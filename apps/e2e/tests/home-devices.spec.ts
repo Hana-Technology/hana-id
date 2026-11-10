@@ -161,12 +161,12 @@ test('stopping auto-approve in Hana Home stops auto-signing in the open partner 
   // Sign out this device: gone from Home, and the partner's next load asks to sign in again.
   await home.bringToFront();
   await item.getByRole('button', { name: 'Sign out this device' }).click();
-  await expect(home.locator('.home-confirm')).toContainText('A tab already open there can keep working for up to about a minute.');
+  await expect(home.locator('.home-confirm')).toContainText('A tab already open there can keep signing for up to about a minute.');
   // The detail is behind "More", which opens from the keyboard.
   await home.locator('.home-confirm summary').focus();
   await home.keyboard.press('Enter');
   await expect(home.locator('.home-confirm details')).toHaveAttribute('open', '');
-  await expect(home.locator('.home-confirm details')).toContainText('for up to about a minute, or for up to about 10 minutes while that device can’t reach Hana');
+  await expect(home.locator('.home-confirm details')).toContainText('for up to about a minute, or for up to about 3 minutes while that device can’t reach Hana');
   const signedOut = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/shares/revoke` && r.request().method() === 'POST');
   await home.locator('.home-confirm').getByRole('button', { name: 'Sign out', exact: true }).click();
   expect((await signedOut).status()).toBe(200);
@@ -188,6 +188,11 @@ test('signing a device out in Hana Home ends an open tab of an app with no polic
   test.setTimeout(180_000);
   const scopeId = `homeout${browserName}`;
   const app = await newApp({ name: 'Sign-out E2E', scopeId });
+  // The vault's light share read (POST /v1/vault/share-status) against the real API: every answer it gets.
+  const statusAnswers: number[] = [];
+  context.on('response', (r) => {
+    if (r.url() === `${API_URL}/v1/vault/share-status` && r.request().method() === 'POST') statusAnswers.push(r.status());
+  });
   await openPartner(page, app);
   const addresses = await login(page);
   await waitPersisted(page, addresses.evm);
@@ -208,12 +213,12 @@ test('signing a device out in Hana Home ends an open tab of an app with no polic
   const item = group.locator('.home-device');
   await expect(item).toHaveCount(1);
   await item.getByRole('button', { name: 'Sign out this device' }).click();
-  await expect(home.locator('.home-confirm')).toContainText('A tab already open there can keep working for up to about a minute.');
+  await expect(home.locator('.home-confirm')).toContainText('A tab already open there can keep signing for up to about a minute.');
   const signedOut = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/shares/revoke` && r.request().method() === 'POST');
   await home.locator('.home-confirm').getByRole('button', { name: 'Sign out', exact: true }).click();
   expect((await signedOut).status()).toBe(200);
   const outAt = Date.now();
-  await expect(group.locator('.home-devices-note')).toContainText('a tab already open there stops working within about a minute');
+  await expect(group.locator('.home-devices-note')).toContainText('a tab already open there can’t sign after about a minute');
 
   // The partner tab, shown, ends by itself at its next minute's read: no request, no reload.
   await page.bringToFront();
@@ -225,6 +230,9 @@ test('signing a device out in Hana Home ends an open tab of an app with no polic
   await page.reload();
   await waitReady(page);
   expect(await status(page)).toBe('logged_out');
+  // The tab learned it from the light read, which only ever answered 200.
+  expect(statusAnswers.length).toBeGreaterThan(0);
+  expect(new Set(statusAnswers)).toEqual(new Set([200]));
 });
 
 // ---- every screen, over routed answers ----

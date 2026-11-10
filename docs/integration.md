@@ -380,13 +380,15 @@ button.addEventListener('click', async () => {
   `hana.persistence` becomes `'none'` (with a `persistenceChanged` event; `useHana()` re-renders), and the next page
   load needs a new login; a reload within that moment after `login()` resolved is a new login too.
 - **Signed out from Hana.** A user can sign a device out of your app from Hana's own page (for a lost or stolen
-  device). A tab of your app already open there ends its session within about a minute while it is shown, and at once
-  when a hidden tab is shown again: your page gets `disconnect` (code 4900) and `accountsChanged` with no addresses,
-  then shows signed out; nothing else is needed. To do this the vault asks Hana's API about once a minute while a
-  wallet is open in a shown tab, and before each signature you ask the user to approve. If Hana's API can't be reached
-  for more than 10 minutes, such a request fails with `api_unavailable` and `data.reason: 'share_unconfirmed'`
-  before any popup; the user stays signed in, and the same request works again once the API answers. With
-  `'none'` there is no device to sign out (each page load is its own login).
+  device). A tab of your app already open there can't sign after about a minute, and ends its session within about a
+  minute while it is shown and in use (a few minutes in a tab nobody is using, at once when a hidden tab is shown
+  again, or at its next signature or identity-token request): your page gets `disconnect` (code 4900) and
+  `accountsChanged` with no addresses, then shows signed out; nothing else is needed. To do this the vault asks Hana's
+  API about once a minute while a wallet is open in a shown tab in use, every 5 minutes when nothing happens there, and
+  before each signature you ask the user to approve and each cached identity token. If Hana's API can't be reached for
+  more than 3 minutes, such a request fails with `api_unavailable` and `data.reason: 'share_unconfirmed'` before any
+  popup; the user stays signed in, and the same request works again once the API answers. With `'none'` there is no
+  device to sign out (each page load is its own login).
 - **Email login** (off until an owner turns it on for your app in the portal, [section 1](#1-your-app-and-the-partner-portal)). With email on,
   `hana.login()` shows a chooser in the Hana popup: "Continue with Google" or "Continue with email". The email path
   asks for the address, mails a 6-digit code, and the user types it into the same Hana popup (never into your page).
@@ -1048,7 +1050,7 @@ window, not returned.
 | `config_mismatch` | Hana's pages disagree about the signer, scope or client, or the scope doesn't match the on-chain registry (`data.reason: 'scope_mismatch'`) | report it to Hana; never retry around it |
 | `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced (`derive_failed` with `data.reason: 'link_restart'`: a linking login was interrupted and its session revoked; `'webcrypto_unsupported'`: the browser has no Ed25519 in WebCrypto, so Hana can't make the sign-in's session key: Chrome and Edge before 137, Firefox before 129, Safari before 17; `'webcrypto_failed'`: the browser refused to make the key, `data.error` the platform error's name; both in a login, `linkAccount()` and the export window's sign-in) | the user logs in again; with `webcrypto_unsupported`, ask them to update the browser or use another |
 | `session_consumed` | Someone replayed the login transaction first | the vault offers "Continue signing in" |
-| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `mainnet_demo_unconfirmed` (Hana's sandbox mainnet demo couldn't be confirmed on, section 12), `email_match_unavailable` (Hana's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Hana's NEAR providers), `path_disputed` (they disagree: report it), `share_unconfirmed` (a signature: Hana's API couldn't confirm for 10 minutes that this device is still signed in, "Signed out from Hana" in section 4) | back off, or contact Hana |
+| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `mainnet_demo_unconfirmed` (Hana's sandbox mainnet demo couldn't be confirmed on, section 12), `email_match_unavailable` (Hana's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Hana's NEAR providers), `path_disputed` (they disagree: report it), `share_unconfirmed` (a signature or an identity token: Hana's API couldn't confirm for 3 minutes that this device is still signed in, "Signed out from Hana" in section 4) | back off, or contact Hana |
 | `storage_unavailable` | The Hana popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
 | `busy` | An export is already running | wait |
 | `identity_unavailable` | `getIdentityToken()`: Hana's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |

@@ -18,12 +18,14 @@
 // - An auto-approve consent exists on the API too (Hana Home): the vault records it before storing it, and auto-signs
 //   only with an `'active'` answer for that consent from GET /v1/app younger than POLICY_FRESH_MS (the same read). A
 //   consent's id never leaves the vault except to the API.
-// - The session's share is checked the same way (Hana Home's "Sign out this device", D680): GET /v1/app is read about
-//   once a minute (STATUS_READ_MS) while a session with a share is live in this tab and the tab is shown, in every app
-//   (with a policy it is the policy's own read, never a second one), at once when a hidden tab is shown again and the
-//   check is due, and at most every STATUS_READ_BACKOFF_MAX_MS after reads that fail. `'revoked'` ends the session; the
-//   read never extends one (no touch, no activity). An approval-popup signature needs a `'live'` answer younger than
-//   SHARE_FRESH_MS (re-read first), or, when the API can't answer, one younger than SHARE_GRACE_MS.
+// - The session's share is checked too (Hana Home's "Sign out this device", D680): about once a minute (STATUS_READ_MS)
+//   while a session with a share is live in this tab and the tab is shown, every STATUS_IDLE_READ_MS once the tab has
+//   seen no activity for STATUS_IDLE_AFTER_MS, at once when a hidden tab is shown again, and at most every
+//   STATUS_READ_BACKOFF_MAX_MS after checks that fail. With a policy it is the policy's own GET /v1/app, never a second
+//   request; otherwise the light POST /v1/vault/share-status (D690), each the other's fallback. `'revoked'` ends the
+//   session; a check never extends one (no touch, no idle-limit activity). An approval-popup signature and a cached
+//   identity token need a `'live'` answer younger than SHARE_FRESH_MS (checked first), or, when the API can't answer,
+//   one younger than SHARE_GRACE_MS.
 // - A pk_test_ app never signs for a mainnet (docs/decisions.md D39): the request is refused before any popup or
 //   policy.
 // - PRK is zeroed after the app's idle limit (`idleTtlMs`) without a request that uses the key (a signature, an
@@ -335,7 +337,13 @@ interface Dormant {
   emailState: 'granted' | 'declined' | 'not_asked' | null;
   /** Ends it at expiresAtMs, as a live session's expiry timer would. */
   expiryTimer: unknown;
+  /** When the API last said its share is live (Share.liveAt, carried over), for a cached identity token's check (D692). */
+  liveAt?: number;
+  livePerf?: number;
 }
+
+/** A session whose share the API is asked about (D680, D692): the live one with its share, or the dormant one. */
+type ShareHolder = { kind: 'live'; s: Session; share: Share } | { kind: 'dormant'; d: Dormant };
 
 /** The session an identity token is minted for (vault.identityTarget). */
 interface IdentityTarget {
@@ -396,7 +404,12 @@ export const SHARE_FRESH_MS = 60_000;
  * When that re-read can't get an answer (the API or its D1 down, the device offline), the signature still completes
  * if the share was last said to be live this recently, and is refused (`api_unavailable`, `share_unconfirmed`) after.
  */
-export const SHARE_GRACE_MS = 10 * 60_000;
+export const SHARE_GRACE_MS = 3 * 60_000;
+/** A check that got no answer is reused this long: sign requests in a row during an outage make one read, not one each. */
+export const SHARE_NO_ANSWER_REUSE_MS = 5_000;
+/** A tab with no activity (`noteStatusActivity`) for this long is idle: its background read slows to STATUS_IDLE_READ_MS. */
+export const STATUS_IDLE_AFTER_MS = 5 * 60_000;
+export const STATUS_IDLE_READ_MS = 5 * 60_000;
 /** The pre-signature re-read is waited for this long at most; a slower one counts as no answer (the grace applies). */
 export const SHARE_WAIT_MS = 8_000;
 /**
@@ -443,6 +456,15 @@ export class Vault {
   private statusMark: { at: number; perf: number };
   /** The timer's reads that failed in a row (the backoff); an answer to any read resets it. */
   private statusFailures = 0;
+  /** Whether the armed timer was armed at the idle interval (activity then re-arms it at the minute). */
+  private statusTimerIdle = false;
+  /** The page's or the user's last activity this vault saw (`noteStatusActivity`), server-corrected and on perfNow. */
+  private statusActive: { at: number; perf: number };
+  /** The share check in flight (one at a time), and when the last one got no answer (SHARE_NO_ANSWER_REUSE_MS). */
+  private shareCheck: Promise<boolean> | null = null;
+  private shareNoAnswer: { at: number; perf: number } | null = null;
+  /** The API answered 404 `not_found` for POST /v1/vault/share-status (an API older than it): GET /v1/app only. */
+  private shareStatusMissing = false;
   /** The raw-signing setting in force: the inlined one until GET /v1/app says 'off' (then 'off' until a reload). */
   private rawSign: RawSign;
   /** Server-corrected time of the last GET /v1/app (or page render) that confirmed `rawSign`. */
@@ -540,6 +562,7 @@ export class Vault {
     this.policyCheckedAt = o.config.serverTimeMs;
     this.policyCheckedPerf = this.perfNow();
     this.statusMark = { at: o.config.serverTimeMs, perf: this.policyCheckedPerf };
+    this.statusActive = { ...this.statusMark };
     this.rawSign = o.config.settings.rawSign;
     this.rawSignCheckedAt = o.config.serverTimeMs;
     // The page's own render counts as a reading (as for rawSign); GET /v1/app re-confirms it before any mainnet request.
@@ -580,6 +603,9 @@ export class Vault {
     // After the handshake the parent talks only on its port.
     if (e.source === this.host.parent) return;
     const t = isObj(e.data) ? e.data.t : undefined;
+    // A Hana window's message (a popup someone is using) is activity for the background read's pace (D694), from the
+    // auth origin only; it is checked again, and may well be dropped, by the handler below.
+    if (e.origin === this.env.authOrigin && typeof t === 'string' && t.startsWith('hana:')) this.noteStatusActivity();
     if (t === 'hana:auth-hello') {
       const task = this.pending ?? this.pendingLink;
       if (task && parseWindowMessage(e.data, ['hana:auth-hello'])) task.acceptHello(e);
@@ -810,9 +836,9 @@ export class Vault {
 
   /**
    * The share GET /v1/app (sent at `at`) reported on (the session's when the read was sent). `'revoked'` ends that
-   * session as a touch's 410 does: the record is deleted, other tabs are told, the session ends. `'live'` is noted for
-   * the pre-signature check (`shareConfirmed`). Only ever an end: the read slides nothing (D55, D539) and counts as no
-   * activity, and anything else, a missing field included, changes nothing.
+   * session as a touch's 410 does (`endHolder`). `'live'` is noted for the pre-signature check (`confirmHolder`). Only
+   * ever an end: the read slides nothing (D55, D539) and counts as no activity, and anything else, a missing field
+   * included, changes nothing.
    */
   private applyServedShare(app: AppConfig, s: Session, shareId: Uint8Array, at: number, sent: number): void {
     if (this.session !== s || !s.share || !bytesEqual(s.share.shareId, shareId)) return;
@@ -820,43 +846,124 @@ export class Vault {
       this.noteShareLive(s.share, at, sent);
       return;
     }
-    if (app.share !== 'revoked') return;
-    void this.deleteRecordIf(s).catch(() => undefined);
-    this.broadcastRevoked(shareId);
-    this.endSession(true);
+    if (app.share === 'revoked') this.endHolder({ kind: 'live', s, share: s.share });
   }
 
-  /** The API said `share` is live at `at` (server-corrected) / `sent` (perfNow); an older answer never moves it back. */
-  private noteShareLive(share: Share, at: number, sent: number): void {
+  /** The API said a share is live at `at` (server-corrected) / `sent` (perfNow); an older answer never moves it back. */
+  private noteShareLive(share: { liveAt?: number; livePerf?: number }, at: number, sent: number): void {
     share.liveAt = Math.max(share.liveAt ?? Number.NEGATIVE_INFINITY, at);
     share.livePerf = Math.max(share.livePerf ?? Number.NEGATIVE_INFINITY, sent);
   }
 
-  /** The session's share was said to be live within `ms`, on the larger of two clocks (as `consentConfirmed`). */
-  private shareLiveWithin(share: Share, ms: number): boolean {
+  /** The share was said to be live within `ms`, on the larger of two clocks (as `consentConfirmed`). */
+  private shareLiveWithin(share: { liveAt?: number; livePerf?: number }, ms: number): boolean {
     if (share.liveAt === undefined || share.livePerf === undefined) return false;
     return Math.max(this.clock.now() - share.liveAt, this.perfNow() - share.livePerf) < ms;
   }
 
+  /** Whether `h` is still this tab's session with that share (an answer for any other applies to nothing). */
+  private holderCurrent(h: ShareHolder): boolean {
+    return h.kind === 'live' ? this.session === h.s && h.s.share === h.share : this.dormant === h.d;
+  }
+
+  private holderLive(h: ShareHolder): { liveAt?: number; livePerf?: number } {
+    return h.kind === 'live' ? h.share : h.d;
+  }
+
+  private holderShareId(h: ShareHolder): Uint8Array {
+    return h.kind === 'live' ? h.share.shareId : h.d.shareId;
+  }
+
+  /** The API said the share is revoked: as a touch's 410, the record deleted, other tabs told, the session ended. */
+  private endHolder(h: ShareHolder): void {
+    if (!this.holderCurrent(h)) return;
+    const shareId = Uint8Array.from(this.holderShareId(h));
+    if (h.kind === 'live') {
+      void this.deleteRecordIf(h.s).catch(() => undefined);
+      this.broadcastRevoked(shareId);
+      this.endSession(true);
+      return;
+    }
+    void this.deleteRecordIf({ sessionPk: h.d.sessionPk, share: { shareId, counter: 0, createdAt: null } }).catch(() => undefined);
+    this.broadcastRevoked(shareId);
+    this.dropDormant(true);
+  }
+
   /**
-   * Before an approval-popup signature (D682): the session's share must have a `'live'` answer younger than
-   * SHARE_FRESH_MS, so a device signed out from Hana Home can't complete one. An older one is re-read first (one read,
-   * shared with any in flight, waited for SHARE_WAIT_MS at most); `'revoked'` ends the session (`disconnected`). If no
-   * answer can be had, an answer younger than SHARE_GRACE_MS still lets it through, so a short API outage blocks no
-   * signing; past that it is refused (`api_unavailable`, reason `share_unconfirmed`), and signing resumes with the
-   * API's next answer. A session with no share (`'none'` mode, or a share not made yet) has nothing Hana Home could
-   * sign out: nothing to check.
+   * Asks the API about `h`'s share (D690): POST /v1/vault/share-status, the light read, unless GET /v1/app is wanted
+   * first (`appFirst`: an app with a policy, whose minute read carries the share anyway). Whichever was not tried is the
+   * fallback when the first gives no answer (an API older than the light read; a NEAR or settings failure behind GET
+   * /v1/app). GET /v1/app names only a live session's share, so a dormant one has the light read alone. One check at a
+   * time. True when the share got an answer (`'live'` noted, or `'revoked'` and the session ended); a refusal, a 429, a
+   * 5xx or a network error is no answer, never `'revoked'`.
    */
-  private async shareConfirmed(s: Session): Promise<void> {
-    const share = s.share;
-    if (!share || this.shareLiveWithin(share, SHARE_FRESH_MS)) return;
-    let waited: unknown = null;
-    await Promise.race([this.refreshPolicy().catch(() => undefined), new Promise<void>((resolve) => (waited = this.timers.setTimeout(resolve, SHARE_WAIT_MS)))]);
-    this.timers.clearTimeout(waited);
-    if (this.live() !== s) throw disconnected('This session was revoked');
+  private checkShare(h: ShareHolder, appFirst = false): Promise<boolean> {
+    this.shareCheck ??= (async () => {
+      const at = this.clock.now();
+      const perf = this.perfNow();
+      const answered = (): boolean => !this.holderCurrent(h) || (this.holderLive(h).liveAt ?? Number.NEGATIVE_INFINITY) >= at;
+      const viaApp = async (): Promise<boolean> => {
+        if (h.kind !== 'live') return false;
+        await this.refreshPolicy().catch(() => undefined);
+        return answered();
+      };
+      const viaLight = async (): Promise<boolean> => {
+        if (this.shareStatusMissing) return false;
+        let status: 'live' | 'revoked';
+        try {
+          status = await this.api!.shareStatus(this.holderShareId(h));
+        } catch (e) {
+          // An API older than the endpoint: GET /v1/app from now on (never `revoked`).
+          if (e instanceof ApiError && e.status === 404 && e.code === 'not_found') this.shareStatusMissing = true;
+          return false;
+        }
+        this.noteStatusMark(at, perf);
+        this.statusFailures = 0;
+        if (!this.holderCurrent(h)) return true;
+        if (status === 'live') this.noteShareLive(this.holderLive(h), at, perf);
+        else this.endHolder(h);
+        return true;
+      };
+      try {
+        const ok = appFirst ? (await viaApp()) || (await viaLight()) : (await viaLight()) || (await viaApp());
+        this.shareNoAnswer = ok ? null : { at, perf };
+        return ok;
+      } finally {
+        this.shareCheck = null;
+      }
+    })();
+    return this.shareCheck;
+  }
+
+  /**
+   * Before a signature from the approval popup (D682), and before a cached identity token is handed out (D692): the
+   * share must have a `'live'` answer younger than SHARE_FRESH_MS, so a device signed out from Hana Home can't complete
+   * one. An older one is checked first (`checkShare`, waited for SHARE_WAIT_MS at most; a check that got no answer in the
+   * last SHARE_NO_ANSWER_REUSE_MS is reused, not repeated, D691). `'revoked'` ends the session: false (the caller
+   * answers as for a session that ended). If no answer can be had, an answer younger than SHARE_GRACE_MS (3 minutes)
+   * still lets it through, so a short API outage blocks nothing; past that it is refused (`api_unavailable`, reason
+   * `share_unconfirmed`), the session stays, and the next answer lets it through again. A session with no share
+   * (`'none'` mode, or a share not made yet) has nothing Hana Home could sign out: nothing to check.
+   */
+  private async confirmHolder(h: ShareHolder | null): Promise<boolean> {
+    if (!h || this.shareLiveWithin(this.holderLive(h), SHARE_FRESH_MS)) return true;
+    const last = this.shareNoAnswer;
+    const reused = last !== null && Math.max(this.clock.now() - last.at, this.perfNow() - last.perf) < SHARE_NO_ANSWER_REUSE_MS;
+    if (!reused) {
+      let waited: unknown = null;
+      await Promise.race([this.checkShare(h), new Promise<void>((resolve) => (waited = this.timers.setTimeout(resolve, SHARE_WAIT_MS)))]);
+      this.timers.clearTimeout(waited);
+    }
+    if (!this.holderCurrent(h)) return false;
     // Fresh now, or (no answer) still within the grace.
-    if (this.shareLiveWithin(share, SHARE_GRACE_MS)) return;
+    if (this.shareLiveWithin(this.holderLive(h), SHARE_GRACE_MS)) return true;
     throw new VaultError('api_unavailable', 'Could not confirm with Hana that this device is still signed in', { reason: 'share_unconfirmed' });
+  }
+
+  /** confirmHolder for a signature in `s`: a session that ended meanwhile (signed out) is `disconnected`. */
+  private async shareConfirmed(s: Session): Promise<void> {
+    const ok = await this.confirmHolder(s.share ? { kind: 'live', s, share: s.share } : null);
+    if (!ok || this.live() !== s) throw disconnected('This session was revoked');
   }
 
   /** After the 60 s read: a consent found revoked is cleared here, so a tab's status reflects it without any request. */
@@ -987,9 +1094,18 @@ export class Vault {
     return this.policy !== null || (this.session?.share != null && this.visible());
   }
 
-  /** The background interval now: STATUS_READ_MS, doubled per failed read up to STATUS_READ_BACKOFF_MAX_MS. */
+  /** No activity (`noteStatusActivity`) for STATUS_IDLE_AFTER_MS, on the larger of two clocks (D684, D694). */
+  private statusIdle(): boolean {
+    return Math.max(this.clock.now() - this.statusActive.at, this.perfNow() - this.statusActive.perf) >= STATUS_IDLE_AFTER_MS;
+  }
+
+  /**
+   * The background interval now: STATUS_READ_MS, or STATUS_IDLE_READ_MS in an idle tab (D684); after failed reads it
+   * doubles from the minute up to STATUS_READ_BACKOFF_MAX_MS (D683), and is never shorter than the idle interval then.
+   */
   private statusInterval(): number {
-    return Math.min(STATUS_READ_MS * 2 ** Math.min(this.statusFailures, 8), STATUS_READ_BACKOFF_MAX_MS);
+    const base = this.statusIdle() ? STATUS_IDLE_READ_MS : STATUS_READ_MS;
+    return Math.max(base, Math.min(STATUS_READ_MS * 2 ** Math.min(this.statusFailures, 8), STATUS_READ_BACKOFF_MAX_MS));
   }
 
   /** Time since `statusMark`, on the larger of two clocks. */
@@ -1002,12 +1118,31 @@ export class Vault {
   }
 
   /**
+   * Activity in this tab (D694): any request from the partner page on the port (reads included), and any message from a
+   * Hana window this vault opened or answers (the approval, consent, login, export and sharing popups: a person at
+   * work). It only sets how often the background read runs: an idle tab reads every STATUS_IDLE_READ_MS, an active one
+   * every minute. It never extends a session (the idle limit counts only key requests, D55) and never stands in for
+   * the check before a signature or a cached identity token (D682, D692), so a page that sends nothing to slow the reads
+   * gains nothing: it can't get a signature without a fresh answer. Leaving the idle state re-arms the timer at once.
+   */
+  private noteStatusActivity(): void {
+    const wasIdle = this.statusIdle();
+    this.statusActive = { at: this.clock.now(), perf: this.perfNow() };
+    if ((wasIdle || this.statusTimerIdle) && this.statusTimer !== null) {
+      this.timers.clearTimeout(this.statusTimer);
+      this.statusTimer = null;
+      this.armStatusRead();
+    }
+  }
+
+  /**
    * Arms the background timer for what is left of the interval since the last read (at least STATUS_READ_MIN_MS), if
-   * there is work and it isn't armed. Called at start, when a session or its share arrives, after each run, and when
-   * the tab is shown again.
+   * there is work and it isn't armed. Called at start, when a session or its share arrives, after each run, when the
+   * tab is shown again, and when an idle tab becomes active.
    */
   private armStatusRead(): void {
     if (this.statusTimer !== null || !this.statusReadWanted()) return;
+    this.statusTimerIdle = this.statusIdle();
     const delay = Math.max(STATUS_READ_MIN_MS, this.statusInterval() - this.sinceStatusMark());
     this.statusTimer = this.timers.setTimeout(() => {
       this.statusTimer = null;
@@ -1017,17 +1152,28 @@ export class Vault {
 
   /**
    * One background read, when due: nothing while logged out, dormant or past the session's limits, or when another read
-   * answered within the interval. It changes no activity time and slides nothing (D55, D539): a `'revoked'` share ends
-   * the session (applyServedShare), anything else leaves it as it was. A failure only backs the timer off.
+   * answered within the interval. With a policy in force it is the policy's GET /v1/app, which carries the share (one
+   * request); without one, the light share read (D690). It changes no activity time and slides nothing (D55, D539): a
+   * `'revoked'` share ends the session, anything else leaves it as it was. A failure only backs the timer off.
    */
   private async statusRead(): Promise<void> {
-    if (!this.statusReadWanted() || !this.live()) return;
+    if (!this.statusReadWanted()) return;
+    const s = this.live();
+    if (!s) return;
     if (this.sinceStatusMark() < this.statusInterval()) return;
     const at = this.clock.now();
     const perf = this.perfNow();
-    try {
-      await this.refreshPolicy();
-    } catch {
+    let ok: boolean;
+    if (s.share && this.visible()) {
+      ok = await this.checkShare({ kind: 'live', s, share: s.share }, this.policy !== null);
+    } else {
+      // A policy's own re-read (a hidden tab, or a session with no share).
+      ok = await this.refreshPolicy().then(
+        () => true,
+        () => false,
+      );
+    }
+    if (!ok) {
       this.statusFailures += 1;
       this.noteStatusMark(at, perf);
     }
@@ -1036,7 +1182,8 @@ export class Vault {
 
   /**
    * The tab was hidden or shown (D681). Hidden: the share check pauses (the timer stops unless a policy's re-read needs
-   * it). Shown: a check that is due runs at once, else the timer is re-armed for what is left.
+   * it). Shown: a check that is due runs at once, else the timer is re-armed for what is left. A page restored from the
+   * back/forward cache is shown the same way.
    */
   private onVisibilityChange(): void {
     if (!this.visible()) {
@@ -1049,6 +1196,8 @@ export class Vault {
     if (!this.statusReadWanted()) return;
     this.timers.clearTimeout(this.statusTimer);
     this.statusTimer = null;
+    // Being shown again is a person at the tab.
+    this.statusActive = { at: this.clock.now(), perf: this.perfNow() };
     if (this.sinceStatusMark() >= this.statusInterval()) void this.statusRead().then(() => this.armStatusRead());
     else this.armStatusRead();
   }
@@ -1102,6 +1251,8 @@ export class Vault {
       return;
     }
     if (!this.claimId(request.id)) return;
+    // Any request from the page is activity for the background read's pace (D694); it extends nothing.
+    this.noteStatusActivity();
     // The SDK opened an approval popup for this request in the user's click (D99): hold the launcher for its hello, and
     // close it if the request ends without an approval screen (auto-approved under the policy, or refused).
     const claim = request.popupOpened === true ? (this.approvals?.claim() ?? null) : null;
@@ -1811,6 +1962,7 @@ export class Vault {
       sealedEmail: s.sealedEmail,
       emailState: s.emailState,
       expiryTimer: null,
+      ...(s.share.liveAt !== undefined && s.share.livePerf !== undefined ? { liveAt: s.share.liveAt, livePerf: s.share.livePerf } : {}),
     };
     // The same session goes on, dormant: its identity token stays valid.
     this.endSession(false, ErrorCode.disconnected, true);
@@ -2487,6 +2639,21 @@ export class Vault {
     return { identityToken: c.token, expiresAtMs: c.expiresAtMs };
   }
 
+  /**
+   * The cached token for `t`, handed out only after the share check (D692): a token is a server-verifiable sign-in the
+   * partner's backend trusts for up to an hour, so a tab signed out from Hana Home (a hidden one included) must not keep
+   * serving it. The same rule as before a signature: a `'live'` answer within a minute, else a check (the light read,
+   * which never wakes a dormant session), else the 3-minute grace, else `share_unconfirmed`. Null when nothing usable
+   * is cached; `'ended'` when the check ended the session (the caller answers as logged out). A mint needs no check:
+   * the API checks the share itself.
+   */
+  private async checkedCachedIdentity(t: IdentityTarget, maxAgeMs?: number): Promise<PortResultMap['hana_identityToken'] | 'ended' | null> {
+    if (!this.cachedIdentity(t.sessionPk, maxAgeMs)) return null;
+    const h: ShareHolder | null = t.live ? (t.live.share ? { kind: 'live', s: t.live, share: t.live.share } : null) : t.dormant ? { kind: 'dormant', d: t.dormant } : null;
+    if (!(await this.confirmHolder(h))) return 'ended';
+    return this.cachedIdentity(t.sessionPk, maxAgeMs);
+  }
+
   /** Drops the identity token (the session ended or was replaced) and tells the partner page. */
   private dropIdentity(): void {
     if (!this.identity) return;
@@ -2512,14 +2679,16 @@ export class Vault {
     const none = { identityToken: null, expiresAtMs: null };
     const first = this.identityTarget();
     if (!first) return none;
-    const hit = this.cachedIdentity(first.sessionPk, maxAgeMs);
+    const hit = await this.checkedCachedIdentity(first, maxAgeMs);
+    if (hit === 'ended') return none;
     if (hit) return hit;
     // Right after a login the share may still be in the making (D79): the API needs it in 'session' mode.
     if (first.live) await this.persisted(first.live);
     return this.o.locks.request(this.identityLockName, async () => {
       const t = this.identityTarget();
       if (!t) return none;
-      const cached = this.cachedIdentity(t.sessionPk, maxAgeMs);
+      const cached = await this.checkedCachedIdentity(t, maxAgeMs);
+      if (cached === 'ended') return none;
       if (cached) return cached;
       return this.mintIdentity(t);
     });

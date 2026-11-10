@@ -36,11 +36,12 @@ export function devicesLinked(search: string): boolean {
 export const HOME_STOP_CONFIRM: Readonly<Record<HomeStop['kind'], { title: string; points: readonly string[]; more?: readonly string[]; go: string; going: string }>> = Object.freeze({
   share: {
     title: 'Sign out this device?',
-    points: ['Signs that device out of this app and stops automatic signing there.', 'A tab already open there can keep working for up to about a minute.'],
+    points: ['Signs that device out of this app and stops automatic signing there.', 'A tab already open there can keep signing for up to about a minute.'],
     more: [
       'Automatic signing stops on that device within about 10 seconds.',
       'The next time the app is opened or reloaded there, it asks to sign in again.',
-      'Whoever has that device can still approve and sign in a tab of the app that is already open there for up to about a minute, or for up to about 10 minutes while that device can’t reach Hana.',
+      'Whoever has that device can still approve and sign in a tab of the app that is already open there for up to about a minute, or for up to about 3 minutes while that device can’t reach Hana.',
+      'A tab nobody is using may still look signed in for a few minutes, but it can’t sign anything.',
       'Signatures and transactions already made stay valid. Signing out doesn’t move your funds: if someone else may have your wallet’s key, move your funds to a new wallet.',
     ],
     go: 'Sign out',
@@ -70,7 +71,7 @@ export const HOME_STOP_CONFIRM: Readonly<Record<HomeStop['kind'], { title: strin
 
 /** What the page says once a stop is done (`changed`: false when it had already ended). */
 export function stopDoneText(kind: HomeStop['kind'], changed: boolean): string {
-  if (kind === 'share') return changed ? 'Signed out. Automatic signing stops there within about 10 seconds, a tab already open there stops working within about a minute, and the app asks to sign in again the next time it opens there.' : 'That device was already signed out.';
+  if (kind === 'share') return changed ? 'Signed out. Automatic signing stops there within about 10 seconds, a tab already open there can’t sign after about a minute, and the app asks to sign in again the next time it opens there.' : 'That device was already signed out.';
   if (kind === 'consent') return changed ? 'Auto-approve stopped. Within about 10 seconds the app asks you to approve each request on that device.' : 'Auto-approve had already stopped on that device.';
   return changed ? 'Your email is no longer shared with this app. Its new sign-ins don’t include it.' : 'Your email was no longer shared with this app.';
 }

@@ -14,6 +14,7 @@ import { HOME_REVOKE_ENDPOINTS, HOME_REVOKE_PER_KEY_MINUTE } from '../src/home/r
 import { clearKekCache } from '../src/vault/kek.ts';
 import { NO_SHARE_ID } from '../src/vault/message.ts';
 import { clearViewCaches } from '../src/views.ts';
+import { SHARE_STATUS_ENDPOINT } from '../src/vault/share-status.ts';
 import { GOOGLE_ISS, ORIGIN, type Chain, type SeededApp, call, chain, google, seedApp, uid } from './helpers.ts';
 import { emailEnv, emailToken, ikSync, withEmail } from './email-helpers.ts';
 import { HOUR, VAULT, act, autoApprovePolicy, pathFor, pathHash, setSettings, setShare, signVault, spentSession, storedShare, vaultHeaders } from './vault-helpers.ts';
@@ -743,6 +744,63 @@ describe('GET /v1/app’s share field (H9: an open tab learns it was signed out)
     await setShare(d.shareId, { idle_until: Date.now() - 1 });
     const before = await storedShare(d.shareId);
     expect((await appRead(app, d.shareId)).share).toBe('live');
+    expect(await storedShare(d.shareId)).toEqual(before);
+  });
+
+  // ---- POST /v1/vault/share-status (D690): the light check ----
+
+  const statusRead = async (app: SeededApp, shareId: number[], o: { origin?: string; body?: unknown; env?: Partial<typeof env> } = {}) => {
+    const res = await call(SHARE_STATUS_ENDPOINT, { headers: { 'x-hana-key': app.key, origin: o.origin ?? VAULT, 'x-hana-parent-origin': ORIGIN }, body: o.body ?? { shareId }, ...(o.env ? { env: o.env } : {}) });
+    return { res, body: (await res.json()) as Record<string, unknown> };
+  };
+
+  it('share-status: live, then revoked once Home signs the device out; another app’s or an unknown share reads revoked', async () => {
+    const app = await seedApp();
+    const other = await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    const live = await statusRead(app, d.shareId);
+    expect(live.res.status).toBe(200);
+    expect(live.res.headers.get('cache-control')).toBe('no-store');
+    expect(live.body).toMatchObject({ share: 'live', serverTimeMs: expect.any(Number) });
+    expect((await statusRead(other, d.shareId)).body.share).toBe('revoked');
+    expect((await statusRead(app, [...crypto.getRandomValues(new Uint8Array(16))])).body.share).toBe('revoked');
+    expect((await stop(me, 'share', { shareId: b64(d.shareId) })).status).toBe(200);
+    expect((await statusRead(app, d.shareId)).body.share).toBe('revoked');
+  });
+
+  it('share-status: vault origin only, an exact body, and its refusals are never an answer', async () => {
+    const app = await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    expect((await statusRead(app, d.shareId, { origin: ORIGIN })).res.status).toBe(403);
+    for (const body of [{}, { shareId: [1, 2] }, { shareId: d.shareId, extra: 1 }, [d.shareId]]) {
+      const r = await statusRead(app, d.shareId, { body });
+      expect(r.res.status).toBe(400);
+      expect(r.body.share).toBeUndefined();
+    }
+    const no = { limit: async () => ({ success: false }) } as unknown as RateLimit;
+    const down = { limit: async () => { throw new Error('down'); } } as unknown as RateLimit;
+    expect((await statusRead(app, d.shareId, { env: { VAULT_STATUS_SHARE_LIMIT: no } })).body).toMatchObject({ code: 'rate_limited' });
+    expect((await statusRead(app, d.shareId, { env: { VAULT_STATUS_IP_LIMIT: no } })).body).toMatchObject({ code: 'rate_limited' });
+    expect((await statusRead(app, d.shareId, { env: { VAULT_STATUS_IP_LIMIT: down } })).res.status).toBe(503);
+    // Its own windows: the vault's per-IP and per-share windows (unlock, touch) don't count it.
+    expect((await statusRead(app, d.shareId, { env: { VAULT_IP_LIMIT: no, VAULT_SHARE_LIMIT: no } })).body.share).toBe('live');
+  });
+
+  it('share-status: no chain call (answers while NEAR is down), one D1 statement and 2 rows once the app is cached, and it moves nothing', async () => {
+    const app = await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    await setShare(d.shareId, { idle_until: Date.now() - 1 });
+    expect((await statusRead(app, d.shareId)).body.share).toBe('live');
+    const before = await storedShare(d.shareId);
+    for (const view of Object.keys(near.views)) near.views[view] = () => { throw new Error('rpc down'); };
+    const counted = countingDb(env.DB);
+    const r = await statusRead(app, d.shareId, { env: { DB: counted.db } });
+    expect(r.body.share).toBe('live');
+    expect(counted.statements).toHaveLength(1);
+    expect(counted.rowsRead()).toBeLessThanOrEqual(2);
     expect(await storedShare(d.shareId)).toEqual(before);
   });
 });

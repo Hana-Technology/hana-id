@@ -96,7 +96,13 @@ export const ABORTED_READS_CAP = 100;
 const WARP_MAX_MS = 5_000;
 
 export class TestTimers implements Timers {
+  /** The device clock (Date.now). Assigning it moves only this clock: a device clock set forward or back. */
   now = START_MS;
+  /**
+   * A monotonic clock (performance.now) for tabs opened with `fakePerf`; `advance` moves it with `now`. Assigning it
+   * moves only it; leaving it while `now` moves is a device that slept (a monotonic timer that stopped).
+   */
+  perf = 1_000;
   private seq = 0;
   private readonly manual = new Map<number, { at: number; fn: () => void }>();
   private readonly real = new Map<number, ReturnType<typeof setTimeout>>();
@@ -126,6 +132,7 @@ export class TestTimers implements Timers {
   /** Moves the clock and fires every long timer now due, in order. */
   advance(ms: number): void {
     this.now += ms;
+    this.perf += ms;
     for (;;) {
       const due = [...this.manual.entries()].filter(([, t]) => t.at <= this.now).sort((a, b) => a[1].at - b[1].at)[0];
       if (!due) return;
@@ -606,6 +613,7 @@ export class FakeBackend {
     }
     if (call.path === '/v1/vault/consents' || call.path === '/v1/vault/consents/revoke') return this.consentCall(call, call.path === '/v1/vault/consents');
     if (call.path === '/v1/vault/shares') return this.createShare(call);
+    if (call.path === '/v1/vault/share-status') return this.shareStatusCall(call);
     if (call.path.startsWith('/v1/vault/')) return this.shareAction(call, call.path.slice('/v1/vault/'.length));
     void url;
     return apiError(404, 'not_found');
@@ -658,6 +666,25 @@ export class FakeBackend {
     const ks = crypto.getRandomValues(new Uint8Array(32));
     this.shares.set(toHex(shareId), { shareId, ks, sessionPk: pk, appId: APP_ID, counter: 0, revoked: false, createdAt: this.serverNow(), absExpiresAtMs: session.expires_at_ms });
     return json(201, { shareId: Array.from(shareId), ks: Array.from(ks), absExpiresAtMs: session.expires_at_ms, idleUntilMs: this.serverNow() + 2 * HOUR, ...this.timingsField(), requestId: 'rq' });
+  }
+
+  /** Whether the fake API has POST /v1/vault/share-status (false: an API older than it, which answers 404 `not_found`). */
+  shareStatusEndpoint = true;
+
+  /**
+   * POST /v1/vault/share-status (D690), as the API answers it: `{share}` for the share named, no chain call. `shareAnswer`
+   * applies as on GET /v1/app; its `'omit'` (the D1 read failed) is the endpoint's 503.
+   */
+  private shareStatusCall(call: ApiCall): Response {
+    if (!this.shareStatusEndpoint) return apiError(404, 'not_found');
+    const b = call.body as { shareId?: unknown };
+    if (!b || !Array.isArray(b.shareId) || b.shareId.length !== 16 || Object.keys(b).length !== 1) return apiError(400, 'bad_request');
+    const hex = toHex(Uint8Array.from(b.shareId as number[]));
+    const answered = this.shareAnswer?.(hex);
+    if (answered === 'omit') return apiError(503, 'share_status_unavailable');
+    if (answered !== undefined) return json(200, { share: answered, serverTimeMs: this.serverNow(), requestId: 'rq' });
+    const share = this.shares.get(hex);
+    return json(200, { share: !share || share.revoked ? 'revoked' : 'live', serverTimeMs: this.serverNow(), requestId: 'rq' });
   }
 
   /** `share` on GET /v1/app, for the vault's `x-hana-share` header (H9): 'revoked' for a revoked or unknown share. */
@@ -943,6 +970,8 @@ export interface TabOptions {
   hidden?: boolean;
   /** A host without visibility (an older host, or a browser without the Page Visibility API): counts as shown. */
   noVisibility?: boolean;
+  /** The vault's monotonic clock is `browser.timers.perf` (default: the real performance.now). */
+  fakePerf?: boolean;
 }
 
 export function openTab(browser: Browser, o: TabOptions = {}): Tab {
@@ -979,6 +1008,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
     fetch: browser.backend.fetch,
     timers: browser.timers,
     deviceNow: () => browser.timers.now,
+    ...(o.fakePerf ? { perfNow: () => browser.timers.perf } : {}),
     jwks: async (kid) => (o.googleJwk && o.googleJwk.kid === kid ? o.googleJwk : null),
     ...(o.loginFlow ? { loginFlow: o.loginFlow } : {}),
     ...o.options,

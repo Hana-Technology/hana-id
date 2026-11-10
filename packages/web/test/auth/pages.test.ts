@@ -93,7 +93,7 @@ describe('auth page policies', () => {
   it('batch C11: the pages that show the app’s name add the files origin to img-src in place; the callback doesn’t', () => {
     const files = { ...sandbox, filesOrigin: 'https://files.example' };
     const IMG = "img-src 'self' data: https://files.example";
-    expect(LOGO_PAGES).toEqual(['login', 'email', 'approve', 'export', 'share']);
+    expect(LOGO_PAGES).toEqual(['login', 'email', 'approve', 'export', 'share', 'home']);
     for (const p of AUTH_PAGES) {
       const policy = authPageMetaCsp(files, p.name);
       // One img-src only: a browser ignores a repeated directive.
@@ -110,7 +110,7 @@ describe('auth page policies', () => {
     for (const p of AUTH_PAGES) expect(authPageMetaCsp(noFiles, p.name), p.name).toContain("img-src 'self' data:;");
   });
 
-  it('serves the six pages at the spec’s paths (D411 adds /share-email)', () => {
+  it('serves the seven pages at the spec’s paths (D411 adds /share-email, Hana Home adds /home)', () => {
     expect(AUTH_PAGES.map((p) => [p.path, p.file])).toEqual([
       ['/login', 'login.html'],
       ['/login/email', 'login/email.html'],
@@ -118,7 +118,16 @@ describe('auth page policies', () => {
       ['/approve', 'approve.html'],
       ['/export', 'export.html'],
       ['/share-email', 'share-email.html'],
+      ['/home', 'home.html'],
     ]);
+    // Hana Home: the API, Google's JWKS and the two NEAR providers (opening a wallet reads the chain, a linked identity's
+    // path on both, D263): exactly the export window's origins and nothing more. No email issuer, even in an env with one.
+    const withBoth = { ...sandbox, rpc: 'https://rpc1.example', rpcFallback: 'https://rpc2.example', emailIssuerUrl: 'https://issuer.example' };
+    expect(connectSources(withBoth, 'home')).toEqual([new URL(sandbox.apiUrl).origin, 'https://rpc1.example', 'https://rpc2.example', 'https://www.googleapis.com']);
+    expect(connectSources(withBoth, 'home')).toEqual(connectSources(withBoth, 'export'));
+    const { rpcFallback: _none, ...single } = withBoth;
+    expect(connectSources(single, 'home')).toEqual([new URL(sandbox.apiUrl).origin, 'https://rpc1.example', 'https://www.googleapis.com']);
+    expect(authPageCsp(sandbox, 'home')).toBe(authPageCsp(sandbox, 'export'));
     // D411: the sheet reads the address from the API, nothing else.
     expect(connectSources(sandbox, 'share')).toEqual([new URL(sandbox.apiUrl).origin]);
   });
@@ -291,7 +300,7 @@ describe('per-env build', () => {
     for (const page of AUTH_PAGES) expect(existsSync(join(built.dir, `${page.path.slice(1)}.html`))).toBe(true);
     // Nothing is written next to the origin roots, so the vault root (<env>/vault) holds only the vault's files.
     expect(readdirSync(join(out, 'sandbox-dev'))).toEqual(['auth']);
-    expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'export.html', 'login', 'login.html', 'share-email.html'].sort());
+    expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'export.html', 'home.html', 'login', 'login.html', 'share-email.html'].sort());
     expect(readdirSync(join(built.dir, 'login')).sort()).toEqual(['callback.html', 'email.html']);
   });
 

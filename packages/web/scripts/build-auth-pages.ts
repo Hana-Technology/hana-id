@@ -1,4 +1,4 @@
-// Builds the auth-origin pages (/login, /login/email, /login/callback, /approve, /export, /share-email) of every env whose manifest sets
+// Builds the auth-origin pages (/login, /login/email, /login/callback, /approve, /export, /share-email, /home) of every env whose manifest sets
 // vaultOrigin and authOrigin, into packages/web/dist/pages/<env>/auth (docs/batch-b-spec.md "Packages"):
 //
 //   pnpm --filter @hana-id/web build:auth [env…]
@@ -44,6 +44,7 @@ const ENTRIES: Record<AuthPage['name'], string> = {
   approve: 'src/auth/entries/approve.ts',
   export: 'src/auth/entries/export.ts',
   share: 'src/auth/entries/share.ts',
+  home: 'src/auth/entries/home.ts',
 };
 
 const escapeAttr = (s: string) => s.replace(/&/gu, '&amp;').replace(/"/gu, '&quot;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');

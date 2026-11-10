@@ -71,6 +71,11 @@ export class Chain {
   /** The email issuer's active key (`get_issuer_keys("email")`), or none: no email issuer on chain. */
   emailKey: { kid: string; n: string; e: string } | null = null;
   /**
+   * The kid of the stack's Google signing key (google-backend.ts), active on chain (`get_issuer("google")`): the
+   * Worker's own POST /v1/home/login refuses a token whose kid the chain doesn't list (`issuer_key_pending`).
+   */
+  googleKid: string | null = null;
+  /**
    * Contract v3's accounts and links (build plan batches 7 and 8b), as packages/web's vault test harness models them:
    * identity keys whose own path was derived (`opened`, D130) and accounts by root identity key.
    */
@@ -188,6 +193,10 @@ export class Chain {
     switch (method) {
       case 'get_session':
         return { value: Array.isArray(args.session_public_key) ? this.session(Uint8Array.from(args.session_public_key as number[])) : null };
+      case 'session_key_in_use':
+        return { value: Array.isArray(args.session_public_key) && this.session(Uint8Array.from(args.session_public_key as number[])) !== null };
+      case 'get_issuer':
+        return { value: args.provider === 'google' && this.googleKid ? { kids: [this.googleKid] } : null };
       case 'get_scope':
         return {
           value:

@@ -817,6 +817,39 @@ export interface WindowMessageMap {
     emailShare?: true;
   };
   /**
+   * Hana Home page → its own sign-in child (`/login?mode=home`), in answer to the child's `hana:auth-hello`. The nonce
+   * commits to the Home key, its end and salt (home.ts `homeNonce`), never to a session, so the token Google answers can
+   * open nothing on chain. Carries relayKey, as `hana:auth-params` does. The child takes it only from its same-origin
+   * opener on the Home page.
+   */
+  'hana:home-params': {
+    signer: string;
+    clientId: string;
+    homePublicKey: Uint8Array;
+    expiresAtMs: number;
+    salt: Uint8Array;
+    nonce: string;
+    relayId: string;
+    relayKey: Uint8Array;
+  };
+  /**
+   * Hana Home page → its own sign-in child (`/login?mode=home`), for opening one app's wallet: a session of exactly one
+   * use and key index 0 in `scopeId`, whose nonce (`sessionNonce`) the child recomputes from these fields. The child
+   * asks Google to sign the user in again (`max_age=0`). Carries relayKey; taken only from the same-origin opener on
+   * the Home page. It names no app and carries no partner string.
+   */
+  'hana:home-derive-params': {
+    signer: string;
+    clientId: string;
+    scopeId: string;
+    sessionPublicKey: Uint8Array;
+    expiresAtMs: number;
+    salt: Uint8Array;
+    nonce: string;
+    relayId: string;
+    relayKey: Uint8Array;
+  };
+  /**
    * Login popup → vault: the popup is about to navigate to Google (`google`, from any Hana page, every time), it is
    * back from Google on Hana's callback with its opener (`back`), the code was sent (`email_code`, from
    * `/login/email`), or the popup relayed its answer and is closing itself (`relayed`). A signal only: it carries nothing, and the vault takes it only from the window its pending login answered.
@@ -1048,6 +1081,27 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isBytes(m.salt, SALT_MIN_BYTES, SALT_MAX_BYTES) &&
     isInt(m.keyIndex, 0, KEY_INDEX_LIMIT) &&
     isInt(m.maxUses, 1, MAX_USES_LIMIT) &&
+    isNonce(m.nonce) &&
+    isRelayId(m.relayId) &&
+    isBytes(m.relayKey, 32, 32),
+  'hana:home-params': (m) =>
+    exactKeys(m, ['v', 't', 'signer', 'clientId', 'homePublicKey', 'expiresAtMs', 'salt', 'nonce', 'relayId', 'relayKey']) &&
+    isNearAccountId(m.signer) &&
+    isClientId(m.clientId) &&
+    isBytes(m.homePublicKey, 32, 32) &&
+    isMs(m.expiresAtMs) &&
+    isBytes(m.salt, 32, 32) &&
+    isNonce(m.nonce) &&
+    isRelayId(m.relayId) &&
+    isBytes(m.relayKey, 32, 32),
+  'hana:home-derive-params': (m) =>
+    exactKeys(m, ['v', 't', 'signer', 'clientId', 'scopeId', 'sessionPublicKey', 'expiresAtMs', 'salt', 'nonce', 'relayId', 'relayKey']) &&
+    isNearAccountId(m.signer) &&
+    isClientId(m.clientId) &&
+    isScopeId(m.scopeId) &&
+    isBytes(m.sessionPublicKey, 32, 32) &&
+    isMs(m.expiresAtMs) &&
+    isBytes(m.salt, SALT_MIN_BYTES, SALT_MAX_BYTES) &&
     isNonce(m.nonce) &&
     isRelayId(m.relayId) &&
     isBytes(m.relayKey, 32, 32),

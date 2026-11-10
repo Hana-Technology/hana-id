@@ -48,6 +48,7 @@ const PAGE_FILES = {
   '/approve.html': { body: '<!doctype html><title>approve</title>', type: 'text/html; charset=utf-8', headers: { 'cross-origin-opener-policy': 'same-origin' } },
   '/export.html': { body: '<!doctype html><title>export</title>', type: 'text/html; charset=utf-8' },
   '/share-email.html': { body: '<!doctype html><title>share</title>', type: 'text/html; charset=utf-8' },
+  '/home.html': { body: '<!doctype html><title>home</title>', type: 'text/html; charset=utf-8' },
   '/login.js': { body: 'export {}', type: 'text/javascript' },
   '/style.css': { body: 'body{}', type: 'text/css' },
 };
@@ -112,6 +113,8 @@ describe('auth origin Worker', () => {
       '/export': `${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`,
       // D411: the email sharing sheet reads the sealed address from the API's preview, nothing else.
       '/share-email': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
+      // Hana Home: the API, Google's JWKS and, for opening a wallet, the NEAR RPC: exactly the export window's origins.
+      '/home': `${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`,
     };
     expect(Object.keys(expected)).toEqual([...AUTH_PAGE_PATHS]);
     for (const path of AUTH_PAGE_PATHS) {
@@ -121,7 +124,9 @@ describe('auth origin Worker', () => {
       expectPageBasics(res);
       expect(csp(res)).toBe(expected[path]);
       // No COOP header (unsafe-none), even when the build's file carried one; no cross-origin CORP on a top-level page.
-      expect(res.headers.get('cross-origin-opener-policy')).toBeNull();
+      // Hana Home alone cuts off whoever opened it, and keeps the sign-in child it opens itself; every other page stays
+      // reachable from the partner page or the vault that opened it.
+      expect(res.headers.get('cross-origin-opener-policy')).toBe(path === '/home' ? 'same-origin-allow-popups' : null);
       expect(res.headers.get('cross-origin-resource-policy')).toBeNull();
       expect(res.headers.get('etag')).toBeNull();
       expect(await res.text()).toBe(PAGE_FILES[`${path}.html` as keyof typeof PAGE_FILES].body);

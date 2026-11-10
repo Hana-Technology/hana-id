@@ -23,7 +23,9 @@ describe('routing', () => {
     expect(body).toMatchObject({ ok: true, env: 'sandbox-test', signer: 'signer.test.near', hotDb: 9, capabilities: { createProof: true } });
     // D384, additive: the build id the Worker was deployed with; the test bindings have none.
     expect(body.build).toBeNull();
-    expect(Object.keys(body).sort()).toEqual(['build', 'capabilities', 'env', 'hotDb', 'ok', 'requestId', 'signer']);
+    // `usageCapture` (D596, additive): whether this API writes usage events; deploy-check reads it.
+    expect(body.usageCapture).toBe(true);
+    expect(Object.keys(body).sort()).toEqual(['build', 'capabilities', 'env', 'hotDb', 'ok', 'requestId', 'signer', 'usageCapture']);
   });
 
   it('GET /v1/health reports the deployed build id (HANA_BUILD), and null for a malformed one', async () => {

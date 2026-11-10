@@ -120,6 +120,13 @@ export const HOME_EMAIL_TEXT = Object.freeze({
 });
 
 export const CODE_RE = /^\d{6}$/u;
+
+/** A number the issuer put in its refusal's `data` (`{error, code, data}`), or null. */
+function detail(err: ApiError, name: string): number | null {
+  const data = err.details.data;
+  const v = typeof data === 'object' && data !== null ? (data as Record<string, unknown>)[name] : err.details[name];
+  return typeof v === 'number' && Number.isSafeInteger(v) ? v : null;
+}
 const RESEND_WAIT_MAX_MS = 60_000;
 
 /** Where an email code's steps are. */
@@ -193,8 +200,9 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
       });
     return b;
   };
+  // The login popup's email step's notice (a `note` line, "Try again" in it when the service didn't answer).
   const message = (text: string | null, retry?: () => void): HTMLElement | null =>
-    text ? d.h('div', { class: 'notice', attrs: { role: 'alert', id: id('notice') } }, d.h('p', {}, text), retry ? button('Try again', 'retry', retry, 'link') : null) : null;
+    text ? d.h('p', { class: 'note', attrs: { role: 'alert', id: id('notice') } }, text, ...(retry ? [' ', button('Try again', 'retry', retry, 'link')] : [])) : null;
   const heading = (text: string) => d.h('h3', { attrs: { id: id('title'), tabindex: '-1' } }, text);
   const focus = (el: HTMLElement): void => {
     try {
@@ -349,9 +357,10 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
         notice = 'challenge_expired';
         return showAddress(HOME_EMAIL_TEXT.expired);
       }
-      if (err instanceof ApiError && err.status === 429 && err.code === 'rate_limited' && typeof err.details.resendAfterMs === 'number') {
+      const after = err instanceof ApiError && err.status === 429 && err.code === 'rate_limited' ? detail(err, 'resendAfterMs') : null;
+      if (after !== null) {
         notice = 'resend_wait';
-        return showCode(err.details.resendAfterMs, HOME_EMAIL_TEXT.resendWait);
+        return showCode(after, HOME_EMAIL_TEXT.resendWait);
       }
       const p = problemOf(err);
       if (p === 'stop') return stop((err as ApiError).code);
@@ -370,7 +379,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
     } catch (err) {
       if (mine !== turn) return;
       if (err instanceof ApiError && err.code === 'code_invalid') {
-        const left = typeof err.details.attemptsLeft === 'number' ? err.details.attemptsLeft : null;
+        const left = detail(err, 'attemptsLeft');
         notice = 'code_invalid';
         if (left === 0) {
           challengeId = null;

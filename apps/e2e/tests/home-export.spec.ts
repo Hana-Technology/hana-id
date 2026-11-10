@@ -490,7 +490,8 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
 
   // Where the move can't be offered: one sentence, and no way to start it.
   const off: readonly [string, string, string][] = [
-    ['Lumen Pay', 'h8-03-not-offered-exit-login', 'can’t move this wallet yet'],
+    // Coverage `exit` naming a client that isn't Hana Home's exit client in force (H10 offers the move through that one).
+    ['Lumen Pay', 'h8-03-not-offered-exit-login', 'Hana can’t open this wallet from here.'],
     ['Atlas Markets', 'h8-04-not-offered-out-of-reach', 'Hana can’t open this wallet from here.'],
     ['Nova Earn', 'h8-05-not-offered-not-checked', 'Hana hasn’t checked this app yet.'],
     ['Orbit Swap', 'h8-06-not-offered-app-from-link', 'You came to this app through a link'],

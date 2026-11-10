@@ -216,6 +216,13 @@ describe('wrangler.jsonc', () => {
     expect(() => vars({ ...manifest, homeDerivesPerDay: 1.5 })).toThrow();
   });
 
+  it('writes HANA_ORG_ID only when the manifest names Hana’s own org', () => {
+    const vars = (m: unknown) => (wranglerConfig(manifestSchema.parse(m), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    expect(vars(manifest).HANA_ORG_ID).toBeUndefined();
+    expect(vars({ ...manifest, hanaOrgId: 'org_2Yh8sJq4Lm' }).HANA_ORG_ID).toBe('org_2Yh8sJq4Lm');
+    expect(() => vars({ ...manifest, hanaOrgId: 'not-an-org' })).toThrow();
+  });
+
   it('writes the API’s failover list as NEAR_RPC_FALLBACKS: apiRpcFallbacks in order, else rpcFallback, else nothing (D435)', () => {
     const vars = (m: unknown) => (wranglerConfig(manifestSchema.parse(m), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
     const { apiRpcFallbacks: _a, rpcFallback: _f, ...neither } = manifest;

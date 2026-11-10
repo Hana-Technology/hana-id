@@ -77,6 +77,8 @@ describe('a pk_test_ app and mainnet chains', () => {
     const popup = openApproval(s.t);
     const m = await popup.next('hana:approve-request');
     expect(m).toMatchObject({ context: { chainId: CHAIN }, testApp: true });
+    // The mainnet demo is off for this app: the message is exactly the older one.
+    expect(m).not.toHaveProperty('mainnetDemo');
     answer(s.t, popup, m, true);
     expect(evmTxSigner((await reply).result as string, tx)).toBe(s.evm);
     // Messages and typed data without a domain chain aren't tied to a network (D35): shown, not refused.

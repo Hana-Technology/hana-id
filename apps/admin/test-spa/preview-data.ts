@@ -204,6 +204,7 @@ const alert = (id: number, severity: string, kind: string, title: string, create
   details: { kid: 'f3a1…', account: 'hana-signer' },
   deliveries: [{ channel: 'email', at: ago(7 * MIN), ok: true }],
   deliveriesTotal: 14,
+  deliveriesLatest: [{ channel: 'email', at: ago(7 * MIN), ok: true }],
   ...extra,
 });
 

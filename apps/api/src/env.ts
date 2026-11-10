@@ -47,6 +47,11 @@ export interface Env {
   /** Optional var (manifest `homeDerivesPerDay`): Home derives allowed per UTC day across the env, 0 for none. Default 500 (home/login.ts). */
   HOME_DERIVES_PER_DAY?: string;
   /**
+   * Optional var (manifest `hanaOrgId`): Hana's own org, which a Hana Home derive's usage event is written for when no
+   * partner pays for it (home/billing.ts). Without it those events go to the legacy org.
+   */
+  HANA_ORG_ID?: string;
+  /**
    * Optional var: the allowance (decimal yoctoNEAR) the owner-pool keys were added with, when deploy-contract ran with
    * another `--owner-relayer-allowance` than its 0.5 NEAR default: the base of the hourly `owner_allowance_low` check.
    */

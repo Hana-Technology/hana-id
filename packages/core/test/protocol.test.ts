@@ -542,6 +542,22 @@ describe('window messages', () => {
     }
   });
 
+  it('`ui` takes exactly its two fields (an SDK that shipped drops anything else); `launcherKind` is its own event', () => {
+    expect(parsePortEvent({ v: 1, event: 'ui', data: { launcher: 'show', label: 'Review in Hana' } })).not.toBeNull();
+    expect(parsePortEvent({ v: 1, event: 'ui', data: { launcher: 'show', label: 'Review in Hana', clickable: true } })).toBeNull();
+    expect(parsePortEvent({ v: 1, event: 'launcherKind', data: { clickable: false } })).toEqual({ v: 1, event: 'launcherKind', data: { clickable: false } });
+    for (const bad of [{ clickable: 'no' }, {}, { clickable: true, label: 'x' }, null]) expect(parsePortEvent({ v: 1, event: 'launcherKind', data: bad })).toBeNull();
+  });
+
+  it('approve-request and consent-request take an optional mainnetDemo flag: only true, and only with testApp', () => {
+    for (const [t, base] of [['hana:approve-request', APPROVE_REQUEST], ['hana:consent-request', VALID_WINDOW['hana:consent-request']]] as const) {
+      expect(parseWindowMessage({ ...base, testApp: true, mainnetDemo: true }, [t])).not.toBeNull();
+      expect(parseWindowMessage({ ...base, mainnetDemo: true }, [t])).toBeNull();
+      expect(parseWindowMessage({ ...base, testApp: true, mainnetDemo: false }, [t])).toBeNull();
+      expect(parseWindowMessage({ ...base, testApp: true, mainnetDemo: 'on' }, [t])).toBeNull();
+    }
+  });
+
   it.each([
     ['a short policyId', { policyId: 'a'.repeat(63) }],
     ['an uppercase policyId', { policyId: 'A'.repeat(64) }],

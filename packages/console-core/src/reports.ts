@@ -75,6 +75,10 @@ export interface ReportSqlRow {
   period: string;
   app_id: string | null;
   scope_id: string;
+  /** 'app', 'scope' (owner actions) or 'home' (Hana Home logins); absent before migrations-usage 0008. */
+  kind?: string | null;
+  /** Absent before migrations-usage 0008. */
+  home_logins?: number | string | null;
   logins: number | string;
   derives: number | string;
   revokes: number | string;
@@ -119,6 +123,12 @@ export const failuresOf = (v: ReportSqlRow['failures']): Record<string, number> 
 };
 const latency = (v: number | null | undefined): number | undefined => (v === null || v === undefined ? undefined : int(v));
 
+export type ReportRowKind = 'app' | 'scope' | 'home';
+/** What a report row is about. A row from before migrations-usage 0008 names no kind: an app's, else a scope's owner actions. */
+export const reportRowKind = (r: Pick<ReportSqlRow, 'kind' | 'app_id'>): ReportRowKind => (r.kind === 'home' ? 'home' : r.app_id !== null ? 'app' : 'scope');
+/** The label of a scope's Hana Home line, wherever a report or a statement shows it. */
+export const HOME_LOGINS_LABEL = 'Hana Home logins';
+
 /** A report row as the RPC's UsageRow (docs/batch-c-spec.md "Types"; the C12 additions are optional). */
 export function usageRowOf(orgId: string, r: ReportSqlRow): UsageRow {
   const p50 = { login: latency(r.login_p50), derive: latency(r.derive_p50) };
@@ -136,6 +146,8 @@ export function usageRowOf(orgId: string, r: ReportSqlRow): UsageRow {
     ownerActions: int(r.owner_actions),
     linkActions: int(r.link_actions),
     identityTokens: int(r.identity_tokens),
+    kind: reportRowKind(r),
+    ...(reportRowKind(r) === 'home' ? { homeLogins: int(r.home_logins) } : {}),
     activeUsers: int(r.active_users),
     newUsers: int(r.new_users),
     failuresByCode: failuresOf(r.failures),
@@ -239,12 +251,16 @@ export const csvLine = (cells: readonly string[]): string => `${cells.map(csvCel
 
 // ---- statements ----
 
-/** A statement's CSV columns (docs/batch-c-spec.md "CSV"; `link_actions` and `identity_tokens` added by C12, D324). */
+/**
+ * A statement's CSV columns (docs/batch-c-spec.md "CSV"; `link_actions` and `identity_tokens` added by C12, D324;
+ * `row_kind` and `home_logins` by Hana Home's billing, appended last so no earlier column moves, D587: a scope's Hana
+ * Home logins are rows of their own, with `row_kind` = `home`, no app, and the gas of those logins only).
+ */
 export const STATEMENT_CSV_COLUMNS = [
   'month', 'org_id', 'org_name', 'scope_id', 'app_id', 'app_name', 'environment', 'day',
   'logins', 'derives', 'revokes', 'unlocks', 'owner_actions', 'link_actions', 'identity_tokens', 'mau', 'new_users', 'failures_by_code',
   'tgas', 'relayed_rejected_tgas', 'error_tgas', 'near', 'relayed_rejected_near', 'near_usd_rate', 'rate_source', 'usd', 'relayed_rejected_usd',
-  'login_p50_ms', 'login_p95_ms', 'derive_p50_ms', 'derive_p95_ms', 'unsettled', 'as_of',
+  'login_p50_ms', 'login_p95_ms', 'derive_p50_ms', 'derive_p95_ms', 'unsettled', 'as_of', 'row_kind', 'home_logins',
 ] as const;
 
 const decimalText = z.string().regex(/^(0|[1-9]\d*)(\.\d*[1-9])?$/u);
@@ -253,7 +269,8 @@ const count = z.number().int().nonnegative();
 /** One app's or scope's month (the CSV's `day = total` row), as stored in `usage.statements.totals`. */
 export const statementTotalRow = z
   .object({
-    kind: z.enum(['app', 'scope']),
+    /** `home`: the scope's Hana Home logins (D461), a line of their own. */
+    kind: z.enum(['app', 'scope', 'home']),
     scopeId: z.string(),
     appId: z.string().optional(),
     appName: z.string().optional(),
@@ -265,6 +282,8 @@ export const statementTotalRow = z
     ownerActions: count,
     linkActions: count,
     identityTokens: count,
+    /** Absent in statements issued before Hana Home logins were counted. */
+    homeLogins: count.optional(),
     mau: count.optional(),
     newUsers: count,
     failures: z.record(z.string(), count),
@@ -345,6 +364,7 @@ export function statementOf(orgId: string, r: StatementSqlRow): StatementWithTot
 
 const isTestNetwork = (network: string): boolean => network !== 'mainnet';
 export const TESTNET_PRICE_NOTE = 'Testnet usage, valued at the mainnet NEAR/USD price (D93).';
+export const HOME_LOGINS_NOTE = 'Hana Home logins: users of these apps opening their wallet from Hana Home. Each is billed at its gas, like a login.';
 export const REJECTED_NOTE = 'Relayed-then-rejected gas is not billed by default (D91); it is shown on its own line.';
 
 /** What the on-screen statement and the PDF show, in order: the same labels and values in both (D92). */
@@ -360,8 +380,11 @@ export interface StatementView {
 
 export function statementView(s: { csvSha256: string; pdfSha256?: string; totals: StatementTotals }): StatementView {
   const t = s.totals;
-  const name = (r: StatementTotalRow) => (r.kind === 'app' ? `${r.appName ?? r.appId ?? ''} (${r.appId ?? ''})` : `Owner actions, scope ${r.scopeId}`);
+  const name = (r: StatementTotalRow) =>
+    r.kind === 'app' ? `${r.appName ?? r.appId ?? ''} (${r.appId ?? ''})` : r.kind === 'home' ? `${HOME_LOGINS_LABEL}, scope ${r.scopeId}` : `Owner actions, scope ${r.scopeId}`;
   const notes = [REJECTED_NOTE];
+  const home = t.rows.some((r) => r.kind === 'home');
+  if (home) notes.push(HOME_LOGINS_NOTE);
   if (isTestNetwork(t.network)) notes.unshift(TESTNET_PRICE_NOTE);
   return {
     title: `Hana ID usage statement ${t.month}`,
@@ -372,10 +395,11 @@ export function statementView(s: { csvSha256: string; pdfSha256?: string; totals
       ['Covers events received up to', new Date(t.asOf).toISOString()],
       ['Statement hash (SHA-256 of the CSV)', s.csvSha256],
     ],
-    tableColumns: ['Logins', 'Derives', 'Owner actions', 'MAU', 'New users', 'Tgas', 'NEAR', 'USD', 'Unsettled'],
+    // The Home column and summary line appear only on a statement that has a Home line, so an older statement renders as it did.
+    tableColumns: ['Logins', 'Derives', 'Owner actions', ...(home ? ['Home logins'] : []), 'MAU', 'New users', 'Tgas', 'NEAR', 'USD', 'Unsettled'],
     table: t.rows.map((r) => ({
       label: name(r),
-      cells: [String(r.logins), String(r.derives), String(r.ownerActions), r.mau === undefined ? '' : String(r.mau), String(r.newUsers), r.tgas, r.near, r.usd, String(r.unsettled)],
+      cells: [String(r.logins), String(r.derives), String(r.ownerActions), ...(home ? [String(r.homeLogins ?? 0)] : []), r.mau === undefined ? '' : String(r.mau), String(r.newUsers), r.tgas, r.near, r.usd, String(r.unsettled)],
     })),
     summary: [
       ['Logins', String(t.sum.logins)],
@@ -385,6 +409,7 @@ export function statementView(s: { csvSha256: string; pdfSha256?: string; totals
       ['Owner actions', String(t.sum.ownerActions)],
       ['Link actions', String(t.sum.linkActions)],
       ['Identity tokens', String(t.sum.identityTokens)],
+      ...(home ? ([[HOME_LOGINS_LABEL, String(t.sum.homeLogins ?? 0)]] as [string, string][]) : []),
       ['New users', String(t.sum.newUsers)],
       ['All settled gas (Tgas)', t.sum.tgas],
       ['All settled NEAR', t.sum.near],

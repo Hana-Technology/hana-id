@@ -73,8 +73,13 @@ export interface HanaEvents {
   disconnect: [{ code: number }];
   loginProgress: [PortEventMap['loginProgress']];
   autoApproved: [PortEventMap['autoApproved']];
-  /** The vault's launcher (a 320×72 px Hana button) is shown or hidden; `label` is its text. */
-  launcher: [{ visible: boolean; label: string }];
+  /**
+   * The vault's launcher (a 320×72 px Hana element) is shown or hidden; `label` is its text. `clickable` is true when
+   * it is a button the user has to click to continue ("Review in Hana", "Sign in with Hana", an export), and false
+   * for a short notice that needs nothing from the user ("Signed by Hana under …") and whenever it is hidden. Prompt
+   * the user to click only when `visible && clickable`.
+   */
+  launcher: [{ visible: boolean; label: string; clickable: boolean }];
   /**
    * `persistence` changed after login: 'none' when the vault could not save the session for reloads. The wallet
    * keeps working on this page; the next page load needs a new login.
@@ -209,6 +214,8 @@ export class HanaClient extends Emitter<HanaEvents> {
   #mainnetDemo: MainnetDemo | null = null;
   /** The vault's latest price book, kept apart so the announcement can arrive on either side of it. */
   #mainnetDemoPrices: MainnetDemoPrices | null = null;
+  /** Whether the launcher the next `ui` show announces can be clicked (the vault's `launcherKind` event). */
+  #launcherClickable = true;
   /** Whether `ready` resolved: the vault has said whatever it was going to say about the demo. */
   #mainnetDemoKnown = false;
   readonly #windows: ApprovalWindows;
@@ -669,9 +676,16 @@ export class HanaClient extends Emitter<HanaEvents> {
         if (e.data.stage === 'popup_connected') this.#attempt?.connected();
         this.emit('loginProgress', e.data);
         return;
-      case 'ui':
-        this.emit('launcher', { visible: e.data.launcher === 'show', label: e.data.label });
+      case 'launcherKind':
+        this.#launcherClickable = e.data.clickable;
         return;
+      case 'ui': {
+        const visible = e.data.launcher === 'show';
+        this.emit('launcher', { visible, label: e.data.label, clickable: visible && this.#launcherClickable });
+        // The next show is a button unless the vault says otherwise first.
+        this.#launcherClickable = true;
+        return;
+      }
       case 'approvalWindow':
         this.#windows.vaultWindowOpen = e.data.open;
         return;
@@ -732,7 +746,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   #onDisconnect(launcherWasVisible: boolean): void {
     this.#vaultDown = true;
     // The connection hid the frame; tell a partner that mirrors the launcher (PART-1).
-    if (launcherWasVisible && !this.#destroyed) this.emit('launcher', { visible: false, label: '' });
+    if (launcherWasVisible && !this.#destroyed) this.emit('launcher', { visible: false, label: '', clickable: false });
     this.#attempt?.abort(hanaError(ErrorCode.disconnected));
     this.#attempt = null;
     this.#setIdentity(null);

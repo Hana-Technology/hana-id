@@ -156,6 +156,14 @@ describe('UsageEvent v1', () => {
     expect(usageEventV1.safeParse({ ...owner, endpoint: 'owner_action', app_id: null }).success).toBe(true);
   });
 
+  it('accepts a Hana Home derive: a scope and no app, never a uid', () => {
+    const { uid: _, ...home } = ok;
+    expect(usageEventV1.safeParse({ ...home, endpoint: 'home_login', app_id: null }).success).toBe(true);
+    expect(usageEventV1.safeParse({ ...home, endpoint: 'home_login', app_id: null, outcome: 'rejected', code: 'ckd_failed', status: 422 }).success).toBe(true);
+    expect(refused({ endpoint: 'home_login', uid: undefined })).toBe(true); // a Home derive with an app
+    expect(refused({ endpoint: 'home_login', app_id: null })).toBe(true); // a Home derive with a uid
+  });
+
   it('refuses the shapes the ledger CHECKs refuse', () => {
     expect(refused({ near_tx: undefined })).toBe(true); // relayed without its tx
     expect(refused({ app_id: null })).toBe(true); // a login without an app

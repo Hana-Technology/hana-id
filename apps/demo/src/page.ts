@@ -321,8 +321,9 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     render();
   });
   let launcherNotice: string | null = null;
-  c.on('launcher', ({ visible, label }) => {
-    if (visible) {
+  c.on('launcher', ({ visible, label, clickable }) => {
+    // A notice ("Signed by Hana under …") needs no click: only a button is pointed at.
+    if (visible && clickable) {
       launcherNotice = `Click “${label}” on the Hana button at the bottom right of the page to continue.`;
       notice(launcherNotice);
     } else {

@@ -1,6 +1,6 @@
 import { b64url, usageEventV1, type UsageEventV1 } from '@hana-id/console-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { failure, freshDb, type TestDb } from './db.ts';
+import { failure, freshDb, migrationFiles, type TestDb } from './db.ts';
 
 let db: TestDb;
 beforeAll(async () => {
@@ -88,6 +88,8 @@ describe('migrations-usage on an empty database', () => {
       'usage.ensure_partitions',
       'usage.erase_uid',
       'usage.org_ledger',
+      // 0008: the ledger rows with a Home derive's transaction, for staff only (the writer's `org_ledger` hides it).
+      'usage.org_ledger_full',
       'usage.org_report',
       'usage.org_statements',
       'usage.override_rate',
@@ -106,6 +108,23 @@ describe('the writer role', () => {
     for (const endpoint of ['link', 'link_cancel', 'link_unlink']) {
       expect(await asWriter(() => record(event({ endpoint, uid: undefined, request_id: `link-${endpoint}` }))), endpoint).toBe(true);
     }
+  });
+
+  it('records a Hana Home derive (migrations-usage 0008): home_login, a scope and no app, without a uid', async () => {
+    const e = event({ endpoint: 'home_login', app_id: null, uid: undefined, org_id: 'org_partner', scope_id: 'shome', request_id: 'home-login-0001' });
+    expect(usageEventV1.safeParse(strip(e)).success).toBe(true);
+    expect(await asWriter(() => record(e))).toBe(true);
+    const [row] = await db.query<{ endpoint: string; app_id: string | null; org_id: string; scope_id: string; uid: unknown; relayed: boolean }>("SELECT endpoint, app_id, org_id, scope_id, uid, relayed FROM usage.events WHERE request_id = 'home-login-0001'");
+    expect(row).toEqual({ endpoint: 'home_login', app_id: null, org_id: 'org_partner', scope_id: 'shome', uid: null, relayed: true });
+    // No user is counted for it: app_users is keyed by app, and a Home derive has none.
+    expect(await count("SELECT count(*) AS n FROM usage.app_users WHERE app_id IS NULL OR app_id = 'shome'")).toBe(0);
+    // The table's own rules, whoever writes: a Home derive with an app, and a login without one.
+    const direct = (endpoint: string, app: string | null) =>
+      failure(db.query("INSERT INTO usage.events (request_id, at, org_id, app_id, scope_id, endpoint, outcome, status, latency_ms, relayed) VALUES ($1, now(), 'o', $2, 's', $3, 'ok', 200, 1, false)", [`direct-${endpoint}-${app}`, app, endpoint]));
+    expect((await direct('home_login', 'app_a'))?.code).toBe('23514');
+    expect((await direct('login', null))?.code).toBe('23514');
+    expect(await direct('home_login', null)).toBeNull();
+    expect(await direct('owner_action', null)).toBeNull();
   });
 
   it('records events through record_event', async () => {
@@ -251,6 +270,8 @@ describe('record_event', () => {
     ['a relayed event', { near_tx: undefined }],
     ['owner actions', { app_id: null }],
     ['owner actions', { endpoint: 'owner_action', uid: undefined }],
+    ['Hana Home derives', { endpoint: 'home_login', uid: undefined }],
+    ['carry a uid', { endpoint: 'home_login', app_id: null }],
     ['carry a uid', { outcome: 'rejected', code: 'contract_rejected' }],
     ['carry a uid', { endpoint: 'unlock' }],
     ['carry a uid', { endpoint: 'link' }],
@@ -282,6 +303,8 @@ describe('record_event', () => {
       event({ endpoint: 'revoke', uid: undefined }),
       event({ endpoint: 'unlock', uid: undefined, relayed: false, near_tx: undefined, relayer_pk: undefined, relayer_nonce: undefined, relay_gas_burnt: undefined, relay_tokens_burnt_yocto: undefined }),
       event({ endpoint: 'owner_action', app_id: null, uid: undefined }),
+      event({ endpoint: 'home_login', app_id: null, uid: undefined }),
+      event({ endpoint: 'home_login', app_id: null, uid: undefined, outcome: 'error', code: 'ckd_failed', status: 502 }),
       event({ outcome: 'rejected', code: 'contract_rejected', status: 400, uid: undefined }),
       event({ outcome: 'error', code: 'timeout', status: 504, uid: undefined }),
       event({ latency_ms: 0, status: 599, at_ms: NOW }),
@@ -354,5 +377,38 @@ describe('settlement shape', () => {
     expect((await insert('final', null, null))?.code).toBe('23514');
     expect((await insert('unsettled', 1, '2'))?.code).toBe('23514');
     expect((await insert('final', -1, '2'))?.code).toBe('23514');
+  });
+});
+
+describe('migrations-usage 0008 on a ledger that already holds events', () => {
+  it('applies after 0001–0007 with rows in place: nothing changes, the app_id rule is replaced once, the grants are kept', async () => {
+    const old = await freshDb({ migrate: false });
+    try {
+      const files = migrationFiles();
+      const at = files.findIndex((f) => f.name.startsWith('0008_'));
+      expect(at).toBeGreaterThan(0);
+      for (const f of files.slice(0, at)) await old.exec(f.sql);
+      const q = (e: Record<string, unknown>) => old.query<{ r: boolean }>('SELECT usage.record_event($1::jsonb) AS r', [JSON.stringify(strip(e))]);
+      await q(event({ request_id: 'before-login-01' }));
+      await q(event({ request_id: 'before-owner-01', endpoint: 'owner_action', app_id: null, uid: undefined }));
+      // Before 0008 the ledger refuses a Home derive: the API's write is rejected (logged, never billed, never retried).
+      expect((await failure(q(event({ endpoint: 'home_login', app_id: null, uid: undefined }))))?.code).toBe('22023');
+      const before = await old.query('SELECT request_id, endpoint, app_id FROM usage.events ORDER BY request_id');
+
+      await old.exec(files[at]!.sql);
+      expect(await old.query('SELECT request_id, endpoint, app_id FROM usage.events ORDER BY request_id')).toEqual(before);
+      const rules = await old.query<{ conname: string; def: string }>("SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'usage.events'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%app_id IS NULL%'");
+      expect(rules.map((r) => r.conname)).toEqual(['events_app_id_check']);
+      expect(rules[0]!.def).toContain('home_login');
+      expect((await q(event({ request_id: 'after-home-0001', endpoint: 'home_login', app_id: null, uid: undefined })))[0]!.r).toBe(true);
+      // The report is callable by the same two roles and by nobody else; the writer still only through functions.
+      for (const role of ['usage_writer', 'usage_admin'] as const) {
+        const rows = await old.asRole(role, () => old.query<{ kind: string; home_logins: string }>("SELECT kind, home_logins::text FROM usage.org_report('org_legacy', (now() AT TIME ZONE 'UTC')::date, (now() AT TIME ZONE 'UTC')::date, 'day')"));
+        expect(rows.map((r) => [r.kind, r.home_logins]).sort()).toEqual([['app', '0'], ['home', '1'], ['scope', '0']]);
+      }
+      expect((await old.query<{ ok: boolean }>("SELECT has_function_privilege('public', 'usage.org_report(text, date, date, text, text[], timestamptz)', 'EXECUTE') AS ok"))[0]!.ok).toBe(false);
+    } finally {
+      await old.close();
+    }
   });
 });

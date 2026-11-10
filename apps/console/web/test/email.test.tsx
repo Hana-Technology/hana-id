@@ -78,6 +78,9 @@ describe('EmailLogin', () => {
     at(PAGE);
     await screen.findByRole('heading', { name: 'Email login' });
     expect(screen.getByText('Off')).toBeTruthy();
+    // The scope's internal id is not shown as a fact of this page (the scope's own page is one link away).
+    expect(screen.queryByText('Scope')).toBeNull();
+    expect(screen.queryByText('s1')).toBeNull();
     expect(screen.getByRole('cell', { name: '40' })).toBeTruthy();
     expect(screen.getByText('5.0%')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: /Review and confirm with Google/u })[0]!);

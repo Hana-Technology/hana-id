@@ -18,7 +18,7 @@ import type { AdminRpcClient, StaffRpcClient } from './env.ts';
 import type { LedgerStore } from './ledger.ts';
 import { errorName, log } from './log.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
-import { type StatementApp, buildStatement } from './statement.ts';
+import { type StatementApp, StatementRefused, buildStatement } from './statement.ts';
 import { statementPdf } from './statement-pdf.ts';
 
 export const MONTH_RE = /^(\d{4})-(0[1-9]|1[0-2])$/u;
@@ -86,7 +86,14 @@ export async function issueStatement(d: IssueDeps, orgId: string, month: string)
   const asOf = d.now;
   const { first, last } = monthDays(month);
   const [dayRows, monthRows] = [await d.store.report(orgId, first, last, 'day', null, asOf), await d.store.report(orgId, first, last, 'month', null, asOf)];
-  const built = buildStatement({ orgId, orgName: org.org.name, month, asOf, network: d.network, apps: appMap, dayRows, monthRows });
+  let built: ReturnType<typeof buildStatement>;
+  try {
+    built = buildStatement({ orgId, orgName: org.org.name, month, asOf, network: d.network, apps: appMap, internal: org.org.kind === 'internal', dayRows, monthRows });
+  } catch (err) {
+    // A Home line the org can't be billed for: nothing is written, and staff are told which scope.
+    if (err instanceof StatementRefused) return { ok: false, code: 'conflict', error: err.message };
+    throw err;
+  }
   const csvBytes = new TextEncoder().encode(built.csv);
   const csvSha256 = await sha256Hex(csvBytes);
   const pdfBytes = await statementPdf(statementView({ csvSha256, totals: built.totals }), asOf);
@@ -123,7 +130,7 @@ export interface Exported {
   finalTokens: string;
 }
 
-/** The ledger CSV text of an org's month as of `asOf` (every page through usage.org_ledger), with its final sums. */
+/** The ledger CSV text of an org's month as of `asOf` (every page through usage.org_ledger_full: staff see each row's transaction, a Home derive's included), with its final sums. */
 export async function ledgerCsv(store: Pick<LedgerStore, 'ledgerPage'>, orgId: string, month: string, asOf: number, maxRows = EXPORT_MAX_ROWS): Promise<{ csv: string; rows: number; finalGas: bigint; finalTokens: bigint } | null> {
   const parts = [csvLine(LEDGER_CSV_COLUMNS)];
   let after: string | null = null;

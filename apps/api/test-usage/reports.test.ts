@@ -90,6 +90,9 @@ async function settle(rid: string, at: string, tx: string, gas: bigint | null, t
 const report = (org: string, from: string, to: string, by: 'day' | 'month', apps: string[] | null = null, asOf: string | null = null) =>
   db.query<ReportSqlRow>('SELECT * FROM usage.org_report($1, $2::date, $3::date, $4, $5::text[], $6::timestamptz)', [org, from, to, by, apps, asOf]);
 
+/** The first row without an app (a scope's owner actions). */
+const rows0 = (rows: ReportSqlRow[]): ReportSqlRow => rows.find((r) => r.app_id === null)!;
+
 const nearestRank = (xs: number[], p: number): number => {
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.max(0, Math.ceil(p * s.length) - 1)]!;
@@ -224,6 +227,58 @@ describe('usage.org_report', () => {
     expect((await report(org, '2025-01-15', '2025-01-15', 'day', ['app_z'])).map((r) => r.app_id)).toEqual(['app_z']);
   });
 
+  it('gives a scope’s Hana Home logins a row of their own (kind home), apart from its owner actions, with their gas only (migrations-usage 0008)', async () => {
+    const org = 'org_home';
+    await db.query("INSERT INTO usage.near_usd_rates (day, usd_micros, source) VALUES ('2025-01-18', 2500000, 'coingecko') ON CONFLICT DO NOTHING");
+    const login = await ev({ org, app: 'app_h', scope: 'sh', at: '2025-01-18T00:00:00Z', relayed: true, uid: 9 });
+    const owner = await ev({ org, app: null, scope: 'sh', endpoint: 'owner_action', at: '2025-01-18T00:00:01Z', relayed: true });
+    const h1 = await ev({ org, app: null, scope: 'sh', endpoint: 'home_login', at: '2025-01-18T00:00:02Z', relayed: true, latency: 7400 });
+    const h2 = await ev({ org, app: null, scope: 'sh', endpoint: 'home_login', at: '2025-01-18T00:00:03Z', relayed: true });
+    const rejected = await ev({ org, app: null, scope: 'sh', endpoint: 'home_login', at: '2025-01-18T00:00:04Z', relayed: true, outcome: 'rejected', code: 'contract_rejected' });
+    const pending = await ev({ org, app: null, scope: 'sh', endpoint: 'home_login', at: '2025-01-18T00:00:05Z', relayed: true });
+    // Another scope of the org: its Home logins are their own row.
+    const other = await ev({ org, app: null, scope: 'sh2', endpoint: 'home_login', at: '2025-01-18T00:00:06Z', relayed: true });
+    await settle(login.rid, login.at, login.tx!, 30n * 10n ** 12n, 3n * 10n ** 21n);
+    await settle(owner.rid, owner.at, owner.tx!, 5n * 10n ** 12n, 5n * 10n ** 20n);
+    await settle(h1.rid, h1.at, h1.tx!, 38n * 10n ** 12n, 38n * 10n ** 20n);
+    await settle(h2.rid, h2.at, h2.tx!, 40n * 10n ** 12n, 40n * 10n ** 20n);
+    await settle(rejected.rid, rejected.at, rejected.tx!, 2n * 10n ** 12n, 2n * 10n ** 20n);
+    await settle(other.rid, other.at, other.tx!, 39n * 10n ** 12n, 39n * 10n ** 20n);
+
+    for (const by of ['day', 'month'] as const) {
+      const rows = await report(org, '2025-01-18', '2025-01-18', by);
+      expect(rows.map((r) => [r.kind, r.app_id, r.scope_id, Number(r.logins), Number(r.owner_actions), Number(r.home_logins), r.gas, r.rejected_gas, Number(r.unsettled), Number(r.active_users)]), by).toEqual([
+        ['app', 'app_h', 'sh', 1, 0, 0, '30000000000000', '0', 0, 1],
+        ['scope', null, 'sh', 0, 1, 0, '5000000000000', '0', 0, 0],
+        // Three ok Home logins (a count is by outcome, as logins are); the one not settled yet adds no gas and is `unsettled`.
+        ['home', null, 'sh', 0, 0, 3, '80000000000000', '2000000000000', 1, 0],
+        ['home', null, 'sh2', 0, 0, 1, '39000000000000', '0', 0, 0],
+      ]);
+      const home = rows[2]!;
+      // 8 mNEAR at 2.5 USD, of which 0.2 mNEAR relayed-then-rejected; the failures are the Home line's own.
+      expect([home.burnt_yocto, home.usd_micros, home.rejected_usd_micros]).toEqual(['8000000000000000000000', '20000', '500']);
+      expect(home.failures).toEqual({ contract_rejected: 1 });
+      // A Home login is no app login: no latency percentile, no user counted.
+      expect([home.login_p50, home.derive_p50, Number(home.new_users)]).toEqual([null, null, 0]);
+      const view = usageRowOf(org, home);
+      expect(view).toMatchObject({ kind: 'home', homeLogins: 3, scopeId: 'sh', logins: 0, ownerActions: 0, tgas: '80', relayedRejectedTgas: '2', usdMicros: '20000', unsettled: 1 });
+      expect(view.appId).toBeUndefined();
+      expect(usageRowOf(org, rows[1]!)).toMatchObject({ kind: 'scope', ownerActions: 1 });
+      expect(usageRowOf(org, rows[1]!).homeLogins).toBeUndefined();
+      expect(usageRowOf(org, rows[0]!)).toMatchObject({ kind: 'app', appId: 'app_h' });
+      // The org's total is the sum of its rows: nothing is counted twice and nothing is lost.
+      expect(rows.reduce((s, r) => s + BigInt(r.gas), 0n)).toBe(154n * 10n ** 12n);
+    }
+    // An app filter leaves the Home rows out, as it leaves owner actions out.
+    expect((await report(org, '2025-01-18', '2025-01-18', 'day', ['app_h'])).map((r) => r.kind)).toEqual(['app']);
+    // The org's pending Home event holds its statement back like any other relayed event.
+    expect(Number((await db.query<{ pending: string }>("SELECT pending FROM usage.statement_blockers($1, '2025-01-01')", [org]))[0]!.pending)).toBe(1);
+    void pending;
+    // A report row from before 0008 names no kind: an app's row, else a scope's owner actions.
+    const { kind: _k, home_logins: _h, ...legacy } = rows0(await report(org, '2025-01-18', '2025-01-18', 'day'));
+    expect(usageRowOf(org, legacy as ReportSqlRow)).toMatchObject({ kind: 'scope' });
+  });
+
   it('includes link relays and the identity tokens copied for the org', async () => {
     const org = 'org_link';
     await ev({ org, app: 'app_l', at: '2025-01-16T00:00:00Z', endpoint: 'link' });
@@ -344,6 +399,63 @@ describe('usage.org_ledger', () => {
     // Without the as_of bound the late event is there, pending.
     const now = await db.query<{ gas_status: string }>("SELECT gas_status FROM usage.org_ledger($1, '2025-02-01', NULL, NULL, 1000)", [org]);
     expect(now.filter((r) => r.gas_status === 'pending').length).toBe(1);
+  });
+
+  it('a partner’s rows never point at a Home derive’s transaction: no near_tx, the day for the time, a hashed row id; gas and paging intact (0008)', async () => {
+    const org = 'org_home_ledger';
+    const login = await ev({ org, app: 'app_hl', at: '2025-03-10T08:15:30.123Z', relayed: true });
+    const homes = [];
+    for (const at of ['2025-03-10T09:41:07.555Z', '2025-03-10T23:59:59.999Z', '2025-03-11T00:00:00.000Z', '2025-03-20T12:00:00.000Z']) homes.push(await ev({ org, app: null, scope: 'shl', endpoint: 'home_login', at, relayed: true }));
+    await settle(login.rid, login.at, login.tx!, 30n * 10n ** 12n, 3n * 10n ** 21n);
+    for (const [i, h] of homes.entries()) await settle(h.rid, h.at, h.tx!, BigInt(38 + i) * 10n ** 12n, BigInt(38 + i) * 10n ** 20n);
+    type Row = { request_id: string; at_ms: string; endpoint: string; near_tx: string | null; gas_status: string; gas_burnt: string | null; scope_id: string; app_id: string | null };
+    const page = (fn: string, after: string | null, lim: number, role: 'usage_writer' | 'usage_admin' = 'usage_writer') =>
+      db.asRole(role, () => db.query<Row>(`SELECT request_id, at_ms::text AS at_ms, endpoint, near_tx, gas_status, gas_burnt, scope_id, app_id FROM usage.${fn}($1, '2025-03-01', NULL, $2, $3)`, [org, after, lim]));
+
+    const partner = await page('org_ledger', null, 1000);
+    const home = partner.filter((r) => r.endpoint === 'home_login');
+    expect(home).toHaveLength(4);
+    const text = JSON.stringify(home);
+    for (const h of homes) {
+      expect(text).not.toContain(h.tx!);
+      expect(text).not.toContain(h.rid);
+    }
+    for (const r of home) {
+      expect(r.near_tx).toBeNull();
+      expect(r.request_id).toMatch(/^home_[0-9a-f]{32}$/u);
+      expect(Number(r.at_ms) % 86_400_000).toBe(0);
+      expect([r.scope_id, r.app_id, r.gas_status]).toEqual(['shl', null, 'final']);
+    }
+    // The days are right (23:59:59.999 stays in its day), the row ids distinct, and nothing else of the time is left.
+    expect(home.map((r) => new Date(Number(r.at_ms)).toISOString().slice(0, 10)).sort()).toEqual(['2025-03-10', '2025-03-10', '2025-03-11', '2025-03-20']);
+    expect(new Set(home.map((r) => r.request_id)).size).toBe(4);
+    // Every other row is as it was.
+    const other = partner.find((r) => r.endpoint === 'login')!;
+    expect([other.request_id, other.near_tx, other.at_ms]).toEqual([login.rid, login.tx, String(Date.parse('2025-03-10T08:15:30.123Z'))]);
+    // The gas stays, so the partner's CSV still sums to the report for the same as_of.
+    const sum = (rows: Row[]) => rows.reduce((s, r) => s + BigInt(r.gas_burnt ?? '0'), 0n);
+    const [homeRow] = (await report(org, '2025-03-01', '2025-03-31', 'month')).filter((r) => r.kind === 'home');
+    expect(sum(home)).toBe(BigInt(homeRow!.gas));
+    // Paging by the rows as returned: two at a time gives every row once, in the same order, and a cursor never names
+    // a Home derive's request id or time.
+    const paged: Row[] = [];
+    let after: string | null = null;
+    for (let k = 0; k < 10; k++) {
+      const rows: Row[] = await page('org_ledger', after, 2);
+      paged.push(...rows);
+      if (rows.length < 2) break;
+      after = `${rows[1]!.request_id},${rows[1]!.at_ms}`;
+      for (const h of homes) expect(after).not.toContain(h.rid);
+    }
+    expect(paged).toEqual(partner);
+    // Staff read the full rows (the admin role only): the transaction and the exact time, to check against the chain.
+    const full = await page('org_ledger_full', null, 1000, 'usage_admin');
+    expect(full.filter((r) => r.endpoint === 'home_login').map((r) => r.near_tx).sort()).toEqual(homes.map((h) => h.tx!).sort());
+    expect(full.filter((r) => r.endpoint === 'home_login').map((r) => r.request_id).sort()).toEqual(homes.map((h) => h.rid).sort());
+    expect(sum(full)).toBe(sum(partner));
+    expect((await failure(page('org_ledger_full', null, 10, 'usage_writer')))?.code).toBe('42501');
+    // The admin role calling the partner's function gets the partner's rows.
+    expect((await page('org_ledger', null, 1000, 'usage_admin')).filter((r) => r.endpoint === 'home_login').every((r) => r.near_tx === null)).toBe(true);
   });
 
   it('refuses a bad month, cursor or page size', async () => {

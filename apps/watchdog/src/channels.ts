@@ -68,7 +68,9 @@ async function post(url: string, init: RequestInit): Promise<Response | { error:
 
 const failed = (r: Response | { error: string }): SendResult | null => ('error' in r && !(r instanceof Response) ? { ok: false, error: r.error } : null);
 
-const notConfigured: SendResult = { ok: false, error: 'not configured' };
+/** A channel with no credentials: what its one `deliveries` row per alert says. Not a failed send. */
+export const NOT_CONFIGURED = 'not configured';
+const notConfigured: SendResult = { ok: false, error: NOT_CONFIGURED };
 
 /**
  * One alert's subject: a non-production env's label first (`[SANDBOX]`, D419), so test mail never reads as

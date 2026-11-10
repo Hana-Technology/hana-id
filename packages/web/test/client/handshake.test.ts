@@ -413,9 +413,33 @@ describe('launcher', () => {
     expect(s.frame.hidden).toBe(true);
     expect(st.getPropertyValue('display')).toBe('none');
     expect(seen).toEqual([
-      { visible: true, label: 'Review in Hana' },
-      { visible: false, label: '' },
+      { visible: true, label: 'Review in Hana', clickable: true },
+      { visible: false, label: '', clickable: false },
     ]);
+  });
+
+  it('says whether the launcher can be clicked: a notice is not a button, and the next show is one again', async () => {
+    s = setup();
+    const seen: unknown[] = [];
+    s.client.on('launcher', (l) => seen.push(l));
+    await s.vault.connect();
+    // The vault says what kind the next show is, just before it.
+    s.vault.emit('launcherKind', { clickable: false });
+    s.vault.emit('ui', { launcher: 'show', label: 'Signed by Hana under Swaps' });
+    s.vault.emit('ui', { launcher: 'hide', label: '' });
+    s.vault.emit('launcherKind', { clickable: true });
+    s.vault.emit('ui', { launcher: 'show', label: 'Review in Hana' });
+    // A show with no kind before it (nothing said otherwise) is a button.
+    s.vault.emit('ui', { launcher: 'show', label: 'Sign in with Hana' });
+    await flush();
+    expect(seen).toEqual([
+      { visible: true, label: 'Signed by Hana under Swaps', clickable: false },
+      { visible: false, label: '', clickable: false },
+      { visible: true, label: 'Review in Hana', clickable: true },
+      { visible: true, label: 'Sign in with Hana', clickable: true },
+    ]);
+    // The frame shows for a notice as for a button: the notice is the vault's own.
+    expect(s.frame.hidden).toBe(false);
   });
 
   it('a second load while the launcher shows hides the frame at once and emits launcher hidden (PART-1)', async () => {
@@ -432,8 +456,8 @@ describe('launcher', () => {
     expect(s.frame.hidden).toBe(true);
     expect(s.frame.style.getPropertyValue('display')).toBe('none');
     expect(seen).toEqual([
-      { visible: true, label: 'Review in Hana' },
-      { visible: false, label: '' },
+      { visible: true, label: 'Review in Hana', clickable: true },
+      { visible: false, label: '', clickable: false },
     ]);
     expect(s.client.status).toBe('error');
   });

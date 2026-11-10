@@ -20,7 +20,8 @@
 // shows). A Home session is one use and short-lived, so it can't be used past these limits afterwards.
 //
 // The derive is not a login of any app: it marks no app as launched (D462: no `first_login_at`, no `first_session_at`, no
-// session marker) and counts in no app's quota or usage. It records `key_exported` for the account, with `app_id` NULL
+// session marker) and counts in no app's quota. A derive that reaches the relay is one usage event (`home_login`, no app,
+// no uid: usage/event.ts), written after the response for the org that pays for it (billing.ts, D461). It records `key_exported` for the account, with `app_id` NULL
 // (D520) and, only for an identity the directory already holds as active or a confirmed linked member, refreshes its
 // directory row (D500, D527), both after the response.
 //
@@ -41,6 +42,7 @@ import { recalledPanic, rememberPanic, requestKey } from '../panic-cache.ts';
 import { ALREADY_RELAYED } from '../relayer-config.ts';
 import { relay } from '../relayer-pool.ts';
 import { ckdPayload, sessionNonce, verifySessionSignature } from '../session-crypto.ts';
+import { beginUsage, finishUsageOnThrow } from '../usage/event.ts';
 import { sessionStanding } from '../session-standing.ts';
 import { claimCounter } from '../session-use.ts';
 import { type Checked, isError } from '../validate.ts';
@@ -248,6 +250,9 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     if (count >= alertAt && count < alertAt + HOME_USAGE_ALERT_TRIES) await inBackground(exec, () => noteBudgetHigh(env, day, count as number, max, requestId));
 
     lap(ctx, 'limits');
+    // From here on every outcome is one usage event (`lapRelay` notes the transaction, `done` closes it): a derive that
+    // reached the relay. Its org is chosen after the response; with capture off nothing is built or read.
+    beginUsage(ctx, { orgId: null, appId: null, scopeId, exec });
     const result = await relay(env, 'home', { method: call.method, args: call.args }, requestId, { sessionPublicKey: req.sessionPublicKey, expiresAtMs: req.expiresAtMs, counter: 1 });
     lapRelay(ctx, result);
     forgetSession(req.sessionPublicKey);
@@ -279,6 +284,10 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
       nearTx: result.nearTx,
       ...(supportId ? { supportId } : {}),
     });
+  } catch (err) {
+    // A throw after the relay still leaves its transaction in the ledger (500 `internal`); a no-op before the event opened.
+    finishUsageOnThrow(ctx);
+    throw err;
   } finally {
     release();
   }

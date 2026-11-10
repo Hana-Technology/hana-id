@@ -1023,6 +1023,23 @@ describe('other alerts', () => {
     await w.run();
     expect((await alertsOf(w.store, 'channel_not_configured')).map((a) => a.details.channel)).toEqual(['pager']);
   });
+
+  it('a channel with no credentials is the `channel_not_configured` alert, not an `alert_delivery` error (D570)', async () => {
+    const w = await initialized();
+    w.notifier.unconfigured.add('slack');
+    const delivery = async () => (await w.run()).checks.find((c) => c.id === 'alert_delivery');
+    // The run that raises the warning holds its Slack delivery: said in the detail, not an error.
+    const first = await delivery();
+    expect(first?.outcome).toBe('ok');
+    expect(first?.detail).toContain('held (channel not configured)');
+    const [alert] = await alertsOf(w.store, 'channel_not_configured');
+    for (let i = 0; i < 3; i++) expect(await delivery()).toMatchObject({ outcome: 'ok', detail: '0 first, 0 re-sent, 0 failed, 0 acked in the paging app' });
+    expect((await w.store.deliveries(alert!.id)).filter((d) => d.channel === 'slack')).toEqual([expect.objectContaining({ ok: false, error: 'not configured' })]);
+    // A real failure on a configured channel is still an error.
+    w.notifier.failing.add('email');
+    w.chain.config.sponsors = [];
+    expect((await delivery())?.outcome).toBe('error');
+  });
 });
 
 describe("dead-man's switch (step 7) and the run record (step 8)", () => {

@@ -1,7 +1,8 @@
 // The ledger's cron (docs/batch-c-spec.md "Crons"; batch C12), one trigger every 15 minutes (D329):
 //
 //   every run          the alerts not yet sent, the statement notices, then gas settlement with what is left
-//   the 00:30 UTC run  first the daily work: the nonce cross-check, the rejection-rate check (the previous day),
+//   every run          the nonce cross-check's round of the day, from 00:30 UTC: at most three keys a run (D598)
+//   the 00:30 UTC run  first the daily work: the rejection-rate check (the previous day),
 //                      `usage.ensure_partitions` (a second keeper beside the API's hourly one, D223); its alerts go out
 //                      in the same run, then the NEAR/USD rate, then settlement with what is left
 //   from the 1st 01:00 the monthly retention job (retention.ts, C13), until a run of the month completes: after the
@@ -29,7 +30,7 @@ import { coingecko, runRates } from './rates.ts';
 import { runRejectionCheck } from './rejections.ts';
 import { type RetentionSummary, isRetentionTick, runRetention, runRetentionAlerts, sendRetentionSkipped } from './retention.ts';
 import { systemCtx } from './rpc.ts';
-import { runSettlement } from './settlement.ts';
+import { type RelayerPool, runSettlement } from './settlement.ts';
 
 /**
  * The run's record in `ops.state` (D425): `{at, budgetLeft, calls, failed}` (the steps that threw), written last on the
@@ -76,11 +77,20 @@ async function withStore<T>(env: Env, budget: Budget, run: string, fn: (store: L
   }
 }
 
-/** Both pools' public keys from the API (the one source: the API holds the secrets). Null when unreadable. */
-async function poolKeys(env: Pick<Env, 'API'>): Promise<string[] | null> {
+interface Pools {
+  keys: { pool: RelayerPool; publicKey: string }[];
+  /** Whether the API writes usage events; undefined from an API that doesn't say (judged as on, as before). */
+  capture: boolean | undefined;
+}
+
+/** Every pool's public keys from the API, each with its pool (the one source: the API holds the secrets). Null when unreadable. */
+async function poolKeys(env: Pick<Env, 'API'>): Promise<Pools | null> {
   try {
     const r = await env.API.relayerKeys(systemCtx());
-    return r.ok ? r.keys.map((k) => k.publicKey) : null;
+    if (!r.ok) return null;
+    // A pool the API couldn't list (a malformed secret, a key in two pools) loses only its own keys: say so every run.
+    if (r.unreadablePools?.length) log({ event: 'ledger_cron', step: 'relayer', outcome: 'error', code: 'relayer_pool_unreadable', target: r.unreadablePools.filter((x) => ['session', 'owner', 'home'].includes(x)).join(',') }, 'error');
+    return { keys: r.keys, capture: r.capture };
   } catch {
     return null;
   }
@@ -101,6 +111,8 @@ export interface DailySummary {
 
 export interface FifteenSummary {
   daily: DailySummary | null;
+  /** The nonce check's share of this run (also `daily.nonce` at the 00:30 run). */
+  nonce: Awaited<ReturnType<typeof runNonceCheck>> | null;
   retention: RetentionSummary | null;
   alerts: Awaited<ReturnType<typeof runAlerts>> | null;
   retentionAlerts: Awaited<ReturnType<typeof runRetentionAlerts>> | null;
@@ -127,14 +139,18 @@ export async function everyFifteenMinutes(env: Env, now = Date.now()): Promise<F
   const out = await withStore(env, budget, 'fifteen', async (store) => {
     const relayer = env.RELAYER_ACCOUNT;
     if (!relayer) log({ event: 'ledger_cron', step: 'relayer', outcome: 'skipped', code: 'relayer_account_missing' }, 'error');
-    const keys = relayer ? await budget.as('relayer_keys', () => poolKeys(menv)) : null;
+    const pools = relayer ? await budget.as('relayer_keys', () => poolKeys(menv)) : null;
+    const keys = pools?.keys ?? null;
     if (relayer && !keys) log({ event: 'ledger_cron', step: 'relayer', outcome: 'skipped', code: 'relayer_keys_unavailable' }, 'error');
     const near = nearReader(env.NEAR_RPC);
 
+    // The nonce check, every run: it reads the day's keys not yet tried, a few a run (nonce-check.ts), so at 00:30 UTC
+    // it starts the day's round and later runs finish it; with nothing left it makes no call.
+    const nonce = relayer && keys ? await track('nonce_check', () => runNonceCheck({ store, near, keys: keys.map((k) => k.publicKey), relayerAccount: relayer, budget, now, captureOn: pools?.capture })) : null;
     let daily: DailySummary | null = null;
     if (isDailyTick(now)) {
       daily = {
-        nonce: relayer && keys ? await track('nonce_check', () => runNonceCheck({ store, near, keys, relayerAccount: relayer, budget, now })) : null,
+        nonce,
         rejection: await track('rejection_rate', () => runRejectionCheck({ store, now })),
         partitions: await track('partitions', () => store.ensurePartitions(PARTITION_MONTHS)),
         rates: null,
@@ -149,8 +165,8 @@ export async function everyFifteenMinutes(env: Env, now = Date.now()): Promise<F
     // The link-rate alert (D448): one RPC and at most one email, only when both fit (a clean stop otherwise).
     await track('link_jump', () => runLinkJumpAlert(menv, store.state, sender, budget, now));
     if (daily) daily.rates = await track('rates', () => runRates({ store, fetchRate: coingecko(env.COINGECKO_API_KEY), budget, now }));
-    const settlement = relayer && keys ? await track('settlement', () => runSettlement({ store, near, poolKeys: new Set(keys), relayerAccount: relayer, signerAccount: env.SIGNER_ACCOUNT, budget, now })) : null;
-    const summary = { daily, retention, alerts, retentionAlerts, notices, settlement, budgetLeft: budget.remaining, calls: { ...budget.used } };
+    const settlement = relayer && keys ? await track('settlement', () => runSettlement({ store, near, poolKeys: new Map(keys.map((k) => [k.publicKey, k.pool])), relayerAccount: relayer, signerAccount: env.SIGNER_ACCOUNT, budget, now })) : null;
+    const summary = { daily, nonce, retention, alerts, retentionAlerts, notices, settlement, budgetLeft: budget.remaining, calls: { ...budget.used } };
     try {
       await store.state.setState(LEDGER_LAST_RUN, JSON.stringify({ at: now, budgetLeft: summary.budgetLeft, calls: summary.calls, failed }));
     } catch (err) {

@@ -17,6 +17,8 @@ function run(o: { nonce: bigint | null; prev?: bigint; relayed?: boolean; hasRow
     recordNonceCheck: async (r: { chainNonce: bigint; explained: boolean }) => {
       recorded.push(r);
     },
+    // The day's keys already tried (none yet).
+    state: { getState: async () => new Map(), setState: async () => {} },
   } as unknown as LedgerStore;
   const near = { accessKeyNonce: async () => o.nonce } as unknown as NearReader;
   const budget = { take: () => true } as unknown as Budget;

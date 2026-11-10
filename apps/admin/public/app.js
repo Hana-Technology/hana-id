@@ -1633,7 +1633,7 @@ function alertsTable(alerts, opts = {}) {
                 { done: `Alert #${a.id} acknowledged: its re-sends stop. The condition is still checked.` },
               )
             : '',
-          opts.details ? h('details', { class: 'raw' }, h('summary', {}, 'Details and deliveries'), plainJson(a.details), h('p', { class: 'muted' }, `Deliveries: the last ${a.deliveries.length} of ${a.deliveriesTotal}`), plainJson(a.deliveries)) : '',
+          opts.details ? h('details', { class: 'raw' }, h('summary', {}, 'Details and deliveries'), plainJson(a.details), h('p', { class: 'muted' }, 'Latest result per channel'), plainJson(a.deliveriesLatest ?? []), h('p', { class: 'muted' }, `Deliveries: the last ${a.deliveries.length} of ${a.deliveriesTotal}`), plainJson(a.deliveries)) : '',
         ),
       ),
     ),
@@ -2071,16 +2071,17 @@ async function reportsPage(main) {
   const x = (text) => ({ text, extra: true, num: true });
   const n = (text) => ({ text, num: true });
   const wrap = table(
-    ['Period', 'App or scope', n('Logins'), n('Derives'), x('Owner actions'), x('Link actions'), x('Identity tokens'), n('Active users'), n('New users'), n('Tgas'), x('Rejected Tgas'), x('Error Tgas'), n('NEAR'), n('USD'), n('Login p50 ms'), n('Login p95 ms'), 'Failures', n('Unsettled'), n('After statement')],
+    ['Period', 'App or scope', n('Logins'), n('Derives'), x('Owner actions'), x('Link actions'), x('Identity tokens'), x('Home logins'), n('Active users'), n('New users'), n('Tgas'), x('Rejected Tgas'), x('Error Tgas'), n('NEAR'), n('USD'), n('Login p50 ms'), n('Login p95 ms'), 'Failures', n('Unsettled'), n('After statement')],
     d.rows.map((r) => {
       const cells = [
         h('span', { class: 'nw' }, r.period),
-        r.appId ? mono(r.appId) : h('span', {}, 'Owner actions', h('span', { class: 'sub' }, h('code', {}, r.scopeId))),
+        r.appId ? mono(r.appId) : h('span', {}, r.kind === 'home' ? 'Hana Home logins' : 'Owner actions', h('span', { class: 'sub' }, h('code', {}, r.scopeId))),
         String(r.logins),
         String(r.derives),
         String(r.ownerActions),
         String(r.linkActions ?? 0),
         String(r.identityTokens ?? 0),
+        String(r.homeLogins ?? 0),
         String(r.activeUsers ?? ''),
         String(r.newUsers),
         r.tgas,

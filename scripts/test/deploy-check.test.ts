@@ -14,7 +14,12 @@ import {
   deployCheck,
   deployedVersions,
   deploymentStatusArgv,
+  isProductionNetwork,
   judge,
+  judgeUsageCapture,
+  orgKindArgv,
+  orgKindOf,
+  readUsageCapture,
   migrationsListArgv,
   observe,
   observeWrangler,
@@ -238,7 +243,9 @@ describe('deployCheck', () => {
     const { fetchFn, seen } = server(ID);
     const { code, out } = await run(['sandbox-dev'], fetchFn);
     expect(code).toBe(0);
-    expect(seen.map((s) => s.url).sort()).toEqual(Object.values(URLS).sort());
+    // The API's health answer is read twice: for its build id, and for whether usage capture is on.
+    expect([...new Set(seen.map((s) => s.url))].sort()).toEqual(Object.values(URLS).sort());
+    expect(seen.filter((s) => s.url === URLS.api)).toHaveLength(2);
     for (const name of ['api', 'vault worker', 'vault bundle', 'auth worker', 'auth pages', 'email issuer']) expect(out).toMatch(new RegExp(`${name}\\s+${ID}`, 'u'));
     expect(out).toContain(`OK: every piece of sandbox-dev runs ${ID}`);
   });
@@ -590,5 +597,83 @@ describe('deployCheck with the dashboard Workers', () => {
     expect(dirs).toEqual(['apps/watchdog']);
     const missing = await runFull(['sandbox-dev', '--only', 'console', '--d1'], fullServer(ID).fetchFn, { pnpm, hasWranglerConfig: () => false });
     expect(missing.out).toMatch(/console D1: no wrangler config in apps\/console; generate it for sandbox-dev first: corepack pnpm --filter @hana-id\/console gen sandbox-dev --d1-id <its id>/u);
+  });
+});
+
+describe('usage capture and Hana’s own org (Hana Home’s billing, D596, D597)', () => {
+  const HANA_ORG = 'org_2Yh8sJq4LmHana';
+  const production = { ...full, network: 'mainnet' } as unknown as Manifest;
+  const api = (usageCapture?: boolean) => fullServer(ID).fetchFn && ((async (input: string | URL | Request, init?: RequestInit) => (String(input) === URLS.api ? Response.json({ ok: true, build: ID, ...(usageCapture === undefined ? {} : { usageCapture }) }) : fullServer(ID).fetchFn(input, init))) as typeof fetch);
+
+  it('reads usageCapture from the API’s health answer; anything else is "doesn’t say"', async () => {
+    expect(await readUsageCapture(full, api(true))).toBe(true);
+    expect(await readUsageCapture(full, api(false))).toBe(false);
+    expect(await readUsageCapture(full, api())).toBeNull();
+    expect(await readUsageCapture(full, (async () => new Response('down', { status: 503 })) as typeof fetch)).toBeNull();
+    expect(await readUsageCapture(full, (async () => { throw new Error('network'); }) as typeof fetch)).toBeNull();
+  });
+
+  it('on a production network capture off, or an API that doesn’t say, fails; on testnet it is a note', async () => {
+    expect(isProductionNetwork(full)).toBe(false);
+    expect(isProductionNetwork(production)).toBe(true);
+    expect(judgeUsageCapture(production, true)).toEqual({});
+    expect(judgeUsageCapture(production, false).failure).toMatch(/usage capture is off .* production network/u);
+    expect(judgeUsageCapture(production, null).failure).toMatch(/does not say whether usage capture is on/u);
+    expect(judgeUsageCapture(full, false)).toEqual({ note: expect.stringMatching(/usage capture is off in the API/u) });
+    expect(judgeUsageCapture(full, null)).toEqual({});
+
+    const off = await runFull(['sandbox-dev'], api(false));
+    expect(off.code).toBe(0);
+    expect(off.out).toMatch(/note: usage capture is off in the API/u);
+    const prodOff = await runFull(['prod'], api(false), { loadManifest: () => ({ ...production, hanaOrgId: HANA_ORG }) as Manifest });
+    expect(prodOff.code).toBe(1);
+    expect(prodOff.out).toMatch(/FAIL: api: usage capture is off/u);
+    const prodOn = await runFull(['prod'], api(true), { loadManifest: () => ({ ...production, hanaOrgId: HANA_ORG }) as Manifest });
+    expect(prodOn.code).toBe(0);
+    // A production env must name Hana's own org.
+    const noOrg = await runFull(['prod'], api(true), { loadManifest: () => production });
+    expect(noOrg.code).toBe(1);
+    expect(noOrg.out).toMatch(/FAIL: manifest: no hanaOrgId on a production network/u);
+  });
+
+  it('--d1 checks that hanaOrgId is an org that exists and is internal, reading only its kind from the console’s D1', async () => {
+    const named = { ...full, hanaOrgId: HANA_ORG } as Manifest;
+    expect(orgKindArgv('hana-id-console-x', HANA_ORG)).toEqual(['exec', 'wrangler', 'd1', 'execute', 'hana-id-console-x', '--remote', '--json', '--command', `SELECT kind FROM orgs WHERE id = '${HANA_ORG}'`]);
+    expect(orgKindOf(JSON.stringify([{ results: [{ kind: 'internal' }], success: true }]))).toBe('internal');
+    expect(orgKindOf(`some banner\n${JSON.stringify([{ results: [{ kind: 'partner' }] }])}`)).toBe('partner');
+    expect(orgKindOf(JSON.stringify([{ results: [] }]))).toBeNull();
+    expect(orgKindOf('✘ [ERROR] not logged in')).toBeUndefined();
+    expect(orgKindOf(JSON.stringify([{ results: [{ kind: 5 }] }]))).toBeUndefined();
+
+    const withKind = (answer: { status: number; output: string }) => {
+      const asked: string[][] = [];
+      const pnpm = (_dir: string, argv: string[]) => {
+        if (argv.includes('execute')) {
+          asked.push(argv);
+          return answer;
+        }
+        return { status: 0, output: '✅ No migrations to apply!' };
+      };
+      return { asked, run: () => runFull(['sandbox-dev', '--d1'], api(true), { loadManifest: () => named, pnpm, hasWranglerConfig: () => true }) };
+    };
+    const ok = withKind({ status: 0, output: JSON.stringify([{ results: [{ kind: 'internal' }] }]) });
+    const good = await ok.run();
+    expect(good.code).toBe(0);
+    expect(good.out).toContain(`${HANA_ORG} exists and is internal`);
+    expect(ok.asked).toEqual([orgKindArgv('hana-id-console-x', HANA_ORG)]);
+    for (const [answer, want] of [
+      [{ status: 0, output: JSON.stringify([{ results: [{ kind: 'partner' }] }]) }, /FAIL: hanaOrgId: org .* is of kind partner, not internal/u],
+      [{ status: 0, output: JSON.stringify([{ results: [] }]) }, /FAIL: hanaOrgId: no org /u],
+      [{ status: 1, output: 'not logged in' }, /FAIL: hanaOrgId: could not read org /u],
+      [{ status: 0, output: 'garbage' }, /FAIL: hanaOrgId: could not read org /u],
+    ] as const) {
+      const r = await withKind(answer).run();
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(want);
+    }
+    // Without --d1 nothing is read from D1; an env that names no org asks nothing.
+    const none = withKind({ status: 0, output: '[]' });
+    expect((await runFull(['sandbox-dev', '--d1'], api(true), { pnpm: (_d, argv) => (argv.includes('execute') ? (none.asked.push(argv), { status: 1, output: '' }) : { status: 0, output: '✅ No migrations to apply!' }), hasWranglerConfig: () => true })).code).toBe(0);
+    expect(none.asked).toEqual([]);
   });
 });

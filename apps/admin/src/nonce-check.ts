@@ -123,6 +123,7 @@ export async function runNonceCheck(d: NonceDeps): Promise<NonceSummary> {
     sum.checked++;
     if (!explained) sum.unexplained++;
   }
-  if (done.length) await d.store.state.setState(NONCE_CHECK_STATE, JSON.stringify({ day, tried: [...tried, ...done] }));
+  // If the day's list can't be written the keys are read again next run: three calls at most, never a lost check.
+  if (done.length) await d.store.state.setState(NONCE_CHECK_STATE, JSON.stringify({ day, tried: [...tried, ...done] })).catch(() => undefined);
   return sum;
 }

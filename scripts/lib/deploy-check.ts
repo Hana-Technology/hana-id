@@ -431,6 +431,59 @@ const tail = (output: string): string =>
     .map((l) => `    ${l}`)
     .join('\n');
 
+// ---- usage capture and Hana's own org (Hana Home's billing) ----
+
+/** A production network: anything but testnet (the manifest schema admits only testnet today; the rule is ready for mainnet). */
+export const isProductionNetwork = (m: { network: string }): boolean => m.network !== 'testnet';
+
+/** `usageCapture` of the API's `GET /v1/health` (true, false), or null when it can't be read or the API doesn't say. */
+export async function readUsageCapture(m: Manifest, fetchFn: typeof fetch = fetch): Promise<boolean | null> {
+  try {
+    const res = await fetchFn(new URL('/v1/health', m.apiUrl).toString(), { redirect: 'error', signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) });
+    if (!res.ok) return null;
+    const { text, truncated } = await readPrefix(res, BODY_LIMIT);
+    if (truncated) return null;
+    const v = (JSON.parse(text) as { usageCapture?: unknown }).usageCapture;
+    return typeof v === 'boolean' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What usage capture's state means for this env, as a failure or a note. On a production network capture must be on:
+ * without ledger rows nothing is billed, and the nonce check records baselines and can't see a relayer key used outside
+ * the API.
+ */
+export function judgeUsageCapture(m: Manifest, capture: boolean | null): { failure?: string; note?: string } {
+  const production = isProductionNetwork(m);
+  if (capture === true) return {};
+  if (capture === false) {
+    return production
+      ? { failure: 'api: usage capture is off (no USAGE_DB) on a production network: nothing is billed and the relayer nonce check measures nothing; bind it (docs/operations.md "Usage capture")' }
+      : { note: 'usage capture is off in the API: no usage is recorded and the relayer nonce check records baselines only' };
+  }
+  return production ? { failure: 'api: GET /v1/health does not say whether usage capture is on (an older API, or unreadable): on a production network it must be on' } : {};
+}
+
+/** `wrangler d1 execute` argv for the kind of one org (the id is an `org_…` id by the manifest's schema, so it is safe to quote). */
+export const orgKindArgv = (db: string, orgId: string): string[] => ['exec', 'wrangler', 'd1', 'execute', db, '--remote', '--json', '--command', `SELECT kind FROM orgs WHERE id = '${orgId}'`];
+
+/** The `kind` wrangler's JSON answer holds for the org: a string, null for no such org, undefined when the output isn't what wrangler prints. */
+export function orgKindOf(output: string): string | null | undefined {
+  const start = output.indexOf('[');
+  if (start < 0) return undefined;
+  try {
+    const parsed = JSON.parse(output.slice(start, output.lastIndexOf(']') + 1)) as { results?: { kind?: unknown }[] }[];
+    const rows = parsed[0]?.results;
+    if (!Array.isArray(rows)) return undefined;
+    if (rows.length === 0) return null;
+    return typeof rows[0]!.kind === 'string' ? rows[0]!.kind : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Runs the check; returns the exit code (0: every piece read on one commit, HEAD's unless --skip-head). */
 export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps = {}): Promise<number> {
   const args = parseCli(argv, { booleans: ['d1', 'skip-head', 'strict'], multiple: ['only', 'skip'] });
@@ -459,9 +512,32 @@ export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps
   for (const n of selection.notes) log(`note: ${n}`);
   const { failures, warnings } = judge(observed, args.flag('skip-head') ? null : head, { strict: args.flag('strict') });
 
+  // Usage capture (the API says in its health answer): required on a production network.
+  if (selection.groups.includes('api')) {
+    const capture = judgeUsageCapture(m, await readUsageCapture(m, deps.fetch ?? fetch));
+    if (capture.failure) failures.push(capture.failure);
+    if (capture.note) log(`note: ${capture.note}`);
+  }
+  // Hana's own org for the Home derives no partner pays for: a production network must name one.
+  if (isProductionNetwork(m) && m.hanaOrgId === undefined && selection.groups.includes('api')) failures.push('manifest: no hanaOrgId on a production network: the Hana Home derives Hana pays for would be recorded for org_legacy');
+
   if (args.flag('d1')) {
     const pnpm = deps.pnpm ?? defaultPnpm;
     const hasConfig = deps.hasWranglerConfig ?? defaultHasConfig;
+    // hanaOrgId must be an org that exists and is Hana's own (kind internal): a partner's id there would put the Home
+    // derives Hana pays for on that partner's org.
+    if (m.hanaOrgId !== undefined && m.console && selection.groups.includes('console')) {
+      const dir = join(repoRoot, 'apps', 'console');
+      if (!hasConfig(dir)) failures.push(`hanaOrgId: no wrangler config in apps/console to read the org with; generate it for ${m.name} first`);
+      else {
+        const res = pnpm(dir, orgKindArgv(m.console.d1Name, m.hanaOrgId));
+        const kind = res.status === 0 ? orgKindOf(res.output) : undefined;
+        if (kind === undefined) failures.push(`hanaOrgId: could not read org ${m.hanaOrgId} from ${m.console.d1Name}${res.status !== 0 ? ` (exit ${res.status})` : ''}:\n${tail(res.output)}`);
+        else if (kind === null) failures.push(`hanaOrgId: no org ${m.hanaOrgId} in ${m.console.d1Name}: create Hana's internal org in the admin console and name its id`);
+        else if (kind !== 'internal') failures.push(`hanaOrgId: org ${m.hanaOrgId} is of kind ${kind}, not internal: Hana's Home derives would be recorded for a partner's org`);
+        else log(`  hanaOrgId  ${m.hanaOrgId} exists and is internal (${m.console.d1Name})`);
+      }
+    } else if (m.hanaOrgId !== undefined && !m.console) failures.push('hanaOrgId: the manifest names an org but has no console block to hold it');
     for (const t of d1Targets(m, selection.groups)) {
       if (!hasConfig(t.dir)) {
         failures.push(`${t.name}: no wrangler config in ${t.dir.slice(repoRoot.length + 1)}; generate it for ${m.name} first: ${t.gen}`);

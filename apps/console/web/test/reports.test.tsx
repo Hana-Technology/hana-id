@@ -91,6 +91,8 @@ const ROW = {
   unsettled: 1,
   afterStatement: 0,
 };
+/** A scope's Hana Home logins: no app, a line of its own with the gas of those logins. */
+const HOME_ROW = { orgId: 'org_a', scopeId: 's1', kind: 'home', homeLogins: 6, period: '2026-01-02', logins: 0, derives: 0, revokes: 0, unlocks: 0, ownerActions: 0, newUsers: 0, failuresByCode: {}, tgas: '231', relayedRejectedTgas: '0', errorTgas: '0', burntYocto: '23100000000000000000000', usdMicros: '57750', p50: {}, p95: {}, unsettled: 0 };
 const OWNER_ROW = { orgId: 'org_a', scopeId: 's1', period: '2026-01-02', logins: 0, derives: 0, revokes: 0, unlocks: 0, ownerActions: 2, newUsers: 0, failuresByCode: {}, tgas: '3', relayedRejectedTgas: '0', errorTgas: '0', burntYocto: '300000000000000000000', p50: {}, p95: {}, unsettled: 0 };
 
 describe('the tabs: reads for any member', () => {
@@ -131,18 +133,21 @@ describe('exact amounts', () => {
 describe('usage', () => {
   it('this UTC month by day; every count the statement CSV has, exact NEAR and USD, app names', async () => {
     signedIn('viewer');
-    routes[DEFAULT_USAGE] = { body: { rows: [ROW, OWNER_ROW] } };
+    routes[DEFAULT_USAGE] = { body: { rows: [ROW, OWNER_ROW, HOME_ROW] } };
     at('/orgs/org_a/usage');
     expect(await screen.findByText('app_1')).toBeTruthy();
-    for (const h of ['Logins', 'Derives', 'Revokes', 'Unlocks', 'Owner actions', 'Link actions', 'Identity tokens', 'Active users', 'New users', 'Failures by code', 'Tgas', 'Relayed-then-rejected Tgas', 'Error Tgas', 'NEAR', 'USD', 'Unsettled'])
+    for (const h of ['Logins', 'Derives', 'Revokes', 'Unlocks', 'Owner actions', 'Link actions', 'Identity tokens', 'Home logins', 'Active users', 'New users', 'Failures by code', 'Tgas', 'Relayed-then-rejected Tgas', 'Error Tgas', 'NEAR', 'USD', 'Unsettled'])
       expect(screen.getByRole('columnheader', { name: h })).toBeTruthy();
     const row = screen.getByText('app_1').closest('tr')!;
     const cells = within(row).getAllByRole('cell').map((c) => c.textContent);
-    expect(cells).toEqual(['2026-01-02', 'Walletapp_1', '12', '7', '1', '3', '0', '4', '9', '5', '2', 'bad_token=1; rate_limited=2', '12.5', '0.25', '0.1', '0.00125', '0.000025', '0.004375', '0.000087', '820 / 1900', '1400 / —', '1']);
+    expect(cells).toEqual(['2026-01-02', 'Walletapp_1', '12', '7', '1', '3', '0', '4', '9', '0', '5', '2', 'bad_token=1; rate_limited=2', '12.5', '0.25', '0.1', '0.00125', '0.000025', '0.004375', '0.000087', '820 / 1900', '1400 / —', '1']);
     const owner = screen.getByText('Owner actions, scope s1').closest('tr')!;
     expect(within(owner).getAllByRole('cell').map((c) => c.textContent).slice(6, 9)).toEqual(['2', '0', '0']);
     // No rate yet: USD is "—", never 0.
-    expect(within(owner).getAllByRole('cell')[17]!.textContent).toBe('—');
+    expect(within(owner).getAllByRole('cell')[18]!.textContent).toBe('—');
+    // The scope's Hana Home logins: their own line, apart from its owner actions, with their count, gas and cost.
+    const home = within(screen.getByText('Hana Home logins, scope s1').closest('tr')!).getAllByRole('cell').map((c) => c.textContent);
+    expect([home[2], home[6], home[9], home[13], home[16], home[18]]).toEqual(['0', '0', '6', '231', '0.0231', '0.05775']);
     expect(screen.queryByRole('columnheader', { name: 'After the statement' })).toBeNull();
     expect(writeButtons()).toEqual([]);
     noPersonAddress();
@@ -162,7 +167,7 @@ describe('usage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show' }));
     expect(await screen.findByRole('columnheader', { name: 'After the statement' })).toBeTruthy();
     expect(calls.map((c) => c.url)).toContain('/api/orgs/org_a/usage?from=2026-01-01&to=2026-03-31&by=month&apps=app_1');
-    expect(screen.getByText(/owner actions \(which belong to a scope, not an app\) are left out/u)).toBeTruthy();
+    expect(screen.getByText(/owner actions and Hana Home logins \(which belong to a scope, not an app\) are left out/u)).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Month' })).toBeTruthy();
   });
 

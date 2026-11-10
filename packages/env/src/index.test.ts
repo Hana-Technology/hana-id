@@ -137,6 +137,16 @@ describe('manifestSchema: homeDerivesPerDay', () => {
   });
 });
 
+describe('manifestSchema: hanaOrgId', () => {
+  const base = raw();
+  it('takes an org id, and is optional', () => {
+    expect(manifestSchema.safeParse({ ...base, hanaOrgId: 'org_2Yh8sJq4Lm' }).success).toBe(true);
+    expect(manifestSchema.safeParse({ ...base, hanaOrgId: 'hana' }).success).toBe(false);
+    expect(manifestSchema.safeParse({ ...base, hanaOrgId: 'org_' }).success).toBe(false);
+    expect(manifestSchema.safeParse({ ...base, hanaOrgId: `org_${'a'.repeat(61)}` }).success).toBe(false);
+  });
+});
+
 describe('manifestSchema: watchdog', () => {
   const watchdog = (over: Record<string, unknown> = {}) => ({
     account: 'watchdog.example.testnet',

@@ -112,6 +112,30 @@ export function poolAllows(pool: Pool, method: string): method is RelayMethod {
 
 const KEY_RE = /^ed25519:[1-9A-HJ-NP-Za-km-z]+$/u;
 
+type PoolSecrets = Partial<Record<(typeof POOL_SECRET)[Pool], string | undefined>>;
+
+/**
+ * The pools that hold a key another pool holds too. A key belongs to one pool: its on-chain method list is that pool's,
+ * and settlement tells a Home derive from everything else by the pool of the key that signed it. Such a pool is refused
+ * as a whole (it relays nothing and lists no key) until the secrets are fixed. A pool whose secret doesn't parse shares
+ * nothing here: it is refused on its own account.
+ */
+export function poolsSharingAKey(env: PoolSecrets): Pool[] {
+  const holders = new Map<string, Set<Pool>>();
+  for (const pool of POOLS) {
+    let keys: string[];
+    try {
+      keys = parseRelayerKeys(env[POOL_SECRET[pool]], POOL_SECRET[pool]);
+    } catch {
+      continue;
+    }
+    for (const k of keys) holders.set(k, (holders.get(k) ?? new Set<Pool>()).add(pool));
+  }
+  const shared = new Set<Pool>();
+  for (const pools of holders.values()) if (pools.size > 1) for (const p of pools) shared.add(p);
+  return POOLS.filter((p) => shared.has(p));
+}
+
 /** Parses a pool secret: a JSON array of `ed25519:<base58>` secret keys. Empty/absent → []. */
 export function parseRelayerKeys(raw: string | undefined, name = 'RELAYER_KEYS'): string[] {
   if (!raw) return [];

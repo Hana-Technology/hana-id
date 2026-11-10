@@ -17,7 +17,7 @@ import { NOTICE_PAGE, runChangeNotices } from '../src/notices.ts';
 import { type OpsStore, opsSource, sqlOps } from '../src/ops.ts';
 import { RETENTION_MAX_CALLS } from '../src/retention.ts';
 import { WATCH_CURSOR, runWatcher } from '../src/watcher.ts';
-import { ALIAS, FakeEmail, PK_A, PK_B, RELAYER, SIGNER, insertEvent, ledgerDb } from './fakes.ts';
+import { ALIAS, FakeEmail, PK_A, PK_HOME, POOL_KEYS, RELAYER, SIGNER, insertEvent, ledgerDb } from './fakes.ts';
 
 let db: TestDb;
 let store: LedgerStore;
@@ -60,9 +60,13 @@ interface Net {
   rate: number;
   txs: Map<string, { pk: string; nonce: bigint }>;
   scopes: Map<string, unknown>;
+  /** An access key's nonce at final, by public key (5 for a key not named here). */
+  nonces: Map<string, number>;
+  /** The keys whose nonce was read, in order. */
+  keysRead: string[];
 }
 function stubNetwork(): Net {
-  const net: Net = { tx: 0, key: 0, scope: 0, rate: 0, txs: new Map(), scopes: new Map() };
+  const net: Net = { tx: 0, key: 0, scope: 0, rate: 0, txs: new Map(), scopes: new Map(), nonces: new Map(), keysRead: [] };
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url.startsWith('https://api.coingecko.com/')) {
@@ -81,7 +85,8 @@ function stubNetwork(): Net {
     }
     if (body.params.request_type === 'view_access_key') {
       net.key++;
-      return Response.json({ jsonrpc: '2.0', id: 'admin', result: { nonce: 5 } });
+      net.keysRead.push(body.params.public_key!);
+      return Response.json({ jsonrpc: '2.0', id: 'admin', result: { nonce: net.nonces.get(body.params.public_key!) ?? 5 } });
     }
     if (body.params.request_type === 'call_function' && body.params.method_name === 'get_scope') {
       net.scope++;
@@ -161,7 +166,7 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
   const api = () =>
     recorded(
       {
-        relayerKeys: async () => ({ ok: true as const, keys: [{ pool: 'session' as const, publicKey: PK_A }, { pool: 'owner' as const, publicKey: PK_B }] }),
+        relayerKeys: async () => ({ ok: true as const, keys: POOL_KEYS, capture: true, unreadablePools: [] }),
         // The link-rate alert's one read (D448): no jump here, so no email.
         linkStats: async () => ({ ok: true as const, rows: [] }),
         getSecurityContacts: async () => ({ ok: true as const, emails: ['sec@partner.example'] }),
@@ -245,10 +250,14 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
 
     // The worst case: every job due at once.
     const first = await tick(T0);
-    // The order is the priority: the connection, the pool keys, the daily nonce check, the retention job (at most 12),
-    // the alerts, then the statement notices (2 RPCs and 3 emails each: the contacts, the billing email, the alias) as
-    // far as they fit; the rates get what is left and settlement nothing this run.
-    expect(first.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 2, retention: RETENTION_MAX_CALLS, alerts: 2, statement_notices: 4 * 5, link_jump: 1, rates: 1 });
+    // The order is the priority: the connection, the pool keys, the daily nonce check (one read per pool key: session,
+    // owner and Home, readiness 7.4a), the retention job (at most 12), the alerts, then the statement notices (2 RPCs
+    // and 3 emails each: the contacts, the billing email, the alias) as far as they fit. One call is left: the link-rate
+    // check needs two (its read and its email) and stops cleanly until the next run, 15 minutes later (the Home key's
+    // read took the call it had before that key joined the check, D591); the rates take the one left and settlement
+    // nothing this run.
+    expect(first.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 3, retention: RETENTION_MAX_CALLS, alerts: 2, statement_notices: 4 * 5, rates: 1 });
+    expect(net.keysRead).toEqual([PK_A, POOL_KEYS[1]!.publicKey, PK_HOME]);
     expect(first.total).toBe(RUN_BUDGET);
     // D425: the run's record in ops.state, written on the run's own connection: a query, not a call (the counts above
     // are unchanged), read by the System status page.
@@ -274,9 +283,113 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
 
     // The next day's 00:30 tick fills the rates the first one had no calls for.
     const daily = await tick(T0 + 24 * 60 * MIN);
-    expect(daily.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 2, link_jump: 1, rates: 10 });
+    expect(daily.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 3, link_jump: 1, rates: 10 });
     expect((await store.ratesBetween('2031-02-22', '2031-03-03')).length).toBe(10);
     expect(email.sent.filter((m) => ALERT_SUBJECT.test(m.subject))).toHaveLength(2);
+  });
+});
+
+describe('the daily nonce check covers the Home pool’s keys (readiness 7.4a, D591)', () => {
+  const T0 = Date.UTC(2031, 1, 10, 0, 30);
+  const DAY = 24 * 60 * MIN;
+  let net: Net;
+  let email: FakeEmail;
+  beforeEach(() => {
+    net = stubNetwork();
+    email = new FakeEmail();
+    vi.spyOn(outbound, 'email').mockReturnValue(email);
+    vi.spyOn(ledgerSource, 'open').mockImplementation(async () => ({ ...store, close: async () => {} }));
+  });
+  const env = (keys: readonly { pool: 'session' | 'owner' | 'home'; publicKey: string }[], capture: boolean | undefined = true) =>
+    ({
+      ENV_NAME: 'sandbox-test',
+      CONSOLE_ORIGIN: 'https://console.test',
+      SECURITY_ALIAS: ALIAS,
+      EMAIL_FROM: 'Hana <no-reply@hana.example>',
+      NEAR_RPC,
+      RELAYER_ACCOUNT: RELAYER,
+      SIGNER_ACCOUNT: SIGNER,
+      USAGE_DB: { connectionString: 'postgres://unused' },
+      API: { relayerKeys: async () => ({ ok: true as const, keys, ...(capture === undefined ? {} : { capture }) }), linkStats: async () => ({ ok: true as const, rows: [] }), deletedApps: async () => ({ ok: true as const, appIds: [], more: false }) },
+      CONSOLE: {},
+    }) as unknown as Env;
+  // A Home key of its own, so the other describes' rows and checks don't touch it.
+  const HOME = 'ed25519:7XkTqBqqDX2pD2oDFcHoMBoUnDwDaMrFbTfyobKmsS9a';
+  const keys = [POOL_KEYS[0]!, POOL_KEYS[1]!, { pool: 'home' as const, publicKey: HOME }];
+  const homeCheck = async () => {
+    const [r] = await db.query<{ chain_nonce: string; explained: boolean }>('SELECT chain_nonce::text, explained FROM ops.nonce_checks WHERE relayer_pk = $1 ORDER BY checked_at DESC LIMIT 1', [HOME]);
+    return r;
+  };
+
+  it('a Home relay the ledger holds explains the key’s nonce; a Home key spending outside the API is nonce_unexplained and emailed', async () => {
+    // Day 1: the API relayed a Home derive at nonce 41 and wrote its row (capture on).
+    await insertEvent(db, { endpoint: 'home_login', org: 'org_h', at: T0 - 60 * MIN, relayed: true, pk: HOME, nonce: 41n });
+    net.nonces.set(HOME, 41);
+    const one = (await everyFifteenMinutes(env(keys), T0))!;
+    expect(net.keysRead).toContain(HOME);
+    expect(one.daily!.nonce).toMatchObject({ checked: 3 });
+    expect(await homeCheck()).toEqual({ chain_nonce: '41', explained: true });
+
+    // Day 2: idle, explained.
+    await everyFifteenMinutes(env(keys), T0 + DAY);
+    expect(await homeCheck()).toEqual({ chain_nonce: '41', explained: true });
+
+    // Day 3: the key's nonce moved and the ledger has no row for it: something other than the API signed with it.
+    net.nonces.set(HOME, 42);
+    const before = email.sent.length;
+    await everyFifteenMinutes(env(keys), T0 + 2 * DAY);
+    expect(await homeCheck()).toEqual({ chain_nonce: '42', explained: false });
+    const alert = email.sent.slice(before).find((m) => /Relayer nonce unexplained/u.test(m.subject));
+    expect(alert).toMatchObject({ to: ALIAS });
+    expect(alert!.text).toContain(HOME);
+  });
+
+  it('with usage capture off the Home key’s nonce is a baseline every day and nothing is emailed; capture on starts from a fresh baseline, then a spend alerts', async () => {
+    const quiet = 'ed25519:8hSHprDq2StXwMtNd43wDTXQYsjXcD4MJTXQYsjXcc87';
+    const k = [{ pool: 'home' as const, publicKey: quiet }];
+    const last = async () => (await db.query<{ chain_nonce: string; explained: boolean; reason: string | null }>('SELECT chain_nonce::text, explained, reason FROM ops.nonce_checks WHERE relayer_pk = $1 ORDER BY checked_at DESC LIMIT 1', [quiet]))[0];
+    const nonceMail = () => email.sent.filter((m) => /Relayer nonce unexplained/u.test(m.subject) && m.text.includes(quiet));
+    // Capture off (sandbox-dev): Home derives move the nonce and no row is ever written.
+    net.nonces.set(quiet, 1_234_567);
+    expect((await everyFifteenMinutes(env(k, false), T0 + 5 * DAY))!.nonce).toMatchObject({ checked: 1, baselined: 1, unexplained: 0 });
+    expect(await last()).toEqual({ chain_nonce: '1234567', explained: true, reason: 'capture_off' });
+    net.nonces.set(quiet, 1_234_568);
+    await everyFifteenMinutes(env(k, false), T0 + 6 * DAY);
+    expect(await last()).toEqual({ chain_nonce: '1234568', explained: true, reason: 'capture_off' });
+    expect(nonceMail()).toEqual([]);
+    // Capture turned on: a fresh baseline, whatever moved meanwhile.
+    net.nonces.set(quiet, 1_234_570);
+    await everyFifteenMinutes(env(k, true), T0 + 7 * DAY);
+    expect(await last()).toEqual({ chain_nonce: '1234570', explained: true, reason: 'capture_on' });
+    // From then on a nonce with no ledger row is a spend outside the API.
+    net.nonces.set(quiet, 1_234_571);
+    await everyFifteenMinutes(env(k, true), T0 + 8 * DAY);
+    expect(await last()).toEqual({ chain_nonce: '1234571', explained: false, reason: null });
+    expect(nonceMail()).toHaveLength(1);
+  });
+
+  it('several Home keys don’t take the run: three keys a run, the rest 15 minutes later, the other jobs’ calls untouched (D598)', async () => {
+    const many = [POOL_KEYS[0]!, POOL_KEYS[1]!, ...['a', 'b', 'c'].map((x) => ({ pool: 'home' as const, publicKey: `ed25519:manyHome${x}` }))];
+    const t = T0 + 20 * DAY;
+    const first = (await everyFifteenMinutes(env(many, false), t))!;
+    expect(first.calls.nonce_check).toBe(3);
+    expect(first.nonce).toMatchObject({ checked: 3, pending: 2 });
+    const second = (await everyFifteenMinutes(env(many, false), t + 15 * MIN))!;
+    expect(second.calls.nonce_check).toBe(2);
+    expect(second.nonce).toMatchObject({ checked: 2, pending: 0 });
+    const third = (await everyFifteenMinutes(env(many, false), t + 30 * MIN))!;
+    expect(third.calls.nonce_check).toBeUndefined();
+    expect(net.keysRead.slice(-5)).toEqual(many.map((k) => k.publicKey));
+    // With 2 Home keys: 3, then 1.
+    const two = many.slice(0, 4);
+    const a = (await everyFifteenMinutes(env(two, false), t + DAY))!;
+    const b = (await everyFifteenMinutes(env(two, false), t + DAY + 15 * MIN))!;
+    expect([a.calls.nonce_check, b.calls.nonce_check]).toEqual([3, 1]);
+  });
+
+  it('an API from before the Home keys were listed: the key isn’t read (nothing fails), which is why 7.4a needed the list', async () => {
+    await everyFifteenMinutes(env([POOL_KEYS[0]!, POOL_KEYS[1]!], undefined), T0 + 9 * DAY);
+    expect(net.keysRead).toEqual([PK_A, POOL_KEYS[1]!.publicKey]);
   });
 });
 

@@ -46,6 +46,7 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
 | `HOME_RELAYER_KEYS` | secret | Home pool (one key, 5 NEAR by default), same format: `create_session_and_derive` only. Without it `POST /v1/home/login` answers 503 and nothing else is affected |
 | `HOME_DERIVES_PER_DAY` | optional var (manifest `homeDerivesPerDay`) | Hana Home derives per UTC day across the env; default 500; `0` turns them off |
+| `HANA_ORG_ID` | optional var (manifest `hanaOrgId`) | Hana's own org in the usage ledger: the Hana Home derives no partner pays for are recorded for it (`src/home/billing.ts`); without it, for `org_legacy` |
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
 | `KEYS_UPDATER_KEY` | secret | function-call key on `SIGNER_ACCOUNT` (governance contract: exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, installed by `add_updater_key`); cron skips without it |
 | `API_URL` | vars (manifest) | `apiUrl`: the API's own URL, in the vault page's CSP `connect-src` |

@@ -7,7 +7,7 @@ import type { TestDb } from '../../api/test-usage/db.ts';
 import { runAlerts } from '../src/alerts.ts';
 import type { LedgerStore } from '../src/ledger.ts';
 import { Budget } from '../src/mail.ts';
-import { runNonceCheck } from '../src/nonce-check.ts';
+import { NONCE_READS_PER_RUN, nonceDay, runNonceCheck } from '../src/nonce-check.ts';
 import { RATE_LOOKBACK_DAYS, RATE_SOURCE, rateUrl, runRates, usdMicrosFromHistory } from '../src/rates.ts';
 import { REJECTION_MIN_RELAYED, overThreshold, runRejectionCheck } from '../src/rejections.ts';
 import { ALIAS, DAY, FakeEmail, FakeNear, PK_A, PK_B, RELAYER, insertEvent, ledgerDb } from './fakes.ts';
@@ -24,7 +24,7 @@ afterAll(async () => {
 const NOW = Date.now();
 const env = { ENV_NAME: 'sandbox-test', CONSOLE_ORIGIN: 'https://console.test', SECURITY_ALIAS: ALIAS };
 const PK_C = 'ed25519:4kqyRk2KyNBUm2oWT7m8n3fESEFJr3vV3YdBSiHVpDWp';
-const check = (near: FakeNear, keys: string[], now: number, budget = new Budget()) => runNonceCheck({ store, near, keys, relayerAccount: RELAYER, budget, now });
+const check = (near: FakeNear, keys: string[], now: number, budget = new Budget(), captureOn?: boolean) => runNonceCheck({ store, near, keys, relayerAccount: RELAYER, budget, now, ...(captureOn === undefined ? {} : { captureOn }) });
 
 describe('the nonce cross-check', () => {
   it('first check: explained by a matching row; a key the ledger never saw is the baseline', async () => {
@@ -33,7 +33,7 @@ describe('the nonce cross-check', () => {
     const near = new FakeNear();
     near.nonces.set(PK_A, 105n);
     near.nonces.set(PK_B, 9_000n);
-    expect(await check(near, [PK_A, PK_B], NOW)).toEqual({ checked: 2, unexplained: 0, skipped: 0, rebaselined: 0 });
+    expect(await check(near, [PK_A, PK_B], NOW)).toEqual({ checked: 2, unexplained: 0, skipped: 0, rebaselined: 0, baselined: 0, pending: 0 });
     expect(near.calls).toEqual([`key:${RELAYER}:${PK_A}`, `key:${RELAYER}:${PK_B}`]);
     const a = await store.lastNonceCheck(PK_A);
     expect(a).toMatchObject({ chainNonce: 105n, explained: true, ledgerRelayedSinceLast: 2 });
@@ -43,14 +43,14 @@ describe('the nonce cross-check', () => {
   it('explained when idle (N unchanged), even with no row for it', async () => {
     const near = new FakeNear();
     near.nonces.set(PK_B, 9_000n);
-    expect(await check(near, [PK_B], NOW + DAY)).toEqual({ checked: 1, unexplained: 0, skipped: 0, rebaselined: 0 });
+    expect(await check(near, [PK_B], NOW + DAY)).toEqual({ checked: 1, unexplained: 0, skipped: 0, rebaselined: 0, baselined: 0, pending: 0 });
   });
 
   it('nonce_unexplained for a nonce with no ledger row (a lost write, or a foreign signer)', async () => {
     const near = new FakeNear();
     near.nonces.set(PK_A, 230n);
     near.nonces.set(PK_B, 9_001n);
-    expect(await check(near, [PK_A, PK_B], NOW + 2 * DAY)).toEqual({ checked: 2, unexplained: 2, skipped: 0, rebaselined: 0 });
+    expect(await check(near, [PK_A, PK_B], NOW + 2 * DAY)).toEqual({ checked: 2, unexplained: 2, skipped: 0, rebaselined: 0, baselined: 0, pending: 0 });
     // A row for the new nonce explains the next day's check.
     await insertEvent(db, { at: NOW + 2 * DAY + 1000, relayed: true, pk: PK_A, nonce: 231n });
     near.nonces.set(PK_A, 231n);
@@ -63,17 +63,22 @@ describe('the nonce cross-check', () => {
     const reAdded = 'ed25519:readded';
     near.nonces.set(reAdded, 212_345_000_000n);
     await insertEvent(db, { at: NOW - 1000, relayed: true, pk: reAdded, nonce: 20n });
-    expect(await check(near, [reAdded], NOW + 5 * DAY)).toEqual({ checked: 1, unexplained: 0, skipped: 0, rebaselined: 1 });
+    expect(await check(near, [reAdded], NOW + 5 * DAY)).toEqual({ checked: 1, unexplained: 0, skipped: 0, rebaselined: 1, baselined: 0, pending: 0 });
     expect(await store.lastNonceCheck(reAdded)).toMatchObject({ chainNonce: 212_345_000_000n, explained: true });
-    expect(await check(near, [reAdded], NOW + 6 * DAY)).toEqual({ checked: 1, unexplained: 0, skipped: 0, rebaselined: 0 });
+    expect(await check(near, [reAdded], NOW + 6 * DAY)).toEqual({ checked: 1, unexplained: 0, skipped: 0, rebaselined: 0, baselined: 0, pending: 0 });
   });
 
   it('a key the account doesn’t have, an unreadable RPC and an empty budget are skipped, not alerted', async () => {
     const near = new FakeNear();
     near.nonces.set(PK_A, new Error('rpc down'));
-    expect(await check(near, [PK_A, PK_C], NOW + 4 * DAY)).toEqual({ checked: 0, unexplained: 0, skipped: 2, rebaselined: 0 });
-    expect(await check(near, [PK_A], NOW + 4 * DAY, new Budget(0))).toEqual({ checked: 0, unexplained: 0, skipped: 1, rebaselined: 0 });
+    expect(await check(near, [PK_A, PK_C], NOW + 4 * DAY)).toEqual({ checked: 0, unexplained: 0, skipped: 2, rebaselined: 0, baselined: 0, pending: 0 });
+    // Tried once a day, whatever the outcome: the same day's later runs don't read them again.
+    expect(await check(near, [PK_A, PK_C], NOW + 4 * DAY + 15 * 60_000)).toEqual({ checked: 0, unexplained: 0, skipped: 0, rebaselined: 0, baselined: 0, pending: 0 });
+    // An empty budget leaves the key pending for the next run, where it is read.
+    near.nonces.set(PK_A, 231n);
+    expect(await check(near, [PK_A], NOW + 7 * DAY, new Budget(0))).toEqual({ checked: 0, unexplained: 0, skipped: 1, rebaselined: 0, baselined: 0, pending: 1 });
     expect(near.calls).toHaveLength(2);
+    expect(await check(near, [PK_A], NOW + 7 * DAY + 15 * 60_000)).toMatchObject({ checked: 1, unexplained: 0, pending: 0 });
   });
 
   it('emails the unexplained checks to the alias once (a failed send is retried by the next run)', async () => {
@@ -89,6 +94,93 @@ describe('the nonce cross-check', () => {
     expect(email.sent[0]!.text).toContain(PK_A);
     expect((await runAlerts(env, store, email, new Budget(), NOW)).nonce).toBe(0);
     expect(email.sent).toHaveLength(1);
+  });
+});
+
+describe('the nonce check with usage capture off (D596)', () => {
+  const K1 = 'ed25519:capoff1';
+  const K2 = 'ed25519:capoff2';
+  const T = NOW + 40 * DAY;
+  const last = async (pk: string) => {
+    const c = (await store.lastNonceCheck(pk))!;
+    return { nonce: c.chainNonce, explained: c.explained, reason: c.reason };
+  };
+
+  it('records each key’s nonce as an explained baseline (capture_off) and raises no alert, however far the nonce moved', async () => {
+    const near = new FakeNear();
+    const email = new FakeEmail();
+    const sentBefore = (await runAlerts(env, store, email, new Budget(), T)).nonce;
+    void sentBefore;
+    for (const [day, n1, n2] of [[0, 500n, 9_000_001n], [1, 517n, 9_000_044n], [2, 517n, 9_000_090n]] as const) {
+      near.nonces.set(K1, n1);
+      near.nonces.set(K2, n2);
+      expect(await check(near, [K1, K2], T + day * DAY, new Budget(), false)).toEqual({ checked: 2, unexplained: 0, skipped: 0, rebaselined: 0, baselined: 2, pending: 0 });
+      expect(await last(K1)).toEqual({ nonce: n1, explained: true, reason: 'capture_off' });
+    }
+    // Nothing to email: three days of relays with no ledger row, and not one unexplained check.
+    const mail = new FakeEmail();
+    expect((await runAlerts(env, store, mail, new Budget(), T + 3 * DAY)).nonce).toBe(0);
+    expect(mail.sent).toEqual([]);
+  });
+
+  it('capture back on: the first check is a fresh baseline (capture_on), and from the next one the ledger decides', async () => {
+    const near = new FakeNear();
+    // The nonces moved again while capture was off; no row will ever explain them.
+    near.nonces.set(K1, 640n);
+    near.nonces.set(K2, 9_000_300n);
+    expect(await check(near, [K1, K2], T + 3 * DAY, new Budget(), true)).toEqual({ checked: 2, unexplained: 0, skipped: 0, rebaselined: 0, baselined: 2, pending: 0 });
+    expect(await last(K1)).toEqual({ nonce: 640n, explained: true, reason: 'capture_on' });
+    // The next day: K1's relay has its row, K2's nonce moved with none.
+    await insertEvent(db, { at: T + 3 * DAY + 60_000, relayed: true, pk: K1, nonce: 641n });
+    near.nonces.set(K1, 641n);
+    near.nonces.set(K2, 9_000_301n);
+    expect(await check(near, [K1, K2], T + 4 * DAY, new Budget(), true)).toEqual({ checked: 2, unexplained: 1, skipped: 0, rebaselined: 0, baselined: 0, pending: 0 });
+    expect(await last(K1)).toEqual({ nonce: 641n, explained: true, reason: null });
+    expect(await last(K2)).toEqual({ nonce: 9_000_301n, explained: false, reason: null });
+    const mail = new FakeEmail();
+    expect((await runAlerts(env, store, mail, new Budget(), T + 4 * DAY)).nonce).toBe(1);
+    expect(mail.sent[0]!.text).toContain(K2);
+  });
+
+  it('an API that doesn’t say (older than the flag) is judged as before', async () => {
+    const near = new FakeNear();
+    const old = 'ed25519:capunknown';
+    near.nonces.set(old, 77n);
+    expect(await check(near, [old], T + 5 * DAY)).toMatchObject({ checked: 1, unexplained: 0, baselined: 0 });
+    near.nonces.set(old, 78n);
+    expect(await check(near, [old], T + 6 * DAY)).toMatchObject({ checked: 1, unexplained: 1 });
+    await store.markNonceAlerted([{ relayerPk: old, checkedAt: T + 6 * DAY }], T + 6 * DAY);
+  });
+});
+
+describe('the nonce check takes a bounded share of a run (D598)', () => {
+  const T = NOW + 60 * DAY;
+  const pool = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `ed25519:${tag}${i}`);
+
+  for (const homeKeys of [2, 3]) {
+    it(`with ${homeKeys} Home keys (session, owner and ${homeKeys} Home): ${NONCE_READS_PER_RUN} keys a run, the rest in the next runs, each once a day`, async () => {
+      const day = T + homeKeys * DAY;
+      const keys = [`ed25519:s${homeKeys}`, `ed25519:o${homeKeys}`, ...pool(homeKeys, `h${homeKeys}x`)];
+      const near = new FakeNear();
+      for (const [i, k] of keys.entries()) near.nonces.set(k, BigInt(1000 + i));
+      const first = await check(near, keys, day, new Budget(), false);
+      expect(first).toMatchObject({ checked: NONCE_READS_PER_RUN, pending: keys.length - NONCE_READS_PER_RUN });
+      expect(near.calls).toHaveLength(NONCE_READS_PER_RUN);
+      const second = await check(near, keys, day + 15 * 60_000, new Budget(), false);
+      expect(second).toMatchObject({ checked: keys.length - NONCE_READS_PER_RUN, pending: 0 });
+      // Every key read exactly once, in order; a third run that day reads nothing.
+      expect(near.calls).toEqual(keys.map((k) => `key:${RELAYER}:${k}`));
+      expect(await check(near, keys, day + 30 * 60_000, new Budget(), false)).toMatchObject({ checked: 0, pending: 0 });
+      expect(near.calls).toHaveLength(keys.length);
+      // The next check day (from 00:30 UTC) starts the round again.
+      expect(await check(near, keys, day + DAY, new Budget(), false)).toMatchObject({ checked: NONCE_READS_PER_RUN, pending: keys.length - NONCE_READS_PER_RUN });
+    });
+  }
+
+  it('the check day starts at 00:30 UTC', () => {
+    expect(nonceDay(Date.UTC(2031, 0, 5, 0, 29))).toBe('2031-01-04');
+    expect(nonceDay(Date.UTC(2031, 0, 5, 0, 30))).toBe('2031-01-05');
+    expect(nonceDay(Date.UTC(2031, 0, 5, 23, 59))).toBe('2031-01-05');
   });
 });
 

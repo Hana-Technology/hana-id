@@ -945,7 +945,7 @@ export const API_CAPABILITIES = { createProof: true } as const;
 export function handleHealth(env: Env, requestId: string): Response {
   return json(
     200,
-    { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, hotDb: HOT_DB_SCHEMA, capabilities: API_CAPABILITIES, build: deployedBuild(env.HANA_BUILD), requestId },
+    { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, hotDb: HOT_DB_SCHEMA, capabilities: API_CAPABILITIES, usageCapture: env.USAGE_DB !== undefined, build: deployedBuild(env.HANA_BUILD), requestId },
     { 'access-control-allow-origin': '*', 'x-request-id': requestId },
   );
 }

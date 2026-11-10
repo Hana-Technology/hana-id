@@ -4,12 +4,13 @@ import type { Env } from './env.ts';
 import { log } from './log.ts';
 import { placedStub } from './placement.ts';
 import type { ContractCall } from './near/tx.ts';
-import { POOL_SECRET, type Pool, parseRelayerKeys, poolAllows, relayerKeyName } from './relayer-config.ts';
+import { POOL_SECRET, type Pool, parseRelayerKeys, poolAllows, relayerKeyName, poolsSharingAKey } from './relayer-config.ts';
 import type { RelayResult } from './relayer-key.ts';
 
 export { relayerKeyName };
 
 const parsed: Record<Pool, { from: string | undefined; count: number }> = { session: { from: undefined, count: 0 }, owner: { from: undefined, count: 0 }, home: { from: undefined, count: 0 } };
+const shared: { from: string | undefined; pools: Pool[] } = { from: undefined, pools: [] };
 /** Round-robin cursor per pool, random start so isolates don't all begin on key 0. */
 const cursors: Record<Pool, number> = { session: Math.floor(Math.random() * 1_000_000), owner: Math.floor(Math.random() * 1_000_000), home: Math.floor(Math.random() * 1_000_000) };
 
@@ -21,6 +22,13 @@ export function relayerKeyCount(env: Pick<Env, 'RELAYER_KEYS' | 'OWNER_RELAYER_K
     p.count = parseRelayerKeys(raw, name).length;
     p.from = raw;
   }
+  // One key in two pools is a misconfiguration (relayer-config.ts poolsSharingAKey): refuse the pools involved.
+  const all = `${env.RELAYER_KEYS ?? ''}\n${env.OWNER_RELAYER_KEYS ?? ''}\n${env.HOME_RELAYER_KEYS ?? ''}`;
+  if (shared.from !== all) {
+    shared.pools = poolsSharingAKey(env);
+    shared.from = all;
+  }
+  if (shared.pools.includes(pool)) throw new Error(`${name} holds a key another pool holds too`);
   return p.count;
 }
 

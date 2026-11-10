@@ -1,6 +1,7 @@
 // Usage capture (docs/batch-c-spec.md "Usage capture and reporting"): one UsageEvent v1 for every request that passed
 // the gate of /v1/login, /v1/sessions, /v1/derive, /v1/sessions/revoke, /v1/vault/unlock and /v1/link* (batch 6), and for /v1/owner-actions
-// after the owner check. A handler opens a draft once its gate passed (`beginUsage`), the relay fills in what it sent
+// after the owner check, and one for every Hana Home derive (/v1/home/login) that reached the relay (D585: Home has no
+// app gate, and a refusal before the relay costs no gas and belongs to no partner's failures). A handler opens a draft once its gate passed (`beginUsage`), the relay fills in what it sent
 // (`noteRelay`), and the response (`handlers.ts` `done`) closes it (`finishUsage`): the event goes to the ledger after
 // the response (`waitUntil`, usage/record.ts) and never decides or delays the answer. Gate rejections and GET /v1/app
 // are logged only.
@@ -27,6 +28,8 @@ export const USAGE_ENDPOINT: Readonly<Record<string, UsageEndpoint>> = {
   '/v1/link': 'link',
   '/v1/link/cancel': 'link_cancel',
   '/v1/link/unlink': 'link_unlink',
+  /** A Hana Home derive: a scope and no app, relayed from the Home pool; its org is who pays (home/billing.ts). */
+  '/v1/home/login': 'home_login',
 };
 
 /** What a relay sent, as the ledger records it. */
@@ -44,9 +47,9 @@ export interface UsageDraft {
   endpoint: UsageEndpoint;
   /** Request start (unix ms). */
   atMs: number;
-  /** The gate row's org; for an owner action, resolved from the scope after the response (record.ts). */
+  /** The gate row's org; for an owner action and a Home derive, resolved from the scope after the response (record.ts). */
   orgId: string | null;
-  /** null only for owner actions. */
+  /** null only for owner actions and Home derives. */
   appId: string | null;
   scopeId: string;
   /** The request's derivation path `scope#provider#sub#key_index`, in memory only: the uid's input, never sent. */

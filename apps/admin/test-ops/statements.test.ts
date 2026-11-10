@@ -3,15 +3,16 @@
 // second issue refused; a rate change refused once the month has a statement; late events excluded by as_of and listed;
 // the golden CSV (byte-stable: quoting, injection cases, negative numbers unprefixed, scope rows, totals); the ledger
 // CSV's final gas for the same as_of equals the statement's tgas and near; and D92: the CSV, the PDF and the on-screen
-// statement show identical totals and the CSV's sha256, the rejected line separate and marked not billed.
+// statement show identical totals and the CSV's sha256, the rejected line separate and marked not billed. Hana Home's
+// billing (D461, D585–D588): an active app's "Hana Home logins" line and its totals, and Hana's own org after the app is gone.
 import { inflateSync } from 'node:zlib';
 import { type ReportSqlRow, STATEMENT_CSV_COLUMNS, formatNear, formatTgas, statementView } from '@hana-id/console-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { TestDb } from '../../api/test-usage/db.ts';
+import { type TestDb, failure } from '../../api/test-usage/db.ts';
 import { runStatementNotices } from '../src/alerts.ts';
 import type { LedgerStore } from '../src/ledger.ts';
 import { Budget } from '../src/mail.ts';
-import { buildStatement } from '../src/statement.ts';
+import { StatementRefused, buildStatement } from '../src/statement.ts';
 import { statementPdf } from '../src/statement-pdf.ts';
 import { exportLedger, issuableFrom, issueStatement, ledgerCsv, sha256Hex, statementKey } from '../src/statements.ts';
 import { ALIAS, FakeBucket, FakeEmail, STAFF, fakeRpcs, insertEvent, ledgerDb, utc } from './fakes.ts';
@@ -33,7 +34,8 @@ const ISSUE_AT = utc('2025-02-04T00:00:00.000Z');
 function pdfText(pdf: Uint8Array): string {
   const raw = Buffer.from(pdf).toString('latin1');
   const out: string[] = [];
-  for (const m of raw.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/gu)) {
+  // pdf-lib writes `stream\n…\nendstream`: no optional `\r` here, or a compressed stream that ends in 0x0d loses its last byte.
+  for (const m of raw.matchAll(/stream\n([\s\S]*?)\nendstream/gu)) {
     let body: string;
     try {
       body = inflateSync(Buffer.from(m[1]!, 'latin1')).toString('latin1');
@@ -230,13 +232,16 @@ describe('the golden statement CSV (byte-stable)', () => {
     ['app_2', { name: '@x, -x', environment: 'test', scopeId: 's2' }],
     ['app_3', { name: '-5', environment: 'live', scopeId: 's1' }],
   ]);
+  // The older rows name no `kind` (a report from before migrations-usage 0008): an app's, else a scope's owner actions.
   const DAY_ROWS = [
+        row({ app_id: null, scope_id: 's1', kind: 'home', home_logins: 1, logins: 0, derives: 0, unlocks: 0, owner_actions: 0, identity_tokens: 0, active_users: 0, new_users: 0, failures: {}, gas: '38500000000000', rejected_gas: '0', burnt_yocto: '3850000000000000000000', rejected_yocto: '0', usd_micros: '9625', rejected_usd_micros: '0', login_p50: null, login_p95: null, derive_p50: null, derive_p95: null, period: '2026-01-02' }),
         row({ app_id: null, scope_id: 's1', period: '2026-01-02', logins: 0, derives: 0, unlocks: 0, owner_actions: 1, identity_tokens: 0, active_users: 0, new_users: 0, failures: {}, login_p50: null, login_p95: null, derive_p50: null, derive_p95: null }),
         row({ app_id: 'app_2', scope_id: 's2', period: '2026-01-03', failures: {} }),
         row({}),
         row({ app_id: 'app_3', period: '2026-01-02', gas: '0', rejected_gas: '0', burnt_yocto: '0', rejected_yocto: '0', usd_micros: '0', rejected_usd_micros: '0', failures: {} }),
   ];
   const MONTH_ROWS = [
+        row({ app_id: null, scope_id: 's1', kind: 'home', home_logins: 1, logins: 0, derives: 0, unlocks: 0, owner_actions: 0, identity_tokens: 0, active_users: 0, new_users: 0, failures: {}, gas: '38500000000000', rejected_gas: '0', burnt_yocto: '3850000000000000000000', rejected_yocto: '0', usd_micros: '9625', rejected_usd_micros: '0', login_p50: null, login_p95: null, derive_p50: null, derive_p95: null, period: '2026-01', near_usd_rate: null, rate_source: null }),
         row({ period: '2026-01', near_usd_rate: null, rate_source: null }),
         row({ app_id: 'app_2', scope_id: 's2', period: '2026-01', failures: {}, near_usd_rate: null, rate_source: null }),
         row({ app_id: 'app_3', period: '2026-01', gas: '0', rejected_gas: '0', burnt_yocto: '0', rejected_yocto: '0', usd_micros: '0', rejected_usd_micros: '0', failures: {}, near_usd_rate: null, rate_source: null }),
@@ -245,29 +250,39 @@ describe('the golden statement CSV (byte-stable)', () => {
   const built = () => buildStatement({ orgId: 'org_golden', orgName: 'Golden "Org", Ltd', month: '2026-01', asOf: Date.UTC(2026, 1, 3, 0, 0, 0, 123), network: 'testnet', apps, dayRows: DAY_ROWS, monthRows: MONTH_ROWS });
 
   const GOLDEN = [
-    'month,org_id,org_name,scope_id,app_id,app_name,environment,day,logins,derives,revokes,unlocks,owner_actions,link_actions,identity_tokens,mau,new_users,failures_by_code,tgas,relayed_rejected_tgas,error_tgas,near,relayed_rejected_near,near_usd_rate,rate_source,usd,relayed_rejected_usd,login_p50_ms,login_p95_ms,derive_p50_ms,derive_p95_ms,unsettled,as_of',
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_1,"'=cmd|""/C calc""!A0",live,2026-01-02,2,1,0,1,0,0,3,,1,bad_token=2;timeout=1,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s2,app_2,"'@x, -x",test,2026-01-03,2,1,0,1,0,0,3,,1,,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_3,-5,live,2026-01-02,2,1,0,1,0,0,3,,1,,0,0,0,0,0,2.5,coingecko,0,0,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,2026-01-02,0,0,0,0,1,0,0,,0,,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,,,,,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_1,"'=cmd|""/C calc""!A0",live,total,2,1,0,1,0,0,3,2,1,bad_token=2;timeout=1,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s2,app_2,"'@x, -x",test,total,2,1,0,1,0,0,3,2,1,,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_3,-5,live,total,2,1,0,1,0,0,3,2,1,,0,0,0,0,0,,,0,0,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,total,0,0,0,0,1,0,0,,0,,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,,,,,0,2026-02-03T00:00:00.123Z`,
+    'month,org_id,org_name,scope_id,app_id,app_name,environment,day,logins,derives,revokes,unlocks,owner_actions,link_actions,identity_tokens,mau,new_users,failures_by_code,tgas,relayed_rejected_tgas,error_tgas,near,relayed_rejected_near,near_usd_rate,rate_source,usd,relayed_rejected_usd,login_p50_ms,login_p95_ms,derive_p50_ms,derive_p95_ms,unsettled,as_of,row_kind,home_logins',
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_1,"'=cmd|""/C calc""!A0",live,2026-01-02,2,1,0,1,0,0,3,,1,bad_token=2;timeout=1,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s2,app_2,"'@x, -x",test,2026-01-03,2,1,0,1,0,0,3,,1,,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_3,-5,live,2026-01-02,2,1,0,1,0,0,3,,1,,0,0,0,0,0,2.5,coingecko,0,0,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,2026-01-02,0,0,0,0,1,0,0,,0,,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,,,,,0,2026-02-03T00:00:00.123Z,scope,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,2026-01-02,0,0,0,0,0,0,0,,0,,38.5,0,0,0.00385,0,2.5,coingecko,0.009625,0,,,,,0,2026-02-03T00:00:00.123Z,home,1`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_1,"'=cmd|""/C calc""!A0",live,total,2,1,0,1,0,0,3,2,1,bad_token=2;timeout=1,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s2,app_2,"'@x, -x",test,total,2,1,0,1,0,0,3,2,1,,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_3,-5,live,total,2,1,0,1,0,0,3,2,1,,0,0,0,0,0,,,0,0,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,total,0,0,0,0,1,0,0,,0,,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,,,,,0,2026-02-03T00:00:00.123Z,scope,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,total,0,0,0,0,0,0,0,,0,,38.5,0,0,0.00385,0,,,0.009625,0,,,,,0,2026-02-03T00:00:00.123Z,home,1`,
   ].join('\n') + '\n';
 
   it('matches the golden bytes, in the fixed order, whatever order the rows come in', async () => {
     const a = built();
     expect(a.csv).toBe(GOLDEN);
-    expect(a.lines).toBe(8);
+    expect(a.lines).toBe(10);
     // Byte-stable: the same rows in another order give the same bytes and hash.
     const inputs = { orgId: 'org_golden', orgName: 'Golden "Org", Ltd', month: '2026-01', asOf: Date.UTC(2026, 1, 3, 0, 0, 0, 123), network: 'testnet', apps };
     const first = buildStatement({ ...inputs, dayRows: DAY_ROWS, monthRows: MONTH_ROWS });
     const shuffled = buildStatement({ ...inputs, dayRows: [...DAY_ROWS].reverse(), monthRows: [...MONTH_ROWS].reverse() });
     expect(shuffled.csv).toBe(first.csv);
     expect(await sha256Hex(new TextEncoder().encode(shuffled.csv))).toBe(await sha256Hex(new TextEncoder().encode(GOLDEN)));
-    expect(a.totals.sum).toMatchObject({ tgas: '98.011349602452', relayedRejectedTgas: '6.6', usd: '0.024336', relayedRejectedUsd: '0.00165', ownerActions: 1 });
-    expect(a.totals.billed).toEqual({ tgas: '91.411349602452', near: '0.0090741801914952', usd: '0.022686' });
+    expect(a.totals.sum).toMatchObject({ tgas: '136.511349602452', relayedRejectedTgas: '6.6', usd: '0.033961', relayedRejectedUsd: '0.00165', ownerActions: 1, homeLogins: 1 });
+    // The Home line is a row of its own, last, after the scope's owner actions, with the gas of the Home logins only.
+    expect(a.totals.rows.map((r) => [r.kind, r.appId ?? r.scopeId, r.homeLogins, r.tgas])).toEqual([
+      ['app', 'app_1', 0, '32.670449867484'],
+      ['app', 'app_2', 0, '32.670449867484'],
+      ['app', 'app_3', 0, '0'],
+      ['scope', 's1', 0, '32.670449867484'],
+      ['home', 's1', 1, '38.5'],
+    ]);
+    expect(a.totals.billed).toEqual({ tgas: '129.911349602452', near: '0.0129241801914952', usd: '0.032311' });
   });
 
   it('refuses a row without USD (a day with gas and no rate): a statement is never issued without one', () => {
@@ -289,3 +304,160 @@ describe('the golden statement CSV (byte-stable)', () => {
   });
 });
 
+
+describe('Hana Home logins on a statement (D461, D585–D588)', () => {
+  const PARTNER = 'org_homepartner';
+  const HANA = 'org_hanainternal';
+  const FEB = '2025-02';
+  const AT = utc('2025-03-04T00:00:00.000Z');
+  const rpcs = fakeRpcs({ orgName: 'Partner', apps: [{ id: 'app_h1', name: 'Wallet app', scopeId: 'sh1', environment: 'live' }] });
+  const bucket = new FakeBucket();
+  const deps = { store, api: rpcs.api, console: rpcs.console, bucket, network: 'testnet', staff: STAFF, now: AT };
+  const HOME_GAS = 38_500_000_000_000n;
+  const HOME_TOKENS = 3_850_000_000_000_000_000_000n;
+
+  beforeAll(async () => {
+    // `deps.store` was read before the file's beforeAll ran.
+    deps.store = store;
+    await rates('2025-02-01', '2025-02-28');
+    // The partner's active app: a login, and three Home derives of its scope written for the partner's org (one of them
+    // relayed and rejected: `ckd_failed`), plus an owner action in the same scope.
+    const login = await insertEvent(db, { org: PARTNER, app: 'app_h1', scope: 'sh1', at: utc('2025-02-03T10:00:00Z'), relayed: true, uid: 7 });
+    const h1 = await insertEvent(db, { org: PARTNER, endpoint: 'home_login', scope: 'sh1', at: utc('2025-02-03T11:00:00Z'), relayed: true });
+    const h2 = await insertEvent(db, { org: PARTNER, endpoint: 'home_login', scope: 'sh1', at: utc('2025-02-20T11:00:00Z'), relayed: true });
+    const failed = await insertEvent(db, { org: PARTNER, endpoint: 'home_login', scope: 'sh1', at: utc('2025-02-21T11:00:00Z'), relayed: true, outcome: 'error', code: 'ckd_failed' });
+    const owner = await insertEvent(db, { org: PARTNER, endpoint: 'owner_action', scope: 'sh1', at: utc('2025-02-22T00:00:00Z'), relayed: true });
+    await settle(login, 30_000_000_000_000n, 3_000_000_000_000_000_000_000n);
+    await settle(h1, HOME_GAS, HOME_TOKENS);
+    await settle(h2, HOME_GAS, HOME_TOKENS);
+    await settle(failed, 20_000_000_000_000n, 2_000_000_000_000_000_000_000n);
+    await settle(owner, 5_000_000_000_000n, 500_000_000_000_000_000_000n);
+    // Hana's own org: derives of a scope whose app is gone, and of a suspended app's scope (the API chose the org).
+    const gone = await insertEvent(db, { org: HANA, endpoint: 'home_login', scope: 'sgone', at: utc('2025-02-05T00:00:00Z'), relayed: true });
+    const suspended = await insertEvent(db, { org: HANA, endpoint: 'home_login', scope: 'ssusp', at: utc('2025-02-06T00:00:00Z'), relayed: true });
+    await settle(gone, HOME_GAS, HOME_TOKENS);
+    await settle(suspended, HOME_GAS, HOME_TOKENS);
+  });
+
+  it('an active app’s org: its own line with the Home logins’ count and gas, in the report, the CSV, the totals and the PDF', async () => {
+    const month = await store.report(PARTNER, '2025-02-01', '2025-02-28', 'month', null, null);
+    expect(month.map((r) => [r.kind, r.app_id, r.scope_id, Number(r.logins), Number(r.owner_actions), Number(r.home_logins), r.gas])).toEqual([
+      ['app', 'app_h1', 'sh1', 1, 0, 0, '30000000000000'],
+      ['scope', null, 'sh1', 0, 1, 0, '5000000000000'],
+      ['home', null, 'sh1', 0, 0, 2, '97000000000000'],
+    ]);
+    // Per day too: the two days with an ok Home login and the day of the failed one.
+    const days = (await store.report(PARTNER, '2025-02-01', '2025-02-28', 'day', null, null)).filter((r) => r.kind === 'home');
+    expect(days.map((r) => [r.period, Number(r.home_logins), r.gas, r.error_gas])).toEqual([
+      ['2025-02-03', 1, '38500000000000', '0'],
+      ['2025-02-20', 1, '38500000000000', '0'],
+      ['2025-02-21', 0, '20000000000000', '20000000000000'],
+    ]);
+    // An app filter leaves the Home line out, as it leaves owner actions out: neither has an app.
+    expect((await store.report(PARTNER, '2025-02-01', '2025-02-28', 'month', ['app_h1'], null)).map((r) => r.kind)).toEqual(['app']);
+
+    const issued = await issueStatement(deps, PARTNER, FEB);
+    if (!issued.ok) throw new Error(issued.error);
+    const t = issued.statement.totals;
+    expect(t.rows.map((r) => [r.kind, r.appId ?? r.scopeId, r.homeLogins, r.tgas, r.mau])).toEqual([
+      ['app', 'app_h1', 0, '30', 1],
+      ['scope', 'sh1', 0, '5', undefined],
+      ['home', 'sh1', 2, '97', undefined],
+    ]);
+    // 97 Tgas = 9.7 mNEAR at 2.5 USD: the Home line's own USD, and part of the org's sum and of what is billed (an
+    // errored relay's gas is billed like any other's, D324; only relayed-then-rejected gas is not).
+    expect(t.rows[2]).toMatchObject({ near: '0.0097', usd: '0.02425', errorTgas: '20', relayedRejectedTgas: '0', failures: { ckd_failed: 1 } });
+    expect(t.sum).toMatchObject({ logins: 1, ownerActions: 1, homeLogins: 2, tgas: '132', near: '0.0132', usd: '0.033' });
+    expect(t.billed).toEqual({ tgas: '132', near: '0.0132', usd: '0.033' });
+
+    const csv = new TextDecoder().decode(bucket.objects.get(issued.statement.csvKey)!.bytes).trimEnd().split('\n').map((l) => l.split(','));
+    const col = (name: (typeof STATEMENT_CSV_COLUMNS)[number]) => STATEMENT_CSV_COLUMNS.indexOf(name);
+    const homeTotal = csv.find((c) => c[col('row_kind')] === 'home' && c[col('day')] === 'total')!;
+    expect([homeTotal[col('scope_id')], homeTotal[col('app_id')], homeTotal[col('home_logins')], homeTotal[col('logins')], homeTotal[col('tgas')], homeTotal[col('usd')], homeTotal[col('mau')]]).toEqual(['sh1', '', '2', '0', '97', '0.02425', '']);
+    expect(csv.filter((c) => c[col('row_kind')] === 'home').map((c) => c[col('day')])).toEqual(['2025-02-03', '2025-02-20', '2025-02-21', 'total']);
+
+    const view = statementView(issued.statement);
+    expect(view.table.map((r) => r.label)).toEqual(['Wallet app (app_h1)', 'Owner actions, scope sh1', 'Hana Home logins, scope sh1']);
+    expect(view.tableColumns).toContain('Home logins');
+    expect(view.table[2]!.cells[view.tableColumns.indexOf('Home logins')]).toBe('2');
+    expect(view.summary).toContainEqual(['Hana Home logins', '2']);
+    const text = pdfText(bucket.objects.get(issued.statement.pdfKey!)!.bytes);
+    expect(text).toContain('Hana Home logins, scope sh1');
+    expect(text).toContain('Home logins: 2');
+    expect(text).toContain('Hana Home logins:\n2');
+    expect(text).toContain('users of these apps opening their wallet from Hana Home');
+    // The ledger CSV for the same as_of reconciles, Home rows included.
+    const ledger = (await ledgerCsv(store, PARTNER, FEB, AT))!;
+    expect(formatTgas(ledger.finalGas)).toBe(t.sum.tgas);
+    expect(ledger.csv).toContain(',home_login,ok,true,');
+  });
+
+  it('Hana’s own org after the app is gone, and for a suspended app: the Home lines and totals are Hana’s, and none of it is on the partner’s', async () => {
+    const rows = await store.report(HANA, '2025-02-01', '2025-02-28', 'month', null, null);
+    expect(rows.map((r) => [r.kind, r.app_id, r.scope_id, Number(r.home_logins), r.gas, r.usd_micros])).toEqual([
+      ['home', null, 'sgone', 1, '38500000000000', '9625'],
+      ['home', null, 'ssusp', 1, '38500000000000', '9625'],
+    ]);
+    const built = buildStatement({ orgId: HANA, orgName: 'Hana (internal)', month: FEB, asOf: AT, network: 'testnet', apps: new Map(), internal: true, dayRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'day', null, AT), monthRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'month', null, AT) });
+    expect(built.totals.sum).toMatchObject({ homeLogins: 2, logins: 0, tgas: '77', usd: '0.01925' });
+    expect(statementView({ csvSha256: 'ab'.repeat(32), totals: built.totals }).table.map((r) => r.label)).toEqual(['Hana Home logins, scope sgone', 'Hana Home logins, scope ssusp']);
+    // The partner's report for the same month names neither scope.
+    expect((await store.report(PARTNER, '2025-02-01', '2025-02-28', 'month', null, null)).map((r) => r.scope_id)).toEqual(['sh1', 'sh1', 'sh1']);
+  });
+
+  it('a Home line for a scope that isn’t the org’s is refused, never billed; Hana’s internal org may carry any scope’s', async () => {
+    // The ledger holds Home rows of scopes `sgone` and `ssusp` for HANA. Read as a partner org's (HANA_ORG_ID wrongly
+    // naming a partner, or a forged event), they are refused: the org has no app in those scopes.
+    const rows = { dayRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'day', null, AT), monthRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'month', null, AT) };
+    const base = { orgId: HANA, orgName: 'Not internal', month: FEB, asOf: AT, network: 'testnet' };
+    expect(() => buildStatement({ ...base, apps: new Map([['app_h1', { name: 'Wallet app', environment: 'live', scopeId: 'sh1' }]]), ...rows })).toThrow(StatementRefused);
+    expect(() => buildStatement({ ...base, apps: new Map(), ...rows })).toThrow(/Hana Home logins of scope sgone are recorded for org_hanainternal, which has no app in that scope/u);
+    // With an app in each scope, or as an internal org, it is built.
+    const own = new Map([['a1', { name: 'A', environment: 'live', scopeId: 'sgone' }], ['a2', { name: 'B', environment: 'live', scopeId: 'ssusp' }]]);
+    expect(buildStatement({ ...base, apps: own, ...rows }).totals.sum.homeLogins).toBe(2);
+    expect(buildStatement({ ...base, apps: new Map(), internal: true, ...rows }).totals.sum.homeLogins).toBe(2);
+
+    // Issuing goes the same way: the org's kind comes from the console. A partner org is refused with nothing written.
+    const files = new FakeBucket();
+    const asPartner = fakeRpcs({ orgName: 'Not internal', apps: [] });
+    const refused = await issueStatement({ store, api: asPartner.api, console: asPartner.console, bucket: files, network: 'testnet', staff: STAFF, now: AT }, HANA, FEB);
+    expect(refused).toMatchObject({ ok: false, code: 'conflict', error: expect.stringMatching(/Hana Home logins of scope sgone/u) });
+    expect(files.objects.size).toBe(0);
+    expect(await store.statements(HANA)).toEqual([]);
+    const asInternal = fakeRpcs({ orgName: 'Hana (internal)', apps: [], kind: 'internal' });
+    const issued = await issueStatement({ store, api: asInternal.api, console: asInternal.console, bucket: files, network: 'testnet', staff: STAFF, now: AT }, HANA, FEB);
+    if (!issued.ok) throw new Error(issued.error);
+    expect(issued.statement.totals.rows.map((r) => [r.kind, r.scopeId])).toEqual([['home', 'sgone'], ['home', 'ssusp']]);
+  });
+
+  it('staff’s ledger CSV names a Home derive’s transaction (to reconcile against the chain); the partner’s rows never do', async () => {
+    const staff = (await ledgerCsv(store, PARTNER, FEB, AT))!;
+    const homeLine = staff.csv.split('\n').find((l) => l.includes(',home_login,ok,'))!.split(',');
+    expect(homeLine[8]).toMatch(/^H[1-9A-HJ-NP-Za-km-z]+$/u);
+    // What the API's writer role reads for the partner (usage.org_ledger): no transaction, the day only, a hashed row id.
+    const partner = await db.asRole('usage_writer', () => db.query<{ request_id: string; at_ms: string; endpoint: string; near_tx: string | null; gas_burnt: string | null }>("SELECT request_id, at_ms::text, endpoint, near_tx, gas_burnt FROM usage.org_ledger($1, '2025-02-01', $2::timestamptz, NULL, 1000)", [PARTNER, new Date(AT).toISOString()]));
+    const home = partner.filter((r) => r.endpoint === 'home_login');
+    expect(home).toHaveLength(3);
+    for (const r of home) {
+      expect(r.near_tx).toBeNull();
+      expect(r.request_id).toMatch(/^home_[0-9a-f]{32}$/u);
+      expect(Number(r.at_ms) % 86_400_000).toBe(0);
+    }
+    expect(partner.filter((r) => r.endpoint !== 'home_login').every((r) => r.near_tx !== null && !r.request_id.startsWith('home_'))).toBe(true);
+    // The writer can't read the full rows.
+    expect((await failure(db.asRole('usage_writer', () => db.query("SELECT * FROM usage.org_ledger_full($1, '2025-02-01', now(), NULL, 10)", [PARTNER]))))?.code).toBe('42501');
+  });
+
+  it('a statement with no Home line renders exactly as before: no Home column, no Home summary line, no Home note', async () => {
+    const plain = buildStatement({ orgId: 'org_plain', orgName: 'Plain', month: FEB, asOf: AT, network: 'mainnet', apps: new Map(), dayRows: [], monthRows: [] });
+    const view = statementView({ csvSha256: 'ab'.repeat(32), totals: plain.totals });
+    expect(view.tableColumns).toEqual(['Logins', 'Derives', 'Owner actions', 'MAU', 'New users', 'Tgas', 'NEAR', 'USD', 'Unsettled']);
+    expect(view.summary.map(([k]) => k)).not.toContain('Hana Home logins');
+    expect(view.notes.join(' ')).not.toMatch(/Hana Home/u);
+    // And its stored totals carry no Home field at all: the shape a reader from before this change expects.
+    const withApp = buildStatement({ orgId: 'org_plain', orgName: 'Plain', month: FEB, asOf: AT, network: 'mainnet', apps: new Map(), dayRows: [], monthRows: await store.report('org_acme', '2025-01-01', '2025-01-31', 'month', null, null) });
+    expect(withApp.totals.rows.length).toBeGreaterThan(0);
+    expect(JSON.stringify(withApp.totals)).not.toContain('homeLogins');
+    expect(JSON.stringify(withApp.totals)).not.toContain('"home"');
+  });
+});

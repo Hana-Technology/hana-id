@@ -200,6 +200,8 @@ describe('the C12 crons', () => {
     withStore();
     const fifteen = await run(FIFTEEN_MINUTES);
     expect(fifteen.filter((l) => l.event === 'ledger_cron').map((l) => [l.step, l.outcome])).toEqual([
+      // Every run: the day's keys not yet tried, at most three a run (D598); with none left it makes no call.
+      ['nonce_check', 'ok'],
       ['retention', 'ok'],
       ['alerts', 'ok'],
       ['retention_alerts', 'ok'],

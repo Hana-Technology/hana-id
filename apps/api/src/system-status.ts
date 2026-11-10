@@ -6,7 +6,7 @@
 // fails on its own: a D1 or NEAR failure leaves the others standing.
 import { type ApiSystemStatus, type CronRunView, type DbProbe, NOTICE_BACKLOG_LIMIT, type NoticeBacklog } from '@hana-id/console-core';
 import { deployedBuild } from './build.ts';
-import { relayerKeys } from './changes/admin.ts';
+import { relayerPools } from './changes/admin.ts';
 import { RpcRefusal } from './changes/cas.ts';
 import type { HotDb } from './changes/db.ts';
 import { q } from './changes/sql.ts';
@@ -52,7 +52,7 @@ async function noticeBacklog(db: HotDb): Promise<NoticeBacklog | null> {
 
 function poolKeys(env: Env): ApiSystemStatus['relayerKeys'] {
   try {
-    return relayerKeys(env);
+    return relayerPools(env).keys;
   } catch {
     return null;
   }
@@ -70,5 +70,5 @@ async function governance(env: Env): Promise<ApiSystemStatus['governance']> {
 
 export async function systemStatus(env: Env, db: HotDb): Promise<ApiSystemStatus> {
   const [hotDb, sync, notices, gov] = await Promise.all([probe(env), jwksSync(db), noticeBacklog(db), governance(env)]);
-  return { build: deployedBuild(env.HANA_BUILD), hotDb, jwksSync: sync, notices, relayerKeys: poolKeys(env), governance: gov };
+  return { build: deployedBuild(env.HANA_BUILD), hotDb, jwksSync: sync, notices, relayerKeys: poolKeys(env), usageCapture: env.USAGE_DB !== undefined, governance: gov };
 }

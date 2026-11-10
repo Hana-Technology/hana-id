@@ -65,7 +65,7 @@ import {
   getSecurityContacts,
   listScopes,
   markSecurityEventNotified,
-  relayerKeys,
+  relayerPools,
   securityEvents,
   setSecurityContacts,
 } from '../changes/admin.ts';
@@ -220,7 +220,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   /** Public keys only: never a secret. */
   relayerKeys(c: unknown) {
-    return runRpc(this.env, 'admin.relayerKeys', relayerKeysInput, c, { actors: HANA_OR_SYSTEM }, async () => ({ keys: relayerKeys(this.env) }));
+    return runRpc(this.env, 'admin.relayerKeys', relayerKeysInput, c, { actors: HANA_OR_SYSTEM }, async () => relayerPools(this.env));
   }
 
   // ---- governance (batch C14, D83, D86): read-only, the snapshot GET /v1/governance serves ----

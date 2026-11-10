@@ -4,8 +4,13 @@
 import { z } from '@hana-id/env/zod';
 import { requestId } from './types.ts';
 
-/** `link`, `link_cancel`, `link_unlink`: the API's link relays (email login batch 6; migrations-usage 0005). */
-export const USAGE_ENDPOINTS = ['login', 'session', 'derive', 'revoke', 'unlock', 'owner_action', 'link', 'link_cancel', 'link_unlink'] as const;
+/**
+ * `link`, `link_cancel`, `link_unlink`: the API's link relays (email login batch 6; migrations-usage 0005).
+ * `home_login`: a Hana Home derive that reached the relay (migrations-usage 0008). It names a scope and no app.
+ */
+export const USAGE_ENDPOINTS = ['login', 'session', 'derive', 'revoke', 'unlock', 'owner_action', 'link', 'link_cancel', 'link_unlink', 'home_login'] as const;
+/** Endpoints whose events name a scope and no app (`app_id` null): an owner action and a Hana Home derive. */
+export const APPLESS_ENDPOINTS = ['owner_action', 'home_login'] as const;
 export const USAGE_OUTCOMES = ['ok', 'rejected', 'error'] as const;
 /** Endpoints whose ok events carry a uid (MAU and new users). */
 export const UID_ENDPOINTS = ['login', 'session', 'derive'] as const;
@@ -24,7 +29,7 @@ export const usageEventV1 = z
     /** Request start, unix ms: sets the UTC day and the monthly partition. */
     at_ms: z.number().int().nonnegative().max(8_640_000_000_000_000),
     org_id: z.string().min(1).max(64),
-    /** null only for owner actions (they belong to a scope, not an app). */
+    /** null only for owner actions and Hana Home derives (they belong to a scope, not an app). */
     app_id: z.string().min(1).max(64).nullable(),
     scope_id: z.string().min(1).max(64),
     endpoint: z.enum(USAGE_ENDPOINTS),
@@ -48,7 +53,7 @@ export const usageEventV1 = z
   .superRefine((e, ctx) => {
     const issue = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, message });
     if (e.relayed && (e.near_tx === undefined || e.relayer_pk === undefined || e.relayer_nonce === undefined)) issue('A relayed event names near_tx, relayer_pk and relayer_nonce');
-    if ((e.endpoint === 'owner_action') !== (e.app_id === null)) issue('app_id is null exactly for owner actions');
+    if ((APPLESS_ENDPOINTS as readonly string[]).includes(e.endpoint) !== (e.app_id === null)) issue('app_id is null exactly for owner actions and Hana Home derives');
     if (e.uid !== undefined && !(e.outcome === 'ok' && (UID_ENDPOINTS as readonly string[]).includes(e.endpoint))) issue('Only ok login, session and derive events carry a uid');
     if ((e.outcome === 'ok') !== (e.code === null)) issue('code is null exactly for ok outcomes');
   });

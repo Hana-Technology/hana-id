@@ -1,22 +1,29 @@
 // POST /v1/home/login (docs/hana-home-spec.md "Tests", H3 of the build plan): a derive with no app gate. Every limit
 // before the relay; a member's root path; a suspended, deleted and purged scope; nothing relayed on any failed check;
 // the directory row (D500); `key_exported` with `chain` null and `app_id` NULL (D520); the Home pool; the exit client.
+// H11: the derive's usage event and who pays for it (D461, D585, D586), with capture on and off; the Home keys in
+// `AdminRpc.relayerKeys` (readiness 7.4a).
 import { encodeHomeIdentity, HOME_EMAIL_AUDIENCE, homeMessage, homeNonce } from '@hana-id/core/home';
+import { usageEventV1 } from '@hana-id/console-core';
 import { applyD1Migrations } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOME_DERIVES_PER_DAY_DEFAULT, HOME_DERIVES_PER_PATH_HOUR, HOME_DERIVES_PER_USER_DAY, HOME_DERIVES_PER_USER_HOUR, HOME_LOGIN_ENDPOINT, HOME_LOGIN_PER_IP_HOUR, HOME_SESSION_MAX_MS, checkHomeClientScope, countHomeDerive, homeDerivesPerDay, homeUnrecordedCeiling, toHomeLogin } from '../src/home/login.ts';
+import { relayerKeys, relayerPools } from '../src/changes/admin.ts';
+import { relayerKeyCount } from '../src/relayer-pool.ts';
+import { HOME_PAYER, hanaOrgId, homeBillingOrg, homePayerOrg, homeScopeStanding } from '../src/home/billing.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { syncAfterLogin } from '../src/directory/sync.ts';
 import { clearLinkViewCaches } from '../src/link-views.ts';
 import { sha256Hex } from '../src/owner-actions.ts';
-import { parseRelayerKeys, POOL_METHODS, POOL_SECRET, poolAllows, relayerKeyName } from '../src/relayer-config.ts';
+import { parseRelayerKeys, POOL_METHODS, POOL_SECRET, poolAllows, poolsSharingAKey, relayerKeyName } from '../src/relayer-config.ts';
 import { ckdPayload, sessionNonce } from '../src/session-crypto.ts';
 import { adminRpc, system } from './rpc-helpers.ts';
 import { emailAud, emailEnv, emailToken, withEmail, type EmailChain } from './email-helpers.ts';
 import { GOOGLE_ISS, type Chain, call, chain, google, seedApp, signSession, uid } from './helpers.ts';
 import { appKey, loginBody, withCombinedCall } from './login-helpers.ts';
+import { ledger } from './usage-ledger.ts';
 
 const AUTH = env.AUTH_ORIGIN!;
 const SHARED = 'shared-client.apps.googleusercontent.com';
@@ -797,6 +804,237 @@ describe('Home shape and pool rules', () => {
     const no = await call(HOME_LOGIN_ENDPOINT, { method: 'OPTIONS', headers: { origin: 'https://wallet.example.com' } });
     expect(no.status).toBe(403);
     expect((await call(HOME_LOGIN_ENDPOINT, { method: 'GET', headers: { origin: AUTH } })).status).toBe(405);
+  });
+});
+
+describe('POST /v1/home/login: the usage event and who pays (H11; D461, D585, D586)', () => {
+  const PARTNER = 'org_partnerH11';
+  const HANA = 'org_hanaH11';
+  /** A derive in `s` by another user, so no test here meets the per-wallet or per-user windows. */
+  const deriveAs = async (s: string, sub: string, bindings?: Partial<typeof env>) => derive(await body(s, SHARED, { sub }), undefined, { sub, ...(bindings ? { env: bindings } : {}) });
+  const homeEvents = (scopeId: string) => ledger.events.filter((e) => e.endpoint === 'home_login' && e.scope_id === scopeId);
+  /** A scope of its own in the partner's org, with one app. */
+  const partnerScope = async (o: { status?: string; suspendedBy?: number } = {}, second = false) => {
+    const s = newScope();
+    const app = await seedApp({ scope: s, ...o });
+    // A second, running app in the same scope (seeded before the scope moves: a new app takes its scope's org).
+    const other = second ? await seedApp({ scope: s }) : undefined;
+    await env.DB.prepare('UPDATE scopes SET org_id = ?2 WHERE scope_id = ?1').bind(s, PARTNER).run();
+    return { scope: s, app, other };
+  };
+
+  it('an active app: one event for the partner’s org, with the Home key and nonce that signed it, no app, no uid and nothing of the user', async () => {
+    const { scope: s } = await partnerScope();
+    const r = await derive(await body(s, SHARED), undefined, { env: { HANA_ORG_ID: HANA } });
+    expect(r.status).toBe(200);
+    const b = await json(r);
+    const [e, ...rest] = homeEvents(s);
+    expect(rest).toEqual([]);
+    expect(usageEventV1.safeParse(e).success).toBe(true);
+    expect(e).toMatchObject({ v: 1, request_id: b.requestId, endpoint: 'home_login', org_id: PARTNER, app_id: null, scope_id: s, outcome: 'ok', code: null, status: 200, relayed: true, near_tx: b.nearTx });
+    // Signed by the Home pool's key, at the nonce the ledger records: what settlement and the nonce check hold it to.
+    const tx = near.sent.at(-1)!;
+    expect(homeKeys).toContain(e!.relayer_pk);
+    expect(e!.relayer_pk).toBe(tx.publicKey);
+    expect(e!.relayer_nonce).toMatch(/^[1-9]\d*$/u);
+    expect(e!.uid).toBeUndefined();
+    const text = JSON.stringify(e);
+    expect(text).not.toContain(SUB);
+    expect(text).not.toContain('#google#');
+    expect(Object.keys(e!).sort()).toEqual(['app_id', 'at_ms', 'code', 'endpoint', 'latency_ms', 'near_tx', 'org_id', 'outcome', 'relay_gas_burnt', 'relay_tokens_burnt_yocto', 'relayed', 'relayer_nonce', 'relayer_pk', 'request_id', 'scope_id', 'status', 'v'].filter((k) => k in e!));
+    // It is no app's event: nothing was recorded under the scope's app.
+    expect(ledger.events.filter((x) => x.app_id !== null && x.scope_id === s)).toEqual([]);
+  });
+
+  it('Hana’s own org once the app is gone: a deleted app’s scope and a scope the hot DB doesn’t hold', async () => {
+    const { scope: deleted, app } = await partnerScope();
+    await env.DB.prepare('UPDATE apps SET deleted_at = ?2 WHERE id = ?1').bind(app.id, Date.now()).run();
+    expect((await deriveAs(deleted, `g1-${uid()}`, { HANA_ORG_ID: HANA })).status).toBe(200);
+    expect(homeEvents(deleted).map((e) => [e.org_id, e.app_id, e.outcome])).toEqual([[HANA, null, 'ok']]);
+
+    const chainOnly = newScope();
+    expect((await deriveAs(chainOnly, `g2-${uid()}`, { HANA_ORG_ID: HANA })).status).toBe(200);
+    expect(homeEvents(chainOnly).map((e) => e.org_id)).toEqual([HANA]);
+
+    // No HANA_ORG_ID in the env (or a malformed one): the legacy org, never the partner's.
+    const other = await partnerScope();
+    await env.DB.prepare('UPDATE apps SET deleted_at = ?2 WHERE id = ?1').bind(other.app.id, Date.now()).run();
+    expect((await deriveAs(other.scope, `g3-${uid()}`)).status).toBe(200);
+    expect(homeEvents(other.scope).map((e) => e.org_id)).toEqual(['org_legacy']);
+    expect(hanaOrgId({ HANA_ORG_ID: 'not an org' })).toBe('org_legacy');
+    expect(hanaOrgId({ HANA_ORG_ID: HANA })).toBe(HANA);
+    expect(hanaOrgId({})).toBe('org_legacy');
+  });
+
+  it('a suspended app, by the single rule: Hana pays (HOME_PAYER.suspended); an app still running in the scope keeps it the partner’s', async () => {
+    // The rule itself, in one table. Changing who pays for a suspended app is changing this line and this test.
+    expect(HOME_PAYER).toEqual({ active: 'partner', suspended: 'hana', gone: 'hana' });
+
+    for (const o of [{ status: 'suspended', suspendedBy: 1 }, { status: 'suspended', suspendedBy: 2 }, { status: 'suspended', suspendedBy: 4 }]) {
+      const { scope: s } = await partnerScope(o);
+      expect((await deriveAs(s, `s${o.suspendedBy}-${uid()}`, { HANA_ORG_ID: HANA })).status).toBe(200);
+      expect(homeEvents(s).map((e) => e.org_id), JSON.stringify(o)).toEqual([HOME_PAYER.suspended === 'hana' ? HANA : PARTNER]);
+    }
+    // Two apps in one scope, one suspended and one running: the scope still has an active app.
+    const mixed = await partnerScope({ status: 'suspended', suspendedBy: 1 }, true);
+    expect((await deriveAs(mixed.scope, `mx-${uid()}`, { HANA_ORG_ID: HANA })).status).toBe(200);
+    expect(homeEvents(mixed.scope).map((e) => e.org_id)).toEqual([PARTNER]);
+    // A deleted app beside a suspended one doesn't count as running.
+    const both = await partnerScope({ status: 'suspended', suspendedBy: 1 }, true);
+    await env.DB.prepare('UPDATE apps SET deleted_at = ?2 WHERE id = ?1').bind(both.other!.id, Date.now()).run();
+    expect((await deriveAs(both.scope, `bt-${uid()}`, { HANA_ORG_ID: HANA })).status).toBe(200);
+    expect(homeEvents(both.scope).map((e) => e.org_id)).toEqual([HANA]);
+
+    // The pure pieces: standing from the app counts, and the org from the rule.
+    expect(homeScopeStanding(null)).toBe('gone');
+    expect(homeScopeStanding({ live: 0, active: 0 })).toBe('gone');
+    expect(homeScopeStanding({ live: 2, active: 0 })).toBe('suspended');
+    expect(homeScopeStanding({ live: 2, active: 1 })).toBe('active');
+    expect(homePayerOrg({ HANA_ORG_ID: HANA }, PARTNER, 'active')).toBe(PARTNER);
+    expect(homePayerOrg({ HANA_ORG_ID: HANA }, PARTNER, 'suspended')).toBe(HANA);
+    expect(homePayerOrg({ HANA_ORG_ID: HANA }, PARTNER, 'gone')).toBe(HANA);
+    expect(homePayerOrg({ HANA_ORG_ID: HANA }, null, 'active')).toBe(HANA);
+  });
+
+  it('when the hot DB can’t say where the scope stands, Hana pays: a partner is never billed on a guess', async () => {
+    const broken = { prepare: () => { throw new Error('D1 down'); } } as unknown as D1Database;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await homeBillingOrg({ DB: broken, HANA_ORG_ID: HANA }, 'anyscope', { requestId: 'req-billing-0001', endpoint: HOME_LOGIN_ENDPOINT })).toBe(HANA);
+    expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('usage_org_unavailable');
+  });
+
+  it('a relay that ran and failed is one relayed event (rejected or error); a request refused before the relay writes none', async () => {
+    const { scope: s } = await partnerScope();
+    near.contract.create_session_and_derive = () => {
+      throw new Error('some contract panic');
+    };
+    const rejected = await derive(await body(s, SHARED));
+    expect(rejected.status).toBe(422);
+    expect(homeEvents(s).map((e) => [e.org_id, e.outcome, e.code, e.status, e.relayed, typeof e.near_tx, homeKeys.includes(e.relayer_pk ?? '')])).toEqual([[PARTNER, 'rejected', 'contract_rejected', 422, true, 'string', true]]);
+
+    // Refused before the relay: a bad shape and the kill switch.
+    const before = ledger.events.length;
+    const sent = near.sent.length;
+    const bad = JSON.stringify({ scopeId: s });
+    expect((await post(bad, (await newIdentity()).sign(bad))).status).toBe(400);
+    expect((await deriveAs(s, `k-${uid()}`, { HOME_DERIVES_PER_DAY: '0' })).status).toBe(429);
+    expect(near.sent.length).toBe(sent);
+    expect(ledger.events.length).toBe(before);
+    // A relay that never left (no key in the pool) is an event that isn't relayed: nothing to settle or explain.
+    const noKey = await deriveAs(s, `u-${uid()}`, { HOME_RELAYER_KEYS: '[]' });
+    expect(noKey.status).toBe(503);
+    expect(ledger.events.slice(before).map((e) => [e.endpoint, e.outcome, e.code, e.relayed, e.near_tx])).toEqual([['home_login', 'error', 'relayer_unconfigured', false, undefined]]);
+    // A wallet that was never opened, where links are open (D544): refused before the relay, no event.
+    withEmail(near, [s]);
+    fresh();
+    expect((await deriveAs(s, `n-${uid()}`, emailEnv())).status).toBe(404);
+    expect(near.sent.length).toBe(sent);
+    expect(ledger.events.length).toBe(before + 1);
+  });
+
+  it('ckd_failed (the session was committed, no key came back) is a relayed event that isn’t ok: no Home login is counted for it', async () => {
+    const { scope: s } = await partnerScope();
+    withCombinedCall(near, { ckd: 'fail' });
+    expect((await derive(await body(s, SHARED))).status).toBe(422);
+    expect(homeEvents(s).map((e) => [e.outcome, e.code, e.relayed])).toEqual([['rejected', 'ckd_failed', true]]);
+  });
+
+  it('with usage capture off (no USAGE_DB, as on sandbox-dev) a derive answers the same and nothing is built, read or sent', async () => {
+    const { scope: s } = await partnerScope();
+    const prepared: string[] = [];
+    const spy = vi.spyOn(env.DB, 'prepare');
+    const off = await derive(await body(s, SHARED), undefined, { env: { USAGE_DB: undefined, HANA_ORG_ID: HANA } });
+    for (const c of spy.mock.calls) prepared.push(String(c[0]));
+    spy.mockRestore();
+    expect(off.status).toBe(200);
+    expect(ledger.calls).toEqual([]);
+    expect(ledger.events).toEqual([]);
+    // The rule's read never ran: who pays is only asked when an event is written.
+    expect(prepared.filter((q) => q.includes('FROM scopes s WHERE s.scope_id'))).toEqual([]);
+
+    // The same derive with capture on, for another user: the same answer's shape, and one event.
+    const on = await deriveAs(s, `on-${uid()}`, { HANA_ORG_ID: HANA });
+    expect(on.status).toBe(200);
+    const strip = ({ requestId: _r, nearTx: _t, session: _s, supportId: _i, ...rest }: Record<string, unknown>) => rest;
+    expect(strip(await json(on))).toEqual(strip(await json(off)));
+    expect(homeEvents(s)).toHaveLength(1);
+    // The failures with capture off are the same too, and write nothing.
+    near.contract.create_session_and_derive = () => {
+      throw new Error('some contract panic');
+    };
+    expect((await deriveAs(s, `off-${uid()}`, { USAGE_DB: undefined })).status).toBe(422);
+    expect(homeEvents(s)).toHaveLength(1);
+  });
+
+  it('a ledger that refuses the event (0008 not applied yet) or can’t be reached never changes the answer', async () => {
+    const { scope: s } = await partnerScope();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    ledger.fail = () => new Error('connect ECONNREFUSED');
+    const r = await derive(await body(s, SHARED));
+    expect(r.status).toBe(200);
+    expect((await json(r)).result).toEqual({ big_y: 'bls12381g1:Y', big_c: 'bls12381g1:C' });
+    const lines = errors.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(lines).toContain('usage_write_failed');
+    expect(lines).not.toContain(SUB);
+  });
+
+  it('AdminRpc.relayerKeys lists the Home pool’s public keys, tagged, beside the session and owner pools’ (readiness 7.4a)', async () => {
+    const r = await adminRpc().relayerKeys({ ...system() });
+    if (!r.ok) throw new Error('relayerKeys refused');
+    const home = r.keys.filter((k) => k.pool === 'home').map((k) => k.publicKey);
+    expect(home).toEqual(homeKeys);
+    expect(home.length).toBeGreaterThan(0);
+    expect(new Set(r.keys.map((k) => k.pool))).toEqual(new Set(['session', 'owner', 'home']));
+    // Public keys only, and a Home key is no other pool's.
+    for (const secret of parseRelayerKeys(env.HOME_RELAYER_KEYS, 'HOME_RELAYER_KEYS')) expect(JSON.stringify(r)).not.toContain(secret.slice(8, 30));
+    expect(r.keys.filter((k) => k.pool !== 'home').map((k) => k.publicKey).filter((k) => homeKeys.includes(k))).toEqual([]);
+    // An env with no Home key lists none.
+    expect(relayerKeys({ ...env, HOME_RELAYER_KEYS: undefined }).some((k) => k.pool === 'home')).toBe(false);
+    expect(relayerKeys(env).filter((k) => k.pool === 'home').map((k) => k.publicKey)).toEqual(homeKeys);
+  });
+
+  it('relayerKeys says whether usage capture is on, and GET /v1/health says it too (for deploy-check)', async () => {
+    const r = await adminRpc().relayerKeys({ ...system() });
+    if (!r.ok) throw new Error('relayerKeys refused');
+    expect(r.capture).toBe(true);
+    expect(r.unreadablePools).toEqual([]);
+    expect(relayerPools({ ...env, USAGE_DB: undefined }).capture).toBe(false);
+    expect((await json(await call('/v1/health'))).usageCapture).toBe(true);
+    expect((await json(await call('/v1/health', { env: { USAGE_DB: undefined } }))).usageCapture).toBe(false);
+  });
+
+  it('a malformed pool secret loses only its own pool: the other pools’ keys are still listed, so their nonce check and settlement go on', async () => {
+    const all = relayerPools(env);
+    for (const [name, pool] of [['HOME_RELAYER_KEYS', 'home'], ['OWNER_RELAYER_KEYS', 'owner'], ['RELAYER_KEYS', 'session']] as const) {
+      for (const bad of ['not json', '["ed25519:"]', '{"a":1}', '["ed25519:1111"]']) {
+        const v = relayerPools({ ...env, [name]: bad });
+        expect(v.unreadablePools, `${name}=${bad}`).toEqual([pool]);
+        expect(v.keys).toEqual(all.keys.filter((k) => k.pool !== pool));
+      }
+    }
+    // Nothing of a secret in the answer, readable or not.
+    expect(JSON.stringify(relayerPools({ ...env, HOME_RELAYER_KEYS: 'not json' }))).not.toContain(parseRelayerKeys(env.RELAYER_KEYS, 'RELAYER_KEYS')[0]!.slice(8, 30));
+  });
+
+  it('one key in two pools is refused: neither pool lists a key or relays, and the third pool is untouched', async () => {
+    const session = parseRelayerKeys(env.RELAYER_KEYS, 'RELAYER_KEYS');
+    const dup = { RELAYER_KEYS: env.RELAYER_KEYS, OWNER_RELAYER_KEYS: env.OWNER_RELAYER_KEYS, HOME_RELAYER_KEYS: JSON.stringify([session[0]]) };
+    expect(poolsSharingAKey(dup)).toEqual(['session', 'home']);
+    expect(poolsSharingAKey(env)).toEqual([]);
+    // A pool that doesn't parse shares nothing (it is refused on its own account).
+    expect(poolsSharingAKey({ ...dup, HOME_RELAYER_KEYS: 'not json' })).toEqual([]);
+    const v = relayerPools({ ...env, ...dup });
+    expect(v.unreadablePools).toEqual(['session', 'home']);
+    expect(v.keys.map((k) => k.pool)).toEqual(relayerKeys(env).filter((k) => k.pool === 'owner').map(() => 'owner'));
+    // The relay refuses the pools involved before anything is signed.
+    const before = near.sent.length;
+    const r = await derive(await body(scope, SHARED), undefined, { env: dup });
+    expect(r.status).toBe(503);
+    expect((await json(r)).code).toBe('relayer_unconfigured');
+    expect(near.sent.length).toBe(before);
+    expect(() => relayerKeyCount({ ...env, ...dup }, 'session')).toThrow(/another pool/u);
+    expect(relayerKeyCount({ ...env, ...dup }, 'owner')).toBeGreaterThan(0);
+    expect(relayerKeyCount(env, 'home')).toBe(homeKeys.length);
   });
 });
 

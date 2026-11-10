@@ -2,7 +2,8 @@
 // report function's rows for the month with one `as_of`: per UTC day (`by = day`) for the day rows, per month
 // (`by = month`) for the totals, so MAU and the percentiles of a total are exact over the month, not sums of days. The
 // CSV is byte-stable: RFC 4180, UTF-8, LF, decimal strings, rows in a fixed order (apps by id then day, then owner
-// actions by scope then day, then one total per app and one per scope), every cell through the injection guard
+// actions by scope then day, then Hana Home logins by scope then day, then one total per app, per scope and per scope's
+// Home logins), every cell through the injection guard
 // (console-core csvCell). The totals are what `usage.statements.totals` stores and what the PDF and the on-screen
 // statement render (console-core statementView), so all three carry the same numbers.
 import {
@@ -13,6 +14,7 @@ import {
   csvLine,
   failuresOf,
   formatNear,
+  reportRowKind,
   formatTgas,
   formatUsd,
   statementTotals,
@@ -32,9 +34,14 @@ export interface StatementInputs {
   asOf: number;
   network: string;
   apps: ReadonlyMap<string, StatementApp>;
+  /** The org is one of Hana's own (kind `internal`): it may carry Home lines of any scope, the ones no partner pays for. */
+  internal?: boolean;
   dayRows: readonly ReportSqlRow[];
   monthRows: readonly ReportSqlRow[];
 }
+
+/** A statement that must not be issued as its rows stand; the message is for staff. */
+export class StatementRefused extends Error {}
 
 const big = (v: string | null | undefined, what: string): bigint => {
   if (v === null || v === undefined || !/^(0|[1-9]\d*)$/u.test(v)) throw new Error(`statement: ${what} is missing`);
@@ -47,6 +54,8 @@ const byKey = (a: ReportSqlRow, b: ReportSqlRow): number => {
   const kb = b.app_id ?? '';
   if (ka !== kb) return ka < kb ? -1 : 1;
   if (a.scope_id !== b.scope_id) return a.scope_id < b.scope_id ? -1 : 1;
+  // A scope's owner actions before its Hana Home logins.
+  if (reportRowKind(a) !== reportRowKind(b)) return reportRowKind(a) === 'home' ? 1 : -1;
   return a.period < b.period ? -1 : a.period > b.period ? 1 : 0;
 };
 const failuresCell = (r: ReportSqlRow): string =>
@@ -60,6 +69,14 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
   for (const a of i.apps.values()) if (!envOfScope.has(a.scopeId)) envOfScope.set(a.scopeId, a.environment);
   const appOf = (r: ReportSqlRow) => (r.app_id === null ? undefined : i.apps.get(r.app_id));
   const environmentOf = (r: ReportSqlRow) => appOf(r)?.environment ?? envOfScope.get(r.scope_id) ?? '';
+
+  // A partner pays only for Home logins of its own scopes. A Home row of any other scope means the ledger put it on the
+  // wrong org (the API's HANA_ORG_ID naming a partner's org, or a forged event): refuse rather than bill it.
+  if (!i.internal) {
+    const own = new Set([...i.apps.values()].map((a) => a.scopeId));
+    const foreign = [...i.dayRows, ...i.monthRows].find((r) => reportRowKind(r) === 'home' && !own.has(r.scope_id));
+    if (foreign) throw new StatementRefused(`Hana Home logins of scope ${foreign.scope_id} are recorded for ${i.orgId}, which has no app in that scope: not issued (check the API's HANA_ORG_ID and the ledger)`);
+  }
 
   const cells = (r: ReportSqlRow, day: string, total: boolean): string[] => {
     const usd = big(r.usd_micros, `the USD of ${r.app_id ?? r.scope_id} on ${r.period} (a day without a rate)`);
@@ -98,20 +115,25 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
       opt(r.derive_p95),
       String(n(r.unsettled)),
       asOf,
+      reportRowKind(r),
+      String(n(r.home_logins)),
     ];
   };
 
   const days = [...i.dayRows].sort(byKey);
   const months = [...i.monthRows].sort(byKey);
-  const ordered = (rows: ReportSqlRow[]) => [...rows.filter((r) => r.app_id !== null), ...rows.filter((r) => r.app_id === null)];
+  const ordered = (rows: ReportSqlRow[]) => (['app', 'scope', 'home'] as const).flatMap((k) => rows.filter((r) => reportRowKind(r) === k));
   const lines = [
     csvLine(STATEMENT_CSV_COLUMNS),
     ...ordered(days).map((r) => csvLine(cells(r, r.period, false))),
     ...ordered(months).map((r) => csvLine(cells(r, 'total', true))),
   ];
 
+  // The Home count is stored only on a statement that has a Home line, so one without is the shape it always was (a
+  // reader from before Hana Home's billing still parses it).
+  const hasHome = months.some((r) => reportRowKind(r) === 'home');
   const rows: StatementTotalRow[] = ordered(months).map((r) => ({
-    kind: r.app_id === null ? 'scope' : 'app',
+    kind: reportRowKind(r),
     scopeId: r.scope_id,
     ...(r.app_id !== null ? { appId: r.app_id, appName: appOf(r)?.name ?? '' } : {}),
     ...(environmentOf(r) ? { environment: environmentOf(r) } : {}),
@@ -122,6 +144,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
     ownerActions: n(r.owner_actions),
     linkActions: n(r.link_actions),
     identityTokens: n(r.identity_tokens),
+    ...(hasHome ? { homeLogins: n(r.home_logins) } : {}),
     ...(r.app_id !== null ? { mau: n(r.active_users) } : {}),
     newUsers: n(r.new_users),
     failures: failuresOf(r.failures),
@@ -159,6 +182,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
       ownerActions: sumN((r) => r.owner_actions),
       linkActions: sumN((r) => r.link_actions),
       identityTokens: sumN((r) => r.identity_tokens),
+      ...(hasHome ? { homeLogins: sumN((r) => r.home_logins ?? 0) } : {}),
       newUsers: sumN((r) => r.new_users),
       tgas: formatTgas(gas),
       relayedRejectedTgas: formatTgas(rejGas),

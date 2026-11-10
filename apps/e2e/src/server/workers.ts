@@ -115,6 +115,7 @@ export const allowAllLimiter = {
   idFromName: (name: string): string => name,
   get: (_id: string) => ({
     hit: async () => ({ ok: true as const }),
+    unhit: async () => undefined,
     hitSliding: async () => ({ ok: true as const }),
     unhitSliding: async () => undefined,
     reserve: async () => true,

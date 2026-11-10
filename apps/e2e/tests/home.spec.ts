@@ -5,42 +5,13 @@
 //   directory.
 // - "every screen": the page's states over a routed `GET /v1/home/apps` (the sign-in is still the real one). With
 //   HANA_SHOTS_DIR set (Chromium only) it saves each screen there at desktop and phone width, light and dark.
-import type { BrowserContext, Page } from '@playwright/test';
-import { API_URL, AUTH_ORIGIN, EVIL_ORIGIN } from '../src/stack.ts';
+import { API_URL, AUTH_ORIGIN, EVIL_ORIGIN, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { chooseAccount, expect, login, newApp, openPartner, test, walletDirectory } from './fixtures.ts';
+import { routeApps, shots, signIn } from './home-steps.ts';
 
-
-const SHOTS = process.env.HANA_SHOTS_DIR;
-const HOME_APPS = `${API_URL}/v1/home/apps`;
 const G = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 
-const VARIANTS = [
-  { name: 'desktop-light', width: 1280, height: 800, scheme: 'light' },
-  { name: 'desktop-dark', width: 1280, height: 800, scheme: 'dark' },
-  { name: 'phone-light', width: 390, height: 844, scheme: 'light' },
-  { name: 'phone-dark', width: 390, height: 844, scheme: 'dark' },
-] as const;
-
-/** Saves the screen in each size and colour scheme, and checks in each that nothing spills past the window's width. */
-async function shots(page: Page, name: string, browserName: string): Promise<void> {
-  for (const v of VARIANTS) {
-    await page.setViewportSize({ width: v.width, height: v.height });
-    await page.emulateMedia({ colorScheme: v.scheme });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${name} ${v.name}: no sideways scroll`).toBe(true);
-    if (SHOTS && browserName === 'chromium') await page.screenshot({ path: `${SHOTS}/${name}-${v.name}.png`, fullPage: true, animations: 'disabled' });
-  }
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.emulateMedia({ colorScheme: 'light' });
-}
-
-/** The click, the child at `/login?mode=home`, the Google stub's chooser. */
-async function signIn(page: Page, button = 'Continue with Google', account = 0): Promise<void> {
-  const childP = page.waitForEvent('popup');
-  await page.getByRole('button', { name: button }).click();
-  const child = await childP;
-  await chooseAccount(child, account);
-}
 
 test('lists the app the user signed in to, with its addresses and Support ID, from the real API', async ({ page, context, google, browserName }) => {
   // Its own scope per browser: the stack's default scope fills with other tests' apps, and the projects share one stack.
@@ -56,7 +27,8 @@ test('lists the app the user signed in to, with its addresses and Support ID, fr
   const response = await home.goto(`${AUTH_ORIGIN}/home`);
   const csp = response?.headers()['content-security-policy'] ?? '';
   expect(csp).toContain("frame-ancestors 'none'");
-  expect(csp).toContain(`connect-src ${new URL(API_URL).origin} https://www.googleapis.com`);
+  // The API, both NEAR providers (the per-app derive reads NEAR itself, a member's path on each alone) and Google's keys.
+  expect(csp).toContain(`connect-src ${new URL(API_URL).origin} ${new URL(NEAR_RPC).origin} ${new URL(NEAR_RPC_FALLBACK).origin} https://www.googleapis.com`);
   // Whoever opened Hana Home keeps no handle on it; the sign-in child Home opens itself still reaches Home (below).
   expect(response?.headers()['cross-origin-opener-policy']).toBe('same-origin-allow-popups');
   await expect(home.getByRole('heading', { name: 'Hana Home' })).toBeVisible();
@@ -119,18 +91,6 @@ const LIST = {
   ],
   nextCursor: 's6',
 };
-
-/** Answers `GET /v1/home/apps` (and its preflight) from `answer`, as the API would to the auth origin. */
-async function routeApps(context: BrowserContext, answer: (url: URL) => { status: number; body: unknown }): Promise<void> {
-  const cors = { 'access-control-allow-origin': AUTH_ORIGIN, 'access-control-allow-headers': 'content-type, x-hana-home', 'access-control-allow-methods': 'GET, POST, OPTIONS', vary: 'Origin' };
-  await context.route(`${HOME_APPS}**`, async (route) => {
-    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
-    // Every listing request carries the signed header, and never a cookie.
-    expect(route.request().headers()['x-hana-home']).toMatch(/^[A-Za-z0-9_-]{200,}$/u);
-    const { status, body } = answer(new URL(route.request().url()));
-    return route.fulfill({ status, headers: { ...cors, 'content-type': 'application/json', 'cache-control': 'no-store', 'x-request-id': 'req_e2e' }, body: JSON.stringify(body) });
-  });
-}
 
 test('every screen: signed out, signing in, the list, an app, search, the sign-in’s end, an empty list, an error', async ({ page, context, browserName }) => {
   test.setTimeout(180_000);

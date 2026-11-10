@@ -755,6 +755,11 @@ button.home-export-toggle {
   flex-wrap: wrap;
 }
 
+/* Text under a row of buttons keeps its distance from them (the reveal's copy status sits between, empty until used). */
+.home-export .actions + p {
+  margin-top: 12px;
+}
+
 .home-export label {
   display: block;
   margin-top: 12px;

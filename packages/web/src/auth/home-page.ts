@@ -31,7 +31,7 @@ import { ApiError, HOME_EMAIL_AUDIENCE, type Jwk, RELAY_KEY_BYTES, type RelayRea
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ServerClock } from './clock.ts';
-import { type Child, type Dom, addressText, dom } from './dom.ts';
+import { type Child, type Dom, addressText, dom, maskedAddress } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { googleKeys } from './google-keys.ts';
 import { HOME_APP_ID, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeAddress, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
@@ -408,6 +408,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     identity = null;
     if (session === 'none') return;
     session = 'ended';
+    byId('home-who')?.replaceWith(whoText());
     renderBanner();
   }
 
@@ -1009,7 +1010,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
    */
   function whoText(): HTMLElement {
     const el = d.h('span', { class: 'muted', attrs: { id: 'home-who' } });
-    if (account?.provider === 'email' && emailAddress) el.append('Signed in as ', addressText(d, emailAddress, 'strong', 'home-who-address'));
+    // Once the sign-in has ended the address is masked on screen; the page still holds it for "Sign in again".
+    if (account?.provider === 'email' && emailAddress) el.append('Signed in as ', addressText(d, session === 'ended' ? maskedAddress(emailAddress) : emailAddress, 'strong', 'home-who-address'));
     else el.append(account?.provider === 'email' ? 'Signed in with email' : 'Signed in with Google');
     return el;
   }

@@ -2,13 +2,17 @@
 // Hana, whether Hana can still open their wallet in each, their addresses there and their Support ID. Looking derives
 // no key and sends no chain transaction: the lists come from `GET /v1/home/apps`. On an app's page, a collapsed section
 // lets the user open that wallet and take its private key to another wallet app (home-export.ts): it does nothing until
-// the user expands it and signs in again, and nothing in the page's address can open or start it. The devices list and
-// email sign-in are later additions with their own seams here (the `home-app-extras` element, `SIGN_IN_METHODS`).
+// the user expands it and signs in again, and nothing in the page's address can open or start it. The devices list is a
+// later addition with its own seam here (the `home-app-extras` element).
 //
-// Sign-in: a click opens a child `/login?mode=home` (as the export window opens its own), which takes
-// `hana:home-params` only from this page, goes to Google with a nonce that commits to a key made for this sign-in, and
-// relays Google's answer through the login relay. This page checks the token against Google's keys, then signs every
-// API call with that key (home-api.ts). A new sign-in always makes a new key.
+// Sign-in, with Google or an email code (`SIGN_IN_METHODS`). Google: a click opens a child `/login?mode=home` (as the
+// export window opens its own), which takes `hana:home-params` only from this page, goes to Google with a nonce that
+// commits to a key made for this sign-in, and relays Google's answer through the login relay. The shared Google client
+// is used while one is in force, else Hana Home's exit client (D490), whose answer comes back through `/home/callback`
+// (D491). This page checks the token against Google's keys. Email (D463): the code screens are on this page
+// (home-email.ts); the issuer's Home route signs a token whose nonce commits to the key, and the API checks it against
+// the chain's email keys. Then every API call is signed with that key (home-api.ts). A new sign-in always makes a new
+// key. Two methods are two accounts, even with the same id (D559).
 //
 // The sign-in lasts 15 minutes. The page tells its end from the identity's own end and from a 401; it warns two
 // minutes before; when it ends, everything on screen stays and nothing is fetched until the user signs in again; no
@@ -16,13 +20,14 @@
 //
 // SECURITY:
 // - The identity (key, token, `sub`) is in memory only: never in storage, a URL, a message other than the one to the
-//   child (which carries the public key and the relay key, no token) or a log.
+//   child (which carries the public key and the relay key, no token) or a log. So is an email sign-in's address: it is
+//   sent to the issuer only, and kept for the sign-in it was typed for (opening a wallet sends its code there).
 // - App names, origins and logos are partner-supplied. They reach the page only as text nodes, attribute values that
 //   aren't URLs, and a logo `<img>` pinned to this build's files origin (logo.ts). Nothing here builds markup from a
 //   string, and no partner string becomes a link.
 // - The page drops its opener at load, refuses to run framed, takes messages only from its own child window, and acts
 //   only on real clicks in its own page.
-import { ApiError, type Jwk, RELAY_KEY_BYTES, type RelayReadResponse, type WindowMessage, base64UrlEncode, decryptRelayPayload, isJsonFormToken, isRelayToken, parseWindowMessage, randomBytes, relayIdFor, sessionKeyFailure, verifyGoogleIdToken } from '@hana-id/core';
+import { ApiError, HOME_EMAIL_AUDIENCE, type Jwk, RELAY_KEY_BYTES, type RelayReadResponse, type WindowMessage, base64UrlEncode, decryptRelayPayload, isJsonFormToken, isRelayToken, parseWindowMessage, randomBytes, relayIdFor, sessionKeyFailure, verifyGoogleIdToken } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ServerClock } from './clock.ts';
@@ -30,6 +35,7 @@ import { type Child, type Dom, dom } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { googleKeys } from './google-keys.ts';
 import { HOME_APP_ID, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeAddress, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
+import { EMAIL_SUB_RE, type HomeEmailApi, type HomeEmailStep, emailTokenClaims, homeEmailStep } from './home-email.ts';
 import { type HomeExport, type HomeExportState, homeExportRoute, startHomeExport } from './home-export.ts';
 import { type HomeProblem, homeProblem } from './home-problems.ts';
 import { type ExportClipboard, browserClipboard as exportClipboard, screenGuard } from './key-reveal.ts';
@@ -44,8 +50,8 @@ export const HOME_LOGIN_LIMIT_MS = 5 * 60_000;
 /** The sign-in child's path and query. */
 export const HOME_LOGIN_CHILD = '/login?mode=home';
 export const HOME_PATH = '/home';
-/** The sign-in methods the page offers. Email joins with its own route. */
-export const SIGN_IN_METHODS = ['google'] as const;
+/** The sign-in methods the page offers, each while `GET /v1/home/config` says it is open. */
+export const SIGN_IN_METHODS = ['google', 'email'] as const;
 const RELAY_WAIT_S = 25;
 const CHILD_WATCH_MS = 500;
 /** How long "Copied" stays. */
@@ -74,6 +80,8 @@ export interface HomePageDeps {
   near: NearReader;
   /** Whether this window has focus (default: `document.hasFocus()`): the guard and the clipboard blank need it. */
   hasFocus?: () => boolean;
+  /** The email issuer's Home route (home-email.ts), or null (the default) in an env without an email issuer. */
+  email?: HomeEmailApi | null;
   /** The guard's clock (default: Date.now; tests inject one): Continue, Show key and Copy key wait for it. */
   guardNow?: () => number;
 }
@@ -207,11 +215,20 @@ interface HomeAccount {
 
 interface PendingSignIn {
   identity: HomeIdentity;
+  /** The Google client this sign-in uses: the shared client, or the exit client (answered at `/home/callback`). */
+  clientId: string;
   relayId: string;
   relayKey: Uint8Array;
   relayReadKey: Uint8Array;
   params: WindowMessage<'hana:home-params'>;
   helloAccepted: boolean;
+}
+
+/** Which Google client Hana Home's own sign-in uses: the shared client while one is in force, else the exit client (D490). */
+export function homeGoogleRoute(config: HomeConfig | null): { clientId: string; exit: boolean } | null {
+  if (config?.sharedGoogleClientId) return { clientId: config.sharedGoogleClientId, exit: false };
+  if (config?.exitGoogleClientId) return { clientId: config.exitGoogleClientId, exit: true };
+  return null;
 }
 
 export function startHomePage(deps: HomePageDeps): HomePage {
@@ -256,6 +273,14 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   let child: Window | null = null;
   let childName: string | null = null;
   let signInError: HomeProblem | null = null;
+  /** An email sign-in in progress: its code screens, where they draw, and the identity its code is for. */
+  let emailStep: HomeEmailStep | null = null;
+  let emailBox: HTMLElement | null = null;
+  let emailIdentity: HomeIdentity | null = null;
+  /** The signed-in email account's address, for its later codes (memory only). */
+  let emailAddress: string | null = null;
+  const emailApi: HomeEmailApi | null = deps.email ?? null;
+  const emailOpen = (): boolean => emailApi !== null && config?.emailSignIn === true;
 
   /** Addresses of wallets opened in this page, by listing: shown where Hana had none on record. Memory only. */
   const opened = new Map<string, HomeAddress[]>();
@@ -300,8 +325,10 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     hasFocus,
     session: () => {
       checkSession();
-      return identity && identity.usable && account ? { identity, account } : null;
+      if (!identity || !identity.usable || !account) return null;
+      return { identity, account: account.provider === 'email' && emailAddress ? { ...account, address: emailAddress } : account };
     },
+    email: emailApi,
     config: () => config,
     signingIn: () => signingIn,
     onSignedOut: () => endSession(),
@@ -574,10 +601,19 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   }
 
   /** The sign-in attempt is over without a new identity: back to where the page was. */
+  function endEmailStep(): void {
+    emailStep?.end();
+    emailStep = null;
+    emailBox = null;
+    emailIdentity?.end();
+    emailIdentity = null;
+  }
+
   function signInFailed(p: HomeProblem | null): void {
     if (pending) pending.identity.end();
     wipePending();
     closeChild();
+    endEmailStep();
     signingIn = false;
     if (stage === 'signing_in') {
       stage = 'signed_out';
@@ -598,7 +634,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
    * hello every 100 ms, so one that arrives early is answered by a later one.
    */
   function beginSignIn(): void {
-    if (signingIn || !config?.sharedGoogleClientId || stage === 'loading' || stage === 'stopped' || stage === 'unavailable') return;
+    if (signingIn || !homeGoogleRoute(config) || stage === 'loading' || stage === 'stopped' || stage === 'unavailable') return;
     // One sign-in child at a time: a per-app sign-in that hasn't finished gives way to this one.
     moving.yieldChild();
     signingIn = true;
@@ -650,11 +686,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         signInFailed(plain('login_cancelled', 'The sign-in window closed before it finished. Try again.'));
       }
     }, CHILD_WATCH_MS);
-    track(prepare(opened, config));
+    track(prepare(opened, config as HomeConfig));
   }
 
   async function prepare(opened: Window, cfg: HomeConfig): Promise<void> {
-    const clientId = cfg.sharedGoogleClientId as string;
+    const route = homeGoogleRoute(cfg);
+    if (!route) return signInFailed(plain('no_google_client', 'Hana Home can’t sign you in with Google right now.'));
+    const clientId = route.clientId;
     let made: HomeIdentity;
     try {
       made = await newHomeIdentity(env.signer, clock.now());
@@ -680,8 +718,80 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       nonce: made.nonce,
       relayId,
       relayKey: Uint8Array.from(relayKey),
+      // The exit client answers at /home/callback only (D491).
+      ...(route.exit ? { exit: true as const } : {}),
     };
-    pending = { identity: made, relayId, relayKey, relayReadKey, params, helloAccepted: false };
+    pending = { identity: made, clientId, relayId, relayKey, relayReadKey, params, helloAccepted: false };
+  }
+
+  /**
+   * "Continue with email": the code screens, on this page (no child window). Each "Send code" makes this sign-in's key
+   * (so its 15 minutes start then), and the code it mails is for that key alone. Signing in again for an email account
+   * sends the code to the same address.
+   */
+  function beginEmailSignIn(): void {
+    const api = emailApi;
+    if (signingIn || !api || !emailOpen() || stage === 'loading' || stage === 'stopped' || stage === 'unavailable') return;
+    moving.yieldChild();
+    signingIn = true;
+    signInError = null;
+    const renew = stage === 'signed_in';
+    const fixed = renew && account?.provider === 'email' ? emailAddress : null;
+    const box = d.h('div', { class: 'home-email', attrs: { id: 'home-email' } });
+    emailBox = box;
+    emailStep = homeEmailStep({
+      d,
+      root: box,
+      isGesture,
+      now: () => clock.now(),
+      title: renew ? 'Sign in again' : 'Sign in with email',
+      intro: renew ? 'Hana Home sends a new code to the email you signed in with.' : 'Use the email you sign in to your apps with. Hana sends a 6-digit code to it.',
+      address: fixed,
+      start: async (address) => {
+        emailIdentity?.end();
+        emailIdentity = null;
+        const made = await newHomeIdentity(env.signer, clock.now());
+        if (emailBox !== box) {
+          made.end();
+          throw new ApiError(499, 'login_cancelled', 'cancelled', null, null);
+        }
+        emailIdentity = made;
+        return api.start(address, 'identity', { homePublicKey: made.publicKey, expiresAtMs: made.expiresAtMs, salt: made.salt });
+      },
+      api,
+      ids: 'home-email',
+      onToken: (token, address) => emailSignedIn(token, address),
+      onStop: ({ code }) => signInFailed(plain(code === 'home_email_unavailable' ? code : 'email_token_invalid', code === 'home_email_unavailable' ? 'Email sign-in to Hana Home isn’t available right now. Try again later.' : 'The email sign-in could not be finished. Try again.')),
+      onCancel: () => signInFailed(null),
+    });
+    if (renew) {
+      renderBanner();
+      return;
+    }
+    stage = 'signing_in';
+    d.show(d.h('section', { class: 'panel home' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'), box));
+  }
+
+  /** The code was right: the token must be the issuer's Home identity for this sign-in's key. */
+  function emailSignedIn(token: string, address: string): void {
+    const made = emailIdentity;
+    emailIdentity = null;
+    emailStep = null;
+    emailBox = null;
+    const c = emailTokenClaims(token);
+    // Read without its signature (the API checks that against the chain's keys): the Home audience, this key's nonce,
+    // the env's issuer, an email `sub`, not expired.
+    if (!made || !c || c.aud !== HOME_EMAIL_AUDIENCE || c.nonce !== made.nonce || (env.emailIss !== undefined && c.iss !== env.emailIss) || !EMAIL_SUB_RE.test(c.sub) || c.exp * 1000 <= clock.now()) {
+      made?.end();
+      return signInFailed(plain('email_token_invalid', 'The email sign-in could not be checked. Try again.'));
+    }
+    if (clock.now() >= made.expiresAtMs) {
+      made.end();
+      return signInFailed(plain('login_timeout', 'The sign-in took too long. Try again.'));
+    }
+    made.attach(token);
+    signingIn = false;
+    signedIn(made, { provider: 'email', sub: c.sub }, address);
   }
 
   /** Whether `w` is on this origin at `/login?mode=home`. A window whose address can't be read (another origin) isn't. */
@@ -717,7 +827,6 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   /** Long-polls the relay for Google's answer, checks the token, and signs in. */
   async function awaitToken(p: PendingSignIn): Promise<void> {
-    const cfg = config as HomeConfig;
     const deadline = clock.now() + HOME_LOGIN_LIMIT_MS;
     const readKey = base64UrlEncode(p.relayReadKey);
     let value: RelayReadResponse | null = null;
@@ -747,7 +856,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       } else if (!isRelayToken(payload) || payload.accessToken !== undefined || payload.access !== undefined || payload.caseB !== undefined || payload.as !== undefined || isJsonFormToken(payload.idToken)) {
         failure = plain('token_invalid', 'Google’s answer could not be verified. Try again.');
       } else {
-        const checked = await verifyGoogleIdToken(payload.idToken, { clientId: cfg.sharedGoogleClientId as string, nonce: p.identity.nonce, nowMs: clock.now(), jwks }).catch(() => null);
+        const checked = await verifyGoogleIdToken(payload.idToken, { clientId: p.clientId, nonce: p.identity.nonce, nowMs: clock.now(), jwks }).catch(() => null);
         if (checked === null) failure = plain('api_unavailable', 'Google’s keys could not be read. Try again.');
         else if (!checked.ok) failure = checked.code === 'token_has_pii' ? plain('token_has_pii', 'Google returned more account details than Hana accepts, so the sign-in was stopped.') : plain('token_invalid', 'Google’s answer could not be verified. Try again.');
         else {
@@ -773,12 +882,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   }
 
   /** A sign-in finished. The same account keeps the screen as it is and fetches nothing; another account starts over. */
-  function signedIn(next: HomeIdentity, who: HomeAccount): void {
+  function signedIn(next: HomeIdentity, who: HomeAccount, address: string | null = null): void {
     // The same person is the same sign-in method and the same id from it: two methods can use the same id for two people.
     const same = stage === 'signed_in' && account !== null && account.provider === who.provider && account.sub === who.sub;
     identity?.end();
     identity = next;
     account = who;
+    emailAddress = who.provider === 'email' ? address : null;
     session = 'active';
     signInError = null;
     scheduleSession(next);
@@ -818,10 +928,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     if (pending) pending.identity.end();
     wipePending();
     closeChild();
+    endEmailStep();
     signingIn = false;
     identity?.end();
     identity = null;
     account = null;
+    emailAddress = null;
     session = 'none';
     clearScreen();
     stage = 'signed_out';
@@ -831,19 +943,28 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   // ---- screens ----
   function renderSignedOut(): void {
-    const start = button('Continue with Google', beginSignIn, { class: 'primary', id: 'home-sign-in' });
+    const google = homeGoogleRoute(config) !== null;
+    const email = emailOpen();
+    const buttons = [
+      google ? button('Continue with Google', beginSignIn, { class: 'primary', id: 'home-sign-in' }) : null,
+      email ? button('Continue with email', beginEmailSignIn, { class: google ? undefined : 'primary', id: 'home-sign-in-email' }) : null,
+    ].filter((b): b is HTMLButtonElement => b !== null);
+    const how = google && email ? 'the Google account or the email' : email ? 'the email' : 'the Google account';
     d.show(
       d.h(
         'section',
         { class: 'panel home' },
         d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'),
         d.h('p', {}, 'See the apps you use with Hana and your wallet addresses in each of them, in one place.'),
-        d.h('p', { class: 'muted' }, 'Sign in with the Google account you use in those apps. You stay signed in for 15 minutes, and not after you close or reload this page.'),
+        d.h('p', { class: 'muted' }, `Sign in with ${how} you use in those apps. You stay signed in for 15 minutes, and not after you close or reload this page.`),
         signInError ? problemView(signInError, 'home-sign-in-problem') : null,
-        d.h('div', { class: 'actions choose' }, start),
+        d.h('div', { class: 'actions choose' }, ...buttons),
       ),
     );
   }
+
+  /** How the page names the signed-in account in its sentences. */
+  const accountName = (): string => (account?.provider === 'email' ? 'email address' : 'Google account');
 
   function renderUnavailable(p: HomeProblem): void {
     stage = 'unavailable';
@@ -869,7 +990,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           'header',
           { class: 'home-head' },
           d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'),
-          d.h('p', { class: 'home-who' }, d.h('span', { class: 'muted' }, 'Signed in with Google'), button('Sign out', signOut, { id: 'home-sign-out' })),
+          d.h('p', { class: 'home-who' }, d.h('span', { class: 'muted', attrs: { id: 'home-who' } }, account?.provider === 'email' ? 'Signed in with email' : 'Signed in with Google'), button('Sign out', signOut, { id: 'home-sign-out' })),
         ),
         d.h('div', { attrs: { id: 'home-banner', 'aria-live': 'polite' } }),
         d.h('div', { attrs: { id: 'home-notice' } }),
@@ -882,11 +1003,17 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   function renderBanner(): void {
     if (stage !== 'signed_in') return;
+    if (signingIn && emailBox) {
+      // Signing in again with email: the code screens, kept as they are while the banner is drawn again.
+      fill('home-banner', d.h('div', { class: 'home-banner note' }, emailBox));
+      return;
+    }
     if (signingIn) {
       fill('home-banner', d.h('div', { class: 'home-banner note' }, d.h('p', {}, 'Finish signing in with Google in the other window.'), button('Cancel', () => signInFailed(null), { id: 'home-cancel' })));
       return;
     }
-    const again = () => button('Sign in again', beginSignIn, { class: 'primary', id: 'home-sign-in-again' });
+    // Sign in again with the method this account uses.
+    const again = () => button('Sign in again', account?.provider === 'email' ? beginEmailSignIn : beginSignIn, { class: 'primary', id: 'home-sign-in-again' });
     if (session === 'ending' && identity) {
       const minutes = Math.max(1, Math.ceil((identity.expiresAtMs - clock.now()) / 60_000));
       fill(
@@ -986,13 +1113,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           ? d.h('div', { class: 'actions start' }, button('Try again', () => track(loadFirst()), { class: 'primary', id: 'home-reload' }))
           : mine.length > 0
             ? cards(mine)
-            : d.h('p', { class: 'muted', attrs: { id: 'home-empty' } }, 'No apps yet for this Google account. An app appears here once you have signed in to it with Hana.'),
+            : d.h('p', { class: 'muted', attrs: { id: 'home-empty' } }, `No apps yet for this ${accountName()}. An app appears here once you have signed in to it with Hana.`),
       list === 'ready' && linked && !mine.some((s) => s.scopeId === linked?.scopeId)
         ? d.h(
             'section',
             { attrs: { id: 'home-linked', 'aria-labelledby': 'home-linked-title' } },
             d.h('h2', { attrs: { id: 'home-linked-title' } }, 'The app from your link'),
-            d.h('p', { class: 'note' }, 'The link you opened is for the app below. Hana has no wallet on record for this Google account in it. Its name and address are the app’s own, not Hana’s.'),
+            d.h('p', { class: 'note' }, `The link you opened is for the app below. Hana has no wallet on record for this ${accountName()} in it. Its name and address are the app’s own, not Hana’s.`),
             cards([linked]),
           )
         : null,
@@ -1074,7 +1201,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     // The app the page's link named, the user's own included: a link can come from anyone ("open this, press Move this
     // wallet, paste the key here"), so the page never offers to open that wallet in this page load.
     const fromLink = linked?.scopeId === scope.scopeId || linkScope === scope.scopeId;
-    const cover = coverageText(scope.coverage, scope.mine, typeof homeExportRoute(scope, config, fromLink) !== 'string');
+    const cover = coverageText(scope.coverage, scope.mine, typeof homeExportRoute(scope, config, fromLink, account?.provider ?? 'google', emailApi !== null) !== 'string');
     const stellar = STELLAR_ACCOUNT_URL[env.network];
     // Addresses on record, or, where Hana has none, those of the wallet the user opened here in this page.
     const fromWallet = scope.addresses.length === 0 ? (opened.get(scope.scopeId) ?? []) : [];
@@ -1107,7 +1234,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       d.h('h3', {}, 'Your addresses'),
       addressRows.length > 0
         ? d.h('div', { class: 'home-addresses' }, fromWallet.length > 0 ? d.h('p', { class: 'muted', attrs: { id: 'home-opened-note' } }, 'From the wallet you opened on this page. Hana had no address on record for you here.') : null, ...addressRows)
-        : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? 'Hana has no address on record for you in this app yet.' : 'Hana has no wallet on record for this Google account in this app.'),
+        : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? 'Hana has no address on record for you in this app yet.' : `Hana has no wallet on record for this ${accountName()} in this app.`),
       scope.supportId
         ? d.h(
             'div',
@@ -1135,7 +1262,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     }
     clock.sync(config.serverTimeMs);
     if (config.signer !== env.signer) return renderUnavailable(plain('config_mismatch', 'Hana Home’s settings don’t match this page, so sign-in is off. Try again later.'));
-    if (!config.sharedGoogleClientId) return renderUnavailable(plain('no_google_client', 'Hana Home can’t sign you in right now. Try again later.'));
+    // D550's open point, settled: with no shared Google client in force, Google sign-in uses the exit client; only with
+    // neither, and no email sign-in, is there nothing to offer.
+    if (!homeGoogleRoute(config) && !emailOpen()) return renderUnavailable(plain('no_google_client', 'Hana Home can’t sign you in right now. Try again later.'));
     stage = 'signed_out';
     signInError = null;
     renderSignedOut();

@@ -831,6 +831,11 @@ export interface WindowMessageMap {
     nonce: string;
     relayId: string;
     relayKey: Uint8Array;
+    /**
+     * `clientId` is Hana Home's exit Google client: Google answers to `/home/callback`, the exit client's only redirect,
+     * never to `/login/callback`. Absent for the shared client.
+     */
+    exit?: true;
   };
   /**
    * Hana Home page → its own sign-in child (`/login?mode=home`), for opening one app's wallet: a session of exactly one
@@ -848,6 +853,8 @@ export interface WindowMessageMap {
     nonce: string;
     relayId: string;
     relayKey: Uint8Array;
+    /** As `hana:home-params`: the exit Google client, answered to `/home/callback`. */
+    exit?: true;
   };
   /**
    * Login popup → vault: the popup is about to navigate to Google (`google`, from any Hana page, every time), it is
@@ -1085,7 +1092,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isRelayId(m.relayId) &&
     isBytes(m.relayKey, 32, 32),
   'hana:home-params': (m) =>
-    exactKeys(m, ['v', 't', 'signer', 'clientId', 'homePublicKey', 'expiresAtMs', 'salt', 'nonce', 'relayId', 'relayKey']) &&
+    exactKeys(m, ['v', 't', 'signer', 'clientId', 'homePublicKey', 'expiresAtMs', 'salt', 'nonce', 'relayId', 'relayKey'], ['exit']) &&
+    (m.exit === undefined || m.exit === true) &&
     isNearAccountId(m.signer) &&
     isClientId(m.clientId) &&
     isBytes(m.homePublicKey, 32, 32) &&
@@ -1095,7 +1103,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isRelayId(m.relayId) &&
     isBytes(m.relayKey, 32, 32),
   'hana:home-derive-params': (m) =>
-    exactKeys(m, ['v', 't', 'signer', 'clientId', 'scopeId', 'sessionPublicKey', 'expiresAtMs', 'salt', 'nonce', 'relayId', 'relayKey']) &&
+    exactKeys(m, ['v', 't', 'signer', 'clientId', 'scopeId', 'sessionPublicKey', 'expiresAtMs', 'salt', 'nonce', 'relayId', 'relayKey'], ['exit']) &&
+    (m.exit === undefined || m.exit === true) &&
     isNearAccountId(m.signer) &&
     isClientId(m.clientId) &&
     isScopeId(m.scopeId) &&

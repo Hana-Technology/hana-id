@@ -60,6 +60,10 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   path_unconfirmed: 'Hana Home couldn’t confirm on NEAR which wallet this sign-in opens, so it opened nothing. Try again in a moment.',
   near_unreadable: 'Hana Home couldn’t read NEAR to check this app. Nothing was opened. Try again in a moment.',
   root_unsupported: 'This wallet belongs to a sign-in method Hana Home can’t open yet.',
+  // Email (home-email.ts).
+  home_email_unavailable: 'Email sign-in to Hana Home isn’t available right now. Try again later.',
+  email_token_invalid: 'The email sign-in could not be checked. Nothing was shown. Try again.',
+  no_sign_in: 'Hana Home can’t sign you in right now. Try again later.',
 });
 
 /** A code as the page may show it: the API's lowercase snake case only. */

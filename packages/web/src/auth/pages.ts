@@ -6,7 +6,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core/demo-config';
 import { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
 
-export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export' | 'share' | 'home';
+export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export' | 'share' | 'home' | 'home-callback';
 
 export interface AuthPage {
   readonly name: AuthPageName;
@@ -27,6 +27,8 @@ export const AUTH_PAGES: readonly AuthPage[] = Object.freeze([
   { name: 'share', path: '/share-email', file: 'share-email.html', title: 'Share your email' },
   // Hana Home (home-page.ts): linked from nowhere yet, reached only by its address.
   { name: 'home', path: '/home', file: 'home.html', title: 'Hana Home' },
+  // D491: the exit Google client's only redirect URI (home-callback-page.ts).
+  { name: 'home-callback', path: '/home/callback', file: 'home/callback.html', title: 'Signing in to Hana Home' },
 ]);
 
 /** Google's JWKS host, which the export window reads (as the vault does). */
@@ -66,8 +68,8 @@ export function imgSources(env: CspEnv, page: AuthPageName): string[] {
 }
 
 /**
- * What the page may fetch: the API (callback, email, export, home), Google's tokeninfo (callback, with an email issuer), the
- * email issuer (email), the NEAR RPC (export, home) and Google's JWKS (export, home). apps/api src/pages/host.ts sends the same lists in
+ * What the page may fetch: the API (callback, email, export, home, home-callback), Google's tokeninfo (callback, with an
+ * email issuer), the email issuer (email, home), the NEAR RPC (export, home) and Google's JWKS (export, home). apps/api src/pages/host.ts sends the same lists in
  * the header policy: a browser enforces both, so they must agree.
  */
 export function connectSources(env: CspEnv, page: AuthPageName): string[] {
@@ -91,12 +93,18 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
       // Both NEAR providers: the page falls back to rpcFallback, and a linked identity's path is read on both
       // (D263). The Worker's header policy lists the same; a browser enforces both policies, so the meta one must too.
       // Hana Home reads them only once the user opens a wallet (home-export.ts); listing and viewing read no chain.
+      // Hana Home also calls the email issuer for its email sign-in (H10), in an env that has one: the export window's
+      // list plus that origin.
       return [
         originOf(env.apiUrl),
         originOf(env.rpc),
         ...(env.rpcFallback && originOf(env.rpcFallback) !== originOf(env.rpc) ? [originOf(env.rpcFallback)] : []),
         GOOGLE_CERTS_ORIGIN,
+        ...(page === 'home' && env.emailIssuerUrl ? [originOf(env.emailIssuerUrl)] : []),
       ];
+    case 'home-callback':
+      // The relay write to the API, nothing else: no tokeninfo (no email scope is ever asked for here).
+      return [originOf(env.apiUrl)];
     case 'approve':
       // The popup decodes and renders what the vault sent. In a dev testnet build it also reads a mainnet demo wallet's
       // balance from Hana's two pinned public endpoints (D429); a production build fetches nothing.

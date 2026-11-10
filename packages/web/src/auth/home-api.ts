@@ -39,8 +39,13 @@ export interface HomeConfig {
   signer: string;
   /** The Google client the Home sign-in uses, or null when none is in force. */
   sharedGoogleClientId: string | null;
-  /** The client Home falls back to for an app whose own sign-in is gone (the per-app sign-in's, not used here). */
+  /**
+   * Hana Home's exit Google client (D484): its own sign-in uses it when no shared client is in force, and opening the
+   * wallet of an app whose own sign-in route is gone (D490). Google answers it at `/home/callback` only (D491).
+   */
   exitGoogleClientId: string | null;
+  /** Email sign-in is open: the env has an email issuer and its Home audience is on the exit list (H10). */
+  emailSignIn: boolean;
 }
 
 export const HOME_COVERAGES = ['shared', 'hana_client', 'exit', 'partner_client', 'email', 'none', 'unknown'] as const;
@@ -184,7 +189,8 @@ export function parseHomeConfig(body: unknown): HomeConfig {
   const shared = clientId(body.sharedGoogleClientId);
   const exit = clientId(body.exitGoogleClientId ?? null);
   if (shared === undefined || exit === undefined) throw bad('/v1/home/config');
-  return { serverTimeMs: body.serverTimeMs as number, signer: body.signer, sharedGoogleClientId: shared, exitGoogleClientId: exit };
+  // An API from before email sign-in sends no `emailSignIn`: read as off.
+  return { serverTimeMs: body.serverTimeMs as number, signer: body.signer, sharedGoogleClientId: shared, exitGoogleClientId: exit, emailSignIn: body.emailSignIn === true };
 }
 
 /** The query string of a listing request (empty for the first page). */

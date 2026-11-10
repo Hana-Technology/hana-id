@@ -446,6 +446,12 @@ describe('window messages', () => {
     expect(parseWindowMessage({ ...VALID_WINDOW['hana:home-derive-params'], ...change }, ['hana:home-derive-params'])).toBeNull();
   });
 
+  // H10: either message may name Hana Home's exit client (`exit: true`, answered at /home/callback); nothing else.
+  it.each(['hana:home-params', 'hana:home-derive-params'] as const)('%s takes `exit: true` and only that', (t) => {
+    expect(parseWindowMessage({ ...VALID_WINDOW[t], exit: true }, [t])).toMatchObject({ exit: true });
+    for (const exit of [false, 1, 'true', null]) expect(parseWindowMessage({ ...VALID_WINDOW[t], exit }, [t]), String(exit)).toBeNull();
+  });
+
   // Email login (batch 8a): the offered methods ride only when email is among them; a Google-only message is batch B's.
   it('auth-params takes the email methods, a preselected method and an email hint', () => {
     for (const extra of [

@@ -2,7 +2,7 @@
 // the signed-in identity's own rows, a member's through its root; another user's id is a 404 that changes nothing; a stop
 // is what the vault's status read sees next (D465: auto-signing stops within about 10 s); a 'session'-mode logout reads
 // as not active (D534); paging and bounds; every refusal; nothing identifying in a log line.
-import { consentRegisterPayload, encodeHomeIdentity, homeMessage, homeNonce } from '@hana-id/core/home';
+import { consentRegisterPayload, encodeHomeIdentity, HOME_EMAIL_AUDIENCE, homeMessage, homeNonce } from '@hana-id/core/home';
 import { identitySub } from '@hana-id/core/identity';
 import { policyId as computePolicyId } from '@hana-id/core/policy';
 import { KeyPair } from '@near-js/crypto';
@@ -15,7 +15,7 @@ import { clearKekCache } from '../src/vault/kek.ts';
 import { NO_SHARE_ID } from '../src/vault/message.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { GOOGLE_ISS, ORIGIN, type Chain, type SeededApp, call, chain, google, seedApp, uid } from './helpers.ts';
-import { ikSync } from './email-helpers.ts';
+import { emailEnv, emailToken, ikSync, withEmail } from './email-helpers.ts';
 import { HOUR, VAULT, act, autoApprovePolicy, pathFor, pathHash, setSettings, setShare, signVault, spentSession, storedShare, vaultHeaders } from './vault-helpers.ts';
 
 const AUTH = env.AUTH_ORIGIN!;
@@ -54,16 +54,22 @@ interface Identity {
   send(method: 'GET' | 'POST', path: string, body?: unknown, init?: { ip?: string; origin?: string | null; env?: Partial<typeof env> }): Promise<Response>;
 }
 
-async function home(sub = `${Date.now()}${Math.floor(Math.random() * 1e6)}`): Promise<Identity> {
+/**
+ * A signed-in Home identity. Default: Google through the shared client. `aud`: another Google client (the exit client);
+ * `email`: an email sign-in (H10: the issuer's Home audience), whose requests carry the issuer's keys in the env.
+ */
+async function home(sub = `${Date.now()}${Math.floor(Math.random() * 1e6)}`, o: { aud?: string; email?: boolean } = {}): Promise<Identity> {
   const kp = KeyPair.fromRandom('ed25519');
   const pub = Uint8Array.from(kp.getPublicKey().data);
   const expiresAtMs = Date.now() + 15 * 60_000;
   const salt = crypto.getRandomValues(new Uint8Array(32));
   const nonce = homeNonce({ signer: env.SIGNER_ACCOUNT, homePublicKey: pub, expiresAtMs, salt });
-  const jwt = await google.sign({ iss: GOOGLE_ISS, aud: SHARED, sub, nonce, exp: Math.floor(Date.now() / 1000) + 3600 });
+  const jwt = o.email ? await emailToken({ aud: HOME_EMAIL_AUDIENCE, sub, nonce }) : await google.sign({ iss: GOOGLE_ISS, aud: o.aud ?? SHARED, sub, nonce, exp: Math.floor(Date.now() / 1000) + 3600 });
+  const baseEnv = o.email ? emailEnv() : undefined;
   return {
     sub,
     async send(method, path, body, init = {}) {
+      if (baseEnv) init = { ...init, env: { ...baseEnv, ...init.env } };
       const bytes = body === undefined ? new Uint8Array(0) : new TextEncoder().encode(JSON.stringify(body));
       const c = ++counter;
       const sig = kp.sign(homeMessage({ signer: env.SIGNER_ACCOUNT, counter: c, method, path, body: bytes })).signature;
@@ -128,8 +134,10 @@ async function policyApp(o: Parameters<typeof seedApp>[0] = {}): Promise<SeededA
 }
 
 /** A device signed in as `sub` with a share, optionally its label, and optionally an auto-approve consent. */
-async function device(app: SeededApp, sub: string, o: { consent?: boolean; label?: string } = {}): Promise<{ shareId: number[]; spk: number[]; consentId: number[] | null }> {
+async function device(app: SeededApp, sub: string, o: { consent?: boolean; label?: string; provider?: string } = {}): Promise<{ shareId: number[]; spk: number[]; consentId: number[] | null }> {
   const spk = spentSession(near, app.scope, { sub });
+  // Another login method's session: the same path layout with its provider (`{scope}#email#{sub}#0`).
+  if (o.provider) near.sessions.get(JSON.stringify(spk))!.path = `${app.scope}#${o.provider}#${sub}#0`;
   const signature = await signVault(spk, app.id, NO_SHARE_ID, 0, (await import('../src/vault/message.ts')).createSharePayload(ORIGIN));
   const res = await call('/v1/vault/shares', { headers: vaultHeaders(app), body: { sessionPublicKey: spk, signature, ...(o.label ? { deviceLabel: o.label } : {}) } });
   expect(res.status).toBe(201);
@@ -676,6 +684,59 @@ describe('GET /v1/app’s share field (H9: an open tab learns it was signed out)
     const before = await storedShare(d.shareId);
     expect((await appRead(app, d.shareId)).share).toBe('live');
     expect(await storedShare(d.shareId)).toEqual(before);
+  });
+});
+
+describe('every Home sign-in route (H10): an email identity and the exit client’s', () => {
+  const EXIT = 'hana-exit.apps.googleusercontent.com';
+
+  it('an email identity lists and stops its own email login’s devices, consents and sharing, by its provider and sub', async () => {
+    withEmail(near, []);
+    near.exit = [['email', HOME_EMAIL_AUDIENCE]];
+    const app = await policyApp();
+    const sub = `e1.${uid()}`;
+    const me = await home(sub, { email: true });
+    const a = await device(app, sub, { provider: 'email', consent: true, label: 'Safari on iOS' });
+    const b = await device(app, sub, { provider: 'email' });
+    const userSub = identitySub(userSubKey(), app.scope, { provider: 'email', sub });
+    await shareEmail(app, userSub, 'me@example.com');
+    const s = await ofScope(me, app.scope);
+    expect(s.canStop).toBe(true);
+    expect(s.devices.map((d) => d.shareId).sort()).toEqual([b64(a.shareId), b64(b.shareId)].sort());
+    expect(s.email).toEqual([{ appId: app.id, addresses: ['me@example.com'] }]);
+    expect((await stop(me, 'consent', { consentId: b64(a.consentId!) })).status).toBe(200);
+    expect(await vaultSees(app, a.consentId!)).toBe('revoked');
+    expect((await stop(me, 'share', { shareId: b64(b.shareId) })).status).toBe(200);
+    expect((await storedShare(b.shareId))!.revoked_at).not.toBeNull();
+    expect((await stop(me, 'email', { appId: app.id })).status).toBe(200);
+    expect((await emailRows(app, userSub)).results).toEqual([{ state: 'declined', email: null }]);
+  });
+
+  it('the same string as a Google sub is another person: neither sees nor stops the other’s rows', async () => {
+    withEmail(near, []);
+    near.exit = [['email', HOME_EMAIL_AUDIENCE]];
+    const app = await policyApp();
+    const sub = `e1.${uid()}`;
+    const byEmail = await home(sub, { email: true });
+    const byGoogle = await home(sub);
+    const e = await device(app, sub, { provider: 'email', consent: true });
+    const g = await device(app, sub, { consent: true });
+    expect((await ofScope(byEmail, app.scope)).devices.map((d) => d.shareId)).toEqual([b64(e.shareId)]);
+    expect((await ofScope(byGoogle, app.scope)).devices.map((d) => d.shareId)).toEqual([b64(g.shareId)]);
+    await expectCode(await stop(byGoogle, 'share', { shareId: b64(e.shareId) }), 404, 'unknown_share');
+    await expectCode(await stop(byEmail, 'consent', { consentId: b64(g.consentId!) }), 404, 'unknown_consent');
+    expect((await storedShare(e.shareId))!.revoked_at).toBeNull();
+    expect(await vaultSees(app, g.consentId!)).toBe('active');
+  });
+
+  it('an identity signed in through Hana Home’s exit client lists and stops its devices like the shared client’s', async () => {
+    near.exit = [EXIT];
+    const app = await policyApp();
+    const me = await home(undefined, { aud: EXIT });
+    const d = await device(app, me.sub, { consent: true });
+    expect((await ofScope(me, app.scope)).devices.map((x) => x.shareId)).toEqual([b64(d.shareId)]);
+    expect((await stop(me, 'share', { shareId: b64(d.shareId) })).status).toBe(200);
+    expect(await vaultSees(app, d.consentId!)).toBe('revoked');
   });
 });
 

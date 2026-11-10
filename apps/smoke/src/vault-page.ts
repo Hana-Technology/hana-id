@@ -179,7 +179,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
   let requestPending = false;
   /** Bumped on every `autoApproved` event: a sign request that saw it bump was signed under the policy. */
   let autoApprovedCount = 0;
-  /** Bumped on every launcher shown: a request that saw it bump needed a click into a Hana popup. */
+  /** Bumped on every clickable launcher shown (not a notice): a request that saw it bump needed a click into a Hana popup. */
   let launcherShownCount = 0;
   let signs = 0;
   let vaultRuns: VaultRunRecord[] = parseStoredVaultRuns(read(VAULT_RUNS_STORAGE));
@@ -390,13 +390,13 @@ export function startVaultPage(deps: VaultPageDeps): void {
       progress = stage;
       render();
     });
-    c.on('launcher', ({ visible, label }) => {
+    c.on('launcher', ({ visible, label, clickable }) => {
       if (!live()) return;
-      launcher = visible ? `shown: "${label}" (click it)` : '';
-      if (visible) {
-        launcherShownCount += 1;
-        logEvent(`Hana launcher: "${label}"`);
-      }
+      // A notice ("Signed by Hana under …") has no click action and is not a popup: only a button counts as one.
+      const button = visible && clickable;
+      launcher = !visible ? '' : button ? `shown: "${label}" (click it)` : `notice: "${label}"`;
+      if (button) launcherShownCount += 1;
+      if (visible) logEvent(button ? `Hana launcher: "${label}"` : `Hana notice: "${label}"`);
       render();
     });
     c.on('autoApproved', (d) => {
@@ -568,15 +568,26 @@ export function startVaultPage(deps: VaultPageDeps): void {
   async function autoApprove(kind: 'request' | 'status' | 'revoke'): Promise<void> {
     const c = client;
     if (!c) return;
-    if (kind === 'request') {
-      const r = await c.requestAutoApprove();
-      logEvent(r.granted ? `Auto-approve accepted: policy ${r.policyId ?? '?'} until ${r.expiresAtMs ? new Date(r.expiresAtMs).toISOString() : '?'}${r.policyId === demoId ? ' (the demo policy)' : ''}` : 'Auto-approve declined');
-    } else if (kind === 'status') {
-      const s = await c.autoApproveStatus();
-      logEvent(s ? `Auto-approve: "${s.label}" (${s.policyId}), until ${new Date(s.expiresAtMs).toISOString()}, used ${s.used.count} today` : 'Auto-approve: no consent in force');
-    } else {
-      await c.revokeAutoApprove();
-      logEvent('Auto-approve stopped: every request needs the popup again');
+    // The result goes beside the buttons too: the Events log is at the bottom of the page.
+    const say = (text: string): void => {
+      $('aa-result').textContent = text;
+      logEvent(text);
+    };
+    $('aa-result').textContent = '…';
+    try {
+      if (kind === 'request') {
+        const r = await c.requestAutoApprove();
+        say(r.granted ? `Auto-approve accepted: policy ${r.policyId ?? '?'} until ${r.expiresAtMs ? new Date(r.expiresAtMs).toISOString() : '?'}${r.policyId === demoId ? ' (the demo policy)' : ''}` : 'Auto-approve declined');
+      } else if (kind === 'status') {
+        const s = await c.autoApproveStatus();
+        say(s ? `Auto-approve: "${s.label}" (${s.policyId}), until ${new Date(s.expiresAtMs).toISOString()}, used ${s.used.count} today` : 'Auto-approve: no consent in force');
+      } else {
+        await c.revokeAutoApprove();
+        say('Auto-approve stopped: every request needs the popup again');
+      }
+    } catch (e) {
+      $('aa-result').textContent = `Failed: ${describeError(e)}`;
+      throw e;
     }
   }
 

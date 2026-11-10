@@ -1,8 +1,11 @@
 // Alert delivery (D85): first delivery on every channel of the alert's severity, retried until it succeeds (also
 // after an acknowledgement: an ack never stops a first alert), re-sends of unacknowledged critical alerts every
 // 15 min on every channel, and acknowledgements polled from the paging app. A failing channel never blocks the others.
+// A channel with no credentials is not a failed send (D570): it is recorded once per alert and held, never retried
+// while it stays unconfigured, and sent once it is configured if the alert is still open. The
+// `channel_not_configured` alert is the signal for it.
 import { alertPlaybook, CHANNELS, type Channel, RESEND_MS } from './checks.ts';
-import type { AlertMessage, Notifier, Sender, SendResult } from './channels.ts';
+import { type AlertMessage, NOT_CONFIGURED, type Notifier, type Sender, type SendResult } from './channels.ts';
 import { log } from './log.ts';
 import { ident, printable } from './sanitize.ts';
 import { iso } from './time.ts';
@@ -76,12 +79,19 @@ export async function sendSafe(sender: Sender, msg: AlertMessage): Promise<SendR
 export interface DeliveryReport {
   first: number;
   resent: number;
+  /** Sends a configured channel refused or lost (HTTP error, timeout, a throw). Never "not configured". */
   failed: number;
   ackedByPager: number;
+  /** Channels newly held because they have no credentials: one `deliveries` row each, no retry. */
+  notConfigured: number;
 }
 
+/** The `alert_delivery` check's detail. A held channel is named but is not an error. */
+export const deliveryDetail = (r: DeliveryReport) =>
+  `${r.first} first, ${r.resent} re-sent, ${r.failed} failed, ${r.ackedByPager} acked in the paging app${r.notConfigured ? `, ${r.notConfigured} held (channel not configured)` : ''}`;
+
 export async function deliverAlerts(store: Store, notifier: Notifier, now: number, envName: string): Promise<DeliveryReport> {
-  const report: DeliveryReport = { first: 0, resent: 0, failed: 0, ackedByPager: 0 };
+  const report: DeliveryReport = { first: 0, resent: 0, failed: 0, ackedByPager: 0, notConfigured: 0 };
   for (const alert of await store.alertsToDeliver()) {
     // Paging-app acknowledgements (Pushover receipts) stop the re-sends like a portal ack.
     if (alert.severity === 'critical' && alert.acked_at === null && alert.pager_ref && notifier.pager.acknowledged) {
@@ -93,17 +103,29 @@ export async function deliverAlerts(store: Store, notifier: Notifier, now: numbe
       }
     }
     const pending = alert.pending_channels;
+    const held = alert.unconfigured_channels;
+    const usable = (c: Channel) => senderFor(notifier, c).configured;
+    // Still open: the condition holds, or it is critical and nobody acknowledged it. Only then is a held channel
+    // sent once it gets credentials; a closed alert's held channel is left as it is.
+    const open = alert.resolved_at === null || (alert.severity === 'critical' && alert.acked_at === null);
     const dueResend = alert.severity === 'critical' && alert.acked_at === null && alert.last_sent_at !== null && now - alert.last_sent_at >= RESEND_MS - RESEND_TOLERANCE_MS;
-    let targets: { channel: Channel; kind: 'first' | 'resend' }[];
-    if (dueResend) targets = CHANNELS.critical.map((channel) => ({ channel, kind: pending.includes(channel) ? 'first' : 'resend' }));
-    else if (pending.length > 0) {
-      if (alert.severity !== 'critical' && now - alert.created_at > FIRST_DELIVERY_GIVE_UP_MS) {
-        await store.clearPending(alert.id);
-        log({ event: 'alert_delivery_given_up', alertId: alert.id, severity: alert.severity }, 'error');
-        continue;
-      }
-      targets = pending.map((channel) => ({ channel, kind: 'first' }));
-    } else continue;
+    if (!dueResend && pending.length > 0 && alert.severity !== 'critical' && now - alert.created_at > FIRST_DELIVERY_GIVE_UP_MS) {
+      await store.clearPending(alert.id);
+      log({ event: 'alert_delivery_given_up', alertId: alert.id, severity: alert.severity }, 'error');
+      continue;
+    }
+    // First deliveries wanted now: the outstanding ones, and held ones whose channel has since been configured.
+    const firsts = new Set<Channel>([...pending, ...(open ? held.filter(usable) : [])]);
+    const wanted = dueResend ? [...new Set<Channel>([...CHANNELS.critical, ...firsts])] : [...firsts];
+    const newlyHeld = wanted.filter((c) => !usable(c) && !held.includes(c));
+    const targets = wanted.filter(usable).map((channel) => ({ channel, kind: firsts.has(channel) ? ('first' as const) : ('resend' as const) }));
+    if (targets.length === 0 && newlyHeld.length === 0) continue;
+
+    for (const channel of newlyHeld) {
+      await store.recordDelivery({ alertId: alert.id, channel, kind: firsts.has(channel) ? 'first' : 'resend', at: now, ok: false, error: NOT_CONFIGURED });
+      report.notConfigured++;
+      log({ event: 'alert_delivery', alertId: alert.id, channel, outcome: 'skipped', code: 'not_configured' });
+    }
 
     const base = { alertId: alert.id, severity: alert.severity, kind: alert.kind, title: alert.title, text: alertText(alert, envName) };
     const results = await Promise.all(targets.map(async (t) => ({ ...t, result: await sendSafe(senderFor(notifier, t.channel), { ...base, resend: t.kind === 'resend' || alert.send_count > 0 }) })));
@@ -119,11 +141,12 @@ export async function deliverAlerts(store: Store, notifier: Notifier, now: numbe
         log({ event: 'alert_delivery', alertId: alert.id, channel: r.channel, outcome: 'error', code: r.result.error.slice(0, 60) }, 'warn');
       }
     }
-    const stillPending = pending.filter((c) => !results.some((r) => r.channel === c && r.result.ok));
+    const stillPending = results.filter((r) => r.kind === 'first' && !r.result.ok).map((r) => r.channel);
+    const stillHeld = [...held.filter((c) => !results.some((r) => r.channel === c)), ...newlyHeld];
     // Only a full round (the first one, or a re-send) restarts the 15-minute clock: retrying one failed channel
-    // must not delay the re-send on the others.
-    const round = dueResend || alert.last_sent_at === null;
-    await store.markSent(alert.id, round ? now : alert.last_sent_at, round, stillPending, pagerRef);
+    // must not delay the re-send on the others. A run that sent nothing (every channel held) is not a round.
+    const round = results.length > 0 && (dueResend || alert.last_sent_at === null);
+    await store.markSent(alert.id, round ? now : alert.last_sent_at, round, stillPending, pagerRef, stillHeld);
   }
   return report;
 }

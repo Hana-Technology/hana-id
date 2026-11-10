@@ -30,6 +30,8 @@ export interface AlertRow {
   created_at: number;
   resolved_at: number | null;
   pending_channels: Channel[];
+  /** Channels that had no credentials when this alert met them: recorded once, held (not retried) until configured. */
+  unconfigured_channels: Channel[];
   last_sent_at: number | null;
   send_count: number;
   pager_ref: string | null;
@@ -65,11 +67,16 @@ export interface RunRow {
   checks: CheckResult[];
 }
 
-type RawAlert = Omit<AlertRow, 'details' | 'pending_channels'> & { details: string; pending_channels: string };
+type RawAlert = Omit<AlertRow, 'details' | 'pending_channels' | 'unconfigured_channels'> & { details: string; pending_channels: string; unconfigured_channels: string };
 type RawAction = Omit<ActionRow, 'args' | 'ok'> & { args: string; ok: number };
 type RawRun = Omit<RunRow, 'checks' | 'first_run'> & { checks: string; first_run: number };
 
-const alertRow = (r: RawAlert): AlertRow => ({ ...r, details: JSON.parse(r.details) as Record<string, unknown>, pending_channels: JSON.parse(r.pending_channels) as Channel[] });
+const alertRow = (r: RawAlert): AlertRow => ({
+  ...r,
+  details: JSON.parse(r.details) as Record<string, unknown>,
+  pending_channels: JSON.parse(r.pending_channels) as Channel[],
+  unconfigured_channels: JSON.parse(r.unconfigured_channels) as Channel[],
+});
 const actionRow = (r: RawAction): ActionRow => ({ ...r, args: JSON.parse(r.args) as Record<string, unknown>, ok: r.ok === 1 });
 const runRow = (r: RawRun): RunRow => ({ ...r, first_run: r.first_run === 1, checks: JSON.parse(r.checks) as CheckResult[] });
 
@@ -297,10 +304,13 @@ export class Store {
     return (await this.db.prepare('SELECT * FROM alerts WHERE created_at >= ?1 ORDER BY id').bind(at).all<RawAlert>()).results.map(alertRow);
   }
 
-  /** Alerts that still need a send: a first delivery outstanding, or critical and unacknowledged. */
+  /**
+   * Alerts that may need a send: a first delivery outstanding, critical and unacknowledged, or still open with a
+   * channel held for want of credentials (sent once that channel is configured; a resolved alert's is not).
+   */
   async alertsToDeliver(): Promise<AlertRow[]> {
     const rows = await this.db
-      .prepare(`SELECT * FROM alerts WHERE pending_channels != '[]' OR (severity = 'critical' AND acked_at IS NULL) ORDER BY id`)
+      .prepare(`SELECT * FROM alerts WHERE pending_channels != '[]' OR (severity = 'critical' AND acked_at IS NULL) OR (unconfigured_channels != '[]' AND resolved_at IS NULL) ORDER BY id`)
       .all<RawAlert>();
     return rows.results.map(alertRow);
   }
@@ -311,11 +321,14 @@ export class Store {
     return rows.results.map(alertRow);
   }
 
-  /** After a send: `lastSentAt` starts the re-send clock, `round` counts a full round in `send_count`. */
-  async markSent(id: number, lastSentAt: number | null, round: boolean, pending: Channel[], pagerRef: string | null): Promise<void> {
+  /**
+   * After a send: `lastSentAt` starts the re-send clock, `round` counts a full round in `send_count`, and `held` are
+   * the channels waiting for credentials.
+   */
+  async markSent(id: number, lastSentAt: number | null, round: boolean, pending: Channel[], pagerRef: string | null, held: Channel[]): Promise<void> {
     await this.db
-      .prepare('UPDATE alerts SET last_sent_at = ?2, send_count = send_count + ?5, pending_channels = ?3, pager_ref = COALESCE(?4, pager_ref) WHERE id = ?1')
-      .bind(id, lastSentAt, JSON.stringify(pending), pagerRef, round ? 1 : 0)
+      .prepare('UPDATE alerts SET last_sent_at = ?2, send_count = send_count + ?5, pending_channels = ?3, pager_ref = COALESCE(?4, pager_ref), unconfigured_channels = ?6 WHERE id = ?1')
+      .bind(id, lastSentAt, JSON.stringify(pending), pagerRef, round ? 1 : 0, JSON.stringify(held))
       .run();
   }
 

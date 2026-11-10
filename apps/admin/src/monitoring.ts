@@ -58,8 +58,22 @@ export interface AlertView {
   canAck: boolean;
   deliveries: unknown[];
   deliveriesTotal: number;
+  /** The newest delivery row of each channel, out of all the watchdog served (not only the last ones kept above). */
+  deliveriesLatest: unknown[];
   /** Its recovery playbook; null renders the "no playbook" error (D126). */
   playbook: PlaybookLink | null;
+}
+
+/** The newest row of each channel, oldest channel result first (the watchdog serves rows oldest first). */
+function latestPerChannel(deliveries: unknown[]): unknown[] {
+  const latest = new Map<string, unknown>();
+  for (const d of deliveries) {
+    const channel = str(obj(d)?.channel);
+    if (channel === null) continue;
+    latest.delete(channel);
+    latest.set(channel, d);
+  }
+  return (plain([...latest.values()]) as unknown[]) ?? [];
 }
 
 export function alertView(raw: unknown, servedKinds: Record<string, unknown> = {}): AlertView | null {
@@ -89,6 +103,7 @@ export function alertView(raw: unknown, servedKinds: Record<string, unknown> = {
     canAck: ackedAt === null && resendsUntilAck,
     deliveries: (plain(deliveries.slice(-DELIVERIES_SHOWN)) as unknown[]) ?? [],
     deliveriesTotal: deliveries.length,
+    deliveriesLatest: latestPerChannel(deliveries),
     playbook: playbookFor(kind, obj(servedKinds[kind])?.playbook),
   };
 }

@@ -79,13 +79,14 @@
       <h2>3. Signing and auto-approve</h2>
       <p>
         Every request is signed only, never broadcast. Set the demo policy with
-        <code>pnpm --filter @hana-id/scripts admin &lt;env&gt; app:settings &lt;app&gt; --auto-approve ../apps/smoke/policies/demo-auto-approve.json --remote</code> (the path is relative to <code>scripts/</code>, where pnpm runs it);
+        <code>pnpm --filter @hana-id/scripts admin &lt;env&gt; app:settings &lt;app&gt; --auto-approve apps/smoke/policies/demo-auto-approve.json --remote</code> from the repo root (a relative path is resolved against the directory you ran pnpm from);
         it takes effect after the env's change delay.
       </p>
       <dl id="policy"></dl>
       <button id="aa-request" disabled>Accept the policy (consent popup)</button>
       <button id="aa-status" disabled>Auto-approve status</button>
       <button id="aa-revoke" disabled>Stop auto-approving</button>
+      <p id="aa-result" class="muted" role="status" aria-live="polite"></p>
       <div>
         <button id="sign-stellar-self" disabled>Stellar transfer to yourself (covered)</button>
         <button id="sign-stellar-other" disabled>Stellar transfer to a stranger (popup)</button>

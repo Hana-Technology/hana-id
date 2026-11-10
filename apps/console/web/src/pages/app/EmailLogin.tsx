@@ -88,8 +88,6 @@ export function EmailLogin() {
         <dl className="facts">
           <dt>Status</dt>
           <dd>{label}</dd>
-          <dt>Scope</dt>
-          <dd className="mono small">{a.scopeId}</dd>
         </dl>
         {!scope && <Why>The scope’s on-chain state can’t be read right now: try reloading.</Why>}
         {a.otherAppsEmailOn > 0 && <p className="muted small">{`${a.otherAppsEmailOn} other ${a.otherAppsEmailOn === 1 ? 'app' : 'apps'} of this scope also ${a.otherAppsEmailOn === 1 ? 'uses' : 'use'} email login.`}</p>}

@@ -15,7 +15,8 @@ import { type ContractConfig, GOOGLE_PROVIDER, type GovernanceView, type KeyChan
 import { checkFunctionKey, signerFullAccessAllowed } from './deploy-plan.ts';
 import { fetchGoogleJwks, usableKeys } from './jwks.ts';
 import { type AccessKeyListEntry, describePermission, type NearRpc, TGAS } from './near.ts';
-import { castVote, describeOwnerCall, isOwnerMethod, type OwnerCall, type OwnerTxDeps, type OwnerTxOptions, sendOwnerCall } from './owner-tx.ts';
+import { registeredScopeId } from './admin-scope.ts';
+import { castVoteTx, describeOwnerCall, isOwnerMethod, type OwnerCall, type OwnerTxDeps, type OwnerTxOptions, sendOwnerCall } from './owner-tx.ts';
 import { approvers, type DaoProposal, decodeFunctionCall, decodeMemberChange, isOpen, policyProblems, recentProposals, type SputnikPolicy, votesNeeded } from './sputnik.ts';
 
 export const OWNER_DRY_RUN_LINE = 'Dry run: re-run with --yes to send.';
@@ -187,7 +188,9 @@ export async function ownerVoteCmd(m: Manifest, idText: string, args: Args, deps
   deps.log(`${action} #${id} on ${dao} by ${member}`);
   if (!args.flag('yes')) return void deps.log(OWNER_DRY_RUN_LINE);
   await assertTestnet(deps.rpc, m);
-  const status = await castVote(m, dao, id, member, action, deps);
+  const { status, logs } = await castVoteTx(m, dao, id, member, action, deps);
+  const scopeId = status === 'Approved' ? registeredScopeId(logs) : null;
+  if (scopeId) deps.log(`Registered scope: ${scopeId}`);
   deps.log(
     status === 'Approved'
       ? `#${id} approved and executed.`

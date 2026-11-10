@@ -170,8 +170,11 @@ export class NearRpc {
     }
   }
 
-  /** Signs and sends one transaction, waits for it to be final, throws on any failure in the receipt tree. */
-  async sendTx(signer: TxSigner, receiverId: string, actions: Action[], timeoutMs = 120_000): Promise<{ hash: string; value: unknown }> {
+  /**
+   * Signs and sends one transaction, waits for it to be final, throws on any failure in the receipt tree. `logs`: every
+   * receipt's logs in the order the RPC lists them (a DAO vote's executed call logs its events there).
+   */
+  async sendTx(signer: TxSigner, receiverId: string, actions: Action[], timeoutMs = 120_000): Promise<{ hash: string; value: unknown; logs?: string[] }> {
     const publicKey: PublicKey = signer.keyPair.getPublicKey();
     const key = await this.accessKey(signer.accountId, publicKey.toString());
     if (!key) throw new Error(`Key ${publicKey.toString()} is not an access key of ${signer.accountId}`);
@@ -199,7 +202,7 @@ export class NearRpc {
     }
     const failure = failureText(outcome);
     if (failure) throw new Error(`Transaction ${hash} failed: ${failure}`);
-    return { hash, value: successValue(outcome) };
+    return { hash, value: successValue(outcome), logs: outcome.receipts_outcome.flatMap((r) => r.outcome.logs ?? []) };
   }
 }
 

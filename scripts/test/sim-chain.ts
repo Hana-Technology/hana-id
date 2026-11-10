@@ -132,13 +132,17 @@ export class SimChain {
     }
   }
 
-  private send(signer: TxSigner, receiver: string, actions: Action[]): { hash: string; value: unknown } {
+  /** The logs of the transaction being applied (an executed call's NEP-297 events, as the contract logs them). */
+  private txLogs: string[] = [];
+
+  private send(signer: TxSigner, receiver: string, actions: Action[]): { hash: string; value: unknown; logs: string[] } {
     const from = this.accounts.get(signer.accountId);
     const pk = signer.keyPair.getPublicKey().toString();
     if (!from || !from.keys.some((k) => k.public_key === pk)) throw new Error(`Key ${pk} is not an access key of ${signer.accountId}`);
     this.sent.push({ signer: signer.accountId, receiver, actions });
     const hash = `hash${this.sent.length}`;
     let value: unknown = null;
+    this.txLogs = [];
     // Actions of one transaction are atomic: work on a copy, commit at the end.
     const snapshot = this.snapshot();
     try {
@@ -147,7 +151,7 @@ export class SimChain {
       this.restore(snapshot);
       throw new Error(`Transaction ${hash} failed: ${(err as Error).message}`);
     }
-    return { hash, value };
+    return { hash, value, logs: this.txLogs };
   }
 
   private snapshot() {
@@ -375,6 +379,8 @@ export class SimChain {
         if (id === 'global') this.globalScope = scope;
         else this.scopes[id] = scope;
         for (const [p, a] of clients) delete this.removedClients[`${p}/${a}`];
+        const data = { scope_id: id, owners: scope.owners, clients, allow_shared: scope.allow_shared, by: predecessor, admin: true };
+        this.txLogs.push(`EVENT_JSON:${JSON.stringify({ standard: 'hana-id', version: '1.3.0', event: 'scope_registered', data: [data] })}`);
         return id;
       }
       case 'remove_client': {

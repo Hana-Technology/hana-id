@@ -267,7 +267,8 @@ export async function newHomeIdentity(signer: string, nowMs: number): Promise<Ho
   };
 }
 
-export interface HomeApi {
+/** Every Home API call the page makes; the devices list and its stops are `HomeDevicesApi`'s. */
+export interface HomeApi extends HomeDevicesApi {
   /** `GET /v1/home/config`. No identity yet. */
   config(): Promise<HomeConfig>;
   /** `GET /v1/home/apps`, signed by `identity`. One request, never repeated here. */
@@ -282,12 +283,211 @@ export interface HomeApi {
 /** `/v1/login`'s body without what a Home derive can't carry (a link, an export label), plus the scope. */
 export type HomeLoginBody = Omit<LoginBody, 'linkJwt' | 'linkImmediate' | 'exportChain'> & { scopeId: string };
 
+// ---- devices (`GET /v1/home/devices` and the three stops) ----
+
+/** A device's active auto-approve consent. `label` is the app's own words for its rule: text only, never a heading. */
+export interface HomeConsent {
+  consentId: string;
+  label: string;
+  grantedAtMs: number;
+  expiresAtMs: number;
+}
+
+/** One signed-in device: one browser profile on one site for one app session. */
+export interface HomeDevice {
+  shareId: string;
+  appId: string;
+  partnerOrigin: string;
+  /** The vault's coarse "Chrome on macOS", or null (a vault that sent none). */
+  label: string | null;
+  signedInAtMs: number;
+  /** The last unlock or approved signature there, or null when it can't be told. */
+  lastUsedAtMs: number | null;
+  /** When it signs out by itself if it isn't used again. */
+  idleUntilMs: number;
+  /** When it signs out at the latest. */
+  expiresAtMs: number;
+  consent: HomeConsent | null;
+}
+
+/** An auto-approve consent of an app that keeps no sign-in on the device (persistence 'none'). */
+export interface HomeTabConsent extends HomeConsent {
+  appId: string;
+  partnerOrigin: string;
+}
+
+export interface HomeEmailShare {
+  appId: string;
+  addresses: string[];
+}
+
+/** One listing's devices, consents and email sharing. */
+export interface HomeDeviceScope {
+  scopeId: string;
+  /** The apps named below, with their display-safe names. */
+  apps: { appId: string; name: string; status: HomeAppStatus }[];
+  devices: HomeDevice[];
+  consents: HomeTabConsent[];
+  /** Null when Hana can't tell right now. */
+  email: HomeEmailShare[] | null;
+  /** More devices or consents exist than the answer carries. */
+  more: boolean;
+  /**
+   * Whether this sign-in's place in the account is confirmed, so stops are offered. False while a linked account couldn't
+   * be checked on NEAR: the devices are shown, with no stop and no addresses.
+   */
+  canStop: boolean;
+}
+
+export interface HomeDevicesPage {
+  scopes: HomeDeviceScope[];
+  nextCursor: string | null;
+}
+
+/** The user's own listings a page at a time, or one listing. */
+export type HomeDevicesQuery = { kind: 'first' } | { kind: 'cursor'; cursor: string } | { kind: 'scope'; scopeId: string };
+
+export type HomeStop = { kind: 'consent'; consentId: string } | { kind: 'share'; shareId: string } | { kind: 'email'; appId: string };
+
+/** What a stop answered: whether it changed anything (false: it had already ended), or how many addresses stopped. */
+export type HomeStopResult = { revoked: boolean } | { revoked: number };
+
+export const HOME_DEVICES_MAX = 25;
+export const HOME_EMAILS_MAX = 25;
+/** The policy's label at most (core's POLICY_LABEL_MAX). */
+export const HOME_POLICY_LABEL_MAX = 80;
+/** What stands in for a policy label the page won't show. */
+export const HOME_UNNAMED_RULE = 'No description';
+const HOME_ID_RE = /^[A-Za-z0-9_-]{22}$/u;
+/** The API's shape of a device label (D512). */
+const DEVICE_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9 .()/_-]{0,39}$/u;
+const isMs = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+
+/** A policy's label as the page shows it: the display-safety rule, at most 80 characters, else Hana's stand-in. */
+export function homePolicyLabel(v: unknown): string {
+  if (typeof v !== 'string') return HOME_UNNAMED_RULE;
+  const t = v.trim();
+  return t.length === 0 || [...t].length > HOME_POLICY_LABEL_MAX || !isDisplaySafeLine(t) ? HOME_UNNAMED_RULE : t;
+}
+
+const isAddress = (v: unknown): v is string => typeof v === 'string' && v.length >= 3 && v.length <= 254 && /^[^\s@<>"']+@[^\s@<>"']+$/u.test(v) && isDisplaySafeLine(v);
+
+function parseConsent(v: unknown): HomeConsent | null {
+  if (!isObj(v) || typeof v.consentId !== 'string' || !HOME_ID_RE.test(v.consentId) || !isMs(v.grantedAtMs) || !isMs(v.expiresAtMs)) return null;
+  return { consentId: v.consentId, label: homePolicyLabel(v.label), grantedAtMs: v.grantedAtMs, expiresAtMs: v.expiresAtMs };
+}
+
+function parseDevice(v: unknown): HomeDevice | null {
+  if (!isObj(v) || typeof v.shareId !== 'string' || !HOME_ID_RE.test(v.shareId) || typeof v.appId !== 'string' || !HOME_APP_ID.test(v.appId) || !isOrigin(v.partnerOrigin)) return null;
+  if (!isMs(v.signedInAtMs) || !isMs(v.idleUntilMs) || !isMs(v.expiresAtMs) || (v.lastUsedAtMs !== null && !isMs(v.lastUsedAtMs))) return null;
+  const consent = v.consent === null ? null : parseConsent(v.consent);
+  if (v.consent !== null && consent === null) return null;
+  return {
+    shareId: v.shareId,
+    appId: v.appId,
+    partnerOrigin: v.partnerOrigin,
+    label: typeof v.label === 'string' && DEVICE_LABEL_RE.test(v.label) ? v.label : null,
+    signedInAtMs: v.signedInAtMs,
+    lastUsedAtMs: v.lastUsedAtMs as number | null,
+    idleUntilMs: v.idleUntilMs,
+    expiresAtMs: v.expiresAtMs,
+    consent,
+  };
+}
+
+function parseDeviceScope(v: unknown): HomeDeviceScope | null {
+  if (!isObj(v) || !isScopeId(v.scopeId) || !Array.isArray(v.apps) || !Array.isArray(v.devices) || !Array.isArray(v.consents)) return null;
+  const apps = v.apps
+    .filter((a): a is Record<string, unknown> => isObj(a) && typeof a.appId === 'string' && HOME_APP_ID.test(a.appId) && (a.status === 'active' || a.status === 'suspended' || a.status === 'deleted'))
+    .slice(0, HOME_MAX_APPS * 5)
+    .map((a) => ({ appId: a.appId as string, name: homeAppName(a.name), status: a.status as HomeAppStatus }));
+  const devices = v.devices
+    .map(parseDevice)
+    .filter((x): x is HomeDevice => x !== null)
+    .slice(0, HOME_DEVICES_MAX);
+  const consents = v.consents
+    .map((c) => {
+      const base = parseConsent(c);
+      return base && isObj(c) && typeof c.appId === 'string' && HOME_APP_ID.test(c.appId) && isOrigin(c.partnerOrigin) ? { ...base, appId: c.appId, partnerOrigin: c.partnerOrigin } : null;
+    })
+    .filter((x): x is HomeTabConsent => x !== null)
+    .slice(0, HOME_DEVICES_MAX);
+  let email: HomeEmailShare[] | null = null;
+  if (Array.isArray(v.email)) {
+    email = v.email
+      .filter((e): e is Record<string, unknown> => isObj(e) && typeof e.appId === 'string' && HOME_APP_ID.test(e.appId) && Array.isArray(e.addresses))
+      .map((e) => ({ appId: e.appId as string, addresses: (e.addresses as unknown[]).filter(isAddress).slice(0, HOME_EMAILS_MAX) }))
+      .filter((e) => e.addresses.length > 0)
+      .slice(0, HOME_EMAILS_MAX);
+  } else if (v.email !== null) return null;
+  // Stops only where the API says so: a missing or odd value offers none.
+  return { scopeId: v.scopeId, apps, devices, consents, email, more: v.more === true, canStop: v.canStop === true };
+}
+
+/** Reads a `GET /v1/home/devices` answer strictly; a malformed entry is dropped, a malformed answer is `bad_response`. */
+export function parseHomeDevices(body: unknown): HomeDevicesPage {
+  if (!isObj(body) || !Array.isArray(body.scopes)) throw bad('/v1/home/devices');
+  const nextCursor = body.nextCursor === null || body.nextCursor === undefined ? null : isScopeId(body.nextCursor) ? body.nextCursor : undefined;
+  if (nextCursor === undefined) throw bad('/v1/home/devices');
+  const seen = new Set<string>();
+  const scopes: HomeDeviceScope[] = [];
+  for (const raw of body.scopes.slice(0, HOME_MAX_SCOPES)) {
+    const s = parseDeviceScope(raw);
+    if (!s || seen.has(s.scopeId)) continue;
+    seen.add(s.scopeId);
+    scopes.push(s);
+  }
+  return { scopes, nextCursor };
+}
+
+export function homeDevicesSearch(query: HomeDevicesQuery): string {
+  if (query.kind === 'cursor') return `?${new URLSearchParams({ cursor: query.cursor }).toString()}`;
+  if (query.kind === 'scope') return `?${new URLSearchParams({ scopeId: query.scopeId }).toString()}`;
+  return '';
+}
+
+const STOP_PATH: Readonly<Record<HomeStop['kind'], string>> = { consent: '/v1/home/consents/revoke', share: '/v1/home/shares/revoke', email: '/v1/home/email-sharing/revoke' };
+
+/** A stop's body: exactly its one field. */
+export function homeStopBody(stop: HomeStop): Record<string, string> {
+  if (stop.kind === 'consent') return { consentId: stop.consentId };
+  if (stop.kind === 'share') return { shareId: stop.shareId };
+  return { appId: stop.appId };
+}
+
+/** `GET /v1/home/devices` and the stops, signed by `identity`. One request each, never repeated here. */
+export interface HomeDevicesApi {
+  devices(identity: HomeIdentity, query: HomeDevicesQuery): Promise<HomeDevicesPage>;
+  stop(identity: HomeIdentity, stop: HomeStop): Promise<HomeStopResult>;
+}
+
+export function homeDevicesApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...args)): HomeDevicesApi {
+  const base = new URL(apiUrl).origin;
+  const init = (extra: RequestInit): RequestInit => ({ cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', ...extra });
+  return {
+    async devices(identity, query) {
+      const url = new URL(`${base}/v1/home/devices${homeDevicesSearch(query)}`);
+      const header = await identity.header('GET', url, NO_BODY);
+      return parseHomeDevices(await parseApiResponse(await fetchFn(url.toString(), init({ headers: { accept: 'application/json', [HOME_IDENTITY_HEADER]: header } }))));
+    },
+    async stop(identity, stop) {
+      const url = new URL(`${base}${STOP_PATH[stop.kind]}`);
+      const bytes = new TextEncoder().encode(JSON.stringify(homeStopBody(stop)));
+      const header = await identity.header('POST', url, bytes);
+      const out = await parseApiResponse(await fetchFn(url.toString(), init({ method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', [HOME_IDENTITY_HEADER]: header }, body: bytes })));
+      if (typeof out.revoked === 'boolean' || (Number.isSafeInteger(out.revoked) && (out.revoked as number) >= 0)) return { revoked: out.revoked as boolean | number } as HomeStopResult;
+      throw bad(STOP_PATH[stop.kind]);
+    },
+  };
+}
+
 const NO_BODY = new Uint8Array(0);
 
 export function homeApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...args)): HomeApi {
   const base = new URL(apiUrl).origin;
   const init = (extra: RequestInit): RequestInit => ({ cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', ...extra });
   return {
+    ...homeDevicesApi(apiUrl, fetchFn),
     async config() {
       return parseHomeConfig(await parseApiResponse(await fetchFn(`${base}/v1/home/config`, init({ headers: { accept: 'application/json' } }))));
     },

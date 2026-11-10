@@ -40,6 +40,12 @@ export interface AppConfig {
    */
   consent?: unknown;
   /**
+   * Whether the session's share the vault named on its own read was taken away: 'live' or 'revoked' (Hana Home's "Sign
+   * out this device", the app's settings). Absent on any other read and when the API couldn't read it. Typed unknown on
+   * purpose: anything but 'revoked' changes nothing.
+   */
+  share?: unknown;
+  /**
    * Email login: the sign-in methods the app offers and its scope can serve, in the order google, email. Older
    * APIs omit it (Google only). An app with email but no Google (`google: null`) is refused by isAppConfig until the
    * vault supports it.

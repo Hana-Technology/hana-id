@@ -139,6 +139,20 @@ export function markRemovedMembers(db: D1Database, scopeId: string, internalId: 
     .bind(scopeId, internalId, JSON.stringify(keep), at, hint?.memberKey ?? '', hint ? (hint.action === 'cancel' ? 'cancelled' : 'unlinked') : '');
 }
 
+/**
+ * The member a cancel or unlink the API just relayed removed, when the account can't be read afresh: `cancelled` or
+ * `unlinked` by the action, whatever account it was in. Only a member row still `active` or `pending` and no newer than
+ * `at` moves, so a later join elsewhere is never undone (D661).
+ */
+export function markHintedMember(db: D1Database, scopeId: string, hint: { memberKey: string; action: 'cancel' | 'unlink' }, at: number): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE end_user_identities SET status = ?3, observed_at = ?4
+        WHERE scope_id = ?1 AND identity_key = ?2 AND role = 'member' AND status IN ('active', 'pending') AND observed_at <= ?4`,
+    )
+    .bind(scopeId, hint.memberKey, hint.action === 'cancel' ? 'cancelled' : 'unlinked', at);
+}
+
 /** Runs one directory batch; a failure is logged with its code and never thrown (the directory is best effort). */
 export async function writeDirectory(env: Env, stmts: D1PreparedStatement[], at: { requestId: string; endpoint: string; appId?: string }): Promise<boolean> {
   if (stmts.length === 0) return true;

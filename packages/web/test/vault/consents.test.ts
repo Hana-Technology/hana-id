@@ -413,21 +413,50 @@ describe('the consent status in the existing 10 s read', () => {
     expect(await status(s)).toBeNull();
   });
 
-  it('a revoked share stops auto-signing within about 10 s: signing goes on until the next read, then stops', async () => {
+  it('a revoked share stops auto-signing within about 10 s, and the next read ends the session (H9: the share is read too)', async () => {
     const s = await session();
-    const popup = await grant(s);
+    await grant(s);
     await signAuto(s);
     // "Sign out this device" on Home: the share ends, and the consent's status reads 'revoked' from it.
     shareOf(s).revoked = true;
     // Within the 10 s freshness the tab still auto-signs: the design's bound.
     await signAuto(s, '0x8');
     s.t.browser.timers.now += POLICY_FRESH_MS;
-    const reply = s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x9' }) });
-    const a = await popup.next('hana:approve-request');
-    expect(a.autoApprove).toBeUndefined();
-    answer(s.t, popup, a, false);
-    expect((await reply).error?.code).toBe(4001);
-    expect(await status(s)).toBeNull();
+    // The next read finds the share taken away: the session ends, nothing is signed, nothing waits for a click.
+    const reply = await s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x9' }) });
+    expect(reply.result).toBeUndefined();
+    expect(reply.error?.code).toBeDefined();
+    expect(((await s.t.request('hana_status')).result as { status: string }).status).toBe('logged_out');
+  });
+
+  it('an open tab of an app with a policy ends at its next periodic read once Home signs the device out, with no request', async () => {
+    const s = await session();
+    await grant(s);
+    shareOf(s).revoked = true;
+    const before = s.t.browser.backend.count('/v1/app');
+    s.t.browser.timers.advance(POLICY_REFRESH_MS);
+    await eventually(() => s.t.browser.backend.count('/v1/app') > before, 'the 60 s read ran');
+    await eventually(() => (s.t.vault as unknown as { session: unknown }).session === null, 'the session ended');
+    expect(((await s.t.request('hana_status')).result as { status: string }).status).toBe('logged_out');
+    const store = await openRecordStore(s.t.browser.idb);
+    await eventually2(async () => (await store.get(recordKey(ENV.signer, APP_ID, SCOPE, 0))) === undefined, 'the record was deleted');
+  });
+
+  it('a live share, or a read that fails, never ends the session; the read slides nothing', async () => {
+    const s = await session();
+    await grant(s);
+    const counterBefore = shareOf(s).counter;
+    const touches = s.t.browser.backend.count('/v1/vault/touch');
+    s.t.browser.timers.now += POLICY_FRESH_MS;
+    await signAuto(s, '0x8');
+    s.t.browser.backend.overrides.set('/v1/app', () => apiError(503, 'config_unavailable'));
+    s.t.browser.timers.advance(POLICY_REFRESH_MS);
+    await sleepReal(20);
+    s.t.browser.backend.overrides.delete('/v1/app');
+    expect(((await s.t.request('hana_status')).result as { status: string }).status).toBe('logged_in');
+    // Nothing moved the share: no touch, no counter step (D55, D539).
+    expect(shareOf(s).counter).toBe(counterBefore);
+    expect(s.t.browser.backend.count('/v1/vault/touch')).toBe(touches);
   });
 
   it('a status read that fails (an outage): no auto-sign, the consent stays, and auto-signing resumes when it answers', async () => {

@@ -124,9 +124,11 @@ export class VaultApi {
    * GET /v1/app: the scope, signer and Google client (read from chain by the API), plus serverTimeMs. `consentHeader`
    * (base64url of the consent id) also asks for that consent's status; the API honours it only from the vault's origin.
    */
-  async app(consentHeader?: string): Promise<AppConfig> {
+  async app(consentHeader?: string, shareHeader?: string): Promise<AppConfig> {
     const headers = this.headers(false);
     if (consentHeader) headers['x-hana-consent'] = consentHeader;
+    // The session's share id (base64url): the API answers whether it was taken away, so an open tab ends (H9).
+    if (shareHeader) headers['x-hana-share'] = shareHeader;
     const { res, body } = await this.request('/v1/app', { method: 'GET', headers });
     if (!isAppConfig(body)) throw new ApiError(res.status, 'bad_response', 'Unexpected /v1/app response', null, str(body.requestId));
     if (body.serverTimeMs !== undefined) this.o.onServerTime?.(body.serverTimeMs);
@@ -213,8 +215,10 @@ export class VaultApi {
     await this.request(`/v1/link/${action}`, { method: 'POST', headers: this.headers(true), body: JSON.stringify(payload) });
   }
 
-  async createShare(sessionPublicKey: Uint8Array, signature: Uint8Array): Promise<CreateShareResponse> {
-    const { value } = await this.post('/v1/vault/shares', { sessionPublicKey: Array.from(sessionPublicKey), signature: Array.from(signature) }, isCreateShareResponse);
+  /** `deviceLabel`: the coarse "Chrome on macOS" Hana Home names the device by (device-label.ts), or null to send none. */
+  async createShare(sessionPublicKey: Uint8Array, signature: Uint8Array, deviceLabel: string | null = null): Promise<CreateShareResponse> {
+    const body = { sessionPublicKey: Array.from(sessionPublicKey), signature: Array.from(signature), ...(deviceLabel ? { deviceLabel } : {}) };
+    const { value } = await this.post('/v1/vault/shares', body, isCreateShareResponse);
     return value;
   }
 

@@ -3,6 +3,7 @@
 // page has none), so the SDK's handshake times out and raises `vault_unavailable`.
 import type { HanaEnv } from '../hana-env.ts';
 import { readInlinedConfig } from './config.ts';
+import { deviceLabel } from './device-label.ts';
 import { domLauncherView } from './launcher.ts';
 import { openRecordStore } from './record.ts';
 import { type WindowRef, browserChannel, browserLocks } from './runtime.ts';
@@ -41,5 +42,6 @@ export function bootVault(win: Window, env: HanaEnv, scriptStart?: number): Vaul
     launcherView: domLauncherView(win.document),
     ...(win.performance ? { perfNow: () => win.performance.now() } : {}),
     ...(scriptStart !== undefined ? { boot: { scriptStart } } : {}),
+    deviceLabel: deviceLabel(win.navigator?.userAgent),
   });
 }

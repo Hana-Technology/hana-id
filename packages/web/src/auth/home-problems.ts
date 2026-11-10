@@ -60,6 +60,11 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   path_unconfirmed: 'Hana Home couldn’t confirm on NEAR which wallet this sign-in opens, so it opened nothing. Try again in a moment.',
   near_unreadable: 'Hana Home couldn’t read NEAR to check this app. Nothing was opened. Try again in a moment.',
   root_unsupported: 'This wallet belongs to a sign-in method Hana Home can’t open yet.',
+  // Devices and the stops (home-devices.ts). A 404 is the same for "gone" and "not yours": the sentence says what is likely.
+  unknown_share: 'Hana Home couldn’t find that device among yours: it has probably signed out already. Show your devices again to see what is signed in now.',
+  unknown_consent: 'Hana Home couldn’t find that auto-approve among yours: it has probably ended already. Show your devices again to see what is on now.',
+  unknown_email_share: 'Hana Home found nothing you share with that app. Show your devices again to see what you share now.',
+  email_sharing_unavailable: 'Hana Home can’t change email sharing right now. Try again later.',
 });
 
 /** A code as the page may show it: the API's lowercase snake case only. */

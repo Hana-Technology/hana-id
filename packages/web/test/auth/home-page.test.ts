@@ -36,6 +36,10 @@ async function until(cond: () => boolean, what = 'condition'): Promise<void> {
   throw new Error(`Timed out waiting for ${what}`);
 }
 
+const noChain = (): never => {
+  throw new Error('Hana Home read NEAR without the user opening a wallet');
+};
+
 interface Call {
   url: URL;
   header: string | null;
@@ -111,6 +115,8 @@ function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; o
         });
       },
     },
+    // Listing and viewing read no chain: any NEAR read in these tests is a failure (opening a wallet is home-export.test.ts).
+    near: { getSession: noChain, txOutcome: noChain, view: noChain, independent: noChain },
     jwks: async (kid) => (kid === signer.jwk.kid ? signer.jwk : null),
     deviceNow: () => now,
     sleep: async () => {},

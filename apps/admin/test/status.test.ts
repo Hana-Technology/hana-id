@@ -448,6 +448,20 @@ describe('Relayer funds', () => {
     expect(tile(a, 'home-pool')).toMatchObject({ state: 'ok', detail: '1 key on chain · lowest allowance 5 NEAR · 0 in the API' });
   });
 
+  it('the nonce check tile: not measured while the API’s usage capture is off, with no issue raised (D596)', async () => {
+    world.api = apiAnswer({ usageCapture: false });
+    let a = await read();
+    invariants(a);
+    expect(tile(a, 'nonce-check')).toMatchObject({ state: 'not_measured', detail: expect.stringMatching(/^Not measured: usage capture is off/u) });
+    expect(a.issues.filter((i) => /nonce/iu.test(i.title))).toEqual([]);
+    world.api = apiAnswer({ usageCapture: true });
+    a = await read();
+    expect(tile(a, 'nonce-check')).toMatchObject({ state: 'ok', detail: expect.stringMatching(/^Usage capture is on/u) });
+    // An API older than the flag: shown as checked, with a nudge to deploy.
+    world.api = apiAnswer();
+    expect(tile(await read(), 'nonce-check').state).toBe('ok');
+  });
+
   it('a reading older than 30 minutes is amber (said once); none yet is unknown with an issue', async () => {
     world.watchdog = watchdogBody({ relayer_funds: relayerFunds({ at: NOW - 45 * MIN }) });
     let a = await read();

@@ -46,6 +46,8 @@ export interface ApiSystemStatus {
   notices: NoticeBacklog | null;
   /** Every pool's public keys (never a secret); null: the pool config is unreadable. */
   relayerKeys: { pool: 'session' | 'owner' | 'home'; publicKey: string }[] | null;
+  /** Whether the API writes usage events (its `USAGE_DB` is bound). Absent from an API older than this field. */
+  usageCapture?: boolean;
   /** The `GET /v1/governance` snapshot (the API's 10 s cache), or why it couldn't be read. */
   governance: { ok: true; snapshot: Record<string, unknown> } | { ok: false; code: string };
 }

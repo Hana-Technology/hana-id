@@ -2,7 +2,7 @@
 // is written for. A Home derive names a scope and no app, so the question is asked of the scope's apps.
 //
 // THE RULE IS `HOME_PAYER`, BELOW, AND NOWHERE ELSE. To change who pays for a suspended app's Home derives (still to be
-// agreed, D461's note), change that one line and its test (test/home-billing.test.ts). Nothing else reads an app's status
+// agreed, D461's note), change that one line and its test (test/home-login.test.ts, "by the single rule"). Nothing else reads an app's status
 // for billing: the ledger, the reports, the statement and settlement only see the org this file chose.
 //
 // The rule is applied once, when the event is written, after the response (usage/record.ts) and only when usage capture
@@ -33,7 +33,9 @@ const ORG_ID_RE = /^org_[A-Za-z0-9]{1,60}$/u;
 
 /**
  * Hana's own org in the ledger: the var HANA_ORG_ID (manifest `hanaOrgId`, an internal org staff made in the admin
- * console) when it is an org id, else the legacy org, which no partner can read and no statement bills.
+ * console) when it is an org id, else the legacy org, which no partner can read and no statement bills. Only the shape
+ * is checked here: `deploy-check <env> --d1` checks that the org exists and is internal, and a statement refuses a Home
+ * line for a scope that isn't its org's unless the org is internal, so a wrong id can't bill a partner.
  */
 export function hanaOrgId(env: Pick<Env, 'HANA_ORG_ID'>): string {
   const v = env.HANA_ORG_ID;

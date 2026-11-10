@@ -10,6 +10,11 @@
 // 3. the transaction at FINAL has that hash, is signed by the env's relayer account with that key at that nonce, and is
 //    sent to the signer contract (`signer_mismatch` otherwise).
 //
+// A refusal is final: the event has its settlement row and is never read again, so it is never billed, even if the
+// pool list or the chain would later agree. That is why the API is deployed before this Worker (a Home event settled
+// against an API that lists no Home key is refused for good), and why a key is taken out of a pool's secret only once
+// nothing signed by it is left to settle (docs/operations.md "Hana Home billing: deploy").
+//
 // A refusal is written `unsettled` with its reason (never billed, listed in the admin's security screen) and raises a
 // settlement alert, emailed to the security alias by the alert step (alerts.ts): a leaked writer credential could
 // otherwise attach a real transaction to an org it isn't for. A transaction that isn't final yet is read again an hour

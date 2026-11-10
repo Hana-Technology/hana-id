@@ -5,7 +5,9 @@
 --
 --   1. widens the endpoint list of `usage.events` and of `record_event`, and the `app_id` rule of both: `app_id` is
 --      NULL exactly for owner actions and Home derives (the function below is 0005's with those two rules changed);
---   2. replaces `usage.org_report` (0006's, with two columns added, so it is dropped and created again with the same
+--   2. (below, after the report) replaces `usage.org_ledger` so a partner's ledger rows don't point at a Home derive's
+--      transaction, adds `usage.org_ledger_full` for the admin, and adds `ops.nonce_checks.reason`;
+--   3. replaces `usage.org_report` (0006's, with two columns added, so it is dropped and created again with the same
 --      grants): `kind` says what a row is about ('app', 'scope' for a scope's owner actions, 'home' for a scope's Hana
 --      Home logins), and `home_logins` counts the ok ones. A scope's Home logins are a row of their own, with the gas of
 --      those logins only, so a statement can show them as their own line.
@@ -13,6 +15,16 @@
 -- No row changes. A Home event carries no uid (only login, session and derive events do). Its `org_id` is the org that
 -- pays, chosen by the API when it writes the event (apps/api/src/home/billing.ts): the scope's org while it has an
 -- active app, Hana's own org otherwise. No user data.
+
+-- Each file runs in one transaction (scripts/lib/usage-migrate.ts). The two ALTERs below take an ACCESS EXCLUSIVE lock on
+-- usage.events and scan it once to check the new rules; rather than queue behind a long statement and hold every writer
+-- up meanwhile, give up after 5 s (the file then fails as a whole and can simply be run again). A CHECK may be added
+-- NOT VALID on a partitioned table and validated afterwards (tried on Postgres 18), but inside one transaction that
+-- gains nothing: the first lock is held to the commit either way.
+--
+-- There is no down file. To go back: deploy the older API first (so no `home_login` event is written), and leave this
+-- schema in place; it accepts everything the older schema did.
+SET LOCAL lock_timeout = '5s';
 
 ALTER TABLE usage.events DROP CONSTRAINT events_endpoint_check;
 ALTER TABLE usage.events ADD CONSTRAINT events_endpoint_check CHECK (endpoint IN ('login', 'session', 'derive', 'revoke', 'unlock', 'owner_action', 'link', 'link_cancel', 'link_unlink', 'home_login'));
@@ -256,3 +268,82 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION usage.org_report(text, date, date, text, text[], timestamptz) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION usage.org_report(text, date, date, text, text[], timestamptz) TO usage_writer, usage_admin;
+
+-- ---- the ledger CSV: what a partner may read of a Home derive ----
+
+-- A Home derive's transaction is public on chain and its arguments carry the user's ID token, so a partner's ledger
+-- must not point at it. `usage.org_ledger` (the partner's rows through the API's writer role, as before) now returns a
+-- Home row without its transaction hash, with the UTC day in place of the exact time, and with a row id that is a hash
+-- of the request id (stable, unique, and no key into Hana's logs). Its gas stays, so the CSV still sums to the
+-- statement. Every other row is unchanged. The admin Worker reads the full rows from `usage.org_ledger_full` (0006's
+-- function under a new name, admin only), to reconcile a statement against the chain.
+CREATE FUNCTION usage.org_ledger_full(p_org text, p_month date, as_of timestamptz, after text, lim integer)
+RETURNS TABLE (request_id text, at_ms bigint, org_id text, scope_id text, app_id text, endpoint text, outcome text,
+               relayed boolean, near_tx text, gas_status text, gas_burnt text, tokens_burnt text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = usage, pg_temp SET timezone = 'UTC' AS $$
+DECLARE
+  after_rid text;
+  after_at  timestamptz;
+  bound     timestamptz := COALESCE(as_of, now());
+BEGIN
+  IF p_org IS NULL OR length(p_org) NOT BETWEEN 1 AND 64 THEN RAISE EXCEPTION 'org_ledger_full: org' USING ERRCODE = '22023'; END IF;
+  IF p_month IS NULL OR EXTRACT(DAY FROM p_month) <> 1 THEN RAISE EXCEPTION 'org_ledger_full: month is a first of month' USING ERRCODE = '22023'; END IF;
+  IF lim IS NULL OR lim < 1 OR lim > 1000 THEN RAISE EXCEPTION 'org_ledger_full: lim 1..1000' USING ERRCODE = '22023'; END IF;
+  IF after IS NOT NULL THEN
+    IF after !~ '^[A-Za-z0-9_-]{8,128},(0|[1-9][0-9]{0,15})$' THEN RAISE EXCEPTION 'org_ledger_full: cursor' USING ERRCODE = '22023'; END IF;
+    after_rid := split_part(after, ',', 1);
+    after_at := timestamptz 'epoch' + (split_part(after, ',', 2)::bigint / 1000) * interval '1 second' + (split_part(after, ',', 2)::bigint % 1000) * interval '1 millisecond';
+  END IF;
+  RETURN QUERY
+  SELECT c.request_id, (extract(epoch FROM c.at) * 1000)::bigint, c.org_id, c.scope_id, c.app_id, c.endpoint, c.outcome,
+         c.relayed, c.near_tx, c.gas_status, c.gas_burnt::text, c.tokens_burnt::text
+    FROM usage.classified(p_org, p_month::timestamp AT TIME ZONE 'UTC', (p_month + interval '1 month')::timestamp AT TIME ZONE 'UTC', bound) c
+   WHERE after IS NULL OR (c.request_id, c.at) > (after_rid, after_at)
+   ORDER BY c.request_id, c.at
+   LIMIT lim;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION usage.org_ledger(p_org text, p_month date, as_of timestamptz, after text, lim integer)
+RETURNS TABLE (request_id text, at_ms bigint, org_id text, scope_id text, app_id text, endpoint text, outcome text,
+               relayed boolean, near_tx text, gas_status text, gas_burnt text, tokens_burnt text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = usage, pg_temp SET timezone = 'UTC' AS $$
+DECLARE
+  after_rid text;
+  after_at  timestamptz;
+  bound     timestamptz := COALESCE(as_of, now());
+BEGIN
+  IF p_org IS NULL OR length(p_org) NOT BETWEEN 1 AND 64 THEN RAISE EXCEPTION 'org_ledger: org' USING ERRCODE = '22023'; END IF;
+  IF p_month IS NULL OR EXTRACT(DAY FROM p_month) <> 1 THEN RAISE EXCEPTION 'org_ledger: month is a first of month' USING ERRCODE = '22023'; END IF;
+  IF lim IS NULL OR lim < 1 OR lim > 1000 THEN RAISE EXCEPTION 'org_ledger: lim 1..1000' USING ERRCODE = '22023'; END IF;
+  IF after IS NOT NULL THEN
+    IF after !~ '^[A-Za-z0-9_-]{8,128},(0|[1-9][0-9]{0,15})$' THEN RAISE EXCEPTION 'org_ledger: cursor' USING ERRCODE = '22023'; END IF;
+    after_rid := split_part(after, ',', 1);
+    after_at := timestamptz 'epoch' + (split_part(after, ',', 2)::bigint / 1000) * interval '1 second' + (split_part(after, ',', 2)::bigint % 1000) * interval '1 millisecond';
+  END IF;
+  RETURN QUERY
+  SELECT r.rid, (extract(epoch FROM r.rat) * 1000)::bigint, r.org_id, r.scope_id, r.app_id, r.endpoint, r.outcome,
+         r.relayed, r.tx, r.gas_status, r.gas_burnt::text, r.tokens_burnt::text
+    FROM (
+      SELECT CASE WHEN c.endpoint = 'home_login'
+                  THEN 'home_' || substr(encode(sha256(convert_to(c.request_id || ',' || (extract(epoch FROM c.at) * 1000)::bigint::text, 'UTF8')), 'hex'), 1, 32)
+                  ELSE c.request_id END AS rid,
+             CASE WHEN c.endpoint = 'home_login' THEN date_trunc('day', c.at) ELSE c.at END AS rat,
+             CASE WHEN c.endpoint = 'home_login' THEN NULL ELSE c.near_tx END AS tx,
+             c.org_id, c.scope_id, c.app_id, c.endpoint, c.outcome, c.relayed, c.gas_status, c.gas_burnt, c.tokens_burnt
+        FROM usage.classified(p_org, p_month::timestamp AT TIME ZONE 'UTC', (p_month + interval '1 month')::timestamp AT TIME ZONE 'UTC', bound) c
+    ) r
+   WHERE after IS NULL OR (r.rid, r.rat) > (after_rid, after_at)
+   ORDER BY r.rid, r.rat
+   LIMIT lim;
+END
+$$;
+
+REVOKE EXECUTE ON FUNCTION usage.org_ledger_full(text, date, timestamptz, text, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION usage.org_ledger_full(text, date, timestamptz, text, integer) TO usage_admin;
+
+-- ---- the nonce check: why a check was taken as explained ----
+
+-- 'capture_off': the API reported usage capture off, so the nonce was recorded as a baseline and nothing was judged.
+-- 'capture_on': the first check after capture came back on, a fresh baseline. NULL: judged by the ledger, as before.
+ALTER TABLE ops.nonce_checks ADD COLUMN reason text CHECK (reason IS NULL OR reason IN ('capture_off', 'capture_on'));

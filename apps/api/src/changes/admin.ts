@@ -5,7 +5,7 @@
 import { KeyPair } from '@near-js/crypto';
 import { type Environment, LEGACY_ORG_ID, newId, newPublishableKey } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
-import { type Pool, parseRelayerKeys } from '../relayer-config.ts';
+import { POOLS, type Pool, parseRelayerKeys, poolsSharingAKey } from '../relayer-config.ts';
 import { getApp } from './apps.ts';
 import { type Writer, actorId, commitOn, committed, refuse, refuseReplay, replayRow, runWrite, expectReplay } from './cas.ts';
 import { requireOwnersInOrg } from './chain.ts';
@@ -192,15 +192,41 @@ export async function markSecurityEventNotified(db: HotDb, ids: readonly string[
   await db.batch([q`UPDATE security_events SET notified_at = ${now} WHERE id IN (SELECT value FROM json_each(${JSON.stringify(ids)})) AND notified_at IS NULL`]);
 }
 
-/**
- * The public keys of every relayer pool (never a secret), for the admin Worker's nonce check, settlement and status
- * page. The Home pool's are here too (readiness 7.4a), so a Home key spending outside the API is seen.
- */
-export function relayerKeys(env: Env): { pool: Pool; publicKey: string }[] {
-  const pub = (secret: string) => KeyPair.fromString(secret as `ed25519:${string}`).getPublicKey().toString();
-  return [
-    ...parseRelayerKeys(env.RELAYER_KEYS, 'RELAYER_KEYS').map((k) => ({ pool: 'session' as const, publicKey: pub(k) })),
-    ...parseRelayerKeys(env.OWNER_RELAYER_KEYS, 'OWNER_RELAYER_KEYS').map((k) => ({ pool: 'owner' as const, publicKey: pub(k) })),
-    ...parseRelayerKeys(env.HOME_RELAYER_KEYS, 'HOME_RELAYER_KEYS').map((k) => ({ pool: 'home' as const, publicKey: pub(k) })),
-  ];
+/** What `AdminRpc.relayerKeys` answers: the pools' public keys (never a secret) and what the admin needs to judge them. */
+export interface RelayerPoolsView {
+  keys: { pool: Pool; publicKey: string }[];
+  /** Whether this API writes usage events (`USAGE_DB` bound). Off: the ledger can't explain any key's nonce. */
+  capture: boolean;
+  /** Pools whose secret doesn't parse, or that share a key with another pool: none of their keys is listed. */
+  unreadablePools: Pool[];
 }
+
+const POOL_ENV = { session: 'RELAYER_KEYS', owner: 'OWNER_RELAYER_KEYS', home: 'HOME_RELAYER_KEYS' } as const;
+
+/**
+ * Every relayer pool's public keys, for the admin Worker's nonce check, settlement and status page; the Home pool's are
+ * here too (readiness 7.4a), so a Home key spending outside the API is seen. Each pool is read on its own: a secret that
+ * doesn't parse, or a pool sharing a key with another, loses only its own keys, so one bad secret can't stop the check
+ * and settlement for the other pools.
+ */
+export function relayerPools(env: Env): RelayerPoolsView {
+  const pub = (secret: string) => KeyPair.fromString(secret as `ed25519:${string}`).getPublicKey().toString();
+  const sharing = poolsSharingAKey(env);
+  const keys: RelayerPoolsView['keys'] = [];
+  const unreadablePools: Pool[] = [];
+  for (const pool of POOLS) {
+    if (sharing.includes(pool)) {
+      unreadablePools.push(pool);
+      continue;
+    }
+    try {
+      keys.push(...parseRelayerKeys(env[POOL_ENV[pool]], POOL_ENV[pool]).map((k) => ({ pool, publicKey: pub(k) })));
+    } catch {
+      unreadablePools.push(pool);
+    }
+  }
+  return { keys, capture: env.USAGE_DB !== undefined, unreadablePools };
+}
+
+/** The pools' public keys alone (see `relayerPools`). */
+export const relayerKeys = (env: Env): RelayerPoolsView['keys'] => relayerPools(env).keys;

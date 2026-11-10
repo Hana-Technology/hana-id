@@ -10,13 +10,14 @@ import { env } from 'cloudflare:workers';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOME_DERIVES_PER_DAY_DEFAULT, HOME_DERIVES_PER_PATH_HOUR, HOME_DERIVES_PER_USER_DAY, HOME_DERIVES_PER_USER_HOUR, HOME_LOGIN_ENDPOINT, HOME_LOGIN_PER_IP_HOUR, HOME_SESSION_MAX_MS, checkHomeClientScope, countHomeDerive, homeDerivesPerDay, homeUnrecordedCeiling, toHomeLogin } from '../src/home/login.ts';
-import { relayerKeys } from '../src/changes/admin.ts';
+import { relayerKeys, relayerPools } from '../src/changes/admin.ts';
+import { relayerKeyCount } from '../src/relayer-pool.ts';
 import { HOME_PAYER, hanaOrgId, homeBillingOrg, homePayerOrg, homeScopeStanding } from '../src/home/billing.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { syncAfterLogin } from '../src/directory/sync.ts';
 import { clearLinkViewCaches } from '../src/link-views.ts';
 import { sha256Hex } from '../src/owner-actions.ts';
-import { parseRelayerKeys, POOL_METHODS, POOL_SECRET, poolAllows, relayerKeyName } from '../src/relayer-config.ts';
+import { parseRelayerKeys, POOL_METHODS, POOL_SECRET, poolAllows, poolsSharingAKey, relayerKeyName } from '../src/relayer-config.ts';
 import { ckdPayload, sessionNonce } from '../src/session-crypto.ts';
 import { adminRpc, system } from './rpc-helpers.ts';
 import { emailAud, emailEnv, emailToken, withEmail, type EmailChain } from './email-helpers.ts';
@@ -990,6 +991,50 @@ describe('POST /v1/home/login: the usage event and who pays (H11; D461, D585, D5
     // An env with no Home key lists none.
     expect(relayerKeys({ ...env, HOME_RELAYER_KEYS: undefined }).some((k) => k.pool === 'home')).toBe(false);
     expect(relayerKeys(env).filter((k) => k.pool === 'home').map((k) => k.publicKey)).toEqual(homeKeys);
+  });
+
+  it('relayerKeys says whether usage capture is on, and GET /v1/health says it too (for deploy-check)', async () => {
+    const r = await adminRpc().relayerKeys({ ...system() });
+    if (!r.ok) throw new Error('relayerKeys refused');
+    expect(r.capture).toBe(true);
+    expect(r.unreadablePools).toEqual([]);
+    expect(relayerPools({ ...env, USAGE_DB: undefined }).capture).toBe(false);
+    expect((await json(await call('/v1/health'))).usageCapture).toBe(true);
+    expect((await json(await call('/v1/health', { env: { USAGE_DB: undefined } }))).usageCapture).toBe(false);
+  });
+
+  it('a malformed pool secret loses only its own pool: the other pools’ keys are still listed, so their nonce check and settlement go on', async () => {
+    const all = relayerPools(env);
+    for (const [name, pool] of [['HOME_RELAYER_KEYS', 'home'], ['OWNER_RELAYER_KEYS', 'owner'], ['RELAYER_KEYS', 'session']] as const) {
+      for (const bad of ['not json', '["ed25519:"]', '{"a":1}', '["ed25519:1111"]']) {
+        const v = relayerPools({ ...env, [name]: bad });
+        expect(v.unreadablePools, `${name}=${bad}`).toEqual([pool]);
+        expect(v.keys).toEqual(all.keys.filter((k) => k.pool !== pool));
+      }
+    }
+    // Nothing of a secret in the answer, readable or not.
+    expect(JSON.stringify(relayerPools({ ...env, HOME_RELAYER_KEYS: 'not json' }))).not.toContain(parseRelayerKeys(env.RELAYER_KEYS, 'RELAYER_KEYS')[0]!.slice(8, 30));
+  });
+
+  it('one key in two pools is refused: neither pool lists a key or relays, and the third pool is untouched', async () => {
+    const session = parseRelayerKeys(env.RELAYER_KEYS, 'RELAYER_KEYS');
+    const dup = { RELAYER_KEYS: env.RELAYER_KEYS, OWNER_RELAYER_KEYS: env.OWNER_RELAYER_KEYS, HOME_RELAYER_KEYS: JSON.stringify([session[0]]) };
+    expect(poolsSharingAKey(dup)).toEqual(['session', 'home']);
+    expect(poolsSharingAKey(env)).toEqual([]);
+    // A pool that doesn't parse shares nothing (it is refused on its own account).
+    expect(poolsSharingAKey({ ...dup, HOME_RELAYER_KEYS: 'not json' })).toEqual([]);
+    const v = relayerPools({ ...env, ...dup });
+    expect(v.unreadablePools).toEqual(['session', 'home']);
+    expect(v.keys.map((k) => k.pool)).toEqual(relayerKeys(env).filter((k) => k.pool === 'owner').map(() => 'owner'));
+    // The relay refuses the pools involved before anything is signed.
+    const before = near.sent.length;
+    const r = await derive(await body(scope, SHARED), undefined, { env: dup });
+    expect(r.status).toBe(503);
+    expect((await json(r)).code).toBe('relayer_unconfigured');
+    expect(near.sent.length).toBe(before);
+    expect(() => relayerKeyCount({ ...env, ...dup }, 'session')).toThrow(/another pool/u);
+    expect(relayerKeyCount({ ...env, ...dup }, 'owner')).toBeGreaterThan(0);
+    expect(relayerKeyCount(env, 'home')).toBe(homeKeys.length);
   });
 });
 

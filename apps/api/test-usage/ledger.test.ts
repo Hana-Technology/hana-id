@@ -88,6 +88,8 @@ describe('migrations-usage on an empty database', () => {
       'usage.ensure_partitions',
       'usage.erase_uid',
       'usage.org_ledger',
+      // 0008: the ledger rows with a Home derive's transaction, for staff only (the writer's `org_ledger` hides it).
+      'usage.org_ledger_full',
       'usage.org_report',
       'usage.org_statements',
       'usage.override_rate',

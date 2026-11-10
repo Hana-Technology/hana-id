@@ -253,14 +253,14 @@ export const csvLine = (cells: readonly string[]): string => `${cells.map(csvCel
 
 /**
  * A statement's CSV columns (docs/batch-c-spec.md "CSV"; `link_actions` and `identity_tokens` added by C12, D324;
- * `row_kind` and `home_logins` by Hana Home's billing, D587: a scope's Hana Home logins are rows of their own, with
- * `row_kind` = `home`, no app, and the gas of those logins only).
+ * `row_kind` and `home_logins` by Hana Home's billing, appended last so no earlier column moves, D587: a scope's Hana
+ * Home logins are rows of their own, with `row_kind` = `home`, no app, and the gas of those logins only).
  */
 export const STATEMENT_CSV_COLUMNS = [
-  'month', 'org_id', 'org_name', 'scope_id', 'app_id', 'app_name', 'environment', 'row_kind', 'day',
-  'logins', 'derives', 'revokes', 'unlocks', 'owner_actions', 'link_actions', 'identity_tokens', 'home_logins', 'mau', 'new_users', 'failures_by_code',
+  'month', 'org_id', 'org_name', 'scope_id', 'app_id', 'app_name', 'environment', 'day',
+  'logins', 'derives', 'revokes', 'unlocks', 'owner_actions', 'link_actions', 'identity_tokens', 'mau', 'new_users', 'failures_by_code',
   'tgas', 'relayed_rejected_tgas', 'error_tgas', 'near', 'relayed_rejected_near', 'near_usd_rate', 'rate_source', 'usd', 'relayed_rejected_usd',
-  'login_p50_ms', 'login_p95_ms', 'derive_p50_ms', 'derive_p95_ms', 'unsettled', 'as_of',
+  'login_p50_ms', 'login_p95_ms', 'derive_p50_ms', 'derive_p95_ms', 'unsettled', 'as_of', 'row_kind', 'home_logins',
 ] as const;
 
 const decimalText = z.string().regex(/^(0|[1-9]\d*)(\.\d*[1-9])?$/u);

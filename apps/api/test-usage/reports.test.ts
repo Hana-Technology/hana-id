@@ -401,6 +401,63 @@ describe('usage.org_ledger', () => {
     expect(now.filter((r) => r.gas_status === 'pending').length).toBe(1);
   });
 
+  it('a partner’s rows never point at a Home derive’s transaction: no near_tx, the day for the time, a hashed row id; gas and paging intact (0008)', async () => {
+    const org = 'org_home_ledger';
+    const login = await ev({ org, app: 'app_hl', at: '2025-03-10T08:15:30.123Z', relayed: true });
+    const homes = [];
+    for (const at of ['2025-03-10T09:41:07.555Z', '2025-03-10T23:59:59.999Z', '2025-03-11T00:00:00.000Z', '2025-03-20T12:00:00.000Z']) homes.push(await ev({ org, app: null, scope: 'shl', endpoint: 'home_login', at, relayed: true }));
+    await settle(login.rid, login.at, login.tx!, 30n * 10n ** 12n, 3n * 10n ** 21n);
+    for (const [i, h] of homes.entries()) await settle(h.rid, h.at, h.tx!, BigInt(38 + i) * 10n ** 12n, BigInt(38 + i) * 10n ** 20n);
+    type Row = { request_id: string; at_ms: string; endpoint: string; near_tx: string | null; gas_status: string; gas_burnt: string | null; scope_id: string; app_id: string | null };
+    const page = (fn: string, after: string | null, lim: number, role: 'usage_writer' | 'usage_admin' = 'usage_writer') =>
+      db.asRole(role, () => db.query<Row>(`SELECT request_id, at_ms::text AS at_ms, endpoint, near_tx, gas_status, gas_burnt, scope_id, app_id FROM usage.${fn}($1, '2025-03-01', NULL, $2, $3)`, [org, after, lim]));
+
+    const partner = await page('org_ledger', null, 1000);
+    const home = partner.filter((r) => r.endpoint === 'home_login');
+    expect(home).toHaveLength(4);
+    const text = JSON.stringify(home);
+    for (const h of homes) {
+      expect(text).not.toContain(h.tx!);
+      expect(text).not.toContain(h.rid);
+    }
+    for (const r of home) {
+      expect(r.near_tx).toBeNull();
+      expect(r.request_id).toMatch(/^home_[0-9a-f]{32}$/u);
+      expect(Number(r.at_ms) % 86_400_000).toBe(0);
+      expect([r.scope_id, r.app_id, r.gas_status]).toEqual(['shl', null, 'final']);
+    }
+    // The days are right (23:59:59.999 stays in its day), the row ids distinct, and nothing else of the time is left.
+    expect(home.map((r) => new Date(Number(r.at_ms)).toISOString().slice(0, 10)).sort()).toEqual(['2025-03-10', '2025-03-10', '2025-03-11', '2025-03-20']);
+    expect(new Set(home.map((r) => r.request_id)).size).toBe(4);
+    // Every other row is as it was.
+    const other = partner.find((r) => r.endpoint === 'login')!;
+    expect([other.request_id, other.near_tx, other.at_ms]).toEqual([login.rid, login.tx, String(Date.parse('2025-03-10T08:15:30.123Z'))]);
+    // The gas stays, so the partner's CSV still sums to the report for the same as_of.
+    const sum = (rows: Row[]) => rows.reduce((s, r) => s + BigInt(r.gas_burnt ?? '0'), 0n);
+    const [homeRow] = (await report(org, '2025-03-01', '2025-03-31', 'month')).filter((r) => r.kind === 'home');
+    expect(sum(home)).toBe(BigInt(homeRow!.gas));
+    // Paging by the rows as returned: two at a time gives every row once, in the same order, and a cursor never names
+    // a Home derive's request id or time.
+    const paged: Row[] = [];
+    let after: string | null = null;
+    for (let k = 0; k < 10; k++) {
+      const rows: Row[] = await page('org_ledger', after, 2);
+      paged.push(...rows);
+      if (rows.length < 2) break;
+      after = `${rows[1]!.request_id},${rows[1]!.at_ms}`;
+      for (const h of homes) expect(after).not.toContain(h.rid);
+    }
+    expect(paged).toEqual(partner);
+    // Staff read the full rows (the admin role only): the transaction and the exact time, to check against the chain.
+    const full = await page('org_ledger_full', null, 1000, 'usage_admin');
+    expect(full.filter((r) => r.endpoint === 'home_login').map((r) => r.near_tx).sort()).toEqual(homes.map((h) => h.tx!).sort());
+    expect(full.filter((r) => r.endpoint === 'home_login').map((r) => r.request_id).sort()).toEqual(homes.map((h) => h.rid).sort());
+    expect(sum(full)).toBe(sum(partner));
+    expect((await failure(page('org_ledger_full', null, 10, 'usage_writer')))?.code).toBe('42501');
+    // The admin role calling the partner's function gets the partner's rows.
+    expect((await page('org_ledger', null, 1000, 'usage_admin')).filter((r) => r.endpoint === 'home_login').every((r) => r.near_tx === null)).toBe(true);
+  });
+
   it('refuses a bad month, cursor or page size', async () => {
     for (const [m, after, lim] of [
       ['2025-02-02', null, 10],

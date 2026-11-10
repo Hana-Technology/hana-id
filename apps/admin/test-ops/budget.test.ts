@@ -166,7 +166,7 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
   const api = () =>
     recorded(
       {
-        relayerKeys: async () => ({ ok: true as const, keys: POOL_KEYS }),
+        relayerKeys: async () => ({ ok: true as const, keys: POOL_KEYS, capture: true, unreadablePools: [] }),
         // The link-rate alert's one read (D448): no jump here, so no email.
         linkStats: async () => ({ ok: true as const, rows: [] }),
         getSecurityContacts: async () => ({ ok: true as const, emails: ['sec@partner.example'] }),
@@ -300,7 +300,7 @@ describe('the daily nonce check covers the Home pool’s keys (readiness 7.4a, D
     vi.spyOn(outbound, 'email').mockReturnValue(email);
     vi.spyOn(ledgerSource, 'open').mockImplementation(async () => ({ ...store, close: async () => {} }));
   });
-  const env = (keys: readonly { pool: 'session' | 'owner' | 'home'; publicKey: string }[]) =>
+  const env = (keys: readonly { pool: 'session' | 'owner' | 'home'; publicKey: string }[], capture: boolean | undefined = true) =>
     ({
       ENV_NAME: 'sandbox-test',
       CONSOLE_ORIGIN: 'https://console.test',
@@ -310,7 +310,7 @@ describe('the daily nonce check covers the Home pool’s keys (readiness 7.4a, D
       RELAYER_ACCOUNT: RELAYER,
       SIGNER_ACCOUNT: SIGNER,
       USAGE_DB: { connectionString: 'postgres://unused' },
-      API: { relayerKeys: async () => ({ ok: true as const, keys }), linkStats: async () => ({ ok: true as const, rows: [] }), deletedApps: async () => ({ ok: true as const, appIds: [], more: false }) },
+      API: { relayerKeys: async () => ({ ok: true as const, keys, ...(capture === undefined ? {} : { capture }) }), linkStats: async () => ({ ok: true as const, rows: [] }), deletedApps: async () => ({ ok: true as const, appIds: [], more: false }) },
       CONSOLE: {},
     }) as unknown as Env;
   // A Home key of its own, so the other describes' rows and checks don't touch it.
@@ -344,20 +344,51 @@ describe('the daily nonce check covers the Home pool’s keys (readiness 7.4a, D
     expect(alert!.text).toContain(HOME);
   });
 
-  it('with usage capture off (no Home row is ever written) a Home key’s first check is a silent baseline, and a later spend still alerts', async () => {
+  it('with usage capture off the Home key’s nonce is a baseline every day and nothing is emailed; capture on starts from a fresh baseline, then a spend alerts', async () => {
     const quiet = 'ed25519:8hSHprDq2StXwMtNd43wDTXQYsjXcD4MJTXQYsjXcc87';
     const k = [{ pool: 'home' as const, publicKey: quiet }];
-    const last = async () => (await db.query<{ chain_nonce: string; explained: boolean }>('SELECT chain_nonce::text, explained FROM ops.nonce_checks WHERE relayer_pk = $1 ORDER BY checked_at DESC LIMIT 1', [quiet]))[0];
+    const last = async () => (await db.query<{ chain_nonce: string; explained: boolean; reason: string | null }>('SELECT chain_nonce::text, explained, reason FROM ops.nonce_checks WHERE relayer_pk = $1 ORDER BY checked_at DESC LIMIT 1', [quiet]))[0];
+    const nonceMail = () => email.sent.filter((m) => /Relayer nonce unexplained/u.test(m.subject) && m.text.includes(quiet));
+    // Capture off (sandbox-dev): Home derives move the nonce and no row is ever written.
     net.nonces.set(quiet, 1_234_567);
-    await everyFifteenMinutes(env(k), T0 + 5 * DAY);
-    expect(await last()).toEqual({ chain_nonce: '1234567', explained: true });
+    expect((await everyFifteenMinutes(env(k, false), T0 + 5 * DAY))!.nonce).toMatchObject({ checked: 1, baselined: 1, unexplained: 0 });
+    expect(await last()).toEqual({ chain_nonce: '1234567', explained: true, reason: 'capture_off' });
     net.nonces.set(quiet, 1_234_568);
-    await everyFifteenMinutes(env(k), T0 + 6 * DAY);
-    expect(await last()).toEqual({ chain_nonce: '1234568', explained: false });
+    await everyFifteenMinutes(env(k, false), T0 + 6 * DAY);
+    expect(await last()).toEqual({ chain_nonce: '1234568', explained: true, reason: 'capture_off' });
+    expect(nonceMail()).toEqual([]);
+    // Capture turned on: a fresh baseline, whatever moved meanwhile.
+    net.nonces.set(quiet, 1_234_570);
+    await everyFifteenMinutes(env(k, true), T0 + 7 * DAY);
+    expect(await last()).toEqual({ chain_nonce: '1234570', explained: true, reason: 'capture_on' });
+    // From then on a nonce with no ledger row is a spend outside the API.
+    net.nonces.set(quiet, 1_234_571);
+    await everyFifteenMinutes(env(k, true), T0 + 8 * DAY);
+    expect(await last()).toEqual({ chain_nonce: '1234571', explained: false, reason: null });
+    expect(nonceMail()).toHaveLength(1);
+  });
+
+  it('several Home keys don’t take the run: three keys a run, the rest 15 minutes later, the other jobs’ calls untouched (D598)', async () => {
+    const many = [POOL_KEYS[0]!, POOL_KEYS[1]!, ...['a', 'b', 'c'].map((x) => ({ pool: 'home' as const, publicKey: `ed25519:manyHome${x}` }))];
+    const t = T0 + 20 * DAY;
+    const first = (await everyFifteenMinutes(env(many, false), t))!;
+    expect(first.calls.nonce_check).toBe(3);
+    expect(first.nonce).toMatchObject({ checked: 3, pending: 2 });
+    const second = (await everyFifteenMinutes(env(many, false), t + 15 * MIN))!;
+    expect(second.calls.nonce_check).toBe(2);
+    expect(second.nonce).toMatchObject({ checked: 2, pending: 0 });
+    const third = (await everyFifteenMinutes(env(many, false), t + 30 * MIN))!;
+    expect(third.calls.nonce_check).toBeUndefined();
+    expect(net.keysRead.slice(-5)).toEqual(many.map((k) => k.publicKey));
+    // With 2 Home keys: 3, then 1.
+    const two = many.slice(0, 4);
+    const a = (await everyFifteenMinutes(env(two, false), t + DAY))!;
+    const b = (await everyFifteenMinutes(env(two, false), t + DAY + 15 * MIN))!;
+    expect([a.calls.nonce_check, b.calls.nonce_check]).toEqual([3, 1]);
   });
 
   it('an API from before the Home keys were listed: the key isn’t read (nothing fails), which is why 7.4a needed the list', async () => {
-    await everyFifteenMinutes(env([POOL_KEYS[0]!, POOL_KEYS[1]!]), T0 + 9 * DAY);
+    await everyFifteenMinutes(env([POOL_KEYS[0]!, POOL_KEYS[1]!], undefined), T0 + 9 * DAY);
     expect(net.keysRead).toEqual([PK_A, POOL_KEYS[1]!.publicKey]);
   });
 });

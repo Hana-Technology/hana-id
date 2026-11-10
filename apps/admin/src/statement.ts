@@ -34,9 +34,14 @@ export interface StatementInputs {
   asOf: number;
   network: string;
   apps: ReadonlyMap<string, StatementApp>;
+  /** The org is one of Hana's own (kind `internal`): it may carry Home lines of any scope, the ones no partner pays for. */
+  internal?: boolean;
   dayRows: readonly ReportSqlRow[];
   monthRows: readonly ReportSqlRow[];
 }
+
+/** A statement that must not be issued as its rows stand; the message is for staff. */
+export class StatementRefused extends Error {}
 
 const big = (v: string | null | undefined, what: string): bigint => {
   if (v === null || v === undefined || !/^(0|[1-9]\d*)$/u.test(v)) throw new Error(`statement: ${what} is missing`);
@@ -65,6 +70,14 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
   const appOf = (r: ReportSqlRow) => (r.app_id === null ? undefined : i.apps.get(r.app_id));
   const environmentOf = (r: ReportSqlRow) => appOf(r)?.environment ?? envOfScope.get(r.scope_id) ?? '';
 
+  // A partner pays only for Home logins of its own scopes. A Home row of any other scope means the ledger put it on the
+  // wrong org (the API's HANA_ORG_ID naming a partner's org, or a forged event): refuse rather than bill it.
+  if (!i.internal) {
+    const own = new Set([...i.apps.values()].map((a) => a.scopeId));
+    const foreign = [...i.dayRows, ...i.monthRows].find((r) => reportRowKind(r) === 'home' && !own.has(r.scope_id));
+    if (foreign) throw new StatementRefused(`Hana Home logins of scope ${foreign.scope_id} are recorded for ${i.orgId}, which has no app in that scope: not issued (check the API's HANA_ORG_ID and the ledger)`);
+  }
+
   const cells = (r: ReportSqlRow, day: string, total: boolean): string[] => {
     const usd = big(r.usd_micros, `the USD of ${r.app_id ?? r.scope_id} on ${r.period} (a day without a rate)`);
     const rejUsd = big(r.rejected_usd_micros, `the rejected USD of ${r.app_id ?? r.scope_id} on ${r.period}`);
@@ -76,7 +89,6 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
       r.app_id ?? '',
       appOf(r)?.name ?? '',
       environmentOf(r),
-      reportRowKind(r),
       day,
       String(n(r.logins)),
       String(n(r.derives)),
@@ -85,7 +97,6 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
       String(n(r.owner_actions)),
       String(n(r.link_actions)),
       String(n(r.identity_tokens)),
-      String(n(r.home_logins)),
       total && r.app_id !== null ? String(n(r.active_users)) : '',
       String(n(r.new_users)),
       failuresCell(r),
@@ -104,6 +115,8 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
       opt(r.derive_p95),
       String(n(r.unsettled)),
       asOf,
+      reportRowKind(r),
+      String(n(r.home_logins)),
     ];
   };
 

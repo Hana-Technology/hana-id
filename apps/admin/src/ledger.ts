@@ -55,6 +55,8 @@ export interface NonceCheck {
   explained: boolean;
   ledgerRelayedSinceLast: number;
   alertedAt: number | null;
+  /** Why the check was taken as explained without the ledger: `capture_off`, `capture_on` (nonce-check.ts); else null. */
+  reason: string | null;
 }
 
 export interface RejectionAlert {
@@ -113,7 +115,7 @@ export interface LedgerStore {
   relayedWithNonce(relayerPk: string, nonce: bigint): Promise<boolean>;
   hasRelayedRows(relayerPk: string): Promise<boolean>;
   relayedSince(relayerPk: string, since: number | null, until: number): Promise<number>;
-  recordNonceCheck(c: Omit<NonceCheck, 'alertedAt'>): Promise<void>;
+  recordNonceCheck(c: Omit<NonceCheck, 'alertedAt' | 'reason'> & { reason?: string | null }): Promise<void>;
   nonceChecks(o: { unalertedUnexplainedOnly: boolean; limit: number }): Promise<NonceCheck[]>;
   markNonceAlerted(keys: { relayerPk: string; checkedAt: number }[], now: number): Promise<void>;
   // rates
@@ -159,6 +161,7 @@ export function sqlLedger(query: Query, close: () => Promise<void> = async () =>
     explained: r.explained === true,
     ledgerRelayedSinceLast: Number(r.ledger_relayed_since_last),
     alertedAt: msOrNull(r.alerted_at),
+    reason: typeof r.reason === 'string' ? r.reason : null,
   });
   return {
     async settlementQueue(limit, now, retryAfterMs) {
@@ -230,7 +233,7 @@ export function sqlLedger(query: Query, close: () => Promise<void> = async () =>
     },
 
     async lastNonceCheck(relayerPk) {
-      const [r] = await query('SELECT relayer_pk, checked_at, chain_nonce::text AS chain_nonce, explained, ledger_relayed_since_last, alerted_at FROM ops.nonce_checks WHERE relayer_pk = $1 ORDER BY checked_at DESC LIMIT 1', [relayerPk]);
+      const [r] = await query('SELECT relayer_pk, checked_at, chain_nonce::text AS chain_nonce, explained, ledger_relayed_since_last, alerted_at, reason FROM ops.nonce_checks WHERE relayer_pk = $1 ORDER BY checked_at DESC LIMIT 1', [relayerPk]);
       return r ? nonceRow(r) : null;
     },
     async relayedWithNonce(relayerPk, nonce) {
@@ -248,16 +251,16 @@ export function sqlLedger(query: Query, close: () => Promise<void> = async () =>
     },
     async recordNonceCheck(c) {
       await query(
-        `INSERT INTO ops.nonce_checks (relayer_pk, checked_at, chain_nonce, explained, ledger_relayed_since_last) VALUES ($1, $2::timestamptz, $3::bigint, $4, $5)
+        `INSERT INTO ops.nonce_checks (relayer_pk, checked_at, chain_nonce, explained, ledger_relayed_since_last, reason) VALUES ($1, $2::timestamptz, $3::bigint, $4, $5, $6)
          ON CONFLICT (relayer_pk, checked_at) DO NOTHING`,
-        [c.relayerPk, iso(c.checkedAt), c.chainNonce.toString(), c.explained, c.ledgerRelayedSinceLast],
+        [c.relayerPk, iso(c.checkedAt), c.chainNonce.toString(), c.explained, c.ledgerRelayedSinceLast, c.reason ?? null],
       );
     },
     async nonceChecks(o) {
       const rows = o.unalertedUnexplainedOnly
-        ? await query('SELECT relayer_pk, checked_at, chain_nonce::text AS chain_nonce, explained, ledger_relayed_since_last, alerted_at FROM ops.nonce_checks WHERE NOT explained AND alerted_at IS NULL ORDER BY checked_at, relayer_pk LIMIT $1', [o.limit])
+        ? await query('SELECT relayer_pk, checked_at, chain_nonce::text AS chain_nonce, explained, ledger_relayed_since_last, alerted_at, reason FROM ops.nonce_checks WHERE NOT explained AND alerted_at IS NULL ORDER BY checked_at, relayer_pk LIMIT $1', [o.limit])
         : await query(
-            `SELECT DISTINCT ON (relayer_pk) relayer_pk, checked_at, chain_nonce::text AS chain_nonce, explained, ledger_relayed_since_last, alerted_at
+            `SELECT DISTINCT ON (relayer_pk) relayer_pk, checked_at, chain_nonce::text AS chain_nonce, explained, ledger_relayed_since_last, alerted_at, reason
                FROM ops.nonce_checks ORDER BY relayer_pk, checked_at DESC LIMIT $1`,
             [o.limit],
           );
@@ -333,7 +336,7 @@ export function sqlLedger(query: Query, close: () => Promise<void> = async () =>
       return (await query('SELECT * FROM usage.org_report($1, $2::date, $3::date, $4, $5::text[], $6::timestamptz)', [orgId, fromDay, toDay, by, appIds, asOf === null ? null : iso(asOf)])) as unknown as ReportSqlRow[];
     },
     async ledgerPage(orgId, month, asOf, after, limit) {
-      return (await query('SELECT * FROM usage.org_ledger($1, $2::date, $3::timestamptz, $4, $5)', [orgId, `${month}-01`, iso(asOf), after, limit])) as unknown as LedgerSqlRow[];
+      return (await query('SELECT * FROM usage.org_ledger_full($1, $2::date, $3::timestamptz, $4, $5)', [orgId, `${month}-01`, iso(asOf), after, limit])) as unknown as LedgerSqlRow[];
     },
     async statements(orgId) {
       return (await query('SELECT * FROM usage.org_statements($1)', [orgId])) as unknown as StatementSqlRow[];

@@ -531,6 +531,15 @@ function fundsTiles(r: Report, s: Sources): void {
   }
 }
 
+/** The daily nonce check: it measures only while the API writes usage events (D596). */
+function nonceTile(r: Report, s: Sources): void {
+  const base: TileInput = { id: 'nonce-check', group: 'funds', name: 'Relayer nonce check', affects: 'Seeing a relayer key (session, owner or Home) used outside the API', detail: '', link: L.feed };
+  if (!s.api.ok) return r.add({ ...base, detail: 'Unknown: the API didn’t answer' }, [{ ...apiRpcProblem(s.api.code), issue: false }]);
+  const capture = s.api.value.usageCapture;
+  if (capture === false) return r.add({ ...base, detail: 'Not measured: usage capture is off in the API, so the check records each key’s nonce as a baseline and raises no alert', notMeasured: true });
+  r.add({ ...base, detail: capture === true ? 'Usage capture is on: each key’s nonce is checked daily against the ledger (Feed and notices lists the checks)' : 'Checked daily against the ledger (the API doesn’t say whether usage capture is on: deploy it)' });
+}
+
 function dataTiles(r: Report, s: Sources): void {
   const db = (id: string, name: string, affects: string, part: Settled<{ db: { ok: boolean; latencyMs: number } }> | null, rpcFailure: (code: string) => Problem) => {
     const base: TileInput = { id, group: 'data', name, affects, detail: '' };
@@ -804,6 +813,7 @@ export async function buildStatus(env: Env, staff: StaffRequest, accessJwt: stri
   workerTiles(r, env, s);
   contractTiles(r, env, s);
   fundsTiles(r, s);
+  nonceTile(r, s);
   dataTiles(r, s);
   jobTiles(r, s);
   externalTiles(r, env, s);

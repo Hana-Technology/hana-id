@@ -152,6 +152,8 @@ describe('the statement view (on-screen and PDF)', () => {
     expect(reportRowKind({ app_id: null })).toBe('scope');
     expect(reportRowKind({ app_id: 'app_1' })).toBe('app');
     expect(STATEMENT_CSV_COLUMNS).toContain('home_logins');
-    expect(STATEMENT_CSV_COLUMNS.indexOf('row_kind')).toBe(STATEMENT_CSV_COLUMNS.indexOf('day') - 1);
+    // The two Home columns are the last two: no column a reader already knew has moved.
+    expect(STATEMENT_CSV_COLUMNS.slice(-3)).toEqual(['as_of', 'row_kind', 'home_logins']);
+    expect(STATEMENT_CSV_COLUMNS.indexOf('day')).toBe(7);
   });
 });

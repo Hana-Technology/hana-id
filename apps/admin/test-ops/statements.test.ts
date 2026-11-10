@@ -8,11 +8,11 @@
 import { inflateSync } from 'node:zlib';
 import { type ReportSqlRow, STATEMENT_CSV_COLUMNS, formatNear, formatTgas, statementView } from '@hana-id/console-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { TestDb } from '../../api/test-usage/db.ts';
+import { type TestDb, failure } from '../../api/test-usage/db.ts';
 import { runStatementNotices } from '../src/alerts.ts';
 import type { LedgerStore } from '../src/ledger.ts';
 import { Budget } from '../src/mail.ts';
-import { buildStatement } from '../src/statement.ts';
+import { StatementRefused, buildStatement } from '../src/statement.ts';
 import { statementPdf } from '../src/statement-pdf.ts';
 import { exportLedger, issuableFrom, issueStatement, ledgerCsv, sha256Hex, statementKey } from '../src/statements.ts';
 import { ALIAS, FakeBucket, FakeEmail, STAFF, fakeRpcs, insertEvent, ledgerDb, utc } from './fakes.ts';
@@ -121,7 +121,7 @@ describe('issuing a statement', () => {
     const csv = new TextDecoder().decode(bucket.objects.get(s.csvKey)!.bytes);
     const lines = csv.trimEnd().split('\n');
     expect(lines[0]).toBe(STATEMENT_CSV_COLUMNS.join(','));
-    const totalLines = lines.filter((l) => l.split(',')[8] === 'total').map((l) => l.split(','));
+    const totalLines = lines.filter((l) => l.split(',')[7] === 'total').map((l) => l.split(','));
     const col = (name: (typeof STATEMENT_CSV_COLUMNS)[number]) => STATEMENT_CSV_COLUMNS.indexOf(name);
     expect(totalLines.length).toBe(s.totals.rows.length);
     for (const [k, row] of s.totals.rows.entries()) {
@@ -250,17 +250,17 @@ describe('the golden statement CSV (byte-stable)', () => {
   const built = () => buildStatement({ orgId: 'org_golden', orgName: 'Golden "Org", Ltd', month: '2026-01', asOf: Date.UTC(2026, 1, 3, 0, 0, 0, 123), network: 'testnet', apps, dayRows: DAY_ROWS, monthRows: MONTH_ROWS });
 
   const GOLDEN = [
-    'month,org_id,org_name,scope_id,app_id,app_name,environment,row_kind,day,logins,derives,revokes,unlocks,owner_actions,link_actions,identity_tokens,home_logins,mau,new_users,failures_by_code,tgas,relayed_rejected_tgas,error_tgas,near,relayed_rejected_near,near_usd_rate,rate_source,usd,relayed_rejected_usd,login_p50_ms,login_p95_ms,derive_p50_ms,derive_p95_ms,unsettled,as_of',
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_1,"'=cmd|""/C calc""!A0",live,app,2026-01-02,2,1,0,1,0,0,3,0,,1,bad_token=2;timeout=1,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s2,app_2,"'@x, -x",test,app,2026-01-03,2,1,0,1,0,0,3,0,,1,,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_3,-5,live,app,2026-01-02,2,1,0,1,0,0,3,0,,1,,0,0,0,0,0,2.5,coingecko,0,0,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,scope,2026-01-02,0,0,0,0,1,0,0,0,,0,,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,,,,,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,home,2026-01-02,0,0,0,0,0,0,0,1,,0,,38.5,0,0,0.00385,0,2.5,coingecko,0.009625,0,,,,,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_1,"'=cmd|""/C calc""!A0",live,app,total,2,1,0,1,0,0,3,0,2,1,bad_token=2;timeout=1,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s2,app_2,"'@x, -x",test,app,total,2,1,0,1,0,0,3,0,2,1,,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_3,-5,live,app,total,2,1,0,1,0,0,3,0,2,1,,0,0,0,0,0,,,0,0,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,scope,total,0,0,0,0,1,0,0,0,,0,,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,,,,,0,2026-02-03T00:00:00.123Z`,
-    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,home,total,0,0,0,0,0,0,0,1,,0,,38.5,0,0,0.00385,0,,,0.009625,0,,,,,0,2026-02-03T00:00:00.123Z`,
+    'month,org_id,org_name,scope_id,app_id,app_name,environment,day,logins,derives,revokes,unlocks,owner_actions,link_actions,identity_tokens,mau,new_users,failures_by_code,tgas,relayed_rejected_tgas,error_tgas,near,relayed_rejected_near,near_usd_rate,rate_source,usd,relayed_rejected_usd,login_p50_ms,login_p95_ms,derive_p50_ms,derive_p95_ms,unsettled,as_of,row_kind,home_logins',
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_1,"'=cmd|""/C calc""!A0",live,2026-01-02,2,1,0,1,0,0,3,,1,bad_token=2;timeout=1,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s2,app_2,"'@x, -x",test,2026-01-03,2,1,0,1,0,0,3,,1,,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_3,-5,live,2026-01-02,2,1,0,1,0,0,3,,1,,0,0,0,0,0,2.5,coingecko,0,0,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,2026-01-02,0,0,0,0,1,0,0,,0,,32.670449867484,2.2,0,0.0032447267304984,0.00022,2.5,coingecko,0.008112,0.00055,,,,,0,2026-02-03T00:00:00.123Z,scope,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,2026-01-02,0,0,0,0,0,0,0,,0,,38.5,0,0,0.00385,0,2.5,coingecko,0.009625,0,,,,,0,2026-02-03T00:00:00.123Z,home,1`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_1,"'=cmd|""/C calc""!A0",live,total,2,1,0,1,0,0,3,2,1,bad_token=2;timeout=1,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s2,app_2,"'@x, -x",test,total,2,1,0,1,0,0,3,2,1,,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,app_3,-5,live,total,2,1,0,1,0,0,3,2,1,,0,0,0,0,0,,,0,0,812,1400,2000,2000,0,2026-02-03T00:00:00.123Z,app,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,total,0,0,0,0,1,0,0,,0,,32.670449867484,2.2,0,0.0032447267304984,0.00022,,,0.008112,0.00055,,,,,0,2026-02-03T00:00:00.123Z,scope,0`,
+    `2026-01,org_golden,"Golden ""Org"", Ltd",s1,,,live,total,0,0,0,0,0,0,0,,0,,38.5,0,0,0.00385,0,,,0.009625,0,,,,,0,2026-02-03T00:00:00.123Z,home,1`,
   ].join('\n') + '\n';
 
   it('matches the golden bytes, in the fixed order, whatever order the rows come in', async () => {
@@ -398,11 +398,54 @@ describe('Hana Home logins on a statement (D461, D585–D588)', () => {
       ['home', null, 'sgone', 1, '38500000000000', '9625'],
       ['home', null, 'ssusp', 1, '38500000000000', '9625'],
     ]);
-    const built = buildStatement({ orgId: HANA, orgName: 'Hana (internal)', month: FEB, asOf: AT, network: 'testnet', apps: new Map(), dayRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'day', null, AT), monthRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'month', null, AT) });
+    const built = buildStatement({ orgId: HANA, orgName: 'Hana (internal)', month: FEB, asOf: AT, network: 'testnet', apps: new Map(), internal: true, dayRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'day', null, AT), monthRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'month', null, AT) });
     expect(built.totals.sum).toMatchObject({ homeLogins: 2, logins: 0, tgas: '77', usd: '0.01925' });
     expect(statementView({ csvSha256: 'ab'.repeat(32), totals: built.totals }).table.map((r) => r.label)).toEqual(['Hana Home logins, scope sgone', 'Hana Home logins, scope ssusp']);
     // The partner's report for the same month names neither scope.
     expect((await store.report(PARTNER, '2025-02-01', '2025-02-28', 'month', null, null)).map((r) => r.scope_id)).toEqual(['sh1', 'sh1', 'sh1']);
+  });
+
+  it('a Home line for a scope that isn’t the org’s is refused, never billed; Hana’s internal org may carry any scope’s', async () => {
+    // The ledger holds Home rows of scopes `sgone` and `ssusp` for HANA. Read as a partner org's (HANA_ORG_ID wrongly
+    // naming a partner, or a forged event), they are refused: the org has no app in those scopes.
+    const rows = { dayRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'day', null, AT), monthRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'month', null, AT) };
+    const base = { orgId: HANA, orgName: 'Not internal', month: FEB, asOf: AT, network: 'testnet' };
+    expect(() => buildStatement({ ...base, apps: new Map([['app_h1', { name: 'Wallet app', environment: 'live', scopeId: 'sh1' }]]), ...rows })).toThrow(StatementRefused);
+    expect(() => buildStatement({ ...base, apps: new Map(), ...rows })).toThrow(/Hana Home logins of scope sgone are recorded for org_hanainternal, which has no app in that scope/u);
+    // With an app in each scope, or as an internal org, it is built.
+    const own = new Map([['a1', { name: 'A', environment: 'live', scopeId: 'sgone' }], ['a2', { name: 'B', environment: 'live', scopeId: 'ssusp' }]]);
+    expect(buildStatement({ ...base, apps: own, ...rows }).totals.sum.homeLogins).toBe(2);
+    expect(buildStatement({ ...base, apps: new Map(), internal: true, ...rows }).totals.sum.homeLogins).toBe(2);
+
+    // Issuing goes the same way: the org's kind comes from the console. A partner org is refused with nothing written.
+    const files = new FakeBucket();
+    const asPartner = fakeRpcs({ orgName: 'Not internal', apps: [] });
+    const refused = await issueStatement({ store, api: asPartner.api, console: asPartner.console, bucket: files, network: 'testnet', staff: STAFF, now: AT }, HANA, FEB);
+    expect(refused).toMatchObject({ ok: false, code: 'conflict', error: expect.stringMatching(/Hana Home logins of scope sgone/u) });
+    expect(files.objects.size).toBe(0);
+    expect(await store.statements(HANA)).toEqual([]);
+    const asInternal = fakeRpcs({ orgName: 'Hana (internal)', apps: [], kind: 'internal' });
+    const issued = await issueStatement({ store, api: asInternal.api, console: asInternal.console, bucket: files, network: 'testnet', staff: STAFF, now: AT }, HANA, FEB);
+    if (!issued.ok) throw new Error(issued.error);
+    expect(issued.statement.totals.rows.map((r) => [r.kind, r.scopeId])).toEqual([['home', 'sgone'], ['home', 'ssusp']]);
+  });
+
+  it('staff’s ledger CSV names a Home derive’s transaction (to reconcile against the chain); the partner’s rows never do', async () => {
+    const staff = (await ledgerCsv(store, PARTNER, FEB, AT))!;
+    const homeLine = staff.csv.split('\n').find((l) => l.includes(',home_login,ok,'))!.split(',');
+    expect(homeLine[8]).toMatch(/^H[1-9A-HJ-NP-Za-km-z]+$/u);
+    // What the API's writer role reads for the partner (usage.org_ledger): no transaction, the day only, a hashed row id.
+    const partner = await db.asRole('usage_writer', () => db.query<{ request_id: string; at_ms: string; endpoint: string; near_tx: string | null; gas_burnt: string | null }>("SELECT request_id, at_ms::text, endpoint, near_tx, gas_burnt FROM usage.org_ledger($1, '2025-02-01', $2::timestamptz, NULL, 1000)", [PARTNER, new Date(AT).toISOString()]));
+    const home = partner.filter((r) => r.endpoint === 'home_login');
+    expect(home).toHaveLength(3);
+    for (const r of home) {
+      expect(r.near_tx).toBeNull();
+      expect(r.request_id).toMatch(/^home_[0-9a-f]{32}$/u);
+      expect(Number(r.at_ms) % 86_400_000).toBe(0);
+    }
+    expect(partner.filter((r) => r.endpoint !== 'home_login').every((r) => r.near_tx !== null && !r.request_id.startsWith('home_'))).toBe(true);
+    // The writer can't read the full rows.
+    expect((await failure(db.asRole('usage_writer', () => db.query("SELECT * FROM usage.org_ledger_full($1, '2025-02-01', now(), NULL, 10)", [PARTNER]))))?.code).toBe('42501');
   });
 
   it('a statement with no Home line renders exactly as before: no Home column, no Home summary line, no Home note', async () => {

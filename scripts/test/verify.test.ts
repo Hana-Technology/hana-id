@@ -420,7 +420,13 @@ describe('the run: phases in order, lanes side by side, a lane one step at a tim
     const f = fake({ sandbox: 80, pack: 10, e2e: 10 });
     const out = await V.schedule({ steps }, { ...quiet, run: f.run });
     expect(out.failed).toBeNull();
-    expect(f.events).toEqual(['start install', 'end install', 'start unit', 'start docs', 'end unit', 'end docs', 'start sandbox', 'start pack', 'end pack', 'start e2e', 'end e2e', 'end sandbox']);
+    // The first two phases, then the third phase's two lanes starting together. How the lanes then interleave depends on
+    // real timers (on a loaded machine the 80 ms sandbox can end before the web lane's two 10 ms steps), so the rest is
+    // checked as what must hold: the web lane runs in order, and every step of the phase ends.
+    expect(f.events.slice(0, 8)).toEqual(['start install', 'end install', 'start unit', 'start docs', 'end unit', 'end docs', 'start sandbox', 'start pack']);
+    const rest = f.events.slice(8);
+    expect([...rest].sort()).toEqual(['end e2e', 'end pack', 'end sandbox', 'start e2e']);
+    expect(rest.filter((e) => e !== 'end sandbox')).toEqual(['end pack', 'start e2e', 'end e2e']);
     expect([...out.results.keys()].sort()).toEqual(['docs', 'e2e', 'install', 'pack', 'sandbox', 'unit']);
     for (const r of out.results.values()) expect(r.result).toBe('pass');
     expect(out.results.get('e2e')!.start).toBeGreaterThanOrEqual(out.results.get('pack')!.start + 10);

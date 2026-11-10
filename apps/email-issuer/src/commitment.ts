@@ -2,15 +2,29 @@
 // nonce, never the nonce itself, and the issuer computes the nonce with the pinned signer. Byte arrays are JSON arrays
 // of numbers (as the API's bodies and the contract's arguments); identity keys are 64 lowercase hex characters (as the
 // contract's views and arguments).
+import { HOME_IDENTITY_MAX_LIFETIME_MS, HOME_KEY_BYTES, HOME_SALT_BYTES, homeNonce } from '@hana-id/core/home';
 import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, fromHex } from './bytes.ts';
 import { isObj, onlyKeys } from './http.ts';
 import { EMAIL_PROVIDER, type SessionCommitment, linkAccountPreimage, linkChangePreimage, linkNewPreimage, nonceOf, sessionNonceOf } from './layouts.ts';
 
-/** Every purpose an email token can serve. `auto_link` challenges are created by google-match only (D195). */
-export const PURPOSES = ['session', 'link_new', 'link_account', 'link_change', 'auto_link'] as const;
+/**
+ * Every purpose an email token can serve. `auto_link` challenges are created by google-match only (D195); `home` and
+ * `home_session` by Hana Home's route only (`POST /v1/email/home/start`).
+ */
+export const PURPOSES = ['session', 'link_new', 'link_account', 'link_change', 'auto_link', 'home', 'home_session'] as const;
 export type Purpose = (typeof PURPOSES)[number];
-/** The purposes `start` accepts. */
+/** The purposes `start` accepts. Never a Home purpose: those need no app, and `start` is gated on one. */
 export const START_PURPOSES: readonly Purpose[] = ['session', 'link_new', 'link_account', 'link_change'];
+/**
+ * Hana Home's purposes: `home` is the Home identity (its nonce commits to the Home key and can never open a session),
+ * `home_session` the one-use session Hana Home opens one app's wallet with.
+ */
+export type HomePurpose = 'home' | 'home_session';
+export const isHomePurpose = (p: Purpose): p is HomePurpose => p === 'home' || p === 'home_session';
+/** A Home session ends within this (the API's `POST /v1/home/login` rule: one use, key index 0, at most 20 minutes). */
+export const HOME_SESSION_MAX_MS = 20 * 60_000;
+/** What Hana Home asks a code for: its own sign-in, or opening one app's wallet. */
+export const HOME_KINDS = ['identity', 'derive'] as const;
 
 const MAX_SESSION_MS = 24 * 60 * 60_000;
 const SKEW_MS = 5 * 60_000;
@@ -35,6 +49,45 @@ export function parseSessionCommitment(v: unknown, now: number): Checked<Session
   if (!Number.isInteger(keyIndex) || (keyIndex as number) < 0 || (keyIndex as number) > KEY_INDEX_LIMIT) return bad('commitment.keyIndex must be 0 to 2^31 - 1');
   if (!Number.isInteger(maxUses) || (maxUses as number) < 1 || (maxUses as number) > MAX_USES_LIMIT) return bad(`commitment.maxUses must be 1 to ${MAX_USES_LIMIT}`);
   return { ok: true, value: { scopeId, sessionPublicKey: Uint8Array.from(sessionPublicKey), expiresAtMs, keyIndex: keyIndex as number, maxUses: maxUses as number, salt: Uint8Array.from(salt) } };
+}
+
+export interface ParsedHomeCommitment {
+  purpose: HomePurpose;
+  /** The scope a `home_session` token opens; null for the Home identity, which is for no scope. */
+  scopeId: string | null;
+  /** The token's nonce, computed here from the typed inputs: never a value the caller sent. */
+  nonce: string;
+}
+
+/**
+ * Hana Home's commitment and its nonce. The nonce is always computed here, from typed fields of fixed sizes, with the
+ * pinned signer; the body has no field a nonce could be passed in. So a `hana-home` token's nonce is either a Home
+ * nonce (domain `hana-id/home/v1`) or a session nonce (`hana-id/session/v1`), never a client proof's or a link's: an
+ * owner can't get a token to register this audience on their scope with (the contract's audience-shape rule refuses
+ * it too).
+ * - `identity`: `{homePublicKey (32 bytes), expiresAtMs, salt (32 bytes)}`, ending after now and at most 20 minutes away
+ *   (the API's Home identity rule): `homeNonce`.
+ * - `derive`: the session commitment, with key index 0, one use and an end at most 20 minutes away (the API's Home
+ *   session rule): `sessionNonce`.
+ */
+export function homeCommitmentNonce(signer: string, kind: unknown, commitment: unknown, now: number): Checked<ParsedHomeCommitment> {
+  if (kind === 'identity') {
+    if (!isObj(commitment) || !onlyKeys(commitment, ['homePublicKey', 'expiresAtMs', 'salt'])) return bad('commitment must be {homePublicKey, expiresAtMs, salt}');
+    const { homePublicKey, expiresAtMs, salt } = commitment;
+    if (!isBytes(homePublicKey, HOME_KEY_BYTES, HOME_KEY_BYTES)) return bad(`commitment.homePublicKey must be ${HOME_KEY_BYTES} bytes`);
+    if (!isBytes(salt, HOME_SALT_BYTES, HOME_SALT_BYTES)) return bad(`commitment.salt must be ${HOME_SALT_BYTES} bytes`);
+    if (!isU64(expiresAtMs) || expiresAtMs <= now || expiresAtMs > now + HOME_IDENTITY_MAX_LIFETIME_MS) return bad('commitment.expiresAtMs must be in the next 20 minutes');
+    return { ok: true, value: { purpose: 'home', scopeId: null, nonce: homeNonce({ signer, homePublicKey: Uint8Array.from(homePublicKey), expiresAtMs, salt: Uint8Array.from(salt) }) } };
+  }
+  if (kind === 'derive') {
+    const c = parseSessionCommitment(commitment, now);
+    if (!c.ok) return c;
+    if (c.value.keyIndex !== 0) return bad('commitment.keyIndex must be 0');
+    if (c.value.maxUses !== 1) return bad('commitment.maxUses must be 1');
+    if (c.value.expiresAtMs > now + HOME_SESSION_MAX_MS) return bad('commitment.expiresAtMs must be in the next 20 minutes');
+    return { ok: true, value: { purpose: 'home_session', scopeId: c.value.scopeId, nonce: sessionNonceOf(signer, c.value) } };
+  }
+  return bad(`kind must be one of ${HOME_KINDS.join(', ')}`);
 }
 
 export interface ParsedCommitment {

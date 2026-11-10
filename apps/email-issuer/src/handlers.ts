@@ -9,11 +9,12 @@ import { base64UrlDecode, base64UrlEncode, sha256, toHex, utf8 } from './bytes.t
 import { BUILD_ID_RE } from '@hana-id/env/build-id';
 import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail, sealEmail, type SealedEmailSource } from '@hana-id/email';
 import type { PartnerClientProof } from '@hana-id/console-core';
+import { HOME_EMAIL_AUDIENCE } from '@hana-id/core/home';
 import { ApiUnavailable, type IssuerApp, appById, appByKey, isPublishableKey, scopeHasEmailApp } from './apps.ts';
 import type { ChallengeRecord, TicketRecord } from './challenge.ts';
 import { type ChallengeId, decryptEmail, encryptEmail, newChallengeId, parseChallengeId } from './challenge-id.ts';
 import { ChainUnavailable } from './chain.ts';
-import { type Purpose, commitmentNonce, isScopeId, parseSessionCommitment } from './commitment.ts';
+import { type HomePurpose, type Purpose, commitmentNonce, homeCommitmentNonce, isHomePurpose, isScopeId, parseSessionCommitment } from './commitment.ts';
 import { type Judgement, type Side, judge } from './decide.ts';
 import type { Deps } from './deps.ts';
 import { recordUserEmailLater } from './directory.ts';
@@ -25,7 +26,7 @@ import { corsHeaders, error, isObj, json, onlyKeys, readJson } from './http.ts';
 import { ipAggregates, ipSubject, isClientIp } from './ip.ts';
 import { type EmailClaims, TOKEN_LIFETIME_S, mintJws } from './jws.ts';
 import { CODE_RE, KeysUnavailable, codeMac, domainKey, issueDeviceTicket, mailboxKey, newCode, randomId, readDeviceTicket, requesterKey, suppressionKey } from './keys.ts';
-import { CLIENT_PROOF_SUB, clientProofNonce, emailClient } from './client-proof.ts';
+import { CLIENT_PROOF_SUB, clientProofNonce, emailClient, emailClientAud } from './client-proof.ts';
 import { autoLinkPreimage, EMAIL_PROVIDER, identityKey, nonceOf, sessionPreimage, type SessionCommitment } from './layouts.ts';
 import {
   CHALLENGE_TTL_MS,
@@ -42,8 +43,10 @@ import {
   MAILBOX_RETRY_AFTER_S,
   RESEND_SPACING_MS,
   STAFF_LIMITS,
+  HOME_BUDGET_SHARE,
   appBudgetShare,
   appStartLimits,
+  generalPool,
   limitsFor,
   type Limits,
 } from './limits.ts';
@@ -167,16 +170,26 @@ async function emailApp(ctx: Ctx, pk: unknown): Promise<{ ok: true; app: IssuerA
   return { ok: true, app };
 }
 
+/**
+ * A token's audience, of one of exactly two forms: a scope's email client `email:{scope_id}`, or Hana Home's
+ * `hana-home` (the exit list's email entry, on no scope). Nothing else can be minted: no audience is ever taken from a
+ * request.
+ */
+export type TokenAudience = { kind: 'scope'; scopeId: string } | { kind: 'home' };
+const scopeAudience = (scopeId: string): TokenAudience => ({ kind: 'scope', scopeId });
+const HOME_AUDIENCE: TokenAudience = Object.freeze({ kind: 'home' });
+
 /** Mints one email token: the issuance row first (so every signature has a row), then the JWS with its self-check. */
-async function mint(ctx: Ctx, app: { id: string } | null, scopeId: string, sub: string, nonce: string, purpose: Purpose | 'client_proof', jti: string = randomId(16)): Promise<{ token: string; jti: string }> {
+async function mint(ctx: Ctx, app: { id: string } | null, audience: TokenAudience, sub: string, nonce: string, purpose: Purpose | 'client_proof', jti: string = randomId(16)): Promise<{ token: string; jti: string }> {
   const { deps } = ctx;
   const signers = await deps.signers();
   const iat = Math.floor(deps.now() / 1000);
-  const claims: EmailClaims = { iss: deps.env.EMAIL_ISS, aud: `email:${scopeId}`, sub, iat, exp: iat + TOKEN_LIFETIME_S, nonce, jti };
+  const aud = audience.kind === 'home' ? HOME_EMAIL_AUDIENCE : emailClientAud(audience.scopeId);
+  const claims: EmailClaims = { iss: deps.env.EMAIL_ISS, aud, sub, iat, exp: iat + TOKEN_LIFETIME_S, nonce, jti };
   const kid = signers[0]!.kid;
   await deps.env.DB.prepare('INSERT INTO email_issuance (jti, app_id, purpose, kid, iat) VALUES (?1, ?2, ?3, ?4, ?5)').bind(jti, app?.id ?? null, purpose, kid, iat).run();
   const token = await mintJws(claims, signers, await deps.publicKeys());
-  log({ event: 'token_minted', requestId: ctx.requestId, endpoint: ctx.endpoint, jti, purpose, ...(app ? { appId: app.id } : {}), scopeId, kid });
+  log({ event: 'token_minted', requestId: ctx.requestId, endpoint: ctx.endpoint, jti, purpose, ...(app ? { appId: app.id } : {}), ...(audience.kind === 'scope' ? { scopeId: audience.scopeId } : { aud }), kid });
   return { token, jti };
 }
 
@@ -556,6 +569,8 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   const rec = v.record;
   // A verified login at a capped domain gives its mails' places back and raises the domain's cap (abuse review M1).
   if (rec.domainKey) await limiter(deps, `dom:${rec.domainKey}`).domainVerified(rec.domainRes, rec.mailboxKey, now);
+  // Hana Home's challenges (handleHomeStart): no app, no device ticket, no directory row, no case B.
+  if (isHomePurpose(rec.purpose)) return homeVerified(ctx, cid, rec, rec.purpose);
   const app = await appById(deps.env.API, rec.appId);
   if (!app?.active || !app.emailOn || app.scopeId !== rec.scopeId) return fail(ctx, 403, 'email_not_enabled', 'Email login is not enabled for this app');
   const email = await decryptEmail(cid, rec.emailEnc);
@@ -607,7 +622,7 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
       // only for a link token of this `sub`, so it needs this popup's own email step (D139, D256).
       return recorded(ok(ctx, 200, { googleWallet: true, deviceTicket: owner, ...(linkTicket ? { linkTicket, sub } : {}) }, { appId: app.id, purpose: rec.purpose, decision: 'case_b' }));
     }
-    const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, rec.nonce!, 'session');
+    const { token: idToken } = await mint(ctx, app, scopeAudience(rec.scopeId), sub, rec.nonce!, 'session');
     // The login address, sealed for the session the challenge was started for (D438); none for a record from before.
     const sealed = rec.seal ? await sealedFor(ctx, app.id, { sessionPublicKey: Uint8Array.from(rec.seal.sessionPublicKey), expiresAtMs: rec.seal.expiresAtMs }, email, 'email') : {};
     return recorded(ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner, ...sealed }, { appId: app.id, purpose: rec.purpose }));
@@ -622,13 +637,171 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
     if (j.decision !== 'case_a' || !j.join) return fail(ctx, 409, 'link_refused', 'The sign-in methods can no longer be linked', { decision: j.decision });
     const sessionIk = identityKey(rec.scopeId, 'google', a.googleSub);
     const nonce = nonceOf(autoLinkPreimage(deps.env.SIGNER_ACCOUNT, rec.scopeId, base64UrlDecode(a.sessionHash), sessionIk, { ...j.join, mode: 1 }));
-    const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, nonce, 'auto_link');
+    const { token: idToken } = await mint(ctx, app, scopeAudience(rec.scopeId), sub, nonce, 'auto_link');
     deps.waitUntil(notify(ctx, email, app.name, false, app.id, rec.budgetShare));
     return recorded(ok(ctx, 200, { idToken, googleWallet: false, decision: 'case_a', linkImmediate: true, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose, decision: 'case_a' }));
   }
 
-  const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, rec.nonce!, rec.purpose);
+  const { token: idToken } = await mint(ctx, app, scopeAudience(rec.scopeId), sub, rec.nonce!, rec.purpose);
   return recorded(ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose }));
+}
+
+// ---- Hana Home ----
+
+/**
+ * What stands for the app in a Hana Home challenge (the budget's share, the daily counts, the issuance rows and the
+ * logs): not an app id (`app_…`), so it can never be taken for one, and no app is read for it.
+ */
+export const HOME_ISSUER_APP = 'hana-home';
+const HOME_APP_NAME = 'Hana Home';
+/** Hana Home's share a day of the general pool (limits.ts HOME_BUDGET_SHARE), counted apart from every app's. */
+function homeShare(ctx: Ctx): number {
+  const budget = dailySendBudget(ctx.deps.env);
+  return Math.max(1, Math.min(generalPool(budget), Math.floor(budget * HOME_BUDGET_SHARE)));
+}
+
+/**
+ * The audience a Hana Home token gets, read from the chain alone (no app and no IssuerRpc read, D434: a suspended or
+ * deleted app's users keep their route):
+ * - the Home identity (`home`): `hana-home`, only while `("email", "hana-home")` is an exit client in force, since the API
+ *   accepts a Home identity only then (and the council's emergency removal must stop it here too);
+ * - one app's wallet (`home_session`): the scope's own email client `email:{scope}` while the chain lists it (the normal
+ *   route, so the exit counter stays a signal of real exits), else `hana-home` while it is in force, for a registered
+ *   scope that dropped its email client (the email exit); else nothing.
+ */
+async function homeAudience(ctx: Ctx, purpose: HomePurpose, scopeId: string): Promise<{ ok: true; aud: TokenAudience } | { ok: false; response: Response }> {
+  const { chain } = ctx.deps;
+  if (purpose === 'home') {
+    if (await chain.homeEmailExit()) return { ok: true, aud: HOME_AUDIENCE };
+    return { ok: false, response: fail(ctx, 409, 'home_email_unavailable', 'Email sign-in to Hana Home is not available') };
+  }
+  const notCovered = () => ({ ok: false as const, response: fail(ctx, 409, 'not_covered', 'Hana Home can’t open a wallet of this scope with email') });
+  const scope = await chain.scope(scopeId);
+  if (!scope) return notCovered();
+  if (scope.clients.some(([p, a]) => p === EMAIL_PROVIDER && a === emailClientAud(scopeId))) return { ok: true, aud: scopeAudience(scopeId) };
+  return (await chain.homeEmailExit()) ? { ok: true, aud: HOME_AUDIENCE } : notCovered();
+}
+
+/**
+ * `POST /v1/email/home/start` (D463): Hana Home's email code, for its own sign-in (`kind: 'identity'`) or for opening
+ * one app's wallet (`kind: 'derive'`). `{email, kind, commitment}` and nothing else: no publishable key (Hana Home is
+ * for no app) and no nonce: the issuer computes it from the commitment's typed fields (commitment.ts
+ * homeCommitmentNonce). The gate is the chain's (homeAudience), never an app's. Every requester-side and mailbox limit
+ * of `start` applies, in its order: the IP's start windows, the aggregate prefixes, the mailbox, the recipient domain,
+ * the general budget pool within Hana Home's share. There is no owner path (Hana Home keeps no device ticket) and no
+ * partner quota (there is no partner). The code mail names the action and Hana Home, never an app. Enumeration-safe as
+ * `start`: every valid address gets the same 202, a suppressed one included.
+ */
+export async function handleHomeStart(request: Request, ctx: Ctx): Promise<Response> {
+  const { deps } = ctx;
+  const parsed = await readJson(request, MAX_BODY);
+  if (!parsed.ok) return fail(ctx, parsed.status, 'bad_request', parsed.message);
+  const b = parsed.body;
+  if (!isObj(b) || !onlyKeys(b, ['email', 'kind', 'commitment'])) return fail(ctx, 400, 'bad_request', 'Body must be {email, kind, commitment}');
+  const limited = await ipLimit(ctx, request, ctx.limits.ipStart);
+  if (limited) return limited;
+  if (typeof b.email !== 'string' || b.email.length > 1024) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
+  const r = normalizeEmail(b.email);
+  if (!r.ok) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
+  const now = deps.now();
+  const c = homeCommitmentNonce(deps.env.SIGNER_ACCOUNT, b.kind, b.commitment, now);
+  if (!c.ok) return fail(ctx, 400, 'bad_request', c.message);
+  const agg = await aggregateLimits(ctx, request);
+  if (agg) return agg;
+  const route = await homeAudience(ctx, c.value.purpose, c.value.scopeId ?? '');
+  if (!route.ok) return route.response;
+  if (isDisposableDomain(r.domain)) return fail(ctx, 400, 'email_domain_not_allowed', 'Addresses on this domain can’t be used to sign in');
+
+  const keys = await deps.keys();
+  const mbx = await mailboxKey(keys, r.mailbox);
+  const addrKey = await suppressionKey(keys, r.email);
+  const box = mailboxLimiter(deps, mbx);
+  const ip = requesterKey(ipOf(request));
+  const expiresAtMs = now + CHALLENGE_TTL_MS;
+  // As `start`: a suppressed address takes the same path, its limits counted, only the provider call skipped.
+  const suppressed = await isSuppressed(deps, addrKey);
+  const dKey = await domainSubject(deps, r.domain);
+  const share = homeShare(ctx);
+
+  // 1. The mailbox (one atomic call): locks, live challenges, the day's cap, the first code's limits. No owner claim.
+  const adm = await box.admit(ip, expiresAtMs, true, now, null, ctx.limits.mailbox);
+  if (!adm.ok) return tryLater(ctx, adm.reason);
+  const undoMailbox = async (alsoLive: boolean) => {
+    if (adm.send) await box.refund(adm.send);
+    await box.unadmit(adm.created, alsoLive ? expiresAtMs : null, now, null);
+  };
+  // 2. The recipient domain's day.
+  const dom = await reserveDomain(ctx, dKey, request, now, false);
+  if (!dom.ok) {
+    await undoMailbox(true);
+    return tryLater(ctx, 'domain');
+  }
+  // 3. The global budget: the general pool, within Hana Home's share.
+  const budget = await reserveBudget(ctx, HOME_ISSUER_APP, share, 'user');
+  if (!budget) {
+    await undoMailbox(true);
+    await releaseDomain(deps, dKey, dom.r);
+    return tooMany(ctx, 60_000);
+  }
+
+  const id = newChallengeId();
+  const code = newCode();
+  const rec: ChallengeRecord = {
+    appId: HOME_ISSUER_APP,
+    appName: HOME_APP_NAME,
+    scopeId: c.value.scopeId ?? '',
+    purpose: c.value.purpose,
+    nonce: c.value.nonce,
+    autoLink: null,
+    seal: null,
+    silent: suppressed,
+    emailEnc: suppressed ? '' : await encryptEmail(id, r.email),
+    mailboxKey: mbx,
+    domainKey: dKey,
+    owner: null,
+    budgetShare: share,
+    domainRes: dom.r ? [dom.r] : [],
+    codeMac: await codeMac(keys, id.id, suppressed ? randomId() : code),
+    attempts: 0,
+    createdAtMs: now,
+    expiresAtMs,
+    lastSentAtMs: now,
+    resends: 0,
+  };
+  if (!(await challengeStub(deps, id.name).create(rec))) {
+    await undoMailbox(true);
+    await releaseDomain(deps, dKey, dom.r);
+    await limiter(deps, 'global').refund(budget);
+    return fail(ctx, 500, 'internal', 'Could not start the challenge');
+  }
+  if (!suppressed) {
+    deps.waitUntil(
+      deliver(ctx, rec, r.email, code, async () => {
+        await undoMailbox(false);
+        await releaseDomain(deps, dKey, dom.r);
+        if (dom.r) await challengeStub(deps, id.name).forgetDomain(dom.r);
+        await limiter(deps, 'global').refund(budget);
+      }),
+    );
+  } else log({ event: 'code_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'suppressed', code: 'suppressed', appId: HOME_ISSUER_APP, purpose: rec.purpose });
+  return ok(ctx, 202, { challengeId: id.id, expiresAtMs, resendAfterMs: now + RESEND_SPACING_MS }, { appId: HOME_ISSUER_APP, purpose: rec.purpose });
+}
+
+/**
+ * A Hana Home challenge whose code was right (handleVerify): the audience is read from the chain again (the scope may
+ * have dropped its email client since the code was sent, or the council removed the email exit), then one token of the
+ * address's own `sub` (the same as any email login's: `HMAC(K_sub, address)`, with no audience input) and the nonce the
+ * start computed. `{idToken}` only: no device ticket (Hana Home keeps none, and a new one would push out one of the
+ * user's devices'), no user-directory row (it is no app's login), no sealed address, no case B.
+ */
+async function homeVerified(ctx: Ctx, cid: ChallengeId, rec: ChallengeRecord, purpose: HomePurpose): Promise<Response> {
+  const route = await homeAudience(ctx, purpose, rec.scopeId);
+  if (!route.ok) return route.response;
+  const email = await decryptEmail(cid, rec.emailEnc);
+  if (email === null) return fail(ctx, 410, 'challenge_expired', 'The code expired, was used or ran out of attempts: start again');
+  const sub = await emailSub((await ctx.deps.keys()).sub, email);
+  const { token: idToken } = await mint(ctx, { id: HOME_ISSUER_APP }, route.aud, sub, rec.nonce as string, purpose);
+  return ok(ctx, 200, { idToken }, { appId: HOME_ISSUER_APP, purpose });
 }
 
 // ---- google-match ----
@@ -776,7 +949,7 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
     if (googleHosted) {
       if (!b.link) return ok(ctx, 200, base, { appId: app.id, decision: j.decision });
       const nonce = nonceOf(autoLinkPreimage(deps.env.SIGNER_ACCOUNT, app.scopeId, sessionHash, sessionIk, { ...j.join, mode: 1 }));
-      const { token: emailToken } = await mint(ctx, app, app.scopeId, sub, nonce, 'auto_link');
+      const { token: emailToken } = await mint(ctx, app, scopeAudience(app.scopeId), sub, nonce, 'auto_link');
       deps.waitUntil(notify(ctx, r.email, app.name, false, app.id, shareOf(ctx, app)));
       return ok(ctx, 200, { ...base, emailToken, linkImmediate: true }, { appId: app.id, decision: j.decision });
     }
@@ -820,7 +993,7 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
   if (j.decision === 'case_b' && linkable && j.join && b.link && ticketValid) {
     const mode = googleHosted ? 1 : 0;
     const nonce = nonceOf(autoLinkPreimage(deps.env.SIGNER_ACCOUNT, app.scopeId, sessionHash, sessionIk, { ...j.join, mode }));
-    const { token: emailToken } = await mint(ctx, app, app.scopeId, sub, nonce, 'auto_link');
+    const { token: emailToken } = await mint(ctx, app, scopeAudience(app.scopeId), sub, nonce, 'auto_link');
     deps.waitUntil(notify(ctx, r.email, app.name, !googleHosted, app.id, shareOf(ctx, app)));
     return ok(ctx, 200, { ...base, emailToken, linkImmediate: mode === 1 }, { appId: app.id, decision: j.decision });
   }
@@ -929,7 +1102,7 @@ export async function mintPartnerClientProof(deps: Deps, requestId: string, i: {
   await deps.env.DB.prepare('INSERT INTO email_admin_audit (at_ms, staff, action, ticket, scope_id, action_nonce, jti, subject, detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)')
     .bind(deps.now(), PARTNER_PROOF_STAFF, 'client_proof', i.orgId.slice(0, 64), i.scopeId, i.actionNonce, jti, JSON.stringify({ org: i.orgId, actor: i.actorId, requestId }))
     .run();
-  const { token } = await mint(ctx, null, i.scopeId, CLIENT_PROOF_SUB, clientProofNonce(deps.env.SIGNER_ACCOUNT, i.scopeId, i.actionNonce), 'client_proof', jti);
+  const { token } = await mint(ctx, null, scopeAudience(i.scopeId), CLIENT_PROOF_SUB, clientProofNonce(deps.env.SIGNER_ACCOUNT, i.scopeId, i.actionNonce), 'client_proof', jti);
   return { ok: true, token, client: emailClient(i.scopeId) as [string, string] };
 }
 
@@ -945,7 +1118,7 @@ export async function handleClientProof(request: Request, ctx: Ctx): Promise<Res
   if (!(await scopeHasEmailApp(deps.env.API, scopeId))) return fail(ctx, 409, 'email_not_enabled', 'No active app of this scope has email on');
   const jti = randomId(16);
   await audit(deps, { staff: gate.staff, action: 'client_proof', ticket, scopeId, actionNonce: actionNonce as number, jti });
-  const { token } = await mint(ctx, null, scopeId, CLIENT_PROOF_SUB, clientProofNonce(deps.env.SIGNER_ACCOUNT, scopeId, actionNonce as number), 'client_proof', jti);
+  const { token } = await mint(ctx, null, scopeAudience(scopeId), CLIENT_PROOF_SUB, clientProofNonce(deps.env.SIGNER_ACCOUNT, scopeId, actionNonce as number), 'client_proof', jti);
   return ok(ctx, 200, { token, client: emailClient(scopeId) }, { scopeId, purpose: 'client_proof', jti });
 }
 
@@ -1121,6 +1294,7 @@ export const ROUTES = {
   start: '/v1/email/start',
   resend: '/v1/email/resend',
   verify: '/v1/email/verify',
+  homeStart: '/v1/email/home/start',
   googleMatch: '/v1/email/google-match',
   googleRecord: '/v1/email/google-record',
   clientProof: '/v1/email/admin/client-proof',
@@ -1135,12 +1309,12 @@ export const ROUTES = {
 } as const;
 
 /** Routes whose limits key on the client's IP: refused without a usable `cf-connecting-ip` (L4). */
-const IP_ROUTES: ReadonlySet<string> = new Set([ROUTES.start, ROUTES.resend, ROUTES.verify, ROUTES.confirm, ROUTES.googleMatch, ROUTES.googleRecord, ROUTES.sendgridWebhook]);
+const IP_ROUTES: ReadonlySet<string> = new Set([ROUTES.start, ROUTES.homeStart, ROUTES.resend, ROUTES.verify, ROUTES.confirm, ROUTES.googleMatch, ROUTES.googleRecord, ROUTES.sendgridWebhook]);
 const isStaffRoute = (path: string): boolean => path.startsWith('/v1/email/admin/');
 
 /** Which browser origin may call a POST route (null: no browser caller, no CORS). */
 function allowedOrigin(deps: Deps, path: string): string | null {
-  if (path === ROUTES.start || path === ROUTES.resend || path === ROUTES.verify || path === ROUTES.confirm) return deps.env.AUTH_ORIGIN;
+  if (path === ROUTES.start || path === ROUTES.homeStart || path === ROUTES.resend || path === ROUTES.verify || path === ROUTES.confirm) return deps.env.AUTH_ORIGIN;
   if (path === ROUTES.googleMatch || path === ROUTES.googleRecord) return deps.env.VAULT_ORIGIN;
   return null;
 }
@@ -1164,6 +1338,7 @@ export async function route(request: Request, deps: Deps): Promise<Response> {
       [ROUTES.start]: handleStart,
       [ROUTES.resend]: handleResend,
       [ROUTES.verify]: handleVerify,
+      [ROUTES.homeStart]: handleHomeStart,
       [ROUTES.googleMatch]: handleGoogleMatch,
       [ROUTES.googleRecord]: handleGoogleRecord,
       [ROUTES.clientProof]: handleClientProof,

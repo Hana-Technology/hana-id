@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOME_DERIVES_PER_DAY_DEFAULT, HOME_DERIVES_PER_PATH_HOUR, HOME_DERIVES_PER_USER_DAY, HOME_DERIVES_PER_USER_HOUR, HOME_LOGIN_ENDPOINT, HOME_LOGIN_PER_IP_HOUR, HOME_SESSION_MAX_MS, checkHomeClientScope, countHomeDerive, homeDerivesPerDay, homeUnrecordedCeiling, toHomeLogin } from '../src/home/login.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { syncAfterLogin } from '../src/directory/sync.ts';
+import { checkClientScope } from '../src/handlers.ts';
 import { clearLinkViewCaches } from '../src/link-views.ts';
 import { sha256Hex } from '../src/owner-actions.ts';
 import { parseRelayerKeys, POOL_METHODS, POOL_SECRET, poolAllows, relayerKeyName } from '../src/relayer-config.ts';
@@ -833,5 +834,89 @@ describe('migration 0018', () => {
     expect(indexes).toEqual(['user_events_address', 'user_events_app', 'user_events_user']);
     await noApp(db);
     await expect(db.prepare("INSERT INTO home_usage (day, derives) VALUES ('today', 1)").run()).rejects.toThrow();
+  });
+});
+
+describe('POST /v1/home/login: email (H10, D463, D485)', () => {
+  /** A Home identity of email `sub` (the issuer's `hana-home` token over the Home nonce). */
+  const emailIdentity = (sub: string) => newIdentity({ jwt: (nonce) => emailToken({ aud: HOME_EMAIL_AUDIENCE, sub, nonce }) });
+  /** A Home derive body for `scopeId` whose session token is the issuer's for `aud`, of email `sub`. */
+  async function emailBody(scopeId: string, aud: string, sub: string): Promise<Record<string, unknown>> {
+    const b = await loginBody(scopeId, emailAud(scopeId), { maxUses: 1, expiresAtMs: Date.now() + 10 * 60_000 }, {}, appKey(3n));
+    const nonce = await sessionNonce({ signer: env.SIGNER_ACCOUNT, scopeId, sessionPublicKey: b.sessionPublicKey as number[], expiresAtMs: b.expiresAtMs as number, keyIndex: 0, maxUses: 1, salt: b.salt as number[] });
+    return { ...b, jwt: await emailToken({ aud, sub, nonce }), scopeId };
+  }
+  const named = (prefix: string) => `${prefix}${uid()}`.toLowerCase().replace(/[^a-z0-9]/gu, '').slice(0, 60);
+
+  it('a Home identity token can never open a session: as the derive’s token its nonce commits to no session', async () => {
+    const mail = named('eid');
+    const e = withEmail(near, [mail]);
+    e.exit = [['email', HOME_EMAIL_AUDIENCE]];
+    fresh();
+    const sub = `e1.${uid()}`;
+    e.identities.set(`email#${sub}`, { status: 'own', opened: true });
+    // The identity's own token (aud hana-home, nonce = homeNonce) put where the session token goes.
+    let identityJwt = '';
+    const home = await newIdentity({ jwt: async (nonce) => (identityJwt = await emailToken({ aud: HOME_EMAIL_AUDIENCE, sub, nonce })) });
+    const b = { ...(await emailBody(mail, emailAud(mail), sub)), jwt: identityJwt };
+    const before = relays().length;
+    const r = await derive(b, home, { env: emailEnv() });
+    expect(r.status).toBe(400);
+    expect((await json(r)).code).toBe('nonce_mismatch');
+    // A Google Home identity's token the same.
+    let googleJwt = '';
+    const gHome = await newIdentity({ jwt: async (nonce) => (googleJwt = await google.sign({ iss: GOOGLE_ISS, aud: SHARED, sub: SUB, nonce, exp: Math.floor(Date.now() / 1000) + 3600 })) });
+    const rg = await derive({ ...(await body(scope, SHARED)), jwt: googleJwt }, gHome);
+    expect(rg.status).toBe(400);
+    expect((await json(rg)).code).toBe('nonce_mismatch');
+    expect(relays().length).toBe(before);
+  });
+
+  it('the email exit token opens a session for its own user in a scope that dropped its email client, only while the exit is in force', async () => {
+    // A registered scope with no email client (the owner removed it) and shared login off.
+    const dropped = named('drp');
+    near.clients[OWN] = dropped;
+    const e = withEmail(near, []);
+    e.exit = [['email', HOME_EMAIL_AUDIENCE]];
+    near.contract.create_session_and_derive = () => ({ big_y: 'bls12381g1:Y', big_c: 'bls12381g1:C' });
+    fresh();
+    const sub = `e1.${uid()}`;
+    e.identities.set(`email#${sub}`, { status: 'own', opened: true });
+    const before = relays().length;
+    const r = await derive(await emailBody(dropped, HOME_EMAIL_AUDIENCE, sub), await emailIdentity(sub), { env: emailEnv() });
+    expect(r.status).toBe(200);
+    expect(relays().length).toBe(before + 1);
+    const tx = relays().at(-1)!;
+    expect(tx.args.scope_id).toBe(dropped);
+    expect(homeKeys).toContain(tx.publicKey);
+
+    // Its own user only: another email user's Home identity can't use it.
+    const other = `e1.${uid()}`;
+    e.identities.set(`email#${other}`, { status: 'own', opened: true });
+    const mismatch = await derive(await emailBody(dropped, HOME_EMAIL_AUDIENCE, sub), await emailIdentity(other), { env: emailEnv() });
+    expect(mismatch.status).toBe(403);
+    expect((await json(mismatch)).code).toBe('home_account_mismatch');
+    // A Google Home identity whose id equals the email id is another account.
+    const sameId = await derive(await emailBody(dropped, HOME_EMAIL_AUDIENCE, sub), await newIdentity({ sub }), { env: emailEnv() });
+    expect(sameId.status).toBe(403);
+    expect((await json(sameId)).code).toBe('home_account_mismatch');
+
+    // Removed from the exit list: the identity isn't a Home identity any more (D494), and nothing is relayed.
+    e.exit = [];
+    fresh();
+    const off = await derive(await emailBody(dropped, HOME_EMAIL_AUDIENCE, sub), await emailIdentity(sub), { env: emailEnv() });
+    expect(off.status).toBe(401);
+    expect((await json(off)).code).toBe('not_a_home_client');
+    expect(relays().length).toBe(before + 1);
+  });
+
+  it('the exit token opens no scope through a partner login: checkClientScope stays closed to it', async () => {
+    const e = withEmail(near, []);
+    e.exit = [['email', HOME_EMAIL_AUDIENCE]];
+    fresh();
+    const closed = named('cls');
+    near.clients[OWN] = closed;
+    expect(await checkHomeClientScope(env, 'email', HOME_EMAIL_AUDIENCE, closed, Date.now())).toBeNull();
+    expect(await checkClientScope(env, 'email', HOME_EMAIL_AUDIENCE, closed, Date.now())).not.toBeNull();
   });
 });

@@ -301,6 +301,11 @@ export const BUDGET_STAFF_MIN = 5;
 export const BUDGET_SHARE_PER_PLAN_DAY = 0.02;
 export const BUDGET_APP_SHARE = 0.1;
 export const BUDGET_RESERVE = 0.2;
+/**
+ * Hana Home's share of the general pool a day (its email codes, handlers.ts handleHomeStart): the flat share of an app
+ * with no usable plan, counted apart, so Hana Home can't use up an app's share and no app can use up Hana Home's.
+ */
+export const HOME_BUDGET_SHARE = BUDGET_APP_SHARE;
 /** No app's share is below this many mails a day (a tiny plan can still sign people in), within the general pool. */
 export const BUDGET_MIN_SHARE = 10;
 

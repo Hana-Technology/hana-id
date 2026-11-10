@@ -96,6 +96,12 @@ export class FakeChain implements Chain {
   async unrecordedWallets(): Promise<boolean> {
     return this.unrecorded;
   }
+  /** `("email", "hana-home")` in force on the exit list (contract v4, H6): on by default, as on sandbox-dev. */
+  homeExit = true;
+  async homeEmailExit(): Promise<boolean> {
+    this.calls.push('get_config');
+    return this.homeExit;
+  }
   async identity(scope: string, provider: string, sub: string): Promise<IdentityView> {
     this.calls.push('get_identity');
     if (this.failViews) throw new (await import('../src/chain.ts')).ChainUnavailable('down');

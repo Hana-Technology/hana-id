@@ -50,7 +50,6 @@ import {
   decryptRelayPayload,
   evmPrivateKeyHex,
   extractPrk,
-  fetchGoogleJwks,
   jsonBytes,
   logoUrlOn,
   newAppKey,
@@ -75,6 +74,7 @@ import { PageError, apiErrorCode, errorMessage, sessionKeyText } from './errors.
 import { appLogo } from './logo.ts';
 import type { NearReader } from './near-rpc.ts';
 import { PathCheckError, confirmPath } from '../path-check.ts';
+import { googleKeys } from './google-keys.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
 
 /** The export session's lifetime: it is used once, within minutes. */
@@ -158,20 +158,6 @@ export interface ExportPage {
   readonly awaitingChild: boolean;
   /** Resolves when the page reaches `confirm` or `error` after a sign-in (tests). */
   readonly settled: Promise<ExportPageState>;
-}
-
-/** Google's keys with one refetch on an unknown kid (key rotation). */
-function googleKeys(): (kid: string) => Promise<Jwk | null> {
-  let keys: Jwk[] | null = null;
-  return async (kid) => {
-    keys ??= await fetchGoogleJwks();
-    let k = keys.find((j) => j.kid === kid);
-    if (!k) {
-      keys = await fetchGoogleJwks();
-      k = keys.find((j) => j.kid === kid);
-    }
-    return k ?? null;
-  };
 }
 
 /** The export string of a chain private key (StrKey S… or 0x + 64 hex). */

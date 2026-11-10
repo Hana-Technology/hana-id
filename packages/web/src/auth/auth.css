@@ -479,3 +479,259 @@ p.links {
   margin-top: 14px;
   text-align: center;
 }
+
+/* ---- Hana Home (home-page.ts): the app list, an app's page, the sign-in banner ---- */
+.home-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 14px;
+}
+
+.home-head h1 {
+  margin: 0;
+}
+
+.home-who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.home-who button {
+  min-height: 34px;
+  padding: 5px 14px;
+}
+
+/* Headings that take focus when the view changes (so a screen reader starts there) show no ring for it. */
+.home [tabindex='-1']:focus {
+  outline: none;
+}
+
+.home-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin: 0 0 14px;
+}
+
+.home-banner p {
+  margin: 0;
+  flex: 1 1 260px;
+}
+
+.home-problem {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--hana-radius);
+  padding: 10px 12px;
+  margin: 0 0 14px;
+}
+
+.home-problem p {
+  margin: 0 0 4px;
+}
+
+.home-problem p:first-child {
+  color: var(--danger-text);
+  font-weight: 600;
+}
+
+.home-cards {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.home-card {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 12px;
+}
+
+.home-card-apps {
+  display: grid;
+  gap: 10px;
+}
+
+.home-app {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.home-app img.app-logo {
+  flex: none;
+  margin-top: 2px;
+}
+
+.home-app-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.home-app-text p {
+  margin: 0;
+}
+
+/* An app name can be 200 characters with no space to break at. */
+.home-app-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  overflow-wrap: anywhere;
+}
+
+.home-app-name strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.home-app-origins .origin {
+  color: var(--muted);
+}
+
+.home-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.home-card-foot button {
+  min-height: 36px;
+  padding: 6px 18px;
+}
+
+.home-app-all {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+/* State badges: text in the page's ink on a state tint, never colour alone (the words say it). */
+.badge {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.5;
+  padding: 1px 9px;
+  border-radius: var(--hana-radius-pill);
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.badge-ok {
+  background: var(--hana-ok-soft);
+  border-color: var(--hana-ok-line);
+}
+
+.badge-warn {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+}
+
+.badge-off {
+  background: var(--danger-bg);
+  border-color: var(--danger-line);
+}
+
+.badge-muted {
+  color: var(--muted);
+}
+
+.actions.start {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.home-find {
+  margin-top: 6px;
+}
+
+.home-addresses {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.home-address {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 10px 12px;
+}
+
+.home-address p {
+  margin: 0;
+}
+
+.home-address-label {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.86rem;
+}
+
+.home-address-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 8px !important;
+}
+
+button.home-copy {
+  min-height: 32px;
+  padding: 3px 14px;
+  font-size: 0.88rem;
+}
+
+#home-back {
+  display: inline-block;
+  margin-bottom: 4px;
+}
+
+@media (max-width: 420px) {
+  .panel.home {
+    padding: 18px 14px 16px;
+  }
+}
+
+/* The code and request lines wrap at their separators, not inside a word. */
+.home-problem .code {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.home-app-heading {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.home-app-meta p {
+  margin: 0 0 6px;
+}
+
+.home-support .mono {
+  margin-right: 6px;
+}

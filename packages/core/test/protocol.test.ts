@@ -303,6 +303,18 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
   'hana:hello': { v: 1, t: 'hana:hello', sdk: '0.0.0' },
   'hana:auth-hello': { v: 1, t: 'hana:auth-hello' },
   'hana:auth-params': AUTH_PARAMS,
+  'hana:home-params': {
+    v: 1,
+    t: 'hana:home-params',
+    signer: 'hana-signer.testnet',
+    clientId: 'shared.apps.googleusercontent.com',
+    homePublicKey: new Uint8Array(32),
+    expiresAtMs: 1_800_000_000_000,
+    salt: new Uint8Array(32),
+    nonce: 'A'.repeat(43),
+    relayId: AUTH_PARAMS.relayId,
+    relayKey: new Uint8Array(32),
+  },
   'hana:auth-progress': { v: 1, t: 'hana:auth-progress', stage: 'email_code' },
   'hana:auth-progress-ack': { v: 1, t: 'hana:auth-progress-ack', stage: 'google' },
   'hana:approve-hello': { v: 1, t: 'hana:approve-hello' },
@@ -390,6 +402,20 @@ describe('window messages', () => {
     ['an over-long appName', { appName: 'x'.repeat(201) }],
   ])('auth-params refuses %s', (_, change) => {
     expect(parseWindowMessage({ ...AUTH_PARAMS, ...change }, ['hana:auth-params'])).toBeNull();
+  });
+
+  // Hana Home's sign-in child: the Home key and salt are exactly 32 bytes, and no app or session field rides along.
+  it.each([
+    ['a 31-byte Home key', { homePublicKey: new Uint8Array(31) }],
+    ['a 16-byte salt', { salt: new Uint8Array(16) }],
+    ['a 31-byte relayKey', { relayKey: new Uint8Array(31) }],
+    ['a short nonce', { nonce: 'n'.repeat(42) }],
+    ['a bad signer', { signer: 'Hana Signer' }],
+    ['an empty client', { clientId: '' }],
+    ['a session field', { scopeId: 's1' }],
+    ['an app name', { appName: 'Partner' }],
+  ])('home-params refuses %s', (_, change) => {
+    expect(parseWindowMessage({ ...VALID_WINDOW['hana:home-params'], ...change }, ['hana:home-params'])).toBeNull();
   });
 
   // Email login (batch 8a): the offered methods ride only when email is among them; a Google-only message is batch B's.

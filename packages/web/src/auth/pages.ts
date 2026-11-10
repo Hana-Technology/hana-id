@@ -6,7 +6,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core/demo-config';
 import { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
 
-export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export' | 'share';
+export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export' | 'share' | 'home';
 
 export interface AuthPage {
   readonly name: AuthPageName;
@@ -25,6 +25,8 @@ export const AUTH_PAGES: readonly AuthPage[] = Object.freeze([
   { name: 'export', path: '/export', file: 'export.html', title: 'Export your key' },
   // D411: the email sharing sheet (share-page.ts).
   { name: 'share', path: '/share-email', file: 'share-email.html', title: 'Share your email' },
+  // Hana Home (home-page.ts): linked from nowhere yet, reached only by its address.
+  { name: 'home', path: '/home', file: 'home.html', title: 'Hana Home' },
 ]);
 
 /** Google's JWKS host, which the export window reads (as the vault does). */
@@ -50,10 +52,10 @@ export const demoBalanceBuild = (env: CspEnv): boolean => env.devEnv === true &&
 
 /**
  * The pages that show the app's name, and so its logo beside it (batch C11): the sign-in chooser, the email step, the
- * approval and consent popup and the export window. The callback shows no app, so it loads no image from elsewhere.
+ * approval and consent popup, the export window and Hana Home's app list. The callback shows no app, so it loads no image from elsewhere.
  * apps/api src/pages/host.ts AUTH_LOGO_PATHS lists the same pages for the header policy.
  */
-export const LOGO_PAGES: readonly AuthPageName[] = Object.freeze(['login', 'email', 'approve', 'export', 'share']);
+export const LOGO_PAGES: readonly AuthPageName[] = Object.freeze(['login', 'email', 'approve', 'export', 'share', 'home']);
 
 /**
  * The page's `img-src`: the base policy's 'self' data:, plus the files origin on a logo page of an env that has one.
@@ -64,8 +66,8 @@ export function imgSources(env: CspEnv, page: AuthPageName): string[] {
 }
 
 /**
- * What the page may fetch: the API (callback, email, export), Google's tokeninfo (callback, with an email issuer), the
- * email issuer (email), the NEAR RPC and Google's JWKS (export). apps/api src/pages/host.ts sends the same lists in
+ * What the page may fetch: the API (callback, email, export, home), Google's tokeninfo (callback, with an email issuer), the
+ * email issuer (email), the NEAR RPC (export) and Google's JWKS (export, home). apps/api src/pages/host.ts sends the same lists in
  * the header policy: a browser enforces both, so they must agree.
  */
 export function connectSources(env: CspEnv, page: AuthPageName): string[] {
@@ -100,6 +102,10 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
     case 'share':
       // D411: the sheet reads the sealed address from the API (`/v1/identity/email-consent/preview`); nothing else.
       return [originOf(env.apiUrl)];
+    case 'home':
+      // Hana Home: the API (`/v1/home/*`, the login relay's read) and Google's JWKS, for its own check of the token.
+      // It reads no chain: the NEAR RPC joins only with the per-app derive.
+      return [originOf(env.apiUrl), GOOGLE_CERTS_ORIGIN];
   }
 }
 

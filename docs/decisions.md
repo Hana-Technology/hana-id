@@ -9921,3 +9921,51 @@ below.
   Hana's popup would override that choice.
 - Alternatives: (a) the app's full chooser (D341 as built): it ignores the partner's `method`. Not recommended.
 
+
+### D550. Hana Home's page (H7) lists apps and addresses from the API and derives nothing
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** · Built: `packages/web/src/auth/home-page.ts`, `home-api.ts`, `entries/home.ts` · Source: the plan's H7; `docs/hana-home-spec.md` "Wallets and export" ("Viewing needs no chain transaction and no re-auth")
+- Decision: `/home` signs the user in with Google and shows what `GET /v1/home/apps` answers: their apps first, each with whether Hana can still open the wallet, the addresses on record and the Support ID where the API gives one. It never calls `POST /v1/home/login`: the first derive belongs to export (H8). An app with no address on record says so and offers nothing more until H8.
+- The Home sign-in itself uses the shared Google client through `/login?mode=home` and `/login/callback` (the spec's "Identity" step 3). With no shared Google client in force the page says sign-in isn't available: signing in to Home through the exit client needs `/home/callback` (D491), which arrives with the per-app sign-in (H8) or email (H10).
+- Why: the spec says viewing needs no chain transaction; a derive marks an identity `opened` on chain for good (D544) and spends the daily ceiling, so it shouldn't happen just to look.
+- Seams left: the app page's `home-app-extras` element (export in H8, devices in H9), `SIGN_IN_METHODS` (email in H10), and the page's sentences for the derive's refusals (`home_no_wallet`, `home_busy`, `home_account_mismatch`, `link_pending`), already written and tested.
+- Address impact: none. No path, key rule or derivation is read or changed.
+
+### D551. `/home`'s policy lists the API and Google's JWKS only; the NEAR RPC joins with the derive
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** · Built: `apps/api/src/pages/host.ts` (`authPageDirectives`, `AUTH_PAGE_PATHS`, `AUTH_LOGO_PATHS`), `packages/web/src/auth/pages.ts`
+- Decision: `/home` is served with the base policy plus `frame-ancestors 'none'; connect-src {apiUrl} https://www.googleapis.com`, and the files origin in `img-src` (app logos). The spec's list also names `{rpc}` and `{rpcFallback}`; H7 reads no chain, so they are left out until H8 needs them for `get_scope` and `get_identity`.
+- Why: a page gets only the origins it uses. Adding two origins later is one line in each of the two lists, which a test keeps equal.
+- Address impact: none.
+
+### D552. `/login?mode=home` takes its own message, `hana:home-params`, only from a same-origin opener at `/home`
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7` (the condition of H1's review); **proposed, awaiting the user's confirmation** (the new message) · Built: `packages/core/src/protocol.ts` (`hana:home-params`), `packages/web/src/auth/login-page.ts` (`checkHome`)
+- Decision: the Home sign-in child is `/login?mode=home`. It accepts only `hana:home-params` (`signer`, `clientId`, the Home public key, its end, the salt, the nonce, the relay slot and key), only with `event.origin === authOrigin`, `event.source === window.opener` and `opener.location.pathname === '/home'`. It recomputes `homeNonce` from the message's own key, end and salt for the pinned signer and stops on any difference, so it never sends Google a nonce it can't account for. It goes to Google with `scope=openid`, the account chooser and no `max_age`. The mode takes no `hana:auth-params`, and the partner, vault and export modes take no `hana:home-params`: no other opener can get a token with a Home nonce through Hana's pages.
+- Options: reuse `hana:auth-params` with a flag (its session fields would be dummies, and a flag could be set by the vault); a separate page (another route and policy for the same steps).
+- Address impact: none.
+
+### D553. Hana Home's sign-in ends after 15 minutes: a warning 2 minutes before, the screen kept, nothing fetched, a new key at each sign-in
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** (the 2 minutes and the same-account rule) · Built: `home-page.ts` (`HOME_EXPIRY_WARN_MS`, `checkSession`, `signedIn`) · Implements the spec's "Expiry" (D424's rules for Home) and the plan's "One `hk` per sign-in"
+- Decision: the page tells the end from the identity's own `expiresAtMs` (timers, and a check whenever the page is shown or focused and before every request) and from any 401. Two minutes before, a notice says so and offers "Sign in again". At the end the key and token are dropped; everything on screen stays; a click that needs the API sends nothing and the notice asks for a new sign-in. The page never sends a request again by itself, after an error or after a new sign-in. A new sign-in always makes a new key. If it is for the same Google account (the `sub`, compared in memory), the screen stays exactly as it was and nothing is fetched until the user acts; for another account the screen is cleared and that account's list is loaded.
+- Why: "lose nothing" and "never retry" together mean the user, not the page, decides what is asked again; comparing the account stops one person's list staying on screen under another's sign-in.
+- Memory only: the key, token and `sub` are never written to storage, a URL or a log; a reload signs out.
+- Address impact: none.
+
+### D554. Hana Home's wording: availability badges, app states, refusals
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** · Built: `home-page.ts` (`COVERAGE_TEXT`, `homeProblem`)
+- Decision:
+  - Availability, from the API's coverage: `shared`, `hana_client`, `exit` and `email` read "Available" ("Hana can open this wallet for you, even if the app stops running."); `partner_client` "May stop working" (it works only while the app keeps its own Google sign-in); `none` "Not available" (with "If the app still runs, use the app itself."); `unknown` "Not checked yet", checked once when the app's page is opened or on "Check now" (a user's own app by `?scopeId=`, another by `?appId=`, D502).
+  - App states: `suspended` "Paused", `deleted` "Closed", a test app "Test app". Sections: "Your apps", "Find an app", "Other apps that use Hana".
+  - Refusals read as fixed sentences picked by the API's code, never the API's own message, with the code and the request ID beneath: `home_no_wallet` "There is no wallet for this sign-in in that app." (D544); `home_busy` "Hana Home has reached its limit for today. Try again tomorrow."; `rate_limited` and any other 429 "Too many requests. Wait a minute and try again."; every 5xx and a network failure "Hana Home is not reachable right now. Nothing on screen was lost. Try again in a moment."; every 401 ends the sign-in (D553).
+- Why: plain words, no internal terms (scope, coverage, derive); one place to change them.
+- Address impact: none.
+
+### D555. The partner's link to Hana Home is `/home?appId=app_…`
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** · Built: `home-page.ts` (`linkedAppId`) · For D502 ("found … by its `appId` (the partner's link)")
+- Decision: `/home?appId=<app id>` (exactly that one parameter, of the app id's form) opens that app's page after sign-in, with one `GET /v1/home/apps?appId=` read. Anything else in the query is ignored. The page never changes its own URL.
+- Why: an app id is public and can't be walked (D502); nothing of the user's is in the link.
+- Address impact: none.
+
+### D556. Hana Home links a Stellar address to StellarExpert; an EVM address gets no explorer link
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** · Built: `home-page.ts` (`STELLAR_ACCOUNT_URL`)
+- Decision: beside the copy button, a Stellar address links to its StellarExpert account page for the env's network (a fixed URL of Hana's choosing with the address appended, `rel="noopener noreferrer"`). An EVM address has only the copy button: it is the same address on every EVM chain, so no one explorer is right for it. The spec's F3 says "copy and explorer links" without naming chains.
+- Options: an EVM link to one default chain (which one is a product choice); a list of chains (long, and most would be empty).
+- Address impact: none.

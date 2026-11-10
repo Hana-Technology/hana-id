@@ -39,8 +39,9 @@ class Statement {
 
   runSync(): { success: true; meta: { changes: number }; results: Row[] } {
     const stmt = this.db.prepare(this.sql);
-    // A statement with RETURNING answers rows (D1's batch gives them in `results`).
-    if (/\breturning\b/iu.test(this.sql)) {
+    // A read, or a statement with RETURNING, answers rows (D1's batch gives them in `results`; GET /v1/home/apps reads
+    // its listing in one batch).
+    if (/^\s*select\b/iu.test(this.sql) || /\breturning\b/iu.test(this.sql)) {
       const results = stmt.all(...this.args).map(plain);
       return { success: true, meta: { changes: results.length }, results };
     }

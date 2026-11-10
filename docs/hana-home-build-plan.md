@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0, H1, H2, H4 and H6 merged and live on sandbox-dev (contract v4, exit clients in force); H3 and H5 built with their security reviews' fixes, merged on branch `merge/h3-h5` (not merged into `develop`, not deployed); H7–H12 not started. Older "not merged, not deployed" notes in the result lines below are history.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-09): H0, H1, H2, H4 and H6 merged and live on sandbox-dev (contract v4, exit clients in force); H3 and H5 built with their security reviews' fixes, merged on branch `merge/h3-h5` (not merged into `develop`, not deployed); H7 built on `feat/hana-home-h7` (2026-11-10, not merged, not deployed); H8–H12 not started. Older "not merged, not deployed" notes in the result lines below are history.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -193,6 +193,7 @@ The design is `docs/hana-home-h6-design.md`; its decisions are D480–D489.
 - **Migration / deploy.** Pages. Not linked yet. Run the "Deploy checklist" below first.
 - **User-visible.** Only by typing the URL.
 - **Condition (H1's review).** `/login?mode=home`: only a same-origin opener at `/home` may supply the nonce.
+- **Result (2026-11-10, `feat/hana-home-h7`, not merged, not deployed).** `packages/web/src/auth/home-page.ts` and `home-api.ts` (the page, its identity and its signed API calls), `entries/home.ts`, `google-keys.ts` (shared with the export window), the `home` mode of `login-page.ts` with core's new `hana:home-params` message (D552), `/home` in `pages.ts`, the page build and `apps/api/src/pages/host.ts` (policy: the API and Google's JWKS, D551), Home's styles in `auth.css`; D550–D556 (all proposed, awaiting the user's confirmation). The page lists apps and addresses and derives nothing: `POST /v1/home/login` is first called in H8 (D550). Tests: `packages/web/test/auth/home-page.test.ts` (states, sign-in and opener checks, text-only partner strings, the end of the sign-in, every refusal), `login-page.test.ts` "/login?mode=home", `pages.test.ts`, `apps/api/test/pages-host.test.ts`, core `protocol.test.ts`, and `apps/e2e/tests/home.spec.ts` (the real API's gate accepting the page's signed requests; every screen). The e2e D1 stand-in now returns a batch's `SELECT` rows, as D1 does (`apps/e2e/src/server/d1.ts`). No migration, no cron, no path or key change. Left for later batches: the derive and addresses of apps with none on record (H8), signing in to Home through the exit client (`/home/callback`, H8 or H10), devices (H9), email (H10), an EVM explorer link and browser-history navigation between the list and an app's page (not built).
 
 ### H8: export
 

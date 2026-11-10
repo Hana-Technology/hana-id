@@ -6,7 +6,7 @@
 // - vaultOrigin: `GET /vault` goes to the API Worker through the `API` service binding with the request unchanged (its
 //   URL keeps the vault origin, which vault/page.ts checks), so the page is rendered there per request with the app's
 //   D1 config inlined and its `frame-ancestors`. Every other path is a static asset (the vault bundle).
-// - authOrigin: `/login`, `/login/email`, `/login/callback`, `/approve` and `/export` are the built HTML files (`<path>.html`), served
+// - authOrigin: `/login`, `/login/email`, `/login/callback`, `/approve`, `/export`, `/share-email` and `/home` are the built HTML files (`<path>.html`), served
 //   with each page's CSP and headers. Every other path is a static asset.
 //
 // - both: `GET /.well-known/hana-build` is `{"build": <id> | null}`, the build id the Worker was deployed with
@@ -89,6 +89,10 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
     case '/share-email':
       // D411: the email sharing sheet reads the sealed address from the API's preview endpoint; nothing else.
       return ["frame-ancestors 'none'", `connect-src ${origins.api}`];
+    case '/home':
+      // Hana Home (docs/hana-home-spec.md "Pages and packages"): the API (`/v1/home/*`, the login relay's read) and
+      // Google's JWKS for its own token check. No NEAR RPC yet: the page reads no chain until it derives (D551).
+      return ["frame-ancestors 'none'", `connect-src ${origins.api} ${GOOGLE_CERTS_ORIGIN}`];
     default:
       return null;
   }
@@ -97,12 +101,12 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
 /**
  * The auth pages that show the app's name and so its logo (batch C11): their `img-src` adds FILES_ORIGIN. packages/web
  * src/auth/pages.ts LOGO_PAGES lists the same pages for the meta policy: a browser enforces both, so they must agree.
- * The callback shows no app and loads no image from elsewhere.
+ * The callback shows no app and loads no image from elsewhere. Hana Home lists apps with their logos.
  */
-export const AUTH_LOGO_PATHS: readonly string[] = ['/login', '/login/email', '/approve', '/export', '/share-email'];
+export const AUTH_LOGO_PATHS: readonly string[] = ['/login', '/login/email', '/approve', '/export', '/share-email', '/home'];
 
 /** The auth pages' routes; each is served from the built file `<route>.html`. */
-export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export', '/share-email'] as const;
+export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export', '/share-email', '/home'] as const;
 
 const ERROR_HTML = '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Hana ID</title></head><body></body></html>\n';
 

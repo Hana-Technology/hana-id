@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // /login (docs/batch-b-spec.md "Login" steps 3–5, "Tests → Web unit → Login popup"): the sender checks in each opener
 // mode, the signer and nonce checks, no API call (D77), the COOP error, the sessionStorage entry and the Google request.
-import { relayIdFor, sessionNonce } from '@hana-id/core';
+import { homeNonce, relayIdFor, sessionNonce } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HELLO_TIMEOUT_MS, openerMode, startLoginPage } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX } from '../../src/auth/login-storage.ts';
@@ -80,7 +80,8 @@ describe('opener modes', () => {
     expect(openerMode(`?v=${VAULT_FRAME}`)).toEqual({ mode: 'partner', vaultFrame: VAULT_FRAME });
     expect(openerMode('?from=vault')).toEqual({ mode: 'vault' });
     expect(openerMode('?mode=export')).toEqual({ mode: 'export' });
-    for (const bad of ['', '?v=hana-vault-xyz', '?v=other', `?v=${VAULT_FRAME}&from=vault`, '?from=partner', '?mode=login', `?v=${VAULT_FRAME}&v=${VAULT_FRAME}`]) expect(openerMode(bad)).toBeNull();
+    expect(openerMode('?mode=home')).toEqual({ mode: 'home' });
+    for (const bad of ['', '?v=hana-vault-xyz', '?v=other', `?v=${VAULT_FRAME}&from=vault`, '?from=partner', '?mode=login', '?mode=home&mode=export', '?mode=home&v=1', '?mode=Home', `?v=${VAULT_FRAME}&v=${VAULT_FRAME}`]) expect(openerMode(bad)).toBeNull();
   });
 });
 
@@ -291,5 +292,160 @@ describe('timings (pk_test_ apps)', () => {
     expect((await s.page.done).stage).toBe('redirecting');
     const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId) as string) as Record<string, unknown>;
     expect(entry).not.toHaveProperty('t');
+  });
+});
+
+// Hana Home's sign-in child (docs/hana-home-spec.md "Pages and packages"; H1's review): only a same-origin opener at
+// /home may supply the nonce, and the nonce must be the Home nonce of the message's own key.
+describe('/login?mode=home', () => {
+  function homeParams(over: Record<string, unknown> = {}) {
+    const homePublicKey = crypto.getRandomValues(new Uint8Array(32));
+    const salt = crypto.getRandomValues(new Uint8Array(32));
+    const expiresAtMs = 1_800_000_900_000;
+    return {
+      v: 1,
+      t: 'hana:home-params',
+      signer: ENV.signer,
+      clientId: CLIENT_ID,
+      homePublicKey,
+      expiresAtMs,
+      salt,
+      nonce: homeNonce({ signer: ENV.signer, homePublicKey, expiresAtMs, salt }),
+      relayId: relayIdFor(crypto.getRandomValues(new Uint8Array(32))),
+      relayKey: crypto.getRandomValues(new Uint8Array(32)),
+      ...over,
+    };
+  }
+
+  function home(pathname = '/home') {
+    const win = new FakeWindow('/login', '?mode=home');
+    const opener = remoteWindow({ location: { pathname } });
+    win.opener = asWindow(opener);
+    const page = startLoginPage({ win, env: ENV, now: () => 1_800_000_000_000 });
+    return { win, opener, page };
+  }
+
+  it('says hello to its opener on the auth origin only', () => {
+    const s = home();
+    expect(s.opener.postMessage).toHaveBeenCalledWith({ v: 1, t: 'hana:auth-hello' }, ENV.authOrigin);
+    for (const call of s.opener.postMessage.mock.calls) expect(call[1]).toBe(ENV.authOrigin);
+  });
+
+  it('takes the Home page’s message, stores the relay key under the state and goes to Google with the Home nonce', async () => {
+    const s = home();
+    const params = homeParams();
+    const relayKey = Uint8Array.from(params.relayKey);
+    s.win.message(params, ENV.authOrigin, s.opener);
+    const state = await s.page.done;
+    expect(state.stage).toBe('redirecting');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(s.win.location.assigned).toHaveLength(1);
+    const url = new URL(s.win.location.assigned[0] as string);
+    expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client_id: CLIENT_ID,
+      redirect_uri: `${ENV.authOrigin}/login/callback`,
+      response_type: 'id_token',
+      response_mode: 'fragment',
+      scope: 'openid',
+      nonce: params.nonce,
+      state: params.relayId,
+      prompt: 'select_account',
+    });
+    // The callback's entry, exactly a plain login's: the relay key and nothing of a follow-up.
+    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId) as string) as Record<string, unknown>;
+    expect(Object.keys(entry).sort()).toEqual(['createdAt', 'relayKey', 'v']);
+    expect(Buffer.from(entry.relayKey as string, 'base64url')).toEqual(Buffer.from(relayKey));
+    expect(s.win.sessionStorage.length).toBe(1);
+    expect(params.relayKey.every((b) => b === 0)).toBe(true);
+    expect(pageText()).toContain('Signing in to Hana Home');
+  });
+
+  it.each([
+    ['an opener on another page of the auth origin', '/export'],
+    ['an opener at the site root', '/'],
+    ['an opener at a path that only starts like it', '/home/x'],
+    ['an opener at /login', '/login'],
+  ])('refuses %s', async (_, pathname) => {
+    const s = home(pathname);
+    s.win.message(homeParams(), ENV.authOrigin, s.opener);
+    await flush();
+    expect(s.page.state.stage).toBe('connecting');
+    expect(s.win.sessionStorage.length).toBe(0);
+    expect(s.win.location.assigned).toEqual([]);
+  });
+
+  it('refuses a cross-origin opener, another origin, and another window', async () => {
+    const win = new FakeWindow('/login', '?mode=home');
+    const cross = crossOriginWindow();
+    win.opener = asWindow(cross);
+    const page = startLoginPage({ win, env: ENV });
+    win.message(homeParams(), ENV.authOrigin, cross);
+    await flush();
+    expect(page.state.stage).toBe('connecting');
+
+    const s = home();
+    s.win.message(homeParams(), ENV.vaultOrigin, s.opener);
+    s.win.message(homeParams(), EVIL, s.opener);
+    s.win.message(homeParams(), PARTNER, s.opener);
+    s.win.message(homeParams(), ENV.authOrigin, remoteWindow({ location: { pathname: '/home' } }));
+    s.win.message(homeParams(), ENV.authOrigin, null);
+    await flush();
+    expect(s.page.state.stage).toBe('connecting');
+    expect(s.win.sessionStorage.length).toBe(0);
+    expect(s.win.location.assigned).toEqual([]);
+  });
+
+  it('takes no session message in this mode, even from /home', async () => {
+    const s = home();
+    s.win.message(authParams(), ENV.authOrigin, s.opener);
+    await flush();
+    expect(s.page.state.stage).toBe('connecting');
+    expect(s.win.sessionStorage.length).toBe(0);
+  });
+
+  it.each(['partner', 'vault', 'export'] as const)('%s mode takes no Home message, so no other opener can supply a Home nonce', async (mode) => {
+    const s = setup(mode);
+    const { source, origin } = preparer(s, mode);
+    s.win.message(homeParams(), origin, source);
+    await flush();
+    expect(s.page.state.stage).toBe('connecting');
+    expect(s.win.sessionStorage.length).toBe(0);
+    expect(s.win.location.assigned).toEqual([]);
+  });
+
+  it.each([
+    ['another signer', () => homeParams({ signer: 'evil-signer.testnet' })],
+    ['a nonce that commits to nothing', () => homeParams({ nonce: 'x'.repeat(43) })],
+    ['a nonce for another end', () => homeParams({ expiresAtMs: 1_800_000_900_001 })],
+    ['a nonce for another key', () => homeParams({ homePublicKey: new Uint8Array(32) })],
+    [
+      'a session nonce',
+      () => {
+        const p = homeParams();
+        return { ...p, nonce: sessionNonce({ signer: ENV.signer, scopeId: SCOPE, sessionPublicKey: p.homePublicKey, expiresAtMs: p.expiresAtMs, keyIndex: 0, maxUses: 1, salt: p.salt }) };
+      },
+    ],
+  ])('stops (config_mismatch) on %s: nothing stored, no Google request', async (_, make) => {
+    const s = home();
+    const params = make();
+    s.win.message(params, ENV.authOrigin, s.opener);
+    expect(await s.page.done).toEqual({ stage: 'error', code: 'config_mismatch' });
+    expect(s.win.location.assigned).toEqual([]);
+    expect(s.win.sessionStorage.length).toBe(0);
+    expect((params.relayKey as Uint8Array).every((b) => b === 0)).toBe(true);
+  });
+
+  it('accepts only the first valid message, and times out with Home’s own words', async () => {
+    const s = home();
+    s.win.message(homeParams(), ENV.authOrigin, s.opener);
+    s.win.message(homeParams(), ENV.authOrigin, s.opener);
+    await s.page.done;
+    expect(s.win.location.assigned).toHaveLength(1);
+
+    const t = home();
+    vi.advanceTimersByTime(HELLO_TIMEOUT_MS + 1);
+    expect(await t.page.done).toEqual({ stage: 'error', code: 'login_timeout' });
+    expect(pageText()).toContain('Hana Home did not answer');
   });
 });

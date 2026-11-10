@@ -3,7 +3,7 @@
 // call, partner strings as text only, the sign-in's end (detect, warn, lose nothing, never retry, memory only) and how
 // each API refusal reads.
 import { ApiError, type RelayPayload, type RelayReadResponse, decodeHomeIdentity, encryptRelayPayload, homeMessage, homeNonce, parseWindowMessage } from '@hana-id/core';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { homeApi, parseHomeApps, parseHomeConfig } from '../../src/auth/home-api.ts';
 import { COVERAGE_TEXT, HOME_EXPIRY_WARN_MS, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
 import { CLIENT_ID, ENV, EVIL, FakeWindow, type RemoteWindow, type TokenSigner, asWindow, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
@@ -54,7 +54,7 @@ interface Harness {
   relay(payload: RelayPayload | ((params: Record<string, unknown>) => Promise<RelayPayload> | RelayPayload)): Promise<void>;
   relayFail(err: unknown): void;
   token(over?: Record<string, unknown>): (params: Record<string, unknown>) => Promise<RelayPayload>;
-  clipboard: { writeText: ReturnType<typeof vi.fn> };
+  clipboard: { writeText: Mock<(text: string) => Promise<void>> };
   click(id: string): void;
   /** The whole sign-in, from the click to the list on screen. */
   signIn(sub?: string, button?: string): Promise<void>;
@@ -82,7 +82,7 @@ function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; o
     relayReads,
     answer: (_url: URL): Response | Promise<Response> => json(200, { scopes: [], nextCursor: null }),
     config: opts.config ?? ((): Response | Promise<Response> => json(200, { serverTimeMs: now, signer: ENV.signer, sharedGoogleClientId: CLIENT_ID, exitGoogleClientId: null })),
-    clipboard: { writeText: vi.fn(async () => {}) },
+    clipboard: { writeText: vi.fn(async (_text: string) => {}) },
   } as unknown as Harness;
   Object.defineProperty(h, 'child', { get: () => child });
   const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

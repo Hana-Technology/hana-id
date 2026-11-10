@@ -9995,3 +9995,75 @@ below.
   - A new sign-in is "the same account" only if both the sign-in method and its id match (ready for email in H10, where two methods' ids must never be taken for one person).
   - A request whose sign-in has ended or been replaced before it answered shows no problem and is not sent again; an answer for another account is thrown away.
 - Address impact: none.
+
+## Hana Home H8: key export in Home (branch `feat/hana-home-h8`), 2026-11-10
+
+Built on `feat/hana-home-h8` (on top of H7), not merged, not deployed. Every decision here is **proposed, awaiting the user's confirmation**: none was asked in conversation. No path, key rule or derivation changes in any of them.
+
+### D575. Hana Home moves a wallet out from a collapsed section on the app's page; nothing in the address opens or starts it
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `packages/web/src/auth/home-export.ts` (`startHomeExport`), `home-page.ts` (`moving`, `appPage`) · Source: the spec's "Wallets and export" and "Lock-in stance" (D41), H7's review ("`?appId=` must never preselect or start an export")
+- Decision: an app's page ends with one collapsed button, "Move this wallet to another wallet app". Expanding it shows what it does and D430's warning; "Sign in again to continue" starts the per-app sign-in; then the wallet's two addresses, a choice of chain, the warning again with the typed `EXPORT`, and Show key / Copy key. Continue, Show key and Copy key sit behind the approval guard; a shown key hides after 60 s (D430).
+- The section always starts collapsed. The page reads `?appId=` only to choose which app's page to open (D555, D557); no parameter expands the section, picks a chain or starts a sign-in, and each step needs a real click in the page.
+- The reveal is one module shared with the export window (`key-reveal.ts`: the guard over a screen's buttons, Show/Hide, Copy, the 60 s hide, the clipboard blank), so the safeguards can't drift apart. The export window's behaviour is unchanged, with one addition (D580: a shown key hides before printing).
+- Address impact: none.
+
+### D576. The section is offered for the user's own apps and for apps they found themselves; never for the app a link named
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-export.ts` (`homeExportRoute`, `HOME_EXPORT_OFF_TEXT`)
+- Decision: the section offers the sign-in on an app that is the user's (`mine`), and on an app with no wallet on record that the user reached through their own list or search. That second case is the shutdown case Home exists for: a purged directory (the spec's "the user then finds the app by search, and a derive shows the addresses"). There the wording says Hana has no wallet on record and will look for one, and the API refuses with `home_no_wallet` when the chain shows none (D544), before anything is spent.
+- The app a `/home?appId=` link named, when it isn't the user's, is never offered in that page load, however the user reaches its page: the section says to open Hana Home without the link and find the app by name.
+- Options: (a) this; (b) the user's own apps only (simpler, but a user whose app shut down and was purged could never move the wallet, which is the point of Home; not recommended); (c) every app, the link's included (a partner's link would then lead straight to a key screen; not recommended).
+- Address impact: none.
+
+### D577. The per-app sign-in uses its own message, fixes one use and key index 0 in the child, asks Google to sign in again, and sends no `login_hint`
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `packages/core/src/protocol.ts` (`hana:home-derive-params`), `login-page.ts` (`checkHomeDerive`), `home-export.ts` (`prepare`, `awaitToken`) · Deviates from the spec ("Home sends `login_hint`")
+- Decision: to open one app's wallet, `/home` sends its child `/login?mode=home` the message `hana:home-derive-params` (signer, client, scope, session key, end, salt, nonce, relay slot and key). The child takes it only from a same-origin opener at `/home` (as D552), recomputes `sessionNonce` with `keyIndex 0` and `maxUses 1` written in the child itself, and goes to Google with `max_age=0`. No other mode takes the message.
+- No `login_hint`: the hint would put the user's Google id in the child's address and the browser's history, and through a message. The page instead compares the token's account with Hana Home's sign-in before anything is sent; a different account reads "Sign in as the same account you used in Hana Home" (`home_account_mismatch`) and costs nothing. The API checks the same again.
+- Options: send the hint as the spec says (one click fewer for a user with several Google accounts; the id in a URL). Not recommended.
+- Address impact: none (`key_index` 0 is the address Home shows; the nonce layout is the existing `sessionNonce`).
+
+### D578. H8 opens wallets through the shared client and an app's own Google client; the exit client's `/home/callback` is proposed for H10
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8` (the two routes); **proposed, awaiting the user's confirmation** (where `/home/callback` goes) · Built: `home-export.ts` (`homeExportRoute`, `checkRoute`) · Source: D490, D491, D550, the plan's H8 ("decide with the spec whether signing in through the exit client belongs here or in H10"); the spec leaves the batch open
+- Decision: H8 signs in for an app with coverage `shared` (Hana's shared client) or `hana_client` / `partner_client` (a Google client of the app itself), both through the existing `/login/callback`. Before answering the child, the page reads NEAR itself: `get_scope` with `allow_shared` and the client in `get_config().shared_clients`, or `scope_for_client('google', client) === scope`. A mismatch stops before Google (`not_covered`); an unreadable chain says so (`near_unreadable`).
+- Coverage `exit` and `email` say "Hana Home can't move this wallet yet" and offer no sign-in. `/home/callback` (D491), which both the per-app sign-in through the exit client and Home's own sign-in without a shared client need (D550's open point), is proposed for **H10**.
+- Why H10: it is a new page on the auth origin, the only one that receives exit tokens, with a new redirect URI and a deploy-checklist item; it deserves its own security review rather than a place inside "keys in memory". H10 already builds the email exit and changes the same child. Nothing links to `/home` before H12.
+- Cost (to weigh): on an env with an exit client in force, coverage reports `exit` for every app whose normal route is gone, and for partner-held clients too (D490's order), so those wallets can't be moved out from Home until `/home/callback` exists. If H10 slips, do it as a small batch of its own before H12. D550's "no shared client in force means sign-in is unavailable" stays open until then.
+- Address impact: none (`aud` never enters the path).
+
+### D579. Hana Home derives the vault's path: the identity's own, or its account root's only after both NEAR providers agree
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** (the wording of the two refusals) · Built: `packages/web/src/auth/export-path.ts` (`exportPath`, shared with `export-page.ts`), `home-export.ts` · Implements D263 for Home
+- Decision: the path comes from one function the export window and Hana Home share. `get_identity` names the identity or its root; a root's path is read again on `rpc` and `rpcFallback` separately and used only if both agree with the first view and show the root as an account root (`confirmPath`). The identity's own path takes no second opinion, as in the vault: only the MPC can answer for it, and the pairing check against the pinned key refuses anything else (a page told "own" while the chain derived the root shows nothing: `pairing_failed`).
+- Refusals: the providers disagree, `path_disputed` ("NEAR providers disagree about which wallet this sign-in opens, so Hana Home opened nothing"); a provider didn't answer or the env has no second one, `path_unconfirmed`; a pending link, `link_pending`. Nothing is relayed in any of them.
+- Test: `packages/web/test/auth/home-export.test.ts` "golden" holds Home to the frozen `derivation-v1.json` vectors (paths, secrets, addresses and export strings), for an own path and for a member reaching its root.
+- Address impact: none. `pathIdentity` and the path string are unchanged; the function was moved, not rewritten, and the export window's tests pass unchanged.
+
+### D580. The opened wallet's secret lives at most 5 minutes in the page and is erased on leaving; a chain key lives inside one Show or Copy
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-export.ts` (`HOME_PRK_LIFETIME_MS`, `wipeSecret`, `lock`, `chainSecret`), `key-reveal.ts` · D98 item 6, the spec's step 4
+- Decision: after the derive the page holds PRK in one buffer for 5 minutes (a timer, and a check against the server-corrected clock every second and when the tab is shown again). It is zeroed at 5 minutes, on "Lock now", when the user goes back to the list, signs out, signs in as another account, and on `pagehide` (close, reload, or the back/forward cache). The CKD answer's secret is zeroed as soon as PRK is taken from it. A chain's private key is derived inside one Show or Copy and zeroed in the same call. Coming back to the app's page starts collapsed, and opening again needs a new sign-in.
+- The 5 minutes run from the derive, not from Hana Home's sign-in: a wallet that is open stays open for its 5 minutes if Home's own 15 minutes end meanwhile (nothing new can be fetched). Option: lock when Home's sign-in ends (stricter, but a user reading the key would lose it mid-way). Not built.
+- What can't be erased, as in the export window: the key's text while shown (one text node, replaced by dots on hide), a copy in the clipboard (blanked after 60 s and when the wallet locks, where the browser allows it), and the strings themselves until the engine collects them. A screenshot can't be prevented; the page says "Make sure nobody can see your screen". New for both pages: a shown key hides before printing (`beforeprint`), and the stylesheet blanks the box in print.
+- Address impact: none.
+
+### D581. Hana Home sends a derive once and never re-sends it
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-export.ts` (`resendableUntil: 0` to `loginOnChain`) · Applies D553 to `POST /v1/home/login`; deviates from the export window, which re-sends once
+- Decision: the page sends `POST /v1/home/login` once per sign-in. An outcome it can't learn is looked up on NEAR (`get_session`, the transaction), as the login table does; anything else is a refusal with "Try again", which goes back to the first screen and a new Google sign-in.
+- Why: D553 says Home never sends a request again by itself, and each derive spends the daily ceiling and the user's own windows.
+- Cost: a passing `near_unavailable` or `relayer_busy` costs the user one more Google sign-in.
+- Address impact: none.
+
+### D582. Home shows the opened wallet's own addresses, says so when the record differs, and keeps them on the app's page where Hana had none
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-export.ts` (`mismatch`), `home-page.ts` (`opened`)
+- Decision: once a wallet is open the section shows the two addresses worked out from its own key. If an address on record differs, a warning says the record is different and the ones shown are the wallet's own; the move goes on (the spec's "warns on a difference": a compromised API can show a wrong address in the list, never change the wallet). Where Hana had no address on record, the app's page then shows the opened wallet's addresses, marked as such, until the user signs out or reloads (public values, memory only).
+- Option: stop on a difference (safer-looking, but it would let a wrong directory row block a user's exit). Not recommended.
+- Address impact: none.
+
+### D583. `/home`'s policy gains the two NEAR RPC origins: exactly the export window's list
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `packages/web/src/auth/pages.ts` (`connectSources`), `apps/api/src/pages/host.ts` (`authPageDirectives`) · Completes D551
+- Decision: `/home` is served with `connect-src {apiUrl} {rpc} {rpcFallback} https://www.googleapis.com`, the same origins as `/export` and nothing more (a test holds the two equal). The page reads NEAR only after the user presses "Sign in again to continue": listing and viewing still read no chain (a test fails on any read).
+- Address impact: none.
+
+### D584. Wording: the section, its refusals, and the availability sentence now that the move exists
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-problems.ts` (`PROBLEM_TEXT`, `DERIVE_RATE_LIMITED`), `home-export.ts`, `home-page.ts` (`coverageText`, `MOVE_WORDS`) · Revisits D559 as it asked
+- Availability (final wording proposed): the badges stay "Stays reachable", "Depends on the app", "Out of reach", "Not checked yet" (and "Supported" for an app with no wallet on record). The sentence gains one clause only where this page offers the move for the user's own wallet: "You can also move it to another wallet app, further down this page." and, for an app's own Google sign-in, "To stop depending on it, you can move the wallet to another wallet app, further down this page." No badge says "export" or "available": the badge answers whether the wallet depends on the app, and the section says what can be done.
+- Refusals use H7's sentences by code (`home_no_wallet`, `home_busy`, `home_account_mismatch`, `link_pending`, `not_covered`, the unreachable family), each with the code and the request ID. Added: `rate_limited` on a derive reads "This wallet was opened too many times. Wait an hour and try again." (H7's "wait a minute" is wrong for hourly and daily limits); `shared_login_disabled`, `unregistered_client` and `scope_mismatch` read as `not_covered`; `ckd_failed`, `pairing_failed`, `session_exists` and the token refusals each say that nothing was shown and to sign in again; a 401 ends Home's sign-in and says so.
+- Section words: "Move this wallet to another wallet app" (the spec's label, never "export" in a heading), "Confirm it's you", "Opening your wallet", "Your wallet is open", "Your Stellar key" / "Your EVM key", "Wallet locked".
+- Address impact: none.

@@ -28,11 +28,18 @@ const refusal = (status: number, code: string, error = 'internal words'): Respon
 
 /** Lets real crypto and promise work finish (timers are faked, setImmediate isn't). */
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
+/**
+ * Waits for `cond` by real time, not by a count of ticks: a sign-in's key and nonce are real WebCrypto work, which on a
+ * busy machine (verify runs four packages at once) can take more than a few hundred ticks. `Date` isn't faked here.
+ */
+const UNTIL_MS = 10_000;
 async function until(cond: () => boolean, what = 'condition'): Promise<void> {
-  for (let i = 0; i < 400; i++) {
+  const deadline = Date.now() + UNTIL_MS;
+  while (Date.now() < deadline) {
     if (cond()) return;
     await tick();
   }
+  if (cond()) return;
   throw new Error(`Timed out waiting for ${what}`);
 }
 

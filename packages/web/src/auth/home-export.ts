@@ -61,7 +61,7 @@ import type { Child, Dom } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { ExportPathError, exportPath } from './export-path.ts';
 import type { HomeAddress, HomeApi, HomeConfig, HomeIdentity, HomeLoginBody, HomeScope } from './home-api.ts';
-import { DERIVE_RATE_LIMITED, type HomeProblem, homeProblem, plainProblem } from './home-problems.ts';
+import { type HomeProblem, deriveRateLimited, homeProblem, plainProblem } from './home-problems.ts';
 import { EXPORT_CLIPBOARD_NOTE, EXPORT_CONFIRMATION, EXPORT_WARNING, type ExportClipboard, type KeyReveal, type ScreenGuard, exportString, keyReveal } from './key-reveal.ts';
 import type { NearReader } from './near-rpc.ts';
 import { type GestureCheck, type PageWindow, randomName } from './page-window.ts';
@@ -102,7 +102,7 @@ export type HomeExportState =
 export type HomeExportOff = 'link' | 'later' | 'none' | 'unknown';
 
 export const HOME_EXPORT_OFF_TEXT: Readonly<Record<HomeExportOff, string>> = Object.freeze({
-  link: 'You came to this app through a link, and Hana has no wallet on record for you in it. To look for a wallet of yours here, open Hana Home without the link and find the app by its name.',
+  link: 'You came to this app through a link. Hana Home never moves a wallet out from a link, because a link can come from anyone. If you want to move this wallet, open Hana Home yourself, without the link, and find the app in your list or by its name.',
   later: 'Hana Home can’t move this wallet yet: it would need a sign-in route this page doesn’t have so far. Nothing is lost. If the app still runs, you can keep using the wallet there.',
   none: 'Hana can’t open this wallet from here. If the app still runs, use the app itself.',
   unknown: 'Hana hasn’t checked this app yet. Use “Check now” above, then come back here.',
@@ -183,8 +183,9 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 
 /** Which Google client opens this app's wallets from Hana Home, or why the move can't be offered. */
 export function homeExportRoute(scope: HomeScope, config: HomeConfig | null, fromLink: boolean): Route | HomeExportOff {
-  // An app the user reached by someone's link, with no wallet of theirs on record: never from this page load.
-  if (fromLink && !scope.mine) return 'link';
+  // The app the page's link named, the user's own included: never from this page load. Whoever sent the link may be
+  // coaching the user to take the key out and hand it over.
+  if (fromLink) return 'link';
   switch (scope.coverage) {
     case 'shared': {
       const clientId = scope.googleClientId ?? config?.sharedGoogleClientId ?? null;
@@ -450,7 +451,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
   /** The sentence for a refusal of the derive: the API's code picks it, with the derive's own words for its limits. */
   function deriveProblem(err: ApiError): HomeProblem {
     const p = homeProblem(err);
-    return p.code === 'rate_limited' ? { ...p, text: DERIVE_RATE_LIMITED } : p;
+    return p.code === 'rate_limited' ? { ...p, text: deriveRateLimited(err.details.retryAfterS) } : p;
   }
 
   /** Long-polls the relay for Google's answer, then checks the token, resolves the path, derives and decrypts. */
@@ -506,8 +507,9 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
 
       // 3. The path: this identity's own, or its account root's once both NEAR providers agree.
       let path: string;
+      let linked: boolean;
       try {
-        path = (await exportPath({ near, signer: env.signer, scopeId: p.scopeId, who, keyIndex: 0 })).path;
+        ({ path, linked } = await exportPath({ near, signer: env.signer, scopeId: p.scopeId, who, keyIndex: 0 }));
       } catch (e) {
         if (stale()) return;
         if (!(e instanceof ExportPathError)) throw e;
@@ -534,12 +536,16 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       };
       token = '';
       let refused: ApiError | null = null;
+      /** The answer the API itself gave, if it gave one: any other result was looked up on NEAR by the page. */
+      let answered: CkdResult | null = null;
       let result: CkdResult;
       try {
         result = await loginOnChain(body, {
           login: async (b) => {
             try {
-              return await deps.api.login(live.identity, { ...b, scopeId: p.scopeId } as HomeLoginBody);
+              const out = await deps.api.login(live.identity, { ...b, scopeId: p.scopeId } as HomeLoginBody);
+              answered = out.result;
+              return out;
             } catch (err) {
               if (err instanceof ApiError) refused = err;
               throw err;
@@ -596,11 +602,20 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
         made.fill(0);
         return;
       }
+      const differs = s.addresses.some((a) => (a.chain === 'stellar' ? a.address !== opened.stellar : a.address.toLowerCase() !== opened.evm.toLowerCase()));
+      // Where the pairing check alone doesn't prove the key is the user's, a difference from the record stops the move,
+      // as the export window stops on a difference from the vault's address: a root's path (two lying providers could
+      // name a root whose owner can forge an answer for it), and an answer the page looked up on NEAR itself rather than
+      // got from the API. On the identity's own path with the API's own answer, only the MPC could have made the key:
+      // there the record is what's wrong, and it is said, not hidden.
+      if (differs && (linked || result !== answered)) {
+        made.fill(0);
+        return refuse(plainProblem('address_mismatch'));
+      }
       wipePending();
       prk = made;
       addresses = opened;
-      // An address on record that isn't the wallet's own: the record is wrong, never the wallet. Said, not hidden.
-      mismatch = s.addresses.some((a) => (a.chain === 'stellar' ? a.address !== opened.stellar : a.address.toLowerCase() !== opened.evm.toLowerCase()));
+      mismatch = differs;
       // The deadline: a timer, which device clock changes can't move, and the server-clock check beside it.
       deadline = clock.now() + HOME_PRK_LIFETIME_MS;
       prkTimer = setTimeout(() => lock('expired'), HOME_PRK_LIFETIME_MS);
@@ -644,13 +659,13 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
               : 'Hana has no wallet on record for you in this app. If you had one, sign in again and Hana Home will look for it. If it finds one, it can show you its private key, so that you can import it into another wallet app.',
           ),
           d.h('p', { class: 'warn' }, EXPORT_WARNING),
-          d.h('p', { class: 'muted' }, 'To be sure it’s you, you sign in with Google again first, with the same account. The key then stays ready in this page for 5 minutes.'),
+          d.h('p', { class: 'muted' }, 'First you choose your Google account again; it must be the account you used for Hana Home. Google may not ask for your password again. The key then stays ready in this page for 5 minutes.'),
           d.h('div', { class: 'actions start' }, button('Sign in again to continue', 'home-export-start', begin, 'primary'), close),
         );
       }
       case 'signing_in':
         return show(
-          title('Confirm it’s you'),
+          title('Choose your Google account again'),
           d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Finish signing in with Google in the other window.'),
           d.h('div', { class: 'actions start' }, button('Cancel', 'home-export-cancel', cancel)),
         );
@@ -798,6 +813,9 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
   win.document.addEventListener('visibilitychange', () => {
     if (win.document.visibilityState === 'visible') expired();
   });
+  // A frozen tab runs no timers, so the 5 minutes could pass unnoticed with the secret still in memory: it is erased as
+  // the tab freezes.
+  win.document.addEventListener('freeze', () => lock('locked'));
   // The page is going away, or into the back/forward cache: nothing of the wallet stays in it.
   win.addEventListener('pagehide', () => {
     const s = scope;

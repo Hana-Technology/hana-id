@@ -4502,7 +4502,8 @@ Home derive: deploy" done first (`POST /v1/home/login`, the Home pool key, migra
 have `rpcFallback` on another provider (a linked member's wallet is refused without it, D263). Each wallet a user opens
 is one `create_session_and_derive` from the Home pool and one of the day's derives (`home_usage`, the `home_budget_high`
 alert at 80%). After `deploy:pages`, check by hand, with an account that has a wallet in an app with shared login: open
-the app's page and see "Move this wallet to another wallet app" collapsed (also through `/home?appId=…`); expand, sign in
+the app's page and see "Move this wallet to another wallet app" collapsed; through `/home?appId=…` see it refuse with
+"open Hana Home yourself, without the link" (D600); from the list, expand, sign in
 again, and see the same two addresses the app shows; show a key and see it hide after 60 seconds; "Lock now"; then check
 the user's `key_exported` event in the admin (it reads "Hana Home"). An app whose coverage is `exit` or `email` says it
 can't be moved yet (D578). Rolling back is `deploy:pages` of the previous build: nothing is stored.

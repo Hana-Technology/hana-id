@@ -481,7 +481,7 @@ describe('/login?mode=home', () => {
     expect(Object.keys(entry).sort()).toEqual(['createdAt', 'relayKey', 'v']);
     expect(s.win.sessionStorage.length).toBe(1);
     expect(params.relayKey.every((b) => b === 0)).toBe(true);
-    expect(pageText()).toContain('Confirm it’s you');
+    expect(pageText()).toContain('Choose your Google account again');
   });
 
   it.each([

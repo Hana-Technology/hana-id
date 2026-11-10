@@ -10004,13 +10004,14 @@ Built on `feat/hana-home-h8` (on top of H7), not merged, not deployed. Every dec
 - Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `packages/web/src/auth/home-export.ts` (`startHomeExport`), `home-page.ts` (`moving`, `appPage`) · Source: the spec's "Wallets and export" and "Lock-in stance" (D41), H7's review ("`?appId=` must never preselect or start an export")
 - Decision: an app's page ends with one collapsed button, "Move this wallet to another wallet app". Expanding it shows what it does and D430's warning; "Sign in again to continue" starts the per-app sign-in; then the wallet's two addresses, a choice of chain, the warning again with the typed `EXPORT`, and Show key / Copy key. Continue, Show key and Copy key sit behind the approval guard; a shown key hides after 60 s (D430).
 - The section always starts collapsed. The page reads `?appId=` only to choose which app's page to open (D555, D557); no parameter expands the section, picks a chain or starts a sign-in, and each step needs a real click in the page.
+- Amended 2026-11-10 (H8's security review, D600): the app a link named is not offered the move at all in that page load, the user's own included.
 - The reveal is one module shared with the export window (`key-reveal.ts`: the guard over a screen's buttons, Show/Hide, Copy, the 60 s hide, the clipboard blank), so the safeguards can't drift apart. The export window's behaviour is unchanged, with one addition (D580: a shown key hides before printing).
 - Address impact: none.
 
 ### D576. The section is offered for the user's own apps and for apps they found themselves; never for the app a link named
 - Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-export.ts` (`homeExportRoute`, `HOME_EXPORT_OFF_TEXT`)
 - Decision: the section offers the sign-in on an app that is the user's (`mine`), and on an app with no wallet on record that the user reached through their own list or search. That second case is the shutdown case Home exists for: a purged directory (the spec's "the user then finds the app by search, and a derive shows the addresses"). There the wording says Hana has no wallet on record and will look for one, and the API refuses with `home_no_wallet` when the chain shows none (D544), before anything is spent.
-- The app a `/home?appId=` link named, when it isn't the user's, is never offered in that page load, however the user reaches its page: the section says to open Hana Home without the link and find the app by name.
+- The app a `/home?appId=` link named, when it isn't the user's, is never offered in that page load, however the user reaches its page: the section says to open Hana Home without the link and find the app by name. Amended 2026-11-10 (D600): the same holds when the linked app is the user's own.
 - Options: (a) this; (b) the user's own apps only (simpler, but a user whose app shut down and was purged could never move the wallet, which is the point of Home; not recommended); (c) every app, the link's included (a partner's link would then lead straight to a key screen; not recommended).
 - Address impact: none.
 
@@ -10054,6 +10055,7 @@ Built on `feat/hana-home-h8` (on top of H7), not merged, not deployed. Every dec
 - Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-export.ts` (`mismatch`), `home-page.ts` (`opened`)
 - Decision: once a wallet is open the section shows the two addresses worked out from its own key. If an address on record differs, a warning says the record is different and the ones shown are the wallet's own; the move goes on (the spec's "warns on a difference": a compromised API can show a wrong address in the list, never change the wallet). Where Hana had no address on record, the app's page then shows the opened wallet's addresses, marked as such, until the user signs out or reloads (public values, memory only).
 - Option: stop on a difference (safer-looking, but it would let a wrong directory row block a user's exit). Not recommended.
+- Amended 2026-11-10 (H8's security review, D601): a difference does stop the move on a linked member's path and when the answer was looked up on NEAR; the warning remains only on the identity's own path with the API's own answer.
 - Address impact: none.
 
 ### D583. `/home`'s policy gains the two NEAR RPC origins: exactly the export window's list
@@ -10067,3 +10069,31 @@ Built on `feat/hana-home-h8` (on top of H7), not merged, not deployed. Every dec
 - Refusals use H7's sentences by code (`home_no_wallet`, `home_busy`, `home_account_mismatch`, `link_pending`, `not_covered`, the unreachable family), each with the code and the request ID. Added: `rate_limited` on a derive reads "This wallet was opened too many times. Wait an hour and try again." (H7's "wait a minute" is wrong for hourly and daily limits); `shared_login_disabled`, `unregistered_client` and `scope_mismatch` read as `not_covered`; `ckd_failed`, `pairing_failed`, `session_exists` and the token refusals each say that nothing was shown and to sign in again; a 401 ends Home's sign-in and says so.
 - Section words: "Move this wallet to another wallet app" (the spec's label, never "export" in a heading), "Confirm it's you", "Opening your wallet", "Your wallet is open", "Your Stellar key" / "Your EVM key", "Wallet locked".
 - Address impact: none.
+
+### D600. The app a link named is never moved out in that page load, the user's own included
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-page.ts` (`linkScope`), `home-export.ts` (`homeExportRoute`) · From H8's independent security review (M1) · Amends D575 and D576
+- Problem: `/home?appId=<an app the victim uses>` opened the user's own funded wallet's page, where the section was offered with no caution about the link. A phisher could send it with "press Move this wallet and paste the key here".
+- Decision: for the app the page's link named, whether or not it is the user's, the section offers no sign-in in that page load, however the user gets to the app's page (the link, the list, a search, after signing in again). It says: "You came to this app through a link. Hana Home never moves a wallet out from a link, because a link can come from anyone. If you want to move this wallet, open Hana Home yourself, without the link, and find the app in your list or by its name." Addresses and the Support ID still show, and the availability sentence doesn't mention the move there.
+- Cost: a user who followed an honest "Manage in Hana Home" link has to open Hana Home again without it to move that wallet. H12's own links should not carry `appId` if they are meant to lead to the move.
+- Address impact: none.
+
+### D601. A wallet that differs from the record is not shown on a linked path, or when the answer was looked up on NEAR
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-export.ts` (`awaitToken`: `linked`, `answered`), `home-problems.ts` (`address_mismatch`) · From H8's independent security review (M2) · Amends D582
+- Problem: the pairing check proves a key is the MPC's for the path asked about. If both NEAR providers lie "member of root R", and the outcome is read back from the RPC by its transaction, R's owner can forge an answer that passes it; D582 only warned, so the user could import an attacker-held key. The export window stops there (`address_mismatch` against the vault's address).
+- Decision: when an address on record differs from the opened wallet's, the page refuses with `address_mismatch` and zeroes the secret if the path is an account root's (a linked member), or if the result did not come in the API's own answer (it was recovered from NEAR). On the identity's own path with the API's own answer, D582's warning stays: only the MPC could have made that key.
+- Limits: with no address on record there is nothing to compare (a purged scope). Against a compromised API the comparison has no value, since the API controls the record too; it is a check against a lying RPC, and a hint of a wrong directory row.
+- Address impact: none.
+
+### D602. A derive's limit sentence says how long the API asked to wait
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-api.ts` (`login`, `retryAfterS`), `home-problems.ts` (`deriveRateLimited`) · From H8's review (L2) · Amends D584
+- Decision: on a `rate_limited` answer to `POST /v1/home/login` the page reads `retry-after` (the API exposes it) and says "This wallet was opened too many times. Try again in about N minutes." up to an hour, "in about N hours" beyond, and "Try again later." when the API gave no time. It replaces "Wait an hour", which was false for the daily limit.
+
+### D603. The opened wallet's secret is erased when the tab is frozen
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-export.ts` (the `freeze` listener) · From H8's review (L3) · Amends D580
+- Decision: a frozen background tab runs no timers, so the 5 minutes could pass with PRK still in memory. The page locks the wallet on the document's `freeze` event (as "Lock now"), besides the timer, the server-clock check and `pagehide`. A browser without the event falls back on the check made when the tab is shown again, before anything can be shown or copied.
+- Option not built: lock after a short time hidden (it would also lock a user who switches to their wallet app to paste the key).
+
+### D604. The per-app step is described as choosing the Google account again, not as proof that it's you
+- Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **proposed, awaiting the user's confirmation** · Built: `home-export.ts`, `login-page.ts` (`checkHomeDerive`) · From H8's review (L4) · Amends D584; the mechanism is unchanged
+- Decision: the page no longer says "To be sure it's you" or "Confirm it's you". It says "First you choose your Google account again; it must be the account you used for Hana Home. Google may not ask for your password again.", and the step's heading is "Choose your Google account again".
+- Why: Google sends no `auth_time` even with `max_age=0`, and with `prompt=select_account` the step can be one click. Whoever can use the user's Google session on the device can open every app's wallet from Home, where the export window reached one app's. `docs/security.md` states it. A real re-authentication is not available from Google's implicit flow today; whether Home needs another factor before mainnet is for the production-readiness check.

@@ -242,6 +242,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   let searchDraft = '';
   /** A listing reached only by the partner's link. */
   let linked: HomeScope | null = null;
+  /** The listing the page's link named, the user's own or not: its wallet is never moved out in this page load. */
+  let linkScope: string | null = null;
   let list: HomeListState = 'idle';
   let openScope: string | null = null;
   let problem: HomeProblem | null = null;
@@ -450,6 +452,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       const hasLinked = (s: HomeScope): boolean => s.apps.some((a) => a.appId === linkApp);
       const own = mine.find(hasLinked);
       if (own) {
+        linkScope = own.scopeId;
         openApp(own.scopeId);
         return;
       }
@@ -465,6 +468,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       const found = one?.scopes[0];
       if (found?.mine) {
         mine = [found, ...mine.filter((s) => s.scopeId !== found.scopeId)];
+        linkScope = found.scopeId;
         openApp(found.scopeId);
       } else if (found) {
         linked = found;
@@ -1067,8 +1071,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   /** One listing's page: its apps, whether Hana can open the wallet, the addresses on record and the Support ID. */
   function appPage(scope: HomeScope): Child[] {
-    // The app the page's link named, when Hana knows no wallet of the user's in it: the page never offers to open it.
-    const fromLink = linked?.scopeId === scope.scopeId;
+    // The app the page's link named, the user's own included: a link can come from anyone ("open this, press Move this
+    // wallet, paste the key here"), so the page never offers to open that wallet in this page load.
+    const fromLink = linked?.scopeId === scope.scopeId || linkScope === scope.scopeId;
     const cover = coverageText(scope.coverage, scope.mine, typeof homeExportRoute(scope, config, fromLink) !== 'string');
     const stellar = STELLAR_ACCOUNT_URL[env.network];
     // Addresses on record, or, where Hana has none, those of the wallet the user opened here in this page.

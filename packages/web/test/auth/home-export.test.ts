@@ -87,6 +87,9 @@ interface Opts {
   /** `scope_for_client`, `get_scope` and `get_config` answers. */
   registry?: { scopeForClient?: unknown; scope?: unknown; config?: unknown; fail?: boolean };
   login?: (body: Record<string, unknown>) => Response | Promise<Response>;
+  /** `get_session` and the transaction's outcome, as the page reads them from NEAR after an answer it never got. */
+  session?: () => unknown;
+  tx?: (hash: string) => unknown;
   clipboard?: null;
 }
 
@@ -180,8 +183,8 @@ function start(o: Opts = {}): H {
   };
   const first = views(o.identity, 'any');
   const near: NearReader = {
-    getSession: vi.fn(async () => null),
-    txOutcome: vi.fn(async () => ({ status: 'pending' as const })),
+    getSession: vi.fn(async () => (o.session?.() ?? null) as never),
+    txOutcome: vi.fn(async (hash: string) => (o.tx?.(hash) ?? { status: 'pending' as const }) as never),
     view: vi.fn(async (_signer: string, method: string, args: unknown) => first(method, args)),
     independent: vi.fn(() => (o.second === null ? null : { primary: views(o.identity, 'primary'), second: views(o.second ?? o.identity, 'second') })),
   };
@@ -405,6 +408,50 @@ describe('golden: Hana Home opens the vault’s address', () => {
     expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(vector(OWN).accounts[0]!.stellar.address);
   });
 
+  it('on a linked member’s path a different address on record stops the move: nothing is shown or kept', async () => {
+    // Two lying providers could name a root whose owner can forge an answer for it; the record is the last check.
+    const h = start({ identity: member, chainPath: ROOT });
+    await h.toApp();
+    await h.open();
+    expect(h.page.moving.state).toBe('refused');
+    expect(h.page.moving.errorCode).toBe('address_mismatch');
+    expect(document.getElementById('home-export-problem')?.textContent).toContain('is not the one Hana has on record for you in this app, so nothing is shown');
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(zeroed.has(vector(ROOT).prkHex)).toBe(true);
+    expect(document.getElementById('home-export-addresses')).toBeNull();
+    expect(pageText()).not.toContain(vector(ROOT).accounts[0]!.stellar.address);
+  });
+
+  // An answer the API never delivered, read back from NEAR by its transaction: the RPC's word, not the API's.
+  const recovered = (record: string) => {
+    let pk1 = '';
+    return start({
+      scopes: [mineScope({ addresses: [{ chain: 'stellar', address: record }] })],
+      login: (body) => {
+        pk1 = body.pk1 as string;
+        return json(504, { error: 'internal words', code: 'timeout', nearTx: '4'.repeat(44), requestId: 'req_9' }, 'req_9');
+      },
+      tx: () => ({ status: 'success', result: simulateMpc(pk1, ckdAppId(HOME_ENV.signer, OWN), NET).response }),
+    });
+  };
+
+  it('an outcome recovered from NEAR by its transaction opens the wallet when it is the one on record', async () => {
+    const h = recovered(vector(OWN).accounts[0]!.stellar.address);
+    await h.unlock();
+    expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(vector(OWN).accounts[0]!.stellar.address);
+    expect(h.logins()).toHaveLength(1);
+  });
+
+  it('an outcome recovered from NEAR that differs from the record stops the move, even on the own path', async () => {
+    const h = recovered(vector(ROOT).accounts[0]!.stellar.address);
+    await h.toApp();
+    await h.open();
+    expect(h.page.moving.errorCode).toBe('address_mismatch');
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(zeroed.has(vector(OWN).prkHex)).toBe(true);
+    expect(h.logins()).toHaveLength(1);
+  });
+
   it('shows the opened wallet’s addresses on the app’s page when Hana had none on record', async () => {
     const h = start({ scopes: [mineScope({ addresses: [] })] });
     await h.toApp();
@@ -430,6 +477,23 @@ describe('nothing starts from the page’s address', () => {
     expect(g.logins()).toEqual([]);
     expect(g.nearCalls).toEqual([]);
     expect(g.page.moving.holdsSecret).toBe(false);
+    // A link can come from anyone: the wallet of the app it named, the user's own included, isn't moved out in this
+    // page load. The addresses stay visible; the section says to come back without the link.
+    expect(document.getElementById('home-address-stellar')?.textContent).toBe(vector(OWN).accounts[0]!.stellar.address);
+    expect(document.getElementById('home-coverage')?.textContent).not.toMatch(/move/u);
+    g.click('home-export-open');
+    expect(document.getElementById('home-export-off')?.textContent).toBe(HOME_EXPORT_OFF_TEXT.link);
+    expect(HOME_EXPORT_OFF_TEXT.link).toContain('open Hana Home yourself, without the link');
+    expect(document.getElementById('home-export-start')).toBeNull();
+    expect(pageText()).not.toContain(EXPORT_WARNING);
+    // Going back to the list and opening the same app again changes nothing, nor does signing in again.
+    g.click('home-back');
+    (document.querySelector('.home-open') as HTMLElement).click();
+    g.click('home-export-open');
+    expect(document.getElementById('home-export-start')).toBeNull();
+    expect(g.win.opened).toHaveLength(1);
+    expect(g.logins()).toEqual([]);
+    expect(g.nearCalls).toEqual([]);
   });
 
   it.each(['?appId=app_one&export=1', '?appId=app_one&chain=stellar', '?export=stellar', '?scopeId=s1', '?move=1'])('%s starts nothing either', async (search) => {
@@ -593,7 +657,7 @@ describe('refusals read as Hana’s own sentences', () => {
   it.each([
     [404, 'home_no_wallet', 'There is no wallet for this sign-in in that app.'],
     [429, 'home_busy', 'Hana Home has reached its limit for today. Try again tomorrow.'],
-    [429, 'rate_limited', 'This wallet was opened too many times. Wait an hour and try again.'],
+    [429, 'rate_limited', 'This wallet was opened too many times. Try again later.'],
     [403, 'home_account_mismatch', 'Sign in as the same account you used in Hana Home.'],
     [409, 'link_pending', 'A sign-in method is still being added to this wallet. Try again once that has finished.'],
     [403, 'shared_login_disabled', 'Hana can’t open this wallet from here. If the app still runs, use the app itself.'],
@@ -625,6 +689,19 @@ describe('refusals read as Hana’s own sentences', () => {
     expect(h.win.opened).toHaveLength(windows);
   });
 
+  it.each([
+    [59, 'Try again in about 1 minute.'],
+    [1800, 'Try again in about 30 minutes.'],
+    [3600, 'Try again in about 60 minutes.'],
+    [3601, 'Try again in about 2 hours.'],
+    [50_000, 'Try again in about 14 hours.'],
+  ])('a limit says how long the API asked to wait (retry-after %i s), hourly or daily', async (seconds, words) => {
+    const h = start({ login: () => new Response(JSON.stringify({ error: 'internal words', code: 'rate_limited', requestId: 'req_9' }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': String(seconds) } }) });
+    await h.toApp();
+    await h.open();
+    expect(document.getElementById('home-export-problem')?.textContent).toContain(`This wallet was opened too many times. ${words}`);
+  });
+
   it('a 401 ends Hana Home’s sign-in and says so', async () => {
     const h = start({ login: () => refusal(401, 'invalid_home_identity') });
     await h.toApp();
@@ -645,6 +722,21 @@ describe('refusals read as Hana’s own sentences', () => {
     await h.open();
     expect(h.page.moving.errorCode).toBe('api_unavailable');
     expect(h.logins()).toHaveLength(1);
+  });
+
+  it('a derive that ran but whose answer was lost: the one-use session is spent, nothing is shown, and it says so', async () => {
+    const h = start({
+      login: () => {
+        throw new TypeError('network');
+      },
+      session: () => ({ scope_id: SCOPE, path: OWN, expires_at_ms: T0 + HOME_EXPORT_SESSION_TTL_MS, max_uses: 1, used: 1 }),
+    });
+    await h.toApp();
+    await h.open();
+    expect(h.page.moving.errorCode).toBe('derive_failed');
+    expect(document.getElementById('home-export-problem')?.textContent).toContain('Nothing was shown. Sign in again to retry.');
+    expect(h.logins()).toHaveLength(1);
+    expect(h.page.moving.holdsSecret).toBe(false);
   });
 
   it('Google signed in as another account: said here, and nothing is sent', async () => {
@@ -731,6 +823,18 @@ describe('the secret’s life', () => {
     expect(h.page.moving.holdsSecret).toBe(false);
     expect(zeroed.has(prkOf(OWN))).toBe(true);
     expect(h.page.moving.state).toBe('ended');
+  });
+
+  it('is erased when the tab is frozen (a frozen tab runs no timers, so the 5 minutes could pass unseen)', async () => {
+    const h = start();
+    await h.unlock();
+    const r = h.reveal('stellar');
+    pressEl(h, r.toggle);
+    document.dispatchEvent(new Event('freeze'));
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(zeroed.has(prkOf(OWN))).toBe(true);
+    expect(h.page.moving.state).toBe('ended');
+    expect(r.secret.textContent).toBe('••••••••');
   });
 
   it.each([
@@ -919,7 +1023,7 @@ describe('words and source', () => {
     expect(homeExportRoute(s({ coverage: 'partner_client' }), null, false)).toEqual({ clientId: 'c', kind: 'own' });
     expect(homeExportRoute(s({ coverage: 'hana_client', googleClientId: null }), null, false)).toBe('none');
     expect(homeExportRoute(s({ mine: false }), null, true)).toBe('link');
-    expect(homeExportRoute(s({ mine: true }), null, true)).toEqual({ clientId: 'c', kind: 'shared' });
+    expect(homeExportRoute(s({ mine: true }), null, true)).toBe('link');
   });
 
   it('home-export.ts stores nothing, logs nothing, never touches the URL or the network directly, and posts only its parameters', () => {

@@ -195,7 +195,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
    * Hana Home opening one app's wallet (`home` mode, `hana:home-derive-params`): the nonce must be the session nonce of
    * the message's own scope, session key, end and salt, for exactly one use and key index 0 on the pinned SIGNER. Those
    * two are fixed here, not read from the message, so Hana Home can't be made to ask for any other session. Google
-   * only, with `max_age=0`: the user signs in again before a key can be shown. No app is named and nothing of a
+   * only, with `max_age=0`: Google is asked for a fresh sign-in, though it may show only its account chooser. No app is named and nothing of a
    * partner's is on this screen.
    */
   function checkHomeDerive(msg: WindowMessage<'hana:home-derive-params'>): void {
@@ -210,7 +210,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
       }
       const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: true });
-      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Confirm it’s you'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Choose your Google account again'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
       state = { stage: 'redirecting', mode: 'home', url };
       finish(state);
       win.location.assign(url);

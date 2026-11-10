@@ -917,7 +917,7 @@ names are held to the display-safety rule, cut to 60 characters and never used a
 
 **Moving a wallet out (H8, D575–D584; `home-export.ts`, `key-reveal.ts`, `export-path.ts`; not deployed).** An app's page
 ends with a collapsed section, "Move this wallet to another wallet app". Nothing in the address opens or starts it
-(`?appId=` only chooses the app's page). On "Sign in again to continue" the page opens the child `/login?mode=home` again
+(`?appId=` only chooses the app's page, and the app a link named isn't offered the move in that page load, D600). On "Sign in again to continue" the page opens the child `/login?mode=home` again
 and sends it `hana:home-derive-params`: a session of its own for this app, one use, key index 0, 15 minutes, whose
 `sessionNonce` the child recomputes; Google is asked to sign the user in again (`max_age=0`, no `login_hint`). The Google
 client is the shared one (coverage `shared`) or the app's own (`hana_client`, `partner_client`), and the page first checks
@@ -926,10 +926,11 @@ on NEAR itself that it still opens this app (`get_scope` and `get_config`, or `s
 Google's keys and against the account Hana Home is signed in as, resolves the path as the vault does (`exportPath`: the
 identity's own, or its account root's only once `rpc` and `rpcFallback` each confirm it, D263), sends one `POST
 /v1/home/login` (never re-sent, D581), and decrypts the answer with the pinned CKD key and the pairing check for that
-path. It shows the wallet's two addresses (and says so if the record differs), then per chain the warning, the typed
+path. It shows the wallet's two addresses (and says so if the record differs; on a linked path, or for an answer it looked up
+on NEAR, a difference shows nothing, D601), then per chain the warning, the typed
 `EXPORT`, and Show key / Copy key through the reveal it shares with the export window (the approval guard, the 60 s
 hide). PRK stays in memory for at most 5 minutes and is zeroed then, on "Lock now", on leaving the app's page, on
-sign-out, and on `pagehide`; a chain key exists only inside one Show or Copy (D580). No path, key rule or derivation
+sign-out, on `pagehide` and when the tab is frozen; a chain key exists only inside one Show or Copy (D580). No path, key rule or derivation
 differs from the vault's: a golden test holds Home to the frozen derivation vectors, for an own path and a member's.
 
 ### Auto-approve consents on the server (H4, H5, D45, D465, D510–D513, D530–D535; not deployed)

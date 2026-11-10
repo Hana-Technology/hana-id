@@ -301,7 +301,16 @@ export function homeApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...a
       // The key signs these exact bytes, so the same bytes are sent.
       const bytes = new TextEncoder().encode(JSON.stringify(body));
       const header = await identity.header('POST', url, bytes);
-      const out = await parseApiResponse(await fetchFn(url.toString(), init({ method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', [HOME_IDENTITY_HEADER]: header }, body: bytes })));
+      const res = await fetchFn(url.toString(), init({ method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', [HOME_IDENTITY_HEADER]: header }, body: bytes }));
+      // How long a limit asks the user to wait (the API exposes the header): the page's sentence says it.
+      const retry = res.headers.get('retry-after');
+      let out: Record<string, unknown>;
+      try {
+        out = await parseApiResponse(res);
+      } catch (err) {
+        if (err instanceof ApiError && retry !== null && /^[1-9]\d{0,6}$/u.test(retry)) throw new ApiError(err.status, err.code, 'refused', err.nearTx, err.requestId, { ...err.details, retryAfterS: Number(retry) });
+        throw err;
+      }
       if (!isLoginResponse(out)) throw bad('/v1/home/login');
       return out;
     },

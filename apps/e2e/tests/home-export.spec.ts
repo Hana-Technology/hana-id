@@ -128,6 +128,20 @@ test('a wallet made by a partner login is opened in Hana Home and its Stellar ke
   // The one window was Hana Home's own sign-in.
   expect(popups).toBe(1);
   expect(homeLogins(requests)).toBe(0);
+  // A link can come from anyone, so the wallet of the app it named isn't moved out in that page load, the user's own
+  // included: the section says to come back without the link, and offers no sign-in.
+  await s.open.click();
+  await expect(home.locator('#home-export-off')).toContainText('open Hana Home yourself, without the link');
+  await expect(s.start).toHaveCount(0);
+  await shots(home, 'h8-06b-not-offered-own-app-from-link', browserName);
+  expect(popups).toBe(1);
+  expect(homeLogins(requests)).toBe(0);
+
+  // Without the link: from the user's own list.
+  await home.goto(`${AUTH_ORIGIN}/home`);
+  popups = 0;
+  await signIn(home);
+  await home.locator(`.home-card[data-scope="${scopeId}"]`).getByRole('button', { name: `View ${name}` }).click();
 
   // Expanded: the warning, and still nothing sent until the click.
   await s.open.click();
@@ -504,7 +518,7 @@ test('every screen before a wallet opens: collapsed, the warning, where it canâ€
   await s.start.click();
   const child = await childP;
   await child.waitForURL('https://accounts.google.com/**');
-  await expect(s.title).toHaveText('Confirm itâ€™s you');
+  await expect(s.title).toHaveText('Choose your Google account again');
   await shots(home, 'h8-07-signing-in', browserName);
   const closed = closeOf(child);
   await home.locator('#home-export-cancel').click();

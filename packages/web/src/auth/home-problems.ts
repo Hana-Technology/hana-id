@@ -41,6 +41,7 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   ckd_failed: 'The key service didn’t produce the key this time. Nothing was shown. Sign in again to retry.',
   derive_failed: 'The wallet could not be opened. Nothing was shown. Sign in again to retry.',
   contract_rejected: 'The sign-in was refused on NEAR. Nothing was shown.',
+  address_mismatch: 'The wallet this sign-in opened is not the one Hana has on record for you in this app, so nothing is shown. Try again later.',
   pairing_failed: 'The key service returned an answer that failed its check, so it was not used. Nothing was shown.',
   invalid_token: TOKEN_REFUSED,
   nonce_mismatch: TOKEN_REFUSED,
@@ -82,5 +83,15 @@ export function homeProblem(err: unknown): HomeProblem {
   return { code, text: 'Something went wrong. Try again.', requestId, signInAgain: false };
 }
 
-/** Opening a wallet is limited by the hour and the day, not the minute: the same code reads differently there. */
-export const DERIVE_RATE_LIMITED = 'This wallet was opened too many times. Wait an hour and try again.';
+/**
+ * Opening a wallet is limited by the hour and by the day, not the minute, so the same code reads differently there: the
+ * sentence says how long the API asked to wait (`retry-after`, in seconds), or claims no time when it didn't say.
+ */
+export function deriveRateLimited(retryAfterS: unknown): string {
+  const start = 'This wallet was opened too many times.';
+  if (typeof retryAfterS !== 'number' || !Number.isFinite(retryAfterS) || retryAfterS <= 0) return `${start} Try again later.`;
+  const minutes = Math.ceil(retryAfterS / 60);
+  if (minutes <= 60) return `${start} Try again in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.`;
+  const hours = Math.ceil(retryAfterS / 3600);
+  return `${start} Try again in about ${hours} hours.`;
+}

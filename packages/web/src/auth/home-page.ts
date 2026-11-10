@@ -396,7 +396,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   /** Brings `session` up to date with the clock. Timers can fire late (a sleeping laptop), so every request checks too. */
   function checkSession(): void {
     if (!identity || session === 'none' || session === 'ended') return;
-    const left = identity.expiresAtMs - clock.now();
+    const left = identity.endsAtMs - clock.now();
     if (left <= 0) endSession();
     else if (left <= HOME_EXPIRY_WARN_MS && session !== 'ending') {
       session = 'ending';
@@ -406,7 +406,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   function scheduleSession(id: HomeIdentity): void {
     clearSessionTimers();
-    const left = id.expiresAtMs - clock.now();
+    const left = id.endsAtMs - clock.now();
     warnTimer = setTimeout(checkSession, Math.max(0, left - HOME_EXPIRY_WARN_MS));
     endTimer = setTimeout(checkSession, Math.max(0, left));
   }
@@ -956,7 +956,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         { class: 'panel home' },
         d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'),
         d.h('p', {}, 'See the apps you use with Hana and your wallet addresses in each of them, in one place.'),
-        d.h('p', { class: 'muted' }, `Sign in with ${how} you use in those apps. You stay signed in for 15 minutes, and not after you close or reload this page.`),
+        d.h('p', { class: 'muted' }, `Sign in with ${how} you use in those apps. You stay signed in for a short time, and not after you close or reload this page.`),
         signInError ? problemView(signInError, 'home-sign-in-problem') : null,
         d.h('div', { class: 'actions choose' }, ...buttons),
       ),
@@ -1015,7 +1015,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     // Sign in again with the method this account uses.
     const again = () => button('Sign in again', account?.provider === 'email' ? beginEmailSignIn : beginSignIn, { class: 'primary', id: 'home-sign-in-again' });
     if (session === 'ending' && identity) {
-      const minutes = Math.max(1, Math.ceil((identity.expiresAtMs - clock.now()) / 60_000));
+      const minutes = Math.max(1, Math.ceil((identity.endsAtMs - clock.now()) / 60_000));
       fill(
         'home-banner',
         d.h(

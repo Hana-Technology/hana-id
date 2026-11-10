@@ -1072,7 +1072,7 @@ if Home's own sign-in ends meanwhile (D580).
 | The email exit reaches any registered scope, one that never had email included; D544's refusal (an identity that never opened a wallet there) is the stop, and only where links are open | D485's note, D667 |
 | A phisher relaying a code: the Home mails name Hana Home and the action ("open a wallet … where its private key can be shown"), and say never to give the code to anyone (D620). The per-app code is a fresh proof of the mailbox, unlike Google's per-app step (D604) | `mail.ts` |
 | The address is typed into the `/home` page and sent to the issuer only (D230: never through the API Worker); the page keeps it in memory for that sign-in, writes nothing to storage, and no user-directory row is written for a Home code | `home-email.ts`, `home-page.ts`; e2e "memory only" |
-| The page checks an email token's audience, nonce, issuer, `sub` form and expiry before using it (the API checks the signature against the chain's keys) | `emailTokenClaims` callers |
+| The page checks an email token's audience, nonce, issuer, `sub` form and expiry before using it (the API checks the signature against the chain's keys); the sign-in ends with the token's expiry when that comes first (an email token's 10 minutes), so the page never shows a sign-in as live that the API refuses | `emailTokenClaims` callers; `HomeIdentity.endsAtMs`; D627 |
 
 ### Hana Home's exit-client sign-in (H10, D490, D491, D618, D624; `/home/callback`; not deployed)
 

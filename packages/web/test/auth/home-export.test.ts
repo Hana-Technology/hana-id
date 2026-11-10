@@ -1460,3 +1460,30 @@ describe('H10 review: the issuer refuses the Home sign-in behind a per-app code'
     expect(h.logins()).toEqual([]);
   });
 });
+
+describe('H10: an email sign-in ends with its token', () => {
+  it('the warning and the end follow the email token’s 10 minutes, not the identity’s 15', async () => {
+    const h = start({ email: emailIssuer() });
+    await h.page.idle();
+    // The first screen promises no number of minutes: the methods differ.
+    expect(pageText()).toContain('You stay signed in for a short time');
+    expect(pageText()).not.toContain('15 minutes');
+    await h.toAppByEmail();
+    expect(h.page.session).toBe('active');
+    advance(8 * 60_000 + 1);
+    expect(h.page.session).toBe('ending');
+    expect(document.getElementById('home-ending')?.textContent).toContain('ends in about 2 minutes');
+    advance(2 * 60_000);
+    expect(h.page.session).toBe('ended');
+    expect(document.getElementById('home-ended')).not.toBeNull();
+  });
+
+  it('a Google sign-in still lasts its 15 minutes (its token outlives them)', async () => {
+    const h = start();
+    await h.toApp();
+    advance(10 * 60_000 + 1);
+    expect(h.page.session).toBe('active');
+    advance(3 * 60_000);
+    expect(h.page.session).toBe('ending');
+  });
+});

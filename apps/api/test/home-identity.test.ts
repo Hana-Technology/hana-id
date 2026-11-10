@@ -613,6 +613,9 @@ describe('GET /v1/home/config', () => {
     expect(await read(emailEnv())).toBe(true);
     // No email issuer in the env: no email sign-in, whatever the chain says.
     expect(await read({ EMAIL_ISS: undefined })).toBe(false);
+    // An issuer URL that isn't one (the page's policy leaves the issuer out then): email sign-in off; a good one: on.
+    expect(await read({ ...emailEnv(), EMAIL_ISSUER_URL: 'not a url' })).toBe(false);
+    expect(await read({ ...emailEnv(), EMAIL_ISSUER_URL: 'https://issuer.test' })).toBe(true);
     clearViewCaches();
     near.exit = [];
     near.pendingExit = [{ provider: 'email', aud: HOME_EMAIL_AUDIENCE, effective_at_ms: Date.now() + 86_400_000 }];

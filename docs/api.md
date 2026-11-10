@@ -1040,7 +1040,7 @@ D468), or `null` against an older contract or an empty list (fail closed: Home h
 with the shared client while there is one and with the exit client otherwise (D490, D618, through `/home/callback`), and
 opens an app's wallet with the exit client only where the app's coverage is `exit`. `emailSignIn` (H10) is `true` only
 when the env has an email issuer (`EMAIL_ISS`) and `("email", "hana-home")` is an exit client in force (the same rule
-`homeGate` applies, D494); an API from before H10 sends no field and the page reads it as `false`. Failures: `429
+`homeGate` applies, D494), and only while the env's `EMAIL_ISSUER_URL`, when set, is an http(s) URL (D669); an API from before H10 sends no field and the page reads it as `false`. Failures: `429
 rate_limited`, `502 near_unavailable`, `503 rate_limiter_unavailable`.
 
 **The identity (`homeGate`).** Every later `/v1/home/*` call sends `x-hana-home`: `b64url(json {jwt, key, expiresAtMs, salt,

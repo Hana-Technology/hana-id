@@ -15,6 +15,16 @@ export const HOME_CONFIG_ENDPOINT = '/v1/home/config';
 export const HOME_CONFIG_PER_IP_MINUTE = 60;
 const MINUTE = 60_000;
 
+/** The env's issuer URL is absent (the issuer on the API's own origin) or an http(s) URL: a malformed one leaves Home's email sign-in off, as `/home`'s policy leaves the issuer out. */
+const issuerUrlUsable = (url: string | undefined): boolean => {
+  if (url === undefined || url === '') return true;
+  try {
+    return ['https:', 'http:'].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+};
+
 export async function handleHomeConfig(request: Request, env: Env, requestId: string, now: number = Date.now()): Promise<Response> {
   const ctx = newCtx(env, requestId, HOME_CONFIG_ENDPOINT, request);
   if (!isHomeOrigin(request, env)) return reject(ctx, 403, 'origin_not_allowed', 'Origin not allowed');
@@ -34,7 +44,7 @@ export async function handleHomeConfig(request: Request, env: Env, requestId: st
     // An old contract has no exit clients: null, and Home has no exit route (fail closed).
     exit = effectiveExitClients(config, now).find(([provider]) => provider === GOOGLE_PROVIDER);
     // Email sign-in (H10): only in an env with an email issuer, and while the email exit is in force, as homeGate requires.
-    email = !!env.EMAIL_ISS && isExitClient(config, EMAIL_PROVIDER, HOME_EMAIL_AUDIENCE, now);
+    email = !!env.EMAIL_ISS && issuerUrlUsable(env.EMAIL_ISSUER_URL) && isExitClient(config, EMAIL_PROVIDER, HOME_EMAIL_AUDIENCE, now);
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the shared clients');
   }

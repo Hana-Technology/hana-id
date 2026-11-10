@@ -75,7 +75,7 @@ async function homeEmailSignIn(home: Page, to: string, browserName: string, shot
   if (shotsAs) await shots(home, `${shotsAs}-code-entry`, browserName);
   await home.fill('#home-email-code', code);
   await home.locator('#home-email-verify').click();
-  await expect(home.getByText('Signed in with email')).toBeVisible();
+  await expect(home.locator('#home-who')).toHaveText(`Signed in as ${to}`);
 }
 
 /** `GET /v1/home/config` through the real API, with `patch` applied to its answer. */

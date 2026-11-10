@@ -743,7 +743,7 @@ describe('partner strings are text only', () => {
     const open = document.querySelector('.home-open') as HTMLElement;
     expect(open.getAttribute('aria-label')).toBe(`View ${XSS}`);
     open.click();
-    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Hana Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses', 'Devices and auto-approve']);
+    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Hana Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses', 'Devices and auto-approve', 'Move this wallet to another wallet app']);
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe(XSS);
     expect(document.querySelector('#app script')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();

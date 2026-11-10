@@ -53,6 +53,21 @@ export function originText(d: Dom, origin: string, tag: 'span' | 'p' = 'span'): 
   return el;
 }
 
+/**
+ * An email address as text that wraps at its own break points, the same rule as `originText`: a line may break before
+ * `@` and before each `.` (`<wbr>`), and inside a part only when that part alone is wider than the line (auth.css
+ * `.mail-address`). Its text content is the address exactly; every part is a text node, so nothing in it can become
+ * markup.
+ */
+export function addressText(d: Dom, address: string, tag: 'span' | 'strong' = 'span', id?: string): HTMLElement {
+  const el = d.h(tag, { class: 'mail-address', ...(id ? { attrs: { id } } : {}) });
+  address.split(/(?=[@.])/u).forEach((part, i) => {
+    if (i > 0) el.append(d.h('wbr'));
+    el.append(d.doc.createTextNode(part));
+  });
+  return el;
+}
+
 /** A titled error panel; `code` is the protocol error code, shown small for support. */
 export function errorView(d: Dom, title: string, message: string, code?: string): HTMLElement {
   return d.h(

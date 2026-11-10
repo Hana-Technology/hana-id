@@ -1,0 +1,338 @@
+[
+  {
+    "topic": "The one idea",
+    "question": "Where is a Hana ID user's private key stored between logins?",
+    "options": [
+      "In an encrypted vault on Hana's servers",
+      "Split into shares held by Hana and the user's device",
+      "Nowhere at rest: it is derived on demand by NEAR's MPC network at each login",
+      "In the partner's backend, encrypted with the user's Google id"
+    ],
+    "answer": 2,
+    "explanation": "Hana stores no key. At login, the hana-signer contract checks the Google token on chain and asks NEAR's MPC network to derive the key for the user's path, encrypted so only the browser can open it. The persisted-login feature keeps the wallet's root secret on the device, encrypted under a server-held unlock key, but neither half alone opens it and Hana never holds the key itself."
+  },
+  {
+    "topic": "Login flow",
+    "question": "Why does a stolen Google ID token from a Hana login not let a thief derive the user's key?",
+    "options": [
+      "Google tokens expire after 10 seconds",
+      "The token's nonce commits to a session key that only the user's browser holds, and the MPC answer is encrypted to the browser's one-time key",
+      "Hana's API keeps the token secret and never puts it on chain",
+      "The contract only accepts each Google user id once"
+    ],
+    "answer": 1,
+    "explanation": "The vault makes a non-extractable session key and puts a commitment to it in the Google request's nonce, so the token names that key. Every derive must be signed by that session key, and the MPC's answer is encrypted to a one-time key the vault made. The token itself is public: it appears in the NEAR transaction's arguments forever."
+  },
+  {
+    "topic": "Login flow",
+    "question": "What does Hana's API see during a login?",
+    "options": [
+      "Nothing: the browser talks straight to NEAR",
+      "The Google token and public keys in transit, plus the MPC's encrypted answer, which it can't open",
+      "The derived secret, briefly, before forwarding it",
+      "The user's email address and name from Google's token"
+    ],
+    "answer": 1,
+    "explanation": "The API checks and relays the transaction, so it handles the openid-only Google token and the browser's public keys. The MPC answer passes through it encrypted to the browser's key. The API refuses any token with claims beyond the openid set, so no email or name is in the token it relays."
+  },
+  {
+    "topic": "Login flow",
+    "question": "What happens on chain when a returning user reloads the page within their session?",
+    "options": [
+      "A new create_session_and_derive transaction",
+      "A cheaper derive_key transaction",
+      "Nothing: the vault unlocks its device record with a server-held share, with no NEAR transaction",
+      "The MPC network re-encrypts the key for the new tab"
+    ],
+    "answer": 2,
+    "explanation": "In the default persistence mode, the root secret is stored on the device encrypted under a per-share key the API holds. On reload the vault signs with its session key and the API returns that share key once. No chain call is made, which is why reloads cost nothing in gas."
+  },
+  {
+    "topic": "Signing",
+    "question": "Which of these can be auto-approved under a partner's policy that the user accepted?",
+    "options": [
+      "personal_sign messages",
+      "Raw signing of a bare hash",
+      "An EVM transaction to a partner-listed contract within the policy's daily limits",
+      "Any Stellar message the partner names"
+    ],
+    "answer": 2,
+    "explanation": "Policies can cover transactions and typed data that match their rules and daily counters. personal_sign and Stellar messages always need the popup, and raw signing is never auto-approved (and is refused for test apps). A policy also takes effect only after a delay, and each user must accept that exact policy once."
+  },
+  {
+    "topic": "Signing",
+    "question": "What stops a partner's page from tricking the user into clicking Approve?",
+    "options": [
+      "The partner's page can't open the approval popup at all",
+      "The Approve button arms only a second after the window shows and after a real gesture, and the popup decodes the bytes itself",
+      "Hana's API reviews each transaction before the popup opens",
+      "Approval requires a fresh Google sign-in each time"
+    ],
+    "answer": 1,
+    "explanation": "The popup is Hana's own page on the auth origin; it decodes the transaction itself and takes nothing from the partner page. Approve is guarded: it arms 1 s after render and focus, then needs a mouse move, touch or key, and the arming gesture itself never approves. The vault then signs only if what was approved matches what was queued."
+  },
+  {
+    "topic": "Export",
+    "question": "Which statement about key export is accurate?",
+    "options": [
+      "Partners can turn export off for their users",
+      "Export reuses the key already in the vault to save time",
+      "Export runs its own fresh login, shows the key after a typed EXPORT, and erases it 5 minutes after deriving it",
+      "Export is only possible through Hana support"
+    ],
+    "answer": 2,
+    "explanation": "Export opens a separate Hana window that signs the user in again and derives the key itself, then checks the address matches. The key is behind guarded Show and Copy buttons, hides after 60 s and is erased 5 minutes after derivation. Partners can't switch it off: that is a deliberate commitment, because export is the user's exit."
+  },
+  {
+    "topic": "Hana Home",
+    "question": "What lets Hana Home reach a user's wallet even after a partner turns off Hana's shared Google login?",
+    "options": [
+      "Hana keeps a copy of every user's key",
+      "The exit client: a Hana-held client that the contract accepts in every scope",
+      "Partners must sign an agreement to keep shared login on",
+      "Home asks the MPC network directly, bypassing the contract"
+    ],
+    "answer": 1,
+    "explanation": "Contract version 4 has exit clients that open a session in any existing scope, whatever the partner's settings. Exit sessions are capped on chain at 30 minutes and 3 uses and can't link accounts. Because it is cross-scope by design, a compromised Home page could reach everyone who signs in there, so the watchdog alarms on bursts."
+  },
+  {
+    "topic": "Hana Home",
+    "question": "What is the honest state of Hana Home for real users today?",
+    "options": [
+      "Live and linked from every partner app",
+      "Server side and exit client live on testnet; the page is merged but not linked anywhere, and no real Home login has run",
+      "Designed only; nothing is built",
+      "Live on mainnet for Sodax users"
+    ],
+    "answer": 1,
+    "explanation": "Batches H1 to H6 (the identity, app list, derive, consents and the exit client) are live on sandbox-dev. The page and Home export were merged into develop on 10 November, while the docs still record them as undeployed. Devices (H9) and email sign-in for Home (H10) sit on unmerged branches, and the page stays unlinked until the last batch."
+  },
+  {
+    "topic": "What Hana can do",
+    "question": "Under the mainnet design, can Hana open a Google user's wallet without that user signing in?",
+    "options": [
+      "Yes, Hana's API holds a master key",
+      "Not without a public, delayed change: posting a fake Google key (cancelled by the watchdog) or a 72-hour contract upgrade",
+      "Yes, Hana can ask the MPC network directly",
+      "Never, under any circumstances"
+    ],
+    "answer": 1,
+    "explanation": "The contract needs a Google token for the user with a nonce Hana chose, and Hana can't forge Google tokens. A fake Google key waits a public delay and the watchdog cancels it; an upgrade waits 72 hours in public with critical alerts. 'Never' is wrong: the council could do it after the delay, and Hana's pages can steal the keys of users who do sign in."
+  },
+  {
+    "topic": "What Hana can do",
+    "question": "What is the biggest unbounded risk Hana shares with every embedded web wallet?",
+    "options": [
+      "Google revoking its signing keys",
+      "A malicious update to the pages Hana serves, which could steal the keys of users who load it",
+      "NEAR gas prices rising",
+      "Partners reading users' keys from the SDK"
+    ],
+    "answer": 1,
+    "explanation": "The vault and auth pages hold keys in the browser, and Hana's Cloudflare account serves them. A strict content security policy, no third-party scripts and stamped builds make abuse harder or detectable afterwards, but nothing prevents a deploy by someone with deploy rights. The docs list bounding this trust root as an open issue."
+  },
+  {
+    "topic": "Email login",
+    "question": "Who can open an email-login user's wallet without the user today?",
+    "options": [
+      "Nobody: email tokens need two signatures",
+      "Anyone who can read the email issuer Worker's secrets, because the issuer has one signer",
+      "Only the council, after 72 hours",
+      "Only SendGrid"
+    ],
+    "answer": 1,
+    "explanation": "The on-chain signer policy requires one signature, from a key held as a Worker secret on testnet. Whoever can make that key sign can mint a token for any email user. Installing a new email key is governed and pinned by the watchdog, but use of the real key isn't bounded on chain; AWS KMS and a second co-signer are planned, not live."
+  },
+  {
+    "topic": "Governance",
+    "question": "On mainnet, who can cancel a pending contract upgrade?",
+    "options": [
+      "The watchdog",
+      "Any partner",
+      "Only the council (owner)",
+      "Hana's API"
+    ],
+    "answer": 2,
+    "explanation": "There is no independent upgrade guardian at launch, so only the owner can cancel. Every upgrade proposal waits 72 hours in public and pages both founders. The watchdog can cancel forged issuer keys and pause, but it can't cancel an upgrade."
+  },
+  {
+    "topic": "Governance",
+    "question": "What can a pause do?",
+    "options": [
+      "Freeze users' funds on Stellar and EVM",
+      "Stop logins, derives and token paths until the council unpauses; it can't post keys, change code or move anything",
+      "Roll back the last contract upgrade",
+      "Delete every session and share"
+    ],
+    "answer": 1,
+    "explanation": "The council or a watchdog can pause; only the council unpauses, at once. Pause stops every token path and the executors, but not governance, cancels or session revokes. Users' funds live on other chains and are untouched."
+  },
+  {
+    "topic": "Governance",
+    "question": "How do sandbox-dev's governance protections compare with the mainnet plan?",
+    "options": [
+      "They are identical",
+      "Sandbox-dev uses 60-second and 2-minute delays, keeps a full-access key on the contract account, and holds all three council keys on one machine",
+      "Sandbox-dev has longer delays for safety",
+      "Sandbox-dev has no council at all"
+    ],
+    "answer": 1,
+    "explanation": "Sandbox-dev deliberately uses short delays for fast drills and keeps the signer's full-access key for speed. Its council members are throwaway testnet accounts whose keys are in the operator's secrets folder. So no claim about bounded Hana power applies to testnet."
+  },
+  {
+    "topic": "Watchdog",
+    "question": "What happens if someone steals the API's updater key and proposes a fake Google key?",
+    "options": [
+      "The fake key takes effect immediately",
+      "The proposal waits a public delay; the watchdog sees Google doesn't publish it, cancels it, deletes the updater key and pages",
+      "Google notices and revokes it",
+      "Partners must vote it down"
+    ],
+    "answer": 1,
+    "explanation": "The updater key can only propose delayed Google key changes. The watchdog fetches Google's keys itself every 5 minutes, cancels forgeries and deletes the updater keys; if a forged key ever became active it would pause the contract. The forged-key and pause drills ran on sandbox-dev on 30 October."
+  },
+  {
+    "topic": "Watchdog",
+    "question": "Is the alert path to the founders proven end to end?",
+    "options": [
+      "Yes, on all three channels",
+      "Email yes; the phone pager (a free stand-in) failed in the 10 November test, and Slack isn't set up",
+      "Only Slack works",
+      "No channel has been tested"
+    ],
+    "answer": 1,
+    "explanation": "The test critical page reached email within seconds, but ntfy.sh failed from the Worker, as it had in the first drill. Choosing a production pager is an open decision. Until both founders confirm every channel, paging is not proven."
+  },
+  {
+    "topic": "Failure modes",
+    "question": "If NEAR's MPC network goes down, what still works?",
+    "options": [
+      "Nothing at all",
+      "New logins, but slower",
+      "Users with a live or persisted session keep signing; new logins and exports fail",
+      "Exports, but not signing"
+    ],
+    "answer": 2,
+    "explanation": "Signing uses the key already in the vault and doesn't call the MPC or the chain. New logins and exports need a fresh derivation, so they fail with ckd_failed. Hana can't restart the MPC network: it is NEAR's."
+  },
+  {
+    "topic": "Failure modes",
+    "question": "What can a lying NEAR RPC provider do to a user's own wallet?",
+    "options": [
+      "Swap in a key it knows",
+      "Fail or delay logins, but not forge the key: the vault checks the MPC answer against a pinned public key",
+      "Read the user's private key",
+      "Nothing, because Hana doesn't use RPC providers"
+    ],
+    "answer": 1,
+    "explanation": "The MPC network's public key is pinned in Hana's build after reading it from at least three providers, and every answer is checked against it. A provider could refuse or delay logins. For linked accounts, where the path isn't the user's own, the vault requires two independent providers to agree."
+  },
+  {
+    "topic": "Exit",
+    "question": "If Hana shut down tomorrow, which is true?",
+    "options": [
+      "Users could log in with any open-source tool",
+      "Funds stay on their chains, but logging in needs Hana's pages and relayer; only keys already exported remain usable without Hana",
+      "Funds would be lost",
+      "Partners could take over logins automatically"
+    ],
+    "answer": 1,
+    "explanation": "Funds are on Stellar and EVM chains and nothing moves them. But Google returns tokens only to Hana's registered pages, the relayer pays the gas, and the contract's Google keys are kept current by Hana's cron or the council. A standalone recovery tool is deferred, so the honest advice is to export while Hana runs."
+  },
+  {
+    "topic": "Partners",
+    "question": "Which partners could derive their own users' keys?",
+    "options": [
+      "Every partner, through the SDK",
+      "None, ever",
+      "Partners on their own Google client, when users sign in through a page the partner controls",
+      "Only partners with auto-approve on"
+    ],
+    "answer": 2,
+    "explanation": "On Hana's shared client the partner can't get a token with a nonce of its choosing, so it can't derive keys. A partner that controls its own Google client can get tokens with any nonce for it, which Hana can't see or stop. That is why the shared client is the default and own clients carry a written warning."
+  },
+  {
+    "topic": "Privacy",
+    "question": "What about a user is public on NEAR?",
+    "options": [
+      "Nothing at all",
+      "Their email address and name",
+      "Each login's openid-only Google token, including Google's user id, which is the same across every Hana app",
+      "Their wallet's private key, encrypted"
+    ],
+    "answer": 2,
+    "explanation": "Login tokens sit in the transaction arguments forever. The claim allow-list keeps email, name and picture off chain, but Google's sub, the client and timestamps remain. Because the sub is the same across clients, an observer can see one Google account logging in to several Hana apps."
+  },
+  {
+    "topic": "Privacy",
+    "question": "Does Hana hold users' email addresses?",
+    "options": [
+      "No, never",
+      "Only for users who share their email with a partner",
+      "Yes: the email issuer's staff-only directory keeps verified addresses, including Google users' where an email issuer runs",
+      "Only in the partner's console"
+    ],
+    "answer": 2,
+    "explanation": "Email login records each verified address, and under the current Google flow the popup asks Google for the email scope so the issuer can record Google users' addresses too. Staff reads are audited and budgeted. Partners see an address only if the user shared it with that app."
+  },
+  {
+    "topic": "Mainnet demo",
+    "question": "What does the $9.99 cap in the mainnet demo actually limit?",
+    "options": [
+      "The wallet's total balance",
+      "What a single transaction can move, fee included; not what the testnet MPC's operators could take from the address",
+      "The total a user can spend per day",
+      "Gas only"
+    ],
+    "answer": 1,
+    "explanation": "The vault refuses any demo request valued over $9.99, before any popup. There is no balance cap, only a warning above $10. The keys come from the testnet MPC, so everything at the address is behind testnet custody; the demo is staff-only and doesn't exist in production."
+  },
+  {
+    "topic": "Maturity",
+    "question": "Which statement about Hana ID's maturity is accurate?",
+    "options": [
+      "Externally audited and live on mainnet",
+      "Testnet only, unaudited, 50 of 132 readiness rows done or built, and CI switched off with checks run locally",
+      "Audited, waiting only for a launch date",
+      "Production on testnet with a 99.9% uptime SLA"
+    ],
+    "answer": 1,
+    "explanation": "Everything runs on sandbox-dev, on NEAR testnet and the founder's personal accounts. The external audit is a hard gate before live keys and has no auditor named. CI has been off since 5 November; pnpm verify runs the checks locally before merges."
+  },
+  {
+    "topic": "Cost and scale",
+    "question": "Roughly what does a login cost, and who pays?",
+    "options": [
+      "Nothing; NEAR is free",
+      "About two US cents of NEAR gas, paid by Hana's relayer and billed to the partner",
+      "About a dollar, paid by the user",
+      "Two cents per signature, paid by the user"
+    ],
+    "answer": 1,
+    "explanation": "The planning figure comes from late-October testnet measurements: about 40 Tgas, around $0.021 at $5.29 per NEAR, for the older two-step login. The one-step login's gas has been measured only in a local sandbox. Reloads within a session cost nothing on chain."
+  },
+  {
+    "topic": "Cost and scale",
+    "question": "What is the honest answer to 'what breaks at a million users?'",
+    "options": [
+      "Nothing; it's serverless",
+      "The MPC network, which caps at 10,000 users",
+      "Unknown: it hasn't been load-tested; known free-tier limits include settlement throughput, relayer funds and Home's daily ceiling",
+      "The contract's storage, which is full"
+    ],
+    "answer": 2,
+    "explanation": "No load test has run; it belongs to the staging rehearsal, which isn't built. Known limits are configurable settings and plan choices: settlement handles about 3,600 relayed transactions a day on the free plan, 3 × 2 NEAR of relayer allowance covers about 1,500 logins, and Home allows 500 derives a day by default. MPC throughput is NEAR's and unmeasured."
+  },
+  {
+    "topic": "Competition",
+    "question": "What is genuinely different about Hana ID compared with typical embedded wallets, as far as their public docs go?",
+    "options": [
+      "Hana needs no trust in the code served to the browser",
+      "No provider-held key or key share; the login check that releases a key runs on chain; partners never get a signing credential",
+      "Hana doesn't depend on Google",
+      "Hana works without any servers"
+    ],
+    "answer": 1,
+    "explanation": "Other providers hold keys in enclaves or keep a server share, or hand the key to the app; Hana's key is derived by NEAR's MPC after the contract checks the token. Every signature goes through Hana's window. Like every web wallet, users still trust the code Hana serves, Google and Hana's infrastructure."
+  }
+]

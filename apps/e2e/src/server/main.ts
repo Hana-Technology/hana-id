@@ -44,6 +44,7 @@ export async function startStack(fingerprint: string): Promise<void> {
   // Google's server-side endpoints for the Workers in this process (google-match's tokeninfo, userinfo, JWKS, revoke).
   const google = await GoogleBackend.create();
   google.install();
+  chain.googleKid = google.kid;
   const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk() });
   const issuer = await LocalIssuer.start(d1, issuerKey);
   const evm = new MockEvm();

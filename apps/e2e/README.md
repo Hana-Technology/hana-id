@@ -73,6 +73,15 @@ The mocked NEAR RPC (`src/server/chain.ts`) answers the vault's and the export w
 status, and the login's registry check, `get_scope` / `scope_for_client`, D56) and the Worker's (`get_session`,
 `get_scope`, `get_config`).
 
+Hana Home's derive, `POST /v1/home/login`, is not mocked (`tests/home-export.spec.ts`): the Worker's own handler runs
+whole (the Home identity gate, the token's signature against the stack's Google key, the nonce, the chain reads,
+`home_usage` in D1, the directory writes). Only the `home` relayer pool's key object behind it is stood in for
+(`relayHome` in `src/server/api.ts`): it applies `create_session_and_derive` to the mocked chain and answers with the
+test MPC instead of signing a NEAR transaction. For that handler the mocked chain also answers `session_key_in_use`
+and `get_issuer("google")` (the stack's Google kid). `POST /__e2e/apps` takes `launched: true` to set the app's
+`first_login_at`, which the Worker's own `/v1/login` sets and the mocked one doesn't: Hana Home then lists the app to
+a user the wallet directory has no row for (a linked member's row is also written by the Worker's own login only).
+
 The demo (`apps/demo`) is bundled by esbuild from its own `index.html` and `src/main.ts` with a configuration for the
 stack (`DEMO_CONFIG` in `src/build.ts`: the e2e env, the mocked EVM chain). It bakes its key in at build time, as the
 deployed demo does, so its app has a fixed key (`DEMO_PK`): `POST /__e2e/apps` with `publishableKey` creates it once

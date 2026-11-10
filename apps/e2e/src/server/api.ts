@@ -8,8 +8,15 @@
 // API's own check has its own tests in apps/api), but /v1/login applies the Worker's claim allow-list (apps/api
 // claims.ts, `token_has_pii`). Every relayed transaction that carried a token is recorded (Chain.relayed).
 //
+// POST /v1/home/login (Hana Home's derive) is NOT mocked: the Worker's own handler runs whole (the Home identity gate,
+// the token's RS256 check against the stack's Google key, the nonce, the chain reads, D1's `home_usage`, the directory
+// writes). Only what it hands to the `home` relayer pool is answered here: `RELAYER_KEY` is a stand-in for the
+// RelayerKey Durable Object (`relayHome`), which applies `create_session_and_derive` to the mocked chain and answers
+// with the test MPC, instead of signing a NEAR transaction. HOME_RELAYER_KEYS holds one throwaway key per stack, which
+// only routes (relayer-pool.ts claimKeyIndex) and never signs.
+//
 // Control endpoints for the tests (`/__e2e/*`, no CORS, so no page can call them):
-//   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?, publishableKey?, live?, loginMethods?} → {appId, pk}
+//   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?, publishableKey?, live?, loginMethods?, launched?} → {appId, pk}
 //                                     (with publishableKey: created once, then the same app is returned; live: a
 //                                     pk_live_ key, on LIVE_SCOPE_ID unless scopeId says otherwise)
 //   POST /__e2e/apps/<pk>/revoke      every live share of the app is revoked (an unlock then gets 410 share_revoked)
@@ -126,6 +133,11 @@ export interface AppSpec {
   live?: boolean;
   /** `apps.login_methods` (migration 0010): `'google,email'` turns email login on (default: Google only). */
   loginMethods?: 'google' | 'google,email';
+  /**
+   * `apps.first_login_at` is set, as the Worker's own /v1/login sets it at an app's first login (the mocked one here
+   * doesn't): Hana Home then lists the app to a user the wallet directory has no row for (GET /v1/home/apps, D462).
+   */
+  launched?: boolean;
 }
 
 export interface MockApiOptions {
@@ -187,6 +199,12 @@ export class MockApi {
       ...(opts.email ? { EMAIL_ISS: opts.email.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(opts.email.publicKeys) } : {}),
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);
+    // The `home` pool (POST /v1/home/login, the Worker's own handler): one throwaway key, and the object that relays.
+    env.HOME_RELAYER_KEYS = JSON.stringify([`ed25519:${base58.encode(crypto.getRandomValues(new Uint8Array(64)))}`]);
+    env.RELAYER_KEY = {
+      idFromName: (name: string): string => name,
+      get: (_id: string) => ({ relay: async (pool: unknown, _keyIndex: unknown, call: { method: string; args: Body }) => this.relayHome(pool, call) }),
+    };
     this.env = env;
   }
 
@@ -216,6 +234,7 @@ export class MockApi {
     if (spec.status === 'suspended') this.d1.db.prepare('UPDATE apps SET suspended_by = 1 WHERE id = ?').run(appId);
     if (spec.loginMethods) this.d1.db.prepare('UPDATE apps SET login_methods = ? WHERE id = ?').run(spec.loginMethods, appId);
     if (spec.mainnetDemo) this.d1.db.prepare('UPDATE apps SET mainnet_demo = 1 WHERE id = ?').run(appId);
+    if (spec.launched) this.d1.db.prepare('UPDATE apps SET first_login_at = ? WHERE id = ?').run(now, appId);
     this.d1.db.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?, ?, ?, 'e2e', ?)").run(`key_${appId}`, appId, pk, now);
     const insert = this.d1.db.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?, ?, 0)');
     for (const o of spec.origins) insert.run(appId, o);
@@ -338,6 +357,33 @@ export class MockApi {
     // As the Worker's /v1/login (C15): the account root's Support ID, by the Worker's own code.
     const supportId = await this.api.sessionSupportId(this.env, app.scope_id, pi);
     return this.api.done(ctx, 200, { result, session: { scope_id: session.scope_id, expires_at_ms: session.expires_at_ms, max_uses: session.max_uses, used: 1 }, nearTx, ...(supportId ? { supportId } : {}) });
+  }
+
+  /**
+   * The RelayerKey object's `relay` for the `home` pool (apps/api relayer-key.ts RelayResult): the Worker's
+   * /v1/home/login checked the token, its nonce, the session signature and the identity's standing before it got here,
+   * as it does before a real relay. `create_session_and_derive` on the mocked chain, as `login` above: the path is the
+   * contract's (a member's root's), the session is one the Worker's `get_session` then finds, and the answer is the
+   * test MPC's. A refusal is the contract's panic (`contract_rejected`, executed by the signer).
+   */
+  private relayHome(pool: unknown, call: { method: string; args: Body }): Body {
+    if (pool !== 'home' || call.method !== 'create_session_and_derive') return { ok: false, status: 400, code: 'method_not_allowed', error: 'Not relayed by this pool' };
+    const a = call.args;
+    const who = tokenIdentity(a.jwt);
+    const panic = (error: string): Body => ({ ok: false, status: 422, code: 'contract_rejected', error, executor: E2E_ENV.signer, nearTx: this.chain.newTxHash() });
+    if (!who || typeof a.scope_id !== 'string' || !isBytes(a.session_public_key, 32) || !isInt(a.expires_at_ms) || !isInt(a.key_index) || !isInt(a.max_uses) || typeof a.pk1 !== 'string') return panic('Malformed arguments');
+    const sessionPublicKey = bytes(a.session_public_key);
+    this.chain.relayed.push({ method: 'create_session_and_derive', tokens: [relayedToken(who)] });
+    if (this.chain.session(sessionPublicKey)) return panic('Session key in use');
+    const pi = this.chain.pathIdentity(a.scope_id, { provider: who.provider, sub: who.sub });
+    if (pi === 'pending') return panic('Sign-in method link is pending');
+    const session = { path: `${a.scope_id}#${pi.provider}#${pi.sub}#${a.key_index}`, scope_id: a.scope_id, expires_at_ms: a.expires_at_ms, max_uses: a.max_uses, used: 1 };
+    this.chain.sessions.set(toHex(sessionPublicKey), session);
+    this.chain.opened.add(identityKeyHex(a.scope_id, pi.provider, pi.sub));
+    const result = mpcAnswer(a.pk1, session.path);
+    const nearTx = this.chain.newTxHash();
+    this.chain.txs.set(nearTx, result);
+    return { ok: true, result, nearTx };
   }
 
   private async derive(ctx: ApiCtx, b: Body): Promise<Response> {

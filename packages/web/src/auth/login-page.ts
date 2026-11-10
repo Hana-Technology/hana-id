@@ -14,27 +14,37 @@
 //   partner  /login?v=<vault frame name>  opened by the partner page; the vault is window.opener.frames[v]
 //   vault    /login?from=vault            opened by the vault's launcher; the vault is window.opener
 //   export   /login?mode=export           opened by the export window (authOrigin); it is window.opener
+//   home     /login?mode=home             opened by Hana Home (authOrigin, `/home`); it is window.opener. It prepares no
+//                                         session: its message is `hana:home-params`, whose nonce commits to the Home
+//                                         key (core home.ts `homeNonce`), and only Google is offered. This mode takes
+//                                         no `hana:auth-params`, and no other mode takes `hana:home-params`: only a
+//                                         same-origin opener at `/home` can supply a Home nonce. To open one app's
+//                                         wallet Hana Home sends `hana:home-derive-params` instead: a session of one
+//                                         use and key index 0 in one scope, whose nonce this window recomputes, and
+//                                         Google is asked to sign the user in again (`max_age=0`).
 //
 // SECURITY: auth-params carries relayKey, the one session secret that crosses postMessage. It is accepted only from
 // the authenticated sender, kept only in sessionStorage, and the in-memory copy is zeroed.
-import { type LoginMethod, type WindowMessage, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
+import { type LoginMethod, type WindowMessage, homeNonce, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { PageError } from './errors.ts';
 import { type EmailContext, storeEmailContext } from './email-storage.ts';
-import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, loginGoogleRequest } from './google.ts';
+import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAuthUrl, loginGoogleRequest } from './google.ts';
 import { addLoginTimings, storeLoginEntry } from './login-storage.ts';
 import { appLogo } from './logo.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 import { markEmailShare } from './share-handoff.ts';
 import { vaultSignals } from './vault-signal.ts';
 
-export type OpenerMode = 'partner' | 'vault' | 'export';
+export type OpenerMode = 'partner' | 'vault' | 'export' | 'home';
 
 export { VAULT_FRAME_NAME };
 export const HELLO_INTERVAL_MS = 100;
 export const HELLO_TIMEOUT_MS = 15_000;
 export const EXPORT_PATH = '/export';
+/** Hana Home's page: the only opener whose `hana:home-params` the `home` mode takes. */
+export const HOME_PATH = '/home';
 /** The email step (auth/email-page.ts), reached by navigating this window; the fragment names the login (`#<relayId>`). */
 export const EMAIL_PATH = '/login/email';
 
@@ -64,7 +74,7 @@ export interface LoginPage {
   stop(): void;
 }
 
-/** The opener mode from the query, or null when the link is not one of the three forms exactly. */
+/** The opener mode from the query, or null when the link is not one of the four forms exactly. */
 export function openerMode(search: string): { mode: OpenerMode; vaultFrame?: string } | null {
   const q = new URLSearchParams(search);
   const keys = [...q.keys()];
@@ -75,6 +85,7 @@ export function openerMode(search: string): { mode: OpenerMode; vaultFrame?: str
   if (keys[0] === 'v' && VAULT_FRAME_NAME.test(value)) return { mode: 'partner', vaultFrame: value };
   if (keys[0] === 'from' && value === 'vault') return { mode: 'vault' };
   if (keys[0] === 'mode' && value === 'export') return { mode: 'export' };
+  if (keys[0] === 'mode' && value === 'home') return { mode: 'home' };
   return null;
 }
 
@@ -117,11 +128,22 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   const opener = win.opener;
   // D347's signals: to the vault frame (partner mode) or the vault's window (vault mode). The export window's child
   // has no vault to tell (its opener is the export window, on authOrigin).
-  const signals = vaultSignals(win, () => (!parsed || !opener || parsed.mode === 'export' ? [] : [parsed.mode === 'partner' ? childFrame(opener, parsed.vaultFrame as string) : opener]), env.vaultOrigin);
+  const signals = vaultSignals(win, () => (!parsed || !opener || parsed.mode === 'export' || parsed.mode === 'home' ? [] : [parsed.mode === 'partner' ? childFrame(opener, parsed.vaultFrame as string) : opener]), env.vaultOrigin);
 
   function onMessage(event: Event): void {
     if (accepted || !parsed || !opener) return;
     const e = event as MessageEvent;
+    if (parsed.mode === 'home') {
+      // Hana Home's sign-in: its own message, from the same-origin opener at /home, and nothing else.
+      const home = parseWindowMessage(e.data, ['hana:home-params']);
+      const derive = home ? null : parseWindowMessage(e.data, ['hana:home-derive-params']);
+      if ((!home && !derive) || !fromPreparer(e, 'home')) return;
+      accepted = true;
+      stop();
+      if (home) checkHome(home);
+      else if (derive) checkHomeDerive(derive);
+      return;
+    }
     const msg = parseWindowMessage(e.data, ['hana:auth-params']);
     if (!msg) return;
     if (!fromPreparer(e, parsed.mode, parsed.vaultFrame)) return;
@@ -134,8 +156,70 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   function fromPreparer(e: MessageEvent, mode: OpenerMode, vaultFrame?: string): boolean {
     if (!opener) return false;
     if (mode === 'export') return e.origin === env.authOrigin && e.source === opener && openerPath(opener) === EXPORT_PATH;
+    if (mode === 'home') return e.origin === env.authOrigin && e.source === opener && openerPath(opener) === HOME_PATH;
     if (mode === 'vault') return e.origin === env.vaultOrigin && e.source === opener;
     return fromPartnerVault(e, opener, vaultFrame as string, env.vaultOrigin);
+  }
+
+  /**
+   * Hana Home's sign-in (`home` mode): the nonce must be the Home nonce of the message's own key, end and salt for the
+   * pinned SIGNER, so this window never sends Google a nonce it can't account for (a session nonce least of all). Google
+   * only, with the account chooser and no `max_age`; the relay key is stored as for any login and the callback relays
+   * Google's answer. No app is named: the sign-in is to Hana Home itself.
+   */
+  function checkHome(msg: WindowMessage<'hana:home-params'>): void {
+    state = { stage: 'checking', mode: 'home' };
+    try {
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', 'Hana Home named another signer.');
+      const nonce = homeNonce({ signer: env.signer, homePublicKey: msg.homePublicKey, expiresAtMs: msg.expiresAtMs, salt: msg.salt });
+      if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its Home key.');
+      try {
+        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now());
+      } catch {
+        throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
+      }
+      const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: false });
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in to Hana Home'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+      state = { stage: 'redirecting', mode: 'home', url };
+      finish(state);
+      win.location.assign(url);
+    } catch (err) {
+      const e = err instanceof PageError ? err : new PageError('config_mismatch', 'The sign-in request could not be checked.');
+      fail(e.code, 'Sign-in stopped', e.message);
+    } finally {
+      msg.relayKey.fill(0);
+    }
+  }
+
+  /**
+   * Hana Home opening one app's wallet (`home` mode, `hana:home-derive-params`): the nonce must be the session nonce of
+   * the message's own scope, session key, end and salt, for exactly one use and key index 0 on the pinned SIGNER. Those
+   * two are fixed here, not read from the message, so Hana Home can't be made to ask for any other session. Google
+   * only, with `max_age=0`: Google is asked for a fresh sign-in, though it may show only its account chooser. No app is named and nothing of a
+   * partner's is on this screen.
+   */
+  function checkHomeDerive(msg: WindowMessage<'hana:home-derive-params'>): void {
+    state = { stage: 'checking', mode: 'home' };
+    try {
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', 'Hana Home named another signer.');
+      const nonce = sessionNonce({ signer: env.signer, scopeId: msg.scopeId, sessionPublicKey: msg.sessionPublicKey, expiresAtMs: msg.expiresAtMs, keyIndex: 0, maxUses: 1, salt: msg.salt });
+      if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its session.');
+      try {
+        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now());
+      } catch {
+        throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
+      }
+      const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: true });
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Choose your Google account again'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+      state = { stage: 'redirecting', mode: 'home', url };
+      finish(state);
+      win.location.assign(url);
+    } catch (err) {
+      const e = err instanceof PageError ? err : new PageError('config_mismatch', 'The sign-in request could not be checked.');
+      fail(e.code, 'Sign-in stopped', e.message);
+    } finally {
+      msg.relayKey.fill(0);
+    }
   }
 
   async function check(msg: WindowMessage<'hana:auth-params'>, mode: OpenerMode): Promise<void> {
@@ -329,7 +413,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
     state = { stage: 'connecting', mode: parsed.mode };
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), d.h('p', { class: 'muted' }, 'Connecting…')));
     win.addEventListener('message', onMessage);
-    const targetOrigin = parsed.mode === 'export' ? env.authOrigin : env.vaultOrigin;
+    const targetOrigin = parsed.mode === 'export' || parsed.mode === 'home' ? env.authOrigin : env.vaultOrigin;
     const hello = () => {
       const target = parsed.mode === 'partner' ? childFrame(opener, parsed.vaultFrame as string) : opener;
       try {
@@ -341,7 +425,9 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
     hello();
     helloTimer = setInterval(hello, HELLO_INTERVAL_MS);
     helloDeadline = setTimeout(() => {
-      if (!accepted) fail('login_timeout', 'Sign-in stopped', 'The app’s Hana vault did not answer. Close this window and start again from the app.');
+      if (accepted) return;
+      if (parsed.mode === 'home') fail('login_timeout', 'Sign-in stopped', 'Hana Home did not answer. Close this window and sign in again from Hana Home.');
+      else fail('login_timeout', 'Sign-in stopped', 'The app’s Hana vault did not answer. Close this window and start again from the app.');
     }, HELLO_TIMEOUT_MS);
   }
 

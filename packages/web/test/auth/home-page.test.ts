@@ -28,11 +28,18 @@ const refusal = (status: number, code: string, error = 'internal words'): Respon
 
 /** Lets real crypto and promise work finish (timers are faked, setImmediate isn't). */
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
+/**
+ * Waits for `cond` by real time, not by a count of ticks: a sign-in's key and nonce are real WebCrypto work, which on a
+ * busy machine (verify runs four packages at once) can take more than a few hundred ticks. `Date` isn't faked here.
+ */
+const UNTIL_MS = 10_000;
 async function until(cond: () => boolean, what = 'condition'): Promise<void> {
-  for (let i = 0; i < 400; i++) {
+  const deadline = Date.now() + UNTIL_MS;
+  while (Date.now() < deadline) {
     if (cond()) return;
     await tick();
   }
+  if (cond()) return;
   throw new Error(`Timed out waiting for ${what}`);
 }
 
@@ -451,7 +458,7 @@ describe('your apps', () => {
     h.answer = LIST;
     await h.signIn();
     const sections = [...document.querySelectorAll('#home-content h2')].map((x) => x.textContent);
-    expect(sections).toEqual(['Your apps', 'Find an app', 'Other apps that use Hana']);
+    expect(sections).toEqual(['Your apps', 'Devices and auto-approve', 'Find an app', 'Other apps that use Hana']);
     const cards = [...document.querySelectorAll('.home-card')];
     expect(cards.map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
     const badgeOf = (id: string) => document.querySelector(`.home-card[data-scope="${id}"] .home-card-foot .badge`)?.textContent;
@@ -612,7 +619,7 @@ describe('your apps', () => {
     expect(h.appCalls().map((c) => c.url.search)).toEqual(['', '?appId=app_quiet1']);
     // The partner's words are never the landing screen: the user's own apps come first, nothing is opened.
     expect(h.page.openScope).toBeNull();
-    expect([...document.querySelectorAll('#home-content h2')].map((x) => x.textContent)).toEqual(['Your apps', 'The app from your link', 'Find an app']);
+    expect([...document.querySelectorAll('#home-content h2')].map((x) => x.textContent)).toEqual(['Your apps', 'The app from your link', 'Devices and auto-approve', 'Find an app']);
     expect(document.querySelector('#home-linked .note')?.textContent).toContain('Hana has no wallet on record for this Google account in it.');
     expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's8']);
     expect(document.querySelector('#home-linked .home-card-foot .badge')?.textContent).toBe('Supported');
@@ -736,7 +743,7 @@ describe('partner strings are text only', () => {
     const open = document.querySelector('.home-open') as HTMLElement;
     expect(open.getAttribute('aria-label')).toBe(`View ${XSS}`);
     open.click();
-    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Hana Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses']);
+    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Hana Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses', 'Devices and auto-approve']);
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe(XSS);
     expect(document.querySelector('#app script')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();

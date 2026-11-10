@@ -408,13 +408,13 @@ describe('/login/email', () => {
   it('a wrong code shows the tries left; the last one, an expired code and a used one go back to the address', async () => {
     const s = emailSetup();
     await toCode(s);
-    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { attemptsLeft: 3 }));
+    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { data: { attemptsLeft: 3 } }));
     typeInto('email-code', '000000');
     submit('email-verify');
     await flush();
     expect(s.page.stage).toBe('code');
     expect(pageText()).toContain('3 tries left');
-    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { attemptsLeft: 0 }));
+    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { data: { attemptsLeft: 0 } }));
     typeInto('email-code', '000001');
     submit('email-verify');
     await flush();
@@ -530,7 +530,7 @@ describe('/login/email', () => {
     expect(pageText()).not.toContain('can’t be reached');
     expect(document.getElementById('email-retry')).toBeNull();
     await toCode(s);
-    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { attemptsLeft: 2 }));
+    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { data: { attemptsLeft: 2 } }));
     typeInto('email-code', '000000');
     submit('email-verify');
     await flush();
@@ -605,7 +605,7 @@ describe('/login/email', () => {
     resetDom();
     const wrong = emailSetup();
     await toCode(wrong);
-    wrong.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { attemptsLeft: 4 }));
+    wrong.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { data: { attemptsLeft: 4 } }));
     typeInto('email-code', '000000');
     submit('email-verify');
     await flush();
@@ -663,7 +663,7 @@ describe('review fixes (L4, L5, L8)', () => {
   it('the cancel reason resets after a successful resend and a successful verify', async () => {
     const s = emailSetup();
     await toCode(s);
-    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { attemptsLeft: 4 }));
+    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { data: { attemptsLeft: 4 } }));
     typeInto('email-code', '000000');
     submit('email-verify');
     await flush();
@@ -676,7 +676,7 @@ describe('review fixes (L4, L5, L8)', () => {
     resetDom();
     const b = emailSetup();
     await toCode(b);
-    b.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { attemptsLeft: 4 }));
+    b.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { data: { attemptsLeft: 4 } }));
     typeInto('email-code', '000000');
     submit('email-verify');
     await flush();

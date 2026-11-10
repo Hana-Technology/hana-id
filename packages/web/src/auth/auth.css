@@ -168,6 +168,13 @@ strong,
   word-break: break-all;
 }
 
+/* A web address wraps whole, or at its own break points (dom.ts originText: after `://`, before `.`, `:` and `/`), never
+   inside a label; only a label wider than the line is ever cut. */
+.origin {
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
 .warn,
 .note {
   background: var(--warn-bg);
@@ -801,5 +808,185 @@ button.home-export-toggle {
 @media print {
   .secret {
     visibility: hidden !important;
+  }
+}
+
+/* ---- Hana Home: "Devices and auto-approve" (home-devices.ts), on the front page and above the move on an app's page ---- */
+.home-devices {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.home-devices h2,
+.home-devices h3 {
+  margin-top: 0;
+}
+
+.home-devices-group {
+  margin: 12px 0 16px;
+}
+
+/* Which app a group is for: the partner's names, in the neutral box partner content always sits in. */
+.home-devices-apps {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+.home-devices-apps p {
+  margin: 0;
+}
+
+.home-devices-note {
+  color: var(--ok-text);
+  font-weight: 600;
+  margin: 6px 0 10px;
+}
+
+.home-devices-note:empty {
+  display: none;
+}
+
+.home-device-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.home-device {
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 12px;
+  min-width: 0;
+}
+
+.home-device p {
+  margin: 0 0 6px;
+}
+
+.home-device-name {
+  overflow-wrap: anywhere;
+}
+
+.home-device-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 6px 0 10px;
+  font-size: 0.9rem;
+}
+
+.home-device-facts dt {
+  color: var(--muted);
+}
+
+.home-device-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.home-device-consent {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 10px 12px;
+  margin: 8px 0 10px;
+}
+
+/* The app's own words for its rule: quoted, set apart, wrapped anywhere. */
+.home-policy-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
+.home-device .actions.start,
+.home-email .actions.start {
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.home-email {
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+
+.home-email p {
+  margin: 0 0 4px;
+}
+
+/* A stop's confirmation, in place of its button: what it does and doesn't, then the stop itself. */
+.home-confirm {
+  border: 1px solid var(--warn-line);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-radius: var(--hana-radius);
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+
+.home-confirm-title {
+  font-weight: 700;
+  margin: 0 0 4px !important;
+}
+
+.home-confirm ul {
+  margin: 0 0 6px;
+  padding-left: 20px;
+}
+
+.home-confirm li {
+  margin: 2px 0;
+}
+
+.home-confirm-more {
+  margin: 0 0 8px;
+}
+
+.home-confirm-more summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent);
+  width: fit-content;
+}
+
+.home-confirm-more summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.home-confirm-more ul {
+  margin: 6px 0 0;
+}
+
+/* The stop button: outlined in the danger colour (its words say what it does), legible in both schemes. */
+button.stop {
+  background: var(--danger-bg);
+  border-color: var(--danger-text);
+  color: var(--danger-text);
+}
+
+button.stop:hover:not(:disabled) {
+  border-color: var(--danger-text);
+  background: var(--panel);
+}
+
+@media (max-width: 420px) {
+  .home-device-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .home-device-facts dd {
+    margin-bottom: 4px;
   }
 }

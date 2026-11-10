@@ -110,6 +110,17 @@ export const IP_START_LIMITS: Limit[] = [
  * device ticket or unlock grant skips them (checked first).
  */
 export const IP_AGGREGATE_START_LIMITS: Limit[] = [{ name: 'agg:start:1d', windowMs: DAY, max: 1000 }];
+/**
+ * Hana Home's `home/start` per IP subject (H10's security review): 3 per 10 min and 10 a day, on top of `start`'s
+ * windows. The route is unauthenticated and draws on one share for every user, so one requester gets far less of it than
+ * of an app's `start`. Dev envs: 10 and 60 (D340).
+ */
+export const IP_HOME_START_LIMITS: Limit[] = [
+  { name: 'ip:home:10m', windowMs: 10 * MIN, max: 3 },
+  { name: 'ip:home:1d', windowMs: DAY, max: 10 },
+];
+/** And per aggregate prefix (IPv4 /24, IPv6 /56 and /48): 50 a day, in every env. */
+export const IP_AGGREGATE_HOME_LIMITS: Limit[] = [{ name: 'agg:home:1d', windowMs: DAY, max: 50 }];
 /** `verify` per IP: 30 per 10 min. */
 export const IP_VERIFY_LIMITS: Limit[] = [{ name: 'ip:verify:10m', windowMs: 10 * MIN, max: 30 }];
 /** `resend` per IP (not in the spec's table; the same bound as start, D198). */
@@ -197,12 +208,14 @@ export interface Limits {
   ipStart: readonly Limit[];
   ipResend: readonly Limit[];
   ipVerify: readonly Limit[];
+  /** Hana Home's `home/start` per IP subject, on top of `ipStart` (H10's review). */
+  ipHomeStart: readonly Limit[];
 }
 
 const freeze = (l: Limits): Limits => {
   for (const v of Object.values(l.mailbox)) Object.freeze(v);
   Object.freeze(l.mailbox);
-  for (const v of [l.ipStart, l.ipResend, l.ipVerify]) for (const x of v) Object.freeze(x);
+  for (const v of [l.ipStart, l.ipResend, l.ipVerify, l.ipHomeStart]) for (const x of v) Object.freeze(x);
   return Object.freeze(l);
 };
 
@@ -224,6 +237,7 @@ export const PRODUCTION_LIMITS: Limits = freeze({
   ipStart: IP_START_LIMITS.map((l) => ({ ...l })),
   ipResend: IP_RESEND_LIMITS.map((l) => ({ ...l })),
   ipVerify: IP_VERIFY_LIMITS.map((l) => ({ ...l })),
+  ipHomeStart: IP_HOME_START_LIMITS.map((l) => ({ ...l })),
 });
 
 /**
@@ -261,6 +275,10 @@ export const DEV_LIMITS: Limits = freeze({
   ],
   ipResend: [{ name: 'ip:resend:10m', windowMs: 10 * MIN, max: 30 }],
   ipVerify: [{ name: 'ip:verify:10m', windowMs: 10 * MIN, max: 90 }],
+  ipHomeStart: [
+    { name: 'ip:home:10m', windowMs: 10 * MIN, max: 10 },
+    { name: 'ip:home:1d', windowMs: DAY, max: 60 },
+  ],
 });
 
 /** The env's limit set: `DEV_LIMITS` for a dev env name (`local*`, `sandbox*`), `PRODUCTION_LIMITS` for every other. */
@@ -301,6 +319,20 @@ export const BUDGET_STAFF_MIN = 5;
 export const BUDGET_SHARE_PER_PLAN_DAY = 0.02;
 export const BUDGET_APP_SHARE = 0.1;
 export const BUDGET_RESERVE = 0.2;
+/**
+ * Hana Home's share of the general pool a day (its email codes, handlers.ts handleHomeStart): the flat share of an app
+ * with no usable plan, counted apart, so Hana Home can't use up an app's share and no app can use up Hana Home's.
+ */
+export const HOME_BUDGET_SHARE = 0.06;
+/**
+ * A second part of Hana Home's mail, 4% of the budget, that only a returning mailbox may draw on (one that verified a
+ * code, for any app or for Hana Home, within RETURNING_MAILBOX_MS): a flood of fresh addresses uses up the 6% above and
+ * stops there, and the users who already have wallets still get their code. Together the two are the flat app share
+ * (BUDGET_APP_SHARE).
+ */
+export const HOME_RESERVE_SHARE = 0.04;
+/** How long a verified code makes a mailbox "returning" for Hana Home's reserve (its own mailbox object holds the time). */
+export const RETURNING_MAILBOX_MS = 30 * DAY;
 /** No app's share is below this many mails a day (a tiny plan can still sign people in), within the general pool. */
 export const BUDGET_MIN_SHARE = 10;
 

@@ -29,7 +29,7 @@ import { sessionStanding } from './session-standing.ts';
 import { claimCounter, precheckSessionUse } from './session-use.ts';
 import { type UsageDraft, beginUsage, finishUsage, finishUsageOnThrow, notePath, noteRelay } from './usage/event.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
-import { CONSENT_HEADER, type ConsentStatus, consentStatus, parseConsentHeader } from './vault/consent-store.ts';
+import { CONSENT_HEADER, type ConsentStatus, SHARE_HEADER, consentStatus, parseConsentHeader, shareStatus } from './vault/consent-store.ts';
 import { parentOriginAllowed } from './vault/origins.ts';
 import { type AppSettings, effectiveSettings, getSettingsRow } from './vault/settings.ts';
 import { type LoginMethod, appLoginMethods } from './login-methods.ts';
@@ -39,7 +39,7 @@ import { fixedMainnetDemoPrices } from '@hana-id/core/mainnet-demo-prices';
 import { LINK_ADDS_PER_IP_MINUTE, LINK_CHANGES_PER_IP_MINUTE } from './links.ts';
 import { TtlCache, effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isIssuerKeyActive, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
-const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}, ${CONSENT_HEADER}`;
+const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}, ${CONSENT_HEADER}, ${SHARE_HEADER}`;
 const APP_METHODS = 'GET, POST, OPTIONS';
 /** Owner actions are unauthenticated at the API (the proof is in the args): keep them slow. */
 export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
@@ -374,7 +374,18 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
           log({ event: 'consent_status_unavailable', requestId, appId: app.id, endpoint: ctx.endpoint }, 'warn');
           return undefined;
         });
-  const [settingsDone, chainDone, demoPrices, consent] = await Promise.all([settingsRead, chainRead, pricesRead, consentRead]);
+  // The session's share (H9): whether Hana Home (or anything else) took it away, so an open tab ends at this read. Vault
+  // only, like the consent's; a failed read is no answer (the field is left out), never 'revoked'.
+  const shareHeader = env.VAULT_ORIGIN && request.headers.get('origin') === env.VAULT_ORIGIN ? request.headers.get(SHARE_HEADER) : null;
+  const shareRead: Promise<'live' | 'revoked' | undefined> =
+    shareHeader === null
+      ? Promise.resolve(undefined)
+      : timed('share', readShareStatus(env, app, shareHeader)).then((r) => {
+          if (r.ok) return r.value;
+          log({ event: 'share_status_unavailable', requestId, appId: app.id, endpoint: ctx.endpoint }, 'warn');
+          return undefined;
+        });
+  const [settingsDone, chainDone, demoPrices, consent, share] = await Promise.all([settingsRead, chainRead, pricesRead, consentRead, shareRead]);
   if (!settingsDone.ok) return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   const [settings, methods, identityEmail, mainnetDemo] = settingsDone.value;
   const autoApprovePolicy: AppSettings['autoApprovePolicy'] = settings?.autoApprovePolicy ?? null;
@@ -422,6 +433,8 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       identityEmail,
       // D465: only on the vault's read with `x-hana-consent`; older vaults never send the header.
       ...(consent ? { consent } : {}),
+      // H9: only on the vault's read with `x-hana-share`; older vaults never send the header.
+      ...(share ? { share } : {}),
     });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
@@ -433,6 +446,13 @@ function readConsentStatus(env: Env, app: App, header: string): Promise<ConsentS
   const consentId = parseConsentHeader(header);
   if (!consentId) return Promise.resolve('unknown');
   return consentStatus(env.DB, app.id, consentId, Date.now(), (origin) => parentOriginAllowed(env.ENV_NAME, app, origin));
+}
+
+/** `x-hana-share` → whether the share was taken away. A malformed value names no share: no answer (undefined), no read. */
+async function readShareStatus(env: Env, app: App, header: string): Promise<'live' | 'revoked' | undefined> {
+  const shareId = parseConsentHeader(header);
+  if (!shareId) return undefined;
+  return shareStatus(env.DB, app.id, shareId, (origin) => parentOriginAllowed(env.ENV_NAME, app, origin));
 }
 
 // ---- App endpoints ----

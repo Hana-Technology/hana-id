@@ -31,8 +31,13 @@ export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const GOOGLE_TOKENINFO_URL = 'https://oauth2.googleapis.com/tokeninfo';
 /** Its origin (google-origins.ts, which pages.ts reads without the rest of this module). */
 export { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
-/** The callback path on authOrigin; the only redirect URI registered on the Google clients. */
+/** The callback path on authOrigin; the only redirect URI registered on the shared and the apps' Google clients. */
 export const CALLBACK_PATH = '/login/callback';
+/**
+ * Hana Home's exit client's callback (D491): the only redirect URI registered on that client, and used by no other
+ * request, so a normal login can never produce an exit token and an exit token reaches only this page.
+ */
+export const HOME_CALLBACK_PATH = '/home/callback';
 /** What the relay may carry for Google's `error` (Google's codes are lowercase snake case). */
 const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
 
@@ -75,6 +80,8 @@ export interface GoogleAuthRequest {
   loginHint?: string | null;
   /** With `loginHint`: `prompt=none` (token_first's silent ID request). */
   silent?: boolean;
+  /** Hana Home's exit client: Google answers to HOME_CALLBACK_PATH instead of CALLBACK_PATH. */
+  exit?: boolean;
 }
 
 /**
@@ -85,7 +92,7 @@ export interface GoogleAuthRequest {
 export function googleAuthUrl(r: GoogleAuthRequest): string {
   const params = new URLSearchParams({
     client_id: r.clientId,
-    redirect_uri: `${r.authOrigin}${CALLBACK_PATH}`,
+    redirect_uri: `${r.authOrigin}${r.exit ? HOME_CALLBACK_PATH : CALLBACK_PATH}`,
     response_type: 'id_token',
     response_mode: 'fragment',
     scope: 'openid',

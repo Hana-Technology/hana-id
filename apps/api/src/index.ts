@@ -9,6 +9,8 @@ import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-
 import { guardedChangesMaintenance } from './guarded/cron.ts';
 import { HOME_APPS_ENDPOINT, handleHomeApps } from './home/apps.ts';
 import { HOME_CONFIG_ENDPOINT, handleHomeConfig } from './home/config.ts';
+import { HOME_DEVICES_ENDPOINT, handleHomeDevices } from './home/devices.ts';
+import { handleHomeRevoke, isHomeRevokeEndpoint } from './home/revoke.ts';
 import { HOME_LOGIN_ENDPOINT, handleHomeLogin } from './home/login.ts';
 import { homePreflight } from './home/identity.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
@@ -177,6 +179,18 @@ export default {
         if (request.method === 'OPTIONS') return homePreflight(request, env);
         if (request.method === 'GET') return await handleHomeApps(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, OPTIONS' });
+      }
+      if (pathname === HOME_DEVICES_ENDPOINT) {
+        // Hana Home's devices (H9): a Home identity's own live shares, consents and email sharing. D1 only.
+        if (request.method === 'OPTIONS') return homePreflight(request, env);
+        if (request.method === 'GET') return await handleHomeDevices(request, env, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, OPTIONS' });
+      }
+      if (isHomeRevokeEndpoint(pathname)) {
+        // Hana Home's stops (H9): a consent, a device, email sharing; only the identity's own rows (404 otherwise).
+        if (request.method === 'OPTIONS') return homePreflight(request, env);
+        if (request.method === 'POST') return await handleHomeRevoke(request, env, pathname, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (pathname === HOME_LOGIN_ENDPOINT) {
         // Hana Home's derive (H3): a Home identity, no app gate, relayed through the Home pool.

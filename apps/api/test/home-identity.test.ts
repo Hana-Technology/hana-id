@@ -603,6 +603,28 @@ describe('GET /v1/home/config', () => {
     expect(typeof b.requestId).toBe('string');
   });
 
+  it('emailSignIn: true only with an email issuer and ("email", "hana-home") in force on the exit list (H10, D494)', async () => {
+    const withIssuer = (env2: Partial<typeof env>) => call(HOME_CONFIG_ENDPOINT, { method: 'GET', headers: { origin: AUTH }, env: env2 });
+    const read = async (env2: Partial<typeof env>) => ((await (await withIssuer(env2)).json()) as Record<string, unknown>).emailSignIn;
+    near.exit = [EXIT];
+    expect(await read(emailEnv())).toBe(false);
+    clearViewCaches();
+    near.exit = [EXIT, ['email', HOME_EMAIL_AUDIENCE]];
+    expect(await read(emailEnv())).toBe(true);
+    // No email issuer in the env: no email sign-in, whatever the chain says.
+    expect(await read({ EMAIL_ISS: undefined })).toBe(false);
+    // An issuer URL that isn't one (the page's policy leaves the issuer out then): email sign-in off; a good one: on.
+    expect(await read({ ...emailEnv(), EMAIL_ISSUER_URL: 'not a url' })).toBe(false);
+    expect(await read({ ...emailEnv(), EMAIL_ISSUER_URL: 'https://issuer.test' })).toBe(true);
+    clearViewCaches();
+    near.exit = [];
+    near.pendingExit = [{ provider: 'email', aud: HOME_EMAIL_AUDIENCE, effective_at_ms: Date.now() + 86_400_000 }];
+    expect(await read(emailEnv())).toBe(false);
+    clearViewCaches();
+    near.exit = null;
+    expect(await read(emailEnv())).toBe(false);
+  });
+
   it('names the exit Google client in force, and null against an old contract (fail closed)', async () => {
     near.exit = [EXIT];
     expect(((await (await get(AUTH)).json()) as Record<string, unknown>).exitGoogleClientId).toBe(EXIT);
@@ -674,9 +696,11 @@ describe('GET /v1/home/config', () => {
     expect((await call(HOME_CONFIG_ENDPOINT, { method: 'POST', rawBody: '{}', headers: { origin: AUTH } })).status).toBe(405);
   });
 
-  it('no Home route other than config, apps and login exists: no other /v1/home path answers', async () => {
-    for (const p of ['/v1/home/devices']) {
+  it('no Home route other than config, apps, login, devices and the three stops exists: no other /v1/home path answers', async () => {
+    for (const p of ['/v1/home/device', '/v1/home/revoke', '/v1/home/consents', '/v1/home/email-sharing']) {
       expect((await call(p, { method: 'POST', rawBody: '{}', headers: { origin: AUTH } })).status).toBe(404);
     }
+    // /v1/home/devices takes GET only.
+    expect((await call('/v1/home/devices', { method: 'POST', rawBody: '{}', headers: { origin: AUTH } })).status).toBe(405);
   });
 });

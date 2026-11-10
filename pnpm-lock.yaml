@@ -322,6 +322,9 @@ importers:
       '@hana-id/console-core':
         specifier: workspace:*
         version: link:../../packages/console-core
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@hana-id/email':
         specifier: workspace:*
         version: link:../../packages/email

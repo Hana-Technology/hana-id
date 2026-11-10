@@ -182,6 +182,11 @@ export const LIVE_SCOPE_ID = 'e2elive';
 
 /** The scope's shared Google client (any string: the OIDC stub accepts any client id the API hands out). */
 export const GOOGLE_CLIENT_ID = 'e2e-shared.apps.googleusercontent.com';
+/**
+ * Hana Home's exit Google client (D484), on the mocked chain's exit list beside the email exit `("email", "hana-home")`
+ * (H6, as on sandbox-dev). The Google stub lets it answer only to `{authOrigin}/home/callback` (D491).
+ */
+export const EXIT_CLIENT_ID = 'e2e-exit.apps.googleusercontent.com';
 
 /**
  * The demo's app key. The demo bakes its key in at build time, as the hosted one does, so its e2e app has this fixed

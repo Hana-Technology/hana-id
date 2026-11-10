@@ -115,6 +115,15 @@ describe('the record', () => {
     expect(browser.backend.count('/v1/vault/shares')).toBe(1);
   });
 
+  it('the share names the device by its coarse label when the vault has one (Hana Home, D98 item 10), and sends none otherwise', async () => {
+    const labelled = await loggedIn(new Browser(), { options: { deviceLabel: 'Firefox on Linux' } });
+    const share = labelled.browser.backend.calls.find((c) => c.path === '/v1/vault/shares')!;
+    expect(share.body).toMatchObject({ deviceLabel: 'Firefox on Linux' });
+    expect(Object.keys(share.body as object).sort()).toEqual(['deviceLabel', 'sessionPublicKey', 'signature']);
+    const plain = await loggedIn();
+    expect(Object.keys(plain.browser.backend.calls.find((c) => c.path === '/v1/vault/shares')!.body as object).sort()).toEqual(['sessionPublicKey', 'signature']);
+  });
+
   it('a reload (new tab) unlocks with one API call: zero /v1/derive, no /v1/login, no chain RPC', async () => {
     const { browser, addresses } = await loggedIn();
     const rpcBefore = browser.backend.rpcCalls.length;

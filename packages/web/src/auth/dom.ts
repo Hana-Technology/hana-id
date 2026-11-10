@@ -35,6 +35,24 @@ export function dom(doc: Document): Dom {
   };
 }
 
+/**
+ * A web origin (the partner's, as text) that wraps only at sensible points: after `://`, and before each `.`, `:` and `/`
+ * of the rest (`<wbr>`), never inside a label, unless one label alone is wider than the line (auth.css `.origin`). Its
+ * text content is the origin exactly.
+ */
+export function originText(d: Dom, origin: string, tag: 'span' | 'p' = 'span'): HTMLElement {
+  const el = d.h(tag, { class: 'origin' });
+  const scheme = origin.indexOf('://');
+  const head = scheme >= 0 ? origin.slice(0, scheme + 3) : '';
+  const rest = scheme >= 0 ? origin.slice(scheme + 3) : origin;
+  if (head) el.append(d.doc.createTextNode(head), d.h('wbr'));
+  rest.split(/(?=[.:/])/u).forEach((part, i) => {
+    if (i > 0) el.append(d.h('wbr'));
+    el.append(d.doc.createTextNode(part));
+  });
+  return el;
+}
+
 /** A titled error panel; `code` is the protocol error code, shown small for support. */
 export function errorView(d: Dom, title: string, message: string, code?: string): HTMLElement {
   return d.h(

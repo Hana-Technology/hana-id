@@ -415,6 +415,18 @@ describe('NEAR views', () => {
     const huge = (async () => new Response('x'.repeat(2 * 1024 * 1024))) as unknown as typeof fetch;
     await expect(new NearChain(['https://x.test'], 's', huge).scope('s1')).rejects.toThrow('no RPC answered');
   });
+
+  it('Hana Home’s email exit: in force when listed, or pending and due; an old contract, an empty list or a pending entry not yet due read as false', async () => {
+    const now = 1_000_000;
+    const exitOf = async (config: unknown) => new NearChain(['https://x.test'], 's', (async () => rpcAnswer(config)) as unknown as typeof fetch, () => now).homeEmailExit();
+    expect(await exitOf({ shared_clients: [], exit_clients: [['google', 'exit.apps'], ['email', 'hana-home']], pending_exit_clients: [] })).toBe(true);
+    expect(await exitOf({ shared_clients: [], exit_clients: [], pending_exit_clients: [{ provider: 'email', aud: 'hana-home', effective_at_ms: now }] })).toBe(true);
+    expect(await exitOf({ shared_clients: [], exit_clients: [], pending_exit_clients: [{ provider: 'email', aud: 'hana-home', effective_at_ms: now + 1 }] })).toBe(false);
+    expect(await exitOf({ shared_clients: [], exit_clients: [] })).toBe(false);
+    expect(await exitOf({ shared_clients: [] })).toBe(false);
+    // Only the exact entry: Google's exit client or an email client of a scope is not the email exit.
+    expect(await exitOf({ shared_clients: [], exit_clients: [['google', 'hana-home'], ['email', 'email:s1']] })).toBe(false);
+  });
 });
 
 describe('Durable Object cleanup', () => {

@@ -19,6 +19,7 @@ import {
   type IdentityRef,
   directoryUser,
   identityKeyHex,
+  markHintedMember,
   markRemovedMembers,
   noteDirectoryUnavailable,
   upsertIdentity,
@@ -54,6 +55,9 @@ export async function syncAccount(env: Env, scopeId: string, root: IdentityRef, 
     account = await getAccount(env, scopeId, root.provider, root.sub);
   } catch {
     log({ event: 'directory_sync_failed', requestId: at.requestId, endpoint: at.endpoint, appId: at.appId, code: 'near_unavailable' }, 'warn');
+    // The API relayed this cancel or unlink itself, so it knows that member is out even with no fresh read: its row must
+    // not stay `active`, or Hana Home would keep treating it as the account's (D661). The rest waits for the next sync.
+    if (opts.hint) await writeDirectory(env, [markHintedMember(env.DB, scopeId, opts.hint, readAt)], at);
     return false;
   }
   // The account the chain names is the truth (`root` was the caller's reading of it).

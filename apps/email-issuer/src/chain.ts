@@ -2,8 +2,10 @@
 // Every answer is size-capped and shape-checked; the scope and config reads are cached 60 s per isolate (spec
 // "Endpoints": "its scope must hold the email client (cached chain read, 60 s)"). Identity and account reads are never
 // cached: the join an auto_link token commits to is read at minting (D133).
+import { HOME_EMAIL_AUDIENCE } from '@hana-id/core/home';
 import { base64Encode } from './bytes.ts';
 import { readCapped, globalFetch } from './http.ts';
+import { EMAIL_PROVIDER } from './layouts.ts';
 
 export const RPC_TIMEOUT_MS = 8000;
 export const RPC_MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -40,6 +42,11 @@ export interface Chain {
   sharedGoogleClients(): Promise<string[]>;
   /** `get_config().unrecorded_wallets` (D135): links are refused on chain while it is true. */
   unrecordedWallets(): Promise<boolean>;
+  /**
+   * Whether `("email", "hana-home")` is an exit client in force (`get_config().exit_clients`, or a pending addition whose
+   * time has come): Hana Home's email route. An older contract, an empty list or a pending entry read as false.
+   */
+  homeEmailExit(): Promise<boolean>;
   identity(scopeId: string, provider: string, sub: string): Promise<IdentityView>;
   account(scopeId: string, provider: string, sub: string): Promise<AccountView | null>;
 }
@@ -127,6 +134,16 @@ export class NearChain implements Chain {
     // Fresh: it is read right before minting a link token, and a stale `false` would only make the chain refuse.
     const c = await this.config(true);
     return c.unrecorded_wallets !== false;
+  }
+
+  async homeEmailExit(): Promise<boolean> {
+    const c = await this.config();
+    const now = this.now();
+    const isHome = (p: string, a: string): boolean => p === EMAIL_PROVIDER && a === HOME_EMAIL_AUDIENCE;
+    if ((Array.isArray(c.exit_clients) ? c.exit_clients.filter(isPair) : []).some(([p, a]) => isHome(p, a))) return true;
+    return (Array.isArray(c.pending_exit_clients) ? c.pending_exit_clients : []).some(
+      (p) => isObj(p) && typeof p.provider === 'string' && typeof p.aud === 'string' && isHome(p.provider, p.aud) && typeof p.effective_at_ms === 'number' && p.effective_at_ms <= now,
+    );
   }
 
   async identity(scopeId: string, provider: string, sub: string): Promise<IdentityView> {

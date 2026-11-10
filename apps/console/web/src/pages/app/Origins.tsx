@@ -1,11 +1,13 @@
 // An app's allowed origins: each with its state (active, or waiting with its timeline and Cancel), Remove for an owner
 // (immediate, a kill switch: open in a frozen org), and the add form (a fresh sign-in: `origin.add`, announced, then
-// active after the delay; at most 20 per request).
+// active after the delay; at most 20 per request), shown only to an on-chain owner of the app's scope (the API refuses
+// anyone else, `not_owner`; ChainOwner.tsx says who can instead).
 import { useState } from 'react';
 import { postJson } from '../../api.ts';
 import { useNow, useStepUp, useWrite, when } from '../../lib.tsx';
 import { Badge, ConfirmButton, Empty, OriginText, Panel, StepUpHint, Why, WriteNote } from '../../ui.tsx';
 import { useApp } from '../Apps.tsx';
+import { ChainOwnerGate, useChainOwner } from './ChainOwner.tsx';
 import { PendingChanges } from './Changes.tsx';
 
 const MAX_PER_REQUEST = 20;
@@ -16,6 +18,7 @@ export function Origins() {
   const now = useNow(30_000);
   const w = useWrite();
   const step = useStepUp(org);
+  const chain = useChainOwner(org, app.scopeId, owner && !frozen);
   const [text, setText] = useState('');
   const base = `/api/orgs/${org}/apps/${app.id}`;
   const add = text
@@ -37,7 +40,7 @@ export function Origins() {
       >
         {app.origins.length === 0 ? (
           <Empty title="No origins yet">
-            <p>{owner && !frozen ? 'Add the origin your app runs on below.' : 'An owner adds the origins your app runs on.'} Until one is active, the wallet won’t load anywhere.</p>
+            <p>{chain.state === 'yes' ? 'Add the origin your app runs on below.' : chain.state === 'no' ? 'An on-chain owner of the app’s scope adds the origins your app runs on.' : 'An owner adds the origins your app runs on.'} Until one is active, the wallet won’t load anywhere.</p>
           </Empty>
         ) : (
           <table className="table">
@@ -104,6 +107,8 @@ export function Origins() {
           <Why>Only owners can add or remove origins.</Why>
         ) : frozen ? (
           <Why>Adding origins is paused while Hana has frozen the organisation. Removing one still works.</Why>
+        ) : chain.state !== 'yes' ? (
+          <ChainOwnerGate chain={chain} org={org} scopeId={app.scopeId} what="Adding origins" />
         ) : (
           <form
             className="form"

@@ -10,6 +10,24 @@ import { blob } from './shares.ts';
 
 /** Sent by the vault on GET /v1/app (`Origin: VAULT_ORIGIN` only); carries the 128-bit consent id. */
 export const CONSENT_HEADER = 'x-hana-consent';
+/** Sent by the vault on GET /v1/app (`Origin: VAULT_ORIGIN` only); carries its session's 128-bit share id (H9). */
+export const SHARE_HEADER = 'x-hana-share';
+
+/**
+ * Whether a share has been taken away, for GET /v1/app's `share` (H9: "Sign out this device" reaches an open tab at its next
+ * read). `'revoked'`: no such share of this app, revoked (by the device, Hana Home or the app's settings), the app no longer
+ * keeping logins, or its origin no longer allowed. Time-based ends (idle, absolute) are left to the vault's own timers and
+ * the next unlock or touch (D55), so this read can end a session only where unlock would refuse it for good, and never
+ * slides or extends anything (D539). One uncached D1 statement.
+ */
+export async function shareStatus(db: D1Database, appId: string, shareId: Uint8Array, originAllowed: (origin: string) => boolean): Promise<'live' | 'revoked'> {
+  const r = await db
+    .prepare('SELECT s.revoked_at, s.partner_origin, a.persistence FROM vault_shares s JOIN apps a ON a.id = s.app_id WHERE s.share_id = ?1 AND s.app_id = ?2')
+    .bind(shareId, appId)
+    .first<{ revoked_at: number | null; partner_origin: string; persistence: string }>();
+  if (!r || r.revoked_at !== null || r.persistence !== 'session' || !originAllowed(r.partner_origin)) return 'revoked';
+  return 'live';
+}
 /** Revoked rows are kept this long, then pruned (a share-mode row's replay is stopped by the share's counter). */
 export const CONSENT_REVOKED_KEEP_MS = 60 * 60 * 1000;
 /**
@@ -139,6 +157,28 @@ export function parseConsentHeader(value: string): Uint8Array | null {
   }
 }
 
+/** A share row as liveness judges it, with its app's settings as they are now. */
+export interface ShareLiveness {
+  revoked_at: number | null;
+  idle_until: number;
+  abs_expires_at: number;
+  created_at: number;
+  partner_origin: string;
+  persistence: string;
+  session_ttl_ms: number;
+}
+
+/**
+ * Whether a share is live, as unlock judges it: not revoked, before `idle_until`, before min(`abs_expires_at`,
+ * `created_at` + the app's current session TTL), the app still keeping logins and the share's origin still allowed.
+ * The one rule for the vault's status read and Hana Home's devices list (D534: never `revoked_at` alone).
+ */
+export function shareLive(s: ShareLiveness, now: number, originAllowed: (origin: string) => boolean): boolean {
+  if (s.revoked_at !== null || s.persistence !== 'session') return false;
+  if (now >= s.idle_until || now >= Math.min(s.abs_expires_at, s.created_at + s.session_ttl_ms)) return false;
+  return originAllowed(s.partner_origin);
+}
+
 interface StatusRow {
   revoked_at: number | null;
   expires_at: number;
@@ -151,6 +191,13 @@ interface StatusRow {
   partner_origin: string | null;
   persistence: string;
   session_ttl_ms: number;
+}
+
+/** A consent's own end and revocation, and (in 'session' mode) whether its share is live; null share: 'none' mode. */
+export function consentActive(c: { revoked_at: number | null; expires_at: number }, share: ShareLiveness | null | 'gone', now: number, originAllowed: (origin: string) => boolean): boolean {
+  if (c.revoked_at !== null || now >= c.expires_at) return false;
+  if (share === null) return true;
+  return share !== 'gone' && shareLive(share, now, originAllowed);
 }
 
 /**
@@ -172,11 +219,13 @@ export async function consentStatus(db: D1Database, appId: string, consentId: Ui
     .bind(consentId, appId)
     .first<StatusRow>();
   if (!r) return 'unknown';
-  if (r.revoked_at !== null || now >= r.expires_at) return 'revoked';
-  if (r.share_id === null) return 'active';
-  if (r.live_share === null || r.share_revoked_at !== null || r.persistence !== 'session') return 'revoked';
-  if (now >= r.idle_until! || now >= Math.min(r.abs_expires_at!, r.created_at! + r.session_ttl_ms)) return 'revoked';
-  return originAllowed(r.partner_origin!) ? 'active' : 'revoked';
+  const share: ShareLiveness | null | 'gone' =
+    r.share_id === null
+      ? null
+      : r.live_share === null
+        ? 'gone'
+        : { revoked_at: r.share_revoked_at, idle_until: r.idle_until!, abs_expires_at: r.abs_expires_at!, created_at: r.created_at!, partner_origin: r.partner_origin!, persistence: r.persistence, session_ttl_ms: r.session_ttl_ms };
+  return consentActive(r, share, now, originAllowed) ? 'active' : 'revoked';
 }
 
 /**

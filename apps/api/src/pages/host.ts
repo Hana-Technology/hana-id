@@ -6,7 +6,7 @@
 // - vaultOrigin: `GET /vault` goes to the API Worker through the `API` service binding with the request unchanged (its
 //   URL keeps the vault origin, which vault/page.ts checks), so the page is rendered there per request with the app's
 //   D1 config inlined and its `frame-ancestors`. Every other path is a static asset (the vault bundle).
-// - authOrigin: `/login`, `/login/email`, `/login/callback`, `/approve`, `/export`, `/share-email` and `/home` are the built HTML files (`<path>.html`), served
+// - authOrigin: `/login`, `/login/email`, `/login/callback`, `/approve`, `/export`, `/share-email`, `/home` and `/home/callback` are the built HTML files (`<path>.html`), served
 //   with each page's CSP and headers. Every other path is a static asset.
 //
 // - both: `GET /.well-known/hana-build` is `{"build": <id> | null}`, the build id the Worker was deployed with
@@ -92,8 +92,12 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
     case '/home':
       // Hana Home (docs/hana-home-spec.md "Pages and packages"): the API (`/v1/home/*`, the login relay's read) and
       // Google's JWKS for its own token check, and the NEAR RPC origins, read only when the user opens a wallet there
-      // (the app's registration, the path on both providers, a lost outcome): exactly the export window's list.
-      return ["frame-ancestors 'none'", `connect-src ${origins.api} ${origins.rpc} ${GOOGLE_CERTS_ORIGIN}`];
+      // (the app's registration, the path on both providers, a lost outcome): the export window's list, plus the email
+      // issuer for its email sign-in (H10) in an env that has one.
+      return ["frame-ancestors 'none'", `connect-src ${origins.api} ${origins.rpc} ${GOOGLE_CERTS_ORIGIN}${origins.emailIssuer ? ` ${origins.emailIssuer}` : ''}`];
+    case '/home/callback':
+      // The exit Google client's only redirect (D491): the relay write to the API, nothing else.
+      return ["frame-ancestors 'none'", `connect-src ${origins.api}`];
     default:
       return null;
   }
@@ -107,7 +111,7 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
 export const AUTH_LOGO_PATHS: readonly string[] = ['/login', '/login/email', '/approve', '/export', '/share-email', '/home'];
 
 /** The auth pages' routes; each is served from the built file `<route>.html`. */
-export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export', '/share-email', '/home'] as const;
+export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export', '/share-email', '/home', '/home/callback'] as const;
 
 /**
  * Headers one page gets beyond the policy. Hana Home (D558): `Cross-Origin-Opener-Policy: same-origin-allow-popups`, so a
@@ -229,8 +233,9 @@ export async function handleAuthHost(request: Request, env: AuthHostEnv): Promis
   // The export window falls back to rpcFallback when the primary fails (Q9): both are in its connect-src.
   const rpc = primary && (!env.NEAR_RPC_FALLBACK || fallback) ? (fallback && fallback !== primary ? `${primary} ${fallback}` : primary) : null;
   const emailIssuer = env.EMAIL_ISSUER_URL ? originOf(env.EMAIL_ISSUER_URL) : null;
-  // A malformed EMAIL_ISSUER_URL breaks only the email step's page (never a looser policy there); the other pages don't
-  // use it.
+  // A malformed EMAIL_ISSUER_URL breaks only the email step's page (never a looser policy there). Hana Home is served
+  // without the issuer's origin (its email sign-in then can't reach the issuer and says so; Google sign-in works); the
+  // other pages don't use it.
   const issuerBroken = url.pathname === '/login/email' && !!env.EMAIL_ISSUER_URL && !emailIssuer;
   const directives = api && rpc && !issuerBroken ? authPageDirectives(url.pathname, { api, rpc, emailIssuer, demoBalance: env.MAINNET_DEMO_BALANCE === '1' }) : null;
   if (!directives) {

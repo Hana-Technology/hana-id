@@ -21,17 +21,19 @@
 //                                         same-origin opener at `/home` can supply a Home nonce. To open one app's
 //                                         wallet Hana Home sends `hana:home-derive-params` instead: a session of one
 //                                         use and key index 0 in one scope, whose nonce this window recomputes, and
-//                                         Google is asked to sign the user in again (`max_age=0`).
+//                                         Google is asked to sign the user in again (`max_age=0`). Either message
+//                                         may name Hana Home's exit client (`exit`): Google then answers to
+//                                         `/home/callback` (D491), the only page that takes an exit token.
 //
 // SECURITY: auth-params carries relayKey, the one session secret that crosses postMessage. It is accepted only from
 // the authenticated sender, kept only in sessionStorage, and the in-memory copy is zeroed.
 import { type LoginMethod, type WindowMessage, homeNonce, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
-import { type Dom, dom, errorView } from './dom.ts';
+import { type Dom, dom, errorView, originText } from './dom.ts';
 import { PageError } from './errors.ts';
 import { type EmailContext, storeEmailContext } from './email-storage.ts';
 import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAuthUrl, loginGoogleRequest } from './google.ts';
-import { addLoginTimings, storeLoginEntry } from './login-storage.ts';
+import { type FollowEntry, addLoginTimings, storeLoginEntry } from './login-storage.ts';
 import { appLogo } from './logo.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 import { markEmailShare } from './share-handoff.ts';
@@ -97,6 +99,12 @@ function openerPath(opener: Window): string | null {
     return null;
   }
 }
+
+/**
+ * The login entry's parts for Hana Home's exit client (D491): Google answers to `/home/callback`, which relays only an ID
+ * token of this client with this nonce, and only for an entry marked so. None for the shared client.
+ */
+const exitEntry = (msg: { exit?: true; clientId: string }, nonce: string): FollowEntry => (msg.exit ? { exit: true, clientId: msg.clientId, nonce } : {});
 
 export function startLoginPage(deps: LoginPageDeps): LoginPage {
   const { win, env } = deps;
@@ -174,11 +182,11 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       const nonce = homeNonce({ signer: env.signer, homePublicKey: msg.homePublicKey, expiresAtMs: msg.expiresAtMs, salt: msg.salt });
       if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its Home key.');
       try {
-        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now());
+        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now(), undefined, exitEntry(msg, nonce));
       } catch {
         throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
       }
-      const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: false });
+      const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: false, exit: msg.exit === true });
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in to Hana Home'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
       state = { stage: 'redirecting', mode: 'home', url };
       finish(state);
@@ -205,11 +213,11 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       const nonce = sessionNonce({ signer: env.signer, scopeId: msg.scopeId, sessionPublicKey: msg.sessionPublicKey, expiresAtMs: msg.expiresAtMs, keyIndex: 0, maxUses: 1, salt: msg.salt });
       if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its session.');
       try {
-        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now());
+        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now(), undefined, exitEntry(msg, nonce));
       } catch {
         throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
       }
-      const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: true });
+      const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: true, exit: msg.exit === true });
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Choose your Google account again'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
       state = { stage: 'redirecting', mode: 'home', url };
       finish(state);
@@ -292,7 +300,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       const url = googleRequest.url;
       // The app's logo (batch C11), when the preparer sent one on this build's files origin.
       const intro = () =>
-        d.h('p', { class: 'asker' }, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
+        d.h('p', { class: 'asker' }, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', originText(d, msg.parentOrigin));
       // Email is offered only by the vault or the export window, only for an env with an email issuer.
       const methods: readonly LoginMethod[] = msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
       /** The email context: the email step's facts, and (batch 8b) the follow-up mode's, which a Google login needs too. */

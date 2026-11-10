@@ -511,7 +511,7 @@ export class FakeBackend {
 
   private async route(call: ApiCall, url: URL, signal?: AbortSignal): Promise<Response> {
     const b = call.body as Record<string, unknown>;
-    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, ...this.consentField(call.headers['x-hana-consent']), serverTimeMs: this.serverNow(), ...this.timingsField(), requestId: 'rq' });
+    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, ...this.consentField(call.headers['x-hana-consent']), ...this.shareField(call.headers['x-hana-share']), serverTimeMs: this.serverNow(), ...this.timingsField(), requestId: 'rq' });
     if (call.path === '/v1/login') {
       const r = this.createSession(b, true);
       const nearTx = this.nextTx();
@@ -656,6 +656,13 @@ export class FakeBackend {
     const ks = crypto.getRandomValues(new Uint8Array(32));
     this.shares.set(toHex(shareId), { shareId, ks, sessionPk: pk, appId: APP_ID, counter: 0, revoked: false, createdAt: this.serverNow(), absExpiresAtMs: session.expires_at_ms });
     return json(201, { shareId: Array.from(shareId), ks: Array.from(ks), absExpiresAtMs: session.expires_at_ms, idleUntilMs: this.serverNow() + 2 * HOUR, ...this.timingsField(), requestId: 'rq' });
+  }
+
+  /** `share` on GET /v1/app, for the vault's `x-hana-share` header (H9): 'revoked' for a revoked or unknown share. */
+  private shareField(header: string | undefined): { share?: unknown } {
+    if (header === undefined) return {};
+    const share = this.shares.get(toHex(base64UrlDecode(header)));
+    return { share: !share || share.revoked ? 'revoked' : 'live' };
   }
 
   /** `consent` on GET /v1/app, for the vault's `x-hana-consent` header. */

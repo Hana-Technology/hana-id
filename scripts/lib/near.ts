@@ -48,9 +48,15 @@ export interface AccessKeyListEntry {
   access_key: AccessKeyView;
 }
 
+/** One receipt's logs and the account that executed it. */
+export interface ReceiptLogs {
+  executor: string;
+  logs: string[];
+}
+
 export interface FinalOutcome {
   status: { SuccessValue?: string; Failure?: unknown };
-  receipts_outcome: { outcome: { logs: string[]; status: { Failure?: unknown } } }[];
+  receipts_outcome: { outcome: { logs: string[]; status: { Failure?: unknown }; executor_id?: string } }[];
   transaction: { hash: string };
 }
 
@@ -170,8 +176,12 @@ export class NearRpc {
     }
   }
 
-  /** Signs and sends one transaction, waits for it to be final, throws on any failure in the receipt tree. */
-  async sendTx(signer: TxSigner, receiverId: string, actions: Action[], timeoutMs = 120_000): Promise<{ hash: string; value: unknown }> {
+  /**
+   * Signs and sends one transaction, waits for it to be final, throws on any failure in the receipt tree.
+   * `receiptLogs`: each receipt's executor and logs, in the order the RPC lists them (a DAO vote's executed call logs
+   * its events there; a reader trusts an event only from the contract it expects, never any receipt's).
+   */
+  async sendTx(signer: TxSigner, receiverId: string, actions: Action[], timeoutMs = 120_000): Promise<{ hash: string; value: unknown; receiptLogs?: ReceiptLogs[] }> {
     const publicKey: PublicKey = signer.keyPair.getPublicKey();
     const key = await this.accessKey(signer.accountId, publicKey.toString());
     if (!key) throw new Error(`Key ${publicKey.toString()} is not an access key of ${signer.accountId}`);
@@ -199,7 +209,7 @@ export class NearRpc {
     }
     const failure = failureText(outcome);
     if (failure) throw new Error(`Transaction ${hash} failed: ${failure}`);
-    return { hash, value: successValue(outcome) };
+    return { hash, value: successValue(outcome), receiptLogs: outcome.receipts_outcome.map((r) => ({ executor: r.outcome.executor_id ?? '', logs: r.outcome.logs ?? [] })) };
   }
 }
 

@@ -5,14 +5,19 @@
 // sentence; the guard and the 60 s auto-hide; and nothing is opened, relayed or derived from the page's address alone.
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import {
+  ApiError,
   type RelayPayload,
   type RelayReadResponse,
   addressOfExport,
   chainAddress,
   chainPrivateKey,
   ckdAppId,
+  deriveAddresses,
+  HOME_EMAIL_AUDIENCE,
+  base64UrlEncode,
   decodeHomeIdentity,
   encryptRelayPayload,
+  homeNonce,
   extractPrk,
   homeMessage,
   identityKeyHex,
@@ -27,6 +32,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mpcNetwork, readJson, simulateMpc } from '../../../core/test/helpers.ts';
 import { homeApi } from '../../src/auth/home-api.ts';
+import type { HomeEmailApi, HomeIdentityCommitment, HomeSessionCommitment } from '../../src/auth/home-email.ts';
 import { HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportRoute } from '../../src/auth/home-export.ts';
 import { type HomePage, coverageText, startHomePage } from '../../src/auth/home-page.ts';
 import { EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_SHOW_MS, EXPORT_WARNING } from '../../src/auth/key-reveal.ts';
@@ -63,11 +69,18 @@ const T0 = 1_800_000_000_000;
 const json = (status: number, body: unknown, requestId = 'req_1'): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'x-request-id': requestId } });
 const refusal = (status: number, code: string): Response => json(status, { error: 'internal words', code, requestId: 'req_9' }, 'req_9');
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
+/**
+ * Waits for `cond` by real time, not by a count of ticks: keys, nonces and the decrypt are real WebCrypto work, which on
+ * a busy machine (verify runs four packages at once) can take more than a few hundred ticks. `Date` isn't faked here.
+ */
+const UNTIL_MS = 10_000;
 async function until(cond: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 600; i++) {
+  const deadline = Date.now() + UNTIL_MS;
+  while (Date.now() < deadline) {
     if (cond()) return;
     await tick();
   }
+  if (cond()) return;
   throw new Error(`Timed out waiting for ${what}: ${pageText()}`);
 }
 
@@ -91,6 +104,59 @@ interface Opts {
   session?: () => unknown;
   tx?: (hash: string) => unknown;
   clipboard?: null;
+  /** H10: Hana Home's exit Google client in `/v1/home/config`; `shared: false` names no shared client. */
+  exit?: string;
+  shared?: false;
+  /** H10: email sign-in open, with this fake issuer's answers (`EmailIssuer`). */
+  email?: EmailIssuer;
+}
+
+/** A fake issuer Home route (home-email.ts's API): it records the starts and answers tokens of its `sub` for their nonces. */
+interface EmailIssuer extends HomeEmailApi {
+  starts: { email: string; kind: 'identity' | 'derive'; commitment: HomeIdentityCommitment | HomeSessionCommitment; identity?: string }[];
+  /** The tokens `verify` answered, in order. */
+  tokens: string[];
+  /** The `sub` the next token carries. */
+  sub: string;
+  /** The audience the next derive token carries (the scope's email client by default). */
+  deriveAud?: string;
+  /** Answers `verify` with this instead of a token. */
+  refuse?: Error;
+}
+
+const ESUB = `e1.${'A'.repeat(43)}`;
+const EMAIL_ISS = 'https://issuer.hana.test/v1/email';
+/** An email token in the issuer's JWS JSON form; the page reads its claims only (the API checks the signature). */
+const emailJws = (claims: Record<string, unknown>): string => JSON.stringify({ payload: base64UrlEncode(utf8(JSON.stringify(claims))), signatures: [{ protected: 'e30', signature: 'c2ln' }] });
+
+function emailIssuer(sub = ESUB): EmailIssuer {
+  const issuer: EmailIssuer = {
+    starts: [],
+    tokens: [],
+    sub,
+    async start(email: string, kind: 'identity' | 'derive', commitment: HomeIdentityCommitment | HomeSessionCommitment, identity?: string) {
+      issuer.starts.push({ email, kind, commitment, ...(identity !== undefined ? { identity } : {}) });
+      return { challengeId: 'C'.repeat(43), expiresAtMs: now + 600_000, resendAfterMs: now + 30_000 };
+    },
+    async resend() {
+      return { challengeId: 'C'.repeat(43), expiresAtMs: now + 600_000, resendAfterMs: now + 30_000 };
+    },
+    async verify() {
+      if (issuer.refuse) throw issuer.refuse;
+      const last = issuer.starts.at(-1)!;
+      const exp = Math.floor(now / 1000) + 600;
+      if (last.kind === 'identity') {
+        const c = last.commitment as HomeIdentityCommitment;
+        const t = emailJws({ iss: EMAIL_ISS, aud: HOME_EMAIL_AUDIENCE, sub: issuer.sub, iat: exp - 600, exp, nonce: homeNonce({ signer: HOME_ENV.signer, homePublicKey: c.homePublicKey, expiresAtMs: c.expiresAtMs, salt: c.salt }), jti: 'j' });
+        issuer.tokens.push(t);
+        return t;
+      }
+      const c = last.commitment as HomeSessionCommitment;
+      const nonce = sessionNonce({ signer: HOME_ENV.signer, scopeId: c.scopeId, sessionPublicKey: c.sessionPublicKey, expiresAtMs: c.expiresAtMs, keyIndex: 0, maxUses: 1, salt: c.salt });
+      return emailJws({ iss: EMAIL_ISS, aud: issuer.deriveAud ?? `email:${c.scopeId}`, sub: issuer.sub, iat: exp - 600, exp, nonce, jti: 'j' });
+    },
+  } as EmailIssuer;
+  return issuer;
 }
 
 interface H {
@@ -110,6 +176,14 @@ interface H {
   open(sub?: string, claims?: Record<string, unknown>): Promise<void>;
   /** The same, up to the wallet being open. */
   unlock(): Promise<void>;
+  /** H10: Hana Home's own sign-in with an email code, then the app's page. */
+  toAppByEmail(address?: string): Promise<void>;
+  /** H10: expand, "Continue with a code", "Send code", the code: waiting until the wallet is open or refused. */
+  openByEmail(): Promise<void>;
+  /** Submits the form that holds element `id` (a real user's Enter or button press). */
+  submit(id: string): void;
+  /** Answers the newest child's hello and relays Google's answer, a token of `aud` for the nonce the page sent. */
+  answer(claims: Record<string, unknown>, aud: string): Promise<void>;
   click(id: string): void;
   /** A user's click: the pointer moves (arming the guard), then presses and clicks. */
   press(id: string): void;
@@ -160,7 +234,7 @@ function start(o: Opts = {}): H {
     const url = new URL(String(input));
     const body = init?.body instanceof Uint8Array ? Uint8Array.from(init.body) : null;
     fetches.push({ url, method: init?.method ?? 'GET', header: new Headers(init?.headers).get('x-hana-home'), body });
-    if (url.pathname === '/v1/home/config') return json(200, { serverTimeMs: now, signer: HOME_ENV.signer, sharedGoogleClientId: CLIENT_ID, exitGoogleClientId: null });
+    if (url.pathname === '/v1/home/config') return json(200, { serverTimeMs: now, signer: HOME_ENV.signer, sharedGoogleClientId: o.shared === false ? null : CLIENT_ID, exitGoogleClientId: o.exit ?? null, emailSignIn: o.email !== undefined });
     if (url.pathname === '/v1/home/apps') return json(200, { scopes: o.scopes ?? [mineScope()], nextCursor: null });
     if (url.pathname === '/v1/home/login') {
       const sent = JSON.parse(new TextDecoder().decode(body as Uint8Array)) as Record<string, unknown>;
@@ -190,7 +264,8 @@ function start(o: Opts = {}): H {
   };
   const page = startHomePage({
     win,
-    env: HOME_ENV,
+    env: o.email ? { ...HOME_ENV, emailIssuerUrl: 'https://issuer.hana.test', emailIss: EMAIL_ISS } : HOME_ENV,
+    email: o.email ?? null,
     api: homeApi(ENV.apiUrl, fetchFn as unknown as typeof fetch),
     relay: {
       readRelay: () =>
@@ -277,6 +352,40 @@ function start(o: Opts = {}): H {
       await h.toApp();
       await h.open();
       expect(page.moving.state, pageText()).toBe('unlocked');
+    },
+    answer: (claims, aud) => answer(claims, aud),
+    submit(id) {
+      const form = el(id).closest('form');
+      if (!form) throw new Error(`#${id} is in no form`);
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    },
+    async toAppByEmail(address = 'user@example.com') {
+      await page.idle();
+      h.click('home-sign-in-email');
+      (el('home-email-address') as HTMLInputElement).value = address;
+      h.submit('home-email-address');
+      await until(() => document.getElementById('home-email-code') !== null, 'the code screen');
+      (el('home-email-code') as HTMLInputElement).value = '123456';
+      h.submit('home-email-code');
+      await until(() => page.stage === 'signed_in', 'the email sign-in');
+      await page.idle();
+      if (page.openScope === null) (document.querySelector('.home-open') as HTMLElement).click();
+      expect(page.openScope).toBe(SCOPE);
+    },
+    async openByEmail() {
+      // Read through a function: the state changes under the awaits below.
+      const refused = (): boolean => (page.moving.state as string) === 'refused';
+      h.click('home-export-open');
+      h.click('home-export-start');
+      await until(() => document.getElementById('home-export-email-send') !== null || refused(), 'the code screen');
+      if (refused()) return;
+      h.click('home-export-email-send');
+      await until(() => document.getElementById('home-export-email-code') !== null || refused(), 'the code to be sent');
+      if (refused()) return;
+      (el('home-export-email-code') as HTMLInputElement).value = '654321';
+      h.submit('home-export-email-code');
+      await until(() => page.moving.state === 'unlocked' || page.moving.state === 'refused', 'the wallet to open or be refused');
+      await page.idle();
     },
     reveal(chain) {
       h.click(chain === 'stellar' ? 'home-export-stellar' : 'home-export-evm');
@@ -593,8 +702,9 @@ describe('the per-app sign-in', () => {
   });
 
   it.each([
-    ['exit', 'later'],
-    ['email', 'later'],
+    // No exit client in Hana Home's settings, and an email coverage for a Google account: nothing to sign in with.
+    ['exit', 'none'],
+    ['email', 'none'],
     ['none', 'none'],
     ['unknown', 'unknown'],
   ] as const)('coverage %s offers no sign-in and says why', async (coverage, off) => {
@@ -1033,9 +1143,360 @@ describe('words and source', () => {
     for (const banned of [/localStorage/u, /sessionStorage/u, /indexedDB/u, /document\.cookie/u, /\bconsole\./u, /\bfetch\(/u, /XMLHttpRequest/u, /sendBeacon/u, /location\.(?:href|hash|assign|replace)/u, /history\./u, /WebSocket/u, /innerHTML/u]) {
       expect(source, String(banned)).not.toMatch(banned);
     }
-    expect([...source.matchAll(/\.postMessage\(([\s\S]*?), env\.authOrigin\)/gu)].map((m) => m[1]!.trim())).toEqual(['p.params']);
+    expect([...source.matchAll(/\.postMessage\(([\s\S]*?), env\.authOrigin\)/gu)].map((m) => m[1]!.trim())).toEqual(['r.params']);
     // The export string is made in one place, from a key zeroed in the same call, and handed only to the reveal.
     expect([...source.matchAll(/^.*exportString\(.*$/gmu)].map((m) => m[0].trim())).toEqual(['return exportString(c, key);']);
     expect(source).toMatch(/const key = chainPrivateKey\(prk, c, 0\);\s+try \{\s+return exportString\(c, key\);\s+\} finally \{\s+key\.fill\(0\);/u);
+  });
+});
+
+// ---- H10: the exit client and email ----
+
+const EXIT = 'hana-exit.apps.googleusercontent.com';
+/** A wallet's addresses for `path`, as the vault works them out from the MPC's answer (core's own derivation). */
+const addressesOf = (path: string) => deriveAddresses(extractPrk(simulateMpc(newAppKey().publicKey.AppPublicKeyPV.pk1, ckdAppId(HOME_ENV.signer, path), NET).expected), 0);
+
+describe('H10: Google through the exit client (D490, D491)', () => {
+  it('Hana Home’s own sign-in uses the exit client when no shared client is in force (D550’s open point)', async () => {
+    const h = start({ shared: false, exit: EXIT });
+    await h.page.idle();
+    expect(h.page.stage).toBe('signed_out');
+    h.click('home-sign-in');
+    await until(() => h.page.awaitingChild, 'the Home sign-in to be prepared');
+    await h.answer({}, EXIT);
+    const sent = h.children.at(-1)!.received.at(-1) as Record<string, unknown>;
+    expect(parseWindowMessage(sent, ['hana:home-params'])).not.toBeNull();
+    expect(sent).toMatchObject({ clientId: EXIT, exit: true });
+    await h.page.idle();
+    expect(h.page.stage).toBe('signed_in');
+  });
+
+  it('with a shared client in force, the shared client: no exit flag', async () => {
+    const h = start({ exit: EXIT });
+    await h.toApp();
+    const sent = h.children[0]!.received.at(-1) as Record<string, unknown>;
+    expect(sent.clientId).toBe(CLIENT_ID);
+    expect('exit' in sent).toBe(false);
+  });
+
+  it('coverage exit: the per-app sign-in names the exit client, checks it on NEAR, and opens the vectors’ address', async () => {
+    const h = start({ exit: EXIT, scopes: [mineScope({ coverage: 'exit', googleClientId: EXIT })], registry: { config: { shared_clients: [['google', CLIENT_ID]], exit_clients: [['google', EXIT]], pending_exit_clients: [] } } });
+    await h.unlock();
+    const sent = h.children.at(-1)!.received.at(-1) as Record<string, unknown>;
+    expect(parseWindowMessage(sent, ['hana:home-derive-params'])).not.toBeNull();
+    expect(sent).toMatchObject({ clientId: EXIT, exit: true, scopeId: SCOPE });
+    const want = vector(OWN).accounts[0]!;
+    expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(want.stellar.address);
+    expect(document.getElementById('home-export-address-evm')?.textContent).toBe(want.evm.address);
+    expect(h.logins()).toHaveLength(1);
+  });
+
+  it.each([
+    ['not on the exit list', { shared_clients: [], exit_clients: [] }],
+    ['still pending', { shared_clients: [], exit_clients: [], pending_exit_clients: [{ provider: 'google', aud: EXIT, effective_at_ms: T0 + 60_000 }] }],
+    ['on an older contract', { shared_clients: [] }],
+  ])('coverage exit with the exit client %s on NEAR: refused before Google, nothing posted', async (_, config) => {
+    const h = start({ exit: EXIT, scopes: [mineScope({ coverage: 'exit', googleClientId: EXIT })], registry: { config } });
+    await h.toApp();
+    await h.open();
+    expect(h.page.moving.errorCode).toBe('not_covered');
+    expect(h.children.at(-1)!.received).toEqual([]);
+    expect(h.logins()).toEqual([]);
+  });
+
+  it('coverage exit with no exit client in Hana Home’s settings, or another client named: no sign-in offered', async () => {
+    for (const [exit, named] of [
+      [undefined, EXIT],
+      [EXIT, 'other.apps.googleusercontent.com'],
+    ] as const) {
+      resetDom();
+      const h = start({ ...(exit ? { exit } : {}), scopes: [mineScope({ coverage: 'exit', googleClientId: named })] });
+      await h.toApp();
+      h.click('home-export-open');
+      expect(document.getElementById('home-export-off')?.textContent).toBe(HOME_EXPORT_OFF_TEXT.none);
+    }
+  });
+});
+
+describe('H10: email users (D463)', () => {
+  it('signs in with an email code: no child window, a token for this key, “Signed in with email”, nothing stored', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer });
+    await h.page.idle();
+    // Both methods offered.
+    expect(document.getElementById('home-sign-in')?.textContent).toBe('Continue with Google');
+    expect(document.getElementById('home-sign-in-email')?.textContent).toBe('Continue with email');
+    await h.toAppByEmail('User@Example.com');
+    expect(h.win.opened).toEqual([]);
+    expect(issuer.starts).toHaveLength(1);
+    expect(issuer.starts[0]).toMatchObject({ email: 'User@Example.com', kind: 'identity' });
+    expect(document.getElementById('home-who')?.textContent).toBe('Signed in with email');
+    // The listing request carries the email token as the Home identity.
+    const apps = h.fetches.find((f) => f.url.pathname === '/v1/home/apps')!;
+    const header = decodeHomeIdentity(apps.header as string)!;
+    expect(header.jwt.startsWith('{')).toBe(true);
+    const c = issuer.starts[0]!.commitment as HomeIdentityCommitment;
+    expect(header.key).toEqual(c.homePublicKey);
+    expect(header.expiresAtMs).toBe(c.expiresAtMs);
+    // Memory only.
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it.each([
+    ['another key’s nonce', { nonce: 'N'.repeat(43) }],
+    ['a scope’s audience', { aud: 'email:s1' }],
+    ['another issuer', { iss: 'https://evil.example/v1/email' }],
+    ['an expired token', { exp: Math.floor(T0 / 1000) - 1 }],
+    ['a sub not of the issuer’s form', { sub: '110248495921238986420' }],
+  ])('refuses the sign-in for %s: no request is sent', async (_, over) => {
+    const issuer = emailIssuer();
+    const verify = issuer.verify.bind(issuer);
+    issuer.verify = async (id, code) => {
+      const t = JSON.parse(await verify(id, code)) as { payload: string };
+      const claims = JSON.parse(Buffer.from(t.payload, 'base64url').toString('utf8')) as Record<string, unknown>;
+      return emailJws({ ...claims, ...over });
+    };
+    const h = start({ email: issuer });
+    await h.page.idle();
+    h.click('home-sign-in-email');
+    (document.getElementById('home-email-address') as HTMLInputElement).value = 'user@example.com';
+    h.submit('home-email-address');
+    await until(() => document.getElementById('home-email-code') !== null, 'the code screen');
+    (document.getElementById('home-email-code') as HTMLInputElement).value = '123456';
+    h.submit('home-email-code');
+    await until(() => h.page.errorCode !== null, 'the refusal');
+    expect(h.page.stage).toBe('signed_out');
+    expect(h.page.errorCode).toBe('email_token_invalid');
+    expect(h.fetches.filter((f) => f.url.pathname === '/v1/home/apps')).toEqual([]);
+  });
+
+  it('the issuer’s limits and refusals read as the email step’s sentences; the email route off ends the attempt', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer });
+    await h.page.idle();
+    h.click('home-sign-in-email');
+    const send = async (fn: () => Promise<never>) => {
+      // The page makes the sign-in's key (real WebCrypto) before it calls the issuer: wait for the call, not for ticks.
+      let called = false;
+      issuer.start = (async () => {
+        called = true;
+        return fn();
+      }) as unknown as HomeEmailApi['start'];
+      (document.getElementById('home-email-address') as HTMLInputElement).value = 'user@example.com';
+      h.submit('home-email-address');
+      await until(() => called, 'the issuer call');
+      for (let i = 0; i < 5; i++) await tick();
+    };
+    await send(async () => {
+      throw new ApiError(429, 'rate_limited', 'x', null, null);
+    });
+    expect(document.getElementById('home-email-notice')?.textContent).toContain('Too many attempts. Try again later.');
+    await send(async () => {
+      throw new ApiError(400, 'email_domain_not_allowed', 'x', null, null);
+    });
+    expect(document.getElementById('home-email-notice')?.textContent).toContain('Addresses on this domain can’t be used to sign in.');
+    await send(async () => {
+      throw new TypeError('network');
+    });
+    expect(document.getElementById('home-email-notice')?.textContent).toContain('A code may already be on its way');
+    expect(document.getElementById('home-email-retry')).not.toBeNull();
+    await send(async () => {
+      throw new ApiError(409, 'home_email_unavailable', 'x', null, null);
+    });
+    expect(h.page.stage).toBe('signed_out');
+    expect(h.page.errorCode).toBe('home_email_unavailable');
+  });
+
+  it('a wrong code says how many tries are left; none left goes back to the address', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer });
+    await h.page.idle();
+    h.click('home-sign-in-email');
+    (document.getElementById('home-email-address') as HTMLInputElement).value = 'user@example.com';
+    h.submit('home-email-address');
+    await until(() => document.getElementById('home-email-code') !== null, 'the code screen');
+    let left = 1;
+    issuer.verify = async () => {
+      throw new ApiError(400, 'code_invalid', 'x', null, null, { data: { attemptsLeft: left-- } });
+    };
+    (document.getElementById('home-email-code') as HTMLInputElement).value = '111111';
+    h.submit('home-email-code');
+    await until(() => document.getElementById('home-email-notice') !== null, 'the notice');
+    expect(document.getElementById('home-email-notice')?.textContent).toContain('That code is wrong. 1 try left.');
+    (document.getElementById('home-email-code') as HTMLInputElement).value = '111111';
+    h.submit('home-email-code');
+    await until(() => document.getElementById('home-email-address') !== null, 'the address screen');
+    expect(document.getElementById('home-email-notice')?.textContent).toContain('no tries left');
+  });
+
+  it('signing in again with email: a new code to the same address and a new key; the same account keeps the screen', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer });
+    await h.toAppByEmail();
+    advance(13 * 60_000 + 1);
+    h.click('home-sign-in-again');
+    // The address is the sign-in's own: no field, one button.
+    expect(document.getElementById('home-email-address')).toBeNull();
+    expect(document.getElementById('home-email-to')?.textContent).toBe('user@example.com');
+    const listed = h.fetches.filter((f) => f.url.pathname === '/v1/home/apps').length;
+    h.click('home-email-send');
+    await until(() => document.getElementById('home-email-code') !== null, 'the code screen');
+    (document.getElementById('home-email-code') as HTMLInputElement).value = '123456';
+    h.submit('home-email-code');
+    await until(() => h.page.session === 'active', 'the new sign-in');
+    expect(issuer.starts).toHaveLength(2);
+    expect(issuer.starts[1]!.email).toBe('user@example.com');
+    expect((issuer.starts[1]!.commitment as HomeIdentityCommitment).homePublicKey).not.toEqual((issuer.starts[0]!.commitment as HomeIdentityCommitment).homePublicKey);
+    // The same method and id: the screen stays, nothing fetched.
+    expect(h.page.openScope).toBe(SCOPE);
+    expect(h.fetches.filter((f) => f.url.pathname === '/v1/home/apps').length).toBe(listed);
+  });
+
+  it('signing in again as another email account clears the screen and loads that account’s list', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer });
+    await h.toAppByEmail();
+    advance(13 * 60_000 + 1);
+    h.click('home-sign-in-again');
+    issuer.sub = `e1.${'Z'.repeat(43)}`;
+    h.click('home-email-send');
+    await until(() => document.getElementById('home-email-code') !== null, 'the code screen');
+    (document.getElementById('home-email-code') as HTMLInputElement).value = '123456';
+    h.submit('home-email-code');
+    await until(() => h.page.openScope === null, 'the screen to start over');
+    await h.page.idle();
+    expect(h.fetches.filter((f) => f.url.pathname === '/v1/home/apps')).toHaveLength(2);
+  });
+
+  it('opening a wallet by email: the code goes to the sign-in’s address; a linked member reaches its root (the vectors’ address)', async () => {
+    const issuer = emailIssuer();
+    const emailMember: IdentityFn = (p, s) => (p === 'email' && s === ESUB ? { key: identityKeyHex(SCOPE, p, s), status: 'member', opened: false, root: { provider: 'google', sub: ROOT_SUB }, effective_at_ms: 1, account_epoch: 1 } : undefined);
+    const h = start({
+      email: issuer,
+      identity: emailMember,
+      chainPath: ROOT,
+      scopes: [mineScope({ coverage: 'email', googleClientId: null, addresses: [{ chain: 'stellar', address: vector(ROOT).accounts[0]!.stellar.address }] })],
+      registry: { scope: { id: SCOPE, allow_shared: false, clients: [['email', `email:${SCOPE}`]] }, config: { shared_clients: [], exit_clients: [] } },
+    });
+    await h.toAppByEmail();
+    await h.openByEmail();
+    expect(h.page.moving.state, pageText()).toBe('unlocked');
+    expect(h.win.opened).toEqual([]);
+    expect(issuer.starts.map((x) => [x.kind, x.email])).toEqual([
+      ['identity', 'user@example.com'],
+      ['derive', 'user@example.com'],
+    ]);
+    const c = issuer.starts[1]!.commitment as HomeSessionCommitment;
+    expect(c.scopeId).toBe(SCOPE);
+    // The per-app code is asked for with Hana Home's own sign-in token; the sign-in's own code with none.
+    expect(issuer.starts[1]!.identity).toBe(issuer.tokens[0]);
+    expect(issuer.starts[0]!.identity).toBeUndefined();
+    const want = vector(ROOT).accounts[0]!;
+    expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(want.stellar.address);
+    expect(document.getElementById('home-export-address-evm')?.textContent).toBe(want.evm.address);
+    // One derive, key index 0, one use, the email token of this session.
+    const body = JSON.parse(new TextDecoder().decode(h.logins()[0]!.body as Uint8Array)) as Record<string, unknown>;
+    expect([body.keyIndex, body.maxUses, body.scopeId]).toEqual([0, 1, SCOPE]);
+    expect((body.jwt as string).startsWith('{')).toBe(true);
+    // The root's path was confirmed on both providers.
+    for (const on of ['primary', 'second'] as const) expect(h.nearCalls.some((x) => x.on === on && x.method === 'get_identity')).toBe(true);
+  });
+
+  it('the email exit: a scope that dropped its email client opens the identity’s own path with the exit token', async () => {
+    const issuer = emailIssuer();
+    issuer.deriveAud = HOME_EMAIL_AUDIENCE;
+    const path = `${SCOPE}#email#${ESUB}#0`;
+    const h = start({
+      email: issuer,
+      chainPath: path,
+      scopes: [mineScope({ coverage: 'exit', googleClientId: null, addresses: [] })],
+      registry: { scope: { id: SCOPE, allow_shared: false, clients: [['google', OWN_CLIENT]] }, config: { shared_clients: [], exit_clients: [['email', HOME_EMAIL_AUDIENCE]] } },
+    });
+    await h.toAppByEmail();
+    await h.openByEmail();
+    expect(h.page.moving.state, pageText()).toBe('unlocked');
+    const want = addressesOf(path);
+    expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(want.stellar);
+    expect(document.getElementById('home-export-address-evm')?.textContent).toBe(want.evm);
+  });
+
+  it.each([
+    ['the scope has neither its email client nor the email exit on NEAR', { scope: { id: SCOPE, allow_shared: true, clients: [] }, config: { shared_clients: [], exit_clients: [] } }],
+    ['the scope isn’t registered', { scope: null, config: { shared_clients: [] } }],
+  ])('refuses before a code is sent when %s', async (_, registry) => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer, scopes: [mineScope({ coverage: 'email', googleClientId: null })], registry });
+    await h.toAppByEmail();
+    await h.openByEmail();
+    expect(h.page.moving.errorCode).toBe('not_covered');
+    expect(issuer.starts).toHaveLength(1);
+    expect(h.logins()).toEqual([]);
+  });
+
+  it('a per-app token that isn’t this session’s, or is another account’s, is refused before anything is sent', async () => {
+    for (const [over, code] of [
+      [{ deriveAud: 'email:other' }, 'email_token_invalid'],
+      [{ sub: `e1.${'B'.repeat(43)}` }, 'home_account_mismatch'],
+    ] as const) {
+      resetDom();
+      const issuer = emailIssuer();
+      const h = start({ email: issuer, scopes: [mineScope({ coverage: 'email', googleClientId: null })], registry: { scope: { id: SCOPE, allow_shared: false, clients: [['email', `email:${SCOPE}`]] }, config: { shared_clients: [] } } });
+      await h.toAppByEmail();
+      Object.assign(issuer, over);
+      await h.openByEmail();
+      expect(h.page.moving.errorCode).toBe(code);
+      expect(h.logins()).toEqual([]);
+    }
+  });
+
+  it('the route for an email account: the email codes for coverage email or exit, nothing else', () => {
+    expect(homeExportRoute(mineScope({ coverage: 'email' }) as never, null, false, 'email', false)).toBe('none');
+    expect(homeExportRoute(mineScope({ coverage: 'exit' }) as never, null, false, 'email', true)).toEqual({ kind: 'email' });
+    expect(homeExportRoute(mineScope({ coverage: 'email' }) as never, null, false, 'email', true)).toEqual({ kind: 'email' });
+    expect(homeExportRoute(mineScope({ coverage: 'shared' }) as never, null, false, 'email', true)).toBe('none');
+    expect(homeExportRoute(mineScope({ coverage: 'email' }) as never, null, true, 'email', true)).toBe('link');
+  });
+});
+
+describe('H10 review: the issuer refuses the Home sign-in behind a per-app code', () => {
+  it('home_identity_invalid ends Hana Home’s sign-in and says so; nothing is derived', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer, scopes: [mineScope({ coverage: 'email', googleClientId: null })], registry: { scope: { id: SCOPE, allow_shared: false, clients: [['email', `email:${SCOPE}`]] }, config: { shared_clients: [] } } });
+    await h.toAppByEmail();
+    issuer.start = (async () => {
+      throw new ApiError(401, 'home_identity_invalid', 'x', null, null);
+    }) as unknown as HomeEmailApi['start'];
+    await h.openByEmail();
+    expect(h.page.moving.errorCode).toBe('home_signed_out');
+    expect(h.page.session).toBe('ended');
+    expect(h.logins()).toEqual([]);
+  });
+});
+
+describe('H10: an email sign-in ends with its token', () => {
+  it('the warning and the end follow the email token’s 10 minutes, not the identity’s 15', async () => {
+    const h = start({ email: emailIssuer() });
+    await h.page.idle();
+    // The first screen promises no number of minutes: the methods differ.
+    expect(pageText()).toContain('You stay signed in for a short time');
+    expect(pageText()).not.toContain('15 minutes');
+    await h.toAppByEmail();
+    expect(h.page.session).toBe('active');
+    advance(8 * 60_000 + 1);
+    expect(h.page.session).toBe('ending');
+    expect(document.getElementById('home-ending')?.textContent).toContain('ends in about 2 minutes');
+    advance(2 * 60_000);
+    expect(h.page.session).toBe('ended');
+    expect(document.getElementById('home-ended')).not.toBeNull();
+  });
+
+  it('a Google sign-in still lasts its 15 minutes (its token outlives them)', async () => {
+    const h = start();
+    await h.toApp();
+    advance(10 * 60_000 + 1);
+    expect(h.page.session).toBe('active');
+    advance(3 * 60_000);
+    expect(h.page.session).toBe('ending');
   });
 });

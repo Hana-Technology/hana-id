@@ -26,7 +26,7 @@ import { type WindowMessage, parseWindowMessage } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
-import { type Dom, dom, errorView } from './dom.ts';
+import { type Dom, dom, errorView, originText } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
 
@@ -176,7 +176,7 @@ export function startSharePage(deps: SharePageDeps): SharePage {
   }
 
   function header(m: WindowMessage<'hana:email-share-request'>): HTMLElement {
-    return d.h('header', { class: 'app' }, d.h('p', {}, appLogo(d, env, m.logoUrl), 'From ', d.h('strong', {}, m.appName)), d.h('p', { class: 'origin' }, m.parentOrigin));
+    return d.h('header', { class: 'app' }, d.h('p', {}, appLogo(d, env, m.logoUrl), 'From ', d.h('strong', {}, m.appName)), originText(d, m.parentOrigin, 'p'));
   }
 
   function answer(a: 'granted' | 'declined' | 'revoke' | 'keep'): void {

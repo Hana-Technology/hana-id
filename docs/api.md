@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the admin's alert view: `deliveriesLatest`, D570); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: "Usage capture": the `home_login` event and who pays for it; `usage.org_report`'s `kind` and `home_logins`; `relayerKeys` with the Home pool; settlement's pool check; the statement's Home line; D585–D594; after the independent review: `relayerKeys`' `capture` and `unreadablePools`; `usage.org_ledger` for partners and `org_ledger_full` for staff; `GET /v1/health`'s `usageCapture`; the statement CSV's two columns appended last; D595–D599; D585–D599 confirmed by the user 2026-11-10, D605); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`: `404 home_no_wallet`, `503 home_directory_unavailable`, D544); 2026-11-10 (branch `feat/hana-home-h8`, not merged, not deployed: `/home`'s policy with the NEAR RPC origins, the page's one `POST /v1/home/login` per per-app sign-in, D575, D581, D583); 2026-11-10 (branch `feat/hana-home-h7`, not merged, not deployed: the `/home` page row and its policy, which Home routes the page calls, `/home`'s COOP header, D550, D551, D558); 2026-11-10 (branch `docs/tidy-deployed-1110`: the deploy notes of Hana Home, the RPC entrypoints, the admin Worker and the email issuer brought in line with sandbox-dev at `develop` 9b0ae580; the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`: `404 home_no_wallet`, `503 home_directory_unavailable`, D544); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: the vault's use of `GET /v1/app`'s `consent`, `bad_expiry`'s `maxExpiresAtMs`, D530–D538); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`, migration 0018 (`home_usage`, `user_events.app_id` nullable)); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps` and "D1 schema": `apps.first_login_at`, D462 amended); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps`'s `status = 'active'` overlay, `?scopeId=` with quiet scopes, the coverage cache's stated bound; `/v1/vault/consents*`: signature before the window, one chain read and `session_not_visible`, `too_many_consents`: security reviews of H2 and H4, D462, D500, D502, D510, D513); 2026-11-09 (branch `feat/hana-home-h2`, not merged, not deployed: "Routing", "Rate limits", "Hana Home" `GET /v1/home/apps`, "Chain views", "D1 schema" migration 0016: H2 built, D500–D503); 2026-11-09 (branch `feat/hana-home-h4`, not merged, not deployed: `GET /v1/app`'s `consent` and `x-hana-consent`, `POST /v1/vault/consents` and `/revoke`, `deviceLabel` on `POST /v1/vault/shares`, migration 0017, the consent prune in vault maintenance, D510–D513); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: "Hana Home" step 5: the email Home audience only while on the exit list, D494); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: "Hana Home": the exit client (`homeAudienceRoute`, `/v1/home/config`'s `exitGoogleClientId`), D468, D484, D490); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: the `RateLimiter` row: markers deleted by the alarm, D475); 2026-11-09 (branch `feat/hana-home-h1`, not merged: "Hana Home": `GET /v1/home/config`, `homeGate`, its refusals, the rate-limit rows, `log()`'s redacted field names; D473, D474); 2026-11-09 (branch `fix/batch-9-review`, not merged: the webhook's one D1 batch and dedupe, the feed's login-methods notice; D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: "Email login page", "Email login views", `AdminRpc.linkStats`, `ConsoleIssuerRpc`, `DirectoryRpc.issuerStats`, `link_usage`, the email AddClient proof; D444–D448); 2026-11-09 (branch `fix/before-mainnet-sweep-2`: "Relayer pools and gas": a session-signed relay's HMAC routing and its failover to the next key, D455's note; the `relay_failover` event); 2026-11-09 (branch `fix/before-mainnet-sweep`: "Relayer pools and gas": the narrowed allowlists and gas table, one relay per signed request, D455, D456); 2026-11-09 (branch `chore/status-access-followups`: the admin's `GET /api/status` NEAR reads on every endpoint the API can use, a tile's `lines`, D435's note); 2026-11-06 (branch `feat/user-events-retention`: `AdminRpc.purgeUserEvents`, the admin's monthly job's `user_events` step, `user_events`' 24-month retention and erasure, readiness 7.17, D433); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the API's `IssuerRpc` entrypoint, the issuer's `API` binding instead of `APP_DB`, `503 api_unavailable`, D434); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `NEAR_RPC_FALLBACKS`, "RPC view timeout and failover", the `near_rpc_failover` log line, D435); 2026-11-06 (branch `feat/mainnet-demo-key-export`: `GET /v1/app`'s `mainnetDemo`, `POST /v1/mainnet-demo/events`, `POST /v1/login`'s `exportChain` and the `key_exported` event, migration 0013 (`apps.mainnet_demo`, `user_events`), `AdminRpc.setMainnetDemo`, the staff app view's `settings.mainnetDemo`, `StaffUser.events`, the admin's `POST /api/apps/:app/mainnet-demo`, the auth Worker's `MAINNET_DEMO_BALANCE` and `/approve`'s dev-env `connect-src`; D428–D430); 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-09 (branch `feat/email-sharing-2`: brought up to date with `develop` @ a3de75e, not merged; migration 0014 instead of 0012, D438–D443 renumbered); 2026-11-06 (branch `feat/email-sharing`, not merged: email sharing with partners, D411, D438–D443: migration 0014 (`apps.identity_email`, `email_consents`), `GET /v1/app`'s `identityEmail`, "Email sharing" (the four consent endpoints), the mint's `email` claim and `emailStatus`, `/share-email`'s page policy, `ConsoleRpc`'s `email`/`emails` and email search, `updateSettings`' `identityEmail`, `purgeDirectory`'s `emailConsents`, the issuer's `sealedEmail` answers and `IDENTITY_SEAL_KEY`, the API's `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` and `EMAIL_CONSENT_KEY`); 2026-11-09 (branch `feat/mainnet-demo-live-prices`: `GET /v1/app`'s `mainnetDemoPrices`, D436); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-10 (branch `feat/hana-home-h9`, not merged, not deployed: "Routing", "Rate limits", "Hana Home": `GET /v1/home/devices` and the three stops, whose rows, the member check and `canStop`, the counts (D606–D610, D661, D663–D665); `GET /v1/app`'s `share` and `x-hana-share` (D662); the vault's `deviceLabel` (D611)); 2026-11-10 (branch `feat/hana-home-h10`, not merged, not deployed: the email issuer's `POST /v1/email/home/start` and Home's `verify` answer, `GET /v1/home/config`'s `emailSignIn`, the `/home/callback` page row and policy, `/home`'s policy with the email issuer, the page's email sign-in and exit-client sign-in, D616–D627; after its security review, D628, D629, D666–D669); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the admin's `GET /api/me` `scopeRegistration` and its `SCOPE_REGISTRATION` var, D651); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the admin's alert view: `deliveriesLatest`, D570); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: "Usage capture": the `home_login` event and who pays for it; `usage.org_report`'s `kind` and `home_logins`; `relayerKeys` with the Home pool; settlement's pool check; the statement's Home line; D585–D594; after the independent review: `relayerKeys`' `capture` and `unreadablePools`; `usage.org_ledger` for partners and `org_ledger_full` for staff; `GET /v1/health`'s `usageCapture`; the statement CSV's two columns appended last; D595–D599; D585–D599 confirmed by the user 2026-11-10, D605); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`: `404 home_no_wallet`, `503 home_directory_unavailable`, D544); 2026-11-10 (branch `feat/hana-home-h8`, not merged, not deployed: `/home`'s policy with the NEAR RPC origins, the page's one `POST /v1/home/login` per per-app sign-in, D575, D581, D583); 2026-11-10 (branch `feat/hana-home-h7`, not merged, not deployed: the `/home` page row and its policy, which Home routes the page calls, `/home`'s COOP header, D550, D551, D558); 2026-11-10 (branch `docs/tidy-deployed-1110`: the deploy notes of Hana Home, the RPC entrypoints, the admin Worker and the email issuer brought in line with sandbox-dev at `develop` 9b0ae580; the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: the vault's use of `GET /v1/app`'s `consent`, `bad_expiry`'s `maxExpiresAtMs`, D530–D538); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`, migration 0018 (`home_usage`, `user_events.app_id` nullable)); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps` and "D1 schema": `apps.first_login_at`, D462 amended); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps`'s `status = 'active'` overlay, `?scopeId=` with quiet scopes, the coverage cache's stated bound; `/v1/vault/consents*`: signature before the window, one chain read and `session_not_visible`, `too_many_consents`: security reviews of H2 and H4, D462, D500, D502, D510, D513); 2026-11-09 (branch `feat/hana-home-h2`, not merged, not deployed: "Routing", "Rate limits", "Hana Home" `GET /v1/home/apps`, "Chain views", "D1 schema" migration 0016: H2 built, D500–D503); 2026-11-09 (branch `feat/hana-home-h4`, not merged, not deployed: `GET /v1/app`'s `consent` and `x-hana-consent`, `POST /v1/vault/consents` and `/revoke`, `deviceLabel` on `POST /v1/vault/shares`, migration 0017, the consent prune in vault maintenance, D510–D513); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: "Hana Home" step 5: the email Home audience only while on the exit list, D494); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: "Hana Home": the exit client (`homeAudienceRoute`, `/v1/home/config`'s `exitGoogleClientId`), D468, D484, D490); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: the `RateLimiter` row: markers deleted by the alarm, D475); 2026-11-09 (branch `feat/hana-home-h1`, not merged: "Hana Home": `GET /v1/home/config`, `homeGate`, its refusals, the rate-limit rows, `log()`'s redacted field names; D473, D474); 2026-11-09 (branch `fix/batch-9-review`, not merged: the webhook's one D1 batch and dedupe, the feed's login-methods notice; D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: "Email login page", "Email login views", `AdminRpc.linkStats`, `ConsoleIssuerRpc`, `DirectoryRpc.issuerStats`, `link_usage`, the email AddClient proof; D444–D448); 2026-11-09 (branch `fix/before-mainnet-sweep-2`: "Relayer pools and gas": a session-signed relay's HMAC routing and its failover to the next key, D455's note; the `relay_failover` event); 2026-11-09 (branch `fix/before-mainnet-sweep`: "Relayer pools and gas": the narrowed allowlists and gas table, one relay per signed request, D455, D456); 2026-11-09 (branch `chore/status-access-followups`: the admin's `GET /api/status` NEAR reads on every endpoint the API can use, a tile's `lines`, D435's note); 2026-11-06 (branch `feat/user-events-retention`: `AdminRpc.purgeUserEvents`, the admin's monthly job's `user_events` step, `user_events`' 24-month retention and erasure, readiness 7.17, D433); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the API's `IssuerRpc` entrypoint, the issuer's `API` binding instead of `APP_DB`, `503 api_unavailable`, D434); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `NEAR_RPC_FALLBACKS`, "RPC view timeout and failover", the `near_rpc_failover` log line, D435); 2026-11-06 (branch `feat/mainnet-demo-key-export`: `GET /v1/app`'s `mainnetDemo`, `POST /v1/mainnet-demo/events`, `POST /v1/login`'s `exportChain` and the `key_exported` event, migration 0013 (`apps.mainnet_demo`, `user_events`), `AdminRpc.setMainnetDemo`, the staff app view's `settings.mainnetDemo`, `StaffUser.events`, the admin's `POST /api/apps/:app/mainnet-demo`, the auth Worker's `MAINNET_DEMO_BALANCE` and `/approve`'s dev-env `connect-src`; D428–D430); 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-09 (branch `feat/email-sharing-2`: brought up to date with `develop` @ a3de75e, not merged; migration 0014 instead of 0012, D438–D443 renumbered); 2026-11-06 (branch `feat/email-sharing`, not merged: email sharing with partners, D411, D438–D443: migration 0014 (`apps.identity_email`, `email_consents`), `GET /v1/app`'s `identityEmail`, "Email sharing" (the four consent endpoints), the mint's `email` claim and `emailStatus`, `/share-email`'s page policy, `ConsoleRpc`'s `email`/`emails` and email search, `updateSettings`' `identityEmail`, `purgeDirectory`'s `emailConsents`, the issuer's `sealedEmail` answers and `IDENTITY_SEAL_KEY`, the API's `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` and `EMAIL_CONSENT_KEY`); 2026-11-09 (branch `feat/mainnet-demo-live-prices`: `GET /v1/app`'s `mainnetDemoPrices`, D436); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -102,6 +102,8 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `/v1/wallets/record` | POST, OPTIONS | `directory/record.ts` | publishable key + vault origin + each address's own signature (wallet record) + the session key's signature over the request + a live session on that path | W |
 | `/v1/home/config` | GET, OPTIONS | `home/config.ts` | `AUTH_ORIGIN` only (no identity yet) | H1 |
 | `/v1/home/apps` | GET, OPTIONS | `home/apps.ts` | `AUTH_ORIGIN` + Home identity (`homeGate`) | H2 |
+| `/v1/home/devices` | GET, OPTIONS | `home/devices.ts` | `AUTH_ORIGIN` + Home identity (`homeGate`); the identity's own rows only | H9 |
+| `/v1/home/consents/revoke`, `/v1/home/shares/revoke`, `/v1/home/email-sharing/revoke` | POST, OPTIONS | `home/revoke.ts` | `AUTH_ORIGIN` + Home identity (`homeGate`); the identity's own rows only, 404 otherwise | H9 |
 | `/v1/identity/jwks.json`, `/v1/identity/.well-known/openid-configuration` | GET, HEAD, OPTIONS | `identity/public.ts` | none (public keys only) | I |
 | `/v1/owner-actions` | POST, OPTIONS | `handlers.ts` | OIDC owner token inside the args | |
 | cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts`, `identity/maintenance.ts`, `guarded/cron.ts`, `changes/drift.ts` | — | vault part B; JWKS sync every 15 min since G; identity counts' retention I; guarded changes and drift C |
@@ -222,6 +224,8 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 | `/v1/health`, `GET /vault` | — | — | — |
 | `GET /v1/home/config` (H1) | 60/min (`home:config:ip`), after the origin check | — | — |
 | `GET /v1/home/apps` (H2) | 30/min (`home:apps:ip`) | — | 60/min per Home key (`home:apps:key`); a search (`?q=`) also 10/min per Home key (`home:apps:search:key`, D500) |
+| `GET /v1/home/devices` (H9) | 30/min (`home:devices:ip`) | — | 60/min per Home key (`home:devices:key`) |
+| The three `POST /v1/home/*/revoke` (H9) | 30/min (`home:revoke:ip`, shared by the three) | — | 30/min per Home key (`home:revoke:key`, shared) |
 | Later `/v1/home/*` (via `homeGate`; each passes its own window names) | the endpoint's per-IP limit, before the header is read | — | the endpoint's per-Home-key limit, after the signature |
 
 Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
@@ -339,7 +343,14 @@ its `expires_at`, its share (if any) live as unlock judges it (not revoked, befo
 created_at + session_ttl_ms)`, the app still keeping logins, the origin still allowed). `revoked`: otherwise, including a
 share row already pruned. `unknown`: no such consent in this app, or a malformed id (no D1 read). Left out without the
 header, from any other origin, and when D1 can't be read (not `unknown`: log `consent_status_unavailable`, so a blip
-can't make a vault drop a consent). Older vaults never send the header and see no difference. The vault (H5, D530–D535)
+can't make a vault drop a consent). Older vaults never send the header and see no difference.
+
+`share` (H9, D662), only for `Origin: VAULT_ORIGIN` with `x-hana-share: b64url(shareId)` (allowed in the preflight): `revoked`
+when the share is gone, revoked (the device, Hana Home's "Sign out this device"), the app no longer keeps logins, or its
+origin is no longer allowed; else `live`. Time-based ends (idle, absolute) are not reported: they stay the vault's own and the
+next unlock's or touch's (D55). One uncached D1 statement. Left out without the header, for a malformed id, from any other
+origin, and when D1 can't be read (`share_status_unavailable`). The vault sends it on every `GET /v1/app` it makes (no new
+read) and ends the session on `revoked`, as a touch's 410 does; nothing else changes anything (D539: the read slides nothing). The vault (H5, D530–D535)
 sends it whenever it holds a consent, on its existing 10-second read, and treats `unknown`, `revoked` or a value of another
 shape as stated in `docs/security.md`: `revoked`/`unknown` clear the consent, a missing field is no answer.
 
@@ -704,7 +715,8 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL> [https://oauth2.googleapis.com]` (Google's tokeninfo only when `EMAIL_ISSUER_URL` is set and valid: under `'token_first'` the callback reads the access token's `sub` there, D270; the built page's `<meta>` policy lists the same, `packages/web/src/auth/pages.ts`) |
 | auth | `/login`, `/approve` | `<path>.html` with `frame-ancestors 'none'` (neither fetches anything; the login popup makes no API call, D77) |
 | auth | `/share-email` | `share-email.html` with `frame-ancestors 'none'; connect-src <API_URL>` (D411, D442: the email sharing sheet reads the sealed address from `/v1/identity/email-consent/preview`, nothing else) |
-| auth | `/home` | `home.html` with `Cross-Origin-Opener-Policy: same-origin-allow-popups` (D558; no other auth page sends COOP) and `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` (Hana Home, H7 and H8, D551, D583: `/v1/home/*`, the login relay's read, Google's JWKS for its own token check, and the NEAR RPC origins, read only when the user opens a wallet: the same list as `/export`) |
+| auth | `/home` | `home.html` with `Cross-Origin-Opener-Policy: same-origin-allow-popups` (D558; no other auth page sends COOP) and `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com [<EMAIL_ISSUER_URL>]` (Hana Home, H7, H8 and H10, D551, D583, D622: `/v1/home/*`, the login relay's read, Google's JWKS for its own token check, the NEAR RPC origins, read only when the user opens a wallet, and in an env with an email issuer the issuer's Home route, `resend` and `verify` for its email sign-in: `/export`'s list plus the issuer; a malformed `EMAIL_ISSUER_URL` is left out, so only the email sign-in fails, D669) |
+| auth | `/home/callback` | `home/callback.html` with `frame-ancestors 'none'; connect-src <API_URL>` (H10, D491, D619: Hana Home's exit Google client's only redirect URI; it relays an ID token of that client with the nonce its sign-in child stored, to the login relay, and closes; no COOP, no logo) |
 | auth | logo pages: `/login`, `/login/email`, `/approve`, `/export`, `/share-email`, `/home` | with `FILES_ORIGIN` set (the manifest's `files.origin`, C11, D306), the base policy's `img-src 'self' data:` becomes `img-src 'self' data: <FILES_ORIGIN origin>` (in place, one `img-src`); the build's `<meta>` policy does the same from `HanaEnv.filesOrigin`. `/login/callback` never. A `FILES_ORIGIN` that isn't an origin is left out and logged (`files_origin_misconfigured`), the page still served |
 | auth | `/login/email` | `login/email.html` with `frame-ancestors 'none'; connect-src [<EMAIL_ISSUER_URL origin>] <API_URL>` (the email step, batch 8a: the issuer's `start`, `resend`, `verify` and the relay write; the auth Worker's `EMAIL_ISSUER_URL` is set by `gen` from `emailIssuer`, and a malformed one is a `503` page) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
@@ -753,7 +765,8 @@ call (`app:<id>`), made only once the IP limit accepted (D95).
 | `/v1/vault/consents/revoke` (H4) | `{shareId?, sessionPublicKey, counter, signature, consentId}` (exactly) | `"consent-revoke" ‖ consentId` | `200 {revoked: bool, counter}` |
 
 `deviceLabel` (D512): at most 40 characters of letters, digits and ` .()/_-`, starting with a letter or digit; anything else
-is stored as null and never refuses the login. Hana Home shows it as text, on the row deleted with the share.
+is stored as null and never refuses the login. Hana Home shows it as text, on the row deleted with the share. The vault sends
+"{browser} on {system}" from the User-Agent's families only (`packages/web/src/vault/device-label.ts`, H9, D611), or none.
 
 Consents (`src/vault/consents.ts`, `consent-store.ts`; `docs/hana-home-spec.md`; narrow-only: a row can stop auto-signing, never
 start it). `shareId` present is `'session'` mode (`counter` ≥ 1, signed under that share id); absent is `'none'` mode
@@ -1034,11 +1047,15 @@ else writes no row: it doesn't make them `mine` in `GET /v1/home/apps`.
 Nothing here derives a key outside that route.
 
 **`GET /v1/home/config`** (`Origin` must be `AUTH_ORIGIN`, 403 `origin_not_allowed` otherwise; per IP 60/min, window
-`home:config:ip`): `200 {serverTimeMs, signer, sharedGoogleClientId, exitGoogleClientId, requestId}`. `sharedGoogleClientId` is the
+`home:config:ip`): `200 {serverTimeMs, signer, sharedGoogleClientId, exitGoogleClientId, emailSignIn, requestId}`. `sharedGoogleClientId` is the
 first shared Google client in force (`effectiveSharedClients`, cached ≤ 60 s), or `null` when there is none; an email user
 can still sign in. `exitGoogleClientId` is the first exit Google client in force (`effectiveExitClients`; contract v4,
-D468), or `null` against an older contract or an empty list (fail closed: Home has no exit route then). Home uses it only
-where a scope's normal route is gone (D490). Failures: `429 rate_limited`, `502 near_unavailable`, `503 rate_limiter_unavailable`.
+D468), or `null` against an older contract or an empty list (fail closed: Home has no exit route then). The page signs in
+with the shared client while there is one and with the exit client otherwise (D490, D618, through `/home/callback`), and
+opens an app's wallet with the exit client only where the app's coverage is `exit`. `emailSignIn` (H10) is `true` only
+when the env has an email issuer (`EMAIL_ISS`) and `("email", "hana-home")` is an exit client in force (the same rule
+`homeGate` applies, D494), and only while the env's `EMAIL_ISSUER_URL`, when set, is an http(s) URL (D669); an API from before H10 sends no field and the page reads it as `false`. Failures: `429
+rate_limited`, `502 near_unavailable`, `503 rate_limiter_unavailable`.
 
 **The identity (`homeGate`).** Every later `/v1/home/*` call sends `x-hana-home`: `b64url(json {jwt, key, expiresAtMs, salt,
 counter, sig})` (`@hana-id/core/home`: at most 12 288 characters, exactly these six fields, canonical base64url, `key` and
@@ -1104,6 +1121,73 @@ home_directory_unavailable` (D1), `503 rate_limiter_unavailable` (a search). Par
 data, never interpreted. No `sub`, token or address is logged. Coverage is display only: `POST /v1/home/login` (H3) and the
 contract check for themselves. Deviation from the spec's shape: no `sharedLoginEndsAtMs` (D480 made turn-offs immediate, so
 nothing is pending) and no `liveDevices` (H9's `/devices` reads shares by `path_hash`), D501.
+
+**Whose rows (H9, `src/home/root.ts`, D606).** In a scope, the devices list and the stops act on the account root that the
+wallet directory records for the verified `(provider, sub)` with status `active` (a member's row → its account's `root` row,
+the rule of the app list's overlay), else on the identity's own: the path `{scope}#{provider}#{sub}#0` (key index 0, the only
+one a vault opens), hashed as `vault_shares.path_hash` / `vault_consents.path_hash` hold it, and the account's User ID
+(`end_users.token_sub`, or computed with IDENTITY_SUB_KEY for a user with no row) for `email_consents`. Shares and consents
+at another key index are invisible to Home (none exist: the vault opens only index 0, D665). A root that is another identity's
+(a member's account) is confirmed on chain before Home shows its addresses or stops anything (D661): one uncached
+`get_identity` view; where the chain contradicts the directory (a stale `active` row after an unlink whose sync failed), the
+identity's own rows are used instead.
+
+**`GET /v1/home/devices`** (`homeGate`, window `devices`: 30/min per IP, 60/min per Home key; H9, D607, D608). At most one
+query parameter, or `400 bad_request`: none or `cursor` (the directory's scopes for this identity, 10 a page in scope order,
+`nextCursor` the last one's id or null), or `scopeId` (one scope, the identity's own path when the directory has no row; a
+scope with nothing of this user's answers its empty entry). One D1 read for the roots; at most 10 `get_identity` views for
+member scopes, 5 at a time, stopped after the first batch with a failure (D661); one D1 batch of three or four statements a
+scope, which D1 counts as one query (a second batch only before migration 0014). Worst case 3 D1 queries, 3 Durable Object
+calls, 4 fetches for an uncached `get_config` and 25 for the member checks (D665). `200 {scopes: [...], nextCursor, requestId}`, `Cache-Control: no-store`:
+
+```
+{scopeId, apps: [{appId, name, status}], more, canStop,
+ devices: [{shareId, appId, partnerOrigin, label, signedInAtMs, lastUsedAtMs, idleUntilMs, expiresAtMs,
+            consent: {consentId, label, grantedAtMs, expiresAtMs} | null}],
+ consents: [{consentId, appId, partnerOrigin, label, grantedAtMs, expiresAtMs}],
+ email: [{appId, addresses: [string]}] | null}
+```
+
+- `devices`: the live shares under the root's path, newest first, at most 25 (`more: true` past that), judged as unlock
+  judges them (`shareLive`: not revoked, before `idle_until`, before min(`abs_expires_at`, `created_at` + the app's session TTL),
+  persistence `'session'`, the origin still allowed). `shareId` and `consentId` are the 16-byte ids, base64url. `label` is the
+  vault's `deviceLabel` or null. `expiresAtMs` is the share's capped end. `lastUsedAtMs` is the last unlock or approved
+  signature there (`idle_until` − the app's idle limit, never later than now; auto-signatures don't count), or null when the
+  slide was cut short by the end (D610, D663). A device whose app the apps read didn't return is still listed (D664).
+- `consent`: the device's active consent, read with the device (joined by its share, so no other list's bound hides it, D664),
+  judged as `GET /v1/app`'s status read judges it (`consentActive`), so a
+  'session'-mode logout (the share revoked, the consent's `revoked_at` still NULL) reads as none (D534). `label` is the policy's
+  at grant, the partner's words, returned as data.
+- `consents`: active consents with no share (an app with persistence `'none'`), at most 25.
+- `email`: the addresses the account shares (`state = 'granted'`) per app of the scope, at most 25; `null` when this env
+  can't tell (no IDENTITY_SUB_KEY for a user with no directory row, no migration 0014, or a member's account not confirmed).
+- `canStop`: false only for a member's account the chain couldn't confirm (D661): its devices are listed, with no stop and no
+  addresses.
+- `apps`: the apps named above, with name and status.
+
+Refusals: `homeGate`'s; `400 bad_request`; `503 home_directory_unavailable` (D1). Nothing logs a `sub`, an id, a path hash, a
+label or an address.
+
+**The stops** (`homeGate`, window `revoke`: 30/min per IP and 30/min per Home key, shared by the three; H9, D609). Body exactly
+its one field. Each finds the row by its id, resolves the root for the row's scope (above) and acts only when the row is that
+root's; the write repeats the match. Another user's id and an id that doesn't exist get the same 404. A member's account is
+confirmed on chain first (one `get_identity`; a contradiction acts for the identity's own rows; no answer is `503
+near_unavailable` with `retry-after: 2`, nothing written, D661). No transaction, so they work through a pause.
+
+| Endpoint | Body | Does | `200` |
+|---|---|---|---|
+| `POST /v1/home/consents/revoke` | `{consentId}` (base64url, 16 bytes) | `revoked_at` now, `revoked_by = 'home'` | `{revoked: bool}` (false: already ended) |
+| `POST /v1/home/shares/revoke` | `{shareId}` | "Sign out this device": the share's `revoked_at` and, in the same batch, its consents' (`revoked_by = 'share'`) | `{revoked: bool}` |
+| `POST /v1/home/email-sharing/revoke` | `{appId}` | every address of the account for that app → `declined`, the copies cleared: the session-proof route's write (`/v1/identity/email-consent/revoke`) | `{state: 'declined', revoked: n}` |
+
+Refusals: `homeGate`'s; `400 bad_request`; `404 unknown_consent` / `unknown_share` / `unknown_email_share` (no such row, not
+this user's, or for email nothing this account ever decided with the app); `503 email_sharing_unavailable` (no IDENTITY_SUB_KEY
+for a user the directory doesn't hold); `503 near_unavailable` (a member's account not confirmed); `503
+home_directory_unavailable` (D1). Effect: the vault's next status read (`GET /v1/app` with `x-hana-consent`, at most 10 s old
+before any auto-signature, D465) reads `'revoked'`, so auto-signing stops within about 10 s; a signed-out device's open tab
+ends at its next `GET /v1/app` (`share: 'revoked'`, D662: within about a minute in an app with a policy), touch, unlock or
+reload; new identity tokens and the partner's
+console lose a stopped address at once, tokens already issued keep it for at most an hour.
 
 ### `POST /v1/owner-actions` — owner pool
 
@@ -2138,7 +2222,7 @@ binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content
 
 | Route | Body or query → answer | Calls |
 |---|---|---|
-| `GET /api/me` | → `{email, sub, env, consoleOrigin, accessExp, renewUrl?}`: `accessExp` is the verified Access token's `exp` (seconds), when this sign-in ends, for the SPA's warning before it (D424); `renewUrl` is the Access team's login for this application (`https://<team>/cdn-cgi/access/login/<admin host>?kid=<aud>&redirect_url=%2Fsigned-in`, public values; omitted when the team domain or AUD is malformed), which mints a fresh token while the team session lasts, for the SPA's Renew (D424 amended); the token itself is never answered | — |
+| `GET /api/me` | → `{email, sub, env, consoleOrigin, accessExp, renewUrl?, scopeRegistration}`: `scopeRegistration` is the `SCOPE_REGISTRATION` var checked (`src/scope-registration.ts`; `{ownerKind, owner, councilMembers, devCouncilKeys, sharedClientIds}`, public manifest values, `null` when absent or malformed), from which the organisation page's "Register a scope" panel writes the `scope:register` command (D651; nothing is sent); `accessExp` is the verified Access token's `exp` (seconds), when this sign-in ends, for the SPA's warning before it (D424); `renewUrl` is the Access team's login for this application (`https://<team>/cdn-cgi/access/login/<admin host>?kid=<aud>&redirect_url=%2Fsigned-in`, public values; omitted when the team domain or AUD is malformed), which mints a fresh token while the team session lasts, for the SPA's Renew (D424 amended); the token itself is never answered | — |
 | `GET /api/status` (D425) | → the System status answer (below) | watchdog `GET /status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the public build reads, NEAR `block` on `NEAR_RPC`, each of `NEAR_RPC_FALLBACKS` and a separate `NEAR_RPC_FALLBACK`, one ledger connection, a `get` on `STATEMENTS` and `EXPORTS`; kept 30 s in the isolate |
 | `GET /api/orgs?cursor` | → `{orgs, next?}` (100 a page) | `StaffRpc.listOrgs` |
 | `GET /api/orgs/:org` | → `{org, members, invites, grants, securityContacts, apps, flags: {noSecurityContacts, ownersNotContacts}}` | `getOrg`, `getSecurityContacts`, `AdminRpc.listApps` |
@@ -2351,7 +2435,9 @@ that failed; across isolates a message can arrive twice, never zero times. One m
 `EMAIL_FROM`, `SECURITY_ALIAS`, `APP_CHANGE_DELAY_MS`, `OWNER_GRANT_DELAY_MS`, from D425 `API_URL`, `VAULT_ORIGIN`, `AUTH_ORIGIN`, `EMAIL_ISSUER_URL`, `CONSOLE_AUTH_ORIGIN`,
 `NEAR_RPC_FALLBACK` (each only when the manifest has it) and `ACCOUNT_CRONS` (JSON `[{worker, crons}]`: the manifest's cron
 Workers on the API's account), and from C14 `NEAR_NETWORK` and
-`WATCHDOG_URL` (manifest `watchdog.url`; absent in a dev env without it, required on a production manifest); secrets
+`WATCHDOG_URL` (manifest `watchdog.url`; absent in a dev env without it, required on a production manifest), and
+`SCOPE_REGISTRATION` (JSON: the manifest's owner kind, owner, council members, whether the council's keys are on disk
+here, shared client ids; D651); secrets
 `EMAIL_API_KEY`, `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` and from C14 `WATCHDOG_STATUS_TOKEN` (never in the config).
 `preview_urls: false`; `workers_dev: true` only for a workers.dev `admin.origin` in a dev env, else a Custom Domain
 route. No D1. From C12 the R2 buckets `STATEMENTS` (`put` of new keys and `get` only: a source check) and
@@ -2432,6 +2518,40 @@ A suppressed address (its exact address, `+tag` included: a complaint, or a boun
 path, counted and never refunded, and gets the same answer; only the mail is skipped, and its challenge holds no address
 and no code. The code mail goes to the normalized address (its `+tag` kept), after the response, with the purpose's own
 subject and wording (`src/mail.ts`, D199).
+
+### `POST /v1/email/home/start` · E (H10, D463, D616–D621)
+
+Hana Home's code, from `AUTH_ORIGIN` only: `{email, kind, commitment, identity?}` and no other field (no `pk`, no
+nonce) → `202 {challengeId, expiresAtMs, resendAfterMs}`, then the shared `resend` and `verify`. `identity` is required for
+`derive` and refused for `identity` (`400 bad_request`): the caller's Hana Home identity token, minted by this issuer for
+this address (signature, `iss`, audience `hana-home`, unexpired with 60 s of skew, issuance purpose `home`, `sub` the
+address's own), else `401 home_identity_invalid` and nothing mailed (D629).
+
+- `kind: 'identity'`: the Home sign-in. `commitment = {homePublicKey: [32 bytes], expiresAtMs, salt: [32 bytes]}`, the
+  end after now and at most 20 minutes away; the token's nonce is `homeNonce` (`@hana-id/core/home`) of these, computed
+  here.
+- `kind: 'derive'`: opening one app's wallet. `commitment = {scopeId, sessionPublicKey: [32 bytes], expiresAtMs, keyIndex:
+  0, maxUses: 1, salt: [16..64 bytes]}`, the end at most 20 minutes away (the API's Home session rule); the nonce is the
+  session nonce of these.
+
+The nonce is never taken from the request (H1's review condition): a `hana-home` token's nonce is always a Home or a
+session nonce, never a client proof's, so no owner can register `("email", "hana-home")` with one (the contract refuses
+that client by its shape too). The gate is the chain alone, no app and no `IssuerRpc` read (D434): `identity` needs
+`("email", "hana-home")` in force on the exit list (`409 home_email_unavailable` otherwise); `derive` needs the scope
+registered (`409 not_covered` otherwise) and gets the audience `email:{scope}` while the scope holds its email client,
+else `hana-home` while the email exit is in force (D485, D490), else `409 not_covered`; any registered scope, one that
+never had email included (D544's `home_no_wallet` at the derive is what stops an empty one, D667). A suspended, deleted
+or purged app's scope works. The audience is read again at `resend` (nothing mailed once it fails) and at `verify`
+**before** the code is compared, so a refusal or a chain outage never spends the code (D668). Limits, in `start`'s
+order: the IP's start windows and Home's own (3 per 10 min, 10 a day; dev 10 and 60), the aggregate prefixes and Home's
+own (50 a day each), the mailbox (the same windows as every login: a Home code counts in them), the recipient domain,
+then the general pool within Hana Home's share: 6% of the budget for anyone, then 4% only for a returning mailbox (a code
+verified within 30 days; the mailbox object keeps that time only), D628; half of either raises `email_budget` `app_50`.
+No owner path (no device ticket is taken or issued) and no partner quota. Enumeration-safe as `start`. The mail names Hana Home and the
+action, never an app ("Your sign-in code for Hana Home", "Your code to open a wallet in Hana Home", D620). `verify` of a
+Home challenge answers `200 {idToken}` only: no device ticket, no `sealedEmail`, no case B, and no user-directory row
+(D621); the token's `sub` is the address's own (`HMAC(K_sub, address)`, as at any login). The issuance row's `app_id` and
+the daily counts' app are `hana-home`.
 
 ### `POST /v1/email/resend` · E
 

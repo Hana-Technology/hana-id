@@ -676,6 +676,66 @@ describe('GET /v1/app’s share field (H9: an open tab learns it was signed out)
     expect((await appRead(app, d.shareId, ORIGIN)).share).toBeUndefined();
   });
 
+  /**
+   * What one of the vault's minute reads costs D1 (D684): a D1 that counts each statement and the rows it reads, as
+   * `meta.rows_read` reports them (the free plan bills rows read, D417). Pinned so a change that adds a read is seen.
+   */
+  function countingDb(db: D1Database): { db: D1Database; statements: string[]; rowsRead: () => number } {
+    const statements: string[] = [];
+    let rows = 0;
+    const note = (sql: string, meta: { rows_read?: number } | undefined) => {
+      statements.push(sql.replace(/\s+/gu, ' ').slice(0, 60));
+      rows += meta?.rows_read ?? 0;
+    };
+    const wrap = (st: D1PreparedStatement, sql: string): D1PreparedStatement =>
+      ({
+        bind: (...v: unknown[]) => wrap(st.bind(...v), sql),
+        first: async (col?: string) => {
+          const r = await st.all();
+          note(sql, r.meta);
+          const row = (r.results[0] ?? null) as Record<string, unknown> | null;
+          return col === undefined ? row : (row?.[col] ?? null);
+        },
+        all: async () => {
+          const r = await st.all();
+          note(sql, r.meta);
+          return r;
+        },
+        run: async () => {
+          const r = await st.run();
+          note(sql, r.meta);
+          return r;
+        },
+      }) as unknown as D1PreparedStatement;
+    const wrapped = { prepare: (sql: string) => wrap(db.prepare(sql), sql), batch: (s: D1PreparedStatement[]) => db.batch(s) } as unknown as D1Database;
+    return { db: wrapped, statements, rowsRead: () => rows };
+  }
+
+  it.each([
+    ['an app with no policy (the share alone)', false],
+    ['an app with a policy and a consent (one read answers both)', true],
+  ])('one minute read costs few D1 statements and rows: %s', async (_name, withConsent) => {
+    const app = withConsent ? await policyApp() : await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub, { consent: withConsent });
+    near.clients[`client-${app.scope}`] = app.scope;
+    const counted = countingDb(env.DB);
+    const res = await call('/v1/app', {
+      method: 'GET',
+      headers: { 'x-hana-key': app.key, origin: VAULT, 'x-hana-parent-origin': ORIGIN, 'x-hana-share': b64(d.shareId), ...(d.consentId ? { 'x-hana-consent': b64(d.consentId) } : {}) },
+      env: { DB: counted.db },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect(body.share).toBe('live');
+    if (withConsent) expect(body.consent).toBe('active');
+    // The gate's app and origins, the settings, login methods, identity email, the share (and the consent).
+    // The gate's app and its origins (one origin here: a row per origin), the settings, login methods, identity email,
+    // the mainnet demo switch (a test app in a dev env only), the consent with its share (a policy app's), the share.
+    expect(counted.statements).toHaveLength(withConsent ? 8 : 7);
+    expect(counted.rowsRead()).toBeLessThanOrEqual(withConsent ? 14 : 11);
+  });
+
   it('an idle share still reads live: time-based ends stay the vault’s own (D55), and the read moves nothing', async () => {
     const app = await policyApp();
     const me = await home();

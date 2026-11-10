@@ -279,6 +279,8 @@ export class FakeBackend {
    * field out (a D1 failure, D511); any other value is sent as is (a value of an unknown shape).
    */
   consentAnswer: ((idHex: string) => unknown) | null = null;
+  /** The same for `share` (the vault's `x-hana-share`): `'omit'` leaves it out (the API's D1 read failed). */
+  shareAnswer: ((idHex: string) => unknown) | null = null;
   /** The API's own timings to answer /v1/login, /v1/vault/shares and /v1/vault/unlock with (a pk_test_ API), or none. */
   serverTimings: { totalMs: number; phases: Record<string, number> } | null = null;
   /** The relay read's `heldMs`, or none (an older API). */
@@ -661,7 +663,11 @@ export class FakeBackend {
   /** `share` on GET /v1/app, for the vault's `x-hana-share` header (H9): 'revoked' for a revoked or unknown share. */
   private shareField(header: string | undefined): { share?: unknown } {
     if (header === undefined) return {};
-    const share = this.shares.get(toHex(base64UrlDecode(header)));
+    const hex = toHex(base64UrlDecode(header));
+    const answered = this.shareAnswer?.(hex);
+    if (answered === 'omit') return {};
+    if (answered !== undefined) return { share: answered };
+    const share = this.shares.get(hex);
     return { share: !share || share.revoked ? 'revoked' : 'live' };
   }
 
@@ -913,6 +919,8 @@ export interface Tab {
   waitEvent(event: PortEventName, n?: number): Promise<unknown>;
   /** Waits until `check` is true, re-checking on every port message (and every 20 ms), for up to 4 s of real time. */
   waitUntil(check: () => boolean, what: string): Promise<void>;
+  /** The tab is hidden or shown (document.visibilityState), with its `visibilitychange` event. */
+  setVisibility(state: 'visible' | 'hidden'): void;
   close(): void;
 }
 
@@ -931,6 +939,10 @@ export interface TabOptions {
   navigation?: NavigationMarks;
   /** The SDK version the tab's hello names (default '0.0.0': an SDK before every versioned field, e.g. supportId). */
   sdk?: string;
+  /** The tab starts hidden (document.visibilityState; `Tab.setVisibility` changes it). */
+  hidden?: boolean;
+  /** A host without visibility (an older host, or a browser without the Page Visibility API): counts as shown. */
+  noVisibility?: boolean;
 }
 
 export function openTab(browser: Browser, o: TabOptions = {}): Tab {
@@ -938,6 +950,8 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
   const launcher = new FakeLauncherView();
   const opened: FakeWindow[] = [];
   const listeners: ((e: WindowMessageEvent) => void)[] = [];
+  let visibility: 'visible' | 'hidden' = o.hidden ? 'hidden' : 'visible';
+  const visibilityListeners: (() => void)[] = [];
   const config = o.config ?? makeConfig();
   // The page a tab loads inlines what the API serves at that moment.
   browser.backend.autoApprovePolicy = config.settings.autoApprovePolicy;
@@ -956,6 +970,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
         return w;
       },
       navigationTiming: () => o.navigation ?? null,
+      ...(o.noVisibility ? {} : { visibility: () => visibility, onVisibilityChange: (l: () => void) => visibilityListeners.push(l) }),
     },
     openStore: browser.openStore,
     locks: browser.locks,
@@ -1022,6 +1037,10 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
     waitEvent: async (event, n = 0) => (await waitFor(() => events.filter((e) => e.event === event)[n], `event ${event}`)).data,
     waitUntil: async (check, what) => {
       await waitFor(() => (check() ? true : undefined), what);
+    },
+    setVisibility: (state) => {
+      visibility = state;
+      for (const l of visibilityListeners) l();
     },
     close: () => {
       port1.close();

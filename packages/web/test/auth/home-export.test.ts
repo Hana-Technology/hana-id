@@ -69,11 +69,18 @@ const T0 = 1_800_000_000_000;
 const json = (status: number, body: unknown, requestId = 'req_1'): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'x-request-id': requestId } });
 const refusal = (status: number, code: string): Response => json(status, { error: 'internal words', code, requestId: 'req_9' }, 'req_9');
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
+/**
+ * Waits for `cond` by real time, not by a count of ticks: keys, nonces and the decrypt are real WebCrypto work, which on
+ * a busy machine (verify runs four packages at once) can take more than a few hundred ticks. `Date` isn't faked here.
+ */
+const UNTIL_MS = 10_000;
 async function until(cond: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 600; i++) {
+  const deadline = Date.now() + UNTIL_MS;
+  while (Date.now() < deadline) {
     if (cond()) return;
     await tick();
   }
+  if (cond()) return;
   throw new Error(`Timed out waiting for ${what}: ${pageText()}`);
 }
 
@@ -1270,9 +1277,15 @@ describe('H10: email users (D463)', () => {
     await h.page.idle();
     h.click('home-sign-in-email');
     const send = async (fn: () => Promise<never>) => {
-      issuer.start = fn as unknown as HomeEmailApi['start'];
+      // The page makes the sign-in's key (real WebCrypto) before it calls the issuer: wait for the call, not for ticks.
+      let called = false;
+      issuer.start = (async () => {
+        called = true;
+        return fn();
+      }) as unknown as HomeEmailApi['start'];
       (document.getElementById('home-email-address') as HTMLInputElement).value = 'user@example.com';
       h.submit('home-email-address');
+      await until(() => called, 'the issuer call');
       for (let i = 0; i < 5; i++) await tick();
     };
     await send(async () => {

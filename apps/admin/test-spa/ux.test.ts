@@ -5,6 +5,8 @@
 // be issued), every API error is said in plain words with the code kept small, and destructive or guarded actions are
 // confirmed in the page, never with a browser dialog. The request each action sends is the one the routes take
 // (docs/api.md "Admin Worker").
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type Answer, type Call, SRC, boot, closeWindow } from './boot.ts';
 
@@ -34,6 +36,20 @@ function orgsApi(write: (c: Call) => Answer = () => ({ body: { ok: true } }), de
 }
 const writes = (s: ReturnType<typeof boot>) => s.api().filter((c) => c.method !== 'GET');
 
+describe('the admin console cannot act on chain itself (D651: it only prepares the scope registration)', () => {
+  it('no admin Worker source signs or sends a NEAR transaction or names the registration call, and no binding holds a key for one', () => {
+    const dir = new URL('../src/', import.meta.url).pathname;
+    const files = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(d, e.name)) : e.name.endsWith('.ts') ? [join(d, e.name)] : []));
+    for (const f of files(dir)) {
+      const text = readFileSync(f, 'utf8');
+      expect(text.match(/admin_register_scope|register_scope|send_tx|broadcast_tx_(?:async|commit)|signTransaction|KeyPair|@near-js\/(?:crypto|transactions|accounts)/u)?.[0] ?? null, f).toBeNull();
+    }
+    // Its bindings' secrets: email, link and watchdog keys only, none a NEAR key.
+    const env = readFileSync(join(dir, 'env.ts'), 'utf8');
+    expect([...env.matchAll(/^\s+([A-Z_]+(?:KEY|SECRET|TOKEN)[A-Z_]*)\??:/gmu)].map((m) => m[1]).sort()).toEqual(['CANCEL_LINK_KEY', 'COINGECKO_API_KEY', 'EMAIL_API_KEY', 'EMAIL_PINNED_KEYS', 'INVITE_LINK_KEY', 'WATCHDOG_STATUS_TOKEN']);
+  });
+});
+
 describe('Legacy apps (org_legacy): only what can work there', () => {
   it('offers no invite, member, owner-grant, freeze or app form, and says why with the way to onboard instead', async () => {
     const s = boot('/orgs/org_legacy', orgsApi());
@@ -41,7 +57,11 @@ describe('Legacy apps (org_legacy): only what can work there', () => {
     const t = s.text();
     expect(t).toContain('Nobody can be invited to Legacy apps, and it can’t be frozen');
     expect(t).toContain('To onboard a partner whose app is here: invite their first owner to a new organisation, then use “Move to an organisation” on the scope. If the scope has Google-account owners on chain, each must be an owner of that organisation first, or the move is refused (scope_conflict).');
-    expect(SRC).not.toMatch(/scope:register|owners-from-org/u);
+    // Changed deliberately with D651: the SPA now shows a `scope:register` command, in the organisation page's
+    // "Register a scope" panel, which prepares it and sends nothing. Legacy apps never shows the panel or the command.
+    expect(t).not.toMatch(/scope:register|Register a scope/u);
+    expect(s.main().querySelector('#register-scope')).toBeNull();
+    expect(SRC).not.toMatch(/owners-from-org/u);
     for (const absent of ['Send invite', 'Invite someone', 'Freeze', 'Unfreeze', 'Make owner', 'Create an app', 'Move a legacy scope here']) expect(s.buttons(absent), absent).toHaveLength(0);
     for (const absent of ['Members', 'Invites', 'Pending owner grants']) expect([...s.main().querySelectorAll('h2')].map((x) => x.textContent), absent).not.toContain(absent);
     expect(s.main().querySelector('input[name=email]')).toBeNull();

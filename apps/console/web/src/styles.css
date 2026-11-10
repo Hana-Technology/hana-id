@@ -1574,32 +1574,54 @@ table.report thead th:first-child {
 }
 @media (max-width: 760px) {
   .frame {
-    grid-template-columns: 1fr;
+    /* minmax(0, …): a wide child (a table, a key) can't widen the column past the screen; it scrolls in place. */
+    grid-template-columns: minmax(0, 1fr);
     background: var(--canvas);
   }
+  .content,
+  .sidebar {
+    min-width: 0;
+  }
+  /* One header block: Hana's gradient as a rule across its whole top edge (not under the brand text, which ended
+     mid-row here), then the brand and Sign out on one row, the organisation on its own row, then the nav. */
   .sidebar {
     position: static;
     height: auto;
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px 12px;
-    padding: 10px 16px;
+    gap: 6px 12px;
+    padding: 13px 16px 8px;
     border-right: none;
     border-bottom: 1px solid var(--line);
+    background: var(--hana-gradient) top / 100% 3px no-repeat, var(--surface);
   }
   .brand {
+    order: 1;
+    margin: 0;
     padding: 0;
+  }
+  .brand::after {
+    display: none;
+  }
+  .account {
+    order: 2;
   }
   .org-role,
   .side-nav-group {
     display: none;
   }
+  .org-name,
+  .org-switch {
+    order: 3;
+    flex: 1 0 100%;
+    min-width: 0;
+  }
   .org-name {
     padding: 0;
-  }
-  .org-switch {
-    flex: 1 1 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .side-nav {
     order: 5;
@@ -1621,6 +1643,18 @@ table.report thead th:first-child {
   }
   .account-email {
     display: none;
+  }
+  /* A wide table scrolls inside its panel instead of widening the page (and the header with it). */
+  .table {
+    position: relative; /* its visually hidden headers stay inside the scroller */
+    display: block;
+    overflow-x: auto;
+  }
+  .app-row-meta {
+    min-width: 0;
+  }
+  .app-row-meta .badge {
+    white-space: normal;
   }
   .content {
     padding: 20px 16px 48px;

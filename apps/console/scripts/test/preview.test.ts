@@ -32,6 +32,14 @@ describe('the fixtures have the console’s shapes', () => {
 });
 
 describe('the scenarios', () => {
+  it('not-chain-owner: an owner in the console, not an on-chain owner of the scope (the Origins and Signing lines)', () => {
+    expect((get('not-chain-owner', `/api/orgs/${F.ORG_ID}`).body as { role: string }).role).toBe('owner');
+    const sc = get('not-chain-owner', `/api/orgs/${F.ORG_ID}/scopes/s_lumen_live`).body as { youAreOnChainOwner: boolean; drift: { missingOnChain: { email: string }[] } };
+    expect(sc.youAreOnChainOwner).toBe(false);
+    expect(sc.drift.missingOnChain.map((m) => m.email)).toEqual(['aiko.tanaka@soralabs.io']);
+    expect((get('owner', `/api/orgs/${F.ORG_ID}/scopes/s_lumen_live`).body as { youAreOnChainOwner: boolean }).youAreOnChainOwner).toBe(true);
+  });
+
   it('the session scenarios: the warning’s end time, and a session that ended under the page’s writes', () => {
     expect((get('session-ending', '/api/me').body as { sessionExpiresAt: number }).sessionExpiresAt).toBe(now + 4 * 60_000);
     expect(meAnswer.safeParse(get('session-ending', '/api/me').body).success).toBe(true);

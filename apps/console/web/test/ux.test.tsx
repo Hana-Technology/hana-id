@@ -61,6 +61,8 @@ function signedIn(app: Record<string, unknown> = {}, role = 'owner', status = 'a
   routes['/api/me'] = { body: ME };
   routes['/api/orgs/org_a'] = { body: { org: { id: 'org_a', name: 'Acme', status }, role } };
   routes['/api/orgs/org_a/apps/app_1'] = { body: { app: { ...APP, ...app } } };
+  // The signed-in member is an on-chain owner of the app's scope (the add and propose forms need one).
+  routes['/api/orgs/org_a/scopes/s1'] = { body: { scope: { id: 's1', actionNonce: 1, allowShared: true, clients: [], owners: [{ kind: 'member', userId: 'usr_a', email: 'me@partner.example', orgOwner: true }], pending: [] }, drift: { hasDrift: false, missingOnChain: [], notOrgOwners: [], unknownOnChain: 0 }, youAreOnChainOwner: true } };
 }
 const posted = (url: string) => calls.some((c) => c.url === url && c.init?.method === 'POST');
 const bodyOf = (url: string) => JSON.parse(String(calls.find((c) => c.url === url && c.init?.method === 'POST')!.init!.body)) as Record<string, unknown>;

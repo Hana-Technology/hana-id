@@ -214,7 +214,22 @@ export function members(now: number): MembersAnswer {
   };
 }
 
-export function scope(now: number) {
+/** The scope page's answer; `mine` false: the signed-in owner (Aiko) isn't an on-chain owner, Dmitri is. */
+export function scope(now: number, mine = true) {
+  if (!mine) {
+    return {
+      scope: {
+        id: 's_lumen_live',
+        actionNonce: 6,
+        allowShared: true,
+        clients: [{ provider: 'google', aud: '204871935513-k2v9mq8d0w7hj1n3s6e4c5t0b8a2f9xg.apps.googleusercontent.com' }],
+        owners: [{ kind: 'member', userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@soralabs.io', orgOwner: true }],
+        pending: [],
+      },
+      drift: { hasDrift: true, missingOnChain: [{ userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@soralabs.io' }], notOrgOwners: [], unknownOnChain: 0 },
+      youAreOnChainOwner: false,
+    };
+  }
   return {
     scope: {
       id: 's_lumen_live',

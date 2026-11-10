@@ -1,13 +1,16 @@
 // An app's signing settings. The auto-approve policy: the one in force, Remove (immediate, a kill switch), and the
 // editor, which checks the JSON with the console (`policy/check`, the vault's validator) and shows the consent screen
 // users will see before proposing it with a fresh sign-in (`policy.set`, announced, then active after the delay). Raw
-// signing: off at once (a kill switch), on through a fresh sign-in (live apps only: test apps never sign raw).
+// signing: off at once (a kill switch), on through a fresh sign-in (live apps only: test apps never sign raw). Proposing
+// a policy or turning raw signing on needs an on-chain owner of the app's scope (the API refuses anyone else,
+// `not_owner`): for an owner who isn't one, ChainOwner.tsx's line stands in for the editor and the button.
 import { useState } from 'react';
 import { ApiError, postJson } from '../../api.ts';
 import { useStepUp, useWrite } from '../../lib.tsx';
 import { Badge, ConfirmButton, CopyButton, Panel, StepUpHint, Why, WriteNote } from '../../ui.tsx';
 import { useApp } from '../Apps.tsx';
 import { ConsentPreview } from '../Consent.tsx';
+import { type ChainOwner, ChainOwnerGate, useChainOwner } from './ChainOwner.tsx';
 import { PendingChanges } from './Changes.tsx';
 
 interface Checked {
@@ -16,7 +19,7 @@ interface Checked {
   policy: unknown;
 }
 
-function Policy() {
+function Policy({ chain }: { chain: ChainOwner }) {
   const ctl = useApp();
   const { app, owner, frozen, org } = ctl;
   const s = app.settings;
@@ -70,6 +73,8 @@ function Policy() {
         <Why>Only owners can set or remove the policy.</Why>
       ) : frozen ? (
         <Why>A new policy can’t be proposed while Hana has frozen the organisation. Removing the policy still works.</Why>
+      ) : chain.state !== 'yes' ? (
+        <ChainOwnerGate chain={chain} org={org} scopeId={app.scopeId} what="Setting a policy" />
       ) : (
         <div className="editor">
           <label className="field">
@@ -122,7 +127,7 @@ function Policy() {
   );
 }
 
-function RawSigning() {
+function RawSigning({ chain }: { chain: ChainOwner }) {
   const ctl = useApp();
   const { app, owner, frozen, org } = ctl;
   const w = useWrite();
@@ -153,7 +158,8 @@ function RawSigning() {
       {!on && app.environment === 'test' && <Why>Test apps never sign raw: their keys come from the testnet MPC, so Hana refuses anything that could move real funds.</Why>}
       {!on && app.environment === 'live' && owner && frozen && <Why>Raw signing can’t be turned on while Hana has frozen the organisation.</Why>}
       {!on && app.environment === 'live' && !owner && <Why>Only owners can turn raw signing on or off.</Why>}
-      {owner && !on && !frozen && app.environment === 'live' && !pending && (
+      {owner && !on && !frozen && app.environment === 'live' && !pending && chain.state !== 'yes' && <ChainOwnerGate chain={chain} org={org} scopeId={app.scopeId} what="Turning raw signing on" />}
+      {owner && !on && !frozen && app.environment === 'live' && !pending && chain.state === 'yes' && (
         <>
           <button type="button" className="btn" disabled={step.busy} onClick={() => void step.start('raw_sign.on', { appId: app.id })}>
             Turn raw signing on (confirm with Google)
@@ -168,10 +174,13 @@ function RawSigning() {
 }
 
 export function Signing() {
+  const { app, owner, frozen, org } = useApp();
+  // One read for both panels: whether this owner can sign the scope's guarded changes on chain.
+  const chain = useChainOwner(org, app.scopeId, owner && !frozen);
   return (
     <div className="stack">
-      <Policy />
-      <RawSigning />
+      <Policy chain={chain} />
+      <RawSigning chain={chain} />
     </div>
   );
 }

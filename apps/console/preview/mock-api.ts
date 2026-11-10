@@ -7,7 +7,7 @@
 import { canonicalJson, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import * as F from './fixtures.ts';
 
-export const SCENARIOS = ['owner', 'viewer', 'frozen', 'multi', 'new-org', 'signed-out', 'errors', 'session-ending', 'session-ended'] as const;
+export const SCENARIOS = ['owner', 'viewer', 'frozen', 'multi', 'new-org', 'signed-out', 'errors', 'session-ending', 'session-ended', 'not-chain-owner'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 export interface Answer {
@@ -177,7 +177,8 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   }
   if (rest === '/members') return ok(scenario === 'new-org' ? { members: [F.members(now).members[0]!], invites: [], grants: [] } : F.members(now));
   if (rest === '/audit') return ok(F.audit(now));
-  if (rest.startsWith('/scopes/')) return ok(F.scope(now));
+  // `not-chain-owner`: an owner in the console whose Google account isn't an on-chain owner of the scope (D652).
+  if (rest.startsWith('/scopes/')) return ok(F.scope(now, scenario !== 'not-chain-owner'));
   if (rest === '/usage') {
     const by = url.searchParams.get('by') === 'month' ? 'month' : 'day';
     const ids = (url.searchParams.get('apps') ?? '').split(',').filter(Boolean);

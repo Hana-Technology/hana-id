@@ -27,6 +27,7 @@ import { usersFindRoute, usersGetRoute, usersSearchRoute } from './users.ts';
 import { supportLookupRoute } from './support.ts';
 import { issuerViewRoute, linksViewRoute } from './email-views.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
+import { scopeRegistrationOf } from './scope-registration.ts';
 
 export interface RouteCtx {
   request: Request;
@@ -137,7 +138,11 @@ async function directoryAudit(c: RouteCtx): Promise<{ rows: DirectoryAuditRow[];
 }
 
 const ROUTES: Route[] = [
-  { method: 'GET', pattern: '/api/me', handler: async (c) => json(200, { email: c.staff.actor.email, sub: c.staff.actor.id, env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN, accessExp: c.staff.accessExp, ...renewField(c.env) }) },
+  {
+    method: 'GET',
+    pattern: '/api/me',
+    handler: async (c) => json(200, { email: c.staff.actor.email, sub: c.staff.actor.id, env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN, accessExp: c.staff.accessExp, ...renewField(c.env), scopeRegistration: scopeRegistrationOf(c.env.SCOPE_REGISTRATION) }),
+  },
   // ---- the System status page (D425): read-only, cached 30 s in the isolate ----
   { method: 'GET', pattern: '/api/status', handler: (c) => statusRoute(c.env, c.staff, c.request) },
 

@@ -14,7 +14,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
 > an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
 
-Last verified against code: 2026-11-10 (the `launcher` event's `clickable`, after 0.3.0), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
+Last verified against code: 2026-11-10 (onboarding: what Hana needs and in what order, on-chain owners), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
 
 ## How it works
 
@@ -44,13 +44,31 @@ gets the same addresses on every device, and different addresses in another part
 ## 1. Your app and the partner portal
 
 During the pilot Hana creates your organisation and your apps, and you manage them in Hana's **partner portal**
-(sandbox-dev: `https://hana-id-console-sandbox-dev.tingtc.workers.dev`). To get a test app, send Hana:
+(sandbox-dev: `https://hana-id-console-sandbox-dev.tingtc.workers.dev`).
 
-- the app name your users will see ("Signing in to {name} at {origin}");
-- the origins your app runs on to start with (you can add more in the portal; [Allowed origins](#allowed-origins));
-- whether you use Hana's shared Google client or your own ([section 6](#6-google-client-shared-or-your-own));
-- the Google address of the first person who manages it (they become an owner), and at least one **security
-  contact**: an address that gets the announcement of every change to your apps' origins and signing settings.
+**What Hana needs from you**, for a test app:
+
+- the Google address of each person who will manage it as an **owner** (up to 5), and at least one **security
+  contact**: an address that gets the announcement of every change to your apps' origins and signing settings;
+- the app name your users will see ("Signing in to {name} at {origin}"), and the origins your app runs on to start with
+  (more can be added in the portal; [Allowed origins](#allowed-origins));
+- nothing about Google clients: your scope starts on Hana's shared Google client. If you want your own
+  ([section 6](#6-google-client-shared-or-your-own)), an on-chain owner adds it in the portal once the scope exists,
+  with a sign-in on your client that proves it is yours; Hana never registers a client ID you send.
+
+**In this order:**
+
+1. Hana invites your first owner. They open the invite email and **Sign in with Google to accept** (below). This comes
+   first: Hana can set up your scope only once your owners have accepted, because their Google accounts become the
+   scope's **on-chain owners** ([below](#on-chain-owners)).
+2. Hana registers your scope on Hana's contract with the owners you name (shared login), then creates your test app
+   in it. An on-chain owner stays one even after leaving your organisation in the portal: removing them takes another
+   on-chain owner's proposal and the contract's timelock ([below](#on-chain-owners)), so name only people who should
+   hold that.
+3. You receive the app's **publishable key** and **app id** (also in the portal, below) and the SDK's tarballs with
+   their checksums ([section 2](#2-install)).
+4. An on-chain owner adds any further origins and, if you want them, an auto-approve policy and your own Google client
+   in the portal.
 
 What you get, and where to find it again:
 
@@ -64,6 +82,17 @@ The publishable key is public: ship it in your page. Your origins are what prote
 either, but your page never sees it (the SDK takes only the publishable key), so copy it from the portal into your
 backend's configuration; never take it from a token you are about to verify. A scope is test or live for good, so
 test and live apps never share addresses.
+
+<a id="on-chain-owners"></a>**On-chain owners.** Your scope lives on Hana's contract, and its owners there are the
+Google accounts that may change it: add origins to its apps, propose an auto-approve policy, turn raw signing on, add
+a Google client, change its owners. The portal checks this with your **Confirm with Google** sign-in, so an owner in
+the portal who isn't an on-chain owner sees, instead of those forms, one line naming the on-chain owners. Removing an
+origin or the policy, turning raw signing off, suspending and revoking keys work for every owner. An owner invited
+after your scope was set up becomes an on-chain owner like this: an on-chain owner opens the scope's page ("Google
+clients and on-chain owners", linked from that line and from **Login & sessions**), which lists the owners missing on
+chain, and clicks **Propose: set the on-chain owners to your organisation's owners** (confirmed with Google). The
+change waits the contract's timelock, then any owner clicks **Execute** on the same page. A scope has at most 5
+on-chain owners. If none of your owners is an on-chain owner, ask Hana.
 
 ### Signing in to the portal
 
@@ -105,7 +134,7 @@ app's mail per day (sent, bounced, complaints, refusals), never an address ([sec
 compared exactly: scheme, host and port, no path (`http://localhost:5173` and `http://localhost:5174` are two origins,
 and so are `http://localhost:5173` and `http://127.0.0.1:5173`). At most 20 per app. On the **Origins** tab:
 
-- **Add**: owners type one origin per line, then **Review and confirm with Google**, review the change and
+- **Add**: on-chain owners ([above](#on-chain-owners)) type one origin per line, then **Review and confirm with Google**, review the change and
   **Confirm with Google**. Hana then announces the change by email to your security contacts and to Hana (the notices
   go out within about 5 minutes), and the origin takes effect a fixed delay after that announcement: 60 s on
   sandbox-dev, 24 hours on a production network. The page shows each step ("Requested", "Announced by email", "Takes
@@ -477,8 +506,10 @@ Then add it to your scope: in the portal, an app's **Login & sessions** tab link
 clients and on-chain owners"), whose **Add your own Google client** steps take a client proof: a helper page you
 download, host on one of the client's origins and sign in on once, whose token becomes public on chain (use a team
 account). The addition is timelocked by Hana's contract. Return the client to the settings above (remove the helper's
-redirect URI and origin) once the change is proposed. Or send Hana the client ID. The token's audience then picks your
-scope. If your scope also holds iOS or Android clients, which can't run Hana's web flow, set the web one as the
+redirect URI and origin) once the change is proposed. Only an on-chain owner can propose it
+([section 1](#on-chain-owners)), and this is the only way to add one: Hana doesn't register a client ID you send,
+because nothing would prove it is yours. Once your own client is in, an on-chain owner can turn Hana's shared login off
+on the same page. The token's audience then picks your scope. If your scope also holds iOS or Android clients, which can't run Hana's web flow, set the web one as the
 app's **Google web client** on **Login & sessions**. A scope with a client of its own always signs in through it.
 
 Hana can't see your Google client's settings. Any JavaScript origin, extra redirect URI or native app on your client
@@ -633,7 +664,8 @@ await hana.signRaw({ chain: 'stellar', bytes });   // Ed25519 over ≤ 4 KiB →
 await hana.signRaw({ chain: 'evm', digest });      // secp256k1 over 32 bytes → { signature } (r‖s‖v, v ∈ {27, 28})
 ```
 
-The user always approves raw requests, under a red warning that raw signing can authorize any transaction on that
+An on-chain owner of your scope turns it on, on the **Signing** tab ([section 1](#on-chain-owners)); any owner turns
+it off. The user always approves raw requests, under a red warning that raw signing can authorize any transaction on that
 chain. No policy ever covers them. Ask for it only if a standard method can't do the job. With raw signing off,
 `signRaw` is `4100` (`data.reason: 'raw_sign_off'`), also in a tab opened before it was turned off. Bytes in Hana's
 own signing domains are never raw-signed: Stellar bytes starting with `hana-id`, and the session's identity
@@ -654,7 +686,7 @@ example repeated deposits into your contract. It needs two opt-ins:
 Until both happen, matching requests simply get the normal popup. The vault, not your page, checks every request
 against the policy, so an injected script on your page can do no more than the policy allows.
 
-**How to set one.** Write the policy as JSON (below) and paste it on your app's **Signing** tab in the portal:
+**How to set one.** An on-chain owner of your scope ([section 1](#on-chain-owners)) writes the policy as JSON (below) and pastes it on your app's **Signing** tab in the portal:
 **Check and preview** runs the same validator the vault uses, lists any problem and shows the consent screen your users
 will see; **Propose this policy (confirm with Google)** then announces it, and it takes effect after the delay. One
 policy change can wait at a time. You can run the validator yourself first:

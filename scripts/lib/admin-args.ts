@@ -10,7 +10,8 @@ export function ownersFromArgs(near: string[], google: string[]): Owner[] {
       return { Near: { account_id } };
     }),
     ...google.map((sub) => {
-      if (!sub || sub.includes('#') || sub.length > 255) throw new CliError(`Invalid Google sub: ${sub}`);
+      // A Google `sub` is digits (up to 255): nothing else reaches the contract as a Google owner from here.
+      if (!/^[0-9]{1,255}$/u.test(sub)) throw new CliError(`Invalid Google sub (digits only): ${sub}`);
       return { Oidc: { provider: GOOGLE_PROVIDER, sub } };
     }),
   ];

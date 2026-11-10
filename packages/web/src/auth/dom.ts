@@ -68,6 +68,20 @@ export function addressText(d: Dom, address: string, tag: 'span' | 'strong' = 's
   return el;
 }
 
+/**
+ * An email address with its mailbox name hidden, for a screen whose sign-in has ended: the first character of the
+ * local part, `•••`, then `@` and the domain in full ("a•••@example.com"). A first character that isn't a letter, digit,
+ * mark, punctuation or symbol (a control, format or bidi character, a space) is hidden too; so is everything when the
+ * address has no `@`. The first character is a whole code point, never half a surrogate pair.
+ */
+export function maskedAddress(address: string): string {
+  const at = address.lastIndexOf('@');
+  if (at < 0) return '•••';
+  const first = Array.from(address.slice(0, at))[0] ?? '';
+  const shown = /^[\p{L}\p{N}\p{M}\p{P}\p{S}]$/u.test(first) ? first : '';
+  return `${shown}•••@${address.slice(at + 1)}`;
+}
+
 /** A titled error panel; `code` is the protocol error code, shown small for support. */
 export function errorView(d: Dom, title: string, message: string, code?: string): HTMLElement {
   return d.h(

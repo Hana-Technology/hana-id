@@ -31,6 +31,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mpcNetwork, readJson, simulateMpc } from '../../../core/test/helpers.ts';
+import { maskedAddress } from '../../src/auth/dom.ts';
 import { homeApi } from '../../src/auth/home-api.ts';
 import type { HomeEmailApi, HomeIdentityCommitment, HomeSessionCommitment } from '../../src/auth/home-email.ts';
 import { HOME_EXPORT_ABOUT, HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_OPEN, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportRoute } from '../../src/auth/home-export.ts';
@@ -1291,6 +1292,59 @@ describe('H10: email users (D463)', () => {
     await h.toAppByEmail('grace@example.org');
     expect(who()?.textContent).toBe('Signed in as grace@example.org');
     expect(pageText()).not.toContain('lovelace');
+  });
+
+  it('once the sign-in ends the header masks the address; signing in again shows it in full; the code still goes to it', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer });
+    await h.toAppByEmail('ada.lovelace@mail.example.com');
+    const who = () => document.getElementById('home-who')?.textContent;
+    advance(8 * 60_000 + 1);
+    // Ending: still the full address.
+    expect(h.page.session).toBe('ending');
+    expect(who()).toBe('Signed in as ada.lovelace@mail.example.com');
+    advance(2 * 60_000);
+    expect(h.page.session).toBe('ended');
+    expect(who()).toBe('Signed in as a•••@mail.example.com');
+    expect(pageText()).not.toContain('lovelace');
+    // "Sign in again" still sends the code to the full address, kept in memory.
+    h.click('home-sign-in-again');
+    expect(document.getElementById('home-email-to')?.textContent).toBe('ada.lovelace@mail.example.com');
+    h.click('home-email-send');
+    await until(() => document.getElementById('home-email-code') !== null, 'the code screen');
+    expect(issuer.starts.at(-1)!.email).toBe('ada.lovelace@mail.example.com');
+    (document.getElementById('home-email-code') as HTMLInputElement).value = '123456';
+    h.submit('home-email-code');
+    await until(() => h.page.session === 'active', 'the new sign-in');
+    expect(who()).toBe('Signed in as ada.lovelace@mail.example.com');
+    // Ended again, then signed out: nothing of it is left.
+    advance(10 * 60_000 + 1);
+    expect(who()).toBe('Signed in as a•••@mail.example.com');
+    h.click('home-sign-out');
+    expect(document.getElementById('home-who')).toBeNull();
+    expect(pageText()).not.toContain('mail.example.com');
+    // Another account after an ended one: its own address, in full.
+    issuer.sub = `e1.${'C'.repeat(43)}`;
+    await h.toAppByEmail('grace@example.org');
+    expect(who()).toBe('Signed in as grace@example.org');
+  });
+
+  it('maskedAddress: first character, •••, the domain in full; never markup, never a hidden character', () => {
+    expect(maskedAddress('ada@example.com')).toBe('a•••@example.com');
+    expect(maskedAddress('a@example.com')).toBe('a•••@example.com');
+    expect(maskedAddress('@example.com')).toBe('•••@example.com');
+    expect(maskedAddress('no-at-sign')).toBe('•••');
+    // The last `@` splits (a quoted local part may hold one).
+    expect(maskedAddress('"a@b"@example.com')).toBe('"•••@example.com');
+    // A whole code point, never half a surrogate pair; a bidi, format or space first character is hidden too.
+    expect(maskedAddress('\u{1F600}x@example.com')).toBe('\u{1F600}•••@example.com');
+    expect(maskedAddress('‮moc@example.com')).toBe('•••@example.com');
+    expect(maskedAddress('​x@example.com')).toBe('•••@example.com');
+    expect(maskedAddress(' x@example.com')).toBe('•••@example.com');
+    const long = `${'l'.repeat(64)}@${'sub.'.repeat(40)}example.com`;
+    expect(maskedAddress(long)).toBe(`l•••@${'sub.'.repeat(40)}example.com`);
+    // Text only: what it returns is placed as a text node; tags stay characters.
+    expect(maskedAddress('<img src=x onerror=1>@x.com')).toBe('<•••@x.com');
   });
 
   it('a hostile-looking address renders as text: no markup, no link, bidi isolated', async () => {

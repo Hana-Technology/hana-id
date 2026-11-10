@@ -91,6 +91,19 @@ describe('docs/integration.md', () => {
     for (const re of internal) expect(text.match(re)?.[0] ?? null, String(re)).toBeNull();
   });
 
+  it('onboarding: the owners accept before the scope is set up, and the changes the contract checks name on-chain owners', () => {
+    const s1 = guide.slice(guide.indexOf('## 1. Your app and the partner portal'), guide.indexOf('## 2. Install'));
+    expect(s1.indexOf('Sign in with Google to accept')).toBeLessThan(s1.indexOf('Hana registers your scope'));
+    expect(s1).toContain('<a id="on-chain-owners"></a>**On-chain owners.**');
+    expect(s1).toContain('**Propose: set the on-chain owners to your organisation\'s owners**');
+    expect(s1).toMatch(/- \*\*Add\*\*: on-chain owners/u);
+    // The policy and raw signing name who proposes them; the client id goes to Hana only before the scope exists.
+    expect(guide).toMatch(/An on-chain owner of your scope \(\[section 1\]\(#on-chain-owners\)\) writes the policy/u);
+    expect(guide).toContain('An on-chain owner of your scope turns it on');
+    expect(guide).not.toMatch(/Or send Hana the client ID\./u);
+    expect(guide).toContain('works only before your scope is set up');
+  });
+
   it('starts with the content: one short Last verified line, not a changelog', () => {
     const lines = guide.split('\n').filter((l) => l.startsWith('Last verified'));
     expect(lines).toHaveLength(1);

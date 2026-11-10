@@ -20,12 +20,27 @@ The left nav groups the screens by task (D420):
 | Group | Screens |
 |---|---|
 | Overview | **Status** (D425): the landing page (`/`), every part of the env at a glance, below |
-| Partners | **Organisations**: the list and "Invite a new partner" (a new organisation's first owner); an organisation's members, invites, owner grants, apps ("Create an app", "Move a legacy scope here"), security contacts, recent app changes and its danger zone (freeze, suspend every app); an app's suspension switches, allowed origins, guarded changes, signing settings, publishable keys and danger zone. **Legacy apps** (`org_legacy`) has its own page: its scopes, each with "Move to an organisation" |
+| Partners | **Organisations**: the list and "Invite a new partner" (a new organisation's first owner); an organisation's members, invites, owner grants, "Register a scope for this organisation" (below), apps ("Create an app", "Move a legacy scope here"), security contacts, recent app changes and its danger zone (freeze, suspend every app); an app's suspension switches, allowed origins, guarded changes, signing settings, publishable keys and danger zone. **Legacy apps** (`org_legacy`) has its own page: its scopes, each with "Move to an organisation" |
 | Support | **Users** (C8b), **Support ID lookup** (C15) |
 | Security | **Security & monitoring**, **Feed and notices**, **Pending upgrades**, **Playbooks** (C14), **Audit log** (the console's rows, an org's app changes, the issuer's directory reads) |
 | Email login | **Email issuer**: tokens, mail with bounce and complaint rates, refusals by limit, alert occurrences per app and day, and the signer policy against the pins (batch 10's KMS figures say so). **Account links**: links per app and day, today against the 7-day median (build plan batch 9, D446, D448) |
 | Money | **Reports**, **Statements**, **Rates** (C12) |
 | System | **Retention** (C13) |
+
+**Register a scope for this organisation (D651).** A partner's apps need a scope on chain whose Google owners are
+owners of the organisation, and registering one is a council action, so the panel prepares it and sends nothing. It
+lists the organisation's owners who have accepted (each with their Google account, the `sub` the contract stores) as
+checkboxes, the first five ticked (the contract's 1–5), and everyone who can't be one yet with why (an owner invite not
+accepted, an owner in the grant period, a disabled owner); then "Hana's shared Google login" (ticked) and the
+partner's own Google client id (optional). It checks the choices as the contract and "Create an app" would and shows
+the exact `scope:register` command for the env (`GET /api/me` `scopeRegistration`, from the `SCOPE_REGISTRATION` var):
+both council votes in one run on a dev env on testnet (`--member`/`--approve-with`), one member's proposal elsewhere,
+the owner's key for an account owner; with what to run it on, what it prints (`Registered scope: s…`) and the next
+steps ("Create an app" with that id; the partner's on-chain owner adds origins). No owner yet: "Waiting for the
+partner" and no form. An organisation that already has an app keeps it behind "Prepare a scope:register command". The
+`sub` is shown to staff and in the command only, never in a URL or a log. The organisation's registered scopes are not
+offered in "Create an app" (no view lists them: D655). Tests: `test-spa/scope-register.test.ts`. The full onboarding
+sequence: `docs/operations.md` "Onboarding a partner on testnet".
 
 **Users (C8b; D275 as confirmed 2026-11-05).** Search the email issuer's user directory by address (a full address
 exactly, else ≥ 3 characters of one), account kind, app, sub or "unverified only" (`POST /api/users/search`; a support
@@ -128,8 +143,9 @@ screen (D420; tests `test-spa/ux.test.ts`).
 
 - **Never offer an action that can't work.** What the API would refuse for a reason the page already knows is hidden
   or disabled with one line saying why: Legacy apps (`org_legacy`) has no members, so it shows no invite, member,
-  owner-grant, freeze or app form, and offers "Invite a new partner" and, per scope, "Move to an organisation"
-  instead; an organisation without a security contact gets no "Create an app"; "Issue statement" is disabled until
+  owner-grant, freeze, app or scope-registration form, and offers "Invite a new partner" and, per scope, "Move to an
+  organisation" instead; an organisation without a security contact gets no "Create an app"; the scope-registration
+  panel shows no command until its choices would work, and none while no owner has accepted; "Issue statement" is disabled until
   the month is over, settled and rated. Everything else is left to the server, its refusal mapped: a scope moves (or
   gets an app) only when each of its Google-account owners on chain is an owner of the target organisation (a scope
   owned only by a NEAR account moves freely), else `scope_conflict`.
@@ -234,7 +250,8 @@ the warning at once and the expired banner 4 minutes later; `0.4` the expired ba
 
 `test-spa/preview.ts` serves `public/` with the Worker's own headers and CSP and answers `/api/*` from
 `test-spa/preview-data.ts`: fake organisations (Legacy apps with its scopes, partners with members, invites and
-grants, a frozen one, one without a security contact), apps, users, a Support ID lookup, the feed, monitoring,
+grants, a frozen one, one without a security contact, and for the scope-registration panel Orbit Labs (an owner invite
+not accepted) and Corvid Pay (two owners, one in the grant period, an open owner invite, no app)), apps, users, a Support ID lookup, the feed, monitoring,
 upgrades, the real playbooks, reports, statements, rates and retention. Writes succeed, except the refusals the real
 services give for `org_legacy`. It binds to the loopback address, has no Access, secret or network, and is not part
 of the Worker (wrangler serves `public/` alone; a source check keeps `public/` to the SPA's three files and the brand
@@ -280,7 +297,7 @@ lookup screen and the Users screen's ways into it (`support.test.ts`), the UI pr
 the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`), and the System status page over each
 preview scenario's real answer (`status.test.ts`); the status route's checks, call count and cache are `test/status.test.ts`.
 
-Last verified: 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: an alert's "Details and deliveries" shows the latest result per channel above the last 20 rows, D570); 2026-11-09 (branch `feat/email-login-9`, not merged: the Email login screens, D446, D448); 2026-11-09 (branch `chore/status-access-followups`: System status's NEAR RPC tile, one line per endpoint the API can use, the calls per load and the preview's `critical`, D435's note; the Access session's length, D437); 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
+Last verified: 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: "Register a scope for this organisation", the staff "Propose origins" help, `ux.test.ts`'s `scope:register` rule changed, D651, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: an alert's "Details and deliveries" shows the latest result per channel above the last 20 rows, D570); 2026-11-09 (branch `feat/email-login-9`, not merged: the Email login screens, D446, D448); 2026-11-09 (branch `chore/status-access-followups`: System status's NEAR RPC tile, one line per endpoint the API can use, the calls per load and the preview's `critical`, D435's note; the Access session's length, D437); 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
 before `exp`, `GET /api/me` `accessExp`, `/signed-in`, the preview's `PREVIEW_SESSION_MIN`, `session.test.ts`, D424);
 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

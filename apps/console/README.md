@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer shows the scope's internal id); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
+Last verified: 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer shows the scope's internal id); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
 2026-11-06 (branch `fix/session-expiry-ux`: the session's end mid-task, the banner, the warning before
 the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenarios, D424); 2026-11-06 (branch
 `feat/console-ux-redesign`: the SPA's layout, error display and the local preview, D421).
@@ -34,7 +34,11 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
 - **Errors**: shown with `ErrorNote` (plain text for the code, the server's detail when it adds something, the code and
   HTTP status small). A new error code gets its line in `web/src/messages.ts`.
 - **No control that can't work**: where the console would refuse (a viewer, a frozen org, a limit), the page shows one
-  line saying why (`Why`) instead of the control. Destructive immediate writes use `ConfirmButton` (a second click in
+  line saying why (`Why`) instead of the control. That includes the changes the API checks against the scope's
+  on-chain owners (adding origins, proposing a policy, turning raw signing on, the scope page's owner actions, the
+  email client): for an owner who isn't an on-chain owner, `pages/app/ChainOwner.tsx` reads the scope page's route
+  once per page and says who the on-chain owners are and that one of them can add this account from the scope page
+  (D652); kill switches stay. Destructive immediate writes use `ConfirmButton` (a second click in
   the page, never a browser dialog).
 - **When the session ends mid-task** (2 h idle, 12 h absolute, or revoked: `docs/security.md` "Console Worker"; D424).
   A request answered 401 after this page has had a session isn't an error under the button and doesn't jump to
@@ -101,6 +105,7 @@ corepack pnpm --filter @hana-id/console preview:web   # http://127.0.0.1:5178
 
 Pick a scenario, then a page: `http://127.0.0.1:5178/__preview/<scenario>?to=<path>`. Scenarios: `owner` (the
 default), `viewer`, `frozen`, `multi` (two organisations), `new-org` (no apps), `signed-out`, `errors`,
+`not-chain-owner` (an owner whose Google account isn't an on-chain owner of the scope),
 `session-ending` (4 min before the session's 12 h end: the warning) and `session-ended` (reads work, every write
 answers 401: the "Your session has ended" banner; switch to `owner` in another tab, then Try again). The org is
 `org_7Hq2Lm9Xc4`; its apps `app_Lm4Pq9Zs2v` (live, with changes waiting), `app_Ts6Ry1Hn8b` (test), `app_Rw2Bt7Kd5c`

@@ -26,9 +26,10 @@ ESM only, with TypeScript declarations. Use a bundler (Vite, webpack, esbuild, N
 ## Before you start
 
 During the pilot Hana creates your app (send Hana the app name users will see, your first origins, whether you use
-Hana's shared Google client or your own, and who manages it). You then manage it in Hana's **partner portal**
-(sandbox-dev: `https://hana-id-console-sandbox-dev.tingtc.workers.dev`), where you sign in with Google from your
-invite email. On your app's page:
+Hana's shared Google client or your own, the Google address of each person who manages it, and a security contact).
+Those people accept their invite email first (**Sign in with Google**): their Google accounts become your scope's
+on-chain owners, the only ones who can add origins or set a policy. You then manage the app in Hana's **partner
+portal** (sandbox-dev: `https://hana-id-console-sandbox-dev.tingtc.workers.dev`). On your app's page:
 
 - the header shows the **Publishable key** (`pk_test_…`, public: ship it in your page) and the **App ID** (`app_…`,
   for your backend's identity-token check), each with a Copy button;

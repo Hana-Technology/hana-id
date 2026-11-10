@@ -48,6 +48,16 @@ export interface EmailApi {
   verify(challengeId: string, code: string): Promise<Verified>;
 }
 
+/**
+ * A number the issuer put in a refusal: its body is `{error, code, data}` (apps/email-issuer http.ts), so the client's
+ * ApiError holds it under `details.data`. Null when absent or not an integer.
+ */
+export function issuerDetail(err: ApiError, name: string): number | null {
+  const data = err.details.data;
+  const v = typeof data === 'object' && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>)[name] : undefined;
+  return typeof v === 'number' && Number.isSafeInteger(v) ? v : null;
+}
+
 const bad = (what: string): ApiError => new ApiError(502, 'bad_response', `Unexpected ${what} response`, null, null);
 const isMs = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 

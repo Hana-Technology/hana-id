@@ -27,7 +27,7 @@
 // Access tokens are self-describing test values the stack reads back (google-backend.ts `accessTokenFor`).
 import { base64UrlEncode, utf8 } from '@hana-id/core';
 import { accessTokenFor, readAccessToken, tokeninfoAnswer } from './server/google-backend.ts';
-import { AUTH_ORIGIN, LIVE_AUTH_ORIGIN } from './stack.ts';
+import { AUTH_ORIGIN, EXIT_CLIENT_ID, LIVE_AUTH_ORIGIN } from './stack.ts';
 
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const GOOGLE_CERTS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
@@ -38,6 +38,8 @@ const TOKENINFO_OTHER_ORIGIN = 'https://www.google.com';
 export const CALLBACK_URL = `${AUTH_ORIGIN}/login/callback`;
 /** The registered redirect URIs: each env's authOrigin callback (E2E_ENV and live mode's LIVE_ENV). */
 export const CALLBACK_URLS: readonly string[] = Object.freeze([CALLBACK_URL, `${LIVE_AUTH_ORIGIN}/login/callback`]);
+/** Hana Home's exit client's only redirect URI (D491), as the deploy checklist registers it: no other client may use it. */
+export const HOME_CALLBACK_URLS: readonly string[] = Object.freeze([`${AUTH_ORIGIN}/home/callback`, `${LIVE_AUTH_ORIGIN}/home/callback`]);
 
 export interface StubAccount {
   sub: string;
@@ -103,7 +105,9 @@ export function checkAuthRequest(url: URL): AuthCheck {
   for (const k of url.searchParams.keys()) if (!ALLOWED_PARAMS.has(k)) return { ok: false, problem: `unexpected parameter ${k}` };
   for (const k of url.searchParams.keys()) if (url.searchParams.getAll(k).length !== 1) return { ok: false, problem: `${k} repeated` };
   const redirects = url.searchParams.getAll('redirect_uri');
-  if (redirects.length !== 1 || !CALLBACK_URLS.includes(redirects[0] as string)) return { ok: false, problem: `redirect_uri must be one of ${CALLBACK_URLS.join(', ')}` };
+  // Each client's registered redirect URIs, as Google enforces them: the exit client answers only to /home/callback.
+  const allowed = url.searchParams.get('client_id') === EXIT_CLIENT_ID ? HOME_CALLBACK_URLS : CALLBACK_URLS;
+  if (redirects.length !== 1 || !allowed.includes(redirects[0] as string)) return { ok: false, problem: `redirect_uri must be one of ${allowed.join(', ')}` };
   const redirectUri = redirects[0] as string;
   if (one(url, 'response_mode') !== 'fragment') return { ok: false, problem: 'response_mode must be fragment' };
   const clientId = one(url, 'client_id');

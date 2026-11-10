@@ -5,7 +5,7 @@
 //   directory.
 // - "every screen": the page's states over a routed `GET /v1/home/apps` (the sign-in is still the real one). With
 //   HANA_SHOTS_DIR set (Chromium only) it saves each screen there at desktop and phone width, light and dark.
-import { API_URL, AUTH_ORIGIN, EVIL_ORIGIN, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
+import { API_URL, AUTH_ORIGIN, EVIL_ORIGIN, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { chooseAccount, expect, login, newApp, openPartner, test, walletDirectory } from './fixtures.ts';
 import { routeApps, shots, signIn } from './home-steps.ts';
 
@@ -27,8 +27,9 @@ test('lists the app the user signed in to, with its addresses and Support ID, fr
   const response = await home.goto(`${AUTH_ORIGIN}/home`);
   const csp = response?.headers()['content-security-policy'] ?? '';
   expect(csp).toContain("frame-ancestors 'none'");
-  // The API, both NEAR providers (the per-app derive reads NEAR itself, a member's path on each alone) and Google's keys.
-  expect(csp).toContain(`connect-src ${new URL(API_URL).origin} ${new URL(NEAR_RPC).origin} ${new URL(NEAR_RPC_FALLBACK).origin} https://www.googleapis.com`);
+  // The API, both NEAR providers (the per-app derive reads NEAR itself, a member's path on each alone), Google's keys and
+  // the email issuer (its email sign-in, H10).
+  expect(csp).toContain(`connect-src ${new URL(API_URL).origin} ${new URL(NEAR_RPC).origin} ${new URL(NEAR_RPC_FALLBACK).origin} https://www.googleapis.com ${new URL(ISSUER_URL).origin}`);
   // Whoever opened Hana Home keeps no handle on it; the sign-in child Home opens itself still reaches Home (below).
   expect(response?.headers()['cross-origin-opener-policy']).toBe('same-origin-allow-popups');
   await expect(home.getByRole('heading', { name: 'Hana Home' })).toBeVisible();

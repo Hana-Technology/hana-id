@@ -9,7 +9,7 @@
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import { CKD_DST, base64Decode, base64Encode, ckdAppId, fromUtf8, identityKeyHex, toHex, utf8 } from '@hana-id/core';
-import { E2E_ENV, GOOGLE_CLIENT_ID, TEST_MPC_MSK } from '../stack.ts';
+import { E2E_ENV, EXIT_CLIENT_ID, GOOGLE_CLIENT_ID, TEST_MPC_MSK } from '../stack.ts';
 import { type Handler, json } from './http.ts';
 
 const G1 = bls.G1.ProjectivePoint;
@@ -211,8 +211,21 @@ export class Chain {
       case 'get_self_issued':
         return { value: args.provider === 'email' && this.emailKey ? { provider: 'email', signers: [{ id: 'hana', kids: [this.emailKey.kid] }], required: 1, overlap_until_ms: null } : null };
       case 'get_config':
-        // A v3 contract created with `new` (or after `accept_unrecorded_wallets`): links are open (D135).
-        return { value: { console_audiences: [], shared_clients: [['google', GOOGLE_CLIENT_ID]], pending_shared_clients: [], unrecorded_wallets: false } };
+        // A v3 contract created with `new` (or after `accept_unrecorded_wallets`): links are open (D135). Contract v4's exit
+        // list (H6): Hana Home's exit Google client and the email exit, in force, as on sandbox-dev.
+        return {
+          value: {
+            console_audiences: [],
+            shared_clients: [['google', GOOGLE_CLIENT_ID]],
+            pending_shared_clients: [],
+            unrecorded_wallets: false,
+            exit_clients: [
+              ['google', EXIT_CLIENT_ID],
+              ['email', 'hana-home'],
+            ],
+            pending_exit_clients: [],
+          },
+        };
       case 'get_identity':
         return typeof args.scope_id === 'string' && typeof args.provider === 'string' && typeof args.sub === 'string' ? { value: this.identityView(args.scope_id, args.provider, args.sub) } : undefined;
       case 'get_account':

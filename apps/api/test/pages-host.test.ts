@@ -49,6 +49,7 @@ const PAGE_FILES = {
   '/export.html': { body: '<!doctype html><title>export</title>', type: 'text/html; charset=utf-8' },
   '/share-email.html': { body: '<!doctype html><title>share</title>', type: 'text/html; charset=utf-8' },
   '/home.html': { body: '<!doctype html><title>home</title>', type: 'text/html; charset=utf-8' },
+  '/home/callback.html': { body: '<!doctype html><title>home callback</title>', type: 'text/html; charset=utf-8' },
   '/login.js': { body: 'export {}', type: 'text/javascript' },
   '/style.css': { body: 'body{}', type: 'text/css' },
 };
@@ -115,6 +116,8 @@ describe('auth origin Worker', () => {
       '/share-email': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
       // Hana Home: the API, Google's JWKS and, for opening a wallet, the NEAR RPC: exactly the export window's origins.
       '/home': `${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`,
+      // D491: the exit Google client's only redirect: the relay write to the API, nothing else.
+      '/home/callback': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
     };
     expect(Object.keys(expected)).toEqual([...AUTH_PAGE_PATHS]);
     for (const path of AUTH_PAGE_PATHS) {
@@ -157,6 +160,19 @@ describe('auth origin Worker', () => {
     }
   });
 
+  it('Hana Home reaches the email issuer too in an env with one (H10); /home/callback never does', async () => {
+    const env = () => authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' });
+    expect(csp(await call(authWorker, env(), `${AUTH}/home`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com https://issuer.test`);
+    expect(csp(await call(authWorker, env(), `${AUTH}/home/callback`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
+    expect(csp(await call(authWorker, env(), `${AUTH}/export`))).not.toContain('issuer.test');
+    // A malformed issuer URL doesn't take Hana Home down: it is served without the issuer's origin (never a looser
+    // policy), so only its email sign-in fails; its callback works too.
+    const broken = await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/home`);
+    expect(broken.status).toBe(200);
+    expect(csp(broken)).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`);
+    expect((await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/home/callback`)).status).toBe(200);
+  });
+
   it('token_first (D270): with an email issuer the callback may also reach Google’s tokeninfo, and only the callback', async () => {
     const withIssuer = authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' });
     const callback = await call(authWorker, withIssuer, `${AUTH}/login/callback`);
@@ -183,7 +199,7 @@ describe('auth origin Worker', () => {
     }
     expect(csp(await withFiles('/login'))).toBe(`${BASE.replace("img-src 'self' data:", IMG)}; frame-ancestors 'none'`);
     expect(csp(await withFiles('/login/callback'))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
-    expect(AUTH_PAGE_PATHS.filter((p) => !AUTH_LOGO_PATHS.includes(p))).toEqual(['/login/callback']);
+    expect(AUTH_PAGE_PATHS.filter((p) => !AUTH_LOGO_PATHS.includes(p))).toEqual(['/login/callback', '/home/callback']);
     // The origin only, whatever path or trailing slash the var carries.
     expect(csp(await call(authWorker, authEnv({ FILES_ORIGIN: 'https://files.test/' }), `${AUTH}/approve`))).toContain(`${IMG};`);
     // A FILES_ORIGIN that is no origin is left out (logged): the page still works, with the stricter policy.

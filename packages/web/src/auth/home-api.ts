@@ -39,8 +39,13 @@ export interface HomeConfig {
   signer: string;
   /** The Google client the Home sign-in uses, or null when none is in force. */
   sharedGoogleClientId: string | null;
-  /** The client Home falls back to for an app whose own sign-in is gone (the per-app sign-in's, not used here). */
+  /**
+   * Hana Home's exit Google client (D484): its own sign-in uses it when no shared client is in force, and opening the
+   * wallet of an app whose own sign-in route is gone (D490). Google answers it at `/home/callback` only (D491).
+   */
   exitGoogleClientId: string | null;
+  /** Email sign-in is open: the env has an email issuer and its Home audience is on the exit list (H10). */
+  emailSignIn: boolean;
 }
 
 export const HOME_COVERAGES = ['shared', 'hana_client', 'exit', 'partner_client', 'email', 'none', 'unknown'] as const;
@@ -184,7 +189,8 @@ export function parseHomeConfig(body: unknown): HomeConfig {
   const shared = clientId(body.sharedGoogleClientId);
   const exit = clientId(body.exitGoogleClientId ?? null);
   if (shared === undefined || exit === undefined) throw bad('/v1/home/config');
-  return { serverTimeMs: body.serverTimeMs as number, signer: body.signer, sharedGoogleClientId: shared, exitGoogleClientId: exit };
+  // An API from before email sign-in sends no `emailSignIn`: read as off.
+  return { serverTimeMs: body.serverTimeMs as number, signer: body.signer, sharedGoogleClientId: shared, exitGoogleClientId: exit, emailSignIn: body.emailSignIn === true };
 }
 
 /** The query string of a listing request (empty for the first page). */
@@ -215,11 +221,31 @@ export interface HomeIdentity {
   readonly nonce: string;
   /** Whether a token is attached and the identity hasn't been ended. */
   readonly usable: boolean;
+  /**
+   * When this sign-in really ends: its own end, or the attached token's expiry if that comes first (an email token lives
+   * 10 minutes, so an email sign-in ends before its 15; a Google token outlives it). The page's warning and end use this.
+   */
+  readonly endsAtMs: number;
+  /** The attached token while usable, else null: an email sign-in's goes to the issuer with a per-app code request. */
+  readonly token: string | null;
   /** Attaches the token Google answered for `nonce` (once). */
   attach(token: string): void;
   /** `x-hana-home` for one request, with a counter this key hasn't used. Throws once ended, or before a token. */
   header(method: string, url: URL, body: Uint8Array): Promise<string>;
   end(): void;
+}
+
+/** A token's `exp` in ms, read without a check (a compact JWT or the issuer's JWS JSON); +Infinity when it has none. */
+export function tokenExpiry(token: string): number {
+  try {
+    const payload = token.startsWith('{') ? (JSON.parse(token) as { payload?: unknown }).payload : token.split('.')[1];
+    if (typeof payload !== 'string') return Number.POSITIVE_INFINITY;
+    const json = atob(payload.replace(/-/gu, '+').replace(/_/gu, '/') + '='.repeat((4 - (payload.length % 4)) % 4));
+    const exp = (JSON.parse(json) as { exp?: unknown }).exp;
+    return Number.isSafeInteger(exp) ? (exp as number) * 1000 : Number.POSITIVE_INFINITY;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
 }
 
 /**
@@ -233,6 +259,7 @@ export async function newHomeIdentity(signer: string, nowMs: number): Promise<Ho
   const nonce = homeNonce({ signer, homePublicKey: key.publicKey, expiresAtMs, salt });
   let privateKey: CryptoKey | null = key.keyPair.privateKey;
   let token: string | null = null;
+  let tokenExpMs = Number.POSITIVE_INFINITY;
   let counter = 0;
   return {
     publicKey: key.publicKey,
@@ -242,9 +269,16 @@ export async function newHomeIdentity(signer: string, nowMs: number): Promise<Ho
     get usable() {
       return privateKey !== null && token !== null;
     },
+    get endsAtMs() {
+      return Math.min(expiresAtMs, tokenExpMs);
+    },
+    get token() {
+      return privateKey !== null ? token : null;
+    },
     attach(t) {
       if (token !== null || privateKey === null) throw new Error('The Home identity already has a token');
       token = t;
+      tokenExpMs = tokenExpiry(t);
     },
     async header(method, url, body) {
       const k = privateKey;

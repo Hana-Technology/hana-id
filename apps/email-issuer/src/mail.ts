@@ -2,7 +2,7 @@
 // no images; code mails carry no link at all; the code is never in the subject (lock-screen previews, Q8). The app is
 // "named by the app" (D118): its name is shown only when it passes the display-safety rule, else a neutral wording.
 import { isDisplaySafeLine } from './bytes.ts';
-import type { Purpose } from './commitment.ts';
+import { type Purpose, isHomePurpose } from './commitment.ts';
 import type { MailMessage } from './sender.ts';
 
 const MAX_APP_NAME = 64;
@@ -61,6 +61,16 @@ export function purposeText(purpose: Purpose, appText: string): { subject: strin
         what: `link your Google sign-in to the wallet this email opens in ${appText}`,
         ignore: 'If you didn’t just sign in with Google, ignore this mail: nothing changes.',
       };
+    // Hana Home's codes name Hana Home and the action, never an app: the issuer reads no app for them, and a name the
+    // page sent would let anyone put words in a Hana mail.
+    case 'home':
+      return { subject: 'Your sign-in code for Hana Home', what: 'sign in to Hana Home', ignore: 'If you didn’t try to sign in to Hana Home, ignore this mail.' };
+    case 'home_session':
+      return {
+        subject: 'Your code to open a wallet in Hana Home',
+        what: 'open one of your wallets in Hana Home, where its private key can be shown to move it to another wallet app',
+        ignore: 'If you didn’t ask Hana Home to open a wallet, ignore this mail: nothing changes. Never give this code to anyone: it opens your wallet.',
+      };
   }
 }
 
@@ -70,7 +80,9 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
   const host = hostOf(input.authOrigin);
   const t = purposeText(input.purpose, appText);
   const warning = `Type this code only in the Hana window you opened (${host}). Hana never asks for it by phone, chat or on another site.`;
-  const text = [`Your code to ${t.what} with Hana:`, '', input.code, '', 'It expires in 10 minutes.', '', warning, '', t.ignore, ''].join('\n');
+  // Hana Home's own words already name Hana.
+  const by = isHomePurpose(input.purpose) ? '' : ' with Hana';
+  const text = [`Your code to ${t.what}${by}:`, '', input.code, '', 'It expires in 10 minutes.', '', warning, '', t.ignore, ''].join('\n');
   // Subjects name the app only when it is display-safe; the code is never in a subject.
   const subject = app ? t.subject.replaceAll('“', '').replaceAll('”', '') : purposeText(input.purpose, 'Hana').subject.replace(/ (?:for|in) Hana$/u, '');
   return {
@@ -78,7 +90,7 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
     subject,
     text,
     html: html([
-      `Your code to ${escapeHtml(t.what)} with Hana:`,
+      `Your code to ${escapeHtml(t.what)}${by}:`,
       `<strong style="font-size:24px;letter-spacing:4px;color:#3308a8">${escapeHtml(input.code)}</strong>`,
       'It expires in 10 minutes.',
       escapeHtml(warning),

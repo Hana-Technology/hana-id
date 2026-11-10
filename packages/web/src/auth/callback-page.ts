@@ -170,8 +170,9 @@ export async function runCallbackPage(pageDeps: CallbackPageDeps): Promise<Callb
     return 'refused';
   }
   const taken = takeLogin(win.sessionStorage, fragment.state, now());
-  // A parked entry (D341) is the email page's, for the screen after a cancel: no Google answer may use it.
-  if (!taken || taken.cancelled) {
+  // A parked entry (D341) is the email page's, for the screen after a cancel: no Google answer may use it. An exit
+  // client's entry is `/home/callback`'s alone (D491): an answer that reaches this page for it is never relayed.
+  if (!taken || taken.cancelled || taken.exit) {
     if (taken) zeroTaken(taken);
     d.show(errorView(d, 'Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.'));
     return 'refused';

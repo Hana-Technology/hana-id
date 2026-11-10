@@ -121,9 +121,9 @@ export class Challenge extends DurableObject<Env> {
   }
 
   /** A live challenge's limiter subjects and flags, and whether another code may go out now; null when gone. */
-  peek(now: number = Date.now()): { mailboxKey: string; domainKey: string; appId: string; silent: boolean; owner: OwnerRef | null; budgetShare: number; send: SendCheck } | null {
+  peek(now: number = Date.now()): { mailboxKey: string; domainKey: string; appId: string; scopeId: string; purpose: Purpose; silent: boolean; owner: OwnerRef | null; budgetShare: number; send: SendCheck } | null {
     const rec = this.load(now);
-    return rec ? { mailboxKey: rec.mailboxKey, domainKey: rec.domainKey, appId: rec.appId, silent: rec.silent, owner: rec.owner, budgetShare: rec.budgetShare, send: sendCheck(rec, now) } : null;
+    return rec ? { mailboxKey: rec.mailboxKey, domainKey: rec.domainKey, appId: rec.appId, scopeId: rec.scopeId, purpose: rec.purpose, silent: rec.silent, owner: rec.owner, budgetShare: rec.budgetShare, send: sendCheck(rec, now) } : null;
   }
 
   /**

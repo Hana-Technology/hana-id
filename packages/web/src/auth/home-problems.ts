@@ -65,6 +65,10 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   unknown_consent: 'Hana Home couldn’t find that auto-approve among yours: it has probably ended already. Show your devices again to see what is on now.',
   unknown_email_share: 'Hana Home found nothing you share with that app. Show your devices again to see what you share now.',
   email_sharing_unavailable: 'Hana Home can’t change email sharing right now. Try again later.',
+  // Email (home-email.ts).
+  home_email_unavailable: 'Email sign-in to Hana Home isn’t available right now. Try again later.',
+  email_token_invalid: 'The email sign-in could not be checked. Nothing was shown. Try again.',
+  no_sign_in: 'Hana Home can’t sign you in right now. Try again later.',
 });
 
 /** A code as the page may show it: the API's lowercase snake case only. */

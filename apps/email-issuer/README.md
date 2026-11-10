@@ -13,6 +13,12 @@ It binds no D1 of the API's: it reads apps through the API Worker's read-only `I
 `API`, D434; it replaced the read-write `APP_DB` of D251), so the API must serve `IssuerRpc` before this Worker deploys.
 **Not deployed**; no app enables email yet (the sandbox-dev steps: `docs/operations.md` "Email login on sandbox-dev").
 
+**Hana Home (H10, D616–D621).** `POST /v1/email/home/start` mails a code for Hana Home's own sign-in (audience
+`hana-home`, nonce `homeNonce` of the Home key, end and salt it is sent) or for opening one app's wallet there (the
+scope's `email:{scope}`, else `hana-home` through the exit list's email entry). It takes no publishable key and no nonce:
+the nonce is computed here from typed fields (`src/commitment.ts` `homeCommitmentNonce`, with `@hana-id/core/home`), and
+the gate is the chain alone. `resend` and `verify` are shared; a Home `verify` answers `{idToken}` only.
+
 Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Email issuer"; setup and runbook in
 `docs/operations.md` "Email issuer"; keys and invariants in `docs/security.md`; decisions D195–D199.
 

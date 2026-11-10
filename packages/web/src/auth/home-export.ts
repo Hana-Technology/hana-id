@@ -28,6 +28,7 @@ import {
   ApiError,
   type CkdResult,
   EXPORT_MAX_AUTH_AGE_MS,
+  HOME_EMAIL_AUDIENCE,
   type Jwk,
   RELAY_KEY_BYTES,
   type RelayReadResponse,
@@ -61,6 +62,7 @@ import type { Child, Dom } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { ExportPathError, exportPath } from './export-path.ts';
 import type { HomeAddress, HomeApi, HomeConfig, HomeIdentity, HomeLoginBody, HomeScope } from './home-api.ts';
+import { type HomeEmailApi, type HomeEmailStep, emailTokenClaims, homeEmailStep } from './home-email.ts';
 import { type HomeProblem, deriveRateLimited, homeProblem, plainProblem } from './home-problems.ts';
 import { EXPORT_CLIPBOARD_NOTE, EXPORT_CONFIRMATION, EXPORT_WARNING, type ExportClipboard, type KeyReveal, type ScreenGuard, exportString, keyReveal } from './key-reveal.ts';
 import type { NearReader } from './near-rpc.ts';
@@ -99,11 +101,10 @@ export type HomeExportState =
   | 'refused';
 
 /** Why the section can't offer the move for this app, or null when it can. */
-export type HomeExportOff = 'link' | 'later' | 'none' | 'unknown';
+export type HomeExportOff = 'link' | 'none' | 'unknown';
 
 export const HOME_EXPORT_OFF_TEXT: Readonly<Record<HomeExportOff, string>> = Object.freeze({
   link: 'You came to this app through a link. Hana Home never moves a wallet out from a link, because a link can come from anyone. If you want to move this wallet, open Hana Home yourself, without the link, and find the app in your list or by its name.',
-  later: 'Hana Home can’t move this wallet yet: it would need a sign-in route this page doesn’t have so far. Nothing is lost. If the app still runs, you can keep using the wallet there.',
   none: 'Hana can’t open this wallet from here. If the app still runs, use the app itself.',
   unknown: 'Hana hasn’t checked this app yet. Use “Check now” above, then come back here.',
 });
@@ -127,8 +128,13 @@ export interface HomeExportDeps {
   guard: ScreenGuard;
   clipboard: () => ExportClipboard | null;
   hasFocus: () => boolean;
-  /** Hana Home's live sign-in and the account it is for, or null when there is none. */
-  session: () => { identity: HomeIdentity; account: { provider: 'google' | 'email'; sub: string } } | null;
+  /**
+   * Hana Home's live sign-in and the account it is for, or null when there is none. An email account carries the
+   * address it signed in with (memory only): opening a wallet sends its code there.
+   */
+  session: () => { identity: HomeIdentity; account: { provider: 'google' | 'email'; sub: string; address?: string } } | null;
+  /** The issuer's Home route (home-email.ts), or null in an env without an email issuer. */
+  email: HomeEmailApi | null;
   config: () => HomeConfig | null;
   /** Whether Hana Home's own sign-in child is open: one child at a time. */
   signingIn: () => boolean;
@@ -161,31 +167,45 @@ export interface HomeExport {
   onMessage(e: MessageEvent): boolean;
 }
 
-interface Route {
-  clientId: string;
-  /** `shared`: Hana's shared Google client, for an app with shared login on. `own`: a Google client of the app itself. */
-  kind: 'shared' | 'own';
-}
+/**
+ * How Hana Home signs in again to open an app's wallet:
+ * - `shared`: Hana's shared Google client, for an app with shared login on;
+ * - `own`: a Google client of the app itself;
+ * - `exit`: Hana Home's exit Google client (D468, D484), where the app's own Google route is gone (D490), answered at
+ *   `/home/callback` (D491);
+ * - `email`: a code to the address Hana Home signed in with; the issuer gives the token the app's email client, or the
+ *   email exit where the app dropped it (D485).
+ */
+type Route = { kind: 'shared' | 'own' | 'exit'; clientId: string } | { kind: 'email' };
 
+/** The per-app sign-in's own session (one use, key index 0), and for Google the child's relay. */
 interface Pending {
   scopeId: string;
   route: Route;
-  relayId: string;
-  relayKey: Uint8Array;
-  relayReadKey: Uint8Array;
+  sessionPublicKey: Uint8Array;
+  expiresAtMs: number;
   salt: Uint8Array;
-  params: WindowMessage<'hana:home-derive-params'>;
+  nonce: string;
   privateKey: CryptoKey;
-  helloAccepted: boolean;
+  /** Google only: the relay Google's answer comes back through, and the child's parameters. */
+  relay: { id: string; key: Uint8Array; readKey: Uint8Array; params: WindowMessage<'hana:home-derive-params'>; helloAccepted: boolean } | null;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** Which Google client opens this app's wallets from Hana Home, or why the move can't be offered. */
-export function homeExportRoute(scope: HomeScope, config: HomeConfig | null, fromLink: boolean): Route | HomeExportOff {
+/**
+ * How Hana Home signs in to open this app's wallet for an account of `provider`, or why the move can't be offered.
+ * `email`: whether this page can send email codes (an email issuer in this env).
+ */
+export function homeExportRoute(scope: HomeScope, config: HomeConfig | null, fromLink: boolean, provider: 'google' | 'email' = 'google', email = false): Route | HomeExportOff {
   // The app the page's link named, the user's own included: never from this page load. Whoever sent the link may be
   // coaching the user to take the key out and hand it over.
   if (fromLink) return 'link';
+  if (scope.coverage === 'unknown') return 'unknown';
+  if (provider === 'email') {
+    // An email account's coverage is its scope's email client, or the email exit (the API's coverage.ts).
+    return (scope.coverage === 'email' || scope.coverage === 'exit') && email ? { kind: 'email' } : 'none';
+  }
   switch (scope.coverage) {
     case 'shared': {
       const clientId = scope.googleClientId ?? config?.sharedGoogleClientId ?? null;
@@ -194,13 +214,14 @@ export function homeExportRoute(scope: HomeScope, config: HomeConfig | null, fro
     case 'hana_client':
     case 'partner_client':
       return scope.googleClientId ? { clientId: scope.googleClientId, kind: 'own' } : 'none';
-    case 'exit':
+    case 'exit': {
+      // The exit client in force that the API named, which must be the one Hana Home's settings name.
+      const clientId = config?.exitGoogleClientId ?? null;
+      return clientId && (scope.googleClientId === null || scope.googleClientId === clientId) ? { clientId, kind: 'exit' } : 'none';
+    }
     case 'email':
-      return 'later';
     case 'none':
       return 'none';
-    case 'unknown':
-      return 'unknown';
   }
 }
 
@@ -219,6 +240,9 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
   let pending: Pending | null = null;
   let child: Window | null = null;
   let childName: string | null = null;
+  /** The email route's code screens, and the element they draw in (kept across renders). */
+  let emailStep: HomeEmailStep | null = null;
+  let emailBox: HTMLElement | null = null;
 
   /** The opened wallet's secret (memory only), its addresses, and when it is erased (server-corrected ms). */
   let prk: Uint8Array | null = null;
@@ -261,12 +285,17 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
 
   // ---- erasing ----
   function wipePending(): void {
+    emailStep?.end();
+    emailStep = null;
+    emailBox = null;
     if (!pending) return;
-    pending.relayKey.fill(0);
-    pending.relayReadKey.fill(0);
     pending.salt.fill(0);
-    pending.params.relayKey.fill(0);
-    pending.params.salt.fill(0);
+    if (pending.relay) {
+      pending.relay.key.fill(0);
+      pending.relay.readKey.fill(0);
+      pending.relay.params.relayKey.fill(0);
+      pending.relay.params.salt.fill(0);
+    }
     pending = null;
   }
   function closeChild(): void {
@@ -334,13 +363,22 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
    */
   function begin(): void {
     if (state !== 'intro' || !scope) return;
-    const route = homeExportRoute(scope, deps.config(), fromLink);
+    const live = deps.session();
+    const route = homeExportRoute(scope, deps.config(), fromLink, live?.account.provider ?? 'google', deps.email !== null);
     if (typeof route === 'string') return;
     // Hana Home's own sign-in child is open: one child at a time, and that one comes first.
     if (deps.signingIn()) return refuse(plainProblem('home_signing_in'));
-    if (!deps.session()) return refuse(plainProblem('home_signed_out'));
+    if (!live) return refuse(plainProblem('home_signed_out'));
     run += 1;
     const mine = run;
+    if (route.kind === 'email') {
+      // No child window: the code screens are on this page, once the route is checked on NEAR.
+      state = 'signing_in';
+      render();
+      focusTitle();
+      deps.track(prepare(mine, scope.scopeId, route));
+      return;
+    }
     childName = randomName('hana-home-open-');
     child = win.open(`${env.authOrigin}${LOGIN_CHILD}`, childName, 'popup,width=480,height=640');
     if (!child) return refuse(plainProblem('popup_blocked'));
@@ -351,7 +389,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     // A child closed before it connected: back to the start. After the hello the handle isn't watched, because
     // Google's pages may make it report `closed`; Cancel and the time limit cover that.
     const watch = setInterval(() => {
-      if (run !== mine || child !== opened || state !== 'signing_in' || pending?.helloAccepted) {
+      if (run !== mine || child !== opened || state !== 'signing_in' || pending?.relay?.helloAccepted) {
         clearInterval(watch);
         return;
       }
@@ -378,10 +416,16 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       if (route.kind === 'own') return (await near.view(env.signer, 'scope_for_client', { provider: 'google', aud: route.clientId })) === scopeId ? 'ok' : 'not_covered';
       const [onChain, config] = await Promise.all([near.view(env.signer, 'get_scope', { scope_id: scopeId }), near.view(env.signer, 'get_config', {})]);
       if (onChain === null) return 'not_covered';
-      if (!isObj(onChain) || typeof onChain.allow_shared !== 'boolean') return 'near_unreadable';
-      const list = isObj(config) ? config.shared_clients : undefined;
-      if (!Array.isArray(list)) return 'near_unreadable';
-      return onChain.allow_shared && list.some((c) => Array.isArray(c) && c.length === 2 && c[0] === 'google' && c[1] === route.clientId) ? 'ok' : 'not_covered';
+      if (!isObj(onChain) || typeof onChain.allow_shared !== 'boolean' || !isObj(config)) return 'near_unreadable';
+      const has = (list: unknown, provider: string, aud: string): boolean => Array.isArray(list) && list.some((c) => Array.isArray(c) && c.length === 2 && c[0] === provider && c[1] === aud);
+      // An exit client in force: listed, or a pending addition whose time has come (an older contract has neither).
+      const exitInForce = (provider: string, aud: string): boolean =>
+        has(config.exit_clients, provider, aud) ||
+        (Array.isArray(config.pending_exit_clients) && config.pending_exit_clients.some((p) => isObj(p) && p.provider === provider && p.aud === aud && typeof p.effective_at_ms === 'number' && p.effective_at_ms <= clock.now()));
+      if (route.kind === 'exit') return exitInForce('google', route.clientId) ? 'ok' : 'not_covered';
+      if (route.kind === 'email') return has(onChain.clients, 'email', `email:${scopeId}`) || exitInForce('email', HOME_EMAIL_AUDIENCE) ? 'ok' : 'not_covered';
+      if (!Array.isArray(config.shared_clients)) return 'near_unreadable';
+      return onChain.allow_shared && has(config.shared_clients, 'google', route.clientId) ? 'ok' : 'not_covered';
     } catch {
       return 'near_unreadable';
     }
@@ -400,24 +444,88 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     if (run !== mine) return;
     if (verdict !== 'ok') return refuse(plainProblem(verdict));
     const salt = randomBytes(SALT_BYTES);
+    const expiresAtMs = clock.now() + HOME_EXPORT_SESSION_TTL_MS;
+    const sessionPublicKey = sessionKey.publicKey;
+    const nonce = sessionNonce({ signer: env.signer, scopeId, sessionPublicKey, expiresAtMs, keyIndex: 0, maxUses: 1, salt });
+    const base = { scopeId, route, sessionPublicKey, expiresAtMs, salt, nonce, privateKey: sessionKey.keyPair.privateKey };
+    if (route.kind === 'email') {
+      const p: Pending = { ...base, relay: null };
+      pending = p;
+      return startEmailCode(mine, p);
+    }
     const relayKey = randomBytes(RELAY_KEY_BYTES);
     const relayReadKey = randomBytes(32);
     const relayId = relayIdFor(relayReadKey);
-    const expiresAtMs = clock.now() + HOME_EXPORT_SESSION_TTL_MS;
     const params: WindowMessage<'hana:home-derive-params'> = {
       v: 1,
       t: 'hana:home-derive-params',
       signer: env.signer,
       clientId: route.clientId,
       scopeId,
-      sessionPublicKey: sessionKey.publicKey,
+      sessionPublicKey,
       expiresAtMs,
       salt: Uint8Array.from(salt),
-      nonce: sessionNonce({ signer: env.signer, scopeId, sessionPublicKey: sessionKey.publicKey, expiresAtMs, keyIndex: 0, maxUses: 1, salt }),
+      nonce,
       relayId,
       relayKey: Uint8Array.from(relayKey),
+      // The exit client answers at /home/callback only (D491).
+      ...(route.kind === 'exit' ? { exit: true as const } : {}),
     };
-    pending = { scopeId, route, relayId, relayKey, relayReadKey, salt, params, privateKey: sessionKey.keyPair.privateKey, helloAccepted: false };
+    pending = { ...base, relay: { id: relayId, key: relayKey, readKey: relayReadKey, params, helloAccepted: false } };
+  }
+
+  /**
+   * The email route: the code screens, for the address Hana Home signed in with (memory only), over this session's
+   * commitment. The issuer computes the nonce from it; the token must carry this session's nonce and the account's id.
+   */
+  function startEmailCode(mine: number, p: Pending): void {
+    const live = deps.session();
+    const api = deps.email;
+    const address = live?.account.provider === 'email' ? live.account.address : undefined;
+    if (!live || !api || !address) return refuse(plainProblem('home_signed_out'));
+    const box = d.h('div', { class: 'home-email', attrs: { id: 'home-export-email' } });
+    emailBox = box;
+    emailStep = homeEmailStep({
+      d,
+      root: box,
+      isGesture,
+      now: () => clock.now(),
+      title: 'Get a code to open this wallet',
+      intro: 'Hana Home sends a code to the email you signed in with. The key then stays ready in this page for 5 minutes.',
+      address,
+      // The issuer mails this code only to the address Hana Home is signed in as, shown by the sign-in's own token.
+      start: (to) => api.start(to, 'derive', { scopeId: p.scopeId, sessionPublicKey: p.sessionPublicKey, expiresAtMs: p.expiresAtMs, salt: p.salt }, live.identity.token ?? ''),
+      api,
+      ids: 'home-export-email',
+      onToken: (token) => {
+        if (run !== mine || pending !== p) return;
+        emailStep = null;
+        emailBox = null;
+        const c = emailTokenClaims(token);
+        // The session's own token: its nonce, the app's email client or the email exit, the env's issuer, unexpired.
+        if (!c || c.nonce !== p.nonce || (c.aud !== `email:${p.scopeId}` && c.aud !== HOME_EMAIL_AUDIENCE) || (env.emailIss !== undefined && c.iss !== env.emailIss) || c.exp * 1000 <= clock.now()) {
+          return refuse(plainProblem('email_token_invalid'));
+        }
+        state = 'opening';
+        render();
+        focusTitle();
+        deps.track(open(p, mine, token, { provider: 'email', sub: c.sub }));
+      },
+      onStop: ({ code }) => {
+        if (run !== mine) return;
+        // The issuer no longer takes Hana Home's sign-in (its token's 10 minutes are over): the sign-in has ended.
+        if (code === 'home_identity_invalid') {
+          deps.onSignedOut();
+          return refuse(plainProblem('home_signed_out'));
+        }
+        refuse(plainProblem(code === 'not_covered' || code === 'home_email_unavailable' ? code : 'email_token_invalid'));
+      },
+      onCancel: () => {
+        if (run === mine) cancel();
+      },
+    });
+    render();
+    focusTitle();
   }
 
   /** Whether `w` is on this origin at the sign-in child's address. A window whose address can't be read isn't. */
@@ -431,18 +539,19 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
 
   function onMessage(e: MessageEvent): boolean {
     const p = pending;
-    if (!p || p.helloAccepted || child === null || e.source !== child || e.origin !== env.authOrigin) return false;
+    const r = p?.relay;
+    if (!p || !r || r.helloAccepted || child === null || e.source !== child || e.origin !== env.authOrigin) return false;
     if (!parseWindowMessage(e.data, ['hana:auth-hello'])) return false;
     if (!childAtLogin(child)) return true;
-    p.helloAccepted = true;
+    r.helloAccepted = true;
     try {
-      child.postMessage(p.params, env.authOrigin);
+      child.postMessage(r.params, env.authOrigin);
     } catch {
       refuse(plainProblem('login_cancelled'));
       return true;
     } finally {
       // postMessage cloned it; the page keeps only its own copy of the relay key, for the decrypt.
-      p.params.relayKey.fill(0);
+      r.params.relayKey.fill(0);
     }
     deps.track(awaitToken(p, run));
     return true;
@@ -454,17 +563,20 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     return p.code === 'rate_limited' ? { ...p, text: deriveRateLimited(err.details.retryAfterS) } : p;
   }
 
-  /** Long-polls the relay for Google's answer, then checks the token, resolves the path, derives and decrypts. */
+  /** Long-polls the relay for Google's answer and checks the token, then opens the wallet with it (`open`). */
   async function awaitToken(p: Pending, mine: number): Promise<void> {
     const stale = () => run !== mine || pending !== p;
+    const r = p.relay;
+    if (!r || p.route.kind === 'email') return;
+    const clientId = p.route.clientId;
     const limit = clock.now() + HOME_EXPORT_LOGIN_LIMIT_MS;
-    const readKey = base64UrlEncode(p.relayReadKey);
+    const readKey = base64UrlEncode(r.readKey);
     let value: RelayReadResponse | null = null;
     while (value === null) {
       if (stale()) return;
       if (clock.now() > limit) return refuse(plainProblem('login_timeout'));
       try {
-        value = await deps.relay.readRelay(p.relayId, readKey, RELAY_WAIT_S);
+        value = await deps.relay.readRelay(r.id, readKey, RELAY_WAIT_S);
       } catch (err) {
         if (stale()) return;
         // A slot that is gone or forbidden never recovers; anything else is the wait itself failing, so it goes on.
@@ -479,28 +591,36 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     render();
     focusTitle();
 
-    let secret: Uint8Array | null = null;
+    // 2. Google's answer: an ID token of this client for this session's nonce, from a sign-in made just now.
     try {
-      // 2. Google's answer: an ID token of this client for this session's nonce, from a sign-in made just now.
-      let token: string;
-      let who: { provider: 'google'; sub: string };
-      const payload = await decryptRelayPayload(p.relayKey, p.relayId, value).catch(() => null);
+      const payload = await decryptRelayPayload(r.key, r.id, value).catch(() => null);
       if (stale()) return;
       if (payload === null) return refuse(plainProblem('token_invalid'));
       if ('error' in payload) return refuse(plainProblem(payload.error === 'access_denied' ? 'login_cancelled' : 'google_error', payload.error === 'access_denied' ? 'The sign-in was cancelled.' : undefined));
       if (!isRelayToken(payload) || payload.accessToken !== undefined || payload.access !== undefined || payload.caseB !== undefined || payload.as !== undefined || isJsonFormToken(payload.idToken)) {
         return refuse(plainProblem('token_invalid'));
       }
-      const checked = await verifyGoogleIdToken(payload.idToken, { clientId: p.route.clientId, nonce: p.params.nonce, nowMs: clock.now(), jwks: deps.jwks }).catch(() => null);
+      const checked = await verifyGoogleIdToken(payload.idToken, { clientId, nonce: p.nonce, nowMs: clock.now(), jwks: deps.jwks }).catch(() => null);
       if (stale()) return;
       if (checked === null) return refuse(plainProblem('api_unavailable', 'Google’s keys could not be read. Try again.'));
       if (!checked.ok) return refuse(plainProblem(checked.code === 'token_has_pii' ? 'token_has_pii' : 'token_invalid'));
       // Google sends no auth_time today even with max_age=0, so its absence is accepted; when present it must be fresh.
       if (checked.token.authTime !== null && checked.token.authTime * 1000 < clock.now() - EXPORT_MAX_AUTH_AGE_MS) return refuse(plainProblem('stale_sign_in'));
-      token = payload.idToken;
-      who = { provider: 'google', sub: checked.token.sub };
+      await open(p, mine, payload.idToken, { provider: 'google', sub: checked.token.sub });
+    } catch {
+      if (!stale()) refuse(plainProblem('derive_failed'));
+    }
+  }
 
-      // The same account as Hana Home's sign-in, checked here before anything is sent.
+  /**
+   * Steps 3 to 5 with the per-app sign-in's token (Google's, checked against Google's keys; or the issuer's, whose
+   * nonce and audience were checked): the account must be Hana Home's own, then the path, the one derive, the decrypt.
+   */
+  async function open(p: Pending, mine: number, token: string, who: { provider: 'google' | 'email'; sub: string }): Promise<void> {
+    const stale = () => run !== mine || pending !== p;
+    let secret: Uint8Array | null = null;
+    try {
+      // The same account as Hana Home's sign-in (the method and its id), checked here before anything is sent.
       const live = deps.session();
       if (!live) return refuse(plainProblem('home_signed_out'));
       if (live.account.provider !== who.provider || live.account.sub !== who.sub) return refuse(plainProblem('home_account_mismatch'));
@@ -524,8 +644,8 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       const signature = await signDerive(p.privateKey, 1, pk1, pk2);
       const body: HomeLoginBody = {
         jwt: token,
-        sessionPublicKey: jsonBytes(p.params.sessionPublicKey),
-        expiresAtMs: p.params.expiresAtMs,
+        sessionPublicKey: jsonBytes(p.sessionPublicKey),
+        expiresAtMs: p.expiresAtMs,
         salt: jsonBytes(p.salt),
         keyIndex: 0,
         maxUses: 1,
@@ -556,7 +676,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           relayer: env.relayer,
           scopeId: p.scopeId,
           expectedPath: path,
-          sessionPublicKey: p.params.sessionPublicKey,
+          sessionPublicKey: p.sessionPublicKey,
           maxUses: 1,
           resendableUntil: 0,
           now: () => clock.now(),
@@ -646,9 +766,10 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
         // Collapsed, and labelled for what it is: never the first thing on the page, never hidden.
         return show(button(HOME_EXPORT_TITLE, 'home-export-open', expand, 'home-export-toggle'));
       case 'intro': {
-        const route = homeExportRoute(s, deps.config(), fromLink);
+        const route = routeFor(s);
         const close = button('Close', 'home-export-close', collapse);
         if (typeof route === 'string') return show(title(HOME_EXPORT_TITLE), d.h('p', { attrs: { id: 'home-export-off' } }, HOME_EXPORT_OFF_TEXT[route]), d.h('div', { class: 'actions start' }, close));
+        const byEmail = route.kind === 'email';
         return show(
           title(HOME_EXPORT_TITLE),
           d.h(
@@ -656,14 +777,24 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
             {},
             s.mine
               ? 'Hana Home can show you this wallet’s private key, so that you can import it into another wallet app. The wallet keeps working in the app as before.'
-              : 'Hana has no wallet on record for you in this app. If you had one, sign in again and Hana Home will look for it. If it finds one, it can show you its private key, so that you can import it into another wallet app.',
+              : `Hana has no wallet on record for you in this app. If you had one, ${byEmail ? 'confirm with a code' : 'sign in again'} and Hana Home will look for it. If it finds one, it can show you its private key, so that you can import it into another wallet app.`,
           ),
           d.h('p', { class: 'warn' }, EXPORT_WARNING),
-          d.h('p', { class: 'muted' }, 'First you choose your Google account again; it must be the account you used for Hana Home. Google may not ask for your password again. The key then stays ready in this page for 5 minutes.'),
-          d.h('div', { class: 'actions start' }, button('Sign in again to continue', 'home-export-start', begin, 'primary'), close),
+          d.h(
+            'p',
+            { class: 'muted' },
+            byEmail
+              ? 'First Hana Home sends a new code to the email you signed in with. The key then stays ready in this page for 5 minutes.'
+              : 'First you choose your Google account again; it must be the account you used for Hana Home. Google may not ask for your password again. The key then stays ready in this page for 5 minutes.',
+          ),
+          d.h('div', { class: 'actions start' }, button(byEmail ? 'Continue with a code' : 'Sign in again to continue', 'home-export-start', begin, 'primary'), close),
         );
       }
       case 'signing_in':
+        if (pending?.route.kind === 'email' || routeKind() === 'email') {
+          // The email route's code screens (home-email.ts), once the route is checked on NEAR.
+          return show(...(emailBox ? [emailBox] : [title('Get a code to open this wallet'), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Checking this app on NEAR…'), d.h('div', { class: 'actions start' }, button('Cancel', 'home-export-cancel', cancel))]));
+        }
         return show(
           title('Choose your Google account again'),
           d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Finish signing in with Google in the other window.'),
@@ -765,6 +896,15 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     }
   }
 
+  /** How this page would open `s`'s wallet for the signed-in account. */
+  function routeFor(s: HomeScope): Route | HomeExportOff {
+    return homeExportRoute(s, deps.config(), fromLink, deps.session()?.account.provider ?? 'google', deps.email !== null);
+  }
+  const routeKind = (): Route['kind'] | null => {
+    const r = scope ? routeFor(scope) : null;
+    return r && typeof r !== 'string' ? r.kind : null;
+  };
+
   function expand(): void {
     if (state !== 'closed' && state !== 'ended' && state !== 'refused') return;
     problem = null;
@@ -843,7 +983,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       return childName;
     },
     get awaitingChild() {
-      return pending !== null && !pending.helloAccepted;
+      return pending?.relay != null && !pending.relay.helloAccepted;
     },
     get holdsSecret() {
       return prk !== null;

@@ -18,6 +18,8 @@
 // login's slot for that screen (no Google answer may use it: the email page takes it on load); `s` is the relay slot an
 // attempt started after it (or from case B) answers, under an OAuth `state` of its own, so a cancelled attempt's state
 // never finds an entry again.
+// Hana Home's exit client (D491): `ex` marks the entry of a sign-in whose Google answer goes to `/home/callback`, with
+// the client (`c`) and the nonce (`n`) its ID token must carry; `/login/callback` refuses it.
 //
 // SECURITY: relayKey and followKey are session secrets. They live here only between pages and are deleted on read.
 import { type CaseBProof, FOLLOW_KEY_BYTES, RELAY_ID_PATTERN, RELAY_KEY_BYTES, base64UrlDecode, base64UrlEncode, isTimings } from '@hana-id/core';
@@ -55,6 +57,11 @@ export interface FollowEntry {
   offer?: CaseBProof;
   /** D341: parked by the callback after a cancel, for the email page's return screen; never a Google answer's entry. */
   cancelled?: boolean;
+  /**
+   * Hana Home's exit client (D491): only `/home/callback` takes this entry, and only for an ID token of `clientId` with
+   * `nonce`; `/login/callback` never does.
+   */
+  exit?: boolean;
 }
 
 interface LoginEntry {
@@ -79,6 +86,7 @@ interface LoginEntry {
   bk?: 'c' | 'b';
   ob?: CaseBProof;
   x?: 1;
+  ex?: 1;
 }
 
 /** What /login/callback takes: the relay key and /login's timings (null for a pk_live_ app). */
@@ -120,6 +128,7 @@ function readEntry(storage: Storage, key: string): LoginEntry | null {
       ...(e.bk === 'c' || e.bk === 'b' ? { bk: e.bk } : {}),
       ...(isCaseB(e.ob) ? { ob: { linkTicket: e.ob.linkTicket, emailSub: e.ob.emailSub } } : {}),
       ...(e.x === 1 ? { x: 1 as const } : {}),
+      ...(e.ex === 1 ? { ex: 1 as const } : {}),
     };
   } catch {
     return null;
@@ -171,6 +180,7 @@ export function storeLoginEntry(storage: Storage, relayId: string, relayKey: Uin
     ...(follow.back ? { bk: follow.back === 'case_b' ? ('b' as const) : ('c' as const) } : {}),
     ...(follow.offer ? { ob: follow.offer } : {}),
     ...(follow.cancelled ? { x: 1 as const } : {}),
+    ...(follow.exit ? { ex: 1 as const } : {}),
   };
   storage.setItem(LOGIN_ENTRY_PREFIX + relayId, JSON.stringify(entry));
 }
@@ -225,6 +235,7 @@ const toTaken = (e: LoginEntry): TakenLogin | null => {
     ...(e.bk ? { back: e.bk === 'b' ? ('case_b' as const) : ('chooser' as const) } : {}),
     ...(e.ob ? { offer: e.ob } : {}),
     ...(e.x ? { cancelled: true } : {}),
+    ...(e.ex ? { exit: true } : {}),
   };
 };
 

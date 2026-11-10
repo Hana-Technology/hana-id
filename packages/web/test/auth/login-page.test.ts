@@ -361,6 +361,54 @@ describe('/login?mode=home', () => {
     expect(pageText()).toContain('Signing in to Hana Home');
   });
 
+  it('the exit client (D491): Google answers to /home/callback, and the entry is marked for it with the client and nonce', async () => {
+    const s = home();
+    const params = homeParams({ clientId: 'hana-exit.apps.googleusercontent.com', exit: true });
+    s.win.message(params, ENV.authOrigin, s.opener);
+    expect((await s.page.done).stage).toBe('redirecting');
+    const url = new URL(s.win.location.assigned[0] as string);
+    expect(url.searchParams.get('redirect_uri')).toBe(`${ENV.authOrigin}/home/callback`);
+    expect(url.searchParams.get('client_id')).toBe('hana-exit.apps.googleusercontent.com');
+    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId) as string) as Record<string, unknown>;
+    expect(entry).toMatchObject({ ex: 1, c: 'hana-exit.apps.googleusercontent.com', n: params.nonce });
+  });
+
+  it('the per-app sign-in through the exit client: /home/callback, max_age=0, the entry marked', async () => {
+    const s = home();
+    const sessionPublicKey = crypto.getRandomValues(new Uint8Array(32));
+    const salt = crypto.getRandomValues(new Uint8Array(32));
+    const expiresAtMs = 1_800_000_900_000;
+    const msg = {
+      v: 1,
+      t: 'hana:home-derive-params',
+      signer: ENV.signer,
+      clientId: 'hana-exit.apps.googleusercontent.com',
+      scopeId: 's1',
+      sessionPublicKey,
+      expiresAtMs,
+      salt,
+      nonce: sessionNonce({ signer: ENV.signer, scopeId: 's1', sessionPublicKey, expiresAtMs, keyIndex: 0, maxUses: 1, salt }),
+      relayId: relayIdFor(crypto.getRandomValues(new Uint8Array(32))),
+      relayKey: crypto.getRandomValues(new Uint8Array(32)),
+      exit: true,
+    };
+    s.win.message(msg, ENV.authOrigin, s.opener);
+    expect((await s.page.done).stage).toBe('redirecting');
+    const url = new URL(s.win.location.assigned[0] as string);
+    expect(url.searchParams.get('redirect_uri')).toBe(`${ENV.authOrigin}/home/callback`);
+    expect(url.searchParams.get('max_age')).toBe('0');
+    expect(JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + msg.relayId) as string)).toMatchObject({ ex: 1, n: msg.nonce });
+  });
+
+  it('refuses an exit flag that isn’t exactly true', async () => {
+    const s = home();
+    s.win.message(homeParams({ exit: 1 }), ENV.authOrigin, s.opener);
+    s.win.message(homeParams({ exit: false }), ENV.authOrigin, s.opener);
+    await flush();
+    expect(s.page.state.stage).toBe('connecting');
+    expect(s.win.sessionStorage.length).toBe(0);
+  });
+
   it.each([
     ['an opener on another page of the auth origin', '/export'],
     ['an opener at the site root', '/'],

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ALERT_KINDS_WITH_PLAYBOOKS, ALERT_KIND_IDS, CHECKS, CHECK_IDS, RESEND_MS, RUN_INTERVAL_MS } from '../../watchdog/src/checks.ts';
 import worker from '../src/index.ts';
 import { CHECK_VIEWS } from '../src/monitoring-registry.ts';
-import { DELIVERIES_SHOWN, ackBy, findingsOf, statusView } from '../src/monitoring.ts';
+import { DELIVERIES_SHOWN, ackBy, alertView, findingsOf, statusView } from '../src/monitoring.ts';
 import { plainString } from '../src/plain.ts';
 import { WATCHDOG_LIMITS, watchdogTiming } from '../src/watchdog.ts';
 import { ADMIN, CSRF, type ReqInit, STAFF_EMAIL, STAFF_SUB, WATCHDOG, WATCHDOG_TOKEN, type WatchdogCall, adminRequest, envWith, json, overrideBinding, staffJwt, stubNetwork, watchdog } from './helpers.ts';
@@ -306,6 +306,15 @@ describe('text only', () => {
     const d = await json<{ alerts: { deliveries: unknown[]; deliveriesTotal: number }[] }>(await req('/api/monitoring/alerts'));
     expect(d.alerts[0]!.deliveries).toHaveLength(DELIVERIES_SHOWN);
     expect(d.alerts[0]!.deliveriesTotal).toBe(30);
+  });
+
+  it('gives the latest result of each channel, whatever a flooding channel pushed out of the last rows', () => {
+    const row = (channel: string, at: number, ok: boolean, error: string | null = null) => ({ channel, kind: 'first', at, ok, error });
+    const flood = Array.from({ length: 40 }, (_, i) => row('slack', NOW + 10 + i, false, 'not configured'));
+    const v = alertView({ id: 5, kind: 'governance_change', severity: 'critical', deliveries: [row('pager', NOW, false, 'HTTP 429'), row('email', NOW, false, 'HTTP 500'), row('email', NOW + 1, true), ...flood, { kind: 'first' }] })!;
+    expect(v.deliveries).toHaveLength(DELIVERIES_SHOWN);
+    expect(v.deliveriesLatest).toEqual([row('pager', NOW, false, 'HTTP 429'), row('email', NOW + 1, true), row('slack', NOW + 49, false, 'not configured')]);
+    expect(alertView({ id: 6, kind: 'governance_change', severity: 'info' })!.deliveriesLatest).toEqual([]);
   });
 
   it('a malformed alert or action row is dropped, never half-rendered', () => {

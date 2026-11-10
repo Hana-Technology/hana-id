@@ -210,10 +210,11 @@ only computes; recording the result in `docs/context.md` and rotating the keys a
 `policies/demo-auto-approve.json` is a testnet policy that covers exactly two harmless requests: a native-XLM SAC
 `transfer` of 1 stroop to yourself on Stellar testnet, and a Sepolia USDC `approve(you, 1)` (address rule
 `self-or-listed`, 20 a day, consent for 1 h). Set it on the app (it takes effect after the env's `changeDelayMs`).
-pnpm runs the admin script in `scripts/`, so the policy path is relative to that directory:
+A relative policy path is resolved against the directory you ran `pnpm` from (pnpm's `INIT_CWD`), not `scripts/`,
+so from the repo root:
 
 ```sh
-pnpm --filter @hana-id/scripts admin <env> app:settings <app id | pk> --auto-approve ../apps/smoke/policies/demo-auto-approve.json --remote
+pnpm --filter @hana-id/scripts admin <env> app:settings <app id | pk> --auto-approve apps/smoke/policies/demo-auto-approve.json --remote
 pnpm --filter @hana-id/scripts admin <env> app:settings <app id | pk> --auto-approve off --remote   # immediate
 ```
 

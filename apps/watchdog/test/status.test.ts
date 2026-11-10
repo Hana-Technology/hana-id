@@ -151,8 +151,9 @@ describe('GET /alerts and /actions', () => {
     w.chain.config.sponsors = [];
     await w.run();
     const all = await call('/alerts?limit=2', {}, w.clock.t);
-    const page = all.body.alerts as { id: number; deliveries: unknown[] }[];
+    const page = all.body.alerts as { id: number; deliveries: unknown[]; unconfigured_channels: string[] }[];
     expect(page).toHaveLength(2);
+    expect(page[0]!.unconfigured_channels).toEqual([]);
     expect(page[0]!.id).toBeGreaterThan(page[1]!.id);
     const next = await call(`/alerts?cursor=${String(all.body.next_cursor)}&limit=50`, {}, w.clock.t);
     expect((next.body.alerts as { id: number }[]).every((a) => a.id < page[1]!.id)).toBe(true);

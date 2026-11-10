@@ -17,7 +17,7 @@
 // its pool keys' allowances and never tops anything up (it holds no key on that account). Dependencies are injected
 // so every path is tested against stubs.
 import { GOOGLE_PROVIDER, type Jwk, rsaThumbprint, sameRsaKey } from '@hana-id/jwks';
-import { type DeliveryReport, deliverAlerts } from './alerts.ts';
+import { type DeliveryReport, deliverAlerts, deliveryDetail } from './alerts.ts';
 import type { ChainReader, ChainSnapshot, ChainWriter, KeyChange, WatchdogMethod } from './chain.ts';
 import type { Notifier } from './channels.ts';
 import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId, NEW_KID_CANCEL_LEAD_MS } from './checks.ts';
@@ -610,7 +610,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
 
     // ---- alerts out (first deliveries, re-sends, pager acks) ----
     delivery = await deliverAlerts(store, d.notifier, d.now(), cfg.envName);
-    run.check('alert_delivery', delivery.failed ? 'error' : 'ok', `${delivery.first} first, ${delivery.resent} re-sent, ${delivery.failed} failed, ${delivery.ackedByPager} acked in the paging app`);
+    run.check('alert_delivery', delivery.failed ? 'error' : 'ok', deliveryDetail(delivery));
     const digest = await maybeSendDigest(store, d.notifier, d.now(), cfg.digestHourUtc, cfg.envName);
     run.check('digest', digest === 'failed' ? 'error' : digest === 'sent' ? 'ok' : 'skipped', digest);
 

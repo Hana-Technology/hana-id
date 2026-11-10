@@ -1633,7 +1633,7 @@ function alertsTable(alerts, opts = {}) {
                 { done: `Alert #${a.id} acknowledged: its re-sends stop. The condition is still checked.` },
               )
             : '',
-          opts.details ? h('details', { class: 'raw' }, h('summary', {}, 'Details and deliveries'), plainJson(a.details), h('p', { class: 'muted' }, `Deliveries: the last ${a.deliveries.length} of ${a.deliveriesTotal}`), plainJson(a.deliveries)) : '',
+          opts.details ? h('details', { class: 'raw' }, h('summary', {}, 'Details and deliveries'), plainJson(a.details), h('p', { class: 'muted' }, 'Latest result per channel'), plainJson(a.deliveriesLatest ?? []), h('p', { class: 'muted' }, `Deliveries: the last ${a.deliveries.length} of ${a.deliveriesTotal}`), plainJson(a.deliveries)) : '',
         ),
       ),
     ),

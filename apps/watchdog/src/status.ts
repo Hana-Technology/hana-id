@@ -62,6 +62,7 @@ function alertView(a: AlertRow) {
     last_sent_at: a.last_sent_at,
     send_count: a.send_count,
     pending_channels: a.pending_channels,
+    unconfigured_channels: a.unconfigured_channels,
     channels: CHANNELS[a.severity],
     resends_until_ack: a.severity === 'critical',
   };

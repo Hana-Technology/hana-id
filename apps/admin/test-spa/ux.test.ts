@@ -41,7 +41,11 @@ describe('Legacy apps (org_legacy): only what can work there', () => {
     const t = s.text();
     expect(t).toContain('Nobody can be invited to Legacy apps, and it can’t be frozen');
     expect(t).toContain('To onboard a partner whose app is here: invite their first owner to a new organisation, then use “Move to an organisation” on the scope. If the scope has Google-account owners on chain, each must be an owner of that organisation first, or the move is refused (scope_conflict).');
-    expect(SRC).not.toMatch(/scope:register|owners-from-org/u);
+    // Changed deliberately with D651: the SPA now mentions `scope:register`, but only in the organisation page's
+    // "Register a scope" panel, which prepares the command (it sends nothing). Legacy apps never offers it.
+    expect(t).not.toMatch(/scope:register|Register a scope/u);
+    expect(SRC).not.toMatch(/owners-from-org/u);
+    expect(SRC.match(/scope:register/gu)?.length).toBeLessThanOrEqual(6);
     for (const absent of ['Send invite', 'Invite someone', 'Freeze', 'Unfreeze', 'Make owner', 'Create an app', 'Move a legacy scope here']) expect(s.buttons(absent), absent).toHaveLength(0);
     for (const absent of ['Members', 'Invites', 'Pending owner grants']) expect([...s.main().querySelectorAll('h2')].map((x) => x.textContent), absent).not.toContain(absent);
     expect(s.main().querySelector('input[name=email]')).toBeNull();

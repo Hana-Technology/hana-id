@@ -78,6 +78,17 @@ export function adminPlacement(m: Manifest): Record<string, unknown> {
   return { name: a.workerName, workers_dev: false, preview_urls: false, routes: [{ pattern: url.hostname, custom_domain: true }] };
 }
 
+/** SCOPE_REGISTRATION: the manifest's owner, council and shared clients (public values; src/routes.ts reads them). */
+export function scopeRegistrationVar(m: Manifest): { ownerKind: string; owner: string; councilMembers: string[]; devCouncilKeys: boolean; sharedClientIds: string[] } {
+  return {
+    ownerKind: m.ownerKind ?? 'account',
+    owner: m.owner,
+    councilMembers: m.council?.members ?? [],
+    devCouncilKeys: m.network === 'testnet' && isDevEnv(m.name) && !!m.council,
+    sharedClientIds: m.sharedGoogleClientIds,
+  };
+}
+
 export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string | null } = {}): Record<string, unknown> {
   const { console: c, files: f, admin: a, email: e } = m;
   if (!c || !f || !a || !m.usage || !e || m.ownerGrantDelayMs === undefined) throw new Error(`envs/${m.name}.json has no dashboard blocks (console, files, admin, usage, email, ownerGrantDelayMs)`);
@@ -134,6 +145,9 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
       APP_CHANGE_DELAY_MS: String(m.appChangeDelayMs),
       OWNER_GRANT_DELAY_MS: String(m.ownerGrantDelayMs),
       NEAR_NETWORK: m.network,
+      // The organisation page's "Register a scope" panel (D651): who signs admin_register_scope, so the page can write
+      // the exact scope:register command. The Worker never signs or sends it.
+      SCOPE_REGISTRATION: JSON.stringify(scopeRegistrationVar(m)),
       ...(watchdogUrl ? { WATCHDOG_URL: watchdogUrl } : {}),
     },
     // AdminRpc on the API, StaffRpc on the console and (C8b, D275) DirectoryRpc on the email issuer: the admin Worker

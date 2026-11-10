@@ -1013,7 +1013,7 @@ function appsPanel(o, d) {
       h('h3', {}, 'Create an app'),
       form(
         [
-          { name: 'scopeId', label: 'Scope id', placeholder: 's…', required: true, help: 'The scope must be registered on chain. If it has Google-account owners on chain, each must be an owner of this organisation, or the app is refused (scope_conflict).' },
+          { name: 'scopeId', label: 'Scope id', placeholder: 's…', required: true, help: 'The id `scope:register` printed (“Register a scope for this organisation” above prepares that command). The scope must be registered on chain, and each of its Google-account owners on chain must be an owner of this organisation, or the app is refused (scope_conflict).' },
           { name: 'environment', type: 'select', label: 'Environment', optional: false, options: [{ value: 'test', label: 'Test' }, { value: 'live', label: 'Live' }] },
           { name: 'name', label: 'App name', placeholder: 'Lumen Pay checkout', required: true },
           { name: 'origins', label: 'Allowed origins', placeholder: 'https://app.partner.example', size: 'wide', help: 'Space or comma separated. The security contacts are emailed and they take effect after the waiting period.' },
@@ -1054,6 +1054,161 @@ function appsPanel(o, d) {
     blocked ? '' : create.box,
     move.box,
   );
+}
+
+// ---- registering a scope (D651): the page prepares, one command runs it ----
+
+/** A Google `sub` as it may appear in the command (digits in practice; never anything a shell would read). */
+const SUB_RE = /^[A-Za-z0-9_-]{1,255}$/u;
+/** A Google web client id (the console's own check). */
+const GOOGLE_CLIENT_RE = /^[0-9]{1,32}-[0-9a-z]{1,64}\.apps\.googleusercontent\.com$/u;
+/** The contract's owner limit (`A scope needs 1 to 5 owners`). */
+const MAX_SCOPE_OWNERS = 5;
+const isDevEnvName = (name) => /^(local|sandbox)/u.test(name || '');
+
+/**
+ * Who can be an on-chain owner of a new scope for this organisation: its owners now (role owner, not disabled, with a
+ * Google account recorded), since "Create an app" refuses a scope with any other Google-account owner. Everyone else
+ * the partner might expect to see is listed with why not yet.
+ */
+function scopeOwnerCandidates(d) {
+  const owners = [];
+  const later = [];
+  for (const m of d.members) {
+    if (m.role === 'owner' && !m.disabled && typeof m.sub === 'string' && SUB_RE.test(m.sub)) owners.push(m);
+    else if (m.role === 'owner' && m.disabled) later.push({ email: m.email, why: 'disabled: enable the user first' });
+    else if (m.role === 'owner') later.push({ email: m.email, why: 'no Google account recorded for this member' });
+    else if (m.pendingOwnerFrom) later.push({ email: m.email, why: `an owner only from ${time(m.pendingOwnerFrom)} (the owner-grant period): until then “Create an app” would refuse a scope they own` });
+  }
+  const now = Date.now();
+  for (const i of d.invites) {
+    if (i.role === 'owner' && !i.acceptedAt && !i.revokedAt && !(i.expiresAt < now)) later.push({ email: i.email, why: 'invited as an owner, hasn’t accepted yet: their Google account is known only once they accept' });
+  }
+  return { owners, later };
+}
+
+/**
+ * The exact `admin <env> scope:register` command for the choices, and what is wrong with them. `cfg` is GET /api/me's
+ * `scopeRegistration` (the manifest's owner and council); the checks are the contract's and createApp's.
+ */
+function scopeRegisterPlan(cfg, env, d, choice) {
+  const problems = [];
+  const warnings = [];
+  const client = (choice.client || '').trim();
+  if (!cfg) problems.push('This admin console can’t prepare the command: its Worker has no SCOPE_REGISTRATION setting. Run its `gen` for this env and deploy it again.');
+  if (!/^[a-z0-9-]{1,40}$/u.test(env || '')) problems.push('This admin console doesn’t know its env name.');
+  if (choice.subs.length === 0) problems.push('Choose at least one owner: a scope needs one to five on-chain owners.');
+  if (choice.subs.length > MAX_SCOPE_OWNERS) problems.push(`A scope has at most ${MAX_SCOPE_OWNERS} owners on chain: choose ${MAX_SCOPE_OWNERS} or fewer (the others can be added later only by replacing owners).`);
+  if (!choice.shared && !client) problems.push('Choose how users sign in: Hana’s shared Google login, the partner’s own Google client, or both.');
+  if (client && !GOOGLE_CLIENT_RE.test(client)) problems.push(`\`${client.slice(0, 120)}\` isn’t a Google web client id (like \`123456789012-abc123.apps.googleusercontent.com\`).`);
+  else if (client && cfg && cfg.sharedClientIds.includes(client)) problems.push('That is Hana’s shared Google client: tick “Hana’s shared Google login” instead of entering it.');
+  const sharedReady = cfg && cfg.sharedClientIds.some((id) => !/UNSET/u.test(id));
+  if (choice.shared && cfg && !sharedReady) warnings.push('This env has no shared Google client yet, so shared login won’t work until one is set and deploy-contract has run set_shared_clients.');
+  if (d.flags.noSecurityContacts) warnings.push('This organisation has no security contact: registering doesn’t need one, but “Create an app” does. Add one under Security contacts first.');
+  if (problems.length) return { problems, warnings, command: null };
+  const parts = ['pnpm --filter @hana-id/scripts run admin', env, 'scope:register'];
+  if (choice.shared) parts.push('--allow-shared');
+  if (client) parts.push('--client', client);
+  for (const sub of choice.subs) parts.push('--owner-google', sub);
+  let signs;
+  let prints;
+  if (cfg.ownerKind === 'sputnik' && cfg.devCouncilKeys) {
+    parts.push('--member', cfg.councilMembers[0], '--approve-with', cfg.councilMembers[1]);
+    signs = `Run it from the repo root on the machine that holds \`.secrets/${env}/council/\`: it proposes \`admin_register_scope\` to the council DAO and casts both votes (${cfg.councilMembers[0]} and ${cfg.councilMembers[1]}), so the scope is registered when it ends.`;
+    prints = '`Registered scope: s…` and the next step: copy that scope id.';
+  } else if (cfg.ownerKind === 'sputnik') {
+    parts.push('--member', '<your council account>');
+    signs = `Run it as one council member (${cfg.councilMembers.join(', ')}): it proposes \`admin_register_scope\` to the council DAO. It prints what each other member signs; the scope is registered when the second approval lands.`;
+    prints = '`Proposed #…` and the vote each member signs. The vote that passes it shows the new scope id in its `scope_registered` event: ask that member for it.';
+  } else {
+    signs = `Run it from the repo root: ${cfg.owner}, the contract owner, signs \`admin_register_scope\` with its key from \`~/.near-credentials\`.`;
+    prints = '`Registered scope: s…` and the next step: copy that scope id.';
+  }
+  parts.push('--yes');
+  return { problems, warnings, command: parts.join(' '), signs, prints };
+}
+
+function scopePanel(o, d) {
+  const cfg = me && me.scopeRegistration ? me.scopeRegistration : null;
+  const env = me ? me.env : '';
+  const { owners, later } = scopeOwnerCandidates(d);
+  const hint = 'A scope holds this partner’s users’ wallets on chain; its owners are the Google accounts that may change it later (clients, owners, shared login). Registering one is a council action: this panel prepares the exact command and sends nothing.';
+  const laterList = later.length
+    ? h('div', {}, h('h3', {}, 'Not included'), h('ul', { class: 'findings' }, later.map((x) => h('li', {}, h('strong', {}, x.email), h('span', { class: 'muted' }, x.why)))))
+    : '';
+  if (!owners.length) {
+    return panel(
+      'Register a scope for this organisation',
+      { anchor: 'register-scope', hint },
+      emptyState('Waiting for the partner', 'The command needs each owner’s Google account, which is known only once they accept their invite. Invite the partner’s first owner (Members), ask them to accept it, then come back here.'),
+      laterList,
+    );
+  }
+  const out = h('div', { class: 'scope-plan', 'aria-live': 'polite' });
+  const ownerBoxes = owners.map((m, i) => ({ m, input: h('input', { type: 'checkbox', name: 'scopeOwner', value: m.userId, checked: i < MAX_SCOPE_OWNERS }) }));
+  const shared = h('input', { type: 'checkbox', name: 'allowShared', checked: true });
+  const clientId = nextId('f-client');
+  const client = h('input', { type: 'text', name: 'client', id: clientId, autocomplete: 'off', placeholder: '123456789012-abc123.apps.googleusercontent.com', 'aria-describedby': `${clientId}-help` });
+  const update = () => {
+    const plan = scopeRegisterPlan(cfg, env, d, { subs: ownerBoxes.filter((b) => b.input.checked).map((b) => b.m.sub), shared: shared.checked, client: client.value });
+    const parts = [];
+    for (const w of plan.warnings) parts.push(note('warn', '', w));
+    if (plan.problems.length) parts.push(note('warn', 'Not ready yet', ...plan.problems));
+    else {
+      parts.push(
+        h('h3', {}, 'The command'),
+        h('p', { class: 'hint' }, richText(plan.signs)),
+        commandBlock(plan.command),
+        h('p', { class: 'hint' }, richText(`It shows the call first (without \`--yes\` it would only print it), then ${plan.prints}`)),
+        h('h3', {}, 'Then'),
+        h(
+          'ol',
+          { class: 'steps' },
+          h('li', {}, `${d.flags.noSecurityContacts ? 'Add a security contact (below), then use' : 'Use'} “Create an app” under Apps with the scope id the command printed. Its first app makes the scope a test or a live scope for good, so a live app later gets a scope of its own.`),
+          h('li', {}, 'Give the partner the app id and the publishable key. An on-chain owner adds their origins and signing policy in their console.'),
+        ),
+      );
+    }
+    out.replaceChildren(...parts);
+  };
+  for (const b of ownerBoxes) b.input.addEventListener('change', update);
+  shared.addEventListener('change', update);
+  client.addEventListener('input', update);
+  const form = h(
+    'div',
+    { class: 'stack' },
+    h(
+      'fieldset',
+      { class: 'choices' },
+      h('legend', {}, 'On-chain owners'),
+      h('p', { class: 'hint' }, `This organisation’s owners who have accepted their invite. Each one ticked becomes an on-chain owner: they can add origins, set signing policies and change the scope from their console. At most ${MAX_SCOPE_OWNERS}.`),
+      ownerBoxes.map((b) => h('label', { class: 'check' }, b.input, h('span', {}, b.m.email, h('span', { class: 'sub' }, 'Google account ', h('code', {}, b.m.sub))))),
+    ),
+    laterList,
+    h(
+      'fieldset',
+      { class: 'choices' },
+      h('legend', {}, 'How users sign in'),
+      h('label', { class: 'check' }, shared, h('span', {}, 'Hana’s shared Google login', h('span', { class: 'sub' }, 'Works at once; Google’s consent screen shows Hana. Adds `--allow-shared`.'))),
+      h(
+        'label',
+        { class: 'field wide', for: clientId },
+        h('span', { class: 'label' }, 'The partner’s own Google client id', h('span', { class: 'req' }, ' (optional)')),
+        client,
+        h('span', { class: 'help', id: `${clientId}-help` }, 'Only if the partner sent one and wants their own name on Google’s consent screen. It must not belong to another scope. Leave it empty to add it later from the partner’s console.'),
+      ),
+    ),
+    h('p', { class: 'hint' }, 'Order matters: the partner accepts their invite first (so their Google account is known), then the command, then “Create an app”.'),
+    out,
+  );
+  update();
+  const content = h('div', {}, form);
+  if (d.apps.some((a) => !a.deleted)) {
+    // An organisation that already has its apps rarely needs another scope: keep the form one click away.
+    const more = disclosure('Prepare a scope:register command', content);
+    return panel('Register a scope for this organisation', { anchor: 'register-scope', hint, actions: [more.button] }, more.box);
+  }
+  return panel('Register a scope for this organisation', { anchor: 'register-scope', hint }, content);
 }
 
 function contactsPanel(o, d) {
@@ -1209,7 +1364,7 @@ async function orgPage(main, orgId) {
   if (o.status === 'frozen') main.append(note('error', 'This organisation is frozen', 'Its members are signed out and console writes are refused, except cancels and kill switches. Unfreeze it in the danger zone at the bottom of the page.'));
   if (d.flags.noSecurityContacts) main.append(note('warn', 'No security contact', 'This organisation can’t get apps until it has one, and its notices go to the Hana security alias only. Add one under Security contacts.'));
   if (d.flags.ownersNotContacts.length) main.append(note('warn', 'Owners who aren’t security contacts', `${d.flags.ownersNotContacts.join(', ')}: add them under Security contacts so they hear about changes to their apps.`));
-  main.append(membersPanel(o, d), invitesPanel(d), grantsPanel(d), appsPanel(o, d), contactsPanel(o, d));
+  main.append(membersPanel(o, d), invitesPanel(d), grantsPanel(d), scopePanel(o, d), appsPanel(o, d), contactsPanel(o, d));
   await changesPanel(main, o.id);
   main.append(dangerPanel(o, false));
   return undefined;
@@ -1224,6 +1379,22 @@ function changesTable(changes) {
 }
 
 // ---- one app ----
+
+/**
+ * The staff "Propose origins" help: the origin rules the API applies (console-core originProblem) and what differs for a
+ * staff proposal (the full waiting period always, never the loopback waiver; refused for one waiting period after the
+ * scope moved to this organisation).
+ */
+function originsHelp(app) {
+  const loopback = app.environment === 'test' && isDevEnvName(me && me.env);
+  return [
+    'Space or comma separated, each an origin only (scheme, host, port; no path): https with a real host name',
+    loopback ? ', or on this test app in a dev env `http://localhost:<port>` and `http://localhost:*`.' : '.',
+    ' A staff proposal always waits the full period after its email',
+    loopback ? ' (only the partner’s own proposal of a localhost origin takes effect at once)' : '',
+    ', and is refused for one waiting period after the scope moved to this organisation.',
+  ].join('');
+}
 
 async function appPage(main, orgId, appId) {
   const { app } = await api('GET', `/api/apps/${encodeURIComponent(appId)}?org=${encodeURIComponent(orgId)}`);
@@ -1275,7 +1446,7 @@ async function appPage(main, orgId, appId) {
             {},
             h('h3', {}, 'Propose origins'),
             form(
-              [{ name: 'add', label: 'Origins to add', placeholder: 'https://new.partner.example', required: true, size: 'wide', help: 'Full https:// origins, space or comma separated.' }],
+              [{ name: 'add', label: 'Origins to add', placeholder: 'https://new.partner.example', required: true, size: 'wide', help: originsHelp(app) }],
               'Propose',
               (v) => api('POST', `${base}/origins`, { orgId, add: lines(v.add), expectedVersion: app.originsVersion }),
               { confirm: 'Propose these origins? The security contacts are emailed and they take effect after the delay.', done: 'Origins proposed. They take effect after the waiting period, once the email has gone out.' },

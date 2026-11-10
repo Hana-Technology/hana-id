@@ -23,9 +23,10 @@ import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
 import { MAIL_LABELS } from '../../src/labels.ts';
 import { MAX_NEAR_BACKUPS } from '../../src/status-probes.ts';
+import { scopeRegistrationOf } from '../../src/scope-registration.ts';
 import { adminCsp } from '../../src/headers.ts';
 import { BRAND_END, BRAND_FONT_FILES, BRAND_START, brandBlock } from '../sync-brand.ts';
-import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, accountCrons, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, accountCrons, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, scopeRegistrationVar, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
 const WRITER_ID = 'b'.repeat(32);
@@ -45,6 +46,20 @@ type Config = Record<string, unknown> & {
 const withAdmin = (over: Partial<NonNullable<Manifest['admin']>>, m: Partial<Manifest> = {}): Manifest => ({ ...TEST_MANIFEST, ...m, admin: { ...TEST_MANIFEST.admin!, ...over } }) as Manifest;
 
 describe('the admin config', () => {
+  it('SCOPE_REGISTRATION: sandbox-dev\'s council signs, both votes in one command; the Worker reads exactly that back', () => {
+    const m = loadEnv('sandbox-dev');
+    const v = scopeRegistrationVar(m);
+    expect(v).toEqual({ ownerKind: 'sputnik', owner: m.owner, councilMembers: m.council!.members, devCouncilKeys: true, sharedClientIds: m.sharedGoogleClientIds });
+    expect(scopeRegistrationOf(JSON.stringify(v))).toEqual(v);
+    // A non-dev env never claims one-command votes; an account owner has no council.
+    expect(scopeRegistrationVar({ ...m, name: 'staging' } as Manifest).devCouncilKeys).toBe(false);
+    expect(scopeRegistrationOf(JSON.stringify(scopeRegistrationVar(TEST_MANIFEST)))).toEqual({ ownerKind: 'account', owner: 'owner.test.near', councilMembers: [], devCouncilKeys: false, sharedClientIds: [] });
+    // Anything that isn't a plain account or client id (it would land in a shell command) makes the whole var unusable.
+    for (const bad of [{ ...v, councilMembers: ['a.testnet; echo x'] }, { ...v, sharedClientIds: ['x y'] }, { ...v, ownerKind: 'dao' }, { ...v, councilMembers: [m.council!.members[0]] }]) expect(scopeRegistrationOf(JSON.stringify(bad))).toBeNull();
+    expect(scopeRegistrationOf(undefined)).toBeNull();
+    expect(scopeRegistrationOf('{not json')).toBeNull();
+  });
+
   it('validates as a manifest (the test manifest is a real one)', () => {
     expect(manifestSchema.parse(TEST_MANIFEST)).toBeTruthy();
   });
@@ -86,6 +101,7 @@ describe('the admin config', () => {
         OWNER_GRANT_DELAY_MS: '60000',
         NEAR_NETWORK: 'testnet',
         WATCHDOG_URL: TEST_WATCHDOG_URL,
+        SCOPE_REGISTRATION: JSON.stringify({ ownerKind: 'account', owner: 'owner.test.near', councilMembers: [], devCouncilKeys: false, sharedClientIds: [] }),
       },
       services: [
         { binding: 'API', service: 'hana-id-api-test', entrypoint: 'AdminRpc' },
@@ -106,7 +122,7 @@ describe('the admin config', () => {
     expect(JSON.stringify(c.r2_buckets)).not.toContain('LOGOS');
     expect(JSON.stringify(c)).not.toMatch(/ConsoleRpc|EMAIL_API_KEY|CANCEL_LINK_KEY|INVITE_LINK_KEY|WATCHDOG_STATUS_TOKEN|COINGECKO_API_KEY/u);
     expect(Object.keys(c.vars!).sort()).toEqual(
-      ['ACCESS_AUD', 'ACCESS_TEAM_DOMAIN', 'ACCOUNT_CRONS', 'ADMIN_ORIGIN', 'API_URL', 'AUTH_ORIGIN', 'CONSOLE_AUTH_ORIGIN', 'VAULT_ORIGIN', 'APP_CHANGE_DELAY_MS', 'CONSOLE_ORIGIN', 'EMAIL_FROM', 'ENV_LABEL', 'ENV_NAME', 'FILES_ORIGIN', 'NEAR_NETWORK', 'NEAR_RPC', 'OWNER_GRANT_DELAY_MS', 'RELAYER_ACCOUNT', 'SECURITY_ALIAS', 'SIGNER_ACCOUNT', 'STAFF_EMAILS', 'WATCHDOG_URL'].sort(),
+      ['ACCESS_AUD', 'ACCESS_TEAM_DOMAIN', 'ACCOUNT_CRONS', 'ADMIN_ORIGIN', 'API_URL', 'AUTH_ORIGIN', 'CONSOLE_AUTH_ORIGIN', 'VAULT_ORIGIN', 'APP_CHANGE_DELAY_MS', 'CONSOLE_ORIGIN', 'EMAIL_FROM', 'ENV_LABEL', 'ENV_NAME', 'FILES_ORIGIN', 'NEAR_NETWORK', 'NEAR_RPC', 'OWNER_GRANT_DELAY_MS', 'RELAYER_ACCOUNT', 'SCOPE_REGISTRATION', 'SECURITY_ALIAS', 'SIGNER_ACCOUNT', 'STAFF_EMAILS', 'WATCHDOG_URL'].sort(),
     );
     expect(LOCAL_ADMIN_CONNECTION_STRING).toMatch(/\.invalid:/u);
   });

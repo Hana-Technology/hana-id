@@ -8,7 +8,20 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 const ago = (ms: number) => NOW - ms;
 
-export const me = { email: 'tze@hana.example', sub: 'access-sub-1', env: 'sandbox-dev', consoleOrigin: 'https://console.sandbox-dev.hana.example' };
+export const me = {
+  email: 'tze@hana.example',
+  sub: 'access-sub-1',
+  env: 'sandbox-dev',
+  consoleOrigin: 'https://console.sandbox-dev.hana.example',
+  // The "Register a scope" panel's manifest values (GET /api/me `scopeRegistration`): a council owner, a dev env.
+  scopeRegistration: {
+    ownerKind: 'sputnik',
+    owner: 'hana-id-council-dev1.sputnikv2.testnet',
+    councilMembers: ['hana-id-council-a-dev1.testnet', 'hana-id-council-b-dev1.testnet', 'hana-id-council-c-dev1.testnet'],
+    devCouncilKeys: true,
+    sharedClientIds: ['875896396522-previewsharedclient00000000000.apps.googleusercontent.com'],
+  },
+};
 
 export const orgs = [
   { id: 'org_legacy', name: 'Legacy apps', kind: 'internal', status: 'active', createdAt: ago(240 * DAY) },
@@ -16,6 +29,9 @@ export const orgs = [
   { id: 'org_01jd2kestrel', name: 'Kestrel Wallet', kind: 'partner', status: 'active', createdAt: ago(9 * DAY) },
   { id: 'org_01jd9saltmarsh', name: 'Saltmarsh Games', kind: 'partner', status: 'frozen', createdAt: ago(5 * DAY) },
   { id: 'org_01jb0hanaint', name: 'Hana internal', kind: 'internal', status: 'active', createdAt: ago(60 * DAY) },
+  // Onboarding (the "Register a scope" panel's states): invited, not accepted yet; and owners in, no scope yet.
+  { id: 'org_01jdorbit', name: 'Orbit Labs', kind: 'partner', status: 'active', createdAt: ago(2 * HOUR) },
+  { id: 'org_01jdcorvid', name: 'Corvid Pay', kind: 'partner', status: 'active', createdAt: ago(DAY) },
 ];
 
 const member = (userId: string, email: string, role: 'owner' | 'viewer', since: number, extra: Record<string, unknown> = {}) => ({ userId, sub: `g-${userId}`, email, role, roleSince: ago(since), disabled: false, ...extra });
@@ -85,6 +101,29 @@ export const orgDetail: Record<string, unknown> = {
     apps: [{ id: 'app_01jb0demo', name: 'Hana demo', scopeId: 's9e4a1c7b3d2f0', environment: 'test', deleted: false, suspendedBy: 0, activeOrigins: 2, pendingChanges: 0 }],
     flags: { noSecurityContacts: false, ownersNotContacts: [] },
   },
+};
+
+orgDetail.org_01jdorbit = {
+  org: orgs[5],
+  members: [],
+  invites: [{ id: 'inv_01jdorbitlena', email: 'lena.fischer@orbitlabs.example', role: 'owner', createdAt: ago(2 * HOUR), notifiedAt: ago(2 * HOUR - 4 * MIN), expiresAt: NOW + 7 * DAY, acceptedAt: null, revokedAt: null }],
+  grants: [{ id: 'grt_01jdorbitlena', userId: null, inviteId: 'inv_01jdorbitlena', grantedByKind: 'hana', grantedBy: 'tze@hana.example', notifiedAt: null, ownerFrom: null }],
+  securityContacts: [],
+  apps: [],
+  flags: { noSecurityContacts: true, ownersNotContacts: [] },
+};
+orgDetail.org_01jdcorvid = {
+  org: orgs[6],
+  members: [
+    member('usr_01jdcorvsam', 'sam.ito@corvidpay.example', 'owner', DAY, { sub: '110248495921238986420' }),
+    member('usr_01jdcorvrui', 'rui.costa@corvidpay.example', 'owner', 20 * HOUR, { sub: '104857739201938475610' }),
+    member('usr_01jdcorvada', 'ada.obi@corvidpay.example', 'viewer', 3 * HOUR, { sub: '117730021948573629104', pendingOwnerFrom: NOW + 21 * HOUR }),
+  ],
+  invites: [{ id: 'inv_01jdcorvkai', email: 'kai.berg@corvidpay.example', role: 'owner', createdAt: ago(HOUR), notifiedAt: ago(HOUR - 4 * MIN), expiresAt: NOW + 7 * DAY, acceptedAt: null, revokedAt: null }],
+  grants: [],
+  securityContacts: ['sam.ito@corvidpay.example', 'rui.costa@corvidpay.example'],
+  apps: [],
+  flags: { noSecurityContacts: false, ownersNotContacts: [] },
 };
 
 export const orgChanges = (orgId: string) => ({

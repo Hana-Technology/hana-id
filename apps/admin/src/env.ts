@@ -223,6 +223,14 @@ export interface Env {
    */
   NEAR_NETWORK?: string;
   /**
+   * What the organisation page's "Register a scope" panel needs to write the exact `admin <env> scope:register` command
+   * (D651): JSON `{ownerKind, owner, councilMembers, devCouncilKeys, sharedClientIds}` from the manifest (all public;
+   * `devCouncilKeys`: a dev env on testnet, where the council's keys are in `.secrets/` and one command casts both
+   * votes). The Worker only reads it into `GET /api/me`; nothing here sends a transaction. Absent or malformed: the
+   * panel says the command can't be prepared until `gen` has run.
+   */
+  SCOPE_REGISTRATION?: string;
+  /**
    * The watchdog status endpoint's bearer token (≥ 32 characters; the watchdog holds the other copy, D83). Secret: sent
    * only in the `Authorization` header of this Worker's calls to WATCHDOG_URL, never logged, never in a response.
    */

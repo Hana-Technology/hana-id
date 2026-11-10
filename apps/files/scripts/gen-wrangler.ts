@@ -56,7 +56,9 @@ export function wranglerConfig(m: Manifest): Record<string, unknown> {
     ...filesPlacement(m),
     // The Worker's own log lines only (codes, never a key or an app id); the platform's per-request records would add
     // the URL, which is public anyway, so they stay on.
-    observability: { enabled: true },
+    // No platform invocation logs (URLs, headers, the client's address): the mail logo is fetched when a mail is opened,
+    // and who opened what must not be kept (D685). The Worker's own lines are errors only, with no request data.
+    observability: { enabled: true, logs: { invocation_logs: false } },
     vars: { FILES_ORIGIN: f.origin },
     // Read only by code (a source test): the console writes logos, the files Worker only gets them.
     r2_buckets: [{ binding: 'LOGOS', bucket_name: f.logosBucket }],

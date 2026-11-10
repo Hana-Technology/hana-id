@@ -10,6 +10,8 @@ export interface MailContext {
   consoleOrigin: string;
   /** A non-production env's label (`[SANDBOX]`, D419), first in every subject; absent or empty on production. */
   label?: string;
+  /** The env's files origin: the designed mails' logo is served there (D685); absent, the text wordmark. */
+  filesOrigin?: string;
 }
 
 const KIND_LABEL: Record<string, string> = { origin_add: 'a new allowed origin', policy_set: 'an auto-approve policy', raw_sign_on: 'raw signing (with approval)' };
@@ -97,7 +99,7 @@ export function inviteLink(c: MailContext, invite: InviteView, o: { orgName?: st
     ],
     c.consoleOrigin,
     c.label,
-    { heading: subject, preheader: `Join ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} in the Hana ID partner console. The invitation expires on ${isoTime(invite.expiresAt)}.` },
+    { heading: subject, ...(c.filesOrigin ? { filesOrigin: c.filesOrigin } : {}), preheader: `Join ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} in the Hana ID partner console. The invitation expires on ${isoTime(invite.expiresAt)}.` },
   );
 }
 

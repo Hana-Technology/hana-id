@@ -63,6 +63,8 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       // The env label the HTML part of user mail opens with (D419, D670); none on any network but testnet.
       NEAR_NETWORK: m.network,
       ...(envAlertLabel(m) ? { ENV_LABEL: envAlertLabel(m) } : {}),
+      // The designed mails' logo comes from the files Worker (D685); without a files block, the text wordmark.
+      ...(m.files ? { FILES_ORIGIN: m.files.origin } : {}),
       NEAR_RPC: m.rpc,
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
       SIGNER_ACCOUNT: m.signer,

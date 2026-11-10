@@ -1,6 +1,9 @@
 // The email layout (src/email.ts): escaping, what it refuses, what it never emits, and its size.
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { MAIL_COLOURS, type MailBlock, mailHtml, mailText, mailUrlProblem } from '../src/email.ts';
+import { MAIL_COLOURS, type MailBlock, isMailLoopbackHost, mailHtml, mailLogoUrl, mailText, mailUrlProblem } from '../src/email.ts';
+import { MAIL_LOGO_HEIGHT, MAIL_LOGO_PATH, MAIL_LOGO_PNG_BASE64, MAIL_LOGO_SHA256, MAIL_LOGO_WIDTH } from '../src/mail-logo.ts';
 
 const BIDI = String.fromCharCode(0x202e);
 const ZWSP = String.fromCharCode(0x200b);
@@ -128,5 +131,76 @@ describe('mailHtml', () => {
 
   it('mailText escapes the five HTML characters', () => {
     expect(mailText(`&<>"'`)).toBe('&#38;&#60;&#62;&#34;&#39;');
+  });
+});
+
+describe('what text may hold: the display-safety rule, by class', () => {
+  const ch = (n: number): string => String.fromCodePoint(n);
+  const cases: [string, number[]][] = [
+    ['Cc, controls (but tab and line feed)', [0x00, 0x07, 0x0d, 0x1b, 0x7f, 0x85, 0x9f]],
+    ['Cf, format: bidi, zero-width, soft hyphen, Arabic letter mark, Mongolian vowel separator, interlinear, BOM, tags', [0x202e, 0x2066, 0x200b, 0x200d, 0x00ad, 0x061c, 0x180e, 0xfff9, 0xfffb, 0xfeff, 0xe0001, 0xe0041, 0xe007f]],
+    ['Co, private use', [0xe000, 0xf8ff, 0xf0000]],
+    ['Zl, line separator', [0x2028]],
+    ['Zp, paragraph separator', [0x2029]],
+    ['fillers: combining grapheme joiner, Hangul, Khmer, Mongolian selectors, braille blank, variation selectors', [0x034f, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x17b5, 0x180b, 0x180f, 0x2800, 0xfe00, 0xfe0f, 0xe0100, 0xe01ef]],
+  ];
+  for (const [what, points] of cases) {
+    it(`drops ${what}`, () => {
+      for (const n of points) expect(mailText(`a${ch(n)}b`), n.toString(16)).toBe('ab');
+    });
+  }
+
+  it('keeps tab and line feed (a preformatted block needs them), letters, accents and emoji without a selector', () => {
+    expect(mailText('a\tb\nc')).toBe('a\tb\nc');
+    expect(mailText('Café Ünïcode 日本 😀')).toBe('Café Ünïcode 日本 😀');
+  });
+});
+
+describe('the hosted logo (D685)', () => {
+  it('replaces the text wordmark with one <img>: the URL as given, fixed size, alt "Hana ID" styled as the wordmark', () => {
+    const url = `https://files.example${MAIL_LOGO_PATH}`;
+    const html = base([], { logoUrl: url });
+    const img = [...html.matchAll(/<img\b[^>]*>/gu)].map((m) => m[0]);
+    expect(img).toHaveLength(1);
+    expect(img[0]).toContain(`src="${url}"`);
+    expect(img[0]).toContain(`width="${MAIL_LOGO_WIDTH}" height="${MAIL_LOGO_HEIGHT}"`);
+    expect(img[0]).toContain('alt="Hana ID"');
+    expect(img[0]).toMatch(/font-size:20px;[^"]*font-weight:800;[^"]*color:#16073a/u);
+    expect(html).not.toContain('>Hana</span> <span');
+    // Without a URL, or with one that isn't https (or loopback http): the text wordmark, no image.
+    for (const logoUrl of [undefined, 'http://files.example/x.png', 'javascript:alert(1)', 'not a url']) {
+      const h = base([], logoUrl === undefined ? {} : { logoUrl });
+      expect(h, String(logoUrl)).not.toContain('<img');
+      expect(h).toContain('>Hana</span> <span');
+    }
+  });
+
+  it('mailLogoUrl: the files origin and the hashed path, nothing per recipient', () => {
+    expect(mailLogoUrl('https://files.example')).toBe(`https://files.example${MAIL_LOGO_PATH}`);
+    expect(mailLogoUrl('https://files.example/')).toBe(`https://files.example${MAIL_LOGO_PATH}`);
+    expect(mailLogoUrl(undefined)).toBeUndefined();
+    expect(mailLogoUrl('')).toBeUndefined();
+  });
+
+  it('the logo bytes: a PNG of the declared size, whose sha256 the path names, the same as mail/hana-mail-logo.png', () => {
+    const bytes = Buffer.from(MAIL_LOGO_PNG_BASE64, 'base64');
+    expect([...bytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    // IHDR: width and height at 2x.
+    expect(bytes.readUInt32BE(16)).toBe(MAIL_LOGO_WIDTH * 2);
+    expect(bytes.readUInt32BE(20)).toBe(MAIL_LOGO_HEIGHT * 2);
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(MAIL_LOGO_SHA256);
+    expect(MAIL_LOGO_PATH).toBe(`/brand/hana-mail-logo-${MAIL_LOGO_SHA256.slice(0, 16)}.png`);
+    expect(readFileSync(new URL('../mail/hana-mail-logo.png', import.meta.url)).equals(bytes)).toBe(true);
+    expect(bytes.length).toBeLessThan(8 * 1024);
+  });
+});
+
+describe('mailUrlProblem: https, or http on a loopback host', () => {
+  it('accepts every loopback form isLoopbackHost does', () => {
+    for (const host of ['localhost', 'app.localhost', '127.0.0.1', '127.1.2.3', '[::1]', '[::ffff:7f00:1]', 'localhost.']) {
+      expect(isMailLoopbackHost(new URL(`http://${host}/`).hostname), host).toBe(true);
+      expect(mailUrlProblem(`http://${host}:4400/x`), host).toBeNull();
+    }
+    for (const host of ['example.com', '10.0.0.1', '0.0.0.0', 'localhost.example.com', '[::2]']) expect(mailUrlProblem(`http://${host}/x`), host).not.toBeNull();
   });
 });

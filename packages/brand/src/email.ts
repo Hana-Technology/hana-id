@@ -2,8 +2,9 @@
 // library and nothing loaded at send time, so it costs a Worker almost no CPU.
 //
 // Written for mail clients, not browsers: tables and inline styles (clients drop or rewrite style sheets), at most
-// 560 px wide, the system font stack (web fonts don't load reliably), no image, no script, no form, no remote
-// anything. The wordmark is text, so a client that blocks images shows the same mail. One `<style>` in the head only
+// 560 px wide, the system font stack (web fonts don't load reliably), no script, no form, and one remote resource at
+// most: the logo (D685), the same URL for every mail, its `alt` styled as the text wordmark, so a client that blocks
+// images shows the same mail. One `<style>` in the head only
 // adds what inline styles can't: dark colours for clients that honour `prefers-color-scheme`, a narrow-screen
 // padding, and neutral styling for links a client adds by itself. Without it the mail is still the light layout.
 //
@@ -11,9 +12,14 @@
 // so a partner's name can't add markup, a link or hidden text. A button's URL must be an http(s) URL (http only for
 // a loopback host); a code may hold digits and capital letters only. Callers still decide which strings a mail may
 // show at all.
+import { MAIL_LOGO_HEIGHT, MAIL_LOGO_PATH, MAIL_LOGO_WIDTH } from './mail-logo.ts';
 
-/** A run of text inside a paragraph or callout. `host` shows a host name as text that mail clients don't link. */
-export type MailInline = string | { strong: string } | { host: string };
+/**
+ * A run of text inside a paragraph or callout. `host` shows a host name as monospaced text that mail clients don't
+ * link; `unlinked` is ordinary text written the same way (a partner's name: even one that looks like a host stays
+ * text).
+ */
+export type MailInline = string | { strong: string } | { host: string } | { unlinked: string };
 
 export type MailBlock =
   | { kind: 'heading'; text: string }
@@ -41,6 +47,8 @@ export interface MailLayout {
   blocks: readonly MailBlock[];
   /** Small print under the card. */
   footer?: string | readonly MailInline[];
+  /** The hosted logo (`mailLogoUrl`); absent, or not an https URL: the text wordmark. */
+  logoUrl?: string;
 }
 
 /** Colours: packages/brand tokens.css, light and dark (D426's palette, AA on their surfaces). */
@@ -86,21 +94,18 @@ const D = MAIL_COLOURS.dark;
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif";
 const MONO = "ui-monospace,'SF Mono',Menlo,Consolas,'Liberation Mono','Courier New',monospace";
 
-/** Control characters but tab and LF, DEL and C1, zero-width space, LRM/RLM, line/paragraph separators, bidi controls, word joiners and BOM. */
-// Built from numbers, so this source holds no invisible character.
-const INVISIBLE_RANGES: readonly (readonly [number, number])[] = [
-  [0x00, 0x08],
-  [0x0b, 0x1f],
-  [0x7f, 0x9f],
-  [0x200b, 0x200b],
-  [0x200e, 0x200f],
-  [0x2028, 0x202e],
-  [0x2060, 0x2064],
-  [0x2066, 0x206f],
-  [0xfeff, 0xfeff],
-];
-const cp = (n: number): string => `\\u{${n.toString(16)}}`;
-const INVISIBLE = new RegExp(`[${INVISIBLE_RANGES.map(([a, b]) => (a === b ? cp(a) : `${cp(a)}-${cp(b)}`)).join('')}]`, 'gu');
+/**
+ * What text in a mail may not hold: the display-safety rule of `@hana-id/core` `isDisplaySafeLine` (display-safe.ts),
+ * by Unicode property rather than a list. Controls (Cc) but tab and line feed, which preformatted blocks keep; format
+ * characters (Cf: bidi controls and isolates, zero-width characters, U+00AD, U+061C, U+180E, U+FEFF, U+FFF9–U+FFFB, the
+ * tag characters U+E0000–U+E007F, …); private use (Co); line and paragraph separators (Zl, Zp); and the other
+ * invisible fillers: U+034F, the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, U+17B4, U+17B5, the Mongolian
+ * selectors U+180B–U+180F, the braille blank U+2800 and every variation selector. Escapes only, so this source holds
+ * no invisible character.
+ */
+export const MAIL_INVISIBLE_SOURCE =
+  '[\\u{0}-\\u{8}\\u{b}-\\u{1f}\\u{7f}-\\u{9f}\\p{Cf}\\p{Co}\\p{Zl}\\p{Zp}\\u{34f}\\u{115f}\\u{1160}\\u{17b4}\\u{17b5}\\u{180b}-\\u{180f}\\u{2800}\\u{3164}\\u{fe00}-\\u{fe0f}\\u{ffa0}\\u{e0100}-\\u{e01ef}]';
+const INVISIBLE = new RegExp(MAIL_INVISIBLE_SOURCE, 'gu');
 
 /** Text for HTML: invisible characters dropped, then `& < > " '` escaped. */
 export function mailText(s: string): string {
@@ -108,14 +113,14 @@ export function mailText(s: string): string {
 }
 
 /**
- * Text that mail clients shouldn't turn into a link (a host name, a URL shown as text): each `.`, `/`, `#`, `?`, `=`
- * and `&` in its own element, so no single text node looks like an address, with a break opportunity after it. Copying
+ * Text that mail clients shouldn't turn into a link (a host name, a URL shown as text): each `.`, `/`, `#`, `?` and `=`
+ * in its own element, so no single text node looks like an address, with a break opportunity after it. Copying
  * it gives the original characters: nothing invisible is added.
  */
 function unlinked(s: string): string {
   return s
     .replace(INVISIBLE, '')
-    .split(/([./#?=&])/u)
+    .split(/([./#?=])/u)
     .map((piece, i) => (i % 2 === 1 ? `<span>${mailText(piece)}</span><wbr>` : mailText(piece)))
     .join('');
 }
@@ -126,12 +131,22 @@ function inline(parts: string | readonly MailInline[]): string {
     .map((p) => {
       if (typeof p === 'string') return mailText(p);
       if ('strong' in p) return `<strong style="font-weight:700">${mailText(p.strong)}</strong>`;
+      if ('unlinked' in p) return unlinked(p.unlinked);
       return `<span class="hm-host" style="font-family:${MONO};font-size:0.92em;color:inherit;text-decoration:none;overflow-wrap:anywhere">${unlinked(p.host)}</span>`;
     })
     .join('');
 }
 
-/** A URL a button may carry: http(s) only, http only on a loopback host; nothing that could be script. */
+/**
+ * Loopback, as the URL parser writes the host: `localhost`, `*.localhost`, 127.0.0.0/8, `[::1]` and IPv4-mapped
+ * 127.0.0.0/8, each also with a trailing dot (`@hana-id/env` `isLoopbackHost`; a test keeps the two equal).
+ */
+export function isMailLoopbackHost(hostname: string): boolean {
+  const h = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname;
+  return h === 'localhost' || h.endsWith('.localhost') || /^127(\.\d{1,3}){3}$/u.test(h) || h === '[::1]' || /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/u.test(h);
+}
+
+/** A URL a button or the logo may carry: https, or http on a loopback host (local envs); nothing that could be script. */
 export function mailUrlProblem(url: string): string | null {
   let u: URL;
   try {
@@ -140,7 +155,7 @@ export function mailUrlProblem(url: string): string | null {
     return 'not a URL';
   }
   if (u.protocol === 'https:') return null;
-  if (u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]')) return null;
+  if (u.protocol === 'http:' && isMailLoopbackHost(u.hostname)) return null;
   return 'only https URLs';
 }
 
@@ -199,9 +214,25 @@ const DARK = `.hm-page{background-color:${D.page}!important}.hm-card{background-
 
 const STYLE = `:root{color-scheme:light dark;supported-color-schemes:light dark}body{margin:0!important;padding:0!important;width:100%!important}a[x-apple-data-detectors],.hm-host a,.hm-code a{color:inherit!important;text-decoration:none!important;font-size:inherit!important;font-family:inherit!important;font-weight:inherit!important;line-height:inherit!important}@media (max-width:480px){.hm-pad{padding:24px 20px 20px!important}.hm-outer{padding:16px 8px!important}.hm-code{font-size:30px!important;letter-spacing:6px!important;margin-right:-6px!important}}@media (prefers-color-scheme:dark){${DARK}}${DARK.replace(/(^|\})\./gu, '$1[data-ogsc] .')}`;
 
-// Zero-width non-joiners and non-breaking spaces after the preheader: clients fill a preview to its length from the
-// body otherwise, which would put the code there.
-const PREVIEW_PAD = '&#847;&zwnj;&nbsp;'.repeat(40);
+// Invisible joiners and non-breaking spaces after the preheader, about 300 characters: clients fill a preview to its
+// length from the body otherwise, which would put the code there. Best effort (D671): a client that previews more
+// than this, or previews the text part, still reaches the code.
+const PREVIEW_PAD = '&#847;&zwnj;&nbsp;'.repeat(100);
+
+/**
+ * The header: the hosted logo (D685) when the env has one, its `alt` "Hana ID" styled as the text wordmark so a client
+ * that blocks images shows the same words; without a logo URL, the text wordmark itself. The one place a logo changes.
+ */
+function header(logoUrl: string | undefined): string {
+  const td = `<tr><td style="padding:0 4px 14px;font-family:${FONT};font-size:20px;line-height:1.2;font-weight:800;letter-spacing:-0.3px">`;
+  if (logoUrl !== undefined && mailUrlProblem(logoUrl) === null) {
+    return `${td}<img class="hm-ink" src="${mailText(logoUrl)}" width="${MAIL_LOGO_WIDTH}" height="${MAIL_LOGO_HEIGHT}" alt="Hana ID" style="display:block;border:0;outline:none;text-decoration:none;width:${MAIL_LOGO_WIDTH}px;height:${MAIL_LOGO_HEIGHT}px;font-family:${FONT};font-size:20px;line-height:${MAIL_LOGO_HEIGHT}px;font-weight:800;letter-spacing:-0.3px;color:${L.ink}"></td></tr>`;
+  }
+  return `${td}<span class="hm-ink" style="color:${L.ink}">Hana</span> <span class="hm-accent" style="color:${L.accent}">ID</span></td></tr>`;
+}
+
+/** The logo's URL on an env's files origin (D685): the same for every recipient and every mail, no query, no token. */
+export const mailLogoUrl = (filesOrigin: string | undefined): string | undefined => (filesOrigin ? `${filesOrigin.replace(/\/+$/u, '')}${MAIL_LOGO_PATH}` : undefined);
 
 /** The whole HTML part. */
 export function mailHtml(m: MailLayout): string {
@@ -227,8 +258,7 @@ export function mailHtml(m: MailLayout): string {
     `<table role="presentation" class="hm-page" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${L.page}"><tr><td class="hm-outer" align="center" style="padding:28px 12px">`,
     '<!--[if mso]><table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->',
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;margin:0 auto">`,
-    // The wordmark, as text: the same with images blocked.
-    `<tr><td style="padding:0 4px 14px;font-family:${FONT};font-size:20px;line-height:1.2;font-weight:800;letter-spacing:-0.3px"><span class="hm-ink" style="color:${L.ink}">Hana</span> <span class="hm-accent" style="color:${L.accent}">ID</span></td></tr>`,
+    header(m.logoUrl),
     banner,
     `<tr><td><table role="presentation" class="hm-card" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${L.card};border:1px solid ${L.line};border-radius:16px;border-collapse:separate">`,
     // Hana's gradient as a thin top rule (decoration only: a client without gradients shows its first colour).

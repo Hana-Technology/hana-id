@@ -3,6 +3,7 @@
 // skips what this isolate saw accepted and never what it didn't, D401) and the rendering rules (escaped partner
 // text, one-line subjects, links only to the console origin, no remote image); which mail bypasses SendGrid's
 // suppression lists (alerts and blocking notices) and which keeps them (D401 as amended).
+import { MAIL_LOGO_PATH } from '@hana-id/brand/mail-logo';
 import { SENDGRID_URL } from '@hana-id/sendgrid';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mailLabel } from '../src/env.ts';
@@ -244,6 +245,19 @@ describe('rendering', () => {
       expect(pre).not.toContain('tok');
     }
     expect(() => render('e', 's', [{ kind: 'link', label: 'x', url: 'javascript:alert(1)' }], 'https://console.test', '', { heading: 'h', preheader: 'p' })).toThrow();
+  });
+
+  it('the invite: the hosted logo when the env has a files origin, the only image (D685); an org name that looks like a host is unlinked text', () => {
+    const url = 'https://console.test/invite#t=tok';
+    const r = inviteLink({ ...ctx, filesOrigin: 'https://files.test' }, { id: 'inv_1', role: 'owner', newOrgName: 'evil.example Labs', createdByKind: 'hana', createdBy: 's', expiresAt: 0 } as never, { inviteUrl: url });
+    const imgs = [...r.html.matchAll(/<img\b[^>]*>/gu)].map((m) => m[0]);
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toContain(`src="https://files.test${MAIL_LOGO_PATH}"`);
+    expect(imgs[0]).toContain('alt="Hana ID"');
+    expect([...r.html.matchAll(/\bsrc=/gu)]).toHaveLength(1);
+    expect(r.html).toContain('evil<span>.</span><wbr>example Labs');
+    expect([...r.html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1])).toEqual([url]);
+    expect(inviteLink(ctx, { id: 'inv_1', role: 'owner', newOrgName: 'Acme', createdByKind: 'hana', createdBy: 's', expiresAt: 0 } as never, { inviteUrl: url }).html).not.toContain('<img');
   });
 
   it('operational mails keep the plain HTML (no designed layout)', () => {

@@ -9,7 +9,7 @@
 // - proposeChange: a policy set or raw-signing enable as a pending guarded change, nothing in `apps` until its notice
 //   is acked (lifecycle.ts): a staff proposal (AdminRpc) or a member's with the API-verified step-up (ConsoleRpc,
 //   changes/step-up.ts, the settings-change layout over the policyId and the stored settings_version).
-import { LOGO_KEY_RE, newId, nonceOf, normaliseAppName, settingsChangeDigest } from '@hana-id/console-core';
+import { LOGO_KEY_RE, newId, nonceOf, normalisePartnerAppName, settingsChangeDigest } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { IDLE_TTL_MIN_MS, SESSION_TTL_MAX_MS, SESSION_TTL_MIN_MS } from '../vault/settings.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
@@ -23,9 +23,12 @@ import { type Q, join, q, raw } from './sql.ts';
 import { type StepUpToken, confirmStepUp, releaseStepUp, verifyStepUpToken } from './step-up.ts';
 import { type ChangeRow, changeView } from './views.ts';
 
-/** An app name as stored: NFC, trimmed, 1..64 characters, one display-safe line (console-core normaliseAppName). */
+/**
+ * An app name as stored: NFC, trimmed, 1..64 characters, one display-safe line, and not like a web address or "Hana"
+ * (console-core normalisePartnerAppName, D686). Applies to a new app and to every rename.
+ */
 export function appName(input: string): string {
-  const r = normaliseAppName(input);
+  const r = normalisePartnerAppName(input);
   return r.ok ? r.name : refuse('bad_request', r.problem);
 }
 

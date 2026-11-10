@@ -4,6 +4,7 @@
 import { SELF, env } from 'cloudflare:test';
 import { BUILD_PATH } from '@hana-id/env/build-id';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MAIL_LOGO_PATH, MAIL_LOGO_SHA256 } from '@hana-id/brand/mail-logo';
 import worker, { LOGO_HEADERS, LOGO_MAX_BYTES, PNG_SIGNATURE } from '../src/index.ts';
 
 const ORIGIN = env.FILES_ORIGIN;
@@ -196,5 +197,42 @@ describe('GET /.well-known/hana-build (D406)', () => {
     expect((await worker.fetch(new Request(url, { method: 'POST' }), stamped)).status).toBe(405);
     expect((await worker.fetch(new Request(`https://other.test${BUILD_PATH}`), stamped)).status).toBe(404);
     for (const path of [`${BUILD_PATH}/`, `${BUILD_PATH}.json`, '/.well-known/hana-builds']) expect((await worker.fetch(new Request(`${ORIGIN}${path}`), stamped)).status, path).toBe(404);
+  });
+});
+
+describe('GET the mail logo (D685)', () => {
+  const sha = async (b: ArrayBuffer): Promise<string> => [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map((x) => x.toString(16).padStart(2, '0')).join('');
+
+  it('serves the built-in PNG at its hashed path: the logo headers, no cookie, a year’s caching, cross-origin CORP', async () => {
+    const res = await get(MAIL_LOGO_PATH);
+    expect(res.status).toBe(200);
+    const bytes = await res.arrayBuffer();
+    expect(await sha(bytes)).toBe(MAIL_LOGO_SHA256);
+    expect(MAIL_LOGO_PATH).toBe(`/brand/hana-mail-logo-${MAIL_LOGO_SHA256.slice(0, 16)}.png`);
+    expect([...new Uint8Array(bytes, 0, 8)]).toEqual([...PNG_SIGNATURE]);
+    expect(Object.fromEntries(res.headers)).toEqual({ ...LOGO_HEADERS, 'content-disposition': 'inline; filename="hana.png"', 'content-length': String(bytes.byteLength) });
+    expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    expect(res.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
+    expect(res.headers.has('set-cookie')).toBe(false);
+    const h = await get(MAIL_LOGO_PATH, { method: 'HEAD' });
+    expect(h.status).toBe(200);
+    expect(await h.text()).toBe('');
+  });
+
+  it('logs nothing and reads no bucket, whatever the request carries; a query string changes nothing', async () => {
+    const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'info'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error'), vi.spyOn(console, 'debug')];
+    const r2 = vi.spyOn(env.LOGOS, 'get');
+    const plain = await (await worker.fetch(new Request(`${ORIGIN}${MAIL_LOGO_PATH}`), env)).arrayBuffer();
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}${MAIL_LOGO_PATH}?r=recipient@example.com&m=123`, { headers: { 'user-agent': 'GoogleImageProxy', 'cf-connecting-ip': '203.0.113.9', referer: 'https://mail.example/' } }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(plain));
+    for (const l of logs) expect(l).not.toHaveBeenCalled();
+    expect(r2).not.toHaveBeenCalled();
+    // Only on FILES_ORIGIN, GET and HEAD.
+    expect((await get(MAIL_LOGO_PATH, undefined, 'https://other.test')).status).toBe(404);
+    expect((await get(MAIL_LOGO_PATH, { method: 'POST' })).status).toBe(405);
   });
 });

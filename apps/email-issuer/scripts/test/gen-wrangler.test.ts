@@ -5,7 +5,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
-import { ENV_ALERT_LABELS, type Manifest, envAlertLabel, loadEnv, rsaJwkThumbprint } from '@hana-id/env';
+import { isMailLoopbackHost } from '@hana-id/brand/email';
+import { ENV_ALERT_LABELS, type Manifest, envAlertLabel, isLoopbackHost, loadEnv, rsaJwkThumbprint } from '@hana-id/env';
 import { MAIL_LABELS } from '../../src/labels.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CUSTOM_DOMAIN, customDomainManifest } from '../../../../packages/env/src/custom-domain.fixture.ts';
@@ -99,6 +100,19 @@ describe('wranglerConfig', () => {
     // No label on any other network (and gen refuses a Worker-secret signer there anyway).
     expect(envAlertLabel({ ...base, network: 'mainnet' })).toBe('');
     expect([...MAIL_LABELS]).toEqual([...ENV_ALERT_LABELS]);
+  });
+
+  it('writes the files origin the designed mails’ logo is served from (D685), only with a files block', () => {
+    const c = wranglerConfig(manifest(), LOCAL_D1_ID) as Record<string, any>;
+    expect(c.vars.FILES_ORIGIN).toBe(base.files!.origin);
+    const none = wranglerConfig({ ...manifest(), files: undefined } as unknown as Manifest, LOCAL_D1_ID) as Record<string, any>;
+    expect(none.vars.FILES_ORIGIN).toBeUndefined();
+  });
+
+  it('the mail layout’s loopback rule is @hana-id/env isLoopbackHost', () => {
+    for (const host of ['localhost', 'a.localhost', 'localhost.', '127.0.0.1', '127.255.0.9', '[::1]', '[::ffff:7f00:1]', '[::ffff:7fff:ffff]', 'example.com', '10.0.0.1', '0.0.0.0', '[::2]', 'localhost.example', '128.0.0.1']) {
+      expect(isMailLoopbackHost(host), host).toBe(isLoopbackHost(host));
+    }
   });
 
   it('DirectoryRpc’s staff check: the admin application’s Access vars only with a dashboard block; no service binding of its own (D275)', () => {

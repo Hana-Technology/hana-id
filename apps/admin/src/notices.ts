@@ -41,7 +41,7 @@ const delay = (raw: string | undefined, fallback: number): number => {
   return Number.isSafeInteger(v) && v > 0 ? v : fallback;
 };
 
-const mailContext = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env) });
+const mailContext = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env), filesOrigin: env.FILES_ORIGIN });
 
 /** A page read is worth it only with room for one notice after it: the page (RPC), one email and the ack (RPC). */
 const PAGE_AND_ONE = 3;

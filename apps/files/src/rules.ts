@@ -20,3 +20,9 @@ export const LOGO_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   'cache-control': 'public, max-age=31536000, immutable',
   'referrer-policy': 'no-referrer',
 });
+
+/**
+ * The mail logo's headers (D685): a logo's, under its own file name. No cookie, a year's immutable caching (the path
+ * names the image's hash), cross-origin CORP so mail clients' image proxies may fetch it.
+ */
+export const MAIL_LOGO_HEADERS: Readonly<Record<string, string>> = Object.freeze({ ...LOGO_HEADERS, 'content-disposition': 'inline; filename="hana.png"' });

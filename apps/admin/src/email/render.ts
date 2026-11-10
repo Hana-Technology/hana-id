@@ -3,7 +3,7 @@
 // (the partner invite), Hana's designed layout (@hana-id/brand/email) built from the same blocks, with the same text
 // part. Partner-controlled text (app and org names, origins, policy labels) is escaped for HTML and stripped of
 // control characters; a subject is one line.
-import { type MailBlock, mailHtml } from '@hana-id/brand/email';
+import { MAIL_INVISIBLE_SOURCE, type MailBlock, mailHtml, mailLogoUrl } from '@hana-id/brand/email';
 
 export type Block =
   | { kind: 'p'; text: string }
@@ -17,6 +17,8 @@ export type Block =
 export interface Design {
   heading: string;
   preheader: string;
+  /** The env's files origin, for the hosted logo (D685); absent, the text wordmark. */
+  filesOrigin?: string;
 }
 
 export interface Rendered {
@@ -25,18 +27,12 @@ export interface Rendered {
   html: string;
 }
 
-/** A character class of code point ranges (built from numbers, so the source holds no invisible character). */
-const charClass = (ranges: [number, number][]): string => ranges.map(([a, b]) => (a === b ? `\\u{${a.toString(16)}}` : `\\u{${a.toString(16)}}-\\u{${b.toString(16)}}`)).join('');
-
-/** C0 controls but tab and line feed, DEL, C1, the Unicode line and paragraph separators and the bidi controls. */
-const INVISIBLE: [number, number][] = [
-  [0x00, 0x08],
-  [0x0b, 0x1f],
-  [0x7f, 0x9f],
-  [0x2028, 0x202e],
-  [0x2066, 0x2069],
-];
-const CONTROL = new RegExp(`[${charClass(INVISIBLE)}]`, 'gu');
+/**
+ * What mail text may not hold: the display-safety rule (`@hana-id/core` `isDisplaySafeLine`, by Unicode property) as
+ * the mail layout applies it: controls but tab and line feed, format characters (bidi, zero-width, soft hyphen, tag
+ * characters, …), private use, line and paragraph separators, and the invisible fillers.
+ */
+const CONTROL = new RegExp(MAIL_INVISIBLE_SOURCE, 'gu');
 
 /** One line of display text: no control characters or line breaks, collapsed spaces, at most `max` characters. */
 export function oneLine(s: string, max = 200): string {
@@ -76,7 +72,8 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
       case 'p':
         text.push(clean(b.text));
         html.push(`<p>${escapeHtml(clean(b.text))}</p>`);
-        designed.push({ kind: 'p', text: clean(b.text) });
+        // Written so clients don't link a name that looks like a host (D687).
+        designed.push({ kind: 'p', text: [{ unlinked: clean(b.text) }] });
         break;
       case 'warn':
         text.push(`WARNING: ${clean(b.text)}`);
@@ -116,7 +113,7 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
     subject: oneLine(`${tag ? `${tag} ` : ''}[Hana ID ${env}] ${subject}`, 200),
     text: `${text.join('\n\n')}\n`,
     html: design
-      ? mailHtml({ title: oneLine(design.heading, 200), preheader: oneLine(design.preheader, 200), blocks: designed, footer, ...(notice ? { envNotice: notice } : {}) })
+      ? mailHtml({ title: oneLine(design.heading, 200), preheader: oneLine(design.preheader, 200), blocks: designed, footer, ...(notice ? { envNotice: notice } : {}), ...(design.filesOrigin ? { logoUrl: mailLogoUrl(design.filesOrigin)! } : {}) })
       : `<!doctype html><html><body>${html.join('\n')}</body></html>`,
   };
 }

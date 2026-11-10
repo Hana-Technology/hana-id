@@ -10,6 +10,7 @@
 // changed a row, and every other statement only if that row exists; the CLI reads it back (`committedSql`). A write
 // planned from a stale read changes nothing and says so ("writes" below).
 import {
+  appNameProblem,
   type Environment,
   LEGACY_ORG_ID,
   MAX_APP_ORIGINS,
@@ -77,6 +78,9 @@ export function assertAppName(s: string): string {
   const name = s.normalize('NFC').trim();
   if (name.length < 1 || name.length > 100) throw new Error('App name must be 1..100 characters');
   if (UNSAFE_NAME_RE.test(name)) throw new Error('App name must not contain control, format (bidi, zero-width), separator or unassigned characters');
+  // D686: not like a web address, no "Hana" (the API's rule, console-core appNameProblem).
+  const problem = appNameProblem(name);
+  if (problem) throw new Error(`App name: ${problem}`);
   return name;
 }
 

@@ -50,6 +50,7 @@ import {
   STAFF_ACTIONS_PER_MAILBOX_DAY,
   THIRTY_DAYS_MS,
   PRODUCTION_LIMITS,
+  RETURNING_MAILBOX_MS,
   UNLOCK_GRANT_TTL_MS,
   type MailboxLimits,
   generalPool,
@@ -108,6 +109,8 @@ interface TicketEntry {
 
 const DAY = 86_400_000;
 const LIVE_KEY = 'live';
+/** A mailbox's last verified code (ms): Hana Home's reserve takes only a mailbox seen within RETURNING_MAILBOX_MS. */
+const SEEN_KEY = 'seen';
 /**
  * A requester's wrong-code lock, keyed by the max that set it (production's keeps the plain `lock:<ip>`), so a lock set
  * under another set's lower max doesn't hold under a higher one: a dev env's counts are judged by the dev max at once.
@@ -305,6 +308,18 @@ export class RateLimiter extends DurableObject<Env> {
    * Registers a ticket `verify` just issued for this exact address: at most MAX_LIVE_TICKETS stay live, a newer one
    * revoking the oldest (scan of the re-check: re-verifying can't pile up tickets).
    */
+  /** A code to this mailbox was verified now (any purpose): it counts as returning for Hana Home's reserve. Holds a time only. */
+  async noteVerified(now: number = Date.now()): Promise<void> {
+    this.kv().put(SEEN_KEY, now);
+    await this.sweepAt(now + RETURNING_MAILBOX_MS);
+  }
+
+  /** Whether this mailbox verified a code within RETURNING_MAILBOX_MS. */
+  returning(now: number = Date.now()): boolean {
+    const seen = this.kv().get<number>(SEEN_KEY);
+    return seen !== undefined && seen > now - RETURNING_MAILBOX_MS && seen <= now + DAY;
+  }
+
   async registerTicket(addrKey: string, id: string, issuedAtMs: number, now: number = Date.now()): Promise<void> {
     const live = (this.kv().get<TicketEntry[]>(ticketsKey(addrKey)) ?? []).filter((t) => t.issuedAtMs + THIRTY_DAYS_MS > now);
     live.push({ id, issuedAtMs });
@@ -633,6 +648,7 @@ export class RateLimiter extends DurableObject<Env> {
           next = Math.max(next, Math.min(...log) + THIRTY_DAYS_MS);
         } else kv.delete(key);
       } else if (key.startsWith('lock:')) keepUntil(key, value as number);
+      else if (key === SEEN_KEY) keepUntil(key, (value as number) + RETURNING_MAILBOX_MS);
       else if (key.startsWith('tickets:')) {
         const live = (value as TicketEntry[]).filter((t) => t.issuedAtMs + THIRTY_DAYS_MS > now);
         if (live.length) {

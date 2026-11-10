@@ -6,8 +6,8 @@
 // for email, unlike Google, which must answer to a redirect URI.
 //
 // What is sent: `POST /v1/email/home/start` `{email, kind, commitment}`, where the commitment holds only the inputs the
-// issuer computes the nonce from (the Home key, its end and salt; or the one-use session), never a nonce; then the
-// shared `resend` and `verify`. The issuer answers `verify` with the token alone: no device ticket (Hana Home keeps none)
+// issuer computes the nonce from (the Home key, its end and salt; or the one-use session), never a nonce, and for a
+// per-app code the Hana Home sign-in's own email token (`identity`); then the shared `resend` and `verify`. The issuer answers `verify` with the token alone: no device ticket (Hana Home keeps none)
 // and no sealed address.
 //
 // SECURITY: the address and the code go to the issuer only. The address stays in the page's memory for the sign-in it
@@ -16,6 +16,7 @@
 import { ApiError, parseApiResponse } from '@hana-id/core';
 import type { Fetch } from './api.ts';
 import type { Dom } from './dom.ts';
+import { issuerDetail } from './email-api.ts';
 import { CHALLENGE_ID_RE } from './email-storage.ts';
 import type { GestureCheck } from './page-window.ts';
 
@@ -44,7 +45,8 @@ export interface HomeChallenge {
 
 export interface HomeEmailApi {
   start(email: string, kind: 'identity', commitment: HomeIdentityCommitment): Promise<HomeChallenge>;
-  start(email: string, kind: 'derive', commitment: HomeSessionCommitment): Promise<HomeChallenge>;
+  /** `identity`: the Hana Home sign-in's own email token, which the issuer checks is this address's. */
+  start(email: string, kind: 'derive', commitment: HomeSessionCommitment, identity: string): Promise<HomeChallenge>;
   resend(challengeId: string): Promise<HomeChallenge>;
   /** The email token (JWS JSON), or an ApiError with the issuer's code. */
   verify(challengeId: string, code: string): Promise<string>;
@@ -66,12 +68,12 @@ export function homeEmailApi(issuerUrl: string, fetchFn: Fetch = (...args) => fe
       await fetchFn(`${base}/${path}`, { method: 'POST', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
     );
   return {
-    async start(email: string, kind: HomeEmailKind, c: HomeIdentityCommitment | HomeSessionCommitment): Promise<HomeChallenge> {
+    async start(email: string, kind: HomeEmailKind, c: HomeIdentityCommitment | HomeSessionCommitment, identity?: string): Promise<HomeChallenge> {
       const commitment =
         kind === 'identity'
           ? { homePublicKey: Array.from((c as HomeIdentityCommitment).homePublicKey), expiresAtMs: c.expiresAtMs, salt: Array.from(c.salt) }
           : { scopeId: (c as HomeSessionCommitment).scopeId, sessionPublicKey: Array.from((c as HomeSessionCommitment).sessionPublicKey), expiresAtMs: c.expiresAtMs, keyIndex: 0, maxUses: 1, salt: Array.from(c.salt) };
-      return challenge(await post('home/start', { email, kind, commitment }), 'start');
+      return challenge(await post('home/start', { email, kind, commitment, ...(kind === 'derive' ? { identity } : {}) }), 'start');
     },
     async resend(challengeId) {
       return challenge(await post('resend', { challengeId }), 'resend');
@@ -121,12 +123,6 @@ export const HOME_EMAIL_TEXT = Object.freeze({
 
 export const CODE_RE = /^\d{6}$/u;
 
-/** A number the issuer put in its refusal's `data` (`{error, code, data}`), or null. */
-function detail(err: ApiError, name: string): number | null {
-  const data = err.details.data;
-  const v = typeof data === 'object' && data !== null ? (data as Record<string, unknown>)[name] : err.details[name];
-  return typeof v === 'number' && Number.isSafeInteger(v) ? v : null;
-}
 const RESEND_WAIT_MAX_MS = 60_000;
 
 /** Where an email code's steps are. */
@@ -170,7 +166,7 @@ export interface HomeEmailStep {
 }
 
 /** The issuer's codes that mean "email can't do this here right now": nothing the user can fix. */
-const STOPS = new Set(['home_email_unavailable', 'not_covered', 'origin_not_allowed', 'bad_request']);
+const STOPS = new Set(['home_email_unavailable', 'not_covered', 'home_identity_invalid', 'origin_not_allowed', 'bad_request']);
 
 /**
  * An email code's screens: the address (unless fixed), then the code, with "Resend code", "Use a different email" (when
@@ -357,7 +353,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
         notice = 'challenge_expired';
         return showAddress(HOME_EMAIL_TEXT.expired);
       }
-      const after = err instanceof ApiError && err.status === 429 && err.code === 'rate_limited' ? detail(err, 'resendAfterMs') : null;
+      const after = err instanceof ApiError && err.status === 429 && err.code === 'rate_limited' ? issuerDetail(err, 'resendAfterMs') : null;
       if (after !== null) {
         notice = 'resend_wait';
         return showCode(after, HOME_EMAIL_TEXT.resendWait);
@@ -379,7 +375,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
     } catch (err) {
       if (mine !== turn) return;
       if (err instanceof ApiError && err.code === 'code_invalid') {
-        const left = detail(err, 'attemptsLeft');
+        const left = issuerDetail(err, 'attemptsLeft');
         notice = 'code_invalid';
         if (left === 0) {
           challengeId = null;

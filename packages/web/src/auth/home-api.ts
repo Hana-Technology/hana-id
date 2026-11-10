@@ -221,6 +221,8 @@ export interface HomeIdentity {
   readonly nonce: string;
   /** Whether a token is attached and the identity hasn't been ended. */
   readonly usable: boolean;
+  /** The attached token while usable, else null: an email sign-in's goes to the issuer with a per-app code request. */
+  readonly token: string | null;
   /** Attaches the token Google answered for `nonce` (once). */
   attach(token: string): void;
   /** `x-hana-home` for one request, with a counter this key hasn't used. Throws once ended, or before a token. */
@@ -247,6 +249,9 @@ export async function newHomeIdentity(signer: string, nowMs: number): Promise<Ho
     nonce,
     get usable() {
       return privateKey !== null && token !== null;
+    },
+    get token() {
+      return privateKey !== null ? token : null;
     },
     attach(t) {
       if (token !== null || privateKey === null) throw new Error('The Home identity already has a token');

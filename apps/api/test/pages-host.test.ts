@@ -165,8 +165,11 @@ describe('auth origin Worker', () => {
     expect(csp(await call(authWorker, env(), `${AUTH}/home`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com https://issuer.test`);
     expect(csp(await call(authWorker, env(), `${AUTH}/home/callback`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
     expect(csp(await call(authWorker, env(), `${AUTH}/export`))).not.toContain('issuer.test');
-    // A malformed issuer URL stops Hana Home (never a looser policy); its callback still works.
-    expect((await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/home`)).status).toBe(503);
+    // A malformed issuer URL doesn't take Hana Home down: it is served without the issuer's origin (never a looser
+    // policy), so only its email sign-in fails; its callback works too.
+    const broken = await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/home`);
+    expect(broken.status).toBe(200);
+    expect(csp(broken)).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`);
     expect((await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/home/callback`)).status).toBe(200);
   });
 

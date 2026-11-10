@@ -106,7 +106,9 @@ interface Opts {
 
 /** A fake issuer Home route (home-email.ts's API): it records the starts and answers tokens of its `sub` for their nonces. */
 interface EmailIssuer extends HomeEmailApi {
-  starts: { email: string; kind: 'identity' | 'derive'; commitment: HomeIdentityCommitment | HomeSessionCommitment }[];
+  starts: { email: string; kind: 'identity' | 'derive'; commitment: HomeIdentityCommitment | HomeSessionCommitment; identity?: string }[];
+  /** The tokens `verify` answered, in order. */
+  tokens: string[];
   /** The `sub` the next token carries. */
   sub: string;
   /** The audience the next derive token carries (the scope's email client by default). */
@@ -123,9 +125,10 @@ const emailJws = (claims: Record<string, unknown>): string => JSON.stringify({ p
 function emailIssuer(sub = ESUB): EmailIssuer {
   const issuer: EmailIssuer = {
     starts: [],
+    tokens: [],
     sub,
-    async start(email: string, kind: 'identity' | 'derive', commitment: HomeIdentityCommitment | HomeSessionCommitment) {
-      issuer.starts.push({ email, kind, commitment });
+    async start(email: string, kind: 'identity' | 'derive', commitment: HomeIdentityCommitment | HomeSessionCommitment, identity?: string) {
+      issuer.starts.push({ email, kind, commitment, ...(identity !== undefined ? { identity } : {}) });
       return { challengeId: 'C'.repeat(43), expiresAtMs: now + 600_000, resendAfterMs: now + 30_000 };
     },
     async resend() {
@@ -137,7 +140,9 @@ function emailIssuer(sub = ESUB): EmailIssuer {
       const exp = Math.floor(now / 1000) + 600;
       if (last.kind === 'identity') {
         const c = last.commitment as HomeIdentityCommitment;
-        return emailJws({ iss: EMAIL_ISS, aud: HOME_EMAIL_AUDIENCE, sub: issuer.sub, iat: exp - 600, exp, nonce: homeNonce({ signer: HOME_ENV.signer, homePublicKey: c.homePublicKey, expiresAtMs: c.expiresAtMs, salt: c.salt }), jti: 'j' });
+        const t = emailJws({ iss: EMAIL_ISS, aud: HOME_EMAIL_AUDIENCE, sub: issuer.sub, iat: exp - 600, exp, nonce: homeNonce({ signer: HOME_ENV.signer, homePublicKey: c.homePublicKey, expiresAtMs: c.expiresAtMs, salt: c.salt }), jti: 'j' });
+        issuer.tokens.push(t);
+        return t;
       }
       const c = last.commitment as HomeSessionCommitment;
       const nonce = sessionNonce({ signer: HOME_ENV.signer, scopeId: c.scopeId, sessionPublicKey: c.sessionPublicKey, expiresAtMs: c.expiresAtMs, keyIndex: 0, maxUses: 1, salt: c.salt });
@@ -1300,7 +1305,7 @@ describe('H10: email users (D463)', () => {
     await until(() => document.getElementById('home-email-code') !== null, 'the code screen');
     let left = 1;
     issuer.verify = async () => {
-      throw new ApiError(400, 'code_invalid', 'x', null, null, { attemptsLeft: left-- });
+      throw new ApiError(400, 'code_invalid', 'x', null, null, { data: { attemptsLeft: left-- } });
     };
     (document.getElementById('home-email-code') as HTMLInputElement).value = '111111';
     h.submit('home-email-code');
@@ -1371,6 +1376,9 @@ describe('H10: email users (D463)', () => {
     ]);
     const c = issuer.starts[1]!.commitment as HomeSessionCommitment;
     expect(c.scopeId).toBe(SCOPE);
+    // The per-app code is asked for with Hana Home's own sign-in token; the sign-in's own code with none.
+    expect(issuer.starts[1]!.identity).toBe(issuer.tokens[0]);
+    expect(issuer.starts[0]!.identity).toBeUndefined();
     const want = vector(ROOT).accounts[0]!;
     expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(want.stellar.address);
     expect(document.getElementById('home-export-address-evm')?.textContent).toBe(want.evm.address);
@@ -1435,5 +1443,20 @@ describe('H10: email users (D463)', () => {
     expect(homeExportRoute(mineScope({ coverage: 'email' }) as never, null, false, 'email', true)).toEqual({ kind: 'email' });
     expect(homeExportRoute(mineScope({ coverage: 'shared' }) as never, null, false, 'email', true)).toBe('none');
     expect(homeExportRoute(mineScope({ coverage: 'email' }) as never, null, true, 'email', true)).toBe('link');
+  });
+});
+
+describe('H10 review: the issuer refuses the Home sign-in behind a per-app code', () => {
+  it('home_identity_invalid ends Hana Home’s sign-in and says so; nothing is derived', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer, scopes: [mineScope({ coverage: 'email', googleClientId: null })], registry: { scope: { id: SCOPE, allow_shared: false, clients: [['email', `email:${SCOPE}`]] }, config: { shared_clients: [] } } });
+    await h.toAppByEmail();
+    issuer.start = (async () => {
+      throw new ApiError(401, 'home_identity_invalid', 'x', null, null);
+    }) as unknown as HomeEmailApi['start'];
+    await h.openByEmail();
+    expect(h.page.moving.errorCode).toBe('home_signed_out');
+    expect(h.page.session).toBe('ended');
+    expect(h.logins()).toEqual([]);
   });
 });

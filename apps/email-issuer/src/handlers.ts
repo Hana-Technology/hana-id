@@ -44,6 +44,8 @@ import {
   RESEND_SPACING_MS,
   STAFF_LIMITS,
   HOME_BUDGET_SHARE,
+  HOME_RESERVE_SHARE,
+  IP_AGGREGATE_HOME_LIMITS,
   appBudgetShare,
   appStartLimits,
   generalPool,
@@ -53,7 +55,7 @@ import {
 import { log } from './log.ts';
 import { codeMail, confirmMail, linkNoticeMail, unlockMail } from './mail.ts';
 import type { BudgetKind, Limit, OwnerClaim, OwnerRef, Reservation } from './rate-limiter.ts';
-import { SignerUnavailable } from './signer.ts';
+import { SignerUnavailable, verifyRs256 } from './signer.ts';
 import { readWebhookBody, SIGNATURE_HEADER, suppressionsOf, TIMESTAMP_HEADER, verifyWebhook, webhookHeadersOk } from './webhook.ts';
 
 export const MAX_BODY = 8 * 1024;
@@ -129,6 +131,19 @@ async function ipLimit(ctx: Ctx, request: Request, limits: readonly Limit[]): Pr
   log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, limit: r.limit });
   countRefusal(ctx.deps, null, r.limit);
   return tooMany(ctx, r.retryAfterMs);
+}
+
+/** Hana Home's own aggregate prefix windows (limits.ts IP_AGGREGATE_HOME_LIMITS), after `start`'s. */
+async function homeAggregateLimits(ctx: Ctx, request: Request): Promise<Response | null> {
+  for (const agg of ipAggregates(rawIp(request))) {
+    const r = await limiter(ctx.deps, `ip:${agg}`).hit(IP_AGGREGATE_HOME_LIMITS, ctx.deps.now());
+    if (!r.ok) {
+      log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, limit: `${agg.split(':')[0]}:${r.limit}` });
+      countRefusal(ctx.deps, null, `${agg.split(':')[0]}:${r.limit}`);
+      return tooMany(ctx, r.retryAfterMs);
+    }
+  }
+  return null;
 }
 
 /** `start`'s aggregate prefix limits (IPv4 /24, IPv6 /56 and /48); skipped for a valid ticket or grant (abuse review M2). */
@@ -461,6 +476,12 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
   if (!st) return gone();
   if (st.send.result === 'limit') return fail(ctx, 429, 'resend_limit', 'No more codes for this challenge: start again');
   if (st.send.result === 'too_soon') return fail(ctx, 429, 'rate_limited', 'Wait before asking for another code', { resendAfterMs: now + st.send.retryAfterMs }, retryHeader(st.send.retryAfterMs));
+  // A Hana Home code is mailed only while its route still stands (the exit removed, the scope gone: nothing is sent).
+  const home = isHomePurpose(st.purpose);
+  if (home) {
+    const route = await homeAudience(ctx, st.purpose as HomePurpose, st.scopeId);
+    if (!route.ok) return route.response;
+  }
   // Reserved before the code changes, in the order start uses; a silent (suppressed) challenge takes the same path.
   const box = mailboxLimiter(deps, st.mailboxKey);
   const res = await box.reserveSend(requesterKey(ipOf(request)), now, st.owner, ctx.limits.mailbox);
@@ -473,7 +494,7 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
     await box.refund(send);
     return tryLater(ctx, 'domain');
   }
-  const budget = await reserveBudget(ctx, st.appId, st.budgetShare, isOwner ? ownerBudgetKind(st.owner, now) : 'user');
+  const budget = home ? await homeBudget(ctx, box) : await reserveBudget(ctx, st.appId, st.budgetShare, isOwner ? ownerBudgetKind(st.owner, now) : 'user');
   if (!budget) {
     await box.refund(send);
     await releaseDomain(deps, st.domainKey, dom.r);
@@ -539,6 +560,14 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   const gone = () => fail(ctx, 410, 'challenge_expired', 'The code expired, was used or ran out of attempts: start again');
   const live = await stub.peek(now);
   if (!live) return gone();
+  // A Hana Home challenge: its route is read before the code is compared, so a refusal (or a chain that can't be read)
+  // never spends the single-use code; the token is minted on this reading.
+  let homeRoute: TokenAudience | null = null;
+  if (isHomePurpose(live.purpose)) {
+    const route = await homeAudience(ctx, live.purpose, live.scopeId);
+    if (!route.ok) return route.response;
+    homeRoute = route.aud;
+  }
   // The check is reserved in the mailbox limiter before the code is compared (one atomic call), so concurrent guesses
   // can't all pass a lock check before any is counted; it is refunded when the code was right. The challenge counts
   // its own attempts atomically too.
@@ -565,12 +594,14 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   }
   await box.refundGuess(ip, guess.reservation, now, ctx.limits.mailbox);
   await box.releaseLive(v.record.expiresAtMs, now);
+  // The mailbox now counts as returning for Hana Home's reserve (a time only, in its own object).
+  await box.noteVerified(now);
   // The code was right: the challenge is gone (single use). At most one token is minted from it.
   const rec = v.record;
   // A verified login at a capped domain gives its mails' places back and raises the domain's cap (abuse review M1).
   if (rec.domainKey) await limiter(deps, `dom:${rec.domainKey}`).domainVerified(rec.domainRes, rec.mailboxKey, now);
   // Hana Home's challenges (handleHomeStart): no app, no device ticket, no directory row, no case B.
-  if (isHomePurpose(rec.purpose)) return homeVerified(ctx, cid, rec, rec.purpose);
+  if (isHomePurpose(rec.purpose) && homeRoute) return homeVerified(ctx, cid, rec, rec.purpose, homeRoute);
   const app = await appById(deps.env.API, rec.appId);
   if (!app?.active || !app.emailOn || app.scopeId !== rec.scopeId) return fail(ctx, 403, 'email_not_enabled', 'Email login is not enabled for this app');
   const email = await decryptEmail(cid, rec.emailEnc);
@@ -654,10 +685,76 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
  */
 export const HOME_ISSUER_APP = 'hana-home';
 const HOME_APP_NAME = 'Hana Home';
-/** Hana Home's share a day of the general pool (limits.ts HOME_BUDGET_SHARE), counted apart from every app's. */
-function homeShare(ctx: Ctx): number {
+/** The reserve part of Hana Home's mail (limits.ts HOME_RESERVE_SHARE): counted under its own name. */
+export const HOME_RESERVE_APP = 'hana-home-returning';
+/** A part of the daily budget, in mails: at least one, never more than the general pool. */
+function shareOf_(ctx: Ctx, part: number): number {
   const budget = dailySendBudget(ctx.deps.env);
-  return Math.max(1, Math.min(generalPool(budget), Math.floor(budget * HOME_BUDGET_SHARE)));
+  return Math.max(1, Math.min(generalPool(budget), Math.floor(budget * part)));
+}
+const homeShare = (ctx: Ctx): number => shareOf_(ctx, HOME_BUDGET_SHARE);
+
+/**
+ * One Hana Home mail against the general pool (H10's review, D617 as amended): the open share first; once it is used up,
+ * the reserve, only for a returning mailbox (one that verified a code within 30 days, read from its own object). A
+ * flood of fresh addresses stops at the open share; users who already signed in somewhere still get their code. Reaching
+ * half of either share raises `email_budget` (`app_50`, at most one mail a day) through reserveBudget.
+ */
+async function homeBudget(ctx: Ctx, box: ReturnType<typeof mailboxLimiter>): Promise<Reservation | null> {
+  const open = await reserveBudget(ctx, HOME_ISSUER_APP, homeShare(ctx), 'user');
+  if (open) return open;
+  if (!(await box.returning(ctx.deps.now()))) return null;
+  return reserveBudget(ctx, HOME_RESERVE_APP, shareOf_(ctx, HOME_RESERVE_SHARE), 'user');
+}
+
+/** Hana Home's identity token the issuer itself minted (`purpose = 'home'`, audience `hana-home`), checked as below. */
+const IDENTITY_SKEW_S = 60;
+
+/**
+ * The check that a `derive` code is asked for by someone signed in to Hana Home as this address (H10's review): `token`
+ * must be a JWS this issuer signed (a published key, RS256), with `iss` this issuer's, audience `hana-home`, not expired
+ * (60 s of skew, as the API), its issuance row's purpose `home` (a derive's `hana-home` token or a scope's token is
+ * refused), and `sub` the address's own. False on anything else; never throws on input.
+ */
+async function homeIdentityHolds(ctx: Ctx, token: unknown, email: string): Promise<boolean> {
+  const { deps } = ctx;
+  if (typeof token !== 'string' || token.length > 6000 || !token.startsWith('{')) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(token);
+  } catch {
+    return false;
+  }
+  if (!isObj(parsed) || typeof parsed.payload !== 'string' || !Array.isArray(parsed.signatures) || parsed.signatures.length < 1 || parsed.signatures.length > 3) return false;
+  const payload = parsed.payload;
+  let claims: Record<string, unknown>;
+  try {
+    const c: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(base64UrlDecode(payload)));
+    if (!isObj(c)) return false;
+    claims = c;
+  } catch {
+    return false;
+  }
+  const keys = await deps.publicKeys();
+  let signed = false;
+  for (const sig of parsed.signatures as unknown[]) {
+    if (!isObj(sig) || typeof sig.protected !== 'string' || typeof sig.signature !== 'string') return false;
+    let header: unknown;
+    try {
+      header = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(base64UrlDecode(sig.protected)));
+    } catch {
+      return false;
+    }
+    if (!isObj(header) || header.alg !== 'RS256' || typeof header.kid !== 'string') return false;
+    const key = keys.find((k) => k.kid === header.kid);
+    if (key && (await verifyRs256(key, utf8(`${sig.protected}.${payload}`), base64UrlDecode(sig.signature)))) signed = true;
+  }
+  if (!signed) return false;
+  const nowS = Math.floor(deps.now() / 1000);
+  if (claims.iss !== deps.env.EMAIL_ISS || claims.aud !== HOME_EMAIL_AUDIENCE || typeof claims.sub !== 'string' || typeof claims.jti !== 'string' || !Number.isSafeInteger(claims.exp) || (claims.exp as number) + IDENTITY_SKEW_S <= nowS) return false;
+  if (claims.sub !== (await emailSub((await deps.keys()).sub, email))) return false;
+  const row = await deps.env.DB.prepare('SELECT purpose FROM email_issuance WHERE jti = ?1').bind(claims.jti).first<{ purpose: string }>();
+  return row?.purpose === 'home';
 }
 
 /**
@@ -697,8 +794,10 @@ export async function handleHomeStart(request: Request, ctx: Ctx): Promise<Respo
   const parsed = await readJson(request, MAX_BODY);
   if (!parsed.ok) return fail(ctx, parsed.status, 'bad_request', parsed.message);
   const b = parsed.body;
-  if (!isObj(b) || !onlyKeys(b, ['email', 'kind', 'commitment'])) return fail(ctx, 400, 'bad_request', 'Body must be {email, kind, commitment}');
-  const limited = await ipLimit(ctx, request, ctx.limits.ipStart);
+  if (!isObj(b) || !onlyKeys(b, ['email', 'kind', 'commitment'], ['identity'])) return fail(ctx, 400, 'bad_request', 'Body must be {email, kind, commitment, identity?}');
+  // A derive code needs the caller's Hana Home sign-in (`identity`); the sign-in's own code takes none.
+  if ((b.kind === 'derive') !== (b.identity !== undefined)) return fail(ctx, 400, 'bad_request', 'identity is required for kind derive and refused otherwise');
+  const limited = (await ipLimit(ctx, request, ctx.limits.ipStart)) ?? (await ipLimit(ctx, request, ctx.limits.ipHomeStart));
   if (limited) return limited;
   if (typeof b.email !== 'string' || b.email.length > 1024) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
   const r = normalizeEmail(b.email);
@@ -706,7 +805,9 @@ export async function handleHomeStart(request: Request, ctx: Ctx): Promise<Respo
   const now = deps.now();
   const c = homeCommitmentNonce(deps.env.SIGNER_ACCOUNT, b.kind, b.commitment, now);
   if (!c.ok) return fail(ctx, 400, 'bad_request', c.message);
-  const agg = await aggregateLimits(ctx, request);
+  // Only someone signed in to Hana Home as this very address can have a "open one of your wallets" code mailed to it.
+  if (c.value.purpose === 'home_session' && !(await homeIdentityHolds(ctx, b.identity, r.email))) return fail(ctx, 401, 'home_identity_invalid', 'Sign in to Hana Home with this email first');
+  const agg = (await aggregateLimits(ctx, request)) ?? (await homeAggregateLimits(ctx, request));
   if (agg) return agg;
   const route = await homeAudience(ctx, c.value.purpose, c.value.scopeId ?? '');
   if (!route.ok) return route.response;
@@ -736,8 +837,8 @@ export async function handleHomeStart(request: Request, ctx: Ctx): Promise<Respo
     await undoMailbox(true);
     return tryLater(ctx, 'domain');
   }
-  // 3. The global budget: the general pool, within Hana Home's share.
-  const budget = await reserveBudget(ctx, HOME_ISSUER_APP, share, 'user');
+  // 3. The global budget: the general pool, within Hana Home's open share, then its reserve for a returning mailbox.
+  const budget = await homeBudget(ctx, box);
   if (!budget) {
     await undoMailbox(true);
     await releaseDomain(deps, dKey, dom.r);
@@ -788,19 +889,18 @@ export async function handleHomeStart(request: Request, ctx: Ctx): Promise<Respo
 }
 
 /**
- * A Hana Home challenge whose code was right (handleVerify): the audience is read from the chain again (the scope may
- * have dropped its email client since the code was sent, or the council removed the email exit), then one token of the
+ * A Hana Home challenge whose code was right (handleVerify), with the audience handleVerify read from the chain before
+ * comparing the code (the scope may have dropped its email client since the code was sent, or the council removed the
+ * email exit; a chain that can't be read then leaves the code unspent), then one token of the
  * address's own `sub` (the same as any email login's: `HMAC(K_sub, address)`, with no audience input) and the nonce the
  * start computed. `{idToken}` only: no device ticket (Hana Home keeps none, and a new one would push out one of the
  * user's devices'), no user-directory row (it is no app's login), no sealed address, no case B.
  */
-async function homeVerified(ctx: Ctx, cid: ChallengeId, rec: ChallengeRecord, purpose: HomePurpose): Promise<Response> {
-  const route = await homeAudience(ctx, purpose, rec.scopeId);
-  if (!route.ok) return route.response;
+async function homeVerified(ctx: Ctx, cid: ChallengeId, rec: ChallengeRecord, purpose: HomePurpose, aud: TokenAudience): Promise<Response> {
   const email = await decryptEmail(cid, rec.emailEnc);
   if (email === null) return fail(ctx, 410, 'challenge_expired', 'The code expired, was used or ran out of attempts: start again');
   const sub = await emailSub((await ctx.deps.keys()).sub, email);
-  const { token: idToken } = await mint(ctx, { id: HOME_ISSUER_APP }, route.aud, sub, rec.nonce as string, purpose);
+  const { token: idToken } = await mint(ctx, { id: HOME_ISSUER_APP }, aud, sub, rec.nonce as string, purpose);
   return ok(ctx, 200, { idToken }, { appId: HOME_ISSUER_APP, purpose });
 }
 

@@ -8,6 +8,9 @@ import { clearViewCaches } from '../src/views.ts';
 import { ORIGIN, appHeaders, bytes, call, chain, newSessionKey, seedApp, sessionBody, uid } from './helpers.ts';
 import { AUTH, VAULT, appKey, hanaHeaders, loginBody, mismatchedAppKey, withCombinedCall } from './login-helpers.ts';
 import { panic, receiptFailure } from './near-mock.ts';
+import { HOME_EMAIL_AUDIENCE } from '@hana-id/core/home';
+import { sessionNonce } from '../src/session-crypto.ts';
+import { emailEnv, emailToken, withEmail } from './email-helpers.ts';
 import { usageOf } from './usage-ledger.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -207,6 +210,23 @@ describe('POST /v1/login', () => {
     const now = Math.floor(Date.now() / 1000);
     const res = await login(app, await loginBody(app.scope, aud, {}, { azp: aud, iat: now, nbf: now - 5, jti: 'j1', auth_time: now, at_hash: 'pKoRe4wHbXLoKz8BsUNdXg' }));
     expect(res.status).toBe(200);
+  });
+
+  it('a partner login never takes an exit client, Google’s or the email exit, however valid (H10 review, D525): nothing relayed', async () => {
+    const { app, near } = await setup();
+    const EXIT = 'hana-exit.apps.googleusercontent.com';
+    const e = withEmail(near, []);
+    e.exit = [EXIT, ['email', HOME_EMAIL_AUDIENCE]];
+    near.allowShared.add(app.scope);
+    await env.DB.prepare("UPDATE apps SET login_methods = 'google,email' WHERE id = ?1").bind(app.id).run();
+    clearViewCaches();
+    const google = await login(app, await loginBody(app.scope, EXIT), hanaHeaders(app), emailEnv());
+    expect([google.status, (await body(google)).code]).toEqual([403, 'unregistered_client']);
+    const b = await loginBody(app.scope, EXIT);
+    const nonce = await sessionNonce({ signer: env.SIGNER_ACCOUNT, scopeId: app.scope, sessionPublicKey: b.sessionPublicKey as number[], expiresAtMs: b.expiresAtMs as number, keyIndex: b.keyIndex as number, maxUses: b.maxUses as number, salt: b.salt as number[] });
+    const email = await login(app, { ...b, jwt: await emailToken({ aud: HOME_EMAIL_AUDIENCE, sub: `e1.${uid()}`, nonce }) }, hanaHeaders(app), emailEnv());
+    expect([email.status, (await body(email)).code]).toEqual([403, 'unregistered_client']);
+    expect(near.sent).toHaveLength(0);
   });
 
   it('checks the client’s scope and that the session key is unused, before relaying', async () => {

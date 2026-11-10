@@ -233,9 +233,10 @@ export async function handleAuthHost(request: Request, env: AuthHostEnv): Promis
   // The export window falls back to rpcFallback when the primary fails (Q9): both are in its connect-src.
   const rpc = primary && (!env.NEAR_RPC_FALLBACK || fallback) ? (fallback && fallback !== primary ? `${primary} ${fallback}` : primary) : null;
   const emailIssuer = env.EMAIL_ISSUER_URL ? originOf(env.EMAIL_ISSUER_URL) : null;
-  // A malformed EMAIL_ISSUER_URL breaks only the pages that call the issuer, the email step and Hana Home (never a
-  // looser policy there); the other pages don't use it.
-  const issuerBroken = (url.pathname === '/login/email' || url.pathname === '/home') && !!env.EMAIL_ISSUER_URL && !emailIssuer;
+  // A malformed EMAIL_ISSUER_URL breaks only the email step's page (never a looser policy there). Hana Home is served
+  // without the issuer's origin (its email sign-in then can't reach the issuer and says so; Google sign-in works); the
+  // other pages don't use it.
+  const issuerBroken = url.pathname === '/login/email' && !!env.EMAIL_ISSUER_URL && !emailIssuer;
   const directives = api && rpc && !issuerBroken ? authPageDirectives(url.pathname, { api, rpc, emailIssuer, demoBalance: env.MAINNET_DEMO_BALANCE === '1' }) : null;
   if (!directives) {
     log({ event: 'auth_page', endpoint: url.pathname, outcome: 'error', status: 503, code: 'misconfigured' }, 'error');

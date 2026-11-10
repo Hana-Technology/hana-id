@@ -83,6 +83,7 @@ import { appLogo } from './logo.ts';
 import type { AuthApi } from './api.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
+import { issuerDetail } from './email-api.ts';
 import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
 import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, googleTokenFirstUrl, loginGoogleRequest } from './google.ts';
 import { type TakenLogin, peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
@@ -558,9 +559,10 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         showAddress(TEXT.expired);
         return;
       }
-      if (err instanceof ApiError && err.status === 429 && err.code === 'rate_limited' && typeof err.details.resendAfterMs === 'number') {
+      const after = err instanceof ApiError && err.status === 429 && err.code === 'rate_limited' ? issuerDetail(err, 'resendAfterMs') : null;
+      if (after !== null) {
         notice = 'resend_wait';
-        showCode(err.details.resendAfterMs, TEXT.resendWait);
+        showCode(after, TEXT.resendWait);
         return;
       }
       const p = issuerProblem(err);
@@ -581,7 +583,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       verified = await issuer.verify(challengeId, code);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'code_invalid') {
-        const left = typeof err.details.attemptsLeft === 'number' ? err.details.attemptsLeft : null;
+        // The issuer's body is `{error, code, data: {attemptsLeft}}`.
+        const left = issuerDetail(err, 'attemptsLeft');
         notice = 'code_invalid';
         reason = 'email_code_invalid';
         if (left === 0) {

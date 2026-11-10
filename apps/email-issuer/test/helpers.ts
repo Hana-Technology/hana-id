@@ -98,8 +98,11 @@ export class FakeChain implements Chain {
   }
   /** `("email", "hana-home")` in force on the exit list (contract v4, H6): on by default, as on sandbox-dev. */
   homeExit = true;
+  /** `get_config` can't be read (an RPC outage). */
+  failConfig = false;
   async homeEmailExit(): Promise<boolean> {
     this.calls.push('get_config');
+    if (this.failConfig) throw new (await import('../src/chain.ts')).ChainUnavailable('down');
     return this.homeExit;
   }
   async identity(scope: string, provider: string, sub: string): Promise<IdentityView> {

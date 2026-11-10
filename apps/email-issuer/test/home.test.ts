@@ -2,11 +2,13 @@
 // per-app session, gated on the chain alone (no app, no IssuerRpc read, D434); the nonce computed from typed inputs and
 // never taken from the request (H1's review condition); the same `sub` as any email login; the mailbox limits; the
 // exit list's email entry (D485, D494).
-import { HOME_EMAIL_AUDIENCE, HOME_IDENTITY_MAX_LIFETIME_MS, homeNonce } from '@hana-id/core/home';
+import { HOME_EMAIL_AUDIENCE, HOME_IDENTITY_MAX_LIFETIME_MS, HOME_NONCE_DOMAIN, homeNonce } from '@hana-id/core/home';
+import { SESSION_NONCE_DOMAIN } from '../src/bytes.ts';
+import { homeCommitmentNonce } from '../src/commitment.ts';
 import { describe, expect, it } from 'vitest';
 import { clientProofNonce } from '../src/client-proof.ts';
 import { HOME_ISSUER_APP } from '../src/handlers.ts';
-import { sessionNonceOf } from '../src/layouts.ts';
+import { CLIENT_PROOF_DOMAIN, sessionNonceOf } from '../src/layouts.ts';
 import { captureLogs, decodeToken, emailLogin, env, harness, seedApp, uid, type Harness } from './helpers.ts';
 
 const HOME_START = '/v1/email/home/start';
@@ -30,9 +32,19 @@ function session(h: Harness, scopeId: string, over: Record<string, unknown> = {}
   return { json: { scopeId, sessionPublicKey: [...sessionPublicKey], expiresAtMs: c.expiresAtMs, keyIndex: 0, maxUses: 1, salt: [...salt], ...over }, nonce: sessionNonceOf(env.SIGNER_ACCOUNT, c) };
 }
 
-/** start → the code from the mail → verify. */
+/** A Hana Home sign-in of `email` (its own code, from its own requester): the identity token a derive code needs. */
+async function idFor(h: Harness, email: string): Promise<string> {
+  const s = await h.call(HOME_START, { email, kind: 'identity', commitment: identity(h).json });
+  expect(s.status).toBe(202);
+  const { challengeId } = (await s.json()) as { challengeId: string };
+  const v = await h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor(email) });
+  expect(v.status).toBe(200);
+  return ((await v.json()) as { idToken: string }).idToken;
+}
+
+/** start → the code from the mail → verify. A derive signs in first (its identity token). */
 async function homeCode(h: Harness, email: string, kind: 'identity' | 'derive', commitment: Record<string, unknown>) {
-  const s = await h.call(HOME_START, { email, kind, commitment });
+  const s = await h.call(HOME_START, { email, kind, commitment, ...(kind === 'derive' ? { identity: await idFor(h, email) } : {}) });
   expect(s.status).toBe(202);
   const { challengeId } = (await s.json()) as { challengeId: string };
   return h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor(email) });
@@ -147,6 +159,14 @@ describe('Hana Home: no free-form nonce', () => {
       { email, kind: 'identity', commitment: { homePublicKey: [...bytes(31)], expiresAtMs: h.clock.now + 60_000, salt: [...bytes(32)] } },
       { email, kind: 'identity', commitment: { homePublicKey: [...bytes(32)], expiresAtMs: h.clock.now + 60_000, salt: [...bytes(16)] } },
       { email, kind: 'identity' },
+      // A client proof's own inputs (scope and action nonce), alone or beside a commitment's: refused for either kind.
+      { email, kind: 'identity', commitment: { scopeId: scope, actionNonce: 0 } },
+      { email, kind: 'derive', commitment: { scopeId: scope, actionNonce: 0 }, identity: 'x' },
+      { email, kind: 'identity', commitment: { ...identity(h).json, scopeId: scope, actionNonce: 0 } },
+      { email, kind: 'derive', commitment: { ...session(h, scope).json, actionNonce: 0 }, identity: 'x' },
+      // The identity token belongs to a derive only.
+      { email, kind: 'identity', commitment: identity(h).json, identity: 'x' },
+      { email, kind: 'derive', commitment: session(h, scope).json },
     ];
     for (const b of bodies) expect((await h.call(HOME_START, b)).status, JSON.stringify(Object.keys(b as object))).toBe(400);
     // And the normal route takes no Home purpose.
@@ -187,7 +207,7 @@ describe('Hana Home: opening one app’s wallet', () => {
     noAppReads(h);
     const email = addr('susp');
     const s = session(h, app.scope);
-    const st = await h.call(HOME_START, { email, kind: 'derive', commitment: s.json });
+    const st = await h.call(HOME_START, { email, kind: 'derive', commitment: s.json, identity: await idFor(h, email) });
     expect(st.status).toBe(202);
     const mail = h.sender.sent.at(-1)!;
     expect(mail.subject).toBe('Your code to open a wallet in Hana Home');
@@ -212,8 +232,9 @@ describe('Hana Home: opening one app’s wallet', () => {
     expect(t.claims.aud).toBe(HOME_EMAIL_AUDIENCE);
     expect(t.claims.nonce).toBe(s.nonce);
 
+    const id = await idFor(h, email);
     h.chain.homeExit = false;
-    const r = await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, scope).json });
+    const r = await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, scope).json, identity: id });
     expect(r.status).toBe(409);
     expect(((await r.json()) as { code: string }).code).toBe('not_covered');
   });
@@ -221,19 +242,21 @@ describe('Hana Home: opening one app’s wallet', () => {
   it('an unknown scope is refused; so is a session of more than one use, another key index or more than 20 minutes', async () => {
     const h = await harness();
     const email = addr('bad');
-    const r = await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, 'nosuchscope').json });
+    const id = await idFor(h, email);
+    const mails = h.sender.sent.length;
+    const r = await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, 'nosuchscope').json, identity: id });
     expect(r.status).toBe(409);
     expect(((await r.json()) as { code: string }).code).toBe('not_covered');
     const scope = bareScope(h);
-    for (const over of [{ keyIndex: 1 }, { maxUses: 3 }, { expiresAtMs: h.clock.now + 20 * 60_000 + 1 }]) expect((await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, scope, over).json })).status).toBe(400);
-    expect(h.sender.sent).toHaveLength(0);
+    for (const over of [{ keyIndex: 1 }, { maxUses: 3 }, { expiresAtMs: h.clock.now + 20 * 60_000 + 1 }]) expect((await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, scope, over).json, identity: id })).status).toBe(400);
+    expect(h.sender.sent).toHaveLength(mails);
   });
 
   it('the scope dropped its email client between the mail and the code: the token is the exit’s', async () => {
     const h = await harness();
     const scope = bareScope(h);
     const email = addr('drop');
-    const s = await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, scope).json });
+    const s = await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, scope).json, identity: await idFor(h, email) });
     const { challengeId } = (await s.json()) as { challengeId: string };
     h.chain.addScope(scope, { email: false, google: [] });
     const v = await h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor(email) });
@@ -246,11 +269,12 @@ describe('Hana Home: the mailbox limits', () => {
     const h = await harness();
     const app = await seedApp(h);
     const email = addr('limit');
+    const id = await idFor(h, email);
     const ip = '10.77.1.9';
     // Production: 3 code mails per mailbox and requester per 15 minutes.
     expect((await h.call('/v1/email/start', { pk: app.pk, email, purpose: 'session', commitment: { ...session(h, app.scope).json, maxUses: 3 } }, { ip })).status).toBe(202);
     expect((await h.call(HOME_START, { email, kind: 'identity', commitment: identity(h).json }, { ip })).status).toBe(202);
-    expect((await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, app.scope).json }, { ip })).status).toBe(202);
+    expect((await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, app.scope).json, identity: id }, { ip })).status).toBe(202);
     const r = await h.call(HOME_START, { email, kind: 'identity', commitment: identity(h).json }, { ip });
     expect(r.status).toBe(429);
     expect(r.headers.get('retry-after')).toBe('900');
@@ -292,5 +316,119 @@ describe('Hana Home: the mailbox limits', () => {
     const sub = (await decodeToken(token)).claims.sub as string;
     const all = lines.join('\n');
     for (const secret of [email, email.split('@')[0]!, h.sender.codeFor(email), token, sub]) expect(all).not.toContain(secret);
+  });
+});
+
+// ---- H10's security review ----
+
+describe('Hana Home: the structural guarantee (no client proof’s nonce)', () => {
+  it('every nonce the route can compute is a Home or a session nonce of typed fields; the three domains are prefix-free', () => {
+    const domains = [HOME_NONCE_DOMAIN, SESSION_NONCE_DOMAIN, CLIENT_PROOF_DOMAIN];
+    // No domain is a prefix of another: no preimage of one layout can begin as another's, so no Home or session nonce
+    // equals a client proof's (short of a SHA-256 collision).
+    for (const a of domains) for (const b of domains) if (a !== b) expect(b.startsWith(a), `${a} / ${b}`).toBe(false);
+    for (let i = 0; i < 20; i++) {
+      const now = Date.now();
+      const id = { homePublicKey: [...bytes(32)], expiresAtMs: now + 60_000, salt: [...bytes(32)] };
+      const c = homeCommitmentNonce(env.SIGNER_ACCOUNT, 'identity', id, now);
+      expect(c.ok && c.value.nonce).toBe(homeNonce({ signer: env.SIGNER_ACCOUNT, homePublicKey: Uint8Array.from(id.homePublicKey), expiresAtMs: id.expiresAtMs, salt: Uint8Array.from(id.salt) }));
+      const se = { scopeId: 's1', sessionPublicKey: [...bytes(32)], expiresAtMs: now + 60_000, keyIndex: 0, maxUses: 1, salt: [...bytes(16 + i)] };
+      const d = homeCommitmentNonce(env.SIGNER_ACCOUNT, 'derive', se, now);
+      expect(d.ok && d.value.nonce).toBe(sessionNonceOf(env.SIGNER_ACCOUNT, { ...se, sessionPublicKey: Uint8Array.from(se.sessionPublicKey), salt: Uint8Array.from(se.salt) }));
+    }
+  });
+});
+
+describe('Hana Home: a derive code needs the address’s own Home sign-in', () => {
+  const refused = async (h: Harness, email: string, scope: string, token: unknown) => {
+    const mails = h.sender.sent.length;
+    const r = await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, scope).json, identity: token });
+    expect(r.status).toBe(401);
+    expect(((await r.json()) as { code: string }).code).toBe('home_identity_invalid');
+    expect(h.sender.sent.length).toBe(mails);
+  };
+
+  it('refuses another address’s, an expired, a forged, a derive’s and a scope’s token; takes the address’s own', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const email = addr('own');
+    const own = await idFor(h, email);
+    // Another address's sign-in.
+    await refused(h, email, app.scope, await idFor(h, addr('other')));
+    // Not a token, or one with its payload changed under the signature.
+    await refused(h, email, app.scope, 'not-a-token');
+    const t = JSON.parse(own) as { payload: string; signatures: unknown[] };
+    const claims = JSON.parse(Buffer.from(t.payload, 'base64url').toString('utf8')) as Record<string, unknown>;
+    await refused(h, email, app.scope, JSON.stringify({ ...t, payload: Buffer.from(JSON.stringify({ ...claims, exp: (claims.exp as number) + 3600 })).toString('base64url') }));
+    // A derive's own `hana-home` token (the email exit's), and a scope's token from a normal login.
+    const scope = bareScope(h, { email: false });
+    const derive = ((await (await homeCode(h, email, 'derive', session(h, scope).json)).json()) as { idToken: string }).idToken;
+    expect((await decodeToken(derive)).claims.aud).toBe(HOME_EMAIL_AUDIENCE);
+    await refused(h, email, app.scope, derive);
+    await refused(h, email, app.scope, (await emailLogin(h, app, email)).idToken);
+    // The address's own sign-in, then expired (its 10 minutes and the 60 s of skew).
+    expect((await h.call(HOME_START, { email, kind: 'derive', commitment: session(h, app.scope).json, identity: own })).status).toBe(202);
+    h.clock.now += 11 * 60_000 + 1;
+    await refused(h, email, app.scope, own);
+  });
+});
+
+describe('Hana Home: its mail share can’t be used up by fresh addresses', () => {
+  it('a flood of fresh addresses stops at the open share; a returning mailbox still gets a code; the alert at 50%', async () => {
+    // A budget of 100: Home's open share is 6 mails, its reserve 4.
+    const h = await harness({ env: { ...env, ENV_NAME: `home-flood-${uid()}`, DAILY_SEND_BUDGET: '100', SECURITY_ALIAS: 'security@hana.example' } });
+    // A returning mailbox: it verified a code at an app's login.
+    const app = await seedApp(h);
+    const returning = addr('back');
+    await emailLogin(h, app, returning);
+    let i = 0;
+    const fresh = () => h.call(HOME_START, { email: addr(`flood${i++}`), kind: 'identity', commitment: identity(h).json });
+    for (let n = 0; n < 6; n++) expect((await fresh()).status).toBe(202);
+    const stopped = await fresh();
+    expect(stopped.status).toBe(429);
+    expect(((await stopped.json()) as { code: string }).code).toBe('rate_limited');
+    // The returning mailbox draws on the reserve.
+    expect((await h.call(HOME_START, { email: returning, kind: 'identity', commitment: identity(h).json })).status).toBe(202);
+    expect(h.sender.to(returning).at(-1)?.subject).toBe('Your sign-in code for Hana Home');
+    // The alert: half of Home's open share reached, once (counts only, the app named `hana-home`).
+    const alerts = (await env.DB.prepare("SELECT metric, count FROM email_daily WHERE app_id = ?1 AND metric LIKE 'alert:email_budget%'").bind(HOME_ISSUER_APP).all<{ metric: string; count: number }>()).results;
+    expect(alerts).toContainEqual({ metric: 'alert:email_budget:app_50', count: 1 });
+    const mails = h.sender.sent.filter((m) => m.to === 'security@hana.example');
+    expect(mails.length).toBeGreaterThan(0);
+    for (const m of mails) expect(m.text).not.toContain('@example.com');
+  });
+
+  it('Home’s own per-IP window: a fourth start from one IP within 10 minutes is refused', async () => {
+    const h = await harness();
+    const ip = '10.88.2.9';
+    for (let n = 0; n < 3; n++) expect((await h.call(HOME_START, { email: addr(`ip${n}`), kind: 'identity', commitment: identity(h).json }, { ip })).status).toBe(202);
+    expect((await h.call(HOME_START, { email: addr('ip3'), kind: 'identity', commitment: identity(h).json }, { ip })).status).toBe(429);
+  });
+});
+
+describe('Hana Home: the chain is read before a code is spent', () => {
+  it('a resend after the email exit was removed mails nothing', async () => {
+    const h = await harness();
+    const email = addr('resendoff');
+    const s = await h.call(HOME_START, { email, kind: 'identity', commitment: identity(h).json });
+    const { challengeId } = (await s.json()) as { challengeId: string };
+    const mails = h.sender.sent.length;
+    h.clock.now += 31_000;
+    h.chain.homeExit = false;
+    const r = await h.call('/v1/email/resend', { challengeId });
+    expect(r.status).toBe(409);
+    expect(h.sender.sent.length).toBe(mails);
+  });
+
+  it('a chain that can’t be read at verify leaves the code unspent: the same code works once it can', async () => {
+    const h = await harness();
+    const email = addr('blip');
+    const s = await h.call(HOME_START, { email, kind: 'identity', commitment: identity(h).json });
+    const { challengeId } = (await s.json()) as { challengeId: string };
+    const code = h.sender.codeFor(email);
+    h.chain.failConfig = true;
+    expect((await h.call('/v1/email/verify', { challengeId, code })).status).toBe(502);
+    h.chain.failConfig = false;
+    expect((await h.call('/v1/email/verify', { challengeId, code })).status).toBe(200);
   });
 });

@@ -493,7 +493,8 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       title: 'Get a code to open this wallet',
       intro: 'Hana Home sends a code to the email you signed in with. The key then stays ready in this page for 5 minutes.',
       address,
-      start: (to) => api.start(to, 'derive', { scopeId: p.scopeId, sessionPublicKey: p.sessionPublicKey, expiresAtMs: p.expiresAtMs, salt: p.salt }),
+      // The issuer mails this code only to the address Hana Home is signed in as, shown by the sign-in's own token.
+      start: (to) => api.start(to, 'derive', { scopeId: p.scopeId, sessionPublicKey: p.sessionPublicKey, expiresAtMs: p.expiresAtMs, salt: p.salt }, live.identity.token ?? ''),
       api,
       ids: 'home-export-email',
       onToken: (token) => {
@@ -511,7 +512,13 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
         deps.track(open(p, mine, token, { provider: 'email', sub: c.sub }));
       },
       onStop: ({ code }) => {
-        if (run === mine) refuse(plainProblem(code === 'not_covered' || code === 'home_email_unavailable' ? code : 'email_token_invalid'));
+        if (run !== mine) return;
+        // The issuer no longer takes Hana Home's sign-in (its token's 10 minutes are over): the sign-in has ended.
+        if (code === 'home_identity_invalid') {
+          deps.onSignedOut();
+          return refuse(plainProblem('home_signed_out'));
+        }
+        refuse(plainProblem(code === 'not_covered' || code === 'home_email_unavailable' ? code : 'email_token_invalid'));
       },
       onCancel: () => {
         if (run === mine) cancel();

@@ -177,7 +177,7 @@ describe('Launcher', () => {
       },
       hide: () => shown.push(null),
     };
-    const ui: { launcher: string; label: string }[] = [];
+    const ui: { launcher: string; label: string; clickable: boolean }[] = [];
     const timers = new TestTimers();
     return { launcher: new Launcher(view, (u) => ui.push(u), timers), shown, ui, click: () => click?.(), timers };
   }
@@ -195,10 +195,33 @@ describe('Launcher', () => {
     b.remove();
     expect(m.launcher.label).toBeNull();
     expect(m.ui).toEqual([
-      { launcher: 'show', label: 'A' },
-      { launcher: 'show', label: 'B' },
-      { launcher: 'hide', label: '' },
+      { launcher: 'show', label: 'A', clickable: true },
+      { launcher: 'show', label: 'B', clickable: true },
+      { launcher: 'hide', label: '', clickable: false },
     ]);
+  });
+
+  it('announces a flash as not clickable and an intent as clickable; a second flash of the same label announces nothing', () => {
+    const m = make();
+    m.launcher.flash('Signed by Hana under Swaps', 3000);
+    expect(m.ui).toEqual([{ launcher: 'show', label: 'Signed by Hana under Swaps', clickable: false }]);
+    // Within its 3 s: shown again, announced once.
+    m.launcher.flash('Signed by Hana under Swaps', 3000);
+    expect(m.ui).toHaveLength(1);
+    expect(m.shown).toEqual(['Signed by Hana under Swaps', 'Signed by Hana under Swaps']);
+    // An intent under the flash is announced when the flash ends; one with the flash's own label still is (it can be clicked).
+    const h = m.launcher.push('Signed by Hana under Swaps', () => undefined);
+    expect(m.ui).toHaveLength(1);
+    m.timers.dispose();
+    const n = make();
+    n.launcher.push('Review in Hana', () => undefined);
+    n.launcher.flash('Signed by Hana under Swaps', 3000);
+    expect(n.ui.map((u) => [u.label, u.clickable])).toEqual([
+      ['Review in Hana', true],
+      ['Signed by Hana under Swaps', false],
+    ]);
+    h.remove();
+    n.timers.dispose();
   });
 
   it('a flash shows over the intents for its time, without a click action, and clips long labels', async () => {

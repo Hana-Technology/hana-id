@@ -688,6 +688,13 @@ export interface PortEventMap {
   loginProgress: { stage: (typeof LOGIN_STAGES)[number] };
   ui: { launcher: 'show' | 'hide'; label: string };
   /**
+   * Whether the launcher the next `ui {launcher: 'show'}` announces has a click action: true for a button that opens
+   * a Hana window ("Review in Hana", "Sign in with Hana", an export), false for a short notice that does nothing
+   * when clicked ("Signed by Hana under …"). Sent just before that `ui` event. A separate event because `ui` takes
+   * exactly its two fields: an SDK that predates this one keeps the `ui` event it can read, and simply drops this.
+   */
+  launcherKind: { clickable: boolean };
+  /**
    * Whether the vault has an approval popup open (one its launcher opened, or one the partner page opened that it
    * adopted). The SDK then reuses it instead of opening another in the next click.
    */
@@ -730,6 +737,7 @@ const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
   sessionExpired: (d) => d === null,
   loginProgress: (d) => isPlainObject(d) && exactKeys(d, ['stage']) && (LOGIN_STAGES as readonly unknown[]).includes(d.stage),
   ui: (d) => isPlainObject(d) && exactKeys(d, ['launcher', 'label']) && (d.launcher === 'show' || d.launcher === 'hide') && isStr(d.label, 0, 80),
+  launcherKind: (d) => isPlainObject(d) && exactKeys(d, ['clickable']) && typeof d.clickable === 'boolean',
   approvalWindow: (d) => isPlainObject(d) && exactKeys(d, ['open']) && typeof d.open === 'boolean',
   autoApproved: (d) =>
     isPlainObject(d) && exactKeys(d, ['kind', 'chain', 'contract', 'function']) && isSignMethod(d.kind) && isChain(d.chain) && isStr(d.contract, 1, 128) && isStr(d.function, 1, 128),
@@ -852,6 +860,11 @@ export interface WindowMessageMap {
     /** A pk_test_ app: the popup says that Hana signs only for test networks for it. */
     testApp?: true;
     /**
+     * A pk_test_ app with Hana's mainnet demo on, as the vault last read it: the popup's test-app note then says what
+     * the demo allows. Absent otherwise, so the message is exactly the older one.
+     */
+    mainnetDemo?: true;
+    /**
      * The app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
@@ -921,6 +934,8 @@ export interface WindowMessageMap {
     queued: number;
     /** A pk_test_ app (as in hana:approve-request). */
     testApp?: true;
+    /** The mainnet demo is on for it (as in hana:approve-request). */
+    mainnetDemo?: true;
     /**
      * The app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
@@ -1055,7 +1070,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress-ack': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'logoUrl', 'supportId', 'emailShared', 'demoPrices'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices'])) return false;
+    if (m.mainnetDemo !== undefined && (m.mainnetDemo !== true || m.testApp !== true)) return false;
     if (m.demoPrices !== undefined && !isPlainObject(m.demoPrices)) return false;
     if (m.logoUrl !== undefined && !isLogoUrl(m.logoUrl)) return false;
     if (m.emailShared !== undefined && m.emailShared !== true) return false;
@@ -1092,8 +1108,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isChain(m.chain) &&
     isAddressFor(m.chain, m.address),
   'hana:consent-request': (m) =>
-    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'logoUrl']) &&
+    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'mainnetDemo', 'logoUrl']) &&
     (m.testApp === undefined || m.testApp === true) &&
+    (m.mainnetDemo === undefined || (m.mainnetDemo === true && m.testApp === true)) &&
     (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
     isRequestId(m.id) &&
     isAppName(m.appName) &&

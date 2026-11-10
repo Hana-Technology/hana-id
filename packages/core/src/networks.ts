@@ -33,6 +33,55 @@ export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
   1337: 'Local (Ganache, Geth dev)',
 });
 
+/**
+ * EVM mainnets Hana can name, by chain ID. For display only: it allows nothing (a test app signs for none of them
+ * outside the mainnet demo's own list).
+ */
+export const KNOWN_EVM_MAINNETS: Readonly<Record<number, string>> = Object.freeze({
+  1: 'Ethereum',
+  10: 'OP Mainnet',
+  56: 'BNB Smart Chain',
+  137: 'Polygon',
+  146: 'Sonic',
+  8453: 'Base',
+  42161: 'Arbitrum One',
+  43114: 'Avalanche C-Chain',
+});
+
+/** The native coin's symbol on the chains Hana can name; every other named chain's is ETH. */
+const EVM_NATIVE_SYMBOLS: Readonly<Record<number, string>> = Object.freeze({
+  56: 'BNB',
+  97: 'tBNB',
+  137: 'POL',
+  80002: 'POL',
+  146: 'S',
+  57054: 'S',
+  14601: 'S',
+  43114: 'AVAX',
+  43113: 'AVAX',
+});
+
+export interface EvmChainInfo {
+  /** Hana's own name for the chain, with "(testnet)" unless the name already says so: "Sepolia (testnet)", "Base". */
+  readonly label: string;
+  readonly testnet: boolean;
+  /** The native coin's symbol: "ETH". */
+  readonly nativeSymbol: string;
+}
+
+/**
+ * Hana's name and native coin for an EVM chain ID, from its own tables only (a name an app supplies is never shown
+ * as the chain's), or null for a chain Hana doesn't know: show its number.
+ */
+export function evmChainInfo(chainId: number): EvmChainInfo | null {
+  if (!Number.isSafeInteger(chainId)) return null;
+  const testnet = Object.hasOwn(TEST_EVM_CHAINS, chainId);
+  const name = testnet ? TEST_EVM_CHAINS[chainId] : Object.hasOwn(KNOWN_EVM_MAINNETS, chainId) ? KNOWN_EVM_MAINNETS[chainId] : undefined;
+  if (name === undefined) return null;
+  const label = testnet && !/testnet|^Local/iu.test(name) ? `${name} (testnet)` : name;
+  return { label, testnet, nativeSymbol: Object.hasOwn(EVM_NATIVE_SYMBOLS, chainId) ? (EVM_NATIVE_SYMBOLS[chainId] as string) : 'ETH' };
+}
+
 // The mainnet demo (D428): the mainnets a `pk_test_` app with Hana's demo on may sign for are Base (8453) and Stellar's
 // public network. The vault decides with the app's setting and the per-transaction cap (`@hana-id/core/mainnet-demo`);
 // the partner client lets Base through its own early check only while its vault says the demo is on (the

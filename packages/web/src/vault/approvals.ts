@@ -121,6 +121,8 @@ export interface ApprovalDeps {
   parentOrigin: string;
   /** A pk_test_ app: every request and consent screen says Hana signs only for test networks (D39). */
   testApp?: boolean;
+  /** Whether that test app has the mainnet demo on, as last read: the popup's note then says what the demo allows. */
+  mainnetDemo?: () => boolean;
   open(url: string, name: string, features: string): WindowRef | null;
   launcher: Launcher;
   timers: Timers;
@@ -424,6 +426,7 @@ export class Approvals {
       position,
       queued,
       ...(this.d.testApp ? { testApp: true } : {}),
+      ...(this.d.testApp && this.d.mainnetDemo?.() ? { mainnetDemo: true } : {}),
       ...(logoUrl ? { logoUrl } : {}),
     } as const;
     if (item.type === 'consent') {

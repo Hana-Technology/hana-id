@@ -443,6 +443,33 @@ describe('the policy in force, re-read while the vault stays open', () => {
     expect(s.t.events.filter((e) => e.event === 'autoApproved')).toHaveLength(1);
   });
 
+  it('two auto-signs more than 3 s apart, the second after more than 10 s idle: no clickable launcher, one GET /v1/app', async () => {
+    const s = await session();
+    await grant(s);
+    await waitLauncher(s.t, null);
+    const mark = s.t.events.length;
+    const before = s.t.browser.backend.count('/v1/app');
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx() })).result).toMatch(/^0x02/u);
+    // Past the 3-second notice and the 10-second freshness bound, with no timer run (a throttled tab).
+    s.t.browser.timers.now += POLICY_FRESH_MS + 5_000;
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx() })).result).toMatch(/^0x02/u);
+    const since = s.t.events.slice(mark);
+    expect(since.filter((e) => e.event === 'autoApproved')).toHaveLength(2);
+    // Every launcher shown meanwhile is the notice, announced as not clickable just before its `ui` show.
+    const kinds = since.filter((e) => e.event === 'launcherKind').map((e) => (e.data as { clickable: boolean }).clickable);
+    const shows = since.filter((e) => e.event === 'ui' && (e.data as { launcher: string }).launcher === 'show').map((e) => (e.data as { label: string }).label);
+    expect(shows.length).toBeGreaterThan(0);
+    expect(new Set(shows)).toEqual(new Set(['Signed by Hana under Swaps on Example']));
+    expect(kinds).toHaveLength(shows.length);
+    expect(kinds.every((k) => !k)).toBe(true);
+    for (const [i, e] of since.entries()) if (e.event === 'ui' && (e.data as { launcher: string }).launcher === 'show') expect(since[i - 1]?.event).toBe('launcherKind');
+    // `ui` itself is what every shipped SDK reads: exactly its two fields.
+    for (const e of since.filter((x) => x.event === 'ui')) expect(Object.keys(e.data as object).sort()).toEqual(['label', 'launcher']);
+    // The stale check is redone once, for the second request.
+    expect(s.t.browser.backend.count('/v1/app')).toBe(before + 1);
+    expect(s.t.opened.filter((w) => w.url.endsWith('/approve')).length).toBe(1);
+  });
+
   it('a fresh check signs without another GET /v1/app', async () => {
     const s = await session();
     await grant(s);

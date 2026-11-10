@@ -8,8 +8,9 @@
 @import '@hana-id/brand/tokens.css';
 @import './fonts.css';
 
-/* The email sharing sheet: the address the app would get, the one thing the user must read (D411). */
-.address {
+/* The email sharing sheet: the address the app would get, the one thing the user must read (D411). A block, on a
+   paragraph only: the same box on inline text would overlap the lines around it. */
+p.address {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: var(--hana-radius);
@@ -272,6 +273,33 @@ ul {
 .contract .verified {
   color: var(--ok-text);
   font-weight: 600;
+}
+
+/* The contract's short address: an inline chip that moves to the next line whole, and never covers its neighbours
+   (an inline-block's box takes part in the line's height; no vertical padding spills into other lines). */
+.contract {
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.contract .contract-address {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  word-break: normal;
+  line-height: 1.35;
+  vertical-align: baseline;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 6px;
+}
+
+/* The chain's number beside Hana's name for it. */
+h2 .chain-id {
+  font-size: 0.8rem;
+  font-weight: 400;
+  white-space: nowrap;
 }
 
 .contract a.explorer {

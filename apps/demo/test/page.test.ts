@@ -257,7 +257,10 @@ describe('demo page', () => {
     click('sign-personal');
     expect(($('sign-stellar') as HTMLButtonElement).disabled).toBe(true);
     expect(($('export-evm') as HTMLButtonElement).disabled).toBe(true);
-    fake.emit('launcher', { visible: true, label: 'Review in Hana' });
+    // A notice (after an auto-sign) asks for no click; a button does.
+    fake.emit('launcher', { visible: true, label: 'Signed by Hana under Demo', clickable: false });
+    expect($('notice').textContent ?? '').not.toContain('Click');
+    fake.emit('launcher', { visible: true, label: 'Review in Hana', clickable: true });
     expect($('notice').textContent).toBe('Click “Review in Hana” on the Hana button at the bottom right of the page to continue.');
     reject(Object.assign(new Error('User rejected'), { code: 4001 }));
     await flush();

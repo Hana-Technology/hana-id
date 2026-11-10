@@ -64,7 +64,7 @@ describe('the mainnet demo in the vault', () => {
     await waitLauncher(s.t, 'Review in Hana');
     const popup = openApproval(s.t);
     const m = await popup.next('hana:approve-request');
-    expect(m).toMatchObject({ context: { chainId: 8453 }, testApp: true });
+    expect(m).toMatchObject({ context: { chainId: 8453 }, testApp: true, mainnetDemo: true });
     answer(s.t, popup, m, true);
     expect(evmTxSigner((await reply).result as string, tx)).toBe(s.evm);
     await sleepReal(20);

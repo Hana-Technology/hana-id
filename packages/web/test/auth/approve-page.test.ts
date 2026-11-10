@@ -24,6 +24,7 @@ import {
   LOADING_DELAY_MS,
   MAINNET_DEMO_BANNER,
   SUPPORT_ID_HINT,
+  TEST_APP_DEMO_NOTE,
   TEST_APP_NOTE,
   approveOpenerMode,
   autoApproveReasonText,
@@ -714,6 +715,36 @@ describe('/approve', () => {
     expect(pageText()).not.toContain(TEST_APP_NOTE);
   });
 
+  it('a test app with the mainnet demo on gets a note that is true for it, on requests and the consent screen (D428)', () => {
+    const note = () => document.querySelector('p.note.test-app')?.textContent;
+    expect(TEST_APP_DEMO_NOTE).toBe(
+      'Test app with Hana’s mainnet demo on: besides test networks, Hana ID signs real transactions on Base and Stellar’s public network here, up to $9.99 each. Those always ask you first and are never signed automatically. Other mainnets are refused. The keys are test keys that can be reset or lost, so keep only small amounts at this account.',
+    );
+    // A test-network request and the consent screen: the demo's note, never "mainnets are refused".
+    for (const m of [evmRequest({ testApp: true, mainnetDemo: true }), consentRequest({ testApp: true, mainnetDemo: true })]) {
+      send(m);
+      expect(note()).toBe(TEST_APP_DEMO_NOTE);
+      expect(pageText()).not.toContain('Requests for Stellar or EVM mainnets are refused');
+    }
+    // The demo off: the note as it was.
+    for (const m of [evmRequest({ testApp: true }), consentRequest({ testApp: true })]) {
+      send(m);
+      expect(note()).toBe(TEST_APP_NOTE);
+    }
+    // The flag without `testApp` is not a valid message: nothing new is shown.
+    const before = pageText();
+    send(consentRequest({ mainnetDemo: true }));
+    expect(pageText()).toBe(before);
+  });
+
+  it('outside a dev testnet build the demo flag changes nothing: the plain test-app note', () => {
+    page.stop();
+    resetDom();
+    start({ ...ENV, devEnv: false });
+    send(consentRequest({ testApp: true, mainnetDemo: true }));
+    expect(document.querySelector('p.note.test-app')?.textContent).toBe(TEST_APP_NOTE);
+  });
+
   it('shows why a request was not auto-approved, and "Stop auto-approving" while a consent is active', () => {
     send(evmRequest({ autoApprove: { label: 'Swaps on Example', active: true, reason: 'contract_not_listed' } }));
     expect(pageText()).toContain('Not signed automatically under “Swaps on Example”: the contract isn’t listed in the rules.');
@@ -1135,6 +1166,19 @@ describe('/approve consent screen', () => {
     for (const c of POLICY.ok ? POLICY.policy.stellar?.contracts ?? [] : []) expect(text).toContain(shortAddress(c.id));
     expect(text).toContain('Example pool · named by Partner App');
     expect(text).toContain('Some functions below can send to any address');
+  });
+
+  it('names a known chain with its number beside it, and gives native amounts their unit', () => {
+    send(consentRequest());
+    const h2 = [...document.querySelectorAll('h2')].find((h) => h.textContent?.includes('8453'));
+    expect(h2?.firstChild?.textContent).toBe('Base');
+    expect(h2?.querySelector('span.chain-id')?.textContent).toBe('EVM chain 8453');
+    const dds = [...document.querySelectorAll('dd')].map((x) => x.textContent);
+    expect(dds).toEqual(expect.arrayContaining(['0.000000000000101 ETH (101000 wei)', '0.0000000000003015 ETH (301500 wei)', '0.0000000000001 ETH (100000 wei)']));
+    // The address chip has its own class: the email sheet's block style (`p.address`) never applies to it.
+    const chip = document.querySelector('p.contract code');
+    expect(chip?.className).toBe('mono contract-address');
+    expect(document.querySelector('code.address')).toBeNull();
   });
 
   it('says that stopping can’t take back signatures the app already has (CORE-3, D116)', () => {

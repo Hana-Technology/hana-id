@@ -487,7 +487,7 @@ describe('vault smoke page: auto-approve demo', () => {
     // Consent in force, but the vault still showed its launcher (a popup was needed): not "no popup" either.
     c.autoApproveStatus.mockResolvedValueOnce({ label: 'Demo' } as never);
     c.stellar.signTransaction.mockImplementationOnce(async () => {
-      c.emit('launcher', { visible: true, label: 'Review in Hana' });
+      c.emit('launcher', { visible: true, label: 'Review in Hana', clickable: true });
       c.emit('autoApproved', { kind: 'stellar_signTransaction', chain: 'stellar', contract: 'CDLZ', function: 'transfer' });
       return { signedTxXdr: 'AAAA', signerAddress: A.stellar };
     });
@@ -495,6 +495,44 @@ describe('vault smoke page: auto-approve demo', () => {
     button('sign-stellar-self').click();
     await vi.waitFor(() => expect(rows('signs')).toHaveLength(2));
     await vi.waitFor(() => expect(rows('signs')[0]).toMatch(/signed under the policy, after the consent screen/u));
+  });
+
+  it('the vault’s "Signed by Hana under …" notice is not a popup: an auto-signed request stays "no popup"', async () => {
+    const c = await loggedIn();
+    c.autoApproveStatus.mockResolvedValue({ label: 'Demo' } as never);
+    c.stellar.signTransaction.mockImplementationOnce(async () => {
+      // What the vault does on every auto-sign: the event, then its 3-second notice (no click action).
+      c.emit('autoApproved', { kind: 'stellar_signTransaction', chain: 'stellar', contract: 'CDLZ', function: 'transfer' });
+      c.emit('launcher', { visible: true, label: 'Signed by Hana under Demo', clickable: false });
+      return { signedTxXdr: 'AAAA', signerAddress: A.stellar };
+    });
+    button('sign-stellar-self').click();
+    await vi.waitFor(() => expect(rows('signs')[0]).toMatch(/signed, auto-approved \(no popup\)/u));
+    // The page says it is a notice, and doesn't ask for a click.
+    expect(document.body.textContent).toContain('notice: "Signed by Hana under Demo"');
+    expect(document.body.textContent).not.toContain('"Signed by Hana under Demo" (click it)');
+    expect(document.body.textContent).toContain('Hana notice: "Signed by Hana under Demo"');
+  });
+
+  it('shows the auto-approve status and the stop beside their buttons, as well as in the log', async () => {
+    const c = await loggedIn();
+    const result = () => document.getElementById('aa-result')?.textContent;
+    expect(result()).toBe('');
+    button('aa-status').click();
+    await vi.waitFor(() => expect(result()).toBe('Auto-approve: no consent in force'));
+    await vi.waitFor(() => expect(button('aa-status').disabled).toBe(false));
+    c.autoApproveStatus.mockResolvedValueOnce({ label: 'Demo', policyId: 'p1', expiresAtMs: Date.UTC(2026, 9, 28, 13), used: { count: 2 } } as never);
+    button('aa-status').click();
+    await vi.waitFor(() => expect(result()).toBe('Auto-approve: "Demo" (p1), until 2026-10-28T13:00:00.000Z, used 2 today'));
+    await vi.waitFor(() => expect(button('aa-revoke').disabled).toBe(false));
+    button('aa-revoke').click();
+    await vi.waitFor(() => expect(result()).toBe('Auto-approve stopped: every request needs the popup again'));
+    expect(document.getElementById('events')?.textContent ?? document.body.textContent).toContain('Auto-approve stopped: every request needs the popup again');
+    // A failure is said there too.
+    await vi.waitFor(() => expect(button('aa-status').disabled).toBe(false));
+    c.autoApproveStatus.mockRejectedValueOnce(Object.assign(new Error('The vault is gone'), { code: 4900 }));
+    button('aa-status').click();
+    await vi.waitFor(() => expect(result()).toMatch(/^Failed: .*The vault is gone/u));
   });
 
   it('runs one request at a time, so an auto-approved one never relabels another that waits in the popup', async () => {

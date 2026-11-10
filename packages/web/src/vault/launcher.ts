@@ -32,10 +32,12 @@ export class Launcher {
   private flashLabel: string | null = null;
   private flashTimer: unknown = null;
   private shown: string | null = null;
+  private shownClickable = false;
 
   constructor(
     private readonly view: LauncherView,
-    private readonly emit: (ui: { launcher: 'show' | 'hide'; label: string }) => void,
+    /** `clickable`: whether what is shown has a click action (false for a flash, and when hidden). */
+    private readonly emit: (ui: { launcher: 'show' | 'hide'; label: string; clickable: boolean }) => void,
     private readonly timers: Timers,
   ) {}
 
@@ -79,27 +81,30 @@ export class Launcher {
     const head = this.intents[0];
     if (this.flashLabel !== null) {
       this.view.show(this.flashLabel, null);
-      this.announce(this.flashLabel);
+      this.announce(this.flashLabel, false);
     } else if (head) {
       this.view.show(head.label, () => {
         // Re-read the head at click time: it is the intent on show.
         const current = this.intents[0];
         if (current) current.onClick();
       });
-      this.announce(head.label);
+      this.announce(head.label, true);
     } else {
       this.view.hide();
       if (this.shown !== null) {
         this.shown = null;
-        this.emit({ launcher: 'hide', label: '' });
+        this.shownClickable = false;
+        this.emit({ launcher: 'hide', label: '', clickable: false });
       }
     }
   }
 
-  private announce(label: string): void {
-    if (this.shown === label) return;
+  /** Once per change: the same label shown again (a second flash of it) announces nothing. */
+  private announce(label: string, clickable: boolean): void {
+    if (this.shown === label && this.shownClickable === clickable) return;
     this.shown = label;
-    this.emit({ launcher: 'show', label });
+    this.shownClickable = clickable;
+    this.emit({ launcher: 'show', label, clickable });
   }
 }
 

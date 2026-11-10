@@ -496,7 +496,15 @@ export class Vault {
     this.mainnetDemo = o.config.settings.mainnetDemo === true;
     this.mainnetDemoCheckedAt = o.config.serverTimeMs;
     this.testApp = isTestPublishableKey(o.config.publishableKey);
-    this.launcher = new Launcher(o.launcherView, (ui) => this.emit('ui', ui), this.timers);
+    this.launcher = new Launcher(
+      o.launcherView,
+      (ui) => {
+        // Whether it can be clicked goes first, in its own event: `ui` keeps exactly the fields every SDK reads.
+        if (ui.launcher === 'show') this.emit('launcherKind', { clickable: ui.clickable });
+        this.emit('ui', { launcher: ui.launcher, label: ui.label });
+      },
+      this.timers,
+    );
     this.lockName = `hana-vault-unlock:${o.config.appId}`;
     // Tabs of the app mint one at a time: the second finds the first's token (shared over the channel).
     this.identityLockName = `hana-identity:${o.config.appId}`;
@@ -586,6 +594,7 @@ export class Vault {
       timers: this.timers,
       now: this.deviceNow,
       testApp: this.testApp,
+      mainnetDemo: () => this.demoBuild && this.mainnetDemo,
       onStop: () => void this.revokeAutoApprove(),
       onWindow: (open) => this.emit('approvalWindow', { open }),
     });

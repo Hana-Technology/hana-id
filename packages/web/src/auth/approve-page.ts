@@ -112,6 +112,11 @@ export const MAINNET_DEMO_BANNER = 'Real funds, test custody: these funds may be
 export const MAINNET_DEMO_WHY = 'This test app signs on a real network with keys from Hana’s test infrastructure, which can be reset or broken. Use small amounts only.';
 
 export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar or EVM mainnets are refused, so don’t keep real funds at this account.';
+/**
+ * The same note for a test app with the mainnet demo on (D428), where the first one would be false: what the demo
+ * signs, that it always asks, and that the custody is still test custody.
+ */
+export const TEST_APP_DEMO_NOTE = `Test app with Hana’s mainnet demo on: besides test networks, Hana ID signs real transactions on Base and Stellar’s public network here, up to ${formatUsd(MAINNET_DEMO.txCapUsdMicros)} each. Those always ask you first and are never signed automatically. Other mainnets are refused. The keys are test keys that can be reset or lost, so keep only small amounts at this account.`;
 
 /** The text for a reason code (an unknown code, from a newer vault, is shown generically). */
 export function autoApproveReasonText(reason: string): string {
@@ -240,6 +245,13 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   function onPageHide(): void {
     if (current) answer(false);
     stop();
+  }
+
+  /** A test app's note: what the mainnet demo allows when the vault says it is on (a dev testnet build only). */
+  function testAppNote(msg: { testApp?: true; mainnetDemo?: true }): HTMLElement | null {
+    if (!msg.testApp) return null;
+    const demoOn = msg.mainnetDemo === true && env.devEnv && env.network === 'testnet';
+    return d.h('p', { class: 'note test-app' }, demoOn ? TEST_APP_DEMO_NOTE : TEST_APP_NOTE);
   }
 
   function header(msg: { appName: string; parentOrigin: string; logoUrl?: string }, extra?: string): HTMLElement {
@@ -409,7 +421,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
         msg.supportId ? supportIdLine(msg.supportId) : null,
         msg.emailShared ? emailSharedLine(msg.appName) : null,
-        demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
+        demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
         auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded
           ? renderApproval(d, decoded, msg.appName)
@@ -441,7 +453,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         'section',
         { class: 'panel consent' },
         header(msg),
-        msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
+        testAppNote(msg),
         policy
           ? renderConsent(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, expiresAtMs: msg.expiresAtMs, nowMs: now() })
           : d.h('div', {}, d.h('h1', {}, 'Automatic signing'), d.h('p', { class: 'danger' }, 'This app’s automatic-signing rules could not be checked, so they can’t be allowed.')),

@@ -10,6 +10,7 @@ import {
   type ContractChain,
   type NameCollision,
   displayPartnerName,
+  evmChainInfo,
   explorerContractUrl,
   explorerFor,
   nameCollision,
@@ -71,7 +72,7 @@ export function contractLine(d: Dom, chains: readonly ContractChain[], address: 
     const explorer = explorerFor(chain);
     if (url && explorer) links.push(' · ', d.h('a', { class: 'explorer', attrs: { href: url, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${explorer.name}`));
   }
-  return d.h('p', { class: 'contract' }, name, ' ', d.h('code', { class: 'mono address', attrs: { title: address } }, shortAddress(address)), ...links);
+  return d.h('p', { class: 'contract' }, name, ' ', d.h('code', { class: 'mono contract-address', attrs: { title: address } }, shortAddress(address)), ...links);
 }
 
 function hasAny(policy: AutoApprovePolicyV1): boolean {
@@ -87,6 +88,28 @@ function hasImitation(policy: AutoApprovePolicyV1): boolean {
     (s?.contracts.some((c) => imitates(stellarChains, c.id, c.name)) ?? false) ||
     (policy.evm?.chains.some((ch) => ch.contracts.some((c) => imitates([{ kind: 'evm', chainId: ch.chainId }], c.address, c.name))) ?? false)
   );
+}
+
+/** Shown for the native coin of a chain Hana can't name. */
+export const UNKNOWN_NATIVE_COIN = 'of this chain’s native coin';
+
+/**
+ * A native amount with its unit: "0.001 ETH (1000000000000000 wei)", or, on a chain Hana can't name, "0.001 of this
+ * chain’s native coin (1000000000000000 wei)".
+ */
+export function nativeAmount(chainId: number, wei: string): string {
+  const info = evmChainInfo(chainId);
+  return `${formatUnits(wei, 18)} ${info ? info.nativeSymbol : UNKNOWN_NATIVE_COIN} (${wei} wei)`;
+}
+
+/**
+ * An EVM chain's heading: Hana's own name for it with the number beside it in small text ("Sepolia (testnet)" and
+ * "EVM chain 11155111"), or the number alone for a chain Hana doesn't know. Never a name the app supplied.
+ */
+export function evmChainHeading(d: Dom, chainId: number): HTMLElement {
+  const info = evmChainInfo(chainId);
+  if (!info) return d.h('h2', {}, `EVM chain ${chainId}`);
+  return d.h('h2', {}, info.label, ' ', d.h('span', { class: 'muted chain-id' }, `EVM chain ${chainId}`));
 }
 
 /** An absolute time in the user's locale, with the date: "28 Oct 2026, 21:30". */
@@ -157,11 +180,11 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
 
   for (const ch of policy.evm?.chains ?? []) {
     parts.push(
-      d.h('h2', {}, `EVM chain ${ch.chainId}`),
+      evmChainHeading(d, ch.chainId),
       rows(d, [
-        row(d, 'Maximum value plus network fees, per transaction', `${formatUnits(ch.maxValueWei, 18)} (${ch.maxValueWei} wei)`),
-        row(d, 'Maximum value plus network fees, per day', `${formatUnits(ch.maxValueWeiPerDay, 18)} (${ch.maxValueWeiPerDay} wei)`),
-        row(d, 'Maximum network fee per transaction', `${formatUnits(ch.maxFeeWei, 18)} (${ch.maxFeeWei} wei)`),
+        row(d, 'Maximum value plus network fees, per transaction', nativeAmount(ch.chainId, ch.maxValueWei)),
+        row(d, 'Maximum value plus network fees, per day', nativeAmount(ch.chainId, ch.maxValueWeiPerDay)),
+        row(d, 'Maximum network fee per transaction', nativeAmount(ch.chainId, ch.maxFeeWei)),
         ch.addresses && ch.addresses.length > 0 && row(d, 'Also allowed as recipients', ...ch.addresses.flatMap((a, i) => [i > 0 ? ', ' : '', mono(d, a)])),
       ]),
       d.h(

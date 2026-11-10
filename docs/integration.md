@@ -14,7 +14,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
 > an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
 
-Last verified against code: 2026-11-09, SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
+Last verified against code: 2026-11-10 (the `launcher` event's `clickable`, after 0.3.0), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
 
 ## How it works
 
@@ -260,7 +260,7 @@ hana.on('accountsChanged', (addresses) => {}); // { stellar, evm } or null
 hana.on('sessionExpired', () => {});            // the session reached its limit: log in again
 hana.on('disconnect', ({ code }) => {});        // 4900: the vault connection is gone
 hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'email_code' | 'token' | 'linking' | 'chain' | 'key_pending' | 'done'
-hana.on('launcher', ({ visible, label }) => {}); // Hana's button is shown or hidden ("Review in Hana", …)
+hana.on('launcher', ({ visible, label, clickable }) => {}); // Hana's button or notice is shown or hidden; clickable: the user must click it ("Review in Hana", …)
 hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
 hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't survive a reload (see "Sessions")
 hana.on('linkChanged', ({ provider, status, effectiveAtMs }) => {}); // a sign-in method added, activated or removed (section 4)
@@ -444,7 +444,10 @@ untested: the vault frame sends no COEP header, so such a page may refuse to emb
 The vault's button (sign-in fallback, "Review in Hana", export) is a fixed 320×72 px Hana frame at the bottom right
 of the viewport. Don't cover it: whenever the popup couldn't open in the click (and for every export), users can't
 continue without it. The `launcher` event tells you when it
-shows, if you want to point at it.
+shows, if you want to point at it: prompt the user to click only when `visible && clickable`. The same frame also
+shows short notices that need no click ("Signed by Hana under {label}" for about 3 seconds after each auto-signed
+request, section 9): those arrive with `clickable: false`. `clickable` is in SDK releases after 0.3.0; with 0.3.0 or
+earlier the field is absent, and a notice can't be told from a button.
 
 Removing an origin from your app signs out the users who signed in there.
 
@@ -553,7 +556,9 @@ a mouse move, a tap, or Tab or an arrow key. The gesture that arms it doesn't ap
 clicking in place without moving the mouse, Enter and Space never arm it. That stops clickjacking and double-click
 tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) carry a line that the signature
 isn't tied to one network: they are valid wherever the key is. For a test app every request and consent screen also
-says that Hana signs only for test networks.
+says that Hana signs only for test networks (for a test app with Hana's mainnet demo on, it says what the demo signs
+instead). The consent screen names the EVM chains Hana knows ("Sepolia (testnet)", with the chain ID beside it) and
+gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
 
 ### Stellar
 
@@ -782,7 +787,8 @@ await hana.revokeAutoApprove();    // the user can also stop it from any Hana po
 
 Without `requestAutoApprove()`, the first matching request shows the consent screen. A request that doesn't match
 gets the normal popup, which tells the user why it wasn't auto-approved. After each auto-signed request the vault
-emits `autoApproved` and its button briefly shows "Signed by Hana under {label}".
+emits `autoApproved` and its button briefly shows "Signed by Hana under {label}": a notice, not a prompt, so the
+`launcher` event for it has `clickable: false` (SDK releases after 0.3.0) and there is nothing for the user to click.
 
 Hana records each consent on its API, so auto-approve can't be turned on while the API can't record it. After the
 user presses Allow, `requestAutoApprove()` rejects with `api_unavailable` (`data.reason` is `consent_not_recorded`,

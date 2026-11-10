@@ -3,7 +3,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   STELLAR_MAINNET_PASSPHRASE,
+  KNOWN_EVM_MAINNETS,
   TEST_EVM_CHAINS,
+  evmChainInfo,
   isTestEvmChain,
   isTestPublishableKey,
   isTestStellarNetwork,
@@ -66,5 +68,25 @@ describe('test apps and mainnet chains (D39)', () => {
     expect(mainnetOfRequest(req('personal_sign', ['0x68656c6c6f', EVM]))).toBeNull();
     expect(mainnetOfRequest(req('stellar_signMessage', { message: 'hello' }))).toBeNull();
     expect(mainnetOfRequest(req('hana_signRaw', { chain: 'evm', digest: new Uint8Array(32) }))).toBeNull();
+  });
+});
+
+describe('chain names and native coins, from Hana’s own tables', () => {
+  it('names test chains with "(testnet)" once, mainnets plainly, and gives each its native coin', () => {
+    expect(evmChainInfo(11155111)).toEqual({ label: 'Sepolia (testnet)', testnet: true, nativeSymbol: 'ETH' });
+    expect(evmChainInfo(84532)).toEqual({ label: 'Base Sepolia (testnet)', testnet: true, nativeSymbol: 'ETH' });
+    expect(evmChainInfo(57054)).toEqual({ label: 'Sonic Blaze testnet', testnet: true, nativeSymbol: 'S' });
+    expect(evmChainInfo(97)).toEqual({ label: 'BNB Smart Chain testnet', testnet: true, nativeSymbol: 'tBNB' });
+    expect(evmChainInfo(31337)).toEqual({ label: 'Local (Hardhat, Anvil)', testnet: true, nativeSymbol: 'ETH' });
+    expect(evmChainInfo(8453)).toEqual({ label: 'Base', testnet: false, nativeSymbol: 'ETH' });
+    expect(evmChainInfo(137)).toEqual({ label: 'Polygon', testnet: false, nativeSymbol: 'POL' });
+    expect(evmChainInfo(43113)?.nativeSymbol).toBe('AVAX');
+  });
+
+  it('every listed chain has a label, and an unknown or malformed id has none', () => {
+    for (const id of [...Object.keys(TEST_EVM_CHAINS), ...Object.keys(KNOWN_EVM_MAINNETS)]) expect(evmChainInfo(Number(id))?.label).toBeTruthy();
+    for (const id of [0, 999_999, -1, 1.5, Number.NaN]) expect(evmChainInfo(id)).toBeNull();
+    // No chain is both a testnet and a mainnet, and naming a mainnet allows nothing.
+    for (const id of Object.keys(KNOWN_EVM_MAINNETS)) expect(isTestEvmChain(Number(id))).toBe(false);
   });
 });

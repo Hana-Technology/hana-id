@@ -91,7 +91,9 @@ pnpm --filter @hana-id/smoke typecheck
    after the consent screen* (a covered request with no consent in force, or one for which the vault showed its
    launcher), *signed after approval*, *rejected (4001)* or
    *refused* with the code. One request runs at a time: the sign, auto-approve and export buttons stay disabled until
-   it settles, so each label is that request's own. See [Auto-approve demo](#auto-approve-demo).
+   it settles, so each label is that request's own. The vault’s 3-second "Signed by Hana under …" notice after an auto-sign is logged as a notice and is not
+   counted as a popup (the `launcher` event's `clickable: false`). *Auto-approve status* and *Stop auto-approving*
+   show their result beside the buttons as well as in the Events log. See [Auto-approve demo](#auto-approve-demo).
 
 Every login is a results-log run with **total** from the click to the addresses on this page, and every mount that
 comes back logged in (page load, reload, new tab, *Remount*) is an **unlock** run with **total** from `createHana` to

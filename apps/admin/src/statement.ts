@@ -2,7 +2,8 @@
 // report function's rows for the month with one `as_of`: per UTC day (`by = day`) for the day rows, per month
 // (`by = month`) for the totals, so MAU and the percentiles of a total are exact over the month, not sums of days. The
 // CSV is byte-stable: RFC 4180, UTF-8, LF, decimal strings, rows in a fixed order (apps by id then day, then owner
-// actions by scope then day, then one total per app and one per scope), every cell through the injection guard
+// actions by scope then day, then Hana Home logins by scope then day, then one total per app, per scope and per scope's
+// Home logins), every cell through the injection guard
 // (console-core csvCell). The totals are what `usage.statements.totals` stores and what the PDF and the on-screen
 // statement render (console-core statementView), so all three carry the same numbers.
 import {
@@ -13,6 +14,7 @@ import {
   csvLine,
   failuresOf,
   formatNear,
+  reportRowKind,
   formatTgas,
   formatUsd,
   statementTotals,
@@ -47,6 +49,8 @@ const byKey = (a: ReportSqlRow, b: ReportSqlRow): number => {
   const kb = b.app_id ?? '';
   if (ka !== kb) return ka < kb ? -1 : 1;
   if (a.scope_id !== b.scope_id) return a.scope_id < b.scope_id ? -1 : 1;
+  // A scope's owner actions before its Hana Home logins.
+  if (reportRowKind(a) !== reportRowKind(b)) return reportRowKind(a) === 'home' ? 1 : -1;
   return a.period < b.period ? -1 : a.period > b.period ? 1 : 0;
 };
 const failuresCell = (r: ReportSqlRow): string =>
@@ -72,6 +76,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
       r.app_id ?? '',
       appOf(r)?.name ?? '',
       environmentOf(r),
+      reportRowKind(r),
       day,
       String(n(r.logins)),
       String(n(r.derives)),
@@ -80,6 +85,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
       String(n(r.owner_actions)),
       String(n(r.link_actions)),
       String(n(r.identity_tokens)),
+      String(n(r.home_logins)),
       total && r.app_id !== null ? String(n(r.active_users)) : '',
       String(n(r.new_users)),
       failuresCell(r),
@@ -103,7 +109,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
 
   const days = [...i.dayRows].sort(byKey);
   const months = [...i.monthRows].sort(byKey);
-  const ordered = (rows: ReportSqlRow[]) => [...rows.filter((r) => r.app_id !== null), ...rows.filter((r) => r.app_id === null)];
+  const ordered = (rows: ReportSqlRow[]) => (['app', 'scope', 'home'] as const).flatMap((k) => rows.filter((r) => reportRowKind(r) === k));
   const lines = [
     csvLine(STATEMENT_CSV_COLUMNS),
     ...ordered(days).map((r) => csvLine(cells(r, r.period, false))),
@@ -111,7 +117,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
   ];
 
   const rows: StatementTotalRow[] = ordered(months).map((r) => ({
-    kind: r.app_id === null ? 'scope' : 'app',
+    kind: reportRowKind(r),
     scopeId: r.scope_id,
     ...(r.app_id !== null ? { appId: r.app_id, appName: appOf(r)?.name ?? '' } : {}),
     ...(environmentOf(r) ? { environment: environmentOf(r) } : {}),
@@ -122,6 +128,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
     ownerActions: n(r.owner_actions),
     linkActions: n(r.link_actions),
     identityTokens: n(r.identity_tokens),
+    homeLogins: n(r.home_logins),
     ...(r.app_id !== null ? { mau: n(r.active_users) } : {}),
     newUsers: n(r.new_users),
     failures: failuresOf(r.failures),
@@ -159,6 +166,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
       ownerActions: sumN((r) => r.owner_actions),
       linkActions: sumN((r) => r.link_actions),
       identityTokens: sumN((r) => r.identity_tokens),
+      homeLogins: sumN((r) => r.home_logins ?? 0),
       newUsers: sumN((r) => r.new_users),
       tgas: formatTgas(gas),
       relayedRejectedTgas: formatTgas(rejGas),

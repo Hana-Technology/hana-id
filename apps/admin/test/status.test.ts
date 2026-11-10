@@ -22,6 +22,7 @@ const FALLBACK = 'https://rpc-fallback.test.invalid';
 const BACKUP = 'https://rpc-backup.test.invalid';
 const PK_S = 'ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp';
 const PK_O = 'ed25519:3eNPkjVtn4cHy2BUUgnK3E2q4pCs3LMC5eEFrBsPpnnr';
+const PK_H = 'ed25519:4kqyRk2KyNBUm2oWT7m8n3fESEFJr3vV3YdBSiHVpDWp';
 const E24 = '000000000000000000000000';
 const MIN = 60_000;
 let NOW = Date.now();
@@ -53,10 +54,11 @@ const relayerFunds = (over: Record<string, unknown> = {}) => ({
   keys: [
     { public_key: PK_S, pool: 'session', allowance: `2${E24}` },
     { public_key: PK_O, pool: 'owner', allowance: `5${E24.slice(1)}` },
+    { public_key: PK_H, pool: 'home', allowance: `5${E24}` },
   ],
   other_keys: [],
   at: NOW - MIN,
-  thresholds: { balance: { warn: `5${E24}`, critical: `1${E24}` }, session: { warn: `5${E24.slice(1)}`, critical: `1${E24.slice(1)}` }, owner: { warn: `1${E24.slice(1)}`, critical: `2${E24.slice(2)}` } },
+  thresholds: { balance: { warn: `5${E24}`, critical: `1${E24}` }, session: { warn: `5${E24.slice(1)}`, critical: `1${E24.slice(1)}` }, owner: { warn: `1${E24.slice(1)}`, critical: `2${E24.slice(2)}` }, home: { warn: `1${E24}`, critical: `2${E24.slice(1)}` } },
   ...over,
 });
 
@@ -105,6 +107,7 @@ const apiAnswer = (over: Record<string, unknown> = {}) => ({
   relayerKeys: [
     { pool: 'session', publicKey: PK_S },
     { pool: 'owner', publicKey: PK_O },
+    { pool: 'home', publicKey: PK_H },
   ],
   governance: { ok: true, snapshot: snapshot() },
   ...over,
@@ -321,7 +324,7 @@ describe('Workers', () => {
     a = await read();
     invariants(a);
     expect(tile(a, 'watchdog-worker').state).toBe('critical');
-    for (const id of ['watchdog', 'cron-watchdog', 'relayer-balance', 'session-pool', 'owner-pool']) expect(tile(a, id).state, id).toBe('unknown');
+    for (const id of ['watchdog', 'cron-watchdog', 'relayer-balance', 'session-pool', 'owner-pool', 'home-pool']) expect(tile(a, id).state, id).toBe('unknown');
     expect(a.issues.map((i) => i.component)).toEqual(['watchdog-worker']);
     expect(a.issues[0]).toMatchObject({ severity: 'critical', playbook: { id: 'watchdog-down' } });
   });
@@ -410,10 +413,45 @@ describe('Relayer funds', () => {
     expect(issuesOf(a, 'session-pool').map((i) => i.title)).toEqual(['No session-pool key on the relayer account', '1 of the API’s session-pool keys isn’t on the relayer account: relays from it fail']);
   });
 
+  it('the Home pool has its own tile (readiness 7.4a): its key and allowance, a low allowance, a key the chain lacks, and an env without Home', async () => {
+    const SESSION = { public_key: PK_S, pool: 'session', allowance: `2${E24}` };
+    const OWNER = { public_key: PK_O, pool: 'owner', allowance: `5${E24.slice(1)}` };
+    let a = await read();
+    expect(tile(a, 'home-pool')).toMatchObject({ state: 'ok', name: 'Home pool keys', detail: '1 key on chain · lowest allowance 5 NEAR · 1 in the API' });
+
+    // Below the watchdog's warn (1 NEAR), then its critical (0.2 NEAR).
+    world.watchdog = watchdogBody({ relayer_funds: relayerFunds({ keys: [SESSION, OWNER, { public_key: PK_H, pool: 'home', allowance: `5${E24.slice(1)}` }] }) });
+    a = await read();
+    expect(tile(a, 'home-pool').state).toBe('warning');
+    expect(issuesOf(a, 'home-pool')[0]).toMatchObject({ title: expect.stringMatching(/^A Home-pool key’s allowance is low: 0\.5 NEAR left/u), playbook: { id: 'relayer-out-of-funds' } });
+    world.watchdog = watchdogBody({ relayer_funds: relayerFunds({ keys: [SESSION, OWNER, { public_key: PK_H, pool: 'home', allowance: `1${E24.slice(1)}` }] }) });
+    expect(tile(await read(), 'home-pool').state).toBe('critical');
+
+    // The API holds a Home key the relayer account doesn't have: Home derives fail, logins don't (a warning, not red).
+    world.watchdog = watchdogBody({ relayer_funds: relayerFunds({ keys: [SESSION, OWNER] }) });
+    a = await read();
+    invariants(a);
+    expect(tile(a, 'home-pool').state).toBe('warning');
+    expect(issuesOf(a, 'home-pool').map((i) => i.title)).toEqual(['No Home-pool key on the relayer account', '1 of the API’s Home-pool keys isn’t on the relayer account: relays from it fail']);
+    expect(tile(a, 'session-pool').state).toBe('ok');
+
+    // No Home key anywhere (the API has none, the chain has none): Home derives are off here, nothing to judge.
+    world.api = apiAnswer({ relayerKeys: [{ pool: 'session', publicKey: PK_S }, { pool: 'owner', publicKey: PK_O }] });
+    a = await read();
+    invariants(a);
+    expect(tile(a, 'home-pool')).toMatchObject({ state: 'not_measured', detail: 'No Home key in this env: Hana Home derives are off' });
+    expect(a.issues.filter((i) => /Home/u.test(i.title))).toEqual([]);
+
+    // A Home key on chain that the API doesn't hold is still shown and judged.
+    world.watchdog = watchdogBody({ relayer_funds: relayerFunds() });
+    a = await read();
+    expect(tile(a, 'home-pool')).toMatchObject({ state: 'ok', detail: '1 key on chain · lowest allowance 5 NEAR · 0 in the API' });
+  });
+
   it('a reading older than 30 minutes is amber (said once); none yet is unknown with an issue', async () => {
     world.watchdog = watchdogBody({ relayer_funds: relayerFunds({ at: NOW - 45 * MIN }) });
     let a = await read();
-    expect(['relayer-balance', 'session-pool', 'owner-pool'].map((id) => tile(a, id).state)).toEqual(['warning', 'warning', 'warning']);
+    expect(['relayer-balance', 'session-pool', 'owner-pool', 'home-pool'].map((id) => tile(a, id).state)).toEqual(['warning', 'warning', 'warning', 'warning']);
     expect(a.issues.filter((i) => i.title.startsWith('The relayer reading'))).toHaveLength(1);
     world.watchdog = watchdogBody({ relayer_funds: null });
     a = await read();

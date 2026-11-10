@@ -2,6 +2,8 @@
 // limits, the row mappings and the statement view.
 import { describe, expect, it } from 'vitest';
 import {
+  HOME_LOGINS_LABEL,
+  HOME_LOGINS_NOTE,
   LEDGER_CURSOR_RE,
   REPORT_MAX_APPS,
   REPORT_MAX_DAYS,
@@ -15,6 +17,8 @@ import {
   ledgerCursor,
   ledgerInput,
   ledgerRowOf,
+  reportRowKind,
+  STATEMENT_CSV_COLUMNS,
   statementTotals,
   statementView,
   usageInput,
@@ -119,5 +123,35 @@ describe('the statement view (on-screen and PDF)', () => {
     expect(v.notes[0]).toMatch(/mainnet NEAR\/USD price/u);
     expect(v.table).toEqual([{ label: 'Acme web (app_1)', cells: ['3', '1', '0', '2', '1', '7', '0.0007', '0.00175', '0'] }]);
     expect(statementView({ csvSha256: 'ab'.repeat(32), totals: { ...totals, network: 'mainnet' } }).notes).toHaveLength(1);
+  });
+
+  it('a statement issued before Hana Home logins were counted still parses and renders as it did', () => {
+    // `totals` above is that older shape: no `homeLogins`, no `home` row.
+    const v = statementView({ csvSha256: 'ab'.repeat(32), totals });
+    expect(v.tableColumns).toEqual(['Logins', 'Derives', 'Owner actions', 'MAU', 'New users', 'Tgas', 'NEAR', 'USD', 'Unsettled']);
+    expect(v.summary.map(([k]) => k)).not.toContain(HOME_LOGINS_LABEL);
+  });
+
+  it('a scope’s Hana Home logins are a line of their own, with a column, a summary line and a note', () => {
+    const home = { kind: 'home', ...row, logins: 0, derives: 0, newUsers: 0, homeLogins: 4, tgas: '154', near: '0.0154', usd: '0.0385', relayedRejectedTgas: '0', relayedRejectedNear: '0', relayedRejectedUsd: '0' };
+    const t = statementTotals.parse({ ...totals, rows: [...totals.rows, { kind: 'scope', ...row, logins: 0, derives: 0, ownerActions: 2 }, home], sum: { ...figures, homeLogins: 4 } });
+    const v = statementView({ csvSha256: 'ab'.repeat(32), totals: t });
+    expect(v.table.map((r) => r.label)).toEqual(['Acme web (app_1)', 'Owner actions, scope s1', 'Hana Home logins, scope s1']);
+    expect(v.tableColumns).toEqual(['Logins', 'Derives', 'Owner actions', 'Home logins', 'MAU', 'New users', 'Tgas', 'NEAR', 'USD', 'Unsettled']);
+    expect(v.table[2]!.cells).toEqual(['0', '0', '0', '4', '', '0', '154', '0.0154', '0.0385', '0']);
+    expect(v.table[0]!.cells[3]).toBe('0');
+    expect(v.summary).toContainEqual([HOME_LOGINS_LABEL, '4']);
+    expect(v.notes.at(-1)).toBe(HOME_LOGINS_NOTE);
+    expect(statementTotals.safeParse({ ...totals, rows: [{ ...home, kind: 'other' }] }).success).toBe(false);
+  });
+
+  it('a report row’s kind: named by the report, else an app’s row or a scope’s owner actions', () => {
+    expect(reportRowKind({ kind: 'home', app_id: null })).toBe('home');
+    expect(reportRowKind({ kind: 'scope', app_id: null })).toBe('scope');
+    expect(reportRowKind({ kind: 'app', app_id: 'app_1' })).toBe('app');
+    expect(reportRowKind({ app_id: null })).toBe('scope');
+    expect(reportRowKind({ app_id: 'app_1' })).toBe('app');
+    expect(STATEMENT_CSV_COLUMNS).toContain('home_logins');
+    expect(STATEMENT_CSV_COLUMNS.indexOf('row_kind')).toBe(STATEMENT_CSV_COLUMNS.indexOf('day') - 1);
   });
 });

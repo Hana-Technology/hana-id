@@ -9,6 +9,7 @@
 import { LEGACY_ORG_ID, UID_ENDPOINTS, b64url, uidFromPath, usageEventV1, type UsageEventV1 } from '@hana-id/console-core';
 import pg from 'pg';
 import type { Env } from '../env.ts';
+import { homeBillingOrg } from '../home/billing.ts';
 import { log } from '../log.ts';
 import { userIdKey } from './uid-key.ts';
 
@@ -102,7 +103,8 @@ async function scopeOrg(env: Env, scopeId: string, at: LogCtx): Promise<string> 
 }
 
 /**
- * Completes and writes one event (call it in `waitUntil`): the owner action's org, the uid (ok login, session and
+ * Completes and writes one event (call it in `waitUntil`): the owner action's org or, for a Home derive, the org that
+ * pays for it (home/billing.ts), the uid (ok login, session and
  * derive with a path that parses for the event's scope, and a usable USER_ID_KEY), the UsageEvent v1 check (a refusal
  * is `usage_write_rejected`, never sent), then `usage.record_event`. Never rejects. Without `USAGE_DB` nothing is sent.
  */
@@ -113,7 +115,8 @@ export async function recordUsage(env: Env, draft: UsageDraftEvent, opts: { path
   if (!binding) return;
   const at: LogCtx = { requestId: draft.request_id, appId: draft.app_id ?? undefined, endpoint: opts.logEndpoint };
   try {
-    const event: Record<string, unknown> = { ...draft, org_id: draft.org_id ?? (await scopeOrg(env, draft.scope_id, at)) };
+    const orgId = draft.org_id ?? (draft.endpoint === 'home_login' ? await homeBillingOrg(env, draft.scope_id, at) : await scopeOrg(env, draft.scope_id, at));
+    const event: Record<string, unknown> = { ...draft, org_id: orgId };
     if (draft.outcome === 'ok' && opts.path !== undefined && (UID_ENDPOINTS as readonly string[]).includes(draft.endpoint)) {
       const key = userIdKey(env);
       const uid = key ? await uidFromPath(key, draft.scope_id, opts.path) : null;

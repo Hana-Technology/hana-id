@@ -250,6 +250,14 @@ export const usageRow = z
     /** C12 (D324): ok link, link_cancel and link_unlink relays (email login), and identity tokens minted (D223). */
     linkActions: z.number().int().nonnegative().optional(),
     identityTokens: z.number().int().nonnegative().optional(),
+    /**
+     * What the row is about: an app, a scope's owner actions, or a scope's Hana Home logins (a user opening their wallet
+     * from Hana Home; such a row has no appId, and its gas is that of those logins only). Absent on rows made before
+     * Hana Home logins were counted: then a row without an appId is a scope's owner actions.
+     */
+    kind: z.enum(['app', 'scope', 'home']).optional(),
+    /** Hana Home logins that released a key (only on a `home` row). */
+    homeLogins: z.number().int().nonnegative().optional(),
     activeUsers: z.number().int().nonnegative().optional(),
     newUsers: z.number().int().nonnegative(),
     failuresByCode: z.record(z.string(), z.number().int().nonnegative()),

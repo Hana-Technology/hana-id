@@ -44,8 +44,8 @@ export interface ApiSystemStatus {
   jwksSync: CronRunView[] | null;
   /** The guarded-change notices the admin cron hasn't sent; null: D1 failed. */
   notices: NoticeBacklog | null;
-  /** Both pools' public keys (never a secret); null: the pool config is unreadable. */
-  relayerKeys: { pool: 'session' | 'owner'; publicKey: string }[] | null;
+  /** Every pool's public keys (never a secret); null: the pool config is unreadable. */
+  relayerKeys: { pool: 'session' | 'owner' | 'home'; publicKey: string }[] | null;
   /** The `GET /v1/governance` snapshot (the API's 10 s cache), or why it couldn't be read. */
   governance: { ok: true; snapshot: Record<string, unknown> } | { ok: false; code: string };
 }

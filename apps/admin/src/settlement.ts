@@ -3,7 +3,10 @@
 // billed only when the transaction is its own:
 //
 // 1. its `near_tx` is carried by no other relayed event in the ledger (a duplicate bills neither: `duplicate_tx`);
-// 2. its `relayer_pk` is one of the env's relayer pool keys (`AdminRpc.relayerKeys`, both pools);
+// 2. its `relayer_pk` is one of the env's relayer pool keys (`AdminRpc.relayerKeys`, every pool), and of the pool its
+//    endpoint relays from: a Hana Home derive (`home_login`) from the Home pool only, every other event from the
+//    session or owner pool only (`signer_mismatch` otherwise, without a chain read). The API never crosses them, so an
+//    event that does was not written by the relay it claims;
 // 3. the transaction at FINAL has that hash, is signed by the env's relayer account with that key at that nonce, and is
 //    sent to the signer contract (`signer_mismatch` otherwise).
 //
@@ -24,13 +27,20 @@ export const UNSETTLED_AFTER_MS = 24 * 60 * 60 * 1000;
 export interface SettlementDeps {
   store: LedgerStore;
   near: NearReader;
-  /** The env's relayer pool public keys (`ed25519:…`), read once per run. */
-  poolKeys: ReadonlySet<string>;
+  /** The env's relayer pool public keys (`ed25519:…`) with each one's pool, read once per run. */
+  poolKeys: ReadonlyMap<string, RelayerPool>;
   relayerAccount: string;
   signerAccount: string;
   budget: Budget;
   now: number;
 }
+
+export type RelayerPool = 'session' | 'owner' | 'home';
+/** The ledger's endpoint of a Hana Home derive (console-core USAGE_ENDPOINTS). */
+export const HOME_ENDPOINT = 'home_login';
+
+/** Whether an event of `endpoint` may be signed by a key of `pool`: Home derives by the Home pool, and nothing else by it. */
+export const poolMatches = (endpoint: string, pool: RelayerPool): boolean => (endpoint === HOME_ENDPOINT) === (pool === 'home');
 
 export interface SettlementSummary {
   read: number;
@@ -71,9 +81,15 @@ export async function runSettlement(d: SettlementDeps): Promise<SettlementSummar
       sum.refused++;
       continue;
     }
-    // 2. A key of the env's relayer pools (no chain read needed to refuse).
-    if (!d.poolKeys.has(e.relayerPk)) {
+    // 2. A key of the env's relayer pools, and of its endpoint's pool (no chain read needed to refuse).
+    const pool = d.poolKeys.get(e.relayerPk);
+    if (pool === undefined) {
       await refuse(d, e, 'signer_mismatch', { notInPool: e.relayerPk, nonce: e.relayerNonce.toString() });
+      sum.refused++;
+      continue;
+    }
+    if (!poolMatches(e.endpoint, pool)) {
+      await refuse(d, e, 'signer_mismatch', { wrongPool: pool, endpoint: e.endpoint, publicKey: e.relayerPk, nonce: e.relayerNonce.toString() });
       sum.refused++;
       continue;
     }

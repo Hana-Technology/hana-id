@@ -1,5 +1,5 @@
 // The daily nonce cross-check, 00:30 UTC (docs/batch-c-spec.md "Daily nonce cross-check"; D34, D93 Q13; D323). For each
-// relayer key (`AdminRpc.relayerKeys`, both pools) the access key's nonce N at final is the nonce of the key's last
+// relayer key (`AdminRpc.relayerKeys`: the session, owner and Home pools) the access key's nonce N at final is the nonce of the key's last
 // landed transaction, and every API relay writes a ledger row with (relayer_pk, relayer_nonce), so:
 //
 // - N unchanged since the key's last check: idle, explained;

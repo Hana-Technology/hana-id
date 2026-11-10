@@ -84,6 +84,7 @@ describe('ConsoleRpc.usage', () => {
           ownerActions: 0,
           linkActions: 0,
           identityTokens: 0,
+          kind: 'app',
           activeUsers: 2,
           newUsers: 1,
           failuresByCode: { contract_rejected: 1 },
@@ -103,6 +104,19 @@ describe('ConsoleRpc.usage', () => {
     });
     expect(calls).toEqual([{ sql: ORG_REPORT_SQL, params: [org, '2026-01-01', '2026-01-31', 'day', ['app_1']] }]);
     expect(count).toEqual(before);
+  });
+
+  it('maps a scope’s Hana Home logins to a row of its own kind, with no app, and its owner actions to another', async () => {
+    const org = newOrg();
+    const none = { logins: 0, derives: 0, active_users: 0, new_users: 0, failures: {}, login_p50: null, login_p95: null };
+    answer = () => [reportRow({ kind: 'app' }), reportRow({ ...none, app_id: null, kind: 'scope', owner_actions: 2 }), reportRow({ ...none, app_id: null, kind: 'home', home_logins: 4, gas: '154000000000000', rejected_gas: '0' })];
+    const r = await rpc().usage({ ...member(), orgId: org, from: '2026-01-01', to: '2026-01-31', by: 'day' });
+    if (!r.ok) throw new Error('refused');
+    expect(r.rows.map((x) => [x.kind, x.appId, x.scopeId, x.ownerActions, x.homeLogins, x.tgas])).toEqual([
+      ['app', 'app_1', 's1', 0, undefined, '32.670449867484'],
+      ['scope', undefined, 's1', 2, undefined, '32.670449867484'],
+      ['home', undefined, 's1', 0, 4, '154'],
+    ]);
   });
 
   it('refuses more than 400 days, more than 100 apps and an inverted range before Neon', async () => {

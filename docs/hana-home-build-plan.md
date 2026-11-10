@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0, H1, H2, H4 and H6 merged and live on sandbox-dev (contract v4, exit clients in force); H3 and H5 built with their security reviews' fixes, merged on branch `merge/h3-h5` (not merged into `develop`, not deployed); H7–H12 not started. Older "not merged, not deployed" notes in the result lines below are history.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-10): H0–H6 merged into `develop` and live on sandbox-dev (contract v4, exit clients in force; H3 and H5 merged at 9b0ae580); H11 built on `feat/hana-home-h11` (not merged, not deployed, D585–D594 proposed); H7–H10 and H12 not started. Older "not merged, not deployed" notes in the result lines below are history.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -239,6 +239,7 @@ The design is `docs/hana-home-h6-design.md`; its decisions are D480–D489.
 - **Migration / deploy.** Neon 0008 as 0005 was; API.
 - **Before mainnet (D526, readiness 7.4a).** The Home keys join `AdminRpc.relayerKeys`, the admin status tiles and the daily nonce check, with the ledger rows that explain their nonces.
 - **User-visible.** The statement line, once usage capture is on.
+- **Result (2026-11-10, `feat/hana-home-h11`, not merged, not deployed).** The `home_login` usage event, written for each derive that reaches the relay, with no app and no uid (`apps/api/src/usage/event.ts`, `home/login.ts`); who pays, as one table, `HOME_PAYER` in `apps/api/src/home/billing.ts` (the scope's org while it has a running app; Hana when its apps are all suspended or gone; Hana's org is the manifest's `hanaOrgId`, else `org_legacy`); Neon `0008_home_logins.sql` (the endpoint, the `app_id` rule, `usage.org_report` with `kind` and `home_logins`); the "Hana Home logins" line in the report, the statement's CSV, totals, PDF and on-screen view, the partner's Usage page and the admin's reports table; settlement's pool check (a Home event must be signed by a Home key, D590); readiness 7.4a: the Home keys in `AdminRpc.relayerKeys`, the daily nonce check and a "Home pool keys" status tile, one more call at the 00:30 run and no new cron. `docs/api.md`, `security.md`, `architecture.md`, `operations.md` ("Hana Home billing: deploy"). D585–D594, all **proposed, awaiting the user's confirmation**: the price (gas only, D588), what a partner sees and the CSV's two new columns (D587), the event being recorded only from the relay on (D585), the rule for a scope with one running and one suspended app (D586), Hana's org (D589). Open item 5 stays open: the suspended rule is built as "Hana pays" and is one line to change. No contract, path, key rule or derivation change; no D1 migration. Not done: applying 0008 anywhere, a run against a real ledger (PGlite only), the deploy.
 
 ### H12: closing
 
@@ -291,7 +292,7 @@ Run by hand on an env before H7's first deploy to it and before each later Home 
 | 2 | **Closed 2026-11-09.** Neither is needed: D460's Google-client requirement is dropped (D480) and D464's owner seat is dropped (D481), because the exit client (D468) covers users | — | — |
 | 3 | **Closed 2026-11-09 (D480).** `disable_shared_login` stays and keeps working unchanged: there is no delay to bypass | — | — |
 | 4 | **Closed 2026-11-09 (D520, H3).** `user_events.app_id` is relaxed for `key_exported`; a Home derive names no app | — | — |
-| 5 | Billing of a suspended app: Hana pays for now (D461's note); to discuss with colleagues before finalising | founder, colleagues | H11 |
+| 5 | Billing of a suspended app: Hana pays for now (D461's note); to discuss with colleagues before finalising. Built that way in H11 (D586): the `suspended` line of `HOME_PAYER` in `apps/api/src/home/billing.ts` is the one place to change | founder, colleagues | nothing (H11 is built either way) |
 | 6 | **Closed 2026-11-09 (D481).** Hana holds no owner seat, so there is no `SetOwners` to watch for | — | — |
 | 7 | Partner terms (readiness 9.9), the privacy notice line (9.10), telling Enterprise partners they can't exclude Home (9.12), legal's review of 9.6 (D489) | legal/founder | mainnet |
 

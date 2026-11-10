@@ -29,7 +29,7 @@ import { coingecko, runRates } from './rates.ts';
 import { runRejectionCheck } from './rejections.ts';
 import { type RetentionSummary, isRetentionTick, runRetention, runRetentionAlerts, sendRetentionSkipped } from './retention.ts';
 import { systemCtx } from './rpc.ts';
-import { runSettlement } from './settlement.ts';
+import { type RelayerPool, runSettlement } from './settlement.ts';
 
 /**
  * The run's record in `ops.state` (D425): `{at, budgetLeft, calls, failed}` (the steps that threw), written last on the
@@ -76,11 +76,11 @@ async function withStore<T>(env: Env, budget: Budget, run: string, fn: (store: L
   }
 }
 
-/** Both pools' public keys from the API (the one source: the API holds the secrets). Null when unreadable. */
-async function poolKeys(env: Pick<Env, 'API'>): Promise<string[] | null> {
+/** Every pool's public keys from the API, each with its pool (the one source: the API holds the secrets). Null when unreadable. */
+async function poolKeys(env: Pick<Env, 'API'>): Promise<{ pool: RelayerPool; publicKey: string }[] | null> {
   try {
     const r = await env.API.relayerKeys(systemCtx());
-    return r.ok ? r.keys.map((k) => k.publicKey) : null;
+    return r.ok ? r.keys : null;
   } catch {
     return null;
   }
@@ -134,7 +134,7 @@ export async function everyFifteenMinutes(env: Env, now = Date.now()): Promise<F
     let daily: DailySummary | null = null;
     if (isDailyTick(now)) {
       daily = {
-        nonce: relayer && keys ? await track('nonce_check', () => runNonceCheck({ store, near, keys, relayerAccount: relayer, budget, now })) : null,
+        nonce: relayer && keys ? await track('nonce_check', () => runNonceCheck({ store, near, keys: keys.map((k) => k.publicKey), relayerAccount: relayer, budget, now })) : null,
         rejection: await track('rejection_rate', () => runRejectionCheck({ store, now })),
         partitions: await track('partitions', () => store.ensurePartitions(PARTITION_MONTHS)),
         rates: null,
@@ -149,7 +149,7 @@ export async function everyFifteenMinutes(env: Env, now = Date.now()): Promise<F
     // The link-rate alert (D448): one RPC and at most one email, only when both fit (a clean stop otherwise).
     await track('link_jump', () => runLinkJumpAlert(menv, store.state, sender, budget, now));
     if (daily) daily.rates = await track('rates', () => runRates({ store, fetchRate: coingecko(env.COINGECKO_API_KEY), budget, now }));
-    const settlement = relayer && keys ? await track('settlement', () => runSettlement({ store, near, poolKeys: new Set(keys), relayerAccount: relayer, signerAccount: env.SIGNER_ACCOUNT, budget, now })) : null;
+    const settlement = relayer && keys ? await track('settlement', () => runSettlement({ store, near, poolKeys: new Map(keys.map((k) => [k.publicKey, k.pool])), relayerAccount: relayer, signerAccount: env.SIGNER_ACCOUNT, budget, now })) : null;
     const summary = { daily, retention, alerts, retentionAlerts, notices, settlement, budgetLeft: budget.remaining, calls: { ...budget.used } };
     try {
       await store.state.setState(LEDGER_LAST_RUN, JSON.stringify({ at: now, budgetLeft: summary.budgetLeft, calls: summary.calls, failed }));

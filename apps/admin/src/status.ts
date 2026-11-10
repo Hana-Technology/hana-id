@@ -469,17 +469,18 @@ function fundsTiles(r: Report, s: Sources): void {
     { id: 'relayer-balance', name: 'Relayer balance', affects: 'Every relayed call: logins and owner actions (it pays their gas)' },
     { id: 'session-pool', name: 'Session pool keys', affects: 'Logins (each session-pool key pays a login’s gas within its allowance)' },
     { id: 'owner-pool', name: 'Owner pool keys', affects: 'Owner actions from the partner console' },
+    { id: 'home-pool', name: 'Home pool keys', affects: 'Hana Home: a user opening their wallet without the partner’s app' },
   ] as const;
-  const add = (i: 0 | 1 | 2, detail: string, problems: Problem[]) => r.add({ ...tiles[i], group: 'funds', detail, link: L.monitoring }, problems);
+  const add = (i: 0 | 1 | 2 | 3, detail: string, problems: Problem[]) => r.add({ ...tiles[i], group: 'funds', detail, link: L.monitoring }, problems);
   const w = s.watchdog;
   if (!w.ok) {
-    for (const i of [0, 1, 2] as const) add(i, 'Unknown: read by the watchdog, which can’t be read (see Workers)', [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
+    for (const i of [0, 1, 2, 3] as const) add(i, 'Unknown: read by the watchdog, which can’t be read (see Workers)', [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
     return;
   }
   const f = obj(w.view.relayerFunds);
   if (!f) {
     add(0, 'Unknown: the watchdog has no relayer reading yet', [{ severity: 'unknown', title: 'The watchdog has no relayer reading yet', action: 'It reads the relayer every run: wait one run, else check its `relayer_funds` check in Security & monitoring.', key: 'no-reading' }]);
-    for (const i of [1, 2] as const) add(i, 'Unknown: no relayer reading yet', [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
+    for (const i of [1, 2, 3] as const) add(i, 'Unknown: no relayer reading yet', [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
     return;
   }
   const at = num(f.at);
@@ -504,8 +505,14 @@ function fundsTiles(r: Report, s: Sources): void {
   // Each pool: the keys on the account, their lowest allowance, and the API's pool keys that aren't there.
   const keys = arr(f.keys).map((k) => obj(k) ?? {});
   const apiKeys = s.api.ok ? s.api.value.relayerKeys : null;
-  for (const [i, pool, label] of [[1, 'session', 'session'], [2, 'owner', 'owner']] as const) {
+  for (const [i, pool, label] of [[1, 'session', 'session'], [2, 'owner', 'owner'], [3, 'home', 'Home']] as const) {
     const mine = keys.filter((k) => k.pool === pool);
+    // An env with no Home key anywhere (none in the API, none on chain) doesn't run Home derives: nothing to judge. With
+    // none on chain and the API unreadable it can't be told apart from that, and the API's own tile already says so.
+    if (pool === 'home' && mine.length === 0 && !apiKeys?.some((k) => k.pool === 'home')) {
+      r.add({ ...tiles[i], group: 'funds', detail: apiKeys ? 'No Home key in this env: Hana Home derives are off' : 'No Home key on chain; the API’s pool can’t be read', notMeasured: true, link: L.monitoring });
+      continue;
+    }
     const problems: Problem[] = [...stale.map((p) => ({ ...p, issue: false }))];
     const limited = mine.map((k) => ({ pk: str(k.public_key) ?? '', allowance: k.allowance === null ? null : yocto(k.allowance) }));
     const finite = limited.filter((k): k is { pk: string; allowance: bigint } => k.allowance !== null);

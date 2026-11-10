@@ -98,7 +98,7 @@ export function Usage() {
         </button>
       </form>
       {!valid && <p className="field-error">Pick a start day on or before the end day.</p>}
-      {query.apps.length > 0 && <p className="muted">Filtered by app: owner actions (which belong to a scope, not an app) are left out.</p>}
+      {query.apps.length > 0 && <p className="muted">Filtered by app: owner actions and Hana Home logins (which belong to a scope, not an app) are left out.</p>}
       {r.error && <ErrorNote error={r.error} onRetry={r.reload} />}
       {!r.data && !r.error && <Loading />}
       {r.data && rows.length === 0 && (
@@ -112,7 +112,7 @@ export function Usage() {
             <thead>
               <tr className="group-row">
                 <th scope="colgroup" colSpan={2} />
-                <th scope="colgroup" colSpan={7}>
+                <th scope="colgroup" colSpan={8}>
                   Activity
                 </th>
                 <th scope="colgroup" colSpan={3}>
@@ -138,6 +138,7 @@ export function Usage() {
                 <th>Owner actions</th>
                 <th>Link actions</th>
                 <th>Identity tokens</th>
+                <th>Home logins</th>
                 <th>Active users</th>
                 <th>New users</th>
                 <th>Failures by code</th>
@@ -156,7 +157,7 @@ export function Usage() {
             </thead>
             <tbody>
               {rows.map((x) => (
-                <tr key={`${x.period}:${x.appId ?? `scope:${x.scopeId ?? ''}`}`}>
+                <tr key={`${x.period}:${x.appId ?? `${x.kind === 'home' ? 'home' : 'scope'}:${x.scopeId ?? ''}`}`}>
                   <td className="mono num">{x.period}</td>
                   <td>
                     {x.appId ? (
@@ -164,6 +165,8 @@ export function Usage() {
                         {names.get(x.appId) ?? x.appId}
                         {names.has(x.appId) && <div className="muted mono small">{x.appId}</div>}
                       </>
+                    ) : x.kind === 'home' ? (
+                      `Hana Home logins, scope ${x.scopeId ?? '—'}`
                     ) : (
                       `Owner actions, scope ${x.scopeId ?? '—'}`
                     )}
@@ -175,6 +178,7 @@ export function Usage() {
                   <td className="num">{x.ownerActions}</td>
                   <td className="num">{x.linkActions ?? 0}</td>
                   <td className="num">{x.identityTokens ?? 0}</td>
+                  <td className="num">{x.homeLogins ?? 0}</td>
                   <td className="num">{x.activeUsers ?? '—'}</td>
                   <td className="num">{x.newUsers}</td>
                   <td className="mono small">{failures(x.failuresByCode)}</td>

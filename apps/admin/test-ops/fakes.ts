@@ -10,6 +10,13 @@ export const RELAYER = 'relayer.test.near';
 export const SIGNER = 'signer.test.near';
 export const PK_A = 'ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp';
 export const PK_B = 'ed25519:9qQxjvB6qdb3vZ9bm2AFNQFTDhb6uGqfL63y3pTBMSRY';
+/** The Home pool's key (POST /v1/home/login only). */
+export const PK_HOME = 'ed25519:4kqyRk2KyNBUm2oWT7m8n3fESEFJr3vV3YdBSiHVpDWp';
+export const POOL_KEYS = [
+  { pool: 'session' as const, publicKey: PK_A },
+  { pool: 'owner' as const, publicKey: PK_B },
+  { pool: 'home' as const, publicKey: PK_HOME },
+];
 export const ALIAS = 'security@hana.example';
 
 /** A fresh ledger with partitions for `months` ('YYYY_MM') besides the current ones, and its admin store. */
@@ -65,7 +72,7 @@ export async function insertEvent(db: TestDb, e: Ev): Promise<{ rid: string; at:
       new Date(e.at).toISOString(),
       new Date(e.received ?? e.at).toISOString(),
       org,
-      e.app === undefined ? (e.endpoint === 'owner_action' ? null : 'app_1') : e.app,
+      e.app === undefined ? (e.endpoint === 'owner_action' || e.endpoint === 'home_login' ? null : 'app_1') : e.app,
       e.scope ?? 's1',
       e.endpoint ?? 'login',
       outcome,
@@ -144,7 +151,7 @@ export function fakeRpcs(o: { orgName?: string; billingEmail?: string; contacts?
     api: {
       listApps: async () => ({ ok: true as const, apps: o.apps ?? [{ id: 'app_1', name: 'Acme web', scopeId: 's1', environment: 'live' }] }),
       getSecurityContacts: async () => ({ ok: true as const, emails: o.contacts ?? ['sec@partner.example'] }),
-      relayerKeys: async () => ({ ok: true as const, keys: [{ pool: 'session' as const, publicKey: PK_A }, { pool: 'owner' as const, publicKey: PK_B }] }),
+      relayerKeys: async () => ({ ok: true as const, keys: POOL_KEYS }),
     },
     console: {
       getOrg: async (c: { orgId: string }) => ({ ok: true as const, org: { id: c.orgId, name: o.orgName ?? 'Acme', kind: 'partner' as const, status: 'active' as const, createdAt: 1, ...(o.billingEmail ? { billingEmail: o.billingEmail } : {}) }, members: [], invites: [] }),

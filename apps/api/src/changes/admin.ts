@@ -5,7 +5,7 @@
 import { KeyPair } from '@near-js/crypto';
 import { type Environment, LEGACY_ORG_ID, newId, newPublishableKey } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
-import { parseRelayerKeys } from '../relayer-config.ts';
+import { type Pool, parseRelayerKeys } from '../relayer-config.ts';
 import { getApp } from './apps.ts';
 import { type Writer, actorId, commitOn, committed, refuse, refuseReplay, replayRow, runWrite, expectReplay } from './cas.ts';
 import { requireOwnersInOrg } from './chain.ts';
@@ -192,11 +192,15 @@ export async function markSecurityEventNotified(db: HotDb, ids: readonly string[
   await db.batch([q`UPDATE security_events SET notified_at = ${now} WHERE id IN (SELECT value FROM json_each(${JSON.stringify(ids)})) AND notified_at IS NULL`]);
 }
 
-/** The public keys of both relayer pools (never a secret), for the admin Worker's nonce check and settlement. */
-export function relayerKeys(env: Env): { pool: 'session' | 'owner'; publicKey: string }[] {
+/**
+ * The public keys of every relayer pool (never a secret), for the admin Worker's nonce check, settlement and status
+ * page. The Home pool's are here too (readiness 7.4a), so a Home key spending outside the API is seen.
+ */
+export function relayerKeys(env: Env): { pool: Pool; publicKey: string }[] {
   const pub = (secret: string) => KeyPair.fromString(secret as `ed25519:${string}`).getPublicKey().toString();
   return [
     ...parseRelayerKeys(env.RELAYER_KEYS, 'RELAYER_KEYS').map((k) => ({ pool: 'session' as const, publicKey: pub(k) })),
     ...parseRelayerKeys(env.OWNER_RELAYER_KEYS, 'OWNER_RELAYER_KEYS').map((k) => ({ pool: 'owner' as const, publicKey: pub(k) })),
+    ...parseRelayerKeys(env.HOME_RELAYER_KEYS, 'HOME_RELAYER_KEYS').map((k) => ({ pool: 'home' as const, publicKey: pub(k) })),
   ];
 }

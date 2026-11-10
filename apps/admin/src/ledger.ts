@@ -20,6 +20,8 @@ export interface QueuedEvent {
   requestId: string;
   at: number;
   orgId: string;
+  /** The event's endpoint: settlement holds a Home derive to the Home pool's keys and every other event to the other pools'. */
+  endpoint: string;
   nearTx: string;
   relayerPk: string;
   relayerNonce: bigint;
@@ -161,7 +163,7 @@ export function sqlLedger(query: Query, close: () => Promise<void> = async () =>
   return {
     async settlementQueue(limit, now, retryAfterMs) {
       const rows = await query(
-        `SELECT e.request_id, e.at, e.org_id, e.near_tx, e.relayer_pk, e.relayer_nonce::text AS relayer_nonce
+        `SELECT e.request_id, e.at, e.org_id, e.endpoint, e.near_tx, e.relayer_pk, e.relayer_nonce::text AS relayer_nonce
            FROM usage.events e
           WHERE e.relayed
             AND NOT EXISTS (SELECT 1 FROM usage.gas_settlements g WHERE g.request_id = e.request_id)
@@ -170,7 +172,7 @@ export function sqlLedger(query: Query, close: () => Promise<void> = async () =>
           LIMIT $1`,
         [limit, iso(now - retryAfterMs)],
       );
-      return rows.map((r) => ({ requestId: String(r.request_id), at: ms(r.at), orgId: String(r.org_id), nearTx: String(r.near_tx), relayerPk: String(r.relayer_pk), relayerNonce: BigInt(String(r.relayer_nonce)) }));
+      return rows.map((r) => ({ requestId: String(r.request_id), at: ms(r.at), orgId: String(r.org_id), endpoint: String(r.endpoint), nearTx: String(r.near_tx), relayerPk: String(r.relayer_pk), relayerNonce: BigInt(String(r.relayer_nonce)) }));
     },
     async relayedWithTx(nearTx) {
       const rows = await query('SELECT request_id, at, org_id FROM usage.events WHERE relayed AND near_tx = $1 ORDER BY at, request_id LIMIT 20', [nearTx]);

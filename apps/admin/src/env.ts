@@ -83,8 +83,8 @@ export interface AdminRpcClient {
   changesSince(c: unknown): Answer<{ changes: AppChange[] }>;
   securityEvents(c: unknown): Answer<{ events: SecurityEvent[] }>;
   markSecurityEventNotified(c: unknown): Answer<Record<string, never>>;
-  /** Both relayer pools' public keys (settlement and the nonce check, C12). */
-  relayerKeys(c: unknown): Answer<{ keys: { pool: 'session' | 'owner'; publicKey: string }[] }>;
+  /** Every relayer pool's public keys, the Home pool's included (settlement and the nonce check, C12; readiness 7.4a). */
+  relayerKeys(c: unknown): Answer<{ keys: { pool: 'session' | 'owner' | 'home'; publicKey: string }[] }>;
   /** The `GET /v1/governance` snapshot (batch C14): the API's normalised chain views, JWKS verdicts and cron state. */
   governance(c: unknown): Answer<{ governance: Record<string, unknown> }>;
   /** The pending-upgrades page's view (D86), the same one partners get from ConsoleRpc. */

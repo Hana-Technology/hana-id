@@ -473,3 +473,15 @@ describe('the sign-in’s end and the link', () => {
     expect(h.calls).toHaveLength(1);
   });
 });
+
+describe('what "Sign out this device" says about a tab already open there', () => {
+  it('up to about a minute in every app (the vault checks its share before each signature), 3 minutes only when the device can’t reach Hana', () => {
+    const c = HOME_STOP_CONFIRM.share;
+    expect(c.points).toContain('A tab already open there can keep signing for up to about a minute.');
+    expect(c.more?.join(' ')).toContain('for up to about a minute, or for up to about 3 minutes while that device can’t reach Hana');
+    expect(stopDoneText('share', true)).toContain('a tab already open there can’t sign after about a minute');
+    expect(c.more?.join(' ')).toContain('may still look signed in for a few minutes, but it can’t sign anything');
+    // No app is left with the old 10-minute bound.
+    for (const line of [...c.points, ...(c.more ?? []), stopDoneText('share', true)]) expect(line).not.toMatch(/other apps|never signs by itself|10 minutes/u);
+  });
+});

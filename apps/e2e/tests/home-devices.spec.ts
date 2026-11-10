@@ -5,11 +5,14 @@
 //   through `GET /v1/home/devices`, stops the consent, and the partner tab's next covered request shows the approval
 //   screen instead of signing by itself within about 10 seconds (the vault's status read, D465). Then "Sign out this
 //   device" ends it: the partner's reload asks to sign in again.
+// - "signing a device out … an app with no policy": the same sign-out in an app with no auto-approve policy, whose open
+//   tab (that just signed a message) ends by itself within about a minute too (the vault's minute check, D680), with no
+//   request and no reload.
 // - "every screen": the section's states over routed answers (the sign-in is still the real one). With HANA_SHOTS_DIR
 //   set (Chromium only) each screen is saved there at desktop and phone width, light and dark.
 import type { BrowserContext, Page } from '@playwright/test';
 import { API_URL, AUTH_ORIGIN, EVM_CHAIN_ID } from '../src/stack.ts';
-import { approve, clickAction, closeOf, errorCode, expect, login, newApp, okValue, openPartner, status, test, waitPersisted, waitReady, walletDirectory } from './fixtures.ts';
+import { approve, clickAction, closeOf, errorCode, errorOf, expect, login, newApp, okValue, openPartner, runAction, status, test, waitPersisted, waitReady, walletDirectory } from './fixtures.ts';
 import { HOME_CORS, routeApps, shots, signIn } from './home-steps.ts';
 
 /** Where the screenshots go (Chromium only), as in home-steps.ts. */
@@ -158,12 +161,12 @@ test('stopping auto-approve in Hana Home stops auto-signing in the open partner 
   // Sign out this device: gone from Home, and the partner's next load asks to sign in again.
   await home.bringToFront();
   await item.getByRole('button', { name: 'Sign out this device' }).click();
-  await expect(home.locator('.home-confirm')).toContainText('A tab already open there can keep working for a few minutes (up to about 10).');
+  await expect(home.locator('.home-confirm')).toContainText('A tab already open there can keep signing for up to about a minute.');
   // The detail is behind "More", which opens from the keyboard.
   await home.locator('.home-confirm summary').focus();
   await home.keyboard.press('Enter');
   await expect(home.locator('.home-confirm details')).toHaveAttribute('open', '');
-  await expect(home.locator('.home-confirm details')).toContainText('for up to about a minute in an app that can sign some requests by itself, for up to about 10 minutes in other apps');
+  await expect(home.locator('.home-confirm details')).toContainText('for up to about a minute, or for up to about 3 minutes while that device can’t reach Hana');
   const signedOut = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/shares/revoke` && r.request().method() === 'POST');
   await home.locator('.home-confirm').getByRole('button', { name: 'Sign out', exact: true }).click();
   expect((await signedOut).status()).toBe(200);
@@ -179,6 +182,57 @@ test('stopping auto-approve in Hana Home stops auto-signing in the open partner 
   await page.reload();
   await waitReady(page);
   expect(await status(page)).toBe('logged_out');
+});
+
+test('signing a device out in Hana Home ends an open tab of an app with no policy within about a minute, by itself', async ({ page, context, browserName }) => {
+  test.setTimeout(180_000);
+  const scopeId = `homeout${browserName}`;
+  const app = await newApp({ name: 'Sign-out E2E', scopeId });
+  // The vault's light share read (POST /v1/vault/share-status) against the real API: every answer it gets.
+  const statusAnswers: number[] = [];
+  context.on('response', (r) => {
+    if (r.url() === `${API_URL}/v1/vault/share-status` && r.request().method() === 'POST') statusAnswers.push(r.status());
+  });
+  await openPartner(page, app);
+  const addresses = await login(page);
+  await waitPersisted(page, addresses.evm);
+  await expect.poll(async () => (await walletDirectory(addresses.stellar)).length, { timeout: 15_000 }).toBe(1);
+  // The open tab signs a message (the approval popup), as the tab of someone holding the device would.
+  const popupP = page.waitForEvent('popup');
+  await clickAction(page, 'before', 'personalSign', 'before the sign-out');
+  await approve(await popupP);
+  expect(await okValue(page, 'before')).toMatchObject({ valid: true });
+
+  const home = await context.newPage();
+  await home.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(home);
+  const devicesRead = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/devices` && r.request().method() === 'GET');
+  await home.locator('#home-devices-show').click();
+  expect((await devicesRead).status()).toBe(200);
+  const group = home.locator(`#home-devices .home-devices-group[data-scope="${scopeId}"]`);
+  const item = group.locator('.home-device');
+  await expect(item).toHaveCount(1);
+  await item.getByRole('button', { name: 'Sign out this device' }).click();
+  await expect(home.locator('.home-confirm')).toContainText('A tab already open there can keep signing for up to about a minute.');
+  const signedOut = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/shares/revoke` && r.request().method() === 'POST');
+  await home.locator('.home-confirm').getByRole('button', { name: 'Sign out', exact: true }).click();
+  expect((await signedOut).status()).toBe(200);
+  const outAt = Date.now();
+  await expect(group.locator('.home-devices-note')).toContainText('a tab already open there can’t sign after about a minute');
+
+  // The partner tab, shown, ends by itself at its next minute's read: no request, no reload.
+  await page.bringToFront();
+  await expect.poll(() => status(page), { timeout: 75_000, intervals: [1000] }).toBe('logged_out');
+  expect(Date.now() - outAt).toBeLessThan(75_000);
+  // Nothing more can be signed there, and a reload stays signed out.
+  await runAction(page, 'after', 'personalSign', 'after the sign-out');
+  await errorOf(page, 'after');
+  await page.reload();
+  await waitReady(page);
+  expect(await status(page)).toBe('logged_out');
+  // The tab learned it from the light read, which only ever answered 200.
+  expect(statusAnswers.length).toBeGreaterThan(0);
+  expect(new Set(statusAnswers)).toEqual(new Set([200]));
 });
 
 // ---- every screen, over routed answers ----

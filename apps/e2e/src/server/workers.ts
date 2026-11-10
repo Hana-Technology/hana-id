@@ -123,7 +123,7 @@ export const allowAllLimiter = {
   }),
 };
 
-/** A Rate Limiting binding (the vault's VAULT_IP_LIMIT, VAULT_SHARE_LIMIT) that always allows, for the same reason. */
+/** A Rate Limiting binding (the vault's VAULT_IP_LIMIT, VAULT_SHARE_LIMIT, VAULT_STATUS_*) that always allows, for the same reason. */
 export const allowAllRateLimit = { limit: async (_options: { key: string }) => ({ success: true }) };
 
 /** An ExecutionContext: waitUntil work runs on after the answer, as in workerd (a failure there is the Worker's to log). */

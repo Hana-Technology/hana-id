@@ -360,6 +360,8 @@ describe('the mainnet demo in the vault', () => {
       s.t.browser.backend.app = { ...s.t.browser.backend.app, mainnetDemo: false };
       s.t.browser.timers.advance(5 * 60_000 + 1);
       await sleepReal(20);
+      // Hidden, so the session's own minute check (its share) pauses: only the price refresh could still read.
+      s.t.setVisibility('hidden');
       const off = s.t.browser.backend.count('/v1/app');
       s.t.browser.timers.advance(30 * 60_000);
       await sleepReal(20);

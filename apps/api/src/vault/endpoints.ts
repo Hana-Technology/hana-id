@@ -72,12 +72,9 @@ export type VaultGate = { ok: true; app: App; parentOrigin: string } | { ok: fal
  * cache when it was read from D1 in the last APP_CACHE_TTL_MS (app-cache.ts, D78), so a warm request makes no D1 read
  * here. Also the gate of POST /v1/identity/token (identity/token.ts).
  */
-export async function vaultApp(request: Request, env: Env, ctx: Ctx): Promise<VaultGate> {
+export async function vaultApp(request: Request, env: Env, ctx: Ctx, opts: { parent: 'allowed' | 'any' } = { parent: 'allowed' }): Promise<VaultGate> {
   const fail = (status: number, code: string, error: string, extra: Headers_ = {}): VaultGate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
-  const origin = request.headers.get('origin');
-  const fromVault = !!env.VAULT_ORIGIN && origin === env.VAULT_ORIGIN;
-  // The vault can read every answer, including the ones before the app lookup.
-  if (fromVault) ctx.cors = corsHeaders(origin, VAULT_ALLOW_HEADERS, VAULT_METHODS);
+  const fromVault = vaultCors(request, env, ctx);
 
   const key = request.headers.get('x-hana-key');
   if (!key) return fail(401, 'missing_key', 'x-hana-key header is required');
@@ -93,10 +90,22 @@ export async function vaultApp(request: Request, env: Env, ctx: Ctx): Promise<Va
   ctx.appId = app.id;
   if (appSuspended(app)) return fail(403, 'app_suspended', 'This app is suspended');
   if (!fromVault) return fail(403, 'origin_not_allowed', 'Origin not allowed for this endpoint');
-  const parentOrigin = request.headers.get('x-hana-parent-origin');
-  if (!parentOrigin || !parentOriginAllowed(env.ENV_NAME, app, parentOrigin)) return fail(403, 'origin_not_allowed', 'Parent origin not allowed for this app');
+  const parentOrigin = request.headers.get('x-hana-parent-origin') ?? '';
+  // `any` (POST /v1/vault/share-status, D690): its answer depends on the share's own recorded origin, not on the caller's.
+  if (opts.parent === 'allowed' && (!parentOrigin || !parentOriginAllowed(env.ENV_NAME, app, parentOrigin))) return fail(403, 'origin_not_allowed', 'Parent origin not allowed for this app');
   if (app.scope_conflict) return fail(403, 'scope_conflict', 'This key’s environment is not its scope’s');
   return { ok: true, app, parentOrigin };
+}
+
+/**
+ * Whether the request comes from the vault origin; if so its answers carry the vault's CORS headers, so the vault can
+ * read every answer, the refusals before the app lookup included. (Only a browser sets Origin honestly.)
+ */
+export function vaultCors(request: Request, env: Env, ctx: Ctx): boolean {
+  const origin = request.headers.get('origin');
+  const fromVault = !!env.VAULT_ORIGIN && origin === env.VAULT_ORIGIN;
+  if (fromVault) ctx.cors = corsHeaders(origin, VAULT_ALLOW_HEADERS, VAULT_METHODS);
+  return fromVault;
 }
 
 /** The bindings say only yes or no; a refusal's `retry-after` is their whole period (an upper bound). */

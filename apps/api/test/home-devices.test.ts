@@ -14,6 +14,8 @@ import { HOME_REVOKE_ENDPOINTS, HOME_REVOKE_PER_KEY_MINUTE } from '../src/home/r
 import { clearKekCache } from '../src/vault/kek.ts';
 import { NO_SHARE_ID } from '../src/vault/message.ts';
 import { clearViewCaches } from '../src/views.ts';
+import { SHARE_STATUS_ENDPOINT } from '../src/vault/share-status.ts';
+import { forgetCachedApps } from '../src/app-cache.ts';
 import { GOOGLE_ISS, ORIGIN, type Chain, type SeededApp, call, chain, google, seedApp, uid } from './helpers.ts';
 import { emailEnv, emailToken, ikSync, withEmail } from './email-helpers.ts';
 import { HOUR, VAULT, act, autoApprovePolicy, pathFor, pathHash, setSettings, setShare, signVault, spentSession, storedShare, vaultHeaders } from './vault-helpers.ts';
@@ -676,6 +678,66 @@ describe('GET /v1/app’s share field (H9: an open tab learns it was signed out)
     expect((await appRead(app, d.shareId, ORIGIN)).share).toBeUndefined();
   });
 
+  /**
+   * What one of the vault's minute reads costs D1 (D684): a D1 that counts each statement and the rows it reads, as
+   * `meta.rows_read` reports them (the free plan bills rows read, D417). Pinned so a change that adds a read is seen.
+   */
+  function countingDb(db: D1Database): { db: D1Database; statements: string[]; rowsRead: () => number } {
+    const statements: string[] = [];
+    let rows = 0;
+    const note = (sql: string, meta: { rows_read?: number } | undefined) => {
+      statements.push(sql.replace(/\s+/gu, ' ').slice(0, 60));
+      rows += meta?.rows_read ?? 0;
+    };
+    const wrap = (st: D1PreparedStatement, sql: string): D1PreparedStatement =>
+      ({
+        bind: (...v: unknown[]) => wrap(st.bind(...v), sql),
+        first: async (col?: string) => {
+          const r = await st.all();
+          note(sql, r.meta);
+          const row = (r.results[0] ?? null) as Record<string, unknown> | null;
+          return col === undefined ? row : (row?.[col] ?? null);
+        },
+        all: async () => {
+          const r = await st.all();
+          note(sql, r.meta);
+          return r;
+        },
+        run: async () => {
+          const r = await st.run();
+          note(sql, r.meta);
+          return r;
+        },
+      }) as unknown as D1PreparedStatement;
+    const wrapped = { prepare: (sql: string) => wrap(db.prepare(sql), sql), batch: (s: D1PreparedStatement[]) => db.batch(s) } as unknown as D1Database;
+    return { db: wrapped, statements, rowsRead: () => rows };
+  }
+
+  it.each([
+    ['an app with no policy (the share alone)', false],
+    ['an app with a policy and a consent (one read answers both)', true],
+  ])('one minute read costs few D1 statements and rows: %s', async (_name, withConsent) => {
+    const app = withConsent ? await policyApp() : await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub, { consent: withConsent });
+    near.clients[`client-${app.scope}`] = app.scope;
+    const counted = countingDb(env.DB);
+    const res = await call('/v1/app', {
+      method: 'GET',
+      headers: { 'x-hana-key': app.key, origin: VAULT, 'x-hana-parent-origin': ORIGIN, 'x-hana-share': b64(d.shareId), ...(d.consentId ? { 'x-hana-consent': b64(d.consentId) } : {}) },
+      env: { DB: counted.db },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect(body.share).toBe('live');
+    if (withConsent) expect(body.consent).toBe('active');
+    // The gate's app and origins, the settings, login methods, identity email, the share (and the consent).
+    // The gate's app and its origins (one origin here: a row per origin), the settings, login methods, identity email,
+    // the mainnet demo switch (a test app in a dev env only), the consent with its share (a policy app's), the share.
+    expect(counted.statements).toHaveLength(withConsent ? 8 : 7);
+    expect(counted.rowsRead()).toBeLessThanOrEqual(withConsent ? 14 : 11);
+  });
+
   it('an idle share still reads live: time-based ends stay the vault’s own (D55), and the read moves nothing', async () => {
     const app = await policyApp();
     const me = await home();
@@ -683,6 +745,104 @@ describe('GET /v1/app’s share field (H9: an open tab learns it was signed out)
     await setShare(d.shareId, { idle_until: Date.now() - 1 });
     const before = await storedShare(d.shareId);
     expect((await appRead(app, d.shareId)).share).toBe('live');
+    expect(await storedShare(d.shareId)).toEqual(before);
+  });
+
+  // ---- POST /v1/vault/share-status (D690): the light check ----
+
+  const statusRead = async (app: SeededApp, shareId: number[], o: { origin?: string; body?: unknown; env?: Partial<typeof env> } = {}) => {
+    const res = await call(SHARE_STATUS_ENDPOINT, { headers: { 'x-hana-key': app.key, origin: o.origin ?? VAULT, 'x-hana-parent-origin': ORIGIN }, body: o.body ?? { shareId }, ...(o.env ? { env: o.env } : {}) });
+    return { res, body: (await res.json()) as Record<string, unknown> };
+  };
+
+  it('share-status: live, then revoked once Home signs the device out; another app’s or an unknown share reads revoked', async () => {
+    const app = await seedApp();
+    const other = await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    const live = await statusRead(app, d.shareId);
+    expect(live.res.status).toBe(200);
+    expect(live.res.headers.get('cache-control')).toBe('no-store');
+    expect(live.body).toMatchObject({ share: 'live', serverTimeMs: expect.any(Number) });
+    expect((await statusRead(other, d.shareId)).body.share).toBe('revoked');
+    expect((await statusRead(app, [...crypto.getRandomValues(new Uint8Array(16))])).body.share).toBe('revoked');
+    expect((await stop(me, 'share', { shareId: b64(d.shareId) })).status).toBe(200);
+    expect((await statusRead(app, d.shareId)).body.share).toBe('revoked');
+  });
+
+  it('share-status: vault origin only, an exact body, and its refusals are never an answer', async () => {
+    const app = await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    expect((await statusRead(app, d.shareId, { origin: ORIGIN })).res.status).toBe(403);
+    for (const body of [{}, { shareId: [1, 2] }, { shareId: d.shareId, extra: 1 }, [d.shareId]]) {
+      const r = await statusRead(app, d.shareId, { body });
+      expect(r.res.status).toBe(400);
+      expect(r.body.share).toBeUndefined();
+    }
+    const no = { limit: async () => ({ success: false }) } as unknown as RateLimit;
+    const down = { limit: async () => { throw new Error('down'); } } as unknown as RateLimit;
+    expect((await statusRead(app, d.shareId, { env: { VAULT_STATUS_SHARE_LIMIT: no } })).body).toMatchObject({ code: 'rate_limited' });
+    expect((await statusRead(app, d.shareId, { env: { VAULT_STATUS_IP_LIMIT: no } })).body).toMatchObject({ code: 'rate_limited' });
+    expect((await statusRead(app, d.shareId, { env: { VAULT_STATUS_IP_LIMIT: down } })).res.status).toBe(503);
+    // Its own windows: the vault's per-IP and per-share windows (unlock, touch) don't count it.
+    expect((await statusRead(app, d.shareId, { env: { VAULT_IP_LIMIT: no, VAULT_SHARE_LIMIT: no } })).body.share).toBe('live');
+  });
+
+  it('share-status: one per-IP ceiling across apps, asked before any app lookup', async () => {
+    const a = await seedApp();
+    const b = await seedApp();
+    const me = await home();
+    const da = await device(a, me.sub);
+    const db = await device(b, me.sub);
+    const keys: string[] = [];
+    const recording = { limit: async ({ key }: { key: string }) => (keys.push(key), { success: true }) } as unknown as RateLimit;
+    const headers = { 'cf-connecting-ip': '203.0.113.9' };
+    for (const [app, d] of [[a, da], [b, db]] as const) {
+      const res = await call(SHARE_STATUS_ENDPOINT, { headers: { 'x-hana-key': app.key, origin: VAULT, 'x-hana-parent-origin': ORIGIN, ...headers }, body: { shareId: d.shareId }, env: { VAULT_STATUS_IP_LIMIT: recording } });
+      expect(res.status).toBe(200);
+    }
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).not.toContain(a.id);
+    // Refused by the ceiling: no D1 read at all, even for a made-up key; the vault can read the refusal (CORS).
+    const counted = countingDb(env.DB);
+    const no = { limit: async () => ({ success: false }) } as unknown as RateLimit;
+    const res = await call(SHARE_STATUS_ENDPOINT, { headers: { 'x-hana-key': `pk_live_${'9'.repeat(24)}`, origin: VAULT, ...headers }, body: { shareId: da.shareId }, env: { VAULT_STATUS_IP_LIMIT: no, DB: counted.db } });
+    expect(res.status).toBe(429);
+    expect(res.headers.get('access-control-allow-origin')).toBe(VAULT);
+    expect(counted.statements).toHaveLength(0);
+  });
+
+  it('share-status: a share whose own origin the app no longer allows reads revoked, whatever parent the caller names', async () => {
+    const app = await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    // The caller's parent header changes nothing: the answer is about the share's recorded origin.
+    expect((await statusRead(app, d.shareId)).body.share).toBe('live');
+    const other = await call(SHARE_STATUS_ENDPOINT, { headers: { 'x-hana-key': app.key, origin: VAULT, 'x-hana-parent-origin': 'https://not-allowed.example' }, body: { shareId: d.shareId } });
+    expect(((await other.json()) as { share: string }).share).toBe('live');
+    // The partner removes the origin: the open tab's next read says revoked (its gate no longer refuses it with a 403).
+    await env.DB.prepare('DELETE FROM app_origins WHERE app_id = ?1 AND origin = ?2').bind(app.id, ORIGIN).run();
+    forgetCachedApps();
+    const after = await statusRead(app, d.shareId);
+    expect(after.res.status).toBe(200);
+    expect(after.body.share).toBe('revoked');
+  });
+
+  it('share-status: no chain call (answers while NEAR is down), one D1 statement and 2 rows once the app is cached, and it moves nothing', async () => {
+    const app = await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    await setShare(d.shareId, { idle_until: Date.now() - 1 });
+    expect((await statusRead(app, d.shareId)).body.share).toBe('live');
+    const before = await storedShare(d.shareId);
+    for (const view of Object.keys(near.views)) near.views[view] = () => { throw new Error('rpc down'); };
+    const counted = countingDb(env.DB);
+    const r = await statusRead(app, d.shareId, { env: { DB: counted.db } });
+    expect(r.body.share).toBe('live');
+    expect(counted.statements).toHaveLength(1);
+    expect(counted.rowsRead()).toBeLessThanOrEqual(2);
     expect(await storedShare(d.shareId)).toEqual(before);
   });
 });

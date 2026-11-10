@@ -191,6 +191,8 @@ export class MockApi {
       RATE_LIMITER: allowAllLimiter,
       VAULT_IP_LIMIT: allowAllRateLimit,
       VAULT_SHARE_LIMIT: allowAllRateLimit,
+      VAULT_STATUS_IP_LIMIT: allowAllRateLimit,
+      VAULT_STATUS_SHARE_LIMIT: allowAllRateLimit,
       IDENTITY_SESSION_LIMIT: allowAllRateLimit,
       IDENTITY_ROOT_LIMIT: allowAllRateLimit,
       ...identityBindings(serves.apiUrl),

@@ -728,3 +728,45 @@ button.home-copy {
 .home-support .mono {
   margin-right: 6px;
 }
+
+/* ---- Hana Home: "Move this wallet to another wallet app" (home-export.ts), last on an app's page ---- */
+.home-export {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.home-export:empty {
+  display: none;
+}
+
+/* Collapsed: a quiet disclosure, the full width of the page, never the first thing a user sees. */
+button.home-export-toggle {
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+}
+
+.home-export h3 {
+  margin-top: 0;
+}
+
+.home-export .actions.start {
+  flex-wrap: wrap;
+}
+
+.home-export label {
+  display: block;
+  margin-top: 12px;
+}
+
+.home-export .warn {
+  margin: 10px 0;
+}
+
+/* A printed page, or one saved as a PDF, never carries a key: the box is blank on paper whatever the page shows. */
+@media print {
+  .secret {
+    visibility: hidden !important;
+  }
+}

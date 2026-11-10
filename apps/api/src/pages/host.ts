@@ -91,8 +91,9 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
       return ["frame-ancestors 'none'", `connect-src ${origins.api}`];
     case '/home':
       // Hana Home (docs/hana-home-spec.md "Pages and packages"): the API (`/v1/home/*`, the login relay's read) and
-      // Google's JWKS for its own token check. No NEAR RPC yet: the page reads no chain until it derives (D551).
-      return ["frame-ancestors 'none'", `connect-src ${origins.api} ${GOOGLE_CERTS_ORIGIN}`];
+      // Google's JWKS for its own token check, and the NEAR RPC origins, read only when the user opens a wallet there
+      // (the app's registration, the path on both providers, a lost outcome): exactly the export window's list.
+      return ["frame-ancestors 'none'", `connect-src ${origins.api} ${origins.rpc} ${GOOGLE_CERTS_ORIGIN}`];
     default:
       return null;
   }

@@ -120,9 +120,14 @@ describe('auth page policies', () => {
       ['/share-email', 'share-email.html'],
       ['/home', 'home.html'],
     ]);
-    // Hana Home: the API and Google's JWKS; no NEAR RPC, no email issuer, even in an env that has both.
-    expect(connectSources({ ...sandbox, rpcFallback: 'https://rpc2.example', emailIssuerUrl: 'https://issuer.example' }, 'home')).toEqual([new URL(sandbox.apiUrl).origin, 'https://www.googleapis.com']);
-    expect(authPageCsp(sandbox, 'home')).toBe(`${BASE}; connect-src ${new URL(sandbox.apiUrl).origin} https://www.googleapis.com; frame-ancestors 'none'`);
+    // Hana Home: the API, Google's JWKS and the two NEAR providers (opening a wallet reads the chain, a linked identity's
+    // path on both, D263): exactly the export window's origins and nothing more. No email issuer, even in an env with one.
+    const withBoth = { ...sandbox, rpc: 'https://rpc1.example', rpcFallback: 'https://rpc2.example', emailIssuerUrl: 'https://issuer.example' };
+    expect(connectSources(withBoth, 'home')).toEqual([new URL(sandbox.apiUrl).origin, 'https://rpc1.example', 'https://rpc2.example', 'https://www.googleapis.com']);
+    expect(connectSources(withBoth, 'home')).toEqual(connectSources(withBoth, 'export'));
+    const { rpcFallback: _none, ...single } = withBoth;
+    expect(connectSources(single, 'home')).toEqual([new URL(sandbox.apiUrl).origin, 'https://rpc1.example', 'https://www.googleapis.com']);
+    expect(authPageCsp(sandbox, 'home')).toBe(authPageCsp(sandbox, 'export'));
     // D411: the sheet reads the address from the API, nothing else.
     expect(connectSources(sandbox, 'share')).toEqual([new URL(sandbox.apiUrl).origin]);
   });

@@ -67,7 +67,7 @@ export function imgSources(env: CspEnv, page: AuthPageName): string[] {
 
 /**
  * What the page may fetch: the API (callback, email, export, home), Google's tokeninfo (callback, with an email issuer), the
- * email issuer (email), the NEAR RPC (export) and Google's JWKS (export, home). apps/api src/pages/host.ts sends the same lists in
+ * email issuer (email), the NEAR RPC (export, home) and Google's JWKS (export, home). apps/api src/pages/host.ts sends the same lists in
  * the header policy: a browser enforces both, so they must agree.
  */
 export function connectSources(env: CspEnv, page: AuthPageName): string[] {
@@ -87,8 +87,10 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
       // stays one line and the header policy (which can't read the flow) always matches this one.
       return env.emailIssuerUrl ? [originOf(env.apiUrl), GOOGLE_TOKENINFO_ORIGIN] : [originOf(env.apiUrl)];
     case 'export':
-      // Both NEAR providers: the window falls back to rpcFallback, and a linked identity's path is read on both
+    case 'home':
+      // Both NEAR providers: the page falls back to rpcFallback, and a linked identity's path is read on both
       // (D263). The Worker's header policy lists the same; a browser enforces both policies, so the meta one must too.
+      // Hana Home reads them only once the user opens a wallet (home-export.ts); listing and viewing read no chain.
       return [
         originOf(env.apiUrl),
         originOf(env.rpc),
@@ -102,10 +104,6 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
     case 'share':
       // D411: the sheet reads the sealed address from the API (`/v1/identity/email-consent/preview`); nothing else.
       return [originOf(env.apiUrl)];
-    case 'home':
-      // Hana Home: the API (`/v1/home/*`, the login relay's read) and Google's JWKS, for its own check of the token.
-      // It reads no chain: the NEAR RPC joins only with the per-app derive.
-      return [originOf(env.apiUrl), GOOGLE_CERTS_ORIGIN];
   }
 }
 

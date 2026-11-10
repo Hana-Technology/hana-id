@@ -113,8 +113,8 @@ describe('auth origin Worker', () => {
       '/export': `${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`,
       // D411: the email sharing sheet reads the sealed address from the API's preview, nothing else.
       '/share-email': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
-      // Hana Home: the API and Google's JWKS; it reads no chain, so no NEAR RPC.
-      '/home': `${BASE}; frame-ancestors 'none'; connect-src https://api.test https://www.googleapis.com`,
+      // Hana Home: the API, Google's JWKS and, for opening a wallet, the NEAR RPC: exactly the export window's origins.
+      '/home': `${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`,
     };
     expect(Object.keys(expected)).toEqual([...AUTH_PAGE_PATHS]);
     for (const path of AUTH_PAGE_PATHS) {

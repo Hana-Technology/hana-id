@@ -398,7 +398,10 @@ pre { background: var(--surface-2); border: 1px solid var(--line); border-radius
 .choices .check { align-items: flex-start; }
 .choices .check input { margin-top: 0.2rem; }
 .choices .check .sub code { overflow-wrap: anywhere; }
-.steps { margin: 0.25rem 0 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.steps { margin: 0.25rem 0 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; }
+.scope-form { display: flex; flex-direction: column; gap: 1rem; }
+.scope-form > .hint { margin: 0; }
+.not-included { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.9rem; }
 .scope-plan { display: flex; flex-direction: column; gap: 0.5rem; }
 .scope-plan h3 { margin-bottom: 0; }
 .command { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.35rem 0; }

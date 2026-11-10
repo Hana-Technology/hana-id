@@ -1134,7 +1134,7 @@ function scopePanel(o, d) {
   const { owners, later } = scopeOwnerCandidates(d);
   const hint = 'A scope holds this partner’s users’ wallets on chain; its owners are the Google accounts that may change it later (clients, owners, shared login). Registering one is a council action: this panel prepares the exact command and sends nothing.';
   const laterList = later.length
-    ? h('div', {}, h('h3', {}, 'Not included'), h('ul', { class: 'findings' }, later.map((x) => h('li', {}, h('strong', {}, x.email), h('span', { class: 'muted' }, x.why)))))
+    ? h('div', {}, h('h3', {}, 'Not included'), h('ul', { class: 'not-included' }, later.map((x) => h('li', {}, x.email, h('span', { class: 'sub' }, x.why)))))
     : '';
   if (!owners.length) {
     return panel(
@@ -1176,7 +1176,8 @@ function scopePanel(o, d) {
   client.addEventListener('input', update);
   const form = h(
     'div',
-    { class: 'stack' },
+    { class: 'scope-form' },
+    h('p', { class: 'hint' }, 'Order matters: the partner accepts their invite first (so their Google account is known), then the command, then “Create an app”.'),
     h(
       'fieldset',
       { class: 'choices' },
@@ -1189,7 +1190,7 @@ function scopePanel(o, d) {
       'fieldset',
       { class: 'choices' },
       h('legend', {}, 'How users sign in'),
-      h('label', { class: 'check' }, shared, h('span', {}, 'Hana’s shared Google login', h('span', { class: 'sub' }, 'Works at once; Google’s consent screen shows Hana. Adds `--allow-shared`.'))),
+      h('label', { class: 'check' }, shared, h('span', {}, 'Hana’s shared Google login', h('span', { class: 'sub' }, richText('Works at once; Google’s consent screen shows Hana. Adds `--allow-shared`.')))),
       h(
         'label',
         { class: 'field wide', for: clientId },
@@ -1198,7 +1199,6 @@ function scopePanel(o, d) {
         h('span', { class: 'help', id: `${clientId}-help` }, 'Only if the partner sent one and wants their own name on Google’s consent screen. It must not belong to another scope. Leave it empty to add it later from the partner’s console.'),
       ),
     ),
-    h('p', { class: 'hint' }, 'Order matters: the partner accepts their invite first (so their Google account is known), then the command, then “Create an app”.'),
     out,
   );
   update();

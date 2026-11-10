@@ -202,6 +202,55 @@ describe('rendering', () => {
     expect(invite.subject.startsWith('[SANDBOX] [Hana ID sandbox-test] You')).toBe(true);
   });
 
+  it('the invite: the designed layout, one button and the raw URL as text, who invited and what accepting does', () => {
+    const invite = { id: 'inv_1', email: 'ada@partner.example', orgId: 'org_1', role: 'owner', createdByKind: 'member', createdBy: 'usr_secret_id', createdAt: 0, expiresAt: Date.UTC(2026, 10, 17, 9) } as never;
+    const url = 'https://console.test/invite#t=abc_DEF-123';
+    const r = inviteLink({ ...ctx, label: '[SANDBOX]' }, invite, { orgName: 'Sodax Labs', inviteUrl: url });
+    expect(r.subject).toBe("[SANDBOX] [Hana ID sandbox-test] You're invited to Sodax Labs on Hana ID");
+    expect(r.text).toMatchSnapshot('text');
+    expect(r.html).toMatchSnapshot('html');
+    expect([...r.html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1])).toEqual([url]);
+    expect(r.html.match(/<a /gu)).toHaveLength(1);
+    expect(r.html).not.toMatch(/<img|<script|<form|src=/iu);
+    // The raw URL as text, broken so clients don't link it a second time; the label banner; the heading without prefixes.
+    expect(r.html).toContain('console<span>.</span><wbr>test<span>/</span><wbr>invite<span>#</span><wbr>t<span>=</span><wbr>abc_DEF-123');
+    expect(r.html).toContain('[SANDBOX] Not production: this email is from Hana ID sandbox-test (testnet), for testing.');
+    expect(r.html).toContain(">You&#39;re invited to Sodax Labs on Hana ID</h1>");
+    // Who invited, by role only (no member id or staff address); what accepting does.
+    expect(r.text).toContain('as an owner, by an owner of the organisation.');
+    expect(`${r.text}${r.html}`).not.toContain('usr_secret_id');
+    expect(r.text).toContain('Accepting adds you to the organisation.');
+    expect(r.text).toContain('The link works once, for this address only.');
+    const staff = inviteLink(ctx, { ...(invite as object), createdByKind: 'hana', createdBy: 'staff@hana.example', role: 'viewer' } as never, { orgName: 'Sodax Labs', inviteUrl: url });
+    expect(staff.text).toContain('as a viewer, by Hana staff.');
+    expect(staff.text).toContain('viewers see its apps and settings and change nothing');
+    expect(`${staff.text}${staff.html}`).not.toContain('staff@hana.example');
+    expect(staff.html).not.toContain('Not production');
+    const fresh = inviteLink(ctx, { ...(invite as object), orgId: undefined, newOrgName: 'Acme' } as never, { inviteUrl: url });
+    expect(fresh.text).toContain('Accepting creates the organisation in the console, with you as its first owner.');
+    // Far under Gmail's clip.
+    expect(new TextEncoder().encode(r.html).length).toBeLessThan(16_000);
+  });
+
+  it('the invite: hostile organisation names are text; the preview line holds no link token', () => {
+    const url = 'https://console.test/invite#t=tok';
+    for (const name of ['<a href="javascript:alert(1)">Claim</a>', `Acme${String.fromCharCode(0x202e)}moc.live`, `"><img src=x onerror=alert(1)>`, 'W'.repeat(256), `Acme\r\nBcc: x@example.com`]) {
+      const r = inviteLink(ctx, { id: 'inv_1', role: 'owner', newOrgName: name, createdByKind: 'hana', createdBy: 's', expiresAt: 0 } as never, { inviteUrl: url });
+      expect(r.subject, name).not.toMatch(/[\r\n]/u);
+      expect([...r.html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1]), name).toEqual([url]);
+      expect(r.html, name).not.toMatch(/<img|<script|<a href="javascript/iu);
+      for (const cp of [0x202e, 0x0d]) expect(r.html.includes(String.fromCharCode(cp)), name).toBe(false);
+      const pre = /<div style="display:none[^"]*">([^&<]*)/u.exec(r.html)![1]!;
+      expect(pre).not.toContain('tok');
+    }
+    expect(() => render('e', 's', [{ kind: 'link', label: 'x', url: 'javascript:alert(1)' }], 'https://console.test', '', { heading: 'h', preheader: 'p' })).toThrow();
+  });
+
+  it('operational mails keep the plain HTML (no designed layout)', () => {
+    const r = render('prod', 'Retention job failed (1 run)', [{ kind: 'p', text: 'body' }], 'https://console.test');
+    expect(r.html).toBe('<!doctype html><html><body><p>body</p>\n<p><small>Sent by Hana ID security. Hana never asks you to approve anything from an email. To reach Hana security, reply to this address or write to your Hana contact.</small></p></body></html>');
+  });
+
   it('mailLabel: ENV_LABEL only when it is a label and the network is testnet', () => {
     expect(mailLabel({ ENV_LABEL: '[SANDBOX]', NEAR_NETWORK: 'testnet' })).toBe('[SANDBOX]');
     expect(mailLabel({ ENV_LABEL: '[STAGING]', NEAR_NETWORK: 'testnet' })).toBe('[STAGING]');

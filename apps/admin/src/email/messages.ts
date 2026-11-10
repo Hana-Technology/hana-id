@@ -76,7 +76,7 @@ const byLabel = (kind: string, id: string): string => (kind === 'hana' ? `Hana s
 export function inviteLink(c: MailContext, invite: InviteView, o: { orgName?: string; inviteUrl: string }): Rendered {
   const subject = `You're invited to ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} on Hana ID`;
   const org = orgLabel(invite, o.orgName);
-  // Who invited, by role only (D673): the invitee learns no staff address or member id.
+  // Who invited, by role only (D672): the invitee learns no staff address or member id.
   const by = invite.createdByKind === 'hana' ? 'Hana staff' : 'an owner of the organisation';
   // What accepting does (docs/integration.md "Members"): an owner invited to an existing organisation is a viewer
   // until its owner grant matures; a new organisation's first owner is its owner at once.

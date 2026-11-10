@@ -9956,6 +9956,7 @@ below.
   - App states: `suspended` "Paused", `deleted` "Closed", a test app "Test app". Sections: "Your apps", "Find an app", "Other apps that use Hana".
   - Refusals read as fixed sentences picked by the API's code, never the API's own message, with the code and the request ID beneath: `home_no_wallet` "There is no wallet for this sign-in in that app." (D544); `home_busy` "Hana Home has reached its limit for today. Try again tomorrow."; `rate_limited` and any other 429 "Too many requests. Wait a minute and try again."; every 5xx and a network failure "Hana Home is not reachable right now. Nothing on screen was lost. Try again in a moment."; every 401 ends the sign-in (D553).
 - Why: plain words, no internal terms (scope, coverage, derive); one place to change them.
+- Amended 2026-11-10 (H7's security review, D559): the availability words changed. "Available… Hana can open this wallet for you" showed on apps where the user has no wallet, and promised an action the page doesn't offer yet.
 - Address impact: none.
 
 ### D555. The partner's link to Hana Home is `/home?appId=app_…`
@@ -9968,4 +9969,29 @@ below.
 - Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** · Built: `home-page.ts` (`STELLAR_ACCOUNT_URL`)
 - Decision: beside the copy button, a Stellar address links to its StellarExpert account page for the env's network (a fixed URL of Hana's choosing with the address appended, `rel="noopener noreferrer"`). An EVM address has only the copy button: it is the same address on every EVM chain, so no one explorer is right for it. The spec's F3 says "copy and explorer links" without naming chains.
 - Options: an EVM link to one default chain (which one is a product choice); a list of chains (long, and most would be empty).
+- Address impact: none.
+
+### D557. A partner's app name is never a heading on Hana Home, is held to the display-safety rule and cut to 60 characters; a linked app that isn't the user's doesn't open
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** · Built: `home-api.ts` (`homeAppName`, `HOME_NAME_SHOWN`, `HOME_UNNAMED_APP`), `home-page.ts` (`appPage`, `loadFirst`) · From H7's independent security review (medium) · Amends D555
+- Problem: `/home?appId=` made a partner's own words the landing heading on the auth origin. A partner could name its app "Hana security notice: wallet locked, restore at …" and send users the link.
+- Decision:
+  - A name is shown only if it passes `isDisplaySafeLine` (no control, direction-changing or invisible character) and is 1 to 200 characters; otherwise Hana's stand-in "Unnamed app" takes its place. The app stays listed: a user's wallet is never hidden by its app's name.
+  - A shown name is cut to 60 characters and "…". The full name is nowhere in the page, including the "View …" button's label.
+  - An app's page has fixed Hana headings ("App details", "App" or "Apps that share one wallet"); the name is a value inside the neutral box under them.
+  - `/home?appId=` opens an app's page only when the app is the user's own (`mine`). For any other app the user lands on their own list, with the linked app below it under "The app from your link" and Hana's notice that it has no wallet on record for them there and that the name and address are the app's own.
+- Left as is: names and origins still show in the list's cards, as text, in the neutral box that marks partner content on every auth page.
+- Address impact: none.
+
+### D558. `/home` sends `Cross-Origin-Opener-Policy: same-origin-allow-popups`, and answers its sign-in child only at `/login?mode=home`
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** · Built: `apps/api/src/pages/host.ts` (`AUTH_PAGE_HEADERS`), `home-page.ts` (`childAtLogin`) · From H7's security review (two low findings)
+- Decision: `/home` alone among the auth pages sends COOP `same-origin-allow-popups`: a page on another origin that opened it keeps no handle (it can't navigate the window or watch it), and the sign-in child Home opens itself keeps its opener. The other auth pages still send no COOP: the partner page or the vault opens them and must reach them. Home also answers its child's hello only while the child's address reads as `/login?mode=home` on this origin, the mirror of the child's check of Home (D552); a window whose address can't be read gets no answer.
+- Checked: the sign-in works with the header in Chromium, Firefox and WebKit (`apps/e2e/tests/home.spec.ts`), and a foreign opener's handle reads as closed.
+- Address impact: none.
+
+### D559. Hana Home's availability words say only what is true now; the account is compared by method and id; a request overtaken by a new sign-in shows nothing
+- Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **proposed, awaiting the user's confirmation** · Built: `home-page.ts` (`coverageText`, `signedIn`, `request`) · From H7's security review · Amends D553 and D554
+- Decision:
+  - Words (replacing D554's): for the user's own app, "Does this wallet depend on the app?" with "Stays reachable" (signing in to the wallet would still work through Hana if the app stopped running), "Depends on the app", "Out of reach", "Not checked yet". For an app where Hana knows no wallet of theirs, "Would a wallet here depend on the app?" with "Supported", "Depends on the app", "Out of reach", "Not checked yet", each saying Hana has no wallet on record for them there. No sentence says "available", "open", "export" or "move": the page offers none of those yet. H8 revisits the words when export exists.
+  - A new sign-in is "the same account" only if both the sign-in method and its id match (ready for email in H10, where two methods' ids must never be taken for one person).
+  - A request whose sign-in has ended or been replaced before it answered shows no problem and is not sent again; an answer for another account is thrown away.
 - Address impact: none.

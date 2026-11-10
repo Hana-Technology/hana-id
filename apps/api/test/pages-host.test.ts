@@ -124,7 +124,9 @@ describe('auth origin Worker', () => {
       expectPageBasics(res);
       expect(csp(res)).toBe(expected[path]);
       // No COOP header (unsafe-none), even when the build's file carried one; no cross-origin CORP on a top-level page.
-      expect(res.headers.get('cross-origin-opener-policy')).toBeNull();
+      // Hana Home alone cuts off whoever opened it, and keeps the sign-in child it opens itself; every other page stays
+      // reachable from the partner page or the vault that opened it.
+      expect(res.headers.get('cross-origin-opener-policy')).toBe(path === '/home' ? 'same-origin-allow-popups' : null);
       expect(res.headers.get('cross-origin-resource-policy')).toBeNull();
       expect(res.headers.get('etag')).toBeNull();
       expect(await res.text()).toBe(PAGE_FILES[`${path}.html` as keyof typeof PAGE_FILES].body);

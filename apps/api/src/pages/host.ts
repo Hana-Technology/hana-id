@@ -108,6 +108,16 @@ export const AUTH_LOGO_PATHS: readonly string[] = ['/login', '/login/email', '/a
 /** The auth pages' routes; each is served from the built file `<route>.html`. */
 export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export', '/share-email', '/home'] as const;
 
+/**
+ * Headers one page gets beyond the policy. Hana Home (D558): `Cross-Origin-Opener-Policy: same-origin-allow-popups`, so a
+ * page on another origin that opened `/home` keeps no handle on it (it can't navigate it or read whether it closed),
+ * while the sign-in child `/home` itself opens keeps its opener. No other auth page sends COOP: the login, approval and
+ * export windows are opened by the partner page or the vault and must stay reachable from them.
+ */
+export const AUTH_PAGE_HEADERS: Readonly<Record<string, Record<string, string>>> = Object.freeze({
+  '/home': { 'cross-origin-opener-policy': 'same-origin-allow-popups' },
+});
+
 const ERROR_HTML = '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Hana ID</title></head><body></body></html>\n';
 
 /** Headers of every response that isn't a page or an asset: nothing to run, frame or sniff. */
@@ -234,7 +244,7 @@ export async function handleAuthHost(request: Request, env: AuthHostEnv): Promis
     return unavailable(head);
   }
   if (head) await asset.body?.cancel();
-  return new Response(head ? null : asset.body, { status: 200, headers: pageHeaders(directives, {}, logoImgOrigins(url.pathname, env.FILES_ORIGIN)) });
+  return new Response(head ? null : asset.body, { status: 200, headers: pageHeaders(directives, AUTH_PAGE_HEADERS[url.pathname] ?? {}, logoImgOrigins(url.pathname, env.FILES_ORIGIN)) });
 }
 
 /**

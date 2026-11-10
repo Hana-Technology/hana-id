@@ -108,16 +108,41 @@ export interface HomePage {
 
 export type CoverageTone = 'ok' | 'warn' | 'off' | 'muted';
 
-/** How each coverage reads to a user: the badge, and the sentence on the app's page. */
-export const COVERAGE_TEXT: Readonly<Record<HomeCoverage, { badge: string; tone: CoverageTone; detail: string }>> = Object.freeze({
-  shared: { badge: 'Available', tone: 'ok', detail: 'Hana can open this wallet for you, even if the app stops running.' },
-  hana_client: { badge: 'Available', tone: 'ok', detail: 'Hana can open this wallet for you, even if the app stops running.' },
-  exit: { badge: 'Available', tone: 'ok', detail: 'Hana can open this wallet for you, even if the app stops running.' },
-  email: { badge: 'Available', tone: 'ok', detail: 'Hana can open this wallet for you, even if the app stops running.' },
-  partner_client: { badge: 'May stop working', tone: 'warn', detail: 'This app uses its own Google sign-in. Hana can open this wallet only while the app keeps that sign-in running.' },
-  none: { badge: 'Not available', tone: 'off', detail: 'Hana can’t open this wallet from here: the sign-in this app used is gone. If the app still runs, use the app itself.' },
-  unknown: { badge: 'Not checked yet', tone: 'muted', detail: 'Hana hasn’t checked yet whether it can open this wallet.' },
+export interface CoverageText {
+  badge: string;
+  tone: CoverageTone;
+  /** The question above the sentence on the app's page. */
+  question: string;
+  detail: string;
+}
+
+type CoverageKind = 'yes' | 'maybe' | 'no' | 'unknown';
+const COVERAGE_KIND: Readonly<Record<HomeCoverage, CoverageKind>> = Object.freeze({ shared: 'yes', hana_client: 'yes', exit: 'yes', email: 'yes', partner_client: 'maybe', none: 'no', unknown: 'unknown' });
+
+const MINE_QUESTION = 'Does this wallet depend on the app?';
+const OTHER_QUESTION = 'Would a wallet here depend on the app?';
+/**
+ * The words say only what is true today. For the user's own app: whether Hana's sign-in to the wallet depends on the
+ * app. For any other app, where Hana knows of no wallet of theirs: the same, as an "if". Nothing here promises an
+ * action the page doesn't offer.
+ */
+const COVERAGE_WORDS: Readonly<Record<'mine' | 'other', Readonly<Record<CoverageKind, CoverageText>>>> = Object.freeze({
+  mine: {
+    yes: { badge: 'Stays reachable', tone: 'ok', question: MINE_QUESTION, detail: 'No. Signing in to this wallet doesn’t depend on the app: it would still work through Hana if the app stopped running.' },
+    maybe: { badge: 'Depends on the app', tone: 'warn', question: MINE_QUESTION, detail: 'Yes. This app uses its own Google sign-in, so signing in to this wallet works only while the app keeps that sign-in running.' },
+    no: { badge: 'Out of reach', tone: 'off', question: MINE_QUESTION, detail: 'Signing in to this wallet through Hana no longer works: the sign-in this app used is gone. If the app still runs, use the app itself.' },
+    unknown: { badge: 'Not checked yet', tone: 'muted', question: MINE_QUESTION, detail: 'Hana hasn’t checked this app yet.' },
+  },
+  other: {
+    yes: { badge: 'Supported', tone: 'ok', question: OTHER_QUESTION, detail: 'No. If you had a wallet in this app, signing in to it would still work through Hana if the app stopped running. Hana has no wallet on record for you here.' },
+    maybe: { badge: 'Depends on the app', tone: 'warn', question: OTHER_QUESTION, detail: 'Yes. This app uses its own Google sign-in, so signing in to a wallet here works only while the app keeps that sign-in running. Hana has no wallet on record for you here.' },
+    no: { badge: 'Out of reach', tone: 'off', question: OTHER_QUESTION, detail: 'Signing in to wallets in this app through Hana no longer works: the sign-in it used is gone. If the app still runs, use the app itself.' },
+    unknown: { badge: 'Not checked yet', tone: 'muted', question: OTHER_QUESTION, detail: 'Hana hasn’t checked this app yet.' },
+  },
 });
+
+/** How a coverage reads to a user: the badge, and the question and sentence on the app's page. */
+export const coverageText = (coverage: HomeCoverage, mine: boolean): CoverageText => COVERAGE_WORDS[mine ? 'mine' : 'other'][COVERAGE_KIND[coverage]];
 
 export interface HomeProblem {
   code: string;
@@ -191,6 +216,12 @@ export function linkedAppId(search: string): string | null {
   return values.length === 1 && HOME_APP_ID.test(values[0] as string) ? (values[0] as string) : null;
 }
 
+/** Who a sign-in is for: the method and that method's id for the person. Memory only. */
+interface HomeAccount {
+  provider: 'google' | 'email';
+  sub: string;
+}
+
 interface PendingSignIn {
   identity: HomeIdentity;
   relayId: string;
@@ -215,7 +246,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   let config: HomeConfig | null = null;
   /** The signed-in identity, and the Google account it is for (memory only). */
   let identity: HomeIdentity | null = null;
-  let sub: string | null = null;
+  let account: HomeAccount | null = null;
   /** Raised on a sign-out or an account change: an answer that started before it is dropped. */
   let epoch = 0;
   let requests = 0;
@@ -354,10 +385,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       return at === epoch ? page : null;
     } catch (err) {
       if (at !== epoch) return null;
+      // The sign-in this request belonged to is gone (it ended, or a new one replaced it while the request was on its
+      // way): whatever it answered says nothing about Hana Home now, so nothing is shown and nothing is sent again.
+      if (identity !== id) return null;
       const p = homeProblem(err);
-      // A 401 ends this sign-in, unless a newer one has already replaced it.
+      // A 401 ends this sign-in.
       if (p.signInAgain) {
-        if (identity === id) endSession();
+        endSession();
         return null;
       }
       problem = p;
@@ -393,20 +427,32 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     nextCursor = page.nextCursor;
     list = 'ready';
     renderContent();
-    // The partner's link names one app: read it once, and open its page.
+    // The partner's link names one app: read it once. Only an app that is the user's own opens straight away. Any
+    // other is the partner's words about an app Hana knows no wallet of theirs in, so the user's own list comes first
+    // and the linked app sits below it under Hana's own notice.
     if (linkApp && !linked) {
-      const known = allScopes().find((s) => s.apps.some((a) => a.appId === linkApp));
+      const hasLinked = (s: HomeScope): boolean => s.apps.some((a) => a.appId === linkApp);
+      const own = mine.find(hasLinked);
+      if (own) {
+        openApp(own.scopeId);
+        return;
+      }
+      const known = listed.find(hasLinked);
       if (known) {
-        openApp(known.scopeId);
+        linked = known;
+        listed = listed.filter((s) => s.scopeId !== known.scopeId);
+        renderContent();
         return;
       }
       const one = await request({ kind: 'app', appId: linkApp });
       if (at !== epoch) return;
       const found = one?.scopes[0];
-      if (found) {
-        if (found.mine) mine = [found, ...mine.filter((s) => s.scopeId !== found.scopeId)];
-        else linked = found;
+      if (found?.mine) {
+        mine = [found, ...mine.filter((s) => s.scopeId !== found.scopeId)];
         openApp(found.scopeId);
+      } else if (found) {
+        linked = found;
+        renderContent();
       } else {
         if (one) problem = { code: 'app_not_found', text: 'Hana Home couldn’t find the app this link is for.', requestId: null, signInAgain: false };
         renderContent();
@@ -614,12 +660,23 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     pending = { identity: made, relayId, relayKey, relayReadKey, params, helloAccepted: false };
   }
 
+  /** Whether `w` is on this origin at `/login?mode=home`. A window whose address can't be read (another origin) isn't. */
+  function childAtLogin(w: Window): boolean {
+    try {
+      return `${w.location.pathname}${w.location.search}` === HOME_LOGIN_CHILD;
+    } catch {
+      return false;
+    }
+  }
+
   /** The only messages the page takes: its own child's hello, answered once with this sign-in's parameters. */
   function onMessage(event: Event): void {
     const e = event as MessageEvent;
     const p = pending;
     if (!p || p.helloAccepted || child === null || e.source !== child || e.origin !== env.authOrigin) return;
     if (!parseWindowMessage(e.data, ['hana:auth-hello'])) return;
+    // The mirror of the child's own check: the window that gets the relay key is at the sign-in child's address.
+    if (!childAtLogin(child)) return;
     p.helloAccepted = true;
     try {
       child.postMessage(p.params, env.authOrigin);
@@ -687,15 +744,16 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     p.relayKey.fill(0);
     p.relayReadKey.fill(0);
     signingIn = false;
-    signedIn(next, who);
+    signedIn(next, { provider: 'google', sub: who });
   }
 
   /** A sign-in finished. The same account keeps the screen as it is and fetches nothing; another account starts over. */
-  function signedIn(next: HomeIdentity, who: string): void {
-    const same = stage === 'signed_in' && sub === who;
+  function signedIn(next: HomeIdentity, who: HomeAccount): void {
+    // The same person is the same sign-in method and the same id from it: two methods can use the same id for two people.
+    const same = stage === 'signed_in' && account !== null && account.provider === who.provider && account.sub === who.sub;
     identity?.end();
     identity = next;
-    sub = who;
+    account = who;
     session = 'active';
     signInError = null;
     scheduleSession(next);
@@ -736,7 +794,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     signingIn = false;
     identity?.end();
     identity = null;
-    sub = null;
+    account = null;
     session = 'none';
     clearScreen();
     stage = 'signed_out';
@@ -863,7 +921,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   const scopeTitle = (scope: HomeScope): string => scope.apps[0]?.name ?? 'An app that is no longer listed';
 
   function scopeCard(scope: HomeScope): HTMLElement {
-    const cover = COVERAGE_TEXT[scope.coverage];
+    const cover = coverageText(scope.coverage, scope.mine);
     return d.h(
       'li',
       { class: 'home-card', attrs: { 'data-scope': scope.scopeId } },
@@ -892,7 +950,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     input.addEventListener('keydown', (e) => {
       if ((e as KeyboardEvent).key === 'Enter' && isGesture(e)) track(runSearch());
     });
-    const others = [...(linked && !mine.some((s) => s.scopeId === linked?.scopeId) ? [linked] : []), ...listed];
+    const others = listed.filter((s) => s.scopeId !== linked?.scopeId);
     return [
       d.h('h2', { attrs: { id: 'home-mine-title' } }, 'Your apps'),
       loading
@@ -902,6 +960,15 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           : mine.length > 0
             ? cards(mine)
             : d.h('p', { class: 'muted', attrs: { id: 'home-empty' } }, 'No apps yet for this Google account. An app appears here once you have signed in to it with Hana.'),
+      list === 'ready' && linked && !mine.some((s) => s.scopeId === linked?.scopeId)
+        ? d.h(
+            'section',
+            { attrs: { id: 'home-linked', 'aria-labelledby': 'home-linked-title' } },
+            d.h('h2', { attrs: { id: 'home-linked-title' } }, 'The app from your link'),
+            d.h('p', { class: 'note' }, 'The link you opened is for the app below. Hana has no wallet on record for this Google account in it. Its name and address are the app’s own, not Hana’s.'),
+            cards([linked]),
+          )
+        : null,
       list === 'ready'
         ? d.h(
             'section',
@@ -977,9 +1044,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   /** One listing's page: its apps, whether Hana can open the wallet, the addresses on record and the Support ID. */
   function appPage(scope: HomeScope): Child[] {
-    const cover = COVERAGE_TEXT[scope.coverage];
+    const cover = coverageText(scope.coverage, scope.mine);
     const stellar = STELLAR_ACCOUNT_URL[env.network];
-    const only = scope.apps.length === 1 ? (scope.apps[0] as HomeApp) : null;
     const addressRows = scope.addresses.map((a) => {
       const name = a.chain === 'stellar' ? 'Stellar address' : 'EVM address';
       return d.h(
@@ -998,11 +1064,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     });
     return [
       button('Back to all apps', closeApp, { class: 'link', id: 'home-back' }),
-      // One app: its name is the heading. Several: they share the wallet, so the heading says that and each is listed.
-      d.h('h2', { attrs: { id: 'home-app-title', tabindex: '-1' } }, only ? d.h('span', { class: 'home-app-heading' }, appLogo(d, env, only.logoUrl), d.h('strong', {}, only.name)) : scope.apps.length > 1 ? 'Apps that share one wallet' : scopeTitle(scope)),
-      only ? d.h('div', { class: 'home-app-meta' }, appBadges(only).some(Boolean) ? d.h('p', { class: 'home-app-name' }, ...appBadges(only)) : null, appOrigins(only, 5)) : null,
-      scope.apps.length > 1 ? d.h('div', { class: 'home-card-apps home-app-all' }, ...scope.apps.map((a) => appLine(a, 5))) : null,
-      d.h('h3', {}, 'Can Hana open this wallet?'),
+      // The heading is Hana's own words, always. An app's name is the partner's: it is a labelled value in the box below
+      // ("App"), never the heading of a page on Hana's origin.
+      d.h('h2', { attrs: { id: 'home-app-title', tabindex: '-1' } }, 'App details'),
+      d.h('h3', { attrs: { id: 'home-app-label' } }, scope.apps.length > 1 ? 'Apps that share one wallet' : 'App'),
+      scope.apps.length > 0 ? d.h('div', { class: 'home-card-apps home-app-all', attrs: { 'aria-labelledby': 'home-app-label', role: 'group' } }, ...scope.apps.map((a) => appLine(a, 5))) : d.h('p', { class: 'muted' }, scopeTitle(scope)),
+      d.h('h3', {}, cover.question),
       d.h('p', { attrs: { id: 'home-coverage' } }, badge(cover.badge, cover.tone), ' ', busy === 'check' ? 'Checking…' : cover.detail),
       scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
       d.h('h3', {}, 'Your addresses'),

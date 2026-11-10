@@ -721,15 +721,8 @@ button.home-copy {
   overflow-wrap: anywhere;
 }
 
-.home-app-heading {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.home-app-meta p {
-  margin: 0 0 6px;
+#home-linked .note {
+  margin-bottom: 10px;
 }
 
 .home-support .mono {

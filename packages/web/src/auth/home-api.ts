@@ -19,6 +19,7 @@ import {
   homeMessage,
   homeNonce,
   homeRequestPath,
+  isDisplaySafeLine,
   isEvmAddress,
   isNearAccountId,
   isOrigin,
@@ -49,6 +50,7 @@ export type HomeAppStatus = 'active' | 'suspended' | 'deleted';
 /** One app of a listing. Every string here is partner-supplied: shown as text, never as markup or a link. */
 export interface HomeApp {
   appId: string;
+  /** As `homeAppName` leaves it: display-safe and at most `HOME_NAME_SHOWN` characters, or Hana's stand-in. */
   name: string;
   status: HomeAppStatus;
   environment: 'test' | 'live';
@@ -89,6 +91,23 @@ export const HOME_MAX_SCOPES = 64;
 export const HOME_MAX_APPS = 10;
 export const HOME_MAX_ORIGINS = 5;
 export const HOME_NAME_MAX = 200;
+/** How much of an app's name the page shows, in characters; a longer one ends in "…". */
+export const HOME_NAME_SHOWN = 60;
+/** What stands in for a name the page won't show (empty, too long, or with a control, bidi or invisible character). */
+export const HOME_UNNAMED_APP = 'Unnamed app';
+
+/**
+ * An app's name as the page shows it. The name is the partner's own words on Hana's origin, so it is held to the one
+ * display-safety rule (no control, direction-changing or invisible character) and cut short; a name that fails is
+ * replaced by Hana's own words, never shown. The app stays listed either way: a user's wallet is never hidden by it.
+ */
+export function homeAppName(v: unknown): string {
+  if (typeof v !== 'string') return HOME_UNNAMED_APP;
+  const name = v.trim();
+  if (name.length === 0 || name.length > HOME_NAME_MAX || !isDisplaySafeLine(name)) return HOME_UNNAMED_APP;
+  const chars = [...name];
+  return chars.length <= HOME_NAME_SHOWN ? name : `${chars.slice(0, HOME_NAME_SHOWN).join('').trimEnd()}…`;
+}
 /** A search term, in characters, after trimming (the API's bounds). */
 export const HOME_SEARCH_MIN = 2;
 export const HOME_SEARCH_MAX = 64;
@@ -101,13 +120,12 @@ const clientId = (v: unknown): string | null | undefined => (v === null ? null :
 function parseApp(v: unknown): HomeApp | null {
   if (!isObj(v)) return null;
   if (typeof v.appId !== 'string' || !HOME_APP_ID.test(v.appId)) return null;
-  if (typeof v.name !== 'string' || v.name.length === 0 || v.name.length > HOME_NAME_MAX) return null;
   if (v.status !== 'active' && v.status !== 'suspended' && v.status !== 'deleted') return null;
   if (v.environment !== 'test' && v.environment !== 'live') return null;
   if (!Array.isArray(v.origins)) return null;
   // An origin that isn't one is dropped, never shown: it is only ever text, but it should at least be an origin.
   const origins = v.origins.filter((o): o is string => isOrigin(o)).slice(0, HOME_MAX_ORIGINS);
-  return { appId: v.appId, name: v.name, status: v.status, environment: v.environment, origins, logoUrl: typeof v.logoUrl === 'string' && v.logoUrl.length <= 512 ? v.logoUrl : null };
+  return { appId: v.appId, name: homeAppName(v.name), status: v.status, environment: v.environment, origins, logoUrl: typeof v.logoUrl === 'string' && v.logoUrl.length <= 512 ? v.logoUrl : null };
 }
 
 function parseAddresses(v: unknown): HomeAddress[] {

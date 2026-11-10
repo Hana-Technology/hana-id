@@ -39,9 +39,13 @@ class Statement {
 
   runSync(): { success: true; meta: { changes: number }; results: Row[] } {
     const stmt = this.db.prepare(this.sql);
-    // A read, or a statement with RETURNING, answers rows (D1's batch gives them in `results`; GET /v1/home/apps reads
-    // its listing in one batch).
-    if (/^\s*select\b/iu.test(this.sql) || /\breturning\b/iu.test(this.sql)) {
+    // A read answers its rows and changes nothing (D1's batch gives them in `results` with `meta.changes` 0; GET
+    // /v1/home/apps reads its listing in one batch): a SELECT, or a WITH that ends in one rather than in a write.
+    if (/^\s*select\b/iu.test(this.sql) || (/^\s*with\b/iu.test(this.sql) && !/\b(?:insert|update|delete|replace)\b/iu.test(this.sql))) {
+      return { success: true, meta: { changes: 0 }, results: stmt.all(...this.args).map(plain) };
+    }
+    // A write with RETURNING answers the rows it wrote.
+    if (/\breturning\b/iu.test(this.sql)) {
       const results = stmt.all(...this.args).map(plain);
       return { success: true, meta: { changes: results.length }, results };
     }

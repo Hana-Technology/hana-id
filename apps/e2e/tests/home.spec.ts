@@ -6,7 +6,7 @@
 // - "every screen": the page's states over a routed `GET /v1/home/apps` (the sign-in is still the real one). With
 //   HANA_SHOTS_DIR set (Chromium only) it saves each screen there at desktop and phone width, light and dark.
 import type { BrowserContext, Page } from '@playwright/test';
-import { API_URL, AUTH_ORIGIN } from '../src/stack.ts';
+import { API_URL, AUTH_ORIGIN, EVIL_ORIGIN } from '../src/stack.ts';
 import { chooseAccount, expect, login, newApp, openPartner, test, walletDirectory } from './fixtures.ts';
 
 
@@ -57,6 +57,8 @@ test('lists the app the user signed in to, with its addresses and Support ID, fr
   const csp = response?.headers()['content-security-policy'] ?? '';
   expect(csp).toContain("frame-ancestors 'none'");
   expect(csp).toContain(`connect-src ${new URL(API_URL).origin} https://www.googleapis.com`);
+  // Whoever opened Hana Home keeps no handle on it; the sign-in child Home opens itself still reaches Home (below).
+  expect(response?.headers()['cross-origin-opener-policy']).toBe('same-origin-allow-popups');
   await expect(home.getByRole('heading', { name: 'Hana Home' })).toBeVisible();
 
   const childP = home.waitForEvent('popup');
@@ -70,7 +72,7 @@ test('lists the app the user signed in to, with its addresses and Support ID, fr
   await expect(home.getByText('Signed in with Google')).toBeVisible();
   const card = home.locator(`.home-card[data-scope="${scopeId}"]`);
   await expect(card).toContainText(name);
-  await expect(card.locator('.home-card-foot .badge')).toHaveText('Available');
+  await expect(card.locator('.home-card-foot .badge')).toHaveText('Stays reachable');
   // It is one of the user's own: listed under "Your apps", before the search.
   expect(await card.evaluate((el) => el.closest('ul')?.previousElementSibling?.textContent)).toBe('Your apps');
   await card.getByRole('button', { name: `View ${name}` }).click();
@@ -160,12 +162,13 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   // The list: the user's own apps first, then the others, each with its badge.
   await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
   await expect(page.locator('.home-card')).toHaveCount(6);
-  await expect(page.locator('.home-card .home-card-foot .badge')).toHaveText(['Available', 'Available', 'May stop working', 'Not available', 'Not checked yet', 'Available']);
+  await expect(page.locator('.home-card .home-card-foot .badge')).toHaveText(['Stays reachable', 'Stays reachable', 'Depends on the app', 'Out of reach', 'Not checked yet', 'Supported']);
   await shots(page, '03-app-list', browserName);
 
   // An app's page.
   await page.getByRole('button', { name: 'View Sodax', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Apps that share one wallet' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'App details' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Apps that share one wallet' })).toBeVisible();
   await expect(page.locator('#home-address-stellar')).toHaveText(G);
   await expect(page.getByRole('link', { name: 'View on StellarExpert (testnet)' })).toHaveAttribute('href', `https://stellar.expert/explorer/testnet/account/${G}`);
   await shots(page, '04-app-page', browserName);
@@ -173,12 +176,15 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
 
   // An app Hana can't open, and one it checks when the page opens.
   await page.getByRole('button', { name: 'View Atlas Markets' }).click();
-  await expect(page.getByRole('heading', { name: 'Atlas Markets' })).toBeFocused();
-  await expect(page.locator('#home-coverage')).toContainText('Hana can’t open this wallet from here');
+  // The app's name is a labelled value, never a heading.
+  await expect(page.getByRole('heading', { name: 'App details' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Atlas Markets' })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'App' })).toContainText('Atlas Markets');
+  await expect(page.locator('#home-coverage')).toContainText('no longer works');
   await shots(page, '05-app-not-available', browserName);
   await page.getByRole('button', { name: 'Back to all apps' }).click();
   await page.getByRole('button', { name: 'View Nova Earn' }).click();
-  await expect(page.locator('#home-coverage .badge')).toHaveText('Available');
+  await expect(page.locator('#home-coverage .badge')).toHaveText('Supported');
   expect(requests.at(-1)).toBe('?appId=app_nova01');
   await page.getByRole('button', { name: 'Back to all apps' }).click();
 
@@ -245,6 +251,40 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   mode = 'list';
   await page.getByRole('button', { name: 'Try again' }).click();
   await expect(page.locator('.home-card')).toHaveCount(6);
+});
+
+test('a link to an app that isn’t the user’s lands on their own list, with the app under Hana’s notice', async ({ page, context, browserName }) => {
+  const requests: string[] = [];
+  const long = 'Hana security notice: your wallet is locked, restore it at hana-restore.example before Friday';
+  await routeApps(context, (url) => {
+    requests.push(url.search);
+    if (url.searchParams.has('appId')) return { status: 200, body: { scopes: [{ scopeId: 's9', mine: false, coverage: 'shared', googleClientId: 'x', apps: [app('app_phish1', long)] }], nextCursor: null } };
+    return { status: 200, body: { scopes: LIST.scopes.slice(0, 2), nextCursor: null } };
+  });
+  // Opened by another site: with Home's opener policy that site keeps no handle on the window.
+  await page.goto(`${AUTH_ORIGIN}/home?appId=app_phish1`);
+  await signIn(page);
+  await expect(page.locator('#home-linked')).toContainText('Hana has no wallet on record for this Google account in it.');
+  expect(requests).toEqual(['', '?appId=app_phish1']);
+  await expect(page.getByRole('heading')).toHaveText(['Hana Home', 'Your apps', 'The app from your link', 'Find an app']);
+  await expect(page.locator('#home-linked .home-app-name strong')).toHaveText('Hana security notice: your wallet is locked, restore it at h…');
+  await expect(page.getByText('hana-restore.example')).toHaveCount(0);
+  await shots(page, '13-linked-app-not-yours', browserName);
+});
+
+test('a page on another site that opens Hana Home keeps no handle on it, and Home’s own sign-in still works', async ({ page, context }) => {
+  await page.goto(`${EVIL_ORIGIN}/`);
+  const homeP = context.waitForEvent('page');
+  await page.evaluate((url) => {
+    (window as unknown as { opened: Window | null }).opened = window.open(url, 'home');
+  }, `${AUTH_ORIGIN}/home`);
+  const home = await homeP;
+  await expect(home.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+  // The opener's handle is cut: it reads as closed, so it can't navigate the window or watch it.
+  await expect.poll(() => page.evaluate(() => (window as unknown as { opened: Window | null }).opened?.closed)).toBe(true);
+  expect(await home.evaluate(() => window.opener)).toBeNull();
+  await signIn(home);
+  await expect(home.getByText('Signed in with Google')).toBeVisible();
 });
 
 test('a cancelled Google sign-in leaves Hana Home signed out, with a way to try again', async ({ page, browserName }) => {

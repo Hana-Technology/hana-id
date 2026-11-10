@@ -4,9 +4,9 @@
 // each API refusal reads.
 import { ApiError, type RelayPayload, type RelayReadResponse, decodeHomeIdentity, encryptRelayPayload, homeMessage, homeNonce, parseWindowMessage } from '@hana-id/core';
 import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { homeApi, parseHomeApps, parseHomeConfig } from '../../src/auth/home-api.ts';
-import { COVERAGE_TEXT, HOME_EXPIRY_WARN_MS, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
-import { CLIENT_ID, ENV, EVIL, FakeWindow, type RemoteWindow, type TokenSigner, asWindow, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
+import { HOME_UNNAMED_APP, homeApi, homeAppName, parseHomeApps, parseHomeConfig } from '../../src/auth/home-api.ts';
+import { HOME_EXPIRY_WARN_MS, coverageText, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
+import { CLIENT_ID, ENV, EVIL, FakeWindow, type RemoteWindow, type TokenSigner, asWindow, crossOriginWindow, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
 
 const FILES = 'https://files.hana.test';
 const HOME_ENV = { ...ENV, filesOrigin: FILES };
@@ -14,7 +14,9 @@ const G = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 const T0 = 1_800_000_000_000;
 const MIN = 60_000;
-const XSS = '<img src=x onerror="window.__pwned=1"><script>window.__pwned=1</script>';
+const XSS = '<img src=x onerror="__pwned=1"><script>__pwned=1</script>';
+/** The sign-in child as Hana Home sees it: on this origin, at /login?mode=home. */
+const childWindow = (): RemoteWindow => remoteWindow({ location: { pathname: '/login', search: '?mode=home' } as never });
 
 type Scope = Record<string, unknown>;
 const app = (name: string, over: Record<string, unknown> = {}) => ({ appId: `app_${name.replace(/[^A-Za-z0-9]/gu, '').slice(0, 20) || 'x'}`, name, status: 'active', environment: 'live', origins: ['https://app.example'], logoUrl: null, ...over });
@@ -58,6 +60,8 @@ interface Harness {
   click(id: string): void;
   /** The whole sign-in, from the click to the list on screen. */
   signIn(sub?: string, button?: string): Promise<void>;
+  /** The same, without waiting for what the page does next (a request may still be on its way). */
+  signInStart(sub?: string, button?: string): Promise<void>;
   hello(): void;
   params(): Record<string, unknown>;
 }
@@ -70,7 +74,7 @@ function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; o
   const win = new FakeWindow('/home', opts.search ?? '');
   if (opts.framed) win.top = {};
   if (opts.opener) win.opener = asWindow(opts.opener);
-  let child = remoteWindow();
+  let child = childWindow();
   win.openResult = child;
   const calls: Call[] = [];
   const relayReads: { relayId: string; readKey: string }[] = [];
@@ -141,13 +145,16 @@ function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; o
   h.token =
     (over = {}) =>
     async (p) => ({ idToken: await signer.sign({ iss: 'https://accounts.google.com', aud: CLIENT_ID, sub: 'sub-1', nonce: p.nonce, iat: Math.floor(now / 1000), exp: Math.floor(now / 1000) + 3600, ...over }) });
-  h.signIn = async (sub = 'sub-1', button = 'home-sign-in') => {
-    child = remoteWindow();
+  h.signInStart = async (sub = 'sub-1', button = 'home-sign-in') => {
+    child = childWindow();
     win.openResult = child;
     h.click(button);
     await until(() => h.page.awaitingChild, 'the sign-in to be prepared');
     h.hello();
     await h.relay(h.token({ sub }));
+  };
+  h.signIn = async (sub = 'sub-1', button = 'home-sign-in') => {
+    await h.signInStart(sub, button);
     await h.page.idle();
   };
   return h;
@@ -272,7 +279,7 @@ describe('sign-in', () => {
     const h = await ready();
     h.click('home-sign-in');
     await until(() => h.page.awaitingChild);
-    const stranger = remoteWindow();
+    const stranger = childWindow();
     // Another window, another origin, another message: none is answered.
     h.win.message({ v: 1, t: 'hana:auth-hello' }, ENV.authOrigin, stranger);
     h.win.message({ v: 1, t: 'hana:auth-hello' }, ENV.vaultOrigin, h.child);
@@ -342,6 +349,28 @@ describe('sign-in', () => {
     expect(h.page.errorCode).toBe(code);
     expect(h.appCalls()).toEqual([]);
     expect(document.getElementById('home-sign-in')).not.toBeNull();
+  });
+
+  it('answers no hello from its child at any other address, or one whose address it can’t read', async () => {
+    for (const location of [{ pathname: '/login', search: '?mode=export' }, { pathname: '/login', search: '' }, { pathname: '/export', search: '?mode=home' }, { pathname: '/login/callback', search: '?mode=home' }, { pathname: '/home', search: '' }]) {
+      resetDom();
+      const h = await ready();
+      h.win.openResult = remoteWindow({ location: location as never });
+      h.click('home-sign-in');
+      await until(() => h.page.awaitingChild);
+      const child = h.win.openResult as RemoteWindow;
+      h.win.message({ v: 1, t: 'hana:auth-hello' }, ENV.authOrigin, child);
+      expect(child.received, JSON.stringify(location)).toEqual([]);
+      expect(h.page.awaitingChild).toBe(true);
+    }
+    resetDom();
+    const h = await ready();
+    const cross = crossOriginWindow();
+    h.win.openResult = cross;
+    h.click('home-sign-in');
+    await until(() => h.page.awaitingChild);
+    h.win.message({ v: 1, t: 'hana:auth-hello' }, ENV.authOrigin, cross);
+    expect(cross.received).toEqual([]);
   });
 
   it('offers a new attempt when the child closes before it connects', async () => {
@@ -420,10 +449,12 @@ describe('your apps', () => {
     const cards = [...document.querySelectorAll('.home-card')];
     expect(cards.map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
     const badgeOf = (id: string) => document.querySelector(`.home-card[data-scope="${id}"] .home-card-foot .badge`)?.textContent;
-    expect(badgeOf('s1')).toBe('Available');
-    expect(badgeOf('s2')).toBe('Available');
-    expect(badgeOf('s3')).toBe('May stop working');
-    expect(badgeOf('s4')).toBe('Not available');
+    expect(badgeOf('s1')).toBe('Stays reachable');
+    expect(badgeOf('s2')).toBe('Stays reachable');
+    expect(badgeOf('s3')).toBe('Depends on the app');
+    expect(badgeOf('s4')).toBe('Out of reach');
+    // An app where the user has no wallet is never called theirs, or "available".
+    expect(badgeOf('s6')).toBe('Supported');
     expect(badgeOf('s5')).toBe('Not checked yet');
     expect(cards[0]?.textContent).toContain('Sodax Earn');
     expect(cards[0]?.textContent).toContain('Paused');
@@ -437,8 +468,14 @@ describe('your apps', () => {
 
   it('every coverage has a badge and a sentence', () => {
     for (const c of ['shared', 'hana_client', 'exit', 'partner_client', 'email', 'none', 'unknown'] as const) {
-      expect(COVERAGE_TEXT[c].badge.length).toBeGreaterThan(3);
-      expect(COVERAGE_TEXT[c].detail.length).toBeGreaterThan(20);
+      for (const own of [true, false]) {
+        const t = coverageText(c, own);
+        expect(t.badge.length).toBeGreaterThan(3);
+        expect(t.detail.length).toBeGreaterThan(20);
+        // No promise of an action the page doesn't offer, and nothing called "your wallet" where Hana knows of none.
+        expect(`${t.badge} ${t.question} ${t.detail}`).not.toMatch(/\b(?:export|move|open|recover|available)\b/iu);
+        if (!own) expect(`${t.question} ${t.detail}`).not.toMatch(/this wallet|your wallet/iu);
+      }
     }
   });
 
@@ -457,12 +494,13 @@ describe('your apps', () => {
     await h.signIn();
     (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
     expect(h.page.openScope).toBe('s1');
-    expect(document.getElementById('home-app-title')?.textContent).toBe('Apps that share one wallet');
+    expect(document.getElementById('home-app-title')?.textContent).toBe('App details');
+    expect(document.getElementById('home-app-label')?.textContent).toBe('Apps that share one wallet');
     expect([...document.querySelectorAll('.home-app-all .home-app-name strong')].map((x) => x.textContent)).toEqual(['Sodax', 'Sodax Earn']);
     expect(document.getElementById('home-address-stellar')?.textContent).toBe(G);
     expect(document.getElementById('home-address-evm')?.textContent).toBe(EVM);
     expect(document.getElementById('home-support-id')?.textContent).toBe('HANA-AB12-CD34');
-    expect(pageText()).toContain('Hana can open this wallet for you');
+    expect(pageText()).toContain('Signing in to this wallet doesn’t depend on the app');
     const links = [...document.querySelectorAll('#app a')] as HTMLAnchorElement[];
     expect(links.map((a) => a.getAttribute('href'))).toEqual([`https://stellar.expert/explorer/testnet/account/${G}`]);
     expect(links[0]?.getAttribute('rel')).toBe('noopener noreferrer');
@@ -487,8 +525,9 @@ describe('your apps', () => {
     h.answer = LIST;
     await h.signIn();
     (document.querySelector('.home-card[data-scope="s2"] .home-open') as HTMLElement).click();
-    expect(document.getElementById('home-app-title')?.textContent).toBe('Old Exchange');
-    expect(document.querySelector('.home-app-meta')?.textContent).toBe('Closed');
+    expect(document.getElementById('home-app-title')?.textContent).toBe('App details');
+    expect(document.getElementById('home-app-label')?.textContent).toBe('App');
+    expect(document.querySelector('.home-app-all')?.textContent).toBe('Old ExchangeClosed');
     expect(document.getElementById('home-support-id')).toBeNull();
     expect(pageText()).not.toContain('Support ID');
     expect(document.getElementById('home-no-address')?.textContent).toBe('Hana has no address on record for you in this app yet.');
@@ -506,12 +545,12 @@ describe('your apps', () => {
     (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
     await h.page.idle();
     expect(h.appCalls().at(-1)?.url.search).toBe('?scopeId=s1');
-    expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Available');
+    expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Stays reachable');
     h.click('home-back');
     (document.querySelector('.home-card[data-scope="s5"] .home-open') as HTMLElement).click();
     await h.page.idle();
     expect(h.appCalls().at(-1)?.url.search).toBe('?appId=app_Apps5');
-    expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Not available');
+    expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Out of reach');
     expect(h.appCalls()).toHaveLength(3);
   });
 
@@ -558,15 +597,19 @@ describe('your apps', () => {
     expect(counters).toEqual([1, 2]);
   });
 
-  it('a partner’s link opens that app’s page after sign-in', async () => {
+  it('a partner’s link to an app that isn’t the user’s shows their own list first, with the app under Hana’s notice', async () => {
     expect(linkedAppId('?appId=app_abc123')).toBe('app_abc123');
     for (const bad of ['', '?appId=', '?appId=abc', '?appId=app_a&x=1', '?appId=app_a&appId=app_b', '?scopeId=s1', '?appId=app_%3Cb%3E']) expect(linkedAppId(bad)).toBeNull();
     const h = await ready({ search: '?appId=app_quiet1' });
     h.answer = (url) => (url.searchParams.get('appId') === 'app_quiet1' ? json(200, { scopes: [scope('s8', { apps: [app('Quiet Bank', { appId: 'app_quiet1' })] })], nextCursor: null }) : json(200, { scopes: [mine('s1')], nextCursor: null }));
     await h.signIn();
     expect(h.appCalls().map((c) => c.url.search)).toEqual(['', '?appId=app_quiet1']);
-    expect(h.page.openScope).toBe('s8');
-    expect(document.getElementById('home-app-title')?.textContent).toBe('Quiet Bank');
+    // The partner's words are never the landing screen: the user's own apps come first, nothing is opened.
+    expect(h.page.openScope).toBeNull();
+    expect([...document.querySelectorAll('#home-content h2')].map((x) => x.textContent)).toEqual(['Your apps', 'The app from your link', 'Find an app']);
+    expect(document.querySelector('#home-linked .note')?.textContent).toContain('Hana has no wallet on record for this Google account in it.');
+    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's8']);
+    expect(document.querySelector('#home-linked .home-card-foot .badge')?.textContent).toBe('Supported');
     // The link's parameter is an app id, never anything of the user's; the page changed no URL.
     expect(h.win.replaced).toEqual([]);
     expect(h.win.location.assigned).toEqual([]);
@@ -620,16 +663,75 @@ describe('partner strings are text only', () => {
     expect(root.querySelectorAll('a')).toHaveLength(0);
   });
 
-  it('a single app’s name is its page’s heading, as characters', async () => {
+  it('a link to an app that is the user’s own opens its page; one already in the list moves under the notice', async () => {
+    const own = await ready({ search: '?appId=app_mine1' });
+    own.answer = () => json(200, { scopes: [mine('s1', { apps: [app('Mine', { appId: 'app_mine1' })] })], nextCursor: null });
+    await own.signIn();
+    expect(own.page.openScope).toBe('s1');
+    expect(own.appCalls()).toHaveLength(1);
+
+    resetDom();
+    const other = await ready({ search: '?appId=app_other1' });
+    other.answer = () => json(200, { scopes: [mine('s1'), scope('s3', { apps: [app('Other', { appId: 'app_other1' })] }), scope('s4')], nextCursor: null });
+    await other.signIn();
+    expect(other.page.openScope).toBeNull();
+    expect(other.appCalls()).toHaveLength(1);
+    expect(document.querySelector('#home-linked .home-card')?.getAttribute('data-scope')).toBe('s3');
+    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's3', 's4']);
+  });
+
+  it.each([
+    ['a right-to-left override', 'Hana \u202EecitoN ytiruceS'],
+    ['a zero-width space', 'Hana\u200B Security'],
+    ['a bidi isolate', '\u2066Hana\u2069 notice'],
+    ['a line break', 'Hana\nSecurity notice: wallet locked'],
+    ['a tab', 'Hana\tnotice'],
+    ['a soft hyphen', 'Ha\u00ADna'],
+    ['a variation selector', 'Hana\uFE0F'],
+    ['nothing but spaces', '   '],
+    ['201 characters', 'x'.repeat(201)],
+    ['a number', 7],
+  ])('a name with %s is never shown: Hana’s stand-in takes its place, in the text and in the button’s label', async (_, name) => {
+    expect(homeAppName(name)).toBe(HOME_UNNAMED_APP);
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: [{ ...app('x', { appId: 'app_x1' }), name }] })], nextCursor: null });
+    await h.signIn();
+    // The app stays listed (a user's wallet is never hidden by its app's name).
+    expect(document.querySelector('.home-app-name strong')?.textContent).toBe('Unnamed app');
+    const open = document.querySelector('.home-open') as HTMLElement;
+    expect(open.getAttribute('aria-label')).toBe('View Unnamed app');
+    open.click();
+    expect(document.querySelector('.home-app-all strong')?.textContent).toBe('Unnamed app');
+    if (typeof name === 'string' && name.trim() !== '') expect(document.documentElement.outerHTML).not.toContain(name.slice(0, 5) === 'xxxxx' ? 'x'.repeat(100) : name);
+  });
+
+  it('a long name is cut to 60 characters, everywhere it shows', async () => {
+    const long = 'Hana security notice: your wallet is locked, restore it at hana-restore.example before Friday';
+    const shown = 'Hana security notice: your wallet is locked, restore it at h…';
+    expect(homeAppName(long)).toBe(shown);
+    expect([...shown]).toHaveLength(61);
+    expect(homeAppName('é'.repeat(60))).toBe('é'.repeat(60));
+    expect(homeAppName(`${'😀'.repeat(61)}`)).toBe(`${'😀'.repeat(60)}…`);
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [scope('s1', { apps: [app(long, { appId: 'app_x1' })] })], nextCursor: null });
+    await h.signIn();
+    const open = document.querySelector('.home-open') as HTMLElement;
+    expect(open.getAttribute('aria-label')).toBe(`View ${shown}`);
+    open.click();
+    expect(document.querySelector('.home-app-all strong')?.textContent).toBe(shown);
+    expect(pageText()).not.toContain('before Friday');
+    expect(document.documentElement.outerHTML).not.toContain('hana-restore.example');
+  });
+
+  it('an app’s name is never a heading: the app page’s headings are Hana’s own words', async () => {
     const h = await ready();
     h.answer = () => json(200, { scopes: [scope('s1', { apps: [app(XSS, { appId: 'app_x1', status: 'deleted' })] })], nextCursor: null });
     await h.signIn();
     const open = document.querySelector('.home-open') as HTMLElement;
     expect(open.getAttribute('aria-label')).toBe(`View ${XSS}`);
     open.click();
-    const title = document.getElementById('home-app-title') as HTMLElement;
-    expect(title.textContent).toBe(XSS);
-    expect(title.querySelector('img, script')).toBeNull();
+    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Hana Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses']);
+    expect(document.querySelector('.home-app-all strong')?.textContent).toBe(XSS);
     expect(document.querySelector('#app script')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
   });
@@ -654,7 +756,7 @@ describe('partner strings are text only', () => {
     expect(page.scopes.map((s) => s.scopeId)).toEqual(['s1', 's4', 's5']);
     // Someone else's listing never carries a Support ID or addresses, whatever the answer says.
     expect(page.scopes[1]).toMatchObject({ supportId: null, addresses: [] });
-    expect(page.scopes[2]?.apps.map((a) => a.name)).toEqual(['ok']);
+    expect(page.scopes[2]?.apps.map((a) => a.name)).toEqual(['ok', 'Unnamed app']);
     expect(() => parseHomeApps({ scopes: 'x' })).toThrow(ApiError);
     expect(() => parseHomeApps({ scopes: [], nextCursor: '<b>' })).toThrow(ApiError);
     expect(() => parseHomeConfig({ serverTimeMs: 1, signer: 'Not An Account', sharedGoogleClientId: null })).toThrow(ApiError);
@@ -776,6 +878,53 @@ describe('the sign-in’s end', () => {
     expect(h.appCalls()).toHaveLength(2);
     expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s2']);
     expect(pageText()).not.toContain('App s1');
+  });
+
+  it('an answer for one account that arrives after another signed in is thrown away, never shown', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn('sub-1');
+    advance(15 * MIN - HOME_EXPIRY_WARN_MS);
+    let release: (r: Response) => void = () => {};
+    h.answer = () => new Promise<Response>((r) => (release = r));
+    h.click('home-more');
+    await until(() => h.appCalls().length === 2);
+    // Account B signs in while A's request is still on its way.
+    h.answer = () => json(200, { scopes: [mine('s2', { apps: [app('B only')] })], nextCursor: null });
+    await h.signInStart('sub-2', 'home-sign-in-again');
+    await until(() => document.querySelector('.home-card[data-scope="s2"]') !== null, 'account B’s list');
+    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s2']);
+    release(json(200, { scopes: [mine('s7', { apps: [app('A secret app')], supportId: 'HANA-ZZZZ-ZZZZ' })], nextCursor: null }));
+    await h.page.idle();
+    await tick();
+    expect(pageText()).not.toContain('A secret app');
+    expect(document.documentElement.outerHTML).not.toContain('HANA-ZZZZ-ZZZZ');
+    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s2']);
+    expect(h.page.errorCode).toBeNull();
+  });
+
+  it('a request cut off by signing in again as the same account shows no problem and is not sent again', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    advance(15 * MIN - HOME_EXPIRY_WARN_MS);
+    let fail: (e: unknown) => void = () => {};
+    h.answer = () => new Promise<Response>((_, reject) => (fail = reject));
+    h.click('home-more');
+    await until(() => h.appCalls().length === 2);
+    // The old request dies (its sign-in was replaced) only after the new sign-in is in.
+    await h.signInStart('sub-1', 'home-sign-in-again');
+    await until(() => h.page.session === 'active' && !h.page.renewing, 'the new sign-in');
+    fail(new TypeError('The request was cut off'));
+    await h.page.idle();
+    expect(h.page.errorCode).toBeNull();
+    expect(document.getElementById('home-problem')).toBeNull();
+    expect(pageText()).not.toContain('not reachable');
+    expect([...document.querySelectorAll('.home-card')]).toHaveLength(2);
+    expect(document.getElementById('home-more')?.hasAttribute('disabled')).toBe(false);
+    advance(MIN);
+    await h.page.idle();
+    expect(h.appCalls()).toHaveLength(2);
   });
 
   it('a failed new sign-in leaves the screen and the ended state as they were', async () => {

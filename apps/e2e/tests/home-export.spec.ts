@@ -114,7 +114,7 @@ test('a wallet made by a partner login is opened in Hana Home and its Stellar ke
   await home.locator(`.home-card[data-scope="${scopeId}"]`).getByRole('button', { name: `View ${name}` }).click();
   const s = section(home);
   await expect(s.open).toHaveText('Move this wallet to another wallet app');
-  expect(await home.locator('#home-app-extras').evaluate((el) => el.parentElement?.lastElementChild === el && el.firstElementChild?.id === 'home-export')).toBe(true);
+  expect(await home.locator('#home-app-extras').evaluate((el) => el.parentElement?.lastElementChild === el && el.lastElementChild?.id === 'home-export')).toBe(true);
   await expect(s.start).toHaveCount(0);
 
   // A link naming the app opens its page, and no more: still collapsed, no window opened, nothing sent.

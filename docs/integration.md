@@ -14,7 +14,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
 > an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
 
-Last verified against code: 2026-11-09, SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
+Last verified against code: 2026-11-10 (branch `feat/hana-home-h9`, not merged, not deployed: "Email sharing": Hana Home's stop replaces the auto-approve apps' required control, D615); 2026-11-09, SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
 
 ## How it works
 
@@ -1107,9 +1107,9 @@ const token = await hana.getIdentityToken(); // with `email` when granted
   sharing") or from the approval window's account line. New tokens and your console then lose the address at once;
   tokens you already received keep it until they expire (≤ 1 h), and the address you stored is yours to delete (your
   terms with Hana require deleting it on request).
-- **Required if you use auto-approve.** Users of an app with an auto-approve policy may never see the approval window,
-  so if email sharing is on you must give them a visible control (for example "Manage email sharing") that calls
-  `requestEmailSharing()`, or they have no way to stop sharing.
+- **Stopping from Hana Home.** Users can also see and stop sharing in Hana Home, Hana's own page, from any device, with
+  the same effect; this covers users of an app whose signing is all auto-approved, who may never see the approval window.
+  A control of yours that calls `requestEmailSharing()` (for example "Manage email sharing") is still welcome.
 - `hana.on('emailSharingChanged', (state) => …)` fires (`'granted'` or `'declined'`) when the user changes it on this
   device; call `getIdentityToken()` again. Errors: `email_sharing_unavailable` (`data.reason`: `off` when your setting
   is off, `no_address` when Hana has no address for this session: ask the user to sign in again, `unavailable`), 4100

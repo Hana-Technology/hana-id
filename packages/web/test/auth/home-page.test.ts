@@ -451,7 +451,7 @@ describe('your apps', () => {
     h.answer = LIST;
     await h.signIn();
     const sections = [...document.querySelectorAll('#home-content h2')].map((x) => x.textContent);
-    expect(sections).toEqual(['Your apps', 'Find an app', 'Other apps that use Hana']);
+    expect(sections).toEqual(['Your apps', 'Devices and auto-approve', 'Find an app', 'Other apps that use Hana']);
     const cards = [...document.querySelectorAll('.home-card')];
     expect(cards.map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
     const badgeOf = (id: string) => document.querySelector(`.home-card[data-scope="${id}"] .home-card-foot .badge`)?.textContent;
@@ -612,7 +612,7 @@ describe('your apps', () => {
     expect(h.appCalls().map((c) => c.url.search)).toEqual(['', '?appId=app_quiet1']);
     // The partner's words are never the landing screen: the user's own apps come first, nothing is opened.
     expect(h.page.openScope).toBeNull();
-    expect([...document.querySelectorAll('#home-content h2')].map((x) => x.textContent)).toEqual(['Your apps', 'The app from your link', 'Find an app']);
+    expect([...document.querySelectorAll('#home-content h2')].map((x) => x.textContent)).toEqual(['Your apps', 'The app from your link', 'Devices and auto-approve', 'Find an app']);
     expect(document.querySelector('#home-linked .note')?.textContent).toContain('Hana has no wallet on record for this Google account in it.');
     expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's8']);
     expect(document.querySelector('#home-linked .home-card-foot .badge')?.textContent).toBe('Supported');
@@ -736,7 +736,7 @@ describe('partner strings are text only', () => {
     const open = document.querySelector('.home-open') as HTMLElement;
     expect(open.getAttribute('aria-label')).toBe(`View ${XSS}`);
     open.click();
-    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Hana Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses']);
+    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Hana Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses', 'Devices and auto-approve']);
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe(XSS);
     expect(document.querySelector('#app script')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();

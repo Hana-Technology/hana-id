@@ -213,8 +213,10 @@ export class VaultApi {
     await this.request(`/v1/link/${action}`, { method: 'POST', headers: this.headers(true), body: JSON.stringify(payload) });
   }
 
-  async createShare(sessionPublicKey: Uint8Array, signature: Uint8Array): Promise<CreateShareResponse> {
-    const { value } = await this.post('/v1/vault/shares', { sessionPublicKey: Array.from(sessionPublicKey), signature: Array.from(signature) }, isCreateShareResponse);
+  /** `deviceLabel`: the coarse "Chrome on macOS" Hana Home names the device by (device-label.ts), or null to send none. */
+  async createShare(sessionPublicKey: Uint8Array, signature: Uint8Array, deviceLabel: string | null = null): Promise<CreateShareResponse> {
+    const body = { sessionPublicKey: Array.from(sessionPublicKey), signature: Array.from(signature), ...(deviceLabel ? { deviceLabel } : {}) };
+    const { value } = await this.post('/v1/vault/shares', body, isCreateShareResponse);
     return value;
   }
 

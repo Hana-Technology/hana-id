@@ -201,6 +201,8 @@ export interface VaultOptions {
   googleEmailFlow?: GoogleEmailFlow;
   /** D347: the watch on the login popup's window (vault/login.ts POPUP_WATCH by default; tests shorten it). */
   popupWatch?: Partial<PopupWatch>;
+  /** The coarse label a new share names this device by in Hana Home (device-label.ts; boot.ts reads the User-Agent), or none. */
+  deviceLabel?: string | null;
 }
 
 interface Share {
@@ -1371,7 +1373,7 @@ export class Vault {
       for (let attempt = 0; created === null; attempt++) {
         if (job.cancelled) return;
         try {
-          created = await this.api!.createShare(success.sessionKey.publicKey, signature);
+          created = await this.api!.createShare(success.sessionKey.publicKey, signature, this.o.deviceLabel ?? null);
         } catch (e) {
           if (attempt >= 1 || job.cancelled) throw new PersistFailure(`share:${e instanceof ApiError ? e.code.slice(0, 64) : 'network'}`);
           await sleep(this.timers, PERSIST_RETRY_MS);

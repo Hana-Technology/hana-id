@@ -10093,3 +10093,65 @@ Built on `feat/hana-home-h8` (on top of H7), not merged, not deployed. Every dec
 - Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **confirmed by the user 2026-11-10** · Built: `home-export.ts`, `login-page.ts` (`checkHomeDerive`) · From H8's review (L4) · Amends D584; the mechanism is unchanged
 - Decision: the page no longer says "To be sure it's you" or "Confirm it's you". It says "First you choose your Google account again; it must be the account you used for Hana Home. Google may not ask for your password again.", and the step's heading is "Choose your Google account again".
 - Why: Google sends no `auth_time` even with `max_age=0`, and with `prompt=select_account` the step can be one click. Whoever can use the user's Google session on the device can open every app's wallet from Home, where the export window reached one app's. `docs/security.md` states it. A real re-authentication is not available from Google's implicit flow today; whether Home needs another factor before mainnet is for the production-readiness check.
+
+## Hana Home H9: devices and revocation (branch `feat/hana-home-h9`), 2026-11-10
+
+Built on `feat/hana-home-h9` (from `develop` with H7 and H8), not merged, not deployed. Every decision here is **proposed,
+awaiting the user's confirmation**. No path, key rule or derivation changes in any of them; no migration, no cron.
+
+### D606. Home's devices, consents and email sharing are the account root's, by the same rule as the app list
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **proposed, awaiting the user's confirmation** · Built: `apps/api/src/home/root.ts` (`scopeRoot`, `overlayRoots`) · Carries out the spec's "Home: list and revoke"
+- Decision: in a scope, Home's rows are those of the account root that the wallet directory records for the signed-in `(provider, sub)` with status `active` (the member's row → its account's `root` row), else the identity's own. The path is `{scope}#{provider}#{sub}#0`, key index 0 (the only index a vault opens), hashed as `vault_shares.path_hash` and `vault_consents.path_hash` hold it; email consents use the account's User ID (`end_users.token_sub`, or `identitySub` computed for a user with no row). The list and all three stops resolve the root the same way, so whatever is listed can be stopped and nothing else can.
+- Options: (a) this (no chain read; a link still in its delay, or a stale `active` row after an unlink whose sync failed, behaves as in `GET /v1/home/apps`, D500); (b) read `get_identity` on chain per scope (exact, but a subrequest per scope, which the free plan's 50 can't afford for a list). **Recommendation: (a)**, with (b) only if a stale directory row is judged worse than the app list's same exposure.
+- Address impact: none.
+
+### D607. `GET /v1/home/devices`: 10 of the user's own scopes a page, 25 devices and 25 tab consents a scope, D1 only
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **proposed, awaiting the user's confirmation** · Built: `apps/api/src/home/devices.ts`
+- Decision: no parameter or `?cursor=` pages the directory's scopes for this identity, 10 at a time in scope order; `?scopeId=` reads one scope (an app's page, with the identity's own path when the directory has no row). Per scope: the live shares (newest first, 25, `more: true` past that), each with its active consent, the active consents of apps that keep no share (25), the shared addresses per app (25), and the names of the apps named. One D1 read for the roots and one D1 batch of four small statements per scope; no chain read. 30/min per IP and 60/min per Home key, as the app list (the spec's table).
+- Why: the spec allows 50 a page; 10 keeps the batch at 40 statements, well inside 10 ms CPU and 50 subrequests (D417).
+- Address impact: none.
+
+### D608. "Live" and "active" are judged by one function shared with the vault's status read
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **proposed, awaiting the user's confirmation** · Built: `apps/api/src/vault/consent-store.ts` (`shareLive`, `consentActive`, used by `consentStatus` and `home/devices.ts`) · Carries out D534's condition on H9
+- Decision: a device is a share that unlock would still accept: not revoked, before its idle limit, before min(its end, created + the app's session TTL now), the app still keeping logins, its origin still allowed. A consent is active when not revoked, before its end, and (in 'session' mode) its share is live: never `revoked_at` alone, so a 'session'-mode logout or new login, which leaves the consent's `revoked_at` NULL, reads as not active (tested).
+- Address impact: none.
+
+### D609. The three stops: the same 404 for "gone" and "not yours", conditional writes, and nothing waits on a pause
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **proposed, awaiting the user's confirmation** · Built: `apps/api/src/home/revoke.ts`
+- Decision: `POST /v1/home/consents/revoke {consentId}`, `/shares/revoke {shareId}` (ids base64url, as the list gives them) and `/email-sharing/revoke {appId}`. Each loads the row by its id, resolves the root for the row's scope (D606) and acts only when the path hash or User ID matches; otherwise `404 unknown_consent` / `unknown_share` / `unknown_email_share` with the same body as an id that doesn't exist. The write repeats the match in its `WHERE`. A repeat answers `200 {revoked: false}` (email: `revoked: 0`). Signing a device out ends its share and its consents in one batch (`revoked_by = 'share'`, as D513 left for H9). Email: every address of the account for that app → `declined`, copies cleared, exactly the session-proof route's write; `404` when this account never decided anything there; `503 email_sharing_unavailable` without IDENTITY_SUB_KEY for a user the directory doesn't hold. No chain read, so all three work through a governance pause. 30/min per IP and per Home key, one window shared by the three.
+- Residual: a found-but-not-yours id costs one more D1 read than an unknown one; ids are 128 random bits, so the timing difference can't be used to find one.
+- Address impact: none.
+
+### D610. "Last used" comes from the share's idle limit; no new column
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **proposed, awaiting the user's confirmation** · Built: `home/devices.ts` (`lastUsedAt`)
+- Decision: an unlock or an approved signature's touch sets `idle_until` to that moment plus the app's idle limit, so the last use is `idle_until − idle_ttl_ms` (never before sign-in). Where the slide was cut short by the share's end, it can't be told and the page shows no "Last used". An auto-signature doesn't touch (D539), so it is the last time the user was there, not the last signature. A changed idle limit shifts the estimate until the next use.
+- Options: (a) this, no migration; (b) migration 0019 adding `vault_shares.last_used_at`, written by every unlock and touch (exact; one more column in the hot path and a deploy order). **Recommendation: (a)**; (b) if exact times are wanted.
+- Address impact: none.
+
+### D611. The vault labels a device by browser and system family only
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **proposed, awaiting the user's confirmation** · Built: `packages/web/src/vault/device-label.ts`, `boot.ts`, `vault.ts`, `api.ts` · Carries out D98 item 10 and D512 (H5 left the label out)
+- Decision: `POST /v1/vault/shares` carries `deviceLabel`: "{browser} on {system}" from the User-Agent every page already sends; browsers Edge, Opera, Samsung Internet, Firefox, Chrome, Safari; systems iOS, Android, ChromeOS, Windows, macOS, Linux; "Browser on {system}" or "{browser}" when one is unknown, no label when both are. Never a version, a device model, a language or a screen size. Stored with the share and deleted with it (D178).
+- Options: (a) this; (b) User-Agent Client Hints (more precise, more bits); (c) no label. **Recommendation: (a)**: a handful of bits, not a fingerprint, and enough to tell "my phone" from "my laptop".
+- Address impact: none.
+
+### D612. The devices section reads only when the user asks
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **proposed, awaiting the user's confirmation** · Built: `packages/web/src/auth/home-devices.ts`, `home-page.ts` (two mount points and `leaveApp`)
+- Decision: "Devices and auto-approve" sits on the front page (after "Your apps", the two the spec's lock-in stance names) and on each app's page above "Move this wallet to another wallet app". Each starts with "Show devices" and reads `GET /v1/home/devices` on that click; "Show again" re-reads; leaving an app's page closes its section. Nothing is fetched on its own, and an answer from before a new sign-in or a sign-out shows nothing (D553, D559).
+- Options: (a) this; (b) read on opening an app's page automatically (one click less, one request per page view). **Recommendation: (a)** for now; (b) is a small change if wanted.
+- Address impact: none.
+
+### D613. `/home?view=devices` is the address the "Manage in Hana Home" links will use; nothing links to it yet
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **proposed, awaiting the user's confirmation** · Built: `home-devices.ts` (`devicesLinked`)
+- Decision: exactly `?view=devices` opens the devices section after sign-in, with one read and focus on its heading. It carries no `appId`, so it never names an app whose wallet the page would then refuse to move (D600). The plan's H9 scope lists the links, but its rule ("nothing ships half-wired"; `/home` is linked from nowhere until H12) and H12's scope ("link `/home` from the consent screen and the approval popup") put the links themselves in H12: H9 built only the address.
+- Address impact: none.
+
+### D614. Wording: what each stop does and doesn't do; the app's rule as the app's own words
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **proposed, awaiting the user's confirmation** · Built: `home-devices.ts` (`HOME_STOP_CONFIRM`, `stopDoneText`), `home-problems.ts`, `home-api.ts` (`homePolicyLabel`)
+- Decision: each stop asks first, in place of its button. "Sign out this device?": auto-signing stops within about 10 seconds; the app asks to sign in again the next time it's opened or reloaded there; a tab open there now can still ask for approvals until it next checks with Hana ("don't approve anything you didn't start"); signatures and transactions already made stay valid, and signing out doesn't move funds. "Stop auto-approving on this device?": stops within about 10 seconds, the device stays signed in, signatures already made stay valid. "Stop sharing your email with this app?": new sign-ins and the dashboard lose it at once, tokens already issued keep it up to an hour, a copy the app stored is the app's own. The policy's label shows as "The app describes what it may sign without asking as: “…”", only if display-safe and at most 80 characters, else "No description"; never a heading. The user sees their own shared addresses. Refusals: one sentence per code (`unknown_share`, `unknown_consent`, `unknown_email_share`, `email_sharing_unavailable`), with the code and request id.
+- Address impact: none.
+
+### D615. D442's partner requirement is removed; Hana Home's stop replaces it
+- Date 2026-11-10 · Status: built on `feat/hana-home-h9` (`docs/integration.md`); **proposed, awaiting the user's confirmation** · Carries out D442's amendment
+- Decision: `docs/integration.md` no longer requires an app with auto-approve and email sharing to offer a "Manage email sharing" control; it says users can stop sharing in Hana Home, and that a control calling `requestEmailSharing()` is still welcome.
+- Gap: Hana Home reaches users only once it is deployed and linked (H12). Until then a user of an app whose signing is all auto-approved has only the partner's control. **Recommendation:** keep the removal (the plan asks for it in H9) and deploy H9 before any partner turns on email sharing with auto-approve; or keep the requirement until H12 if that can't be promised.
+- Address impact: none.

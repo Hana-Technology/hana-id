@@ -15,7 +15,7 @@ import { sessionNonce } from '../src/session-crypto.ts';
 import { clearViewCaches, type ConfigView } from '../src/views.ts';
 import vectors from '../../../packages/core/test/vectors/home-v1.json';
 import { emailEnv, emailToken, withEmail } from './email-helpers.ts';
-import { GOOGLE_ISS, appHeaders, call, chain, google, newSessionKey, seedApp, sessionBody, uid, type Chain } from './helpers.ts';
+import { GOOGLE_ISS, appHeaders, call, chain, google, newSessionKey, seedApp, sessionBody, uid, type Chain, minuteHeadroom } from './helpers.ts';
 
 const AUTH = env.AUTH_ORIGIN!;
 const SHARED = 'shared-client.apps.googleusercontent.com';
@@ -650,6 +650,8 @@ describe('GET /v1/home/config', () => {
   });
 
   it(`allows ${HOME_CONFIG_PER_IP_MINUTE} a minute per IP`, async () => {
+    // The limit is per clock minute: start with room for all 61 requests, even on a loaded machine.
+    await minuteHeadroom(25_000);
     const ip = '10.77.77.77';
     let last = await get(AUTH, ip);
     for (let i = 1; i < HOME_CONFIG_PER_IP_MINUTE; i++) last = await get(AUTH, ip);

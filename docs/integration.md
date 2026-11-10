@@ -14,7 +14,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
 > an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
 
-Last verified against code: 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: "App names", the rule on names that look like a web address or contain "Hana", D686); 2026-11-10 (onboarding: what Hana needs and in what order, on-chain owners), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
+Last verified against code: 2026-11-10 (app names; onboarding), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
 
 ## How it works
 

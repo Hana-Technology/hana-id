@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer shows the scope's internal id); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
+Last verified: 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the phone-width header and tables; Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer shows the scope's internal id); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
 2026-11-06 (branch `fix/session-expiry-ux`: the session's end mid-task, the banner, the warning before
 the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenarios, D424); 2026-11-06 (branch
 `feat/console-ux-redesign`: the SPA's layout, error display and the local preview, D421).
@@ -25,6 +25,10 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
 
 ## The SPA's rules
 
+- **Phone width** (≤ 760 px): the sidebar becomes one header block: Hana's gradient as a rule across its top edge
+  (not under the brand text), the brand and Sign out on one row, the organisation on its own row, then the nav, which
+  scrolls sideways. Wide tables scroll inside their panel (and keep their visually hidden headers inside), so no page
+  scrolls sideways at 320, 375 or 420 px (checked with the preview, 2026-11-10).
 - **CSP** `script-src 'self'; style-src 'self'; font-src 'self'`: no inline script or style anywhere, no `style` prop,
   no external URL; the only font files are Hana's own, bundled from `packages/brand` ("Brand" below); every style is a
   class in `web/src/styles.css` (light, and dark through `prefers-color-scheme`).

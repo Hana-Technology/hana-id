@@ -12,6 +12,54 @@ import { API_URL, AUTH_ORIGIN, EVM_CHAIN_ID } from '../src/stack.ts';
 import { approve, clickAction, closeOf, errorCode, expect, login, newApp, okValue, openPartner, status, test, waitPersisted, waitReady, walletDirectory } from './fixtures.ts';
 import { HOME_CORS, routeApps, shots, signIn } from './home-steps.ts';
 
+/** Where the screenshots go (Chromium only), as in home-steps.ts. */
+const SHOTS = process.env.HANA_SHOTS_DIR;
+
+/**
+ * A screen at the narrow widths web addresses must wrap well at (320, 375, 420 px), light and dark: no sideways scroll, and
+ * no `.origin` broken inside a label (each line of it ends at a break point: `://`, or before `.`, `:` or `/`).
+ */
+async function narrow(page: Page, name: string, browserName: string): Promise<void> {
+  for (const width of [320, 375, 420]) {
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: scheme });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${name} ${width}: no sideways scroll`).toBe(true);
+      const cut = await page.evaluate(() => {
+        const bad: string[] = [];
+        for (const el of document.querySelectorAll('.origin')) {
+          const text = el.textContent ?? '';
+          const range = document.createRange();
+          let lastTop: number | null = null;
+          // Walk the characters; where a new line starts, the character before must be a break point's.
+          let offset = 0;
+          for (const node of el.childNodes) {
+            if (node.nodeType !== Node.TEXT_NODE) continue;
+            const t = node.textContent ?? '';
+            for (let i = 0; i < t.length; i++) {
+              range.setStart(node, i);
+              range.setEnd(node, i + 1);
+              const top = range.getClientRects()[0]?.top ?? null;
+              if (top !== null && lastTop !== null && top > lastTop + 2) {
+                const prev = text[offset + i - 1] ?? '';
+                const here = text[offset + i] ?? '';
+                if (!(prev === '/' && text.slice(0, offset + i).endsWith('://')) && !'.:/'.includes(here)) bad.push(`${text} @${offset + i}`);
+              }
+              if (top !== null) lastTop = top;
+            }
+            offset += t.length;
+          }
+        }
+        return bad;
+      });
+      expect(cut, `${name} ${width}: an origin broken inside a label`).toEqual([]);
+      if (SHOTS && browserName === 'chromium') await page.screenshot({ path: `${SHOTS}/${name}-w${width}-${scheme}.png`, fullPage: true, animations: 'disabled' });
+    }
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.emulateMedia({ colorScheme: 'light' });
+}
+
 const DEPOSIT_CONTRACT = '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
 const AUTO_POLICY = {
   v: 1,
@@ -63,6 +111,7 @@ test('stopping auto-approve in Hana Home stops auto-signing in the open partner 
   const consentP = page.waitForEvent('popup');
   await clickAction(page, 'consent', 'requestAutoApprove');
   const consent = await consentP;
+  await narrow(consent, 'h9-16-consent-origin', browserName);
   await approve(consent, 'Allow');
   expect(await okValue(page, 'consent')).toMatchObject({ granted: true });
   await consent.close();
@@ -109,7 +158,12 @@ test('stopping auto-approve in Hana Home stops auto-signing in the open partner 
   // Sign out this device: gone from Home, and the partner's next load asks to sign in again.
   await home.bringToFront();
   await item.getByRole('button', { name: 'Sign out this device' }).click();
-  await expect(home.locator('.home-confirm')).toContainText('Whoever has that device can still approve and sign in a tab of the app that is already open there');
+  await expect(home.locator('.home-confirm')).toContainText('A tab already open there can keep working for a few minutes (up to about 10).');
+  // The detail is behind "More", which opens from the keyboard.
+  await home.locator('.home-confirm summary').focus();
+  await home.keyboard.press('Enter');
+  await expect(home.locator('.home-confirm details')).toHaveAttribute('open', '');
+  await expect(home.locator('.home-confirm details')).toContainText('for up to about a minute in an app that can sign some requests by itself, for up to about 10 minutes in other apps');
   const signedOut = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/shares/revoke` && r.request().method() === 'POST');
   await home.locator('.home-confirm').getByRole('button', { name: 'Sign out', exact: true }).click();
   expect((await signedOut).status()).toBe(200);
@@ -238,6 +292,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   // Partner names are values in the neutral box, never headings.
   await expect(page.getByRole('heading', { name: 'Sodax' })).toHaveCount(0);
   await shots(page, 'h9-02-devices-list', browserName);
+  await narrow(page, 'h9-02-devices-list', browserName);
 
   // Each confirmation.
   await section.locator(`#home-stop-consent-front-${ID(11)}`).click();

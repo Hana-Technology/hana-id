@@ -167,6 +167,13 @@ strong,
   word-break: break-all;
 }
 
+/* A web address wraps whole, or at its own break points (dom.ts originText: after `://`, before `.`, `:` and `/`), never
+   inside a label; only a label wider than the line is ever cut. */
+.origin {
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
 .warn,
 .note {
   background: var(--warn-bg);
@@ -911,6 +918,27 @@ button.home-export-toggle {
 
 .home-confirm li {
   margin: 2px 0;
+}
+
+.home-confirm-more {
+  margin: 0 0 8px;
+}
+
+.home-confirm-more summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent);
+  width: fit-content;
+}
+
+.home-confirm-more summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.home-confirm-more ul {
+  margin: 6px 0 0;
 }
 
 /* The stop button: outlined in the danger colour (its words say what it does), legible in both schemes. */

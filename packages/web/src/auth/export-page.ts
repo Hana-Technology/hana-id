@@ -64,7 +64,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ChainLoginError, loginOnChain } from './chain-login.ts';
 import { ServerClock } from './clock.ts';
-import { type Dom, dom, errorView } from './dom.ts';
+import { type Dom, dom, errorView, originText } from './dom.ts';
 import { PageError, apiErrorCode, errorMessage, sessionKeyText } from './errors.ts';
 import { appLogo } from './logo.ts';
 import type { NearReader } from './near-rpc.ts';
@@ -373,7 +373,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         'section',
         { class: 'panel export' },
         d.h('h1', {}, `Export your ${CHAIN_NAMES[ctx.chain]} key`),
-        d.h('p', { class: 'asker' }, appLogo(d, env, logoUrl()), 'For your wallet in ', d.h('strong', {}, app?.name ?? ctx.appName), ' at ', d.h('span', { class: 'origin' }, ctx.parentOrigin)),
+        d.h('p', { class: 'asker' }, appLogo(d, env, logoUrl()), 'For your wallet in ', d.h('strong', {}, app?.name ?? ctx.appName), ' at ', originText(d, ctx.parentOrigin)),
         d.h('p', { class: 'account' }, 'Address ', d.h('code', { class: 'mono' }, ctx.address)),
         d.h('p', { class: 'warn' }, EXPORT_WARNING),
         d.h('p', { class: 'muted' }, both ? 'To be sure it’s you, sign in again first, with Google or with a code sent to your email.' : 'To be sure it’s you, sign in with Google again first.'),

@@ -81,7 +81,7 @@ import {
 import type { HanaEnv } from '../hana-env.ts';
 import { appLogo } from './logo.ts';
 import type { AuthApi } from './api.ts';
-import { type Dom, dom, errorView } from './dom.ts';
+import { type Dom, dom, errorView, originText } from './dom.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
 import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, googleTokenFirstUrl, loginGoogleRequest } from './google.ts';
@@ -331,7 +331,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   };
 
   const header = () =>
-    d.h('p', { class: 'asker' }, appLogo(d, env, ctx.logoUrl), 'Signing in to ', d.h('strong', {}, ctx.appName), ' at ', d.h('span', { class: 'origin' }, ctx.parentOrigin));
+    d.h('p', { class: 'asker' }, appLogo(d, env, ctx.logoUrl), 'Signing in to ', d.h('strong', {}, ctx.appName), ' at ', originText(d, ctx.parentOrigin));
   /** A notice; `retry` (a transient failure) adds "Try again", which repeats the request that failed. */
   const message = (text: string | null, id: string, retry?: () => void) => {
     if (!text) return null;

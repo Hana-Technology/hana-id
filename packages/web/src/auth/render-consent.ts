@@ -17,7 +17,7 @@ import {
   verifiedContractOnAll,
 } from '@hana-id/core';
 import type { AutoApprovePolicyV1, FunctionRule } from '@hana-id/core/policy';
-import { type Child, type Dom, row, rows } from './dom.ts';
+import { type Child, type Dom, originText, row, rows } from './dom.ts';
 import { formatUnits } from './render-approval.ts';
 
 const mono = (d: Dom, text: string) => d.h('code', { class: 'mono' }, text);
@@ -116,7 +116,7 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
   const { policy, appName, parentOrigin } = view;
   const parts: Child[] = [
     d.h('h1', {}, 'Allow automatic signing?'),
-    d.h('p', {}, d.h('strong', {}, appName), ' at ', d.h('span', { class: 'origin' }, parentOrigin), ' asks to sign some requests without asking you each time.'),
+    d.h('p', {}, d.h('strong', {}, appName), ' at ', originText(d, parentOrigin), ' asks to sign some requests without asking you each time.'),
     d.h('p', { class: 'label' }, `“${policy.label}”`),
     d.h(
       'p',

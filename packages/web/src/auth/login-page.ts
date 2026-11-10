@@ -27,7 +27,7 @@
 // the authenticated sender, kept only in sessionStorage, and the in-memory copy is zeroed.
 import { type LoginMethod, type WindowMessage, homeNonce, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
-import { type Dom, dom, errorView } from './dom.ts';
+import { type Dom, dom, errorView, originText } from './dom.ts';
 import { PageError } from './errors.ts';
 import { type EmailContext, storeEmailContext } from './email-storage.ts';
 import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAuthUrl, loginGoogleRequest } from './google.ts';
@@ -292,7 +292,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       const url = googleRequest.url;
       // The app's logo (batch C11), when the preparer sent one on this build's files origin.
       const intro = () =>
-        d.h('p', { class: 'asker' }, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
+        d.h('p', { class: 'asker' }, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', originText(d, msg.parentOrigin));
       // Email is offered only by the vault or the export window, only for an env with an email issuer.
       const methods: readonly LoginMethod[] = msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
       /** The email context: the email step's facts, and (batch 8b) the follow-up mode's, which a Google login needs too. */

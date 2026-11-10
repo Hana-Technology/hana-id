@@ -13,7 +13,7 @@
 // SECURITY: app names, origins and the policy's label are the partner's words: they reach the page as text nodes only,
 // never as a heading, a link or markup. The device label is the vault's coarse "Chrome on macOS", also text. Ids are held
 // in memory only, for the stop the user clicks. Nothing here is written to storage, a URL or a log.
-import type { Child, Dom } from './dom.ts';
+import { type Child, type Dom, originText } from './dom.ts';
 import { type HomeConsent, type HomeDevice, type HomeDeviceScope, type HomeDevicesApi, type HomeDevicesQuery, type HomeIdentity, type HomeScope, type HomeStop, type HomeStopResult, type HomeTabConsent, HOME_DEVICES_MAX } from './home-api.ts';
 import { type HomeProblem, homeProblem, plainProblem } from './home-problems.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
@@ -29,11 +29,15 @@ export function devicesLinked(search: string): boolean {
   return keys.length === 1 && keys[0] === 'view' && q.getAll('view').length === 1 && q.get('view') === HOME_DEVICES_VIEW;
 }
 
-/** What each stop says before it is sent: what it does, and what it doesn't. */
-export const HOME_STOP_CONFIRM = Object.freeze({
+/**
+ * What each stop says before it is sent: `points`, at most three short lines, always shown; `more`, the full detail behind
+ * a "More" disclosure. The short lines never promise more than the detail says.
+ */
+export const HOME_STOP_CONFIRM: Readonly<Record<HomeStop['kind'], { title: string; points: readonly string[]; more?: readonly string[]; go: string; going: string }>> = Object.freeze({
   share: {
     title: 'Sign out this device?',
-    points: [
+    points: ['Signs that device out of this app and stops automatic signing there.', 'A tab already open there can keep working for a few minutes (up to about 10).'],
+    more: [
       'Automatic signing stops on that device within about 10 seconds.',
       'The next time the app is opened or reloaded there, it asks to sign in again.',
       'Whoever has that device can still approve and sign in a tab of the app that is already open there: for up to about a minute in an app that can sign some requests by itself, for up to about 10 minutes in other apps.',
@@ -280,6 +284,8 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       { class: 'home-confirm', attrs: { role: 'group', 'aria-labelledby': `${id}-title`, id } },
       d.h('p', { class: 'home-confirm-title', attrs: { id: `${id}-title`, tabindex: '-1' } }, words.title),
       d.h('ul', {}, ...words.points.map((p) => d.h('li', {}, p))),
+      // The full detail, one native disclosure (keyboard and screen reader friendly), closed by default.
+      words.more ? d.h('details', { class: 'home-confirm-more', attrs: { id: `${id}-more` } }, d.h('summary', {}, 'More'), d.h('ul', {}, ...words.more.map((p) => d.h('li', {}, p)))) : null,
       d.h(
         'div',
         { class: 'actions start' },
@@ -313,7 +319,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     return d.h(
       'li',
       { class: 'home-device', attrs: { 'data-share': x.shareId } },
-      d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, x.label ?? UNNAMED_DEVICE), ' on ', d.h('span', { class: 'origin' }, x.partnerOrigin)),
+      d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, x.label ?? UNNAMED_DEVICE), ' on ', originText(d, x.partnerOrigin)),
       showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, x.appId))) : null,
       d.h(
         'dl',
@@ -338,7 +344,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     return d.h(
       'li',
       { class: 'home-device', attrs: { 'data-consent': c.consentId } },
-      d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'A tab (may be closed)'), ' on ', d.h('span', { class: 'origin' }, c.partnerOrigin)),
+      d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'A tab (may be closed)'), ' on ', originText(d, c.partnerOrigin)),
       showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, c.appId))) : null,
       d.h('p', { class: 'muted' }, 'This app keeps no sign-in on the device: the tab is signed out when it closes, and Hana can’t tell whether it still is open.'),
       d.h('div', { class: 'home-device-consent' }, ...consentLines(c), s.canStop ? stopControl(where, { kind: 'consent', consentId: c.consentId }, s.scopeId, 'Stop auto-approving', `home-stop-consent-${where}-${c.consentId}`, nameId) : null),

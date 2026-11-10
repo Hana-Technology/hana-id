@@ -4,7 +4,7 @@
 // stop does, partner strings as text only, every refusal's sentence, the end of the sign-in, and `?view=devices`.
 import { decodeHomeIdentity, homeMessage } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dom } from '../../src/auth/dom.ts';
+import { dom, originText } from '../../src/auth/dom.ts';
 import { HOME_UNNAMED_RULE, type HomeIdentity, homeDevicesApi, homeDevicesSearch, homePolicyLabel, homeStopBody, newHomeIdentity, parseHomeDevices } from '../../src/auth/home-api.ts';
 import { HOME_STOP_CONFIRM, type HomeDevices, UNNAMED_DEVICE, devicesLinked, startHomeDevices, stopDoneText } from '../../src/auth/home-devices.ts';
 import type { HomeScope } from '../../src/auth/home-api.ts';
@@ -243,7 +243,15 @@ describe('the stops', () => {
     expect(h.devices.confirming).not.toBeNull();
     const panel = document.getElementById(`${button}-confirm`)!;
     expect(panel.querySelector('.home-confirm-title')?.textContent).toBe(HOME_STOP_CONFIRM[kind].title);
-    expect([...panel.querySelectorAll('li')].map((li) => li.textContent)).toEqual(HOME_STOP_CONFIRM[kind].points);
+    expect([...panel.querySelectorAll(':scope > ul > li')].map((li) => li.textContent)).toEqual([...HOME_STOP_CONFIRM[kind].points]);
+    expect(HOME_STOP_CONFIRM[kind].points.length).toBeLessThanOrEqual(3);
+    // The full detail, where there is more, sits in a closed native disclosure.
+    const more = panel.querySelector('details');
+    if (HOME_STOP_CONFIRM[kind].more) {
+      expect(more?.hasAttribute('open')).toBe(false);
+      expect(more?.querySelector('summary')?.textContent).toBe('More');
+      expect([...(more?.querySelectorAll('li') ?? [])].map((li) => li.textContent)).toEqual([...(HOME_STOP_CONFIRM[kind].more ?? [])]);
+    } else expect(more).toBeNull();
     h.click(`${button}-confirm-cancel`);
     expect(h.devices.confirming).toBeNull();
     expect(h.calls).toHaveLength(1);
@@ -418,6 +426,15 @@ describe('partner strings are text only', () => {
     expect(() => parseHomeDevices({ scopes: [], nextCursor: 'A B' })).toThrow();
     expect(homePolicyLabel('x'.repeat(81))).toBe(HOME_UNNAMED_RULE);
     expect(homePolicyLabel('  Deposits  ')).toBe('Deposits');
+  });
+
+  it('an origin wraps only after :// and before . : and /, and reads as itself', () => {
+    const el = originText(dom(document), 'https://earn.sodax.example:8443');
+    expect(el.textContent).toBe('https://earn.sodax.example:8443');
+    expect(el.className).toBe('origin');
+    expect(el.innerHTML).toBe('https://<wbr>earn<wbr>.sodax<wbr>.example<wbr>:8443');
+    // Partner text stays text: markup in an origin is never markup.
+    expect(originText(dom(document), 'https://<b>x</b>.example').querySelector('b')).toBeNull();
   });
 
   it('a request’s query and bodies are exactly the API’s', () => {

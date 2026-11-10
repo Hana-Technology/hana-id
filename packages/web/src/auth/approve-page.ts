@@ -36,7 +36,7 @@ import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decod
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
 import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './approve-guard.ts';
-import { type Dom, dom, errorView } from './dom.ts';
+import { type Dom, dom, errorView, originText } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
 import { renderApproval } from './render-approval.ts';
@@ -248,7 +248,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       { class: 'app' },
       // The app's logo (batch C11), when the vault sent one on this build's files origin.
       d.h('p', {}, appLogo(d, env, msg.logoUrl), extra ? `${extra} from ` : 'From ', d.h('strong', {}, msg.appName)),
-      d.h('p', { class: 'origin' }, msg.parentOrigin),
+      originText(d, msg.parentOrigin, 'p'),
     );
   }
 

@@ -672,9 +672,11 @@ describe('GET /v1/home/config', () => {
     expect((await call(HOME_CONFIG_ENDPOINT, { method: 'POST', rawBody: '{}', headers: { origin: AUTH } })).status).toBe(405);
   });
 
-  it('no Home route other than config, apps and login exists: no other /v1/home path answers', async () => {
-    for (const p of ['/v1/home/devices']) {
+  it('no Home route other than config, apps, login, devices and the three stops exists: no other /v1/home path answers', async () => {
+    for (const p of ['/v1/home/device', '/v1/home/revoke', '/v1/home/consents', '/v1/home/email-sharing']) {
       expect((await call(p, { method: 'POST', rawBody: '{}', headers: { origin: AUTH } })).status).toBe(404);
     }
+    // /v1/home/devices takes GET only.
+    expect((await call('/v1/home/devices', { method: 'POST', rawBody: '{}', headers: { origin: AUTH } })).status).toBe(405);
   });
 });

@@ -124,9 +124,11 @@ export class VaultApi {
    * GET /v1/app: the scope, signer and Google client (read from chain by the API), plus serverTimeMs. `consentHeader`
    * (base64url of the consent id) also asks for that consent's status; the API honours it only from the vault's origin.
    */
-  async app(consentHeader?: string): Promise<AppConfig> {
+  async app(consentHeader?: string, shareHeader?: string): Promise<AppConfig> {
     const headers = this.headers(false);
     if (consentHeader) headers['x-hana-consent'] = consentHeader;
+    // The session's share id (base64url): the API answers whether it was taken away, so an open tab ends (H9).
+    if (shareHeader) headers['x-hana-share'] = shareHeader;
     const { res, body } = await this.request('/v1/app', { method: 'GET', headers });
     if (!isAppConfig(body)) throw new ApiError(res.status, 'bad_response', 'Unexpected /v1/app response', null, str(body.requestId));
     if (body.serverTimeMs !== undefined) this.o.onServerTime?.(body.serverTimeMs);

@@ -36,7 +36,7 @@ export const HOME_STOP_CONFIRM = Object.freeze({
     points: [
       'Automatic signing stops on that device within about 10 seconds.',
       'The next time the app is opened or reloaded there, it asks to sign in again.',
-      'A tab of the app that is open there right now can still ask you to approve requests until it next checks with Hana. Don’t approve anything you didn’t start.',
+      'Whoever has that device can still approve and sign in a tab of the app that is already open there: for up to about a minute in an app that can sign some requests by itself, for up to about 10 minutes in other apps.',
       'Signatures and transactions already made stay valid. Signing out doesn’t move your funds: if someone else may have your wallet’s key, move your funds to a new wallet.',
     ],
     go: 'Sign out',
@@ -66,7 +66,7 @@ export const HOME_STOP_CONFIRM = Object.freeze({
 
 /** What the page says once a stop is done (`changed`: false when it had already ended). */
 export function stopDoneText(kind: HomeStop['kind'], changed: boolean): string {
-  if (kind === 'share') return changed ? 'Signed out. Automatic signing stops there within about 10 seconds, and the app asks to sign in again the next time it opens there.' : 'That device was already signed out.';
+  if (kind === 'share') return changed ? 'Signed out. Automatic signing stops there within about 10 seconds, a tab already open there ends within about a minute (up to about 10 minutes in an app that never signs by itself), and the app asks to sign in again the next time it opens there.' : 'That device was already signed out.';
   if (kind === 'consent') return changed ? 'Auto-approve stopped. Within about 10 seconds the app asks you to approve each request on that device.' : 'Auto-approve had already stopped on that device.';
   return changed ? 'Your email is no longer shared with this app. Its new sign-ins don’t include it.' : 'Your email was no longer shared with this app.';
 }
@@ -320,28 +320,28 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
         { class: 'home-device-facts' },
         d.h('dt', {}, 'Signed in'),
         d.h('dd', {}, when(x.signedInAtMs)),
-        x.lastUsedAtMs !== null ? d.h('dt', {}, 'Last used') : null,
+        x.lastUsedAtMs !== null ? d.h('dt', {}, 'Last opened or approved here') : null,
         x.lastUsedAtMs !== null ? d.h('dd', {}, when(x.lastUsedAtMs)) : null,
         d.h('dt', {}, 'Signs out by itself'),
         d.h('dd', {}, ends),
       ),
       x.consent
-        ? d.h('div', { class: 'home-device-consent' }, ...consentLines(x.consent), stopControl(where, { kind: 'consent', consentId: x.consent.consentId }, s.scopeId, 'Stop auto-approving', `home-stop-consent-${where}-${x.consent.consentId}`, nameId))
+        ? d.h('div', { class: 'home-device-consent' }, ...consentLines(x.consent), s.canStop ? stopControl(where, { kind: 'consent', consentId: x.consent.consentId }, s.scopeId, 'Stop auto-approving', `home-stop-consent-${where}-${x.consent.consentId}`, nameId) : null)
         : d.h('p', { class: 'muted' }, 'Auto-approve is off: this device asks you to approve every request.'),
-      stopControl(where, { kind: 'share', shareId: x.shareId }, s.scopeId, 'Sign out this device', `home-stop-share-${where}-${x.shareId}`, nameId),
+      s.canStop ? stopControl(where, { kind: 'share', shareId: x.shareId }, s.scopeId, 'Sign out this device', `home-stop-share-${where}-${x.shareId}`, nameId) : null,
     );
   }
 
-  /** A consent of an app that keeps no sign-in on the device: it lives as long as that tab. */
+  /** A consent of an app that keeps no sign-in on the device: it lives as long as that tab, which may have closed already. */
   function tabConsentItem(where: Where, s: HomeDeviceScope, c: HomeTabConsent, showApp: boolean): HTMLElement {
     const nameId = `home-tab-consent-${where}-${c.consentId}`;
     return d.h(
       'li',
       { class: 'home-device', attrs: { 'data-consent': c.consentId } },
-      d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'An open tab'), ' on ', d.h('span', { class: 'origin' }, c.partnerOrigin)),
+      d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'A tab (may be closed)'), ' on ', d.h('span', { class: 'origin' }, c.partnerOrigin)),
       showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, c.appId))) : null,
-      d.h('p', { class: 'muted' }, 'This app keeps no sign-in on the device: the tab is signed out when it closes.'),
-      d.h('div', { class: 'home-device-consent' }, ...consentLines(c), stopControl(where, { kind: 'consent', consentId: c.consentId }, s.scopeId, 'Stop auto-approving', `home-stop-consent-${where}-${c.consentId}`, nameId)),
+      d.h('p', { class: 'muted' }, 'This app keeps no sign-in on the device: the tab is signed out when it closes, and Hana can’t tell whether it still is open.'),
+      d.h('div', { class: 'home-device-consent' }, ...consentLines(c), s.canStop ? stopControl(where, { kind: 'consent', consentId: c.consentId }, s.scopeId, 'Stop auto-approving', `home-stop-consent-${where}-${c.consentId}`, nameId) : null),
     );
   }
 
@@ -362,7 +362,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
           ': ',
           ...e.addresses.flatMap((a, i) => [i > 0 ? ', ' : null, d.h('span', { class: 'mono' }, a)]),
         ),
-        stopControl(where, { kind: 'email', appId: e.appId }, s.scopeId, 'Stop sharing email', `home-stop-email-${where}-${s.scopeId}-${e.appId}`, lineId),
+        s.canStop ? stopControl(where, { kind: 'email', appId: e.appId }, s.scopeId, 'Stop sharing email', `home-stop-email-${where}-${s.scopeId}-${e.appId}`, lineId) : null,
       );
     });
   }
@@ -379,12 +379,20 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       // Which app: the partner's names, in the neutral box, never a heading.
       where === 'front' ? d.h('div', { class: 'home-devices-apps' }, d.h('p', {}, 'In ', ...s.apps.flatMap((a, i) => [i > 0 ? ' · ' : null, d.h('strong', {}, a.name)]))) : null,
       d.h('p', { class: 'home-devices-note', attrs: { role: 'status', id: `home-devices-note-${where}-${s.scopeId}`, tabindex: '-1' } }, note ?? null),
+      s.canStop
+        ? null
+        : d.h(
+            'p',
+            { class: 'note', attrs: { id: `home-devices-unconfirmed-${where}-${s.scopeId}` } },
+            'Hana Home couldn’t check on NEAR that this sign-in is still part of this account, so it offers no stop and shows no email sharing here for now. Show your devices again in a moment.',
+          ),
       items.length > 0
         ? d.h('ul', { class: 'home-device-list' }, ...items)
         : where === 'app'
           ? d.h('p', { class: 'muted', attrs: { id: 'home-app-devices-empty' } }, 'No device is signed in to this app with Hana right now.')
           : null,
-      s.more ? d.h('p', { class: 'muted' }, `Hana Home shows the ${HOME_DEVICES_MAX} most recent. Sign out the ones you don’t use, then show your devices again.`) : null,
+      s.more ? d.h('p', { class: 'muted' }, `Hana Home shows the ${HOME_DEVICES_MAX} most recent here; others are signed in too. Sign out the ones you don’t use, then show your devices again.`) : null,
+      s.devices.some((x) => x.lastUsedAtMs !== null) ? d.h('p', { class: 'muted home-last-used-note' }, '“Last opened or approved here” doesn’t count requests the app signed by itself.') : null,
       ...emailBlock(where, s, showApp),
     );
   }

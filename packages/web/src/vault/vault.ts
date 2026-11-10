@@ -687,12 +687,16 @@ export class Vault {
       // The consent this read reports on: the session's, as last read. The answer applies to that consent alone.
       const consentId = this.session?.consent?.consentId ?? null;
       this.consentAsked = consentId;
-      const p = this.api!.app(consentId ? base64UrlEncode(fromHex(consentId)) : undefined).then((app) => {
+      // The session's share, likewise: a 'revoked' answer ends that session alone (Hana Home's "Sign out this device").
+      const asked = this.session;
+      const shareId = asked?.share?.shareId ?? null;
+      const p = this.api!.app(consentId ? base64UrlEncode(fromHex(consentId)) : undefined, shareId ? base64UrlEncode(shareId) : undefined).then((app) => {
         this.appRtts.set(app, this.perfNow() - sent);
         this.logoUrl = logoUrlOn(this.env.filesOrigin, app.logoUrl, this.config.appId);
         this.applyServedPolicy(app, at, sent);
         this.applyServedRawSign(app, at);
         this.applyServedConsent(app, consentId, at, sent);
+        if (asked && shareId) this.applyServedShare(app, asked, shareId);
         this.mainnetDemo = app.mainnetDemo === true;
         this.mainnetDemoCheckedAt = Math.max(this.mainnetDemoCheckedAt, at);
         // The vault's own check, whatever the API sent: anything it refuses (or a missing value) means the fixed table.
@@ -742,6 +746,18 @@ export class Vault {
     if (status !== 'active' && status !== 'revoked' && status !== 'unknown') return;
     if (this.consentRead?.id === id && this.consentRead.sent > sent) return;
     this.consentRead = { id, status, at, sent };
+  }
+
+  /**
+   * The share GET /v1/app reported on (the session's when the read was sent). `'revoked'` ends that session as a touch's
+   * 410 does: the record is deleted, other tabs are told, the session ends. Only ever an end: the read slides nothing
+   * (D55, D539), and anything but `'revoked'`, a missing field included, changes nothing.
+   */
+  private applyServedShare(app: AppConfig, s: Session, shareId: Uint8Array): void {
+    if (app.share !== 'revoked' || this.session !== s || !s.share || !bytesEqual(s.share.shareId, shareId)) return;
+    void this.deleteRecordIf(s).catch(() => undefined);
+    this.broadcastRevoked(shareId);
+    this.endSession(true);
   }
 
   /** After the 60 s read: a consent found revoked is cleared here, so a tab's status reflects it without any request. */

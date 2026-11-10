@@ -11,12 +11,18 @@
 // is the only path a share or a consent is ever recorded under. Its sha256 is what `vault_shares.path_hash` and
 // `vault_consents.path_hash` hold. Nothing here derives a key or changes a path.
 //
+// A root that isn't the identity itself (a member's account) is the directory's word, which can be stale: an unlink whose
+// background sync failed leaves the removed login `active` there. So before anything personal is shown (shared addresses)
+// or anything is stopped, that root is confirmed on chain (`confirmMember`, one uncached `get_identity` view; a view works
+// through a governance pause). Read failures fail closed (D661).
+//
 // SECURITY: `(provider, sub)` comes only from `homeGate`'s verified token. Nothing here logs a `sub`, a root, a path or a
 // path hash.
 import { identitySub } from '@hana-id/core/identity';
 import { sha256 } from '../bytes.ts';
 import type { Env } from '../env.ts';
 import { identitySubKey } from '../identity/signer.ts';
+import { getIdentity } from '../link-views.ts';
 import type { HomeIdentity } from './identity.ts';
 
 /** The only key index a vault opens, so the only one shares and consents are recorded under. */
@@ -30,6 +36,8 @@ export interface HomeRoot {
   pathHash: Uint8Array;
   /** The account's User ID in the scope (`email_consents.user_sub`), or null when the env has no IDENTITY_SUB_KEY. */
   userSub: string | null;
+  /** The root is another identity's (the directory says this one is a member of its account): confirm it before acting. */
+  member: boolean;
 }
 
 interface RootRow {
@@ -49,9 +57,9 @@ const ROOTS = `SELECT i.scope_id, r.provider AS root_provider, r.sub AS root_sub
 export const rootPathHash = async (scopeId: string, root: { provider: string; sub: string }): Promise<Uint8Array> =>
   sha256(new TextEncoder().encode(`${scopeId}#${root.provider}#${root.sub}#${HOME_KEY_INDEX}`));
 
-const toRoot = async (r: RootRow): Promise<HomeRoot> => {
+const toRoot = async (r: RootRow, who: Pick<HomeIdentity, 'provider' | 'sub'>): Promise<HomeRoot> => {
   const root = { provider: r.root_provider, sub: r.root_sub };
-  return { scopeId: r.scope_id, root, pathHash: await rootPathHash(r.scope_id, root), userSub: r.token_sub };
+  return { scopeId: r.scope_id, root, pathHash: await rootPathHash(r.scope_id, root), userSub: r.token_sub, member: root.provider !== who.provider || root.sub !== who.sub };
 };
 
 /**
@@ -64,17 +72,40 @@ export async function overlayRoots(db: D1Database, identity: Pick<HomeIdentity, 
     .bind(identity.sub, identity.provider, after ?? '', limit + 1)
     .all<RootRow>();
   const out: HomeRoot[] = [];
-  for (const r of results) if (!out.some((x) => x.scopeId === r.scope_id)) out.push(await toRoot(r));
+  for (const r of results) if (!out.some((x) => x.scopeId === r.scope_id)) out.push(await toRoot(r, identity));
   return out;
 }
 
 /** One scope's root for this identity: the directory's account root, else the identity's own. Throws when D1 can't answer. */
 export async function scopeRoot(env: Pick<Env, 'DB' | 'IDENTITY_SUB_KEY'>, scopeId: string, identity: Pick<HomeIdentity, 'provider' | 'sub'>): Promise<HomeRoot> {
   const row = await env.DB.prepare(`${ROOTS} AND i.scope_id = ?3 LIMIT 1`).bind(identity.sub, identity.provider, scopeId).first<RootRow>();
-  if (row) return toRoot(row);
+  if (row) return toRoot(row, identity);
+  return ownRoot(env, scopeId, identity);
+}
+
+/** The identity's own root in the scope: its own path, its own User ID. */
+export async function ownRoot(env: Pick<Env, 'IDENTITY_SUB_KEY'>, scopeId: string, identity: Pick<HomeIdentity, 'provider' | 'sub'>): Promise<HomeRoot> {
   const root = { provider: identity.provider, sub: identity.sub };
   const key = identitySubKey(env);
-  return { scopeId, root, pathHash: await rootPathHash(scopeId, root), userSub: typeof key === 'string' ? null : identitySub(key, scopeId, root) };
+  return { scopeId, root, pathHash: await rootPathHash(scopeId, root), userSub: typeof key === 'string' ? null : identitySub(key, scopeId, root), member: false };
+}
+
+/**
+ * Whether the chain agrees that the identity is a member of `r`'s root now (`get_identity`: status `member`, that root).
+ * One view call, never cached. Throws when the chain can't answer: the caller fails closed.
+ */
+export async function confirmMember(env: Env, r: HomeRoot, identity: Pick<HomeIdentity, 'provider' | 'sub'>): Promise<boolean> {
+  const view = await getIdentity(env, r.scopeId, identity.provider, identity.sub);
+  return view.status === 'member' && view.root !== null && view.root.provider === r.root.provider && view.root.sub === r.root.sub;
+}
+
+/**
+ * The root a stop may act for: an own root as it is; a member's only once the chain confirms it, and the identity's own
+ * when the chain says the directory is stale. Throws when the chain can't answer.
+ */
+export async function confirmedRoot(env: Env, r: HomeRoot, identity: Pick<HomeIdentity, 'provider' | 'sub'>): Promise<HomeRoot> {
+  if (!r.member) return r;
+  return (await confirmMember(env, r, identity)) ? r : ownRoot(env, r.scopeId, identity);
 }
 
 export const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((x, i) => x === b[i]);

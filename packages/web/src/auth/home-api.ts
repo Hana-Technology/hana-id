@@ -332,6 +332,11 @@ export interface HomeDeviceScope {
   email: HomeEmailShare[] | null;
   /** More devices or consents exist than the answer carries. */
   more: boolean;
+  /**
+   * Whether this sign-in's place in the account is confirmed, so stops are offered. False while a linked account couldn't
+   * be checked on NEAR: the devices are shown, with no stop and no addresses.
+   */
+  canStop: boolean;
 }
 
 export interface HomeDevicesPage {
@@ -415,7 +420,8 @@ function parseDeviceScope(v: unknown): HomeDeviceScope | null {
       .filter((e) => e.addresses.length > 0)
       .slice(0, HOME_EMAILS_MAX);
   } else if (v.email !== null) return null;
-  return { scopeId: v.scopeId, apps, devices, consents, email, more: v.more === true };
+  // Stops only where the API says so: a missing or odd value offers none.
+  return { scopeId: v.scopeId, apps, devices, consents, email, more: v.more === true, canStop: v.canStop === true };
 }
 
 /** Reads a `GET /v1/home/devices` answer strictly; a malformed entry is dropped, a malformed answer is `bad_response`. */

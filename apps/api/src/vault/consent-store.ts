@@ -10,6 +10,24 @@ import { blob } from './shares.ts';
 
 /** Sent by the vault on GET /v1/app (`Origin: VAULT_ORIGIN` only); carries the 128-bit consent id. */
 export const CONSENT_HEADER = 'x-hana-consent';
+/** Sent by the vault on GET /v1/app (`Origin: VAULT_ORIGIN` only); carries its session's 128-bit share id (H9). */
+export const SHARE_HEADER = 'x-hana-share';
+
+/**
+ * Whether a share has been taken away, for GET /v1/app's `share` (H9: "Sign out this device" reaches an open tab at its next
+ * read). `'revoked'`: no such share of this app, revoked (by the device, Hana Home or the app's settings), the app no longer
+ * keeping logins, or its origin no longer allowed. Time-based ends (idle, absolute) are left to the vault's own timers and
+ * the next unlock or touch (D55), so this read can end a session only where unlock would refuse it for good, and never
+ * slides or extends anything (D539). One uncached D1 statement.
+ */
+export async function shareStatus(db: D1Database, appId: string, shareId: Uint8Array, originAllowed: (origin: string) => boolean): Promise<'live' | 'revoked'> {
+  const r = await db
+    .prepare('SELECT s.revoked_at, s.partner_origin, a.persistence FROM vault_shares s JOIN apps a ON a.id = s.app_id WHERE s.share_id = ?1 AND s.app_id = ?2')
+    .bind(shareId, appId)
+    .first<{ revoked_at: number | null; partner_origin: string; persistence: string }>();
+  if (!r || r.revoked_at !== null || r.persistence !== 'session' || !originAllowed(r.partner_origin)) return 'revoked';
+  return 'live';
+}
 /** Revoked rows are kept this long, then pruned (a share-mode row's replay is stopped by the share's counter). */
 export const CONSENT_REVOKED_KEEP_MS = 60 * 60 * 1000;
 /**

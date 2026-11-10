@@ -1107,9 +1107,9 @@ const token = await hana.getIdentityToken(); // with `email` when granted
   sharing") or from the approval window's account line. New tokens and your console then lose the address at once;
   tokens you already received keep it until they expire (≤ 1 h), and the address you stored is yours to delete (your
   terms with Hana require deleting it on request).
-- **Stopping from Hana Home.** Users can also see and stop sharing in Hana Home, Hana's own page, from any device, with
-  the same effect; this covers users of an app whose signing is all auto-approved, who may never see the approval window.
-  A control of yours that calls `requestEmailSharing()` (for example "Manage email sharing") is still welcome.
+- **Required if you use auto-approve.** Users of an app with an auto-approve policy may never see the approval window,
+  so if email sharing is on you must give them a visible control (for example "Manage email sharing") that calls
+  `requestEmailSharing()`, or they have no way to stop sharing.
 - `hana.on('emailSharingChanged', (state) => …)` fires (`'granted'` or `'declined'`) when the user changes it on this
   device; call `getIdentityToken()` again. Errors: `email_sharing_unavailable` (`data.reason`: `off` when your setting
   is off, `no_address` when Hana has no address for this session: ask the user to sign in again, `unavailable`), 4100

@@ -4514,12 +4514,13 @@ the user's `key_exported` event in the admin (it reads "Hana Home"). An app whos
 can't be moved yet (D578). Rolling back is `deploy:pages` of the previous build: nothing is stored.
 
 **With H9 (devices and auto-approve).** No migration (it reads 0003's shares, 0017's consents and 0014's email consents),
-no secret, no var, no cron. Order: the API (`GET /v1/home/devices` and the three `POST /v1/home/*/revoke`), then the pages
-(`/home`'s section) and the vault (it now sends `deviceLabel`; the API has accepted it since H4). Email sharing's part needs
+no secret, no var, no cron. Order: the API (`GET /v1/home/devices`, the three `POST /v1/home/*/revoke`, `GET /v1/app`'s `share`), then the pages
+(`/home`'s section) and the vault (it now sends `deviceLabel`, accepted since H4, and `x-hana-share`, which an older API
+ignores, so the order only matters for the new behaviour). Email sharing's part needs
 IDENTITY_SUB_KEY on the API (already there wherever identity tokens are minted). Check by hand after the deploy: sign in to a
 partner app, Allow its auto-approve, open `/home`, "Show devices", see the device as "{browser} on {system}" with its
 consent; stop auto-approving and see the partner tab's next covered request open the approval screen within about 10 s;
-"Sign out this device" and see the partner's reload ask to sign in again. Open tabs keep the old vault until they reload, so
+"Sign out this device" and see the partner tab, left open, log out within about a minute by itself. Open tabs keep the old vault until they reload, so
 devices signed in before the vault deploy show "A browser (not named)". Rolling back: the pages and vault first, then the API.
 
 ## Hana Home exit client

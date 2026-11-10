@@ -51,7 +51,7 @@ async function deposit(page: Page, name: string, nonce: number): Promise<Page> {
 }
 
 test('stopping auto-approve in Hana Home stops auto-signing in the open partner tab within about 10 s; signing the device out ends it', async ({ page, context, browserName }) => {
-  test.setTimeout(150_000);
+  test.setTimeout(240_000);
   const scopeId = `homedev${browserName}`;
   const app = await newApp({ name: 'Devices E2E', scopeId, settings: { autoApprovePolicy: AUTO_POLICY } });
   await openPartner(page, app);
@@ -109,13 +109,19 @@ test('stopping auto-approve in Hana Home stops auto-signing in the open partner 
   // Sign out this device: gone from Home, and the partner's next load asks to sign in again.
   await home.bringToFront();
   await item.getByRole('button', { name: 'Sign out this device' }).click();
-  await expect(home.locator('.home-confirm')).toContainText('Signatures and transactions already made stay valid.');
+  await expect(home.locator('.home-confirm')).toContainText('Whoever has that device can still approve and sign in a tab of the app that is already open there');
   const signedOut = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/shares/revoke` && r.request().method() === 'POST');
   await home.locator('.home-confirm').getByRole('button', { name: 'Sign out', exact: true }).click();
   expect((await signedOut).status()).toBe(200);
   await expect(group.locator('.home-devices-note')).toContainText('Signed out.');
   await expect(item).toHaveCount(0);
+  const outAt = Date.now();
+  // The open partner tab ends by itself at its next periodic read (an app with a policy reads every minute), no reload,
+  // no request.
   await page.bringToFront();
+  await expect.poll(() => status(page), { timeout: 75_000, intervals: [1000] }).toBe('logged_out');
+  expect(Date.now() - outAt).toBeLessThan(75_000);
+  // And a reload stays signed out.
   await page.reload();
   await waitReady(page);
   expect(await status(page)).toBe('logged_out');
@@ -174,6 +180,7 @@ function devicesFixture(now: number) {
       consents: [],
       email: [{ appId: 'app_sodax1', addresses: ['ada.lovelace@example.com'] }],
       more: false,
+      canStop: true,
     },
     s2: {
       scopeId: 's2',
@@ -182,6 +189,7 @@ function devicesFixture(now: number) {
       consents: [{ consentId: ID(21), appId: 'app_lumen1', partnerOrigin: 'https://lumenpay.example', label: 'Payments under 10 XLM', grantedAtMs: now - 10 * 60_000, expiresAtMs: now + 50 * 60_000 }],
       email: [],
       more: false,
+      canStop: true,
     },
   };
 }
@@ -190,7 +198,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   test.setTimeout(240_000);
   const now = Date.now();
   let data = devicesFixture(now);
-  let mode: 'list' | 'empty' | 'error' = 'list';
+  let mode: 'list' | 'empty' | 'error' | 'unconfirmed' = 'list';
   let stopAnswer: { status: number; body: unknown } | null = null;
   const stops: { path: string; body: unknown }[] = [];
   await routeApps(context, () => ({ status: 200, body: LIST }));
@@ -204,8 +212,10 @@ test('every screen: devices with their auto-approve and email sharing, each conf
       return { status: 200, body: { revoked: true } };
     }
     if (mode === 'error') return { status: 503, body: { error: 'D1 failed', code: 'home_directory_unavailable', requestId: 'req_e2e' } };
+    // A linked account NEAR couldn't confirm (D661): its devices, no stop, no addresses.
+    if (mode === 'unconfirmed') return { status: 200, body: { scopes: [{ ...data.s1, email: null, canStop: false }], nextCursor: null } };
     const scope = url.searchParams.get('scopeId');
-    if (mode === 'empty') return { status: 200, body: { scopes: scope ? [{ scopeId: scope, apps: [], devices: [], consents: [], email: [], more: false }] : [], nextCursor: null } };
+    if (mode === 'empty') return { status: 200, body: { scopes: scope ? [{ scopeId: scope, apps: [], devices: [], consents: [], email: [], more: false, canStop: true }] : [], nextCursor: null } };
     if (scope === 's1') return { status: 200, body: { scopes: [data.s1], nextCursor: null } };
     if (scope === 's2') return { status: 200, body: { scopes: [data.s2], nextCursor: null } };
     return { status: 200, body: { scopes: [data.s1, data.s2], nextCursor: null } };
@@ -222,7 +232,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   // Several devices in two apps: labels, origins, times, a consent with the app's own words, an open tab, email shared.
   await page.locator('#home-devices-show').click();
   await expect(section.locator('.home-device')).toHaveCount(4);
-  await expect(section.locator('.home-device-name strong')).toHaveText(['Chrome on macOS', 'Safari on iOS', 'A browser (not named)', 'An open tab']);
+  await expect(section.locator('.home-device-name strong')).toHaveText(['Chrome on macOS', 'Safari on iOS', 'A browser (not named)', 'A tab (may be closed)']);
   await expect(section.locator('.home-policy-label').first()).toHaveText('Swaps up to 50 USDC a day on Base, to Sodax’s own contracts');
   await expect(section.locator('.home-email')).toContainText('ada.lovelace@example.com');
   // Partner names are values in the neutral box, never headings.
@@ -284,7 +294,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await page.getByRole('button', { name: 'View Lumen Pay', exact: true }).click();
   await page.locator('#home-app-devices-show').click();
   await expect(page.locator('#home-email-none')).toHaveText('You aren’t sharing your email address with this app.');
-  await expect(page.locator('#home-app-devices')).toContainText('An open tab on https://lumenpay.example');
+  await expect(page.locator('#home-app-devices')).toContainText('A tab (may be closed) on https://lumenpay.example');
   await page.locator('#home-app-devices').scrollIntoViewIfNeeded();
   await shots(page, 'h9-10-app-page-tab-consent-email-off', browserName);
   await page.getByRole('button', { name: 'Back to all apps' }).click();
@@ -299,6 +309,13 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await expect(page.locator('#home-app-devices-empty')).toBeVisible();
   await shots(page, 'h9-12-app-page-empty', browserName);
   await page.getByRole('button', { name: 'Back to all apps' }).click();
+
+  // A linked account Hana couldn't confirm on NEAR: the devices, no stop, no addresses, and why.
+  mode = 'unconfirmed';
+  await page.locator('#home-devices-refresh').click();
+  await expect(page.locator('#home-devices-unconfirmed-front-s1')).toContainText('couldn’t check on NEAR');
+  await expect(page.locator('#home-devices button[id^="home-stop-"]')).toHaveCount(0);
+  await shots(page, 'h9-15-account-unconfirmed', browserName);
 
   // The list can't be read.
   mode = 'error';

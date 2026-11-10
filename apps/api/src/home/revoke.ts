@@ -10,12 +10,16 @@
 // Each loads the row, recomputes the signed-in identity's account root for the row's scope (root.ts, the rule the list
 // uses) and acts only when the row is that root's: another user's id, an id that doesn't exist and an id of an app with
 // nothing of this user's all answer the same 404, so ids can't be probed. The write is conditional on the same path hash
-// or User ID, so nothing between the read and the write can move it onto another row.
+// or User ID, so nothing between the read and the write can move it onto another row. A root that is another identity's
+// (a member's account) is confirmed on chain first, with one `get_identity` view (D661): a stale directory row must not
+// let a removed login stop anything; the chain not answering is a retryable 503 and nothing is written.
 //
 // What a stop does in an open tab: the vault's status read (`GET /v1/app`, every 10 s before an auto-signature, D465)
-// reads the consent as `'revoked'` and auto-signing stops there within about 10 s. A signed-out device's tab is told at
-// its next unlock, touch or reload (D55), and on chain the session is already used up. Signatures already made stay valid.
-// No chain transaction, no key: these work through a governance pause, as stopping must never wait on an incident.
+// reads the consent as `'revoked'` and auto-signing stops there within about 10 s. A signed-out device's open tab learns
+// it from the same read's `share` (D662): within about a minute in an app with a policy (its periodic read), else at its
+// next read, touch, unlock or reload (D55). On chain the session is already used up. Signatures already made stay valid.
+// No chain transaction, no key: these work through a governance pause (a view still answers), as stopping must never
+// wait on an incident.
 //
 // SECURITY: `(provider, sub)` comes only from `homeGate`'s verified token. Nothing here logs an id, a path hash, a `sub`,
 // an app id (which apps a Home user uses is theirs) or an address.
@@ -24,7 +28,7 @@ import type { Env } from '../env.ts';
 import { type Ctx, done, lap, newCtx, reject } from '../handlers.ts';
 import { blob } from '../vault/shares.ts';
 import { homeGate } from './identity.ts';
-import { sameBytes, scopeRoot } from './root.ts';
+import { type HomeRoot, confirmedRoot, sameBytes, scopeRoot } from './root.ts';
 
 export const HOME_REVOKE_ENDPOINTS = {
   consent: '/v1/home/consents/revoke',
@@ -104,6 +108,24 @@ export async function handleHomeRevoke(request: Request, env: Env, endpoint: Hom
 
 type Who = { provider: string; sub: string };
 
+/**
+ * A member-resolved root confirmed on chain before any write (D661): a stale `active` directory row (an unlink whose sync
+ * failed) must not let a removed login stop the account's devices or sharing. Null when the chain can't answer.
+ */
+async function confirmed(env: Env, ctx: Ctx, r: HomeRoot, who: Who): Promise<HomeRoot | null> {
+  if (!r.member) return r;
+  try {
+    const out = await confirmedRoot(env, r, who);
+    lap(ctx, 'chain');
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** The chain couldn't confirm the account: retryable, and nothing was written. */
+const chainDown = (ctx: Ctx): Response => reject(ctx, 503, 'near_unavailable', 'Could not confirm the account on NEAR, try again', { 'retry-after': '2' });
+
 /** The row's scope and path hash, by its id, in any app; null when there is no such row. */
 async function rowOf(db: D1Database, table: 'vault_consents' | 'vault_shares', idColumn: 'consent_id' | 'share_id', rowId: Uint8Array): Promise<{ appId: string; scopeId: string; pathHash: Uint8Array } | null> {
   const r = await db.prepare(`SELECT t.app_id, a.scope_id, t.path_hash FROM ${table} t JOIN apps a ON a.id = t.app_id WHERE t.${idColumn} = ?1`).bind(rowId).first<{ app_id: string; scope_id: string; path_hash: unknown }>();
@@ -114,7 +136,8 @@ async function rowOf(db: D1Database, table: 'vault_consents' | 'vault_shares', i
 async function revokeConsentRow(env: Env, ctx: Ctx, who: Who, consentId: Uint8Array, now: number, unknown: () => Response): Promise<Response> {
   const row = await rowOf(env.DB, 'vault_consents', 'consent_id', consentId);
   if (!row) return unknown();
-  const root = await scopeRoot(env, row.scopeId, who);
+  const root = await confirmed(env, ctx, await scopeRoot(env, row.scopeId, who), who);
+  if (!root) return chainDown(ctx);
   if (!sameBytes(root.pathHash, row.pathHash)) return unknown();
   lap(ctx, 'row');
   const res = await env.DB.prepare("UPDATE vault_consents SET revoked_at = ?3, revoked_by = 'home' WHERE consent_id = ?1 AND path_hash = ?2 AND revoked_at IS NULL")
@@ -130,7 +153,8 @@ async function revokeConsentRow(env: Env, ctx: Ctx, who: Who, consentId: Uint8Ar
 async function revokeShareRow(env: Env, ctx: Ctx, who: Who, shareId: Uint8Array, now: number, unknown: () => Response): Promise<Response> {
   const row = await rowOf(env.DB, 'vault_shares', 'share_id', shareId);
   if (!row) return unknown();
-  const root = await scopeRoot(env, row.scopeId, who);
+  const root = await confirmed(env, ctx, await scopeRoot(env, row.scopeId, who), who);
+  if (!root) return chainDown(ctx);
   if (!sameBytes(root.pathHash, row.pathHash)) return unknown();
   lap(ctx, 'row');
   const [share] = await env.DB.batch([
@@ -148,7 +172,8 @@ async function revokeShareRow(env: Env, ctx: Ctx, who: Who, shareId: Uint8Array,
 async function revokeEmail(env: Env, ctx: Ctx, who: Who, appId: string, now: number, unknown: () => Response): Promise<Response> {
   const app = await env.DB.prepare('SELECT scope_id FROM apps WHERE id = ?1').bind(appId).first<{ scope_id: string }>();
   if (!app) return unknown();
-  const root = await scopeRoot(env, app.scope_id, who);
+  const root = await confirmed(env, ctx, await scopeRoot(env, app.scope_id, who), who);
+  if (!root) return chainDown(ctx);
   if (root.userSub === null) return reject(ctx, 503, 'email_sharing_unavailable', 'Email sharing is unavailable in this environment');
   lap(ctx, 'row');
   let revoked: number;

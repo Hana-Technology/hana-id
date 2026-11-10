@@ -9,12 +9,13 @@ import { KeyPair } from '@near-js/crypto';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { base64Decode, base64UrlEncode, fromHex } from '../src/bytes.ts';
-import { HOME_DEVICES_ENDPOINT, HOME_DEVICES_PAGE, HOME_DEVICES_PER_SCOPE } from '../src/home/devices.ts';
+import { HOME_CONSENTS_PER_SCOPE, HOME_DEVICES_ENDPOINT, HOME_DEVICES_PAGE, HOME_DEVICES_PER_SCOPE, HOME_MEMBER_READS, HOME_MEMBER_READ_BATCH } from '../src/home/devices.ts';
 import { HOME_REVOKE_ENDPOINTS, HOME_REVOKE_PER_KEY_MINUTE } from '../src/home/revoke.ts';
 import { clearKekCache } from '../src/vault/kek.ts';
 import { NO_SHARE_ID } from '../src/vault/message.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { GOOGLE_ISS, ORIGIN, type Chain, type SeededApp, call, chain, google, seedApp, uid } from './helpers.ts';
+import { ikSync } from './email-helpers.ts';
 import { HOUR, VAULT, act, autoApprovePolicy, pathFor, pathHash, setSettings, setShare, signVault, spentSession, storedShare, vaultHeaders } from './vault-helpers.ts';
 
 const AUTH = env.AUTH_ORIGIN!;
@@ -25,10 +26,21 @@ const POLICY_ID = [...fromHex(computePolicyId(POLICY, { sessionTtlMs: SESSION_TT
 
 let near: Chain;
 let counter = 0;
+/** The chain's links: `sub` → its root's sub and its status there (the contract's `get_identity`). Absent: its own root. */
+let onChain: Map<string, { root: string; status: 'member' | 'pending' }>;
+/** `get_identity` fails (an RPC outage). */
+let identityDown = false;
 beforeEach(() => {
   clearViewCaches();
   near = chain({}, { shared: [SHARED] });
   near.exit = [];
+  onChain = new Map();
+  identityDown = false;
+  near.views.get_identity = (a) => {
+    if (identityDown) throw new Error('rpc down');
+    const link = onChain.get(a.sub as string);
+    return { key: ikSync(a.scope_id as string, a.provider as string, a.sub as string), status: link ? link.status : 'own', opened: !link, root: link ? { provider: 'google', sub: link.root } : null, effective_at_ms: null, account_epoch: 0 };
+  };
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -85,6 +97,7 @@ interface ScopeAnswer {
   consents: { consentId: string; appId: string; partnerOrigin: string; label: string }[];
   email: { appId: string; addresses: string[] }[] | null;
   more: boolean;
+  canStop: boolean;
 }
 interface DevicesAnswer {
   scopes: ScopeAnswer[];
@@ -153,8 +166,13 @@ const hex64 = (): string => [...crypto.getRandomValues(new Uint8Array(32))].map(
 const b36 = (n: number): string => Array.from({ length: n }, () => 'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]).join('');
 const userSubKey = (): Uint8Array => base64Decode(env.IDENTITY_SUB_KEY!);
 
-/** An account in `scope` rooted at `root`, with `members` (each `[sub, status]`). Returns its User ID. */
-async function account(scope: string, root: string, members: [string, 'active' | 'pending' | 'unlinked'][] = []): Promise<string> {
+/**
+ * An account in `scope` rooted at `root`, with `members` (each `[sub, status]`), in the directory and on chain. `stale`:
+ * a member the directory still holds `active` but the chain no longer links (an unlink whose sync failed). Returns its
+ * User ID.
+ */
+async function account(scope: string, root: string, members: [string, 'active' | 'pending' | 'unlinked' | 'stale'][] = []): Promise<string> {
+  for (const [sub, status] of members) if (status === 'active' || status === 'pending') onChain.set(sub, { root, status: status === 'active' ? 'member' : 'pending' });
   const now = Date.now();
   const userId = `hu_${b36(26)}`;
   const tokenSub = identitySub(userSubKey(), scope, { provider: 'google', sub: root });
@@ -164,7 +182,7 @@ async function account(scope: string, root: string, members: [string, 'active' |
       .bind(scope, hex64(), userId, 'google', sub, role, status, now)
       .run();
   await identity(root, 'root', 'active');
-  for (const [sub, status] of members) await identity(sub, 'member', status);
+  for (const [sub, status] of members) await identity(sub, 'member', status === 'stale' ? 'active' : status);
   return tokenSub;
 }
 
@@ -507,6 +525,157 @@ describe('POST /v1/home/email-sharing/revoke', () => {
     await shareEmail(app, userSub, 'ada@example.com');
     expect((await ofScope(me, app.scope)).email).toEqual([{ appId: app.id, addresses: ['ada@example.com'] }]);
     expect((await stop(me, 'email', { appId: app.id })).status).toBe(200);
+  });
+});
+
+describe('a stale directory row (D661): an unlink whose sync failed', () => {
+  it('a removed login the directory still holds active gets no addresses and no stops: the chain says it is its own now', async () => {
+    const app = await policyApp();
+    const root = await home();
+    const removed = await home();
+    const userSub = await account(app.scope, root.sub, [[removed.sub, 'stale']]);
+    await shareEmail(app, userSub, 'ada@example.com');
+    const d = await device(app, root.sub, { consent: true });
+    // The chain contradicts the row: the list is the removed login's own (nothing), never the account's.
+    for (const s of [await ofScope(removed, app.scope), (await devices(removed)).scopes[0]!]) {
+      expect(s.devices).toEqual([]);
+      expect(s.email).toEqual([]);
+    }
+    await expectCode(await stop(removed, 'share', { shareId: b64(d.shareId) }), 404, 'unknown_share');
+    await expectCode(await stop(removed, 'consent', { consentId: b64(d.consentId!) }), 404, 'unknown_consent');
+    await expectCode(await stop(removed, 'email', { appId: app.id }), 404, 'unknown_email_share');
+    expect((await storedShare(d.shareId))!.revoked_at).toBeNull();
+    expect((await emailRows(app, userSub)).results).toEqual([{ state: 'granted', email: 'ada@example.com' }]);
+  });
+
+  it('a genuine member, confirmed on chain, gets its account’s addresses and stops (one get_identity a member scope)', async () => {
+    const app = await policyApp();
+    const root = await home();
+    const member = await home();
+    const userSub = await account(app.scope, root.sub, [[member.sub, 'active']]);
+    await shareEmail(app, userSub, 'ada@example.com');
+    await device(app, root.sub);
+    const reads = () => near.viewCalls.filter((c) => c.method === 'get_identity').length;
+    const before = reads();
+    const s = await ofScope(member, app.scope);
+    expect(reads() - before).toBe(1);
+    expect(s).toMatchObject({ canStop: true, email: [{ appId: app.id, addresses: ['ada@example.com'] }] });
+    expect(s.devices).toHaveLength(1);
+    // The root itself reads no chain.
+    const after = reads();
+    await ofScope(root, app.scope);
+    expect(reads()).toBe(after);
+  });
+
+  it('the chain read failing fails closed: devices listed, no addresses, no stops; a stop answers a retryable 503 and writes nothing', async () => {
+    const app = await policyApp();
+    const root = await home();
+    const member = await home();
+    const userSub = await account(app.scope, root.sub, [[member.sub, 'active']]);
+    await shareEmail(app, userSub, 'ada@example.com');
+    const d = await device(app, root.sub, { consent: true });
+    identityDown = true;
+    const s = await ofScope(member, app.scope);
+    expect(s).toMatchObject({ canStop: false, email: null });
+    expect(s.devices).toHaveLength(1);
+    for (const [what, body] of [
+      ['share', { shareId: b64(d.shareId) }],
+      ['consent', { consentId: b64(d.consentId!) }],
+      ['email', { appId: app.id }],
+    ] as const) {
+      const res = await stop(member, what, body);
+      expect(res.headers.get('retry-after')).toBe('2');
+      await expectCode(res, 503, 'near_unavailable');
+    }
+    expect((await storedShare(d.shareId))!.revoked_at).toBeNull();
+    expect(await consentRow(d.consentId!)).toMatchObject({ revoked_at: null });
+    expect((await emailRows(app, userSub)).results).toEqual([{ state: 'granted', email: 'ada@example.com' }]);
+    // The root's own stops need no chain read and still work.
+    expect((await stop(root, 'share', { shareId: b64(d.shareId) })).status).toBe(200);
+  });
+
+  it(`a page reads at most ${HOME_MEMBER_READS} identities, and stops after a failing batch`, async () => {
+    const root = await home();
+    const member = await home();
+    for (let i = 0; i < HOME_DEVICES_PAGE; i++) {
+      const app = await policyApp();
+      await account(app.scope, root.sub, [[member.sub, 'active']]);
+    }
+    const reads = () => near.viewCalls.filter((c) => c.method === 'get_identity').length;
+    const before = reads();
+    expect((await devices(member)).scopes.every((s) => s.canStop)).toBe(true);
+    expect(reads() - before).toBe(HOME_MEMBER_READS);
+    identityDown = true;
+    const failing = reads();
+    expect((await devices(member)).scopes.every((s) => !s.canStop)).toBe(true);
+    expect(reads() - failing).toBeLessThanOrEqual(HOME_MEMBER_READ_BATCH);
+  });
+});
+
+describe('the bounds never make the list say something false', () => {
+  it(`a device’s consent shows however many tab consents there are (${HOME_CONSENTS_PER_SCOPE}+)`, async () => {
+    const app = await policyApp();
+    const tabsApp = await policyApp({ scope: app.scope });
+    await setSettings(tabsApp.id, { persistence: 'none' });
+    const me = await home();
+    for (let i = 0; i < HOME_CONSENTS_PER_SCOPE + 2; i++) await registerConsent(tabsApp, spentSession(near, app.scope, { sub: me.sub }), null);
+    const d = await device(app, me.sub, { consent: true });
+    const s = await ofScope(me, app.scope);
+    expect(s.devices.find((x) => x.shareId === b64(d.shareId))?.consent?.consentId).toBe(b64(d.consentId!));
+    expect(s.consents).toHaveLength(HOME_CONSENTS_PER_SCOPE);
+    expect(s.more).toBe(true);
+  });
+
+  it('the apps read takes only the apps the rows name, so other apps in the scope can’t push a device out', async () => {
+    const app = await policyApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    for (let i = 0; i < 5; i++) await seedApp({ scope: app.scope });
+    const s = await ofScope(me, app.scope);
+    expect(s.devices.map((x) => x.shareId)).toEqual([b64(d.shareId)]);
+    expect(s.apps.map((a) => a.appId)).toEqual([app.id]);
+  });
+
+  it('"last used" is never later than now', async () => {
+    const app = await policyApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    // A share slid long ago under a long idle limit, the limit lowered since: idle_until − the new limit is in the future.
+    await setSettings(app.id, { idle_ttl_ms: 15 * 60_000 });
+    await setShare(d.shareId, { idle_until: Date.now() + 3 * HOUR });
+    const s = await ofScope(me, app.scope);
+    expect(s.devices[0]!.lastUsedAtMs).not.toBeNull();
+    expect(s.devices[0]!.lastUsedAtMs).toBeLessThanOrEqual(Date.now());
+  });
+});
+
+describe('GET /v1/app’s share field (H9: an open tab learns it was signed out)', () => {
+  const appRead = async (app: SeededApp, shareId: number[] | string, origin = VAULT): Promise<Record<string, unknown>> => {
+    near.clients[`client-${app.scope}`] = app.scope;
+    const res = await call('/v1/app', { method: 'GET', headers: { 'x-hana-key': app.key, origin, 'x-hana-parent-origin': ORIGIN, 'x-hana-share': typeof shareId === 'string' ? shareId : b64(shareId) } });
+    return (await res.json()) as Record<string, unknown>;
+  };
+
+  it('live, then revoked once Home signs the device out; never from another origin; a malformed id gets no field', async () => {
+    const app = await policyApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    expect((await appRead(app, d.shareId)).share).toBe('live');
+    expect((await stop(me, 'share', { shareId: b64(d.shareId) })).status).toBe(200);
+    expect((await appRead(app, d.shareId)).share).toBe('revoked');
+    expect((await appRead(app, [...crypto.getRandomValues(new Uint8Array(16))])).share).toBe('revoked');
+    expect((await appRead(app, 'nope')).share).toBeUndefined();
+    expect((await appRead(app, d.shareId, ORIGIN)).share).toBeUndefined();
+  });
+
+  it('an idle share still reads live: time-based ends stay the vault’s own (D55), and the read moves nothing', async () => {
+    const app = await policyApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    await setShare(d.shareId, { idle_until: Date.now() - 1 });
+    const before = await storedShare(d.shareId);
+    expect((await appRead(app, d.shareId)).share).toBe('live');
+    expect(await storedShare(d.shareId)).toEqual(before);
   });
 });
 

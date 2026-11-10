@@ -376,6 +376,28 @@ describe('identities after /v1/login and the link relays', () => {
     expect((await identities(app.scope)).filter((r) => r.sub === 'e1.mover')).toEqual([expect.objectContaining({ user_id: userB, status: 'active' })]);
   });
 
+  it('an unlink or cancel the API relayed marks that member out even when the account can’t be read afresh (D661)', async () => {
+    const { app, near } = await linkSetup();
+    const at = { requestId: rid(), endpoint: 'test' };
+    for (const action of ['unlink', 'cancel'] as const) {
+      const m = { provider: 'email', sub: `e1.${action}` };
+      near.accounts.set(`google#${G_SUB}`, { root: { provider: 'google', sub: G_SUB }, members: [{ ...m, active: true }], epoch: 1 });
+      near.identities.set(`email#${m.sub}`, { status: 'member', opened: false, root: { provider: 'google', sub: G_SUB } });
+      await syncAccount(env, app.scope, { provider: 'google', sub: G_SUB }, [m], at);
+      expect((await identities(app.scope)).find((r) => r.sub === m.sub)).toMatchObject({ status: 'active' });
+      // The relay succeeded, then the background read of the account fails.
+      const getAccount = near.views.get_account!;
+      near.views.get_account = () => {
+        throw new Error('rpc down');
+      };
+      expect(await syncAccount(env, app.scope, { provider: 'google', sub: G_SUB }, [], at, { hint: { memberKey: ikSync(app.scope, 'email', m.sub), action } })).toBe(false);
+      near.views.get_account = getAccount;
+      expect((await identities(app.scope)).find((r) => r.sub === m.sub)).toMatchObject({ role: 'member', status: action === 'cancel' ? 'cancelled' : 'unlinked' });
+    }
+    // The root's row is untouched.
+    expect((await identities(app.scope)).find((r) => r.sub === G_SUB)).toMatchObject({ role: 'root', status: 'active' });
+  });
+
   it('a login whose standing read failed writes nothing (the fail-open guess is never stored)', async () => {
     const app = await seedApp();
     expect(await syncAfterLogin(env, app.scope, { provider: 'google', sub: G_SUB }, null, { pending: false, path: pathFor(app.scope), confirmed: false }, { requestId: rid(), endpoint: 'test' })).toBe(false);

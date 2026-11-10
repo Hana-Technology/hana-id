@@ -37,6 +37,7 @@ const scopeOf = (scopeId: string, over: Record<string, unknown> = {}) => ({
   consents: [],
   email: [],
   more: false,
+  canStop: true,
   ...over,
 });
 
@@ -150,7 +151,8 @@ describe('the list', () => {
     expect(items[0]!.textContent).toContain('Auto-approve on');
     expect(items[0]!.querySelector('.home-policy-label')?.textContent).toBe('Swaps on Base');
     expect(items[0]!.textContent).toContain('Signed in');
-    expect(items[0]!.textContent).toContain('Last used');
+    expect(items[0]!.textContent).toContain('Last opened or approved here');
+    expect(pageText()).toContain('doesn’t count requests the app signed by itself');
     expect(items[0]!.textContent).toContain('if it isn’t used before then');
     expect(items[1]!.querySelector('.home-device-name strong')?.textContent).toBe(UNNAMED_DEVICE);
     expect(items[1]!.textContent).toContain('Auto-approve is off: this device asks you to approve every request.');
@@ -206,7 +208,7 @@ describe('the list', () => {
     h.answer = () => json(200, { scopes: [scopeOf('s1', { devices: [device(1)], more: true })], nextCursor: null });
     h.click('home-devices-show');
     await h.idle();
-    expect(pageText()).toContain('Hana Home shows the 25 most recent.');
+    expect(pageText()).toContain('Hana Home shows the 25 most recent here; others are signed in too.');
   });
 
   it('a consent of an app that keeps no sign-in reads as an open tab', async () => {
@@ -215,7 +217,7 @@ describe('the list', () => {
     h.answer = () => json(200, { scopes: [scopeOf('s1', { consents: [{ ...consent(3), appId: 'app_sodax1', partnerOrigin: 'https://sodax.example' }] })], nextCursor: null });
     h.click('home-devices-show');
     await h.idle();
-    expect(pageText()).toContain('An open tab on https://sodax.example');
+    expect(pageText()).toContain('A tab (may be closed) on https://sodax.example');
     expect(pageText()).toContain('the tab is signed out when it closes');
     expect(document.getElementById(`home-stop-consent-front-${ID(3)}`)).not.toBeNull();
   });
@@ -352,6 +354,22 @@ describe('the stops', () => {
     expect(h.devices.front).toBe('closed');
     expect(document.querySelector('.home-devices-note')).toBeNull();
     expect(document.getElementById('home-devices-show')).not.toBeNull();
+  });
+});
+
+describe('an account Hana couldn’t confirm (D661)', () => {
+  it('lists its devices with no stop and says why; a missing canStop offers none either', async () => {
+    for (const over of [{ canStop: false }, { canStop: undefined }]) {
+      resetDom();
+      const h = await start();
+      h.mountFront();
+      h.answer = () => json(200, { scopes: [scopeOf('s1', { devices: [device(1, { consent: consent(9) })], email: null, ...over })], nextCursor: null });
+      h.click('home-devices-show');
+      await h.idle();
+      expect(document.querySelectorAll('#home-devices .home-device')).toHaveLength(1);
+      expect(document.querySelector('#home-devices button[id^="home-stop-"]')).toBeNull();
+      expect(text('home-devices-unconfirmed-front-s1')).toContain('couldn’t check on NEAR that this sign-in is still part of this account');
+    }
   });
 });
 

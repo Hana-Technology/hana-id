@@ -12,7 +12,7 @@ function supportCodeOf(userId: string): string {
   return Array.from({ length: 8 }, (_, i) => '0123456789ABCDEFGHJKMNPQRSTVWXYZ'[Number((n >> BigInt(35 - 5 * i)) & 31n)]).join('');
 }
 
-test('after a login the wallet directory lists the user with both addresses and its Google identity', async ({ page, requests }) => {
+test('after a login the wallet directory lists the user with its three addresses (NEAR: SDK 0.4.0, D755) and its Google identity', async ({ page, requests }) => {
   const app = await newApp();
   await openPartner(page, app);
   const addresses = await login(page);
@@ -29,7 +29,9 @@ test('after a login the wallet directory lists the user with both addresses and 
   expect(user!.wallets).toEqual([
     { chain: 'stellar', address: addresses.stellar },
     { chain: 'evm', address: addresses.evm },
+    { chain: 'near', address: (addresses as { near?: string }).near },
   ]);
+  expect((addresses as { near?: string }).near).toMatch(/^[0-9a-f]{64}$/u);
   expect(user!.identities).toEqual([expect.objectContaining({ provider: 'google', role: 'root', status: 'active' })]);
   expect(requests.count(`${API_URL}/v1/wallets/record`)).toBe(1);
   // The Support ID the page reads (the vault's hana_status, from the API's /v1/login answer, C15) is the one the

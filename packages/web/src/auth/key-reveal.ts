@@ -15,7 +15,7 @@
 // puts it in one text node or hands it to the clipboard, and keeps no other reference. A string can't be zeroed: once
 // the text node is replaced it is only unreachable, until the engine collects it. The box is `translate="no"` and has
 // no `aria-live`, so a translator or a screen reader never takes the key on its own. Nothing here logs.
-import { evmPrivateKeyHex, stellarSecretSeed } from '@hana-id/core';
+import { exportStringOf } from '@hana-id/core';
 import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
 import type { Dom } from './dom.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
@@ -53,8 +53,8 @@ export function browserClipboard(): ExportClipboard | null {
   }
 }
 
-/** The export string of a chain private key (StrKey S… or 0x + 64 hex). */
-export const exportString = (chain: 'stellar' | 'evm', key: Uint8Array): string => (chain === 'stellar' ? stellarSecretSeed(key) : evmPrivateKeyHex(key));
+/** The export string of a chain private key (StrKey S…, 0x + 64 hex, or NEAR's ed25519: + base58(seed ‖ public key)). */
+export const exportString = (chain: 'stellar' | 'evm' | 'near', key: Uint8Array): string => exportStringOf(chain, key);
 
 /** The guard over one screen's buttons. */
 export interface ScreenGuard {

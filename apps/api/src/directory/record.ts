@@ -4,8 +4,9 @@
 //
 //   1. the vault gate: key, app active, Origin = VAULT_ORIGIN, parent allowed for the app, no scope_conflict; then the
 //      vault's limits (per IP, then the app's vault quota);
-//   2. the body: exactly {sessionPublicKey (32 bytes), issuedAtMs, path, wallets: {stellar, evm}, sessionSignature
-//      (64 bytes)}, ≤ 4 KiB;
+//   2. the body: exactly {sessionPublicKey (32 bytes), issuedAtMs, path, wallets: {stellar, evm} or {stellar, evm,
+//      near} (D755: a vault serving SDK 0.4.0+ sends NEAR once GET /v1/app lists it in `walletChains`),
+//      sessionSignature (64 bytes)}, ≤ 4 KiB;
 //   3. issuedAtMs within ±5 min of the API's clock (`stale_record`);
 //   4. the path is the app's scope's (`scope#provider#sub#key_index`);
 //   5. each record verifies for (env, signer, app, scope, path, chain, address, session key, issuedAtMs) by the
@@ -20,7 +21,9 @@
 //      D346) (`directory_unavailable`, 503);
 //   7. the session on chain is live, in the app's scope (identity/token.ts checkChainSession, re-read fresh before
 //      refusing) and its path is exactly the record's (`session_mismatch`): another session's path is refused;
-//   8. one D1 batch: the user (the path's account root, D312), both wallets, the root's identity row.
+//   8. one D1 batch: the user (the path's account root, D312), both wallets, the root's identity row; then the NEAR
+//      wallet, its own statement (D756): before migration 0019 its CHECK refuses 'near', and that must not cost the
+//      Stellar and EVM rows. The answer says whether it landed (`near: true | false`, only when the body had one).
 //
 // No single-use marker: a replay of a whole request within the window rewrites the same rows with the same times, so
 // it changes nothing, and outside it is `stale_record`. The vault sends it in the background, never awaited by the
@@ -30,6 +33,7 @@
 import { identityRoot } from '@hana-id/core/identity';
 import {
   WALLET_RECORD_MAX_BODY,
+  WALLET_RECORD_SIGNATURE_BYTES,
   WALLET_RECORD_WINDOW_MS,
   type WalletRecordChain,
   type WalletRecordContext,
@@ -42,6 +46,7 @@ import { type Ctx, done, lap, newCtx, reject } from '../handlers.ts';
 import { readJson } from '../http.ts';
 import { checkChainSession } from '../identity/token.ts';
 import { vaultApp, vaultLimits } from '../vault/endpoints.ts';
+import { log } from '../log.ts';
 import { directoryUser, identityKeyHex, noteDirectoryUnavailable, upsertIdentity, upsertUser, upsertWallet, writeDirectory } from './store.ts';
 
 export const WALLET_RECORD_ENDPOINT = '/v1/wallets/record';
@@ -55,11 +60,14 @@ interface RecordRequest {
   sessionPk: Uint8Array;
   issuedAtMs: number;
   path: string;
-  wallets: Record<WalletRecordChain, { address: string; signature: Uint8Array }>;
+  wallets: { stellar: RecordProof; evm: RecordProof; near?: RecordProof };
   sessionSignature: Uint8Array;
 }
 
-const SIG_BYTES: Record<WalletRecordChain, number> = { stellar: 64, evm: 65 };
+interface RecordProof {
+  address: string;
+  signature: Uint8Array;
+}
 
 /** Exactly the documented body, each field well formed; null otherwise. */
 export function toRecordRequest(body: unknown): RecordRequest | null {
@@ -69,12 +77,14 @@ export function toRecordRequest(body: unknown): RecordRequest | null {
   const { issuedAtMs, path, wallets } = body;
   if (!sessionPk || !sessionSignature || !Number.isSafeInteger(issuedAtMs) || (issuedAtMs as number) < 0) return null;
   if (typeof path !== 'string' || path.length === 0 || path.length > 512) return null;
-  if (!isObj(wallets) || !exactly(wallets, ['stellar', 'evm'])) return null;
+  if (!isObj(wallets)) return null;
+  const chains: readonly WalletRecordChain[] = exactly(wallets, ['stellar', 'evm']) ? ['stellar', 'evm'] : exactly(wallets, ['stellar', 'evm', 'near']) ? ['stellar', 'evm', 'near'] : [];
+  if (chains.length === 0) return null;
   const out = {} as RecordRequest['wallets'];
-  for (const chain of ['stellar', 'evm'] as const) {
+  for (const chain of chains) {
     const w = wallets[chain];
     if (!isObj(w) || !exactly(w, ['address', 'signature']) || typeof w.address !== 'string' || w.address.length === 0 || w.address.length > 64) return null;
-    const signature = bytesOf(w.signature, SIG_BYTES[chain]);
+    const signature = bytesOf(w.signature, WALLET_RECORD_SIGNATURE_BYTES[chain]);
     if (!signature) return null;
     out[chain] = { address: w.address, signature };
   }
@@ -82,7 +92,7 @@ export function toRecordRequest(body: unknown): RecordRequest | null {
 }
 
 const bad = (ctx: Ctx): Response =>
-  reject(ctx, 400, 'bad_request', 'Body must be {sessionPublicKey: 32 bytes, issuedAtMs, path, wallets: {stellar: {address, signature}, evm: {address, signature}}, sessionSignature: 64 bytes}');
+  reject(ctx, 400, 'bad_request', 'Body must be {sessionPublicKey: 32 bytes, issuedAtMs, path, wallets: {stellar: {address, signature}, evm: {address, signature}, near?: {address, signature}}, sessionSignature: 64 bytes}');
 
 export async function handleWalletRecord(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, WALLET_RECORD_ENDPOINT, request);
@@ -106,15 +116,19 @@ export async function handleWalletRecord(request: Request, env: Env, requestId: 
   // Each address proven by its own key for exactly this env, signer, app, path and session.
   const base: WalletRecordContext = { env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, appId: app.id, scopeId: app.scope_id, path: req.path, sessionPublicKey: req.sessionPk, issuedAtMs: req.issuedAtMs };
   const addresses = {} as Record<WalletRecordChain, string>;
-  for (const chain of ['stellar', 'evm'] as const) {
-    const address = verifyWalletRecord(base, chain, req.wallets[chain]);
+  for (const chain of ['stellar', 'evm', 'near'] as const) {
+    const w = req.wallets[chain];
+    if (!w) continue;
+    const address = verifyWalletRecord(base, chain, w);
     if (address === null) return done(ctx, 400, { error: 'A wallet record does not verify', code: 'bad_wallet_record', chain });
     addresses[chain] = address;
   }
-  // The whole request by the session key: only the vault that opened this session holds it.
+  // The whole request by the session key: only the vault that opened this session holds it. With a NEAR record the
+  // proofs hash is v2's (core walletRecordProofsHash), so a two-chain signature never covers a three-chain body.
   const proofs: WalletRecordProofs = {
     stellar: { address: addresses.stellar, signature: req.wallets.stellar.signature },
     evm: { address: addresses.evm, signature: req.wallets.evm.signature },
+    ...(req.wallets.near ? { near: { address: addresses.near, signature: req.wallets.near.signature } } : {}),
   };
   if (!verifyWalletRecordSession(base, proofs, req.sessionSignature)) return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
   lap(ctx, 'records');
@@ -144,5 +158,15 @@ export async function handleWalletRecord(request: Request, env: Env, requestId: 
   );
   if (!written) return reject(ctx, 503, 'directory_write_failed', 'Could not record the wallets, try again later');
   lap(ctx, 'insert');
-  return done(ctx, 200, { recorded: true });
+  if (!req.wallets.near) return done(ctx, 200, { recorded: true });
+  // NEAR on its own (D756): refused by the CHECK until migration 0019 is applied, without undoing the rows above.
+  let near = true;
+  try {
+    await upsertWallet(env.DB, user.internalId, { chain: 'near', address: addresses.near, keyIndex }, req.issuedAtMs).run();
+  } catch (e) {
+    near = false;
+    log({ event: 'directory_near_unrecorded', requestId, endpoint: ctx.endpoint, appId: app.id, code: /CHECK constraint/u.test(String(e)) ? 'no_migration_0019' : 'internal' }, 'warn');
+  }
+  lap(ctx, 'near');
+  return done(ctx, 200, { recorded: true, near });
 }

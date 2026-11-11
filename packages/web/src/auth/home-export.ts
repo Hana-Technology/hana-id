@@ -39,7 +39,7 @@ import {
   ckdAppId,
   decryptCkd,
   decryptRelayPayload,
-  deriveAddresses,
+  deriveWalletAddresses,
   extractPrk,
   isJsonFormToken,
   isRelayToken,
@@ -709,9 +709,9 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
         return refuse(plainProblem('pairing_failed'));
       }
       const made = extractPrk(secret);
-      let opened: { stellar: string; evm: string };
+      let opened: { stellar: string; evm: string; near: string };
       try {
-        opened = deriveAddresses(made, 0);
+        opened = deriveWalletAddresses(made, 0);
       } catch {
         made.fill(0);
         return refuse(plainProblem('derive_failed'));
@@ -725,7 +725,8 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
         made.fill(0);
         return;
       }
-      const differs = s.addresses.some((a) => (a.chain === 'stellar' ? a.address !== opened.stellar : a.address.toLowerCase() !== opened.evm.toLowerCase()));
+      // Each chain against its own derived address (D755: a NEAR account on record is compared with NEAR's, never EVM's).
+      const differs = s.addresses.some((a) => (a.chain === 'stellar' ? a.address !== opened.stellar : a.chain === 'near' ? a.address !== opened.near : a.address.toLowerCase() !== opened.evm.toLowerCase()));
       // Where the pairing check alone doesn't prove the key is the user's, a difference from the record stops the move,
       // as the export window stops on a difference from the vault's address: a root's path (two lying providers could
       // name a root whose owner can forge an answer for it), and an answer the page looked up on NEAR itself rather than
@@ -747,6 +748,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       deps.onAddresses(p.scopeId, [
         { chain: 'stellar', address: opened.stellar },
         { chain: 'evm', address: opened.evm },
+        { chain: 'near', address: opened.near },
       ]);
       render();
       focusTitle();

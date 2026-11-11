@@ -26,6 +26,7 @@ import {
   unsupportedMethodId,
 } from '../src/protocol.ts';
 import { evmTxSigningPayload, parseEvmTxRequest } from '../src/signers/evm.ts';
+import { NEAR_PARAMS } from './near-fixtures.ts';
 
 const G = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
@@ -58,6 +59,7 @@ const VALID_PARAMS: Record<(typeof PORT_METHODS)[number], unknown> = {
   hana_account: undefined,
   hana_linkAccount: { method: 'email' },
   hana_requestEmailSharing: { popupBlocked: true },
+  ...NEAR_PARAMS,
 };
 
 describe('port requests', () => {

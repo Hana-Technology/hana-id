@@ -435,6 +435,8 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       logoUrl: logoUrl(env.FILES_ORIGIN, app.logo_key) ?? null,
       // D411: when the vault asks the user to share their address with the app (identity/email.ts).
       identityEmail,
+      // D755: the chains `exportChain` and POST /v1/wallets/record take; older APIs omit it (Stellar and EVM).
+      walletChains: ['stellar', 'evm', 'near'],
       // D465: only on the vault's read with `x-hana-consent`; older vaults never send the header.
       ...(consent ? { consent } : {}),
       // H9: only on the vault's read with `x-hana-share`; older vaults never send the header.

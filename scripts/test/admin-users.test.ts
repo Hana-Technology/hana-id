@@ -469,6 +469,9 @@ describe('user:list and user:find with the wallet directory', () => {
     await expect(findAny('--address', G_ALICE, '--email', 'a@b.c')).rejects.toThrow('not --email and --address');
     await expect(findAny('--address', G_ALICE, '--provider', 'email')).rejects.toThrow('--provider goes with');
     expect(walletQuery(`G${'A'.repeat(54)}1`)).toBeNull();
+    // A NEAR implicit account id (D755), any case, lowercased.
+    expect(walletQuery('AB'.repeat(32))).toEqual({ kind: 'address', chain: 'near', address: 'ab'.repeat(32) });
+    expect(walletQuery('ab'.repeat(31))).toBeNull();
     h.deps.d1 = null;
     h.out.length = 0;
     await findAny('--address', G_BOB);

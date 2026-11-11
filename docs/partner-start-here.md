@@ -1,7 +1,7 @@
 # Hana ID: start here (testnet pilot)
 
-Hana ID gives each of your users a Stellar wallet and an EVM wallet when they sign in with Google or with a code sent
-to their email. There is no extension and no seed phrase. Keys never reach your page: they stay in a hidden Hana frame,
+Hana ID gives each of your users a Stellar wallet and an EVM wallet (and, with SDK 0.4.0, a NEAR account) when they
+sign in with Google or with a code sent to their email. There is no extension and no seed phrase. Keys never reach your page: they stay in a hidden Hana frame,
 and every signature needs the user's Approve in a Hana window. This page is the short version. The integration guide
 (`integration.md`, sent with the SDK) has the detail; each step below names the guide's section.
 
@@ -119,7 +119,7 @@ holds your users' wallets and names your on-chain owners), sets your security co
 
 ## Limits worth knowing in the first week
 
-- **Test networks only**: the Stellar testnet and EVM testnets such as Sepolia, Base Sepolia and Sonic testnet
+- **Test networks only**: the Stellar testnet, NEAR testnet and EVM testnets such as Sepolia, Base Sepolia and Sonic testnet
   (guide section 12 lists them). A mainnet request fails with `4100` and `data.reason: 'mainnet_not_allowed'`. Sodax
   runs on mainnet only, so with a test app you can quote and build Sodax intents but not sign them. A test app never
   has raw signing.

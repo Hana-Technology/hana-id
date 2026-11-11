@@ -35,6 +35,8 @@ describe('GET /v1/app (batch B)', () => {
       mainnetDemo: false,
       logoUrl: null,
       identityEmail: 'off',
+      // D755: the chains exportChain and the wallet record take.
+      walletChains: ['stellar', 'evm', 'near'],
       // A pk_test_ app's response carries the API's own time and phases (docs/api.md "Timings").
       timings: { totalMs: expect.any(Number), phases: { app: expect.any(Number), limits: expect.any(Number), settings: expect.any(Number), chain: expect.any(Number) } },
       requestId: expect.any(String),

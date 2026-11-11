@@ -46,10 +46,14 @@ export async function exportLimiterKey(appId: string, path: string): Promise<str
 /** The contract's panic when the session key already holds a session (a front-run create_session or a replay). */
 export const SESSION_KEY_IN_USE_PANIC = 'Session key already in use';
 
+/** The chains the export window may name (`exportChain`), the `key_exported` event's `chain`. */
+export const EXPORT_CHAINS = ['stellar', 'evm', 'near'] as const;
+export type ExportChain = (typeof EXPORT_CHAINS)[number];
+
 const CREATE_FIELDS: ReadonlySet<string> = new Set(['jwt', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses']);
 
 export interface LoginCall {
-  request: CreateSessionRequest & { signature: number[]; pk1: string; pk2: string; linkJwt: string | null; linkImmediate: boolean; exportChain: 'stellar' | 'evm' | null };
+  request: CreateSessionRequest & { signature: number[]; pk1: string; pk2: string; linkJwt: string | null; linkImmediate: boolean; exportChain: ExportChain | null };
   method: 'create_session_and_derive';
   args: Record<string, unknown>;
 }
@@ -73,7 +77,8 @@ export function toLogin(body: unknown, scopeId: string, now = Date.now()): Check
   if (linkImmediate !== undefined && typeof linkImmediate !== 'boolean') return { error: 'linkImmediate must be a boolean' };
   if (linkImmediate !== undefined && linkJwt === undefined) return { error: 'linkImmediate needs a linkJwt' };
   // The export window's label for the key_exported event (D430): never relayed, never in the nonce or the CKD payload.
-  if (exportChain !== undefined && exportChain !== 'stellar' && exportChain !== 'evm') return { error: "exportChain must be 'stellar' or 'evm'" };
+  // 'near' since D755 (an export page sends it only to an API whose GET /v1/app lists it in `walletChains`).
+  if (exportChain !== undefined && !(EXPORT_CHAINS as readonly unknown[]).includes(exportChain)) return { error: "exportChain must be 'stellar', 'evm' or 'near'" };
   const link = linkJwt === undefined ? null : { link_jwt: linkJwt, link_immediate: linkImmediate === true };
   return {
     request: {
@@ -83,7 +88,7 @@ export function toLogin(body: unknown, scopeId: string, now = Date.now()): Check
       pk2: derive.pk2,
       linkJwt: link?.link_jwt ?? null,
       linkImmediate: link?.link_immediate ?? false,
-      exportChain: exportChain === undefined ? null : (exportChain as 'stellar' | 'evm'),
+      exportChain: exportChain === undefined ? null : (exportChain as ExportChain),
     },
     method: 'create_session_and_derive',
     args: { ...create.args, signature: derive.signature, pk1: derive.pk1, pk2: derive.pk2, ...(link ?? {}) },

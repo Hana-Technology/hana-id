@@ -320,7 +320,7 @@ export class MockApi {
     if (b.linkJwt !== undefined && !(typeof b.linkJwt === 'string' && b.linkJwt.startsWith('{'))) throw new HttpError(400, 'bad_request');
     if (b.linkImmediate !== undefined && (typeof b.linkImmediate !== 'boolean' || b.linkJwt === undefined)) throw new HttpError(400, 'bad_request');
     // The export window's chain label (D430), as apps/api's toLogin checks it.
-    if (b.exportChain !== undefined && b.exportChain !== 'stellar' && b.exportChain !== 'evm') throw new HttpError(400, 'bad_request');
+    if (b.exportChain !== undefined && b.exportChain !== 'stellar' && b.exportChain !== 'evm' && b.exportChain !== 'near') throw new HttpError(400, 'bad_request');
     // An email token (JWS JSON, `{"payload":…}`) or a Google one; the path is the contract's (the identity's own, or its
     // account root's, batch 7). The token's signature is the vault's to check here (and apps/api's own tests'), as for
     // Google.
@@ -473,7 +473,7 @@ export class MockApi {
       internalId: String(u.user_id),
       scopeId: String(u.scope_id),
       wallets: this.d1.db
-        .prepare("SELECT chain, address FROM end_user_wallets WHERE user_id = ? ORDER BY chain = 'evm', address")
+        .prepare("SELECT chain, address FROM end_user_wallets WHERE user_id = ? ORDER BY CASE chain WHEN 'stellar' THEN 0 WHEN 'evm' THEN 1 ELSE 2 END, address")
         .all(String(u.user_id))
         .map((w) => ({ chain: String(w.chain), address: String(w.address) })),
       identities: this.d1.db

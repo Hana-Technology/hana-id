@@ -21,7 +21,7 @@
 // three ids (the User ID `u1_…` partners see, the identity token's `sub`; its Support ID; the internal id `hu_…`, the
 // ledger's uid, staff only), its role in the account and the account's wallets, read from the API's D1 with the same
 // private executor (lib/d1.ts apiPrivateD1Execute: a sub or an address to look up never goes in a process argument).
-// `user:find --address <G…|0x…>` and `--user <u1_…|hu_…|HANA-XXXX-XXXX>` start from the API's D1 and join each
+// `user:find --address <G…|0x…|NEAR account>` and `--user <u1_…|hu_…|HANA-XXXX-XXXX>` start from the API's D1 and join each
 // identity's address from the issuer's directory when the env has one.
 import { INTERNAL_ID_RE, UNVERIFIED_CLAIM_WARNING, USER_ID_RE, formatSupportId, parseSupportId } from '@hana-id/console-core';
 import { canonicalWalletAddress } from '@hana-id/core/identity';
@@ -79,7 +79,8 @@ export interface DirectoryUser {
 }
 
 export interface WalletRow {
-  chain: 'stellar' | 'evm';
+  /** `near` since D755 (an SDK 0.4.0+ session's NEAR implicit account). */
+  chain: 'stellar' | 'evm' | 'near';
   address: string;
   keyIndex: number;
   firstSeenMs: number;
@@ -142,7 +143,7 @@ export interface UserListFilter {
 
 export type UserFindQuery = { kind: 'email'; candidates: string[]; provider?: UserProvider } | { kind: 'sub'; sub: string; provider?: UserProvider };
 export type WalletFindQuery =
-  | { kind: 'address'; chain: 'stellar' | 'evm'; address: string }
+  | { kind: 'address'; chain: 'stellar' | 'evm' | 'near'; address: string }
   | { kind: 'userId'; userId: string }
   | { kind: 'internalId'; internalId: string }
   | { kind: 'supportId'; code: string };
@@ -225,10 +226,13 @@ const statusAt = (status: unknown, effectiveAt: number | null, now: number): Wal
 const jsonRows = (v: unknown): Record<string, unknown>[] => (JSON.parse(typeof v === 'string' ? v : '[]') as (Record<string, unknown> | null)[]).filter((x): x is Record<string, unknown> => x !== null);
 const msOrNull = (v: unknown): number | null => (v === null || v === undefined ? null : num(v));
 
+/** Stellar, EVM, then NEAR. */
+const CHAIN_RANK: Record<WalletRow['chain'], number> = { stellar: 0, evm: 1, near: 2 };
+
 function parseWallets(json: unknown): WalletRow[] {
   return jsonRows(json)
     .map((w) => ({ chain: w.chain as WalletRow['chain'], address: str(w.address), keyIndex: num(w.key_index), firstSeenMs: num(w.first_seen_at), lastUsedMs: num(w.last_used_at), sharedWith: num(w.shared) }))
-    .sort((a, b) => (a.chain === b.chain ? a.address.localeCompare(b.address) : a.chain === 'stellar' ? -1 : 1));
+    .sort((a, b) => (a.chain === b.chain ? a.address.localeCompare(b.address) : CHAIN_RANK[a.chain] - CHAIN_RANK[b.chain]));
 }
 
 /** A row of accountsBySubsSql → the identity's account in that scope. */
@@ -470,6 +474,8 @@ export function walletQuery(input: string): WalletFindQuery | null {
     if (!address) throw new CliError('Not a valid EVM address');
     return { kind: 'address', chain: 'evm', address };
   }
+  // A NEAR implicit account id (D755), in any case: stored lowercase.
+  if (/^[0-9a-fA-F]{64}$/u.test(v)) return { kind: 'address', chain: 'near', address: v.toLowerCase() };
   // A User ID is case-sensitive (base64url); an internal id is read in any case.
   if (USER_ID_RE.test(v)) return { kind: 'userId', userId: v };
   if (INTERNAL_ID_RE.test(v.toLowerCase())) return { kind: 'internalId', internalId: v.toLowerCase() };
@@ -509,7 +515,7 @@ export async function userFindWallets(q: WalletFindQuery, args: Args, where: str
 }
 
 /**
- * `user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider …] [--json]`;
+ * `user:find [--email <address> | --sub <sub> | --address <G…|0x…|NEAR account> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider …] [--json]`;
  * no flag: one line on stdin, read as whichever it is.
  */
 export async function userFindCommand(args: Args, where: { issuer: string; api: string }, deps: UserCmdDeps): Promise<void> {
@@ -521,7 +527,7 @@ export async function userFindCommand(args: Args, where: { issuer: string; api: 
     if (args.str('provider') !== undefined) throw new CliError('--provider goes with --email or --sub');
     const q = walletQuery(address ?? user ?? '');
     if (!q || (address !== undefined && q.kind !== 'address') || (user !== undefined && q.kind === 'address')) {
-      throw new CliError(address !== undefined ? '--address takes a Stellar G… or EVM 0x… address' : '--user takes a User ID (u1_…), an internal id (hu_…) or a Support ID (HANA-XXXX-XXXX)');
+      throw new CliError(address !== undefined ? '--address takes a Stellar G…, an EVM 0x… address or a NEAR account (64 hex)' : '--user takes a User ID (u1_…), an internal id (hu_…) or a Support ID (HANA-XXXX-XXXX)');
     }
     await userFindWallets(q, args, where.api, deps);
     return;

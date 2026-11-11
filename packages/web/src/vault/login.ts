@@ -125,7 +125,7 @@ import {
   verifyGoogleIdToken,
   zero,
 } from '@hana-id/core';
-import { type Addresses, deriveAddresses, extractPrk } from '@hana-id/core/derivation';
+import { type WalletAddresses, deriveWalletAddresses, extractPrk } from '@hana-id/core/derivation';
 import type { HanaEnv } from '../hana-env.ts';
 import type { VaultApi } from './api.ts';
 import { type Persistence, SESSION_TTL_CAP_MS, type VaultConfig } from './config.ts';
@@ -295,7 +295,8 @@ export interface MadeLink {
 export interface LoginSuccess {
   /** The caller owns it and must zero it. */
   prk: Bytes;
-  addresses: Addresses;
+  /** Stellar, EVM and NEAR (D720). */
+  addresses: WalletAddresses;
   path: string;
   expiresAtMs: number;
   maxUses: number;
@@ -1056,7 +1057,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       }
       const prk = extractPrk(s);
       try {
-        const addresses = deriveAddresses(prk);
+        const addresses = deriveWalletAddresses(prk);
         mark('decrypt');
         const linked = linkedRef ? await this.madeLink(linkedRef, link as LinkPlan) : null;
         // In the background (memory at once, storage after): the login never waits on IndexedDB for it.

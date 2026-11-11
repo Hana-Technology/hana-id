@@ -121,6 +121,9 @@ describe('approval subject validation', () => {
       ['personal_sign', 'evm'],
       ['eip712', 'evm'],
       ['raw', null],
+      ['near_tx', 'near'],
+      ['near_message', 'near'],
+      ['near_delegate', 'near'],
     ]);
   });
 
@@ -150,6 +153,13 @@ describe('approval subject validation', () => {
     ['a chain ID on personal_sign', { ...base, kind: 'personal_sign', chain: 'evm', context: { chainId: 1 } }],
     ['a chain ID on typed data', { ...base, kind: 'eip712', chain: 'evm', context: { chainId: 1 } }],
     ['a context that is not an object', { ...base, kind: 'eip712', chain: 'evm', context: null }],
+    ['a NEAR transaction without its network', { ...base, kind: 'near_tx', chain: 'near', context: {} }],
+    ['a NEAR transaction on another network', { ...base, kind: 'near_tx', chain: 'near', context: { nearNetwork: 'betanet' } }],
+    ['a NEAR network on a Stellar transaction', { ...base, context: { nearNetwork: 'testnet' } }],
+    ['a passphrase on a NEAR delegate action', { ...base, kind: 'near_delegate', chain: 'near', context: { networkPassphrase: 'x' } }],
+    ['a network on a NEAR message', { ...base, kind: 'near_message', chain: 'near', context: { nearNetwork: 'testnet' } }],
+    ['a NEAR kind on Stellar', { ...base, kind: 'near_tx', context: { nearNetwork: 'testnet' } }],
+    ['a raw NEAR request', { ...base, kind: 'raw', chain: 'near', context: {}, bytes: new Uint8Array(32) }],
   ])('refuses %s', (_, subject) => {
     expect(() => validateApprovalSubject(subject as never)).toThrow();
     expect(() => approvalDigest(subject as never)).toThrow();
@@ -165,6 +175,9 @@ describe('approval subject validation', () => {
     expect(approvalContextString('evm', { chainId: 8453 })).toBe('8453');
     expect(approvalContextString('evm', {})).toBe('');
     expect(approvalContextString('stellar', {})).toBe('');
+    expect(approvalContextString('near', { nearNetwork: 'testnet' })).toBe('near:testnet');
+    expect(approvalContextString('near', { nearNetwork: 'mainnet' })).toBe('near:mainnet');
+    expect(approvalContextString('near', {})).toBe('');
   });
 
   it('gives each kind its context: passphrase, chain ID or none', () => {
@@ -176,6 +189,9 @@ describe('approval subject validation', () => {
       ['personal_sign', 'none'],
       ['eip712', 'none'],
       ['raw', 'none'],
+      ['near_tx', 'nearNetwork'],
+      ['near_message', 'none'],
+      ['near_delegate', 'nearNetwork'],
     ]);
   });
 

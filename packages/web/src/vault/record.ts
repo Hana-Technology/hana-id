@@ -126,10 +126,33 @@ export function parseRootPin(v: unknown): string | null {
   return r.v === 1 && r.t === 'root-pin' && typeof r.root === 'string' && /^[0-9a-f]{64}$/u.test(r.root) ? r.root : null;
 }
 
+// ---- the NEAR wallet record's mark (D756) ----
+//
+// Beside the record, one entry saying the API recorded this session's NEAR account in the wallet directory
+// (POST /v1/wallets/record answered `near: true`), so an unlock sends the record only until then: a user who signed in
+// before NEAR (or whose record was missed) gets the row at the next unlock, without a call at every page load. Only the
+// session public key (public on chain), never an address.
+
+export interface NearRecordedMark {
+  v: 1;
+  t: 'near-recorded';
+  /** The session public key, 64 hex. */
+  sessionPk: string;
+}
+
+export const nearRecordedKey = (recordId: string): string => `near|${recordId}`;
+
+/** The mark's session public key (hex), or null (none, or a value of another shape). */
+export function parseNearRecorded(v: unknown): string | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  return r.v === 1 && r.t === 'near-recorded' && typeof r.sessionPk === 'string' && /^[0-9a-f]{64}$/u.test(r.sessionPk) ? r.sessionPk : null;
+}
+
 /** The object store, as the vault uses it. Every method may throw (storage blocked, quota, private mode). */
 export interface RecordStore {
   get(key: string): Promise<unknown>;
-  put(key: string, record: RecordV1 | RootPinRecord): Promise<void>;
+  put(key: string, record: RecordV1 | RootPinRecord | NearRecordedMark): Promise<void>;
   delete(key: string): Promise<void>;
 }
 

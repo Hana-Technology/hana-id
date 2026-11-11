@@ -20,9 +20,20 @@ import {
   type StellarText,
   type StellarTransaction,
   type TypedDataNode,
+  formatGas,
+  formatNear,
+  nearArgsView,
+  nearChangesControl,
+  nearCodeHash,
+  nearDeposits,
+  nearGlobalContractBurn,
+  nearHash58,
+  nearKeyText,
+  nearMethodName,
   stellarAccountControl,
   stellarFlagNames,
 } from '@hana-id/core/decode';
+import { type NearAction, toHex } from '@hana-id/core';
 import { type Child, type Dom, row, rows } from './dom.ts';
 
 /** `value` with `decimals` decimal places, trailing zeros trimmed: formatUnits(1500000000000000000n, 18) = "1.5". */
@@ -376,6 +387,312 @@ function message(d: Dom, m: DecodedMessage): HTMLElement[] {
     : [d.h('pre', { class: 'message' }, m.text)];
 }
 
+// ---- NEAR (D723) ----
+
+/**
+ * The account-control banner for NEAR (D723, D110's rule): shown on every AddKey, DeleteKey, DeleteAccount,
+ * DeployContract and UseGlobalContract of the user's own transaction or delegate action, in the popup's strongest
+ * style. No auto-approve policy covers any NEAR request.
+ */
+export const NEAR_ACCOUNT_CONTROL_BANNER =
+  'Danger: this changes who controls a NEAR account. Whoever gets control can take everything in it, and Hana ID can’t undo it. Approve only if you started this change yourself; an app should almost never need it.';
+
+/** A delegate action (NEP-366) names no network; a relayer pays its fee. */
+export const NEAR_DELEGATE_NOTES = {
+  relayer:
+    'A relayer sends this for you: it pays the network fee and any NEAR this attaches or sends (if an action fails, that NEAR is refunded to your account). The actions run as your account: a contract they call acts in your name and can move tokens you hold with it.',
+  network: 'This authorization doesn’t name a network: it is valid on any NEAR network where your account has this key.',
+} as const;
+
+/** NEP-413's guidance: the recipient, prominently, and what the signature proves. */
+export const nearMessageWarning = (recipient: string): string => `This proves to ${recipient} that you control this NEAR account. Sign only if you are signing in to ${recipient}.`;
+
+/** The danger lines of one account-control action (`receiver` is the account it acts on, `me` the user's). */
+export function nearControlWarnings(a: NearAction, receiver: string, me: string): string[] {
+  const own = receiver === me;
+  const where = own ? 'your account' : receiver;
+  switch (a.type) {
+    case 'addKey':
+      return a.accessKey.permission.type === 'fullAccess'
+        ? [`This adds a full-access key to ${where}. Whoever holds ${nearKeyText(a.publicKey)} can move all its NEAR and tokens and lock you out.`]
+        : [`This adds a key to ${where} that can call ${a.accessKey.permission.methodNames.length === 0 ? 'any method' : 'some methods'} of ${a.accessKey.permission.receiverId} and spend NEAR on their fees.`];
+    case 'deleteKey':
+      return own && a.publicKey.type === 'ed25519' && toHex(a.publicKey.bytes) === me
+        ? ['This removes your Hana key from your account: Hana can no longer sign for it, so you lose control of it.']
+        : [`This removes key ${nearKeyText(a.publicKey)} from ${where}.`];
+    case 'deleteAccount':
+      return [`This deletes ${where} and sends all of its NEAR to ${a.beneficiaryId}. It can’t be undone.`];
+    case 'deployContract':
+      return [`This deploys a contract to ${where}. A contract runs with the account’s own authority: it can move everything in it.`];
+    case 'useGlobalContract':
+      return [`This sets ${where}’s contract to a global contract. A contract runs with the account’s own authority: it can move everything in it.`];
+    default:
+      return [];
+  }
+}
+
+/**
+ * The red warnings of actions that don't change who controls the account but can still cost it dearly: a call to a
+ * contract on the user's own account (it runs with the account's full authority), and publishing a global contract
+ * (its NEAR is burnt).
+ */
+export function nearCostWarnings(a: NearAction, receiver: string, me: string): string[] {
+  switch (a.type) {
+    case 'functionCall':
+      return receiver === me ? ['This calls a contract on your own account. A contract there runs with your account’s full authority: it can move everything in it.'] : [];
+    case 'deployGlobalContract':
+      return [`This publishes a global contract and burns ${formatNear(nearGlobalContractBurn(a.code.length))} from ${receiver === me ? 'your account' : receiver} (0.0001 NEAR per byte of code). Burnt NEAR is gone for good.`];
+    default:
+      return [];
+  }
+}
+
+/** Text longer than this gets a line saying so above it: the box scrolls, and the user must read to its end. */
+export const LONG_TEXT_CHARS = 1500;
+
+/** "Long: N characters. Scroll through all of it before you approve." */
+export const longTextNote = (n: number): string => `Long: ${n} characters. Scroll through all of it before you approve.`;
+
+/** All of `text`, always (never cut): in a scrolling box, with a warning line above it when it is long. */
+function longText(d: Dom, text: string, cls: string): HTMLElement {
+  const box = d.h('pre', { class: cls }, text);
+  if (text.length <= LONG_TEXT_CHARS) return box;
+  return d.h('div', {}, d.h('p', { class: 'warn long-text' }, longTextNote(text.length)), box);
+}
+
+function nearArgs(d: Dom, args: Uint8Array): HTMLElement {
+  const v = nearArgsView(args);
+  if (v.kind === 'empty') return d.h('p', { class: 'muted' }, 'No arguments');
+  if (v.kind === 'json') return d.h('div', { class: 'args' }, d.h('p', {}, `Arguments (JSON, ${v.length} bytes)`), longText(d, v.text, 'message mono'));
+  return d.h('div', { class: 'args' }, d.h('p', { class: 'warn' }, `Arguments (not JSON, shown as hex, ${v.length} bytes)`), longText(d, v.hex, 'message mono'));
+}
+
+function nearMethod(d: Dom, name: string): HTMLElement {
+  const m = nearMethodName(name);
+  return m.text === null ? mono(d, `(shown as hex) ${m.hex}`) : d.h('strong', {}, m.text);
+}
+
+function nearPermission(d: Dom, p: Extract<NearAction, { type: 'addKey' }>['accessKey']['permission']): HTMLElement {
+  if (p.type === 'fullAccess') return d.h('span', { class: 'danger' }, 'Full access');
+  return d.h(
+    'span',
+    {},
+    'Can call ',
+    p.methodNames.length === 0 ? 'any method' : d.h('span', {}, ...p.methodNames.flatMap((n, i) => [i > 0 ? ', ' : '', nearMethod(d, n)])),
+    ' on ',
+    mono(d, p.receiverId),
+    `, fee allowance ${p.allowance === null ? 'unlimited' : formatNear(p.allowance)}`,
+  );
+}
+
+function nearActionBody(d: Dom, a: NearAction, receiver: string, me: string, nested: boolean): Child[] {
+  switch (a.type) {
+    case 'createAccount':
+      return [d.h('p', {}, 'Creates the account ', mono(d, receiver))];
+    case 'deployContract':
+      return [rows(d, [row(d, 'Deploys a contract to', mono(d, receiver)), row(d, 'Code', `${a.code.length} bytes, hash ${nearCodeHash(a.code)}`)])];
+    case 'functionCall':
+      return [
+        rows(d, [row(d, 'Calls', nearMethod(d, a.methodName), ' on ', mono(d, receiver)), row(d, 'Attached deposit', formatNear(a.deposit)), row(d, 'Gas', formatGas(a.gas))]),
+        nearArgs(d, a.args),
+      ];
+    case 'transfer':
+      return [rows(d, [row(d, 'Sends', formatNear(a.deposit)), row(d, 'To', mono(d, receiver))])];
+    case 'stake':
+      return [rows(d, [row(d, 'Stakes (locks)', formatNear(a.stake)), row(d, 'Validator key', mono(d, nearKeyText(a.publicKey)))])];
+    case 'addKey':
+      return [rows(d, [row(d, 'Adds key', mono(d, nearKeyText(a.publicKey))), row(d, 'To account', mono(d, receiver)), row(d, 'Permission', nearPermission(d, a.accessKey.permission))])];
+    case 'deleteKey':
+      return [rows(d, [row(d, 'Removes key', mono(d, nearKeyText(a.publicKey))), row(d, 'From account', mono(d, receiver))])];
+    case 'deleteAccount':
+      return [rows(d, [row(d, 'Deletes the account', mono(d, receiver)), row(d, 'Sends all its NEAR to', mono(d, a.beneficiaryId))])];
+    case 'delegate': {
+      const inner = a.signedDelegate.delegateAction;
+      return [
+        d.h('p', { class: 'warn' }, 'Relays a meta transaction signed by ', mono(d, inner.senderId), ': your account pays its network fee.'),
+        rows(d, [row(d, 'Sender', mono(d, inner.senderId)), row(d, 'Receiver', mono(d, inner.receiverId)), row(d, 'Valid until block', String(inner.maxBlockHeight))]),
+        nested ? null : nearActionList(d, inner.actions, inner.receiverId, inner.senderId, true),
+      ];
+    }
+    case 'deployGlobalContract':
+      return [rows(d, [row(d, 'Publishes a global contract', a.deployMode === 'codeHash' ? 'identified by its code hash' : `identified by the account ${receiver}`), row(d, 'Code', `${a.code.length} bytes, hash ${nearCodeHash(a.code)}`)])];
+    case 'useGlobalContract':
+      return [rows(d, [row(d, 'Sets the contract of', mono(d, receiver)), row(d, 'To the global contract', a.contract.type === 'codeHash' ? mono(d, nearHash58(a.contract.hash)) : mono(d, a.contract.accountId))])];
+  }
+}
+
+const NEAR_ACTION_NAMES: Readonly<Record<NearAction['type'], string>> = {
+  createAccount: 'Create account',
+  deployContract: 'Deploy contract',
+  functionCall: 'Call a contract',
+  transfer: 'Send NEAR',
+  stake: 'Stake',
+  addKey: 'Add key',
+  deleteKey: 'Remove key',
+  deleteAccount: 'Delete account',
+  delegate: 'Relay a meta transaction',
+  deployGlobalContract: 'Publish global contract',
+  useGlobalContract: 'Use global contract',
+};
+
+/**
+ * The actions of a transaction or delegate action on `receiver`, signed by `me`. `nested`: the actions of a delegate
+ * action the user's transaction relays (they act on its sender's account, so they carry no warning for the user).
+ */
+function nearActionList(d: Dom, actions: readonly NearAction[], receiver: string, me: string, nested: boolean): HTMLElement {
+  return d.h(
+    'div',
+    nested ? { class: 'sub' } : {},
+    d.h(nested ? 'p' : 'h2', nested ? { class: 'muted' } : {}, actions.length === 1 ? '1 action' : `${actions.length} actions`),
+    d.h(
+      'ol',
+      { class: 'ops' },
+      ...actions.map((a, i) => {
+        const warnings = nested ? [] : [...nearControlWarnings(a, receiver, me), ...nearCostWarnings(a, receiver, me)];
+        return d.h(
+          'li',
+          { class: warnings.length > 0 ? 'op takeover-op' : 'op' },
+          d.h('h3', {}, `${i + 1}. ${NEAR_ACTION_NAMES[a.type]}`),
+          ...warnings.map((w) => d.h('p', { class: 'danger takeover' }, w)),
+          ...nearActionBody(d, a, receiver, me, nested),
+        );
+      }),
+    ),
+  );
+}
+
+/** The NEAR leaving the account: deposits (and stake), and whether a DeleteAccount sends everything. */
+/** A transaction's NEAR: deposits and transfers leave the signer's account; Stake locks, a global contract burns. */
+function nearTotal(d: Dom, actions: readonly NearAction[]): HTMLElement {
+  const t = nearDeposits(actions);
+  const leaving = t.total + t.burned;
+  return rows(d, [
+    row(d, 'NEAR leaving your account', t.deletesAccount ? d.h('strong', { class: 'danger' }, 'All of it (the account is deleted)') : d.h('strong', {}, formatNear(leaving)), ' (plus the network fee for gas)'),
+    t.burned > 0n && row(d, 'NEAR burnt', d.h('strong', { class: 'danger' }, formatNear(t.burned)), ' (publishing a global contract)'),
+    t.staked > 0n && row(d, 'NEAR staked (locked)', formatNear(t.staked)),
+  ]);
+}
+
+/**
+ * A delegate action's NEAR (nearcore): the relayer's transaction prepays every deposit and transfer in it, which go
+ * to their receivers on success and back to the user's account (the receipt's predecessor) on failure; gas is the
+ * relayer's. What the user's own balance loses is only what acts on the user's account itself: a DeleteAccount
+ * (everything), Stake (locked) and a global contract's burn.
+ */
+function nearDelegateTotal(d: Dom, actions: readonly NearAction[]): HTMLElement {
+  const t = nearDeposits(actions);
+  return rows(d, [
+    row(
+      d,
+      'NEAR leaving your account',
+      t.deletesAccount ? d.h('strong', { class: 'danger' }, 'All of it (the account is deleted)') : d.h('strong', {}, t.burned > 0n ? formatNear(t.burned) : 'None'),
+      t.deletesAccount || t.burned > 0n ? '' : ' (the relayer pays the fee and what this sends)',
+    ),
+    t.total > 0n && row(d, 'NEAR this sends, paid by the relayer', formatNear(t.total)),
+    t.burned > 0n && row(d, 'NEAR burnt', d.h('strong', { class: 'danger' }, formatNear(t.burned)), ' (publishing a global contract)'),
+    t.staked > 0n && row(d, 'NEAR staked (locked)', formatNear(t.staked)),
+  ]);
+}
+
+const NEAR_NETWORK_NAMES = { testnet: 'NEAR testnet', mainnet: 'NEAR mainnet' } as const;
+
+/** What the popup knows about the network a NEAR request names (D726). */
+export interface NearRenderContext {
+  /** This build's env network: the one the vault checks NEAR requests against (its RPC). */
+  readonly envNetwork: 'testnet' | 'mainnet';
+  /** A pk_test_ app: the vault binds its delegate actions to the env network too. */
+  readonly testApp: boolean;
+  /** The partner page's origin, as the vault pinned it (a NEP-413 recipient is compared with its host). */
+  readonly parentOrigin?: string;
+}
+
+/**
+ * The network line of a NEAR request (D726). NEAR's bytes name no network, so the popup says what the vault checked:
+ * a transaction on the env's network had its block hash found there (the vault refuses it otherwise, failing closed);
+ * a test app's delegate action had its key, nonce and expiry checked there; anything else is the app's claim.
+ */
+export function nearNetworkLine(kind: 'near_tx' | 'near_delegate', network: 'testnet' | 'mainnet', ctx: NearRenderContext): string {
+  const name = NEAR_NETWORK_NAMES[network];
+  if (network === ctx.envNetwork && kind === 'near_tx') return `${name} (Hana found its block hash on ${network})`;
+  if (network === ctx.envNetwork && ctx.testApp) return `${name} (Hana checked your key, nonce and expiry on ${network})`;
+  return `${name}, as the app says: Hana can’t check this`;
+}
+
+function nearBanner(d: Dom, actions: readonly NearAction[]): HTMLElement[] {
+  return nearChangesControl(actions) ? [d.h('p', { class: 'danger takeover banner', attrs: { role: 'alert' } }, NEAR_ACCOUNT_CONTROL_BANNER)] : [];
+}
+
+function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>, ctx: NearRenderContext): HTMLElement[] {
+  const tx = decoded.tx;
+  return [
+    ...nearBanner(d, tx.actions),
+    rows(d, [
+      row(d, 'Network', nearNetworkLine('near_tx', decoded.network, ctx)),
+      row(d, 'From', mono(d, tx.signerId)),
+      row(d, 'To', mono(d, tx.receiverId)),
+      row(d, 'Nonce', mono(d, String(tx.nonce))),
+      row(d, 'Block hash', mono(d, nearHash58(tx.blockHash))),
+      row(d, 'Transaction hash', mono(d, decoded.hash)),
+    ]),
+    nearTotal(d, tx.actions),
+    nearActionList(d, tx.actions, tx.receiverId, tx.signerId, false),
+  ];
+}
+
+function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>, ctx: NearRenderContext): HTMLElement[] {
+  const da = decoded.delegate;
+  return [
+    ...nearBanner(d, da.actions),
+    d.h('p', { class: 'note' }, NEAR_DELEGATE_NOTES.relayer),
+    d.h('p', { class: 'note' }, NEAR_DELEGATE_NOTES.network),
+    rows(d, [
+      row(d, 'Network', nearNetworkLine('near_delegate', decoded.network, ctx)),
+      row(d, 'From', mono(d, da.senderId)),
+      row(d, 'To', mono(d, da.receiverId)),
+      row(d, 'Valid until block', String(da.maxBlockHeight)),
+      row(d, 'Nonce', mono(d, String(da.nonce))),
+    ]),
+    nearDelegateTotal(d, da.actions),
+    nearActionList(d, da.actions, da.receiverId, da.senderId, false),
+  ];
+}
+
+/** The page's host (`https://app.example:8443` → `app.example`), or null for a value that isn't an origin. */
+function originHost(origin: string | undefined): string | null {
+  if (!origin) return null;
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** A NEP-413 recipient that isn't the requesting page: whoever holds the signature can use it as proof at `recipient`. */
+export const nearRecipientMismatch = (recipient: string, host: string): string =>
+  `This app is at ${host}, but the signature is for ${recipient}. Sign only if you are signing in to ${recipient} on purpose.`;
+
+/** A recipient with characters outside printable ASCII, which can imitate another name, written with \u escapes. */
+export const nearRecipientLookalike = (escaped: string): string => `The recipient has characters that can imitate another name. Written out: ${escaped}`;
+
+const asciiEscaped = (s: string): string => Array.from(s, (ch) => (/^[\x20-\x7e]$/u.test(ch) ? ch : Array.from({ length: ch.length }, (_, i) => `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`).join(''))).join('');
+
+function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: NearRenderContext): HTMLElement[] {
+  const p = decoded.payload;
+  const host = originHost(ctx.parentOrigin);
+  const sameSite = host !== null && (p.recipient === host || p.recipient === ctx.parentOrigin);
+  const lookalike = /[^\x20-\x7e]/u.test(p.recipient);
+  const text = decoded.message.text;
+  return [
+    d.h('p', { class: 'warn' }, nearMessageWarning(p.recipient)),
+    host !== null && !sameSite ? d.h('p', { class: 'danger' }, nearRecipientMismatch(p.recipient, host)) : null,
+    lookalike ? d.h('p', { class: 'danger' }, nearRecipientLookalike(asciiEscaped(p.recipient))) : null,
+    rows(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl)), row(d, 'Nonce', mono(d, toHex(p.nonce)))]),
+    d.h('p', { class: 'note' }, NO_NETWORK_NOTE),
+    ...(text !== null && text.length > LONG_TEXT_CHARS ? [d.h('p', { class: 'warn long-text' }, longTextNote(text.length))] : []),
+    ...message(d, decoded.message),
+  ].filter((x): x is HTMLElement => x !== null);
+}
+
 const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM chains' } as const;
 
 /**
@@ -385,7 +702,7 @@ const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM chains' } as const;
 export const NO_NETWORK_NOTE = 'This signature isn’t tied to one network.';
 
 /** The body of the approval screen for a decoded request. */
-export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string): HTMLElement {
+export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
   const parts: HTMLElement[] = [];
   switch (decoded.kind) {
     case 'stellar_tx':
@@ -429,6 +746,15 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
         d.h('p', { class: 'note' }, NO_NETWORK_NOTE),
         mono(d, decoded.hex),
       );
+      break;
+    case 'near_tx':
+      parts.push(d.h('h2', {}, 'NEAR transaction'), ...nearTx(d, decoded, near));
+      break;
+    case 'near_delegate':
+      parts.push(d.h('h2', {}, 'NEAR transaction, fee paid by a relayer'), ...nearDelegate(d, decoded, near));
+      break;
+    case 'near_message':
+      parts.push(d.h('h2', {}, 'Sign in with your NEAR account'), ...nearMessage(d, decoded, near));
       break;
   }
   return d.h('div', { class: 'request' }, ...parts);

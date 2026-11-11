@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@hana-id/core": "workspace:*",
-    "@hana-id/web": "workspace:*"
+    "@hana-id/web": "workspace:*",
+    "@scure/base": "1.2.6"
   },
   "devDependencies": {
     "@hana-id/brand": "workspace:*",

@@ -236,6 +236,9 @@ importers:
       '@hana-id/web':
         specifier: workspace:*
         version: link:../../packages/web
+      '@scure/base':
+        specifier: 1.2.6
+        version: 1.2.6
     devDependencies:
       '@hana-id/brand':
         specifier: workspace:*

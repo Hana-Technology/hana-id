@@ -6,11 +6,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LoginResult } from '@hana-id/core';
+import { type LoginResult, decodeNearDelegateAction, decodeNearTransaction, utf8 } from '@hana-id/core';
+import { base58 } from '@scure/base';
 import type { HanaAddresses, HanaConfig, HanaStatus } from '@hana-id/web';
 import { type DemoClient, startDemo, statusText, untilText } from '../src/page.ts';
 import { TEST_MESSAGE, utf8Hex } from '../src/requests.ts';
-import { ADDRESSES, CONFIG } from './fixtures.ts';
+import { ADDRESSES, CONFIG, NEAR_ACCOUNT } from './fixtures.ts';
+import { BLOCK_HASH, FakeNearRpc, TX_HASH, fakeNear } from './near-fakes.ts';
 
 const html = readFileSync(join(import.meta.dirname, '..', 'index.html'), 'utf8');
 const body = /<body>([\s\S]*)<\/body>/u.exec(html)![1]!;
@@ -41,11 +43,13 @@ class FakeClient {
     this.status = 'logged_out';
     this.emit('accountsChanged', null);
   });
-  readonly exportKey = vi.fn(async (_chain: 'stellar' | 'evm') => null);
+  readonly exportKey = vi.fn(async (_chain: 'stellar' | 'evm' | 'near') => null);
   readonly revokeOtherDevices = vi.fn(async () => ({ revoked: 2 }));
   readonly getIdentityToken = vi.fn(async (): Promise<string | null> => IDENTITY_TOKEN);
   readonly stellar = { signMessage: vi.fn(async (_m: string, _o: unknown) => ({ signedMessage: 'c2lnbmVk', signerAddress: ADDRESSES.stellar })) };
   readonly ethereum = { request: vi.fn(async (_a: { method: string; params?: unknown }): Promise<unknown> => `0x${'ab'.repeat(65)}`) };
+  readonly near = fakeNear(() => this.addresses?.near ?? null);
+  readonly prepareApproval = vi.fn(() => ({ cancel: vi.fn() }));
 
   constructor(readonly config: HanaConfig) {
     this.ready = new Promise((res, rej) => {
@@ -108,10 +112,15 @@ let fake: FakeClient;
 let copied: string[];
 let copyFails = false;
 let t = 0;
+let rpc: FakeNearRpc;
+let wall = Date.UTC(2026, 9, 29, 12);
 
 function boot(): void {
   copied = [];
+  rpc = new FakeNearRpc();
   startDemo({
+    fetch: rpc.fetch,
+    sleep: async () => {},
     config: CONFIG,
     sdkVersion: '0.0.0',
     createClient: (c) => {
@@ -119,7 +128,7 @@ function boot(): void {
       return fake as unknown as DemoClient;
     },
     now: () => t,
-    clock: () => Date.UTC(2026, 9, 29, 12),
+    clock: () => wall,
     copy: async (text) => {
       if (copyFails) throw new Error('denied');
       copied.push(text);
@@ -130,6 +139,7 @@ function boot(): void {
 beforeEach(() => {
   document.body.innerHTML = body;
   t = 0;
+  wall = Date.UTC(2026, 9, 29, 12);
   copyFails = false;
   vi.useFakeTimers({ toFake: ['setInterval'] });
 });
@@ -167,7 +177,7 @@ describe('demo page', () => {
     expect(fake.loginOptions).toEqual([{ method: 'google' }, { method: 'email' }]);
   });
 
-  it('creates the client exactly as a partner does, from the baked configuration', () => {
+  it('creates the client exactly as a partner does, from the baked configuration, and says NEAR in the banner', () => {
     boot();
     expect(fake.config).toEqual({
       publishableKey: 'pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie',
@@ -175,7 +185,10 @@ describe('demo page', () => {
       evm: { chains: [{ id: 84532, rpcUrl: 'https://sepolia.base.org' }], defaultChainId: 84532 },
       stellar: { networkPassphrase: 'Test SDF Network ; September 2015' },
     });
-    expect($('testnet-banner').textContent).toContain('Testnet demo — test networks only, nothing here holds real funds.');
+    expect($('testnet-banner').textContent).toBe('Testnet demo: Stellar, EVM and NEAR test networks only, nothing here holds real funds.');
+    expect(document.querySelector('.lead')!.textContent).toMatch(/^\s*Log in with email \(a code sent to your inbox; Google sign-in works for listed testers\) to get a\s+Stellar, an EVM and a NEAR wallet/u);
+    expect($('login-email').classList.contains('primary')).toBe(true);
+    expect($('footer-env').textContent).toContain('NEAR: testnet, guestbook hana-id-guestbook-dev1.testnet');
     expect($('env-badge').textContent).toBe('sandbox-dev · testnet');
     expect($('status').textContent).toBe('Connecting to the Hana vault…');
     expect(($('login') as HTMLButtonElement).disabled).toBe(true);
@@ -342,6 +355,10 @@ describe('demo page', () => {
     click('export-stellar');
     await flush();
     expect(fake.exportKey).toHaveBeenCalledWith('stellar');
+    expect($('export-near').hidden).toBe(false);
+    click('export-near');
+    await flush();
+    expect(fake.exportKey).toHaveBeenLastCalledWith('near');
     expect($('notice').textContent).toMatch(/export window is open/u);
     click('revoke');
     await flush();
@@ -463,5 +480,380 @@ describe('status text', () => {
     expect(statusText({ status: 'logged_in', expiresAtMs: null, persistence: 'none', warning: 'storage_unavailable' }, 0)).toBe(
       'Logged in · persistence: none, every page load signs in again (your browser blocks storage here).',
     );
+  });
+});
+
+// ---- the NEAR card ----
+
+const settle = async () => {
+  for (let i = 0; i < 12; i++) await flush();
+};
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const type = (text: string): void => {
+  const input = $('near-text') as HTMLInputElement;
+  input.value = text;
+  input.dispatchEvent(new Event('input'));
+};
+
+/** The delegate action the vault was asked to sign, decoded. */
+const signedDelegate = () => decodeNearDelegateAction(fake.near.signDelegateAction.mock.calls.at(-1)![0].delegateAction as Uint8Array);
+
+const message = (index: number, account_id: string, text: string) => ({ index, account_id, text, block_timestamp_ms: Date.UTC(2026, 10, 11, 9, 30) });
+
+describe('the NEAR card', () => {
+  it('is hidden while signed out, and shows the account short with copy, in full on demand, and its explorer link', async () => {
+    boot();
+    fake.readyWith(null);
+    await settle();
+    expect($('near').hidden).toBe(true);
+    await loginFlow();
+    await settle();
+    expect($('near').hidden).toBe(false);
+    expect($('near-account').textContent).toBe(`${NEAR_ACCOUNT.slice(0, 6)}…${NEAR_ACCOUNT.slice(-6)}`);
+    expect($('near-account-full').textContent).toBe(NEAR_ACCOUNT);
+    expect(($('near-link') as HTMLAnchorElement).href).toBe(`https://testnet.nearblocks.io/address/${NEAR_ACCOUNT}`);
+    expect($('near-link').getAttribute('rel')).toBe('noopener noreferrer');
+    expect($('near-guestbook').textContent).toBe('hana-id-guestbook-dev1.testnet');
+    expect($('near-balance').textContent).toBe('Balance: 0 NEAR. The guestbook write needs none.');
+    click('copy-near');
+    await flush();
+    expect(copied).toEqual([NEAR_ACCOUNT]);
+    expect($('notice').textContent).toBe('NEAR account copied.');
+    // Reads only, at login: no activation, no signing.
+    expect(fake.near.activate).not.toHaveBeenCalled();
+    expect(rpc.count((c) => c.params.request_type === 'view_access_key')).toBe(1);
+    expect(rpc.calls.every((c) => c.url === CONFIG.near.rpcUrl)).toBe(true);
+    click('logout');
+    await settle();
+    expect($('near').hidden).toBe(true);
+  });
+
+  it('works the same after an email login', async () => {
+    boot();
+    fake.readyWith(null);
+    await settle();
+    click('login-email');
+    fake.finishLogin!({ addresses: ADDRESSES, expiresAtMs: Date.UTC(2026, 9, 29, 23), persistence: 'session', timings: { app: 1, popup: 1, emailEntry: 1, emailStart: 1, emailCode: 1, emailVerify: 1, verify: 1, chain: 1, decrypt: 1 } });
+    await settle();
+    expect(fake.loginOptions).toEqual([{ method: 'email' }]);
+    expect($('near').hidden).toBe(false);
+    type('gm by email');
+    click('near-write-button');
+    expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
+    await settle();
+    expect($('near-done').hidden).toBe(false);
+  });
+
+  it('stays hidden with a vault that has no NEAR account', async () => {
+    boot();
+    fake.readyWith({ stellar: ADDRESSES.stellar, evm: ADDRESSES.evm });
+    await settle();
+    expect($('wallet').hidden).toBe(false);
+    expect($('near').hidden).toBe(true);
+    expect($('export-near').hidden).toBe(true);
+    expect(rpc.calls).toEqual([]);
+  });
+
+  it('counts characters as the contract does and refuses an empty or long message before any request', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    type('  🌸🌸  ');
+    expect($('near-count').textContent).toBe('2 / 200');
+    type('a'.repeat(201));
+    expect($('near-count').textContent).toBe('201 / 200');
+    expect($('near-count').classList.contains('over')).toBe(true);
+    click('near-write-button');
+    expect($('near-hint').textContent).toBe('That is 201 characters: the guestbook takes at most 200.');
+    type('   ');
+    click('near-write-button');
+    expect($('near-hint').textContent).toBe('Write a message first (1 to 200 characters).');
+    expect(fake.near.signDelegateAction).not.toHaveBeenCalled();
+    expect(fake.prepareApproval).not.toHaveBeenCalled();
+  });
+
+  it('prepared: the click signs at once (the popup opens in the click), then relays, shows each stage, the transaction and the list', async () => {
+    boot();
+    rpc.messages = [message(0, 'alice.testnet', 'first!')];
+    await loginFlow();
+    await settle();
+    expect($('near-messages').textContent).toContain('first!');
+    type('gm from Hana');
+    await settle();
+    const sign = deferred<{ signature: string; signedDelegateAction: string }>();
+    const relay = deferred<{ transactionHash: string; status: string }>();
+    fake.near.signDelegateAction.mockImplementationOnce(() => sign.promise);
+    fake.near.relay.mockImplementationOnce(() => relay.promise);
+    click('near-write-button');
+    // Synchronously in the click: the request is sent, and no window was opened in advance.
+    expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
+    expect(fake.prepareApproval).not.toHaveBeenCalled();
+    expect($('near-stage').textContent).toBe('Waiting for your approval in the Hana window…');
+    expect(($('near-write-button') as HTMLButtonElement).disabled).toBe(true);
+    expect(fake.near.signDelegateAction.mock.calls[0]![0].network).toBe('testnet');
+    const d = signedDelegate();
+    expect(d).toMatchObject({ senderId: NEAR_ACCOUNT, receiverId: 'hana-id-guestbook-dev1.testnet', nonce: 199_990_000_000_001n, maxBlockHeight: BigInt(rpc.height) + 600n });
+    expect(d.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'gm from Hana' })), gas: 30_000_000_000_000n, deposit: 0n }]);
+    sign.resolve({ signature: 'c2ln', signedDelegateAction: 'U0RB' });
+    await settle();
+    expect($('near-stage').textContent).toBe('Sending it through Hana’s relayer, which pays the fee…');
+    expect(fake.near.relay).toHaveBeenCalledWith({ network: 'testnet', signedDelegateAction: 'U0RB' });
+    rpc.messages = [message(1, NEAR_ACCOUNT, 'gm from Hana'), ...rpc.messages];
+    relay.resolve({ transactionHash: TX_HASH, status: 'executed' });
+    await settle();
+    expect($('near-stage').hidden).toBe(true);
+    expect($('near-done').hidden).toBe(false);
+    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR testnet. You paid no gas.');
+    expect(($('near-tx-link') as HTMLAnchorElement).href).toBe(`https://testnet.nearblocks.io/txns/${TX_HASH}`);
+    const items = [...$('near-messages').querySelectorAll('li')];
+    expect(items).toHaveLength(2);
+    expect(items[0]!.classList.contains('mine')).toBe(true);
+    expect(items[0]!.querySelector('.you')!.textContent).toBe('you');
+    expect(items[0]!.querySelector('.text')!.textContent).toBe('gm from Hana');
+    expect(items[1]!.querySelector('.you')).toBeNull();
+    expect(($('near-text') as HTMLInputElement).value).toBe('');
+    expect(fake.near.activate).not.toHaveBeenCalled();
+    // A second write before the next read still uses a higher nonce.
+    type('again');
+    click('near-write-button');
+    expect(signedDelegate().nonce).toBe(199_990_000_000_002n);
+    await settle();
+  });
+
+  it('a new account: focusing the box activates it once, in the background, so the click still signs at once', async () => {
+    boot();
+    rpc.key = null;
+    await loginFlow();
+    await settle();
+    expect($('near-balance').textContent).toMatch(/^Not on NEAR testnet yet: your first guestbook write creates it/u);
+    fake.near.activate.mockImplementationOnce(async () => {
+      rpc.key = { nonce: 199_999_999_000_000 };
+      return { created: true };
+    });
+    $('near-text').dispatchEvent(new Event('focus'));
+    await settle();
+    expect(fake.near.activate).toHaveBeenCalledTimes(1);
+    expect($('near-balance').textContent).toBe('Balance: 0 NEAR. The guestbook write needs none.');
+    type('first write');
+    click('near-write-button');
+    expect(fake.prepareApproval).not.toHaveBeenCalled();
+    expect(signedDelegate().nonce).toBe(199_999_999_000_001n);
+    await settle();
+    expect(fake.near.activate).toHaveBeenCalledTimes(1);
+  });
+
+  it('not prepared: the click opens Hana’s window first (prepareApproval), activates, reads, then signs into it', async () => {
+    boot();
+    rpc.key = null;
+    await loginFlow();
+    await settle();
+    const activation = deferred<{ created: boolean }>();
+    fake.near.activate.mockImplementationOnce(() => activation.promise);
+    // Typed long ago: the read is stale, as on a slow first visit.
+    ($('near-text') as HTMLInputElement).value = 'hello';
+    wall += 61_000;
+    click('near-write-button');
+    expect(fake.prepareApproval).toHaveBeenCalledTimes(1);
+    expect(fake.near.signDelegateAction).not.toHaveBeenCalled();
+    expect($('near-stage').textContent).toBe('Reading your NEAR account on testnet…');
+    await settle();
+    expect($('near-stage').textContent).toBe('Preparing your NEAR account…');
+    rpc.key = { nonce: 5_000_000 };
+    activation.resolve({ created: true });
+    await settle();
+    expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
+    // The key's nonce is far below testnet's window: the nonce is the window's floor.
+    expect(signedDelegate().nonce).toBe(199_990_000_000_001n);
+    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. You paid no gas.');
+    // Cached for the session: the next write doesn't activate again.
+    type('second');
+    click('near-write-button');
+    await settle();
+    expect(fake.near.activate).toHaveBeenCalledTimes(1);
+  });
+
+  it('right after login: retries activate and relay while the account is not in Hana’s wallet directory yet (409), then gives up', async () => {
+    boot();
+    rpc.key = null;
+    await loginFlow();
+    await settle();
+    const unrecorded = () => hanaError(4100, { status: 409, reason: 'near_account_unrecorded' });
+    fake.near.activate
+      .mockRejectedValueOnce(unrecorded())
+      .mockRejectedValueOnce(unrecorded())
+      .mockImplementationOnce(async () => {
+        rpc.key = { nonce: 199_999_999_000_000 };
+        return { created: true };
+      });
+    fake.near.relay.mockRejectedValueOnce(unrecorded());
+    ($('near-text') as HTMLInputElement).value = 'early bird';
+    click('near-write-button');
+    await settle();
+    expect(fake.near.activate).toHaveBeenCalledTimes(3);
+    expect(fake.near.relay).toHaveBeenCalledTimes(2);
+    expect($('near-done').hidden).toBe(false);
+
+    // Still unrecorded after about 20 s: a plain error, not an endless wait.
+    document.body.innerHTML = body;
+    boot();
+    rpc.key = null;
+    await loginFlow();
+    await settle();
+    fake.near.activate.mockRejectedValue(unrecorded());
+    ($('near-text') as HTMLInputElement).value = 'too early';
+    click('near-write-button');
+    await settle();
+    await settle();
+    expect(fake.near.activate.mock.calls.length).toBeGreaterThan(3);
+    expect(fake.near.activate.mock.calls.length).toBeLessThan(12);
+    expect($('near-error').textContent).toMatch(/still setting up your NEAR account/u);
+    expect(fake.near.signDelegateAction).not.toHaveBeenCalled();
+  });
+
+  it('cancels the prepared window when reading NEAR fails, and says so in the card', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    rpc.down = true;
+    wall += 61_000;
+    ($('near-text') as HTMLInputElement).value = 'hello';
+    const cancel = vi.fn();
+    fake.prepareApproval.mockReturnValueOnce({ cancel });
+    click('near-write-button');
+    await settle();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fake.near.signDelegateAction).not.toHaveBeenCalled();
+    expect($('near-error').textContent).toBe('This page couldn’t read NEAR testnet (its RPC didn’t answer). Check your connection and try again.');
+    expect($('near-stage').hidden).toBe(true);
+    expect($('error').hidden).toBe(true);
+    // The fallback RPC was tried too.
+    expect(new Set(rpc.calls.map((c) => c.url))).toEqual(new Set([CONFIG.near.rpcUrl, CONFIG.near.rpcFallbackUrl]));
+  });
+
+  it.each([
+    ['the vault refuses an unknown key', 'signDelegateAction', hanaError(4100, { reason: 'near_key_unknown' }), /doesn’t exist on testnet yet/u],
+    ['the vault refuses an expired action', 'signDelegateAction', hanaError(4100, { reason: 'near_delegate_expiry' }), /expired before it was approved/u],
+    ['the user rejects', 'signDelegateAction', hanaError(4001), /^Rejected in the Hana window: nothing was signed\.$/u],
+    ['the relayer refuses the receiver', 'relay', hanaError(4100, { status: 403, reason: 'receiver_not_allowed' }), /pays only for calls to the demo guestbook/u],
+    ['the relayer refuses with a code the demo doesn’t know', 'relay', hanaError(4100, { status: 400, reason: 'brand_new_code' }), /^Hana’s relayer refused this request \(brand_new_code\)/u],
+    ['the relayer is down', 'relay', hanaError('api_unavailable', { status: 503, reason: 'relayer_unavailable' }), /relayer is unavailable right now/u],
+    ['the relayer rate-limits', 'relay', hanaError('rate_limited', { status: 429, reason: 'rate_limited' }), /Too many guestbook writes/u],
+  ] as const)('shows a plain message in the card when %s', async (_name, method, error, text) => {
+    boot();
+    await loginFlow();
+    await settle();
+    fake.near[method].mockRejectedValueOnce(error);
+    type('hello');
+    click('near-write-button');
+    await settle();
+    expect($('near-error').hidden).toBe(false);
+    expect($('near-error').textContent).toMatch(text);
+    expect($('near-error').textContent).not.toMatch(/[–—]/u);
+    expect($('near-stage').hidden).toBe(true);
+    expect($('near-done').hidden).toBe(true);
+  });
+
+  it('renders hostile guestbook entries strictly as text: no markup, no links, bidi and invisible characters neutralised, bounded', async () => {
+    boot();
+    rpc.messages = [
+      message(5, NEAR_ACCOUNT, '<img src=x onerror="window.__xss=1">'),
+      message(4, 'mallory.testnet', 'https://evil.example click me'),
+      message(3, 'eve.testnet', 'gm‮txt.exe​'),
+      message(2, '<b>bob</b>.testnet', 'invalid author: dropped'),
+      message(1, 'long.testnet', 'y'.repeat(800)),
+      { index: 0, account_id: 'x.testnet', text: { html: '<b>' }, block_timestamp_ms: 1 },
+    ];
+    await loginFlow();
+    await settle();
+    const list = $('near-messages');
+    expect(list.querySelectorAll('img, a, b, script')).toHaveLength(0);
+    const texts = [...list.querySelectorAll('.text')].map((p) => p.textContent);
+    expect(texts).toEqual(['<img src=x onerror="window.__xss=1">', 'https://evil.example click me', 'gm�txt.exe�', `${'y'.repeat(200)}…`]);
+    expect([...list.querySelectorAll('.text')].every((p) => p.childNodes.length === 1 && p.firstChild!.nodeType === 3)).toBe(true);
+    expect([...list.querySelectorAll('.author')].map((a) => a.textContent)).toEqual([`${NEAR_ACCOUNT.slice(0, 6)}…${NEAR_ACCOUNT.slice(-6)}`, 'mallory.testnet', 'eve.testnet', 'long.testnet']);
+    expect(list.querySelectorAll('.you')).toHaveLength(1);
+    expect((window as unknown as { __xss?: number }).__xss).toBeUndefined();
+    // Refresh reads again.
+    rpc.messages = [];
+    click('near-refresh');
+    await settle();
+    expect(list.children).toHaveLength(0);
+    expect($('near-book-status').textContent).toBe('No messages yet. Be the first.');
+  });
+
+  it('Sign a transaction with no NEAR: signs a real add_message transaction, shows it and says it was not sent', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    type('signed only');
+    click('sign-near-tx');
+    expect(fake.near.signTransaction).toHaveBeenCalledTimes(1);
+    const { network, transaction } = fake.near.signTransaction.mock.calls[0]![0];
+    expect(network).toBe('testnet');
+    const tx = decodeNearTransaction(transaction as Uint8Array);
+    expect(tx).toMatchObject({ signerId: NEAR_ACCOUNT, receiverId: 'hana-id-guestbook-dev1.testnet', nonce: 1001n, blockHash: base58.decode(BLOCK_HASH) });
+    expect(tx.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'signed only' })), gas: 30_000_000_000_000n, deposit: 0n }]);
+    await settle();
+    const item = $('near-results').querySelector('li')!;
+    expect(item.textContent).toContain('NEAR transaction (add_message on the guestbook): signed, not sent');
+    expect(item.textContent).toContain('Not sent: your NEAR account has no NEAR to pay the network fee.');
+    expect(item.textContent).toContain('“Write to the guestbook (no NEAR needed)”');
+    expect(rpc.sent).toEqual([]);
+  });
+
+  it('Sign a transaction with NEAR for the fee: signs and sends it, with its explorer link', async () => {
+    boot();
+    rpc.balance = '2000000000000000000000000';
+    await loginFlow();
+    await settle();
+    expect($('near-balance').textContent).toBe('Balance: 2 NEAR.');
+    click('sign-near-tx');
+    await settle();
+    expect(rpc.sent).toEqual(['U0lHTkVEVFJBTlNBQ1RJT05TSUdORURUUkFOU0FDVElPTg==']);
+    const tx = decodeNearTransaction(fake.near.signTransaction.mock.calls[0]![0].transaction as Uint8Array);
+    expect(JSON.parse(new TextDecoder().decode((tx.actions[0] as { args: Uint8Array }).args))).toEqual({ text: 'Hello from Hana ID (a signed NEAR transaction)' });
+    const item = $('near-results').querySelector('li')!;
+    expect(item.textContent).toContain('signed and sent');
+    expect(item.querySelector('a')!.getAttribute('href')).toBe(`https://testnet.nearblocks.io/txns/${TX_HASH}`);
+  });
+
+  it('Sign a message (NEP-413): this page as the recipient, a fresh 32-byte nonce, signed in the click', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    click('sign-near-message');
+    expect(fake.near.signMessage).toHaveBeenCalledTimes(1);
+    const p = fake.near.signMessage.mock.calls[0]![0];
+    expect(p.message).toBe('Hana ID testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.');
+    expect(p.recipient).toBe('hana-id-demo-sandbox-dev.tingtc.workers.dev');
+    expect((p.nonce as Uint8Array).length).toBe(32);
+    await settle();
+    expect($('near-results').textContent).toContain('NEAR message (NEP-413): signed');
+    expect($('near-results').textContent).toContain('TkVQNDEzU0lH');
+  });
+
+  it('the diagnostics carry the NEAR account, and a NEAR failure', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    fake.near.signDelegateAction.mockRejectedValueOnce(hanaError(4100, { reason: 'near_delegate_nonce_used' }));
+    type('x');
+    click('near-write-button');
+    await settle();
+    click('copy-diagnostics');
+    await flush();
+    const d = JSON.parse(copied.at(-1)!) as { addresses: Record<string, string>; errors: { action: string; code: unknown; reason: unknown }[] };
+    expect(d.addresses.near).toBe(NEAR_ACCOUNT);
+    expect(d.errors.map((e) => [e.action, e.code, e.reason])).toEqual([['near', 4100, 'near_delegate_nonce_used']]);
   });
 });

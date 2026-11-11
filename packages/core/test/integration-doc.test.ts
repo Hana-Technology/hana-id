@@ -165,6 +165,11 @@ describe('docs/integration.md: NEAR (section 8)', () => {
       expect(s8).toContain(`hana.near.${m}(`);
       expect(client).toMatch(new RegExp(`\\n  async ${m}\\(p: `, 'u'));
     }
+    // activate takes no argument: the user's own account.
+    expect(s8).toContain('hana.near.activate()');
+    expect(client).toContain('\n  async activate(): Promise<NearActivateResult> {');
+    expect(client).toContain('/v1/near/${path}');
+    expect(s8).toContain('POST /v1/near/activate');
     for (const reason of ['near_block_unknown', 'near_network_mismatch', 'near_key_unknown', 'near_delegate_nonce_used', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'near_rpc_unavailable']) {
       expect(s8).toContain(reason);
       expect(vault).toContain(`'${reason}'`);

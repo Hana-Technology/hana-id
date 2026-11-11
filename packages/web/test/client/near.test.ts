@@ -156,3 +156,105 @@ describe('hana.near.relay', () => {
     expect((await rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: SDA }))).code).toBe('api_unavailable');
   });
 });
+
+describe('hana.near.activate', () => {
+  const answer = (body: unknown, status = 200) => async () => new Response(JSON.stringify(body), { status });
+
+  it("POSTs the user's own account to /v1/near/activate with the publishable key, and reads { created }", async () => {
+    s = setup({ apiUrl: API, fetch: answer({ created: true }) });
+    await s.vault.connect(NEAR_IN);
+    await expect(s.client.near.activate()).resolves.toEqual({ created: true });
+    const [url, init] = s.fetch.mock.calls.at(-1) as [string, RequestInit];
+    expect(url).toBe(`${API}/v1/near/activate`);
+    expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('omit');
+    expect(init.referrerPolicy).toBe('no-referrer');
+    expect(init.headers).toEqual({ 'content-type': 'application/json', 'x-hana-key': PK });
+    expect(JSON.parse(init.body as string)).toEqual({ accountId: NEAR });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('an account that exists already: { created: false }; extra fields are dropped', async () => {
+    s = setup({ apiUrl: API, fetch: answer({ created: false, extra: '<b>' }) });
+    await s.vault.connect(NEAR_IN);
+    await expect(s.client.near.activate()).resolves.toEqual({ created: false });
+  });
+
+  it('refuses before any call while logged out or with a vault that has no NEAR account (4100)', async () => {
+    s = setup({ apiUrl: API, fetch: answer({ created: true }) });
+    expect((await rejection(s.client.near.activate())).code).toBe(4100);
+    await s.vault.connect(LOGGED_IN);
+    expect((await rejection(s.client.near.activate())).code).toBe(4100);
+    expect(s.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [429, { code: 'rate_limited', error: 'slow down' }, 'rate_limited'],
+    [403, { code: 'app_suspended', error: 'no' }, 'app_suspended'],
+    [400, { code: 'account_invalid', error: 'bad', requestId: 'rq1' }, 4100],
+    [503, { code: 'relayer_unavailable', error: 'down' }, 'api_unavailable'],
+  ] as const)('HTTP %i %j → %s, with the API code as data.reason', async (status, body, code) => {
+    s = setup({ apiUrl: API, fetch: answer(body, status) });
+    await s.vault.connect(NEAR_IN);
+    const e = await rejection(s.client.near.activate());
+    expect(e.code).toBe(code);
+    expect(e.data).toMatchObject({ status, reason: body.code });
+  });
+
+  it('a network failure, an unreadable answer and a build without the API URL are api_unavailable', async () => {
+    s = setup({ apiUrl: API, fetch: async () => Promise.reject(new TypeError('Failed to fetch')) });
+    await s.vault.connect(NEAR_IN);
+    expect((await rejection(s.client.near.activate())).code).toBe('api_unavailable');
+    s.client.destroy();
+    for (const bad of [{ created: 'yes' }, {}, [true], null]) {
+      s = setup({ apiUrl: API, fetch: answer(bad) });
+      await s.vault.connect(NEAR_IN);
+      expect((await rejection(s.client.near.activate())).code, JSON.stringify(bad)).toBe('api_unavailable');
+      s.client.destroy();
+    }
+    s = setup();
+    await s.vault.connect(NEAR_IN);
+    expect((await rejection(s.client.near.activate())).code).toBe('api_unavailable');
+  });
+
+  it('gives up after NEAR_RELAY_TIMEOUT_MS', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      s = setup({
+        apiUrl: API,
+        fetch: (_url: string, init?: RequestInit) => new Promise<Response>((_res, rej) => init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))),
+      });
+      await s.vault.connect(NEAR_IN);
+      const p = rejection(s.client.near.activate());
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect((await p).code).toBe('api_unavailable');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the timeout armed while the body is read (headers sent, then a stall)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      s = setup({
+        apiUrl: API,
+        fetch: async (_url: string, init?: RequestInit) =>
+          ({ ok: true, status: 200, json: () => new Promise((_res, rej) => init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))) }) as unknown as Response,
+      });
+      await s.vault.connect(NEAR_IN);
+      const p = rejection(s.client.near.activate());
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect((await p).code).toBe('api_unavailable');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('409 near_account_unrecorded (the account not in the wallet directory yet) is 4100 with that reason', async () => {
+    s = setup({ apiUrl: API, fetch: answer({ code: 'near_account_unrecorded', error: 'not yet' }, 409) });
+    await s.vault.connect(NEAR_IN);
+    const e = await rejection(s.client.near.activate());
+    expect(e.code).toBe(4100);
+    expect(e.data).toMatchObject({ status: 409, reason: 'near_account_unrecorded' });
+  });
+});

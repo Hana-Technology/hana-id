@@ -43,6 +43,7 @@ export { HanaStellarSigner, STELLAR_NETWORKS, type StellarConfig, type StellarSi
 export {
   HanaNear,
   NEAR_RELAY_TIMEOUT_MS,
+  type NearActivateResult,
   type NearBytes,
   type NearRelayParams,
   type NearRelayResult,

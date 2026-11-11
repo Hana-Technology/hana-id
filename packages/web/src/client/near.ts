@@ -9,6 +9,8 @@
 //   @near-js/transactions' encodeDelegateAction returns); the prefix is taken off before it goes to the vault.
 // - signMessage({ message, recipient, nonce, callbackUrl? }): NEP-413 (the nonce: 32 bytes, or their base64).
 // - relay({ network, signedDelegateAction }): POST {apiUrl}/v1/near/relay; Hana's relayer pays the gas.
+// - activate(): POST {apiUrl}/v1/near/activate for the user's own account, which makes sure it exists on testnet (a new
+//   implicit account exists only after a first transfer; a test app's delegate action needs it, near_key_unknown).
 //
 // Each sign method sends its request synchronously in the call, so a call from a click opens the approval popup in
 // that click (client.ts, D99). Inputs are checked here only for shape; the vault decides.
@@ -61,6 +63,11 @@ export interface NearRelayResult {
   transactionHash: string;
   /** The relayer's status for it, as the API reports it (e.g. a NEAR final execution status). */
   status: string;
+}
+
+export interface NearActivateResult {
+  /** true when Hana's relayer created the account now; false when it already existed. */
+  created: boolean;
 }
 
 export type NearSignTransactionResult = PortResultMap['near_signTransaction'];
@@ -150,36 +157,58 @@ export class HanaNear {
   async relay(p: NearRelayParams): Promise<NearRelayResult> {
     if (typeof p !== 'object' || p === null || p.network !== 'testnet') throw invalid("relay takes { network: 'testnet', signedDelegateAction }");
     const signedDelegateAction = toBase64(p.signedDelegateAction, 'signedDelegateAction');
+    const b = await this.#post('relay', { network: 'testnet', signedDelegateAction });
+    if (!isBase58Hash(b.transactionHash) || typeof b.status !== 'string' || b.status.length === 0 || b.status.length > 64) throw hanaError('api_unavailable', 'Hana’s relayer gave an answer the SDK can’t read');
+    return { transactionHash: b.transactionHash, status: b.status };
+  }
+
+  /**
+   * Makes sure the user's implicit account exists on NEAR testnet (POST /v1/near/activate, the same gate as `relay`):
+   * Hana's relayer creates it (a zero-value transfer) when it doesn't. A test app's delegate action can't be signed
+   * before that (4100 `near_key_unknown`). Resolves `{ created }`; calling it for an account that exists is harmless.
+   */
+  async activate(): Promise<NearActivateResult> {
+    const accountId = this.#host.nearAccountId();
+    if (accountId === null) throw hanaError(4100, 'Not logged in, or this Hana vault has no NEAR account yet');
+    const b = await this.#post('activate', { accountId });
+    if (typeof b.created !== 'boolean') throw hanaError('api_unavailable', 'Hana’s relayer gave an answer the SDK can’t read');
+    return { created: b.created };
+  }
+
+  /** POST {apiUrl}/v1/near/{path} with the publishable key: the answer's JSON object, or the HanaError of a refusal. */
+  async #post(path: 'relay' | 'activate', payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const apiUrl = this.#host.apiUrl;
     if (!apiUrl) throw hanaError('api_unavailable', 'This build of the Hana SDK has no API URL for its environment');
     const ctl = new AbortController();
     const timer = globalThis.setTimeout(() => ctl.abort(), NEAR_RELAY_TIMEOUT_MS);
+    // The timer stays armed until the body is read: a server that sends headers and then stalls is cut off too.
     let res: Response;
+    let body: unknown;
     try {
-      res = await this.#host.fetch(`${apiUrl}/v1/near/relay`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-hana-key': this.#host.publishableKey },
-        body: JSON.stringify({ network: 'testnet', signedDelegateAction }),
-        credentials: 'omit',
-        cache: 'no-store',
-        referrerPolicy: 'no-referrer',
-        signal: ctl.signal,
-      });
-    } catch {
-      throw hanaError('api_unavailable', 'Hana’s relayer could not be reached');
+      try {
+        res = await this.#host.fetch(`${apiUrl}/v1/near/${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-hana-key': this.#host.publishableKey },
+          body: JSON.stringify(payload),
+          credentials: 'omit',
+          cache: 'no-store',
+          referrerPolicy: 'no-referrer',
+          signal: ctl.signal,
+        });
+      } catch {
+        throw hanaError('api_unavailable', 'Hana’s relayer could not be reached');
+      }
+      try {
+        body = await res.json();
+      } catch {
+        body = null;
+      }
     } finally {
       globalThis.clearTimeout(timer);
     }
-    let body: unknown;
-    try {
-      body = await res.json();
-    } catch {
-      body = null;
-    }
     const b = typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
     if (!res.ok) throw relayError(res.status, b);
-    if (!isBase58Hash(b.transactionHash) || typeof b.status !== 'string' || b.status.length === 0 || b.status.length > 64) throw hanaError('api_unavailable', 'Hana’s relayer gave an answer the SDK can’t read');
-    return { transactionHash: b.transactionHash, status: b.status };
+    return b;
   }
 
   /** NEAR requests need a vault that reported a NEAR account: an older vault would drop them unanswered. */
@@ -188,7 +217,7 @@ export class HanaNear {
   }
 }
 
-/** The HanaError of a refused relay: the API's code where the SDK knows it, with its request id. */
+/** The HanaError of a refused relay or activation: the API's code where the SDK knows it, with its request id. */
 function relayError(status: number, b: Record<string, unknown>): HanaError {
   const code = typeof b.code === 'string' ? b.code : '';
   const message = typeof b.error === 'string' ? b.error.slice(0, 300) : `Hana’s relayer refused the request (HTTP ${status})`;

@@ -19,7 +19,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Hana's NEAR accounts.
 
-Last verified against code: 2026-11-11 (SDK 0.4.0: NEAR in section 8, release notes in section 2), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-11 (SDK 0.4.0: NEAR in section 8 with `activate`, release notes in section 2), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -224,7 +224,8 @@ at the top). A new environment means a new release.
 NEAR). Replace all the tarballs you use together (they depend on each other at `^0.4.0`).
 
 - **A NEAR wallet.** `hana.near`: `accountId` and `publicKey` (the user's implicit account), `signTransaction`,
-  `signDelegateAction` (NEP-366, gasless with `relay`), `signMessage` (NEP-413) and `relay`; `hana.addresses.near`.
+  `signDelegateAction` (NEP-366, gasless with `relay`), `signMessage` (NEP-413), `relay` and `activate` (creates a new
+  account on testnet for its first gasless call); `hana.addresses.near`.
   Every NEAR request shows Hana's approval window, none is signed automatically ([section 8, NEAR](#near)).
 - `hana.exportKey('near')` exports the NEAR key as `ed25519:…`.
 - `HanaAddresses.near` is optional in the types: it is missing only while Hana's vault is older than this SDK (during a
@@ -816,11 +817,24 @@ button.addEventListener('click', () => {
 `signDelegateAction` takes the borsh `DelegateAction` with or without NEP-461's prefix (`encodeDelegateAction` adds
 it) and returns `{ signature, signedDelegateAction }` (base64 borsh `SignedDelegateAction`, which any NEP-366 relayer
 takes). A delegate action has no block hash, so for a **test app** Hana ties it to testnet another way, on testnet's
-RPC: the account must already exist there with this key (`near_key_unknown`: fund or create the account first), the
+RPC: the account must already exist there with this key (`near_key_unknown`: activate it first, below), the
 nonce must be above the key's current one (`near_delegate_nonce_used`) and within NEAR's bound for the current height
 (`near_delegate_nonce_too_large`), and `maxBlockHeight` must be ahead of testnet's height by at most 10,000 blocks
 (`near_delegate_expiry`). `relay` rejects with `rate_limited` (429), `origin_not_allowed`, `app_suspended`, 4100 for
 another refusal (`data.reason` is the API's code, `data.requestId` its request ID) or `api_unavailable`.
+
+**A new account: activate it first.** A user's implicit account doesn't exist on chain until something is sent to
+it, so a brand-new user's first delegate action is refused (`near_key_unknown`). `hana.near.activate()` asks Hana's
+relayer to create it (`POST /v1/near/activate` with the user's own account, the same publishable key and origin check
+as `relay`; no popup) and resolves `{ created }`: `true` when it created the account now, `false` when it already
+existed, so calling it again is harmless. It rejects like `relay`. Do it before the click (when the gasless button
+appears), then read `view_access_key` for the nonce: an account that didn't exist has no key to read before.
+
+```ts
+// Before the click: once per account and session.
+await hana.near.activate();   // { created: true } the first time, { created: false } after
+const key = await rpc('query', { request_type: 'view_access_key', finality: 'final', account_id: accountId, public_key: publicKey.toString() });
+```
 
 **Sign in with NEAR (NEP-413).** A signature that proves the user holds the account, for your backend:
 

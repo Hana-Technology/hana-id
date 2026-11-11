@@ -79,6 +79,16 @@ describe('mailHtml', () => {
     expect(html.replace(/<[^>]+>/gu, '')).toContain('(auth.hana.example)');
   });
 
+  it('a table value or list item may be inline runs: an unlinked origin splits at each dot and slash, still escaped (D700)', () => {
+    const html = body(base([{ kind: 'kv', rows: [['Origin', [{ unlinked: 'http://localhost:5173/<b>' }]], ['Plain', 'a.b']] }, { kind: 'list', items: [[{ unlinked: 'https://evil.example' }], 'x.y'] }]));
+    expect(html).toContain('http:<span>/</span><wbr><span>/</span><wbr>localhost:5173<span>/</span><wbr>&#60;b&#62;');
+    expect(html).toContain('https:<span>/</span><wbr><span>/</span><wbr>evil<span>.</span><wbr>example');
+    expect(html).not.toContain('<b>');
+    // A plain string is unchanged: escaped text, no spans.
+    expect(html).toContain('>a.b</td>');
+    expect(html).toContain('>x.y</li>');
+  });
+
   it('keeps the preview line to its text, padded so the body (and a code) does not fill the rest', () => {
     const html = base([{ kind: 'code', code: '550046' }], { preheader: 'Your code to sign in. It expires in 10 minutes.' });
     const pre = /<div style="display:none[^"]*">([\s\S]*?)<\/div>/u.exec(html)![1]!;

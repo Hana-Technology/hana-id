@@ -119,7 +119,7 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
    */
   issueInvite(c: unknown) {
     return runStaff('staff.issueInvite', issueInviteInput, c, HANA, async (i, w) => ({
-      invite: await issueInvite(this.db, w, { email: i.email, role: i.role, orgId: i.orgId, newOrgName: i.newOrgName, kind: i.kind, createdByKind: 'hana' }),
+      invite: await issueInvite(this.db, w, { email: i.email, role: i.role, orgId: i.orgId, newOrgName: i.newOrgName, kind: i.kind, createdByKind: 'hana', network: this.env.NETWORK }),
     }));
   }
 

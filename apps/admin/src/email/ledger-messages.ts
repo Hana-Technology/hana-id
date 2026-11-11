@@ -5,7 +5,7 @@
 import type { NonceCheck, RejectionAlert, SettlementAlert } from '../ledger.ts';
 import type { RetentionRun } from '../retention-store.ts';
 import type { MailContext } from './messages.ts';
-import { type Block, type Rendered, duration, isoTime, oneLine, render } from './render.ts';
+import { type Block, type Rendered, duration, isoTime, oneLine, readableTime, render } from './render.ts';
 
 /** `nonce_unexplained`: relayer keys whose last landed nonce has no ledger row. */
 export function nonceUnexplained(c: MailContext, rows: NonceCheck[]): Rendered {
@@ -91,7 +91,7 @@ export function retentionFailed(c: MailContext, p: RetentionProblem): Rendered {
     }
   } else if (p.kind === 'overdue') {
     subject = `Retention job overdue for ${p.month}`;
-    blocks.push({ kind: 'warn', text: `The monthly retention job for ${p.month} was due at ${isoTime(p.dueAt)} and no run has completed since.` });
+    blocks.push({ kind: 'warn', text: `The monthly retention job for ${p.month} was due at ${readableTime(p.dueAt)} and no run has completed since.` });
     blocks.push({
       kind: 'kv',
       rows: p.latest

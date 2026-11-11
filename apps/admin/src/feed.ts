@@ -201,7 +201,7 @@ async function sendGroup(env: Env, sender: EmailSender, budget: Budget, contacts
   return r.outOfBudget ? 'budget' : r.allAccepted ? 'sent' : 'failed';
 }
 
-const mail = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env) });
+const mail = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env), filesOrigin: env.FILES_ORIGIN });
 
 /** A row that gets the login-methods notice (D444 as amended). */
 export const changesLoginMethods = (r: AppChange): boolean => r.kind === 'settings.changed' && typeof r.detail.loginMethods === 'string';

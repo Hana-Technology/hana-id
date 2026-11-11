@@ -348,7 +348,8 @@ const ERRORS = {
   policy_invalid: ['The policy isn’t valid', 'The details name the field to fix.'],
   invalid_client_proof: ['The client proof isn’t valid', 'Check the value and try again.'],
   owner_nonce_mismatch: ['The on-chain state moved on', 'Reload the page and try again.'],
-  passkeys_required: ['This organisation requires passkeys', 'The member has to add a passkey first.'],
+  // The gate of D242 (not member passkeys, which aren't built): one partner organisation until passkeys ship, off testnet (D698).
+  passkeys_required: ['Only one partner organisation for now', 'Until partner passkeys ship, only one partner organisation can exist on this network (testnet has no such limit), and another partner organisation, or an open invite to create one, already exists. Revoke that invite under Pending invites if it was a mistake, or choose type Internal.'],
   org_frozen: ['This organisation is frozen', 'Unfreeze it first if the change should go ahead.'],
   user_disabled: ['This user is disabled', 'Enable the user first if the change should go ahead.'],
   already_member: ['This person is already a member', 'Change their role in Members instead.'],
@@ -880,7 +881,7 @@ function pendingInvitesPanel(read) {
   const now = Date.now();
   return panel(
     'Pending invites',
-    { anchor: 'pending-invites', hint: 'Invites to organisations that don’t exist yet: each one is created when its first owner accepts. A link works only once its email has gone out (the job runs every 5 minutes), for 7 days. Ended invites stay here for 30 days.' },
+    { anchor: 'pending-invites', hint: 'Invites to organisations that don’t exist yet: each one is created when its first owner accepts. A link works only once its email has gone out (the job runs every 5 minutes), and expires 7 days after the invite was created here: the wait for the email counts against those 7 days. Ended invites stay here for 30 days.' },
     table(
       ['Organisation', 'Type', 'Invited', 'State', 'Sent', 'Expires', ''],
       invites.map((i) => {
@@ -988,7 +989,7 @@ function membersPanel(o, d) {
 function invitesPanel(d) {
   if (!d.invites.length) return '';
   const now = Date.now();
-  const state = (i) => (i.acceptedAt ? badge('Accepted', 'ok') : i.revokedAt ? badge('Revoked') : i.expiresAt < now ? badge('Expired') : i.notifiedAt ? badge('Open', 'info') : badge('Email not sent yet', 'warning'));
+  const state = (i) => (i.acceptedAt ? badge('Accepted', 'ok') : i.revokedAt ? badge('Revoked') : i.expiresAt <= now ? badge('Expired') : i.notifiedAt ? badge('Open', 'info') : badge('Email not sent yet', 'warning'));
   return panel(
     'Invites',
     { hint: 'An invite works only once its email has gone out (the job runs every 5 minutes).' },
@@ -1001,7 +1002,8 @@ function invitesPanel(d) {
           i.notifiedAt ? when(i.notifiedAt) : h('span', { class: 'muted' }, 'not yet'),
           when(i.expiresAt),
           state(i),
-          !i.acceptedAt && !i.revokedAt ? actionButton('Revoke', () => api('POST', `/api/invites/${encodeURIComponent(i.id)}/revoke`), `Revoke the invite for ${i.email}? Its link stops working.`, true, { done: `The invite for ${i.email} was revoked.` }) : '',
+          // Open invites only: an accepted, revoked or expired one can't be revoked (not_pending).
+          !i.acceptedAt && !i.revokedAt && i.expiresAt > now ? actionButton('Revoke', () => api('POST', `/api/invites/${encodeURIComponent(i.id)}/revoke`), `Revoke the invite for ${i.email}? Its link stops working.`, true, { done: `The invite for ${i.email} was revoked.` }) : '',
         ),
       ),
     ),
@@ -1052,6 +1054,16 @@ async function legacyScopeOptions() {
 function appsPanel(o, d) {
   // createApp refuses an organisation without a security contact; moving a legacy scope here doesn't need one.
   const blocked = d.flags.noSecurityContacts ? 'Add a security contact before creating an app: an organisation without one can’t get new apps.' : '';
+  // The table is refreshed in place after "Create app", so the confirmation (with the publishable key) stays on screen.
+  const tableBox = h('div', {}, appsTable(o, d.apps));
+  const refreshApps = async (status) => {
+    try {
+      const fresh = await api('GET', `/api/orgs/${encodeURIComponent(o.id)}`);
+      tableBox.replaceChildren(appsTable(o, fresh.apps));
+    } catch {
+      status.append(h('p', { class: 'hint' }, 'The app list above couldn’t be refreshed: reload the page to see the new app in it.'));
+    }
+  };
   const create = disclosure(
     'Create an app',
     h(
@@ -1067,7 +1079,12 @@ function appsPanel(o, d) {
         ],
         'Create app',
         (v) => api('POST', '/api/apps', { orgId: o.id, scopeId: v.scopeId, environment: v.environment, name: v.name, origins: lines(v.origins) }),
-        { after: (out, status) => status.replaceChildren(note('ok', `Created ${out.app.id}`, h('p', {}, 'Its publishable key (give it to the partner; it is also listed on the app’s page): ', h('code', {}, out.publishableKey)), h('p', {}, link(`/orgs/${encodeURIComponent(o.id)}/apps/${encodeURIComponent(out.app.id)}`, 'Open the app')))) },
+        {
+          after: (out, status) => {
+            status.replaceChildren(note('ok', `Created ${out.app.id}`, h('p', {}, 'Its publishable key (give it to the partner; it is also listed on the app’s page): ', h('code', {}, out.publishableKey)), h('p', {}, link(`/orgs/${encodeURIComponent(o.id)}/apps/${encodeURIComponent(out.app.id)}`, 'Open the app'))));
+            return refreshApps(status);
+          },
+        },
       ),
     ),
   );
@@ -1097,7 +1114,7 @@ function appsPanel(o, d) {
     'Apps',
     { actions: blocked ? [move.button] : [create.button, move.button] },
     blocked ? note('warn', '', blocked) : '',
-    appsTable(o, d.apps),
+    tableBox,
     blocked ? '' : create.box,
     move.box,
   );

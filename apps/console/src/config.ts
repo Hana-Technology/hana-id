@@ -9,6 +9,15 @@ import { RpcRefusal } from './errors.ts';
  */
 export const PASSKEYS_SHIPPED = false;
 
+/**
+ * Whether D242's one-partner gate applies (amended by D698: lifted on testnet only). It applies until passkeys ship,
+ * on every network but testnet. The network is the env manifest's (`envs/<env>.json` `network`, which the manifest
+ * schema allows only as `testnet` today), written into the console's config by `gen` as `NETWORK`, the same var the
+ * API's mainnet-demo rule reads (`mainnetDemoEnv`). Missing, empty or anything but exactly `testnet`: the gate applies
+ * (fails closed).
+ */
+export const onePartnerGate = (network: string | undefined): boolean => !PASSKEYS_SHIPPED && network !== 'testnet';
+
 export const MINUTE_MS = 60_000;
 export const HOUR_MS = 60 * MINUTE_MS;
 export const DAY_MS = 24 * HOUR_MS;

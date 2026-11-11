@@ -14,7 +14,7 @@
 // acceptance (the first-owner exception), the grant is applied at once.
 import { type InviteView, LEGACY_ORG_ID, type MemberNotice, type OwnerGrantView, type Role, INVITE_TTL_MS, MAX_OPEN_INVITES, NEW_ORG_INVITES_WINDOW_MS, fromB64url, hex, newId, normaliseAppName } from '@hana-id/console-core';
 import { type Writer, auditInsert, entry, replayOf } from './audit.ts';
-import { PASSKEYS_SHIPPED } from './config.ts';
+import { onePartnerGate } from './config.ts';
 import { refuse } from './errors.ts';
 import { consumeGuard, consumeStmt } from './members.ts';
 import { applied, frag, gate, gated, isReplay, lit, orgHasOwner, ownerNow, runBatch } from './sql.ts';
@@ -45,13 +45,15 @@ export interface IssueInvite {
   stepUpId?: string | null;
   /** A member's step-up: consumed in the invite's own batch, only while unused and unexpired (members.ts consumeGuard). */
   consume?: { actionId: string };
+  /** The env's network (`Env.NETWORK`): decides the one-partner gate (`onePartnerGate`, D242, D698). Always passed, so no caller forgets it. */
+  network: string | undefined;
 }
 
 /**
  * Issues an invite (unusable until its notice is acked). Refusals: `forbidden` for `org_legacy`; `not_found` for an
  * unknown org; `conflict` for a frozen org, the 11th open invite of an org, or a second open invite of the same address
  * to it; `passkeys_required` for a second partner org while passkeys haven't shipped (an open new-partner-org invite
- * counts); `bad_request` for an unusable org name.
+ * counts), on every network but testnet (`onePartnerGate`, D698); `bad_request` for an unusable org name.
  */
 export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Promise<InviteView> {
   if ((i.orgId === undefined) === (i.newOrgName === undefined)) refuse('bad_request', 'Exactly one of orgId and newOrgName');
@@ -84,7 +86,8 @@ export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Pr
     guards.push(c.sql);
     binds.push(...c.binds);
   }
-  if (kind === 'partner' && !PASSKEYS_SHIPPED) {
+  const partnerGate = kind === 'partner' && onePartnerGate(i.network);
+  if (partnerGate) {
     guards.push(
       `NOT EXISTS (SELECT 1 FROM orgs WHERE kind = 'partner' AND id <> '${LEGACY_ORG_ID}')`,
       `NOT EXISTS (SELECT 1 FROM invites i WHERE i.new_org_kind = 'partner' AND ${openInvite('i', now)})`,
@@ -119,12 +122,12 @@ export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Pr
   if (i.consume) stmts.push(consumeStmt(db, i.consume.actionId, now, g));
   // A replay can't compare the target: each call draws a fresh invite id.
   const results = await runBatch(db, stmts, replayOf(w, action, null));
-  if (!applied(results)) await whyNotIssued(db, i, kind, now);
+  if (!applied(results)) await whyNotIssued(db, i, partnerGate, now);
   const row = await db.prepare(`SELECT ${INVITE_COLUMNS} FROM invites WHERE id = ?`).bind(id).first<InviteRow>();
   return inviteView(row!);
 }
 
-async function whyNotIssued(db: D1Database, i: IssueInvite, kind: string | null, now: number): Promise<never> {
+async function whyNotIssued(db: D1Database, i: IssueInvite, partnerGate: boolean, now: number): Promise<never> {
   if (i.orgId !== undefined) {
     const org = await db.prepare('SELECT status FROM orgs WHERE id = ?').bind(i.orgId).first<{ status: string }>();
     if (!org) refuse('not_found', 'No such org');
@@ -136,7 +139,8 @@ async function whyNotIssued(db: D1Database, i: IssueInvite, kind: string | null,
     if ((open?.same ?? 0) > 0) refuse('conflict', 'This address already has an open invite to the org');
     if ((open?.n ?? 0) >= MAX_OPEN_INVITES) refuse('conflict', `The org has ${MAX_OPEN_INVITES} open invites`);
   }
-  if (kind === 'partner') refuse('passkeys_required', 'A second partner org needs member passkeys first');
+  // Only where the gate was in the guard: on testnet (D698) a refused new-partner invite is never `passkeys_required`.
+  if (partnerGate) refuse('passkeys_required', 'A second partner org needs member passkeys first');
   return refuse('conflict', i.consume ? 'The invite was not issued: this confirmation was already used or has expired' : 'The invite was not issued; retry');
 }
 

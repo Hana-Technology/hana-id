@@ -7,11 +7,12 @@ import { MAIL_LOGO_PATH } from '@hana-id/brand/mail-logo';
 import { SENDGRID_URL } from '@hana-id/sendgrid';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mailLabel } from '../src/env.ts';
-import { changePending, inviteLink } from '../src/email/messages.ts';
-import { consoleLink, oneLine, render } from '../src/email/render.ts';
+import { changePending, changesDigest, inviteLink, inviteNotice, loginMethodsChanged, onChainChanged, onChainPending, ownerGrantNotice } from '../src/email/messages.ts';
+import { retentionFailed } from '../src/email/ledger-messages.ts';
+import { consoleLink, isoTime, oneLine, readableTime, render } from '../src/email/render.ts';
 import { ADMIN_CATEGORY, outbound, sendgridSender } from '../src/email/sender.ts';
 import { ACCEPTED_MEMO_MS, Budget, bypassesSuppressions, forgetAccepted, linkKey, messageKey, recipients, sendToAll } from '../src/mail.ts';
-import { FakeEmail } from './helpers.ts';
+import { FakeEmail, visibleText } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -182,14 +183,133 @@ describe('rendering', () => {
       { cancelUrl: consoleLink('https://console.test', '/cancel/gc_1#t=abc'), delayMs: 86_400_000 },
     );
     expect(r.subject).not.toMatch(/[\r\n]/u);
-    expect(r.subject.startsWith('[Hana ID sandbox-test] Pending change for')).toBe(true);
-    expect(r.html).not.toContain('<img');
-    expect(r.html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(r.subject.startsWith('[Hana ID sandbox-test] New allowed origin proposed for')).toBe(true);
+    expect(r.html).not.toContain('<img src=x');
+    expect(r.html).not.toMatch(/onerror=alert[^<]*>/u);
+    expect(visibleText(r.html)).toContain('<img src=x onerror=alert(1)> Bcc: victim@example.com');
     expect(r.text).toContain('about 1 d after this notice');
     expect(() => consoleLink('https://console.test', '//evil.example/x')).toThrow();
     expect(() => render('e', 's', [{ kind: 'link', label: 'x', url: 'https://evil.example/' }], 'https://console.test')).toThrow();
     expect(oneLine(`a${String.fromCharCode(0x2028)}b${String.fromCharCode(0x202e)}c${String.fromCharCode(7)}d`)).toBe('abcd');
   });
+  it('the change notice in plain words per kind (D699): subject, the Change row with its id, a readable time; still pending and cancellable', () => {
+    const notice = (kind: string, extra: Record<string, unknown> = {}) =>
+      changePending(
+        { ...ctx, label: '[SANDBOX]' },
+        {
+          change: { id: 'gc_7', appId: 'app_1', kind, status: 'pending', proposedByKind: 'member', proposedBy: 'usr_1', proposedAt: Date.parse('2026-11-11T05:01:36.861Z'), ...extra } as never,
+          contacts: [],
+          app: { id: 'app_1', name: 'Dry Run App', orgId: 'org_1', scopeId: 's1', environment: 'test' },
+        },
+        { cancelUrl: consoleLink('https://console.test', '/cancel/gc_7#t=abc'), delayMs: 60_000 },
+      );
+    const cases: [string, Record<string, unknown>, string, string][] = [
+      ['origin_add', { origin: 'https://app.partner.example', display: 'https://app.partner.example', idn: false }, 'New allowed origin proposed for Dry Run App', 'Add an allowed origin (gc_7)'],
+      ['policy_set', { policyId: 'pol_1' }, 'Auto-approve policy proposed for Dry Run App', 'Set an auto-approve policy (gc_7)'],
+      ['raw_sign_on', {}, 'Raw signing proposed for Dry Run App', 'Turn on raw signing (with approval) (gc_7)'],
+      ['some_new_kind', {}, 'Change proposed for Dry Run App', 'some_new_kind (gc_7)'],
+    ];
+    for (const [kind, extra, subject, row] of cases) {
+      const r = notice(kind, extra);
+      expect(r.subject).toBe(`[SANDBOX] [Hana ID sandbox-test] ${subject}`);
+      expect(r.text).toMatch(new RegExp(`Change:\\s+${row.replace(/[()]/gu, '\\$&')}\n`, 'u'));
+      expect(r.text).toMatch(/Proposed at:\s+11 November 2026, 05:01 UTC\n/u);
+      expect(visibleText(r.html)).toContain(`Change${row}`);
+      expect(visibleText(r.html)).toContain('Proposed at11 November 2026, 05:01 UTC');
+      expect(r.text).not.toContain('2026-11-11T05:01');
+      // Still a pending change with its cancel link; the email approves nothing.
+      expect(r.text).toContain('It is not in force yet.');
+      expect(r.text).toContain('If you did not expect this change, cancel it now. The page asks you to confirm; opening the link alone changes nothing.');
+      expect([...r.html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1])).toEqual(['https://console.test/cancel/gc_7#t=abc']);
+      // The heading is fixed words, never the app's name (D687's rule, D700).
+      expect(r.html).toContain(`>${subject.replace(' for Dry Run App', '')}</h1>`);
+      expect(r.html).not.toMatch(/approve this|accept this/iu);
+    }
+  });
+
+  describe('the security notices partners receive: the designed layout (D700)', () => {
+    const files = 'https://files.test';
+    const c = { ...ctx, label: '[SANDBOX]', filesOrigin: files };
+    const hostile = 'evil.example/login?x=1 <b>bold</b>';
+    const app = { id: 'app_1', name: hostile, orgId: 'org_1', scopeId: 's1', environment: 'test' as const };
+    const invite = { id: 'inv_1', email: 'new.owner@evil.example', orgId: 'org_1', role: 'owner', createdByKind: 'hana', createdBy: 'staff-sub', createdAt: Date.UTC(2026, 10, 11, 5), expiresAt: Date.UTC(2026, 10, 18, 5) } as never;
+    const grant = { id: 'og_1', orgId: 'org_1', userId: 'usr_1', grantedByKind: 'member', grantedBy: 'usr_2', createdAt: Date.UTC(2026, 10, 11, 5) };
+    const mails = {
+      changePending: changePending(c, { change: { id: 'gc_1', appId: 'app_1', kind: 'origin_add', origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, status: 'pending', proposedByKind: 'member', proposedBy: 'usr_1', proposedAt: Date.UTC(2026, 10, 11, 5, 1) } as never, contacts: [], app }, { cancelUrl: 'https://console.test/cancel/gc_1#t=abc', delayMs: 60_000 }),
+      changePendingIdn: changePending(c, { change: { id: 'gc_2', appId: 'app_1', kind: 'origin_add', origin: 'https://xn--bcher-kva.example', display: 'https://bücher.example', idn: true, status: 'pending', proposedByKind: 'member', proposedBy: 'usr_1', proposedAt: 0 } as never, contacts: [], app }, { cancelUrl: 'https://console.test/cancel/gc_2#t=abc', delayMs: 60_000 }),
+      inviteNotice: inviteNotice(c, invite, { orgName: hostile }),
+      ownerGrantNotice: ownerGrantNotice(c, { kind: 'owner_grant', grant, member: { userId: 'usr_1', email: 'promoted@evil.example' }, owners: [] } as never, { orgName: hostile, cancelUrl: 'https://console.test/cancel-owner/og_1#t=abc', delayMs: 86_400_000 }),
+      loginMethodsChanged: loginMethodsChanged(c, { seq: 1, at: Date.UTC(2026, 10, 11, 5), appId: 'app_1', orgId: 'org_1', scopeId: 's1', kind: 'app.settings', actorKind: 'member', actorId: 'usr_1', detail: { loginMethods: 'google,email' } } as never, { appName: hostile, undoUrl: 'https://console.test/orgs/org_1/apps/app_1/email' }),
+      onChainPending: onChainPending(c, { scopeId: 's1', orgId: 'org_1', changeId: 7, change: { SetAllowShared: { allow: true } }, unlockAtMs: Date.UTC(2026, 10, 12, 5), currentOwners: [], activeOrigins: ['https://app.evil.example', 'http://localhost:5173'] }),
+      onChainChanged: onChainChanged(c, 's1', 'org_1', { owners: [], clients: [], allowShared: false }, { owners: [{ Oidc: { provider: 'google', sub: '123' } }], clients: [['google', 'x.apps.googleusercontent.com']], allowShared: true }),
+    };
+    const headings: Record<keyof typeof mails, string> = {
+      changePending: 'New allowed origin proposed',
+      changePendingIdn: 'New allowed origin proposed',
+      inviteNotice: 'A new owner was invited',
+      ownerGrantNotice: 'Owner rights requested',
+      loginMethodsChanged: 'Email login turned on',
+      onChainPending: 'A change to your scope was proposed on chain',
+      onChainChanged: 'Your scope changed on chain',
+    };
+
+    for (const [name, m] of Object.entries(mails) as [keyof typeof mails, ReturnType<typeof changePending>][]) {
+      it(`${name}: the layout with a fixed heading, the banner, the logo, the footer; the text part faithful; no markup from names`, () => {
+        expect(m.html).toContain('<html lang="en"');
+        expect(m.html).toContain(`>${headings[name]}</h1>`);
+        expect(m.html.match(/<h1/gu)).toHaveLength(1);
+        // The title and heading never carry a partner's value.
+        expect(m.html.match(/<title>[^<]*<\/title>/u)![0]).not.toMatch(/evil|bold/u);
+        expect(visibleText(m.html)).toContain('[SANDBOX] Not production: this email is from Hana ID sandbox-test (testnet), for testing.');
+        expect(visibleText(m.html)).toContain('Hana never asks you to approve anything from an email.');
+        expect(m.text).toContain('Hana never asks you to approve anything from an email.');
+        // The only image is the hosted logo; no script; links only to the console, at most the one button.
+        expect([...m.html.matchAll(/src="([^"]*)"/gu)].map((x) => x[1])).toEqual([`${files}${MAIL_LOGO_PATH}`]);
+        expect(m.html).not.toMatch(/<script|<form|javascript:/iu);
+        const hrefs = [...m.html.matchAll(/href="([^"]*)"/gu)].map((x) => x[1]!);
+        expect(hrefs.length).toBeLessThanOrEqual(1);
+        for (const h of hrefs) expect(h.startsWith('https://console.test/')).toBe(true);
+        // No markup from a partner's value, and no host or URL in one text node a client could link.
+        expect(m.html).not.toContain('<b>bold</b>');
+        for (const textNode of m.html.split(/<[^>]+>/u)) expect(textNode, name).not.toMatch(/evil&#46;example|evil\.example|localhost:5173\/|localhost&#58;/u);
+        // Every paragraph sentence of the text part is in the HTML part (D670's rule).
+        const html = visibleText(m.html);
+        for (const para of m.text.split('\n\n').filter((p) => !/^[A-Za-z ]+:\s{1,}/u.test(p) && !p.includes('\n- ') && !p.startsWith('- ') && !/:\n/u.test(p))) expect(html, para).toContain(para.replace(/\s+/gu, ' ').trim());
+      });
+    }
+
+    it('the action is the one cancel button where there is one, and the page confirms: opening the link alone changes nothing', () => {
+      for (const [m, label] of [
+        [mails.changePending, 'Cancel this change'],
+        [mails.ownerGrantNotice, 'Cancel the owner grant'],
+      ] as const) {
+        expect(m.html).toContain(`>${label}</a>`);
+        expect(visibleText(m.html)).toContain('opening the link alone changes nothing');
+        expect(m.text).toContain('opening the link alone changes nothing');
+      }
+      expect(visibleText(mails.changePending.html)).toContain('It is not in force yet.');
+      expect(mails.inviteNotice.html).not.toContain('href=');
+      expect(mails.onChainPending.html).not.toContain('href=');
+    });
+
+    it('the origin and every value stay readable text: the localhost origin, an IDN warning, times in words', () => {
+      const text = visibleText(mails.changePending.html);
+      expect(text).toContain('Originhttp://localhost:5173');
+      expect(text).toContain('Proposed at11 November 2026, 05:01 UTC');
+      expect(visibleText(mails.changePendingIdn.html)).toContain('Warning: This origin is an internationalised domain name. Its ASCII form is https://xn--bcher-kva.example;');
+      expect(visibleText(mails.inviteNotice.html)).toContain('Expires18 November 2026, 05:00 UTC');
+      expect(visibleText(mails.inviteNotice.html)).toContain('Invitednew.owner@evil.example');
+      expect(visibleText(mails.onChainPending.html)).toContain('https://app.evil.example');
+      expect(visibleText(mails.onChainPending.html)).toContain('Can execute from12 November 2026, 05:00 UTC');
+    });
+
+    it('staff digests keep their plain form (D674)', () => {
+      const d = changesDigest(c, 'org_1', []);
+      expect(d.html.startsWith('<!doctype html><html><body>')).toBe(true);
+      expect(d.html).not.toContain('<h1');
+    });
+  });
+
   it('a non-production env labels every subject and opens every body with it (D419); production carries none', () => {
     const r = render('sandbox-dev', 'Retention job failed (1 run)', [{ kind: 'p', text: 'body' }], 'https://console.test', '[SANDBOX]');
     expect(r.subject).toBe('[SANDBOX] [Hana ID sandbox-dev] Retention job failed (1 run)');
@@ -222,6 +342,10 @@ describe('rendering', () => {
     expect(`${r.text}${r.html}`).not.toContain('usr_secret_id');
     expect(r.text).toContain('Accepting adds you to the organisation.');
     expect(r.text).toContain('The link works once, for this address only.');
+    // The expiry as a person reads it, in the body and the preview line; never the raw ISO timestamp.
+    expect(r.text).toContain('The invitation expires on 17 November 2026, 09:00 UTC.');
+    expect(r.html).toContain('Join Sodax Labs in the Hana ID partner console. The invitation expires on 17 November 2026, 09:00 UTC.');
+    expect(`${r.text}${r.html}`).not.toContain('2026-11-17T09');
     const staff = inviteLink(ctx, { ...(invite as object), createdByKind: 'hana', createdBy: 'staff@hana.example', role: 'viewer' } as never, { orgName: 'Sodax Labs', inviteUrl: url });
     expect(staff.text).toContain('as a viewer, by Hana staff.');
     expect(staff.text).toContain('viewers see its apps and settings and change nothing');
@@ -258,6 +382,16 @@ describe('rendering', () => {
     expect(r.html).toContain('evil<span>.</span><wbr>example Labs');
     expect([...r.html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1])).toEqual([url]);
     expect(inviteLink(ctx, { id: 'inv_1', role: 'owner', newOrgName: 'Acme', createdByKind: 'hana', createdBy: 's', expiresAt: 0 } as never, { inviteUrl: url }).html).not.toContain('<img');
+  });
+
+  it('times in sentences read as dates (`18 November 2026, 04:54 UTC`); tables keep the exact ISO time', () => {
+    const t = Date.parse('2026-11-18T04:54:59.777Z');
+    expect(readableTime(t)).toBe('18 November 2026, 04:54 UTC');
+    expect(readableTime(Date.UTC(2027, 0, 1, 0, 5))).toBe('1 January 2027, 00:05 UTC');
+    expect(isoTime(t)).toBe('2026-11-18T04:54:59.777Z');
+    expect(isoTime(Date.UTC(2026, 10, 18, 4, 54))).toBe('2026-11-18T04:54:00Z');
+    const overdue = retentionFailed(ctx, { kind: 'overdue', month: '2026-10', dueAt: Date.UTC(2026, 10, 1, 3), latest: null });
+    expect(overdue.text).toContain('The monthly retention job for 2026-10 was due at 1 November 2026, 03:00 UTC and no run has completed since.');
   });
 
   it('operational mails keep the plain HTML (no designed layout)', () => {

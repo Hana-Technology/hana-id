@@ -295,7 +295,7 @@ describe('the 5-minute cron', () => {
     const s = await everyFiveMinutes(env);
     expect(s.feed).toBe(true);
     expect(s.watcher).toBe(true);
-    expect(fake.to(app.contact).some((m) => m.subject.includes('Pending change'))).toBe(true);
+    expect(fake.to(app.contact).some((m) => m.subject.includes('New allowed origin proposed for'))).toBe(true);
     expect(JSON.parse(data.state.get('cron.last_run')!.value)).toMatchObject({ feed: true, watcher: true });
     // Every call over the real service bindings came out of the run's budget, recorded per job (D380): at least the
     // notices' two pages and the feed's reads.
@@ -310,6 +310,6 @@ describe('the 5-minute cron', () => {
     await adminRequest(`/api/apps/${app.id}/origins`, { body: { orgId: app.org, add: [`https://${uid()}.partner.example`], expectedVersion: 0 } });
     const s = await everyFiveMinutes(envWith({ USAGE_DB: undefined }));
     expect(s).toMatchObject({ feed: false, watcher: false });
-    expect(fake.to(app.contact).some((m) => m.subject.includes('Pending change'))).toBe(true);
+    expect(fake.to(app.contact).some((m) => m.subject.includes('New allowed origin proposed for'))).toBe(true);
   });
 });

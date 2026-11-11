@@ -22,6 +22,22 @@ export const RPC = 'https://rpc.test.invalid';
 export const DELAY = 60_000;
 
 let seq = 0;
+/** What a mail's HTML part shows as text: tags dropped (the unlinked spans join up again), entities decoded, spaces collapsed. */
+export const visibleText = (html: string): string =>
+  html
+    .replace(/<style[\s\S]*?<\/style>/gu, '')
+    .replace(/<div style="display:none[\s\S]*?<\/div>/gu, '')
+    .replace(/<[^>]+>/gu, '')
+    .replace(/&#(\d+);/gu, (_m, n: string) => String.fromCodePoint(Number(n)))
+    .replace(/&nbsp;/gu, ' ')
+    .replace(/&zwnj;/gu, '')
+    .replace(/&lt;/gu, '<')
+    .replace(/&gt;/gu, '>')
+    .replace(/&quot;/gu, '"')
+    .replace(/&#39;/gu, "'")
+    .replace(/&amp;/gu, '&')
+    .replace(/\s+/gu, ' ');
+
 export const uid = (): string => `${Date.now().toString(36)}${(++seq).toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 // ---- Access ----

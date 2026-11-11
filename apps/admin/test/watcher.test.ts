@@ -4,6 +4,7 @@
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Budget } from '../src/mail.ts';
+import { readableTime } from '../src/email/render.ts';
 import { WATCH_CURSOR, runWatcher } from '../src/watcher.ts';
 import { ALIAS, FakeEmail, chainScope, memoryOps, nearCalls, newOpsData, seedHotApp, setNearDown, stubNetwork } from './helpers.ts';
 
@@ -52,7 +53,9 @@ describe('the watcher', () => {
     expect(text).toContain('google sign-in attacker-sub-9 (NEW)');
     expect(text).not.toContain('google sign-in owner-sub-1 (NEW)');
     expect(text).toContain('WARNING: It adds a sign-in owner');
-    expect(text).toContain(new Date(unlock).toISOString().slice(0, 16));
+    // Readable in the designed notice (D697 as amended by D700); the HTML part is the designed layout.
+    expect(text).toContain(`Can execute from: ${readableTime(unlock)}`);
+    expect(mails[0]!.html).toContain('A change to your scope was proposed on chain</h1>');
     expect(data.watch.get(`${app.scope}#7`)!.notifiedAt).not.toBeNull();
     data.state.set(WATCH_CURSOR, { value: app.scope.slice(0, -1), updatedAt: 0 });
     const second = await run(data);

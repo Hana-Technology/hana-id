@@ -4,7 +4,10 @@
 // a token hash or (in the audit trail) the invitee's address.
 import { LEGACY_ORG_ID, MAX_OPEN_INVITES, type MemberNotice, NEW_ORG_INVITES_WINDOW_MS, newId, randomBytes } from '@hana-id/console-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { newOrgInvites } from '../src/invites.ts';
+import { createExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import { acceptInvite, newOrgInvites } from '../src/invites.ts';
+import { StaffRpc } from '../src/staff-rpc.ts';
 import { DAY, HOUR, auditRows, db, hana, linkPair, member, seedMember, seedOrg, staffRpc, system } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -169,22 +172,59 @@ describe('issueInvite', () => {
   });
 });
 
-describe('the passkey gate (Deferred: no second partner org before passkeys)', () => {
-  it('allows the first partner org, refuses a second with passkeys_required; an open new-partner invite counts', async () => {
+describe('the passkey gate (D242: no second partner org before passkeys; D698: lifted on testnet only)', () => {
+  /** StaffRpc in an env on `network` (undefined: the var missing). The suite's own env is testnet (TEST_MANIFEST). */
+  const rpcOn = (network: string | undefined) => new StaffRpc(createExecutionContext(), { ...env, NETWORK: network } as typeof env);
+  const issueOn = (network: string | undefined, o: Record<string, unknown>) => rpcOn(network).issueInvite({ ...hana(), role: 'owner', email: `p${Math.random().toString(36).slice(2)}@partner.example`, ...o });
+
+  for (const network of ['mainnet', undefined, '', 'Testnet', 'testnet ']) {
+    it(`on ${JSON.stringify(network)}: allows the first partner org, refuses a second with passkeys_required; an open new-partner invite counts`, async () => {
+      await clearPartnerOrgs();
+      const first = await issueOn(network, { newOrgName: 'Sodax' });
+      expect(first.ok).toBe(true);
+      // The first is still only an invite, and already counts.
+      expect(await issueOn(network, { newOrgName: 'Second', kind: 'partner' })).toMatchObject({ ok: false, code: 'passkeys_required' });
+      // Internal orgs pass, and org_legacy (internal) never counts.
+      expect((await issueOn(network, { newOrgName: 'Hana QA', kind: 'internal' })).ok).toBe(true);
+      // Revoking the open one lets a partner org in; an existing partner org then blocks the next.
+      if (first.ok) expect((await staffRpc().revokeInvite({ ...hana(), inviteId: first.invite.id })).ok).toBe(true);
+      await seedOrg({ kind: 'partner' });
+      expect(await issueOn(network, { newOrgName: 'Third' })).toMatchObject({ ok: false, code: 'passkeys_required' });
+      // Inviting into an existing partner org is not a new partner org.
+      const partner = await db.prepare("SELECT id FROM orgs WHERE kind = 'partner' LIMIT 1").first<string>('id');
+      expect((await issueOn(network, { orgId: partner, role: 'viewer' })).ok).toBe(true);
+    });
+  }
+
+  it('off testnet, the check is in the insert\'s own batch: of concurrent first-partner invites exactly one is issued', async () => {
     await clearPartnerOrgs();
-    const first = await issue({ newOrgName: 'Sodax', role: 'owner' });
-    expect(first.ok).toBe(true);
-    // The first is still only an invite, and already counts.
-    expect(await issue({ newOrgName: 'Second', role: 'owner', kind: 'partner' })).toMatchObject({ ok: false, code: 'passkeys_required' });
-    // Internal orgs pass, and org_legacy (internal) never counts.
-    expect((await issue({ newOrgName: 'Hana QA', role: 'owner', kind: 'internal' })).ok).toBe(true);
-    // Revoking the open one lets a partner org in; an existing partner org then blocks the next.
-    if (first.ok) expect((await staffRpc().revokeInvite({ ...hana(), inviteId: first.invite.id })).ok).toBe(true);
+    const results = await Promise.all(Array.from({ length: 4 }, (_, n) => issueOn('mainnet', { newOrgName: `Race ${n}` })));
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok).map((r) => (r as { code: string }).code)).toEqual(['passkeys_required', 'passkeys_required', 'passkeys_required']);
+    const open = await db.prepare("SELECT COUNT(*) AS n FROM invites WHERE new_org_kind = 'partner' AND accepted_at IS NULL AND revoked_at IS NULL").first<number>('n');
+    expect(open).toBe(1);
+  });
+
+  it('on testnet: a second partner org and a second open partner invite are allowed, and accepting each makes a partner org', async () => {
+    await clearPartnerOrgs();
     await seedOrg({ kind: 'partner' });
-    expect(await issue({ newOrgName: 'Third', role: 'owner' })).toMatchObject({ ok: false, code: 'passkeys_required' });
-    // Inviting into an existing partner org is not a new partner org.
-    const partner = await db.prepare("SELECT id FROM orgs WHERE kind = 'partner' LIMIT 1").first<string>('id');
-    expect((await issue({ orgId: partner })).ok).toBe(true);
+    const a = await issueOn('testnet', { newOrgName: 'Second Partner' });
+    const b = await issueOn('testnet', { newOrgName: 'Third Partner', kind: 'partner' });
+    expect(a).toMatchObject({ ok: true, invite: { newOrgKind: 'partner' } });
+    expect(b).toMatchObject({ ok: true, invite: { newOrgKind: 'partner' } });
+    // The suite's own env (TEST_MANIFEST, network testnet) is the same.
+    expect((await issue({ newOrgName: 'Fourth Partner', role: 'owner' })).ok).toBe(true);
+    for (const r of [a, b]) {
+      if (!r.ok) throw new Error(r.code);
+      const { hash, hashB64 } = await linkPair();
+      expect((await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: hashB64 })).ok).toBe(true);
+      const out = await acceptInvite(db, { tokenHash: hash, email: r.invite.email, provider: 'google', sub: `sub-${r.invite.id}`, hd: null, requestId: `req_${r.invite.id}`, now: Date.now(), ipPrefix: null, country: null }, () => 60_000);
+      expect(out).toMatchObject({ ok: true, role: 'owner' });
+      if (out.ok) expect(await db.prepare('SELECT kind FROM orgs WHERE id = ?').bind(out.orgId).first('kind')).toBe('partner');
+    }
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM orgs WHERE kind = 'partner'").first<number>('n')).toBe(3);
+    // Back off testnet, the gate holds again at once.
+    expect(await issueOn('mainnet', { newOrgName: 'Fifth Partner' })).toMatchObject({ ok: false, code: 'passkeys_required' });
   });
 });
 
@@ -333,17 +373,21 @@ describe('newOrgInvites (D696: the admin Organisations page\'s "Pending invites"
     const accepted = await seedInviteAt({ created: T - 11 * DAY, notified: T - 11 * DAY + 60_000, accepted: T - 10 * DAY });
     const revoked = await seedInviteAt({ created: T - 30 * DAY, revoked: T - 29 * DAY });
     const expired = await seedInviteAt({ created: T - 10 * DAY, notified: T - 10 * DAY + 60_000 });
+    // Newer than every open one, but ended: open first puts it below them.
+    const recentRevoked = await seedInviteAt({ created: T - 10 * 60_000, revoked: T - 9 * 60_000 });
     // The edges: ended exactly W before T is out; a millisecond later is in.
     const edgeIn = await seedInviteAt({ created: T - W - 7 * DAY + 1 });
     await seedInviteAt({ created: T - W - 7 * DAY });
     await seedInviteAt({ created: T - 40 * DAY, revoked: T - W });
     await seedInviteAt({ created: T - 32 * DAY, accepted: T - W - 1 });
+    // Revoked before the window while its expiry (T − 25 d) is inside it: the revocation is when it ended, so it is out.
+    await seedInviteAt({ created: T - 32 * DAY, revoked: T - W - 1 });
     // An open invite to an existing org is the org page's, not this list's.
     await seedInviteAt({ created: T - HOUR, orgId: await seedOrg() });
 
     const r = await newOrgInvites(db, T, 100);
     expect(r.truncated).toBe(false);
-    expect(r.invites.map((i) => i.id)).toEqual([unsent, sent, expired, accepted, revoked, edgeIn]);
+    expect(r.invites.map((i) => i.id)).toEqual([unsent, sent, recentRevoked, expired, accepted, revoked, edgeIn]);
     const byId = new Map(r.invites.map((i) => [i.id, i]));
     expect(byId.get(unsent)).toEqual({
       id: unsent,

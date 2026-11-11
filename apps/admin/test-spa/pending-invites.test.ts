@@ -175,6 +175,19 @@ describe('Pending invites on the Organisations page', () => {
     expect(s.text()).toContain('Lumen Pay');
   });
 
+  it('an organisation name or address that looks like HTML is shown as text, never as markup', async () => {
+    const hostile = invite('inv_x', '<img src=x onerror=alert(1)>', 'a<b>@x.example', 60_000);
+    const s = boot('/orgs', pageApi(list(hostile)));
+    await vi.waitFor(() => expect(panelOf(s)).toBeTruthy());
+    expect(panelOf(s)!.querySelector('img, b')).toBeNull();
+    expect(rows(s)[0]![0]).toContain('<img src=x onerror=alert(1)>');
+    expect(rows(s)[0]![2]).toBe('a<b>@x.example');
+    s.button('Revoke').click();
+    expect(panelOf(s)!.querySelector('.confirm')!.textContent).toContain('to the new organisation “<img src=x onerror=alert(1)>”?');
+    expect(panelOf(s)!.querySelector('img')).toBeNull();
+    expect(s.dialogs).toEqual([]);
+  });
+
   it('says when the list was cut at 100', async () => {
     const s = boot('/orgs', pageApi(() => ({ body: { invites: [UNSENT], truncated: true } })));
     await vi.waitFor(() => expect(panelOf(s)).toBeTruthy());

@@ -1,7 +1,8 @@
 // Plain text plus HTML for every email (docs/batch-c-spec.md "Email"): no remote image, no script, links only to
 // `console.origin`, never an approve link. The HTML is plain semantic markup, or, for a mail that passes `design`
-// (the partner invite), Hana's designed layout (@hana-id/brand/email) built from the same blocks, with the same text
-// part. Partner-controlled text (app and org names, origins, policy labels) is escaped for HTML and stripped of
+// (the partner invite, D672; the security notices partners receive, D700), Hana's designed layout (@hana-id/brand/email)
+// built from the same blocks, with the same text part; in it every paragraph, table value, list item and warning is
+// written so mail clients don't turn a host or address into a link. Partner-controlled text (app and org names, origins, policy labels) is escaped for HTML and stripped of
 // control characters; a subject is one line.
 import { MAIL_INVISIBLE_SOURCE, type MailBlock, mailHtml, mailLogoUrl } from '@hana-id/brand/email';
 
@@ -78,19 +79,21 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
       case 'warn':
         text.push(`WARNING: ${clean(b.text)}`);
         html.push(`<p><strong>Warning:</strong> ${escapeHtml(clean(b.text))}</p>`);
-        designed.push({ kind: 'callout', tone: 'warn', text: [{ strong: 'Warning: ' }, clean(b.text)] });
+        // A warning can quote an origin (an IDN's ASCII form): unlinked, as every partner-influenced value (D700).
+        designed.push({ kind: 'callout', tone: 'warn', text: [{ strong: 'Warning: ' }, { unlinked: clean(b.text) }] });
         break;
       case 'kv': {
         const width = Math.max(...b.rows.map(([k]) => k.length));
         text.push(b.rows.map(([k, v]) => `${`${k}:`.padEnd(width + 2)}${oneLine(v, 500)}`).join('\n'));
         html.push(`<table>${b.rows.map(([k, v]) => `<tr><td><strong>${escapeHtml(k)}</strong></td><td>${escapeHtml(oneLine(v, 500))}</td></tr>`).join('')}</table>`);
-        designed.push({ kind: 'kv', rows: b.rows.map(([k, v]) => [k, oneLine(v, 500)] as const) });
+        // Values are written so clients don't link them (an origin, an app or org name, an address; D700).
+        designed.push({ kind: 'kv', rows: b.rows.map(([k, v]) => [k, [{ unlinked: oneLine(v, 500) }]] as const) });
         break;
       }
       case 'list':
         text.push(b.items.map((i) => `- ${oneLine(i, 500)}`).join('\n'));
         html.push(`<ul>${b.items.map((i) => `<li>${escapeHtml(oneLine(i, 500))}</li>`).join('')}</ul>`);
-        designed.push({ kind: 'list', items: b.items.map((i) => oneLine(i, 500)) });
+        designed.push({ kind: 'list', items: b.items.map((i) => [{ unlinked: oneLine(i, 500) }]) });
         break;
       case 'pre':
         text.push(clean(b.text));
@@ -129,4 +132,13 @@ export function duration(ms: number): string {
   return parts.slice(0, 2).join(' ') || '0 s';
 }
 
+/** An exact UTC time for tables and lists (copyable, sortable): `2026-11-18T04:54:59.777Z`, whole seconds without `.000`. */
 export const isoTime = (ms: number): string => new Date(ms).toISOString().replace('.000Z', 'Z');
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+/** A UTC time as a sentence reads it: `18 November 2026, 04:54 UTC` (to the minute, seconds dropped). */
+export function readableTime(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+}

@@ -29,6 +29,8 @@ export * from './support-id.ts';
 export * from './timings.ts';
 export * from './wallet-record.ts';
 export * from './signers/evm.ts';
+// NEAR (D720–D729): the borsh codec, hashes and signers, also at `@hana-id/core/near`.
+export * from './near/index.ts';
 // The Stellar signers are `@hana-id/core/signers/stellar` only: they pull in @stellar/stellar-base (about 450 kB
 // minified), which pages that sign nothing on Stellar (apps/smoke, the login popup) must not bundle.
 

@@ -39,7 +39,7 @@ import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './a
 import { type Dom, dom, errorView, originText } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
-import { renderApproval } from './render-approval.ts';
+import { markOverflowing, renderApproval } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
 import { type DemoBridge, type DemoNetwork, type DemoSwap, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, fixedMainnetDemoPrices, formatUsd, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
@@ -434,6 +434,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       ),
     );
     guard.rendered();
+    // Boxes that hold more than they show say so, now that they are laid out (and again after a resize).
+    markOverflowing(win.document);
   }
 
   function showConsent(msg: WindowMessage<'hana:consent-request'>): void {
@@ -573,6 +575,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     d.show(errorView(d, 'Nothing to review', 'Open this window from the Hana prompt in the app.'));
   } else {
     for (const [t, l] of listeners) win.addEventListener(t, l);
+    win.addEventListener('resize', () => markOverflowing(win.document));
     win.document.addEventListener('visibilitychange', onVisibility);
     if (opened.mode === 'vault') {
       loadingView();

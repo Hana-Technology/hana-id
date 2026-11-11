@@ -355,22 +355,24 @@ export function pendingUpgrades(now: number, paused = false): PendingUpgradesVie
 }
 
 export function users(now: number) {
-  const u = (n: number, sup: string, kinds: { kind: string; status: 'active' | 'pending' }[], evm: string, stellar: string, seen: number, email: string | null = null) => ({
+  const u = (n: number, sup: string, kinds: { kind: string; status: 'active' | 'pending' }[], evm: string, stellar: string, seen: number, email: string | null = null, near: string | null = null) => ({
     userId: `u1_${hex(`user${n}`, 22).replace(/[0-9]/gu, (c) => 'AbCdEfGhIj'[Number(c)]!)}`,
     supportId: sup,
     scopeId: 's_lumen_live',
     createdAt: now - (30 - n) * D,
     lastSeenAt: now - seen,
     accounts: kinds,
+    // The API's order: Stellar, EVM, then NEAR (only for a user who signed in through an SDK of 0.4.0 or later).
     wallets: [
-      { chain: 'evm' as const, address: evm, firstSeenAt: now - (30 - n) * D, lastUsedAt: now - seen },
       { chain: 'stellar' as const, address: stellar, firstSeenAt: now - (30 - n) * D, lastUsedAt: now - seen },
+      { chain: 'evm' as const, address: evm, firstSeenAt: now - (30 - n) * D, lastUsedAt: now - seen },
+      ...(near ? [{ chain: 'near' as const, address: near, firstSeenAt: now - seen, lastUsedAt: now - seen }] : []),
     ],
     email,
   });
   return [
-    u(1, 'HANA-7KQ2-M4XD', [{ kind: 'google', status: 'active' }], '0x4E2a9c1B7d3F6e8A0b5C9d2E7f1A3b6C8d0E2f41', 'GBX4K7QWZ2M5N8P3R6T9V2Y5B8E1H4K7N0Q3S6U9W2Z5C8F1J4L7P2', 14 * 60_000),
-    u(2, 'HANA-9TPL-2WRN', [{ kind: 'google', status: 'active' }, { kind: 'email', status: 'active' }], '0x91bD3e7F0a2C4d6E8f1A3b5C7d9E0f2A4b6C8d1E', 'GCQ7M2P5R8T1V4X7Z0B3D6F9H2K5M8P1R4T7V0X3Z6B9D2F5H8K1M4', 3 * H),
+    u(1, 'HANA-7KQ2-M4XD', [{ kind: 'google', status: 'active' }], '0x4E2a9c1B7d3F6e8A0b5C9d2E7f1A3b6C8d0E2f41', 'GBX4K7QWZ2M5N8P3R6T9V2Y5B8E1H4K7N0Q3S6U9W2Z5C8F1J4L7P2', 14 * 60_000, null, 'a8f3c2d17e4b9056c1d2e3f40718293a4b5c6d7e8f9012a3b4c5d6e7f8091a2b'),
+    u(2, 'HANA-9TPL-2WRN', [{ kind: 'google', status: 'active' }, { kind: 'email', status: 'active' }], '0x91bD3e7F0a2C4d6E8f1A3b5C7d9E0f2A4b6C8d1E', 'GCQ7M2P5R8T1V4X7Z0B3D6F9H2K5M8P1R4T7V0X3Z6B9D2F5H8K1M4', 3 * H, null, '3c9e7a1b5d2f4086e9a1b3c5d7e9f1023a4b5c6d7e8f90a1b2c3d4e5f6a7b8c9'),
     u(3, 'HANA-4HJS-8BQC', [{ kind: 'email', status: 'active' }, { kind: 'google', status: 'pending' }], '0x0c7A2e9B4d1F6a3C8e5B0d7F2a9C4e1B6d3F8a51', 'GDA2C5E8G1J4L7N0Q3S6U9W2Y5A8C1E4G7J0L3N6Q9S2U5W8Y1A4C7', 2 * D, 'mei.lin@example.com'),
   ];
 }

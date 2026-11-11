@@ -159,7 +159,7 @@ describe('docs/integration.md', () => {
 describe('docs/integration.md: NEAR (section 8)', () => {
   const s8 = guide.slice(guide.indexOf('### NEAR'), guide.indexOf('### Raw signing'));
   const client = readText('../../web/src/client/near.ts');
-  const vault = readText('../../web/src/vault/vault.ts') + readText('../../web/src/vault/signing.ts');
+  const vault = readText('../../web/src/vault/vault.ts') + readText('../../web/src/vault/signing.ts') + readText('../src/near/delegate.ts');
 
   it('names the SDK methods and the refusal reasons the code has', () => {
     for (const m of ['signTransaction', 'signDelegateAction', 'signMessage', 'relay']) {
@@ -171,7 +171,7 @@ describe('docs/integration.md: NEAR (section 8)', () => {
     expect(client).toContain('\n  async activate(): Promise<NearActivateResult> {');
     expect(client).toContain('/v1/near/${path}');
     expect(s8).toContain('POST /v1/near/activate');
-    for (const reason of ['near_block_unknown', 'near_network_mismatch', 'near_relayed_delegate', 'near_key_unknown', 'near_delegate_nonce_used', 'near_delegate_nonce_stale', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'near_rpc_unavailable']) {
+    for (const reason of ['near_block_unknown', 'near_network_mismatch', 'near_relayed_delegate', 'near_key_unknown', 'near_delegate_nonce_used', 'near_delegate_nonce_stale', 'near_delegate_test_app_action', 'near_delegate_test_app_receiver', 'near_rpc_single_provider', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'near_rpc_unavailable']) {
       expect(s8).toContain(reason);
       expect(vault).toContain(`'${reason}'`);
     }

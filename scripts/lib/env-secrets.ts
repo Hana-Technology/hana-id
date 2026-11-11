@@ -156,6 +156,8 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
     out.push(item('api', 'OWNER_RELAYER_KEYS', shown(SECRET_FILES.ownerRelayerKeys), true, f(SECRET_FILES.ownerRelayerKeys), () => readPool(f(SECRET_FILES.ownerRelayerKeys))));
     // Optional: an env without Hana Home's key answers 503 on POST /v1/home/login only.
     out.push(item('api', 'HOME_RELAYER_KEYS', shown(SECRET_FILES.homeRelayerKeys), false, f(SECRET_FILES.homeRelayerKeys), () => readPool(f(SECRET_FILES.homeRelayerKeys))));
+    // Optional (D734): only with the manifest's near.relay; without it POST /v1/near/relay and /activate answer 503.
+    if (m.near?.relay) out.push(item('api', 'NEAR_RELAY_KEYS', shown(SECRET_FILES.nearRelayKeys), false, f(SECRET_FILES.nearRelayKeys), () => readPool(f(SECRET_FILES.nearRelayKeys))));
     out.push(
       item('api', 'KEYS_UPDATER_KEY', shown(SECRET_FILES.keysUpdater, 'private_key'), true, f(SECRET_FILES.keysUpdater), () => {
         const k = (readJson(f(SECRET_FILES.keysUpdater)) as { private_key?: unknown } | null)?.private_key;

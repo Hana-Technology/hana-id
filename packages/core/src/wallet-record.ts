@@ -1,5 +1,5 @@
-// The wallet record (D310 point 3, D311): after a login the vault reports the wallet's Stellar and EVM addresses to the
-// API (`POST /v1/wallets/record`), each signed by that chain's own derived key over a domain-separated statement, so
+// The wallet record (D310 point 3, D311): after a login the vault reports the wallet's Stellar and EVM addresses (and,
+// D755, its NEAR account) to the API (`POST /v1/wallets/record`), each signed by that chain's own derived key over a domain-separated statement, so
 // the API stores an address for a user only when the address's key says so for that user's path and a live session
 // of it. Shared by the vault (packages/web), the API (apps/api) and the tests.
 //
@@ -7,8 +7,11 @@
 //               ‖ borsh(path) ‖ borsh(chain) ‖ borsh(address) ‖ session_pk(32) ‖ u64le(issued_at_ms)
 //   Stellar: Ed25519 (RFC 8032) by the account's key over the statement itself, 64 bytes.
 //   EVM:     secp256k1 ECDSA (RFC 6979, low s) by the account's key over sha256(statement), r ‖ s ‖ v, v ∈ {27, 28}.
+//   NEAR:    Ed25519 (RFC 8032) by the implicit account's key over the statement itself, 64 bytes (D755; SDK 0.4.0+
+//            sessions only, and only to an API whose GET /v1/app lists `near` in `walletChains`).
 //
-// borsh(s) is u32 LE byte length ‖ UTF-8. `address` is canonical (G… StrKey; EVM in EIP-55), `path` the on-chain
+// borsh(s) is u32 LE byte length ‖ UTF-8. `address` is canonical (G… StrKey; EVM in EIP-55; NEAR the implicit
+// account id, 64 lowercase hex characters), `path` the on-chain
 // session path `scope#provider#sub#key_index` (a linked member's is its account root's), `issued_at_ms` the vault's
 // server-corrected clock.
 //
@@ -37,6 +40,14 @@
 //   change, never auto-approved and refused for test apps; the attacker gains a false row under its own user only,
 //   never another user's wallet; an address listed under more than one user is shown so (`sharedWith`). D311 records
 //   why a non-ECDSA scheme (BIP-340 with the same key) was rejected.
+// - NEAR transactions, delegate actions (NEP-366) and NEP-413 messages (D755). The vault's NEAR key signs nothing but
+//   these three and this statement (there is no raw NEAR request), and each of the three is an Ed25519 signature over
+//   a 32-byte sha256: of borsh(Transaction) (what nearcore checks), of NEP-461's u32le(2^30 + 366) ‖
+//   borsh(DelegateAction), of NEP-413's u32le(2^31 + 413) ‖ borsh(Payload) (near/codec.ts, near/sign.ts). Ed25519
+//   binds the exact message bytes, and a statement is always longer than 32 bytes, so a record signature verifies as
+//   none of them, and none of them as a record. A NEP-413-shaped proof was rejected: a NEP-413 payload (message,
+//   recipient, nonce) is what any partner page may ask the user to sign, so a proof in that shape would be one
+//   approved message away from a forgery unless the vault also reserved a recipient.
 // - Other Hana signatures. The domain differs from every other Hana signing domain (the session message
 //   "hana-id-session-v1:", the vault message "hana-id-vault-v1:", the identity token's "hana-id-identity-v1:" and
 //   "hana-id/identity-wallet/v1", the approval digest "hana-id/approve/v1"), and the 0x00 after it ends the domain, so
@@ -51,7 +62,11 @@
 //   session message = "hana-id/wallet-record-session/v1" ‖ 0x00 ‖ borsh(env) ‖ borsh(signer) ‖ borsh(app_id)
 //                     ‖ borsh(scope_id) ‖ borsh(path) ‖ session_pk(32) ‖ u64le(issued_at_ms) ‖ sha256(proofs)
 //   proofs         = "hana-id/wallet-record-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address)
-//                     ‖ borsh(Vec<u8> signature)
+//                     ‖ borsh(Vec<u8> signature)                                       (two chains, every vault)
+//                  | "hana-id/wallet-record-proofs/v2" ‖ 0x00 ‖ for stellar, evm then near: the same triple
+//                                                                                     (three chains, D755)
+//   A body with a NEAR record uses v2, one without it v1: the domains differ, so a session signature over two chains
+//   can't be taken for three (a NEAR record added to a victim's body) nor three for two (one taken away).
 //   Ed25519 (RFC 8032) by the session key over the session message itself, 64 bytes; checked strictly (zip215 off).
 //
 // Every field of the body (path, session key, time, both addresses and both chain signatures) and the env, signer, app
@@ -68,14 +83,17 @@
 // SECURITY: the chain keys come from derivation.ts withChainKey, for one signature each, and are zeroed there. A record
 // is not secret (it says "this address is this path's"), but it is never logged, and the API keeps only the address.
 import { concatBytes, borshString, sha256, toBytes, u32le, u64le, utf8, type Bytes } from './bytes.ts';
-import { type IdentityChain, IDENTITY_CHAINS, canonicalWalletAddress, signWalletProof } from './identity.ts';
+import { type ProofChain, IDENTITY_CHAINS, canonicalWalletAddress, signWalletProof } from './identity.ts';
 import { recoverEvmAddress } from './signers/evm.ts';
 import { STRKEY_VERSION, decodeStrKey } from './addresses.ts';
+import { fromHex } from './bytes.ts';
 import { ed25519 } from '@noble/curves/ed25519';
 
 export const WALLET_RECORD_DOMAIN = 'hana-id/wallet-record/v1';
 export const WALLET_RECORD_SESSION_DOMAIN = 'hana-id/wallet-record-session/v1';
 export const WALLET_RECORD_PROOFS_DOMAIN = 'hana-id/wallet-record-proofs/v1';
+/** The proofs hash of a body that also carries a NEAR record. */
+export const WALLET_RECORD_PROOFS_DOMAIN_V2 = 'hana-id/wallet-record-proofs/v2';
 /** The API accepts a record whose `issuedAtMs` is within this of its clock (a replay changes nothing: rows only move forward in time). */
 export const WALLET_RECORD_WINDOW_MS = 5 * 60_000;
 /** The vault gives the background report this long, then drops it (one call, no retry). */
@@ -83,8 +101,13 @@ export const WALLET_RECORD_TIMEOUT_MS = 15_000;
 /** The request body's cap at the API. */
 export const WALLET_RECORD_MAX_BODY = 4096;
 
-export type WalletRecordChain = IdentityChain;
+export type WalletRecordChain = ProofChain;
+/** The chains every body carries, in the proofs hash's order (v1). */
 export const WALLET_RECORD_CHAINS: readonly WalletRecordChain[] = IDENTITY_CHAINS;
+/** The chains of a body with NEAR, in the v2 proofs hash's order. */
+export const WALLET_RECORD_CHAINS_V2: readonly WalletRecordChain[] = [...IDENTITY_CHAINS, 'near'];
+/** Each chain's record signature length: Ed25519 64 bytes, EVM r ‖ s ‖ v 65. */
+export const WALLET_RECORD_SIGNATURE_BYTES: Readonly<Record<WalletRecordChain, number>> = { stellar: 64, evm: 65, near: 64 };
 
 export interface WalletRecordContext {
   /** The env name (`envs/<env>.json` name; the API's ENV_NAME). */
@@ -115,7 +138,7 @@ function field(s: string, what: string): Bytes {
 export function walletRecordStatement(ctx: WalletRecordContext, chain: WalletRecordChain, address: string): Bytes {
   if (!(ctx.sessionPublicKey instanceof Uint8Array) || ctx.sessionPublicKey.length !== 32) throw new Error('Session public key must be 32 bytes');
   if (!Number.isSafeInteger(ctx.issuedAtMs) || ctx.issuedAtMs < 0) throw new Error('issuedAtMs must be a non-negative integer');
-  if (chain !== 'stellar' && chain !== 'evm') throw new Error('Unknown chain');
+  if (chain !== 'stellar' && chain !== 'evm' && chain !== 'near') throw new Error('Unknown chain');
   if (canonicalWalletAddress(chain, address) !== address) throw new Error('The address must be canonical');
   if (!ctx.path.startsWith(`${ctx.scopeId}#`)) throw new Error('The path is not of this scope');
   return concatBytes(
@@ -146,7 +169,7 @@ export function signWalletRecord(chain: WalletRecordChain, key: Uint8Array, stat
 
 export interface WalletRecordProof {
   address: string;
-  /** Stellar: 64 bytes; EVM: 65 bytes r ‖ s ‖ v. */
+  /** Stellar and NEAR: 64 bytes; EVM: 65 bytes r ‖ s ‖ v. */
   signature: Uint8Array;
 }
 
@@ -165,9 +188,10 @@ export function verifyWalletRecord(ctx: WalletRecordContext, chain: WalletRecord
     return null;
   }
   try {
-    if (chain === 'stellar') {
+    if (chain === 'stellar' || chain === 'near') {
       if (proof.signature.length !== 64) return null;
-      return ed25519.verify(proof.signature, statement, decodeStrKey(STRKEY_VERSION.ed25519PublicKey, address), { zip215: false }) ? address : null;
+      const pk = chain === 'near' ? fromHex(address) : decodeStrKey(STRKEY_VERSION.ed25519PublicKey, address);
+      return ed25519.verify(proof.signature, statement, pk, { zip215: false }) ? address : null;
     }
     if (proof.signature.length !== 65) return null;
     return recoverEvmAddress(sha256(statement), proof.signature) === address ? address : null;
@@ -178,15 +202,19 @@ export function verifyWalletRecord(ctx: WalletRecordContext, chain: WalletRecord
 
 // ---- the session signature (header: "The session signature") ----
 
-/** Both chains' records as they go in the body (addresses canonical). */
-export type WalletRecordProofs = Record<WalletRecordChain, WalletRecordProof>;
+/** The records as they go in the body (addresses canonical): Stellar and EVM always, NEAR when the vault sends it. */
+export type WalletRecordProofs = { stellar: WalletRecordProof; evm: WalletRecordProof; near?: WalletRecordProof };
 
 const borshBytes = (b: Uint8Array): Bytes => concatBytes(u32le(b.length), toBytes(b));
 
-/** sha256("hana-id/wallet-record-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address) ‖ borsh(Vec<u8> sig)). */
+/**
+ * sha256("hana-id/wallet-record-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address) ‖ borsh(Vec<u8>
+ * sig)); with a NEAR record, the v2 domain and stellar, evm then near.
+ */
 export function walletRecordProofsHash(proofs: WalletRecordProofs): Bytes {
-  const parts: Uint8Array[] = [utf8(WALLET_RECORD_PROOFS_DOMAIN), Uint8Array.of(0)];
-  for (const chain of WALLET_RECORD_CHAINS) {
+  const v2 = proofs.near !== undefined;
+  const parts: Uint8Array[] = [utf8(v2 ? WALLET_RECORD_PROOFS_DOMAIN_V2 : WALLET_RECORD_PROOFS_DOMAIN), Uint8Array.of(0)];
+  for (const chain of v2 ? WALLET_RECORD_CHAINS_V2 : WALLET_RECORD_CHAINS) {
     const p = proofs[chain];
     if (!p || typeof p.address !== 'string' || !(p.signature instanceof Uint8Array)) throw new Error(`The ${chain} record is missing`);
     parts.push(borshString(chain), borshString(p.address), borshBytes(p.signature));
@@ -235,7 +263,8 @@ export interface WalletRecordBody {
   sessionPublicKey: number[];
   issuedAtMs: number;
   path: string;
-  wallets: { stellar: { address: string; signature: number[] }; evm: { address: string; signature: number[] } };
+  /** `near` only from a vault serving an SDK of 0.4.0 or later, to an API that lists it in `walletChains`. */
+  wallets: { stellar: { address: string; signature: number[] }; evm: { address: string; signature: number[] }; near?: { address: string; signature: number[] } };
   /** The session key's signature over walletRecordSessionMessage (64 bytes). */
   sessionSignature: number[];
 }

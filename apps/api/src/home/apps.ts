@@ -103,7 +103,9 @@ async function readOverlay(db: HotDb, provider: string, sub: string): Promise<Ma
   );
   const out = new Map<string, OverlayEntry>();
   for (const r of rows) {
-    const addresses = (JSON.parse(r.wallets_json || '[]') as { chain: string; address: string }[]).sort((a, b) => (a.chain === b.chain ? (a.address < b.address ? -1 : 1) : a.chain === 'stellar' ? -1 : 1));
+    // Stellar, EVM, then NEAR (D755; an older Home page leaves out a chain it doesn't know).
+    const rank = (c: string): number => ({ stellar: 0, evm: 1, near: 2 })[c] ?? 9;
+    const addresses = (JSON.parse(r.wallets_json || '[]') as { chain: string; address: string }[]).sort((a, b) => (a.chain === b.chain ? (a.address < b.address ? -1 : 1) : rank(a.chain) - rank(b.chain)));
     out.set(r.scope_id, { supportCode: r.support_code, addresses });
   }
   return out;

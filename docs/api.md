@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: `POST /api/orgs/:org/actions` `returnTo` and `GET /api/actions/:id` `returnTo`, D711; the Email login and scope reads answer `now`, D713; after review: a bad `returnTo` app of another org is `404`); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: `getApp`'s change status in force and `listApps`' `pendingChanges`, D701; the console's `GET /api/me` `envName`, D703; `USERS_SCREEN` from the manifest, D702; after review: the console app read's `now`, the latest `policy_set`); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: `StaffRpc.newOrgInvites`, the admin's `GET /api/invites/new-orgs`, the invite view's `newOrgKind`, D696; `issueInvite`'s `passkeys_required` off testnet only, D698); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: `POST /v1/vault/share-status`, its two Rate Limiting bindings and rows, `GET /v1/app`'s `share` as a policy app's check and the fallback, the D1 cost, D680–D684, D690–D693; after the re-review: the per-IP key across apps asked first, no parent check, the timeout, the sticky fallback); 2026-11-10 (branch `feat/hana-home-h9`, not merged, not deployed: "Routing", "Rate limits", "Hana Home": `GET /v1/home/devices` and the three stops, whose rows, the member check and `canStop`, the counts (D606–D610, D661, D663–D665); `GET /v1/app`'s `share` and `x-hana-share` (D662); the vault's `deviceLabel` (D611)); 2026-11-10 (branch `feat/hana-home-h10`, not merged, not deployed: the email issuer's `POST /v1/email/home/start` and Home's `verify` answer, `GET /v1/home/config`'s `emailSignIn`, the `/home/callback` page row and policy, `/home`'s policy with the email issuer, the page's email sign-in and exit-client sign-in, D616–D627; after its security review, D628, D629, D666–D669); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the admin's `GET /api/me` `scopeRegistration` and its `SCOPE_REGISTRATION` var, D651); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the admin's alert view: `deliveriesLatest`, D570); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: "Usage capture": the `home_login` event and who pays for it; `usage.org_report`'s `kind` and `home_logins`; `relayerKeys` with the Home pool; settlement's pool check; the statement's Home line; D585–D594; after the independent review: `relayerKeys`' `capture` and `unreadablePools`; `usage.org_ledger` for partners and `org_ledger_full` for staff; `GET /v1/health`'s `usageCapture`; the statement CSV's two columns appended last; D595–D599; D585–D599 confirmed by the user 2026-11-10, D605); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`: `404 home_no_wallet`, `503 home_directory_unavailable`, D544); 2026-11-10 (branch `feat/hana-home-h8`, not merged, not deployed: `/home`'s policy with the NEAR RPC origins, the page's one `POST /v1/home/login` per per-app sign-in, D575, D581, D583); 2026-11-10 (branch `feat/hana-home-h7`, not merged, not deployed: the `/home` page row and its policy, which Home routes the page calls, `/home`'s COOP header, D550, D551, D558); 2026-11-10 (branch `docs/tidy-deployed-1110`: the deploy notes of Hana Home, the RPC entrypoints, the admin Worker and the email issuer brought in line with sandbox-dev at `develop` 9b0ae580; the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: the vault's use of `GET /v1/app`'s `consent`, `bad_expiry`'s `maxExpiresAtMs`, D530–D538); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`, migration 0018 (`home_usage`, `user_events.app_id` nullable)); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps` and "D1 schema": `apps.first_login_at`, D462 amended); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps`'s `status = 'active'` overlay, `?scopeId=` with quiet scopes, the coverage cache's stated bound; `/v1/vault/consents*`: signature before the window, one chain read and `session_not_visible`, `too_many_consents`: security reviews of H2 and H4, D462, D500, D502, D510, D513); 2026-11-09 (branch `feat/hana-home-h2`, not merged, not deployed: "Routing", "Rate limits", "Hana Home" `GET /v1/home/apps`, "Chain views", "D1 schema" migration 0016: H2 built, D500–D503); 2026-11-09 (branch `feat/hana-home-h4`, not merged, not deployed: `GET /v1/app`'s `consent` and `x-hana-consent`, `POST /v1/vault/consents` and `/revoke`, `deviceLabel` on `POST /v1/vault/shares`, migration 0017, the consent prune in vault maintenance, D510–D513); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: "Hana Home" step 5: the email Home audience only while on the exit list, D494); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: "Hana Home": the exit client (`homeAudienceRoute`, `/v1/home/config`'s `exitGoogleClientId`), D468, D484, D490); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: the `RateLimiter` row: markers deleted by the alarm, D475); 2026-11-09 (branch `feat/hana-home-h1`, not merged: "Hana Home": `GET /v1/home/config`, `homeGate`, its refusals, the rate-limit rows, `log()`'s redacted field names; D473, D474); 2026-11-09 (branch `fix/batch-9-review`, not merged: the webhook's one D1 batch and dedupe, the feed's login-methods notice; D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: "Email login page", "Email login views", `AdminRpc.linkStats`, `ConsoleIssuerRpc`, `DirectoryRpc.issuerStats`, `link_usage`, the email AddClient proof; D444–D448); 2026-11-09 (branch `fix/before-mainnet-sweep-2`: "Relayer pools and gas": a session-signed relay's HMAC routing and its failover to the next key, D455's note; the `relay_failover` event); 2026-11-09 (branch `fix/before-mainnet-sweep`: "Relayer pools and gas": the narrowed allowlists and gas table, one relay per signed request, D455, D456); 2026-11-09 (branch `chore/status-access-followups`: the admin's `GET /api/status` NEAR reads on every endpoint the API can use, a tile's `lines`, D435's note); 2026-11-06 (branch `feat/user-events-retention`: `AdminRpc.purgeUserEvents`, the admin's monthly job's `user_events` step, `user_events`' 24-month retention and erasure, readiness 7.17, D433); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the API's `IssuerRpc` entrypoint, the issuer's `API` binding instead of `APP_DB`, `503 api_unavailable`, D434); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `NEAR_RPC_FALLBACKS`, "RPC view timeout and failover", the `near_rpc_failover` log line, D435); 2026-11-06 (branch `feat/mainnet-demo-key-export`: `GET /v1/app`'s `mainnetDemo`, `POST /v1/mainnet-demo/events`, `POST /v1/login`'s `exportChain` and the `key_exported` event, migration 0013 (`apps.mainnet_demo`, `user_events`), `AdminRpc.setMainnetDemo`, the staff app view's `settings.mainnetDemo`, `StaffUser.events`, the admin's `POST /api/apps/:app/mainnet-demo`, the auth Worker's `MAINNET_DEMO_BALANCE` and `/approve`'s dev-env `connect-src`; D428–D430); 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-09 (branch `feat/email-sharing-2`: brought up to date with `develop` @ a3de75e, not merged; migration 0014 instead of 0012, D438–D443 renumbered); 2026-11-06 (branch `feat/email-sharing`, not merged: email sharing with partners, D411, D438–D443: migration 0014 (`apps.identity_email`, `email_consents`), `GET /v1/app`'s `identityEmail`, "Email sharing" (the four consent endpoints), the mint's `email` claim and `emailStatus`, `/share-email`'s page policy, `ConsoleRpc`'s `email`/`emails` and email search, `updateSettings`' `identityEmail`, `purgeDirectory`'s `emailConsents`, the issuer's `sealedEmail` answers and `IDENTITY_SEAL_KEY`, the API's `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` and `EMAIL_CONSENT_KEY`); 2026-11-09 (branch `feat/mainnet-demo-live-prices`: `GET /v1/app`'s `mainnetDemoPrices`, D436); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): "NEAR relay": `POST /v1/near/activate` and `POST /v1/near/relay`, their rows in "Routing" and "Rate limits", the `near` role in "Relayer pools and gas", `NEAR_RELAY` and `NEAR_RELAY_KEYS`, the hourly funds check, migration 0020's two `security_events` kinds, D730–D739); 2026-11-11 (branch `feat/near-directory`, after its security review: `409 near_account_mismatch`, `nearCode`, the unique index, `nearAccountUser` never picks, D762, D763); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: `GET /v1/app`'s `walletChains`, `POST /v1/login`'s `exportChain` `"near"` and its event's fallback, `POST /v1/wallets/record`'s NEAR record (the v2 proofs hash, the `near` answer), migration 0019 in "D1 schema", the `near` log phase, `ConsoleRpc`/`AdminRpc` search by a NEAR account, D755–D759); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: `POST /api/orgs/:org/actions` `returnTo` and `GET /api/actions/:id` `returnTo`, D711; the Email login and scope reads answer `now`, D713; after review: a bad `returnTo` app of another org is `404`); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: `getApp`'s change status in force and `listApps`' `pendingChanges`, D701; the console's `GET /api/me` `envName`, D703; `USERS_SCREEN` from the manifest, D702; after review: the console app read's `now`, the latest `policy_set`); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: `StaffRpc.newOrgInvites`, the admin's `GET /api/invites/new-orgs`, the invite view's `newOrgKind`, D696; `issueInvite`'s `passkeys_required` off testnet only, D698); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: `POST /v1/vault/share-status`, its two Rate Limiting bindings and rows, `GET /v1/app`'s `share` as a policy app's check and the fallback, the D1 cost, D680–D684, D690–D693; after the re-review: the per-IP key across apps asked first, no parent check, the timeout, the sticky fallback); 2026-11-10 (branch `feat/hana-home-h9`, not merged, not deployed: "Routing", "Rate limits", "Hana Home": `GET /v1/home/devices` and the three stops, whose rows, the member check and `canStop`, the counts (D606–D610, D661, D663–D665); `GET /v1/app`'s `share` and `x-hana-share` (D662); the vault's `deviceLabel` (D611)); 2026-11-10 (branch `feat/hana-home-h10`, not merged, not deployed: the email issuer's `POST /v1/email/home/start` and Home's `verify` answer, `GET /v1/home/config`'s `emailSignIn`, the `/home/callback` page row and policy, `/home`'s policy with the email issuer, the page's email sign-in and exit-client sign-in, D616–D627; after its security review, D628, D629, D666–D669); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the admin's `GET /api/me` `scopeRegistration` and its `SCOPE_REGISTRATION` var, D651); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the admin's alert view: `deliveriesLatest`, D570); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: "Usage capture": the `home_login` event and who pays for it; `usage.org_report`'s `kind` and `home_logins`; `relayerKeys` with the Home pool; settlement's pool check; the statement's Home line; D585–D594; after the independent review: `relayerKeys`' `capture` and `unreadablePools`; `usage.org_ledger` for partners and `org_ledger_full` for staff; `GET /v1/health`'s `usageCapture`; the statement CSV's two columns appended last; D595–D599; D585–D599 confirmed by the user 2026-11-10, D605); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`: `404 home_no_wallet`, `503 home_directory_unavailable`, D544); 2026-11-10 (branch `feat/hana-home-h8`, not merged, not deployed: `/home`'s policy with the NEAR RPC origins, the page's one `POST /v1/home/login` per per-app sign-in, D575, D581, D583); 2026-11-10 (branch `feat/hana-home-h7`, not merged, not deployed: the `/home` page row and its policy, which Home routes the page calls, `/home`'s COOP header, D550, D551, D558); 2026-11-10 (branch `docs/tidy-deployed-1110`: the deploy notes of Hana Home, the RPC entrypoints, the admin Worker and the email issuer brought in line with sandbox-dev at `develop` 9b0ae580; the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: the vault's use of `GET /v1/app`'s `consent`, `bad_expiry`'s `maxExpiresAtMs`, D530–D538); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`, migration 0018 (`home_usage`, `user_events.app_id` nullable)); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps` and "D1 schema": `apps.first_login_at`, D462 amended); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps`'s `status = 'active'` overlay, `?scopeId=` with quiet scopes, the coverage cache's stated bound; `/v1/vault/consents*`: signature before the window, one chain read and `session_not_visible`, `too_many_consents`: security reviews of H2 and H4, D462, D500, D502, D510, D513); 2026-11-09 (branch `feat/hana-home-h2`, not merged, not deployed: "Routing", "Rate limits", "Hana Home" `GET /v1/home/apps`, "Chain views", "D1 schema" migration 0016: H2 built, D500–D503); 2026-11-09 (branch `feat/hana-home-h4`, not merged, not deployed: `GET /v1/app`'s `consent` and `x-hana-consent`, `POST /v1/vault/consents` and `/revoke`, `deviceLabel` on `POST /v1/vault/shares`, migration 0017, the consent prune in vault maintenance, D510–D513); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: "Hana Home" step 5: the email Home audience only while on the exit list, D494); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: "Hana Home": the exit client (`homeAudienceRoute`, `/v1/home/config`'s `exitGoogleClientId`), D468, D484, D490); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: the `RateLimiter` row: markers deleted by the alarm, D475); 2026-11-09 (branch `feat/hana-home-h1`, not merged: "Hana Home": `GET /v1/home/config`, `homeGate`, its refusals, the rate-limit rows, `log()`'s redacted field names; D473, D474); 2026-11-09 (branch `fix/batch-9-review`, not merged: the webhook's one D1 batch and dedupe, the feed's login-methods notice; D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: "Email login page", "Email login views", `AdminRpc.linkStats`, `ConsoleIssuerRpc`, `DirectoryRpc.issuerStats`, `link_usage`, the email AddClient proof; D444–D448); 2026-11-09 (branch `fix/before-mainnet-sweep-2`: "Relayer pools and gas": a session-signed relay's HMAC routing and its failover to the next key, D455's note; the `relay_failover` event); 2026-11-09 (branch `fix/before-mainnet-sweep`: "Relayer pools and gas": the narrowed allowlists and gas table, one relay per signed request, D455, D456); 2026-11-09 (branch `chore/status-access-followups`: the admin's `GET /api/status` NEAR reads on every endpoint the API can use, a tile's `lines`, D435's note); 2026-11-06 (branch `feat/user-events-retention`: `AdminRpc.purgeUserEvents`, the admin's monthly job's `user_events` step, `user_events`' 24-month retention and erasure, readiness 7.17, D433); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the API's `IssuerRpc` entrypoint, the issuer's `API` binding instead of `APP_DB`, `503 api_unavailable`, D434); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `NEAR_RPC_FALLBACKS`, "RPC view timeout and failover", the `near_rpc_failover` log line, D435); 2026-11-06 (branch `feat/mainnet-demo-key-export`: `GET /v1/app`'s `mainnetDemo`, `POST /v1/mainnet-demo/events`, `POST /v1/login`'s `exportChain` and the `key_exported` event, migration 0013 (`apps.mainnet_demo`, `user_events`), `AdminRpc.setMainnetDemo`, the staff app view's `settings.mainnetDemo`, `StaffUser.events`, the admin's `POST /api/apps/:app/mainnet-demo`, the auth Worker's `MAINNET_DEMO_BALANCE` and `/approve`'s dev-env `connect-src`; D428–D430); 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-09 (branch `feat/email-sharing-2`: brought up to date with `develop` @ a3de75e, not merged; migration 0014 instead of 0012, D438–D443 renumbered); 2026-11-06 (branch `feat/email-sharing`, not merged: email sharing with partners, D411, D438–D443: migration 0014 (`apps.identity_email`, `email_consents`), `GET /v1/app`'s `identityEmail`, "Email sharing" (the four consent endpoints), the mint's `email` claim and `emailStatus`, `/share-email`'s page policy, `ConsoleRpc`'s `email`/`emails` and email search, `updateSettings`' `identityEmail`, `purgeDirectory`'s `emailConsents`, the issuer's `sealedEmail` answers and `IDENTITY_SEAL_KEY`, the API's `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` and `EMAIL_CONSENT_KEY`); 2026-11-09 (branch `feat/mainnet-demo-live-prices`: `GET /v1/app`'s `mainnetDemoPrices`, D436); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -100,6 +100,7 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `/v1/vault/shares`, `/unlock`, `/touch`, `/revoke`, `/revoke-all` | POST, OPTIONS | `vault/endpoints.ts` | publishable key + vault origin + session signature (vault message) | B |
 | `/v1/vault/share-status` | POST, OPTIONS | `vault/share-status.ts` | publishable key + vault origin + allowed parent; the share id names the share (no signature, D690) | B |
 | `/v1/identity/token` | POST, OPTIONS | `identity/token.ts` | publishable key + vault origin + session signature (identity message) | I |
+| `/v1/near/activate`, `/v1/near/relay` | POST, OPTIONS | `near/relay.ts` | publishable key + caller rule (a partner origin of the app, or the vault); no session required (an optional session proof); relay: the delegate's own signature | N |
 | `/v1/wallets/record` | POST, OPTIONS | `directory/record.ts` | publishable key + vault origin + each address's own signature (wallet record) + the session key's signature over the request + a live session on that path | W |
 | `/v1/home/config` | GET, OPTIONS | `home/config.ts` | `AUTH_ORIGIN` only (no identity yet) | H1 |
 | `/v1/home/apps` | GET, OPTIONS | `home/apps.ts` | `AUTH_ORIGIN` + Home identity (`homeGate`) | H2 |
@@ -112,7 +113,7 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 
 There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and origins gate them. "I" marks the
 partner identity token (`docs/identity-token-spec.md`, build steps 1–4); "W" the wallet directory (D310, branch
-`feat/wallet-directory`). Nothing under `/v1/email/` is the API's: the
+`feat/wallet-directory`); "N" the NEAR relay (D730–D739, branch `feat/near-relayer`). Nothing under `/v1/email/` is the API's: the
 email issuer is its own Worker, reached at its own URL (`emailIssuer.url`) or by a zone route that never runs this
 Worker (D230); here such a path is `404 not_found`.
 
@@ -220,6 +221,7 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 | `POST /v1/vault/share-status` | 600/min across apps, *per location*, before the app lookup (binding `VAULT_STATUS_IP_LIMIT`, key `<env>:vault-status-ip:<ipSubject>`) | — | 30/min per share, *per location* (binding `VAULT_STATUS_SHARE_LIMIT`, key `<env>:vault-status-share:<appId>:<hex>`), after the body check; not counted in the vault windows below (D690) |
 | vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95). `/v1/vault/consents*` count in the same window (their share's, or in `'none'` mode the session key's) |
 | `/v1/identity/token` (I, D176) | the vault endpoints' 60/min binding, before the body | its own windows on `app:<id>`, never `vault:minute`: `identity:minute` 10 × plan `per_minute`, `identity:hour` plan `per_day` (at most 100 000), sliding, counted after every other check | per session key 10/min, *per location* (`IDENTITY_SESSION_LIMIT`, key `<env>:identity-session:<appId>:<hex sessionPk>`), after the signature; per account root 30/min, *per location* (`IDENTITY_ROOT_LIMIT`, key `<env>:identity-root:<scopeId>:<hex sub bytes>`); per scope `identity:hour` 2 × the app's (`identity:scope:<scopeId>`, sliding); then global on `identity:global`, sliding: a hard breaker of 1 000 000/h (`503 identity_busy`; `IDENTITY_GLOBAL_HOURLY_MAX` overrides; ≥ 10 × any app's ceiling) and a soft line at 100 000/h that only logs `identity_volume_alert`. A refusal by a later window takes the hit back from the earlier ones |
+| `/v1/near/relay`, `/v1/near/activate` (N) | 30 relays / 10 activations a minute across every app (the app gate's windows `near-relay:minute`, `near-activate:minute`), before the body | relays 120/min and `near.relay.perAppPerDay` (5000) a day, activations 1000 a day | per sender `near.relay.perSenderPerDay` (100) a day; with a session proof, per user 200 relays, 5 activations a day; 1000 activations a day across the env; the daily NEAR budget (`near.relay.dailyBudgetNear`, 5): "NEAR relay" |
 | `/v1/wallets/record` (W) | the vault endpoints' 60/min binding, before the body | the vault endpoints' `vault:minute` (10 × plan `per_minute`) | one per login by design (the vault never retries); a replay changes no row |
 | login relay | writes 40/min, reads 120/min (about 5 writes per linking login, D267) | — | not per app |
 | `/v1/owner-actions`, `ConsoleRpc.ownerAction` (one limiter: the RPC's `clientIp`) | 10/min | per scope 10/min, 20 a UTC day (`owner-actions:scope:<scopeId>`), `propose_change` only | `propose_change`: per owner identity 2/min, 4/day (`owner-actions:owner:<hex sha256(provider#sub)>`: the scope's windows divided by the contract's `MAX_OWNERS`, so no owner can use up its co-owners' proposals, D236), then per scope, then global 20/min, 200/day (`owner-actions:global`). `execute_change` (no auth): its own 10/min, 50/day per scope (`owner-actions:execute:<scopeId>`), then global. The safety budget, `cancel_change`, `remove_client` and `disable_shared_login`: none of those; 5/min, 20/day per owner identity (windows `safety:minute`, `safety:day`), then 25/min, 100/day per target scope (`owner-actions:safety:<scopeId>`: the contract's `MAX_OWNERS` = 5 owners at their own cap), then a spend-bound ceiling of 100/min, 1000/day (`owner-actions:safety-global`). Counted only after every off-chain check passes, the owner proof against the target scope's on-chain owners included; a request a later window refuses is taken back from the earlier ones (D100, D236). A refusal writes an `owner_cap` security event, once per window |
@@ -335,6 +337,7 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
   "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval", "mainnetDemo": false,
   "logoUrl": "https://<files.origin>/logos/<app id>/<sha256 hex>.png" | null,
   "identityEmail": "off" | "on_request" | "at_login",
+  "walletChains": ["stellar", "evm", "near"],
   "consent": "active" | "revoked" | "unknown",
   "timings": { "totalMs": 0, "phases": {} }, "requestId": "string" }
 ```
@@ -361,6 +364,11 @@ shape as stated in `docs/security.md`: `revoked`/`unknown` clear the consent, a 
 
 `identityEmail` (D411): the app's `identity_email` setting (migration 0014; `off` before it): the vault asks the user to
 share their address at the first login (`at_login`), only from `requestEmailSharing()` (`on_request`), or never.
+`walletChains` (D755, D759): the chains this API takes in the export window's `exportChain` and in `POST
+/v1/wallets/record`'s `wallets`; always `["stellar", "evm", "near"]` since `feat/near-directory`. Older APIs omit it,
+and a page treats anything but an array naming `near` as Stellar and EVM only (core `apiTakesNear`): the export window
+then sends no `exportChain` for a NEAR export, and the vault no NEAR record, so a page deployed ahead of the API never
+sends a value the API refuses.
 `mainnetDemo` (D428): `true` only when the Worker's env is a dev env on testnet (`isDevEnv(ENV_NAME)`, `NETWORK =
 `mainnetDemo` (D428; a pk_test_ app's response also carries a phase `prices` when the demo is on, D436): `true` only when the Worker's env is a dev env on testnet (`isDevEnv(ENV_NAME)`, `NETWORK =
 testnet`), the app's scope is `test` and Hana staff set `apps.mainnet_demo = 1` (migration 0013); otherwise `false`,
@@ -533,8 +541,9 @@ One transaction per login. Called by the vault and the export window (`AUTH_ORIG
 Body: exactly the `/v1/sessions` fields (without the proof of possession) plus `signature: number[64]` (session
 signature over counter 1 of the CKD payload), `pk1`, `pk2`, and for email login's automatic link (L, D133)
 `linkJwt` (an email token) and `linkImmediate` (a boolean, only with `linkJwt`), and from the export window only
-`exportChain` (`"stellar"` or `"evm"`, D430: a label for the `key_exported` event, never relayed, not in the nonce or the
-CKD payload; from any other page `400 bad_request`). Any other field: `400 bad_request`.
+`exportChain` (`"stellar"`, `"evm"` or `"near"`, D430, D759: a label for the `key_exported` event, never relayed, not in
+the nonce or the CKD payload; from any other page `400 bad_request`; an API before D759 refuses `"near"`, which is why
+the export window sends it only when `GET /v1/app` lists it in `walletChains`). Any other field: `400 bad_request`.
 Without `linkJwt` the relayed arguments are batch B's exactly; with it, `link_jwt` and `link_immediate` are added, the
 signature must be over the **linked CKD payload** `"hana-id-ckd-link-v1:" ‖ sha256(linkJwt) ‖ u8(linkImmediate) ‖
 pk1 ‖ ":" ‖ pk2`, and the gas is 250 Tgas. `jwt` is a Google or an email token ("Email tokens" below).
@@ -584,7 +593,9 @@ failing receipt's executor:
 Usage event: `login` (uid from the login's path on success; `ckd_failed` is a rejected, relayed event: its gas was
 burnt). An export's success (`AUTH_ORIGIN`, D430) also writes a `key_exported` row in `user_events` after the answer:
 the account's internal id (`hu_…`, from the root whose path the session opened), the app, `exportChain` (or null) and
-the time; no key, token or path. A failure is only logged (`key_export_unrecorded`, with the app and a code).
+the time; no key, token or path. A failure is only logged (`key_export_unrecorded`, with the app and a code). Before
+migration 0019 the table's CHECK refuses `chain = 'near'`: the row is then written with no chain, as an older export
+window's, and `key_export_chain_dropped` (`near_chain_unsupported`) is logged (D759).
 With an email token also `email_usage.email_sessions`, with a link `email_usage.links` (L, on success; copied
 hourly to the ledger's `usage.email_counts`, D233).
 
@@ -866,10 +877,12 @@ still the vault's word (the API never sees it); staff see the rows as "reported 
 
 ### `POST /v1/wallets/record` — the wallet directory · W
 
-`directory/record.ts` (D310, D313). The vault sends it once after each login, in the background (D317). Body
-(≤ 4 KiB, exactly these fields): `{sessionPublicKey: number[32], issuedAtMs, path, wallets: {stellar: {address,
-signature: number[64]}, evm: {address, signature: number[65]}}, sessionSignature: number[64]}`. Each wallet signature
-is by that address's own key over the record statement (`@hana-id/core/wallet-record`, D311):
+`directory/record.ts` (D310, D313, D755–D757). The vault sends it once after each login, in the background (D317), and,
+for an SDK of 0.4.0 or later, once at an unlock until this session's NEAR account is recorded (D756). Body (≤ 4 KiB,
+exactly these fields): `{sessionPublicKey: number[32], issuedAtMs, path, wallets: {stellar: {address, signature:
+number[64]}, evm: {address, signature: number[65]}, near?: {address, signature: number[64]}}, sessionSignature:
+number[64]}`; `wallets` is exactly `{stellar, evm}` or `{stellar, evm, near}`. Each wallet signature is by that
+address's own key over the record statement (`@hana-id/core/wallet-record`, D311):
 
 ```
 "hana-id/wallet-record/v1" ‖ 0x00 ‖ borsh(ENV_NAME) ‖ borsh(SIGNER_ACCOUNT) ‖ borsh(apps.id) ‖ borsh(scope_id)
@@ -877,7 +890,9 @@ is by that address's own key over the record statement (`@hana-id/core/wallet-re
 ```
 
 Stellar: Ed25519 over the statement (strict RFC 8032). EVM: secp256k1 over `sha256(statement)`, `r ‖ s ‖ v`, v ∈ {27,
-28}; the address in any case, stored in EIP-55.
+28}; the address in any case, stored in EIP-55. NEAR (D755): Ed25519 over the statement (strict RFC 8032) by the
+implicit account's key, `chain` `"near"`, `address` the implicit account id exactly as 64 lowercase hex characters
+(the public key; any other form is `bad_wallet_record`).
 
 `sessionSignature` is the session key's Ed25519 signature (strict RFC 8032) over the whole request (D311 as amended
 after a security review: the wallet signatures alone let anyone name a victim's public session key with their own
@@ -889,20 +904,40 @@ address):
 ‖ for stellar then evm: borsh(chain) ‖ borsh(canonical address) ‖ borsh(Vec<u8> signature))
 ```
 
+With a NEAR record the hash is `sha256("hana-id/wallet-record-proofs/v2" ‖ 0x00 ‖ for stellar, evm then near: the same
+triple)` (D755): a session signature over two chains never verifies for three, nor three for two.
+
 Checks in order: the vault gate (as "Vault endpoints") → vault limits → body (`400 bad_request`; `413` over 4 KiB) →
 `|now − issuedAtMs| ≤ 5 min` (`400 stale_record` with `serverTimeMs`) → `path` is `{app's scope}#provider#sub#key_index`
-(`400 bad_request`) → both records verify (`400 bad_wallet_record` with `chain`) → the session signature verifies
+(`400 bad_request`) → every record verifies (`400 bad_wallet_record` with `chain`) → the session signature verifies
 against `sessionPublicKey` (`401 invalid_signature`) → `USER_ID_KEY` and `IDENTITY_SUB_KEY` usable (`503
 directory_unavailable`, D346) → `get_session` (cached, re-read fresh before refusing, re-read every 300 ms for up to 2 s while
 missing): live and unexpired (`410 session_ended`, `reason: no_session`), the app's scope (`403 scope_mismatch`;
-`502 near_unavailable`), its `path` exactly the body's (`403 session_mismatch`) → one D1 batch (`503
-directory_write_failed` when it fails, e.g. before migration 0011). `200 {recorded: true}`.
+`502 near_unavailable`), its `path` exactly the body's (`403 session_mismatch`) → with a NEAR record, NEAR's rules
+(D762): this user already lists another NEAR account at this key index: `409 near_account_mismatch`, nothing written,
+logged `directory_near_conflict` at error level; another user of the scope lists this account: the NEAR row is skipped
+(below), also logged `directory_near_conflict` → one D1 batch (`503 directory_write_failed` when it fails, e.g. before
+migration 0011) → with a NEAR record, the NEAR wallet's upsert on its own (D756: before migration 0019 its CHECK refuses
+`near`; that never undoes the batch; logged `directory_near_unrecorded` with `no_migration_0019` or `internal`; a
+concurrent second account meets 0019's unique index). `200 {recorded: true}`, plus, when the body had a NEAR record,
+`near: true` or `near: false` with `nearCode` ∈ `no_migration_0019`, `near_account_taken`, `near_account_mismatch` (a
+race lost to the unique index), `internal`.
 
 What it writes (migration 0011): the user of the path's account root with its three ids (D346: `user_id` the internal
 id `hu_…`, D312; `token_sub` the User ID, the identity token's `sub`; `support_code`) with `created_at` the MIN and
-`last_seen_at` the MAX of `issuedAtMs`; both wallets with `first_seen_at` MIN and `last_used_at` MAX and the path's
-`key_index`; the root's identity row (role `root`, `active`). Nothing about the request is logged but the app, outcome
-and code; no signature is stored.
+`last_seen_at` the MAX of `issuedAtMs`; both wallets (and NEAR's, migration 0019) with `first_seen_at` MIN and
+`last_used_at` MAX and the path's `key_index`; the root's identity row (role `root`, `active`). Nothing about the
+request is logged but the app, outcome and code; no signature is stored.
+
+**The relayer's lookup (D757).** `directory/near.ts` `nearAccountUser(db, scopeId, accountId): Promise<string | null>`:
+the internal id (`end_users.user_id`) of the one user of `scopeId` whose `end_user_wallets` lists `accountId` with
+`chain = 'near'`; null when none does, when `accountId` isn't a 64-lowercase-hex implicit id, and when two or more users
+of the scope list it (ambiguous, logged `near_account_ambiguous`; never chosen by a time, which a client sets); a
+failed read throws. One indexed SELECT of at most two rows (`end_user_wallets_address`, then `end_users`' key).
+"Listed" means a live session of that user's account root sent a record whose NEAR entry that account's key signed: the
+session's holder held the key, not that Hana derived it (D757, D762). The row exists only once the background
+record landed (normally within a second of the login's answer; up to the vault's 15 s abort; missing in an outage or
+before migration 0019), so a caller treats null as retryable for a while after a login.
 
 **The identities around it (`directory/sync.ts`, D314)**, written after the answer (`waitUntil`) and never failing or
 slowing the request: after a successful `/v1/login` (with a `linkJwt`: `get_identity` of the session identity and
@@ -910,6 +945,167 @@ slowing the request: after a successful `/v1/login` (with a `linkJwt`: `get_iden
 link relay (`get_account` of the account root, fresh). Failures log `directory_sync_failed` (`near_unavailable`),
 `directory_write_failed` (`no_table` / `internal`) or, at most every 10 min per isolate, `directory_unavailable`
 (`no_user_id_key`, `no_sub_key` or `bad_sub_key`).
+
+### NEAR relay: `POST /v1/near/activate`, `POST /v1/near/relay` (D730–D739) · N
+
+`src/near/` (`relay.ts` the routes, `delegate.ts` the decoder, policy and encoder, `relay-chain.ts` the chain reads,
+`relay-config.ts` the config, `relay-funds.ts` the hourly check). A Hana user's NEAR wallet is an implicit account (64
+lowercase hex of its Ed25519 public key) holding no NEAR. These two routes let it act through NEP-366 meta transactions:
+the user signs a `DelegateAction`, Hana's relay account wraps it in its own transaction and pays the gas. Testnet only
+(D733). What NEAR requires and who pays what was measured on near-sandbox 2.13.4, protocol 86
+(`apps/api/test-sandbox/meta-tx.test.ts`; `docs/security.md` "NEAR relay"):
+
+- A delegate action from an account that doesn't exist fails (`AccountDoesNotExist`): the account must exist first. A
+  0-yocto `Transfer` to the 64-hex id creates it (balance 0, 182 bytes of storage, its key the full-access key; a
+  zero-balance account, NEP-448). The two can't share a transaction: the delegate is applied before the Transfer creates
+  the account. Hence `activate`, then `relay`.
+- The new key's nonce is the creation block's height × 10^6; a delegate's nonce must be above the key's and below the
+  current height × 10^6 (`DelegateActionInvalidNonce`, `DelegateActionNonceTooLarge`); `max_block_height` below the
+  current height is `DelegateActionExpired`; NEAR accepts any height above (the relay caps it).
+- The relayer pays the gas of everything AND every deposit the inner actions attach: a delegated `Transfer` of 1 NEAR
+  from a zero-balance account is paid from the relayer's balance (the receiver gains 1 NEAR), and so is a FunctionCall's
+  deposit. The user's balance stays exactly 0. Only zero-deposit FunctionCalls are relayed.
+- A relayed transaction's own `status` is `SuccessValue` even when the inner call fails: the failure is in a receipt
+  (`near/tx.ts` reads every receipt, so the relay answers `contract_rejected`).
+- Costs at the minimum gas price (10^8 yocto/gas): a relay of one small call ≈ 0.0002 NEAR (about 2 Tgas burnt); an
+  activation ≈ 0.0071 NEAR (the Transfer's receipt on a new implicit account burns 70.3 Tgas); while a relay is in
+  flight the relayer also holds about 10× its prepaid gas at the pessimistic gas price (0.03 NEAR for 30 Tgas), refunded
+  a few blocks later.
+
+**Which accounts (D735, after the security review of 2026-11-11).** With `near.relay.requireKnownAccount` (the default;
+sandbox-dev `true` since the directory build is merged into this branch), both routes act only for a NEAR account the
+wallet directory holds for a user of the app's scope: the vault records each user's NEAR account at login with a proof
+signed by the NEAR key (`feat/near-directory`), and both routes look it up through one seam,
+`nearAccountKnown(db, {scopeId, accountId})` (`nearDirectory.lookup` in `src/near/relay.ts`, which calls the directory's
+`nearAccountUser`, `src/directory/near.ts`: `end_user_wallets` chain `near`, migration 0019). An
+account it doesn't hold: `409 near_account_unrecorded` with `retryable: true` and `retry-after: 2`, on both routes: the
+vault's wallet record usually lands within a second of the login and can lag up to 15 s, so the client retries for
+about 20 s. A failed directory read is `503 directory_unavailable`, never "unrecorded". The directory's user then
+also counts per user. Order for the client: login (the vault records the wallets) → `activate` → sign → `relay`.
+`false` (testnet only, the schema refuses it elsewhere) leaves the limits alone, and anyone holding a publishable key
+can spend the relay within them.
+
+**Who may call (D735).** Both routes take the app gate (`appGate` kind `near` / `near-activate`): `x-hana-key`, and
+an `Origin` in force for the app (the SDK's `hana.near.relay` and `hana.near.activate` call from the partner's page,
+`credentials: 'omit'`), or the vault with an allowed `x-hana-parent-origin`; CORS and preflight as `/v1/app`. **No
+session credential is required**: anyone holding an app's publishable key can call them (an `Origin` header binds
+browsers only), so the limits, the budget and the policy below are what bound the spend (`docs/security.md` "The NEAR
+meta-transaction relay", open issue (s)). A body may carry the vault's session proof as well (all four fields or none;
+not sent by the SDK today): the session key's Ed25519 signature over `identityMessage` (`@hana-id/core/identity`:
+`"hana-id-identity-v1:" ‖ borsh(SIGNER_ACCOUNT) ‖ borsh(apps.id) ‖ session_pk(32) ‖ u64le(issuedAtMs) ‖ nonce(16) ‖
+sha256(payload)`) with
+
+```
+relay:    payload = "near-relay"    ‖ borsh(network) ‖ sha256(signedDelegateAction bytes)
+activate: payload = "near-activate" ‖ borsh(network) ‖ borsh(accountId)
+```
+
+(`nearRelayPayload` / `nearActivatePayload` in `src/near/relay.ts`). When present it is checked (`|now − issuedAtMs| ≤
+60 s`, the session live on chain in the app's scope, used once) and the request also counts per user; when absent there
+is no per-user window. A later round can require it.
+
+**Bodies** (≤ 8 KiB, no other fields; `network` optional, `testnet` when absent; the optional proof's `sessionPublicKey`, `nonce`, `signature` are byte arrays of 32, 16, 64):
+
+| Route | Body | 200 |
+|---|---|---|
+| `/v1/near/activate` | `{accountId: <64 lowercase hex>, network?: "testnet", (sessionPublicKey, issuedAtMs, nonce, signature)?}`; idempotent | `{created: true, accountId, accessKeyNonce: "<u64>", blockHeight, transactionHash, nearTx}`, or `{created: false, accountId, accessKeyNonce: "<u64>" or null (the key was removed), blockHeight}` when the account already exists (nothing sent) |
+| `/v1/near/relay` | `{signedDelegateAction: <canonical base64 of borsh(SignedDelegateAction), ≤ 4096 bytes>, network?: "testnet", (sessionPublicKey, issuedAtMs, nonce, signature)?}` | `{transactionHash, status: "executed", nearTx}`: every receipt succeeded |
+
+A delegate's nonce may be any value above the key's nonce (`accessKeyNonce`) and below (head height + 1) × 10^6 (the core
+picks one near (height − 10 000) × 10^6 for test apps; nothing here assumes `accessKeyNonce + 1`), and its
+`max_block_height` between the head + 3 and the head + 1000 (`blockHeight` in the activation answer).
+
+**Checks, in order** (relay; activate skips the delegate steps): the app gate (`401 missing_key` / `unknown_app`, `403
+app_suspended`, `403 scope_conflict`, `403 origin_not_allowed`, then the per-IP window, across every app: 30 relays /
+10 activations a minute, `429 rate_limited`) → the relay configured
+(`503 relayer_unconfigured` unless `NETWORK` is `testnet`, `NEAR_RELAY` parses with at least one receiver, and
+`NEAR_RELAY_KEYS` holds distinct keys none of which a pool holds) → the body (`400 bad_request`; `413`) → `network`
+(`403 mainnet_not_allowed` for `mainnet`, `400 bad_request` otherwise) → the strict decode (`400 bad_delegate` with `reason` `truncated`, `trailing_bytes`, `too_large`,
+`bad_account`, `bad_method`, `key_type` (not Ed25519), `signature_type`, `too_many_actions` (> 4)) → the policy:
+`400 sender_not_implicit` (`sender_id` is not hex of the delegate's own public key), `403 action_not_allowed` (`index`,
+`action`: anything but `FunctionCall`), `400 bad_delegate` (no actions), `403 deposit_not_allowed` (`index`), `403
+receiver_not_allowed` (`receiverId`: not in `near.relay.receivers`), `403 gas_too_high` (`maxGas`: the inner calls'
+gas together above `near.relay.maxGasTgas`) → `400 bad_delegate_signature` (the delegate's own Ed25519 signature
+over `sha256(u32le(2^30 + 366) ‖ borsh(DelegateAction))`) → the directory (`409 near_account_unrecorded`, `503
+directory_unavailable`; with `requireKnownAccount`) → with a session proof only: `400 stale_proof` (with
+`serverTimeMs`), `401 invalid_signature`, `410 session_ended`, `403 scope_mismatch`, `502 near_unavailable`, `409
+proof_replayed` → two chain reads, side by side (the
+final block's height and gas price; the sender's key, `view_access_key` then `view_account` to tell a missing key from a
+missing account; `502 near_unavailable`): `409 account_not_activated`, `409 access_key_missing`, `409
+delegate_nonce_used` (`accessKeyNonce`), `400 delegate_nonce_too_large`, `400 delegate_expired` (`max_block_height` below
+the head + 3; `blockHeight`), `400 block_height_too_far` (above the head + 1000; `blockHeight`, `maxBlockHeight`) → the
+limits (below; `429 rate_limited` + `retry-after`) → the budgets (the app's: `429 app_budget_exhausted`; the env's: `503
+relay_budget_exhausted`; `retry-after` to the next UTC day) → the relay.
+
+**The relay** goes through the key object `near-relay-key-<i>` (`i` = sha256(sender) mod the key count, so copies of one
+request meet; the claim is the signed bytes' hash: a copy within 30 s of a success is `409 already_relayed`). The
+object signs `Transaction {signer: near.relay.account, receiver: the sender, actions: [Delegate(the signed bytes exactly
+as received)]}` (activation: `[Transfer(near.relay.activationYocto, default 0)]`) with the nonce machinery the pools
+use (reservations, one retry on InvalidNonce, an expired block hash or a dropped transaction: none of them executed;
+the delegate's own nonce keeps a resend from running twice), checks `NETWORK` again, and waits for every receipt
+(`EXECUTED_OPTIMISTIC`) up to 30 s. Answers past the relay:
+
+| Status | Code | When |
+|---|---|---|
+| 200 | — | `{transactionHash, status: "executed"}` |
+| 422 | `contract_rejected` | an inner call failed (`status: "failed"`, `error` the contract's panic text, `executor`, `transactionHash`) |
+| 422 | `delegate_rejected` | NEAR refused the delegate itself (`reason` `expired`, `invalid_nonce`, `nonce_too_large`, `access_key`, `invalid_signature`, `sender_mismatch`, `account_missing`; `status: "failed"`) |
+| 504 | `timeout` | no outcome in 30 s (`status: "pending"`, `transactionHash`: poll it; never resend blind) |
+| 409 | `already_relayed` | a copy of a request this key relayed in the last 30 s |
+| 502 | `near_unavailable`, `near_rejected`, `near_error` | as "Relay errors" (`near_rejected` includes a relay account short of balance) |
+| 503 | `relayer_busy`, `relayer_unavailable` (`retry-after: 1`), `relayer_unconfigured` | as "Relay errors" |
+
+**Limits and budget** (D736; all exact, in `RateLimiter` objects; a refusal by a later window gives the earlier ones
+back): per IP subject 30 relays / 10 activations a minute across every app (the app gate's window, `ip:<subject>`,
+windows `near-relay:minute`, `near-activate:minute`: no app id, so many keys don't multiply it), before the body; per sender account `near.relay.perSenderPerDay`
+(default 100) a UTC day (`near-relay:sender:<account>`); per user 200 relays and 2 activations a UTC day (the directory's
+user, `near-relay:user:<user id>`, the default; or a session proof's account root, `near-relay:user:<first 16 bytes of
+sha256(scope#provider#sub), hex>`); per app 120 a minute and `near.relay.perAppPerDay` (default 5000) a day for relays,
+`near.relay.activationsPerAppPerDay` (default 200) activations a day (`app:<id>`, windows `near-relay:*`,
+`near-activate:day`); across the env `near.relay.relaysPerMinute` (300) relays a minute, `near.relay.relaysPerDay` (20000)
+relays and `near.relay.activationsPerDay` (1000) activations a day (`near-relay:global`, `near-activate:global`). Nothing
+scoped to a sender or a user is reachable by a third party (a signed delegate is public once on chain; an account id is
+public): the relay keeps, per sender, the highest delegate nonce it has sent (`RateLimiter.floor` on
+`near-relay:sender:<account>`, durable, only grows, never expires), and a delegate at or below it is refused `409
+delegate_nonce_used` right after the local checks (decode, policy, signature), with no chain read and no count. A nonce
+above it needs a fresh signature by the sender's key, which only the key's holder can make. A copy of a request in
+flight is `409 already_relayed` (the hash, remembered 20 minutes, for concurrent copies only). Before the chain reads
+(M3): the sender's minute (10; past the floor, so only the key's holder reaches it), then the app's and the env's
+minute, which come back when the chain says the delegate's nonce is used (the floor then rises to the chain's nonce:
+a stale delegate costs the shared windows nothing, once); a floor that can't be written answers `503
+rate_limiter_unavailable` (retryable); for activate 60 requests a minute per
+app and 300 across the env, "already exists" answers included. The daily windows (sender, user, app, env) count only a
+delegate that passed every check, right before the budget and the relay; a later refusal, or a relay that didn't run,
+gives them back (and forgets the hash); anything else raises the sender's floor to the delegate's nonce. An activation
+of an existing account answers `created: false` and counts nothing of the user's; the user's day counts only for an
+account about to be created, and comes back when nothing is created. The head block is cached for a second per isolate. Each per-app cap must be below the env's (the schema
+and the parser refuse otherwise), so one leaked publishable key can't use up the env's day. The NEAR budgets: `near.relay.appDailyBudgetNear` (default 1, or a fifth of the env's if less; below it) per app
+(`app:<id>`, window `near-relay:day`), then `near.relay.dailyBudgetNear` (default 5) a UTC day across the env
+(`near-relay:budget`, `RateLimiter.spend`; a refusal by the env's gives the app's back); a relay reserves `(inner gas + 5 Tgas) × gas price`, an activation
+`100 Tgas × gas price + activationYocto`, both above what they burn; after the outcome it gives back the reservation less what the transaction and its receipts burnt (`tokens_burnt`)
+less what it transferred (an activation's `activationYocto`), all of it when nothing executed; a spend above the
+reservation is charged (`RateLimiter.charge`). Once a day's reservations
+reach 80% of the budget, one `near_relay_budget_high` security event a day (`{day, spentYocto, budgetYocto,
+thresholdPct}`, amounts only; migration 0020). Not counted in the app's relay quota or the usage ledger (not billed).
+
+**In flight and the account's balance (M1 of the review of 2026-11-11).** A relay holds its prepaid gas (inner gas +
+5 Tgas overhead) at the pessimistic gas price until the refund (about 10.3× the plain price, measured; counted 12×). Each
+key object takes at most `inFlightNear ÷ (keys × (maxGas + 5 Tgas) × gas price × 12)` relays in flight
+(`inFlightCapPerKey`), and answers `503 relayer_busy` (`retry-after: 1`, nothing sent, the reservation given back)
+beyond it, so the relays in flight never hold more than `near.relay.inFlightNear`. sandbox-dev: (10 + 5) Tgas × 10^8 ×
+12 = 0.018 NEAR a relay, `inFlightNear` 3 over 2 keys → 83 per key, 166 in all. A transaction NEAR refuses for the
+account's balance (`NotEnoughBalance`) answers `502 near_rejected` and keeps its reservation (and the windows it took),
+so a burst that starves the account can't repeat for free. Fund the account with at least `inFlightNear` +
+`lowBalanceNear` + `dailyBudgetNear` (sandbox-dev 3 + 2 + 5 = 10 NEAR; keep about 15).
+
+**Funds check** (hourly cron, `relay-funds.ts`): the relay account's balance (`view_account`, final) below
+`near.relay.lowBalanceNear` (default 2 NEAR), or the account missing, writes one `near_relay_balance_low` security event a
+UTC day (`{account, balanceYocto, missing, thresholdYocto, day}`); off without `NEAR_RELAY`, `NEAR_RELAY_KEYS` or on
+another network. The admin's Security & monitoring view shows both kinds; its feed emails them.
+
+Logs: the request line (`code`, `nearTx`), `relay_dispatched` / `relay_retry` / `relay_rejected` with `pool: "near"` and
+`method` `delegate` or `activate`; `near_relay_alert_failed`, `near_relay_funds_check`. No account id, key, signature or
+path is logged.
 
 ### Identity token · I
 
@@ -1587,6 +1783,11 @@ AddClient of the provider `email` takes the issuer's JWS JSON client proof (`aud
 |---|---|---|---|---|
 | session | `RELAYER_KEYS` | `relayer-key-<i>` | `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `link_identity`, `cancel_link`, `unlink_identity` (L) | `/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/link*` |
 | owner | `OWNER_RELAYER_KEYS` | `owner-relayer-key-<i>` | `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change` | `/v1/owner-actions` |
+| near (N, not a pool) | `NEAR_RELAY_KEYS` | `near-relay-key-<i>` | none: a `Delegate` action (a user's checked signed delegate) or the activation `Transfer`, to a user's implicit account | `/v1/near/relay`, `/v1/near/activate` |
+
+The `near` keys are full-access keys of a separate account, `near.relay.account` (a function-call key can't sign a
+`Delegate` action, D734), in the same `RelayerKey` class (an object serves one role for its whole life; its stored nonce
+reservation names the account and the key). A key in both `NEAR_RELAY_KEYS` and a pool turns the NEAR relay off.
 
 Keys are function-call keys on `RELAYER_ACCOUNT`, receiver `SIGNER_ACCOUNT`, no deposit. A key of the pool is picked
 round-robin (random start per isolate), except for a session-signed request (`/v1/derive`, `/v1/sessions/revoke`,
@@ -1688,17 +1889,17 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `app_origins` (added, C) | `active_from` ms (NULL: not announced, never matches; 0: migrated), `change_id` → `guarded_changes.id` | 0006 |
 | `guarded_changes` (C) | `id` PK (`gc_…`), `app_id`, `kind` `origin_add`/`policy_set`/`raw_sign_on` with its `origin` or `policy_json` + `policy_id`, `status` `pending`/`active`/`cancelled`/`ended`, the proposer (`member`/`hana`/`system`, id, step-up `sub`, time, country), `waiver` `loopback`/`no_session`, `notified_at`, `active_from`, `cancel_token_hash`, `activated_recorded_at`, expedite and end/cancel fields, `request_id`; indexes by app and status, unnotified, due | 0006 |
 | `app_changes` (C) | `seq` PK, `at`, `org_id`, `app_id`, `scope_id`, `kind`, `detail_json` (valid JSON, allowlisted fields), `actor_kind` `member`/`hana`/`system`/`link`, `actor_id`, `actor_sub`, `request_id` UNIQUE. Append-only: UPDATE refused, DELETE refused until a row is 60 months old (triggers). 0006 wrote one `migration.baseline` row per app (its origins, stored policies as stored, raw-signing values, suspension) | 0006 |
-| `security_events` (C) | `id` PK, `detected_at`, `kind` `drift`/`breaker`/`owner_cap`/`owner_allowance_low`/`home_budget_high` (0018, D541: `{day, derives, ceiling, thresholdPct}`, counts only), org/app/scope, `detail_json`, `notified_at` | 0006, 0018 |
+| `security_events` (C) | `id` PK, `detected_at`, `kind` `drift`/`breaker`/`owner_cap`/`owner_allowance_low`/`home_budget_high` (0018, D541: `{day, derives, ceiling, thresholdPct}`, counts only)/`near_relay_budget_high`/`near_relay_balance_low` (0020, D736: amounts and the relay account, "NEAR relay"), org/app/scope, `detail_json`, `notified_at` | 0006, 0018, 0020 |
 | `org_security_contacts` (C) | (`org_id`, `email` lowercased) PK, `added_by`, `added_at` | 0006 |
 | `session_markers` (C) | `app_id` PK → apps, `first_at` ms: written once, when the relay of a session-pool request on a scope with no `first_session_at` settled; the `no_session` waiver's sign besides `first_session_at` (D220). No user data | 0009 |
 | `apps` (added, H2, 0016) | `first_login_at` ms or NULL: the app's first successful login (Google or email), written once by `markFirstLogin` while the gate read it as NULL; no write after that. NULL hides the app from anyone but its scope's own users in `GET /v1/home/apps` (D462). Backfilled from session markers, vault shares, user events, identity tokens and email sessions |
 | `apps` (added, L) | `login_methods` `'google'` (default) / `'email'` / `'google,email'` (CHECK): the sign-in methods the app offers (read only by `GET /v1/app` and for email tokens, never in the gate; the email issuer reads it too) | 0010 |
 | `email_usage` (L) | (`app_id` → apps, `day` `YYYY-MM-DD` UTC) PK, `email_sessions`, `links`: email logins and new links per app and day, as `identity_usage`; copied hourly to the ledger's `usage.email_counts` (D233) | 0010 |
 | `end_users` (W) | `user_id` PK (the internal id: `hu_` + 26 Crockford base32 characters of the uid of the account root, D312; staff only), `token_sub` (the User ID partners see: the identity token's `sub`, `u1_…`, 25 characters; unique, D346), `support_code` (the Support ID's 8 characters: Crockford base32 of the first 5 bytes of `token_sub`'s 16; indexed), `scope_id`, `created_at` (MIN), `last_seen_at` (MAX); indexes by scope and by recency, ties by `token_sub`. Personal data (pseudonyms per scope) | 0011 |
-| `end_user_wallets` (W) | (`user_id` → end_users, `chain` `stellar`/`evm`, `address`) PK, `key_index`, `first_seen_at` (MIN), `last_used_at` (MAX: the last login that recorded it); index on `address` (an address may be under several users: a reused key) | 0011 |
+| `end_user_wallets` (W) | (`user_id` → end_users, `chain` `stellar`/`evm`/`near` (0019, D756), `address`: 42 to 64 characters, a NEAR implicit account id 64 lowercase hex) PK, `key_index`, `first_seen_at` (MIN), `last_used_at` (MAX: the last login that recorded it; both are the client's `issuedAtMs`, ±5 min, so never a basis for a choice); index on `address` (a Stellar or EVM address may be under several users: a reused key); unique `end_user_wallets_one_near` on (`user_id`, `key_index`) where `chain = 'near'` (D762) | 0011, 0019 |
 | `end_user_identities` (W) | (`scope_id`, `identity_key` hex) PK, `user_id` → end_users (indexed), `provider`, `sub` (NULL for a member seen only on chain; indexed), `role` `root`/`member`, `status` `active`/`pending`/`unlinked`/`cancelled`, `effective_at` (a member's link; pending reads as active once passed), `first_seen_at`, `observed_at` (a write lands only when no older than the row's). Holds Google and email `sub`s: staff only; `ConsoleRpc` never selects `sub` or `identity_key` | 0011 |
 | `apps.mainnet_demo` (D428) | 0/1, default 0: Hana staff's switch for the mainnet demo exception to D39 (`AdminRpc.setMainnetDemo`, `admin app:settings --mainnet-demo`); triggers `apps_mainnet_demo_test_only_insert`/`_update` refuse 1 for an app whose scope isn't `test` | 0013 |
-| `user_events` (D428, D430) | `id` PK, `kind` `key_exported`/`mainnet_signature`, `app_id` (NULL only for a `key_exported` row, a Hana Home derive: D520, 0018), `scope_id`, `user_id` (`hu_…`; required for both kinds), `chain`, `network` (EVM chain ID or `pubnet`), `address` (a signature's wallet), `usd_micros`, `request_id`, `at`; indexed by user, by address and by app. No key, token, signature, bytes or path. Personal data (an internal id or an address with times): kept 24 months, and no longer than its scope's wallet directory (the monthly job's `AdminRpc.purgeUserEvents`); an erasure request (`uid-erase`) deletes the user's rows by internal id and by each of their wallet addresses (D433) | 0013 |
+| `user_events` (D428, D430) | `id` PK, `kind` `key_exported`/`mainnet_signature`, `app_id` (NULL only for a `key_exported` row, a Hana Home derive: D520, 0018), `scope_id`, `user_id` (`hu_…`; required for both kinds), `chain` (`stellar`/`evm`, and `near` for a `key_exported` row only since 0019, D759), `network` (EVM chain ID or `pubnet`), `address` (a signature's wallet), `usd_micros`, `request_id`, `at`; indexed by user, by address and by app. No key, token, signature, bytes or path. Personal data (an internal id or an address with times): kept 24 months, and no longer than its scope's wallet directory (the monthly job's `AdminRpc.purgeUserEvents`); an erasure request (`uid-erase`) deletes the user's rows by internal id and by each of their wallet addresses (D433) | 0013 |
 | `home_usage` (D523, D540, 0018) | `day` PK (`YYYY-MM-DD`, UTC), `unrecorded` (those held to the 20% share, D540), `derives` (Home derives of that day): incremented atomically by `POST /v1/home/login` right before it relays, refused at `HOME_DERIVES_PER_DAY`. A count only, one row a day: nothing personal |
 | `apps` (added, I) | `identity_email` `'off'` (default) / `'on_request'` / `'at_login'` (CHECK): when Hana asks a user to share their address with the app (D411). Read beside the gate (`GET /v1/app`, the mint, the consent endpoints; an API before 0014 reads `'off'`), written by `updateSettings` and `app:settings --identity-email` | 0014 |
 | `email_consents` (I) | (`app_id`, `user_sub` `u1_…`, `email_mac` BLOB(32)) PK, `state` `granted`/`declined`, `email` (the shared copy: set exactly while `granted`), `scope_id`, `decided_at`; indexes on `user_sub` and (`email_mac`, `state`). `email_mac` = HMAC-SHA256(`EMAIL_CONSENT_KEY`, `"hana-id/email-consent/v1" ‖ 0x00 ‖ lowercase address`). Personal data: read by the mint and `ConsoleRpc` (granted rows of the org's live apps), deleted by `uid-erase` and 30 days after the app's deletion (`purgeDirectory`) | 0014 |
@@ -1774,6 +1975,9 @@ jobs (one failing doesn't skip the others):
   security event (`{publicKey, allowanceYocto, missing, initialYocto, thresholdPct, day}`), once per key and UTC day.
   A full-access key or an unlimited allowance is skipped. NEAR down is logged (`owner_allowance_check`) and never
   fails the run.
+- **NEAR relay funds, the same hourly run** (`near/relay-funds.ts`, D736). One `view_account` of `near.relay.account`:
+  below `near.relay.lowBalanceNear` (default 2 NEAR) or missing writes one `near_relay_balance_low` security event a UTC
+  day. Off without `NEAR_RELAY` and `NEAR_RELAY_KEYS`, or off testnet. NEAR down is logged (`near_relay_funds_check`).
 - **Drift detection, the same hourly run** (`changes/drift.ts`, C5). It checks that every origin in force is explained
   by an announced `origin_add` whose clock had passed when the row came into force, or by the 0006 baseline
   (`active_from = 0`, listed in `migration.baseline`). It checks that every stored or pending policy and every
@@ -1813,6 +2017,8 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `EMAIL_PUBLIC_KEYS` (L) | var, optional | `emailIssuer.publicKeys`, JSON | the issuer's public keys (its JWKS); public members only |
 | `RELAYER_KEYS` | secret | `.secrets/<env>/relayer-keys.json` | JSON array of `ed25519:` secret keys |
 | `OWNER_RELAYER_KEYS` | secret | `.secrets/<env>/owner-relayer-keys.json` | same format; absent → owner actions 503 |
+| `NEAR_RELAY` (N) | var, optional | `near.relay` | JSON `{account, receivers, maxGasTgas?, dailyBudgetNear?, appDailyBudgetNear?, perSenderPerDay?, perAppPerDay?, relaysPerDay?, activationsPerAppPerDay?, activationsPerDay?, lowBalanceNear?, activationYocto?, requireKnownAccount?}`; unreadable or absent → the NEAR relay answers 503 (D733) |
+| `NEAR_RELAY_KEYS` (N) | secret, optional | `.secrets/<env>/near-relay-keys.json` | JSON array of `ed25519:` full-access keys of `near.relay.account`; absent → the NEAR relay answers 503 (D734) |
 | `OWNER_POOL_ALLOWANCE_YOCTO` (C6) | var, optional | not generated | the allowance (decimal yocto) the owner-pool keys were added with, when deploy-contract ran with another `--owner-relayer-allowance` than 0.5 NEAR: the base of the hourly `owner_allowance_low` check |
 | `COINGECKO_API_KEY` | secret, optional (D436) | set by the user; `.secrets/<env>/coingecko-api-key` if a copy is kept | a CoinGecko key (Pro, else Demo) for the sandbox mainnet demo's prices; without it the public API, then the fixed table |
 | `KEYS_UPDATER_KEY` | secret | `.secrets/<env>/keys-updater.json` `private_key` | function-call key on the signer with exactly the updater methods (installed by `add_updater_key`, G); absent → cron skips JWKS sync |
@@ -1920,7 +2126,7 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text. At runtime 
 | `share` | share actions: the KEK, the share row and (unlock, touch) the settings row (D1) |
 | `advance` | unlock: re-wrap if needed and the counter update (D1) |
 | `proof`, `limits`, `share`, `session`, `wallets`, `sign` | `/v1/identity/token` (I): the session signature, the per-session limit and marker, the share and settings rows, the chain session, the wallet proofs, signing |
-| `records`, `session`, `insert` | `/v1/wallets/record` (W): the two records' checks, the chain session, the D1 batch |
+| `records`, `session`, `insert`, `near` | `/v1/wallets/record` (W): the records' checks, the chain session, the D1 batch, the NEAR wallet's own write (D756) |
 | `relay` | round trip to the relayer key object |
 | `relayDispatch` | inside it, until broadcast: = `relayQueue` + `relayChainRead` + `relaySign` + `relayPersist` (summed over retries) |
 | `relayQueue` | waiting for earlier critical sections of the same key |

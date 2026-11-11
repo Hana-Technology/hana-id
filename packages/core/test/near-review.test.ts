@@ -5,10 +5,10 @@ import { Signature, SignedDelegate, buildDelegateAction } from '@near-js/transac
 import { KeyType } from '@near-js/crypto';
 import { describe, expect, it } from 'vitest';
 import { DecodeError } from '../src/decode/errors.ts';
-import { NEAR_GLOBAL_CONTRACT_YOCTO_PER_BYTE, nearArgsView, nearDeposits, nearGlobalContractBurn } from '../src/decode/near.ts';
+import { NEAR_GLOBAL_CONTRACT_YOCTO_PER_BYTE, nearArgsView, nearCallsOwnContract, nearChangesControl, nearDeposits, nearGlobalContractBurn } from '../src/decode/near.ts';
 import { decodeApprovalRequest } from '../src/decode/request.ts';
-import { decodeNearTransaction, nearRelaysDelegate } from '../src/near/codec.ts';
-import { NEAR_DELEGATE_MAX_BLOCKS, NEAR_DELEGATE_NONCE_LAG_BLOCKS, NEAR_NONCE_PER_BLOCK, nearDelegateNonce, nearDelegateNonceFloor } from '../src/near/delegate.ts';
+import { type NearAction, decodeNearTransaction, nearRelaysDelegate } from '../src/near/codec.ts';
+import { NEAR_DELEGATE_MAX_BLOCKS, NEAR_DELEGATE_NONCE_LAG_BLOCKS, NEAR_NONCE_PER_BLOCK, NEAR_TEST_APP_DELEGATE_ACTIONS, nearDelegateNonce, nearDelegateNonceFloor, nearTestAppDelegateProblem } from '../src/near/delegate.ts';
 import { signNearTransaction } from '../src/near/sign.ts';
 import { addressOfExport, exportKeyString } from '../src/export.ts';
 import { extractPrk } from '../src/derivation.ts';
@@ -17,9 +17,12 @@ import { NEAR_OTHER_KEY, NEAR_USER, NEAR_USER_KEY, NEAR_USER_S, NEAR_USER_SEED, 
 import { actionCreators, GlobalContractDeployMode } from '@near-js/transactions';
 
 /** A transaction from the user that relays bob's delegate action sending 1000 NEAR to an attacker. */
-function relayingTx(): Uint8Array {
+function relayAction() {
   const inner = buildDelegateAction({ senderId: 'bob.testnet', receiverId: 'attacker.testnet', actions: [transfer(1000n * 10n ** 24n)], nonce: 1n, maxBlockHeight: 5n, publicKey: NEAR_OTHER_KEY });
-  return nearTxBytes([actionCreators.signedDelegate(new SignedDelegate({ delegateAction: inner, signature: new Signature({ keyType: KeyType.ED25519, data: new Uint8Array(64) }) }))], { receiver: 'bob.testnet' });
+  return actionCreators.signedDelegate(new SignedDelegate({ delegateAction: inner, signature: new Signature({ keyType: KeyType.ED25519, data: new Uint8Array(64) }) }));
+}
+function relayingTx(): Uint8Array {
+  return nearTxBytes([relayAction()], { receiver: 'bob.testnet' });
 }
 
 describe('H1: a transaction that relays a delegate action', () => {
@@ -93,5 +96,68 @@ describe('L3: the NEAR export check zeroes the key bytes it decoded', () => {
     expect(src).toContain('key = base58.decode(m[1]!) as Bytes;');
     expect(src).not.toMatch(/toBytes\(base58\.decode/u);
     expect(src).toMatch(/finally \{\n    key\?\.fill\(0\);/u);
+  });
+});
+
+describe('H1: the delegate in any position among several actions', () => {
+  it.each([
+    ['first', () => [relayAction(), transfer(1n), transfer(2n)]],
+    ['middle', () => [transfer(1n), relayAction(), transfer(2n)]],
+    ['last', () => [transfer(1n), transfer(2n), relayAction()]],
+  ] as const)('%s: refused by the decoder and the signer', (_, actions) => {
+    const bytes = nearTxBytes([...actions()], { receiver: 'bob.testnet' });
+    expect(nearRelaysDelegate(decodeNearTransaction(bytes))).toBe(true);
+    expect(() => decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: NEAR_USER, context: { nearNetwork: 'testnet' }, bytes })).toThrow(/relays a delegate action/u);
+    expect(() => signNearTransaction(NEAR_USER_SEED(), bytes)).toThrow(/relays a delegate action/u);
+  });
+});
+
+describe('nearDelegateNonce: lastUsed, for several actions from one read', () => {
+  it('returns at least lastUsed + 1', () => {
+    const H = 277_000_000n;
+    const first = nearDelegateNonce({ keyNonce: 0, blockHeight: H });
+    const second = nearDelegateNonce({ keyNonce: 0, blockHeight: H, lastUsed: first });
+    expect(second).toBe(first + 1n);
+    expect(nearDelegateNonce({ keyNonce: 0, blockHeight: H, lastUsed: 5 })).toBe(first);
+    expect(() => nearDelegateNonce({ keyNonce: 0, blockHeight: H, lastUsed: H * NEAR_NONCE_PER_BLOCK })).toThrow(/bound/u);
+  });
+});
+
+describe('test apps’ delegate actions: only calls and transfers to *.testnet accounts', () => {
+  const da = (actions: NearAction[], receiverId = 'hana-id-guestbook-dev1.testnet') => ({ senderId: NEAR_USER, receiverId, actions });
+  const call: NearAction = { type: 'functionCall', methodName: 'add_message', args: new TextEncoder().encode('{"text":"gm"}'), gas: 30_000_000_000_000n, deposit: 0n };
+  const key = { type: 'ed25519' as const, bytes: new Uint8Array(32).fill(1) };
+
+  it('the hackathon demo’s delegate passes', () => {
+    expect(nearTestAppDelegateProblem(da([call]))).toBeNull();
+    expect(nearTestAppDelegateProblem(da([call, { type: 'transfer', deposit: 1n }]))).toBeNull();
+    expect(NEAR_TEST_APP_DELEGATE_ACTIONS).toEqual(['functionCall', 'transfer']);
+  });
+
+  it.each([
+    { type: 'addKey', publicKey: key, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } },
+    { type: 'deleteKey', publicKey: key },
+    { type: 'deleteAccount', beneficiaryId: 'bob.testnet' },
+    { type: 'deployContract', code: new Uint8Array(1) },
+    { type: 'deployGlobalContract', code: new Uint8Array(1), deployMode: 'codeHash' },
+    { type: 'useGlobalContract', contract: { type: 'accountId', accountId: 'g.testnet' } },
+    { type: 'stake', stake: 1n, publicKey: key },
+    { type: 'createAccount' },
+  ] as NearAction[])('refuses $type (near_delegate_test_app_action)', (a) => {
+    expect(nearTestAppDelegateProblem(da([call, a]))?.reason).toBe('near_delegate_test_app_action');
+  });
+
+  it.each([NEAR_USER, 'guestbook.near', 'testnet', 'x.testnet.near', 'evil-testnet'])('refuses receiver %s (near_delegate_test_app_receiver)', (receiver) => {
+    expect(nearTestAppDelegateProblem(da([call], receiver))?.reason).toBe('near_delegate_test_app_receiver');
+  });
+});
+
+describe('nearChangesControl: a call to a contract on the user’s own account', () => {
+  it('counts for the banner when the receiver is the user', () => {
+    const call: NearAction = { type: 'functionCall', methodName: 'm', args: new Uint8Array(0), gas: 1n, deposit: 0n };
+    expect(nearChangesControl([call], NEAR_USER, NEAR_USER)).toBe(true);
+    expect(nearCallsOwnContract([call], NEAR_USER, NEAR_USER)).toBe(true);
+    expect(nearChangesControl([call], 'guestbook.testnet', NEAR_USER)).toBe(false);
+    expect(nearChangesControl([call])).toBe(false);
   });
 });

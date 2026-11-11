@@ -87,7 +87,10 @@ export function statusAt(status: string, effectiveAt: number | null, now: number
   return status as StaffIdentity['status'];
 }
 
-const byWallet = (a: { chain: string; address: string }, b: { chain: string; address: string }) => (a.chain === b.chain ? (a.address < b.address ? -1 : 1) : a.chain === 'stellar' ? -1 : 1);
+/** Stellar, EVM, then NEAR (D755), each chain's addresses in order. */
+const CHAIN_ORDER: Record<string, number> = { stellar: 0, evm: 1, near: 2 };
+const byWallet = (a: { chain: string; address: string }, b: { chain: string; address: string }) =>
+  a.chain === b.chain ? (a.address < b.address ? -1 : 1) : (CHAIN_ORDER[a.chain] ?? 9) - (CHAIN_ORDER[b.chain] ?? 9);
 const ROLE_ORDER = { root: 0, member: 1 } as const;
 
 export function staffUser(r: StaffRow, now: number): StaffUser {
@@ -244,7 +247,7 @@ export async function withEvents(db: HotDb, users: StaffUser[]): Promise<StaffUs
       .map((r) => ({
         kind: r.kind === 'key_exported' ? 'key_exported' : 'mainnet_signature',
         appId: r.app_id,
-        chain: r.chain === 'stellar' || r.chain === 'evm' ? r.chain : null,
+        chain: r.chain === 'stellar' || r.chain === 'evm' || r.chain === 'near' ? r.chain : null,
         network: r.network,
         address: r.address,
         usdMicros: r.usd_micros,

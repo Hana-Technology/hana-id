@@ -28,6 +28,8 @@ import {
   isNearImplicitAccountId,
   nearImplicitPublicKey,
   nearRelaysDelegate,
+  nearTestAppDelegateProblem,
+  type NearDelegateAction,
   signNearDelegateAction,
   signNearTransaction,
   signNep413Message,
@@ -143,6 +145,7 @@ export function approvalSubject(request: SignRequest, addresses: SigningAddresse
   if (request.method === 'near_signTransaction' || request.method === 'near_signDelegateAction') {
     let signer: { account: string; key: NearPublicKey };
     let relays = false;
+    let delegate: NearDelegateAction | null = null;
     try {
       if (request.method === 'near_signTransaction') {
         const tx = decodeNearTransaction(content.bytes);
@@ -151,6 +154,7 @@ export function approvalSubject(request: SignRequest, addresses: SigningAddresse
       } else {
         const da = decodeNearDelegateAction(content.bytes);
         signer = { account: da.senderId, key: da.publicKey };
+        delegate = da;
       }
     } catch {
       throw new VaultError(ErrorCode.unauthorized, 'The request is malformed', { reason: 'invalid_request' });
@@ -158,6 +162,12 @@ export function approvalSubject(request: SignRequest, addresses: SigningAddresse
     if (signer.account !== address || signer.key.type !== 'ed25519' || !bytesEqual(signer.key.bytes, nearImplicitPublicKey(address))) throw addressMismatch();
     // H1 of the review: the signer of a transaction relaying a delegate action prepays the delegate's deposits.
     if (relays) throw new VaultError(ErrorCode.unauthorized, NEAR_RELAYED_DELEGATE_RULE, { reason: 'near_relayed_delegate' });
+    // A test app's delegate action names no network and could be kept and replayed elsewhere (D729): only calls and
+    // transfers to *.testnet accounts, which a replay on mainnet can't reach (nearTestAppDelegateProblem).
+    if (delegate && rules.testApp) {
+      const problem = nearTestAppDelegateProblem(delegate);
+      if (problem) throw new VaultError(ErrorCode.unauthorized, `${problem.message}. ${TEST_APP_NETWORK_RULE}`, { reason: problem.reason, chain: 'near' });
+    }
   }
   const subject: ApprovalSubject = { kind: APPROVAL_KIND[request.method], chain, address, ...content };
   // Before any popup or policy: a test app's keys come from the testnet MPC and must never sign for a mainnet, except

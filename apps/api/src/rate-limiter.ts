@@ -280,6 +280,60 @@ export class RateLimiter extends DurableObject<Env> {
     }
   }
 
+  /**
+   * An amount budget over fixed windows (the NEAR relay's daily spend, D736): adds `amount` to the window's total when
+   * the total stays at most `max`, else refuses and adds nothing. Amounts are non-negative integers as decimal strings
+   * (yoctoNEAR exceeds 2^53). `spent` is the window's total after the call. Keys are `budget:<name>@<start>`.
+   */
+  spend(name: string, windowMs: number, max: string, amount: string, now: number = Date.now()): { ok: true; spent: string } | { ok: false; spent: string; retryAfterS: number } {
+    const kv = this.ctx.storage.kv;
+    const start = Math.floor(now / windowMs) * windowMs;
+    const key = `budget:${name}@${start}`;
+    const spent = BigInt(kv.get<string>(key) ?? '0');
+    const next = spent + BigInt(amount);
+    if (BigInt(amount) < 0n || next > BigInt(max)) return { ok: false, spent: spent.toString(), retryAfterS: Math.max(1, Math.ceil((start + windowMs - now) / 1000)) };
+    kv.put(key, next.toString());
+    for (const [k] of kv.list<string>({ prefix: `budget:${name}@` })) {
+      if (Number(k.slice(`budget:${name}@`.length)) + windowMs <= now) kv.delete(k);
+    }
+    return { ok: true, spent: next.toString() };
+  }
+
+  /**
+   * Adds `amount` to the window of `at` whatever its total (what a relay burnt beyond its reservation): the next
+   * `spend` sees it. An ended window is left alone.
+   */
+  charge(name: string, windowMs: number, amount: string, at: number, now: number = Date.now()): void {
+    const start = Math.floor(at / windowMs) * windowMs;
+    if (start + windowMs <= now || BigInt(amount) <= 0n) return;
+    const kv = this.ctx.storage.kv;
+    const key = `budget:${name}@${start}`;
+    kv.put(key, (BigInt(kv.get<string>(key) ?? '0') + BigInt(amount)).toString());
+  }
+
+  /** Gives back part of a `spend(name, windowMs, …, at)` (what a relay didn't burn); never below zero, an ended window is left alone. */
+  giveBack(name: string, windowMs: number, amount: string, at: number): void {
+    const kv = this.ctx.storage.kv;
+    const key = `budget:${name}@${Math.floor(at / windowMs) * windowMs}`;
+    const spent = kv.get<string>(key);
+    if (spent === undefined || BigInt(amount) <= 0n) return;
+    const next = BigInt(spent) - BigInt(amount);
+    kv.put(key, (next > 0n ? next : 0n).toString());
+  }
+
+  /**
+   * A value that only grows (the highest delegate nonce the NEAR relay sent for one sender, D736): stored durably, never
+   * expires. Decimal strings (u64). `floor` reads it ('0' when none), `raiseFloor` keeps the larger.
+   */
+  floor(name: string): string {
+    return this.ctx.storage.kv.get<string>(`floor:${name}`) ?? '0';
+  }
+
+  raiseFloor(name: string, value: string): void {
+    const kv = this.ctx.storage.kv;
+    if (BigInt(value) > BigInt(kv.get<string>(`floor:${name}`) ?? '0')) kv.put(`floor:${name}`, value);
+  }
+
   /** Drops a marker (a reservation whose relay definitely did not execute). */
   release(key: string): void {
     this.ctx.storage.kv.delete(`mark:${key}`);

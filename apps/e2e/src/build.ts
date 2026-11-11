@@ -11,6 +11,7 @@
 //   pnpm --filter @hana-id/e2e build
 //
 // src/server/main.ts (Playwright's webServer) runs it before serving, unless --no-build.
+import './port-env.ts'; // first: this checkout's port base, before stack.ts reads it (`pnpm build` alone)
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { type Plugin, build } from 'esbuild';

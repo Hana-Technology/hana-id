@@ -28,7 +28,7 @@ export const NEAR_RELAY_BOUNDS = { maxGasTgas: 300, dailyBudgetNear: 1000, perSe
 
 /** Fixed limits (not in the manifest): see docs/api.md "NEAR relay". */
 export const NEAR_RELAY_LIMITS = {
-  /** Relays per Hana user (account root in the scope) per UTC day, across every NEAR account they relay for. */
+  /** Relays per Hana user (account root in the scope) per UTC day, across every NEAR account they relay for: only for a request with the vault's session proof. */
   perUserPerDay: 200,
   /** Relays per app per minute. */
   perAppPerMinute: 120,
@@ -40,6 +40,8 @@ export const NEAR_RELAY_LIMITS = {
   activationsPerAppPerDay: 1000,
   /** Activations per IP subject per minute. */
   activationsPerIpPerMinute: 10,
+  /** Activations across the env per UTC day (each costs about 0.0071 NEAR; the budget bounds them too). */
+  activationsPerDay: 1000,
   /** How far ahead of the current final block a delegate's `max_block_height` may be (≈ 10 min of testnet blocks). */
   maxBlocksAhead: 1000,
   /** A budget alert (`near_relay_budget_high`) once a day's spend reaches this share of the budget. */

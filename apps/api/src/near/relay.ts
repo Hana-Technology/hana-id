@@ -7,10 +7,12 @@
 // - POST /v1/near/relay wraps the user's SignedDelegateAction in the relay account's transaction (receiver = the
 //   user's account, one Delegate action) and sends it.
 //
-// Both are the vault's (Origin VAULT_ORIGIN, the vault gate) and need the session proof the mainnet demo's events use
-// (D735): the session key's signature over `identityMessage` with this request's payload, the session live on chain in
-// the app's scope, the proof used once. The user is the session's account root; limits count per user, sender, app and
-// IP, and the relay's NEAR spend has a daily budget. The relayer pays the inner calls' gas AND any deposit they attach
+// Both take the app gate (`appGate` kind `near`: publishable key, an origin in force for the app, the per-IP window):
+// the SDK calls them from the partner's page (`hana.near.relay`, `hana.near.activate`), the vault may too. No session
+// credential is required (D735): the limits per sender, app, IP and the daily NEAR budget bound what anyone holding a
+// publishable key and an allowed origin can spend. A body may add the vault's session proof (the session key's
+// signature over `identityMessage` with this request's payload, the session live in the app's scope, once); when it
+// does, it is checked and the request also counts per user. The relayer pays the inner calls' gas AND any deposit they attach
 // (measured: a delegate Transfer of 1 NEAR from a zero-balance account is paid by the relayer), so only zero-deposit
 // FunctionCalls to allowlisted receivers are relayed (near/delegate.ts policyRefusal).
 //
@@ -20,17 +22,15 @@ import { identityMessage, identityRoot, IDENTITY_NONCE_BYTES, IDENTITY_PROOF_MAR
 import { base64Decode, base64Encode, borshString, concatBytes, hex, sha256 } from '../bytes.ts';
 import { eventId } from '../changes/guard.ts';
 import type { Env } from '../env.ts';
-import { done, type Ctx, lap, lapRelay, limiter, newCtx, NOT_EXECUTED, reject } from '../handlers.ts';
+import { appGate, done, type Ctx, lap, lapRelay, limiter, newCtx, NOT_EXECUTED, reject } from '../handlers.ts';
 import { readJson } from '../http.ts';
 import { checkChainSession, proofMarker, verifyEd25519 } from '../identity/token.ts';
-import { ipSubject } from '../ip.ts';
 import { log } from '../log.ts';
 import { placedStub } from '../placement.ts';
 import type { App } from '../apps.ts';
 import type { Limit } from '../rate-limiter.ts';
 import { ALREADY_RELAYED, parseRelayerKeys, POOLS, POOL_SECRET } from '../relayer-config.ts';
 import { type NearRelayJob, nearRelayKeyName, type RelayResult } from '../relayer-key.ts';
-import { vaultApp, vaultLimits } from '../vault/endpoints.ts';
 import { ACTIVATE_GAS, decodeSignedDelegate, IMPLICIT_ACCOUNT_RE, innerGas, NONCE_RANGE_MULTIPLIER, policyRefusal, RELAY_OVERHEAD_GAS, verifyDelegateSignature, type DecodedDelegate } from './delegate.ts';
 import { type NearRelayConfig, NEAR_RELAY_LIMITS, parseNearRelayConfig } from './relay-config.ts';
 import { type AccountKey, headBlock, implicitAccountKey } from './relay-chain.ts';
@@ -69,22 +69,26 @@ const exactKeys = (o: Obj, keys: string[]): boolean => Object.keys(o).length ===
 const bytesOf = (v: unknown, n: number): Uint8Array | null =>
   Array.isArray(v) && v.length === n && v.every((b) => Number.isInteger(b) && b >= 0 && b <= 255) ? Uint8Array.from(v as number[]) : null;
 
+/** The vault's optional session proof (D735): all four fields or none. */
 interface SessionProof {
-  network: string;
   sessionPk: Uint8Array;
   issuedAtMs: number;
   nonce: Uint8Array;
   signature: Uint8Array;
 }
 
-/** The fields both bodies share; null when any is malformed. */
-function sessionProof(b: Obj): SessionProof | null {
+const PROOF_FIELDS = ['sessionPublicKey', 'issuedAtMs', 'nonce', 'signature'] as const;
+
+/** The proof fields: absent (null), well formed, or malformed ('bad'). */
+function sessionProof(b: Obj): SessionProof | null | 'bad' {
+  const present = PROOF_FIELDS.filter((k) => k in b);
+  if (present.length === 0) return null;
+  if (present.length !== PROOF_FIELDS.length) return 'bad';
   const sessionPk = bytesOf(b.sessionPublicKey, 32);
   const nonce = bytesOf(b.nonce, IDENTITY_NONCE_BYTES);
   const signature = bytesOf(b.signature, 64);
-  if (typeof b.network !== 'string' || b.network.length > 16 || !sessionPk || !nonce || !signature) return null;
-  if (!Number.isSafeInteger(b.issuedAtMs) || (b.issuedAtMs as number) < 0) return null;
-  return { network: b.network, sessionPk, issuedAtMs: b.issuedAtMs as number, nonce, signature };
+  if (!sessionPk || !nonce || !signature || !Number.isSafeInteger(b.issuedAtMs) || (b.issuedAtMs as number) < 0) return 'bad';
+  return { sessionPk, issuedAtMs: b.issuedAtMs as number, nonce, signature };
 }
 
 /** Standard base64 with padding, canonical (re-encodes to itself). */
@@ -98,28 +102,43 @@ function strictBase64(v: unknown, maxChars: number): Uint8Array | null {
   }
 }
 
-export interface RelayRequest extends SessionProof {
+interface Common {
+  /** The body's `network`, `testnet` when absent; any other value is refused later (mainnet_not_allowed / bad_request). */
+  network: string;
+  proof: SessionProof | null;
+}
+
+export interface RelayRequest extends Common {
   signedDelegate: Uint8Array;
 }
 
-export interface ActivateRequest extends SessionProof {
+export interface ActivateRequest extends Common {
   accountId: string;
 }
 
-/** POST /v1/near/relay's body, exactly: network, signedDelegateAction (base64) and the session proof. */
-export function toRelayRequest(body: unknown): RelayRequest | null {
-  if (!isObj(body) || !exactKeys(body, ['network', 'signedDelegateAction', 'sessionPublicKey', 'issuedAtMs', 'nonce', 'signature'])) return null;
-  const proof = sessionProof(body);
-  const signedDelegate = strictBase64(body.signedDelegateAction, 6000);
-  return proof && signedDelegate ? { ...proof, signedDelegate } : null;
+const onlyKeys = (o: Obj, allowed: readonly string[]): boolean => Object.keys(o).every((k) => allowed.includes(k));
+
+function common(b: Obj): Common | null {
+  if ('network' in b && (typeof b.network !== 'string' || b.network.length > 16)) return null;
+  const proof = sessionProof(b);
+  if (proof === 'bad') return null;
+  return { network: (b.network as string | undefined) ?? 'testnet', proof };
 }
 
-/** POST /v1/near/activate's body, exactly: network, accountId (an implicit account) and the session proof. */
+/** POST /v1/near/relay's body: `signedDelegateAction` (base64), optional `network` and the optional session proof; nothing else. */
+export function toRelayRequest(body: unknown): RelayRequest | null {
+  if (!isObj(body) || !onlyKeys(body, ['network', 'signedDelegateAction', ...PROOF_FIELDS])) return null;
+  const c = common(body);
+  const signedDelegate = strictBase64(body.signedDelegateAction, 6000);
+  return c && signedDelegate ? { ...c, signedDelegate } : null;
+}
+
+/** POST /v1/near/activate's body: `accountId` (an implicit account), optional `network` and the optional session proof. */
 export function toActivateRequest(body: unknown): ActivateRequest | null {
-  if (!isObj(body) || !exactKeys(body, ['network', 'accountId', 'sessionPublicKey', 'issuedAtMs', 'nonce', 'signature'])) return null;
-  const proof = sessionProof(body);
-  if (!proof || typeof body.accountId !== 'string' || !IMPLICIT_ACCOUNT_RE.test(body.accountId)) return null;
-  return { ...proof, accountId: body.accountId };
+  if (!isObj(body) || !onlyKeys(body, ['network', 'accountId', ...PROOF_FIELDS])) return null;
+  const c = common(body);
+  if (!c || typeof body.accountId !== 'string' || !IMPLICIT_ACCOUNT_RE.test(body.accountId)) return null;
+  return { ...c, accountId: body.accountId };
 }
 
 // ---- configuration ----
@@ -160,32 +179,26 @@ export function nearRelayReady(env: Env): { config: NearRelayConfig; keyCount: n
 
 type Step<T> = { ok: true; value: T } | { ok: false; response: Response };
 
-/** Network, clock, the session's signature over `payload`, the session on chain, the proof used once. */
-async function provenSession(env: Env, ctx: Ctx, app: App, proof: SessionProof, payload: Uint8Array): Promise<Step<null>> {
-  if (proof.network === 'mainnet') return { ok: false, response: reject(ctx, 403, 'mainnet_not_allowed', 'The NEAR relay is testnet only') };
-  if (proof.network !== 'testnet') return { ok: false, response: reject(ctx, 400, 'bad_request', 'network must be testnet') };
+/** `network` must be testnet (D733). */
+function networkRefusal(ctx: Ctx, network: string): Response | null {
+  if (network === 'mainnet') return reject(ctx, 403, 'mainnet_not_allowed', 'The NEAR relay is testnet only');
+  if (network !== 'testnet') return reject(ctx, 400, 'bad_request', 'network must be testnet');
+  return null;
+}
+
+/**
+ * The optional session proof (D735), when the body carries one: the clock, the session key's signature over
+ * `payload`, the session live on chain in the app's scope, the proof used once. Its account root is then counted.
+ */
+async function provenUser(env: Env, ctx: Ctx, app: App, proof: SessionProof, payload: Uint8Array): Promise<Step<{ provider: string; sub: string }>> {
   const now = Date.now();
   if (Math.abs(now - proof.issuedAtMs) > IDENTITY_PROOF_WINDOW_MS) return { ok: false, response: done(ctx, 400, { error: 'The session proof is too old or too new', code: 'stale_proof', serverTimeMs: now }) };
   const message = identityMessage({ signer: env.SIGNER_ACCOUNT, appId: app.id, sessionPublicKey: proof.sessionPk, issuedAtMs: proof.issuedAtMs, nonce: proof.nonce, payload });
   if (!(await verifyEd25519(proof.sessionPk, proof.signature, message))) return { ok: false, response: reject(ctx, 401, 'invalid_signature', 'Invalid session signature') };
-  lap(ctx, 'proof');
-  return { ok: true, value: null };
-}
-
-/** The exact per-IP window, then the session on chain and the proof marker. */
-async function liveSession(env: Env, ctx: Ctx, request: Request, app: App, proof: SessionProof, ipWindow: Limit): Promise<Step<{ root: { provider: string; sub: string } }>> {
-  try {
-    const hit = await limiter(env, `ip:${ipSubject(request.headers.get('cf-connecting-ip'))}`).hit([ipWindow]);
-    if (!hit.ok) return { ok: false, response: reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (per IP)', { 'retry-after': String(hit.retryAfterS) }) };
-  } catch {
-    return { ok: false, response: reject(ctx, 503, 'rate_limiter_unavailable', 'Try again') };
-  }
-  const now = Date.now();
   const chain = await checkChainSession(env, ctx, app, proof.sessionPk, now);
   if (!chain.ok) return chain;
   const root = identityRoot(chain.session.path, app.scope_id);
   if (!root) return { ok: false, response: reject(ctx, 502, 'bad_contract_result', 'The session path is not one this API can read') };
-  lap(ctx, 'session');
   try {
     if (!(await limiter(env, `near-relay-proof:${hex(proof.sessionPk)}`).reserve(await proofMarker(proof), proof.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now))) {
       return { ok: false, response: reject(ctx, 409, 'proof_replayed', 'This session proof was already used') };
@@ -193,7 +206,8 @@ async function liveSession(env: Env, ctx: Ctx, request: Request, app: App, proof
   } catch {
     return { ok: false, response: reject(ctx, 503, 'rate_limiter_unavailable', 'Try again') };
   }
-  return { ok: true, value: { root } };
+  lap(ctx, 'session');
+  return { ok: true, value: root };
 }
 
 interface Window {
@@ -327,11 +341,9 @@ function delegateRefusal(ctx: Ctx, d: DecodedDelegate, config: NearRelayConfig):
 
 export async function handleNearRelay(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, NEAR_RELAY_ENDPOINT, request);
-  const gate = await vaultApp(request, env, ctx);
+  const gate = await appGate(request, env, ctx, 'near');
   if (!gate.ok) return gate.response;
   const { app } = gate;
-  const limited = await vaultLimits(request, env, ctx, app);
-  if (limited) return limited;
   const ready = nearRelayReady(env);
   if (!ready) return reject(ctx, 503, 'relayer_unconfigured', 'The NEAR relay is not configured');
   const { config, keyCount } = ready;
@@ -339,8 +351,8 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   if (!parsed.ok) return reject(ctx, parsed.status, 'bad_request', parsed.error);
   const req = toRelayRequest(parsed.body);
   if (!req) return reject(ctx, 400, 'bad_request', 'Not a NEAR relay request');
-  const proven = await provenSession(env, ctx, app, req, await nearRelayPayload(req.network, req.signedDelegate));
-  if (!proven.ok) return proven.response;
+  const net = networkRefusal(ctx, req.network);
+  if (net) return net;
 
   const decoded = decodeSignedDelegate(req.signedDelegate);
   if (!decoded.ok) return done(ctx, 400, { error: 'Not a signed delegate action', code: 'bad_delegate', reason: decoded.error });
@@ -348,9 +360,13 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   const refused = delegateRefusal(ctx, d, config);
   if (refused) return refused;
   if (!(await verifyDelegateSignature(d))) return reject(ctx, 400, 'bad_delegate_signature', "The delegate action's signature does not verify");
-
-  const session = await liveSession(env, ctx, request, app, req, { name: 'near-relay:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.perIpPerMinute });
-  if (!session.ok) return session.response;
+  lap(ctx, 'checks');
+  let user: string | null = null;
+  if (req.proof) {
+    const proven = await provenUser(env, ctx, app, req.proof, await nearRelayPayload(req.network, req.signedDelegate));
+    if (!proven.ok) return proven.response;
+    user = await userSubject(app.scope_id, proven.value);
+  }
 
   // The chain: the head (expiry, the budget's gas price) and the sender's own key (exists, nonce unused).
   let head: { height: bigint; gasPrice: bigint };
@@ -371,10 +387,9 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   const maxAhead = top + BigInt(NEAR_RELAY_LIMITS.maxBlocksAhead);
   if (d.maxBlockHeight > maxAhead) return done(ctx, 400, { error: 'max_block_height is too far ahead', code: 'block_height_too_far', blockHeight: Number(top), maxBlockHeight: Number(maxAhead) });
 
-  const user = await userSubject(app.scope_id, session.value.root);
   const q = await quota(env, ctx, [
     { subject: `near-relay:sender:${d.senderId}`, limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.perSenderPerDay }], what: 'per account' },
-    { subject: user, limits: [{ name: 'near-relay:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.perUserPerDay }], what: 'per user' },
+    ...(user ? [{ subject: user, limits: [{ name: 'near-relay:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.perUserPerDay }], what: 'per user' }] : []),
     {
       subject: `app:${app.id}`,
       limits: [
@@ -401,11 +416,9 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
 
 export async function handleNearActivate(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, NEAR_ACTIVATE_ENDPOINT, request);
-  const gate = await vaultApp(request, env, ctx);
+  const gate = await appGate(request, env, ctx, 'near-activate');
   if (!gate.ok) return gate.response;
   const { app } = gate;
-  const limited = await vaultLimits(request, env, ctx, app);
-  if (limited) return limited;
   const ready = nearRelayReady(env);
   if (!ready) return reject(ctx, 503, 'relayer_unconfigured', 'The NEAR relay is not configured');
   const { config, keyCount } = ready;
@@ -413,10 +426,14 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
   if (!parsed.ok) return reject(ctx, parsed.status, 'bad_request', parsed.error);
   const req = toActivateRequest(parsed.body);
   if (!req) return reject(ctx, 400, 'bad_request', 'Not a NEAR activation request');
-  const proven = await provenSession(env, ctx, app, req, nearActivatePayload(req.network, req.accountId));
-  if (!proven.ok) return proven.response;
-  const session = await liveSession(env, ctx, request, app, req, { name: 'near-activate:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.activationsPerIpPerMinute });
-  if (!session.ok) return session.response;
+  const net = networkRefusal(ctx, req.network);
+  if (net) return net;
+  let user: string | null = null;
+  if (req.proof) {
+    const proven = await provenUser(env, ctx, app, req.proof, nearActivatePayload(req.network, req.accountId));
+    if (!proven.ok) return proven.response;
+    user = await userSubject(app.scope_id, proven.value);
+  }
 
   let head: { height: bigint; gasPrice: bigint };
   let key: AccountKey;
@@ -431,10 +448,10 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
     // Already there: nothing to send. The key's nonce tells the client what to sign next.
     return done(ctx, 200, { created: false, accountId: req.accountId, accessKeyNonce: key.kind === 'key' ? key.nonce.toString() : null, blockHeight: Number(key.kind === 'key' && key.height > head.height ? key.height : head.height) });
   }
-  const user = await userSubject(app.scope_id, session.value.root);
   const q = await quota(env, ctx, [
-    { subject: user, limits: [{ name: 'near-activate:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.activationsPerUserPerDay }], what: 'per user' },
+    ...(user ? [{ subject: user, limits: [{ name: 'near-activate:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.activationsPerUserPerDay }], what: 'per user' }] : []),
     { subject: `app:${app.id}`, limits: [{ name: 'near-activate:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.activationsPerAppPerDay }], what: 'per app' },
+    { subject: 'near-activate:global', limits: [{ name: 'near-activate:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.activationsPerDay }], what: 'across the env' },
   ]);
   if (q) return q;
   const now = Date.now();

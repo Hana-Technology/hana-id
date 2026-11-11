@@ -115,6 +115,9 @@ describe('Origin × x-hana-parent-origin matrix (appGate)', () => {
       '/v1/link': ['vault', 'auth'],
       '/v1/link/cancel': ['vault', 'auth'],
       '/v1/link/unlink': ['vault', 'auth'],
+      // The NEAR relay (D735): the vault may call it; the SDK calls it from the partner's page.
+      '/v1/near/relay': ['vault'],
+      '/v1/near/activate': ['vault'],
     });
   });
 

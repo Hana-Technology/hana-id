@@ -1741,14 +1741,18 @@ too-large nonce, a `max_block_height` within 3 blocks of the head or more than 1
 ahead, which would let a signed delegate wait for months). The relayer forwards the exact bytes it decoded (the strict
 decoder consumes all of them), never a re-encoding.
 
-**Who can use it.** The vault only, with the session proof the mainnet demo's events use: a live session of the app's
-scope signed this exact request (the payload hashes the signed delegate bytes), within 60 s, once. Accepted on testnet,
-open before mainnet (issue (s)): the API can't check that the delegate's account is the session user's own derived
-NEAR wallet (the wallet directory has no NEAR address yet), so a signed-in user can have the relay pay for calls from any
-implicit account whose key they hold. They still need a Hana session per day's quota, the calls only reach the
-allowlisted contracts with zero deposit, and every limit below counts per user as well as per sender. The later
-directory build can require `sender_id` = the user's recorded NEAR address (a `near` wallet record signed by the NEAR
-key, as `/v1/wallets/record` does for Stellar and EVM).
+**Who can use it: anyone with a publishable key.** The SDK calls both routes from the partner's page with the
+publishable key and the app gate only (D735): no Hana session is required, and an `Origin` header binds browsers only,
+so a script anywhere can call them for any app's public key. Anyone can therefore (a) activate any number of fresh
+implicit accounts (each ≈ 0.0071 NEAR of the relayer's, the account's 182 bytes of storage free under NEP-448's
+zero-balance allowance, so nobody pays storage), and (b) have the relay pay for zero-deposit calls to the allowlisted
+contracts from any implicit account whose key they generate. Nothing ties a sender to a Hana user. What bounds it is
+the per-IP, per-sender, per-app and env-wide limits and, above all, the daily NEAR budget below: the worst a flood can
+do is spend one day's budget (5 NEAR on sandbox-dev) on gas and creation fees and spam the guestbook (its own 50-message
+ring), then get `503 relay_budget_exhausted` (real users too) until the UTC day turns. Accepted on testnet, open before
+mainnet (issue (s)). A body may carry the vault's session proof (a live session of the app's scope signed this exact
+request, within 60 s, once), which then also counts per user; a later round can require it, and the wallet directory's
+NEAR record can bind `sender_id` to the session user's own address.
 
 **Limits and the drain bound** (D736). Per IP 30 relays and 10 activations a minute; per sender 100 relays a day
 (sandbox-dev 50); per user 200 relays and 5 activations a day; per app 120 a minute and 5000 a day (sandbox-dev 2000),
@@ -2157,7 +2161,7 @@ market on 2026-11-06 and expire on 2026-12-21; if the market rose past them befo
 $9.99 through per transaction (by the ratio). Review them against a live source before each demo (`docs/operations.md`
 "Reviewing the prices").
 
-**(s) The NEAR relay can't tell a user's own NEAR account from another implicit account they hold a key for. Accepted on testnet, open before mainnet (D735).** `POST /v1/near/relay` proves a live Hana session of the app's scope and the delegate's own signature, but nothing ties the delegate's `sender_id` to that session's derived NEAR key: the wallet directory records no NEAR address yet. A signed-in user can therefore have the relay pay gas for zero-deposit calls to the allowlisted contracts from any implicit account they control, bounded by the per-user, per-sender, per-app and budget limits ("The NEAR meta-transaction relay"). Fix: the directory build records the NEAR address per path (signed by the NEAR key, as the Stellar and EVM records are), and the relay then requires `sender_id` to be the session path's recorded address.
+**(s) The NEAR relay pays for anyone holding a publishable key. Accepted on testnet, open before mainnet (D735).** `POST /v1/near/relay` and `/v1/near/activate` take the app gate only (the SDK calls them from the partner's page, with no Hana session): anyone with an app's public key can activate fresh implicit accounts and relay zero-deposit calls to the allowlisted contracts from keys they make up. Bounded by the per-IP, per-sender, per-app and env-wide limits and the daily NEAR budget ("The NEAR meta-transaction relay"); a flood can use up a day's budget and deny the relay to real users until 00:00 UTC. Fix before mainnet: the vault sends its session proof (the routes already check it when present) and the routes require it, then the wallet directory records each path's NEAR address (signed by the NEAR key) and the relay requires `sender_id` to be it.
 
 **(r) The mainnet demo's USDC bridge didn't bind the spoke `to` (the hub wallet). Fixed, live on sandbox-dev (D476; security review of 2026-11-09, High).** A compromised page on the allowed app could build a correct bridge with the user's own recipient and set `to` to another hub wallet: the funds are delivered there first, and the popup still showed the user's own recipient. `checkBridgeCalls` now requires `to` to be exactly the signing address's own hub wallet, computed offline (`sodaxHubWallet`, the same maths in the vault and the popup, no network read at signing), so the vault refuses before any popup and the popup names a recipient only once the hub wallet is verified. Tests: `packages/core/test/mainnet-demo.test.ts` (the factory's own answers as vectors; empty, wrong length, another user's, the wrong chain's relay id, both directions and both modes), `packages/web/test/vault/mainnet-demo.test.ts`, `packages/web/test/auth/approve-page.test.ts`. Residual: the formula is what the factory's UUPS implementation `0x0b45be992010f95d428c03cc67751827ed65cf9a` computes on 2026-11-09; the owner can upgrade it, and a change that alters the derivation makes bridges refused until the formula is reviewed and rebuilt (fail closed). The check proves the address, not the wallet's code. Extended to swaps and plain deposits (from `fix/demo-swap-hub-wallet`, live on sandbox-dev, D492): the check now sits in `checkSodaxHubCalls` and covers every Sodax deposit, so a factory upgrade that changes the derivation refuses them all. A swap's intent is bound with it: creator, source, destination, solver, data and output asset (D492), closing the spec's R5 for where a swap's output goes. Still open: the intent's minimum output isn't enforced, so a compromised page can set it to almost nothing and a filler could take the deposit for dust, bounded by the $9.99 cap. The popup shows the minimum, so the user can see it before approving.
 

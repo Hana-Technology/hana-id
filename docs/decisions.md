@@ -11072,25 +11072,29 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   mercy); a new Durable Object class (a wrangler migration for the same nonce logic).
 - Address impact: none.
 
-### D735. Who may be relayed: the vault with the session proof; binding the sender to the user's own address waits for the directory (proposed)
+### D735. Who may call: the app gate only (the SDK from the partner's page); a session proof is optional for now (proposed)
 - Date 2026-11-11 · Status: as D730 · Built: `relay.ts` (`nearRelayPayload`, `nearActivatePayload`, `provenSession`,
   `liveSession`)
-- Decision: both routes are the vault's (`Origin: VAULT_ORIGIN`, the vault gate) and carry the mainnet demo's kind of
-  session proof: the session key signs `identityMessage` with payload `"near-relay" ‖ borsh(network) ‖ sha256(signed
-  delegate bytes)` (activate: `"near-activate" ‖ borsh(network) ‖ borsh(accountId)`), within 60 s, the session live in
-  the app's scope, each proof once. The SDK's `hana.near.relay` therefore goes through the vault. Open (security.md
-  (s)): nothing yet binds `sender_id` to the session's own derived NEAR key; when the wallet directory records NEAR
-  addresses, the relay requires the session path's recorded address.
-- Rejected: the partner origin calling directly (no session key there, so limits alone, by IP and app); a wallet proof
-  by the NEAR key over the session key (any key the caller holds can sign it, so it proves nothing more).
+- Decision: the core build's SDK (`hana.near.relay`, `hana.near.activate`) calls both routes from the partner's page
+  with the publishable key and no session credential, so both take the app gate (`appGate` kinds `near` and
+  `near-activate`: an origin in force for the app, or the vault; their own per-IP windows) and require nothing more.
+  Bodies: relay `{network?, signedDelegateAction}`, activate `{accountId, network?}`. The spend is bounded by the
+  policy (D732), the limits and the budget (D736). A body may add the vault's session proof (the session key signs
+  `identityMessage` with payload `"near-relay" ‖ borsh(network) ‖ sha256(signed delegate bytes)`, activate
+  `"near-activate" ‖ borsh(network) ‖ borsh(accountId)`; within 60 s, the session live in the app's scope, once); when
+  present it is checked and the request counts per user. Open (security.md (s)): anyone with a publishable key can use
+  the relay within the limits; before mainnet the vault sends the proof and the routes require it, then the wallet
+  directory's NEAR record binds `sender_id` to the user.
+- Rejected for this round: requiring the session proof (the SDK built in parallel calls from the partner page, D720–D729);
+  a wallet proof by the NEAR key over the session key (any key the caller holds can sign it, so it proves nothing more).
 - Address impact: none.
 
 ### D736. Limits and a daily NEAR budget, in the RateLimiter objects; two security event kinds (proposed)
 - Date 2026-11-11 · Status: as D730 · Built: `relay.ts` (`quota`, `reserveBudget`, `settleBudget`), `relay-funds.ts`,
   migration 0019, `console-core` `SECURITY_EVENT_KINDS`
-- Decision: per IP 30 relays / 10 activations a minute; per sender `perSenderPerDay` (100; sandbox-dev 50); per user
-  200 relays and 5 activations a day; per app 120 a minute and `perAppPerDay` (5000; sandbox-dev 2000), 1000
-  activations a day; a later window's refusal gives the earlier back. The env's budget `dailyBudgetNear` (5) is an
+- Decision: per IP 30 relays / 10 activations a minute (the app gate's window); per sender `perSenderPerDay` (100;
+  sandbox-dev 50); with a session proof, per user 200 relays and 5 activations a day; per app 120 a minute and
+  `perAppPerDay` (5000; sandbox-dev 2000), 1000 activations a day; 1000 activations a day across the env; a later window's refusal gives the earlier back. The env's budget `dailyBudgetNear` (5) is an
   amount counter (`RateLimiter.spend`): a relay reserves (inner gas + 5 Tgas) × gas price, an activation 100 Tgas × gas
   price + its amount, then gives back the difference to what burnt (all of it when nothing executed). Past 80%:
   `near_relay_budget_high` (one a day); hourly, the account below `lowBalanceNear` (2) or missing:

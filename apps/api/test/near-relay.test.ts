@@ -1,6 +1,7 @@
 // The NEAR meta-transaction relay (D730–D739; docs/api.md "NEAR relay"): the SignedDelegateAction decoder, the relay
 // policy and the relayer's transaction encoder (unit), and POST /v1/near/relay and /v1/near/activate through the Worker
-// with the fake NEAR RPC: the vault gate, the session proof, every refusal, the limits, the budget and its alerts.
+// with the fake NEAR RPC: the app gate (the SDK from the partner's page), the optional session proof, every refusal,
+// the limits, the budget and its alerts.
 // The same code against a real node: test-sandbox/meta-tx.test.ts.
 import { createHash } from 'node:crypto';
 import { env } from 'cloudflare:workers';
@@ -14,7 +15,7 @@ import { decodeSignedDelegate, encodeRelayTransaction, MAX_SIGNED_DELEGATE_BYTES
 import { checkNearRelayFunds } from '../src/near/relay-funds.ts';
 import { NEAR_RELAY_DEFAULTS, nearRelayVar, parseNearRelayConfig } from '../src/near/relay-config.ts';
 import { delegateFailure, nearActivatePayload, nearRelayPayload, toActivateRequest, toRelayRequest } from '../src/near/relay.ts';
-import { call, type Chain, newSessionKey, ORIGIN, sessionKeyPair, type SeededApp } from './helpers.ts';
+import { appHeaders, call, type Chain, newSessionKey, ORIGIN, sessionKeyPair, type SeededApp } from './helpers.ts';
 import { spentSession, vaultHeaders, vaultSetup } from './vault-helpers.ts';
 
 const GUESTBOOK = 'guestbook.test.near';
@@ -67,8 +68,10 @@ function activateBody(app: { id: string }, spk: number[], accountId: string, net
   return { network, accountId, ...proof(app, spk, nearActivatePayload(network, accountId)) };
 }
 
-const relay = (app: SeededApp, b: unknown, bindings?: Partial<typeof env>, headers = vaultHeaders(app)) => call('/v1/near/relay', { headers, body: b, env: bindings });
-const activate = (app: SeededApp, b: unknown, bindings?: Partial<typeof env>, headers = vaultHeaders(app)) => call('/v1/near/activate', { headers, body: b, env: bindings });
+/** What the SDK sends (`hana.near.relay`): no session credential. */
+const plainRelay = (signed: Uint8Array, network = 'testnet') => ({ network, signedDelegateAction: base64Encode(signed) });
+const relay = (app: SeededApp, b: unknown, bindings?: Partial<typeof env>, headers = appHeaders(app)) => call('/v1/near/relay', { headers, body: b, env: bindings });
+const activate = (app: SeededApp, b: unknown, bindings?: Partial<typeof env>, headers = appHeaders(app)) => call('/v1/near/activate', { headers, body: b, env: bindings });
 const relayConfig = (extra: Record<string, unknown> = {}) => ({ NEAR_RELAY: JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], maxGasTgas: 50, ...extra }) });
 
 async function setup(): Promise<{ app: SeededApp; near: Chain; spk: number[]; user: User }> {
@@ -211,19 +214,26 @@ describe('NEAR_RELAY config', () => {
 });
 
 describe('request bodies', () => {
-  it('take exactly their fields', async () => {
+  it('take only their fields; network optional; the session proof all or nothing', async () => {
     const user = newUser();
     const spk = newSessionKey();
-    const b = await relayBody({ id: 'app_x' }, spk, delegate(user));
-    expect(toRelayRequest(b)).not.toBeNull();
+    const signed = delegate(user);
+    expect(toRelayRequest({ signedDelegateAction: base64Encode(signed) })).toMatchObject({ network: 'testnet', proof: null });
+    expect(toRelayRequest(plainRelay(signed, 'mainnet'))).toMatchObject({ network: 'mainnet' });
+    const b = await relayBody({ id: 'app_x' }, spk, signed);
+    expect(toRelayRequest(b)?.proof).not.toBeNull();
     expect(toRelayRequest({ ...b, extra: 1 })).toBeNull();
-    expect(toRelayRequest({ ...b, signedDelegateAction: `${b.signedDelegateAction}=` })).toBeNull();
-    expect(toRelayRequest({ ...b, signedDelegateAction: 'not base64!' })).toBeNull();
+    const { signature: _s, ...partial } = b;
+    expect(toRelayRequest(partial)).toBeNull();
     expect(toRelayRequest({ ...b, nonce: [1, 2, 3] })).toBeNull();
-    const a = activateBody({ id: 'app_x' }, spk, user.accountId);
-    expect(toActivateRequest(a)).not.toBeNull();
-    expect(toActivateRequest({ ...a, accountId: 'alice.testnet' })).toBeNull();
-    expect(toActivateRequest({ ...a, accountId: user.accountId.toUpperCase() })).toBeNull();
+    expect(toRelayRequest({ signedDelegateAction: `${base64Encode(signed)}=` })).toBeNull();
+    expect(toRelayRequest({ signedDelegateAction: 'not base64!' })).toBeNull();
+    expect(toRelayRequest({ network: 5, signedDelegateAction: base64Encode(signed) })).toBeNull();
+    expect(toActivateRequest({ accountId: user.accountId })).toMatchObject({ accountId: user.accountId, network: 'testnet', proof: null });
+    expect(toActivateRequest(activateBody({ id: 'app_x' }, spk, user.accountId))?.proof).not.toBeNull();
+    expect(toActivateRequest({ accountId: 'alice.testnet' })).toBeNull();
+    expect(toActivateRequest({ accountId: user.accountId.toUpperCase() })).toBeNull();
+    expect(toActivateRequest({ accountId: user.accountId, extra: true })).toBeNull();
   });
 });
 
@@ -235,34 +245,41 @@ describe('POST /v1/near/relay', () => {
     s = await setup();
   });
 
-  it('relays a checked delegate through the relay account: receiver = the sender, one Delegate action with the exact bytes', async () => {
+  it("relays a checked delegate from the partner's page: the relay account, receiver = the sender, one Delegate action", async () => {
     const signed = delegate(s.user);
-    const res = await relay(s.app, await relayBody(s.app, s.spk, signed));
+    const res = await relay(s.app, plainRelay(signed));
     const b = await body(res);
     expect([res.status, b.status, b.code]).toEqual([200, 'executed', undefined]);
+    expect(res.headers.get('access-control-allow-origin')).toBe(ORIGIN);
     expect(b.transactionHash).toMatch(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/u);
     const tx = s.near.nearSent.at(-1)!;
     expect([tx.hash, tx.signerId, tx.receiverId, tx.kind]).toEqual([b.transactionHash, RELAY_ACCOUNT, s.user.accountId, 'delegate']);
     expect(tx.delegate).toEqual({ senderId: s.user.accountId, receiverId: GUESTBOOK, nonce: 101n, maxBlockHeight: 1100n, methods: ['add_message'] });
-    // Signed by a NEAR_RELAY_KEYS key, never a pool key.
     const nearKeys = (JSON.parse(env.NEAR_RELAY_KEYS!) as string[]).map((k) => KeyPair.fromString(k as `ed25519:${string}`).getPublicKey().toString());
     expect(nearKeys).toContain(tx.publicKey);
-    // The same signed delegate again under a new proof: its key object relayed it already (claims, D455), so it is refused.
-    expect((await body(await relay(s.app, await relayBody(s.app, s.spk, signed)))).code).toBe('already_relayed');
+    // The same signed delegate again: its key object relayed it already (claims, D455).
+    expect((await body(await relay(s.app, plainRelay(signed)))).code).toBe('already_relayed');
   });
 
-  it('is the vault’s only: the publishable key, the vault origin and an allowed parent', async () => {
-    const b = await relayBody(s.app, s.spk, delegate(s.user));
-    expect((await body(await relay(s.app, b, undefined, { origin: 'https://vault.test', 'x-hana-parent-origin': ORIGIN }))).code).toBe('missing_key');
-    expect((await body(await relay(s.app, b, undefined, vaultHeaders(s.app, ORIGIN, ORIGIN)))).code).toBe('origin_not_allowed');
+  it('takes the vault too, with the session proof (then also counted per user)', async () => {
+    const res = await relay(s.app, await relayBody(s.app, s.spk, delegate(s.user)), undefined, vaultHeaders(s.app));
+    expect([res.status, (await body(res)).status]).toEqual([200, 'executed']);
+  });
+
+  it('the app gate: the publishable key, an origin in force, an unsuspended app; preflight for the app’s origins', async () => {
+    const b = plainRelay(delegate(s.user));
+    expect((await body(await relay(s.app, b, undefined, { origin: ORIGIN }))).code).toBe('missing_key');
+    expect((await body(await relay(s.app, b, undefined, appHeaders(s.app, 'https://evil.example')))).code).toBe('origin_not_allowed');
     expect((await body(await relay(s.app, b, undefined, vaultHeaders(s.app, 'https://evil.example')))).code).toBe('origin_not_allowed');
-    const pre = await call('/v1/near/relay', { method: 'OPTIONS', headers: { origin: ORIGIN } });
-    expect(pre.status).toBe(403);
+    expect((await call('/v1/near/relay', { method: 'OPTIONS', headers: { origin: ORIGIN } })).status).toBe(204);
+    expect((await call('/v1/near/relay', { method: 'OPTIONS', headers: { origin: 'https://evil.example' } })).status).toBe(403);
+    await env.DB.prepare('UPDATE apps SET suspended_by = 1 WHERE id = ?1').bind(s.app.id).run();
+    expect((await body(await relay(s.app, b))).code).toBe('app_suspended');
     expect(s.near.nearSent.length).toBe(0);
   });
 
   it('is off (503 relayer_unconfigured) unless the env is testnet, the config readable with receivers and the keys present and unshared', async () => {
-    const b = await relayBody(s.app, s.spk, delegate(s.user));
+    const b = plainRelay(delegate(s.user));
     const poolKey = (JSON.parse(env.RELAYER_KEYS) as string[])[0]!;
     for (const bindings of [
       { NETWORK: 'mainnet' },
@@ -280,15 +297,15 @@ describe('POST /v1/near/relay', () => {
     expect(s.near.nearSent.length).toBe(0);
   });
 
-  it('refuses mainnet, a stale proof, a session signature by another key or over other bytes', async () => {
+  it('refuses mainnet, another network, a malformed body; with a proof: stale, by another key, over other bytes', async () => {
     const signed = delegate(s.user);
-    expect((await body(await relay(s.app, await relayBody(s.app, s.spk, signed, { network: 'mainnet' })))).code).toBe('mainnet_not_allowed');
-    expect((await body(await relay(s.app, await relayBody(s.app, s.spk, signed, { network: 'betanet' })))).code).toBe('bad_request');
+    expect((await body(await relay(s.app, plainRelay(signed, 'mainnet')))).code).toBe('mainnet_not_allowed');
+    expect((await body(await relay(s.app, plainRelay(signed, 'betanet')))).code).toBe('bad_request');
+    expect((await body(await relay(s.app, { ...plainRelay(signed), extra: true }))).code).toBe('bad_request');
     expect((await body(await relay(s.app, await relayBody(s.app, s.spk, signed, { issuedAtMs: Date.now() - 120_000 })))).code).toBe('stale_proof');
     expect((await body(await relay(s.app, await relayBody(s.app, s.spk, signed, { signWith: newSessionKey() })))).code).toBe('invalid_signature');
     const other = await relayBody(s.app, s.spk, delegate(s.user, { nonce: 999n }));
     expect((await body(await relay(s.app, { ...other, signedDelegateAction: base64Encode(signed) }))).code).toBe('invalid_signature');
-    expect((await body(await relay(s.app, { ...(await relayBody(s.app, s.spk, signed)), extra: true }))).code).toBe('bad_request');
     expect(s.near.nearSent.length).toBe(0);
   });
 
@@ -303,7 +320,7 @@ describe('POST /v1/near/relay', () => {
       [delegate(s.user, { signWith: KeyPair.fromRandom('ed25519') }), 'bad_delegate_signature', {}],
     ];
     for (const [signed, code, extra] of cases) {
-      const res = await relay(s.app, await relayBody(s.app, s.spk, signed));
+      const res = await relay(s.app, plainRelay(signed));
       const b = await body(res);
       expect([b.code, ...Object.keys(extra).map((k) => b[k])], code).toEqual([code, ...Object.values(extra)]);
       expect(res.status).toBeGreaterThanOrEqual(400);
@@ -311,7 +328,7 @@ describe('POST /v1/near/relay', () => {
     expect(s.near.nearSent.length).toBe(0);
   });
 
-  it('needs a live session of the app’s scope, and each proof once', async () => {
+  it('with a proof: needs a live session of the app’s scope, and each proof once', async () => {
     const res = await relay(s.app, await relayBody(s.app, newSessionKey(), delegate(s.user)));
     expect([res.status, (await body(res)).code]).toEqual([410, 'session_ended']);
     const other = spentSession(s.near, 'another-scope');
@@ -330,59 +347,63 @@ describe('POST /v1/near/relay', () => {
       [() => undefined, delegate(s.user, { maxBlockHeight: 1002n }), 'delegate_expired'],
       [() => undefined, delegate(s.user, { maxBlockHeight: 2001n }), 'block_height_too_far'],
     ];
-    for (const [arrange, signed, code] of cases) {
+    const reset = () => {
       s.near.missingAccounts.clear();
       s.near.missingKeys.clear();
       s.near.akNonce.clear();
+    };
+    for (const [arrange, signed, code] of cases) {
+      reset();
       arrange();
-      expect((await body(await relay(s.app, await relayBody(s.app, s.spk, signed)))).code, code).toBe(code);
+      expect((await body(await relay(s.app, plainRelay(signed)))).code, code).toBe(code);
     }
     expect(s.near.nearSent.length).toBe(0);
     // At the bounds: 1000 blocks ahead of the head, nonce just below (height + 1) × 10^6.
-    s.near.missingAccounts.clear();
-    s.near.missingKeys.clear();
-    s.near.akNonce.clear();
-    expect((await relay(s.app, await relayBody(s.app, s.spk, delegate(s.user, { nonce: 1001n * 1_000_000n - 1n, maxBlockHeight: 2000n })))).status).toBe(200);
+    reset();
+    expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 1001n * 1_000_000n - 1n, maxBlockHeight: 2000n })))).status).toBe(200);
   });
 
-  it('answers a failed inner call as 422 contract_rejected, a refused delegate as 422 delegate_rejected, a slow one as 504 pending', async () => {
+  it('answers a failed inner call as 422 contract_rejected, a refused delegate as 422 delegate_rejected', async () => {
     s.near.onNearTx = () => ({ failIn: 'receiver', failure: { ActionError: { index: 0, kind: { FunctionCallError: { ExecutionError: 'Smart contract panicked: Text is too long' } } } } });
-    let b = await body(await relay(s.app, await relayBody(s.app, s.spk, delegate(s.user))));
+    let b = await body(await relay(s.app, plainRelay(delegate(s.user))));
     expect([b.code, b.status, b.executor, typeof b.transactionHash]).toEqual(['contract_rejected', 'failed', GUESTBOOK, 'string']);
     s.near.onNearTx = () => ({ failIn: 'sender', failure: { ActionError: { index: 0, kind: 'DelegateActionExpired' } } });
-    b = await body(await relay(s.app, await relayBody(s.app, s.spk, delegate(s.user, { nonce: 102n }))));
+    b = await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 102n }))));
     expect([b.code, b.reason, b.status]).toEqual(['delegate_rejected', 'expired', 'failed']);
   });
 
-  it('counts per sender per day (manifest perSenderPerDay), giving back nothing a refusal didn’t use', async () => {
+  it('counts per sender per day (manifest perSenderPerDay)', async () => {
     const bindings = relayConfig({ perSenderPerDay: 2 });
-    for (const n of [101n, 102n]) expect((await relay(s.app, await relayBody(s.app, s.spk, delegate(s.user, { nonce: n })), bindings)).status).toBe(200);
-    const res = await relay(s.app, await relayBody(s.app, s.spk, delegate(s.user, { nonce: 103n })), bindings);
+    for (const n of [101n, 102n]) expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: n })), bindings)).status).toBe(200);
+    const res = await relay(s.app, plainRelay(delegate(s.user, { nonce: 103n })), bindings);
     expect([res.status, (await body(res)).code, Number(res.headers.get('retry-after')) > 0]).toEqual([429, 'rate_limited', true]);
-    // Another account of the same user still has its own window.
-    expect((await relay(s.app, await relayBody(s.app, s.spk, delegate(newUser())), bindings)).status).toBe(200);
+    expect((await relay(s.app, plainRelay(delegate(newUser())), bindings)).status).toBe(200);
   });
 
-  it('counts per app per day (manifest perAppPerDay)', async () => {
-    const bindings = relayConfig({ perAppPerDay: 1 });
-    expect((await relay(s.app, await relayBody(s.app, s.spk, delegate(s.user)), bindings)).status).toBe(200);
-    const res = await relay(s.app, await relayBody(s.app, s.spk, delegate(newUser())), bindings);
+  it('counts per app per day (manifest perAppPerDay), a refusal giving the sender’s window back', async () => {
+    const bindings = relayConfig({ perAppPerDay: 1, perSenderPerDay: 1 });
+    expect((await relay(s.app, plainRelay(delegate(s.user)), bindings)).status).toBe(200);
+    const other = newUser();
+    const res = await relay(s.app, plainRelay(delegate(other)), bindings);
     expect([res.status, (await body(res)).error]).toEqual([429, 'Rate limit exceeded (per app)']);
+    // The refused request took nothing from `other`'s window: another app relays for it at once.
+    const app2 = await setup();
+    expect((await relay(app2.app, plainRelay(delegate(other)), bindings)).status).toBe(200);
   });
 
-  it('per IP: 30 a minute (exact, besides the vault’s per-location window)', async () => {
-    const headers = { ...vaultHeaders(s.app), 'cf-connecting-ip': '10.250.1.1' };
+  it('per IP: 30 a minute, its own window', async () => {
+    const headers = { ...appHeaders(s.app), 'cf-connecting-ip': '10.250.1.1' };
     let last = 0;
-    for (let i = 0; i < 31; i++) {
-      const spk = spentSession(s.near, s.app.scope, { sub: `ip-${i}` });
-      last = (await relay(s.app, await relayBody(s.app, spk, delegate(newUser())), undefined, headers)).status;
-      if (last !== 200) break;
+    let n = 0;
+    for (; n < 31; n++) {
+      last = (await relay(s.app, plainRelay(new Uint8Array([1])), undefined, headers)).status;
+      if (last === 429) break;
     }
-    expect(last).toBe(429);
+    expect([n, last]).toEqual([30, 429]);
   });
 
   it('a daily NEAR budget: refused with 503 relay_budget_exhausted past it, with a near_relay_budget_high security event', async () => {
-    const res = await relay(s.app, await relayBody(s.app, s.spk, delegate(s.user)), relayConfig({ dailyBudgetNear: 0.000001 }));
+    const res = await relay(s.app, plainRelay(delegate(s.user)), relayConfig({ dailyBudgetNear: 0.000001 }));
     expect([res.status, (await body(res)).code, Number(res.headers.get('retry-after')) > 0]).toEqual([503, 'relay_budget_exhausted', true]);
     expect(s.near.nearSent.length).toBe(0);
     const ev = await env.DB.prepare("SELECT kind, detail_json FROM security_events WHERE kind = 'near_relay_budget_high'").all<{ kind: string; detail_json: string }>();
@@ -397,33 +418,46 @@ describe('POST /v1/near/activate', () => {
     s = await setup();
   });
 
-  it('creates a missing implicit account with a zero Transfer from the relay account, then answers created: false', async () => {
+  it('{accountId} from the partner page creates a missing implicit account with a zero Transfer, then answers created: false', async () => {
     s.near.missingAccounts.add(s.user.accountId);
-    const res = await activate(s.app, activateBody(s.app, s.spk, s.user.accountId));
+    const res = await activate(s.app, { accountId: s.user.accountId });
     const b = await body(res);
     expect([res.status, b.created, b.accountId, typeof b.transactionHash, b.accessKeyNonce]).toEqual([200, true, s.user.accountId, 'string', '100']);
+    expect(res.headers.get('access-control-allow-origin')).toBe(ORIGIN);
     const tx = s.near.nearSent.at(-1)!;
     expect([tx.kind, tx.signerId, tx.receiverId, tx.amount]).toEqual(['transfer', RELAY_ACCOUNT, s.user.accountId, 0n]);
-    const again = await body(await activate(s.app, activateBody(s.app, s.spk, s.user.accountId)));
+    const again = await body(await activate(s.app, { accountId: s.user.accountId, network: 'testnet' }));
     expect([again.created, again.accessKeyNonce, again.blockHeight]).toEqual([false, '100', 1000]);
     expect(s.near.nearSent.length).toBe(1);
   });
 
   it('sends the manifest’s activationYocto when set', async () => {
     s.near.missingAccounts.add(s.user.accountId);
-    expect((await activate(s.app, activateBody(s.app, s.spk, s.user.accountId), relayConfig({ activationYocto: '1000' }))).status).toBe(200);
+    expect((await activate(s.app, { accountId: s.user.accountId }, relayConfig({ activationYocto: '1000' }))).status).toBe(200);
     expect(s.near.nearSent.at(-1)!.amount).toBe(1000n);
   });
 
-  it('refuses what relay refuses: gate, config, mainnet, a bad id, a forged or replayed proof; and 5 activations per user per day', async () => {
-    const b = activateBody(s.app, s.spk, s.user.accountId);
+  it('refuses the gate’s refusals, an unconfigured env, mainnet, a bad id; a proof is checked when present', async () => {
+    const b = { accountId: s.user.accountId };
     expect((await body(await activate(s.app, b, { NETWORK: 'mainnet' }))).code).toBe('relayer_unconfigured');
-    expect((await body(await activate(s.app, b, undefined, vaultHeaders(s.app, ORIGIN, ORIGIN)))).code).toBe('origin_not_allowed');
-    expect((await body(await activate(s.app, activateBody(s.app, s.spk, s.user.accountId, 'mainnet')))).code).toBe('mainnet_not_allowed');
-    expect((await body(await activate(s.app, { ...b, accountId: 'alice.testnet' }))).code).toBe('bad_request');
-    expect((await body(await activate(s.app, { ...b, accountId: newUser().accountId }))).code).toBe('invalid_signature');
-    expect((await activate(s.app, b)).status).toBe(200);
-    expect((await body(await activate(s.app, b))).code).toBe('proof_replayed');
+    expect((await body(await activate(s.app, b, undefined, appHeaders(s.app, 'https://evil.example')))).code).toBe('origin_not_allowed');
+    expect((await body(await activate(s.app, { ...b, network: 'mainnet' }))).code).toBe('mainnet_not_allowed');
+    expect((await body(await activate(s.app, { accountId: 'alice.testnet' }))).code).toBe('bad_request');
+    const proven = activateBody(s.app, s.spk, s.user.accountId);
+    expect((await body(await activate(s.app, { ...proven, accountId: newUser().accountId }))).code).toBe('invalid_signature');
+    expect((await activate(s.app, proven)).status).toBe(200);
+    expect((await body(await activate(s.app, proven))).code).toBe('proof_replayed');
+  });
+
+  it('per IP: 10 a minute; with a proof, 5 a day per user', async () => {
+    const headers = { ...appHeaders(s.app), 'cf-connecting-ip': '10.250.2.2' };
+    let n = 0;
+    for (; n < 11; n++) {
+      const u = newUser();
+      s.near.missingAccounts.add(u.accountId);
+      if ((await activate(s.app, { accountId: u.accountId }, undefined, headers)).status === 429) break;
+    }
+    expect(n).toBe(10);
     let last = 0;
     for (let i = 0; i < 6; i++) {
       const u = newUser();
@@ -431,7 +465,6 @@ describe('POST /v1/near/activate', () => {
       last = (await activate(s.app, activateBody(s.app, s.spk, u.accountId))).status;
     }
     expect(last).toBe(429);
-    expect(s.near.nearSent.filter((t) => t.kind === 'transfer').length).toBe(5);
   });
 });
 

@@ -1324,8 +1324,9 @@ deterministic ones); nothing in Hana depends on a session signature's bytes.
   (`method_not_allowed`, `relayer_unconfigured`, `near_unavailable`, `near_rejected`, `relayer_busy`) are safe to
   resend; anything else carries `nearTx` for the caller to poll.
 - **NEAR meta-transaction relay** (D730–D739, testnet only, not deployed; `docs/api.md` "NEAR relay"): a Hana user's
-  NEAR implicit account (zero NEAR) acts through NEP-366. The vault sends `POST /v1/near/activate` (a 0-yocto Transfer
-  creates the account) and `POST /v1/near/relay` (the user's `SignedDelegateAction`) with a session proof; the API
+  NEAR implicit account (zero NEAR) acts through NEP-366. The SDK sends `POST /v1/near/activate` (a 0-yocto Transfer
+  creates the account) and `POST /v1/near/relay` (the user's `SignedDelegateAction`) from the partner's page through
+  the app gate (no session required, D735); the API
   decodes and checks the delegate (`apps/api/src/near/delegate.ts`: zero-deposit FunctionCalls to
   `near.relay.receivers` only, since the relayer pays every inner deposit and all the gas), reads the chain, counts the
   limits and the daily NEAR budget, and relays through `near-relay-key-<i>`: the same `RelayerKey` class and nonce

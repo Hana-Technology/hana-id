@@ -179,8 +179,8 @@ export default {
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (pathname === NEAR_RELAY_ENDPOINT || pathname === NEAR_ACTIVATE_ENDPOINT) {
-        // Vault only, like /v1/vault/* (D735): a Hana wallet's NEAR meta transaction, or its account's activation.
-        if (request.method === 'OPTIONS') return vaultPreflight(request, env);
+        // The app gate (D735): the SDK from the partner's page, or the vault. A Hana wallet's NEAR meta transaction, or its account's activation.
+        if (request.method === 'OPTIONS') return await appPreflight(request, env);
         if (request.method === 'POST') return pathname === NEAR_RELAY_ENDPOINT ? await handleNearRelay(request, env, requestId) : await handleNearActivate(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }

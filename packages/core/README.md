@@ -12,7 +12,7 @@ The packages aren't on a registry yet. Hana sends you the tarballs with their SH
 install them together:
 
 ```sh
-npm install ./hana-id-core-0.3.1.tgz ./hana-id-web-0.3.1.tgz
+npm install ./hana-id-core-0.4.0.tgz ./hana-id-web-0.4.0.tgz
 ```
 
 ESM only, with TypeScript declarations.

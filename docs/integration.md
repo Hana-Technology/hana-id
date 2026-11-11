@@ -1,8 +1,9 @@
 # Integrating Hana ID (partner guide)
 
-Hana ID gives your users a Stellar and an EVM wallet from a Google login, with no extension or seed phrase. You add
-the SDK to your web app, users click your "Sign in" button, and you sign through standard interfaces: an EIP-1193
-provider, a Stellar signer and a Stellar Wallets Kit module, with an optional Sodax adapter. Keys and Google tokens
+Hana ID gives your users a Stellar, an EVM and a NEAR wallet from a Google login, with no extension or seed phrase.
+You add the SDK to your web app, users click your "Sign in" button, and you sign through standard interfaces: an
+EIP-1193 provider, a Stellar signer and a Stellar Wallets Kit module, a NEAR signer (`hana.near`, SDK 0.4.0), with an
+optional Sodax adapter. Keys and Google tokens
 never reach your page. They live in a hidden Hana iframe, and every signature needs the user's Approve in a Hana
 popup, unless it falls under an auto-approve policy you set and the user accepted.
 
@@ -13,11 +14,12 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > accounts, audit, mainnet). Don't keep real funds in pilot wallets, on any chain. A test app (`pk_test_…`) can't sign
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)).
 
-> **NEAR is Hana's chain, not your users'.** Hana derives every key through NEAR's MPC network and records each login
-> on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
-> an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
+> **NEAR is Hana's chain, and since SDK 0.4.0 your users' too.** Hana derives every key through NEAR's MPC network and
+> records each login on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users
+> get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
+> from Hana's NEAR accounts.
 
-Last verified against code: 2026-11-11 (SDK 0.3.1 and its release notes in section 2), SDK 0.3.1. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
+Last verified against code: 2026-11-11 (SDK 0.4.0: NEAR in section 8, release notes in section 2), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -188,18 +190,18 @@ release with their SHA-256 checksums: check them (`shasum -a 256 *.tgz`), then i
 or yarn. Install every package you use, `@hana-id/core` included, from its tarball, never from a registry:
 
 ```sh
-npm install ./hana-id-core-0.3.1.tgz ./hana-id-web-0.3.1.tgz              # always
-npm install ./hana-id-react-0.3.1.tgz                                      # React apps
-npm install ./hana-id-sodax-0.3.1.tgz @sodax/types@2.2.0                   # Sodax adapters
+npm install ./hana-id-core-0.4.0.tgz ./hana-id-web-0.4.0.tgz              # always
+npm install ./hana-id-react-0.4.0.tgz                                      # React apps
+npm install ./hana-id-sodax-0.4.0.tgz @sodax/types@2.2.0                   # Sodax adapters
 ```
 
 Commit the tarballs to your repository (or a private artifact store) and depend on them by path
-(`"@hana-id/web": "file:vendor/hana-id-web-0.3.1.tgz"`), so every install gets the same bytes.
+(`"@hana-id/web": "file:vendor/hana-id-web-0.4.0.tgz"`), so every install gets the same bytes.
 
 | Package | What | Peer dependencies (tested) |
 |---|---|---|
 | `@hana-id/core` | Shared core; a dependency of the others. `@hana-id/core/policy` validates auto-approve policies; `supportIdFromSub` (SDK releases after 0.2.0, section 15) | |
-| `@hana-id/web` | `createHana`, the EIP-1193 provider, the Stellar signer; `@hana-id/web/stellar-wallets-kit` for SWK | |
+| `@hana-id/web` | `createHana`, the EIP-1193 provider, the Stellar signer, the NEAR signer (0.4.0); `@hana-id/web/stellar-wallets-kit` for SWK | |
 | `@hana-id/react` | `HanaProvider`, `useHana`, `useWallet` | `react` `^18 \|\| ^19` (18.3.1, 19.3.1) |
 | `@hana-id/sodax` | Optional Sodax wallet-provider adapters | `@sodax/types`: the version your `@sodax/sdk` depends on (`@sodax/sdk` 2.2.0 pins 2.2.0), so there is one copy; types only. Tested with 2.2.0 (SDK releases after 0.2.0; 0.2.0 was typed against 2.1.0) |
 
@@ -212,10 +214,26 @@ installing the tarballs into a fresh project outside Hana's repository, type-che
 **Environments are built in.** `@hana-id/web` contains the configuration of every Hana deployment it was released
 for (Hana origins, NEAR accounts, RPC, pinned MPC key; all public values), and you pick one by name with
 `createHana({ environment })`. `HANA_ENVIRONMENTS` lists the names. A release ships exactly the deployed envs; this
-pilot ships `sandbox-dev`, whose Hana side runs on NEAR testnet (your users' wallets are Stellar and EVM; see the note
+pilot ships `sandbox-dev`, whose Hana side runs on NEAR testnet (your users' wallets are Stellar, EVM and NEAR; see the note
 at the top). A new environment means a new release.
 
 ### Release notes
+
+**0.4.0** (after 0.3.1; same environments: `sandbox-dev`). **Nothing to change** for Stellar and EVM: code written for
+0.3.x builds and runs as it is, and an app still on 0.3.x keeps working with Hana's current vault (it just doesn't see
+NEAR). Replace all the tarballs you use together (they depend on each other at `^0.4.0`).
+
+- **A NEAR wallet.** `hana.near`: `accountId` and `publicKey` (the user's implicit account), `signTransaction`,
+  `signDelegateAction` (NEP-366, gasless with `relay`), `signMessage` (NEP-413) and `relay`; `hana.addresses.near`.
+  Every NEAR request shows Hana's approval window, none is signed automatically ([section 8, NEAR](#near)).
+- `hana.exportKey('near')` exports the NEAR key as `ed25519:…`.
+- `HanaAddresses.near` is optional in the types: it is missing only while Hana's vault is older than this SDK (during a
+  deployment), and `hana.near` then refuses requests with 4100. New types: `NearSignTransactionParams`,
+  `NearSignDelegateActionParams`, `NearSignMessageParams`, `NearRelayParams` and their results, `NearNetwork`.
+- A test app signs NEAR testnet only (4100 `mainnet_not_allowed`); new refusal reasons `near_block_unknown`,
+  `near_network_mismatch`, `near_key_unknown`, `near_delegate_nonce_used`, `near_delegate_nonce_too_large`,
+  `near_delegate_expiry` and (with `api_unavailable`) `near_rpc_unavailable`.
+- Not yet NEAR: the identity token's `wallets` (still Stellar and EVM), Hana Home and the partner portal.
 
 **0.3.1** (after 0.3.0; same environments: `sandbox-dev`). **Nothing to change**: code written for 0.3.0 builds and
 runs as it is. Replace all the tarballs you use together (they depend on each other at `^0.3.1`).
@@ -613,7 +631,7 @@ popup, or 5 min without an answer gives `4001`.
 
 **Call the SDK directly in your click handler**. Every signing method (`hana.stellar.sign*`, the Stellar
 Wallets Kit module, `personal_sign`, `eth_signTypedData_v4`, `eth_signTransaction`, `eth_sendTransaction`,
-`hana.signRaw`, `hana.requestAutoApprove`, the Sodax adapters) opens the approval popup synchronously, the moment you
+`hana.near.sign*`, `hana.signRaw`, `hana.requestAutoApprove`, the Sodax adapters) opens the approval popup synchronously, the moment you
 call it, while the browser still treats the click as a user gesture:
 
 ```ts
@@ -719,6 +737,112 @@ one your RPC reports.
 One key covers every EVM chain. Contract creation (an empty `to`) works with approval, but no policy ever
 auto-approves it. Errors are `ProviderRpcError` with numeric codes. A sign-in that didn't complete is `4001`, and the
 Hana code is in `error.data.code`. Logging out emits `accountsChanged []`, as wallets do.
+
+### NEAR
+
+SDK 0.4.0 or later. Each user has one NEAR account in your app's scope, next to their Stellar and EVM ones: an
+**implicit account**, whose id is the 64 lowercase hex characters of its Ed25519 key. It exists on chain once
+someone sends it NEAR (an implicit account is created by its first transfer).
+
+```ts
+hana.near.accountId;   // '6e5e4e30…f35000ab' (64 hex), or null while logged out
+hana.near.publicKey;   // 'ed25519:8RqFZBso…', or null
+hana.addresses;        // { stellar, evm, near }
+```
+
+**A transaction.** Build it before the click with `@near-js/transactions` (or near-api-js): the key's next nonce and
+a recent block hash come from any NEAR RPC. Sign it in the click, then broadcast it yourself:
+
+```ts
+import { PublicKey } from '@near-js/crypto';
+import { actionCreators, createTransaction, encodeTransaction } from '@near-js/transactions';
+import { baseDecode } from '@near-js/utils';
+
+const RPC = 'https://rpc.testnet.near.org';
+async function rpc(method: string, params: unknown) {
+  const res = await fetch(RPC, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+  const body = await res.json();
+  if (body.error) throw new Error(JSON.stringify(body.error));
+  return body.result;
+}
+
+// Before the click: the key's nonce and a recent final block (view_access_key returns both).
+const accountId = hana.near.accountId!;
+const publicKey = PublicKey.fromString(hana.near.publicKey!);
+const key = await rpc('query', { request_type: 'view_access_key', finality: 'final', account_id: accountId, public_key: publicKey.toString() });
+const tx = createTransaction(accountId, publicKey, 'guestbook.testnet', BigInt(key.nonce) + 1n,
+  [actionCreators.functionCall('add_message', { text: 'gm' }, 30_000_000_000_000n, 0n)], baseDecode(key.block_hash));
+
+button.addEventListener('click', () => {
+  hana.near.signTransaction({ network: 'testnet', transaction: encodeTransaction(tx) })   // no await before it
+    .then(({ signedTransaction, hash }) => rpc('send_tx', { signed_tx_base64: signedTransaction, wait_until: 'FINAL' }))
+    .then(onSent, onError);
+});
+```
+
+`signTransaction` returns `{ signature, signedTransaction, hash }`: base64 of the 64-byte signature, base64 of the
+borsh `SignedTransaction` (what `send_tx` takes) and the base58 transaction hash. The transaction's signer and key must
+be the user's (4100 otherwise). NEAR's bytes name no network, so you say which (`'testnet'` or `'mainnet'`) and Hana
+checks it: a `testnet` transaction's block hash must be a testnet block (`near_block_unknown` otherwise; if Hana can't
+reach NEAR testnet it refuses with `api_unavailable`, `data.reason: 'near_rpc_unavailable'`), and a `mainnet` one's
+must not be (`near_network_mismatch`). A test app signs for testnet only. Use a block hash under a day old (NEAR's own
+rule). Transactions with a priority fee (`TransactionV1`) and actions newer than `UseGlobalContract` are refused, and
+a request is at most 192 KiB of base64.
+
+**Gasless (a meta transaction).** Sign a NEP-366 delegate action instead and let Hana's relayer pay the gas: it wraps
+it in its own transaction (`POST /v1/near/relay`, checked against your publishable key and your page's origin like
+every `/v1` call). Any NEAR the actions attach or send still comes from the user's account.
+
+```ts
+import { buildDelegateAction, encodeDelegateAction } from '@near-js/transactions';
+
+// Before the click, with `key` from view_access_key as above.
+const delegate = buildDelegateAction({
+  senderId: accountId,
+  receiverId: 'guestbook.testnet',
+  actions: [actionCreators.functionCall('add_message', { text: 'gasless gm' }, 30_000_000_000_000n, 0n)],
+  nonce: BigInt(key.nonce) + 1n,
+  maxBlockHeight: BigInt(key.block_height) + 600n,   // expires in about 6 minutes
+  publicKey,
+});
+
+button.addEventListener('click', () => {
+  hana.near.signDelegateAction({ network: 'testnet', delegateAction: encodeDelegateAction(delegate) })
+    .then(({ signedDelegateAction }) => hana.near.relay({ network: 'testnet', signedDelegateAction }))
+    .then(({ transactionHash, status }) => onSent(transactionHash, status), onError);
+});
+```
+
+`signDelegateAction` takes the borsh `DelegateAction` with or without NEP-461's prefix (`encodeDelegateAction` adds
+it) and returns `{ signature, signedDelegateAction }` (base64 borsh `SignedDelegateAction`, which any NEP-366 relayer
+takes). A delegate action has no block hash, so for a **test app** Hana ties it to testnet another way, on testnet's
+RPC: the account must already exist there with this key (`near_key_unknown`: fund or create the account first), the
+nonce must be above the key's current one (`near_delegate_nonce_used`) and within NEAR's bound for the current height
+(`near_delegate_nonce_too_large`), and `maxBlockHeight` must be ahead of testnet's height by at most 10,000 blocks
+(`near_delegate_expiry`). `relay` rejects with `rate_limited` (429), `origin_not_allowed`, `app_suspended`, 4100 for
+another refusal (`data.reason` is the API's code, `data.requestId` its request ID) or `api_unavailable`.
+
+**Sign in with NEAR (NEP-413).** A signature that proves the user holds the account, for your backend:
+
+```ts
+const nonce = crypto.getRandomValues(new Uint8Array(32));   // from your backend; accept each one once
+const { accountId, publicKey, signature } = await hana.near.signMessage({ message: 'Sign in to Guestbook', recipient: 'guestbook.example', nonce });
+```
+
+Your backend rebuilds NEP-413's payload (`u32le(2^31 + 413)` ‖ borsh `{ message, nonce, recipient, callbackUrl }`),
+verifies `signature` (base64, Ed25519) over its sha256 with `publicKey`, checks that `publicKey`'s hex is `accountId`
+(an implicit account is its key), and accepts the nonce only once. `recipient` and `callbackUrl` are one line of
+visible text each; Hana's window shows the recipient first. Like other messages it names no network, so a test app may
+sign it.
+
+**What the approval window shows** (decoded by Hana from the bytes, never from your description): the network and
+whether Hana checked it, sender and receiver, every action in plain words (a call with its method, attached deposit,
+gas in Tgas and its arguments as escaped JSON, or hex when they aren't JSON), and the NEAR leaving the account. Adding
+or removing a key, deleting the account and deploying or setting a contract change who controls the account: they
+are shown under a red warning. No NEAR request is ever signed automatically (no policy covers NEAR yet).
+
+`hana.exportKey('near')` exports the key as `ed25519:<base58>` (near-cli and NEAR wallets import that form), with the
+same safeguards as the other chains.
 
 ### Raw signing
 

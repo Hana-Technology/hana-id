@@ -232,7 +232,8 @@ const CHAIN_RANK: Record<WalletRow['chain'], number> = { stellar: 0, evm: 1, nea
 function parseWallets(json: unknown): WalletRow[] {
   return jsonRows(json)
     .map((w) => ({ chain: w.chain as WalletRow['chain'], address: str(w.address), keyIndex: num(w.key_index), firstSeenMs: num(w.first_seen_at), lastUsedMs: num(w.last_used_at), sharedWith: num(w.shared) }))
-    .sort((a, b) => (a.chain === b.chain ? a.address.localeCompare(b.address) : CHAIN_RANK[a.chain] - CHAIN_RANK[b.chain]));
+    // A chain this CLI doesn't know yet sorts last (a stable rank, never NaN).
+    .sort((a, b) => (a.chain === b.chain ? a.address.localeCompare(b.address) : (CHAIN_RANK[a.chain] ?? 9) - (CHAIN_RANK[b.chain] ?? 9)));
 }
 
 /** A row of accountsBySubsSql → the identity's account in that scope. */

@@ -58,8 +58,78 @@ describe('migration 0019_near_wallets', () => {
     expect(await db.prepare('SELECT COUNT(*) AS n FROM end_user_wallets').first()).toEqual({ n: 0 });
   });
 
-  it('keeps the indexes', async () => {
+  it('keeps the indexes, and adds one: at most one NEAR account per user and key index (D762)', async () => {
     const names = (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name IN ('end_user_wallets', 'user_events') AND name NOT LIKE 'sqlite_%' ORDER BY name").all<{ name: string }>()).results.map((r) => r.name);
-    expect(names).toEqual(['end_user_wallets_address', 'user_events_address', 'user_events_app', 'user_events_user']);
+    expect(names).toEqual(['end_user_wallets_address', 'end_user_wallets_one_near', 'user_events_address', 'user_events_app', 'user_events_user']);
+    const sql = async (name: string) => (await db.prepare("SELECT sql FROM sqlite_master WHERE name = ?1").bind(name).first<{ sql: string }>())!.sql.replace(/\s+/gu, ' ');
+    expect(await sql('end_user_wallets_address')).toBe('CREATE INDEX end_user_wallets_address ON end_user_wallets (address)');
+    expect(await sql('end_user_wallets_one_near')).toBe("CREATE UNIQUE INDEX end_user_wallets_one_near ON end_user_wallets (user_id, key_index) WHERE chain = 'near'");
+    expect(await sql('user_events_user')).toBe('CREATE INDEX user_events_user ON user_events (user_id, kind, at DESC)');
+    expect(await sql('user_events_address')).toBe('CREATE INDEX user_events_address ON user_events (address, at DESC)');
+    expect(await sql('user_events_app')).toBe('CREATE INDEX user_events_app ON user_events (app_id, kind, at DESC)');
+  });
+
+  it('keeps every column, type, NOT NULL, key, foreign key and CHECK of both tables', async () => {
+    const cols = async (t: string) => (await db.prepare(`PRAGMA table_info(${t})`).all<{ name: string; type: string; notnull: number; dflt_value: unknown; pk: number }>()).results.map((c) => [c.name, c.type, c.notnull, c.dflt_value, c.pk]);
+    expect(await cols('end_user_wallets')).toEqual([
+      ['user_id', 'TEXT', 1, null, 1],
+      ['chain', 'TEXT', 1, null, 2],
+      ['address', 'TEXT', 1, null, 3],
+      ['key_index', 'INTEGER', 1, null, 0],
+      ['first_seen_at', 'INTEGER', 1, null, 0],
+      ['last_used_at', 'INTEGER', 1, null, 0],
+    ]);
+    expect(await cols('user_events')).toEqual([
+      ['id', 'INTEGER', 0, null, 1],
+      ['kind', 'TEXT', 1, null, 0],
+      ['app_id', 'TEXT', 0, null, 0],
+      ['scope_id', 'TEXT', 1, null, 0],
+      ['user_id', 'TEXT', 0, null, 0],
+      ['chain', 'TEXT', 0, null, 0],
+      ['network', 'TEXT', 0, null, 0],
+      ['address', 'TEXT', 0, null, 0],
+      ['usd_micros', 'INTEGER', 0, null, 0],
+      ['request_id', 'TEXT', 1, null, 0],
+      ['at', 'INTEGER', 1, null, 0],
+    ]);
+    const fks = (await db.prepare('PRAGMA foreign_key_list(end_user_wallets)').all<{ table: string; from: string; to: string; on_delete: string }>()).results.map((f) => [f.table, f.from, f.to, f.on_delete]);
+    expect(fks).toEqual([['end_users', 'user_id', 'user_id', 'CASCADE']]);
+    expect((await db.prepare('PRAGMA foreign_key_list(user_events)').all()).results).toEqual([]);
+    const tableSql = async (t: string) => (await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1").bind(t).first<{ sql: string }>())!.sql.replace(/\s+/gu, ' ');
+    const wallets = await tableSql('end_user_wallets');
+    for (const check of [
+      "CHECK (chain IN ('stellar', 'evm', 'near'))",
+      'CHECK (length(address) BETWEEN 42 AND 64)',
+      'CHECK (key_index >= 0 AND key_index < 2147483648)',
+      'CHECK (first_seen_at >= 0)',
+      'CHECK (last_used_at >= first_seen_at)',
+      'REFERENCES end_users (user_id) ON DELETE CASCADE',
+      'PRIMARY KEY (user_id, chain, address)',
+    ]) expect(wallets, check).toContain(check);
+    const events = await tableSql('user_events');
+    for (const check of [
+      "CHECK (kind IN ('key_exported', 'mainnet_signature'))",
+      "CHECK (user_id IS NULL OR (user_id GLOB 'hu_*' AND length(user_id) = 29))",
+      "CHECK (chain IS NULL OR chain IN ('stellar', 'evm', 'near'))",
+      'CHECK (network IS NULL OR (length(network) BETWEEN 1 AND 16))',
+      'CHECK (address IS NULL OR (length(address) BETWEEN 42 AND 56))',
+      'CHECK (usd_micros IS NULL OR usd_micros >= 0)',
+      'CHECK (at >= 0)',
+      "CHECK (kind <> 'key_exported' OR user_id IS NOT NULL)",
+      "CHECK (kind <> 'mainnet_signature' OR (user_id IS NOT NULL AND address IS NOT NULL AND chain IS NOT NULL AND network IS NOT NULL))",
+      "CHECK (kind <> 'mainnet_signature' OR chain <> 'near')",
+      "CHECK (app_id IS NOT NULL OR kind = 'key_exported')",
+    ]) expect(events, check).toContain(check);
+  });
+
+  it('a second NEAR account for one user and key index is refused by the index; another key index, or Stellar and EVM, are not', async () => {
+    const V = `hu_${'v'.repeat(26)}`;
+    await db.prepare("INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, 'ABCDEFGH', 's1', 1, 2)").bind(V, `u1_${'B'.repeat(21)}A`).run();
+    const add = (chain: string, address: string, keyIndex: number) => accepted('INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?1, ?2, ?3, ?4, 1, 2)', V, chain, address, keyIndex);
+    expect(await add('near', 'cd'.repeat(32), 0)).toBe(true);
+    expect(await add('near', 'ef'.repeat(32), 0)).toBe(false);
+    expect(await add('near', 'ef'.repeat(32), 1)).toBe(true);
+    expect(await add('stellar', `G${'B'.repeat(55)}`, 0)).toBe(true);
+    expect(await add('stellar', `G${'C'.repeat(55)}`, 0)).toBe(true);
   });
 });

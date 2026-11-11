@@ -718,3 +718,68 @@ describe('NEAR in the wallet directory', () => {
     expect(got.user.wallets.find((w) => w.chain === 'near')?.address).toBe(a.addresses.near);
   });
 });
+
+// ---- NEAR's rules (D762): one NEAR account per user and key index, one user per account in a scope ----
+
+describe('NEAR accounts: what a client can list (D762)', () => {
+  it('a second, different NEAR account for the same user and key index is refused whole (409 near_account_mismatch), nothing written', async () => {
+    const { app, spk } = await recorded();
+    const first = randomPrk();
+    expect((await body(await record(app, spk, { prk: first, near: true }))).near).toBe(true);
+    const userId = await expectedInternalId(app.scope, 'google', G_SUB);
+    const before = await wallets(userId);
+    const res = await record(app, spk, { prk: randomPrk(), near: true });
+    expect([res.status, (await body(res)).code]).toEqual([409, 'near_account_mismatch']);
+    expect(await wallets(userId)).toEqual(before);
+    // The same account again is fine (an honest vault's every login).
+    expect((await body(await record(app, spk, { prk: first, near: true }))).near).toBe(true);
+    // Without NEAR in the body, another key's Stellar and EVM are still taken (unchanged behaviour, D762's note).
+    expect((await record(app, spk, { prk: randomPrk() })).status).toBe(200);
+  });
+
+  it('an account another user of the scope lists is not listed again: the user’s other rows are written, near: false, near_account_taken', async () => {
+    const chainMock = chain();
+    const app = await seedApp();
+    const prk = randomPrk();
+    const spkA = spentSession(chainMock, app.scope, { sub: 'owner-a' });
+    const spkB = spentSession(chainMock, app.scope, { sub: 'other-b' });
+    expect((await body(await record(app, spkA, { prk, path: pathFor(app.scope, 'owner-a'), near: true }))).near).toBe(true);
+    const res = await record(app, spkB, { prk, path: pathFor(app.scope, 'other-b'), near: true });
+    expect(res.status).toBe(200);
+    expect(await body(res)).toMatchObject({ recorded: true, near: false, nearCode: 'near_account_taken' });
+    const a = await expectedInternalId(app.scope, 'google', 'owner-a');
+    const b = await expectedInternalId(app.scope, 'google', 'other-b');
+    expect((await wallets(b)).map((w) => w.chain)).toEqual(['stellar', 'evm']);
+    expect(await nearAccountUser(env.DB, app.scope, deriveWalletAddresses(prk).near)).toBe(a);
+  });
+
+  it('the same account in two scopes: each scope’s lookup finds its own user (an exported key; scopes never mix)', async () => {
+    const prk = randomPrk();
+    const near = deriveWalletAddresses(prk).near;
+    const one = await recorded({ sub: 'two-scopes' });
+    expect((await body(await record(one.app, one.spk, { prk, path: pathFor(one.app.scope, 'two-scopes'), near: true }))).near).toBe(true);
+    const two = await recorded({ sub: 'two-scopes' });
+    expect((await body(await record(two.app, two.spk, { prk, path: pathFor(two.app.scope, 'two-scopes'), near: true }))).near).toBe(true);
+    expect(await nearAccountUser(env.DB, one.app.scope, near)).toBe(await expectedInternalId(one.app.scope, 'google', 'two-scopes'));
+    expect(await nearAccountUser(env.DB, two.app.scope, near)).toBe(await expectedInternalId(two.app.scope, 'google', 'two-scopes'));
+  });
+
+  it('nearAccountUser: two users of a scope listing one account is ambiguous (null), whatever their times; a failed read throws', async () => {
+    const { app } = await recorded();
+    const near = deriveWalletAddresses(randomPrk()).near;
+    const ids = [`hu_${'c'.repeat(26)}`, `hu_${'d'.repeat(26)}`];
+    for (const [i, id] of ids.entries()) {
+      await env.DB.prepare("INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, 'ABCDEFGH', ?3, 1, 1)").bind(id, `u1_${String(i).repeat(21)}A`, app.scope).run();
+    }
+    const add = (id: string, first: number, last: number) =>
+      env.DB.prepare("INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?1, 'near', ?2, 0, ?3, ?4)").bind(id, near, first, last).run();
+    await add(ids[0]!, 10, 10);
+    expect(await nearAccountUser(env.DB, app.scope, near)).toBe(ids[0]);
+    // A second user's row (a race past the write path's check, or a direct write) with a later last-used time that a
+    // client could choose: the answer is null, never the one with the newest time.
+    await add(ids[1]!, 20, Date.now() + 300_000);
+    expect(await nearAccountUser(env.DB, app.scope, near)).toBeNull();
+    const broken = { prepare: () => ({ bind: () => ({ all: () => Promise.reject(new Error('D1_ERROR: network')) }) }) } as unknown as D1Database;
+    await expect(nearAccountUser(broken, app.scope, near)).rejects.toThrow(/D1_ERROR/u);
+  });
+});

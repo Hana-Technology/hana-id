@@ -102,7 +102,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { type ConsentProof, VaultApi } from './api.ts';
 import { SHARE_LAUNCHER_HELLO_MS, type ConsentSigner, type SheetOutcome, ShareSheet, consentProof } from './email-share.ts';
 import { type CachedIdentity, cacheUsable, copyProofs, demoEventBody, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
-import { nearRecordedIn, reportWallets, signWalletRecords } from './wallet-record.ts';
+import { nearRecordedIn, nearRefusedIn, reportWallets, signWalletRecords } from './wallet-record.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
@@ -119,6 +119,8 @@ import {
   type RecordStore,
   type RecordV1,
   openConsent,
+  NEAR_RECORD_CONFLICT_DEFER_MS,
+  NEAR_RECORD_DEFER_MS,
   nearRecordedKey,
   openPrk,
   parseNearRecorded,
@@ -2585,27 +2587,46 @@ export class Vault {
     }
     if (this.session !== s) return;
     void reportWallets((body, signal) => api.recordWallets(body, signal), signed.body, this.timers).then((answer) => {
-      if (withNear && nearRecordedIn(answer)) void this.markNearRecorded(s).catch(() => undefined);
+      if (!withNear) return;
+      if (nearRecordedIn(answer)) {
+        void this.markNearRecorded(s, null).catch(() => undefined);
+        return;
+      }
+      // D763: `near: false` (no migration 0019, or a conflict, D762): no unlock resends before the wait is over.
+      const refused = nearRefusedIn(answer);
+      if (refused !== null) {
+        const wait = refused === 'near_account_taken' || refused === 'near_account_mismatch' ? NEAR_RECORD_CONFLICT_DEFER_MS : NEAR_RECORD_DEFER_MS;
+        void this.markNearRecorded(s, this.clock.now() + wait).catch(() => undefined);
+      }
     });
   }
 
-  /** Whether the API already recorded this session's NEAR account (the mark beside the record, D756). */
+  /**
+   * Whether an unlock should skip the NEAR record: the API already recorded this session's NEAR account, or answered
+   * `near: false` for it less than the wait ago (the entry beside the record, D756, D763).
+   */
   private async nearRecorded(s: Session): Promise<boolean> {
     const store = this.store;
     if (!store) return false;
     try {
-      return parseNearRecorded(await store.get(nearRecordedKey(this.recordId))) === toHex(s.sessionPk);
+      const mark = parseNearRecorded(await store.get(nearRecordedKey(this.recordId)));
+      if (!mark || mark.sessionPk !== toHex(s.sessionPk)) return false;
+      return mark.deferredUntilMs === null || this.clock.now() < mark.deferredUntilMs;
     } catch {
       return false;
     }
   }
 
-  /** Marks this session's NEAR account as recorded ('session' mode only: a 'none' session has no record to unlock). */
-  private async markNearRecorded(s: Session): Promise<void> {
+  /**
+   * Marks this session's NEAR account as recorded (`deferUntilMs` null) or as refused until then ('session' mode only:
+   * a 'none' session has no record to unlock).
+   */
+  private async markNearRecorded(s: Session, deferUntilMs: number | null): Promise<void> {
     const store = this.store;
     // Only while the session is still this one: a logout's deletion is never followed by a stale mark.
     if (!store || s.persistence !== 'session' || this.session !== s) return;
-    await store.put(nearRecordedKey(this.recordId), { v: 1, t: 'near-recorded', sessionPk: toHex(s.sessionPk) });
+    const sessionPk = toHex(s.sessionPk);
+    await store.put(nearRecordedKey(this.recordId), deferUntilMs === null ? { v: 1, t: 'near-recorded', sessionPk } : { v: 1, t: 'near-deferred', sessionPk, untilMs: deferUntilMs });
   }
 
   // ---- partner identity token (docs/identity-token-spec.md) ----

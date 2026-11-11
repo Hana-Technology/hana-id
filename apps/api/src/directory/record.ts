@@ -145,6 +145,21 @@ export async function handleWalletRecord(request: Request, env: Env, requestId: 
   if (chain.session.path !== req.path) return reject(ctx, 403, 'session_mismatch', 'The session is for another path');
   lap(ctx, 'session');
 
+  // NEAR's rules (D762): one NEAR account per user and key index, and one user per NEAR account in a scope. A row only
+  // proves that the session's holder also holds that key, not that Hana derived it, so an honest vault (which always
+  // derives the same account for a path) never breaks either; a client that does is refused or not listed.
+  let nearCode: NearRefusal | null = null;
+  if (req.wallets.near) {
+    const conflict = await nearConflict(env.DB, { scopeId: app.scope_id, internalId: user.internalId, keyIndex, address: addresses.near });
+    if (conflict === 'near_account_mismatch') {
+      log({ event: 'directory_near_conflict', requestId, endpoint: ctx.endpoint, appId: app.id, code: conflict }, 'error');
+      return reject(ctx, 409, 'near_account_mismatch', 'This user already has another NEAR account recorded for this path');
+    }
+    if (conflict === 'near_account_taken') log({ event: 'directory_near_conflict', requestId, endpoint: ctx.endpoint, appId: app.id, code: conflict }, 'error');
+    if (conflict === 'unreadable') log({ event: 'directory_near_unrecorded', requestId, endpoint: ctx.endpoint, appId: app.id, code: 'internal' }, 'warn');
+    nearCode = conflict === 'near_account_taken' ? 'near_account_taken' : conflict === 'unreadable' ? 'internal' : null;
+  }
+
   const written = await writeDirectory(
     env,
     [
@@ -159,14 +174,51 @@ export async function handleWalletRecord(request: Request, env: Env, requestId: 
   if (!written) return reject(ctx, 503, 'directory_write_failed', 'Could not record the wallets, try again later');
   lap(ctx, 'insert');
   if (!req.wallets.near) return done(ctx, 200, { recorded: true });
-  // NEAR on its own (D756): refused by the CHECK until migration 0019 is applied, without undoing the rows above.
-  let near = true;
+  if (nearCode) return done(ctx, 200, { recorded: true, near: false, nearCode });
+  // NEAR on its own (D756): refused by the CHECK until migration 0019 is applied, without undoing the rows above; a
+  // concurrent second account for this user and key index meets 0019's unique index (D762).
   try {
     await upsertWallet(env.DB, user.internalId, { chain: 'near', address: addresses.near, keyIndex }, req.issuedAtMs).run();
   } catch (e) {
-    near = false;
-    log({ event: 'directory_near_unrecorded', requestId, endpoint: ctx.endpoint, appId: app.id, code: /CHECK constraint/u.test(String(e)) ? 'no_migration_0019' : 'internal' }, 'warn');
+    const text = String(e);
+    const code: NearRefusal = /CHECK constraint/u.test(text) ? 'no_migration_0019' : /UNIQUE constraint/u.test(text) ? 'near_account_mismatch' : 'internal';
+    log({ event: code === 'near_account_mismatch' ? 'directory_near_conflict' : 'directory_near_unrecorded', requestId, endpoint: ctx.endpoint, appId: app.id, code }, code === 'near_account_mismatch' ? 'error' : 'warn');
+    lap(ctx, 'near');
+    return done(ctx, 200, { recorded: true, near: false, nearCode: code });
   }
   lap(ctx, 'near');
-  return done(ctx, 200, { recorded: true, near });
+  return done(ctx, 200, { recorded: true, near: true });
+}
+
+/** Why a NEAR record wasn't written (the answer's `nearCode`, D756, D762). */
+export type NearRefusal = 'no_migration_0019' | 'near_account_taken' | 'near_account_mismatch' | 'internal';
+
+/**
+ * The NEAR rules' check before any write (D762): `near_account_mismatch` when this user already lists another NEAR
+ * account at this key index (refused whole: an honest vault never does it); `near_account_taken` when another user of
+ * this scope lists this account (only the NEAR row is skipped: with an exported key a stranger could have recorded it
+ * first, and the user's other rows must not depend on that); `unreadable` when the read failed; null otherwise.
+ */
+export async function nearConflict(db: D1Database, w: { scopeId: string; internalId: string; keyIndex: number; address: string }): Promise<'near_account_mismatch' | 'near_account_taken' | 'unreadable' | null> {
+  let rows: { user_id: string; address: string; key_index: number }[];
+  try {
+    rows = (
+      await db
+        .prepare(
+          `SELECT w.user_id, w.address, w.key_index FROM end_user_wallets w
+            WHERE w.chain = 'near' AND w.user_id = ?1 AND w.key_index = ?2
+           UNION ALL
+           SELECT w.user_id, w.address, w.key_index FROM end_user_wallets w JOIN end_users u ON u.user_id = w.user_id
+            WHERE w.chain = 'near' AND w.address = ?3 AND u.scope_id = ?4 AND w.user_id <> ?1
+           LIMIT 4`,
+        )
+        .bind(w.internalId, w.keyIndex, w.address, w.scopeId)
+        .all<{ user_id: string; address: string; key_index: number }>()
+    ).results;
+  } catch {
+    return 'unreadable';
+  }
+  if (rows.some((r) => r.user_id === w.internalId && r.address !== w.address)) return 'near_account_mismatch';
+  if (rows.some((r) => r.user_id !== w.internalId)) return 'near_account_taken';
+  return null;
 }

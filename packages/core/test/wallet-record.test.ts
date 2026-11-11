@@ -321,6 +321,27 @@ describe('the NEAR record', () => {
     }
   });
 
+  it('verifies strictly (RFC 8032, not ZIP 215): a small-order key with R = identity and S = 0, and a non-canonical S (S + L), are refused', () => {
+    // The key 01 00…00 is the identity point (small order); R = identity and S = 0 satisfy [S]B = R + [k]A for every
+    // message, so a ZIP 215 verifier takes this "signature" of any statement. The strict verifier must not.
+    const small = `01${'00'.repeat(31)}`;
+    const forged = new Uint8Array(64);
+    forged[0] = 1;
+    const statementOfSmall = walletRecordStatement(CTX, 'near', small);
+    expect(ed25519.verify(forged, statementOfSmall, fromHex(small), { zip215: true })).toBe(true);
+    expect(verifyWalletRecord(CTX, 'near', { address: small, signature: forged })).toBeNull();
+    // S + L: the same signature with a non-canonical scalar (still below 2^256) is refused.
+    const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+    const sig = sign('near');
+    let s = 0n;
+    for (let i = 31; i >= 0; i--) s = (s << 8n) | BigInt(sig[32 + i]!);
+    const big = s + L;
+    const malleable = Uint8Array.from(sig);
+    for (let i = 0; i < 32; i++) malleable[32 + i] = Number((big >> BigInt(8 * i)) & 0xffn);
+    expect(verifyWalletRecord(CTX, 'near', { address: ADDR.near, signature: sig })).toBe(ADDR.near);
+    expect(verifyWalletRecord(CTX, 'near', { address: ADDR.near, signature: malleable })).toBeNull();
+  });
+
   it('is never a NEAR transaction, delegate action or NEP-413 signature: those sign a 32-byte sha256, the record signs the longer statement', () => {
     const pk = fromHex(ADDR.near);
     expect(statement.length).toBeGreaterThan(32);

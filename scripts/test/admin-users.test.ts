@@ -9,7 +9,7 @@ import { deriveAddresses } from '@hana-id/core/derivation';
 import { loadEnv, repoRoot } from '@hana-id/env';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { assertCommandPositionals } from '../lib/admin-args.ts';
-import { type DirectoryUser, UNVERIFIED_WARNING, type UserCmdDeps, type WalletUser, addressCandidates, ownPath, userFind, userFindCommand, userFindSql, userList, userListSql, walletQuery } from '../lib/admin-users.ts';
+import { type DirectoryUser, UNVERIFIED_WARNING, type UserCmdDeps, type WalletUser, addressCandidates, ownPath, parseWalletUserRow, userFind, userFindCommand, userFindSql, userList, userListSql, walletQuery } from '../lib/admin-users.ts';
 import { parseCli } from '../lib/cli.ts';
 import { PRIVATE_WRANGLER_ENV, apiLocalD1Argv, issuerLocalD1Argv } from '../lib/d1.ts';
 import { newHotDb } from './hot-db.ts';
@@ -469,6 +469,17 @@ describe('user:list and user:find with the wallet directory', () => {
     await expect(findAny('--address', G_ALICE, '--email', 'a@b.c')).rejects.toThrow('not --email and --address');
     await expect(findAny('--address', G_ALICE, '--provider', 'email')).rejects.toThrow('--provider goes with');
     expect(walletQuery(`G${'A'.repeat(54)}1`)).toBeNull();
+    // Wallets sort Stellar, EVM, NEAR, then any chain this CLI doesn't know, never by a NaN comparator.
+    const w = (chain: string, address: string) => ({ chain, address, key_index: 0, first_seen_at: 1, last_used_at: 1, shared: 0 });
+    const row = { token_sub: 'u1_x', support_code: 'ABCDEFGH', user_id: 'hu_x', scope_id: 's1', created_at: 1, last_seen_at: 1, identities_json: '[]' };
+    for (const order of [
+      [w('zeta', 'z1'), w('near', 'ab'.repeat(32)), w('evm', '0x1'), w('stellar', 'G1'), w('alpha', 'a1')],
+      [w('alpha', 'a1'), w('stellar', 'G1'), w('zeta', 'z1'), w('evm', '0x1'), w('near', 'ab'.repeat(32))],
+    ]) {
+      const chains = parseWalletUserRow({ ...row, wallets_json: JSON.stringify(order) }, 0).wallets.map((x) => x.chain);
+      expect(chains.slice(0, 3)).toEqual(['stellar', 'evm', 'near']);
+      expect([...chains.slice(3)].sort()).toEqual(['alpha', 'zeta']);
+    }
     // A NEAR implicit account id (D755), any case, lowercased.
     expect(walletQuery('AB'.repeat(32))).toEqual({ kind: 'address', chain: 'near', address: 'ab'.repeat(32) });
     expect(walletQuery('ab'.repeat(31))).toBeNull();

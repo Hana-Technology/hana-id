@@ -1,6 +1,6 @@
-// What Hana Home says when something is refused or fails (home-page.ts, home-export.ts): one sentence per code, in
-// Hana's own words. The API's message is never shown: only its code picks the sentence, so an odd answer can't put
-// text on the page.
+// What Hana Home says when something is refused or fails (home-page.ts, home-export.ts, home-devices.ts,
+// home-profile.ts): one sentence per code, in Hana's own words. The API's message is never shown: only its code picks
+// the sentence, so an odd answer can't put text on the page.
 import { ApiError } from '@hana-id/core';
 
 export interface HomeProblem {
@@ -65,6 +65,12 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   unknown_consent: 'Hana Home couldn’t find that auto-approve among yours: it has probably ended already. Show your devices again to see what is on now.',
   unknown_email_share: 'Hana Home found nothing you share with that app. Show your devices again to see what you share now.',
   email_sharing_unavailable: 'Hana Home can’t change email sharing right now. Try again later.',
+  // The user's name and who gets it (home-profile.ts).
+  bad_name: 'Hana Home couldn’t save that name. Each name can be up to 50 characters on one line, with no hidden or control characters.',
+  no_profile_name: 'Set your name first: go back to all apps, open “Your name”, and save a first or last name. Then share it from here.',
+  unknown_app: 'Hana Home can’t share your name with this app: Hana doesn’t list it now.',
+  name_sharing_unavailable: 'Hana Home can’t change name sharing right now. Try again later.',
+  profile_unavailable: 'Names aren’t available in Hana Home yet. Try again later.',
   // Email (home-email.ts).
   home_email_unavailable: 'Email sign-in to Hana Home isn’t available right now. Try again later.',
   email_token_invalid: 'The email sign-in could not be checked. Nothing was shown. Try again.',

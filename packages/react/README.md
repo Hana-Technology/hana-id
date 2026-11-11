@@ -9,7 +9,7 @@ The packages aren't on a registry yet. Hana sends you the tarballs with their SH
 install them together, next to your React:
 
 ```sh
-npm install ./hana-id-core-0.3.0.tgz ./hana-id-web-0.3.0.tgz ./hana-id-react-0.3.0.tgz
+npm install ./hana-id-core-0.3.1.tgz ./hana-id-web-0.3.1.tgz ./hana-id-react-0.3.1.tgz
 ```
 
 Peer dependency: `react` `^18.0.0 || ^19.0.0` (tested with 18.3.1 and 19.3.1). ESM only, with TypeScript

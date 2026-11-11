@@ -242,7 +242,15 @@ export class HanaNear {
 function relayError(status: number, b: Record<string, unknown>): HanaError {
   const code = typeof b.code === 'string' ? b.code : '';
   const message = typeof b.error === 'string' ? b.error.slice(0, 300) : `Hana’s relayer refused the request (HTTP ${status})`;
-  const data = { status, ...(code ? { reason: code.slice(0, 64) } : {}), ...(typeof b.requestId === 'string' ? { requestId: b.requestId.slice(0, 64) } : {}) };
+  const data = {
+    status,
+    ...(code ? { reason: code.slice(0, 64) } : {}),
+    ...(typeof b.requestId === 'string' ? { requestId: b.requestId.slice(0, 64) } : {}),
+    // A nonce refusal (`delegate_nonce_used`, `delegate_nonce_too_large`) says the nonce the relayer holds the key at, so
+    // the next delegate action can be built above it; `retryable` marks an answer worth asking again (the API's own word).
+    ...(typeof b.accessKeyNonce === 'string' && /^(?:0|[1-9]\d{0,19})$/u.test(b.accessKeyNonce) ? { accessKeyNonce: b.accessKeyNonce } : {}),
+    ...(b.retryable === true ? { retryable: true } : {}),
+  };
   if (status === 429) return hanaError('rate_limited', message, data);
   if (code === 'origin_not_allowed' || code === 'app_suspended') return hanaError(code, message, data);
   if (status >= 400 && status < 500) return hanaError(4100, message, data);

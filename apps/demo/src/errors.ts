@@ -62,8 +62,9 @@ const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
   near_delegate_expiry: 'The NEAR request expired before it was approved, or expires too far ahead. Try again.',
   near_delegate_nonce_stale: 'That NEAR request was prepared too long ago (its nonce is behind testnet’s current block). Try again: the demo reads a fresh one.',
   near_relayed_delegate: 'Refused: Hana doesn’t sign a transaction that relays someone else’s delegate action.',
-  // Name provisional (the core's rule for test apps: a .testnet receiver, never an action on the account itself).
-  near_delegate_test_app_action: 'Refused: a test app’s gasless request may only call a testnet contract, never act on your own account.',
+  // A test app's delegate actions: only calls and transfers (…_action), to a .testnet account other than the user's (…_receiver).
+  near_delegate_test_app_action: 'Refused: a test app’s gasless request may only call a contract or send NEAR, never change your account.',
+  near_delegate_test_app_receiver: 'Refused: a test app’s gasless request may only go to a testnet account other than your own.',
 };
 
 /**
@@ -107,6 +108,7 @@ const RELAYER_REASONS: Readonly<Record<string, string>> = {
   app_budget_exhausted: 'The demo app has used up today’s free NEAR relays. Try again tomorrow (UTC).',
   relay_budget_exhausted: 'The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).',
   relayer_busy: 'Hana’s relayer is busy. Try again in a moment.',
+  not_enough_balance: 'Hana’s relayer is low on testnet NEAR right now. Tell the Hana team.',
   relayer_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
   relayer_unconfigured: 'Hana’s relayer isn’t set up on this environment yet. Tell the Hana team.',
   rate_limiter_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
@@ -122,6 +124,7 @@ function nearMessage(e: unknown, code: string | number | null, reason: string | 
   if (code === 'near_send_failed') return 'NEAR testnet refused or failed the transaction. Use the gasless write instead.';
   if (code === 4100 && reason !== null && Object.hasOwn(NEAR_VAULT_REASONS, reason)) return NEAR_VAULT_REASONS[reason]!;
   if (code === 'api_unavailable' && reason === 'near_rpc_unavailable') return 'Hana couldn’t reach NEAR testnet to check this request. Try again in a minute.';
+  if (code === 'api_unavailable' && reason === 'near_rpc_single_provider') return `This Hana environment has only one NEAR provider, so Hana can’t check a test app’s NEAR request. ${REPORT}`;
   // The relayer's answers carry their HTTP status in data.status (the SDK's relay and activate); the vault's don't.
   const fromRelayer = isObj(e) && isObj(e.data) && typeof e.data.status === 'number';
   if (action !== 'near' || !fromRelayer) return null;

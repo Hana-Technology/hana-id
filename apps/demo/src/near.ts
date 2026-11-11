@@ -129,9 +129,8 @@ export const TX_FEE_RESERVE = 10n ** 22n;
  * highest of the key's nonce and any nonce this page signed since its last read.
  */
 export function delegateNonce(p: { keyNonce: bigint; blockHeight: bigint; lastSigned?: bigint | undefined }): bigint {
-  const keyNonce = p.lastSigned !== undefined && p.lastSigned > p.keyNonce ? p.lastSigned : p.keyNonce;
   try {
-    return nearDelegateNonce({ keyNonce, blockHeight: p.blockHeight });
+    return nearDelegateNonce({ keyNonce: p.keyNonce, blockHeight: p.blockHeight, ...(p.lastSigned !== undefined ? { lastUsed: p.lastSigned } : {}) });
   } catch {
     throw nearPageError('near_nonce_wait', 'The key’s nonce is at the bound for the block height NEAR reported');
   }

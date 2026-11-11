@@ -46,7 +46,10 @@ async function approveNext(page: Page, open: Page, click: () => Promise<void>): 
   await approve(w);
 }
 
-test('screens of the NEAR card', async ({ page, browserName }) => {
+test('screens of the NEAR card', async ({ page, browserName, google }) => {
+  // A fresh Google account, so a NEAR account no other test has activated (the first write shows "Preparing…").
+  const digits = Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => String(b % 10)).join('');
+  google.accounts = [{ sub: `1${digits}`, label: 'NEAR demo', email: `e2enearshots${digits.slice(0, 8)}@gmail.com`, emailVerified: true }];
   test.skip(!SHOTS || browserName !== 'chromium', 'HANA_SHOTS_DIR, Chromium only');
   test.setTimeout(120_000);
   const activation = gate();

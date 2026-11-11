@@ -853,7 +853,7 @@ your users the same: the keys come from Hana's testnet MPC. For a test app Hana 
 providers; an environment with only one fails closed (`api_unavailable`, `data.reason: 'near_rpc_single_provider'`).
 
 `relay` rejects with `rate_limited` (429), `origin_not_allowed`, `app_suspended`, 4100 for
-another refusal (`data.reason` is the API's code, `data.requestId` its request ID) or `api_unavailable`.
+another refusal (`data.reason` is the API's code, `data.requestId` its request ID, `data.accessKeyNonce` the key's nonce the relayer holds after a nonce refusal, `data.retryable` when the API says to ask again) or `api_unavailable` (`data.reason` too).
 
 **A new account: activate it first.** A user's implicit account doesn't exist on chain until something is sent to
 it, so a brand-new user's first delegate action is refused (`near_key_unknown`). `hana.near.activate()` asks Hana's

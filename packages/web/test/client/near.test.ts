@@ -293,11 +293,21 @@ describe('hana.near.activate', () => {
     }
   });
 
-  it('409 near_account_unrecorded (the account not in the wallet directory yet) is 4100 with that reason', async () => {
-    s = setup({ apiUrl: API, fetch: answer({ code: 'near_account_unrecorded', error: 'not yet' }, 409) });
+  it('409 near_account_unrecorded (the account not in the wallet directory yet) is 4100 with that reason, retryable', async () => {
+    s = setup({ apiUrl: API, fetch: answer({ code: 'near_account_unrecorded', error: 'not yet', retryable: true }, 409) });
     await s.vault.connect(NEAR_IN);
     const e = await rejection(s.client.near.activate());
     expect(e.code).toBe(4100);
-    expect(e.data).toMatchObject({ status: 409, reason: 'near_account_unrecorded' });
+    expect(e.data).toEqual({ status: 409, reason: 'near_account_unrecorded', retryable: true });
+  });
+
+  it("a nonce refusal passes on the relayer's key nonce, only in its exact shape", async () => {
+    s = setup({ apiUrl: API, fetch: answer({ code: 'delegate_nonce_used', error: 'used', accessKeyNonce: '199999900000004' }, 409) });
+    await s.vault.connect(NEAR_IN);
+    expect((await rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: 'AAAA' }))).data).toEqual({ status: 409, reason: 'delegate_nonce_used', accessKeyNonce: '199999900000004' });
+    s.client.destroy();
+    s = setup({ apiUrl: API, fetch: answer({ code: 'delegate_nonce_used', accessKeyNonce: 12, retryable: 'yes' }, 409) });
+    await s.vault.connect(NEAR_IN);
+    expect((await rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: 'AAAA' }))).data).toEqual({ status: 409, reason: 'delegate_nonce_used' });
   });
 });

@@ -734,6 +734,27 @@ describe('the NEAR card', () => {
     expect($('near-done-text').textContent).toContain('Your NEAR account was created for it.');
   });
 
+  it("the relayer's delegate_nonce_used: read again, build above its nonce, ask for one more approval, never more", async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    const used = (held: string) => hanaError(4100, { status: 409, reason: 'delegate_nonce_used', accessKeyNonce: held });
+    fake.near.relay.mockRejectedValueOnce(used('199999900000007'));
+    type('again please');
+    click('near-write-button');
+    await settle();
+    expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(2);
+    expect(signedDelegate().nonce).toBe(199_999_900_000_008n);
+    expect($('near-done').hidden).toBe(false);
+    // Refused again: one retry only, then the message.
+    fake.near.relay.mockRejectedValueOnce(used('199999900000020')).mockRejectedValueOnce(used('199999900000021'));
+    type('third');
+    click('near-write-button');
+    await settle();
+    expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(4);
+    expect($('near-error').textContent).toMatch(/nonce was already used/u);
+  });
+
   it('a busy relayer (503 relayer_busy) is retried twice, then said so', async () => {
     boot();
     await loginFlow();

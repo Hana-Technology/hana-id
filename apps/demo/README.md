@@ -178,7 +178,11 @@ corepack pnpm --filter @hana-id/demo typecheck
 cancelled and declined cases in Chromium, Firefox and WebKit, with no CSP violation. Its NEAR test writes to the
 guestbook end to end: the stack's mocked NEAR RPC serves `view_access_key`, `view_account`, `block` and the
 guestbook's `get_messages`, and `POST /v1/near/activate` and `/v1/near/relay` are mocked at the network layer (the
-relayer's routes aren't in the stack); the approval popup shows "NEAR transaction, fee paid by a relayer" and the
-`add_message` call. Screens of the NEAR card (light and dark, desktop and phone, each stage):
+stack runs no relay account). The mocks answer `409 near_account_unrecorded` until the stack's real wallet directory
+holds the user's NEAR account (the vault records it after login), and a second test clicks before the record lands
+and checks the card waits and retries. The approval popup shows "NEAR transaction, fee paid by a relayer" and the
+`add_message` call. What keeps the page and the API from drifting is `apps/api/test/near-demo-page.test.ts`: the
+page's own builders and nonce (`src/near.ts`) and the SDK's own `activate` and `relay` requests, through the real
+routes with the fake NEAR RPC and sandbox-dev's 10 Tgas cap. Screens of the NEAR card (light and dark, desktop and phone, each stage):
 `HANA_SHOTS_DIR=<dir> corepack pnpm exec playwright test --project=chromium tests/demo-near-shots.spec.ts` in
 `apps/e2e`.

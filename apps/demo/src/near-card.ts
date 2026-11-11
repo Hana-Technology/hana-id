@@ -49,6 +49,8 @@ export const UNRECORDED_WAIT_MS = 20_000;
  * coordinator's `near_account_unrecorded`, and `near_account_unknown`, which the relayer build's docs mark retryable.
  */
 const UNRECORDED_REASONS: ReadonlySet<string> = new Set(['near_account_unrecorded', 'near_account_unknown']);
+/** Refusals that mean the card's last read of the key or the height is behind (the vault's and the relayer's). */
+const STALE_READ_REASONS: ReadonlySet<string> = new Set(['near_delegate_nonce_used', 'near_delegate_nonce_stale', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'delegate_nonce_used', 'delegate_nonce_too_large', 'delegate_expired', 'block_height_too_far']);
 /** How many times activate and relay are retried while the relayer answers `relayer_busy` (503). */
 const BUSY_RETRIES = 2;
 /** How long the card waits for a new account to show its key after activation (1 s per try). */
@@ -64,6 +66,7 @@ export const STAGES = {
   activating: 'Preparing your NEAR account…',
   approving: 'Waiting for your approval in the Hana window…',
   relaying: 'Sending it through Hana’s relayer, which pays the fee…',
+  retrying: 'That request’s number was already used. Building a fresh one: approve it once more in the Hana window…',
 } as const;
 
 export interface NearCardDeps {
@@ -99,6 +102,8 @@ interface Prep {
   balance: bigint;
   at: number;
 }
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -369,14 +374,31 @@ export function startNearCard(deps: NearCardDeps): NearCard {
               throw e;
             }
           }
-          const nonce = delegateNonce({ keyNonce: ready.key!.nonce, blockHeight: ready.height, lastSigned: lastNonce.get(accountId) });
-          const delegateAction = addMessageDelegate({ accountId, guestbook, text: check.text, nonce, blockHeight: ready.height });
-          stage(STAGES.approving);
-          const signing = c.near.signDelegateAction({ network: 'testnet', delegateAction });
-          const { signedDelegateAction } = await signing;
-          lastNonce.set(accountId, nonce);
-          stage(STAGES.relaying);
-          const { transactionHash } = await whileUnrecorded(() => c.near.relay({ network: 'testnet', signedDelegateAction }));
+          /** Builds, signs (the approval window) and relays one delegate action from `r`. */
+          const signAndRelay = async (r: Prep): Promise<string> => {
+            const nonce = delegateNonce({ keyNonce: r.key!.nonce, blockHeight: r.height, lastSigned: lastNonce.get(accountId) });
+            const delegateAction = addMessageDelegate({ accountId, guestbook, text: check.text, nonce, blockHeight: r.height });
+            stage(STAGES.approving);
+            const signing = c.near.signDelegateAction({ network: 'testnet', delegateAction });
+            const { signedDelegateAction } = await signing;
+            lastNonce.set(accountId, nonce);
+            stage(STAGES.relaying);
+            return (await whileUnrecorded(() => c.near.relay({ network: 'testnet', signedDelegateAction }))).transactionHash;
+          };
+          let transactionHash: string;
+          try {
+            transactionHash = await signAndRelay(ready);
+          } catch (e) {
+            // The relayer holds the key at a higher nonce than this page read (another tab, or a chain read it hadn't
+            // seen): read again, build above the relayer's nonce, and ask once more. NEAR requests are never signed
+            // without the user's Approve, so this second request needs their click in Hana's window; at most once.
+            const info = errorInfo(e);
+            if (info.reason !== 'delegate_nonce_used') throw e;
+            const held = isObj(e) && isObj(e.data) && typeof e.data.accessKeyNonce === 'string' ? BigInt(e.data.accessKeyNonce) : null;
+            if (held !== null && held > (lastNonce.get(accountId) ?? 0n)) lastNonce.set(accountId, held);
+            stage(STAGES.retrying);
+            transactionHash = await signAndRelay(await refresh(accountId));
+          }
           stage(null);
           // The first write after this page's activation (in the click or in the background) says so.
           const created = justCreated.delete(accountId);
@@ -388,7 +410,13 @@ export function startNearCard(deps: NearCardDeps): NearCard {
         } catch (e) {
           stage(null);
           // The relayer gave up waiting (504 `timeout`, the transaction pending): it may still land, so look again.
-          if (errorInfo(e).reason === 'timeout') loadList({ accountId, text: check.text }).catch(() => {});
+          const reason = errorInfo(e).reason;
+          if (reason === 'timeout') loadList({ accountId, text: check.text }).catch(() => {});
+          // A nonce or expiry refusal: the read this page holds is behind, so the next click must not reuse it.
+          if (reason !== null && STALE_READ_REASONS.has(reason)) {
+            prep = null;
+            refresh(accountId).catch(() => {});
+          }
           throw e;
         }
       },

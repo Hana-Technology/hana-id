@@ -384,6 +384,17 @@ export const manifestSchema = z
      * `scripts/email-issuer.ts <env> init` writes it.
      */
     emailIssuer: emailIssuerSchema.optional(),
+    /**
+     * NEAR as a wallet chain (D740). Optional, additive. `demoGuestbook`: the account of the hackathon demo contract
+     * (`contracts/hana-guestbook`) a user's NEAR wallet writes to through a relayed meta transaction;
+     * `deploy-guestbook` deploys it. A named `.testnet` account of its own (`nearRules`).
+     */
+    near: z
+      .object({
+        demoGuestbook: nearAccount.optional(),
+      })
+      .strict()
+      .optional(),
   })
   .superRefine((m, ctx) => {
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
@@ -397,6 +408,7 @@ export const manifestSchema = z
     if (m.identityToken) identityTokenRules(m, m.identityToken, ctx);
     if (m.emailIssuer) emailIssuerRules(m, m.emailIssuer, ctx);
     governance(m, ctx);
+    if (m.near) nearRules(m, m.near, ctx);
     dashboardRules(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'rpcFallback must be a different endpoint from rpc' });
@@ -533,6 +545,38 @@ function governance(m: GovernanceFields, ctx: z.RefinementCtx): void {
       path: ['allowSignerFullAccessKey'],
       message: 'allowSignerFullAccessKey is refused outside testnet: a mainnet signer never has a full-access key (D86)',
     });
+  }
+}
+
+/**
+ * `near.demoGuestbook` (D740): on testnet a named account ending in `.testnet` (a top-level account or a sub-account,
+ * never an implicit or `.near` account), and an account of its own: deploy-guestbook deploys code to it, so it must
+ * never be the signer, the relayer, the owner, the MPC or a governance account.
+ */
+function nearRules(
+  m: GovernanceFields & { mpc: string; watchdog?: { account: string } | undefined },
+  near: { demoGuestbook?: string | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  const book = near.demoGuestbook;
+  if (book === undefined) return;
+  const path = ['near', 'demoGuestbook'];
+  if (m.network === 'testnet' && !book.endsWith('.testnet')) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.demoGuestbook ${book} must be a .testnet account on testnet` });
+  }
+  const taken: [string, string | undefined][] = [
+    ['signer', m.signer],
+    ['relayer', m.relayer],
+    ['owner', m.owner],
+    ['mpc', m.mpc],
+    ['council.factory', m.council?.factory],
+    ['council.dao', m.council?.dao],
+    ...(m.council?.members ?? []).map((a): [string, string] => ['a council member', a]),
+    ...(m.watchdogs ?? []).map((a): [string, string] => ['a watchdog', a]),
+    ['watchdog.account', m.watchdog?.account],
+  ];
+  for (const [role, account] of taken) {
+    if (account === book) ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.demoGuestbook must be its own account, not ${role} (${book}): deploy-guestbook deploys code to it` });
   }
 }
 

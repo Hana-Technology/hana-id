@@ -169,6 +169,13 @@ providers you would accept as `rpc`; keep provider API keys out of these URLs (t
 `https://rpc.testnet.near.org`, then `https://near-testnet.drpc.org` (both answered `status` with `chain_id` testnet and
 the signer's `view_account` when added, 2026-11-06).
 
+`near` (optional, D740): NEAR as a wallet chain. `near.demoGuestbook` (optional) is the account of the hackathon demo
+contract `contracts/hana-guestbook`, which `deploy-guestbook <env>` deploys (`docs/operations.md` "Hackathon demo
+guestbook (NEAR)"). On testnet it must end in `.testnet` (a named account, never an implicit or `.near` one), and it
+must be an account of its own: never the signer, relayer, owner, MPC, a council account or a watchdog (the deploy puts
+code on it). sandbox-dev: `hana-id-guestbook-dev1.testnet`, named like its other accounts. Changing it means a new,
+empty guestbook (the contract has no upgrade path).
+
 `vaultOrigin` and `authOrigin` (optional in the schema until every deployed env has them; `gen` refuses an env
 without them and the page build skips it): the origins of Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin
 (`https://host[:port]`, no path or trailing slash); `https` is required, and loopback (`localhost`, `*.localhost`,

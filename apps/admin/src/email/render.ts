@@ -24,6 +24,8 @@ export type Block =
 export interface LogRow {
   line: string;
   title: string;
+  /** The row's code, shown small under the title (support matches on it). */
+  code?: string;
   fields: [string, string][];
   detail?: string;
 }
@@ -135,6 +137,7 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
         designed.push({
           digestRows: b.items.map((r) => ({
             title: [{ unlinked: oneLine(r.title, 500) }],
+            ...(r.code ? { code: [{ unlinked: oneLine(r.code, 500) }] } : {}),
             fields: r.fields.map(([k, v]) => [k, [{ unlinked: oneLine(v, 500) }]] as const),
             ...(r.detail ? { detail: [{ unlinked: oneLine(r.detail, 500) }] } : {}),
           })),

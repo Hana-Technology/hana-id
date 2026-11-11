@@ -506,6 +506,8 @@ describe('navigation', () => {
   it('the audit names actions in words, keeps the code, and shows times as dates', async () => {
     expect(actionLabel('key.created')).toBe('Key created');
     expect(actionLabel('step_up.failed')).toBe('Step up failed');
+    // The same titles as the feed digests (shared, D704): a command-named action reads as what happened.
+    expect(actionLabel('member.invite')).toBe('Member invited');
     routes['/api/me'] = { body: ME };
     routes['/api/orgs/org_a'] = { body: { org: { id: 'org_a', name: 'Acme', status: 'active' }, role: 'owner' } };
     const at_ = Date.UTC(2026, 10, 7, 9, 30);

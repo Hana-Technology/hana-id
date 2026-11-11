@@ -377,25 +377,30 @@ describe('rendering', () => {
       });
     }
 
-    it('the text part keeps each row on one line as before (ISO time, codes, JSON); the HTML shows the same facts per row', () => {
+    it('the text part keeps each row on one line as before (ISO time, codes, JSON); the HTML reads it in words with the code kept (D704)', () => {
       const ch = mails.changesDigest;
       expect(ch.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 2 app changes in org_1');
       expect(ch.text).toContain(`- 2026-11-11T05:01:36.861Z origin.added on app_1 by member usr_1 ${JSON.stringify(urlDetail)}\n`);
       expect(ch.text).toContain('- 2026-11-11T05:02:36.861Z org.security_contacts by hana staff-sub {"old":["a@evil.example"],"new":["b@evil.example"]}\n');
       const chHtml = visibleText(ch.html);
-      for (const fact of ['origin.added on app_1', 'When 2026-11-11T05:01:36.861Z', 'By a console member (usr_1)', JSON.stringify(urlDetail), 'org.security_contacts', 'By Hana staff (staff-sub)', '{"old":["a@evil.example"],"new":["b@evil.example"]}']) expect(chHtml, fact).toContain(fact);
+      // The title in words, its code under it, the time in words, the details as the console's Audit page reads them.
+      for (const fact of ['Origin addedorigin.addedWhen 11 November 2026, 05:01 UTCBy a console member (usr_1)App app_1', `name: ${hostileName} · note: Urgent: cancel at https://evil.example/cancel?x=1#y · origin: http://localhost:5173`, 'Security contacts replacedorg.security_contactsWhen 11 November 2026, 05:02 UTCBy Hana staff (staff-sub)old: a@evil.example · new: b@evil.example']) expect(chHtml, fact).toContain(fact);
+      // The exact time and the JSON stay in the text part only.
+      expect(chHtml).not.toContain('2026-11-11T05:01:36.861Z');
+      expect(chHtml).not.toContain(JSON.stringify(urlDetail));
       const au = mails.auditDigest;
       expect(au.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 2 console events in org_1');
       expect(au.text).toContain(`- 2026-11-11T05:01:36.861Z member.invite ${hostileName} by member usr_1 (ok) ${JSON.stringify(urlDetail)}\n`);
       expect(au.text).toContain('- 2026-11-11T05:02:36.861Z member.invite by member usr_1 (failed)\n');
       const auHtml = visibleText(au.html);
-      for (const fact of [`member.invite ${hostileName}`, 'When 2026-11-11T05:01:36.861Z', 'By a console member (usr_1)', 'Outcome ok', 'Outcome failed', JSON.stringify(urlDetail)]) expect(auHtml, fact).toContain(fact);
+      for (const fact of [`Member invitedmember.inviteWhen 11 November 2026, 05:01 UTCBy a console member (usr_1)About ${hostileName}Outcome succeededname: ${hostileName} · note: Urgent: cancel at https://evil.example/cancel?x=1#y · origin: http://localhost:5173`, 'Member invitedmember.inviteWhen 11 November 2026, 05:02 UTCBy a console member (usr_1)Outcome failedEnd of']) expect(auHtml, fact).toContain(fact);
       expect(mails.auditDigestNoOrg.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 1 console event');
       const se = mails.securityDigest;
       expect(se.subject).toBe('[SANDBOX] [Hana ID sandbox-test] Security events: drift, breaker in org_1');
       expect(se.text).toContain(`- 2026-11-11T05:01:36.861Z drift (se_0) app app_1 scope s1 ${JSON.stringify(urlDetail)}\n`);
       const seHtml = visibleText(se.html);
-      for (const fact of ['drift (se_0)', 'When 2026-11-11T05:01:36.861Z', 'App app_1', 'Scope s1', 'breaker (se_1)', JSON.stringify(urlDetail)]) expect(seHtml, fact).toContain(fact);
+      for (const fact of [`App setting in force without a noticedrift · se_0When 11 November 2026, 05:01 UTCApp app_1Scope s1name: ${hostileName} · note: Urgent: cancel at https://evil.example/cancel?x=1#y · origin: http://localhost:5173`, 'Too many destructive changes in an hourbreaker · se_1When 11 November 2026, 05:02 UTCApp app_1name:']) expect(seHtml, fact).toContain(fact);
+      expect(visibleText(mails.securityDigestOne.html)).toContain('Hana Home daily budget running highhome_budget_high · se_0When 11 November 2026, 05:01 UTCderives: 400');
       // One entry per row, each with its When line.
       expect(se.html.match(/>When</gu)).toHaveLength(2);
       expect(mails.securityDigestOne.subject).toBe('[SANDBOX] [Hana ID sandbox-test] Security event: home_budget_high');
@@ -425,10 +430,20 @@ describe('rendering', () => {
       }
     });
 
+    it('details in words as the console reads them (D703): times as dates (a bad one raw), nulls dropped, yes and no, lists and objects as text; at most 400 characters', () => {
+      const t = Date.UTC(2026, 10, 11, 5, 5);
+      const w = changesDigest(c, 'org_1', [change(0, { kind: 'change.announced', detail: { changeId: 'gc_1', activeFrom: t, endedAt: 9e15, policyId: null, waived: true, origins: [{ changeId: 'gc_2', origin: 'https://a.example' }], tags: [] } })]);
+      const words = visibleText(/<div class="hm-ink2"[^>]*>([\s\S]*?)<\/div>/u.exec(w.html)![1]!);
+      expect(words).toBe('change id: gc_1 · active from: 11 November 2026, 05:05 UTC · ended at: 9000000000000000 · waived: yes · origins: change id: gc_2, origin: https://a.example · tags: none');
+      expect(visibleText(w.html)).toContain('Change announcedchange.announced');
+      // The text part keeps the JSON as before.
+      expect(w.text).toContain(`"activeFrom":${t},"endedAt":9000000000000000,"policyId":null`);
+    });
+
     it('the HTML part shows at most 400 characters of a row’s details, as the text part', () => {
       const m = changesDigest(c, 'org_1', [change(0, { detail: { label: 'x'.repeat(1000) } })]);
       const detail = /<div class="hm-ink2"[^>]*>([\s\S]*?)<\/div>/u.exec(m.html)![1]!;
-      expect(visibleText(detail)).toBe(`{"label":"${'x'.repeat(390)}`);
+      expect(visibleText(detail)).toBe(`label: ${'x'.repeat(393)}`);
       expect(visibleText(detail)).toHaveLength(400);
       expect(m.text).toContain(` {"label":"${'x'.repeat(390)}\n`);
     });
@@ -460,7 +475,7 @@ describe('rendering', () => {
           expect(visibleText(m.html)).toContain(`When ${flag}`);
           // The good row is untouched.
           expect(m.text).toContain('- 2026-11-11T05:02:36.861Z ');
-          expect(visibleText(m.html)).toContain('When 2026-11-11T05:02:36.861Z');
+          expect(visibleText(m.html)).toContain('When 11 November 2026, 05:02 UTC');
         }
       }
       // Logged at error level as a count, never the value or the row: exactly these keys.

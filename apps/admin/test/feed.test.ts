@@ -123,7 +123,8 @@ describe('app_changes', () => {
     expect(mine[0]!.text).not.toContain('origin.proposed');
     // Designed (D704): the fixed heading, the row's code and app; still a blocking-class purpose (bypasses suppressions).
     expect(mine[0]!.html).toMatch(/>(A change|Changes) to your apps<\/h1>/u);
-    expect(mine[0]!.html).toContain('suspension<span>.</span><wbr>set on ');
+    expect(mine[0]!.html).toContain('>Suspension set</div>');
+    expect(mine[0]!.html).toContain('suspension<span>.</span><wbr>set</div>');
     expect(mine[0]!.bypassSuppressions).toBe(true);
     const max = await env.HOT_DB.prepare('SELECT MAX(seq) AS m FROM app_changes').first<number>('m');
     expect(Number(data.state.get(FEED_CURSORS.changes)!.value)).toBe(max);

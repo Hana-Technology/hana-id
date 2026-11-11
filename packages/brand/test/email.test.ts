@@ -103,19 +103,21 @@ describe('mailHtml', () => {
     expect(pre).toBe(json);
   });
 
-  it('log entries (D704): a bold title, labelled lines, a monospaced detail; unlinked runs split, plain strings unchanged; dark classes', () => {
+  it('log entries (D704): a bold title, its code under it, labelled lines, a smaller detail; unlinked runs split, plain strings unchanged; dark classes', () => {
     const html = body(
       base([
         {
           kind: 'entries',
           items: [
-            { title: [{ unlinked: 'origin.added on app_1' }], fields: [['When', [{ unlinked: '2026-11-11T05:01:36.861Z' }]], ['By', 'a.b']], detail: [{ unlinked: '{"origin":"https://evil.example/x?y=1#z"}' }] },
+            { title: [{ unlinked: 'origin.added on app_1' }], code: [{ unlinked: 'origin.added' }], fields: [['When', [{ unlinked: '2026-11-11T05:01:36.861Z' }]], ['By', 'a.b']], detail: [{ unlinked: '{"origin":"https://evil.example/x?y=1#z"}' }] },
             { title: 'org.frozen', fields: [] },
           ],
         },
       ]),
     );
-    expect(html).toContain('<div style="font-weight:700">origin<span>.</span><wbr>added on app_1</div>');
+    expect(html).toContain('<div style="font-weight:700">origin<span>.</span><wbr>added on app_1</div><div class="hm-muted" style="font-size:12px;color:#665d80">origin<span>.</span><wbr>added</div>');
+    // No code line without a code.
+    expect(html.match(/font-size:12px;color:#665d80"/gu)).toHaveLength(1);
     expect(html).toContain('<span class="hm-muted" style="color:#665d80">When</span> 2026-11-11T05:01:36<span>.</span><wbr>861Z');
     expect(html).toContain('<span class="hm-muted" style="color:#665d80">By</span> a.b</div>');
     expect(html).toContain('https:<span>/</span><wbr><span>/</span><wbr>evil<span>.</span><wbr>example<span>/</span><wbr>x<span>?</span><wbr>y<span>=</span><wbr>1<span>#</span><wbr>z');

@@ -1,7 +1,7 @@
 // What every email says (docs/batch-c-spec.md "Email", "Notice and cancel", "Invites and owner grants", "On-chain
 // owner actions"). Builders only: who gets each message and when it is sent is notices.ts, feed.ts and watcher.ts.
 // The link tokens are passed in as finished URLs; nothing here sees a key.
-import type { AppChange, AuditRow, InviteView, MemberNotice, SecurityEvent } from '@hana-id/console-core';
+import { type AppChange, type AuditRow, type InviteView, type MemberNotice, type SecurityEvent, actionLabel, detailFields, securityEventLabel } from '@hana-id/console-core';
 import type { ChangeNotice } from '../env.ts';
 import { log } from '../log.ts';
 import { type Block, type Design, type LogRow, type Rendered, cut, duration, oneLine, readableTime, render, rowTime } from './render.ts';
@@ -217,18 +217,44 @@ const detailText = (d: Record<string, unknown>): string => {
 const actorWords = (kind: string, id: string): string =>
   `${kind === 'hana' ? 'Hana staff' : kind === 'member' ? 'a console member' : kind === 'system' ? 'the system' : kind === 'link' ? 'an emailed link' : kind} (${id})`;
 
+/** A row's time in both forms: `text` for the text part (the exact ISO time), `words` for the HTML part. */
+interface RowTime {
+  text: string;
+  words: string;
+}
+
 /**
- * Each row's time (D704): the exact ISO time (D697: a digest is a log, its times copied into tickets and compared with
- * the console's Audit page and logs). One that isn't a valid time is shown raw and flagged in both parts, and logged
- * at error level (the source, the org and a count; never the value), so it can't hold back the rest of the digest or
- * its source's cursor.
+ * Each row's time (D704). The text part keeps the exact ISO time (D697: a digest is a log, its times copied into tickets
+ * and compared with logs); the HTML part reads it as the notices do ("11 November 2026, 05:01 UTC", seconds dropped),
+ * chosen by the user 2026-11-11. One that isn't a valid time is shown raw and flagged in both parts, and logged at error
+ * level (the source, the org and a count; never the value), so it can't hold back the rest of the digest or its
+ * source's cursor.
  */
-function rowTimes(source: string, orgId: string | null, ms: unknown[]): string[] {
-  const out = ms.map(rowTime);
+function rowTimes(source: string, orgId: string | null, ms: unknown[]): RowTime[] {
+  const out = ms.map((m) => {
+    const t = rowTime(m);
+    return { valid: t.valid, text: t.text, words: t.valid ? readableTime(m as number) : t.text };
+  });
   const bad = out.filter((t) => !t.valid).length;
   if (bad) log({ event: 'digest_bad_time', step: source, ...(orgId ? { orgId } : {}), count: bad }, 'error');
-  return out.map((t) => t.text);
+  return out.map(({ text, words }) => ({ text, words }));
 }
+
+/** A time inside a row's details, in words; one that isn't a valid time as its raw value (never a throw). */
+const detailTime = (ms: number): string => {
+  const t = rowTime(ms);
+  return t.valid ? readableTime(ms) : String(ms);
+};
+
+/**
+ * A row's details for the HTML part (D704), as the console's Audit page reads them (D703, `@hana-id/console-core`
+ * `detailFields`: times as dates, empty fields left out, yes and no, lists and objects as plain text, keys in words),
+ * capped at 400 characters as the text part's JSON is.
+ */
+const detailWords = (d: Record<string, unknown>): string => cut(detailFields(d, detailTime).join(' · '), 400);
+
+/** An audit row's outcome in words; an unknown one as itself. */
+const outcomeWords = (o: string): string => (o === 'ok' ? 'succeeded' : o === 'failed' ? 'failed' : o);
 
 /**
  * The designed layout for a feed digest (D704, asked for by the user; amends D700): a fixed heading and preview line,
@@ -239,34 +265,32 @@ const digestDesign = (c: MailContext, heading: string, preheader: string): Desig
 /** Where a digest's app changes and console rows can also be read (for rows its HTML part leaves out, D704). */
 const AUDIT_PAGE = "the console's Audit page";
 
-// How each digest row reads (D704): its one line for the text part (unchanged) and its title, labelled lines and details
-// for the HTML part. The titles are the codes for now; changing how a row reads is changing these three functions.
-const changeRow = (r: AppChange, time: string): LogRow => ({
-  line: `${time} ${r.kind}${r.appId ? ` on ${r.appId}` : ''} by ${r.actorKind} ${r.actorId}${detailText(r.detail) ? ` ${detailText(r.detail)}` : ''}`,
-  title: r.appId ? `${r.kind} on ${r.appId}` : r.kind,
-  fields: [
-    ['When', time],
-    ['By', actorWords(r.actorKind, r.actorId)],
-  ],
-  ...(detailText(r.detail) ? { detail: detailText(r.detail) } : {}),
+// How each digest row reads (D704, the plain words chosen by the user 2026-11-11): the text part's one line keeps the
+// codes, the ISO time and the JSON (support matches on them); the HTML part has the action in words (the same titles
+// as the console's Audit page, `@hana-id/console-core` audit-words.ts) with its code under it, the time in words, and
+// the details in words.
+const changeRow = (r: AppChange, time: RowTime): LogRow => ({
+  line: `${time.text} ${r.kind}${r.appId ? ` on ${r.appId}` : ''} by ${r.actorKind} ${r.actorId}${detailText(r.detail) ? ` ${detailText(r.detail)}` : ''}`,
+  title: actionLabel(r.kind),
+  code: r.kind,
+  fields: [['When', time.words], ['By', actorWords(r.actorKind, r.actorId)], ...(r.appId ? ([['App', r.appId]] as [string, string][]) : [])],
+  ...(detailWords(r.detail) ? { detail: detailWords(r.detail) } : {}),
 });
 
-const auditLogRow = (r: AuditRow, time: string): LogRow => ({
-  line: `${time} ${r.action}${r.target ? ` ${r.target}` : ''} by ${r.actorKind} ${r.actorId} (${r.outcome})${detailText(r.details) ? ` ${detailText(r.details)}` : ''}`,
-  title: r.target ? `${r.action} ${r.target}` : r.action,
-  fields: [
-    ['When', time],
-    ['By', actorWords(r.actorKind, r.actorId)],
-    ['Outcome', r.outcome],
-  ],
-  ...(detailText(r.details) ? { detail: detailText(r.details) } : {}),
+const auditLogRow = (r: AuditRow, time: RowTime): LogRow => ({
+  line: `${time.text} ${r.action}${r.target ? ` ${r.target}` : ''} by ${r.actorKind} ${r.actorId} (${r.outcome})${detailText(r.details) ? ` ${detailText(r.details)}` : ''}`,
+  title: actionLabel(r.action),
+  code: r.action,
+  fields: [['When', time.words], ['By', actorWords(r.actorKind, r.actorId)], ...(r.target ? ([['About', r.target]] as [string, string][]) : []), ['Outcome', outcomeWords(r.outcome)]],
+  ...(detailWords(r.details) ? { detail: detailWords(r.details) } : {}),
 });
 
-const eventRow = (e: SecurityEvent, time: string): LogRow => ({
-  line: `${time} ${e.kind} (${e.id})${e.appId ? ` app ${e.appId}` : ''}${e.scopeId ? ` scope ${e.scopeId}` : ''} ${detailText(e.detail)}`,
-  title: `${e.kind} (${e.id})`,
-  fields: [['When', time], ...(e.appId ? ([['App', e.appId]] as [string, string][]) : []), ...(e.scopeId ? ([['Scope', e.scopeId]] as [string, string][]) : [])],
-  ...(detailText(e.detail) ? { detail: detailText(e.detail) } : {}),
+const eventRow = (e: SecurityEvent, time: RowTime): LogRow => ({
+  line: `${time.text} ${e.kind} (${e.id})${e.appId ? ` app ${e.appId}` : ''}${e.scopeId ? ` scope ${e.scopeId}` : ''} ${detailText(e.detail)}`,
+  title: securityEventLabel(e.kind),
+  code: `${e.kind} · ${e.id}`,
+  fields: [['When', time.words], ...(e.appId ? ([['App', e.appId]] as [string, string][]) : []), ...(e.scopeId ? ([['Scope', e.scopeId]] as [string, string][]) : [])],
+  ...(detailWords(e.detail) ? { detail: detailWords(e.detail) } : {}),
 });
 
 /** One digest per org and source: the rows, oldest first. */

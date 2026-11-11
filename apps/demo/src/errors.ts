@@ -34,7 +34,7 @@ export function errorInfo(e: unknown): ErrorInfo {
 const REPORT = 'If it keeps happening, use “Copy diagnostics” and send it to the Hana team.';
 
 /** What the page says when Hana signed this device out (4900 with `data.reason` `signed_out`, D695). */
-export const SIGNED_OUT_MESSAGE = 'You were signed out on this device (from Hana Home, or by signing in again elsewhere). Log in again.';
+export const SIGNED_OUT_MESSAGE = 'You were signed out on this device (from Hana Home, another tab or another device). Log in again.';
 
 /**
  * Hana signed this device out: the `disconnect` event or a refused request with code 4900 and `data.reason`

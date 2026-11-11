@@ -994,7 +994,8 @@ identity token also need a `'live'` answer younger than 60 s, checked first, wit
 A session that ends because the API said its share was revoked tells the partner page so (D695): a status read's
 `'revoked'` (the minute's check, or the one before a signature or a cached identity token), a `410 share_revoked` (or
 `410 session_ended` with reason `share_revoked`) on a touch, `revoke-all` or a consent register, a newer login on this
-device, or another tab's `signedOut` broadcast. The vault sends `disconnectReason {reason: 'signed_out'}` just before its
+device, or another tab's `signedOut` broadcast. The revocation itself may come from Hana Home, from `revoke-all` on
+another device of the same user (`revokeAllFrom`), from a newer login on this device, or from the app's settings. The vault sends `disconnectReason {reason: 'signed_out'}` just before its
 `disconnect` (`disconnect` keeps exactly `{code}`, so an SDK of 0.3.0 or older drops the new event and keeps the
 `disconnect` it knows), the SDK adds `reason: 'signed_out'` to the page's `disconnect`, and every request the session
 refuses at that moment (a signature, a consent screen, an export) gets 4900 with `data.reason: 'signed_out'`. To other

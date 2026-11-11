@@ -519,6 +519,8 @@ describe('events and disconnects', () => {
     expect(provider).toContainEqual(['accounts', []]);
   });
 
+  // The SDK's own 4900 never takes the vault's reason: this fails if the lost-connection disconnect ever read a reason
+  // left pending. (Clearing that pending reason in #onDisconnect is defence in depth only: nothing reads it afterwards.)
   it('D695: a lost vault connection is a disconnect with no reason, even right after a disconnectReason', async () => {
     s = setup();
     const seen: unknown[] = [];

@@ -311,12 +311,16 @@ hana.on('supportIdChanged', (supportId) => {}); // 'HANA-XXXX-XXXX' or null (sec
 ```
 
 `disconnect` is always code 4900. With `reason: 'signed_out'` (SDK releases after 0.3.0) Hana ended this device's
-session: the user signed the device out from Hana's own page, or signed in to your app again in another tab, or your
+session: the user signed the device out from Hana's own page, or used "log out other devices"
+(`revokeOtherDevices()`) on another device, or signed in to your app again in another tab of this device, or your
 app's settings ended it (persistence turned off, the origin removed). The vault is fine: show "You were signed out,
-log in again", not "reload". Without `reason` the vault connection is gone (reload, or create the client again), or
-another tab of your app logged out. The request that was waiting when it happened (a signature, an export) rejects
-with 4900 and the same `data.reason: 'signed_out'`, so show one message for both. Your own `logout()` sends no
-`disconnect` (only `accountsChanged` with null).
+log in again", not "reload". Without `reason` the vault doesn't say why: the vault connection may be gone (then
+`hana.status` is `'error'`: reload, or create the client again), or the session ended another way (another tab of your
+app logged out, the session expired on Hana's side, a stored session that couldn't be opened, a tab of an older Hana
+build ended it). When `hana.status` is `'logged_out'`, the vault is fine and a new login is all that's needed. The
+request that was waiting when it happened (a signature, an export) rejects with 4900 and the same `data.reason:
+'signed_out'`, so show one message for both. Your own `logout()` sends no `disconnect` (only `accountsChanged` with
+null).
 
 `loginProgress: key_pending` means Google has just started signing with a new key that Hana ID hasn't activated yet
 (it goes live within minutes): the vault waits up to 30 s and tries once more, then reports `chain` again. Show
@@ -1057,7 +1061,7 @@ window, not returned.
 | `4001` | The user rejected, closed the popup, or let it time out | nothing; let them retry |
 | `4100` | Not logged in, wrong address, or not allowed for this app (raw signing off, no policy, a mainnet for a test app: `data.reason`) | log in, or check the call |
 | `4200` | Unsupported method (`eth_sign`, …) | use a supported method |
-| `4900` | The session or the vault is gone. `data.reason: 'signed_out'`: Hana signed this device out (Hana's own page, a newer sign-in in another tab, or your app's settings), and the vault is fine. Without it: the vault connection is gone (frame replaced), or the session ended another way (a logout, its end) | with `signed_out`, ask the user to log in again (no reload); otherwise create the client again, or log in |
+| `4900` | The session or the vault is gone. `data.reason: 'signed_out'`: Hana signed this device out (Hana's own page, `revokeOtherDevices()` on another device, a newer sign-in in another tab of this device, or your app's settings), and the vault is fine. Without it: the vault connection is gone (frame replaced, `hana.status` `'error'`), or the session ended another way (a logout in another tab, its end on Hana's side, a stored session that couldn't be opened), where the vault is fine (`hana.status` `'logged_out'`) | with `signed_out`, or with `hana.status` `'logged_out'`, ask the user to log in again (no reload); with `'error'`, create the client again or reload |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
 | `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins (`no_answer`'s `data.origin` against the portal's **Origins** tab), the network. A wrong origin or key takes about 3 s to report (`no_answer`; about 10 s with SDK 0.2.0) |
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |

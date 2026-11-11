@@ -80,9 +80,10 @@ export interface HanaEvents {
   /**
    * The session or the vault ended without this page asking (always `code` 4900): Hana ended the session on this
    * device, another tab of the app logged out, or the vault connection is gone. `reason: 'signed_out'` when Hana signed
-   * this device out (its session was revoked: Hana Home's "Sign out this device", or a newer sign-in to the app on this
-   * device): no reload is needed, only a new login. Without `reason`, the cause is not known (a lost vault connection,
-   * another tab's logout, a vault older than this field).
+   * this device out (its session was revoked: Hana Home's "Sign out this device", `revokeOtherDevices()` on another
+   * device, a newer sign-in to the app in another tab of this device, or the app's settings): no reload is needed, only
+   * a new login. Without `reason`, the vault doesn't say why (a lost vault connection, another tab's logout, a share
+   * that expired or that Hana doesn't know, a record that failed to open, a vault or another tab older than this field).
    */
   disconnect: [HanaDisconnect];
   loginProgress: [PortEventMap['loginProgress']];
@@ -767,7 +768,8 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   #onDisconnect(launcherWasVisible: boolean): void {
     this.#vaultDown = true;
-    // The connection itself died: no reason is known (one the vault sent for a disconnect that never came is dropped).
+    // The connection itself died: its disconnect below never has a reason. Clearing a reason the vault sent for a
+    // disconnect that never came is defence in depth only: nothing reads it once the vault is down.
     this.#disconnectReason = null;
     // The connection hid the frame; tell a partner that mirrors the launcher (PART-1).
     if (launcherWasVisible && !this.#destroyed) this.emit('launcher', { visible: false, label: '', clickable: false });

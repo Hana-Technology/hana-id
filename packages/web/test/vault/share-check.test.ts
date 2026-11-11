@@ -141,9 +141,12 @@ async function endedByRevoke(t: Tab, prk: Uint8Array, shareId: Uint8Array): Prom
   expect(t.events.filter((e) => e.event === 'accountsChanged').at(-1)!.data).toEqual({ addresses: null });
   expect(await statusOf(t)).toBe('logged_out');
   await eventually(async () => (await stored(t)) === undefined, 'the record deleted');
-  // Every tab that found it says so the same way (two tabs on one share each tell the other).
+  // Every tab that found it says so the same way (two tabs on one share each tell the other): whole `signedOut`,
+  // `revoked` pairs, so the list always ends in `revoked`, which tabs of an older build end on.
   const told = shareBroadcasts(t.browser, shareId);
   expect(told.length).toBeGreaterThan(0);
+  expect(told.length % 2).toBe(0);
+  expect(told.at(-1)).toBe('revoked');
   expect(told).toEqual(told.map((_, i) => (i % 2 === 0 ? 'signedOut' : 'revoked')));
 }
 

@@ -6,7 +6,7 @@
 // share-check.test.ts; the stale tab's touch in persistence.test.ts.
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { TOUCH_EVERY_MS } from '../../src/vault/vault.ts';
-import { APP_ID, Browser, type Google, type Tab, answer, apiError, disconnectedWith, google, login, openApproval, readyTab, shareBroadcasts, sleepReal, waitLauncher } from './harness.ts';
+import { APP_ID, Browser, type Google, HOUR, type Tab, answer, apiError, disconnectedWith, google, login, openApproval, readyTab, shareBroadcasts, sleepReal, waitLauncher } from './harness.ts';
 
 let g: Google;
 const tabs: Tab[] = [];
@@ -39,6 +39,7 @@ async function twoTabs(): Promise<{ browser: Browser; a: Tab; b: Tab; shareId: U
 }
 
 const shareOf = (t: Tab): Uint8Array | undefined => (t.vault as unknown as { session: { share: { shareId: Uint8Array } | null } | null }).session?.share?.shareId;
+const dormantOf = (t: Tab): unknown => (t.vault as unknown as { dormant: unknown }).dormant;
 const statusOf = async (t: Tab): Promise<string> => ((await t.request('hana_status')).result as { status: string }).status;
 const backendShare = (browser: Browser, shareId: Uint8Array) => [...browser.backend.shares.values()].find((s) => s.shareId.every((v, i) => v === shareId[i]))!;
 
@@ -135,6 +136,38 @@ describe('D695: a session Hana signed out says so', () => {
     await b.waitEvent('disconnect');
     expect(disconnectedWith(b)).toEqual(['signed_out']);
     expect(shareBroadcasts(browser, shareId)).toEqual(['signedOut', 'revoked']);
+  });
+
+  it('a dormant (idle) tab told signedOut by another tab drops its session with disconnect signed_out', async () => {
+    const browser = new Browser();
+    const a = await tab(browser);
+    await login(a, g);
+    await until(() => shareOf(a) !== undefined, 'the share made');
+    const shareId = Uint8Array.from(shareOf(a)!);
+    // Past the 2 h in-memory idle limit: PRK zeroed, the session dormant.
+    browser.timers.advance(2 * HOUR);
+    await until(() => dormantOf(a) !== null, 'the session dormant');
+    fromAnotherTab(browser, [
+      { v: 1, t: 'signedOut', shareId },
+      { v: 1, t: 'revoked', shareId },
+    ]);
+    await a.waitEvent('disconnect');
+    await sleepReal(20);
+    expect(disconnectedWith(a)).toEqual(['signed_out']);
+    expect(dormantOf(a)).toBeNull();
+    expect(await statusOf(a)).toBe('logged_out');
+  });
+
+  it('a signedOut naming another share leaves this tab’s session alone', async () => {
+    const { browser, b } = await twoTabs();
+    const other = new Uint8Array(16).fill(7);
+    fromAnotherTab(browser, [
+      { v: 1, t: 'signedOut', shareId: other },
+      { v: 1, t: 'revoked', shareId: other },
+    ]);
+    await sleepReal(30);
+    expect(b.events.some((e) => e.event === 'disconnect' || e.event === 'disconnectReason')).toBe(false);
+    expect(await statusOf(b)).toBe('logged_in');
   });
 
   it('an export waiting for its window fails 4900 signed_out when the device is signed out', async () => {

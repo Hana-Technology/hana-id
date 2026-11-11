@@ -344,7 +344,8 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     render();
   });
   c.on('disconnect', ({ code, reason }) => {
-    // `reason: 'signed_out'`: Hana signed this device out (Hana Home, or a newer sign-in); without it, the vault is gone.
+    // `reason: 'signed_out'`: Hana signed this device out (Hana Home, another tab or another device); without it, the
+    // demo keeps its lost-vault text.
     showError('load', reason === undefined ? { code } : { code, data: { reason } });
     render();
   });

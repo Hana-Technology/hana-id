@@ -63,7 +63,7 @@ describe('plainMessage', () => {
   });
 
   it('D695: a 4900 with reason signed_out is a sign-out (log in again, no reload); a 4900 without it is a lost vault', () => {
-    const signedOut = 'You were signed out on this device (from Hana Home, or by signing in again elsewhere). Log in again.';
+    const signedOut = 'You were signed out on this device (from Hana Home, another tab or another device). Log in again.';
     expect(SIGNED_OUT_MESSAGE).toBe(signedOut);
     // The refused signature (either error shape) and the disconnect event the page turns into one.
     for (const e of [new HanaError(4900, 'x', { reason: 'signed_out' }), new ProviderRpcError(4900, 'x', { reason: 'signed_out' }), { code: 4900, data: { reason: 'signed_out' } }]) {

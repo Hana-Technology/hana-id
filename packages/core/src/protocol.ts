@@ -691,8 +691,9 @@ export interface PortEventMap {
   disconnect: { code: number };
   /**
    * Why the `disconnect` that comes right after it happened (sent only just before one, in the same turn): `signed_out`,
-   * Hana ended this device's session because its share was revoked (Hana Home's "Sign out this device", a newer sign-in
-   * of the app on this device, or the app's settings). The SDK adds it to that `disconnect` for the page. A separate
+   * Hana ended this device's session because its share was revoked (Hana Home's "Sign out this device",
+   * `revokeOtherDevices()` on another device, a newer sign-in of the app in another tab of this device, or the app's
+   * settings). The SDK adds it to that `disconnect` for the page. A separate
    * event because `disconnect` takes exactly `{code}`: an SDK that predates this one keeps the `disconnect` it can read,
    * and simply drops this.
    */

@@ -306,7 +306,7 @@ describe('demo page', () => {
     fake.emit('accountsChanged', null);
     fake.emit('statusChanged', 'logged_out');
     fake.emit('disconnect', { code: 4900, reason: 'signed_out' });
-    const signedOut = 'You were signed out on this device (from Hana Home, or by signing in again elsewhere). Log in again.';
+    const signedOut = 'You were signed out on this device (from Hana Home, another tab or another device). Log in again.';
     expect($('notice').textContent).toBe(signedOut);
     expect($('notice').hidden).toBe(false);
     expect($('error').hidden).toBe(true);

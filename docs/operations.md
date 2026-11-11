@@ -1105,7 +1105,10 @@ Settings (manifest `near.relay`, all optional but `account` and `receivers`; `ge
 `maxGasTgas` (inner gas per delegate, default 50, sandbox-dev 30; `add_message` burns about 1.45), `dailyBudgetNear`
 (5), `perSenderPerDay` (100, sandbox-dev 50), `perAppPerDay` (5000, sandbox-dev 2000), `lowBalanceNear` (2),
 `activationYocto` (`"0"`: set it, at most 0.01 NEAR, only if a network ever refuses a zero Transfer to a new implicit
-account). Turning it off: remove `near.relay` (or empty `receivers`), `gen`, deploy; or delete the secret
+account), `appDailyBudgetNear` (1; below `dailyBudgetNear`), `relaysPerDay` (20000, sandbox-dev 10000; above
+`perAppPerDay`), `activationsPerAppPerDay` (200) and `activationsPerDay` (1000; above it), `requireKnownAccount` (true;
+sandbox-dev `false` until the wallet directory records NEAR accounts, `feat/near-directory`: set it to `true`, `gen`,
+deploy, once that build is merged and deployed). Turning it off: remove `near.relay` (or empty `receivers`), `gen`, deploy; or delete the secret
 (`wrangler secret delete NEAR_RELAY_KEYS`), which takes effect at once.
 
 ### Runbook

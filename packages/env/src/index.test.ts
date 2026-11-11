@@ -339,4 +339,25 @@ describe('manifestSchema: near (D733)', () => {
     }
     expect(manifestSchema.safeParse(withRelay({ ...ok, maxGasTgas: 300, dailyBudgetNear: 0.5, activationYocto: '10000000000000000000000' })).success).toBe(true);
   });
+
+  it('refuses a per-app cap or budget at or above the env’s (D736)', () => {
+    for (const bad of [
+      { perAppPerDay: 20_000 },
+      { perAppPerDay: 100, relaysPerDay: 100 },
+      { activationsPerAppPerDay: 1000 },
+      { activationsPerAppPerDay: 50, activationsPerDay: 10 },
+      { appDailyBudgetNear: 5 },
+      { dailyBudgetNear: 2, appDailyBudgetNear: 3 },
+      { appDailyBudgetNear: 0.0000001 },
+    ]) {
+      expect(issues(withRelay({ ...ok, ...bad })).join(' '), JSON.stringify(bad)).toMatch(/must be below|at least/u);
+    }
+    expect(issues(withRelay({ ...ok, perAppPerDay: 99, relaysPerDay: 100, activationsPerAppPerDay: 9, activationsPerDay: 10, dailyBudgetNear: 2, appDailyBudgetNear: 1.5 }))).toEqual([]);
+  });
+
+  it('requireKnownAccount: a boolean; false only on testnet (the schema allows only testnet today)', () => {
+    expect(issues(withRelay({ ...ok, requireKnownAccount: false }))).toEqual([]);
+    expect(manifestSchema.safeParse(withRelay({ ...ok, requireKnownAccount: 'no' })).success).toBe(false);
+    expect(manifestSchema.safeParse({ ...withRelay({ ...ok, requireKnownAccount: false }), network: 'mainnet' }).success).toBe(false);
+  });
 });

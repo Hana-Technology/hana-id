@@ -9,12 +9,12 @@ import { KeyPair } from '@near-js/crypto';
 import { type Action, actionCreators, buildDelegateAction, createTransaction, encodeDelegateAction, encodeSignedDelegate, encodeTransaction, Signature, SignedDelegate } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
 import { identityMessage } from '@hana-id/core/identity';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { base64Encode, hex } from '../src/bytes.ts';
 import { decodeSignedDelegate, encodeRelayTransaction, MAX_SIGNED_DELEGATE_BYTES, policyRefusal, TGAS, verifyDelegateSignature } from '../src/near/delegate.ts';
 import { checkNearRelayFunds } from '../src/near/relay-funds.ts';
 import { NEAR_RELAY_DEFAULTS, nearRelayVar, parseNearRelayConfig } from '../src/near/relay-config.ts';
-import { delegateFailure, nearActivatePayload, nearRelayPayload, toActivateRequest, toRelayRequest } from '../src/near/relay.ts';
+import { defaultNearAccountLookup, delegateFailure, nearActivatePayload, nearAccountKnown, nearDirectory, nearRelayPayload, toActivateRequest, toRelayRequest } from '../src/near/relay.ts';
 import { appHeaders, call, type Chain, newSessionKey, ORIGIN, sessionKeyPair, type SeededApp } from './helpers.ts';
 import { spentSession, vaultHeaders, vaultSetup } from './vault-helpers.ts';
 
@@ -74,10 +74,34 @@ const relay = (app: SeededApp, b: unknown, bindings?: Partial<typeof env>, heade
 const activate = (app: SeededApp, b: unknown, bindings?: Partial<typeof env>, headers = appHeaders(app)) => call('/v1/near/activate', { headers, body: b, env: bindings });
 const relayConfig = (extra: Record<string, unknown> = {}) => ({ NEAR_RELAY: JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], maxGasTgas: 50, ...extra }) });
 
+/**
+ * The wallet directory's NEAR records, as the directory build will hold them (D735): `scope#account` → user id. Every
+ * test's `setup()` user is known unless a test says otherwise; `unknownNear` accounts never are.
+ */
+const directory = new Map<string, string>();
+const remember = (scope: string, accountId: string, userId = `hu_${Math.random().toString(36).slice(2)}`) => directory.set(`${scope}#${accountId}`, userId);
+beforeEach(() => {
+  nearDirectory.lookup = async (_db, q) => {
+    const userId = directory.get(`${q.scopeId}#${q.accountId}`);
+    return userId ? { userId } : null;
+  };
+});
+afterEach(() => {
+  nearDirectory.lookup = defaultNearAccountLookup;
+  directory.clear();
+});
+
+/** A user known to the directory for `scope` (relay and activate need it with requireKnownAccount, the default). */
+function knownUser(scope: string, userId?: string): User {
+  const u = newUser();
+  remember(scope, u.accountId, userId);
+  return u;
+}
+
 async function setup(): Promise<{ app: SeededApp; near: Chain; spk: number[]; user: User }> {
   const { app, near } = await vaultSetup();
   const spk = spentSession(near, app.scope, { sub: `near-${Math.random().toString(36).slice(2)}` });
-  return { app, near, spk, user: newUser() };
+  return { app, near, spk, user: knownUser(app.scope) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -185,7 +209,24 @@ describe('encodeRelayTransaction', () => {
 describe('NEAR_RELAY config', () => {
   it('parses the manifest var with defaults and refuses anything out of bounds (relay off)', () => {
     const c = parseNearRelayConfig(nearRelayVar({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK] }));
-    expect(c).toEqual({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], maxGas: BigInt(NEAR_RELAY_DEFAULTS.maxGasTgas) * TGAS, dailyBudgetYocto: 5n * 10n ** 24n, perSenderPerDay: 100, perAppPerDay: 5000, lowBalanceYocto: 2n * 10n ** 24n, activationYocto: 0n });
+    expect(c).toEqual({
+      account: RELAY_ACCOUNT,
+      receivers: [GUESTBOOK],
+      maxGas: BigInt(NEAR_RELAY_DEFAULTS.maxGasTgas) * TGAS,
+      dailyBudgetYocto: 5n * 10n ** 24n,
+      appDailyBudgetYocto: 10n ** 24n,
+      perSenderPerDay: 100,
+      perAppPerDay: 5000,
+      relaysPerDay: 20_000,
+      activationsPerAppPerDay: 200,
+      activationsPerDay: 1000,
+      lowBalanceYocto: 2n * 10n ** 24n,
+      activationYocto: 0n,
+      requireKnownAccount: true,
+    });
+    // A small env budget gets an app budget of a fifth of it by default.
+    expect(parseNearRelayConfig(nearRelayVar({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], dailyBudgetNear: 2 }))?.appDailyBudgetYocto).toBe(4n * 10n ** 23n);
+    expect(parseNearRelayConfig(nearRelayVar({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], requireKnownAccount: false }))?.requireKnownAccount).toBe(false);
     expect(parseNearRelayConfig(nearRelayVar({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], dailyBudgetNear: 0.5, activationYocto: '1' }))).toMatchObject({ dailyBudgetYocto: 5n * 10n ** 23n, activationYocto: 1n });
     for (const bad of [
       undefined,
@@ -199,6 +240,13 @@ describe('NEAR_RELAY config', () => {
       JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], dailyBudgetNear: 0 }),
       JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], activationYocto: '10000000000000000000001' }),
       JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], extra: 1 }),
+      // A per-app cap or budget not below the env's (D736).
+      JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], perAppPerDay: 20_000 }),
+      JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], perAppPerDay: 10, relaysPerDay: 10 }),
+      JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], activationsPerAppPerDay: 1000 }),
+      JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], appDailyBudgetNear: 5 }),
+      JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], dailyBudgetNear: 0.000001 }),
+      JSON.stringify({ account: RELAY_ACCOUNT, receivers: [GUESTBOOK], requireKnownAccount: 'no' }),
     ]) {
       expect(parseNearRelayConfig(bad), String(bad)).toBeNull();
     }
@@ -377,35 +425,71 @@ describe('POST /v1/near/relay', () => {
     for (const n of [101n, 102n]) expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: n })), bindings)).status).toBe(200);
     const res = await relay(s.app, plainRelay(delegate(s.user, { nonce: 103n })), bindings);
     expect([res.status, (await body(res)).code, Number(res.headers.get('retry-after')) > 0]).toEqual([429, 'rate_limited', true]);
-    expect((await relay(s.app, plainRelay(delegate(newUser())), bindings)).status).toBe(200);
+    expect((await relay(s.app, plainRelay(delegate(knownUser(s.app.scope))), bindings)).status).toBe(200);
   });
 
   it('counts per app per day (manifest perAppPerDay), a refusal giving the sender’s window back', async () => {
     const bindings = relayConfig({ perAppPerDay: 1, perSenderPerDay: 1 });
     expect((await relay(s.app, plainRelay(delegate(s.user)), bindings)).status).toBe(200);
-    const other = newUser();
+    const other = knownUser(s.app.scope);
     const res = await relay(s.app, plainRelay(delegate(other)), bindings);
     expect([res.status, (await body(res)).error]).toEqual([429, 'Rate limit exceeded (per app)']);
     // The refused request took nothing from `other`'s window: another app relays for it at once.
     const app2 = await setup();
+    remember(app2.app.scope, other.accountId);
     expect((await relay(app2.app, plainRelay(delegate(other)), bindings)).status).toBe(200);
   });
 
-  it('per IP: 30 a minute, its own window', async () => {
-    const headers = { ...appHeaders(s.app), 'cf-connecting-ip': '10.250.1.1' };
-    let last = 0;
+  it('per IP: 30 a minute across every app (one IP, two apps share the window)', async () => {
+    const other = await setup();
+    const ip = '10.250.1.1';
     let n = 0;
     for (; n < 31; n++) {
-      last = (await relay(s.app, plainRelay(new Uint8Array([1])), undefined, headers)).status;
-      if (last === 429) break;
+      const app = n % 2 === 0 ? s.app : other.app;
+      if ((await relay(app, plainRelay(new Uint8Array([1])), undefined, { ...appHeaders(app), 'cf-connecting-ip': ip })).status === 429) break;
     }
-    expect([n, last]).toEqual([30, 429]);
+    expect(n).toBe(30);
+    expect((await relay(other.app, plainRelay(new Uint8Array([1])), undefined, { ...appHeaders(other.app), 'cf-connecting-ip': ip })).status).toBe(429);
   });
 
-  it('a daily NEAR budget: refused with 503 relay_budget_exhausted past it, with a near_relay_budget_high security event', async () => {
-    const res = await relay(s.app, plainRelay(delegate(s.user)), relayConfig({ dailyBudgetNear: 0.000001 }));
-    expect([res.status, (await body(res)).code, Number(res.headers.get('retry-after')) > 0]).toEqual([503, 'relay_budget_exhausted', true]);
+  it('only for a NEAR account the directory holds for a user of the app’s scope (requireKnownAccount, the default)', async () => {
+    const stranger = newUser();
+    let res = await relay(s.app, plainRelay(delegate(stranger)));
+    expect([res.status, (await body(res)).code, res.headers.get('retry-after')]).toEqual([409, 'near_account_unknown', null]);
+    // Known in another scope only: still unknown here.
+    const elsewhere = knownUser('another-scope');
+    expect((await body(await relay(s.app, plainRelay(delegate(elsewhere))))).code).toBe('near_account_unknown');
+    // With the setting off (testnet only), the limits alone apply.
+    res = await relay(s.app, plainRelay(delegate(stranger)), relayConfig({ requireKnownAccount: false }));
+    expect(res.status).toBe(200);
+    // The lookup failing is a 503, never a pass.
+    nearDirectory.lookup = () => Promise.reject(new Error('D1 down'));
+    expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 102n }))))).code).toBe('directory_unavailable');
+    expect(s.near.nearSent.length).toBe(1);
+  });
+
+  it('the default lookup reads the directory’s near rows of the scope (none before the directory build), through nearAccountKnown', async () => {
+    nearDirectory.lookup = defaultNearAccountLookup;
+    expect(await nearAccountKnown(env.DB, { scopeId: s.app.scope, accountId: s.user.accountId })).toBe(false);
+  });
+
+  it('a per-app daily NEAR budget below the env’s: 429 app_budget_exhausted for the app, the env’s still open to others', async () => {
+    const bindings = relayConfig({ dailyBudgetNear: 1, appDailyBudgetNear: 0.000001 });
+    const res = await relay(s.app, plainRelay(delegate(s.user)), bindings);
+    expect([res.status, (await body(res)).code, Number(res.headers.get('retry-after')) > 0]).toEqual([429, 'app_budget_exhausted', true]);
     expect(s.near.nearSent.length).toBe(0);
+  });
+
+  it('the env’s daily NEAR budget: past it 503 relay_budget_exhausted for every app, with a near_relay_budget_high security event', async () => {
+    // Each relay reserves (30 + 5 Tgas) × 10^8 = 0.0035 NEAR; an app may take 0.005, the env 0.01.
+    const bindings = relayConfig({ dailyBudgetNear: 0.01, appDailyBudgetNear: 0.005 });
+    const apps = [s, await setup(), await setup()];
+    const codes: (string | number)[] = [];
+    for (const a of apps) {
+      const res = await relay(a.app, plainRelay(delegate(a.user)), { ...bindings });
+      codes.push(res.status === 200 ? 200 : ((await body(res)).code as string));
+    }
+    expect(codes.at(-1)).toBe('relay_budget_exhausted');
     const ev = await env.DB.prepare("SELECT kind, detail_json FROM security_events WHERE kind = 'near_relay_budget_high'").all<{ kind: string; detail_json: string }>();
     expect(ev.results.length).toBe(1);
     expect(Object.keys(JSON.parse(ev.results[0]!.detail_json)).sort()).toEqual(['budgetYocto', 'day', 'spentYocto', 'thresholdPct']);
@@ -444,27 +528,58 @@ describe('POST /v1/near/activate', () => {
     expect((await body(await activate(s.app, { ...b, network: 'mainnet' }))).code).toBe('mainnet_not_allowed');
     expect((await body(await activate(s.app, { accountId: 'alice.testnet' }))).code).toBe('bad_request');
     const proven = activateBody(s.app, s.spk, s.user.accountId);
-    expect((await body(await activate(s.app, { ...proven, accountId: newUser().accountId }))).code).toBe('invalid_signature');
+    expect((await body(await activate(s.app, { ...proven, accountId: knownUser(s.app.scope).accountId }))).code).toBe('invalid_signature');
     expect((await activate(s.app, proven)).status).toBe(200);
     expect((await body(await activate(s.app, proven))).code).toBe('proof_replayed');
   });
 
-  it('per IP: 10 a minute; with a proof, 5 a day per user', async () => {
+  it('per IP: 10 a minute across apps; 5 a day per directory user; with a proof also per session user', async () => {
     const headers = { ...appHeaders(s.app), 'cf-connecting-ip': '10.250.2.2' };
     let n = 0;
     for (; n < 11; n++) {
-      const u = newUser();
+      const u = knownUser(s.app.scope);
       s.near.missingAccounts.add(u.accountId);
       if ((await activate(s.app, { accountId: u.accountId }, undefined, headers)).status === 429) break;
     }
     expect(n).toBe(10);
+    // Six accounts of one directory user: the sixth is refused.
     let last = 0;
+    for (let i = 0; i < 6; i++) {
+      const u = knownUser(s.app.scope, 'hu_one_user');
+      s.near.missingAccounts.add(u.accountId);
+      last = (await activate(s.app, { accountId: u.accountId })).status;
+    }
+    expect(last).toBe(429);
+    // With the directory off, a session proof still counts per user.
+    const off = relayConfig({ requireKnownAccount: false });
     for (let i = 0; i < 6; i++) {
       const u = newUser();
       s.near.missingAccounts.add(u.accountId);
-      last = (await activate(s.app, activateBody(s.app, s.spk, u.accountId))).status;
+      last = (await activate(s.app, activateBody(s.app, s.spk, u.accountId), off)).status;
     }
     expect(last).toBe(429);
+  });
+
+  it('an account the directory doesn’t hold yet: 409 near_account_unknown, retryable (retry-after: 2), nothing sent', async () => {
+    const res = await activate(s.app, { accountId: newUser().accountId });
+    const b = await body(res);
+    expect([res.status, b.code, b.retryable, res.headers.get('retry-after')]).toEqual([409, 'near_account_unknown', true, '2']);
+    expect(s.near.nearSent.length).toBe(0);
+  });
+
+  it('per app 200 a day below the env’s 1000 (manifest activationsPerAppPerDay / activationsPerDay)', async () => {
+    const one = knownUser(s.app.scope);
+    const two = knownUser(s.app.scope);
+    for (const u of [one, two]) s.near.missingAccounts.add(u.accountId);
+    const perApp = relayConfig({ activationsPerAppPerDay: 1 });
+    expect((await activate(s.app, { accountId: one.accountId }, perApp)).status).toBe(200);
+    expect((await body(await activate(s.app, { accountId: two.accountId }, perApp))).error).toBe('Rate limit exceeded (per app)');
+    // The env's window, filled to a cap of 2 (other tests in this file count in it too): any app is refused.
+    const global = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName('near-activate:global'));
+    for (let i = 0; i < 2; i++) await global.hit([{ name: 'near-activate:day', windowMs: 86_400_000, max: 2 }]);
+    const b = await setup();
+    b.near.missingAccounts.add(b.user.accountId);
+    expect((await body(await activate(b.app, { accountId: b.user.accountId }, relayConfig({ activationsPerAppPerDay: 1, activationsPerDay: 2 })))).error).toBe('Rate limit exceeded (across the env)');
   });
 });
 

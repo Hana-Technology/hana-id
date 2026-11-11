@@ -227,10 +227,23 @@ export const nearRelaySchema = z
     maxGasTgas: z.number().int().min(1).max(300).optional(),
     /** NEAR the relay may spend per UTC day across the env (default 5). */
     dailyBudgetNear: z.number().positive().max(1000).optional(),
+    /** NEAR one app may spend per UTC day (default 1, or a fifth of `dailyBudgetNear` if less); below `dailyBudgetNear`. */
+    appDailyBudgetNear: z.number().positive().max(1000).optional(),
     /** Relays per sender account per UTC day (default 100). */
     perSenderPerDay: z.number().int().min(1).max(10_000).optional(),
-    /** Relays per app per UTC day (default 5000). */
+    /** Relays per app per UTC day (default 5000); below `relaysPerDay`. */
     perAppPerDay: z.number().int().min(1).max(1_000_000).optional(),
+    /** Relays across the env per UTC day (default 20000). */
+    relaysPerDay: z.number().int().min(1).max(10_000_000).optional(),
+    /** Activations per app per UTC day (default 200); below `activationsPerDay`. */
+    activationsPerAppPerDay: z.number().int().min(1).max(1_000_000).optional(),
+    /** Activations across the env per UTC day (default 1000). */
+    activationsPerDay: z.number().int().min(1).max(1_000_000).optional(),
+    /**
+     * Relay and activate only for a NEAR account the wallet directory holds for a user of the app's scope (default
+     * true, D735). `false`, testnet only: anyone with a publishable key can spend the relay within the limits.
+     */
+    requireKnownAccount: z.boolean().optional(),
     /** Below this balance (NEAR) the hourly check writes `near_relay_balance_low` (default 2). */
     lowBalanceNear: z.number().positive().max(1000).optional(),
     /** The activation's Transfer in yocto (default "0": a zero Transfer creates an implicit account); at most 0.01 NEAR. */
@@ -256,7 +269,7 @@ export const nearSchema = z
  * full-access and pay any deposit a delegate attaches, which the API refuses); receivers are distinct, never the relay
  * account, the signer or the relayer (a relayed call into hana-signer would act as the user's implicit account there).
  */
-function nearRelayRules(m: { signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; near?: z.infer<typeof nearSchema> | undefined }, ctx: z.RefinementCtx): void {
+function nearRelayRules(m: { network: string; signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; near?: z.infer<typeof nearSchema> | undefined }, ctx: z.RefinementCtx): void {
   const relay = m.near?.relay;
   if (!relay) return;
   const taken: [string, string][] = [['signer', m.signer], ['relayer', m.relayer], ['owner', m.owner], ['mpc', m.mpc], ...(m.watchdogs ?? []).map((w): [string, string] => ['watchdog', w])];
@@ -265,6 +278,19 @@ function nearRelayRules(m: { signer: string; relayer: string; owner: string; mpc
     if (relay.account === account) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'account'], message: `near.relay.account must be its own account, not the ${what}` });
   }
   if (new Set(relay.receivers).size !== relay.receivers.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'receivers'], message: 'near.relay.receivers must be distinct' });
+  // One app (one leaked publishable key) must never be able to use up the env's day (D736): each per-app cap below the env's.
+  const pairs: [string, number, string, number][] = [
+    ['perAppPerDay', relay.perAppPerDay ?? 5000, 'relaysPerDay', relay.relaysPerDay ?? 20_000],
+    ['activationsPerAppPerDay', relay.activationsPerAppPerDay ?? 200, 'activationsPerDay', relay.activationsPerDay ?? 1000],
+    ['appDailyBudgetNear', relay.appDailyBudgetNear ?? Math.min(1, (relay.dailyBudgetNear ?? 5) / 5), 'dailyBudgetNear', relay.dailyBudgetNear ?? 5],
+  ];
+  for (const [app, appValue, env, envValue] of pairs) {
+    if (appValue >= envValue) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', app], message: `near.relay.${app} (${appValue}) must be below ${env} (${envValue})` });
+  }
+  if (relay.appDailyBudgetNear !== undefined && Math.round(relay.appDailyBudgetNear * 1_000_000) < 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'appDailyBudgetNear'], message: 'near.relay.appDailyBudgetNear is at least 0.000001' });
+  if (relay.requireKnownAccount === false && m.network !== 'testnet') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'requireKnownAccount'], message: 'near.relay.requireKnownAccount: false is testnet only (the relay then pays for anyone holding a publishable key)' });
+  }
   for (const r of relay.receivers) {
     if (r === relay.account || r === m.signer || r === m.relayer) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'receivers'], message: `near.relay.receivers must not list ${r} (the relay account, the signer or the relayer)` });

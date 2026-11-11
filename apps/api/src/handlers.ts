@@ -283,7 +283,8 @@ export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay
   //    The app's shared quota is counted later, after verification (appQuota).
   try {
     // The link relays (links.ts) count in windows of their own, with their own caps, adds and removals apart.
-    const window = kind === 'relay' ? `${app.id}:minute` : kind === 'config' ? `${app.id}:config:minute` : `${app.id}:${kind}:minute`;
+    // The NEAR relay's per-IP windows hold across every app (D736): one IP can't take 30 a minute from each of many keys.
+    const window = kind === 'relay' ? `${app.id}:minute` : kind === 'config' ? `${app.id}:config:minute` : kind === 'near' ? 'near-relay:minute' : kind === 'near-activate' ? 'near-activate:minute' : `${app.id}:${kind}:minute`;
     // The NEAR relay's own windows (near/relay-config.ts, D736): a relay or activation flood never uses up logins'.
     const max =
       kind === 'link' ? LINK_ADDS_PER_IP_MINUTE : kind === 'link-change' ? LINK_CHANGES_PER_IP_MINUTE : kind === 'near' ? NEAR_RELAY_LIMITS.perIpPerMinute : kind === 'near-activate' ? NEAR_RELAY_LIMITS.activationsPerIpPerMinute : app.per_ip_minute;

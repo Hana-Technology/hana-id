@@ -11117,6 +11117,12 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   present it is checked and the request counts per user. Open (security.md (s)): anyone with a publishable key can use
   the relay within the limits; before mainnet the vault sends the proof and the routes require it, then the wallet
   directory's NEAR record binds `sender_id` to the user.
+- Amended the same day after the security review: with `near.relay.requireKnownAccount` (default true) both routes
+  act only for a NEAR account the wallet directory holds for a user of the app's scope (the `feat/near-directory`
+  build records it at login, signed by the NEAR key), through one seam, `nearAccountKnown`; an unknown account is
+  `409 near_account_unknown` (activate: `retryable`, `retry-after: 2`, since the record can lag the login); per-user
+  limits key on the directory's user. `false` is testnet only (the schema); sandbox-dev runs `false` until the
+  directory build merges, then `true`. The session proof stays an optional extra.
 - Rejected for this round: requiring the session proof (the SDK built in parallel calls from the partner page, D720–D729);
   a wallet proof by the NEAR key over the session key (any key the caller holds can sign it, so it proves nothing more).
 - Address impact: none.
@@ -11126,7 +11132,10 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   migration 0019, `console-core` `SECURITY_EVENT_KINDS`
 - Decision: per IP 30 relays / 10 activations a minute (the app gate's window); per sender `perSenderPerDay` (100;
   sandbox-dev 50); with a session proof, per user 200 relays and 5 activations a day; per app 120 a minute and
-  `perAppPerDay` (5000; sandbox-dev 2000), 1000 activations a day; 1000 activations a day across the env; a later window's refusal gives the earlier back. The env's budget `dailyBudgetNear` (5) is an
+  `perAppPerDay` (5000; sandbox-dev 2000) and `activationsPerAppPerDay` (200) a day; across the env `relaysPerDay`
+  (20000; sandbox-dev 10000) and `activationsPerDay` (1000); the per-IP windows hold across every app (window names
+  without the app id); each per-app cap and the per-app budget `appDailyBudgetNear` (1) must be below the env's (the
+  schema and the parser refuse otherwise; after the security review of 2026-11-11); a later window's refusal gives the earlier back. The env's budget `dailyBudgetNear` (5) is an
   amount counter (`RateLimiter.spend`): a relay reserves (inner gas + 5 Tgas) × gas price, an activation 100 Tgas × gas
   price + its amount, then gives back the difference to what burnt (all of it when nothing executed). Past 80%:
   `near_relay_budget_high` (one a day); hourly, the account below `lowBalanceNear` (2) or missing:

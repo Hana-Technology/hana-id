@@ -210,6 +210,53 @@ async function provenUser(env: Env, ctx: Ctx, app: App, proof: SessionProof, pay
   return { ok: true, value: root };
 }
 
+// ---- the wallet directory (D735) ----
+
+/**
+ * The directory's user for a NEAR account in a scope, or null when it holds none. The seam both routes call: the
+ * wallet directory's NEAR record (the `feat/near-directory` build: the vault records each user's NEAR account at
+ * login with a proof signed by the NEAR key, as `/v1/wallets/record` does for Stellar and EVM). Until that build
+ * lands, the default reads `end_user_wallets` rows of chain `near` (which migration 0011's CHECK can't hold yet, so it
+ * finds none); the merge wires the directory's real table. Tests replace `nearDirectory.lookup`.
+ */
+export type NearAccountLookup = (db: D1Database, q: { scopeId: string; accountId: string }) => Promise<{ userId: string } | null>;
+
+export const defaultNearAccountLookup: NearAccountLookup = async (db, { scopeId, accountId }) => {
+  const row = await db
+    .prepare("SELECT w.user_id AS user_id FROM end_user_wallets w JOIN end_users u ON u.user_id = w.user_id WHERE w.chain = 'near' AND w.address = ?1 AND u.scope_id = ?2 LIMIT 1")
+    .bind(accountId, scopeId)
+    .first<{ user_id: string }>();
+  return row ? { userId: row.user_id } : null;
+};
+
+export const nearDirectory: { lookup: NearAccountLookup } = { lookup: defaultNearAccountLookup };
+
+/** `nearAccountKnown(db, {scopeId, accountId})`: whether the directory holds the account for a user of the scope. */
+export async function nearAccountKnown(db: D1Database, q: { scopeId: string; accountId: string }): Promise<boolean> {
+  return (await nearDirectory.lookup(db, q)) !== null;
+}
+
+/**
+ * With `near.relay.requireKnownAccount` (the default): the account must be a directory user's of the app's scope
+ * (`409 near_account_unknown`; for an activation also `retry-after: 2` and `retryable: true`, since the vault's wallet
+ * record can land a moment after the login). The value is the user's limiter subject, or null with the setting off.
+ */
+async function knownAccount(env: Env, ctx: Ctx, app: App, config: NearRelayConfig, accountId: string, activation: boolean): Promise<Step<string | null>> {
+  if (!config.requireKnownAccount) return { ok: true, value: null };
+  let found: { userId: string } | null;
+  try {
+    found = await nearDirectory.lookup(env.DB, { scopeId: app.scope_id, accountId });
+  } catch {
+    return { ok: false, response: reject(ctx, 503, 'directory_unavailable', 'The wallet directory is unavailable, try again') };
+  }
+  lap(ctx, 'directory');
+  if (!found) {
+    const error = 'This NEAR account is not a Hana wallet of this app’s users (yet): sign in first';
+    return { ok: false, response: activation ? done(ctx, 409, { error, code: 'near_account_unknown', retryable: true }, { 'retry-after': '2' }) : done(ctx, 409, { error, code: 'near_account_unknown' }) };
+  }
+  return { ok: true, value: `near-relay:user:${found.userId}` };
+}
+
 interface Window {
   subject: string;
   limits: Limit[];
@@ -238,11 +285,18 @@ async function quota(env: Env, ctx: Ctx, windows: Window[]): Promise<Response | 
 const userSubject = async (scopeId: string, root: { provider: string; sub: string }): Promise<string> =>
   `near-relay:user:${hex((await sha256(new TextEncoder().encode(`${scopeId}#${root.provider}#${root.sub}`))).slice(0, 16))}`;
 
-/** Takes the worst case from the day's budget; writes the day's alert past NEAR_RELAY_LIMITS.budgetAlertPct. */
-async function reserveBudget(env: Env, ctx: Ctx, config: NearRelayConfig, amount: bigint, now: number): Promise<Step<null>> {
+/**
+ * Takes the worst case from the app's day budget, then from the env's (D736: the app's is below the env's, so one app
+ * can't use up the day); a refusal by the env's gives the app's back. Writes the day's alert past budgetAlertPct.
+ */
+async function reserveBudget(env: Env, ctx: Ctx, app: App, config: NearRelayConfig, amount: bigint, now: number): Promise<Step<null>> {
+  let a;
   let r;
   try {
+    a = await limiter(env, `app:${app.id}`).spend(BUDGET_WINDOW, DAY, config.appDailyBudgetYocto.toString(), amount.toString(), now);
+    if (!a.ok) return { ok: false, response: reject(ctx, 429, 'app_budget_exhausted', "This app's daily NEAR relay budget is used up, try again later", { 'retry-after': String(a.retryAfterS) }) };
     r = await limiter(env, BUDGET_SUBJECT).spend(BUDGET_WINDOW, DAY, config.dailyBudgetYocto.toString(), amount.toString(), now);
+    if (!r.ok) await limiter(env, `app:${app.id}`).giveBack(BUDGET_WINDOW, DAY, amount.toString(), now);
   } catch {
     return { ok: false, response: reject(ctx, 503, 'rate_limiter_unavailable', 'Try again') };
   }
@@ -265,13 +319,13 @@ async function noteBudgetHigh(env: Env, ctx: Ctx, spent: bigint, budget: bigint,
 }
 
 /** Gives back what a relay didn't spend: all of it when it never executed, else the worst case less what it burnt. */
-async function settleBudget(env: Env, reserved: bigint, result: RelayResult, at: number): Promise<void> {
+async function settleBudget(env: Env, app: App, reserved: bigint, result: RelayResult, at: number): Promise<void> {
   let back = 0n;
   if (!result.ok && (NOT_EXECUTED.has(result.code) || result.code === ALREADY_RELAYED)) back = reserved;
   else if (result.relayTokensBurnt && /^\d{1,40}$/u.test(result.relayTokensBurnt)) back = reserved - BigInt(result.relayTokensBurnt);
   if (back <= 0n) return;
   try {
-    await limiter(env, BUDGET_SUBJECT).giveBack(BUDGET_WINDOW, DAY, back.toString(), at);
+    await Promise.all([limiter(env, BUDGET_SUBJECT).giveBack(BUDGET_WINDOW, DAY, back.toString(), at), limiter(env, `app:${app.id}`).giveBack(BUDGET_WINDOW, DAY, back.toString(), at)]);
   } catch {
     // The count stays high: the budget errs on the side of spending less.
   }
@@ -361,11 +415,13 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   if (refused) return refused;
   if (!(await verifyDelegateSignature(d))) return reject(ctx, 400, 'bad_delegate_signature', "The delegate action's signature does not verify");
   lap(ctx, 'checks');
-  let user: string | null = null;
+  const known = await knownAccount(env, ctx, app, config, d.senderId, false);
+  if (!known.ok) return known.response;
+  let user: string | null = known.value;
   if (req.proof) {
     const proven = await provenUser(env, ctx, app, req.proof, await nearRelayPayload(req.network, req.signedDelegate));
     if (!proven.ok) return proven.response;
-    user = await userSubject(app.scope_id, proven.value);
+    user ??= await userSubject(app.scope_id, proven.value);
   }
 
   // The chain: the head (expiry, the budget's gas price) and the sender's own key (exists, nonce unused).
@@ -398,17 +454,18 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
       ],
       what: 'per app',
     },
+    { subject: 'near-relay:global', limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.relaysPerDay }], what: 'across the env' },
   ]);
   if (q) return q;
   const now = Date.now();
   const reserved = (innerGas(d) + RELAY_OVERHEAD_GAS) * head.gasPrice;
-  const budget = await reserveBudget(env, ctx, config, reserved, now);
+  const budget = await reserveBudget(env, ctx, app, config, reserved, now);
   if (!budget.ok) return budget.response;
   lap(ctx, 'limits');
 
   const result = await relayThrough(env, ctx, keyCount, { receiverId: d.senderId, action: { kind: 'delegate', signedDelegate: req.signedDelegate } }, `delegate:${hex(await sha256(req.signedDelegate))}`);
   lapRelay(ctx, result);
-  await settleBudget(env, reserved, result, now);
+  await settleBudget(env, app, reserved, result, now);
   return relayAnswer(ctx, result, d.senderId);
 }
 
@@ -428,11 +485,13 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
   if (!req) return reject(ctx, 400, 'bad_request', 'Not a NEAR activation request');
   const net = networkRefusal(ctx, req.network);
   if (net) return net;
-  let user: string | null = null;
+  const known = await knownAccount(env, ctx, app, config, req.accountId, true);
+  if (!known.ok) return known.response;
+  let user: string | null = known.value;
   if (req.proof) {
     const proven = await provenUser(env, ctx, app, req.proof, nearActivatePayload(req.network, req.accountId));
     if (!proven.ok) return proven.response;
-    user = await userSubject(app.scope_id, proven.value);
+    user ??= await userSubject(app.scope_id, proven.value);
   }
 
   let head: { height: bigint; gasPrice: bigint };
@@ -450,19 +509,19 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
   }
   const q = await quota(env, ctx, [
     ...(user ? [{ subject: user, limits: [{ name: 'near-activate:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.activationsPerUserPerDay }], what: 'per user' }] : []),
-    { subject: `app:${app.id}`, limits: [{ name: 'near-activate:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.activationsPerAppPerDay }], what: 'per app' },
-    { subject: 'near-activate:global', limits: [{ name: 'near-activate:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.activationsPerDay }], what: 'across the env' },
+    { subject: `app:${app.id}`, limits: [{ name: 'near-activate:day', windowMs: DAY, max: config.activationsPerAppPerDay }], what: 'per app' },
+    { subject: 'near-activate:global', limits: [{ name: 'near-activate:day', windowMs: DAY, max: config.activationsPerDay }], what: 'across the env' },
   ]);
   if (q) return q;
   const now = Date.now();
   const reserved = ACTIVATE_GAS * head.gasPrice + config.activationYocto;
-  const budget = await reserveBudget(env, ctx, config, reserved, now);
+  const budget = await reserveBudget(env, ctx, app, config, reserved, now);
   if (!budget.ok) return budget.response;
   lap(ctx, 'limits');
 
   const result = await relayThrough(env, ctx, keyCount, { receiverId: req.accountId, action: { kind: 'activate', amount: config.activationYocto } }, `activate:${req.accountId}`);
   lapRelay(ctx, result);
-  await settleBudget(env, reserved, result, now);
+  await settleBudget(env, app, reserved, result, now);
   if (!result.ok) return relayAnswer(ctx, result, req.accountId);
   // The new key's nonce (the creation block × 10^6), read back so the client signs its first delegate with nonce + 1.
   let after: AccountKey | null = null;

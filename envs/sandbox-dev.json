@@ -140,7 +140,12 @@
       "dailyBudgetNear": 5,
       "perSenderPerDay": 50,
       "perAppPerDay": 2000,
-      "lowBalanceNear": 2
+      "relaysPerDay": 10000,
+      "activationsPerAppPerDay": 200,
+      "activationsPerDay": 1000,
+      "appDailyBudgetNear": 1,
+      "lowBalanceNear": 2,
+      "requireKnownAccount": false
     }
   }
 }

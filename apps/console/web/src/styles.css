@@ -134,6 +134,15 @@ code,
 .strong {
   font-weight: 600;
 }
+/* An id kept whole on one line (a table scrolls instead): a Support ID, a User ID, a shortened address with its copy. */
+.nowrap {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+/* Text that wraps only between words or at a <wbr> (an email address after its @), never mid-word as .mono may. */
+.keep-words {
+  overflow-wrap: normal;
+}
 .icon {
   flex: none;
   vertical-align: -3px;
@@ -962,6 +971,14 @@ p > .badge:first-child {
   border-radius: var(--r);
   border-collapse: separate;
   border-spacing: 0;
+}
+/* The header band follows the card's rounded corners (no overflow: hidden here, which would break a report's sticky
+   first column). */
+.content > .table-wrap > .table > thead > tr:first-child > :first-child {
+  border-top-left-radius: calc(var(--r) - 1px);
+}
+.content > .table-wrap > .table > thead > tr:first-child > :last-child {
+  border-top-right-radius: calc(var(--r) - 1px);
 }
 .table-compact th,
 .table-compact td {

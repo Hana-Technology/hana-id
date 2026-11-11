@@ -191,7 +191,12 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
     return s ? ok({ statement: { ...s, totals: {} }, view: F.statementView(s) }) : fail(404, 'not_found', `No ${st[1]} statement`);
   }
   if (rest === '/governance/pending-upgrades') return ok({ pendingUpgrades: F.pendingUpgrades(now) });
-  if (rest.startsWith('/users')) return ok({ users: F.users(now) });
+  const userM = /^\/users\/([^/?]+)$/u.exec(rest);
+  if (userM) {
+    const user = F.userDetail(now, decodeURIComponent(userM[1]!));
+    return user ? ok({ user }) : fail(404, 'not_found', 'No such user');
+  }
+  if (rest === '/users') return ok({ users: F.users(now) });
   return fail(404, 'not_found', 'Not found');
 }
 

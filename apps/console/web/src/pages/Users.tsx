@@ -3,11 +3,12 @@
 // kinds of account connected; the wallet addresses; and the email only once the user shared it with one of the org's
 // apps (D411: "Not shared" otherwise). A user's detail (`GET /api/orgs/:org/users/:userId`) lists each app's shared
 // address. Never an unshared address or a Google account id: the console's answer has no such field (src/users.ts).
-// Shown only when the server has the screen on (`/api/me` features).
+// Shown only when the server has the screen on (`/api/me` features). The list sits in a card like every console table;
+// its ids stay whole on one line and its wallet addresses are shortened, each copied whole (the detail shows them full).
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApi, when } from '../lib.tsx';
-import { CopyButton, Empty, ErrorNote, Loading, PageHeader, Panel } from '../ui.tsx';
+import { CopyButton, Empty, ErrorNote, Loading, PageHeader, Panel, ShortValue } from '../ui.tsx';
 
 interface PartnerUser {
   userId: string;
@@ -27,17 +28,56 @@ const KIND: Record<string, string> = { google: 'Google', email: 'Email', apple: 
 const NOT_SHARED = 'Not shared';
 
 const day = (ms: number): string => new Date(ms).toLocaleDateString(undefined, { dateStyle: 'medium' });
+/** A time in the list, as `when` but narrower: the date, then the time on a line of its own. */
+function Moment({ ms }: { ms: number }) {
+  const d = new Date(ms);
+  return (
+    <>
+      {day(ms)}
+      <br />
+      <span className="nowrap">{d.toLocaleTimeString(undefined, { timeStyle: 'short' })}</span>
+    </>
+  );
+}
 const accountsText = (u: PartnerUser): string => u.accounts.map((a) => `${KIND[a.kind] ?? 'Other'}${a.status === 'pending' ? ' (pending)' : ''}`).join(', ') || '—';
 
+const CHAIN = { stellar: 'Stellar', evm: 'EVM' } as const;
+
+/** The wallets in full, each with its copy button (a user's detail). */
 function Wallets({ u }: { u: PartnerUser }) {
   return (
     <>
       {u.wallets.map((w) => (
-        <div key={`${w.chain}:${w.address}`} className="mono small">
-          {w.chain === 'stellar' ? 'Stellar' : 'EVM'} {w.address}
+        <div key={`${w.chain}:${w.address}`}>
+          <span className="muted small">{CHAIN[w.chain]}</span> <code className="mono small">{w.address}</code> <CopyButton value={w.address} label={`${CHAIN[w.chain]} address`} />
         </div>
       ))}
     </>
+  );
+}
+
+/** The wallets shortened to one line each (the list), each copied whole. */
+function ShortWallets({ u }: { u: PartnerUser }) {
+  return (
+    <>
+      {u.wallets.map((w) => (
+        <div key={`${w.chain}:${w.address}`} className="nowrap">
+          <span className="muted small">{CHAIN[w.chain]}</span> <ShortValue value={w.address} label={`${CHAIN[w.chain]} address`} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** An email address that wraps only after its `@`, never mid-word (one element, so its text reads and matches whole). */
+function EmailText({ email }: { email: string }) {
+  const at = email.lastIndexOf('@') + 1;
+  return (
+    <span className="mono small keep-words">
+      {email.slice(0, at)}
+      {at > 0 && <wbr />}
+      {email.slice(at)}
+    </span>
   );
 }
 
@@ -47,6 +87,7 @@ function UserDetail({ org, userId, onClose }: { org: string; userId: string; onC
   return (
     <Panel
       title="User"
+      className="section"
       actions={
         <button type="button" className="btn btn-quiet btn-small" onClick={onClose}>
           Close
@@ -58,9 +99,11 @@ function UserDetail({ org, userId, onClose }: { org: string; userId: string; onC
       {r.data && (
         <dl className="facts">
           <dt>User ID</dt>
-          <dd className="mono small">{r.data.user.userId}</dd>
+          <dd>
+            <code className="mono small">{r.data.user.userId}</code> <CopyButton value={r.data.user.userId} label="User ID" />
+          </dd>
           <dt>Support ID</dt>
-          <dd className="mono">{r.data.user.supportId}</dd>
+          <dd className="mono nowrap">{r.data.user.supportId}</dd>
           <dt>Accounts</dt>
           <dd>{accountsText(r.data.user)}</dd>
           <dt>Wallets</dt>
@@ -78,7 +121,7 @@ function UserDetail({ org, userId, onClose }: { org: string; userId: string; onC
             ) : (
               (r.data.user.emails ?? []).map((e) => (
                 <div key={`${e.appId}:${e.email}`}>
-                  <span className="mono small">{e.email}</span>{' '}
+                  <EmailText email={e.email} />{' '}
                   <span className="muted small">
                     Shared with {e.appName} on {day(e.sharedAt)}
                   </span>
@@ -146,44 +189,48 @@ export function Users() {
               <p>{query ? 'Check the address or ID, or clear the search.' : 'Users appear here after they first sign in to one of your apps.'}</p>
             </Empty>
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>User ID</th>
-                  <th>Support ID</th>
-                  <th>Email</th>
-                  <th>Accounts</th>
-                  <th>Wallets</th>
-                  <th>Created</th>
-                  <th>Last seen</th>
-                </tr>
-              </thead>
-              <tbody>
-                {r.data.users.map((u) => (
-                  <tr key={u.userId}>
-                    <td>
-                      <button type="button" className="btn-link mono small" aria-label={`Open ${u.userId}`} onClick={() => setOpen(u.userId)}>
-                        {u.userId}
-                      </button>{' '}
-                      <CopyButton value={u.userId} label="User ID" />
-                    </td>
-                    <td>
-                      <span className="mono">{u.supportId}</span>
-                    </td>
-                    <td>{u.email ? <span className="mono small">{u.email}</span> : <span className="muted">{NOT_SHARED}</span>}</td>
-                    <td>{accountsText(u)}</td>
-                    <td>
-                      <Wallets u={u} />
-                    </td>
-                    <td>{when(u.createdAt)}</td>
-                    <td>{when(u.lastSeenAt)}</td>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th scope="col">User ID</th>
+                    <th scope="col">Support ID</th>
+                    <th scope="col">Email</th>
+                    <th scope="col">Accounts</th>
+                    <th scope="col">Wallets</th>
+                    <th scope="col">Created</th>
+                    <th scope="col">Last seen</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {r.data.users.map((u) => (
+                    <tr key={u.userId}>
+                      <td>
+                        <button type="button" className="btn-link mono small nowrap" aria-label={`Open ${u.userId}`} onClick={() => setOpen(u.userId)}>
+                          {u.userId}
+                        </button>{' '}
+                        <CopyButton value={u.userId} label="User ID" />
+                      </td>
+                      <td className="mono">{u.supportId}</td>
+                      <td>{u.email ? <EmailText email={u.email} /> : <span className="muted">{NOT_SHARED}</span>}</td>
+                      <td>{accountsText(u)}</td>
+                      <td>
+                        <ShortWallets u={u} />
+                      </td>
+                      <td>
+                        <Moment ms={u.createdAt} />
+                      </td>
+                      <td>
+                        <Moment ms={u.lastSeenAt} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           {r.data.next && (
-            <button type="button" className="btn" onClick={() => setCursor(r.data!.next)}>
+            <button type="button" className="btn load-more" onClick={() => setCursor(r.data!.next)}>
               Next page
             </button>
           )}

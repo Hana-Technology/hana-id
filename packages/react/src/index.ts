@@ -9,7 +9,7 @@
 //   const { request, state, error } = useEmailSharing();            // D411: <button onClick={request}>Share email</button>
 
 /** Package version, kept equal to package.json (test/index.test.ts). */
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 
 export { HanaContext, HanaProvider, type HanaContextValue, type HanaProviderProps } from './provider.tsx';
 export { useHana, useMainnetDemo, useWallet, type EvmWallet, type HanaChain, type StellarWallet, type UseHanaResult, type UseMainnetDemoResult } from './hooks.ts';

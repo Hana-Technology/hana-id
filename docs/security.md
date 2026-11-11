@@ -1797,6 +1797,12 @@ mainnet (issue (s)). A body may carry the vault's session proof (a live session 
 request, within 60 s, once), which then also counts per user; a later round can require it, and the wallet directory's
 NEAR record can bind `sender_id` to the session user's own address.
 
+**Replays can't lock a sender out.** A relayed delegate is public on chain, so anyone can re-post it: the relay drops a
+delegate whose hash it relayed in the last 20 minutes (or is relaying) before counting anything, the chain check refuses
+it after that (used nonce), and a refused delegate counts in no daily window; only the sender's minute window (10) and
+the app's and env's minute windows are counted before the chain reads, so a flood of replays delays a victim by at most
+a minute. Naming a victim's existing account in `activate` answers `created: false` and counts nothing of theirs.
+
 **Limits and the drain bound** (D736). Per IP 30 relays and 10 activations a minute; per sender 100 relays a day
 (sandbox-dev 50); per directory user 200 relays and 2 activations a day; per app 120 a minute and 5000 a day
 (sandbox-dev 2000) and 200 activations a day; across the env 300 relays a minute (sandbox-dev 200), 20000 a day

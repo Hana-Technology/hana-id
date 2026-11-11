@@ -11238,7 +11238,10 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   `maxGasTgas` 10, `inFlightNear` 3, `relaysPerMinute` 200. A settlement gives back the reservation less what burnt
   less what an activation transferred, and charges a spend above it. The sender's day and the app's and env's minute
   (activate: 60 a minute per app, 300 across the env, existing accounts included) count before any chain read; the head
-  block is cached a second. Per directory user: 2 activations and 200 relays a day. A concurrent copy of one activation
+  block is cached a second. Per directory user: 2 activations and 200 relays a day. Amended after the next review the
+  same day: a counter aimed at the sender (its day, the user's day) counts only a delegate that passed the nonce, expiry
+  and already-relayed checks; before the chain reads only the sender's minute (10), the app's and the env's minute; a
+  delegate's hash is remembered 20 minutes (refused `already_relayed` before any count), forgotten if nothing ran. A concurrent copy of one activation
   answers `created: false`. The key-in-a-pool check compares public keys; the relay account is never `RELAYER_ACCOUNT`
   or `SIGNER_ACCOUNT`.
 - Address impact: none.

@@ -1057,9 +1057,14 @@ sha256(scope#provider#sub), hex>`); per app 120 a minute and `near.relay.perAppP
 `near.relay.activationsPerAppPerDay` (default 200) activations a day (`app:<id>`, windows `near-relay:*`,
 `near-activate:day`); across the env `near.relay.relaysPerMinute` (300) relays a minute, `near.relay.relaysPerDay` (20000)
 relays and `near.relay.activationsPerDay` (1000) activations a day (`near-relay:global`, `near-activate:global`). Counted
-before any chain read (M3): the sender's day, the app's minute and the env's minute for a relay; 60 activation requests
-a minute per app and 300 across the env, "already exists" answers included; the rest once the chain checks pass, before
-the budget and the relay. The head block is cached for a second per isolate. Each per-app cap must be below the env's (the schema
+before any chain read (M3), only with windows no one can aim at a victim: the sender's minute (10 requests: a short
+delay at worst), the app's and the env's minute for a relay; 60 activation requests a minute per app and 300 across the
+env, "already exists" answers included. A delegate whose hash was relayed in the last 20 minutes (or is being relayed)
+is refused `409 already_relayed` before anything is counted (a signed delegate is public once on chain); one the chain
+checks refuse (used nonce, expired) counts in no daily window. The daily windows (sender, user, app, env) count only a
+delegate that passed every check, right before the budget and the relay; a later refusal gives the earlier ones back,
+and a relay that didn't execute forgets its hash so the client can resend. An activation of an existing account answers
+`created: false` without counting the user's daily activations. The head block is cached for a second per isolate. Each per-app cap must be below the env's (the schema
 and the parser refuse otherwise), so one leaked publishable key can't use up the env's day. The NEAR budgets: `near.relay.appDailyBudgetNear` (default 1, or a fifth of the env's if less; below it) per app
 (`app:<id>`, window `near-relay:day`), then `near.relay.dailyBudgetNear` (default 5) a UTC day across the env
 (`near-relay:budget`, `RateLimiter.spend`; a refusal by the env's gives the app's back); a relay reserves `(inner gas + 5 Tgas) × gas price`, an activation

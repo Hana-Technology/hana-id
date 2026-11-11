@@ -451,6 +451,31 @@ describe('POST /v1/near/relay', () => {
     expect([b.code, b.reason, b.status]).toEqual(['delegate_rejected', 'expired', 'failed']);
   });
 
+  it('re-posting a relayed delegate (public once on chain) never touches its sender’s daily count; the next honest relay goes through', async () => {
+    const bindings = relayConfig({ perSenderPerDay: 2 });
+    const once = plainRelay(delegate(s.user, { nonce: 101n }));
+    expect((await relay(s.app, once, bindings)).status).toBe(200);
+    // While the key's nonce hasn't moved on yet (the hash is remembered), and after it has (the nonce check): refused, uncounted.
+    for (let i = 0; i < 5; i++) expect((await body(await relay(s.app, once, bindings))).code).toBe('already_relayed');
+    s.near.akNonce.set(s.user.keyPair.getPublicKey().toString(), 101n);
+    const other = plainRelay(delegate(s.user, { nonce: 101n, maxBlockHeight: 1101n }));
+    for (let i = 0; i < 3; i++) expect((await body(await relay(s.app, other, bindings))).code).toBe('delegate_nonce_used');
+    expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 102n })), bindings)).status).toBe(200);
+    expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 103n })), bindings))).error).toBe('Rate limit exceeded (per account)');
+  });
+
+  it('a delegate refused by the chain checks (expired) counts in no daily window', async () => {
+    const bindings = relayConfig({ perSenderPerDay: 1 });
+    for (let i = 0; i < 3; i++) expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: BigInt(200 + i), maxBlockHeight: 1001n })), bindings))).code).toBe('delegate_expired');
+    expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 300n })), bindings)).status).toBe(200);
+  });
+
+  it('per sender: 10 requests a minute before the chain reads (a short delay at worst)', async () => {
+    let n = 0;
+    for (; n < 11; n++) if ((await relay(s.app, plainRelay(delegate(s.user, { nonce: BigInt(400 + n), maxBlockHeight: 1001n })))).status === 429) break;
+    expect(n).toBe(10);
+  });
+
   it('counts per sender per day (manifest perSenderPerDay)', async () => {
     const bindings = relayConfig({ perSenderPerDay: 2 });
     for (const n of [101n, 102n]) expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: n })), bindings)).status).toBe(200);
@@ -465,10 +490,10 @@ describe('POST /v1/near/relay', () => {
     const other = knownUser(s.app.scope);
     const res = await relay(s.app, plainRelay(delegate(other)), bindings);
     expect([res.status, (await body(res)).error]).toEqual([429, 'Rate limit exceeded (per app)']);
-    // The sender's day counts before the chain reads (M3), so the refused request used `other`'s one relay.
+    // The refused request took nothing from `other`'s daily window: another app relays for it at once.
     const app2 = await setup();
     remember(app2.app.scope, other.accountId);
-    expect((await body(await relay(app2.app, plainRelay(delegate(other)), bindings))).error).toBe('Rate limit exceeded (per account)');
+    expect((await relay(app2.app, plainRelay(delegate(other)), bindings)).status).toBe(200);
   });
 
   it('per IP: 30 a minute across every app (one IP, two apps share the window)', async () => {
@@ -545,6 +570,18 @@ describe('POST /v1/near/activate', () => {
     const again = await body(await activate(s.app, { accountId: s.user.accountId, network: 'testnet' }));
     expect([again.created, again.accessKeyNonce, again.blockHeight]).toEqual([false, '100', 1000]);
     expect(s.near.nearSent.length).toBe(1);
+  });
+
+  it('naming a victim’s existing account answers created: false and never uses up the victim’s daily activations', async () => {
+    const victim = 'hu_victim';
+    const existing = knownUser(s.app.scope, victim);
+    for (let i = 0; i < 6; i++) expect((await body(await activate(s.app, { accountId: existing.accountId }))).created).toBe(false);
+    // The victim's 2 a day are untouched: two new accounts of theirs still activate.
+    for (let i = 0; i < 2; i++) {
+      const fresh = knownUser(s.app.scope, victim);
+      s.near.missingAccounts.add(fresh.accountId);
+      expect((await body(await activate(s.app, { accountId: fresh.accountId }))).created).toBe(true);
+    }
   });
 
   it('reserves the activation’s Transfer amount in the budget (M2): 0.01 NEAR of gas + 0.01 transferred is past an app budget of 0.015', async () => {

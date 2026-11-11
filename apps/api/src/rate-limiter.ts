@@ -299,6 +299,18 @@ export class RateLimiter extends DurableObject<Env> {
     return { ok: true, spent: next.toString() };
   }
 
+  /**
+   * Adds `amount` to the window of `at` whatever its total (what a relay burnt beyond its reservation): the next
+   * `spend` sees it. An ended window is left alone.
+   */
+  charge(name: string, windowMs: number, amount: string, at: number, now: number = Date.now()): void {
+    const start = Math.floor(at / windowMs) * windowMs;
+    if (start + windowMs <= now || BigInt(amount) <= 0n) return;
+    const kv = this.ctx.storage.kv;
+    const key = `budget:${name}@${start}`;
+    kv.put(key, (BigInt(kv.get<string>(key) ?? '0') + BigInt(amount)).toString());
+  }
+
   /** Gives back part of a `spend(name, windowMs, …, at)` (what a relay didn't burn); never below zero, an ended window is left alone. */
   giveBack(name: string, windowMs: number, amount: string, at: number): void {
     const kv = this.ctx.storage.kv;

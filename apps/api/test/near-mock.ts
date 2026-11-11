@@ -1,5 +1,6 @@
 // A fake NEAR RPC (and Google JWKS endpoint) behind a global fetch stub. The worker, its Durable Objects and the
 // tests share one isolate, so stubbing globalThis.fetch intercepts every outbound call.
+import { KeyPair } from '@near-js/crypto';
 import { SignedTransaction, encodeTransaction } from '@near-js/transactions';
 import { baseEncode } from '@near-js/utils';
 import { env } from 'cloudflare:workers';
@@ -110,9 +111,25 @@ export class NearMock {
   /** How many times the JWKS was fetched. */
   jwksFetches = 0;
   private readonly outcomes = new Map<string, unknown>();
+  /** Which account sent each transaction (a `tx` status read must name it, as a node requires). */
+  private readonly txSender = new Map<string, string>();
+  /**
+   * The account each relayer key belongs to (public key → account): the pools' keys on RELAYER_ACCOUNT, the NEAR relay's
+   * on its account. A view or a transaction that names another account for one of them finds no key, as on chain.
+   */
+  readonly keyAccounts = new Map<string, string>();
+  /** Awaited before a NEAR relay transaction is processed (to hold relays in flight). */
+  onNearSend?: () => Promise<void>;
+  /** When set, a NEAR relay transaction is refused with this InvalidTxError (e.g. NotEnoughBalance). */
+  nearRejection?: unknown;
   private readonly pool = new Map<string, Set<bigint>>();
 
   install(): void {
+    const own = (raw: string | undefined, account: string) => {
+      for (const k of raw ? (JSON.parse(raw) as string[]) : []) this.keyAccounts.set(KeyPair.fromString(k as `ed25519:${string}`).getPublicKey().toString(), account);
+    };
+    for (const pool of [env.RELAYER_KEYS, env.OWNER_RELAYER_KEYS, env.HOME_RELAYER_KEYS]) own(pool, env.RELAYER_ACCOUNT);
+    if (env.NEAR_RELAY) own(env.NEAR_RELAY_KEYS, (JSON.parse(env.NEAR_RELAY) as { account: string }).account);
     vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url === GOOGLE_JWKS_URL) {
@@ -166,7 +183,8 @@ export class NearMock {
         return this.sendTx(params);
       case 'tx': {
         this.waitUntil.push({ method, waitUntil: params.wait_until });
-        const outcome = this.outcomes.get(params.tx_hash as string);
+        const sender = this.txSender.get(params.tx_hash as string);
+        const outcome = sender === undefined || sender === params.sender_account_id ? this.outcomes.get(params.tx_hash as string) : undefined;
         return Promise.resolve(outcome ? { result: outcome } : { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_TRANSACTION' }, message: 'UNKNOWN_TRANSACTION' } });
       }
       default:
@@ -178,7 +196,8 @@ export class NearMock {
     if (params.request_type === 'view_access_key') {
       // As a node answers a key it can't find (on a missing implicit account too): a result carrying `error` text.
       const id = params.account_id as string;
-      if (this.missingAccounts.has(id) || this.missingKeys.has(id)) return { result: { error: `access key ${params.public_key as string} does not exist while viewing`, logs: [], block_height: this.height, block_hash: this.blockHash } };
+      const owner = this.keyAccounts.get(params.public_key as string);
+      if (this.missingAccounts.has(id) || this.missingKeys.has(id) || (owner !== undefined && owner !== id)) return { result: { error: `access key ${params.public_key as string} does not exist while viewing`, logs: [], block_height: this.height, block_hash: this.blockHash } };
       return { result: { nonce: Number(this.nonceOf(params.public_key as string)), block_hash: this.blockHash, block_height: 1000, permission: 'FullAccess' } };
     }
     if (params.request_type === 'view_account') {
@@ -211,6 +230,8 @@ export class NearMock {
     // Borsh decoding yields a plain `{ ed25519Key: { data } }`; render it like PublicKey.toString().
     const publicKey = `ed25519:${baseEncode(new Uint8Array((t.publicKey as unknown as { ed25519Key: { data: number[] } }).ed25519Key.data))}`;
     const nonce = BigInt(t.nonce);
+    const keyOwner = this.keyAccounts.get(publicKey);
+    if (keyOwner !== undefined && keyOwner !== t.signerId) return rpcError('INVALID_TRANSACTION', { InvalidAccessKeyError: { AccessKeyNotFound: { account_id: t.signerId, public_key: publicKey } } });
     const ak = this.nonceOf(publicKey);
     const pool = this.pool.get(publicKey) ?? new Set<bigint>();
     this.pool.set(publicKey, pool);
@@ -261,6 +282,7 @@ export class NearMock {
       final_execution_status: 'EXECUTED',
     };
     this.outcomes.set(hash, outcome);
+    this.txSender.set(hash, t.signerId);
     if (this.sendTxTimesOut) return { error: { name: 'HANDLER_ERROR', cause: { name: 'TIMEOUT_ERROR' }, message: 'Timeout', data: 'TIMEOUT' } };
     return { result: outcome };
   }
@@ -270,8 +292,12 @@ export class NearMock {
     const t = signed.transaction;
     const publicKey = `ed25519:${baseEncode(new Uint8Array((t.publicKey as unknown as { ed25519Key: { data: number[] } }).ed25519Key.data))}`;
     const nonce = BigInt(t.nonce);
+    const keyOwner = this.keyAccounts.get(publicKey);
+    if (keyOwner !== undefined && keyOwner !== t.signerId) return rpcError('INVALID_TRANSACTION', { InvalidAccessKeyError: { AccessKeyNotFound: { account_id: t.signerId, public_key: publicKey } } });
     const ak = this.nonceOf(publicKey);
     if (nonce <= ak) return rpcError('INVALID_TRANSACTION', { InvalidNonce: { ak_nonce: Number(ak), tx_nonce: Number(nonce) } });
+    await this.onNearSend?.();
+    if (this.nearRejection) return rpcError('INVALID_TRANSACTION', this.nearRejection);
     const hash = baseEncode(new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(encodeTransaction(t)))));
     const a = t.actions[0]!;
     const sd = a.signedDelegate as unknown as { delegateAction: { senderId: string; receiverId: string; nonce: bigint; maxBlockHeight: bigint; actions: { functionCall?: { methodName: string } }[] } } | undefined;
@@ -303,6 +329,7 @@ export class NearMock {
     } else receipts = [step(tx.receiverId, ok), step(tx.delegate?.receiverId ?? tx.receiverId, { Failure: result.failure })];
     const outcome = { status, transaction: { hash }, transaction_outcome: { outcome: { ...MOCK_TX_GAS } }, receipts_outcome: receipts, final_execution_status: 'EXECUTED' };
     this.outcomes.set(hash, outcome);
+    this.txSender.set(hash, t.signerId);
     if (this.sendTxTimesOut) return { error: { name: 'HANDLER_ERROR', cause: { name: 'TIMEOUT_ERROR' }, message: 'Timeout', data: 'TIMEOUT' } };
     return { result: outcome };
   }

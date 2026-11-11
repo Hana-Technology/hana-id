@@ -21,6 +21,14 @@ export const NEAR_RELAY_DEFAULTS = {
   perAppPerDay: 5000,
   /** Relays across the env per UTC day. */
   relaysPerDay: 20_000,
+  /** Relays across the env per minute (with the in-flight cap, what bounds a burst). */
+  relaysPerMinute: 300,
+  /**
+   * NEAR the relay account may hold at once for relays in flight (each holds its prepaid gas at the pessimistic gas
+   * price until the refund): sets the in-flight cap per key (inFlightCapPerKey). The account's balance must stay above
+   * this plus `lowBalanceNear` and a day's spend.
+   */
+  inFlightNear: 2,
   /** Activations per app per UTC day (below `activationsPerDay`). */
   activationsPerAppPerDay: 200,
   /** Activations across the env per UTC day (each costs about 0.0071 NEAR; the budget bounds them too). */
@@ -43,6 +51,8 @@ export const NEAR_RELAY_BOUNDS = {
   perSenderPerDay: 10_000,
   perAppPerDay: 1_000_000,
   relaysPerDay: 10_000_000,
+  relaysPerMinute: 100_000,
+  inFlightNear: 1000,
   activationsPerDay: 1_000_000,
   receivers: 16,
   lowBalanceNear: 1000,
@@ -58,9 +68,13 @@ export const NEAR_RELAY_LIMITS = {
   /** Relays per IP subject per minute, across every app (the app gate's window). */
   perIpPerMinute: 30,
   /** Activations per Hana user per UTC day. */
-  activationsPerUserPerDay: 5,
+  activationsPerUserPerDay: 2,
   /** Activations per IP subject per minute, across every app. */
   activationsPerIpPerMinute: 10,
+  /** Activation requests per app per minute, counted before the chain reads ("already exists" answers too). */
+  activateReadsPerAppPerMinute: 60,
+  /** Activation requests across the env per minute, counted before the chain reads. */
+  activateReadsPerMinute: 300,
   /** How far ahead of the current final block a delegate's `max_block_height` may be (≈ 10 min of testnet blocks). */
   maxBlocksAhead: 1000,
   /** A budget alert (`near_relay_budget_high`) once a day's spend reaches this share of the budget. */
@@ -76,6 +90,8 @@ export interface NearRelayConfig {
   perSenderPerDay: number;
   perAppPerDay: number;
   relaysPerDay: number;
+  relaysPerMinute: number;
+  inFlightYocto: bigint;
   activationsPerAppPerDay: number;
   activationsPerDay: number;
   lowBalanceYocto: bigint;
@@ -93,6 +109,8 @@ export interface NearRelayManifest {
   perSenderPerDay?: number | undefined;
   perAppPerDay?: number | undefined;
   relaysPerDay?: number | undefined;
+  relaysPerMinute?: number | undefined;
+  inFlightNear?: number | undefined;
   activationsPerAppPerDay?: number | undefined;
   activationsPerDay?: number | undefined;
   lowBalanceNear?: number | undefined;
@@ -101,7 +119,7 @@ export interface NearRelayManifest {
   requireKnownAccount?: boolean | undefined;
 }
 
-const OPTIONAL_FIELDS = ['maxGasTgas', 'dailyBudgetNear', 'appDailyBudgetNear', 'perSenderPerDay', 'perAppPerDay', 'relaysPerDay', 'activationsPerAppPerDay', 'activationsPerDay', 'lowBalanceNear', 'activationYocto', 'requireKnownAccount'] as const;
+const OPTIONAL_FIELDS = ['maxGasTgas', 'dailyBudgetNear', 'appDailyBudgetNear', 'perSenderPerDay', 'perAppPerDay', 'relaysPerDay', 'relaysPerMinute', 'inFlightNear', 'activationsPerAppPerDay', 'activationsPerDay', 'lowBalanceNear', 'activationYocto', 'requireKnownAccount'] as const;
 
 /** NEAR (a decimal number with at most 6 places) → yocto. */
 export function nearToYocto(near: number): bigint {
@@ -139,6 +157,9 @@ export function parseNearRelayConfig(raw: string | undefined): NearRelayConfig |
   const perSenderPerDay = m.perSenderPerDay ?? d.perSenderPerDay;
   const perAppPerDay = m.perAppPerDay ?? d.perAppPerDay;
   const relaysPerDay = m.relaysPerDay ?? d.relaysPerDay;
+  const relaysPerMinute = m.relaysPerMinute ?? d.relaysPerMinute;
+  const inFlightNear = m.inFlightNear ?? d.inFlightNear;
+  if (!intIn(relaysPerMinute, 1, NEAR_RELAY_BOUNDS.relaysPerMinute) || !numIn(inFlightNear, 0, NEAR_RELAY_BOUNDS.inFlightNear)) return null;
   const activationsPerAppPerDay = m.activationsPerAppPerDay ?? d.activationsPerAppPerDay;
   const activationsPerDay = m.activationsPerDay ?? d.activationsPerDay;
   const lowBalanceNear = m.lowBalanceNear ?? d.lowBalanceNear;
@@ -163,12 +184,36 @@ export function parseNearRelayConfig(raw: string | undefined): NearRelayConfig |
     perSenderPerDay,
     perAppPerDay,
     relaysPerDay,
+    relaysPerMinute,
+    inFlightYocto: nearToYocto(inFlightNear),
     activationsPerAppPerDay,
     activationsPerDay,
     lowBalanceYocto: nearToYocto(lowBalanceNear),
     activationYocto: BigInt(activation),
     requireKnownAccount,
   };
+}
+
+/**
+ * What one relay in flight holds of the relay account's balance: its prepaid gas (the inner calls' and the overhead)
+ * at the pessimistic gas price, which NEAR charges until the refund. Measured on near-sandbox 2.13.4: 30 Tgas held
+ * 0.0310 NEAR at a gas price of 10^8, about 10.3× the plain price; counted at 12×.
+ */
+export const PESSIMISTIC_HOLD_FACTOR = 12n;
+
+export function inFlightHold(prepaidGas: bigint, gasPrice: bigint): bigint {
+  return prepaidGas * gasPrice * PESSIMISTIC_HOLD_FACTOR;
+}
+
+/**
+ * Relays one key object may have in flight (M1 of the 2026-11-11 review): `inFlightNear` spread over the keys, each
+ * relay at its largest hold (maxGas + overhead), at least 1. So every key full at once holds at most `inFlightNear`.
+ */
+export function inFlightCapPerKey(config: Pick<NearRelayConfig, 'inFlightYocto' | 'maxGas'>, overheadGas: bigint, gasPrice: bigint, keyCount: number): number {
+  const hold = inFlightHold(config.maxGas + overheadGas, gasPrice);
+  if (hold <= 0n || keyCount <= 0) return 1;
+  const cap = config.inFlightYocto / (hold * BigInt(keyCount));
+  return cap < 1n ? 1 : cap > 10_000n ? 10_000 : Number(cap);
 }
 
 /** The NEAR_RELAY var for a manifest's `near.relay` (gen-wrangler): the fields as given, defaults left to the parser. */

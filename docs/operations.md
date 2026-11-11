@@ -1098,14 +1098,16 @@ a separate Hana account pays for. Testnet only. Its abuse analysis: `docs/securi
 **Accounts and keys.** The relay account is `near.relay.account` in `envs/<env>.json` (sandbox-dev:
 `hana-id-near-relay-dev1.testnet`), its own account, never `relayer`: a function-call key can't sign a `Delegate`
 action, so the relay's keys are full-access keys (`NEAR_RELAY_KEYS`, one Durable Object `near-relay-key-<i>` each).
-Its balance is everything a stolen key can take: keep it near 10 NEAR on testnet. The contracts it relays to are
+Its balance is everything a stolen key can take, and it must cover the relays in flight: fund it with at least
+`inFlightNear` + `lowBalanceNear` + `dailyBudgetNear` (sandbox-dev 3 + 2 + 5 = 10 NEAR; keep about 15). The contracts it relays to are
 `near.relay.receivers` (sandbox-dev: the guestbook, `near.demoGuestbook`); empty means nothing is relayed.
 
 **What it costs** (near-sandbox 2.13.4, protocol 86, at testnet's minimum gas price of 10^8 yocto/gas, measured by
 `apps/api/test-sandbox/meta-tx.test.ts`; testnet ran nearcore 2.14.0-rc.5, protocol 88, on 2026-11-11, not measured
-there yet): an activation ≈ 0.0071 NEAR, a guestbook message ≈ 0.0002 NEAR, and about 0.03 NEAR held per relay in
-flight (30 Tgas at the pessimistic price), refunded a few blocks later. 10 NEAR covers about 1 300 activations or
-50 000 messages; the daily budget (5 NEAR) stops spend first.
+there yet; sandbox protocol 86 vs testnet 88): an activation ≈ 0.0071 NEAR, a guestbook message ≈ 0.0002 NEAR (1.45
+Tgas burnt), and about 0.018 NEAR held per relay in flight at sandbox-dev's 10 Tgas (15 Tgas with the overhead at 12×
+the price), refunded a few blocks later; the in-flight cap keeps all of them under `inFlightNear` (3 NEAR: 83 per key
+with 2 keys). The daily budgets (1 NEAR per app, 5 per env) stop spend first.
 
 ### Setting it up (the user, once per env; sandbox-dev shown)
 
@@ -1144,13 +1146,13 @@ From the repo root of the main checkout, at the deployed commit:
    user's account, and the user's balance stays 0.
 
 Settings (manifest `near.relay`, all optional but `account` and `receivers`; `gen` and a deploy apply a change):
-`maxGasTgas` (inner gas per delegate, default 50, sandbox-dev 30; `add_message` burns about 1.45), `dailyBudgetNear`
+`maxGasTgas` (inner gas per delegate, default 50, sandbox-dev 10; `add_message` burns about 1.45, the demo attaches 10), `inFlightNear` (2, sandbox-dev 3), `relaysPerMinute` (300, sandbox-dev 200), `dailyBudgetNear`
 (5), `perSenderPerDay` (100, sandbox-dev 50), `perAppPerDay` (5000, sandbox-dev 2000), `lowBalanceNear` (2),
 `activationYocto` (`"0"`: set it, at most 0.01 NEAR, only if a network ever refuses a zero Transfer to a new implicit
 account), `appDailyBudgetNear` (1; below `dailyBudgetNear`), `relaysPerDay` (20000, sandbox-dev 10000; above
-`perAppPerDay`), `activationsPerAppPerDay` (200) and `activationsPerDay` (1000; above it), `requireKnownAccount` (true;
-sandbox-dev `false` until the wallet directory records NEAR accounts, `feat/near-directory`: set it to `true`, `gen`,
-deploy, once that build is merged and deployed). Turning it off: remove `near.relay` (or empty `receivers`), `gen`, deploy; or delete the secret
+`perAppPerDay`), `activationsPerAppPerDay` (200) and `activationsPerDay` (1000; above it), `requireKnownAccount` (true, sandbox-dev too: the relay
+serves only NEAR accounts the wallet directory recorded, so the directory build, its migration 0019 and an SDK 0.4.0
+vault must be deployed for the relay to serve anyone). Turning it off: remove `near.relay` (or empty `receivers`), `gen`, deploy; or delete the secret
 (`wrangler secret delete NEAR_RELAY_KEYS`), which takes effect at once.
 
 ### Runbook
@@ -1159,7 +1161,7 @@ deploy, once that build is merged and deployed). Turning it off: remove `near.re
 |---|---|---|
 | `near_relay_balance_low` security event (hourly; one a day) | The relay account is below `lowBalanceNear`, or missing | Top it up (step 1's `send-near`). Missing: re-create it (step 1) and re-add the keys (step 2's `add-key` lines) |
 | `near_relay_budget_high` security event, then `503 relay_budget_exhausted` | A day's spend reached 80%, then 100%, of `dailyBudgetNear` | Real use: raise `dailyBudgetNear`, `gen`, deploy. Unexplained: look for one app or sender in the request logs (`/v1/near/relay` 200s), lower its limits or set `receivers: []`; the budget resets at 00:00 UTC |
-| Relays answer `502 near_rejected` | Usually the relay account can't cover the pessimistic gas hold (balance too low for the relays in flight) | Top it up; see the account on a testnet explorer |
+| Relays answer `502 near_rejected` (log `near_relay_balance_short`) | The relay account can't cover the pessimistic gas hold of the relays in flight (`NotEnoughBalance`): its balance is below `inFlightNear` + what it spends; these keep their budget reservation | Top it up to at least `inFlightNear` + `lowBalanceNear` + `dailyBudgetNear`, or lower `inFlightNear` (fewer relays in flight, more `503 relayer_busy`); see the account on a testnet explorer |
 | `503 relayer_busy` / `relay_retry` `invalid_nonce` repeatedly | Something else sends with a relay key (they must be the API's only), or a stuck key object | Never use the keys elsewhere. A key's object re-reads its nonce on `InvalidNonce`; replacing the key (below) gives it a fresh life |
 | `504 timeout` with `status: "pending"` | No outcome in 30 s (RPC slow) | The client polls the transaction hash; nothing to do unless it persists (then the RPC: "Logs and latency") |
 | A relay key leaked | Its holder can take the relay account's balance | Delete it on chain at once (`near account delete-keys hana-id-near-relay-dev1.testnet public-keys <ed25519:…> network-config testnet sign-with-legacy-keychain send`, signed by the account's own keychain key), move `.secrets/sandbox-dev/near-relay-keys.json` aside, rerun step 2 and re-upload (step 4). The pools, logins and Home are not affected |

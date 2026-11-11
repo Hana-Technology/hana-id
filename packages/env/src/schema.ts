@@ -235,6 +235,13 @@ export const nearRelaySchema = z
     perAppPerDay: z.number().int().min(1).max(1_000_000).optional(),
     /** Relays across the env per UTC day (default 20000). */
     relaysPerDay: z.number().int().min(1).max(10_000_000).optional(),
+    /** Relays across the env per minute (default 300). */
+    relaysPerMinute: z.number().int().min(1).max(100_000).optional(),
+    /**
+     * NEAR the relay account may hold at once for relays in flight (default 2): sets the in-flight cap per key, so
+     * fund the account with at least this + `lowBalanceNear` + `dailyBudgetNear` (docs/operations.md "NEAR relay").
+     */
+    inFlightNear: z.number().positive().max(1000).optional(),
     /** Activations per app per UTC day (default 200); below `activationsPerDay`. */
     activationsPerAppPerDay: z.number().int().min(1).max(1_000_000).optional(),
     /** Activations across the env per UTC day (default 1000). */

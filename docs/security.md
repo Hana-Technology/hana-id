@@ -1773,9 +1773,15 @@ decoder consumes all of them), never a re-encoding.
 `near.relay.requireKnownAccount` (the default) both routes act only for a NEAR account the wallet directory holds for
 a user of the app's scope, recorded by the vault at login with a proof signed by that NEAR key (the
 `feat/near-directory` build): an unforgeable per-user fact that needs no credential from the SDK, so made-up keys get
-`409 near_account_unrecorded` and spend nothing, and every limit can count per directory user. Until that build merges the
-lookup finds nothing, so sandbox-dev runs with `requireKnownAccount: false` for the demo, and then the paragraph below
-is what holds; the setting goes to `true` with the merge. `false` is refused by the schema off testnet.
+`409 near_account_unrecorded` and spend nothing, and every limit counts per directory user. sandbox-dev runs it `true`
+(the directory build is merged into this branch). `false` is refused by the schema off testnet; with it, the paragraph
+below is what holds. A directory row proves "the holder of this user's session also holds this key", not "Hana derived
+this key", so every spend is bounded per directory user: 2 activations (an honest user needs one ever, plus a retry)
+and 200 relays a day, charged before the relay. Sybil users (many Google or email accounts, each with a session) remain
+possible; the per-app and env budgets bound them. Worst case on sandbox-dev: one user can spend at most 2 × 0.0071 +
+200 × 0.0002 ≈ 0.054 NEAR a day, so about 18 sybil users fill an app's 1 NEAR budget and about 92 the env's 5 NEAR;
+past that every relay answers `429 app_budget_exhausted` or `503 relay_budget_exhausted` until 00:00 UTC (a denial of
+the relay, never of logins), and the relays in flight never hold more than `inFlightNear` (3 NEAR).
 
 **With `requireKnownAccount: false`: anyone with a publishable key.** The SDK calls both routes from the partner's page with the
 publishable key and the app gate only (D735): no Hana session is required, and an `Origin` header binds browsers only,
@@ -1792,8 +1798,10 @@ request, within 60 s, once), which then also counts per user; a later round can 
 NEAR record can bind `sender_id` to the session user's own address.
 
 **Limits and the drain bound** (D736). Per IP 30 relays and 10 activations a minute; per sender 100 relays a day
-(sandbox-dev 50); per user 200 relays and 5 activations a day; per app 120 a minute and 5000 a day (sandbox-dev 2000),
-1000 activations a day; and the env's daily NEAR budget (`near.relay.dailyBudgetNear`, 5 NEAR on sandbox-dev), reserved
+(sandbox-dev 50); per directory user 200 relays and 2 activations a day; per app 120 a minute and 5000 a day
+(sandbox-dev 2000) and 200 activations a day; across the env 300 relays a minute (sandbox-dev 200), 20000 a day
+(sandbox-dev 10000) and 1000 activations a day; at most `inFlightNear` (sandbox-dev 3 NEAR) held by relays in flight;
+the per-app daily NEAR budget (1 NEAR); and the env's daily NEAR budget (`near.relay.dailyBudgetNear`, 5 NEAR on sandbox-dev), reserved
 at the worst case before a relay is sent ((inner gas + 5 Tgas) × gas price; an activation 100 Tgas × gas price) and
 settled to what burnt. The budget is the hard bound on a day's spend whatever the other limits let through; past 80% it
 writes `near_relay_budget_high`, and the hourly check writes `near_relay_balance_low` below 2 NEAR. The worst a

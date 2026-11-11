@@ -32,9 +32,11 @@ import type { Limit } from '../rate-limiter.ts';
 import { ALREADY_RELAYED, parseRelayerKeys, POOLS, POOL_SECRET } from '../relayer-config.ts';
 import { type NearRelayJob, nearRelayKeyName, type RelayResult } from '../relayer-key.ts';
 import { ACTIVATE_GAS, decodeSignedDelegate, IMPLICIT_ACCOUNT_RE, innerGas, NONCE_RANGE_MULTIPLIER, policyRefusal, RELAY_OVERHEAD_GAS, verifyDelegateSignature, type DecodedDelegate } from './delegate.ts';
-import { type NearRelayConfig, NEAR_RELAY_LIMITS, parseNearRelayConfig } from './relay-config.ts';
+import { inFlightCapPerKey, type NearRelayConfig, NEAR_RELAY_LIMITS, parseNearRelayConfig } from './relay-config.ts';
 import { type AccountKey, headBlock, implicitAccountKey } from './relay-chain.ts';
 import { nearRpc } from './rpc.ts';
+import { parseKeyPair } from './tx.ts';
+import { nearAccountUser } from '../directory/near.ts';
 
 export const NEAR_RELAY_ENDPOINT = '/v1/near/relay';
 export const NEAR_ACTIVATE_ENDPOINT = '/v1/near/activate';
@@ -153,15 +155,19 @@ export function nearRelayReady(env: Env): { config: NearRelayConfig; keyCount: n
   if (env.NETWORK !== 'testnet') return null;
   const config = parseNearRelayConfig(env.NEAR_RELAY);
   if (!config || config.receivers.length === 0) return null;
+  // The relay account is its own: never the pools' relayer or the signer (the schema says so too; checked at runtime).
+  if (config.account === env.RELAYER_ACCOUNT || config.account === env.SIGNER_ACCOUNT) return null;
   const all = `${env.NEAR_RELAY_KEYS ?? ''}\n${POOLS.map((p) => env[POOL_SECRET[p]] ?? '').join('\n')}`;
   if (keysParsed.from !== all) {
     let count = 0;
     try {
-      const keys = parseRelayerKeys(env.NEAR_RELAY_KEYS, 'NEAR_RELAY_KEYS');
+      // Compared by public key: one key can be written in two encodings (a 32-byte seed or the 64-byte secret).
+      const publicOf = (k: string) => parseKeyPair(k).getPublicKey().toString();
+      const keys = parseRelayerKeys(env.NEAR_RELAY_KEYS, 'NEAR_RELAY_KEYS').map(publicOf);
       const poolKeys = new Set<string>();
       for (const p of POOLS) {
         try {
-          for (const k of parseRelayerKeys(env[POOL_SECRET[p]], POOL_SECRET[p])) poolKeys.add(k);
+          for (const k of parseRelayerKeys(env[POOL_SECRET[p]], POOL_SECRET[p])) poolKeys.add(publicOf(k));
         } catch {
           // A pool whose secret doesn't parse is refused on its own account.
         }
@@ -224,12 +230,8 @@ async function provenUser(env: Env, ctx: Ctx, app: App, proof: SessionProof, pay
 export type NearAccountLookup = (db: D1Database, q: { scopeId: string; accountId: string }) => Promise<{ userId: string } | null>;
 
 export const defaultNearAccountLookup: NearAccountLookup = async (db, { scopeId, accountId }) => {
-  if (!IMPLICIT_ACCOUNT_RE.test(accountId)) return null;
-  const row = await db
-    .prepare("SELECT w.user_id AS user_id FROM end_user_wallets w JOIN end_users u ON u.user_id = w.user_id WHERE w.chain = 'near' AND w.address = ?1 AND u.scope_id = ?2 LIMIT 1")
-    .bind(accountId, scopeId)
-    .first<{ user_id: string }>();
-  return row ? { userId: row.user_id } : null;
+  const userId = await nearAccountUser(db, scopeId, accountId);
+  return userId ? { userId } : null;
 };
 
 export const nearDirectory: { lookup: NearAccountLookup } = { lookup: defaultNearAccountLookup };
@@ -322,21 +324,54 @@ async function noteBudgetHigh(env: Env, ctx: Ctx, spent: bigint, budget: bigint,
   }
 }
 
-/** Gives back what a relay didn't spend: all of it when it never executed, else the worst case less what it burnt. */
-async function settleBudget(env: Env, app: App, reserved: bigint, result: RelayResult, at: number): Promise<void> {
-  let back = 0n;
-  if (!result.ok && (NOT_EXECUTED.has(result.code) || result.code === ALREADY_RELAYED)) back = reserved;
-  else if (result.relayTokensBurnt && /^\d{1,40}$/u.test(result.relayTokensBurnt)) back = reserved - BigInt(result.relayTokensBurnt);
-  if (back <= 0n) return;
+/**
+ * Settles a reservation against what the relay spent: all of it back when nothing executed; else the reservation less
+ * what burnt less what it transferred (an activation's amount, which leaves the relay account too), and a spend above
+ * the reservation is charged. A relay refused for the account's balance (`not_enough_balance`, the in-flight holds
+ * outgrew it) keeps its reservation, so a burst that starves the account can't repeat for free. A result with no
+ * figure (a timeout) keeps the reservation too.
+ */
+export function budgetSettlement(reserved: bigint, result: RelayResult, transferred: bigint = 0n): bigint {
+  if (!result.ok && result.code === 'near_rejected' && result.rejection === 'not_enough_balance') return 0n;
+  if (!result.ok && (NOT_EXECUTED.has(result.code) || result.code === ALREADY_RELAYED)) return reserved;
+  if (result.relayTokensBurnt && /^\d{1,40}$/u.test(result.relayTokensBurnt)) return reserved - BigInt(result.relayTokensBurnt) - transferred;
+  return 0n;
+}
+
+async function settleBudget(env: Env, ctx: Ctx, app: App, reserved: bigint, result: RelayResult, at: number, transferred: bigint = 0n): Promise<void> {
+  const back = budgetSettlement(reserved, result, transferred);
+  if (!result.ok && result.rejection === 'not_enough_balance') log({ event: 'near_relay_balance_short', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'not_enough_balance' }, 'error');
+  if (back === 0n) return;
+  const subjects = [BUDGET_SUBJECT, `app:${app.id}`];
   try {
-    await Promise.all([limiter(env, BUDGET_SUBJECT).giveBack(BUDGET_WINDOW, DAY, back.toString(), at), limiter(env, `app:${app.id}`).giveBack(BUDGET_WINDOW, DAY, back.toString(), at)]);
+    if (back > 0n) await Promise.all(subjects.map((s) => limiter(env, s).giveBack(BUDGET_WINDOW, DAY, back.toString(), at)));
+    else await Promise.all(subjects.map((s) => limiter(env, s).charge(BUDGET_WINDOW, DAY, (-back).toString(), at)));
   } catch {
-    // The count stays high: the budget errs on the side of spending less.
+    // A failed give-back leaves the count high (the budget errs on the side of spending less); a failed charge is lost.
   }
 }
 
+/** The head block, cached for a second per isolate (M3: bursts of relays share one read). */
+let headCache: { at: number; urls: string; value: Promise<{ height: bigint; gasPrice: bigint }> } | null = null;
+
+export function cachedHead(env: Env, now: number = Date.now()): Promise<{ height: bigint; gasPrice: bigint }> {
+  const urls = `${env.NEAR_RPC}|${env.NEAR_RPC_FALLBACKS ?? ''}`;
+  if (headCache && headCache.urls === urls && now - headCache.at < 1000) return headCache.value;
+  const value = headBlock(nearRpc(env));
+  headCache = { at: now, urls, value };
+  value.catch(() => {
+    if (headCache?.value === value) headCache = null;
+  });
+  return value;
+}
+
+/** Forgets the cached head (tests). */
+export function forgetHead(): void {
+  headCache = null;
+}
+
 /** The key object a sender's relays go through: sha256(account) mod the key count, so copies of one request meet at one object. */
-async function keyIndexFor(accountId: string, count: number): Promise<number> {
+export async function keyIndexFor(accountId: string, count: number): Promise<number> {
   const h = await sha256(new TextEncoder().encode(accountId));
   return new DataView(h.buffer).getUint32(0) % count;
 }
@@ -428,12 +463,20 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
     user ??= await userSubject(app.scope_id, proven.value);
   }
 
+  // Counted before any chain read (M3): the sender's day, the app's and the env's minute. A request NEAR then refuses
+  // still counts, so reads can't be had for free.
+  const pre = await quota(env, ctx, [
+    { subject: `near-relay:sender:${d.senderId}`, limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.perSenderPerDay }], what: 'per account' },
+    { subject: `app:${app.id}`, limits: [{ name: 'near-relay:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.perAppPerMinute }], what: 'per app' },
+    { subject: 'near-relay:global', limits: [{ name: 'near-relay:minute', windowMs: MINUTE, max: config.relaysPerMinute }], what: 'across the env' },
+  ]);
+  if (pre) return pre;
+
   // The chain: the head (expiry, the budget's gas price) and the sender's own key (exists, nonce unused).
   let head: { height: bigint; gasPrice: bigint };
   let key: AccountKey;
   try {
-    const rpc = nearRpc(env);
-    [head, key] = await Promise.all([headBlock(rpc), implicitAccountKey(rpc, d.senderId)]);
+    [head, key] = await Promise.all([cachedHead(env), implicitAccountKey(nearRpc(env), d.senderId)]);
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read NEAR, try again');
   }
@@ -448,16 +491,8 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   if (d.maxBlockHeight > maxAhead) return done(ctx, 400, { error: 'max_block_height is too far ahead', code: 'block_height_too_far', blockHeight: Number(top), maxBlockHeight: Number(maxAhead) });
 
   const q = await quota(env, ctx, [
-    { subject: `near-relay:sender:${d.senderId}`, limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.perSenderPerDay }], what: 'per account' },
     ...(user ? [{ subject: user, limits: [{ name: 'near-relay:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.perUserPerDay }], what: 'per user' }] : []),
-    {
-      subject: `app:${app.id}`,
-      limits: [
-        { name: 'near-relay:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.perAppPerMinute },
-        { name: 'near-relay:day', windowMs: DAY, max: config.perAppPerDay },
-      ],
-      what: 'per app',
-    },
+    { subject: `app:${app.id}`, limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.perAppPerDay }], what: 'per app' },
     { subject: 'near-relay:global', limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.relaysPerDay }], what: 'across the env' },
   ]);
   if (q) return q;
@@ -467,9 +502,10 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   if (!budget.ok) return budget.response;
   lap(ctx, 'limits');
 
-  const result = await relayThrough(env, ctx, keyCount, { receiverId: d.senderId, action: { kind: 'delegate', signedDelegate: req.signedDelegate } }, `delegate:${hex(await sha256(req.signedDelegate))}`);
+  const maxInFlight = inFlightCapPerKey(config, RELAY_OVERHEAD_GAS, head.gasPrice, keyCount);
+  const result = await relayThrough(env, ctx, keyCount, { receiverId: d.senderId, action: { kind: 'delegate', signedDelegate: req.signedDelegate }, maxInFlight }, `delegate:${hex(await sha256(req.signedDelegate))}`);
   lapRelay(ctx, result);
-  await settleBudget(env, app, reserved, result, now);
+  await settleBudget(env, ctx, app, reserved, result, now);
   return relayAnswer(ctx, result, d.senderId);
 }
 
@@ -498,11 +534,16 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
     user ??= await userSubject(app.scope_id, proven.value);
   }
 
+  // Every activation counts before the chain reads (M3), "already exists" answers included: per app and across the env.
+  const pre = await quota(env, ctx, [
+    { subject: `app:${app.id}`, limits: [{ name: 'near-activate:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.activateReadsPerAppPerMinute }], what: 'per app' },
+    { subject: 'near-activate:global', limits: [{ name: 'near-activate:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.activateReadsPerMinute }], what: 'across the env' },
+  ]);
+  if (pre) return pre;
   let head: { height: bigint; gasPrice: bigint };
   let key: AccountKey;
   try {
-    const rpc = nearRpc(env);
-    [head, key] = await Promise.all([headBlock(rpc), implicitAccountKey(rpc, req.accountId)]);
+    [head, key] = await Promise.all([cachedHead(env), implicitAccountKey(nearRpc(env), req.accountId)]);
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read NEAR, try again');
   }
@@ -523,9 +564,15 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
   if (!budget.ok) return budget.response;
   lap(ctx, 'limits');
 
-  const result = await relayThrough(env, ctx, keyCount, { receiverId: req.accountId, action: { kind: 'activate', amount: config.activationYocto } }, `activate:${req.accountId}`);
+  const maxInFlight = inFlightCapPerKey(config, RELAY_OVERHEAD_GAS, head.gasPrice, keyCount);
+  const result = await relayThrough(env, ctx, keyCount, { receiverId: req.accountId, action: { kind: 'activate', amount: config.activationYocto }, maxInFlight }, `activate:${req.accountId}`);
   lapRelay(ctx, result);
-  await settleBudget(env, app, reserved, result, now);
+  await settleBudget(env, ctx, app, reserved, result, now, config.activationYocto);
+  // A concurrent copy of this activation was relayed first (L6): the account exists now, so answer as a repeat does.
+  if (!result.ok && result.code === ALREADY_RELAYED) {
+    const now2 = await implicitAccountKey(nearRpc(env), req.accountId).catch(() => null);
+    return done(ctx, 200, { created: false, accountId: req.accountId, accessKeyNonce: now2?.kind === 'key' ? now2.nonce.toString() : null, blockHeight: now2?.kind === 'key' ? Number(now2.height) : null });
+  }
   if (!result.ok) return relayAnswer(ctx, result, req.accountId);
   // The new key's nonce (the creation block × 10^6), read back so the client signs its first delegate with nonce + 1.
   let after: AccountKey | null = null;

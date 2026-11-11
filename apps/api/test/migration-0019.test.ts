@@ -23,7 +23,8 @@ const accepted = async (sql: string, ...binds: unknown[]): Promise<boolean> =>
 beforeAll(async () => {
   const migrations = env.TEST_MIGRATIONS;
   const at = migrations.findIndex((m) => m.name === '0019_near_wallets.sql');
-  expect(at).toBe(migrations.length - 1);
+  // Later migrations (0020, the NEAR relay's alert kinds) don't touch these tables.
+  expect(at).toBeGreaterThan(0);
   await applyD1Migrations(db, migrations.slice(0, at));
   // Before 0019: NEAR is refused, as an API ahead of the migration finds it.
   await db.prepare("INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, 'ABCDEFGH', 's1', 1, 2)").bind(U, `u1_${'A'.repeat(22)}`).run();

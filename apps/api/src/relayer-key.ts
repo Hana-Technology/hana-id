@@ -102,7 +102,7 @@ export interface RelaySigner {
 /** `executor`: on `contract_rejected`, the account whose receipt failed (null when the RPC did not say). */
 export type RelayResult = (
   | ({ ok: true; result: unknown; nearTx: string; linkTally?: LinkTally } & RelaySigner)
-  | ({ ok: false; status: number; code: string; error: string; nearTx?: string; executor?: string | null } & RelaySigner)
+  | ({ ok: false; status: number; code: string; error: string; nearTx?: string; executor?: string | null; rejection?: 'not_enough_balance' } & RelaySigner)
 ) & { timing?: RelayTiming; instance?: RelayInstance };
 
 interface Dispatched {
@@ -122,6 +122,12 @@ const alreadyRelayed: RelayResult = { ok: false, status: 409, code: ALREADY_RELA
 export interface NearRelayJob {
   receiverId: string;
   action: RelayAction;
+  /**
+   * Relays this key object may have in flight (near/relay-config.ts inFlightCapPerKey): beyond it the job is refused
+   * `503 relayer_busy` before anything is signed, so the relays in flight never hold more of the account's balance
+   * than `near.relay.inFlightNear`.
+   */
+  maxInFlight: number;
 }
 
 /** Durable Object name of a NEAR relay key (NEAR_RELAY_KEYS index). */
@@ -290,6 +296,10 @@ export class RelayerKey extends DurableObject<Env> {
     const config = parseNearRelayConfig(this.env.NEAR_RELAY);
     // Testnet only, checked again here (D733): this object never signs on another network, whatever its caller said.
     if (!config || this.env.NETWORK !== 'testnet') return { ok: false, status: 503, code: 'relayer_unconfigured', error: 'The NEAR relay is not configured' };
+    if (config.account === this.env.RELAYER_ACCOUNT || config.account === this.env.SIGNER_ACCOUNT) return { ok: false, status: 503, code: 'relayer_unconfigured', error: 'The NEAR relay is not configured' };
+    if (!Number.isSafeInteger(job.maxInFlight) || this.inflight >= job.maxInFlight) {
+      return { ok: false, status: 503, code: 'relayer_busy', error: 'The NEAR relay has too many transactions in flight, try again' };
+    }
     const rpc = nearRpc(this.env);
     this.inflight++;
     try {
@@ -358,7 +368,10 @@ export class RelayerKey extends DurableObject<Env> {
         // execute: poll its hash.
         if (isDefiniteRejection(err)) {
           log({ event: 'relay_rejected', requestId, pool, keyIndex, method: method, code: rejectionName(err), nearTx: sent.hash }, 'error');
-          return { ok: false, status: 502, code: 'near_rejected', error: 'NEAR rejected the transaction', nearTx: sent.hash, ...signer };
+          // A relay account short of balance (the pessimistic gas hold of the relays in flight): said, so the caller
+          // charges it rather than giving it back (M1 of the 2026-11-11 review).
+          const short = /NotEnoughBalance|LackBalanceForState/u.test(JSON.stringify((err as RpcError).rpc ?? null));
+          return { ok: false, status: 502, code: 'near_rejected', error: 'NEAR rejected the transaction', nearTx: sent.hash, ...signer, ...(short ? { rejection: 'not_enough_balance' as const } : {}) };
         }
       }
 

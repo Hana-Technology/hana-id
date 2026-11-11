@@ -11190,8 +11190,8 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   act only for a NEAR account the wallet directory holds for a user of the app's scope (the `feat/near-directory`
   build records it at login, signed by the NEAR key), through one seam, `nearAccountKnown`; an unknown account is
   `409 near_account_unrecorded` (activate: `retryable`, `retry-after: 2`, since the record can lag the login); per-user
-  limits key on the directory's user. `false` is testnet only (the schema); sandbox-dev runs `false` until the
-  directory build merges, then `true`. The session proof stays an optional extra.
+  limits key on the directory's user. `false` is testnet only (the schema); sandbox-dev runs `true` (the directory build is
+  merged into this branch; the seam calls its `nearAccountUser`). The session proof stays an optional extra.
 - Rejected for this round: requiring the session proof (the SDK built in parallel calls from the partner page, D720–D729);
   a wallet proof by the NEAR key over the session key (any key the caller holds can sign it, so it proves nothing more).
 - Address impact: none.
@@ -11227,6 +11227,20 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   activation → a delegate signed by @near-js → decoded, checked and wrapped by the API's code → state changed, the user's
   balance 0; it pins the facts of D731 and D732. Skipped without a binary unless `HANA_SANDBOX_REQUIRED=1` (the verify
   step sets it). The Worker's routes and the key object are tested with the fake RPC (`test/near-relay.test.ts`).
+- Address impact: none.
+
+### D739a. After the review of 2026-11-11 (round 2): in-flight cap, gas-only settlement, reads counted first (proposed)
+- Date 2026-11-11 · Status: as D730 · Built: `relay-config.ts` (`inFlightCapPerKey`, `inFlightNear`, `relaysPerMinute`),
+  `relayer-key.ts` (`maxInFlight`, `not_enough_balance`), `relay.ts` (`budgetSettlement`, `cachedHead`, the pre-chain
+  windows), `rate-limiter.ts` (`charge`), `test/near-mock.ts` (keys and transactions bound to their account)
+- Decision: each key object takes at most `inFlightNear ÷ (keys × (maxGas + 5 Tgas) × gas price × 12)` relays in flight
+  (`503 relayer_busy` beyond); a `NotEnoughBalance` refusal keeps its reservation; an env-wide minute window; sandbox-dev
+  `maxGasTgas` 10, `inFlightNear` 3, `relaysPerMinute` 200. A settlement gives back the reservation less what burnt
+  less what an activation transferred, and charges a spend above it. The sender's day and the app's and env's minute
+  (activate: 60 a minute per app, 300 across the env, existing accounts included) count before any chain read; the head
+  block is cached a second. Per directory user: 2 activations and 200 relays a day. A concurrent copy of one activation
+  answers `created: false`. The key-in-a-pool check compares public keys; the relay account is never `RELAYER_ACCOUNT`
+  or `SIGNER_ACCOUNT`.
 - Address impact: none.
 
 ### D739. The relay decodes delegates itself for now; it can move to the core build's NEAR codec (proposed)

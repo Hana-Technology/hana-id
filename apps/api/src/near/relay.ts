@@ -199,17 +199,14 @@ async function knownAccount(env: Env, ctx: Ctx, app: App, config: NearRelayConfi
 }
 
 /**
- * Whether a relay's transaction reached the chain or may have (L-C of the 2026-11-11 re-review): an executed or failed
- * outcome, or one whose fate is unknown (a timeout, a node error after the broadcast). Then its nonce may be used and
- * becomes the sender's floor. Certainly-not-sent outcomes (NOT_EXECUTED, the key object's own refusals) leave it.
+ * The relay's three states (L-C of the 2026-11-11 re-review): certainly not sent (the key object refused before any
+ * broadcast and said so with `notSent`; or a copy refused as `already_relayed`), or sent or unknown (anything after the
+ * broadcast started: executed, failed on chain, a timeout, an RPC error during the send, a key object that failed or
+ * couldn't be reached). Unknown is treated as sent: its nonce may be used, so it becomes the sender's floor and the
+ * copy mark stays. The chain itself never runs one delegate twice (its nonce); this only decides who may resend.
  */
-export function reachedChain(result: RelayResult): boolean {
-  if (result.ok) return true;
-  if (NOT_EXECUTED.has(result.code) || result.code === ALREADY_RELAYED) return false;
-  // The key object failed part way: the transaction may have left only if it was named.
-  if (result.code === 'relayer_unavailable') return result.nearTx !== undefined;
-  // contract_rejected, delegate_rejected, timeout, near_error: on chain, or maybe.
-  return true;
+export function certainlyNotSent(result: RelayResult): boolean {
+  return !result.ok && (result.notSent === true || result.code === ALREADY_RELAYED);
 }
 
 /** Raises a sender's nonce floor, retried once; false (logged) when it can't be written. */
@@ -432,7 +429,8 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   const marks = `near-relay:relayed:${d.senderId}`;
   try {
     const floor = BigInt(await limiter(env, senderSubject).floor(NONCE_FLOOR));
-    if (d.nonce <= floor) return done(ctx, 409, { error: 'The delegate nonce is already used', code: 'delegate_nonce_used', nonceFloor: floor.toString() });
+    // `accessKeyNonce` is the lowest nonce Hana won't take for this sender: the client builds above it.
+    if (d.nonce <= floor) return done(ctx, 409, { error: 'The delegate nonce is already used', code: 'delegate_nonce_used', accessKeyNonce: floor.toString() });
     // A copy of a request in flight right now (the hash, for concurrent copies only).
     if (!(await limiter(env, marks).reserve(hash, Date.now(), Date.now()))) return reject(ctx, 409, ALREADY_RELAYED, 'This delegate action was already relayed');
   } catch {
@@ -474,7 +472,8 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
     // Hana), so a stale public delegate may get this far once; it must not cost the sender (concurrency stays bounded:
     // the hit came first).
     await giveBackWindows(env, [...shared, ...senderMinuteWindow], sharedAt);
-    return done(ctx, 409, { error: 'The delegate nonce is already used', code: 'delegate_nonce_used', nonceFloor: key.nonce.toString() });
+    // Above Hana's floor (checked above), so the chain's nonce is the larger of the two.
+    return done(ctx, 409, { error: 'The delegate nonce is already used', code: 'delegate_nonce_used', accessKeyNonce: key.nonce.toString() });
   }
   if (d.nonce >= (top + 1n) * NONCE_RANGE_MULTIPLIER) return done(ctx, 400, { error: 'The delegate nonce is too large', code: 'delegate_nonce_too_large', accessKeyNonce: key.nonce.toString() });
   if (d.maxBlockHeight < top + MIN_BLOCKS_AHEAD) return done(ctx, 400, { error: 'The delegate action has expired or expires too soon', code: 'delegate_expired', blockHeight: Number(top) });
@@ -516,9 +515,8 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   lapRelay(ctx, result);
   // Nothing ran: the client may send the same delegate again. Anything else may have used the nonce on chain: it
   // becomes the sender's floor (only grows), so this delegate and every older one are dropped from now on.
-  if (!result.ok && NOT_EXECUTED.has(result.code)) await Promise.all([unmark(), giveBackWindows(env, daily, dailyAt)]);
-  else if (reachedChain(result)) await raiseFloor(env, ctx, senderSubject, d.nonce);
-  else await unmark();
+  if (certainlyNotSent(result)) await Promise.all([unmark(), giveBackWindows(env, daily, dailyAt)]);
+  else await raiseFloor(env, ctx, senderSubject, d.nonce);
   await settleBudget(env, ctx, app, reserved, result, now);
   return relayAnswer(ctx, result, d.senderId);
 }
@@ -587,7 +585,7 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
   const result = await relayThrough(env, ctx, keyCount, { receiverId: req.accountId, action: { kind: 'activate', amount: config.activationYocto }, maxInFlight }, `activate:${req.accountId}`);
   lapRelay(ctx, result);
   await settleBudget(env, ctx, app, reserved, result, now, config.activationYocto);
-  if (!result.ok && (NOT_EXECUTED.has(result.code) || result.code === ALREADY_RELAYED)) await giveBackWindows(env, daily, dailyAt);
+  if (certainlyNotSent(result)) await giveBackWindows(env, daily, dailyAt);
   // A concurrent copy of this activation was relayed first (L6): the account exists now, so answer as a repeat does.
   if (!result.ok && result.code === ALREADY_RELAYED) {
     const now2 = await implicitAccountKey(nearRpc(env), req.accountId).catch(() => null);

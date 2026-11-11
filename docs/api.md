@@ -991,8 +991,10 @@ directory_unavailable`. Order for the client: login (the vault records the walle
 | `/v1/near/activate` | `{accountId: <64 lowercase hex>, network?: "testnet"}`; idempotent | `{created: true, accountId, accessKeyNonce: "<u64>", blockHeight, transactionHash, nearTx}` (the chain's nonce of the new key), or `{created: false, accountId, accessKeyNonce: "<u64>" or null (the key was removed), blockHeight}` when the account exists (nothing sent; a concurrent copy of a creation answers this too) |
 | `/v1/near/relay` | `{signedDelegateAction: <canonical base64 of borsh(SignedDelegateAction), ≤ 4096 bytes>, network?: "testnet"}` | `{transactionHash, status: "executed", nearTx}`: every receipt succeeded |
 
-A delegate's nonce may be any value above both the chain's key nonce (`accessKeyNonce`) and Hana's floor for the
-sender (`nonceFloor` in a `409 delegate_nonce_used`), and below (head height + 1) × 10^6 (the core picks one near
+A delegate's nonce may be any value above `accessKeyNonce` and below (head height + 1) × 10^6. In activate's 200
+`accessKeyNonce` is the chain's nonce of the account's key; in a `409 delegate_nonce_used` it is the lowest nonce Hana
+will not accept for the sender, the larger of Hana's floor and (when the chain was read) the key's nonce on chain: a
+client builds above it and asks the user to approve again (the core picks one near
 (height − 10 000) × 10^6 for test apps); its `max_block_height` between the head + 3 and the head + 1000 (`blockHeight`
 in the activation answer).
 
@@ -1011,7 +1013,7 @@ in the activation answer).
    bad_delegate_signature` (the delegate's Ed25519 signature over `sha256(u32le(2^30 + 366) ‖ borsh(DelegateAction))`).
 5. The directory (above).
 6. **The sender's nonce floor** (the highest nonce this relay sent or saw used on chain for the sender; durable, only
-   grows): at or below it, `409 delegate_nonce_used {nonceFloor}` with no chain read and nothing counted.
+   grows): at or below it, `409 delegate_nonce_used {accessKeyNonce: the floor}` with no chain read and nothing counted.
 7. A copy of a request in flight (its hash, 20 minutes): `409 already_relayed`, nothing counted.
 8. The sender's minute (10), then the app's minute (120) and the env's minute (`relaysPerMinute`, 300; sandbox-dev 200):
    `429 rate_limited` (`error` names the window).
@@ -1025,9 +1027,12 @@ in the activation answer).
 11. The budgets: the app's day (`appDailyBudgetNear`, 1 NEAR: `429 app_budget_exhausted`), the env's day
     (`dailyBudgetNear`, 5 NEAR: `503 relay_budget_exhausted`), each with `retry-after` to the next UTC day. A relay
     reserves `(inner gas + 5 Tgas) × gas price`.
-12. The relay (below). A refusal at steps 10–12 or a relay that certainly wasn't sent gives back the daily windows and
-    the budget and forgets the hash; one that reached the chain or may have (executed, failed on chain, a timeout, a node
-    error after the broadcast) raises the sender's floor to its nonce. The settlement gives back the reservation less what
+12. The relay (below). A refusal at steps 10–11, or a relay the key object refused before any broadcast (it says so:
+    the in-flight cap, its own config, testnet and role checks, a key it can't load, a chain read before the first
+    send), gives back the daily windows and forgets the hash: nothing can land. Anything else, sent or unknown (executed,
+    failed on chain, a timeout, an RPC error during the send, a node refusal, a key object that failed or couldn't be
+    reached), is treated as sent: the sender's floor rises to the delegate's nonce and the copy mark stays; the client
+    re-signs with a higher nonce. The budget gives back what never executed. The settlement gives back the reservation less what
     burnt, and charges a spend above it.
 
 **Activate checks, in order:** the gate (per IP 10 a minute across apps), the config, the body, the directory; then the

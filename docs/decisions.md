@@ -11252,8 +11252,9 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   the floor to the chain's nonce and gives the app's and env's minute hits back; a failed floor write fails closed.
   Last, after the re-review of 8b6fbdf5: the optional session proof is removed from both routes (it cost chain reads
   before any counted window; the directory gives the user); a chain-stale delegate gives the sender's minute back too;
-  activate counts an account's own minute (5) before the shared minutes; the floor rises only when a transaction
-  reached the chain or may have; the floor answer's field is `nonceFloor` (activate's `accessKeyNonce` is unchanged). A concurrent copy of one activation
+  activate counts an account's own minute (5) before the shared minutes; three explicit states: certainly not sent
+  (the key object's `notSent`, before any broadcast) forgets the request, anything else (sent or unknown) raises the
+  floor and keeps the copy mark; a `delegate_nonce_used` answer's `accessKeyNonce` is the lowest nonce Hana won't take (the larger of its floor and the chain's), which the SDK and the demo read; no field or code renamed. A concurrent copy of one activation
   answers `created: false`. The key-in-a-pool check compares public keys; the relay account is never `RELAYER_ACCOUNT`
   or `SIGNER_ACCOUNT`.
 - Address impact: none.

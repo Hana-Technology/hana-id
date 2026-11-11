@@ -13,7 +13,7 @@ import { base64Encode, hex } from '../src/bytes.ts';
 import { decodeSignedDelegate, encodeRelayTransaction, MAX_SIGNED_DELEGATE_BYTES, policyRefusal, TGAS, verifyDelegateSignature } from '../src/near/delegate.ts';
 import { checkNearRelayFunds } from '../src/near/relay-funds.ts';
 import { NEAR_RELAY_DEFAULTS, nearRelayVar, parseNearRelayConfig } from '../src/near/relay-config.ts';
-import { budgetSettlement, defaultNearAccountLookup, delegateFailure, forgetHead, keyIndexFor, nearAccountKnown, nearDirectory, reachedChain, toActivateRequest, toRelayRequest } from '../src/near/relay.ts';
+import { budgetSettlement, defaultNearAccountLookup, delegateFailure, forgetHead, keyIndexFor, nearAccountKnown, nearDirectory, certainlyNotSent, toActivateRequest, toRelayRequest } from '../src/near/relay.ts';
 import { inFlightCapPerKey, inFlightHold } from '../src/near/relay-config.ts';
 import { nearRelayKeyName, type RelayerKey, type RelayResult } from '../src/relayer-key.ts';
 import { runInDurableObject } from 'cloudflare:test';
@@ -299,7 +299,9 @@ describe('POST /v1/near/relay', () => {
     const nearKeys = (JSON.parse(env.NEAR_RELAY_KEYS!) as string[]).map((k) => KeyPair.fromString(k as `ed25519:${string}`).getPublicKey().toString());
     expect(nearKeys).toContain(tx.publicKey);
     // The same signed delegate again: at or below the sender's nonce floor, dropped.
-    expect((await body(await relay(s.app, plainRelay(signed)))).code).toBe('delegate_nonce_used');
+    const again = await body(await relay(s.app, plainRelay(signed)));
+    // accessKeyNonce: the lowest nonce Hana won't take for the sender (the floor here), which a client builds above.
+    expect([again.code, again.accessKeyNonce, again.retryable]).toEqual(['delegate_nonce_used', '101', undefined]);
   });
 
   it('takes the vault too', async () => {
@@ -439,7 +441,9 @@ describe('POST /v1/near/relay', () => {
     for (let n = 0; n < 11; n++) {
       // Each delegate above Hana's floor, each already used on chain (executed elsewhere): the chain nonce stays ahead.
       s.near.akNonce.set(pk, BigInt(20_000 + n * 10));
-      expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: BigInt(20_000 + n * 10 - 5) }))))).code).toBe('delegate_nonce_used');
+      const b = await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: BigInt(20_000 + n * 10 - 5) }))));
+      // The chain's nonce, above Hana's floor: the lowest nonce Hana won't take now.
+      expect([b.code, b.accessKeyNonce]).toEqual(['delegate_nonce_used', String(20_000 + n * 10)]);
     }
     // Nothing of the sender's, the app's or the env's minute is left taken (probes with a cap of 1 pass).
     const probe = (name: string) => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(name)).hit([{ name: 'near-relay:minute', windowMs: 60_000, max: 1 }]);
@@ -686,9 +690,10 @@ describe('in flight, balance and budget settlement (the review of 2026-11-11)', 
     const r = (o: Partial<RelayResult>) => ({ ok: false, status: 502, code: 'near_rejected', error: 'x', ...o }) as RelayResult;
     expect(budgetSettlement(100n, r({ rejection: 'not_enough_balance' }))).toBe(0n);
     expect(budgetSettlement(100n, r({}))).toBe(100n);
-    // Not sent (the node refused it): the floor stays, so the same signed delegate goes through once the account is funded.
+    // A refusal after the broadcast started counts as sent (fail closed): that delegate is refused from now on, a re-signed one goes through.
     s.near.nearRejection = undefined;
-    expect((await relay(s.app, plainRelay(delegate(s.user)))).status).toBe(200);
+    expect((await body(await relay(s.app, plainRelay(delegate(s.user))))).code).toBe('delegate_nonce_used');
+    expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 102n })))).status).toBe(200);
   });
 
   it('settles a reservation: all back when nothing ran, less what burnt and what transferred, a spend above it charged', () => {
@@ -757,13 +762,27 @@ describe('in flight, balance and budget settlement (the review of 2026-11-11)', 
 });
 
 describe('what raises the floor, and the limiter’s amounts (L-C, L-D)', () => {
-  it('the floor rises only when the transaction reached the chain or may have', () => {
-    const no = (code: string, nearTx?: string) => ({ ok: false, status: 500, code, error: 'x', ...(nearTx ? { nearTx } : {}) }) as RelayResult;
-    expect(reachedChain({ ok: true, result: null, nearTx: 'h' })).toBe(true);
-    for (const code of ['relayer_busy', 'near_unavailable', 'near_rejected', 'relayer_unconfigured', 'method_not_allowed', 'already_relayed']) expect(reachedChain(no(code, 'h')), code).toBe(false);
-    expect(reachedChain(no('relayer_unavailable'))).toBe(false);
-    expect(reachedChain(no('relayer_unavailable', 'h'))).toBe(true);
-    for (const code of ['contract_rejected', 'delegate_rejected', 'timeout', 'near_error']) expect(reachedChain(no(code, 'h')), code).toBe(true);
+  it('three states: certainly not sent only when the key object says so before a broadcast (or a copy); anything else counts as sent', () => {
+    const no = (code: string, extra: Partial<RelayResult> = {}) => ({ ok: false, status: 500, code, error: 'x', ...extra }) as RelayResult;
+    expect(certainlyNotSent({ ok: true, result: null, nearTx: 'h' })).toBe(false);
+    for (const code of ['relayer_busy', 'relayer_unconfigured', 'relayer_unavailable', 'near_unavailable']) expect(certainlyNotSent(no(code, { notSent: true })), code).toBe(true);
+    expect(certainlyNotSent(no('already_relayed'))).toBe(true);
+    // Unknown is sent: the same codes without the key object's word, and everything after a broadcast.
+    for (const code of ['relayer_unavailable', 'near_unavailable', 'relayer_busy', 'near_rejected', 'contract_rejected', 'delegate_rejected', 'timeout', 'near_error']) expect(certainlyNotSent(no(code)), code).toBe(false);
+  });
+
+  const marked = (sender: string, signed: Uint8Array) =>
+    env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`near-relay:relayed:${sender}`)).reserve(hex(new Uint8Array(createHash('sha256').update(signed).digest())), Date.now(), Date.now()).then((free) => !free);
+
+  it('an RPC error during send_tx counts as sent: the floor rises to the delegate’s nonce and the copy mark stays', async () => {
+    const s = await setup();
+    s.near.sendTxTransportError = 'network';
+    const signed = delegate(s.user, { nonce: 150n });
+    await relay(s.app, plainRelay(signed));
+    s.near.sendTxTransportError = undefined;
+    expect(await marked(s.user.accountId, signed)).toBe(true);
+    const again = await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 150n, maxBlockHeight: 1101n }))));
+    expect([again.code, again.accessKeyNonce]).toEqual(['delegate_nonce_used', '150']);
   });
 
   it('a relay refused in flight (relayer_busy) leaves the floor: the same signed delegate goes through later', async () => {
@@ -775,6 +794,8 @@ describe('what raises the floor, and the limiter’s amounts (L-C, L-D)', () => 
     await new Promise((r) => setTimeout(r, 200));
     const mine = plainRelay(delegate(s.user));
     expect((await body(await relay(s.app, mine, bindings))).code).toBe('relayer_busy');
+    // Refused before any broadcast: the copy mark is gone and the floor unchanged.
+    expect(await marked(s.user.accountId, Uint8Array.from(atob(mine.signedDelegateAction), (c) => c.charCodeAt(0)))).toBe(false);
     release();
     await first;
     s.near.onNearSend = undefined;

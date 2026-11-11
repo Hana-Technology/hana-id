@@ -102,7 +102,7 @@ export interface RelaySigner {
 /** `executor`: on `contract_rejected`, the account whose receipt failed (null when the RPC did not say). */
 export type RelayResult = (
   | ({ ok: true; result: unknown; nearTx: string; linkTally?: LinkTally } & RelaySigner)
-  | ({ ok: false; status: number; code: string; error: string; nearTx?: string; executor?: string | null; rejection?: 'not_enough_balance' } & RelaySigner)
+  | ({ ok: false; status: number; code: string; error: string; nearTx?: string; executor?: string | null; rejection?: 'not_enough_balance'; notSent?: true } & RelaySigner)
 ) & { timing?: RelayTiming; instance?: RelayInstance };
 
 interface Dispatched {
@@ -290,20 +290,26 @@ export class RelayerKey extends DurableObject<Env> {
 
   private async relayNearTimed(keyIndex: number, job: NearRelayJob, requestId: string | undefined, mark: { dispatched: number }, parts: DispatchTiming, instance: RelayInstance): Promise<RelayResult> {
     const method = job.action.kind === 'delegate' ? 'delegate' : 'activate';
+    // Refusals before anything is broadcast carry `notSent` (the caller may forget the request: nothing can land).
     if ((this.role !== null && this.role !== 'near') || (this.keyIndex >= 0 && this.keyIndex !== keyIndex)) {
-      return { ok: false, status: 503, code: 'relayer_unavailable', error: 'Relayer key mismatch' };
+      return { ok: false, status: 503, code: 'relayer_unavailable', error: 'Relayer key mismatch', notSent: true };
     }
     const config = parseNearRelayConfig(this.env.NEAR_RELAY);
     // Testnet only, checked again here (D733): this object never signs on another network, whatever its caller said.
-    if (!config || this.env.NETWORK !== 'testnet') return { ok: false, status: 503, code: 'relayer_unconfigured', error: 'The NEAR relay is not configured' };
-    if (config.account === this.env.RELAYER_ACCOUNT || config.account === this.env.SIGNER_ACCOUNT) return { ok: false, status: 503, code: 'relayer_unconfigured', error: 'The NEAR relay is not configured' };
+    if (!config || this.env.NETWORK !== 'testnet') return { ok: false, status: 503, code: 'relayer_unconfigured', error: 'The NEAR relay is not configured', notSent: true };
+    if (config.account === this.env.RELAYER_ACCOUNT || config.account === this.env.SIGNER_ACCOUNT) return { ok: false, status: 503, code: 'relayer_unconfigured', error: 'The NEAR relay is not configured', notSent: true };
     if (!Number.isSafeInteger(job.maxInFlight) || this.inflight >= job.maxInFlight) {
-      return { ok: false, status: 503, code: 'relayer_busy', error: 'The NEAR relay has too many transactions in flight, try again' };
+      return { ok: false, status: 503, code: 'relayer_busy', error: 'The NEAR relay has too many transactions in flight, try again', notSent: true };
+    }
+    try {
+      this.loadNearKey(keyIndex, config.account);
+    } catch {
+      log({ event: 'relay_failed', requestId, pool: 'near', keyIndex, method, code: 'relayer_unavailable' }, 'error');
+      return { ok: false, status: 503, code: 'relayer_unavailable', error: 'The relayer is unavailable, try again', notSent: true };
     }
     const rpc = nearRpc(this.env);
     this.inflight++;
     try {
-      this.loadNearKey(keyIndex, config.account);
       const keyPair = this.keyPair as KeyPair;
       const publicKey = keyPair.getPublicKey().data;
       const sign: SignFor = async (nonce, blockHash) => {
@@ -341,11 +347,12 @@ export class RelayerKey extends DurableObject<Env> {
       try {
         sent = await this.exclusive(() => this.dispatch(rpc, sign, parts, instance), parts);
       } catch {
-        // An RPC read failed (or, rarely, the reservation write did): either way nothing was sent.
+        // An RPC read failed (or, rarely, the reservation write did): either way nothing was sent on this attempt (on a
+        // retry an earlier attempt was broadcast, so the outcome is not "not sent").
         log({ event: 'relay_dispatch_failed', requestId, pool, keyIndex, method: method, code: 'near_unavailable' }, 'error');
         // The RPC's or the runtime's error text stays out of the answer: a fetch error can name the provider's URL,
         // and an RPC URL can carry an API key.
-        return { ok: false, status: 502, code: 'near_unavailable', error: 'Could not reach NEAR, try again' };
+        return { ok: false, status: 502, code: 'near_unavailable', error: 'Could not reach NEAR, try again', ...(attempt === 0 ? { notSent: true as const } : {}) };
       }
       mark.dispatched = Date.now();
       log({ event: 'relay_dispatched', requestId, pool, keyIndex, method: method, nearTx: sent.hash, nonce: sent.nonce.toString(), attempt });

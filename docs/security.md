@@ -1797,9 +1797,11 @@ checks, in order"; public inputs: a relayed delegate is on chain for anyone to r
 | User's (2), app's (200) and env's (1000) activation days, and the budgets | only for an account about to be created | when nothing is created | anyone naming a missing listed account: it creates the account for its owner, using only that creation's share of the owner's day |
 | In flight per key (`inFlightNear` spread over the keys: 83 per key on sandbox-dev) | in the key object, before signing | when the relay ends | anyone reaching the relay; beyond it `503 relayer_busy`, nothing sent, everything given back |
 
-A floor that can't be written fails closed (`503 rate_limiter_unavailable`, retryable). The floor rises only for an
-outcome that reached the chain or may have (L-C of the re-review): a relay that certainly wasn't sent (`relayer_busy`,
-`near_rejected`, `near_unavailable`, …) leaves it, so the same signed delegate can be sent again.
+A floor that can't be written fails closed (`503 rate_limiter_unavailable`, retryable). A relay is in one of three
+states: certainly not sent (the key object refused before any broadcast and says so, `notSent`): the floor stays and the
+copy mark goes, so the same signed delegate can be sent again; sent, or unknown (anything once the broadcast started,
+an RPC error during the send included): treated as sent, the floor rises to its nonce and the mark stays (fail closed:
+a wrong guess costs a relay fee, never a second execution, which the chain's nonce prevents).
 
 **In flight and the account's balance.** Each key object takes at most `inFlightNear ÷ (keys × (maxGas + 5 Tgas) × gas
 price × 12)` relays in flight (sandbox-dev: 0.018 NEAR a relay, 83 per key, 166 in all, at most 3 NEAR held). A

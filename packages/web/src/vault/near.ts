@@ -162,6 +162,11 @@ export class NearView {
    * separately (`independent` true, when the env has two; D263's rule for answers a lying provider could forge): every
    * provider must answer, and the caller gets each answer to check them all.
    */
+  /** Whether the env has two independent providers (`rpc` and a different `rpcFallback`). */
+  independentProviders(): boolean {
+    return independentEndpoints(this.endpoints) !== null;
+  }
+
   private async reads(method: string, params: unknown, usable: (b: Record<string, unknown>) => boolean, independent: boolean): Promise<Record<string, unknown>[]> {
     const ends = independent ? independentEndpoints(this.endpoints) : null;
     if (!ends) return [await this.call(method, params, usable)];

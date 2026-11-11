@@ -1,8 +1,8 @@
--- NEAR as the directory's third wallet chain (D755–D757; docs/architecture.md "Wallet directory"). Two CHECKs widen, nothing
--- else changes: expand-only for every API that reads or writes these tables, so it applies the same before or after
--- the API that writes NEAR rows (which falls back without them: a NEAR wallet write is its own statement and its
--- failure leaves the Stellar and EVM rows written; a NEAR export is recorded with no chain). Apply it before or after
--- that API; until it is applied no NEAR account is recorded.
+-- NEAR as the directory's third wallet chain (D755–D757, D762; docs/architecture.md "Wallet directory"). Two CHECKs
+-- widen and one unique index is added: expand-only for every API that reads or writes these tables. Apply it before the
+-- API that writes NEAR rows (D763, docs/operations.md); an API ahead of it still works (a NEAR wallet write is its own
+-- statement and its failure leaves the Stellar and EVM rows written; a NEAR export is recorded with no chain), but no
+-- NEAR account is recorded until it is applied.
 --
 -- SQLite can't alter a CHECK, so each table is rebuilt (as 0018 did for `user_events`): same columns, rows, keys and
 -- indexes. No table references either one (`end_user_wallets` references `end_users`, which this file doesn't touch).
@@ -23,6 +23,10 @@ INSERT INTO end_user_wallets_new (user_id, chain, address, key_index, first_seen
 DROP TABLE end_user_wallets;
 ALTER TABLE end_user_wallets_new RENAME TO end_user_wallets;
 CREATE INDEX end_user_wallets_address ON end_user_wallets (address);
+-- One NEAR account per user and key index (D762): an honest vault always derives the same one for a path, so a second,
+-- different one is a client that holds some other key. The API refuses it before writing (`near_account_mismatch`);
+-- this index makes that hold for concurrent writes too. Stellar and EVM have no such rule (D762 says why).
+CREATE UNIQUE INDEX end_user_wallets_one_near ON end_user_wallets (user_id, key_index) WHERE chain = 'near';
 
 -- `user_events`: a `key_exported` row may name 'near' (the export window's label). A mainnet demo signature never does
 -- (the demo covers Stellar and EVM only), and its address stays 42 to 56 characters.

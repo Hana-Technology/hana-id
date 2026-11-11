@@ -102,7 +102,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { type ConsentProof, VaultApi } from './api.ts';
 import { SHARE_LAUNCHER_HELLO_MS, type ConsentSigner, type SheetOutcome, ShareSheet, consentProof } from './email-share.ts';
 import { type CachedIdentity, cacheUsable, copyProofs, demoEventBody, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
-import { nearRecordedIn, reportWallets, signWalletRecords } from './wallet-record.ts';
+import { nearRecordedIn, nearRefusedIn, reportWallets, signWalletRecords } from './wallet-record.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
@@ -119,6 +119,8 @@ import {
   type RecordStore,
   type RecordV1,
   openConsent,
+  NEAR_RECORD_CONFLICT_DEFER_MS,
+  NEAR_RECORD_DEFER_MS,
   nearRecordedKey,
   openPrk,
   parseNearRecorded,
@@ -2585,27 +2587,46 @@ export class Vault {
     }
     if (this.session !== s) return;
     void reportWallets((body, signal) => api.recordWallets(body, signal), signed.body, this.timers).then((answer) => {
-      if (withNear && nearRecordedIn(answer)) void this.markNearRecorded(s).catch(() => undefined);
+      if (!withNear) return;
+      if (nearRecordedIn(answer)) {
+        void this.markNearRecorded(s, null).catch(() => undefined);
+        return;
+      }
+      // D763: `near: false` (no migration 0019, or a conflict, D762): no unlock resends before the wait is over.
+      const refused = nearRefusedIn(answer);
+      if (refused !== null) {
+        const wait = refused === 'near_account_taken' || refused === 'near_account_mismatch' ? NEAR_RECORD_CONFLICT_DEFER_MS : NEAR_RECORD_DEFER_MS;
+        void this.markNearRecorded(s, this.clock.now() + wait).catch(() => undefined);
+      }
     });
   }
 
-  /** Whether the API already recorded this session's NEAR account (the mark beside the record, D756). */
+  /**
+   * Whether an unlock should skip the NEAR record: the API already recorded this session's NEAR account, or answered
+   * `near: false` for it less than the wait ago (the entry beside the record, D756, D763).
+   */
   private async nearRecorded(s: Session): Promise<boolean> {
     const store = this.store;
     if (!store) return false;
     try {
-      return parseNearRecorded(await store.get(nearRecordedKey(this.recordId))) === toHex(s.sessionPk);
+      const mark = parseNearRecorded(await store.get(nearRecordedKey(this.recordId)));
+      if (!mark || mark.sessionPk !== toHex(s.sessionPk)) return false;
+      return mark.deferredUntilMs === null || this.clock.now() < mark.deferredUntilMs;
     } catch {
       return false;
     }
   }
 
-  /** Marks this session's NEAR account as recorded ('session' mode only: a 'none' session has no record to unlock). */
-  private async markNearRecorded(s: Session): Promise<void> {
+  /**
+   * Marks this session's NEAR account as recorded (`deferUntilMs` null) or as refused until then ('session' mode only:
+   * a 'none' session has no record to unlock).
+   */
+  private async markNearRecorded(s: Session, deferUntilMs: number | null): Promise<void> {
     const store = this.store;
     // Only while the session is still this one: a logout's deletion is never followed by a stale mark.
     if (!store || s.persistence !== 'session' || this.session !== s) return;
-    await store.put(nearRecordedKey(this.recordId), { v: 1, t: 'near-recorded', sessionPk: toHex(s.sessionPk) });
+    const sessionPk = toHex(s.sessionPk);
+    await store.put(nearRecordedKey(this.recordId), deferUntilMs === null ? { v: 1, t: 'near-recorded', sessionPk } : { v: 1, t: 'near-deferred', sessionPk, untilMs: deferUntilMs });
   }
 
   // ---- partner identity token (docs/identity-token-spec.md) ----
@@ -3071,6 +3092,7 @@ export class Vault {
    *   4100 `near_network_mismatch`; Hana has no mainnet RPC, so the popup shows mainnet as the app's claim.
    */
   private async checkNearBlock(txBytes: Uint8Array, claimed: 'testnet' | 'mainnet'): Promise<void> {
+    if (this.testApp) this.requireIndependentNear();
     const blockHash = nearHashString(decodeNearTransaction(txBytes).blockHash);
     const here = this.env.network;
     let known: boolean;
@@ -3097,6 +3119,16 @@ export class Vault {
   }
 
   /**
+   * A test app's NEAR checks trust no single RPC (D729): outside local* envs the env must have a second, independent
+   * provider (`rpcFallback`; sandbox-dev's is rpc.testnet.near.org beside fastnear), else the request fails closed with
+   * `api_unavailable`, reason `near_rpc_single_provider`.
+   */
+  private requireIndependentNear(): void {
+    if (this.env.name.startsWith('local') || this.near!.independentProviders()) return;
+    throw new VaultError('api_unavailable', 'This Hana environment has one NEAR provider, so it can’t check a test app’s NEAR request', { reason: 'near_rpc_single_provider' });
+  }
+
+  /**
    * A test app's delegate action must be bound to testnet (D726). A DelegateAction has no block hash; what ties it to a
    * network is its key, nonce and expiry, read here from this env's (testnet) RPC at final finality, from both providers
    * when the env has two (every answer must pass):
@@ -3106,13 +3138,19 @@ export class Vault {
    *   (else `near_delegate_nonce_stale`), and nonce < height × 10^6, nearcore's upper bound (else
    *   `near_delegate_nonce_too_large`); `nearDelegateNonce` in `@hana-id/core/near` picks such a nonce;
    * - height < max_block_height ≤ height + NEAR_DELEGATE_MAX_BLOCKS (else `near_delegate_expiry`).
-   * On another network nearcore refuses a nonce ≥ its height × 10^6 and an action past max_block_height, so it could
-   * run there only while that network's height is between nonce / 10^6 (> testnet's height now − 10,000) and
-   * max_block_height (≤ testnet's height now + 10,000): within about 20,000 blocks of testnet's height today, which
-   * mainnet (~53 million blocks behind on 2026-11-11, both at ~1.7 blocks/s) does not reach while the action is valid.
+   * What this does and doesn't do: nearcore runs a delegate action on any network whose own height H has
+   * nonce < H × 10^6 and H ≤ max_block_height (and the sender's key there a lower nonce). These bounds pin that to a
+   * fixed window of heights around testnet's height at signing, at most 20,000 blocks wide. Mainnet, ~53 million blocks
+   * behind testnet in 2026-11 and growing at the same ~1.7 blocks a second, passes through it about a year later: a
+   * test app that keeps the signature could submit it there then, if the user's implicit account exists on mainnet with
+   * this key (anyone can create it with a transfer). approvalSubject's rule for test apps' delegate actions
+   * (nearTestAppDelegateProblem: calls and transfers to *.testnet accounts only) makes such a replay call an account that
+   * doesn't exist on mainnet. For a test app the reads must come from two independent providers outside local* envs
+   * (`near_rpc_single_provider` otherwise).
    * RPC down: `api_unavailable` (fail closed).
    */
   private async checkNearDelegate(delegateBytes: Uint8Array): Promise<void> {
+    this.requireIndependentNear();
     const da = decodeNearDelegateAction(delegateBytes);
     let keys: ({ nonce: bigint; blockHeight: bigint } | null)[];
     try {

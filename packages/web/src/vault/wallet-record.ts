@@ -77,3 +77,10 @@ export function reportWallets(send: (body: WalletRecordBody, signal: AbortSignal
 
 /** True when the API's answer says it recorded the NEAR account (`near: true`, D756). */
 export const nearRecordedIn = (answer: unknown): boolean => typeof answer === 'object' && answer !== null && (answer as { near?: unknown }).near === true;
+
+/** The API's `nearCode` when it answered `near: false` (D762, D763), `unknown` for another value, or null otherwise. */
+export function nearRefusedIn(answer: unknown): string | null {
+  if (typeof answer !== 'object' || answer === null || (answer as { near?: unknown }).near !== false) return null;
+  const code = (answer as { nearCode?: unknown }).nearCode;
+  return typeof code === 'string' && /^[a-z0-9_]{1,40}$/u.test(code) ? code : 'unknown';
+}

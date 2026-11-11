@@ -157,6 +157,21 @@ export class NearView {
     return isObj(value) && value.unrecorded_wallets === false;
   }
 
+  /**
+   * Whether `blockHash` (base58) is a block of this env's network (D726): a test app's NEAR transaction must name a
+   * testnet block, which ties its signature to testnet (a transaction is valid only with a recent block hash of the
+   * network it is sent to). True when the node returns that block, false when it says it doesn't know it (an
+   * UNKNOWN_BLOCK error); throws when no endpoint gives either answer. A block is unknown to a node once it has
+   * garbage-collected it (after about five epochs, longer than a transaction's validity), so a valid one never is.
+   */
+  async blockExists(blockHash: string): Promise<boolean> {
+    const unknown = (b: Record<string, unknown>) => isObj(b.error) && isObj(b.error.cause) && b.error.cause.name === 'UNKNOWN_BLOCK';
+    const body = await this.call('block', { block_id: blockHash }, (b) => (b.error === undefined && isObj(b.result)) || unknown(b));
+    if (unknown(body)) return false;
+    const header = isObj(body.result) ? body.result.header : undefined;
+    return isObj(header) && header.hash === blockHash;
+  }
+
   /** The outcome of a relayed transaction (sender: the pinned RELAYER). Network errors throw. */
   async txOutcome(txHash: string): Promise<TxOutcome> {
     const body = await this.call('EXPERIMENTAL_tx_status', { tx_hash: txHash, sender_account_id: this.relayer, wait_until: 'EXECUTED_OPTIMISTIC' }, (b) => b.error === undefined || isPendingTxError(b.error));

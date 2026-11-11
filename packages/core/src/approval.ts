@@ -6,8 +6,9 @@
 //   digest = sha256(utf8("hana-id/approve/v1") ‖ borsh(id) ‖ borsh(kind) ‖ borsh(chain) ‖ borsh(address)
 //                   ‖ borsh(parentOrigin) ‖ borsh(contextString) ‖ u32le(len(bytes)) ‖ bytes)
 //
-// borsh(s) is u32 LE byte length ‖ UTF-8; contextString is the network passphrase (Stellar) or the decimal chain ID
-// (EVM) for the kinds whose request names its network (stellar_tx, stellar_auth_entry, evm_tx), and '' for the others:
+// borsh(s) is u32 LE byte length ‖ UTF-8; contextString is the network passphrase (Stellar), the decimal chain ID
+// (EVM) or `near:testnet` / `near:mainnet` (NEAR, D722) for the kinds whose request names its network (stellar_tx,
+// stellar_auth_entry, evm_tx, near_tx, near_delegate), and '' for the others:
 // a message, typed data (its domain carries the chain) or a raw request names none, and the vault, which never learns
 // the partner's selected EVM chain (the SDK answers eth_chainId), has none to bind.
 import { sha256 } from '@noble/hashes/sha2';
@@ -23,6 +24,9 @@ export const APPROVAL_DIGEST_DOMAIN = 'hana-id/approve/v1';
  * - `personal_sign`: the EIP-191 message;
  * - `eip712`: the `eth_signTypedData_v4` JSON, UTF-8;
  * - `raw`: the Ed25519 message (Stellar, ≤ 4 KiB) or the 32-byte secp256k1 digest (EVM). Never decoded.
+ * - `near_tx`: a borsh NEAR `Transaction` (its sha256 is signed);
+ * - `near_delegate`: a borsh NEP-366 `DelegateAction`, without NEP-461's prefix (sha256(prefix ‖ bytes) is signed);
+ * - `near_message`: NEP-413's `u32le(2^31 + 413) ‖ borsh(Payload)` (its sha256 is signed).
  */
 export const APPROVAL_KINDS = [
   'stellar_tx',
@@ -32,26 +36,43 @@ export const APPROVAL_KINDS = [
   'personal_sign',
   'eip712',
   'raw',
+  'near_tx',
+  'near_message',
+  'near_delegate',
 ] as const;
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
 
-export type ApprovalChain = 'stellar' | 'evm';
+export type ApprovalChain = 'stellar' | 'evm' | 'near';
+export const APPROVAL_CHAINS: readonly ApprovalChain[] = ['stellar', 'evm', 'near'];
 
-/** Kinds no auto-approve policy can ever cover. */
+/**
+ * Kinds no auto-approve policy can ever cover. The NEAR kinds are here because no policy format covers NEAR yet
+ * (D722): every NEAR request gets the approval popup.
+ */
 export const NEVER_AUTO_APPROVED_KINDS: ReadonlySet<ApprovalKind> = new Set([
   'raw',
   'personal_sign',
   'stellar_message',
+  'near_tx',
+  'near_message',
+  'near_delegate',
 ]);
+
+/** The NEAR networks a request may name. */
+export const NEAR_NETWORKS = ['testnet', 'mainnet'] as const;
+export type NearNetwork = (typeof NEAR_NETWORKS)[number];
+export const isNearNetwork = (v: unknown): v is NearNetwork => v === 'testnet' || v === 'mainnet';
 
 export type ApprovalContext =
   | { readonly networkPassphrase: string }
   | { readonly chainId: number }
+  | { readonly nearNetwork: NearNetwork }
   | { readonly [key: string]: never };
 
-/** The context a kind carries: the network passphrase, the chain ID, or none (`{}`). */
-export function approvalKindContext(kind: ApprovalKind): 'networkPassphrase' | 'chainId' | 'none' {
+/** The context a kind carries: the network passphrase, the chain ID, the NEAR network, or none (`{}`). */
+export function approvalKindContext(kind: ApprovalKind): 'networkPassphrase' | 'chainId' | 'nearNetwork' | 'none' {
   if (kind === 'stellar_tx' || kind === 'stellar_auth_entry') return 'networkPassphrase';
+  if (kind === 'near_tx' || kind === 'near_delegate') return 'nearNetwork';
   return kind === 'evm_tx' ? 'chainId' : 'none';
 }
 
@@ -59,7 +80,7 @@ export function approvalKindContext(kind: ApprovalKind): 'networkPassphrase' | '
 export interface ApprovalSubject {
   readonly kind: ApprovalKind;
   readonly chain: ApprovalChain;
-  /** The vault's address on `chain` (StrKey G… or EIP-55 0x…). */
+  /** The vault's address on `chain` (StrKey G…, EIP-55 0x… or the NEAR implicit account id). */
   readonly address: string;
   readonly context: ApprovalContext;
   readonly bytes: Uint8Array;
@@ -76,9 +97,10 @@ export const APPROVAL_MAX_BYTES = 192 * 1024;
 export const RAW_STELLAR_MAX_BYTES = 4096;
 const MAX_STRING_BYTES = 1024;
 
-/** The chain a kind belongs to, or null for `raw` (either chain). */
+/** The chain a kind belongs to, or null for `raw` (Stellar or EVM). */
 export function approvalKindChain(kind: ApprovalKind): ApprovalChain | null {
   if (kind === 'raw') return null;
+  if (kind.startsWith('near_')) return 'near';
   return kind.startsWith('stellar_') ? 'stellar' : 'evm';
 }
 
@@ -97,7 +119,7 @@ function checkString(s: unknown, what: string): asserts s is string {
 /** Throws unless kind, chain, context and bytes fit together (the shape both the popup and the vault require). */
 export function validateApprovalSubject(s: ApprovalSubject): void {
   if (!(APPROVAL_KINDS as readonly string[]).includes(s.kind)) throw new Error('Unknown approval kind');
-  if (s.chain !== 'stellar' && s.chain !== 'evm') throw new Error('Unknown approval chain');
+  if (!APPROVAL_CHAINS.includes(s.chain)) throw new Error('Unknown approval chain');
   const kindChain = approvalKindChain(s.kind);
   if (kindChain !== null && kindChain !== s.chain) throw new Error(`Kind ${s.kind} is not on ${s.chain}`);
   checkString(s.address, 'address');
@@ -110,6 +132,7 @@ export function validateApprovalSubject(s: ApprovalSubject): void {
   if (!(s.bytes instanceof Uint8Array)) throw new Error('bytes must be a Uint8Array');
   if (s.bytes.length > APPROVAL_MAX_BYTES) throw new Error('bytes too large');
   if (s.kind === 'raw') {
+    if (s.chain === 'near') throw new Error('A raw request is on Stellar or EVM');
     if (s.chain === 'evm' && s.bytes.length !== 32) throw new Error('A raw EVM request is a 32-byte digest');
     if (s.chain === 'stellar' && (s.bytes.length === 0 || s.bytes.length > RAW_STELLAR_MAX_BYTES)) {
       throw new Error(`A raw Stellar request is 1 to ${RAW_STELLAR_MAX_BYTES} bytes`);
@@ -118,8 +141,8 @@ export function validateApprovalSubject(s: ApprovalSubject): void {
 }
 
 /**
- * The network passphrase (Stellar), the decimal chain ID (EVM), or '' for an empty context. Throws if the context
- * doesn't fit the chain (validateApprovalSubject also checks it fits the kind).
+ * The network passphrase (Stellar), the decimal chain ID (EVM), `near:<network>` (NEAR), or '' for an empty context.
+ * Throws if the context doesn't fit the chain (validateApprovalSubject also checks it fits the kind).
  */
 export function approvalContextString(chain: ApprovalChain, context: ApprovalContext): string {
   if (typeof context !== 'object' || context === null) throw new Error('context must be an object');
@@ -131,6 +154,11 @@ export function approvalContextString(chain: ApprovalChain, context: ApprovalCon
     }
     checkString(context.networkPassphrase, 'networkPassphrase');
     return context.networkPassphrase;
+  }
+  if (chain === 'near') {
+    if (keys.length !== 1 || !('nearNetwork' in context)) throw new Error('NEAR context is {nearNetwork}');
+    if (!isNearNetwork(context.nearNetwork)) throw new Error('nearNetwork is testnet or mainnet');
+    return `near:${context.nearNetwork}`;
   }
   if (keys.length !== 1 || !('chainId' in context)) throw new Error('EVM context is {chainId}');
   if (!Number.isSafeInteger(context.chainId) || context.chainId <= 0) {

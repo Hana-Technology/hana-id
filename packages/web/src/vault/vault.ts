@@ -77,13 +77,18 @@ import {
   SUPPORT_ID_SDK_MIN,
   API_REQUEST_ID_SDK_MIN,
   EMAIL_SHARING_SDK_MIN,
+  NEAR_SDK_MIN,
+  type PortAddresses,
+  TEST_APP_NETWORK_RULE,
+  decodeNearTransaction,
+  nearHashString,
   base64UrlEncode,
   fromHex,
   sdkAtLeast,
   vaultPayload,
   walletRecordEvmDigest,
 } from '@hana-id/core';
-import { deriveAddresses } from '@hana-id/core/derivation';
+import { chainAddress, deriveAddresses } from '@hana-id/core/derivation';
 import { consentRegisterPayload, consentRevokePayload } from '@hana-id/core/home';
 import { type AutoApproveResult, matchAutoApprovePolicy, recordAutoApproveUse } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
@@ -250,9 +255,20 @@ interface ConsentHolder {
   share: Share | null;
 }
 
+/**
+ * A session's addresses: Stellar and EVM (the record's, the wallet proofs' and the wallet record's), and NEAR's
+ * implicit account id (D720), derived from PRK at login and unlock, never stored (D725): the record keeps exactly the
+ * two addresses older vault bundles read.
+ */
+interface SessionAddresses {
+  stellar: string;
+  evm: string;
+  near: string;
+}
+
 interface Session {
   prk: Bytes;
-  addresses: { stellar: string; evm: string };
+  addresses: SessionAddresses;
   expiresAtMs: number;
   path: string;
   sessionPk: Uint8Array;
@@ -325,7 +341,7 @@ export const ACCOUNT_CACHE_MS = 5_000;
 
 /** A 'session'-mode session whose PRK was zeroed for idleness: the record can unlock it again (same share only). */
 interface Dormant {
-  addresses: { stellar: string; evm: string };
+  addresses: SessionAddresses;
   expiresAtMs: number;
   sessionPk: Uint8Array;
   shareId: Uint8Array;
@@ -382,7 +398,7 @@ interface IdentityTarget {
 }
 
 interface ExportJob {
-  chain: 'stellar' | 'evm';
+  chain: 'stellar' | 'evm' | 'near';
   address: string;
   window: WindowRef | null;
   contextSent: boolean;
@@ -536,6 +552,11 @@ export class Vault {
   private sdkTakesRequestId = false;
   /** D411: whether the SDK on the port knows `emailSharingChanged` (EMAIL_SHARING_SDK_MIN or later). */
   private sdkTakesEmailSharing = false;
+  /**
+   * D725: whether the SDK on the port takes `near` in its addresses (NEAR_SDK_MIN or later). SDKs 0.3.x check the
+   * address object's exact keys and would drop a hana_status, hana_login, `ready` or `accountsChanged` that had it.
+   */
+  private sdkTakesNear = false;
   /** D411: the email sharing sheet in progress (one at a time: an `at_login` sign-in's, or requestEmailSharing's). */
   private shareSheet: ShareSheet | null = null;
   private port: MessagePort | null = null;
@@ -684,6 +705,7 @@ export class Vault {
     this.sdkTakesSupportId = sdkAtLeast(hello.sdk, SUPPORT_ID_SDK_MIN);
     this.sdkTakesRequestId = sdkAtLeast(hello.sdk, API_REQUEST_ID_SDK_MIN);
     this.sdkTakesEmailSharing = sdkAtLeast(hello.sdk, EMAIL_SHARING_SDK_MIN);
+    this.sdkTakesNear = sdkAtLeast(hello.sdk, NEAR_SDK_MIN);
     this.port = port;
     const fetchFn = this.o.fetch;
     this.api = new VaultApi({
@@ -780,9 +802,9 @@ export class Vault {
 
   private statusResult(): StatusResult {
     const s = this.live();
-    if (s) return { status: 'logged_in', addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence: s.persistence, ...this.supportIdField(s.supportId) };
+    if (s) return { status: 'logged_in', addresses: this.portAddresses(s.addresses), expiresAtMs: s.expiresAtMs, persistence: s.persistence, ...this.supportIdField(s.supportId) };
     const d = this.liveDormant();
-    if (d) return { status: 'logged_in', addresses: { ...d.addresses }, expiresAtMs: d.expiresAtMs, persistence: 'session', ...this.supportIdField(d.supportId) };
+    if (d) return { status: 'logged_in', addresses: this.portAddresses(d.addresses), expiresAtMs: d.expiresAtMs, persistence: 'session', ...this.supportIdField(d.supportId) };
     return { status: 'logged_out', persistence: this.persistence };
   }
 
@@ -796,8 +818,13 @@ export class Vault {
     return supportId && this.sdkTakesSupportId ? { supportId } : {};
   }
 
+  /** The addresses the SDK on the port gets: with `near` only for NEAR_SDK_MIN or later (D725). */
+  private portAddresses(a: SessionAddresses): PortAddresses {
+    return this.sdkTakesNear ? { stellar: a.stellar, evm: a.evm, near: a.near } : { stellar: a.stellar, evm: a.evm };
+  }
+
   /** The addresses of the session, live or dormant, or null. */
-  private addresses(): { stellar: string; evm: string } | null {
+  private addresses(): SessionAddresses | null {
     return this.live()?.addresses ?? this.liveDormant()?.addresses ?? null;
   }
 
@@ -1149,7 +1176,9 @@ export class Vault {
   /** Whether `request` names a mainnet (D39); false for a request that doesn't parse (approvalSubject refuses it). */
   private static namesMainnet(request: SignRequest): boolean {
     try {
-      return mainnetOfRequest(request) !== null;
+      // NEAR mainnet is never under the demo (D726): refused at once, like any test app mainnet without it.
+      const mainnet = mainnetOfRequest(request);
+      return mainnet !== null && mainnet.chain !== 'near';
     } catch {
       return false;
     }
@@ -1709,7 +1738,7 @@ export class Vault {
     }
     const s: Session = {
       prk: success.prk,
-      addresses: { stellar: success.addresses.stellar, evm: success.addresses.evm },
+      addresses: { stellar: success.addresses.stellar, evm: success.addresses.evm, near: success.addresses.near },
       expiresAtMs: success.expiresAtMs,
       path: success.path,
       sessionPk: success.sessionKey.publicKey,
@@ -1718,7 +1747,7 @@ export class Vault {
       share: null,
       persist: null,
       consent: null,
-      walletProofs: this.walletProofsFor(success.prk, success.sessionKey.publicKey, success.addresses),
+      walletProofs: this.walletProofsFor(success.prk, success.sessionKey.publicKey, { stellar: success.addresses.stellar, evm: success.addresses.evm }),
       supportId: success.supportId,
       sealedEmail: success.sealedEmail,
       emailState: null,
@@ -1738,14 +1767,14 @@ export class Vault {
     if (success.emailShare) await this.loginEmailShare(s, success);
     if (this.session !== s) throw new VaultError('login_cancelled', 'The sign-in ended');
     if (this.pending === pending) this.emit('loginProgress', { stage: 'done' });
-    this.emit('accountsChanged', { addresses: { ...s.addresses } });
+    this.emit('accountsChanged', { addresses: this.portAddresses(s.addresses) });
     // The link this login made (spec "Notices"); the first read of the wallet's methods then reports pending ones.
     if (success.linked) this.emit('linkChanged', { provider: success.linked.provider, status: success.linked.status, effectiveAtMs: success.linked.effectiveAtMs });
     this.methodsSeen = null;
     this.freshLink = success.linked?.provider ?? null;
     this.accountCache = null;
     void this.account(true).catch(() => undefined);
-    const result: LoginResult = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence, ...this.supportIdField(s.supportId) };
+    const result: LoginResult = { addresses: this.portAddresses(s.addresses), expiresAtMs: s.expiresAtMs, persistence, ...this.supportIdField(s.supportId) };
     if (warning) result.warning = warning;
     if (this.testApp) {
       const end = this.perfNow();
@@ -2270,10 +2299,15 @@ export class Vault {
     }
     t?.mark('unwrap');
     let consentOk = true;
+    // NEAR's account is derived here, never read from the record (D725): a record from before NEAR has the same PRK.
+    let near = '';
     try {
       const addresses = deriveAddresses(prk);
       if (addresses.stellar !== record.addresses.stellar || addresses.evm !== record.addresses.evm) consentOk = false;
-      else await openConsent(prk, record);
+      else {
+        near = chainAddress(prk, 'near');
+        await openConsent(prk, record);
+      }
     } catch {
       consentOk = false;
     }
@@ -2283,11 +2317,11 @@ export class Vault {
       return;
     }
     // A format-1 record gets its identity proofs now (PRK is here), written back if the record is still this session's.
-    const walletProofs = record.walletProofs ? copyProofs(record.walletProofs) : this.walletProofsFor(prk, record.sessionPk, record.addresses);
+    const walletProofs = record.walletProofs ? copyProofs(record.walletProofs) : this.walletProofsFor(prk, record.sessionPk, { stellar: record.addresses.stellar, evm: record.addresses.evm });
     if (!record.walletProofs && walletProofs) void this.upgradeRecord(record, walletProofs).catch(() => undefined);
     this.adopt({
       prk,
-      addresses: { ...record.addresses },
+      addresses: { stellar: record.addresses.stellar, evm: record.addresses.evm, near },
       expiresAtMs: record.expiresAtMs,
       path: record.path,
       sessionPk: record.sessionPk,
@@ -2517,7 +2551,8 @@ export class Vault {
       // The digest is refused as a raw EVM request from now on, before the first await (D179, D317).
       s.recordDigest = walletRecordEvmDigest(ctx, s.addresses.evm);
       // The chain keys sign synchronously inside (PRK checked live just above); then the session key, asynchronously.
-      signed = await signWalletRecords(s.prk, s.keyPair.privateKey, ctx, s.addresses);
+      // Exactly Stellar and EVM: the API's POST /v1/wallets/record takes those two (D725).
+      signed = await signWalletRecords(s.prk, s.keyPair.privateKey, ctx, { stellar: s.addresses.stellar, evm: s.addresses.evm });
     } catch {
       return;
     }
@@ -2909,6 +2944,12 @@ export class Vault {
     const mainnetDemo = demo ? await this.freshMainnetDemo() : null;
     if (this.live() !== s) throw sessionEnded(s);
     const subject = this.subjectOf(request, s.addresses, { rawSign, testApp: this.testApp, mainnetDemo, reservedEvmDigests: this.reservedEvmDigests(s.addresses.evm) });
+    // D726: a test app's NEAR transaction must name a block of this env's network (testnet), which is what ties its
+    // signature to testnet (NEAR's bytes name no network). Before any popup, so a refusal costs no click.
+    if (this.testApp && request.method === 'near_signTransaction') {
+      await this.checkNearBlock(subject.bytes);
+      if (this.live() !== s) throw sessionEnded(s);
+    }
     // A mainnet demo request always gets the approval popup and its banner: never auto-approved.
     const eligible = !demo && !NEVER_AUTO_APPROVED_KINDS.has(subject.kind);
     // The policy read below also names the consent, so it is loaded first: one read then answers both.
@@ -2968,14 +3009,39 @@ export class Vault {
   }
 
   /**
+   * Refuses a NEAR transaction whose block hash isn't a block of this env's network (D726): 4100 `near_block_unknown`
+   * when the RPC says it doesn't know the block, `api_unavailable` (reason `near_rpc_unavailable`) when no endpoint
+   * answers. Only test apps are checked: a test app signs for NEAR testnet only, as for the other chains (D39).
+   */
+  private async checkNearBlock(txBytes: Uint8Array): Promise<void> {
+    const blockHash = nearHashString(decodeNearTransaction(txBytes).blockHash);
+    let known: boolean;
+    try {
+      known = await this.near!.blockExists(blockHash);
+    } catch {
+      throw new VaultError('api_unavailable', 'Hana couldn’t check this transaction’s block on NEAR testnet, try again', { reason: 'near_rpc_unavailable' });
+    }
+    if (!known) {
+      throw new VaultError(ErrorCode.unauthorized, `${TEST_APP_NETWORK_RULE}. This transaction’s block hash is not a NEAR ${this.env.network} block: use a recent one from a ${this.env.network} RPC`, {
+        reason: 'near_block_unknown',
+        chain: 'near',
+        blockHash,
+      });
+    }
+  }
+
+  /**
    * The mainnet demo's usage event (D428): what was signed, on which network, for how much, from which address; never
    * a key, a signature or the transaction's bytes. Best effort: a failure never touches the signature.
    */
   private reportDemoSignature(s: Session, subject: ReturnType<typeof approvalSubject>, prices: MainnetDemoPriceBook): void {
-    const assessed = assessMainnetDemo(subject, this.clock.now(), prices, { wallets: s.addresses });
+    // The mainnet demo covers Stellar and EVM only (never NEAR, D726).
+    const chain = subject.chain;
+    if (chain !== 'stellar' && chain !== 'evm') return;
+    const assessed = assessMainnetDemo(subject, this.clock.now(), prices, { wallets: { stellar: s.addresses.stellar, evm: s.addresses.evm } });
     const api = this.api;
     // The session's proof of the signing address (the identity token's): without one there is nothing to report with.
-    const proof = subject.chain === 'stellar' || subject.chain === 'evm' ? s.walletProofs?.[subject.chain] : undefined;
+    const proof = s.walletProofs?.[chain];
     if (!assessed.ok || !api || !proof || proof.address !== subject.address) return;
     const network = assessed.network.chain === 'evm' ? String(assessed.network.chainId) : assessed.network.network;
     void demoEventBody(s.keyPair.privateKey, {
@@ -2983,7 +3049,7 @@ export class Vault {
       appId: this.config.appId,
       sessionPublicKey: Uint8Array.from(s.sessionPk),
       issuedAtMs: this.clock.now(),
-      event: { chain: subject.chain, network, kind: subject.kind, usdMicros: assessed.usdMicros.toString() },
+      event: { chain, network, kind: subject.kind, usdMicros: assessed.usdMicros.toString() },
       proof,
     })
       .then((body) => api.mainnetDemoEvent(body))
@@ -3324,7 +3390,7 @@ export class Vault {
 
   // ---- export (vault side; docs/batch-b-spec.md "Key export" steps 1–2) ----
 
-  private startExport(chain: 'stellar' | 'evm'): Promise<null> {
+  private startExport(chain: 'stellar' | 'evm' | 'near'): Promise<null> {
     const s = this.live();
     if (!s) return Promise.reject(notLoggedIn());
     // The export window signs in again on its own, with Google or (an app with email, batch 8b: D246 lifted) an email
@@ -3334,7 +3400,7 @@ export class Vault {
     return new Promise<null>((resolve, reject) => {
       const job: ExportJob = {
         chain,
-        address: chain === 'stellar' ? s.addresses.stellar : s.addresses.evm,
+        address: s.addresses[chain],
         window: null,
         contextSent: false,
         intent: null,

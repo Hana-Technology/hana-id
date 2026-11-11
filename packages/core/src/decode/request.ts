@@ -1,7 +1,11 @@
 // The approval popup's single entry point: decode a request's bytes itself (never trusting a summary from the vault)
 // and check them against the request's network context. A request that doesn't decode is refused before display.
 // `raw` is never decoded, even when its bytes happen to be a valid transaction or hash.
-import { type ApprovalSubject, validateApprovalSubject } from '../approval.ts';
+import { isNearImplicitAccountId, nearImplicitPublicKey } from '../addresses.ts';
+import { type ApprovalSubject, type NearNetwork, validateApprovalSubject } from '../approval.ts';
+import { bytesEqual } from '../bytes.ts';
+import { type NearPublicKey, decodeNearDelegateAction, decodeNearTransaction, decodeNep413Message, nearTransactionHashString } from '../near/codec.ts';
+import { type DecodedNearDelegate, type DecodedNearMessage, type DecodedNearTx, nearMessageView } from './near.ts';
 import { type NormalizedTypedData, normalizeTypedData, typedDataChainId } from '../typed-data.ts';
 import { type TypedDataView, typedDataView } from './eip712.ts';
 import { DecodeError, fail } from './errors.ts';
@@ -32,7 +36,17 @@ export type DecodedApproval =
       readonly typedData: NormalizedTypedData;
       readonly view: TypedDataView;
     }
-  | { readonly kind: 'raw'; readonly chain: 'stellar' | 'evm'; readonly hex: string };
+  | { readonly kind: 'raw'; readonly chain: 'stellar' | 'evm'; readonly hex: string }
+  | ({ readonly kind: 'near_tx' } & DecodedNearTx)
+  | ({ readonly kind: 'near_delegate' } & DecodedNearDelegate)
+  | ({ readonly kind: 'near_message' } & DecodedNearMessage);
+
+/** The NEAR request's account and key must be the vault's: its implicit account id and the key it is the hex of. */
+function checkNearSigner(address: string, account: string, key: NearPublicKey, what: string): void {
+  if (!isNearImplicitAccountId(address)) fail('malformed', 'The NEAR address is not an implicit account id');
+  if (account !== address) fail('invalid_value', `The ${what} is not from this account`);
+  if (key.type !== 'ed25519' || !bytesEqual(key.bytes, nearImplicitPublicKey(address))) fail('invalid_value', `The ${what} is not for this account's key`);
+}
 
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -50,7 +64,9 @@ export function typedDataFromBytes(bytes: Uint8Array): NormalizedTypedData {
 /**
  * Decodes a request for display (and for the auto-approve matcher). Throws DecodeError when the bytes are malformed
  * or name another network than `context` (an EVM transaction's chain ID, an authorization's network ID). Messages,
- * typed data and raw requests carry no context (approval.ts); typed data shows its domain's chain.
+ * typed data and raw requests carry no context (approval.ts); typed data shows its domain's chain. A NEAR transaction
+ * or delegate action must be signed by the subject's account with its key (`invalid_value` otherwise); NEAR bytes
+ * name no network, so the context is the request's claim (the vault checks a test app's transaction's block hash).
  */
 export function decodeApprovalRequest(s: ApprovalSubject): DecodedApproval {
   try {
@@ -58,7 +74,7 @@ export function decodeApprovalRequest(s: ApprovalSubject): DecodedApproval {
   } catch (e) {
     fail('malformed', (e as Error).message);
   }
-  const ctx = s.context as { networkPassphrase?: string; chainId?: number };
+  const ctx = s.context as { networkPassphrase?: string; chainId?: number; nearNetwork?: NearNetwork };
   switch (s.kind) {
     case 'stellar_tx':
       return {
@@ -86,7 +102,20 @@ export function decodeApprovalRequest(s: ApprovalSubject): DecodedApproval {
       return { kind: s.kind, chainId: typedDataChainId(typedData), typedData, view: typedDataView(typedData) };
     }
     case 'raw':
+      if (s.chain === 'near') fail('malformed', 'A raw request is on Stellar or EVM');
       return { kind: s.kind, chain: s.chain, hex: toHex0x(s.bytes) };
+    case 'near_tx': {
+      const tx = decodeNearTransaction(s.bytes);
+      checkNearSigner(s.address, tx.signerId, tx.publicKey, 'transaction');
+      return { kind: s.kind, network: ctx.nearNetwork as NearNetwork, tx, hash: nearTransactionHashString(s.bytes) };
+    }
+    case 'near_delegate': {
+      const delegate = decodeNearDelegateAction(s.bytes);
+      checkNearSigner(s.address, delegate.senderId, delegate.publicKey, 'delegate action');
+      return { kind: s.kind, network: ctx.nearNetwork as NearNetwork, delegate };
+    }
+    case 'near_message':
+      return { kind: s.kind, ...nearMessageView(decodeNep413Message(s.bytes)) };
     default:
       throw new DecodeError('unsupported', 'Unknown approval kind');
   }

@@ -86,7 +86,7 @@ export const EXPORT_CHECK_MS = 1_000;
 const RELAY_WAIT_S = 25;
 /** How often the child popup's `closed` is checked until it connects. */
 const CHILD_WATCH_MS = 500;
-const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM' } as const;
+const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM', near: 'NEAR' } as const;
 
 /** Why an export ended without an error: the key deadline passed, the vault session ended, or the vault went away. */
 export type ExportEndReason = 'expired' | 'session_ended' | 'vault_gone';
@@ -557,8 +557,9 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         signature: jsonBytes(signature),
         pk1,
         pk2,
-        // The API's key_exported event names the chain (D430): a label only, never relayed or in the nonce.
-        exportChain: ctx.chain,
+        // The API's key_exported event names the chain (D430): a label only, never relayed or in the nonce. The API
+        // takes 'stellar' or 'evm' there today: a NEAR export sends none, so its event is recorded with no chain (D724).
+        ...(ctx.chain === 'near' ? {} : { exportChain: ctx.chain }),
       };
       idToken = null;
       let result: CkdResult;

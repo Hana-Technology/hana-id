@@ -724,7 +724,7 @@ describe('/approve', () => {
     for (const m of [evmRequest({ testApp: true, mainnetDemo: true }), consentRequest({ testApp: true, mainnetDemo: true })]) {
       send(m);
       expect(note()).toBe(TEST_APP_DEMO_NOTE);
-      expect(pageText()).not.toContain('Requests for Stellar or EVM mainnets are refused');
+      expect(pageText()).not.toContain('Requests for Stellar, NEAR or EVM mainnets are refused');
     }
     // The demo off: the note as it was.
     for (const m of [evmRequest({ testApp: true }), consentRequest({ testApp: true })]) {

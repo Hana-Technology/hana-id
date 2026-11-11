@@ -96,14 +96,17 @@ export const isTestEvmChain = (chainId: number): boolean => Number.isSafeInteger
 /** Whether a test app may sign for this Stellar network. */
 export const isTestStellarNetwork = (passphrase: string): boolean => passphrase !== STELLAR_MAINNET_PASSPHRASE;
 
+/** Whether a test app may sign a NEAR transaction or delegate action for this network (testnet only, D726). */
+export const isTestNearNetwork = (network: string): boolean => network === 'testnet';
+
 /** The user-facing explanation (vault errors, the partner client's errors, the approval popup). */
-export const TEST_APP_NETWORK_RULE = 'Test apps (pk_test_ keys) can sign only for test networks: Hana ID refuses Stellar mainnet and EVM chains outside its testnet list';
+export const TEST_APP_NETWORK_RULE = 'Test apps (pk_test_ keys) can sign only for test networks: Hana ID refuses Stellar mainnet, NEAR mainnet and EVM chains outside its testnet list';
 
 /** Why a test app's raw request is refused (a raw digest names no network, so it could be a mainnet transaction). */
 export const TEST_APP_RAW_RULE = 'Test apps (pk_test_ keys) can’t use raw signing: a raw digest can be a mainnet transaction';
 
 /** A mainnet a test app may not sign for, as the request names it. */
-export type MainnetRefusal = { chain: 'stellar'; networkPassphrase: string } | { chain: 'evm'; chainId: number };
+export type MainnetRefusal = { chain: 'stellar'; networkPassphrase: string } | { chain: 'evm'; chainId: number } | { chain: 'near'; network: string };
 
 /**
  * The mainnet this sign request is for, or null when a test app may sign it (a test network, or a request that names
@@ -125,9 +128,15 @@ export function mainnetOfRequest(request: Extract<PortRequest, { method: SignMet
       const chainId = typedDataChainId(normalizeTypedData(request.params[1]));
       return chainId === null || isTestEvmChain(chainId) ? null : { chain: 'evm', chainId };
     }
+    case 'near_signTransaction':
+    case 'near_signDelegateAction':
+      // The request names its network; NEAR's bytes don't (a testnet transaction is tied to testnet by its block hash,
+      // which the vault checks for a test app: D726).
+      return isTestNearNetwork(request.params.network) ? null : { chain: 'near', network: request.params.network };
     case 'stellar_signMessage':
     case 'personal_sign':
     case 'hana_signRaw':
+    case 'near_signMessage':
       return null;
   }
 }

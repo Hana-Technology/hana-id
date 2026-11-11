@@ -2,6 +2,7 @@
 // caller zeroes it), is synchronous, and returns only public values. The bytes must already have passed the decoder
 // (the vault signs what the popup decoded), and are decoded again here so nothing undecodable is ever signed.
 import { ed25519 } from '@noble/curves/ed25519';
+import { nearImplicitAccountId, nearPublicKeyString } from '../addresses.ts';
 import { base64Encode, bytesEqual, toBytes } from '../bytes.ts';
 import {
   type NearDelegateAction,
@@ -57,9 +58,19 @@ export function signNearDelegateAction(seed: Uint8Array, delegateBytes: Uint8Arr
   return { signature: base64Encode(sig), signedDelegateAction: base64Encode(encodeNearSignedDelegateAction(delegateBytes, { type: 'ed25519', bytes: sig })) };
 }
 
-/** Signs NEP-413 message bytes (`u32le(2^31 + 413) ‖ borsh(Payload)`): base64 of the 64-byte signature. */
-export function signNep413Message(seed: Uint8Array, messageBytes: Uint8Array): string {
+export interface Nep413SignedResult {
+  /** The signer's implicit account id (the hex of its public key). */
+  accountId: string;
+  /** `ed25519:<base58>`. */
+  publicKey: string;
+  /** base64 of the 64-byte signature. */
+  signature: string;
+}
+
+/** Signs NEP-413 message bytes (`u32le(2^31 + 413) ‖ borsh(Payload)`), as this seed's implicit account. */
+export function signNep413Message(seed: Uint8Array, messageBytes: Uint8Array): Nep413SignedResult {
   if (seed.length !== 32) throw new Error('Ed25519 seed must be 32 bytes');
   decodeNep413Message(messageBytes);
-  return base64Encode(ed25519.sign(nep413Hash(messageBytes), seed));
+  const pub = ed25519.getPublicKey(seed);
+  return { accountId: nearImplicitAccountId(pub), publicKey: nearPublicKeyString(pub), signature: base64Encode(ed25519.sign(nep413Hash(messageBytes), seed)) };
 }

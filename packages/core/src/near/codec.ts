@@ -466,6 +466,9 @@ export function encodeNep413Message(p: Nep413Payload): Bytes {
 /** A transaction's hash (and what its signature signs): sha256(borsh(Transaction)). */
 export const nearTransactionHash = (txBytes: Uint8Array): Bytes => sha256(txBytes);
 
+/** A 32-byte hash (block, transaction, code) as NEAR RPCs print it: base58. */
+export const nearHashString = (hash: Uint8Array): string => base58.encode(hash);
+
 /** The transaction hash as NEAR RPCs and explorers print it (base58). */
 export const nearTransactionHashString = (txBytes: Uint8Array): string => base58.encode(nearTransactionHash(txBytes));
 

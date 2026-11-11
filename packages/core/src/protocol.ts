@@ -9,8 +9,10 @@
 // SECURITY: no schema here has a field for key bytes, S, PRK, a CKD response, a Google token or a session secret. The
 // one session secret that crosses postMessage is `relayKey` (hana:auth-params, vault → login popup on authOrigin).
 import { isEvmAddress, isNearAccountId, isNearImplicitAccountId, isStellarAddress } from './addresses.ts';
-import { APPROVAL_KINDS, type ApprovalContext, type ApprovalKind, approvalKindChain, validateApprovalSubject } from './approval.ts';
+import { base58 } from '@scure/base';
+import { APPROVAL_KINDS, type ApprovalContext, type ApprovalKind, type NearNetwork, approvalKindChain, isNearNetwork, validateApprovalSubject } from './approval.ts';
 import { base64Decode, from0xHex, toHex, utf8, utf8Length } from './bytes.ts';
+import { NEP413_MAX_FIELD_BYTES, encodeNep413Message } from './near/codec.ts';
 import { isDisplaySafeLine } from './display-safe.ts';
 import { IDENTITY_MAX_MAX_AGE_MS, IDENTITY_MIN_MAX_AGE_MS } from './identity.ts';
 import { isLogoUrl } from './logo.ts';
@@ -168,7 +170,11 @@ function exactKeys(o: Obj, required: readonly string[], optional: readonly strin
 const isStr = (v: unknown, min: number, max: number): v is string => typeof v === 'string' && v.length >= min && v.length <= max;
 const isInt = (v: unknown, min: number, max: number): v is number => Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max;
 const isBytes = (v: unknown, min: number, max: number): v is Uint8Array => v instanceof Uint8Array && v.length >= min && v.length <= max;
+/** The chains of the first protocol (autoApproved events, raw signing): Stellar and EVM. */
 const isChain = (v: unknown): v is 'stellar' | 'evm' => v === 'stellar' || v === 'evm';
+/** Every wallet chain (approval requests, exports): Stellar, EVM and NEAR (D722). */
+export type WalletChain = 'stellar' | 'evm' | 'near';
+const isWalletChain = (v: unknown): v is WalletChain => v === 'stellar' || v === 'evm' || v === 'near';
 const isHex = (v: unknown): v is `0x${string}` => typeof v === 'string' && /^0x(?:[0-9a-fA-F]{2})*$/u.test(v);
 
 /** `scheme://host[:port]` exactly as URL.origin prints it. */
@@ -205,7 +211,8 @@ export const isEmailHint = (v: unknown): v is string => isStr(v, 3, EMAIL_HINT_M
 const isOfferedMethods = (v: unknown): v is LoginMethod[] =>
   Array.isArray(v) && v.length >= 1 && v.length <= LOGIN_METHODS.length && v.every(isLoginMethod) && v.every((m, i) => i === 0 || LOGIN_METHODS.indexOf(m) > LOGIN_METHODS.indexOf(v[i - 1] as LoginMethod));
 const isMs = (v: unknown): v is number => isInt(v, 0, Number.MAX_SAFE_INTEGER);
-const isAddressFor = (chain: 'stellar' | 'evm', v: unknown): v is string => typeof v === 'string' && (chain === 'stellar' ? isStellarAddress(v) : isEvmAddress(v));
+const isAddressFor = (chain: WalletChain, v: unknown): v is string =>
+  typeof v === 'string' && (chain === 'stellar' ? isStellarAddress(v) : chain === 'near' ? isNearImplicitAccountId(v) : isEvmAddress(v));
 
 // ---- port: requests ----
 
@@ -238,6 +245,10 @@ export const PORT_METHODS = [
    * `popupBlocked: true` when it couldn't, and the vault's launcher opens it).
    */
   'hana_requestEmailSharing',
+  /** NEAR (D722): sent only by an SDK of NEAR_SDK_MIN or later, to a vault that reported a NEAR address. */
+  'near_signTransaction',
+  'near_signMessage',
+  'near_signDelegateAction',
 ] as const;
 
 export type PortMethod = (typeof PORT_METHODS)[number];
@@ -251,6 +262,9 @@ export const SIGN_METHODS = [
   'personal_sign',
   'eth_signTypedData_v4',
   'hana_signRaw',
+  'near_signTransaction',
+  'near_signMessage',
+  'near_signDelegateAction',
 ] as const satisfies readonly PortMethod[];
 
 export type SignMethod = (typeof SIGN_METHODS)[number];
@@ -273,7 +287,8 @@ export interface PortParamsMap {
   hana_login: { popupBlocked?: boolean; method?: LoginMethod; emailHint?: string } | undefined;
   hana_cancelLogin: undefined;
   hana_logout: undefined;
-  hana_export: { chain: 'stellar' | 'evm' };
+  /** `near` only from an SDK of NEAR_SDK_MIN or later. */
+  hana_export: { chain: WalletChain };
   hana_revokeOtherDevices: undefined;
   stellar_getAddress: undefined;
   stellar_signTransaction: { xdr: string; networkPassphrase: string; address?: string };
@@ -293,6 +308,12 @@ export interface PortParamsMap {
   /** `popupBlocked: true` when window.open returned null (the vault's launcher opens the popup instead). */
   hana_linkAccount: { method: LoginMethod; popupBlocked?: boolean };
   hana_requestEmailSharing: { popupBlocked?: boolean } | undefined;
+  /** `transaction`: base64 of a borsh NEAR `Transaction` whose signer is the user's implicit account and key. */
+  near_signTransaction: { network: NearNetwork; transaction: string };
+  /** NEP-413: `nonce` is base64 of 32 bytes; `recipient` and `callbackUrl` one line of visible text each. */
+  near_signMessage: { message: string; recipient: string; nonce: string; callbackUrl?: string };
+  /** `delegateAction`: base64 of a borsh NEP-366 `DelegateAction` (without NEP-461's prefix) from the user's account. */
+  near_signDelegateAction: { network: NearNetwork; delegateAction: string };
 }
 
 /**
@@ -345,7 +366,7 @@ const PARAMS: { [M in PortMethod]: (p: unknown) => PortParamsMap[M] | null } = {
   },
   hana_cancelLogin: (p) => (noParams(p) ? undefined : null),
   hana_logout: (p) => (noParams(p) ? undefined : null),
-  hana_export: (p) => (isPlainObject(p) && exactKeys(p, ['chain']) && isChain(p.chain) ? { chain: p.chain } : null),
+  hana_export: (p) => (isPlainObject(p) && exactKeys(p, ['chain']) && isWalletChain(p.chain) ? { chain: p.chain } : null),
   hana_revokeOtherDevices: (p) => (noParams(p) ? undefined : null),
   stellar_getAddress: (p) => (noParams(p) ? undefined : null),
   stellar_signTransaction: (p) =>
@@ -387,7 +408,31 @@ const PARAMS: { [M in PortMethod]: (p: unknown) => PortParamsMap[M] | null } = {
     isPlainObject(p) && exactKeys(p, ['method'], ['popupBlocked']) && isLoginMethod(p.method) && (p.popupBlocked === undefined || typeof p.popupBlocked === 'boolean')
       ? (p as { method: LoginMethod; popupBlocked?: boolean })
       : null,
+  near_signTransaction: (p) =>
+    isPlainObject(p) && exactKeys(p, ['network', 'transaction']) && isNearNetwork(p.network) && isBase64(p.transaction, XDR_MAX) ? { network: p.network, transaction: p.transaction } : null,
+  near_signDelegateAction: (p) =>
+    isPlainObject(p) && exactKeys(p, ['network', 'delegateAction']) && isNearNetwork(p.network) && isBase64(p.delegateAction, XDR_MAX) ? { network: p.network, delegateAction: p.delegateAction } : null,
+  near_signMessage: (p) => {
+    if (!isPlainObject(p) || !exactKeys(p, ['message', 'recipient', 'nonce'], ['callbackUrl'])) return null;
+    if (!isStr(p.message, 0, SIGN_MESSAGE_MAX_BYTES) || !isNep413Field(p.recipient) || (p.callbackUrl !== undefined && !isNep413Field(p.callbackUrl))) return null;
+    if (!isBase64(p.nonce, 44) || base64Decode(p.nonce).length !== 32) return null;
+    const out = { message: p.message, recipient: p.recipient, nonce: p.nonce, ...(p.callbackUrl !== undefined ? { callbackUrl: p.callbackUrl as string } : {}) };
+    // The payload must encode (no lone surrogate in the message): the popup shows exactly what is signed.
+    try {
+      nep413Bytes(out);
+    } catch {
+      return null;
+    }
+    return out;
+  },
 };
+
+/** A NEP-413 recipient or callback URL: one line of 1 to NEP413_MAX_FIELD_BYTES bytes of visible text. */
+const isNep413Field = (v: unknown): v is string => isStr(v, 1, NEP413_MAX_FIELD_BYTES) && utf8Length(v) <= NEP413_MAX_FIELD_BYTES && isDisplaySafeLine(v);
+
+/** The NEP-413 bytes (tag ‖ borsh payload) a near_signMessage signs the sha256 of. */
+const nep413Bytes = (p: PortParamsMap['near_signMessage']): Uint8Array =>
+  encodeNep413Message({ message: p.message, nonce: base64Decode(p.nonce), recipient: p.recipient, callbackUrl: p.callbackUrl ?? null });
 
 /** The size cap for a port request with `method`. */
 export const portRequestCap = (method: unknown): number => (isSignMethod(method) ? SIGN_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES);
@@ -423,7 +468,18 @@ export type Persistence = 'session' | 'none';
 export interface PortAddresses {
   stellar: string;
   evm: string;
+  /**
+   * The NEAR implicit account id (D722). Sent only to an SDK of NEAR_SDK_MIN or later (an older SDK's validators refuse
+   * a key they don't know, and would drop the whole answer); absent from a vault that predates NEAR.
+   */
+  near?: string;
 }
+
+/**
+ * The first SDK version that takes `near` in PortAddresses and sends the near_* methods. The vault adds `near` to the
+ * addresses only for an SDK whose `hana:hello` names this version or later (D725).
+ */
+export const NEAR_SDK_MIN = '0.4.0';
 
 export interface StatusResult {
   status: VaultStatus;
@@ -524,6 +580,12 @@ export interface PortResultMap {
   hana_linkAccount: LinkChange;
   /** Where sharing stands after the sheet: shared, not shared ("Not now", or stopped), or the window closed. */
   hana_requestEmailSharing: { state: EmailSharingResult };
+  /** base64 64-byte Ed25519 signature, base64 borsh SignedTransaction, base58 transaction hash. */
+  near_signTransaction: { signature: string; signedTransaction: string; hash: string };
+  /** NEP-413's answer: the user's implicit account id, `ed25519:` key and base64 signature. */
+  near_signMessage: { accountId: string; publicKey: string; signature: string };
+  /** base64 64-byte signature and base64 borsh SignedDelegateAction (for hana.near.relay or any NEP-366 relayer). */
+  near_signDelegateAction: { signature: string; signedDelegateAction: string };
 }
 
 /**
@@ -543,7 +605,17 @@ const isIdentityTokenState = (v: unknown): v is IdentityTokenState =>
   ((v.identityToken === null && v.expiresAtMs === null) || (isIdentityJwt(v.identityToken) && isMs(v.expiresAtMs)));
 
 const isPersistence = (v: unknown): v is Persistence => v === 'session' || v === 'none';
-const isPortAddresses = (v: unknown): v is PortAddresses => isPlainObject(v) && exactKeys(v, ['stellar', 'evm']) && isAddressFor('stellar', v.stellar) && isAddressFor('evm', v.evm);
+const isPortAddresses = (v: unknown): v is PortAddresses =>
+  isPlainObject(v) && exactKeys(v, ['stellar', 'evm'], ['near']) && isAddressFor('stellar', v.stellar) && isAddressFor('evm', v.evm) && (v.near === undefined || isAddressFor('near', v.near));
+const isSig64Base64 = (v: unknown): v is string => isBase64(v, 88) && base64Decode(v as string).length === 64;
+const isBase58Hash = (v: unknown): v is string => {
+  if (typeof v !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(v)) return false;
+  try {
+    return base58.decode(v).length === 32;
+  } catch {
+    return false;
+  }
+};
 const isPolicyId = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/u.test(v);
 const isSig65 = (v: unknown): v is `0x${string}` => typeof v === 'string' && /^0x[0-9a-fA-F]{130}$/u.test(v);
 const isSignedBy = (v: unknown, key: string): boolean => isPlainObject(v) && exactKeys(v, [key, 'signerAddress']) && isAddressFor('stellar', v.signerAddress);
@@ -603,6 +675,16 @@ const RESULTS: { [M in PortMethod]: (r: unknown) => boolean } = {
   hana_account: (r) => isPlainObject(r) && exactKeys(r, ['methods']) && Array.isArray(r.methods) && r.methods.length >= 1 && r.methods.length <= 4 && r.methods.every(isAccountMethod),
   hana_linkAccount: (r) => isLinkChange(r) && r.status !== 'removed',
   hana_requestEmailSharing: (r) => isPlainObject(r) && exactKeys(r, ['state']) && (r.state === 'granted' || r.state === 'declined' || r.state === 'dismissed'),
+  near_signTransaction: (r) =>
+    isPlainObject(r) && exactKeys(r, ['signature', 'signedTransaction', 'hash']) && isSig64Base64(r.signature) && isBase64(r.signedTransaction, APPROVAL_MESSAGE_MAX_BYTES) && isBase58Hash(r.hash),
+  near_signMessage: (r) =>
+    isPlainObject(r) &&
+    exactKeys(r, ['accountId', 'publicKey', 'signature']) &&
+    isAddressFor('near', r.accountId) &&
+    typeof r.publicKey === 'string' &&
+    /^ed25519:[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(r.publicKey) &&
+    isSig64Base64(r.signature),
+  near_signDelegateAction: (r) => isPlainObject(r) && exactKeys(r, ['signature', 'signedDelegateAction']) && isSig64Base64(r.signature) && isBase64(r.signedDelegateAction, APPROVAL_MESSAGE_MAX_BYTES),
 };
 
 export type PortReply<M extends PortMethod = PortMethod> = { v: 1; id: string; result: PortResultMap[M] } | { v: 1; id: string; error: ProtocolError };
@@ -904,7 +986,7 @@ export interface WindowMessageMap {
     appName: string;
     parentOrigin: string;
     kind: ApprovalKind;
-    chain: 'stellar' | 'evm';
+    chain: WalletChain;
     address: string;
     bytes: Uint8Array;
     context: ApprovalContext;
@@ -960,7 +1042,7 @@ export interface WindowMessageMap {
     scopeId: string;
     signer: string;
     keyIndex: number;
-    chain: 'stellar' | 'evm';
+    chain: WalletChain;
     address: string;
     /**
      * The vault session's end (server-corrected ms): the export window erases the key and ends no later than this
@@ -1062,6 +1144,7 @@ function isApprovalContext(v: unknown): v is ApprovalContext {
   if (Object.keys(v).length === 0) return true;
   if (exactKeys(v, ['networkPassphrase'])) return isStr(v.networkPassphrase, 1, PASSPHRASE_MAX);
   if (exactKeys(v, ['chainId'])) return isInt(v.chainId, 1, Number.MAX_SAFE_INTEGER);
+  if (exactKeys(v, ['nearNetwork'])) return isNearNetwork(v.nearNetwork);
   return false;
 }
 
@@ -1074,6 +1157,9 @@ export const APPROVAL_KIND: Readonly<Record<SignMethod, ApprovalKind>> = {
   personal_sign: 'personal_sign',
   eth_signTypedData_v4: 'eip712',
   hana_signRaw: 'raw',
+  near_signTransaction: 'near_tx',
+  near_signMessage: 'near_message',
+  near_signDelegateAction: 'near_delegate',
 };
 const isApprovalKind = (v: unknown): v is ApprovalKind => (APPROVAL_KINDS as readonly unknown[]).includes(v);
 
@@ -1159,7 +1245,7 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     if (m.supportId !== undefined && !isSupportId(m.supportId)) return false;
     if (m.autoApprove !== undefined && !isAutoApproveNote(m.autoApprove)) return false;
     if (m.testApp !== undefined && m.testApp !== true) return false;
-    if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isApprovalKind(m.kind) || !isChain(m.chain)) return false;
+    if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isApprovalKind(m.kind) || !isWalletChain(m.chain)) return false;
     const expected = approvalKindChain(m.kind);
     if (expected !== null && expected !== m.chain) return false;
     return (
@@ -1186,7 +1272,7 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isScopeId(m.scopeId) &&
     isNearAccountId(m.signer) &&
     isInt(m.keyIndex, 0, KEY_INDEX_LIMIT) &&
-    isChain(m.chain) &&
+    isWalletChain(m.chain) &&
     isAddressFor(m.chain, m.address),
   'hana:consent-request': (m) =>
     exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'mainnetDemo', 'logoUrl']) &&
@@ -1251,8 +1337,8 @@ export function parseWindowMessage<T extends WindowMessageType>(data: unknown, a
 // ---- approval request content ----
 
 /** The approval `chain` of a sign request. */
-export function approvalChain(request: Extract<PortRequest, { method: SignMethod }>): 'stellar' | 'evm' {
-  return request.method === 'hana_signRaw' ? request.params.chain : (approvalKindChain(APPROVAL_KIND[request.method]) as 'stellar' | 'evm');
+export function approvalChain(request: Extract<PortRequest, { method: SignMethod }>): WalletChain {
+  return request.method === 'hana_signRaw' ? request.params.chain : (approvalKindChain(APPROVAL_KIND[request.method]) as WalletChain);
 }
 
 /**
@@ -1265,6 +1351,9 @@ export function approvalChain(request: Extract<PortRequest, { method: SignMethod
  * - personal_sign: the message bytes, no context
  * - eth_signTypedData_v4: the UTF-8 of the typed-data JSON string, no context (the domain carries the chain)
  * - hana_signRaw: the raw bytes or the 32-byte digest, no context
+ * - near_signTransaction: the borsh Transaction, context {nearNetwork}
+ * - near_signDelegateAction: the borsh DelegateAction (no NEP-461 prefix), context {nearNetwork}
+ * - near_signMessage: NEP-413's u32le(2^31 + 413) ‖ borsh(Payload), no context (NEP-413 names no network)
  */
 export function approvalContent(request: Extract<PortRequest, { method: SignMethod }>): { bytes: Uint8Array; context: ApprovalContext } {
   switch (request.method) {
@@ -1287,6 +1376,12 @@ export function approvalContent(request: Extract<PortRequest, { method: SignMeth
       return { bytes: utf8(request.params[1]), context: {} };
     case 'hana_signRaw':
       return { bytes: Uint8Array.from(request.params.chain === 'stellar' ? request.params.bytes : request.params.digest), context: {} };
+    case 'near_signTransaction':
+      return { bytes: base64Decode(request.params.transaction), context: { nearNetwork: request.params.network } };
+    case 'near_signDelegateAction':
+      return { bytes: base64Decode(request.params.delegateAction), context: { nearNetwork: request.params.network } };
+    case 'near_signMessage':
+      return { bytes: nep413Bytes(request.params), context: {} };
   }
 }
 

@@ -45,6 +45,9 @@ import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
 import { type DemoBridge, type DemoNetwork, type DemoSwap, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, fixedMainnetDemoPrices, formatUsd, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
 
 /** How long the popup waits for a follow-up request after an answer before it closes. */
+/** The account line's chain names. */
+const ACCOUNT_CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM', near: 'NEAR' } as const;
+
 export const KEEP_OPEN_MS = 15_000;
 /** A partner-opened popup that no request reaches within this long says bye and closes (vault approvals.ts LATE_CLOSE_MS). */
 export const ADOPT_TIMEOUT_MS = 8_000;
@@ -111,7 +114,7 @@ export const MAINNET_DEMO_BANNER = 'Real funds, test custody: these funds may be
 /** Under the headline: why (the keys come from the testnet MPC). */
 export const MAINNET_DEMO_WHY = 'This test app signs on a real network with keys from Hana’s test infrastructure, which can be reset or broken. Use small amounts only.';
 
-export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar or EVM mainnets are refused, so don’t keep real funds at this account.';
+export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar, NEAR or EVM mainnets are refused, so don’t keep real funds at this account.';
 /**
  * The same note for a test app with the mainnet demo on (D428), where the first one would be false: what the demo
  * signs, that it always asks, and that the custody is still test custody.
@@ -418,7 +421,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         'section',
         { class: 'panel approve' },
         header(msg, `Request ${msg.position} of ${msg.queued}`),
-        d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
+        d.h('p', { class: 'account' }, `Your ${ACCOUNT_CHAIN_NAMES[msg.chain]} account `, d.h('code', { class: 'mono' }, msg.address)),
         msg.supportId ? supportIdLine(msg.supportId) : null,
         msg.emailShared ? emailSharedLine(msg.appName) : null,
         demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),

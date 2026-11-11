@@ -284,7 +284,9 @@ describe('NEP-413 messages', () => {
     expect(toHex(bytes.subarray(0, 4))).toBe(toHex(u32le(NEP413_TAG)));
     expect(NEP413_TAG).toBe(2147484061);
     const theirs = await new KeyPairSigner(KP).signNep413Message('Sign in to Guestbook', ME.accountId, 'guestbook.example', nonce, callbackUrl);
-    expect(toHex(base64Decode(signNep413Message(SEED, bytes)))).toBe(toHex(theirs.signature));
+    const mine = signNep413Message(SEED, bytes);
+    expect(toHex(base64Decode(mine.signature))).toBe(toHex(theirs.signature));
+    expect([mine.accountId, mine.publicKey]).toEqual([ME.accountId, ME.publicKey]);
     expect(KP.verify(nep413Hash(bytes), theirs.signature)).toBe(true);
     expect(decodeNep413Message(bytes)).toEqual({ message: 'Sign in to Guestbook', nonce, recipient: 'guestbook.example', callbackUrl: callbackUrl ?? null });
   });

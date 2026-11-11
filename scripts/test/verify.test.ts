@@ -184,7 +184,10 @@ describe("package selection (this repo's workspace)", () => {
     expect(has(ops, '@hana-id/api')).toBe(false);
     const guide = sel('docs/integration.md');
     for (const n of ['@hana-id/core', '@hana-id/example-identity-verify']) expect(has(guide, n), n).toBe(true);
-    expect(has(sel('docs/playbooks.md'), '@hana-id/admin')).toBe(true);
+    // The playbooks doc is generated from @hana-id/playbooks; the admin Worker no longer names it (its security digest
+    // pointed partners at it until D704), so a change to the doc alone doesn't run the admin's suites.
+    expect(has(sel('docs/playbooks.md'), '@hana-id/playbooks')).toBe(true);
+    expect(has(sel('docs/playbooks.md'), '@hana-id/admin')).toBe(false);
   });
 
   it('a leaf package runs with its readers only; @hana-id/react runs its React 18 suite too', () => {

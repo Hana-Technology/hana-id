@@ -1,10 +1,10 @@
 // Plain text plus HTML for every email (docs/batch-c-spec.md "Email"): no remote image, no script, links only to
 // `console.origin`, never an approve link. The HTML is plain semantic markup, or, for a mail that passes `design`
-// (the partner invite, D672; the security notices partners receive, D700), Hana's designed layout (@hana-id/brand/email)
+// (the partner invite, D672; the security notices partners receive, D700; the feed's digests, D704), Hana's designed layout (@hana-id/brand/email)
 // built from the same blocks, with the same text part; in it every paragraph, table value, list item and warning is
 // written so mail clients don't turn a host or address into a link, preformatted JSON included. Partner-controlled text (app and org names, origins, policy labels) is escaped for HTML and stripped of
 // control characters; a subject is one line.
-import { MAIL_INVISIBLE_SOURCE, type MailBlock, mailHtml, mailLogoUrl } from '@hana-id/brand/email';
+import { MAIL_INVISIBLE_SOURCE, type MailBlock, type MailEntry, mailHtml, mailLogoUrl } from '@hana-id/brand/email';
 
 export type Block =
   | { kind: 'p'; text: string }
@@ -12,7 +12,23 @@ export type Block =
   | { kind: 'kv'; rows: [string, string][] }
   | { kind: 'list'; items: string[] }
   | { kind: 'pre'; text: string }
-  | { kind: 'link'; label: string; url: string };
+  | { kind: 'link'; label: string; url: string }
+  /** A digest's rows (D704); `elsewhere` says where else they can be read, for rows the HTML part leaves out. */
+  | { kind: 'rows'; items: LogRow[]; elsewhere: string };
+
+/**
+ * A digest's log row (D704): `line` is its one line in the text part (and the plain HTML's list item), as the digests
+ * always wrote it; the designed HTML part shows the same facts as a title, labelled lines and the details. How a row
+ * reads (its title and labels) is the caller's: messages.ts builds it.
+ */
+export interface LogRow {
+  line: string;
+  title: string;
+  /** The row's code, shown small under the title (support matches on it). */
+  code?: string;
+  fields: [string, string][];
+  detail?: string;
+}
 
 /** A mail drawn with the designed layout: its heading (the subject without the env and Hana prefixes) and its preview line. */
 export interface Design {
@@ -35,11 +51,28 @@ export interface Rendered {
  */
 const CONTROL = new RegExp(MAIL_INVISIBLE_SOURCE, 'gu');
 
+/**
+ * The first `max` UTF-16 units of `s`, well-formed: a surrogate pair the cut would split is dropped whole, and so is any
+ * lone surrogate already in `s` (a strict mail provider can refuse a body that isn't valid UTF-16). Text without a lone
+ * surrogate that the cut doesn't split comes back as `s.slice(0, max)` (D704).
+ */
+export const cut = (s: string, max: number): string => s.slice(0, max).replace(/[\uD800-\uDFFF]/gu, '');
+
 /** One line of display text: no control characters or line breaks, collapsed spaces, at most `max` characters. */
 export function oneLine(s: string, max = 200): string {
   const flat = s.replace(/[\r\n\t]+/gu, ' ').replace(CONTROL, '').replace(/ {2,}/gu, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+  return flat.length > max ? `${cut(flat, max - 1)}…` : cut(flat, max);
 }
+
+/**
+ * The designed HTML part of a digest stays under this many bytes (D704): rows past it are left out of the HTML part
+ * only, which then says how many and where to read them, so a mail client's clip (Gmail's is 102 KB) can't hide a row
+ * without the mail saying so. The text part always holds every row.
+ */
+export const DIGEST_HTML_BUDGET = 90_000;
+
+const bytes = (s: string): number => new TextEncoder().encode(s).length;
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
 /** Multi-line text with control characters removed (line feeds kept, CRLF and CR made LF). */
 const clean = (s: string): string => s.replace(/\r\n?/gu, '\n').replace(CONTROL, '');
@@ -67,7 +100,8 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
     text.push(notice);
     html.push(`<p><strong>${escapeHtml(notice)}</strong></p>`);
   }
-  const designed: MailBlock[] = design ? [{ kind: 'heading', text: oneLine(design.heading, 200) }] : [];
+  // The designed blocks; a digest's rows are kept apart so the HTML part can show fewer of them (the budget, D704).
+  const designed: (MailBlock | { digestRows: MailEntry[]; total: number; elsewhere: string })[] = design ? [{ kind: 'heading', text: oneLine(design.heading, 200) }] : [];
   for (const b of blocks) {
     switch (b.kind) {
       case 'p':
@@ -95,6 +129,24 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
         html.push(`<ul>${b.items.map((i) => `<li>${escapeHtml(oneLine(i, 500))}</li>`).join('')}</ul>`);
         designed.push({ kind: 'list', items: b.items.map((i) => [{ unlinked: oneLine(i, 500) }]) });
         break;
+      case 'rows': {
+        const end = `End of the ${plural(b.items.length, 'row', 'rows')}.`;
+        text.push(b.items.map((r) => `- ${oneLine(r.line, 500)}`).join('\n'), end);
+        html.push(`<ul>${b.items.map((r) => `<li>${escapeHtml(oneLine(r.line, 500))}</li>`).join('')}</ul>`, `<p>${escapeHtml(end)}</p>`);
+        // Every part of a row can carry a partner's text (an origin, an address, a label in the details): unlinked.
+        designed.push({
+          digestRows: b.items.map((r) => ({
+            title: [{ unlinked: oneLine(r.title, 500) }],
+            ...(r.code ? { code: [{ unlinked: oneLine(r.code, 500) }] } : {}),
+            fields: r.fields.map(([k, v]) => [k, [{ unlinked: oneLine(v, 500) }]] as const),
+            ...(r.detail ? { detail: [{ unlinked: oneLine(r.detail, 500) }] } : {}),
+          })),
+          total: b.items.length,
+          elsewhere: b.elsewhere,
+        });
+        designed.push({ kind: 'p', text: [{ unlinked: end }] });
+        break;
+      }
       case 'pre':
         text.push(clean(b.text));
         html.push(`<pre>${escapeHtml(clean(b.text))}</pre>`);
@@ -113,12 +165,45 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
   const footer = 'Sent by Hana ID security. Hana never asks you to approve anything from an email. To reach Hana security, reply to this address or write to your Hana contact.';
   text.push(footer);
   html.push(`<p><small>${escapeHtml(footer)}</small></p>`);
+  // The designed HTML part showing at most `shown` rows of each digest list; a list cut short says so after its rows.
+  const designedHtml = (shown: number): string =>
+    mailHtml({
+      title: oneLine(design!.heading, 200),
+      preheader: oneLine(design!.preheader, 200),
+      blocks: designed.flatMap((b): MailBlock[] => {
+        if (!('digestRows' in b)) return [b];
+        const left = b.total - Math.min(shown, b.total);
+        return [
+          { kind: 'entries', items: b.digestRows.slice(0, shown) },
+          ...(left
+            ? [{ kind: 'callout', tone: 'info', text: [{ strong: `${plural(left, 'more row is', 'more rows are')} not shown here: ` }, { unlinked: `see the plain-text part of this email or ${b.elsewhere}.` }] } as const]
+            : []),
+        ];
+      }),
+      footer,
+      ...(notice ? { envNotice: notice } : {}),
+      ...(design!.filesOrigin ? { logoUrl: mailLogoUrl(design!.filesOrigin)! } : {}),
+    });
+  let out = '';
+  if (design) {
+    const most = Math.max(0, ...designed.map((b) => ('digestRows' in b ? b.total : 0)));
+    out = designedHtml(most);
+    if (bytes(out) > DIGEST_HTML_BUDGET && most > 0) {
+      // The most rows that fit (the size grows with the rows shown): a binary search, a handful of renders.
+      let lo = 0;
+      let hi = most - 1;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (bytes(designedHtml(mid)) <= DIGEST_HTML_BUDGET) lo = mid;
+        else hi = mid - 1;
+      }
+      out = designedHtml(lo);
+    }
+  }
   return {
     subject: oneLine(`${tag ? `${tag} ` : ''}[Hana ID ${env}] ${subject}`, 200),
     text: `${text.join('\n\n')}\n`,
-    html: design
-      ? mailHtml({ title: oneLine(design.heading, 200), preheader: oneLine(design.preheader, 200), blocks: designed, footer, ...(notice ? { envNotice: notice } : {}), ...(design.filesOrigin ? { logoUrl: mailLogoUrl(design.filesOrigin)! } : {}) })
-      : `<!doctype html><html><body>${html.join('\n')}</body></html>`,
+    html: design ? out : `<!doctype html><html><body>${html.join('\n')}</body></html>`,
   };
 }
 
@@ -135,9 +220,20 @@ export function duration(ms: number): string {
 
 /**
  * An exact UTC time (copyable, sortable): `2026-11-18T04:54:59.777Z`, whole seconds without `.000`. Staff mails' tables
- * and the digests' lists use it (D697); the partner notices use `readableTime`. Throws on an invalid time.
+ * and the digests' rows use it (D697, D704); the partner notices use `readableTime`. Throws on an invalid time (a digest
+ * row uses `rowTime`, which doesn't).
  */
 export const isoTime = (ms: number): string => new Date(ms).toISOString().replace('.000Z', 'Z');
+
+/**
+ * A digest row's time (D704): `isoTime`, or, for a time that isn't one, the raw value flagged ("not a valid time: …"),
+ * so one bad row is still mailed with the rest and never stops its source's cursor (a digest is after the fact; the
+ * blocking notices still refuse to render, `readableTime`).
+ */
+export function rowTime(ms: unknown): { text: string; valid: boolean } {
+  const n = typeof ms === 'number' ? new Date(ms).getTime() : Number.NaN;
+  return Number.isFinite(n) ? { text: isoTime(n), valid: true } : { text: `not a valid time: ${oneLine(String(ms), 40)}`, valid: false };
+}
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /**

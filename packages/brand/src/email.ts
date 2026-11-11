@@ -34,7 +34,22 @@ export type MailBlock =
   | { kind: 'kv'; rows: readonly (readonly [string, string | readonly MailInline[]])[] }
   | { kind: 'list'; items: readonly (string | readonly MailInline[])[] }
   /** Preformatted text; `unlinked`: each `.`, `/`, `#`, `?` and `=` in its own element (D700), copying gives the same text. */
-  | { kind: 'pre'; text: string; unlinked?: boolean };
+  | { kind: 'pre'; text: string; unlinked?: boolean }
+  /** Log rows (a digest, D704): each entry a bold title, an optional code, labelled lines and an optional detail, in compact markup. */
+  | { kind: 'entries'; items: readonly MailEntry[] };
+
+/**
+ * One log row: what happened (the title, with its code under it), labelled lines (when, who, where) and the row's details. Every part may be
+ * inline runs (`{ unlinked }` for ids, origins, addresses and JSON that clients mustn't link). Markup is kept small (the
+ * font and colours set once per row, inherited below) so a digest of 50 rows stays under clients' clipping size.
+ */
+export interface MailEntry {
+  title: string | readonly MailInline[];
+  /** A code under the title, small, muted and monospaced (the row's code beside its words, for support). */
+  code?: string | readonly MailInline[];
+  fields: readonly (readonly [string, string | readonly MailInline[]])[];
+  detail?: string | readonly MailInline[];
+}
 
 export interface MailLayout {
   /** The document title (the subject, without any env prefix). */
@@ -206,6 +221,18 @@ function block(b: MailBlock): string {
       return `<ul class="hm-ink" style="margin:0 0 16px;padding-left:22px;font-family:${FONT};font-size:15px;line-height:1.55;color:${L.ink}">${b.items.map((i) => `<li style="margin:0 0 6px">${inline(i)}</li>`).join('')}</ul>`;
     case 'pre':
       return `<pre class="hm-codebox hm-ink" style="margin:0 0 16px;padding:12px;background-color:${L.codeBg};border:1px solid ${L.codeLine};border-radius:8px;font-family:${MONO};font-size:12px;line-height:1.45;color:${L.ink};white-space:pre-wrap;word-break:break-all">${b.unlinked ? unlinked(b.text) : mailText(b.text)}</pre>`;
+    case 'entries':
+      // One row per entry, a rule above each; the code small and muted under the title, the labels muted, the values in
+      // ink, the detail smaller. Sizes and the font are set on the cell and inherited, so each entry costs well under a
+      // kilobyte of markup.
+      return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;border-collapse:collapse">${b.items
+        .map(
+          (e) =>
+            `<tr><td class="hm-ink hm-line" style="padding:10px 0;border-top:1px solid ${L.line};font-family:${FONT};font-size:14px;line-height:1.45;color:${L.ink};word-break:break-word"><div style="font-weight:700">${inline(e.title)}</div>${e.code === undefined ? '' : `<div class="hm-muted" style="font-size:12px;color:${L.muted}">${inline(e.code)}</div>`}${e.fields
+              .map(([k, v]) => `<div><span class="hm-muted" style="color:${L.muted}">${mailText(k)}</span> ${inline(v)}</div>`)
+              .join('')}${e.detail === undefined ? '' : `<div class="hm-ink2" style="margin-top:2px;font-size:13px;color:${L.ink2}">${inline(e.detail)}</div>`}</td></tr>`,
+        )
+        .join('')}</table>`;
   }
 }
 

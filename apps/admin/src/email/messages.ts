@@ -1,9 +1,10 @@
 // What every email says (docs/batch-c-spec.md "Email", "Notice and cancel", "Invites and owner grants", "On-chain
 // owner actions"). Builders only: who gets each message and when it is sent is notices.ts, feed.ts and watcher.ts.
 // The link tokens are passed in as finished URLs; nothing here sees a key.
-import type { AppChange, AuditRow, InviteView, MemberNotice, SecurityEvent } from '@hana-id/console-core';
+import { type AppChange, type AuditRow, type InviteView, type MemberNotice, type SecurityEvent, actionLabel, detailFields, securityEventLabel } from '@hana-id/console-core';
 import type { ChangeNotice } from '../env.ts';
-import { type Block, type Design, type Rendered, duration, isoTime, oneLine, readableTime, render } from './render.ts';
+import { log } from '../log.ts';
+import { type Block, type Design, type LogRow, type Rendered, cut, duration, oneLine, readableTime, render, rowTime } from './render.ts';
 
 export interface MailContext {
   env: string;
@@ -67,7 +68,7 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
     if (prow.length) blocks.push({ kind: 'kv', rows: prow });
     const any = anyAddressPaths(n.policy);
     if (any.length) blocks.push({ kind: 'warn', text: `The policy lets any address be passed at: ${any.join(', ')}.` });
-    blocks.push({ kind: 'p', text: 'The full policy (contracts, functions and limits):' }, { kind: 'pre', text: JSON.stringify(n.policy, null, 2).slice(0, 20_000) });
+    blocks.push({ kind: 'p', text: 'The full policy (contracts, functions and limits):' }, { kind: 'pre', text: cut(JSON.stringify(n.policy, null, 2), 20_000) });
   }
   if (ch.kind === 'raw_sign_on') blocks.push({ kind: 'warn', text: 'Raw signing lets the app ask users to sign arbitrary bytes (each with the user’s approval).' });
   blocks.push(
@@ -207,50 +208,151 @@ export function loginMethodsChanged(c: MailContext, r: AppChange, o: { appName?:
 
 // ---- the feed (best effort, after the fact) ----
 
+/** A row's details for the text part: its JSON, at most 400 characters; one that can't be read says so (never a throw). */
 const detailText = (d: Record<string, unknown>): string => {
-  const s = JSON.stringify(d);
-  return s === '{}' ? '' : s.slice(0, 400);
+  let s: string | undefined;
+  try {
+    s = JSON.stringify(d);
+  } catch {
+    return '(details unreadable)';
+  }
+  return s === undefined || s === '{}' ? '' : cut(s, 400);
 };
+
+/** Who did it, in words, the id kept for support (D704; the text part keeps the code, as before). */
+const actorWords = (kind: string, id: string): string =>
+  `${kind === 'hana' ? 'Hana staff' : kind === 'member' ? 'a console member' : kind === 'system' ? 'the system' : kind === 'link' ? 'an emailed link' : kind} (${id})`;
+
+/** A row's time in both forms: `text` for the text part (the exact ISO time), `words` for the HTML part. */
+interface RowTime {
+  text: string;
+  words: string;
+}
+
+/**
+ * Each row's time (D704). The text part keeps the exact ISO time (D697: a digest is a log, its times copied into tickets
+ * and compared with logs); the HTML part reads it as the notices do ("11 November 2026, 05:01 UTC", seconds dropped),
+ * chosen by the user 2026-11-11. One that isn't a valid time is shown raw and flagged in both parts, and logged at error
+ * level (the source, the org and a count; never the value), so it can't hold back the rest of the digest or its
+ * source's cursor.
+ */
+function rowTimes(source: string, orgId: string | null, ms: unknown[]): RowTime[] {
+  const out = ms.map((m) => {
+    const t = rowTime(m);
+    return { valid: t.valid, text: t.text, words: t.valid ? readableTime(m as number) : t.text };
+  });
+  const bad = out.filter((t) => !t.valid).length;
+  if (bad) log({ event: 'digest_bad_time', step: source, ...(orgId ? { orgId } : {}), count: bad }, 'error');
+  return out.map(({ text, words }) => ({ text, words }));
+}
+
+/** A time inside a row's details, in words; one that isn't a valid time as its raw value (never a throw). */
+const detailTime = (ms: number): string => {
+  const t = rowTime(ms);
+  return t.valid ? readableTime(ms) : String(ms);
+};
+
+/**
+ * A row's details for the HTML part (D704), as the console's Audit page reads them (D703 as amended by D704,
+ * `@hana-id/console-core` `detailFields`: times as dates, null as "none", yes and no, lists and objects as plain text, a
+ * string holding a separator quoted, keys in words), at most 400 characters, a cut one ending "…". Should the words
+ * fail, the text part's JSON stands in, so a row can never stop its digest.
+ */
+const detailWords = (d: Record<string, unknown>): string => {
+  try {
+    return oneLine(detailFields(d, detailTime).join(' · '), 400);
+  } catch {
+    return detailText(d);
+  }
+};
+
+/** An audit row's outcome in words; an unknown one as itself. */
+const outcomeWords = (o: string): string => (o === 'ok' ? 'succeeded' : o === 'failed' ? 'failed' : o);
+
+/**
+ * The designed layout for a feed digest (D704, asked for by the user; amends D700): a fixed heading and preview line,
+ * never an organisation's or app's name, the hosted logo; no button (the digests link nowhere).
+ */
+const digestDesign = (c: MailContext, heading: string, preheader: string): Design => notice(c, heading, preheader);
+
+/** Where a digest's app changes and console rows can also be read (for rows its HTML part leaves out, D704). */
+const AUDIT_PAGE = "the console's Audit page";
+
+// How each digest row reads (D704, the plain words chosen by the user 2026-11-11): the text part's one line keeps the
+// codes, the ISO time and the JSON (support matches on them); the HTML part has the action in words (the same titles
+// as the console's Audit page, `@hana-id/console-core` audit-words.ts) with its code under it, the time in words, and
+// the details in words.
+const changeRow = (r: AppChange, time: RowTime): LogRow => ({
+  line: `${time.text} ${r.kind}${r.appId ? ` on ${r.appId}` : ''} by ${r.actorKind} ${r.actorId}${detailText(r.detail) ? ` ${detailText(r.detail)}` : ''}`,
+  title: actionLabel(r.kind),
+  code: r.kind,
+  fields: [['When', time.words], ['By', actorWords(r.actorKind, r.actorId)], ...(r.appId ? ([['App', r.appId]] as [string, string][]) : [])],
+  ...(detailWords(r.detail) ? { detail: detailWords(r.detail) } : {}),
+});
+
+const auditLogRow = (r: AuditRow, time: RowTime): LogRow => ({
+  line: `${time.text} ${r.action}${r.target ? ` ${r.target}` : ''} by ${r.actorKind} ${r.actorId} (${r.outcome})${detailText(r.details) ? ` ${detailText(r.details)}` : ''}`,
+  title: actionLabel(r.action),
+  code: r.action,
+  fields: [['When', time.words], ['By', actorWords(r.actorKind, r.actorId)], ...(r.target ? ([['About', r.target]] as [string, string][]) : []), ['Outcome', outcomeWords(r.outcome)]],
+  ...(detailWords(r.details) ? { detail: detailWords(r.details) } : {}),
+});
+
+const eventRow = (e: SecurityEvent, time: RowTime): LogRow => ({
+  line: `${time.text} ${e.kind} (${e.id})${e.appId ? ` app ${e.appId}` : ''}${e.scopeId ? ` scope ${e.scopeId}` : ''} ${detailText(e.detail)}`,
+  title: securityEventLabel(e.kind),
+  code: `${e.kind} · ${e.id}`,
+  fields: [['When', time.words], ...(e.appId ? ([['App', e.appId]] as [string, string][]) : []), ...(e.scopeId ? ([['Scope', e.scopeId]] as [string, string][]) : [])],
+  ...(detailWords(e.detail) ? { detail: detailWords(e.detail) } : {}),
+});
 
 /** One digest per org and source: the rows, oldest first. */
 export function changesDigest(c: MailContext, orgId: string, rows: AppChange[]): Rendered {
+  const times = rowTimes('app_changes', orgId, rows.map((r) => r.at));
   return render(
     c.env,
     `${rows.length} app change${rows.length === 1 ? '' : 's'} in ${orgId}`,
     [
-      { kind: 'p', text: `These changes were made to the apps of ${orgId}. They are already in force or done; nothing here needs an answer unless you didn't expect it.` },
-      { kind: 'list', items: rows.map((r) => `${isoTime(r.at)} ${r.kind}${r.appId ? ` on ${r.appId}` : ''} by ${r.actorKind} ${r.actorId}${detailText(r.detail) ? ` ${detailText(r.detail)}` : ''}`) },
+      { kind: 'p', text: `${rows.length === 1 ? '1 change was' : `${rows.length} changes were`} made to the apps of ${orgId}. ${rows.length === 1 ? 'It is' : 'They are'} already in force or done; nothing here needs an answer unless you didn't expect it.` },
+      { kind: 'rows', items: rows.map((r, i) => changeRow(r, times[i]!)), elsewhere: AUDIT_PAGE },
       { kind: 'p', text: 'If one is unexpected, an owner can undo it in the console, or ask Hana security.' },
     ],
     c.consoleOrigin,
     c.label,
+    digestDesign(c, rows.length === 1 ? 'A change to your apps' : 'Changes to your apps', 'Changes made to your apps in the Hana ID partner console. They are already in force or done.'),
   );
 }
 
 export function auditDigest(c: MailContext, orgId: string | null, rows: AuditRow[]): Rendered {
+  const times = rowTimes('audit_log', orgId, rows.map((r) => r.at));
   return render(
     c.env,
     `${rows.length} console event${rows.length === 1 ? '' : 's'}${orgId ? ` in ${orgId}` : ''}`,
     [
-      { kind: 'p', text: `Members, invites and organisation settings changed${orgId ? ` in ${orgId}` : ''}:` },
-      { kind: 'list', items: rows.map((r) => `${isoTime(r.at)} ${r.action}${r.target ? ` ${r.target}` : ''} by ${r.actorKind} ${r.actorId} (${r.outcome})${detailText(r.details) ? ` ${detailText(r.details)}` : ''}`) },
+      { kind: 'p', text: `${rows.length} console event${rows.length === 1 ? '' : 's'}: members, invites and organisation settings changed${orgId ? ` in ${orgId}` : ''}:` },
+      { kind: 'rows', items: rows.map((r, i) => auditLogRow(r, times[i]!)), elsewhere: AUDIT_PAGE },
     ],
     c.consoleOrigin,
     c.label,
+    digestDesign(c, 'Console activity', 'Members, invites and organisation settings changed in the Hana ID partner console.'),
   );
 }
 
 export function securityDigest(c: MailContext, orgId: string | null, events: SecurityEvent[]): Rendered {
+  const times = rowTimes('security_events', orgId, events.map((e) => e.detectedAt));
   return render(
     c.env,
     `Security event${events.length === 1 ? '' : 's'}: ${[...new Set(events.map((e) => e.kind))].join(', ')}${orgId ? ` in ${orgId}` : ''}`,
     [
-      { kind: 'p', text: 'The API recorded these security events:' },
-      { kind: 'list', items: events.map((e) => `${isoTime(e.detectedAt)} ${e.kind} (${e.id})${e.appId ? ` app ${e.appId}` : ''}${e.scopeId ? ` scope ${e.scopeId}` : ''} ${detailText(e.detail)}`) },
-      { kind: 'p', text: 'docs/playbooks.md has the recovery steps for each kind.' },
+      { kind: 'p', text: `The API recorded ${events.length === 1 ? 'this security event' : `these ${events.length} security events`}:` },
+      // Security events aren't on the console's Audit page: Hana security has them.
+      { kind: 'rows', items: events.map((e, i) => eventRow(e, times[i]!)), elsewhere: 'ask Hana security (reply to this email)' },
+      // To the org's contacts and the alias (the alias alone without an org): words for both, no internal path (D704).
+      { kind: 'p', text: 'Hana security receives every security event too and has a recovery playbook for each kind. To ask about one, reply to this email or write to your Hana contact.' },
     ],
     c.consoleOrigin,
     c.label,
+    digestDesign(c, events.length === 1 ? 'A security event was recorded' : 'Security events were recorded', 'The Hana ID API recorded security events.'),
   );
 }
 
@@ -272,7 +374,7 @@ export const ownerText = (o: unknown): string => {
   const v = o as { Near?: { account_id?: unknown }; Oidc?: { provider?: unknown; sub?: unknown } } | null;
   if (v?.Near && typeof v.Near.account_id === 'string') return `NEAR account ${v.Near.account_id}`;
   if (v?.Oidc && typeof v.Oidc.provider === 'string' && typeof v.Oidc.sub === 'string') return `${v.Oidc.provider} sign-in ${v.Oidc.sub}`;
-  return JSON.stringify(o).slice(0, 200);
+  return cut(JSON.stringify(o), 200);
 };
 
 export interface PendingOnChain {
@@ -305,7 +407,7 @@ export function onChainPending(c: MailContext, p: PendingOnChain): Rendered {
     blocks.push({ kind: 'p', text: `A proposal on chain turns on shared login (Hana's shared Google client) for scope ${p.scopeId}.` });
     if (p.activeOrigins) blocks.push({ kind: 'p', text: p.activeOrigins.length ? 'These origins are active on the scope’s apps and would accept shared-client logins:' : 'No origin is active on the scope’s apps.' }, ...(p.activeOrigins.length ? [{ kind: 'list' as const, items: p.activeOrigins }] : []));
   } else {
-    blocks.push({ kind: 'pre', text: JSON.stringify(p.change, null, 2).slice(0, 5000) });
+    blocks.push({ kind: 'pre', text: cut(JSON.stringify(p.change, null, 2), 5000) });
   }
   blocks.unshift({ kind: 'kv', rows: [['Scope', `${p.scopeId} (${p.orgId})`], ['Change', String(p.changeId)], ['Can execute from', readableTime(p.unlockAtMs)]] });
   blocks.push({ kind: 'p', text: `Any owner of the scope can cancel it before then (cancel_change, in the console's scope page), or ask Hana security. If you made this proposal, no action is needed.` });

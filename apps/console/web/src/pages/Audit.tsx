@@ -1,6 +1,8 @@
 // An org's audit (`GET /api/orgs/:org/audit?cursor=`): the console's events and the API's applied app changes, merged
 // newest first, a page at a time. Rows of one request (the same request id) are shown together.
 import type { AuditAnswer, PartnerAuditEntry } from '@hana-id/console-core';
+// The subpath, not the package root: the SPA bundles only these functions, not the schemas.
+import { actionLabel, detailFields as coreDetailFields, detailValue as coreDetailValue } from '@hana-id/console-core/audit-words';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError, getJson } from '../api.ts';
@@ -18,44 +20,15 @@ function what(e: PartnerAuditEntry): string {
   return e.source === 'console' ? e.action : e.kind;
 }
 
-/** An action code in words: `key.created` → "Key created", `step_up.failed` → "Step up failed". */
-export function actionLabel(code: string): string {
-  const words = code.replace(/[._]+/gu, ' ').trim();
-  return words ? words[0]!.toUpperCase() + words.slice(1) : code;
-}
+// The words for codes, keys and values are shared with the admin's feed digests (D704): `@hana-id/console-core`
+// audit-words.ts. Times here are the browser's local time (`when`).
+export { actionLabel };
 
-/** A detail key in words: `activeFrom` → "active from", `scope_id` → "scope id". Unknown keys stay recognisable. */
-export const keyLabel = (k: string): string => k.replace(/_/gu, ' ').replace(/([a-z0-9])([A-Z])/gu, '$1 $2').toLowerCase();
-
-/** A time in ms under a key that names one (`…At`, `…From`, `…Until`): shown as a date. */
-const isTime = (k: string, v: unknown): v is number => typeof v === 'number' && /(At|From|Until)$/u.test(k) && v > 1e12;
-
-/**
- * One detail value as plain text: times as dates, yes or no, lists joined, an object as its fields; empty (null,
- * undefined) gives null and the field is left out. Nothing else is dropped.
- */
-export function detailValue(k: string, v: unknown): string | null {
-  if (v === null || v === undefined) return null;
-  if (isTime(k, v)) return when(v);
-  if (typeof v === 'boolean') return v ? 'yes' : 'no';
-  if (typeof v === 'string' || typeof v === 'number') return String(v);
-  if (Array.isArray(v)) {
-    const items = v.map((x) => detailValue(k, x)).filter((x): x is string => x !== null);
-    return items.length ? items.join('; ') : 'none';
-  }
-  if (typeof v === 'object') {
-    const fields = detailFields(v as Record<string, unknown>);
-    return fields.length ? fields.join(', ') : 'none';
-  }
-  return JSON.stringify(v) ?? null;
-}
+/** One detail value as plain text (`@hana-id/console-core` `detailValue`, times as local dates). */
+export const detailValue = (k: string, v: unknown): string | null => coreDetailValue(k, v, when);
 
 /** An object's fields as "label: value", empty ones left out. */
-export const detailFields = (d: Record<string, unknown>): string[] =>
-  Object.entries(d).flatMap(([k, v]) => {
-    const text = detailValue(k, v);
-    return text === null ? [] : [`${keyLabel(k)}: ${text}`];
-  });
+export const detailFields = (d: Record<string, unknown>): string[] => coreDetailFields(d, when);
 
 export function detail(e: PartnerAuditEntry): string {
   const parts = detailFields(e.source === 'console' ? e.details : e.detail);

@@ -11,6 +11,7 @@
 // happened in this run (`activated_recorded_at` / `cancelled_at` = this run's `now`), and each `app_changes` row has a
 // request id derived from the change, so two overlapping runs record a change once: the second one's batch writes
 // nothing or fails on the unique request id and rolls back.
+import type { AppChangeKind } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
 
@@ -50,7 +51,7 @@ export interface GuardedRun {
 }
 
 /** An `app_changes` row for change `?1`, written only when `condition` (over `g`, the change) holds. */
-function ledgerFor(db: D1Database, changeId: string, kind: string, detail: string, condition: string, requestId: string, now: number): D1PreparedStatement {
+function ledgerFor(db: D1Database, changeId: string, kind: AppChangeKind, detail: string, condition: string, requestId: string, now: number): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)

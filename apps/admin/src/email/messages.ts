@@ -345,6 +345,18 @@ export function securityDigest(c: MailContext, orgId: string | null, events: Sec
 
 // ---- the on-chain watcher ----
 
+/**
+ * JSON with every object's keys sorted, so two values that differ only in key order compare equal. The watcher's
+ * snapshot comes back from Postgres `jsonb`, which reorders keys (`{"sub","provider"}`), while the chain answers
+ * `{"provider","sub"}`: compared with plain JSON.stringify, a sign-in owner looked removed and added on every run.
+ */
+export const stableJson = (v: unknown): string =>
+  JSON.stringify(v, (_k, x: unknown) =>
+    x !== null && typeof x === 'object' && !Array.isArray(x)
+      ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([p], [q]) => (p < q ? -1 : p > q ? 1 : 0)))
+      : x,
+  );
+
 export const ownerText = (o: unknown): string => {
   const v = o as { Near?: { account_id?: unknown }; Oidc?: { provider?: unknown; sub?: unknown } } | null;
   if (v?.Near && typeof v.Near.account_id === 'string') return `NEAR account ${v.Near.account_id}`;
@@ -396,11 +408,11 @@ export interface ScopeState {
 }
 
 export function onChainChanged(c: MailContext, scopeId: string, orgId: string, before: ScopeState, after: ScopeState): Rendered {
-  const set = (l: unknown[]) => new Set(l.map((x) => JSON.stringify(x)));
+  const set = (l: unknown[]) => new Set(l.map((x) => stableJson(x)));
   const diff = (a: unknown[], b: unknown[]) => {
     const sa = set(a);
     const sb = set(b);
-    return { added: b.filter((x) => !sa.has(JSON.stringify(x))), removed: a.filter((x) => !sb.has(JSON.stringify(x))) };
+    return { added: b.filter((x) => !sa.has(stableJson(x))), removed: a.filter((x) => !sb.has(stableJson(x))) };
   };
   const o = diff(before.owners, after.owners);
   const cl = diff(before.clients, after.clients);

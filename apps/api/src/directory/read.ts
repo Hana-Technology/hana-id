@@ -29,7 +29,7 @@ import {
 } from '@hana-id/console-core';
 import { canonicalWalletAddress } from '@hana-id/core/identity';
 import { refuse } from '../changes/cas.ts';
-import { LIVE_NAME_SHARE, storedName } from '../identity/name.ts';
+import { LIVE_NAME_SHARE, noNameTables, storedName } from '../identity/name.ts';
 import type { HotDb } from '../changes/db.ts';
 import { type Q, join, q, raw } from '../changes/sql.ts';
 
@@ -307,9 +307,14 @@ export async function adminAppNames(db: HotDb, appIds: readonly string[]): Promi
  */
 export async function adminProfileNames(db: HotDb, identities: readonly { provider: string; sub: string }[]): Promise<ProfileNameRow[]> {
   const pairs = identities.map((i) => q`(p.provider = ${i.provider} AND p.sub = ${i.sub})`);
-  const rows = await db.all<{ provider: string; sub: string; given_name: string | null; family_name: string | null }>(
-    q`SELECT p.provider, p.sub, p.given_name, p.family_name FROM home_profiles p WHERE ${join(pairs, ' OR ')} ORDER BY p.provider, p.sub`,
-  );
+  let rows: { provider: string; sub: string; given_name: string | null; family_name: string | null }[];
+  try {
+    rows = await db.all(q`SELECT p.provider, p.sub, p.given_name, p.family_name FROM home_profiles p WHERE ${join(pairs, ' OR ')} ORDER BY p.provider, p.sub`);
+  } catch (err) {
+    // Before migration 0019 nobody has a name.
+    if (noNameTables(err)) return [];
+    throw err;
+  }
   const out: ProfileNameRow[] = [];
   for (const r of rows) {
     const name = storedName(r);

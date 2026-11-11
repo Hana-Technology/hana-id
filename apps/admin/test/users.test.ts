@@ -4,6 +4,8 @@
 // suite's fake RPC). The ticket is required to open a user, to search by sub or a full address and to find a user in
 // the wallet directory (audited first in the console, D410), and optional to browse; budget refusals email the alias;
 // a failed chain read is "chain unavailable", never a guessed path; unverified Google claims carry the CLI's warning.
+// The Hana Home names (D714): a list's in one AdminRpc.profileNames call, an opened identity's too, a failed read
+// leaving the page up and marked.
 import { UNVERIFIED_CLAIM_WARNING, internalIdOf, supportIdOf } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +18,7 @@ beforeEach(async () => {
   identityViews.clear();
   nearCalls.length = 0;
   await env.ISSUER_TEST_DB.batch(['user_emails', 'user_email_apps', 'email_admin_audit'].map((t) => env.ISSUER_TEST_DB.prepare(`DELETE FROM ${t}`)));
+  await env.HOT_DB.prepare('DELETE FROM home_profiles').run();
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -68,6 +71,11 @@ async function seedWalletUser(scope: string, identities: { provider: string; sub
   }
   await db.batch(stmts);
   return { internalId, userId, supportId: supportIdOf(userId), stellar, keys };
+}
+
+/** A Hana Home name (migration 0019's `home_profiles`), as the API's Home endpoint stores it. */
+async function seedName(provider: string, sub: string, givenName: string | null, familyName: string | null): Promise<void> {
+  await env.HOT_DB.prepare('INSERT INTO home_profiles (provider, sub, given_name, family_name, updated_at) VALUES (?, ?, ?, ?, ?)').bind(provider, sub, givenName, familyName, Date.now()).run();
 }
 
 const issuerAudit = async () => (await env.ISSUER_TEST_DB.prepare('SELECT staff, action, ticket, detail FROM email_admin_audit ORDER BY id').all<{ staff: string; action: string; ticket: string | null; detail: string }>()).results;
@@ -180,6 +188,68 @@ describe('POST /api/users/search (the issuer’s directory)', () => {
   });
 });
 
+describe('POST /api/users/search: the page’s Hana Home names (D714)', () => {
+  it('each row’s name from one AdminRpc.profileNames call for the page’s identities; a row with none is null', async () => {
+    await seedDirectory({ provider: 'google', sub: '9401', email: 'ann@names.example' }, { provider: 'email', sub: 'e1.ann', email: 'ann@names.example' }, { provider: 'google', sub: '9402', email: 'bo@names.example' });
+    await seedName('google', '9401', 'Ann', 'Lee');
+    await seedName('email', 'e1.ann', null, 'Lee');
+    await seedName('google', 'unrelated', 'Zed', null);
+    const asked: unknown[] = [];
+    const api = overrideBinding(env.API, { profileNames: (c: unknown) => (asked.push(c), env.API.profileNames(c)) });
+    const res = await requestWith(envWith({ API: api }), '/api/users/search', { q: 'names.example' });
+    expect(res.status).toBe(200);
+    const body = await json<{ users: { sub: string; name: unknown }[]; namesError?: string }>(res);
+    expect(Object.fromEntries(body.users.map((u) => [u.sub, u.name]))).toEqual({ '9401': { givenName: 'Ann', familyName: 'Lee' }, 'e1.ann': { givenName: null, familyName: 'Lee' }, '9402': null });
+    expect(body.namesError).toBeUndefined();
+    expect(asked).toHaveLength(1);
+    const identities = (asked[0] as { identities: { provider: string; sub: string }[] }).identities;
+    expect(identities.map((i) => `${i.provider}:${i.sub}`).sort()).toEqual(['email:e1.ann', 'google:9401', 'google:9402']);
+    expect(asked[0]).toMatchObject({ actor: { kind: 'hana' } }); // the staff member's context (rpc.ts staffCtx)
+  });
+
+  it('asks the issuer for at most 50 rows (one names call covers them), the default page when none is asked', async () => {
+    const limits: unknown[] = [];
+    const issuer = overrideBinding(env.ISSUER!, { search: (c: unknown) => (limits.push((c as { limit?: unknown }).limit), env.ISSUER!.search(c as never)) });
+    for (const body of [{ limit: 100 }, { limit: 20 }, {}]) expect((await requestWith(envWith({ ISSUER: issuer }), '/api/users/search', body)).status).toBe(200);
+    expect(limits).toEqual([50, 20, 50]);
+  });
+
+  it('an empty page makes no names call', async () => {
+    let calls = 0;
+    const api = overrideBinding(env.API, { profileNames: async () => (calls++, { ok: true, names: [] }) });
+    const body = await json<{ users: unknown[]; namesError?: string }>(await requestWith(envWith({ API: api }), '/api/users/search', { q: 'nobody-here' }));
+    expect([body.users, body.namesError, calls]).toEqual([[], undefined, 0]);
+  });
+
+  it('a failed names read leaves the list up: rows without `name`, the answer marked `namesError`', async () => {
+    await seedDirectory({ provider: 'google', sub: '9501', email: 'cy@names.example' });
+    await seedName('google', '9501', 'Cy', null);
+    for (const [profileNames, code] of [
+      [async () => Promise.reject(new Error('Service unavailable')), 'upstream_unavailable'],
+      [async () => ({ ok: false, code: 'internal', error: 'x' }), 'internal'],
+    ] as const) {
+      const res = await requestWith(envWith({ API: overrideBinding(env.API, { profileNames }) }), '/api/users/search', { q: 'names.example' });
+      expect(res.status).toBe(200);
+      const body = await json<{ users: Record<string, unknown>[]; namesError?: string }>(res);
+      expect(body.users.map((u) => u.email)).toEqual(['cy@names.example']);
+      expect('name' in body.users[0]!).toBe(false);
+      expect(body.namesError).toBe(code);
+    }
+  });
+
+  it('a name passes as its two parts only; no log line carries it', async () => {
+    const lines: string[] = [];
+    for (const m of ['log', 'warn', 'error'] as const) vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    await seedDirectory({ provider: 'google', sub: '9601', email: 'di@names.example' });
+    const api = overrideBinding(env.API, { profileNames: async () => ({ ok: true, names: [{ provider: 'google', sub: '9601', givenName: 'Quietname', familyName: null, extra: 'x' }] }) });
+    const body = await json<{ users: { name: unknown }[] }>(await requestWith(envWith({ API: api }), '/api/users/search', { q: 'names.example' }));
+    expect(body.users[0]!.name).toEqual({ givenName: 'Quietname', familyName: null });
+    await requestWith(envWith({ API: overrideBinding(env.API, { profileNames: async () => Promise.reject(new Error('down')) }) }), '/api/users/search', { q: 'names.example' });
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(l).not.toMatch(/Quietname|9601|names\.example/u);
+  });
+});
+
 describe('POST /api/users/get (one identity, the ticket required)', () => {
   it('refuses without a support reference before reading anything', async () => {
     for (const body of [{ provider: 'google', sub: '1' }, { provider: 'google', sub: '1', ticket: '' }, { provider: 'google', sub: '1', ticket: 'has space' }, { provider: 'apple', sub: '1', ticket: 'T-1' }]) {
@@ -277,6 +347,34 @@ describe('POST /api/users/get (one identity, the ticket required)', () => {
     expect(n.chain[0]).toMatchObject({ ok: true, path: `${app.scope}#google#7200#0` });
     // The miss was audited too.
     expect(JSON.parse((await issuerAudit()).at(-1)!.detail)).toEqual({ provider: 'google', sub: '7200', found: 0 });
+  });
+
+  it('the identity’s Hana Home name (D714), with or without a directory row; null for none; `nameError` when unread', async () => {
+    const app = await seedHotApp();
+    await seedDirectory({ provider: 'google', sub: '7601', email: 'named@example.com', apps: [{ appId: app.id, scopeId: app.scope }] });
+    await seedName('google', '7601', 'Nadia', 'Rahman');
+    const w = await seedWalletUser(app.scope, [{ provider: 'google', sub: '7601' }, { provider: 'email', sub: 'e1.nadia', role: 'member' }]);
+    await seedName('email', 'e1.nadia', 'Nad', null);
+    const d = await json<Record<string, any>>(await adminRequest('/api/users/get', { body: { provider: 'google', sub: '7601', ticket: 'T-N1' } }));
+    expect(d.name).toEqual({ givenName: 'Nadia', familyName: 'Rahman' });
+    expect(d.nameError).toBeUndefined();
+    // The wallet directory's user carries the account's name and each identity's (StaffUser, the API's).
+    expect(d.walletUsers[0]).toMatchObject({ userId: w.userId, name: { givenName: 'Nadia', familyName: 'Rahman' } });
+    expect(d.walletUsers[0].identities.map((i: { sub: string; name: unknown }) => [i.sub, i.name])).toEqual([
+      ['7601', { givenName: 'Nadia', familyName: 'Rahman' }],
+      ['e1.nadia', { givenName: 'Nad', familyName: null }],
+    ]);
+    // No directory row and no wallet-directory user: the name is still read (it is the API's).
+    await seedName('email', 'e1.home-only', null, 'Solo');
+    const lone = await json<Record<string, any>>(await adminRequest('/api/users/get', { body: { provider: 'email', sub: 'e1.home-only', ticket: 'T-N2' } }));
+    expect([lone.user, lone.walletUsers, lone.name]).toEqual([null, [], { givenName: null, familyName: 'Solo' }]);
+    const none = await json<Record<string, any>>(await adminRequest('/api/users/get', { body: { provider: 'google', sub: '7699', ticket: 'T-N3' } }));
+    expect(none.name).toBeNull();
+    // A failed read: the page stands, without `name`, marked.
+    const down = await requestWith(envWith({ API: overrideBinding(env.API, { profileNames: async () => Promise.reject(new Error('down')) }) }), '/api/users/get', { provider: 'google', sub: '7601', ticket: 'T-N4' });
+    expect(down.status).toBe(200);
+    const dd = await json<Record<string, any>>(down);
+    expect(['name' in dd, dd.nameError, dd.user.email]).toEqual([false, 'upstream_unavailable', 'named@example.com']);
   });
 
   it('a rate-limited view emails the alias and answers 429', async () => {

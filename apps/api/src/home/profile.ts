@@ -101,7 +101,7 @@ export async function handleHomeProfileGet(request: Request, env: Env, requestId
       if (a) {
         const root = await confirmed(env, ctx, await scopeRoot(env, a.scopeId, who), who);
         if (!root) return chainDown(ctx);
-        const hit = root.userSub === null ? null : await env.DB.prepare(`SELECT 1 AS hit FROM name_shares n WHERE n.app_id = ?1 AND n.user_sub = ?2 AND ${LIVE_NAME_SHARE('?3')}`).bind(appId, root.userSub, now).first();
+        const hit = root.userSub === null ? null : await env.DB.prepare(`SELECT 1 AS hit FROM name_shares n JOIN home_profiles p ON p.provider = n.provider AND p.sub = n.sub WHERE n.app_id = ?1 AND n.user_sub = ?2 AND ${LIVE_NAME_SHARE('?3')}`).bind(appId, root.userSub, now).first();
         app = { appId, shared: hit !== null };
       }
     }
@@ -120,7 +120,9 @@ export async function handleHomeProfileGet(request: Request, env: Env, requestId
       // A share without a name shares nothing; the list says so by being empty.
       shares: name === null ? [] : rows.slice(0, HOME_NAME_SHARES_MAX).map((r) => ({ appId: r.app_id, name: r.name, scopeId: r.scope_id, sharedAtMs: r.shared_at })),
       more: name !== null && rows.length > HOME_NAME_SHARES_MAX,
-      app: app && { ...app, shared: name !== null && app.shared },
+      // The account's share, whichever of its identities made it and whether or not this one has a name: so a login of
+      // the account can always see and stop what the app gets.
+      app,
     });
   } catch (err) {
     return noNameTables(err) ? notYet(ctx) : unavailable(ctx);

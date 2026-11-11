@@ -1,7 +1,8 @@
 // The partner Users screen's data (D310, D346; docs/batch-c-spec.md "What partners never see"): whatever the API's
 // ConsoleRpc answers, the console's answer is rebuilt field by field from an allowlist, so no unshared email address,
 // Google `sub`, identity key, directory key or internal `hu_…` id can reach a partner, by data shape, not just by what
-// the UI renders; a shared address (D411) only in `email` and a detail's `emails`, each of the expected form. Off behind
+// the UI renders; a shared address (D411) only in `email` and a detail's `emails`, a shared name (D714) only in `name`,
+// each of the expected form. Off behind
 // USERS_SCREEN until the wallet directory's reads land (D357).
 import { newId } from '@hana-id/console-core';
 import { describe, expect, it } from 'vitest';
@@ -53,6 +54,7 @@ describe('partnerUserView: the allowlist', () => {
         { chain: 'evm', address: EVM, firstSeenAt: 1, lastUsedAt: 2 },
       ],
       email: null,
+      name: null,
     };
     expect(v).toEqual(expected);
     const text = JSON.stringify(v);
@@ -120,6 +122,45 @@ describe('partnerUserView: the allowlist', () => {
     expect(partnerUserView({ ...leaky(), emails: [null] })).toBeNull();
   });
 
+  it('a shared name (D714) passes in `name`, rebuilt to its two parts; absent (an older API) or null is "not shared"', () => {
+    const v = partnerUserView({ ...leaky(), name: { givenName: 'Ada', familyName: 'Lovelace', provider: 'google', sub: '110248495921238986420', sharedAt: 5 } })!;
+    expect(v.name).toEqual({ givenName: 'Ada', familyName: 'Lovelace' });
+    expect(Object.keys(v.name!).sort()).toEqual(['familyName', 'givenName']);
+    for (const s of PII) expect(JSON.stringify(v), s).not.toContain(s);
+    // Either part alone; the stored form's characters as they are (NFC, inner single spaces, 50 code points).
+    expect(partnerUserView({ ...leaky(), name: { givenName: null, familyName: 'Ōkubo' } })!.name).toEqual({ givenName: null, familyName: 'Ōkubo' });
+    expect(partnerUserView({ ...leaky(), name: { givenName: 'Mary Ann', familyName: null } })!.name).toEqual({ givenName: 'Mary Ann', familyName: null });
+    const fifty = '𝒜'.repeat(50);
+    expect(partnerUserView({ ...leaky(), name: { givenName: fifty, familyName: null } })!.name!.givenName).toBe(fifty);
+    expect(partnerUserView(leaky())!.name).toBeNull();
+    expect(partnerUserView({ ...leaky(), name: null })!.name).toBeNull();
+  });
+
+  it('a malformed `name` drops the row: not an object, no part set, a part missing, or a part not in the stored form', () => {
+    const bad: unknown[] = [
+      'Ada Lovelace',
+      42,
+      ['Ada'],
+      {},
+      { givenName: null, familyName: null },
+      { givenName: 'Ada' }, // each part present: null when not set
+      { givenName: '', familyName: null },
+      { givenName: ' Ada', familyName: null },
+      { givenName: 'Ada ', familyName: null },
+      { givenName: 'Mary  Ann', familyName: null },
+      { givenName: 'Mary\tAnn', familyName: null },
+      { givenName: 'e\u0301', familyName: null }, // not NFC
+      { givenName: 'a'.repeat(51), familyName: null },
+      { givenName: 42, familyName: null },
+      { givenName: null, familyName: { text: 'Lovelace' } },
+      { givenName: 'Ada\u202e', familyName: null },
+      { givenName: 'A\u200bda', familyName: null },
+      { givenName: 'Ada\nLovelace', familyName: null },
+      { givenName: 'Ada\u0000', familyName: null },
+    ];
+    for (const name of bad) expect(partnerUserView({ ...leaky(), name }), JSON.stringify(name)).toBeNull();
+  });
+
   it('shows an account kind it doesn’t know as "other", never its raw text', () => {
     const v = partnerUserView({ ...leaky(), accounts: [{ kind: 'person@gmail.com', status: 'active' }] })!;
     expect(v.accounts).toEqual([{ kind: 'other', status: 'active' }]);
@@ -136,7 +177,7 @@ function fakeEnv(on: boolean, calls: unknown[] = []): Pick<Env, 'USERS_SCREEN' |
     getUser: async (c) => {
       calls.push(c);
       const shared = 'ada@partner-user.example';
-      return { ok: true, user: { ...leaky(), email: shared, emails: [{ appId: 'app_one1', appName: 'Partner Wallet', email: shared, sharedAt: 5, emailMac: 'ab'.repeat(32) }] } as never };
+      return { ok: true, user: { ...leaky(), email: shared, emails: [{ appId: 'app_one1', appName: 'Partner Wallet', email: shared, sharedAt: 5, emailMac: 'ab'.repeat(32) }], name: { givenName: 'Ada', familyName: null, sub: '110248495921238986420' } } as never };
     },
   };
   return { USERS_SCREEN: on ? '1' : undefined, API: client as unknown as Env['API'] };
@@ -158,8 +199,8 @@ describe('the routes', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { users: PartnerUserOut[]; next?: string };
     expect(body.users).toHaveLength(1);
-    expect(Object.keys(body.users[0]!).sort()).toEqual(['accounts', 'createdAt', 'email', 'lastSeenAt', 'scopeId', 'supportId', 'userId', 'wallets']);
-    expect(body.users[0]!.email).toBeNull();
+    expect(Object.keys(body.users[0]!).sort()).toEqual(['accounts', 'createdAt', 'email', 'lastSeenAt', 'name', 'scopeId', 'supportId', 'userId', 'wallets']);
+    expect([body.users[0]!.email, body.users[0]!.name]).toEqual([null, null]);
     expect(body.next).toBe(`1800000100000:${USER}`);
     for (const s of PII) expect(JSON.stringify(body), s).not.toContain(s);
     expect(calls[0]).toMatchObject({ orgId: 'org_users1', search: 'GAAA', limit: 50 });
@@ -173,6 +214,9 @@ describe('the routes', () => {
     // The detail carries the shared address and its per-app list, rebuilt (no MAC, no account-level address).
     expect([user.email, user.emails]).toEqual(['ada@partner-user.example', [{ appId: 'app_one1', appName: 'Partner Wallet', email: 'ada@partner-user.example', sharedAt: 5 }]]);
     expect(JSON.stringify(user)).not.toContain('person@');
+    // The shared name, rebuilt to its two parts (the sub beside it dropped).
+    expect(user.name).toEqual({ givenName: 'Ada', familyName: null });
+    expect(JSON.stringify(user)).not.toContain('110248495921238986420');
     expect((await usersRoute(fakeEnv(true, calls), new URL('https://console.test/x'), info, ctx(), 'hu_0123456789abcdefghjkmnpqrs')).status).toBe(404);
     expect(calls).toHaveLength(1);
     expect((await usersRoute(fakeEnv(true), new URL('https://console.test/x?cursor=%27--'), info, ctx(), undefined)).status).toBe(400);

@@ -5,7 +5,11 @@
 //                           exactly, else a ≥ 3-character substring), provider, app, sub, unverified only; keyset pages.
 //                           A support reference (`ticket`) is required when the search names one identity (a sub or a
 //                           full address: console-core `searchNamesIdentity`, refused here before any call and again by
-//                           the issuer; D410), optional when it browses.
+//                           the issuer; D410), optional when it browses. Then, once the issuer answered, the page's
+//                           Hana Home names (D714) in one AdminRpc.profileNames call (a page holds at most
+//                           SEARCH_PAGE_MAX rows here, so one call names them all): two RPCs in all, under D380's
+//                           limits without a budget. A failed name read leaves the list up, its rows without `name`
+//                           and the answer marked `namesError`.
 //   POST /api/users/find    the wallet directory (`API` → AdminRpc.findUsers): a wallet address, User ID (`u1_…`),
 //                           internal id (`hu_…`) or Support ID (`HANA-XXXX-XXXX`); identities with their subs, wallets
 //                           and ids, no address (the Support ID lookup with activity is C15). Every query names one user,
@@ -15,8 +19,10 @@
 //   POST /api/users/get     one identity, the ticket required: its directory row and apps (DirectoryRpc.get, audited
 //                           by the issuer), the app names (AdminRpc.appNames), the wallet directory's users holding it
 //                           (AdminRpc.findUsers by provider and sub: User ID, Support ID, internal id, wallets; D310,
-//                           D346), and per scope the on-chain path read live (`get_identity`, `get_account`, with the
-//                           block height; a failed read is "chain unavailable", never a guessed path).
+//                           D346), the identity's Hana Home name (AdminRpc.profileNames, D714: whatever the user
+//                           shared; `nameError` and no `name` when it couldn't be read), and per scope the on-chain
+//                           path read live (`get_identity`, `get_account`, with the block height; a failed read is
+//                           "chain unavailable", never a guessed path).
 //
 // The issuer checks the staff member itself from the request's Access JWT (passed as it came; this Worker verified it
 // too), writes the audit row, and keeps the per-staff row budget: a `rate_limited` answer with `budget` makes this
@@ -30,6 +36,9 @@ import {
   type DirectoryFail,
   type DirectoryUserApp,
   type DirectoryUserRow,
+  PROFILE_NAMES_MAX,
+  type ProfileNameRow,
+  type ProfileNameView,
   SEARCH_TICKET_REQUIRED,
   type StaffUser,
   UNVERIFIED_CLAIM_WARNING,
@@ -54,6 +63,32 @@ export const DETAIL_CHAIN_SCOPES_MAX = 8;
 export const DETAIL_APP_NAMES_MAX = 50;
 
 const PROVIDERS = new Set(['email', 'google']);
+
+/** The most rows one directory page has here: one AdminRpc.profileNames call names them all (D714). */
+export const SEARCH_PAGE_MAX = Math.min(DIRECTORY_PAGE_MAX, PROFILE_NAMES_MAX);
+
+const identityKey = (provider: string, sub: string): string => `${provider}\u0000${sub}`;
+const namePart = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
+
+/**
+ * AdminRpc.profileNames' answer by identity, each name exactly its two parts (D714); or the code it failed with (the
+ * call's own, `upstream_unavailable` for a thrown call, `not_read` when the page's call budget had none left).
+ */
+async function profileNames(api: Env['API'], ctx: ReturnType<typeof staffCtx>, identities: { provider: string; sub: string }[]): Promise<{ ok: true; names: Map<string, ProfileNameView> } | { ok: false; code: string }> {
+  try {
+    const r = await api.profileNames({ ...ctx, identities });
+    if (!r.ok) return { ok: false, code: r.code };
+    const names = new Map<string, ProfileNameView>();
+    for (const n of r.names as ProfileNameRow[]) {
+      const givenName = namePart(n.givenName);
+      const familyName = namePart(n.familyName);
+      if (givenName !== null || familyName !== null) names.set(identityKey(n.provider, n.sub), { givenName, familyName });
+    }
+    return { ok: true, names };
+  } catch (err) {
+    return { ok: false, code: err instanceof Error && err.name === 'OutOfBudget' ? 'not_read' : 'upstream_unavailable' };
+  }
+}
 
 /** The ticket rule of the issuer's staff routes (console-core SUPPORT_TICKET_RE): checked again by the issuer. */
 const TICKET_RE = /^[A-Za-z0-9._#:-]{1,64}$/u;
@@ -120,7 +155,8 @@ const unavailable = (c: RouteCtx, route: string, err?: unknown): Response => {
 /** POST /api/users/search */
 export async function usersSearchRoute(c: RouteCtx): Promise<Response> {
   const route = 'POST /api/users/search';
-  const limit = typeof c.body.limit === 'number' ? Math.min(c.body.limit, DIRECTORY_PAGE_MAX) : c.body.limit;
+  // At most SEARCH_PAGE_MAX rows (the issuer's default page when none is asked), so one names call covers the page.
+  const limit = typeof c.body.limit === 'number' ? Math.min(c.body.limit, SEARCH_PAGE_MAX) : c.body.limit === undefined ? SEARCH_PAGE_MAX : c.body.limit;
   const filters = pick(c.body, 'ticket', 'q', 'provider', 'appId', 'sub', 'cursor');
   const input = { ...staffCall(c), ...filters, ...(c.body.unverifiedOnly === true ? { unverifiedOnly: true } : {}), ...(limit !== undefined ? { limit } : {}) };
   // A search that names one identity is a targeted read, ticketed as `get` (D410): refused before any call. (A sub or
@@ -135,8 +171,14 @@ export async function usersSearchRoute(c: RouteCtx): Promise<Response> {
     return unavailable(c, route, err);
   }
   if (!r.ok) return directoryFailure(c, route, r);
+  // The page's Hana Home names (D714), one call for every row (the identities are the issuer's own rows: no new read
+  // of the directory, so nothing more counts against the staff member's row budget).
+  const identities = [...new Map(r.users.map((u) => [identityKey(u.provider, u.sub), { provider: u.provider, sub: u.sub }])).values()];
+  const names = identities.length === 0 ? null : identities.length > PROFILE_NAMES_MAX ? ({ ok: false, code: 'not_read' } as const) : await profileNames(c.env.API, staffCtx(c.staff), identities);
+  if (names && !names.ok) log({ event: 'profile_names', route, requestId: c.staff.requestId, outcome: 'error', code: names.code }, 'warn');
+  const users = r.users.map((u) => (names && !names.ok ? u : { ...u, name: names?.names.get(identityKey(u.provider, u.sub)) ?? null }));
   log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'ok', count: r.users.length });
-  return json(200, { users: r.users, ...(r.next ? { next: r.next } : {}), unverifiedWarning: UNVERIFIED_CLAIM_WARNING });
+  return json(200, { users, ...(r.next ? { next: r.next } : {}), unverifiedWarning: UNVERIFIED_CLAIM_WARNING, ...(names && !names.ok ? { namesError: names.code } : {}) });
 }
 
 /** POST /api/users/find: the wallet directory by wallet address, User ID, internal id or Support ID; ticketed, audited first. */
@@ -245,16 +287,20 @@ export async function usersGetRoute(c: RouteCtx): Promise<Response> {
 
   let dir: Awaited<ReturnType<NonNullable<Env['ISSUER']>['get']>>;
   let wallets: { ok: true; users: StaffUser[] } | { ok: false; code: string };
+  let name: Awaited<ReturnType<typeof profileNames>>;
   try {
-    const [d, w] = await Promise.all([
+    const [d, w, n] = await Promise.all([
       issuer.get({ ...staffCall(c), ticket, provider, sub }),
       api.findUsers({ ...ctx, query: sub, provider }).then(
         (r) => (r.ok ? { ok: true as const, users: r.users } : { ok: false as const, code: r.code }),
         () => ({ ok: false as const, code: 'upstream_unavailable' }),
       ),
+      // The identity's own Hana Home name (D714), read whether or not the wallet directory holds the identity.
+      profileNames(api, ctx, [{ provider, sub }]),
     ]);
     dir = d;
     wallets = w;
+    name = n;
   } catch (err) {
     return unavailable(c, route, err);
   }
@@ -299,11 +345,13 @@ export async function usersGetRoute(c: RouteCtx): Promise<Response> {
     scopes.map((scopeId, k) => (k < DETAIL_CHAIN_SCOPES_MAX ? standing(c.env, budget, scopeId, provider, sub, (key) => subByKey.get(key) ?? null) : Promise.resolve({ scopeId, ok: false as const, reason: 'not_read' as const }))),
   );
 
+  if (!name.ok) log({ event: 'profile_names', route, requestId: c.staff.requestId, outcome: 'error', code: name.code }, 'warn');
   log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'ok', count: chain.length, calls: { ...budget.used } });
   return json(200, {
     provider,
     sub,
     user,
+    ...(name.ok ? { name: name.names.get(identityKey(provider, sub)) ?? null } : { nameError: name.code }),
     ...(user?.unverifiedClaim ? { warning: UNVERIFIED_CLAIM_WARNING } : {}),
     apps: named,
     ...(appsTruncated ? { appsTruncated: true } : {}),

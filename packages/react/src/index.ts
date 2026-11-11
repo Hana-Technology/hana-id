@@ -7,6 +7,7 @@
 //   <button onClick={login}>Sign in</button>             // login only from an onClick, with no await before it
 //   const { identityToken, refresh, error } = useIdentityToken();   // the partner identity token, kept fresh
 //   const { request, state, error } = useEmailSharing();            // D411: <button onClick={request}>Share email</button>
+//   const { profile, refresh, error } = useProfile();               // the name the user shared: { givenName, familyName } | null
 
 /** Package version, kept equal to package.json (test/index.test.ts). */
 export const VERSION = '0.3.1';
@@ -16,3 +17,6 @@ export { useHana, useMainnetDemo, useWallet, type EvmWallet, type HanaChain, typ
 export { INITIAL_STATE, type HanaPersistence, type HanaState } from './store.ts';
 export { IDENTITY_REFRESH_BEFORE_MS, IDENTITY_RETRY_MS, useIdentityToken, type UseIdentityTokenResult } from './identity.ts';
 export { useEmailSharing, type EmailSharingState, type UseEmailSharingResult } from './email-sharing.ts';
+export { useProfile, type UseProfileResult } from './profile.ts';
+// The profile type, so a React app needn't import @hana-id/web for it.
+export type { HanaProfile } from '@hana-id/web';

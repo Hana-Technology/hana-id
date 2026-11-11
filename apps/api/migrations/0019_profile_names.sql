@@ -1,6 +1,7 @@
 -- Profile names (D714): a user's own first and last name, set in Hana Home and shared per app. Both parts optional.
--- Expand-only: applied before the API that reads it (D1 first); an API before this migration never reads either table,
--- and the reads of this one treat a missing table as "no name".
+-- Expand-only: applied before the API that reads it (D1 first); an API before this migration never reads either table.
+-- The mint, Home's endpoints and AdminRpc.profileNames treat a missing table as "no name"; the Users screens' directory
+-- reads (ConsoleRpc and AdminRpc users) need it, as they need 0014's email_consents.
 --
 -- `home_profiles`: one row per sign-in identity, keyed as the wallet directory keys it (`end_user_identities.provider`,
 -- `.sub`, the identity Hana Home signs in as). A row exists only while at least one part is set: "Remove my name" deletes

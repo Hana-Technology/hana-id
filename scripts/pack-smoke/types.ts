@@ -6,7 +6,7 @@ import { decodeEvmTransaction } from '@hana-id/core/decode';
 import { DERIVATION_V1 } from '@hana-id/core/derivation';
 import { type AutoApprovePolicyV1, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { parseStellarEnvelope } from '@hana-id/core/signers/stellar';
-import { HanaProvider, type UseHanaResult, useHana, useWallet } from '@hana-id/react';
+import { type HanaProfile as ReactHanaProfile, HanaProvider, type UseHanaResult, type UseProfileResult, useHana, useProfile, useWallet } from '@hana-id/react';
 import { createSodaxEvmProvider, createSodaxStellarProvider } from '@hana-id/sodax';
 import {
   HANA_ENVIRONMENTS,
@@ -15,6 +15,7 @@ import {
   type HanaConfig,
   HanaError,
   type HanaEthereumProvider,
+  type HanaProfile,
   type HanaStatus,
   ProviderRpcError,
   createHana,
@@ -42,6 +43,8 @@ export function wire(): {
   void status;
   void addresses;
   hana.on('accountsChanged', (a) => void a?.evm.toLowerCase());
+  hana.on('profileChanged', (p: HanaProfile | null) => void p?.givenName?.toLowerCase());
+  void hana.getProfile({ maxAgeMs: 60_000 }).then((p: ReactHanaProfile | null) => p?.familyName ?? hana.profile?.familyName ?? null);
   return {
     hana,
     evm: createSodaxEvmProvider(hana, { chainId: 84532, rpcUrl: 'https://sepolia.base.org' }),
@@ -53,6 +56,11 @@ export function wire(): {
     module: new HanaIdModule(hana),
     provider: hana.ethereum,
   };
+}
+
+export function useName(): string | null {
+  const { profile }: UseProfileResult = useProfile();
+  return profile === null ? null : [profile.givenName, profile.familyName].filter((p) => p !== null).join(' ');
 }
 
 export function useSignIn(): { login: UseHanaResult['login']; evm: string | null; stellar: string | null } {

@@ -760,14 +760,14 @@ const actor = (kind, id) => h('span', {}, ACTOR[kind] || kind, id ? h('span', { 
 const CHANGE_KIND = { origin_add: 'Add an origin', policy_set: 'Set an auto-approve policy', raw_sign_on: 'Turn raw signing on' };
 const CHANGE_STATUS = { pending: ['Pending', 'warning'], active: ['In force', 'ok'], cancelled: ['Cancelled', ''], ended: ['Ended', ''] };
 const changeStatus = (s) => badge(...(CHANGE_STATUS[s] || [s, '']));
-/** The app-change log's kinds (`app_changes.kind`), in words. */
+/** The app-change log's kinds (`app_changes.kind`), in words: the same words as `@hana-id/console-core` `ACTION_TITLES` (this SPA has no build step; test-spa/log-kind.test.ts holds the two equal, D704). */
 const LOG_KIND = {
   'app.created': 'App created',
   'app.deleted': 'App deleted',
   'app.suspended': 'App suspended',
   'app.resumed': 'Suspension lifted',
   'change.proposed': 'Change proposed',
-  'change.announced': 'Change emailed',
+  'change.announced': 'Change announced by email',
   'change.cancelled': 'Change cancelled',
   'change.expedited': 'Change put in force early',
   'key.created': 'Key created',
@@ -776,7 +776,7 @@ const LOG_KIND = {
   'origin.proposed': 'Origin proposed',
   'origin.removed': 'Origin removed',
   'org.security_contacts': 'Security contacts replaced',
-  'scope.assigned': 'Scope moved here',
+  'scope.assigned': 'Scope moved to this organisation',
 };
 const logKind = (k) => h('span', {}, LOG_KIND[k] || k, LOG_KIND[k] ? h('span', { class: 'sub' }, h('code', {}, k)) : '');
 

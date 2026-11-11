@@ -384,7 +384,7 @@ describe('rendering', () => {
       expect(ch.text).toContain('- 2026-11-11T05:02:36.861Z org.security_contacts by hana staff-sub {"old":["a@evil.example"],"new":["b@evil.example"]}\n');
       const chHtml = visibleText(ch.html);
       // The title in words, its code under it, the time in words, the details as the console's Audit page reads them.
-      for (const fact of ['Origin addedorigin.addedWhen 11 November 2026, 05:01 UTCBy a console member (usr_1)App app_1', `name: ${hostileName} · note: Urgent: cancel at https://evil.example/cancel?x=1#y · origin: http://localhost:5173`, 'Security contacts replacedorg.security_contactsWhen 11 November 2026, 05:02 UTCBy Hana staff (staff-sub)old: a@evil.example · new: b@evil.example']) expect(chHtml, fact).toContain(fact);
+      for (const fact of ['Origin addedorigin.addedWhen 11 November 2026, 05:01 UTCBy a console member (usr_1)App app_1', `name: ${hostileName} · note: "Urgent: cancel at https://evil.example/cancel?x=1#y" · origin: http://localhost:5173`, 'Security contacts replacedorg.security_contactsWhen 11 November 2026, 05:02 UTCBy Hana staff (staff-sub)old: a@evil.example · new: b@evil.example']) expect(chHtml, fact).toContain(fact);
       // The exact time and the JSON stay in the text part only.
       expect(chHtml).not.toContain('2026-11-11T05:01:36.861Z');
       expect(chHtml).not.toContain(JSON.stringify(urlDetail));
@@ -393,13 +393,13 @@ describe('rendering', () => {
       expect(au.text).toContain(`- 2026-11-11T05:01:36.861Z member.invite ${hostileName} by member usr_1 (ok) ${JSON.stringify(urlDetail)}\n`);
       expect(au.text).toContain('- 2026-11-11T05:02:36.861Z member.invite by member usr_1 (failed)\n');
       const auHtml = visibleText(au.html);
-      for (const fact of [`Member invitedmember.inviteWhen 11 November 2026, 05:01 UTCBy a console member (usr_1)About ${hostileName}Outcome succeededname: ${hostileName} · note: Urgent: cancel at https://evil.example/cancel?x=1#y · origin: http://localhost:5173`, 'Member invitedmember.inviteWhen 11 November 2026, 05:02 UTCBy a console member (usr_1)Outcome failedEnd of']) expect(auHtml, fact).toContain(fact);
+      for (const fact of [`Member invitemember.inviteWhen 11 November 2026, 05:01 UTCBy a console member (usr_1)About ${hostileName}Outcome succeededname: ${hostileName} · note: "Urgent: cancel at https://evil.example/cancel?x=1#y" · origin: http://localhost:5173`, 'Member invitemember.inviteWhen 11 November 2026, 05:02 UTCBy a console member (usr_1)Outcome failedEnd of']) expect(auHtml, fact).toContain(fact);
       expect(mails.auditDigestNoOrg.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 1 console event');
       const se = mails.securityDigest;
       expect(se.subject).toBe('[SANDBOX] [Hana ID sandbox-test] Security events: drift, breaker in org_1');
       expect(se.text).toContain(`- 2026-11-11T05:01:36.861Z drift (se_0) app app_1 scope s1 ${JSON.stringify(urlDetail)}\n`);
       const seHtml = visibleText(se.html);
-      for (const fact of [`App setting in force without a noticedrift · se_0When 11 November 2026, 05:01 UTCApp app_1Scope s1name: ${hostileName} · note: Urgent: cancel at https://evil.example/cancel?x=1#y · origin: http://localhost:5173`, 'Too many destructive changes in an hourbreaker · se_1When 11 November 2026, 05:02 UTCApp app_1name:']) expect(seHtml, fact).toContain(fact);
+      for (const fact of [`App setting in force without a noticedrift · se_0When 11 November 2026, 05:01 UTCApp app_1Scope s1name: ${hostileName} · note: "Urgent: cancel at https://evil.example/cancel?x=1#y" · origin: http://localhost:5173`, 'Too many destructive changes in an hourbreaker · se_1When 11 November 2026, 05:02 UTCApp app_1name:']) expect(seHtml, fact).toContain(fact);
       expect(visibleText(mails.securityDigestOne.html)).toContain('Hana Home daily budget running highhome_budget_high · se_0When 11 November 2026, 05:01 UTCderives: 400');
       // One entry per row, each with its When line.
       expect(se.html.match(/>When</gu)).toHaveLength(2);
@@ -430,21 +430,43 @@ describe('rendering', () => {
       }
     });
 
-    it('details in words as the console reads them (D703): times as dates (a bad one raw), nulls dropped, yes and no, lists and objects as text; at most 400 characters', () => {
+    it('details in words as the console reads them (D703 as amended): times as dates (a bad one raw), null as none, yes and no, lists and objects as text', () => {
       const t = Date.UTC(2026, 10, 11, 5, 5);
       const w = changesDigest(c, 'org_1', [change(0, { kind: 'change.announced', detail: { changeId: 'gc_1', activeFrom: t, endedAt: 9e15, policyId: null, waived: true, origins: [{ changeId: 'gc_2', origin: 'https://a.example' }], tags: [] } })]);
       const words = visibleText(/<div class="hm-ink2"[^>]*>([\s\S]*?)<\/div>/u.exec(w.html)![1]!);
-      expect(words).toBe('change id: gc_1 · active from: 11 November 2026, 05:05 UTC · ended at: 9000000000000000 · waived: yes · origins: change id: gc_2, origin: https://a.example · tags: none');
-      expect(visibleText(w.html)).toContain('Change announcedchange.announced');
+      expect(words).toBe('change id: gc_1 · active from: 11 November 2026, 05:05 UTC · ended at: 9000000000000000 · policy id: none · waived: yes · origins: change id: gc_2, origin: https://a.example · tags: none');
+      expect(visibleText(w.html)).toContain('Change announced by emailchange.announced');
       // The text part keeps the JSON as before.
       expect(w.text).toContain(`"activeFrom":${t},"endedAt":9000000000000000,"policyId":null`);
+    });
+
+    it('a field cleared to null still says what changed; a value posing as a field is quoted; deep or unreadable details never stop the digest (D704)', () => {
+      const cleared = changesDigest(c, 'org_1', [change(0, { kind: 'settings.changed', detail: { changed: { googleWebClientId: null } } })]);
+      expect(visibleText(cleared.html)).toContain('Settings changedsettings.changed');
+      expect(visibleText(cleared.html)).toContain('changed: google web client id: none');
+      const posing = auditDigest(c, 'org_1', [audit(0, { action: 'app.renamed', target: 'app_1', details: { name: 'Shop · waived: yes' } })]);
+      expect(visibleText(posing.html)).toContain('name: "Shop · waived: yes"');
+      let deep: unknown = 'bottom';
+      for (let i = 0; i < 10_000; i++) deep = { n: deep };
+      const deepMail = changesDigest(c, 'org_1', [change(0, { detail: { deep } }), change(1)]);
+      expect(visibleText(deepMail.html)).toContain('…');
+      expect(deepMail.html.match(/>When</gu)).toHaveLength(2);
+      // A details object that throws when read (not JSON, but a broken value must not stall the cursor).
+      const broken = { get boom(): never { throw new Error('unreadable'); } };
+      const brokenMail = changesDigest(c, 'org_1', [change(0, { detail: broken }), change(1)]);
+      expect(brokenMail.text).toContain('(details unreadable)');
+      expect(visibleText(brokenMail.html)).toContain('(details unreadable)');
+      expect(brokenMail.html.match(/>When</gu)).toHaveLength(2);
     });
 
     it('the HTML part shows at most 400 characters of a row’s details, as the text part', () => {
       const m = changesDigest(c, 'org_1', [change(0, { detail: { label: 'x'.repeat(1000) } })]);
       const detail = /<div class="hm-ink2"[^>]*>([\s\S]*?)<\/div>/u.exec(m.html)![1]!;
-      expect(visibleText(detail)).toBe(`label: ${'x'.repeat(393)}`);
+      // A cut detail says so (D704): 399 characters and "…".
+      expect(visibleText(detail)).toBe(`label: ${'x'.repeat(392)}…`);
       expect(visibleText(detail)).toHaveLength(400);
+      const short = changesDigest(c, 'org_1', [change(0, { detail: { label: 'x'.repeat(10) } })]);
+      expect(visibleText(short.html)).toContain(`label: ${'x'.repeat(10)}End of`);
       expect(m.text).toContain(` {"label":"${'x'.repeat(390)}\n`);
     });
 

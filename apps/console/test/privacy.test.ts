@@ -3,6 +3,7 @@
 // allowlisted ones, no email/sub/token in any log line of a full invite lifecycle, the IP helpers (subject equal to the
 // API's; the forensics prefix never a full address), and the grant delay's fail-closed setting.
 import { ipSubject as apiIpSubject } from '../../api/src/ip.ts';
+import { ACTION_TITLES } from '@hana-id/console-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AUDIT_DETAIL_KEYS, detailsJson } from '../src/audit.ts';
 import { ownerGrantDelayMs } from '../src/config.ts';
@@ -191,6 +192,10 @@ describe('audit details', () => {
     for (const [action, keys] of Object.entries(AUDIT_DETAIL_KEYS)) {
       for (const k of keys) if (!(action === 'signin.refused' && k === 'emailSha256')) expect(k, action).not.toMatch(/email|sub|token|hash|cookie|ip|secret/iu);
     }
+  });
+
+  it('every action has its title in words, shared with the feed digests (D704): a new action without one fails here', () => {
+    for (const action of Object.keys(AUDIT_DETAIL_KEYS)) expect(Object.hasOwn(ACTION_TITLES, action), action).toBe(true);
   });
 
   it('refuses an unlisted key', () => {

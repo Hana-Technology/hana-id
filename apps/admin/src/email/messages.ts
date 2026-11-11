@@ -208,9 +208,15 @@ export function loginMethodsChanged(c: MailContext, r: AppChange, o: { appName?:
 
 // ---- the feed (best effort, after the fact) ----
 
+/** A row's details for the text part: its JSON, at most 400 characters; one that can't be read says so (never a throw). */
 const detailText = (d: Record<string, unknown>): string => {
-  const s = JSON.stringify(d);
-  return s === '{}' ? '' : cut(s, 400);
+  let s: string | undefined;
+  try {
+    s = JSON.stringify(d);
+  } catch {
+    return '(details unreadable)';
+  }
+  return s === undefined || s === '{}' ? '' : cut(s, 400);
 };
 
 /** Who did it, in words, the id kept for support (D704; the text part keeps the code, as before). */
@@ -247,11 +253,18 @@ const detailTime = (ms: number): string => {
 };
 
 /**
- * A row's details for the HTML part (D704), as the console's Audit page reads them (D703, `@hana-id/console-core`
- * `detailFields`: times as dates, empty fields left out, yes and no, lists and objects as plain text, keys in words),
- * capped at 400 characters as the text part's JSON is.
+ * A row's details for the HTML part (D704), as the console's Audit page reads them (D703 as amended by D704,
+ * `@hana-id/console-core` `detailFields`: times as dates, null as "none", yes and no, lists and objects as plain text, a
+ * string holding a separator quoted, keys in words), at most 400 characters, a cut one ending "…". Should the words
+ * fail, the text part's JSON stands in, so a row can never stop its digest.
  */
-const detailWords = (d: Record<string, unknown>): string => cut(detailFields(d, detailTime).join(' · '), 400);
+const detailWords = (d: Record<string, unknown>): string => {
+  try {
+    return oneLine(detailFields(d, detailTime).join(' · '), 400);
+  } catch {
+    return detailText(d);
+  }
+};
 
 /** An audit row's outcome in words; an unknown one as itself. */
 const outcomeWords = (o: string): string => (o === 'ok' ? 'succeeded' : o === 'failed' ? 'failed' : o);

@@ -12,7 +12,7 @@
 //
 // No statement depends on another's row count inside SQL (`changes()`); only the D1 result of the commit insert is read,
 // in code, after the transaction.
-import type { Actor, RpcCode } from '@hana-id/console-core';
+import type { Actor, AppChangeKind, RpcCode } from '@hana-id/console-core';
 import type { HotDb } from './db.ts';
 import { type Q, q, raw } from './sql.ts';
 
@@ -70,7 +70,8 @@ export const committed = (requestId: string): Q => q`EXISTS (SELECT 1 FROM app_c
 const replayed = (requestId: string): Q => q`EXISTS (SELECT 1 FROM app_changes WHERE request_id = ${requestId})`;
 
 export interface CommitRow {
-  kind: string;
+  /** One of `APP_CHANGE_KINDS` (`@hana-id/console-core`): a new kind gets its audit title there (D704). */
+  kind: AppChangeKind;
   /** Allowlisted fields only, as JSON (a plain object), or a SQL expression that builds the JSON from the source row. */
   detail: Record<string, unknown> | Q;
 }
@@ -113,7 +114,8 @@ export const replayRow = (requestId: string): Q =>
 
 interface StoredReplay {
   seq: number;
-  kind: string;
+  /** One of `APP_CHANGE_KINDS` (`@hana-id/console-core`): a new kind gets its audit title there (D704). */
+  kind: AppChangeKind;
   app_id: string | null;
   actor_kind: string;
   actor_id: string;

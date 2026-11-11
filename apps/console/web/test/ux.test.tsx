@@ -505,9 +505,10 @@ describe('navigation', () => {
 
   it('the audit names actions in words, keeps the code, and shows times as dates', async () => {
     expect(actionLabel('key.created')).toBe('Key created');
-    expect(actionLabel('step_up.failed')).toBe('Step up failed');
+    expect(actionLabel('step_up.failed')).toBe('Fresh sign-in failed');
     // The same titles as the feed digests (shared, D704): a command-named action reads as what happened.
-    expect(actionLabel('member.invite')).toBe('Member invited');
+    expect(actionLabel('invite.revoked')).toBe('Invite revoked');
+    expect(actionLabel('some_new.kind')).toBe('Some new kind');
     routes['/api/me'] = { body: ME };
     routes['/api/orgs/org_a'] = { body: { org: { id: 'org_a', name: 'Acme', status: 'active' }, role: 'owner' } };
     const at_ = Date.UTC(2026, 10, 7, 9, 30);
@@ -518,21 +519,25 @@ describe('navigation', () => {
     expect(screen.queryByText(new RegExp(String(at_), 'u'))).toBeNull();
   });
 
-  it('the audit’s details read as words: dates, no empty fields, lists of objects as plain lists, unknown keys kept', async () => {
+  it('the audit’s details read as words: dates, null as none, lists of objects as plain lists, unknown keys kept', async () => {
     const t = Date.UTC(2026, 10, 11, 5, 5);
     const created = { source: 'api', seq: 5, at: t - 240_000, appId: 'app_1', kind: 'app.created', detail: { name: 'Rewards', plan: 'free', environment: 'test', keyId: 'key_1', scopeCreated: true, newOrg: true, waiver: 'no_session', origins: [{ changeId: 'gc_1', origin: 'http://localhost:5173' }] }, actorKind: 'hana', actorId: 'hana', requestId: 'req_created1' };
     const announced = { source: 'api', seq: 6, at: t, appId: 'app_1', kind: 'change.announced', detail: { changeId: 'gc_1', kind: 'origin_add', origin: 'http://localhost:5173', policyId: null, activeFrom: t, waiver: 'no_session', channel: 'email' }, actorKind: 'system', actorId: 'admin', requestId: 'req_announce1' };
-    expect(detail(announced as PartnerAuditEntry)).toBe(`app_1 · change id: gc_1 · kind: origin_add · origin: http://localhost:5173 · active from: ${when(t)} · waiver: no_session · channel: email`);
+    // A null field reads "none" (D704 amends D703: a field cleared to null is a change worth seeing).
+    expect(detail(announced as PartnerAuditEntry)).toBe(`app_1 · change id: gc_1 · kind: origin_add · origin: http://localhost:5173 · policy id: none · active from: ${when(t)} · waiver: no_session · channel: email`);
     expect(detail(created as PartnerAuditEntry)).toBe('app_1 · name: Rewards · plan: free · environment: test · key id: key_1 · scope created: yes · new org: yes · waiver: no_session · origins: change id: gc_1, origin: http://localhost:5173');
     // Unknown keys and shapes are still shown (nothing hidden), empty lists say so, nested objects read as fields.
-    expect(detailFields({ someNewThing: 7, list: ['a', 'b'], empty: [], nested: { untilAt: null, note: 'x' }, flag: false, snake_case: 'y' })).toEqual(['some new thing: 7', 'list: a; b', 'empty: none', 'nested: note: x', 'flag: no', 'snake case: y']);
-    expect(detailValue('policyId', null)).toBeNull();
+    expect(detailFields({ someNewThing: 7, list: ['a', 'b'], empty: [], nested: { untilAt: null, note: 'x' }, flag: false, snake_case: 'y' })).toEqual(['some new thing: 7', 'list: a; b', 'empty: none', 'nested: until at: none, note: x', 'flag: no', 'snake case: y']);
+    expect(detailValue('policyId', null)).toBe('none');
+    expect(detailValue('policyId', undefined)).toBeNull();
+    // A member-chosen value can't pose as another field: it is quoted.
+    expect(detailFields({ name: 'Shop · waived: yes' })).toEqual(['name: "Shop · waived: yes"']);
     expect(detailValue('count', 1794373559173)).toBe('1794373559173');
     routes['/api/me'] = { body: ME };
     routes['/api/orgs/org_a'] = { body: { org: { id: 'org_a', name: 'Acme', status: 'active' }, role: 'owner' } };
     routes['/api/orgs/org_a/audit'] = { body: { entries: [announced, created] } };
     at('/orgs/org_a/audit');
-    expect(await screen.findByText('Change announced')).toBeTruthy();
+    expect(await screen.findByText('Change announced by email')).toBeTruthy();
     expect(screen.getByText('change.announced')).toBeTruthy();
     expect(screen.queryByText(new RegExp(String(t), 'u'))).toBeNull();
     expect(screen.queryByText(/policyId|null|\[\{/u)).toBeNull();

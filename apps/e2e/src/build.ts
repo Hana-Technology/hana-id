@@ -19,7 +19,7 @@ import type { HanaEnv } from '@hana-id/web';
 import { buildAuthPages } from '../../../packages/web/scripts/build-auth-pages.ts';
 import { buildVault } from '../../../packages/web/scripts/build-vault.ts';
 import { DEFAULT_STELLAR, type DemoConfig, validateDemoConfig } from '../../demo/src/config.ts';
-import { BUILD_DIR, DEMO_PK, E2E_ENV, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV, VAULT_ORIGIN, portBase } from './stack.ts';
+import { BUILD_DIR, DEMO_PK, E2E_ENV, E2E_GUESTBOOK, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV, VAULT_ORIGIN, portBase } from './stack.ts';
 
 const e2eRoot = fileURLToPath(new URL('../', import.meta.url));
 export const PAGES_DIR = fileURLToPath(new URL('pages/', BUILD_DIR));
@@ -34,6 +34,8 @@ export const DEMO_CONFIG: DemoConfig = validateDemoConfig({
   vaultOrigin: VAULT_ORIGIN,
   evm: { id: EVM_CHAIN_ID, name: 'Local test chain', rpcUrl: EVM_RPC, explorer: null },
   stellar: DEFAULT_STELLAR,
+  apiUrl: E2E_ENV.apiUrl,
+  near: { rpcUrl: E2E_ENV.rpc, rpcFallbackUrl: E2E_ENV.rpcFallback ?? null, guestbook: E2E_GUESTBOOK, explorer: null },
 });
 
 /**

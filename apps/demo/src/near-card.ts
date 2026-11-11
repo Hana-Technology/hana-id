@@ -44,6 +44,11 @@ const INTEREST_MS = 5 * 60_000;
 const BACKGROUND_GAP_MS = 5_000;
 /** How long activate and relay are retried while the account isn't in Hana's wallet directory yet. */
 export const UNRECORDED_WAIT_MS = 20_000;
+/**
+ * The API's answers (HTTP 409) while the vault hasn't recorded the user's NEAR account in the wallet directory yet: the
+ * coordinator's `near_account_unrecorded`, and `near_account_unknown`, which the relayer build's docs mark retryable.
+ */
+const UNRECORDED_REASONS: ReadonlySet<string> = new Set(['near_account_unrecorded', 'near_account_unknown']);
 /** How long the card waits for a new account to show its key after activation (1 s per try). */
 const ACTIVATION_TRIES = 10;
 
@@ -119,6 +124,8 @@ export function startNearCard(deps: NearCardDeps): NearCard {
   /** Accounts known to exist on testnet this session (a key was read, or activate answered). */
   const activated = new Set<string>();
   const activating = new Map<string, Promise<boolean>>();
+  /** Accounts this page's activation created, until their first write says so. */
+  const justCreated = new Set<string>();
   /** The highest nonce this page signed per account, so a second write before the next read still goes up. */
   const lastNonce = new Map<string, bigint>();
   let interestAt = -Infinity;
@@ -164,7 +171,8 @@ export function startNearCard(deps: NearCardDeps): NearCard {
       try {
         return await call();
       } catch (e) {
-        if (errorInfo(e).reason !== 'near_account_unrecorded' || waited + pause > UNRECORDED_WAIT_MS) throw e;
+        const reason = errorInfo(e).reason;
+        if (reason === null || !UNRECORDED_REASONS.has(reason) || waited + pause > UNRECORDED_WAIT_MS) throw e;
         waited += pause;
         await deps.sleep(pause);
       }
@@ -179,6 +187,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
       p = whileUnrecorded(() => c.near.activate()).then(
         ({ created }) => {
           activated.add(accountId);
+          if (created) justCreated.add(accountId);
           return created;
         },
         (e: unknown) => {
@@ -331,13 +340,12 @@ export function startNearCard(deps: NearCardDeps): NearCard {
         clearCardError();
         try {
           let ready = fresh(accountId);
-          let created = false;
           if (ready === null || ready.key === null) {
             // Not prepared: Hana's window opens now, in the click, and the next signing call uses it.
             const ticket: ApprovalTicket = c.prepareApproval();
             try {
               stage(STAGES.reading);
-              ({ prep: ready, created } = await ensureReady(accountId, stage));
+              ({ prep: ready } = await ensureReady(accountId, stage));
             } catch (e) {
               ticket.cancel();
               throw e;
@@ -352,6 +360,8 @@ export function startNearCard(deps: NearCardDeps): NearCard {
           stage(STAGES.relaying);
           const { transactionHash } = await whileUnrecorded(() => c.near.relay({ network: 'testnet', signedDelegateAction }));
           stage(null);
+          // The first write after this page's activation (in the click or in the background) says so.
+          const created = justCreated.delete(accountId);
           done(`Written to the guestbook on NEAR testnet.${created ? ' Your NEAR account was created for it.' : ''} You paid no gas.`, transactionHash);
           input.value = '';
           renderCount();

@@ -111,7 +111,8 @@ describe('the bytes the user signs (decoded with the vault’s codec)', () => {
     expect(d).toEqual({ senderId: NEAR_ACCOUNT, receiverId: BOOK, actions: call('gm "quoted" ‮'), nonce: 1_000_001n, maxBlockHeight: 200_000_000n + DELEGATE_TTL_BLOCKS, publicKey: key });
     expect(GUESTBOOK_GAS).toBe(30n * 10n ** 12n);
     expect(DELEGATE_TTL_BLOCKS).toBeGreaterThanOrEqual(300n);
-    expect(DELEGATE_TTL_BLOCKS).toBeLessThan(10_000n);
+    // The relayer refuses more than its head + 1000 (and the vault more than + 10,000).
+    expect(DELEGATE_TTL_BLOCKS).toBeLessThanOrEqual(1000n);
     expect(JSON.parse(fromUtf8((d.actions[0] as { args: Uint8Array }).args))).toEqual({ text: 'gm "quoted" ‮' });
   });
 

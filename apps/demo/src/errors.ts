@@ -62,35 +62,49 @@ const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
 };
 
 /**
- * The relayer's refusals of `POST /v1/near/relay` and `/v1/near/activate` (4100 for a 4xx, `api_unavailable` for a 5xx,
- * the API's code in `data.reason`). The codes are the relayer build's; these are the demo's best guess at them, and
- * anything else falls back to RELAYER_REFUSED or RELAYER_DOWN.
+ * The relayer's refusals of `POST /v1/near/relay` and `/v1/near/activate` (the SDK makes a 4xx 4100 and a 5xx
+ * `api_unavailable`, with the API's code in `data.reason` and the HTTP status in `data.status`). The codes are those of
+ * docs/api.md "NEAR relay" on the relayer build's branch; add a row here for a new one. Anything else falls back to
+ * RELAYER_REFUSED or RELAYER_DOWN.
  */
 const RELAYER_REASONS: Readonly<Record<string, string>> = {
   // 409 until the vault has recorded the user's NEAR account in Hana's wallet directory (seconds after login); the
-  // card retries for about 20 s before it shows this.
+  // card retries for about 20 s (near-card.ts UNRECORDED_REASONS) before it shows these.
   near_account_unrecorded: 'Hana is still setting up your NEAR account for this app (it takes a few seconds after you sign in). Try again in a moment.',
-  near_account_unknown: 'Hana doesn’t know this NEAR account for the demo app. Log out, log in again, then try again.',
+  near_account_unknown: 'Hana doesn’t have your NEAR account on record for the demo app yet. Wait a few seconds and try again; if it keeps happening, log out and log in again.',
+  directory_unavailable: 'Hana couldn’t check your NEAR account right now. Try again in a minute.',
+  // The relayer's policy: zero-deposit calls to an allowed contract, from an implicit account, with bounded gas.
   receiver_not_allowed: 'Hana’s relayer pays only for calls to the demo guestbook, and refused this one.',
-  method_not_allowed: 'Hana’s relayer pays only for the guestbook’s add_message call, and refused this one.',
-  action_not_allowed: 'Hana’s relayer pays only for one function call to the demo guestbook, and refused this request.',
+  action_not_allowed: 'Hana’s relayer pays only for function calls, and refused this request.',
   deposit_not_allowed: 'Hana’s relayer refused a request that attaches NEAR: the guestbook needs none.',
   gas_too_high: 'Hana’s relayer refused the request’s gas: it pays for at most what the guestbook needs.',
-  delegate_invalid: 'Hana’s relayer could not read the signed request. Try again.',
+  sender_not_implicit: 'Hana’s relayer acts only for Hana’s own NEAR accounts, and refused this one.',
+  bad_delegate: 'Hana’s relayer could not read the signed request. Try again.',
+  bad_delegate_signature: 'Hana’s relayer found the request’s signature invalid. Try again.',
+  bad_request: 'Hana’s relayer could not read the request. Try again.',
+  mainnet_not_allowed: 'Hana’s relayer works on NEAR testnet only.',
+  // Checked on chain before relaying.
+  account_not_activated: 'Your NEAR account doesn’t exist on testnet yet. Try again: the demo creates it first.',
+  access_key_missing: 'Your NEAR account has no Hana key on testnet any more (was it changed elsewhere?), so the relayer can’t act for it.',
+  delegate_nonce_used: 'That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one.',
+  delegate_nonce_too_large: 'Hana’s relayer refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
   delegate_expired: 'The signed request expired before the relayer sent it. Try again.',
-  signature_invalid: 'Hana’s relayer found the request’s signature invalid. Try again.',
-  sender_mismatch: 'Hana’s relayer refused the request: it isn’t from your own NEAR account.',
-  account_invalid: 'Hana’s relayer refused the NEAR account id.',
-  not_implicit_account: 'Hana’s relayer creates only implicit accounts (your Hana NEAR account is one): it refused this one.',
-  network_not_allowed: 'Hana’s relayer works on NEAR testnet only.',
+  block_height_too_far: 'The signed request expires too far ahead for Hana’s relayer. Try again.',
+  already_relayed: 'Hana’s relayer sent this exact request a moment ago. Check the guestbook list.',
+  // After relaying.
+  contract_rejected: 'The guestbook contract refused the message (is it 1 to 200 characters?). Nothing was stored.',
+  delegate_rejected: 'NEAR testnet refused the signed request. Try again: the demo reads a fresh nonce and block.',
+  timeout: 'NEAR testnet hasn’t confirmed the transaction yet. Refresh the guestbook list in a moment to see whether it landed.',
   near_rejected: 'NEAR testnet refused the relayed transaction. Try again; the guestbook list shows whether it landed.',
-  relay_failed: 'NEAR testnet refused or failed the relayed transaction. Try again; the guestbook list shows whether it landed.',
-  near_tx_failed: 'The relayed transaction failed on NEAR testnet. Try again; the guestbook list shows whether it landed.',
+  near_error: 'NEAR testnet returned an error for the relayed transaction. Try again; the guestbook list shows whether it landed.',
+  near_unavailable: 'Hana’s relayer couldn’t reach NEAR testnet. Try again in a minute.',
+  // Capacity and limits.
+  app_budget_exhausted: 'The demo app has used up today’s free NEAR relays. Try again tomorrow (UTC).',
+  relay_budget_exhausted: 'Hana’s relayer has used up today’s testnet budget. Try again tomorrow (UTC).',
   relayer_busy: 'Hana’s relayer is busy. Wait a few seconds and try again.',
   relayer_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
   relayer_unconfigured: 'Hana’s relayer isn’t set up on this environment yet. Tell the Hana team.',
-  relayer_out_of_funds: 'Hana’s relayer has run out of testnet NEAR. Tell the Hana team.',
-  near_unavailable: 'Hana’s relayer couldn’t reach NEAR testnet. Try again in a minute.',
+  rate_limiter_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
 };
 const RELAYER_REFUSED = 'Hana’s relayer refused this request';
 const RELAYER_DOWN = 'Hana’s relayer is unavailable right now. Try again in a minute.';
@@ -105,7 +119,7 @@ function nearMessage(e: unknown, code: string | number | null, reason: string | 
   // The relayer's answers carry their HTTP status in data.status (the SDK's relay and activate); the vault's don't.
   const fromRelayer = isObj(e) && isObj(e.data) && typeof e.data.status === 'number';
   if (action !== 'near' || !fromRelayer) return null;
-  if (reason !== null && Object.hasOwn(RELAYER_REASONS, reason) && (code === 4100 || code === 'api_unavailable')) return RELAYER_REASONS[reason]!;
+  if (reason !== null && Object.hasOwn(RELAYER_REASONS, reason) && (code === 4100 || code === 'api_unavailable' || code === 'rate_limited')) return RELAYER_REASONS[reason]!;
   if (code === 4100) return `${RELAYER_REFUSED}${reason ? ` (${reason})` : ''}. ${REPORT}`;
   if (code === 'api_unavailable') return reason ? `${RELAYER_DOWN} (${reason})` : 'Could not reach Hana’s relayer. Check your connection and try again.';
   if (code === 'rate_limited') return 'Too many guestbook writes from this app in a short time. Wait a minute and try again.';

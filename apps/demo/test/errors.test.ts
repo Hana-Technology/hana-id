@@ -99,9 +99,11 @@ describe('plainMessage', () => {
   it("maps the relayer's refusals (relay, activate) by data.reason, with a default for codes it doesn't know", () => {
     const relayer = (code: string | number, status: number, reason?: string) => new HanaError(code as never, 'x', { status, ...(reason ? { reason } : {}) });
     expect(plainMessage(relayer(4100, 409, 'near_account_unrecorded'), 'near')).toMatch(/still setting up your NEAR account/u);
-    expect(plainMessage(relayer(4100, 404, 'near_account_unknown'), 'near')).toMatch(/Log out, log in again/u);
+    expect(plainMessage(relayer(4100, 409, 'near_account_unknown'), 'near')).toMatch(/log out and log in again/u);
+    expect(plainMessage(relayer('rate_limited', 429, 'app_budget_exhausted'), 'near')).toMatch(/used up today’s free NEAR relays/u);
+    expect(plainMessage(relayer(4100, 422, 'contract_rejected'), 'near')).toMatch(/guestbook contract refused/u);
     expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'near')).toMatch(/only for calls to the demo guestbook/u);
-    expect(plainMessage(relayer('api_unavailable', 503, 'relayer_out_of_funds'), 'near')).toMatch(/run out of testnet NEAR/u);
+    expect(plainMessage(relayer('api_unavailable', 503, 'relay_budget_exhausted'), 'near')).toMatch(/used up today’s testnet budget/u);
     expect(plainMessage(relayer(4100, 400, 'something_new'), 'near')).toMatch(/^Hana’s relayer refused this request \(something_new\)\. /u);
     expect(plainMessage(relayer(4100, 400), 'near')).toMatch(/^Hana’s relayer refused this request\. /u);
     expect(plainMessage(relayer('api_unavailable', 502, 'whatever'), 'near')).toBe('Hana’s relayer is unavailable right now. Try again in a minute. (whatever)');

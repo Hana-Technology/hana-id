@@ -138,5 +138,8 @@ export const EXIT_CLIENT_ID = 'e2e-exit.apps.googleusercontent.com';
  */
 export const DEMO_PK = 'pk_test_DemoE2eDemoE2eDemoE2e';
 
+/** The demo guestbook's account on the mocked testnet (the demo's `near.guestbook`, src/server/chain.ts). */
+export const E2E_GUESTBOOK = 'e2e-guestbook.testnet';
+
 /** Where src/build.ts writes the bundles, and the servers read them. */
 export const BUILD_DIR = new URL('../.build/', import.meta.url);

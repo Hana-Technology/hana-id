@@ -267,6 +267,20 @@ async function knownAccount(env: Env, ctx: Ctx, app: App, config: NearRelayConfi
   return { ok: true, value: `near-relay:user:${found.userId}` };
 }
 
+/** Raises a sender's nonce floor, retried once; false (logged) when it can't be written. */
+async function raiseFloor(env: Env, ctx: Ctx, subject: string, nonce: bigint): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await limiter(env, subject).raiseFloor(NONCE_FLOOR, nonce.toString());
+      return true;
+    } catch {
+      // once more
+    }
+  }
+  log({ event: 'near_relay_floor_failed', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'rate_limiter_unavailable' }, 'error');
+  return false;
+}
+
 /** Gives back windows `quota` took at `at` (a request refused or not sent after them). Never throws. */
 async function giveBackWindows(env: Env, windows: Window[], at: number): Promise<void> {
   await Promise.all(windows.map((w) => limiter(env, w.subject).unhit(w.limits, at))).catch(() => undefined);
@@ -486,12 +500,17 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
-  // Counted before any chain read (M3), with windows no one can aim at a user: the app's and the env's minute. A
-  // request NEAR then refuses still counts here.
-  const pre = await quota(env, ctx, [
+  // Counted before any chain read (M3). First the sender's own minute: safe to count now, since only the key's holder
+  // gets past the floor (a third party can't sign above it). Then the app's and the env's minute, shared, given back
+  // when the chain says the delegate is stale (below), so one sender can't spend them with delegates the chain refuses.
+  const senderMinute = await quota(env, ctx, [{ subject: senderSubject, limits: [{ name: 'near-relay:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.perSenderPerMinute }], what: 'per account per minute' }]);
+  if (senderMinute) return senderMinute;
+  const shared: Window[] = [
     { subject: `app:${app.id}`, limits: [{ name: 'near-relay:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.perAppPerMinute }], what: 'per app' },
     { subject: 'near-relay:global', limits: [{ name: 'near-relay:minute', windowMs: MINUTE, max: config.relaysPerMinute }], what: 'across the env' },
-  ]);
+  ];
+  const sharedAt = Date.now();
+  const pre = await quota(env, ctx, shared, sharedAt);
   if (pre) return pre;
 
   // The chain: the head (expiry, the budget's gas price) and the sender's own key (exists, nonce unused).
@@ -506,7 +525,14 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   if (key.kind === 'no_account') return reject(ctx, 409, 'account_not_activated', 'The NEAR account does not exist yet: activate it first (POST /v1/near/activate)');
   if (key.kind === 'no_key') return reject(ctx, 409, 'access_key_missing', "The account doesn't hold the delegate's public key");
   const top = key.height > head.height ? key.height : head.height;
-  if (d.nonce <= key.nonce) return done(ctx, 409, { error: 'The delegate nonce is already used', code: 'delegate_nonce_used', accessKeyNonce: key.nonce.toString() });
+  if (d.nonce <= key.nonce) {
+    // Stale on chain (executed elsewhere, or older than the key's nonce): the floor rises to the chain's nonce, so this
+    // delegate and every older one are dropped before any count from now on, and the shared windows come back. A floor
+    // that can't be raised fails closed (retryable).
+    if (!(await raiseFloor(env, ctx, senderSubject, key.nonce))) return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again', { 'retry-after': '1' });
+    await giveBackWindows(env, shared, sharedAt);
+    return done(ctx, 409, { error: 'The delegate nonce is already used', code: 'delegate_nonce_used', accessKeyNonce: key.nonce.toString() });
+  }
   if (d.nonce >= (top + 1n) * NONCE_RANGE_MULTIPLIER) return done(ctx, 400, { error: 'The delegate nonce is too large', code: 'delegate_nonce_too_large', accessKeyNonce: key.nonce.toString() });
   if (d.maxBlockHeight < top + MIN_BLOCKS_AHEAD) return done(ctx, 400, { error: 'The delegate action has expired or expires too soon', code: 'delegate_expired', blockHeight: Number(top) });
   const maxAhead = top + BigInt(NEAR_RELAY_LIMITS.maxBlocksAhead);
@@ -548,7 +574,7 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   // Nothing ran: the client may send the same delegate again. Anything else may have used the nonce on chain: it
   // becomes the sender's floor (only grows), so this delegate and every older one are dropped from now on.
   if (!result.ok && NOT_EXECUTED.has(result.code)) await Promise.all([unmark(), giveBackWindows(env, daily, dailyAt)]);
-  else await limiter(env, senderSubject).raiseFloor(NONCE_FLOOR, d.nonce.toString()).catch(() => undefined);
+  else await raiseFloor(env, ctx, senderSubject, d.nonce);
   await settleBudget(env, ctx, app, reserved, result, now);
   return relayAnswer(ctx, result, d.senderId);
 }

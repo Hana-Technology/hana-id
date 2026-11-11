@@ -65,6 +65,8 @@ export const NEAR_RELAY_LIMITS = {
   perUserPerDay: 200,
   /** Relays per app per minute. */
   perAppPerMinute: 120,
+  /** Relay requests per sender per minute, counted after the nonce floor (so only the key's holder can use it up). */
+  perSenderPerMinute: 10,
   /** Relays per IP subject per minute, across every app (the app gate's window). */
   perIpPerMinute: 30,
   /** Activations per Hana user per UTC day. */

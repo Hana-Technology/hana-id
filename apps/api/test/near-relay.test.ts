@@ -420,8 +420,9 @@ describe('POST /v1/near/relay', () => {
       [() => s.near.missingKeys.add(s.user.accountId), delegate(s.user), 'access_key_missing'],
       [() => s.near.akNonce.set(s.user.keyPair.getPublicKey().toString(), 101n), delegate(s.user, { nonce: 101n }), 'delegate_nonce_used'],
       [() => undefined, delegate(s.user, { nonce: 1001n * 1_000_000n }), 'delegate_nonce_too_large'],
-      [() => undefined, delegate(s.user, { maxBlockHeight: 1002n }), 'delegate_expired'],
-      [() => undefined, delegate(s.user, { maxBlockHeight: 2001n }), 'block_height_too_far'],
+      // Above the floor the nonce-used answer raised (to 101).
+      [() => undefined, delegate(s.user, { nonce: 102n, maxBlockHeight: 1002n }), 'delegate_expired'],
+      [() => undefined, delegate(s.user, { nonce: 103n, maxBlockHeight: 2001n }), 'block_height_too_far'],
     ];
     const reset = () => {
       s.near.missingAccounts.clear();
@@ -462,9 +463,37 @@ describe('POST /v1/near/relay', () => {
     // An older delegate of the sender (a lower nonce, another expiry): dropped the same way.
     for (let i = 0; i < 5; i++) expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 100n, maxBlockHeight: 1050n })), bindings))).code).toBe('delegate_nonce_used');
     expect(s.near.rpcMethods.length).toBe(reads);
+    // The sender's own minute holds only the first relay: the 25 replays counted nothing of theirs.
+    const probe = await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`near-relay:sender:${s.user.accountId}`)).hit([{ name: 'near-relay:minute', windowMs: 60_000, max: 2 }]);
+    expect(probe.ok).toBe(true);
     // The sender's day still has its second relay: the honest next one goes through, the third is refused.
     expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 102n })), bindings)).status).toBe(200);
     expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 103n })), bindings))).error).toBe('Rate limit exceeded (per account)');
+  });
+
+  it('a sender flooding above-floor but chain-stale delegates exhausts only its own minute; the app’s window comes back; the floor rises from the chain', async () => {
+    const pk = s.user.keyPair.getPublicKey().toString();
+    let n = 0;
+    for (; n < 11; n++) {
+      // Each delegate above the floor, each already used on chain (executed elsewhere): the chain nonce stays ahead.
+      s.near.akNonce.set(pk, BigInt(20_000 + n * 10));
+      const res = await relay(s.app, plainRelay(delegate(s.user, { nonce: BigInt(20_000 + n * 10 - 5) })));
+      if (res.status === 429) {
+        expect((await body(res)).error).toBe('Rate limit exceeded (per account per minute)');
+        break;
+      }
+      expect((await body(res)).code).toBe('delegate_nonce_used');
+    }
+    expect(n).toBe(10);
+    // The app's minute window took nothing from the stale ones (a probe with a cap of 1 passes).
+    const app = await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`app:${s.app.id}`)).hit([{ name: 'near-relay:minute', windowMs: 60_000, max: 1 }]);
+    expect(app.ok).toBe(true);
+    // The floor rose to the chain's nonce: an older above-the-old-floor delegate is dropped with no chain read.
+    const reads = s.near.rpcMethods.length;
+    expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 20_050n }))))).code).toBe('delegate_nonce_used');
+    expect(s.near.rpcMethods.length).toBe(reads);
+    // Another sender of the app is unaffected.
+    expect((await relay(s.app, plainRelay(delegate(knownUser(s.app.scope))))).status).toBe(200);
   });
 
   it('a delegate refused by the chain checks (expired) counts in no daily window', async () => {

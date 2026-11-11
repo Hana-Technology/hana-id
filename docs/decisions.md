@@ -11246,7 +11246,9 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   delegate's hash is remembered 20 minutes (refused `already_relayed` before any count), forgotten if nothing ran.
   Amended again (the review after): no sender-scoped window before the delegate is known fresh: a durable per-sender
   nonce floor (the highest nonce sent; only grows) drops anything at or below it with no chain read; the sender's
-  minute window is gone; the daily windows are given back when nothing is sent or created. A concurrent copy of one activation
+  minute window is gone; the daily windows are given back when nothing is sent or created. And once more: the sender's
+  minute window comes back, after the floor (only the key's holder reaches it); a chain answer of a used nonce raises
+  the floor to the chain's nonce and gives the app's and env's minute hits back; a failed floor write fails closed. A concurrent copy of one activation
   answers `created: false`. The key-in-a-pool check compares public keys; the relay account is never `RELAYER_ACCOUNT`
   or `SIGNER_ACCOUNT`.
 - Address impact: none.

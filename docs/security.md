@@ -1801,15 +1801,35 @@ mainnet (issue (s)). A body may carry the vault's session proof (a live session 
 request, within 60 s, once), which then also counts per user; a later round can require it, and the wallet directory's
 NEAR record can bind `sender_id` to the session user's own address.
 
-**Replays can't lock a sender out.** A relayed delegate is public on chain, so anyone can re-post it, at any time. The
-relay keeps per sender the highest nonce it has sent (durable, only grows, never expires) and drops any delegate at or
-below it after the local checks, before any chain read or count; a delegate above it carries a fresh signature by the
-sender's key, which no third party can make. So no sender- or user-scoped window is reachable by anyone but the key's
-holder: before the chain reads only the app's and the env's minute windows count, and the sender's and user's daily
-windows count only a delegate that will be sent (given back if it isn't). In `activate`, an account id is public:
-naming a victim's existing account answers `created: false` and counts nothing of theirs; naming a missing one creates
-it for them (counted in their day, which only that creation uses; given back if nothing is created). The app-wide and
-env-wide windows remain shared, a denial for everyone bounded by the budgets, not aimed at one user.
+**Order of checks and who can consume each counter** (`POST /v1/near/relay`, after three security reviews on
+2026-11-11). Public inputs: a relayed delegate is on chain for anyone to re-post; an account id is public.
+
+1. The app gate's per-IP window (30 a minute across apps): anyone, at the cost of their own IPs.
+2. Body, decode, policy, the delegate's Ed25519 signature: local, nothing counted.
+3. The directory lookup (`requireKnownAccount`): one D1 read, nothing counted.
+4. **The sender's nonce floor** (the highest nonce this relay sent for the sender, durable, only grows): a delegate at
+   or below it is refused `delegate_nonce_used` with no chain read and nothing counted. Anyone can post old delegates;
+   they cost the sender nothing, ever.
+5. The in-flight copy check (the hash, 20 minutes): `already_relayed`, nothing counted.
+6. **The sender's minute** (10): only past the floor, so only the key's holder (a fresh signature above the floor) can
+   use it up, at the cost of their own relays.
+7. **The app's and the env's minute** (120, sandbox-dev env 200): only the key's holder of some sender can reach them;
+   when the chain then says the delegate is stale (used nonce: executed elsewhere or older than the key), the floor
+   rises to the chain's nonce and both hits are given back, so each stale delegate costs the shared windows nothing and
+   can't be used twice. A floor that can't be written fails closed (`503`, retryable). What stays is the cost of the
+   chain reads for delegates refused for other reasons (expired, too far, missing account), bounded by the sender's
+   minute per key and the per-IP window; keys are free to make, so a flood of fresh keys is bounded by IPs and by
+   these shared minutes (a denial for the app or the env for a minute, never for one chosen user).
+8. Chain reads, then the delegate's checks (nonce, expiry, account and key).
+9. **The daily windows** (sender 100, directory user 200, app 5000, env 20000) and **the budgets** (app 1 NEAR, env 5
+   NEAR): only a delegate that will be sent, by its key's holder; given back when nothing is sent. Anything sent raises
+   the floor to its nonce.
+
+`POST /v1/near/activate`: the per-IP window, then the app's (60) and env's (300) activation minutes for every request
+(an account id is public, so these are shared, not aimed at a user); an existing account answers `created: false` and
+counts nothing more; for a missing one the directory user's day (2), the app's (200) and env's (1000) days, then the
+budgets, all given back when nothing is created. Naming a victim's missing account creates it for them (their day,
+used only by that creation).
 
 **Limits and the drain bound** (D736). Per IP 30 relays and 10 activations a minute; per sender 100 relays a day
 (sandbox-dev 50); per directory user 200 relays and 2 activations a day; per app 120 a minute and 5000 a day

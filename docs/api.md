@@ -1070,7 +1070,10 @@ public): the relay keeps, per sender, the highest delegate nonce it has sent (`R
 delegate_nonce_used` right after the local checks (decode, policy, signature), with no chain read and no count. A nonce
 above it needs a fresh signature by the sender's key, which only the key's holder can make. A copy of a request in
 flight is `409 already_relayed` (the hash, remembered 20 minutes, for concurrent copies only). Before the chain reads
-only windows no one can aim at a user count (M3): the app's and the env's minute; for activate 60 requests a minute per
+(M3): the sender's minute (10; past the floor, so only the key's holder reaches it), then the app's and the env's
+minute, which come back when the chain says the delegate's nonce is used (the floor then rises to the chain's nonce:
+a stale delegate costs the shared windows nothing, once); a floor that can't be written answers `503
+rate_limiter_unavailable` (retryable); for activate 60 requests a minute per
 app and 300 across the env, "already exists" answers included. The daily windows (sender, user, app, env) count only a
 delegate that passed every check, right before the budget and the relay; a later refusal, or a relay that didn't run,
 gives them back (and forgets the hash); anything else raises the sender's floor to the delegate's nonce. An activation

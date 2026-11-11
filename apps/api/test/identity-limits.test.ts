@@ -21,7 +21,7 @@ import {
 import { clearIdentitySignerCache } from '../src/identity/signer.ts';
 import { proofMarker } from '../src/identity/token.ts';
 import { clearViewCaches } from '../src/views.ts';
-import { minuteHeadroom, seedApp, seedPlan, uid } from './helpers.ts';
+import { minuteHeadroom, seedApp, seedPlan, uid, startOfMinuteClock } from './helpers.ts';
 import { limiterKeys, mint, randomPrk, setSlidingBucket } from './identity-helpers.ts';
 import { HOUR, act, createShare, setSettings, spentSession, vaultSetup } from './vault-helpers.ts';
 
@@ -50,6 +50,8 @@ describe('M1: no tenant can use up what others share', () => {
   });
 
   it('an app at its plan-sized hourly ceiling gets 429; another app keeps minting', async () => {
+
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     const plan = `tiny${uid()}`;
     await seedPlan(plan, 60, 3, 20);
     const { app, near } = await vaultSetup({ plan });
@@ -64,6 +66,8 @@ describe('M1: no tenant can use up what others share', () => {
   });
 
   it('the scope’s hourly ceiling refuses (429), and the app window takes the hit back', async () => {
+
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     const { app, near } = await vaultSetup();
     const share = await createShare(app, near);
     const now = Date.now();
@@ -130,6 +134,7 @@ describe('sliding windows (RateLimiter.hitSliding)', () => {
 
 describe('L3: identity tokens have their own app windows', () => {
   it('mints at their per-minute limit get 429 while unlocks go on; a full vault window doesn’t stop mints', async () => {
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     const { app, near } = await vaultSetup();
     const share = await createShare(app, near);
     const now = Date.now();

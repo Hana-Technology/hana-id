@@ -384,3 +384,18 @@ export async function mailboxObject(h: Harness, email: string) {
   const key = await mailboxKey(await h.deps.keys(), r.mailbox);
   return env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${h.deps.env.ENV_NAME}:mbx:${key}`));
 }
+
+/**
+ * For tests of fixed windows (the directory's row budget, hour and UTC day): shifts this isolate's clock (the Worker
+ * and its objects share it with the test) to a second into a minute that isn't its hour's last, with time still
+ * running, so a run never straddles a window boundary (apps/api/test/helpers.ts startOfMinuteClock). Call it first;
+ * undone by vi.restoreAllMocks().
+ */
+export function startOfMinuteClock(): void {
+  const now = Date.now;
+  const real = vi.isMockFunction(now) ? (now.getMockImplementation() ?? (() => new Date().getTime())) : now.bind(Date);
+  const t = real();
+  const minute = t - (t % 60_000) + 1000;
+  const target = 3_600_000 - (minute % 3_600_000) < 60_000 ? minute + 60_000 : minute;
+  vi.spyOn(Date, 'now').mockImplementation(() => real() - (t - target));
+}

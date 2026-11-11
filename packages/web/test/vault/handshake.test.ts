@@ -168,6 +168,8 @@ describe('the port', () => {
     const t = await ready();
     t.port.postMessage({ v: 1, id: 'dup', method: 'hana_status' });
     t.port.postMessage({ v: 1, id: 'dup', method: 'hana_status' });
+    // The first one's reply (however long it takes), then time for a second that must not come.
+    for (let i = 0; i < 400 && !t.replies.some((r) => r.id === 'dup'); i++) await sleepReal(5);
     await settle();
     expect(t.replies.filter((r) => r.id === 'dup')).toHaveLength(1);
   });

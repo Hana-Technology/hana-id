@@ -6,10 +6,11 @@
 import { LEDGER_PAGE } from '@hana-id/console-core';
 import { createExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ConsoleRpc } from '../src/rpc/console.ts';
 import { ORG_LEDGER_SQL, ORG_REPORT_SQL, ORG_STATEMENTS_SQL, REPORT_LIMITS, reportTransport } from '../src/usage/reports.ts';
 import { type DbCount, countingDb, member, newOrg } from './rpc-helpers.ts';
+import { startOfMinuteClock } from './helpers.ts';
 
 const realRows = reportTransport.rows;
 let calls: { sql: string; params: unknown[] }[] = [];
@@ -142,6 +143,9 @@ describe('ConsoleRpc.usage', () => {
   });
 
   it('is rate-limited per member', async () => {
+    // Fixed minute and hour windows: start a second into one (helpers.ts), so the run never straddles a boundary.
+    await startOfMinuteClock();
+    onTestFinished(() => void vi.restoreAllMocks());
     const m = member();
     const max = REPORT_LIMITS[0]!.max;
     const input = { ...m, orgId: newOrg(), from: '2026-01-01', to: '2026-01-02', by: 'day' as const };

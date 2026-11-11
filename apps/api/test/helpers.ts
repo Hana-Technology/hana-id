@@ -311,14 +311,28 @@ export function chain(clients: Record<string, string> = {}, opts: { shared?: str
 }
 
 /**
- * For tests of fixed per-minute windows (RateLimiter objects): shifts this isolate's clock (the Worker and its objects
- * share it with the test) so the test starts a second into a minute, with time still running, so a run never straddles
- * a window boundary. Undone by vi.restoreAllMocks().
+ * The instant a test pinned by `startOfMinuteClock` starts at, for a real time `t`: a second into a minute, and never
+ * into the last minute of an hour (that one is skipped for the next hour's first), so a fixed minute window has 59 s
+ * left and a fixed hour or UTC-day window at least that (every UTC day starts on an hour). Exported for its own test.
+ */
+export function minuteStartFor(t: number): number {
+  const target = t - (t % 60_000) + 1000;
+  return 3_600_000 - (target % 3_600_000) < 60_000 ? target + 60_000 : target;
+}
+
+/**
+ * For tests of fixed windows on RateLimiter objects (minute, hour, UTC day): shifts this isolate's clock (the Worker and
+ * its objects share it with the test) to `minuteStartFor(now)`, with time still running, so a run never straddles a
+ * window boundary. Call it first in the test, before anything is counted. Undone by vi.restoreAllMocks().
  */
 export async function startOfMinuteClock(): Promise<void> {
   const { vi } = await import('vitest');
-  const real = Date.now.bind(Date);
-  const offset = (real() % 60_000) - 1000;
+  // On top of a clock already moved (a second call, or a test's own mock): spying again reuses the same spy, so the
+  // clock it moves is the spy's current implementation, never the spy itself (that would recurse).
+  const now = Date.now;
+  const real = vi.isMockFunction(now) ? (now.getMockImplementation() ?? (() => new Date().getTime())) : now.bind(Date);
+  const t = real();
+  const offset = t - minuteStartFor(t);
   vi.spyOn(Date, 'now').mockImplementation(() => real() - offset);
 }
 
@@ -327,6 +341,7 @@ export async function startOfMinuteClock(): Promise<void> {
  * least `headroomMs` remain in the current minute, so the counted requests fall into one window.
  */
 export async function minuteHeadroom(headroomMs = 8000): Promise<void> {
-  const left = 60_000 - (Date.now() % 60_000);
+  // The real clock (`new Date()` doesn't follow a spied Date.now): the windows it waits for are on it.
+  const left = 60_000 - (new Date().getTime() % 60_000);
   if (left < headroomMs) await new Promise((r) => setTimeout(r, left + 250));
 }

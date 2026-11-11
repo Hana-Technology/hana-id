@@ -22,7 +22,7 @@ import { parseRelayerKeys, POOL_METHODS, POOL_SECRET, poolAllows, poolsSharingAK
 import { ckdPayload, sessionNonce } from '../src/session-crypto.ts';
 import { adminRpc, system } from './rpc-helpers.ts';
 import { emailAud, emailEnv, emailToken, withEmail, type EmailChain } from './email-helpers.ts';
-import { GOOGLE_ISS, type Chain, call, chain, google, seedApp, signSession, uid } from './helpers.ts';
+import { GOOGLE_ISS, type Chain, call, chain, google, seedApp, signSession, startOfMinuteClock, uid } from './helpers.ts';
 import { appKey, loginBody, withCombinedCall } from './login-helpers.ts';
 import { ledger } from './usage-ledger.ts';
 
@@ -106,7 +106,8 @@ const fresh = (): void => {
   clearLinkViewCaches();
 };
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+// Date.now, not `new Date()`: the Worker's clock, which startOfMinuteClock moves (and `new Date()` doesn't follow).
+const today = (): string => new Date(Date.now()).toISOString().slice(0, 10);
 const usage = async (): Promise<number> => (await env.DB.prepare('SELECT derives FROM home_usage WHERE day = ?1').bind(today()).first<{ derives: number }>())?.derives ?? 0;
 const events = async (scopeId: string) =>
   (await env.DB.prepare("SELECT kind, app_id, user_id, chain, request_id FROM user_events WHERE scope_id = ?1 AND kind = 'key_exported' ORDER BY id").bind(scopeId).all<Record<string, unknown>>()).results;
@@ -337,6 +338,10 @@ describe('POST /v1/home/login: what it opens', () => {
 });
 
 describe('POST /v1/home/login: nothing to rescue (D544)', () => {
+  // Hour and UTC-day windows, and day rows keyed by the clock: start each test a second into a minute that isn't its
+  // hour's last (helpers.ts startOfMinuteClock), so none straddles a boundary.
+  beforeEach(startOfMinuteClock);
+
   it('an identity that never opened a wallet here is refused: nothing relayed, counted or spent', async () => {
     withEmail(near, [scope]);
     fresh();
@@ -402,6 +407,10 @@ describe('POST /v1/home/login: nothing to rescue (D544)', () => {
 });
 
 describe('POST /v1/home/login: what a relay that didn’t release a key spends', () => {
+  // Hour and UTC-day windows, and day rows keyed by the clock: start each test a second into a minute that isn't its
+  // hour's last (helpers.ts startOfMinuteClock), so none straddles a boundary.
+  beforeEach(startOfMinuteClock);
+
   it('ckd_failed gives the wallet window back and keeps the per-user and daily counts (D528)', async () => {
     withCombinedCall(near, { ckd: 'fail' });
     for (let i = 0; i < HOME_DERIVES_PER_PATH_HOUR + 1; i++) {
@@ -547,6 +556,10 @@ describe('POST /v1/home/login: nothing relayed on any failed check', () => {
 });
 
 describe('POST /v1/home/login: the limits, all before the relay', () => {
+  // Hour and UTC-day windows, and day rows keyed by the clock: start each test a second into a minute that isn't its
+  // hour's last (helpers.ts startOfMinuteClock), so none straddles a boundary.
+  beforeEach(startOfMinuteClock);
+
   it('per IP: ten an hour, counted before anything is parsed', async () => {
     const ip = `10.99.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
     const raw = JSON.stringify(await body(scope, SHARED));

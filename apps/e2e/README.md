@@ -8,7 +8,7 @@ corepack pnpm --filter @hana-id/e2e e2e:install   # once: the browsers
 corepack pnpm --filter @hana-id/e2e e2e           # build + local stack + all three browsers
 corepack pnpm --filter @hana-id/e2e e2e --project webkit tests/approval.spec.ts
 cd apps/e2e && corepack pnpm exec playwright test --project=chromium tests/email.spec.ts   # one spec, one browser
-HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another worktree's run at the same time (not 5010: see below)
+HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # a base of your choice (a worktree has its own by default; not 5010: see below)
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```
 
@@ -36,7 +36,8 @@ has already closed waits for its whole timeout.
 
 ## What runs
 
-Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table shows the default.
+Ports are `HANA_E2E_PORT_BASE` (default 4410 in the main checkout; a linked worktree's own base, below) plus the offsets
+below: the table shows 4410.
 
 | Origin | Serves |
 |---|---|
@@ -169,8 +170,14 @@ Access tokens are self-describing test values (`ya29.e2e.<b64url JSON>`: the cli
 that `tokeninfo` and `userinfo` read back; a test sets its accounts' email and `hd` on `google.accounts`. Production
 bundles keep the hard-coded Google endpoints; nothing in them can select the stub.
 
-The ports are fixed for a run (the bundles inline the origins) and chosen by `HANA_E2E_PORT_BASE`, so worktrees that
-run the suite at the same time each set their own base (4410, 4510, …; the stack uses base … base + 50). A base
+The ports are fixed for a run (the bundles inline the origins) and chosen by `HANA_E2E_PORT_BASE` (the stack uses
+base … base + 50). Unset, it is the checkout's default (`src/checkout-port.ts`, applied by `src/port-env.ts` in the
+Playwright config, the stack's entry point and the build): 4410 in the main checkout, and in a linked git worktree a
+base of its own from 4510 up to 48910 in steps of 100, picked by a hash of the worktree's path, so worktrees running the
+suite or `pnpm verify` at the same time don't meet on one stack (two can still draw the same base, about 1 in 440:
+the fingerprint check below then refuses, and `HANA_E2E_PORT_BASE` picks another). To see a checkout's base:
+`node --import tsx -e "import('./src/checkout-port.ts').then((m) => console.log(m.checkoutPortBase()))"` in
+`apps/e2e`. A base
 whose ports include one of the Fetch standard's blocked ports (5060, 5061, 6000, 6665–6669, 10080, …) is refused, since
 no browser connects there. Outside CI
 Playwright reuses a stack that is already listening on them. `tests/global-setup.ts` fails the run unless that stack

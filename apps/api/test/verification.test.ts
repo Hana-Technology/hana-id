@@ -6,7 +6,7 @@ import { base64UrlDecode, base64UrlEncode, hex } from '../src/bytes.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { ckdPayload, revokePayload, sessionMessage, sessionNonce } from '../src/session-crypto.ts';
 import { makeJwt, rsaSigner } from './near-mock.ts';
-import { DERIVE_KEY, ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, sessionKeyPair, uid } from './helpers.ts';
+import { DERIVE_KEY, ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, sessionKeyPair, uid, startOfMinuteClock } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -449,6 +449,8 @@ describe('GET /v1/app', () => {
   });
 
   it('is limited per IP but never uses the app’s relay quota', async () => {
+
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     const plan = `p${uid()}`;
     await seedPlan(plan, 1, 1000, 2);
     const app = await seedApp({ plan });

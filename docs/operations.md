@@ -3249,10 +3249,12 @@ RPC, and an OIDC stub for Google. No testnet, no secrets. Details: `apps/e2e/REA
 ```sh
 corepack pnpm --filter @hana-id/e2e e2e:install          # once: the browsers
 corepack pnpm --filter @hana-id/e2e e2e                  # build, start the stack, run all three browsers
-HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # a second worktree at the same time
+HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # only to pick the ports yourself: a linked worktree already gets its own
 ```
 
-- Ports are `HANA_E2E_PORT_BASE` (default 4410) to base + 50. Outside CI Playwright reuses a stack already listening
+- Ports are `HANA_E2E_PORT_BASE` to base + 50. Unset, the main checkout uses 4410 and each linked git worktree its own
+  base (4510 to 48910 in steps of 100, from a hash of its path: `apps/e2e/src/checkout-port.ts`), so two checkouts can run
+  `pnpm verify` at once; set the variable to choose the base yourself. Outside CI Playwright reuses a stack already listening
   there; the global setup fails the run unless it is this checkout's current stack (fingerprint on
   `/__e2e/health`). On "not this checkout's current e2e stack": stop the other stack or use another base.
 - A base that puts a port on one of the Fetch standard's blocked ports (5060/5061 SIP, 6000, 6665–6669, 10080, …) is

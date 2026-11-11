@@ -5,7 +5,7 @@ import { DEFAULT_GAS_TGAS, TGAS } from '../src/gas.ts';
 import { EXPORTS_PER_PATH_HOUR, exportLimiterKey, loginFailure } from '../src/login.ts';
 import { failedExecutor } from '../src/near/tx.ts';
 import { clearViewCaches } from '../src/views.ts';
-import { ORIGIN, appHeaders, bytes, call, chain, newSessionKey, seedApp, sessionBody, uid } from './helpers.ts';
+import { ORIGIN, appHeaders, bytes, call, chain, newSessionKey, seedApp, sessionBody, uid, startOfMinuteClock } from './helpers.ts';
 import { AUTH, VAULT, appKey, hanaHeaders, loginBody, mismatchedAppKey, withCombinedCall } from './login-helpers.ts';
 import { panic, receiptFailure } from './near-mock.ts';
 import { HOME_EMAIL_AUDIENCE } from '@hana-id/core/home';
@@ -92,6 +92,8 @@ describe('POST /v1/login', () => {
   });
 
   it('limits exports (the auth origin) to 3 per hour per user path per app, counted only for a verified token', async () => {
+
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     expect(EXPORTS_PER_PATH_HOUR).toBe(3);
     const { app, aud, near } = await setup();
     const exportLogin = async (claims: Record<string, unknown> = {}, target = app, client = aud) => login(target, await loginBody(target.scope, client, {}, claims), hanaHeaders(target, AUTH));
@@ -463,6 +465,8 @@ describe('POST /v1/login', () => {
   });
 
   it('counts against the app’s relay quota like /v1/sessions', async () => {
+
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     const { seedPlan } = await import('./helpers.ts');
     const plan = `p${uid()}`;
     await seedPlan(plan, 1, 1000, 1000);
@@ -475,6 +479,8 @@ describe('POST /v1/login', () => {
   });
 
   it('junk with the public key and forged Hana headers never uses up the quota: it is counted after every check (APIW-1)', async () => {
+
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     const { seedPlan } = await import('./helpers.ts');
     const { rsaSigner } = await import('./near-mock.ts');
     const plan = `p${uid()}`;

@@ -8,6 +8,8 @@ import { supportIdFromSub } from '../src/support-id.ts';
 import { readText } from './helpers.ts';
 
 const guide = readText('../../../docs/integration.md');
+/** The partner's first page, sent with the SDK files beside the guide. */
+const startHere = readText('../../../docs/partner-start-here.md');
 
 /** The first ```json block after the guide's "**Example**" marker in the auto-approve section. */
 function examplePolicy(): unknown {
@@ -73,6 +75,7 @@ describe('docs/integration.md', () => {
   // or build-plan name, no admin CLI command.
   it.each([
     ['docs/integration.md', guide],
+    ['docs/partner-start-here.md', startHere],
     ['packages/core/README.md', readText('../README.md')],
     ['packages/web/README.md', readText('../../web/README.md')],
     ['packages/react/README.md', readText('../../react/README.md')],
@@ -111,6 +114,20 @@ describe('docs/integration.md', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]!.length).toBeLessThan(200);
     expect(guide.indexOf('Last verified')).toBeLessThan(guide.indexOf('## How it works'));
+  });
+
+  it("partner-start-here.md: sandbox-dev's console and vault origins as the manifest sets them, plain punctuation, one short Last verified line", () => {
+    const m = JSON.parse(readText('../../../envs/sandbox-dev.json')) as { console: { origin: string }; vaultOrigin: string; appChangeDelayMs: number };
+    expect(startHere).toContain(`\`${m.console.origin}\``);
+    expect(startHere).toContain(`\`${m.vaultOrigin}\``);
+    // "1 minute after the announcement" is the manifest's appChangeDelayMs.
+    expect(m.appChangeDelayMs).toBe(60_000);
+    expect(startHere).toContain('1 minute after the announcement');
+    expect(startHere).toContain("environment: 'sandbox-dev'");
+    expect(startHere.match(/[–—]/u)?.[0] ?? null).toBeNull();
+    const lines = startHere.split('\n').filter((l) => l.startsWith('Last verified'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.length).toBeLessThan(200);
   });
 
   it("lists sandbox-dev's Hana origins as the manifest sets them", () => {

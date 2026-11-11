@@ -6,6 +6,9 @@ provider, a Stellar signer and a Stellar Wallets Kit module, with an optional So
 never reach your page. They live in a hidden Hana iframe, and every signature needs the user's Approve in a Hana
 popup, unless it falls under an auto-approve policy you set and the user accepted.
 
+New to Hana ID? Read the short `partner-start-here.md` first (sent with the SDK files): what to send Hana, sign-in for
+your testers, and your first sign-in in four steps. This guide has the detail.
+
 > **Testnet pilot.** Keys come from the NEAR **testnet** MPC and stay disposable until the address freeze (final
 > accounts, audit, mainnet). Don't keep real funds in pilot wallets, on any chain. A test app (`pk_test_…`) can't sign
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)).

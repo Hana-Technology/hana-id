@@ -92,7 +92,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 export const WALLET_RECORD_DOMAIN = 'hana-id/wallet-record/v1';
 export const WALLET_RECORD_SESSION_DOMAIN = 'hana-id/wallet-record-session/v1';
 export const WALLET_RECORD_PROOFS_DOMAIN = 'hana-id/wallet-record-proofs/v1';
-/** The proofs hash of a body that also carries a NEAR record (D755). */
+/** The proofs hash of a body that also carries a NEAR record. */
 export const WALLET_RECORD_PROOFS_DOMAIN_V2 = 'hana-id/wallet-record-proofs/v2';
 /** The API accepts a record whose `issuedAtMs` is within this of its clock (a replay changes nothing: rows only move forward in time). */
 export const WALLET_RECORD_WINDOW_MS = 5 * 60_000;
@@ -263,7 +263,7 @@ export interface WalletRecordBody {
   sessionPublicKey: number[];
   issuedAtMs: number;
   path: string;
-  /** `near` only from a vault serving an SDK of 0.4.0 or later, to an API that lists it in `walletChains` (D755). */
+  /** `near` only from a vault serving an SDK of 0.4.0 or later, to an API that lists it in `walletChains`. */
   wallets: { stellar: { address: string; signature: number[] }; evm: { address: string; signature: number[] }; near?: { address: string; signature: number[] } };
   /** The session key's signature over walletRecordSessionMessage (64 bytes). */
   sessionSignature: number[];

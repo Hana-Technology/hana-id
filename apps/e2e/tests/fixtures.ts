@@ -329,7 +329,12 @@ export async function clickLauncher(page: Page, label: string | RegExp): Promise
  * beside them (`pin|…`, D263: they outlive a logout on purpose) are listed by vaultPinKeys.
  */
 export async function vaultRecordKeys(page: Page): Promise<string[]> {
-  return (await vaultStoreKeys(page)).filter((k) => !k.startsWith('pin|'));
+  return (await vaultStoreKeys(page)).filter((k) => !k.startsWith('pin|') && !k.startsWith('near|'));
+}
+
+/** The NEAR record marks' keys (D756): `near|<record key>`, beside a record whose session's NEAR account the API recorded. */
+export async function vaultNearMarkKeys(page: Page): Promise<string[]> {
+  return (await vaultStoreKeys(page)).filter((k) => k.startsWith('near|'));
 }
 
 /** The root pins' keys in the vault frame's IndexedDB (D263). */

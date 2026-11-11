@@ -19,7 +19,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Hana's NEAR accounts.
 
-Last verified against code: 2026-11-11 (SDK 0.4.0: NEAR in section 8; the portal's Users page and Hana Home show NEAR, the token's wallets don't), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-11 (SDK 0.4.0: NEAR in section 8; NEAR on the portal's Users page), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 

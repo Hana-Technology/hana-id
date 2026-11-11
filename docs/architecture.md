@@ -521,7 +521,7 @@ Code: `packages/core/src/wallet-record.ts`, `packages/web/src/vault/wallet-recor
    longer and Ed25519 binds the exact message (`packages/core/src/wallet-record.ts`'s header). A user who signed in
    before NEAR, or whose record was missed, gets it at the next unlock: the vault sends the record once at an unlock
    unless the mark beside its record (`near|<record id>`: the session public key the API last answered `near: true` for,
-   IndexedDB) names this session. Old SDKs never send NEAR: such a user simply has no NEAR row.
+   IndexedDB; deleted with the record, at a logout too) names this session. Old SDKs never send NEAR: such a user simply has no NEAR row.
 2. **The endpoint (API).** The vault gate and its limits, ±5 min on `issuedAtMs`, both records verified, the session
    signature verified against the body's session key, `USER_ID_KEY` and `IDENTITY_SUB_KEY` present (D346), the session
    live on chain in the app's scope and on exactly that path (`get_session`, as the identity token reads it), then one

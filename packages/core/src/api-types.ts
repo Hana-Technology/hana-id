@@ -68,14 +68,14 @@ export interface AppConfig {
   timings?: unknown;
   /**
    * The wallet chains this API takes in the export window's `exportChain` and in `POST /v1/wallets/record`'s
-   * `wallets` (D755). Older APIs omit it: Stellar and EVM only. Typed unknown on purpose: read it with apiTakesNear,
+   * `wallets`. Older APIs omit it: Stellar and EVM only. Typed unknown on purpose: read it with apiTakesNear,
    * which treats anything else as "no NEAR".
    */
   walletChains?: unknown;
   requestId: string;
 }
 
-/** True when an app config says the API takes NEAR in `exportChain` and the wallet record (D755). */
+/** True when an app config says the API takes NEAR in `exportChain` and the wallet record. */
 export const apiTakesNear = (app: Pick<AppConfig, 'walletChains'> | null | undefined): boolean => Array.isArray(app?.walletChains) && (app.walletChains as unknown[]).includes('near');
 
 /** Contract Session as create_session and get_session return it. */

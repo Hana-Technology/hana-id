@@ -473,7 +473,7 @@ export class MockApi {
       internalId: String(u.user_id),
       scopeId: String(u.scope_id),
       wallets: this.d1.db
-        .prepare("SELECT chain, address FROM end_user_wallets WHERE user_id = ? ORDER BY chain = 'evm', address")
+        .prepare("SELECT chain, address FROM end_user_wallets WHERE user_id = ? ORDER BY CASE chain WHEN 'stellar' THEN 0 WHEN 'evm' THEN 1 ELSE 2 END, address")
         .all(String(u.user_id))
         .map((w) => ({ chain: String(w.chain), address: String(w.address) })),
       identities: this.d1.db

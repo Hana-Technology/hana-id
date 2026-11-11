@@ -61,7 +61,7 @@ export const IDENTITY_MAX_MAX_AGE_MS = IDENTITY_TOKEN_MAX_LIFETIME_S * 1000;
 export type IdentityChain = 'stellar' | 'evm';
 export const IDENTITY_CHAINS: readonly IdentityChain[] = ['stellar', 'evm'];
 /**
- * A chain whose address a Hana proof can name: the identity chains and NEAR (the wallet record's third chain, D755).
+ * A chain whose address a Hana proof can name: the identity chains and NEAR (the wallet record's third chain).
  * IDENTITY_CHAINS stays exactly Stellar then EVM: the identity token's proofs hash iterates it.
  */
 export type ProofChain = IdentityChain | 'near';

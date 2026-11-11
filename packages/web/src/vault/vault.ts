@@ -1902,7 +1902,7 @@ export class Vault {
           await store.put(this.recordId, record);
           if (job.cancelled) {
             // The session ended while the record was written: take it back (still under the lock, so it is ours).
-            await store.delete(this.recordId).catch(() => undefined);
+            await this.dropRecordAt(store).catch(() => undefined);
             return 'cancelled';
           }
           s.share = made;
@@ -1951,7 +1951,7 @@ export class Vault {
           this.broadcastRevoked(r.shareId, true);
           void this.revokeDetached({ keyPair: r.sessionKeyPair, share: { shareId: r.shareId, counter: r.counter, createdAt: null } }).catch(() => undefined);
         }
-        await store.delete(this.recordId);
+        await this.dropRecordAt(store);
       })
       .catch(() => undefined);
   }
@@ -2207,8 +2207,14 @@ export class Vault {
     return parseRecord(raw) ?? 'invalid';
   }
 
+  /** Deletes the record and, with it, its NEAR record mark (D756): what a logout or a dead record leaves is only the root pins. */
+  private async dropRecordAt(store: RecordStore): Promise<void> {
+    await store.delete(this.recordId);
+    await store.delete(nearRecordedKey(this.recordId)).catch(() => undefined);
+  }
+
   private async deleteRecord(): Promise<void> {
-    await this.store?.delete(this.recordId);
+    await (this.store ? this.dropRecordAt(this.store) : undefined);
   }
 
   /** Deletes the record if it is still `s`'s (not a newer login's from another tab). */
@@ -2218,7 +2224,7 @@ export class Vault {
     if (!store || !share) return;
     await this.o.locks.request(this.lockName, async () => {
       const r = await this.readRecord();
-      if (r === 'invalid' || (r && sameSession(r, { sessionPk: s.sessionPk, shareId: share.shareId }))) await store.delete(this.recordId);
+      if (r === 'invalid' || (r && sameSession(r, { sessionPk: s.sessionPk, shareId: share.shareId }))) await this.dropRecordAt(store);
     });
   }
 
@@ -2291,7 +2297,7 @@ export class Vault {
             continue;
           }
           if (e.status === 404 || e.status === 410 || e.status === 401 || e.code === 'bad_counter') {
-            await store.delete(this.recordId);
+            await this.dropRecordAt(store);
             if (e.status === 410) this.broadcastRevoked(r.shareId, shareRevokedRefusal(e));
           }
           return null;
@@ -2484,7 +2490,7 @@ export class Vault {
           if (record && !mine) {
             await this.revokeDetached({ keyPair: record.sessionKeyPair, share: { shareId: record.shareId, counter: record.counter, createdAt: null } }).catch(() => undefined);
           }
-          await store?.delete(this.recordId).catch(() => undefined);
+          if (store) await this.dropRecordAt(store).catch(() => undefined);
         })
         .catch(() => undefined);
     }
@@ -2597,7 +2603,8 @@ export class Vault {
   /** Marks this session's NEAR account as recorded ('session' mode only: a 'none' session has no record to unlock). */
   private async markNearRecorded(s: Session): Promise<void> {
     const store = this.store;
-    if (!store || s.persistence !== 'session') return;
+    // Only while the session is still this one: a logout's deletion is never followed by a stale mark.
+    if (!store || s.persistence !== 'session' || this.session !== s) return;
     await store.put(nearRecordedKey(this.recordId), { v: 1, t: 'near-recorded', sessionPk: toHex(s.sessionPk) });
   }
 
@@ -3228,7 +3235,7 @@ export class Vault {
           consent = await openConsent(s.prk, record);
         } catch {
           tampered = true;
-          await store.delete(this.recordId);
+          await this.dropRecordAt(store);
           return null;
         }
         // A consent from before registering existed: the API can't see it, so it can't be stopped remotely. It is

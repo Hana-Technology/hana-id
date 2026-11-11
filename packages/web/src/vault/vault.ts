@@ -3031,6 +3031,7 @@ export class Vault {
    *   4100 `near_network_mismatch`; Hana has no mainnet RPC, so the popup shows mainnet as the app's claim.
    */
   private async checkNearBlock(txBytes: Uint8Array, claimed: 'testnet' | 'mainnet'): Promise<void> {
+    if (this.testApp) this.requireIndependentNear();
     const blockHash = nearHashString(decodeNearTransaction(txBytes).blockHash);
     const here = this.env.network;
     let known: boolean;
@@ -3057,6 +3058,16 @@ export class Vault {
   }
 
   /**
+   * A test app's NEAR checks trust no single RPC (D729): outside local* envs the env must have a second, independent
+   * provider (`rpcFallback`; sandbox-dev's is rpc.testnet.near.org beside fastnear), else the request fails closed with
+   * `api_unavailable`, reason `near_rpc_single_provider`.
+   */
+  private requireIndependentNear(): void {
+    if (this.env.name.startsWith('local') || this.near!.independentProviders()) return;
+    throw new VaultError('api_unavailable', 'This Hana environment has one NEAR provider, so it can’t check a test app’s NEAR request', { reason: 'near_rpc_single_provider' });
+  }
+
+  /**
    * A test app's delegate action must be bound to testnet (D726). A DelegateAction has no block hash; what ties it to a
    * network is its key, nonce and expiry, read here from this env's (testnet) RPC at final finality, from both providers
    * when the env has two (every answer must pass):
@@ -3066,13 +3077,19 @@ export class Vault {
    *   (else `near_delegate_nonce_stale`), and nonce < height × 10^6, nearcore's upper bound (else
    *   `near_delegate_nonce_too_large`); `nearDelegateNonce` in `@hana-id/core/near` picks such a nonce;
    * - height < max_block_height ≤ height + NEAR_DELEGATE_MAX_BLOCKS (else `near_delegate_expiry`).
-   * On another network nearcore refuses a nonce ≥ its height × 10^6 and an action past max_block_height, so it could
-   * run there only while that network's height is between nonce / 10^6 (> testnet's height now − 10,000) and
-   * max_block_height (≤ testnet's height now + 10,000): within about 20,000 blocks of testnet's height today, which
-   * mainnet (~53 million blocks behind on 2026-11-11, both at ~1.7 blocks/s) does not reach while the action is valid.
+   * What this does and doesn't do: nearcore runs a delegate action on any network whose own height H has
+   * nonce < H × 10^6 and H ≤ max_block_height (and the sender's key there a lower nonce). These bounds pin that to a
+   * fixed window of heights around testnet's height at signing, at most 20,000 blocks wide. Mainnet, ~53 million blocks
+   * behind testnet in 2026-11 and growing at the same ~1.7 blocks a second, passes through it about a year later: a
+   * test app that keeps the signature could submit it there then, if the user's implicit account exists on mainnet with
+   * this key (anyone can create it with a transfer). approvalSubject's rule for test apps' delegate actions
+   * (nearTestAppDelegateProblem: calls and transfers to *.testnet accounts only) makes such a replay call an account that
+   * doesn't exist on mainnet. For a test app the reads must come from two independent providers outside local* envs
+   * (`near_rpc_single_provider` otherwise).
    * RPC down: `api_unavailable` (fail closed).
    */
   private async checkNearDelegate(delegateBytes: Uint8Array): Promise<void> {
+    this.requireIndependentNear();
     const da = decodeNearDelegateAction(delegateBytes);
     let keys: ({ nonce: bigint; blockHeight: bigint } | null)[];
     try {

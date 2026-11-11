@@ -774,7 +774,10 @@ app's `testnet` transaction must name a block the RPC knows (`block`, fail close
 app's delegate action must have the user's key on testnet (`view_access_key`), a nonce above the key's, above
 (height − 10,000) × 10^6 and below height × 10^6 (`nearDelegateNonce` in `@hana-id/core/near` picks one), and
 `max_block_height` within `NEAR_DELEGATE_MAX_BLOCKS` (10,000) of testnet's height; for test apps both providers are
-asked (`independentEndpoints`) and every answer must pass. A transaction relaying a delegate action is refused
+asked (`independentEndpoints`; one provider fails closed outside local* envs, `near_rpc_single_provider`) and every
+answer must pass, and the delegate may hold only FunctionCall and Transfer actions to a `*.testnet` receiver
+(`nearTestAppDelegateProblem`: a copy replayed on mainnet about a year later, when its height reaches the window,
+calls an account that doesn't exist there; D729). A transaction relaying a delegate action is refused
 (`near_relayed_delegate`: its signer prepays the delegate's deposits). The popup
 (`render-approval.ts`) says which network claims Hana checked. `hana.near.relay` posts a `SignedDelegateAction` to
 `POST /v1/near/relay` on the env's `apiUrl` (where the environment runs a relayer); the vault isn't involved.

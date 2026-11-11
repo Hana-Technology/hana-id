@@ -232,8 +232,8 @@ NEAR). Replace all the tarballs you use together (they depend on each other at `
   `NearSignDelegateActionParams`, `NearSignMessageParams`, `NearRelayParams` and their results, `NearNetwork`.
 - A test app signs NEAR testnet only (4100 `mainnet_not_allowed`); new refusal reasons `near_block_unknown`,
   `near_network_mismatch`, `near_relayed_delegate`, `near_key_unknown`, `near_delegate_nonce_used`,
-  `near_delegate_nonce_stale`, `near_delegate_nonce_too_large`, `near_delegate_expiry` and (with `api_unavailable`)
-  `near_rpc_unavailable`. `nearDelegateNonce` (`@hana-id/core/near`) picks a delegate action's nonce.
+  `near_delegate_nonce_stale`, `near_delegate_nonce_too_large`, `near_delegate_expiry`, `near_delegate_test_app_action`,
+  `near_delegate_test_app_receiver` and (with `api_unavailable`) `near_rpc_unavailable` and `near_rpc_single_provider`. `nearDelegateNonce` (`@hana-id/core/near`) picks a delegate action's nonce.
 - Not yet NEAR: the identity token's `wallets` (still Stellar and EVM), Hana Home and the partner portal.
 
 **0.3.1** (after 0.3.0; same environments: `sandbox-dev`). **Nothing to change**: code written for 0.3.0 builds and
@@ -797,8 +797,10 @@ key and your page's origin like every `/v1` call), available where the environme
 any NEP-366 relayer takes the same `signedDelegateAction`. **Who pays** (nearcore): the relayer's transaction pays the
 gas and prepays every deposit and transfer in the delegate action; on success those go to their receivers, and if an
 action fails its NEAR is refunded to the user's account. So the user's balance goes down only for what acts on the
-account itself: deleting it (everything), staking (locked) or publishing a global contract (burnt). The actions run
-as the user's account, so a contract they call acts in the user's name (it can move tokens the user holds there).
+account itself: deleting it (everything), staking (locked), publishing a global contract (burnt), a call to a contract
+on the user's own account (it decides what it moves: the popup says "Unknown") and fees spent through a function-call
+key the action adds (up to its allowance). The actions run as the user's account, so a contract they call acts in
+the user's name (it can move tokens the user holds there).
 
 ```ts
 import { nearDelegateNonce } from '@hana-id/core/near';
@@ -831,7 +833,24 @@ RPC (both of the environment's providers, when it has two): the account must alr
 `maxBlockHeight` must be ahead of testnet's height by at most 10,000 blocks (`near_delegate_expiry`).
 `nearDelegateNonce({ keyNonce, blockHeight })` from `@hana-id/core/near` picks a nonce that passes (the key's nonce + 1,
 or (height − 100) × 10^6 if that is higher); the key's nonce moves up to it once the action runs, which later
-transactions and delegate actions simply continue from. `relay` rejects with `rate_limited` (429), `origin_not_allowed`, `app_suspended`, 4100 for
+transactions and delegate actions simply continue from. Two delegate actions built from the same read get the same
+nonce and only the first can run: pass the previous one's as `lastUsed` (`nearDelegateNonce({ keyNonce, blockHeight,
+lastUsed })`), or read the key again.
+
+**A test app's delegate actions may only call contracts or send NEAR, to a `*.testnet` account** other than the
+user's own (4100 `near_delegate_test_app_action` for any other action: AddKey, DeleteKey, DeleteAccount,
+DeployContract, DeployGlobalContract, UseGlobalContract, Stake, CreateAccount; `near_delegate_test_app_receiver` for
+another receiver). Why: a delegate action names no network. nearcore runs it on any network whose own height lies
+between its nonce / 10^6 and its `maxBlockHeight`, and Hana's bounds pin that to a window of at most 20,000 blocks
+around testnet's height when it was signed. Mainnet, about 53 million blocks behind testnet in November 2026 and
+growing at the same rate, passes through that window about a year later: whoever kept the signed action (your page
+can) could submit it there then, if the user's implicit account exists on mainnet with the same key. A `*.testnet`
+account doesn't exist on mainnet (only the `registrar` account could create `testnet` there), so such a replay calls
+nothing. Live apps are not restricted this way. **Never fund or use a test app's addresses on mainnet**, and tell
+your users the same: the keys come from Hana's testnet MPC. For a test app Hana asks both of the environment's NEAR
+providers; an environment with only one fails closed (`api_unavailable`, `data.reason: 'near_rpc_single_provider'`).
+
+`relay` rejects with `rate_limited` (429), `origin_not_allowed`, `app_suspended`, 4100 for
 another refusal (`data.reason` is the API's code, `data.requestId` its request ID) or `api_unavailable`.
 
 **Sign in with NEAR (NEP-413).** A signature that proves the user holds the account, for your backend:

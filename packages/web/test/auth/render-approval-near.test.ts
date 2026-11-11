@@ -4,14 +4,19 @@
 // account-control banner and warnings; the network line says what Hana checked; NEP-413's recipient up front.
 import { type NearAction, encodeNearDelegateAction, encodeNearTransaction, encodeNep413Message, nearImplicitAccountId, nearPublicKeyString, sha256, utf8 } from '@hana-id/core';
 import { decodeApprovalRequest } from '@hana-id/core/decode';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dom } from '../../src/auth/dom.ts';
 import {
-  LONG_TEXT_CHARS,
   NEAR_ACCOUNT_CONTROL_BANNER,
   NEAR_DELEGATE_NOTES,
   type NearRenderContext,
-  longTextNote,
+  NEAR_DELEGATE_NONE,
+  NEAR_OWN_CONTRACT_TOTAL,
+  markOverflowing,
+  nearRecipientNote,
+  overflowNote,
   nearMessageWarning,
   nearNetworkLine,
   nearRecipientLookalike,
@@ -53,24 +58,80 @@ describe('renderApproval: NEAR transactions', () => {
     expect(takeovers(el)).toEqual([]);
   });
 
-  it('shows non-JSON arguments as hex, and long ones whole in the scrolling box, with a line saying how long', () => {
+  it('shows arguments whole (never cut or folded), as hex when they aren’t JSON', () => {
     expect(tx([call(Uint8Array.of(0xff, 0x01))]).textContent).toContain('ff01');
-    // A padded first key can't push receiver_id or amount out of sight: nothing is cut or folded away.
+    // A padded first key can't push receiver_id or amount out of the text: nothing is cut or folded away.
     const long = `{"pad":"${'a'.repeat(3000)}","receiver_id":"attacker.testnet","amount":"1"}`;
     const el = tx([call(long)]);
     expect(el.querySelector('details')).toBeNull();
-    const shown = el.querySelector('pre.message')!.textContent!;
-    expect(shown).toContain('"receiver_id": "attacker.testnet"');
-    expect(el.querySelector('p.warn.long-text')?.textContent).toBe(longTextNote(shown.length));
-    const hex = tx([call(new Uint8Array(1000).fill(0xff))]);
-    expect(hex.querySelector('pre.message')!.textContent).toBe('ff'.repeat(1000));
-    expect(hex.querySelector('p.warn.long-text')?.textContent).toBe(longTextNote(2000));
-    expect(tx([call('{"a":1}')]).querySelector('p.warn.long-text')).toBeNull();
-    expect(LONG_TEXT_CHARS).toBe(1500);
+    expect(el.querySelector('pre.message')!.textContent!).toContain('"receiver_id": "attacker.testnet"');
+    expect(tx([call(new Uint8Array(1000).fill(0xff))]).querySelector('pre.message')!.textContent).toBe('ff'.repeat(1000));
+  });
+
+  describe('markOverflowing: a box that holds more than it shows says so, decided by layout, not length', () => {
+    /** happy-dom lays nothing out: give every box the sizes a browser would (14 lines of ~22 px in a 320 px box). */
+    function laidOut(el: HTMLElement, lineHeight = 22, boxHeight = 320): void {
+      for (const box of Array.from(el.querySelectorAll<HTMLElement>('pre.message'))) {
+        const lines = (box.textContent ?? '').split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 60)), 0);
+        Object.defineProperty(box, 'scrollHeight', { configurable: true, get: () => lines * lineHeight });
+        Object.defineProperty(box, 'clientHeight', { configurable: true, get: () => Math.min(boxHeight, lines * lineHeight) });
+      }
+    }
+    const notes = (el: HTMLElement) => [...el.querySelectorAll('p.overflow-note')].map((n) => n.textContent);
+
+    it('JSON of many short keys (under 1,500 characters) overflows and is flagged', () => {
+      const json = `{${Array.from({ length: 20 }, (_, i) => `"k${i}":${i}`).join(',')}}`;
+      expect(json.length).toBeLessThan(1500);
+      const el = tx([call(json)]);
+      laidOut(el);
+      markOverflowing(el);
+      const box = el.querySelector('pre.message')!;
+      expect(box.classList.contains('overflows')).toBe(true);
+      expect(notes(el)).toEqual([overflowNote(box.textContent!.length)]);
+      // Idempotent: a second pass (a resize) adds nothing.
+      markOverflowing(el);
+      expect(notes(el)).toHaveLength(1);
+    });
+
+    it('hex that overflows is flagged; a short box is not, and loses the note when it fits again', () => {
+      const el = tx([call(new Uint8Array(650).fill(0xab))]);
+      laidOut(el);
+      markOverflowing(el);
+      expect(notes(el)).toHaveLength(1);
+      laidOut(el, 22, 100_000);
+      markOverflowing(el);
+      expect(notes(el)).toEqual([]);
+      const small = tx([call('{"a":1}')]);
+      laidOut(small);
+      markOverflowing(small);
+      expect(notes(small)).toEqual([]);
+    });
+
+    it('a multi-line NEP-413 message that overflows is flagged too', () => {
+      const bytes = encodeNep413Message({ message: Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n'), nonce: new Uint8Array(32), recipient: 'r', callbackUrl: null });
+      const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'P');
+      laidOut(el);
+      markOverflowing(el);
+      expect(notes(el)).toHaveLength(1);
+    });
+  });
+
+  it('numbers each action once: the list has no numbers of its own, the heading has one', () => {
+    const el = tx([call('{}', 0n), { type: 'transfer', deposit: 1n }], 'guestbook.testnet');
+    expect([...el.querySelectorAll('ol.ops > li > h3')].map((h) => h.textContent)).toEqual(['1. Call a contract', '2. Send NEAR']);
+    const css = readFileSync(join(process.cwd(), 'src', 'auth', 'auth.css'), 'utf8');
+    expect(css).toMatch(/ol\.ops \{\n  list-style: none;/u);
+  });
+
+  it('a call to a contract on the user’s own account: the total is unknown and the red banner is up', () => {
+    const el = tx([call('{}', 5n)]);
+    expect(el.querySelector('p.takeover.banner')?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
+    expect(el.textContent).toContain(`NEAR leaving your account${NEAR_OWN_CONTRACT_TOTAL} (plus the network fee for gas)`);
+    expect(el.textContent).toContain('NEAR attached or sent0.000000000000000000000005 NEAR');
   });
 
   it('a call to a contract on the user’s own account carries a warning (it runs with the account’s full authority)', () => {
-    expect(takeovers(tx([call('{}')]))).toEqual(['This calls a contract on your own account. A contract there runs with your account’s full authority: it can move everything in it.']);
+    expect(takeovers(tx([call('{}')]))).toEqual([NEAR_ACCOUNT_CONTROL_BANNER, 'This calls a contract on your own account. A contract there runs with your account’s full authority: it can move everything in it.']);
     expect(takeovers(tx([call('{}')], 'guestbook.testnet'))).toEqual([]);
   });
 
@@ -144,7 +205,8 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     expect(text).toContain(NEAR_DELEGATE_NOTES.relayer);
     expect(text).toContain(NEAR_DELEGATE_NOTES.network);
     expect(text).toContain('Valid until block277000600');
-    expect(text).toContain('NEAR leaving your accountNone (the relayer pays the fee and what this sends)');
+    expect(text).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
+    expect(NEAR_DELEGATE_NONE).toBe('None of your NEAR (the relayer pays the fee and the NEAR attached). Tokens the calls move are yours.');
   });
 
   it('a delegate action: what it sends is the relayer’s; a burn or a deleted account still leaves the user’s', () => {
@@ -156,7 +218,11 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
       'A relayer sends this for you: it pays the network fee and any NEAR this attaches or sends (if an action fails, that NEAR is refunded to your account). The actions run as your account: a contract they call acts in your name and can move tokens you hold with it.',
     );
     const sends = render([{ type: 'transfer', deposit: 2n * 10n ** 24n }]);
-    expect(sends).toContain('NEAR leaving your accountNone');
+    expect(sends).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
+    // A call to a contract on the user's own account: unknown, under the banner.
+    const own = render([{ type: 'functionCall', methodName: 'm', args: new Uint8Array(0), gas: 1n, deposit: 0n }]);
+    expect(own).toContain(`NEAR leaving your account${NEAR_OWN_CONTRACT_TOTAL}`);
+    expect(own).toContain(NEAR_ACCOUNT_CONTROL_BANNER);
     expect(sends).toContain('NEAR this sends, paid by the relayer2 NEAR');
     expect(render([{ type: 'deployGlobalContract', code: new Uint8Array(10), deployMode: 'accountId' }])).toContain('NEAR leaving your account0.001 NEAR');
     expect(render([{ type: 'deleteAccount', beneficiaryId: 'bob.testnet' }])).toContain('All of it (the account is deleted)');
@@ -180,14 +246,16 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     expect(dangers(msg('guestbook.example', 'https://guestbook.example'))).toEqual([]);
     expect(dangers(msg('https://guestbook.example', 'https://guestbook.example'))).toEqual([]);
     expect(dangers(msg('bank.example', 'https://guestbook.example'))).toEqual([nearRecipientMismatch('bank.example', 'guestbook.example')]);
+    expect(dangers(msg('https://bank.example/login', 'https://guestbook.example'))).toEqual([nearRecipientMismatch('https://bank.example/login', 'guestbook.example')]);
+    // A name, not a host (an app or contract name): a neutral line, no danger, so the danger line keeps its weight.
+    for (const name of ['Guestbook', 'guestbook.testnet', 'app.near']) {
+      const el = msg(name, 'https://guestbook.example');
+      expect(dangers(el)).toEqual([]);
+      expect([...el.querySelectorAll('p.note')].map((p) => p.textContent)).toContain(nearRecipientNote(name, 'guestbook.example'));
+    }
+    expect(nearRecipientNote('Guestbook', 'guestbook.example')).toBe('The signature is for Guestbook. This app is at guestbook.example.');
     expect(dangers(msg('gооgle.com', 'https://gооgle.com'.normalize()))).toContain(nearRecipientLookalike('g\\u043e\\u043egle.com'));
     expect(nearRecipientMismatch('bank.example', 'guestbook.example')).toBe('This app is at guestbook.example, but the signature is for bank.example. Sign only if you are signing in to bank.example on purpose.');
-  });
-
-  it('NEP-413: a long message gets the long-text line', () => {
-    const bytes = encodeNep413Message({ message: 'x'.repeat(2000), nonce: new Uint8Array(32), recipient: 'r', callbackUrl: null });
-    const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'P');
-    expect(el.querySelector('p.warn.long-text')?.textContent).toBe(longTextNote(2000));
   });
 
   it('a message with invisible characters is shown as hex', () => {

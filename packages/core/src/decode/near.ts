@@ -142,8 +142,16 @@ export function nearAccountControl(a: NearAction): NearControlChange[] {
   }
 }
 
-/** True when any action changes who controls an account (the popup's red banner). */
-export const nearChangesControl = (actions: readonly NearAction[]): boolean => actions.some((a) => nearAccountControl(a).length > 0);
+/**
+ * True when any action changes who controls an account (the popup's red banner), or, given the receiver and the
+ * user's account, calls a contract on the user's own account (it runs with the account's full authority).
+ */
+export const nearChangesControl = (actions: readonly NearAction[], receiver?: string, me?: string): boolean =>
+  actions.some((a) => nearAccountControl(a).length > 0) || nearCallsOwnContract(actions, receiver, me);
+
+/** True when the actions call a contract on the user's own account (`receiver === me`): what it moves is unknown. */
+export const nearCallsOwnContract = (actions: readonly NearAction[], receiver?: string, me?: string): boolean =>
+  receiver !== undefined && receiver === me && actions.some((a) => a.type === 'functionCall');
 
 /**
  * What DeployGlobalContract burns per byte of code: the protocol's `global_contract_storage_amount_per_byte`,

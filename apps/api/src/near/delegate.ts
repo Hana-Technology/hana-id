@@ -194,8 +194,8 @@ export async function delegateSigningHash(delegateBytes: Uint8Array): Promise<Ui
  */
 export async function verifyDelegateSignature(d: DecodedDelegate): Promise<boolean> {
   try {
-    const key = await crypto.subtle.importKey('raw', d.publicKey, { name: 'Ed25519' }, false, ['verify']);
-    return await crypto.subtle.verify({ name: 'Ed25519' }, key, d.signature, await delegateSigningHash(d.delegateBytes));
+    const key = await crypto.subtle.importKey('raw', d.publicKey as Uint8Array<ArrayBuffer>, { name: 'Ed25519' }, false, ['verify']);
+    return await crypto.subtle.verify({ name: 'Ed25519' }, key, d.signature as Uint8Array<ArrayBuffer>, (await delegateSigningHash(d.delegateBytes)) as Uint8Array<ArrayBuffer>);
   } catch {
     return false;
   }

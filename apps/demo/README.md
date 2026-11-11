@@ -11,7 +11,8 @@ static assets. It is not a Hana page and holds nothing secret.
 
 ## What the page does
 
-One page: a testnet banner and a short explainer, then
+One page: a testnet banner (Stellar, EVM and NEAR test networks) and a short explainer that leads with *Log in with
+email* (most reviewers use it: Google sign-in is limited to the Google client's listed testers), then
 
 - **Log in with email** (`hana.login({ method: 'email' })`, batch 8a): the Hana popup's email step (address, mailed
   code). It works once the demo app's `login_methods` include email and its scope holds its email client
@@ -23,10 +24,32 @@ One page: a testnet banner and a short explainer, then
   and new tabs; `none`, or the browser's storage fallback);
 - the **Stellar and EVM addresses**, each with *Copy* and a testnet explorer link (StellarExpert testnet, Base
   Sepolia's Basescan);
+- the **NEAR card** (SDK 0.4.0, the NEAR hackathon, D750–D754; `src/near-card.ts`, logic in `src/near.ts`), shown
+  once the vault reports a NEAR account (after a Google or an email login alike):
+  - the user's implicit account, short with *Copy*, in full on demand, a NearBlocks testnet link and its balance;
+  - **Write to the guestbook (no NEAR needed)**: a message of 1 to 200 characters, counted as the contract counts
+    them (Rust's `trim`, Unicode scalar values), written to `near.demoGuestbook` through Hana's relayer: `hana.near.
+    activate()` for a new account (once per account and session; retried for about 20 s while the API says the
+    account isn't in the wallet directory yet), a `DelegateAction` calling `add_message({ text })` with 30 Tgas and
+    no deposit, expiring 600 blocks after the latest final block, `hana.near.signDelegateAction` and
+    `hana.near.relay`. Each stage is shown ("Preparing your NEAR account…", "Waiting for your approval in the Hana
+    window…", "Sending it through Hana’s relayer, which pays the fee…"), then the result with the transaction's link;
+  - **the popup rule** (docs/integration.md section 8): the key's nonce and the latest block are read from the env's
+    NEAR RPC when the card appears, when the message box is focused or typed in (which also activates a new account)
+    and every 30 s while the user is active, so a click signs at once and the approval opens in the click. Without a
+    read under 60 s old the click calls `hana.prepareApproval()` first, then reads, then signs (D751);
+  - **Latest messages**: `get_messages` (20, newest first), each author short with "you" on the user's own, its time
+    and text. The guestbook is attacker-controlled: entries are parsed strictly, text goes into text nodes only (no
+    HTML, no links), control, bidi and zero-width characters become U+FFFD (emoji sequences kept), and text is cut to
+    200 characters (D753). Refreshed after a write and with *Refresh*;
+  - **Sign a message (NEP-413)** (this page's host as the recipient, a fresh 32-byte nonce) and **Sign a
+    transaction**: a real `add_message` transaction, sent only when the account holds at least 0.01 NEAR; otherwise it
+    shows the signed transaction and its hash and says it wasn't sent for lack of NEAR for the fee (D754);
+  - the borsh bytes come from `@hana-id/core/near`'s codec, the one the vault decodes with (no NEAR SDK in the page);
 - **Sign**: an EVM `personal_sign` message, a Stellar (SEP-53) message, and a Base Sepolia test transaction (a 0-value
   transfer to yourself, fully filled, `eth_signTransaction`). Each needs the user's Approve in the Hana popup, and
   nothing is ever broadcast, so no funds are needed;
-- **Export key** (Stellar or EVM) through Hana's export window: the key is shown only there;
+- **Export key** (Stellar, EVM or NEAR) through Hana's export window: the key is shown only there;
 - **Identity token**: *Get identity token* (`hana.getIdentityToken()`, no popup) shows the token's decoded header and
   claims (display only: the page never trusts them) and a "verify it yourself" `jose` snippet with the token's own
   `iss` and `aud` (`docs/integration.md` section 15);
@@ -44,7 +67,10 @@ One page: a testnet banner and a short explainer, then
   signature or relay id removed), plus `requestIds`, the latest five distinct request IDs, for Hana's Support ID lookup. It never holds tokens, keys, signatures or relay ids: the page never sees the
   first, and `src/diagnostics.ts` builds the report field by field and scrubs the free text.
 
-Errors are shown in plain words (`src/errors.ts`): a blocked popup (and the "Click *Sign in with Hana*" hint when
+Errors are shown in plain words (`src/errors.ts`), the NEAR card's in the card: every NEAR refusal of the vault
+(`near_key_unknown`, `near_block_unknown`, `near_network_mismatch`, `near_delegate_nonce_used`,
+`near_delegate_nonce_too_large`, `near_delegate_expiry`, `near_rpc_unavailable`), the relayer's refusals by
+`data.reason` (a table to extend, with a default for codes it doesn't know), and the page's own NEAR reads; also a blocked popup (and the "Click *Sign in with Hana*" hint when
 the SDK falls back to the vault's button), a cancelled or declined sign-in, a rejected request, an unreachable vault
 or API, rate limits, "log out other devices" after its 5 minutes, network failures.
 
@@ -59,12 +85,15 @@ or API, rate limits, "log out other devices" after its 5 minutes, network failur
 
   ```text
   default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self';
-  connect-src <EVM RPC origin>; frame-src <vaultOrigin>; base-uri 'none'; form-action 'none';
-  frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'
+  connect-src <EVM RPC> <NEAR rpc> <NEAR rpcFallback> <apiUrl>; frame-src <vaultOrigin>; base-uri 'none';
+  form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'
   ```
 
-  `frame-src` is exactly the env's `vaultOrigin`. `connect-src` is exactly the EVM chain's RPC (the SDK forwards
-  read-only calls there). The page itself calls no Hana API: the vault frame does, under its own CSP. Assets and errors
+  `frame-src` is exactly the env's `vaultOrigin`. `connect-src` is exactly these origins (`src/csp.ts`
+  `connectOrigins`): the EVM chain's RPC (the SDK forwards read-only calls there), the env's NEAR RPC and its fallback
+  (the NEAR card's reads: access key, block, balance, `get_messages`, and `send_tx` for a funded account) and the env's
+  API (the SDK's `hana.near.relay` and `activate` run in the page). Every other Hana API call is the vault frame's,
+  under its own CSP. Assets and errors
   get `default-src 'none'; frame-ancestors 'none'; sandbox`. Also `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin-allow-popups` (not
   `same-origin`, which would break the Hana login popup), `Cross-Origin-Resource-Policy: same-origin`, a
@@ -86,7 +115,10 @@ Chosen at build time from the shell (no `.env` files, so the build and the Worke
 | `HANA_DEMO_PUBLISHABLE_KEY` | the Smoke B key above, for `sandbox-dev` only; another env needs its own `pk_test_` key |
 | `HANA_DEMO_ORIGIN` | none: the API's workers.dev subdomain. A bare https origin (`https://demo.<dev domain>`) makes the demo a Custom Domain on the env's account (`cloudflare.accountId`); required when the env's API is on a custom domain (D404) |
 
-The EVM chain is Base Sepolia (84532, `https://sepolia.base.org`) and Stellar is testnet (`src/config.ts`).
+The EVM chain is Base Sepolia (84532, `https://sepolia.base.org`) and Stellar is testnet (`src/config.ts`). NEAR
+comes from the manifest: `rpc` and `rpcFallback` (the card's reads), `apiUrl` (relay and activate) and
+`near.demoGuestbook` (a `.testnet` account; without it the card has no guestbook write or list); the explorer is
+NearBlocks testnet.
 
 ## Deploy
 
@@ -143,4 +175,10 @@ corepack pnpm --filter @hana-id/demo typecheck
 
 `apps/e2e` also builds the demo for its local stack and serves it with this Worker handler and its real CSP
 (`http://localhost:<base + 2>`): `tests/demo.spec.ts` logs in, signs, checks the diagnostics and the blocked-popup,
-cancelled and declined cases in Chromium, Firefox and WebKit, with no CSP violation.
+cancelled and declined cases in Chromium, Firefox and WebKit, with no CSP violation. Its NEAR test writes to the
+guestbook end to end: the stack's mocked NEAR RPC serves `view_access_key`, `view_account`, `block` and the
+guestbook's `get_messages`, and `POST /v1/near/activate` and `/v1/near/relay` are mocked at the network layer (the
+relayer's routes aren't in the stack); the approval popup shows "NEAR transaction, fee paid by a relayer" and the
+`add_message` call. Screens of the NEAR card (light and dark, desktop and phone, each stage):
+`HANA_SHOTS_DIR=<dir> corepack pnpm exec playwright test --project=chromium tests/demo-near-shots.spec.ts` in
+`apps/e2e`.

@@ -314,7 +314,11 @@ export function plan({ mode, files, pkgs, reads, dirty = false, cpus = available
     // HANA_E2E_PORT_BASE … +50 (4410 by default), below the ephemeral range. The pack check and Playwright share a
     // lane, one after the other as before: pack's `build:lib` rewrites packages/web/src/envs.generated.ts and the SDK's
     // dist/ while the stack's build bundles @hana-id/web's pages.
-    step('sandbox', 'sandbox e2e (near-workspaces)', 3, [cmd('cargo', ['test', '--locked', '--', `--test-threads=${SANDBOX_TEST_THREADS}`], 'contracts/integration-tests')], notQuick ?? (jobs.rust ? null : 'no Rust change')),
+    // Then the API's NEAR meta-transaction tests on the binary that run downloaded (apps/api test-sandbox/, D731).
+    step('sandbox', 'sandbox e2e (near-workspaces)', 3, [
+      cmd('cargo', ['test', '--locked', '--', `--test-threads=${SANDBOX_TEST_THREADS}`], 'contracts/integration-tests'),
+      cmd('pnpm', ['--filter', '@hana-id/api', 'run', 'test:sandbox'], '.', { HANA_SANDBOX_REQUIRED: '1' }),
+    ], notQuick ?? (jobs.rust ? null : 'no Rust change')),
     step('pack', 'SDK pack check', 3, [cmd('pnpm', ['run', 'pack:check'])], notQuick ?? (jobs.web ? null : 'no web change'), 'web'),
     step('e2e', `Playwright (${browsers.join(', ')})`, 4, [cmd('pnpm', ['--filter', '@hana-id/e2e', 'run', 'e2e', '--forbid-only', ...browsers.flatMap((b) => ['--project', b])])], notQuick ?? (jobs.web ? null : 'no web change')),
   ];

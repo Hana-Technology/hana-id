@@ -280,6 +280,35 @@ export class RateLimiter extends DurableObject<Env> {
     }
   }
 
+  /**
+   * An amount budget over fixed windows (the NEAR relay's daily spend, D736): adds `amount` to the window's total when
+   * the total stays at most `max`, else refuses and adds nothing. Amounts are non-negative integers as decimal strings
+   * (yoctoNEAR exceeds 2^53). `spent` is the window's total after the call. Keys are `budget:<name>@<start>`.
+   */
+  spend(name: string, windowMs: number, max: string, amount: string, now: number = Date.now()): { ok: true; spent: string } | { ok: false; spent: string; retryAfterS: number } {
+    const kv = this.ctx.storage.kv;
+    const start = Math.floor(now / windowMs) * windowMs;
+    const key = `budget:${name}@${start}`;
+    const spent = BigInt(kv.get<string>(key) ?? '0');
+    const next = spent + BigInt(amount);
+    if (BigInt(amount) < 0n || next > BigInt(max)) return { ok: false, spent: spent.toString(), retryAfterS: Math.max(1, Math.ceil((start + windowMs - now) / 1000)) };
+    kv.put(key, next.toString());
+    for (const [k] of kv.list<string>({ prefix: `budget:${name}@` })) {
+      if (Number(k.slice(`budget:${name}@`.length)) + windowMs <= now) kv.delete(k);
+    }
+    return { ok: true, spent: next.toString() };
+  }
+
+  /** Gives back part of a `spend(name, windowMs, …, at)` (what a relay didn't burn); never below zero, an ended window is left alone. */
+  giveBack(name: string, windowMs: number, amount: string, at: number): void {
+    const kv = this.ctx.storage.kv;
+    const key = `budget:${name}@${Math.floor(at / windowMs) * windowMs}`;
+    const spent = kv.get<string>(key);
+    if (spent === undefined || BigInt(amount) <= 0n) return;
+    const next = BigInt(spent) - BigInt(amount);
+    kv.put(key, (next > 0n ? next : 0n).toString());
+  }
+
   /** Drops a marker (a reservation whose relay definitely did not execute). */
   release(key: string): void {
     this.ctx.storage.kv.delete(`mark:${key}`);

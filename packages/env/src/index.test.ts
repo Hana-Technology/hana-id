@@ -304,3 +304,39 @@ describe('manifestSchema: watchdog', () => {
   });
 
 });
+
+describe('manifestSchema: near (D733)', () => {
+  const withRelay = (relay: Record<string, unknown>) => ({ ...raw(), near: { demoGuestbook: 'book.example.testnet', relay } });
+  const ok = { account: 'relay.example.testnet', receivers: ['book.example.testnet'] };
+  const issues = (m: unknown) => {
+    const r = manifestSchema.safeParse(m);
+    return r.success ? [] : r.error.issues.map((i) => i.message);
+  };
+
+  it('is optional, sandbox-dev sets the guestbook and the relay, and the relay takes only its fields', () => {
+    const { near: _, ...rest } = raw();
+    expect(manifestSchema.safeParse(rest).success).toBe(true);
+    const sandbox = loadEnv('sandbox-dev');
+    expect(sandbox.near?.relay?.receivers).toEqual([sandbox.near?.demoGuestbook]);
+    expect(issues(withRelay(ok))).toEqual([]);
+    expect(manifestSchema.safeParse(withRelay({ ...ok, keys: ['ed25519:x'] })).success).toBe(false);
+    expect(manifestSchema.safeParse({ ...raw(), near: { other: 1 } }).success).toBe(false);
+  });
+
+  it('keeps the relay account its own, and receivers distinct and off the signer, relayer and relay account', () => {
+    const m = raw() as { signer: string; relayer: string; owner: string; mpc: string };
+    for (const account of [m.signer, m.relayer, m.owner, m.mpc, 'book.example.testnet']) {
+      expect(issues(withRelay({ ...ok, account })).join(' ')).toMatch(/must be its own account/u);
+    }
+    for (const receivers of [[m.signer], [m.relayer], [ok.account], ['a.testnet', 'a.testnet']]) {
+      expect(issues(withRelay({ ...ok, receivers })).length, JSON.stringify(receivers)).toBeGreaterThan(0);
+    }
+  });
+
+  it('bounds the limits as the API parses them', () => {
+    for (const bad of [{ maxGasTgas: 0 }, { maxGasTgas: 301 }, { dailyBudgetNear: 0 }, { perSenderPerDay: 0 }, { perAppPerDay: 1.5 }, { activationYocto: '-1' }, { activationYocto: '10000000000000000000001' }]) {
+      expect(manifestSchema.safeParse(withRelay({ ...ok, ...bad })).success, JSON.stringify(bad)).toBe(false);
+    }
+    expect(manifestSchema.safeParse(withRelay({ ...ok, maxGasTgas: 300, dailyBudgetNear: 0.5, activationYocto: '10000000000000000000000' })).success).toBe(true);
+  });
+});

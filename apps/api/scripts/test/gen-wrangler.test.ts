@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
 import { loadEnv, manifestSchema, repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { nearRelayVar, parseNearRelayConfig } from '../../src/near/relay-config.ts';
 import { parseRelayerKeys } from '../../src/relayer-config.ts';
 import { IDENTITY_PER_ROOT_MINUTE, IDENTITY_PER_SESSION_MINUTE } from '../../src/identity/limits.ts';
 import { SHARE_PER_MINUTE, STATUS_PER_IP_MINUTE, STATUS_PER_SHARE_MINUTE, VAULT_PER_IP_MINUTE } from '../../src/vault/limits.ts';
@@ -186,14 +187,25 @@ describe('wrangler.jsonc', () => {
       APP_CHANGE_DELAY_MS: String(manifest.appChangeDelayMs),
       NETWORK: 'testnet',
       REFUSED_ORIGINS: JSON.stringify([new URL(manifest.apiUrl).origin, manifest.vaultOrigin, manifest.authOrigin].sort()),
+      ...(manifest.near?.relay ? { NEAR_RELAY: nearRelayVar(manifest.near.relay) } : {}),
     });
     expect(config.d1_databases[0]).toMatchObject({ database_name: manifest.cloudflare.d1Name, database_id: LOCAL_D1_ID });
     expect(text).not.toMatch(/ed25519:/u);
     expect(text).not.toMatch(/RELAYER_KEYS|KEYS_UPDATER_KEY/u);
     expect(text).not.toMatch(/OWNER_RELAYER_KEYS/u);
     expect(text).not.toMatch(/VAULT_KEK/u);
+    expect(text).not.toMatch(/NEAR_RELAY_KEYS/u);
     // The claim allow-list can't be turned off (D271): the retired flag is never written.
     expect(text).not.toMatch(/REJECT_PII_ON_SESSIONS/u);
+  });
+
+  it('writes NEAR_RELAY from near.relay only, which the API parses back to the same settings (D733)', () => {
+    const { near: _n, ...noNear } = manifest;
+    expect((wranglerConfig(manifestSchema.parse(noNear), LOCAL_D1_ID) as { vars: Record<string, string> }).vars).not.toHaveProperty('NEAR_RELAY');
+    const relay = { account: 'relay.example.testnet', receivers: ['book.example.testnet'], maxGasTgas: 30, dailyBudgetNear: 2.5, perSenderPerDay: 7, perAppPerDay: 70, lowBalanceNear: 1, activationYocto: '0' };
+    const vars = (wranglerConfig(manifestSchema.parse({ ...noNear, near: { relay } }), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    expect(JSON.parse(vars.NEAR_RELAY!)).toEqual(relay);
+    expect(parseNearRelayConfig(vars.NEAR_RELAY)).toMatchObject({ account: relay.account, receivers: relay.receivers, perSenderPerDay: 7, perAppPerDay: 70, dailyBudgetYocto: 25n * 10n ** 23n });
   });
 
   it('keeps Workers Logs for the Worker’s own lines but turns off invocation logs, which carry request URLs and so relay ids (APIV-3)', () => {

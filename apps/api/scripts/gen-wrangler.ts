@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, accountIdFields, apiRpcFallbacksOf, customDomainPlacement, emailIssuerUrl, hanaOwnOrigins, isLoopbackHost, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { IDENTITY_RATE_LIMITS } from '../src/identity/limits.ts';
 import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
+import { nearRelayVar } from '../src/near/relay-config.ts';
 import { workersDevHost, writePagesWranglerConfigs } from './pages-wrangler.ts';
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -152,6 +153,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
       ...identityVars(m),
       // Email login: the email issuer's iss and public keys (no secret).
       ...emailVars(m),
+      // The NEAR meta-transaction relay (D733): its account, receivers and limits; its keys are the secret NEAR_RELAY_KEYS.
+      ...(m.near?.relay ? { NEAR_RELAY: nearRelayVar(m.near.relay) } : {}),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     // The usage ledger's writer (role usage_writer, caching disabled on the config), batch C4; optional. `wrangler dev`

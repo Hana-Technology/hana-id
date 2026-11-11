@@ -9,6 +9,7 @@ import { testWranglerConfig } from './scripts/gen-wrangler.ts';
 const relayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const ownerRelayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const homeRelayerKeys = [KeyPair.fromRandom('ed25519').toString()];
+const nearRelayKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const keysUpdaterKey = KeyPair.fromRandom('ed25519').toString();
 const vaultKek = `1:${randomBytes(32).toString('base64')}`;
 // The identity token's keys (docs/identity-token-spec.md): two throwaway P-256 keys (active, standby) and a sub key.
@@ -49,6 +50,10 @@ export default defineConfig(async () => {
             RELAYER_KEYS: JSON.stringify(relayerKeys),
             OWNER_RELAYER_KEYS: JSON.stringify(ownerRelayerKeys),
             HOME_RELAYER_KEYS: JSON.stringify(homeRelayerKeys),
+            // The NEAR meta-transaction relay (D733, D734): one relay account with two full-access keys, the guestbook
+            // as its one receiver; test/near-relay.test.ts overrides it per request.
+            NEAR_RELAY: JSON.stringify({ account: 'near-relay.test.near', receivers: ['guestbook.test.near'], maxGasTgas: 50 }),
+            NEAR_RELAY_KEYS: JSON.stringify(nearRelayKeys),
             // A gas override (gas.ts) for a method no endpoint relays, so the default gas of the others stays tested.
             GAS_REMOVE_CLIENT_TGAS: '70',
             KEYS_UPDATER_KEY: keysUpdaterKey,

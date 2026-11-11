@@ -213,6 +213,65 @@ function watchdogRules(
   }
 }
 
+/**
+ * The NEAR meta-transaction relay (D733; docs/api.md "NEAR relay"): the account whose full-access keys
+ * (`NEAR_RELAY_KEYS`, a Worker secret) pay for Hana wallets' NEAR transactions, the contracts it relays calls to
+ * (empty = nothing is relayed), and its limits. Optional: without it the relay routes answer 503. Bounds as the API's
+ * parser (apps/api/src/near/relay-config.ts) enforces them.
+ */
+export const nearRelaySchema = z
+  .object({
+    account: nearAccount,
+    receivers: z.array(nearAccount).max(16),
+    /** Gas all inner calls of one delegate may attach together, Tgas (default 50). */
+    maxGasTgas: z.number().int().min(1).max(300).optional(),
+    /** NEAR the relay may spend per UTC day across the env (default 5). */
+    dailyBudgetNear: z.number().positive().max(1000).optional(),
+    /** Relays per sender account per UTC day (default 100). */
+    perSenderPerDay: z.number().int().min(1).max(10_000).optional(),
+    /** Relays per app per UTC day (default 5000). */
+    perAppPerDay: z.number().int().min(1).max(1_000_000).optional(),
+    /** Below this balance (NEAR) the hourly check writes `near_relay_balance_low` (default 2). */
+    lowBalanceNear: z.number().positive().max(1000).optional(),
+    /** The activation's Transfer in yocto (default "0": a zero Transfer creates an implicit account); at most 0.01 NEAR. */
+    activationYocto: z
+      .string()
+      .regex(/^(0|[1-9]\d{0,22})$/u, 'activationYocto is a decimal yocto amount')
+      .refine((v) => BigInt(v) <= 10n ** 22n, 'activationYocto is at most 0.01 NEAR')
+      .optional(),
+  })
+  .strict();
+
+/** NEAR wallet settings (D733, D740): the demo guestbook contract and the meta-transaction relay. */
+export const nearSchema = z
+  .object({
+    /** The demo guestbook contract (contracts/hana-guestbook). */
+    demoGuestbook: nearAccount.optional(),
+    relay: nearRelaySchema.optional(),
+  })
+  .strict();
+
+/**
+ * The relay account is its own (never the signer, relayer, owner, MPC, a watchdog or the guestbook: its keys are
+ * full-access and pay any deposit a delegate attaches, which the API refuses); receivers are distinct, never the relay
+ * account, the signer or the relayer (a relayed call into hana-signer would act as the user's implicit account there).
+ */
+function nearRules(m: { signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; near?: z.infer<typeof nearSchema> | undefined }, ctx: z.RefinementCtx): void {
+  const relay = m.near?.relay;
+  if (!relay) return;
+  const taken: [string, string][] = [['signer', m.signer], ['relayer', m.relayer], ['owner', m.owner], ['mpc', m.mpc], ...(m.watchdogs ?? []).map((w): [string, string] => ['watchdog', w])];
+  if (m.near?.demoGuestbook) taken.push(['near.demoGuestbook', m.near.demoGuestbook]);
+  for (const [what, account] of taken) {
+    if (relay.account === account) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'account'], message: `near.relay.account must be its own account, not the ${what}` });
+  }
+  if (new Set(relay.receivers).size !== relay.receivers.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'receivers'], message: 'near.relay.receivers must be distinct' });
+  for (const r of relay.receivers) {
+    if (r === relay.account || r === m.signer || r === m.relayer) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'receivers'], message: `near.relay.receivers must not list ${r} (the relay account, the signer or the relayer)` });
+    }
+  }
+}
+
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */
 export const manifestSchema = z
   .object({
@@ -384,8 +443,11 @@ export const manifestSchema = z
      * `scripts/email-issuer.ts <env> init` writes it.
      */
     emailIssuer: emailIssuerSchema.optional(),
+    /** NEAR wallet settings: the demo guestbook and the meta-transaction relay (nearSchema). Optional. */
+    near: nearSchema.optional(),
   })
   .superRefine((m, ctx) => {
+    nearRules(m, ctx);
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
       const value = m[field];
       const problem = value === undefined ? null : endpointUrlProblem(value, m.name);

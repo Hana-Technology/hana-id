@@ -6,6 +6,8 @@ import { json } from './http.ts';
 import { detectDrift } from './changes/drift.ts';
 import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.ts';
 import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-demo.ts';
+import { NEAR_ACTIVATE_ENDPOINT, NEAR_RELAY_ENDPOINT, handleNearActivate, handleNearRelay } from './near/relay.ts';
+import { checkNearRelayFunds } from './near/relay-funds.ts';
 import { guardedChangesMaintenance } from './guarded/cron.ts';
 import { HOME_APPS_ENDPOINT, handleHomeApps } from './home/apps.ts';
 import { HOME_CONFIG_ENDPOINT, handleHomeConfig } from './home/config.ts';
@@ -51,7 +53,8 @@ const ID_RE = /^[A-Za-z0-9-]{1,64}$/u;
  * the identity token's counts past their retention, records guarded changes' activations and expiries
  * (guarded/cron.ts), runs drift detection (changes/drift.ts), keeps the usage ledger's monthly partitions 12
  * months ahead (usage/partitions.ts), copies the recent identity token counts to it (usage/identity-sync.ts) and
- * checks the owner pool's allowance (owner-pool.ts, never fails the run). A Worker
+ * checks the owner pool's allowance (owner-pool.ts) and the NEAR relay account's balance (near/relay-funds.ts), neither
+ * ever failing the run. A Worker
  * still on the old `0 * * * *` trigger only ever gets hourly runs.
  */
 export function isHourlyRun(scheduledTime: number): boolean {
@@ -175,6 +178,12 @@ export default {
         if (request.method === 'POST') return await handleMainnetDemoEvent(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
+      if (pathname === NEAR_RELAY_ENDPOINT || pathname === NEAR_ACTIVATE_ENDPOINT) {
+        // Vault only, like /v1/vault/* (D735): a Hana wallet's NEAR meta transaction, or its account's activation.
+        if (request.method === 'OPTIONS') return vaultPreflight(request, env);
+        if (request.method === 'POST') return pathname === NEAR_RELAY_ENDPOINT ? await handleNearRelay(request, env, requestId) : await handleNearActivate(request, env, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
       if (pathname === HOME_CONFIG_ENDPOINT) {
         // Hana Home (docs/hana-home-spec.md): `AUTH_ORIGIN` only. No identity yet: the page calls it before a sign-in.
         if (request.method === 'OPTIONS') return homePreflight(request, env);
@@ -230,8 +239,8 @@ export default {
       // Usage fails open: these log their own failures and never fail the run (the next hour tries again). Partitions
       // first, so the copy and the hour's events have their months. Pushed last: the destructuring below is positional.
       jobs.push(ensureUsagePartitions(env).then(() => Promise.all([syncIdentityUsage(env), syncEmailUsage(env)])));
-      // Logs its own failures too; also positional-last.
-      jobs.push(checkOwnerPoolAllowance(env));
+      // Log their own failures too; also positional-last.
+      jobs.push(checkOwnerPoolAllowance(env), checkNearRelayFunds(env));
     }
     const [issuerKeys, vault, identity, guarded, drift] = await Promise.allSettled(jobs);
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');

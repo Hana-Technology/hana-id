@@ -21,6 +21,24 @@ export interface SentTx {
 }
 
 type Outcome = { SuccessValue: unknown } | { Failure: unknown };
+
+/** A NEAR relay transaction (D734): the relay account's Delegate or activation Transfer to a user's implicit account. */
+export interface SentNearTx {
+  hash: string;
+  signerId: string;
+  publicKey: string;
+  receiverId: string;
+  nonce: bigint;
+  kind: 'delegate' | 'transfer';
+  /** The delegate action as @near-js decodes it (delegate only). */
+  delegate?: { senderId: string; receiverId: string; nonce: bigint; maxBlockHeight: bigint; methods: string[] };
+  /** Transfer only: the amount, yocto. */
+  amount?: bigint;
+  blockHash: string;
+}
+
+/** What a NEAR relay transaction's outcome should say: a failure in the sender's receipt (the delegate itself) or in the receiver's call. */
+export type NearOutcome = { ok: true } | { failIn: 'sender' | 'receiver'; failure: unknown };
 type RpcReply = { result: unknown } | { error: unknown };
 
 const rpcError = (name: string, info: unknown): { error: unknown } => ({
@@ -39,6 +57,19 @@ export class NearMock {
   /** `wait_until` of every send_tx and tx call, in order. */
   readonly waitUntil: { method: 'send_tx' | 'tx'; waitUntil: unknown }[] = [];
   defaultNonce = 100n;
+  /** `block` answers this height and gas price (yocto per gas). */
+  height = 1000;
+  gasPrice = '100000000';
+  /** Accounts that don't exist (implicit ones until an activation Transfer reaches them). */
+  readonly missingAccounts = new Set<string>();
+  /** Accounts that exist without the key a view asks for. */
+  readonly missingKeys = new Set<string>();
+  /** `view_account` balances (yocto); others answer 5 NEAR. */
+  readonly balances = new Map<string, string>();
+  /** NEAR relay transactions, in order (Delegate and Transfer actions). */
+  readonly nearSent: SentNearTx[] = [];
+  /** The outcome of a NEAR relay transaction (default: success). */
+  onNearTx?: (tx: SentNearTx) => NearOutcome | undefined;
   /**
    * Contract behaviour per method: return a value, or throw/return {Failure} for a panic (in the signer's receipt), or
    * return receiptFailure(...) for a failure in another account's receipt (the MPC) or in no receipt at all.
@@ -127,7 +158,7 @@ export class NearMock {
         return hold ? hold.then(() => reply) : Promise.resolve(reply);
       }
       case 'block':
-        return this.afterRead({ result: { header: { hash: params.finality === 'final' ? this.finalBlockHash : this.blockHash, height: 1000 } } });
+        return this.afterRead({ result: { header: { hash: params.finality === 'final' ? this.finalBlockHash : this.blockHash, height: this.height, gas_price: this.gasPrice } } });
       case 'send_tx':
         this.waitUntil.push({ method, waitUntil: params.wait_until });
         return this.sendTx(params);
@@ -143,7 +174,15 @@ export class NearMock {
 
   private query(params: Record<string, unknown>): RpcReply {
     if (params.request_type === 'view_access_key') {
+      // As a node answers a key it can't find (on a missing implicit account too): a result carrying `error` text.
+      const id = params.account_id as string;
+      if (this.missingAccounts.has(id) || this.missingKeys.has(id)) return { result: { error: `access key ${params.public_key as string} does not exist while viewing`, logs: [], block_height: this.height, block_hash: this.blockHash } };
       return { result: { nonce: Number(this.nonceOf(params.public_key as string)), block_hash: this.blockHash, block_height: 1000, permission: 'FullAccess' } };
+    }
+    if (params.request_type === 'view_account') {
+      const id = params.account_id as string;
+      if (this.missingAccounts.has(id)) return { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT', info: { requested_account_id: id } }, code: -32000, message: 'Server error', data: `account ${id} does not exist while viewing` } };
+      return { result: { amount: this.balances.get(id) ?? '5000000000000000000000000', locked: '0', storage_usage: 182, block_height: this.height } };
     }
     if (params.request_type === 'view_access_key_list') return { result: { keys: this.accessKeyList, block_height: 1000 } };
     if (params.request_type === 'call_function') {
@@ -165,6 +204,7 @@ export class NearMock {
     const signed = SignedTransaction.decode(base64Decode(params.signed_tx_base64 as string));
     const t = signed.transaction;
     const fc = t.actions[0]?.functionCall;
+    if (!fc && (t.actions[0]?.signedDelegate || t.actions[0]?.transfer)) return this.sendNearTx(signed);
     if (!fc) return rpcError('INVALID_TRANSACTION', { ActionsValidation: 'no function call' });
     // Borsh decoding yields a plain `{ ed25519Key: { data } }`; render it like PublicKey.toString().
     const publicKey = `ed25519:${baseEncode(new Uint8Array((t.publicKey as unknown as { ed25519Key: { data: number[] } }).ed25519Key.data))}`;
@@ -218,6 +258,47 @@ export class NearMock {
       receipts_outcome: receiptsFor(tx.receiverId, status, failedIn),
       final_execution_status: 'EXECUTED',
     };
+    this.outcomes.set(hash, outcome);
+    if (this.sendTxTimesOut) return { error: { name: 'HANDLER_ERROR', cause: { name: 'TIMEOUT_ERROR' }, message: 'Timeout', data: 'TIMEOUT' } };
+    return { result: outcome };
+  }
+
+  /** A NEAR relay transaction: nonce checks as above, then an outcome shaped like a node's (the sender's receipt, the call's). */
+  private async sendNearTx(signed: SignedTransaction): Promise<RpcReply> {
+    const t = signed.transaction;
+    const publicKey = `ed25519:${baseEncode(new Uint8Array((t.publicKey as unknown as { ed25519Key: { data: number[] } }).ed25519Key.data))}`;
+    const nonce = BigInt(t.nonce);
+    const ak = this.nonceOf(publicKey);
+    if (nonce <= ak) return rpcError('INVALID_TRANSACTION', { InvalidNonce: { ak_nonce: Number(ak), tx_nonce: Number(nonce) } });
+    const hash = baseEncode(new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(encodeTransaction(t)))));
+    const a = t.actions[0]!;
+    const sd = a.signedDelegate as unknown as { delegateAction: { senderId: string; receiverId: string; nonce: bigint; maxBlockHeight: bigint; actions: { functionCall?: { methodName: string } }[] } } | undefined;
+    const tx: SentNearTx = {
+      hash,
+      signerId: t.signerId,
+      publicKey,
+      receiverId: t.receiverId,
+      nonce,
+      kind: sd ? 'delegate' : 'transfer',
+      ...(sd
+        ? { delegate: { senderId: sd.delegateAction.senderId, receiverId: sd.delegateAction.receiverId, nonce: BigInt(sd.delegateAction.nonce), maxBlockHeight: BigInt(sd.delegateAction.maxBlockHeight), methods: sd.delegateAction.actions.map((x) => x.functionCall?.methodName ?? '?') } }
+        : { amount: BigInt((a.transfer as unknown as { deposit: bigint }).deposit) }),
+      blockHash: baseEncode(new Uint8Array(t.blockHash)),
+    };
+    this.akNonce.set(publicKey, nonce);
+    this.nearSent.push(tx);
+    const result = this.onNearTx?.(tx) ?? { ok: true };
+    if (tx.kind === 'transfer' && 'ok' in result) this.missingAccounts.delete(tx.receiverId);
+    const step = (executor: string, status: unknown) => ({ outcome: { executor_id: executor, logs: [], status, ...MOCK_RECEIPT_GAS } });
+    const ok = { SuccessValue: '' };
+    let receipts: unknown[];
+    let status: unknown = ok;
+    if ('ok' in result) receipts = tx.kind === 'delegate' ? [step(tx.receiverId, ok), step(tx.delegate!.receiverId, ok)] : [step(tx.receiverId, ok)];
+    else if (result.failIn === 'sender') {
+      status = { Failure: result.failure };
+      receipts = [step(tx.receiverId, { Failure: result.failure })];
+    } else receipts = [step(tx.receiverId, ok), step(tx.delegate?.receiverId ?? tx.receiverId, { Failure: result.failure })];
+    const outcome = { status, transaction: { hash }, transaction_outcome: { outcome: { ...MOCK_TX_GAS } }, receipts_outcome: receipts, final_execution_status: 'EXECUTED' };
     this.outcomes.set(hash, outcome);
     if (this.sendTxTimesOut) return { error: { name: 'HANDLER_ERROR', cause: { name: 'TIMEOUT_ERROR' }, message: 'Timeout', data: 'TIMEOUT' } };
     return { result: outcome };

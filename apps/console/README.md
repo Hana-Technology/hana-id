@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-11 (branch `docs/partner-start-here`, not merged, not deployed: the "No apps yet" page asks for the owners' Google accounts and a security contact instead of a Google client, and points testers at email sign-in, D707; "An app's page" describes the Email login page as built, correcting the 2026-11-10 note below); 2026-11-11 (branch `fix/console-users-table`, not merged, not deployed: the Users list in a card like every console table, its ids kept whole, its wallets shortened with a copy each, the header band's rounded corners, the preview's user detail); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: "Audit": the titles and details' words from `@hana-id/console-core/audit-words`, shared with the feed digests, every code titled, a null field as "none", D704); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: "An app's page": changes in force never shown as waiting, the re-read at the next effective time, the snippet's environment, the install line's version, the Audit's details; the Users screen from the manifest; D701–D703; after review: "waiting" on the server's clock, "Unnamed app"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the phone-width header and tables; Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer has a "Scope" row in its facts; corrected 2026-11-11: step 2 still names the scope's email client, `email:<scope id>`, and links the scope's page, see "An app's page"); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
+Last verified: 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: a fresh sign-in returns to the page that started it, D711; the Email login tab's live state, its plain wording and **Ready to execute**, the scope page's re-read at an unlock, D712; the preview's `unlocking` email state); 2026-11-11 (branch `docs/partner-start-here`, not merged, not deployed: the "No apps yet" page asks for the owners' Google accounts and a security contact instead of a Google client, and points testers at email sign-in, D707; "An app's page" describes the Email login page as built, correcting the 2026-11-10 note below); 2026-11-11 (branch `fix/console-users-table`, not merged, not deployed: the Users list in a card like every console table, its ids kept whole, its wallets shortened with a copy each, the header band's rounded corners, the preview's user detail); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: "Audit": the titles and details' words from `@hana-id/console-core/audit-words`, shared with the feed digests, every code titled, a null field as "none", D704); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: "An app's page": changes in force never shown as waiting, the re-read at the next effective time, the snippet's environment, the install line's version, the Audit's details; the Users screen from the manifest; D701–D703; after review: "waiting" on the server's clock, "Unnamed app"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the phone-width header and tables; Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer has a "Scope" row in its facts; corrected 2026-11-11: step 2 still names the scope's email client, `email:<scope id>`, and links the scope's page, see "An app's page"); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
 2026-11-06 (branch `fix/session-expiry-ux`: the session's end mid-task, the banner, the warning before
 the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenarios, D424); 2026-11-06 (branch
 `feat/console-ux-redesign`: the SPA's layout, error display and the local preview, D421).
@@ -35,6 +35,13 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
 - **No HTML injection, no browser storage, same origin only**: checked over `web/src` by `scripts/test/spa-build.test.ts`.
 - **Requests**: every write is `postJson`/`postBytes` (`web/src/api.ts`) with the CSRF header; a change marked
   "fresh sign-in" is built by `POST /api/orgs/:org/actions` and confirmed on `/actions/:id`.
+- **A fresh sign-in returns to the page that started it** (D711): each page passes its own page to `useStepUp(org,
+  {page, appId?})` (Origins, Signing, Login & sessions, Email login, Suspend, the scope page, Members; Keys and
+  Branding have no fresh sign-in, their writes are immediate), the server checks it against the kind's allowlist and
+  keeps the path it builds from ids with the action, and `/actions/:id`'s back link and **Not now** use it after Google's
+  redirect (`Back to Email login`, `Back to Origins`, `Back to the scope`, `Back to members`…), for a member of several
+  organisations too. The SPA links the answer only when it is one of these pages (`safeReturn`, `pages/Action.tsx`);
+  anything else falls back to the kind's own page. Both Email login steps come back to the Email login tab.
 - **Errors**: shown with `ErrorNote` (plain text for the code, the server's detail when it adds something, the code and
   HTTP status small). A new error code gets its line in `web/src/messages.ts`.
 - **No control that can't work**: where the console would refuse (a viewer, a frozen org, a limit), the page shows one
@@ -76,15 +83,23 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
   usable name, the placeholder and where to find it. Step 3 keeps `<version>` in the tarball names: the console is
   deployed apart from SDK releases, so it can't know which release Hana sent (D703).
 - **Email login** (`pages/app/EmailLogin.tsx`): a Status badge (**Off**, **One step left**, **Waiting for the chain**,
-  **On**, or **Unknown** when the chain can't be read) and, until it is on, two steps. Step 1, "Turn email login on for
+  **Ready to execute**, **On**, or **Unknown** when the chain can't be read) and, until it is on, two steps. Step 1, "Turn email login on for
   this app", is the app's setting through a fresh sign-in (in force at once). Step 2, "Add the scope's email client on
   chain", names the client it adds as `email:<scope id>` (the scope's internal id shows there, and the word "scope"
-  links the scope's page) and is proposed by an on-chain owner through a fresh sign-in; while it waits it says
-  "Proposed; it unlocks …", and once the timelock has passed an owner's **Execute the change** runs it. The page reads
-  the state once: it doesn't re-read when the timelock passes (reload it). The fresh sign-in's back link leads to Login &
-  sessions (step 1) or the scope's page (step 2) for a member of one organisation (else the organisation list), never
-  back here. Turning it off is one in-page confirm, at
-  once. Below: the app's mail per day (sent, bounced, complaints, refused), never an address.
+  links the scope's page) and is proposed by an on-chain owner through a fresh sign-in; while it waits the status is
+  **Waiting for the chain** and the step says "You can execute this from HH:MM" (the day added when it isn't today,
+  `lib.tsx` `clockTime`). The email read answers `now`, and the page judges the unlock on the server's clock as D701
+  does (`clockOffset`): one timer to `unlockAt` (plus 1 s) re-reads the page once, and coming back to a hidden tab after
+  that time re-reads it at once (`useReloadAt`, `pages/Apps.tsx`, shared with the app's `useReloadAtNextEffect`, D712);
+  no polling. When the server answers `executable` the status is **Ready to execute** and an owner's **Execute the
+  change** runs it (a viewer is told only owners can). Both steps' fresh sign-ins come back to this tab (D711). The
+  wording assumes nothing: the scope is "the apps that share each user's wallet", the client `email:<scope id>` is
+  named with "(<scope id> is your scope's ID)", the timelock is "a set time, so the other owners can cancel it". Turning
+  it off is one in-page confirm, at once. Below: the app's mail per day (sent, bounced, complaints, refused), never an
+  address.
+- **The scope page** (`/orgs/:org/scopes/:scope`): its read answers `now`; the page judges its countdowns on the server's
+  clock and re-reads once when the next waiting on-chain change unlocks, so its **Execute** appears without a reload
+  (D712).
 - **Audit**: each row keeps its action code under the title; its details read as words (times as dates, a null field
   as "none", yes or no, lists and objects as plain text, a value holding a separator quoted, keys in words), with no
   key hidden (D703 as amended by D704). The titles and the details' words are `@hana-id/console-core/audit-words`,
@@ -143,7 +158,10 @@ A picture of the SPA for design review and screenshots, with no Worker, D1, sess
 plugin in `preview/plugin.ts` runs only in `vite serve`, listens on 127.0.0.1, and nothing of it is built into `dist/`
 (a build test). It answers `/api/*` with the fake data of `preview/fixtures.ts` (invented names, keys and hashes,
 checked against console-core's schemas); writes answer success, or a typical refusal in the `errors` scenario, and
-change nothing. It imitates none of the console's security checks.
+change nothing. It imitates none of the console's security checks. The Email login tab's state is picked with
+`/__preview/<scenario>?email=<state>&to=<path>` (`off`, `stuck` (one step left), `waiting`, `ready`, `on`, `nochain`,
+…; `preview/fixtures.ts` `emailStatus`); `unlocking` is proposed when picked and unlocks 60 s later, as sandbox-dev's
+timelock does, to watch the page's one re-read turn it to **Ready to execute**.
 
 ```sh
 corepack pnpm --filter @hana-id/console preview:web   # http://127.0.0.1:5178

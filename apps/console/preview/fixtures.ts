@@ -230,6 +230,7 @@ export function scope(now: number, mine = true) {
       },
       drift: { hasDrift: true, missingOnChain: [{ userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@soralabs.io' }], notOrgOwners: [], unknownOnChain: 0 },
       youAreOnChainOwner: false,
+      now,
     };
   }
   return {
@@ -243,6 +244,7 @@ export function scope(now: number, mine = true) {
     },
     drift: { hasDrift: true, missingOnChain: [{ userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@soralabs.io' }], notOrgOwners: [], unknownOnChain: 1 },
     youAreOnChainOwner: true,
+    now,
   };
 }
 
@@ -401,8 +403,12 @@ export function audit(now: number): AuditAnswer {
   };
 }
 
-/** The Email login page's answer in each state (`?state=off|waiting|ready|on|nochain`; a screenshot script opens each). */
-export function emailStatus(a: { id: string; scopeId: string; settings: { loginMethods?: string | undefined } }, now: number, state: string): AppEmailAnswer {
+/**
+ * The Email login page's answer in each state (`?email=off|stuck|waiting|unlocking|ready|on|nochain|…`; a screenshot
+ * script opens each). `unlocking` is proposed `since` the state was picked and unlocks 60 s later (sandbox-dev's
+ * timelock), so the page's one re-read at that time can be watched.
+ */
+export function emailStatus(a: { id: string; scopeId: string; settings: { loginMethods?: string | undefined } }, now: number, state: string, since = now): AppEmailAnswer {
   const days = [0, 1, 2, 3, 4, 5, 6].map((d) => ({ day: new Date(now - d * 86_400_000).toISOString().slice(0, 10), sent: 180 - d * 17, bounced: d === 2 ? 4 : 1, complained: d === 4 ? 1 : 0, refused: d === 1 ? 12 : 2 }));
   const deliverability: AppEmailAnswer['deliverability'] = state === 'empty' ? { days: [] } : state === 'nochain' ? { unavailable: true } : { days };
   const scope: AppEmailAnswer['scope'] =
@@ -410,8 +416,9 @@ export function emailStatus(a: { id: string; scopeId: string; settings: { loginM
     : state === 'on' ? { clientOnChain: true, pending: null, youAreOnChainOwner: true }
     : state === 'waiting' ? { clientOnChain: false, pending: { changeId: 12, unlockAt: now + 3 * 3_600_000, executable: false }, youAreOnChainOwner: true }
     : state === 'ready' ? { clientOnChain: false, pending: { changeId: 12, unlockAt: now - 600_000, executable: true }, youAreOnChainOwner: true }
+    : state === 'unlocking' ? { clientOnChain: false, pending: { changeId: 12, unlockAt: since + 60_000, executable: since + 60_000 <= now }, youAreOnChainOwner: true }
     : state === 'stuck' ? { clientOnChain: false, pending: null, youAreOnChainOwner: true }
     : state === 'stuck-other' ? { clientOnChain: false, pending: null, youAreOnChainOwner: false }
     : { clientOnChain: state === 'off-with-client', pending: null, youAreOnChainOwner: state !== 'not-owner' };
-  return { emailOn: state === 'on' || state === 'waiting' || state === 'ready' || state === 'stuck' || state === 'stuck-other' || state === 'nochain', scopeId: a.scopeId, scope, otherAppsEmailOn: state === 'waiting' ? 1 : 0, available: state !== 'unavailable', deliverability };
+  return { emailOn: ['on', 'waiting', 'unlocking', 'ready', 'stuck', 'stuck-other', 'nochain'].includes(state), scopeId: a.scopeId, scope, otherAppsEmailOn: state === 'waiting' ? 1 : 0, available: state !== 'unavailable', deliverability, now };
 }

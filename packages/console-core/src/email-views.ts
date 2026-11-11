@@ -151,4 +151,6 @@ export interface AppEmailAnswer {
   /** Whether this environment has an email issuer (without it, the page says email isn't offered here). */
   available: boolean;
   deliverability: { days: DeliverabilityDay[] } | { unavailable: true };
+  /** The Worker's clock when it judged `pending.executable`: the page's timer and its "from" time use it (D701, D712). */
+  now: number;
 }

@@ -84,6 +84,8 @@ export interface ScopeAnswer {
   drift: { hasDrift: boolean; missingOnChain: { userId: string; email: string }[]; notOrgOwners: { userId: string; email: string }[]; unknownOnChain: number };
   /** Whether the signed-in member is an on-chain owner (owner actions need it). */
   youAreOnChainOwner: boolean;
+  /** The Worker's clock when it judged `executable` (the page measures its own clock against it, D701). */
+  now: number;
 }
 
 export function scopeAnswer(s: ScopeView, owners: OwnerSet, mySub: string, now: number): ScopeAnswer {
@@ -103,6 +105,7 @@ export function scopeAnswer(s: ScopeView, owners: OwnerSet, mySub: string, now: 
     },
     drift: { hasDrift: missingOnChain.length + notOrgOwners.length + unknownOnChain > 0, missingOnChain, notOrgOwners, unknownOnChain },
     youAreOnChainOwner: onChainSubs.has(mySub),
+    now,
   };
 }
 

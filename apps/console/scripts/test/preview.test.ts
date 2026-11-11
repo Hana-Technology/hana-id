@@ -68,6 +68,22 @@ describe('the scenarios', () => {
     const google = (n: number) => answer('owner', 'POST', new URL(`http://127.0.0.1/api/actions/${built.id}/google`), {}, state, now + n).status;
     expect(google(0)).toBe(200);
     expect(google(1)).toBe(409);
+    // Its way back, as the console builds it (D711): the page that started it, a known page name only.
+    expect((read.body as { returnTo: string }).returnTo).toBe(`/orgs/${F.ORG_ID}/apps/app_Lm4Pq9Zs2v/origins`);
+    const email = answer('owner', 'POST', new URL(`http://127.0.0.1/api/orgs/${F.ORG_ID}/actions`), { kind: 'owner_action', params: { scopeId: 's_lumen_live', method: 'propose_change', change: { kind: 'AddEmailClient' } }, returnTo: { page: 'email', appId: 'app_Lm4Pq9Zs2v' } }, state, now).body as { returnTo: string };
+    expect(email.returnTo).toBe(`/orgs/${F.ORG_ID}/apps/app_Lm4Pq9Zs2v/email`);
+    const odd = answer('owner', 'POST', new URL(`http://127.0.0.1/api/orgs/${F.ORG_ID}/actions`), { kind: 'member.invite', params: {}, returnTo: { page: 'https://evil.example' } }, state, now).body as { returnTo: string };
+    expect(odd.returnTo).toBe(`/orgs/${F.ORG_ID}/members`);
+  });
+
+  it('the Email login states, with the server’s clock; `unlocking` turns executable 60 s after it was picked', () => {
+    const app = F.appDetails(now)[0]!;
+    const state = new PreviewState();
+    state.pickEmail('unlocking', now);
+    const read = (t: number) => answer('owner', 'GET', new URL(`http://127.0.0.1/api/orgs/${F.ORG_ID}/apps/${app.id}/email`), undefined, state, t).body as { now: number; scope: { pending: { unlockAt: number; executable: boolean } } };
+    expect(read(now + 59_000)).toMatchObject({ now: now + 59_000, scope: { pending: { unlockAt: now + 60_000, executable: false } } });
+    expect(read(now + 60_000).scope.pending.executable).toBe(true);
+    for (const s of ['off', 'stuck', 'waiting', 'ready', 'on']) expect(F.emailStatus(app, now, s).now).toBe(now);
   });
 
   it('another org is 404; the new org has no apps', () => {

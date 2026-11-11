@@ -232,7 +232,7 @@ describe('no control that can’t work: one line says why', () => {
     fireEvent.change(screen.getByLabelText(/Idle timeout \(minutes\)/u), { target: { value: '45' } });
     fireEvent.click(button);
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_s'));
-    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'app.settings', params: { appId: 'app_1', sessionTtlMs: 8 * H, idleTtlMs: 45 * 60_000 } });
+    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'app.settings', params: { appId: 'app_1', sessionTtlMs: 8 * H, idleTtlMs: 45 * 60_000 }, returnTo: { page: 'sessions', appId: 'app_1' } });
   });
 
   it('a logo of the wrong type or over 512 KiB is refused before upload', async () => {

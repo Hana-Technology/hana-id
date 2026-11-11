@@ -9,7 +9,7 @@ export function Suspend() {
   const ctl = useApp();
   const { app, owner, frozen, org } = ctl;
   const w = useWrite();
-  const step = useStepUp(org);
+  const step = useStepUp(org, { page: 'suspend', appId: app.id });
   const ours = (app.suspendedBy & 4) !== 0;
   const hanas = (app.suspendedBy & 3) !== 0;
   const s = suspension(app.suspendedBy);

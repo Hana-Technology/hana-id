@@ -18,7 +18,7 @@ export function Origins() {
   useNow(30_000); // re-render every 30 s
   const now = ctl.serverNow();
   const w = useWrite();
-  const step = useStepUp(org);
+  const step = useStepUp(org, { page: 'origins', appId: app.id });
   const chain = useChainOwner(org, app.scopeId, owner && !frozen);
   const [text, setText] = useState('');
   const base = `/api/orgs/${org}/apps/${app.id}`;

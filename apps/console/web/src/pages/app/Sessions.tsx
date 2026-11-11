@@ -31,7 +31,7 @@ export function Sessions() {
   const s = app.settings;
   // An API before migration 0014's build omits the setting: it is off there.
   const shareNow: IdentityEmail = s.identityEmail ?? 'off';
-  const step = useStepUp(org);
+  const step = useStepUp(org, { page: 'sessions', appId: app.id });
   const [persistence, setPersistence] = useState(s.persistence);
   const [hours, setHours] = useState(String(s.sessionTtlMs / H));
   const [idle, setIdle] = useState(String(s.idleTtlMs / MIN));

@@ -80,7 +80,7 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     fireEvent.change(await screen.findByPlaceholderText('https://app.example.com'), { target: { value: 'https://bücher.example' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Review and confirm with Google' })[0]!);
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_1'));
-    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'origin.add', params: { appId: 'app_1', add: ['https://bücher.example'] } });
+    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'origin.add', params: { appId: 'app_1', add: ['https://bücher.example'] }, returnTo: { page: 'origins', appId: 'app_1' } });
     expect(headerOf('/api/orgs/org_a/actions', 'x-hana-console')).toBe('1');
     expect(await screen.findByText('Add origins')).toBeTruthy();
     expect(screen.getByText('IDN')).toBeTruthy();
@@ -107,7 +107,7 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     fireEvent.change(select, { target: { value: 'at_login' } });
     fireEvent.click(submit);
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_5'));
-    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'app.settings', params: { appId: 'app_1', identityEmail: 'at_login' } });
+    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'app.settings', params: { appId: 'app_1', identityEmail: 'at_login' }, returnTo: { page: 'sessions', appId: 'app_1' } });
   });
 
   it('email sharing: the current value comes from settings.identityEmail; the review page names the change', async () => {
@@ -147,7 +147,7 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     expect(bodyOf('/api/orgs/org_a/apps/app_1/policy/check')).toEqual({ policy: policyJson() });
     fireEvent.click(screen.getByRole('button', { name: /Propose this policy/u }));
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_3'));
-    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'policy.set', params: { appId: 'app_1', policy } });
+    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'policy.set', params: { appId: 'app_1', policy }, returnTo: { page: 'signing', appId: 'app_1' } });
   });
 
   it('an invalid policy shows the validator’s problems and no preview', async () => {
@@ -336,7 +336,26 @@ describe('the scope page', () => {
     expect(propose).toHaveProperty('disabled', false);
     fireEvent.click(propose);
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_9'));
-    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'owner_action', params: { scopeId: 's1', method: 'propose_change', change: { kind: 'AddClient', aud: '123-abc.apps.googleusercontent.com', clientProof: 'a.b.c', piiWarningAccepted: true } } });
+    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'owner_action', params: { scopeId: 's1', method: 'propose_change', change: { kind: 'AddClient', aud: '123-abc.apps.googleusercontent.com', clientProof: 'a.b.c', piiWarningAccepted: true } }, returnTo: { page: 'scope' } });
+  });
+
+  it('a waiting change: one re-read when it unlocks on the server’s clock (the reader’s 3 h slow), then Execute (D712)', async () => {
+    const real = Date.now.bind(Date);
+    const unlockAt = real() + 300;
+    let reads = 0;
+    routes['/api/me'] = { body: ME };
+    routes['/api/orgs/org_a'] = { body: org() };
+    routes['/api/orgs/org_a/scopes/s1'] = () => {
+      reads++;
+      return { body: { ...SCOPE, scope: { ...SCOPE.scope, pending: [{ id: 5, change: { kind: 'SetAllowShared', allow: true }, unlockAt, executable: real() >= unlockAt }] }, now: real() } };
+    };
+    vi.spyOn(Date, 'now').mockImplementation(() => real() - 3 * 3_600_000);
+    at('/orgs/org_a/scopes/s1');
+    expect(await screen.findByText('Turn shared login on')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Execute' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Execute' }, { timeout: 4000 })).toBeTruthy();
+    expect(screen.getByText('Unlocked: anyone can execute it')).toBeTruthy();
+    expect(reads).toBe(2);
   });
 
   it('owner drift offers the SetOwners proposal', async () => {

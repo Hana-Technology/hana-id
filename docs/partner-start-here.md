@@ -33,15 +33,15 @@ testers, use **email sign-in**: they type their address in Hana's window and get
 
 An owner turns it on in the partner console: **Apps**, your app, the **Email login** tab. It shows a **Status** and two
 steps. Each step's button, **Review and confirm with Google**, opens a confirmation page: click **Confirm with
-Google**, sign in with your console account, and the page says **Done.** Its back link doesn't return to this tab, so
-open the app's **Email login** tab again yourself.
+Google**, sign in with your console account, and the page says **Done.** with **Back to Email login**, which returns
+to the tab.
 
 1. **Turn email login on for this app.** In force at once. Status: **One step left**.
 2. **Add the scope's email client on chain.** Only an on-chain owner (one of the owners Hana registered) can do this
-   step. Status: **Waiting for the chain**, with "Proposed; it unlocks …": the chain makes everyone wait 1 minute on
-   sandbox-dev, so other owners could cancel it. The page doesn't refresh itself: after the minute, reload it. When it
-   says "The timelock has passed: anyone can execute it now", any owner clicks **Execute the change** (the scope's
-   page, where the back link leads, has the same as **Execute**). Status: **On**.
+   step. Status: **Waiting for the chain**, with "You can execute this from" and the time: the chain makes everyone
+   wait 1 minute on sandbox-dev, so other owners could cancel it. Leave the tab open: at that time it checks again by
+   itself (no reload needed), the status turns to **Ready to execute**, and any owner clicks **Execute the change**.
+   Status: **On**.
 
 Until both are done, email isn't offered (`login_method_unavailable`). With email on, `hana.login()` lets the user
 choose Google or email; `hana.login({ method: 'email' })` skips the choice, so testers never reach Google's block.

@@ -31,11 +31,17 @@ Hana's shared Google sign-in is in Google's testing mode: Google lets through on
 by hand, and shows anyone else "Access blocked: … has not completed the Google verification process". So for your
 testers, use **email sign-in**: they type their address in Hana's window and get a 6-digit code.
 
-An owner turns it on in the partner console, on the app's **Email login** tab, in two steps:
+An owner turns it on in the partner console: **Apps**, your app, the **Email login** tab. It shows a **Status** and two
+steps. Each step's button, **Review and confirm with Google**, opens a confirmation page: click **Confirm with
+Google**, sign in with your console account, and the page says **Done.** Its back link doesn't return to this tab, so
+open the app's **Email login** tab again yourself.
 
-1. **Turn email login on for this app**: **Review and confirm with Google**. In force at once.
-2. **Add the scope's email client on chain**: an on-chain owner (the owners Hana registered) confirms with Google; it
-   waits 1 minute on sandbox-dev, then any owner clicks **Execute the change**. The status then reads **On**.
+1. **Turn email login on for this app.** In force at once. Status: **One step left**.
+2. **Add the scope's email client on chain.** Only an on-chain owner (one of the owners Hana registered) can do this
+   step. Status: **Waiting for the chain**, with "Proposed; it unlocks …": the chain makes everyone wait 1 minute on
+   sandbox-dev, so other owners could cancel it. The page doesn't refresh itself: after the minute, reload it. When it
+   says "The timelock has passed: anyone can execute it now", any owner clicks **Execute the change** (the scope's
+   page, where the back link leads, has the same as **Execute**). Status: **On**.
 
 Until both are done, email isn't offered (`login_method_unavailable`). With email on, `hana.login()` lets the user
 choose Google or email; `hana.login({ method: 'email' })` skips the choice, so testers never reach Google's block.
@@ -94,10 +100,11 @@ step. It then takes effect:
 happens in the console, after a fresh Google sign-in.
 
 **Sessions.** A user stays signed in across reloads and tabs for 12 hours, or until 2 hours without use (both
-adjustable on **Login & sessions**). A user can also sign a device out from Hana's own page (Hana Home): your open tab
-shows signed out within about a minute (a few minutes in a tab nobody is using), with `disconnect` and
-`reason: 'signed_out'` (SDK releases after 0.3.0). Show "You were signed out, sign in again"; no reload is needed
-(guide section 3).
+adjustable on **Login & sessions**). A user can also sign a device out from Hana Home, Hana's own page at
+`https://hana-id-auth-sandbox-dev.tingtc.workers.dev/home` (nothing links to it yet, so users go to that address; it
+will change with Hana's permanent addresses). Your open tab then shows signed out within about a minute (a few minutes
+in a tab nobody is using), with `disconnect` and `reason: 'signed_out'` (SDK 0.3.1 or later). Show "You were signed
+out, sign in again"; no reload is needed (guide section 3).
 
 ## What you do, and what Hana does
 
@@ -125,7 +132,8 @@ holds your users' wallets and names your on-chain owners), sets your security co
 
 ## Getting help
 
-- **Support ID** (`HANA-XXXX-XXXX`): a user sees it in Hana's approval window under their account, and on Hana Home.
+- **Support ID** (`HANA-XXXX-XXXX`): a user sees it in Hana's approval window under their account, and on Hana Home
+  (on your app's page there).
   Your page has it as `hana.supportId`: show it where your users look for help. The console's **Users** page finds a
   user by it.
 - **Request ID**: on an error that came from Hana's API, `error.requestId` in the SDK; on every row of the console's

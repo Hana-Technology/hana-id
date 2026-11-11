@@ -55,9 +55,10 @@ function FirstApp() {
           <strong>Every origin your app runs on</strong>, exactly (<code>https://app.example.com</code>, no path). For development on a test app, add <code>http://localhost:5173</code> (your port).
         </li>
         <li>
-          <strong>Which Google client to use</strong>: Hana’s shared one (nothing to set up) or your own (partner guide, section 6).
+          <strong>Who owns it and who hears about changes</strong>: the Google account of each person who will own the organisation (up to 5; invite them under Members first), and a security contact’s email address for Hana’s security notices.
         </li>
       </ol>
+      <p>Your testers should sign in with email for now: Hana’s Google sign-in only lets in the accounts Hana adds. Your own Google client can come later (partner guide, section 6).</p>
       <p className="muted">Then you install the SDK, create the client with your key and add a sign-in button. The app’s page walks you through it.</p>
     </Empty>
   );

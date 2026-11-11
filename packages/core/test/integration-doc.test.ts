@@ -117,9 +117,13 @@ describe('docs/integration.md', () => {
   });
 
   it("partner-start-here.md: sandbox-dev's console and vault origins as the manifest sets them, plain punctuation, one short Last verified line", () => {
-    const m = JSON.parse(readText('../../../envs/sandbox-dev.json')) as { console: { origin: string }; vaultOrigin: string; appChangeDelayMs: number };
+    const m = JSON.parse(readText('../../../envs/sandbox-dev.json')) as { console: { origin: string }; vaultOrigin: string; authOrigin: string; appChangeDelayMs: number };
     expect(startHere).toContain(`\`${m.console.origin}\``);
     expect(startHere).toContain(`\`${m.vaultOrigin}\``);
+    // Hana Home, on the auth origin (nothing links to it yet, so the page gives its address).
+    expect(startHere).toContain(`\`${m.authOrigin}/home\``);
+    // The signed_out reason ships in SDK 0.3.1.
+    expect(startHere).toContain("`reason: 'signed_out'` (SDK 0.3.1 or later)");
     // "1 minute after the announcement" is the manifest's appChangeDelayMs.
     expect(m.appChangeDelayMs).toBe(60_000);
     expect(startHere).toContain('1 minute after the announcement');

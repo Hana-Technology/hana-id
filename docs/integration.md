@@ -54,6 +54,10 @@ During the pilot Hana creates your organisation and your apps, and you manage th
 - the Google address of each person who will manage it as an **owner** (up to 5), and at least one **security
   contact**: an address that gets the announcement of every change to your apps' origins and signing settings;
 - the app name your users will see ("Signing in to {name} at {origin}"), and the origins your app runs on to start with
+  (more can be added in the portal; [Allowed origins](#allowed-origins));
+- nothing about Google clients: your scope starts on Hana's shared Google client. If you want your own
+  ([section 6](#6-google-client-shared-or-your-own)), an on-chain owner adds it in the portal once the scope exists,
+  with a sign-in on your client that proves it is yours; Hana never registers a client ID you send.
 
 **App names.** The name is shown in Hana's popups and sign-in emails next to Hana's own words, so a few names are
 refused (when an app is created or renamed, by Hana staff or on **Branding**):
@@ -67,10 +71,6 @@ refused (when an app is created or renamed, by Hana staff or on **Branding**):
 
 An app whose name was set before this rule keeps working, but its sign-in emails say "an app" instead of the name
 until it is renamed.
-  (more can be added in the portal; [Allowed origins](#allowed-origins));
-- nothing about Google clients: your scope starts on Hana's shared Google client. If you want your own
-  ([section 6](#6-google-client-shared-or-your-own)), an on-chain owner adds it in the portal once the scope exists,
-  with a sign-in on your client that proves it is yours; Hana never registers a client ID you send.
 
 **In this order:**
 

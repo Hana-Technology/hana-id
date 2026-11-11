@@ -21,8 +21,10 @@ import {
   encodeNep413Message,
   sha256,
   utf8,
+  verifyWalletRecord,
+  verifyWalletRecordSession,
 } from '@hana-id/core';
-import { openRecordStore, recordKey } from '../../src/vault/record.ts';
+import { nearRecordedKey, openRecordStore, recordKey } from '../../src/vault/record.ts';
 import { NEAR_DELEGATE_MAX_BLOCKS } from '../../src/vault/vault.ts';
 import { APP_ID, Browser, ENV, type Google, RPC_FALLBACK, SCOPE, type Tab, answer, google, login, makeConfig, openApproval, readyTab, waitLauncher } from './harness.ts';
 
@@ -120,7 +122,7 @@ describe('addresses (D725)', () => {
     expect((await old.ready()).addresses).toEqual({ stellar: s.addresses.stellar, evm: s.addresses.evm });
   });
 
-  it('the wallet record sent to the API names Stellar and EVM only', async () => {
+  it('the wallet record sent to an API that doesn’t list near in walletChains names Stellar and EVM only', async () => {
     const s = await session();
     const records = () => s.t.browser.backend.calls.filter((x) => x.path === '/v1/wallets/record');
     for (let i = 0; i < 200 && records().length === 0; i++) await new Promise((r) => setTimeout(r, 5));
@@ -257,5 +259,100 @@ describe('NEAR key export (vault side)', () => {
     s.t.dispatch({ data: { v: 1, t: 'hana:export-hello' }, origin: ENV.authOrigin, source: w });
     expect(await w.next('hana:export-context')).toMatchObject({ chain: 'near', address: s.addresses.near });
     expect((await reply).result).toBeNull();
+  });
+});
+
+// ---- the NEAR wallet record (D755, D756) ----
+
+describe('the NEAR wallet record', () => {
+  type RecordBody = { sessionPublicKey: number[]; issuedAtMs: number; path: string; wallets: Record<string, { address: string; signature: number[] }>; sessionSignature: number[] };
+  const recordsOf = (t: Tab) => t.browser.backend.calls.filter((x) => x.path === '/v1/wallets/record').map((c) => c.body as RecordBody);
+  const nearApi = (browser: Browser, recorded = true) => {
+    browser.backend.app = { ...browser.backend.app, walletChains: ['stellar', 'evm', 'near'] };
+    browser.backend.walletRecord = (b) => ({ recorded: true, ...((b.wallets as object) && 'near' in (b.wallets as object) ? { near: recorded } : {}) });
+  };
+  const waitRecords = async (t: Tab, n: number) => {
+    for (let i = 0; i < 400 && recordsOf(t).length < n; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(recordsOf(t)).toHaveLength(n);
+  };
+  const settle = () => new Promise((r) => setTimeout(r, 40));
+
+  it('an SDK of 0.4.0 and an API that takes near: the login records three chains, NEAR signed by its own key, the session over all three', async () => {
+    const browser = new Browser();
+    nearApi(browser);
+    const s = await session({}, browser);
+    await waitRecords(s.t, 1);
+    const [body] = recordsOf(s.t);
+    expect(Object.keys(body!.wallets).sort()).toEqual(['evm', 'near', 'stellar']);
+    expect(body!.wallets.near!.address).toBe(s.addresses.near);
+    const sessionPk = Uint8Array.from(body!.sessionPublicKey);
+    const ctx = { env: ENV.name, signer: ENV.signer, appId: APP_ID, scopeId: SCOPE, path: body!.path, sessionPublicKey: sessionPk, issuedAtMs: body!.issuedAtMs };
+    const proof = (c: string) => ({ address: body!.wallets[c]!.address, signature: Uint8Array.from(body!.wallets[c]!.signature) });
+    expect(verifyWalletRecord(ctx, 'near', proof('near'))).toBe(s.addresses.near);
+    expect(verifyWalletRecordSession(ctx, { stellar: proof('stellar'), evm: proof('evm'), near: proof('near') }, Uint8Array.from(body!.sessionSignature))).toBe(true);
+    expect(verifyWalletRecordSession(ctx, { stellar: proof('stellar'), evm: proof('evm') }, Uint8Array.from(body!.sessionSignature))).toBe(false);
+    // The API said it recorded NEAR: a reload's unlock sends nothing more.
+    const again = await readyTab(browser, { googleJwk: g.jwk, sdk: SDK });
+    tabs.push(again);
+    await again.ready();
+    await settle();
+    expect(recordsOf(again)).toHaveLength(1);
+  });
+
+  it.each(['0.3.1', '0.0.0'])('an SDK of %s never sends NEAR, at login or at unlock (its partner never sees the account)', async (sdk) => {
+    const browser = new Browser();
+    nearApi(browser);
+    const t = await readyTab(browser, { googleJwk: g.jwk, sdk });
+    tabs.push(t);
+    await login(t, g);
+    await waitRecords(t, 1);
+    expect(Object.keys(recordsOf(t)[0]!.wallets).sort()).toEqual(['evm', 'stellar']);
+    const again = await readyTab(browser, { googleJwk: g.jwk, sdk });
+    tabs.push(again);
+    await again.ready();
+    await settle();
+    expect(recordsOf(again)).toHaveLength(1);
+  });
+
+  it('a session from before NEAR records it at the next unlock, once the API takes it, and only until the API says it did', async () => {
+    const browser = new Browser();
+    // Signed in while the API took Stellar and EVM only.
+    const s = await session({}, browser);
+    await waitRecords(s.t, 1);
+    expect(Object.keys(recordsOf(s.t)[0]!.wallets).sort()).toEqual(['evm', 'stellar']);
+    // The API now takes NEAR but can't write it yet (migration 0019 not applied): near: false, no mark.
+    nearApi(browser, false);
+    const second = await readyTab(browser, { googleJwk: g.jwk, sdk: SDK });
+    tabs.push(second);
+    await second.ready();
+    await waitRecords(second, 2);
+    expect(Object.keys(recordsOf(second)[1]!.wallets).sort()).toEqual(['evm', 'near', 'stellar']);
+    expect(await (await openRecordStore(browser.idb)).get(nearRecordedKey(recordKey(ENV.signer, APP_ID, SCOPE, 0)))).toBeUndefined();
+    // Recorded at the next unlock, then marked: the one after sends nothing.
+    nearApi(browser, true);
+    const third = await readyTab(browser, { googleJwk: g.jwk, sdk: SDK });
+    tabs.push(third);
+    await third.ready();
+    await waitRecords(third, 3);
+    await settle();
+    const mark = (await (await openRecordStore(browser.idb)).get(nearRecordedKey(recordKey(ENV.signer, APP_ID, SCOPE, 0)))) as { sessionPk: string };
+    expect(mark).toEqual({ v: 1, t: 'near-recorded', sessionPk: Buffer.from(Uint8Array.from(recordsOf(third)[2]!.sessionPublicKey)).toString('hex') });
+    const fourth = await readyTab(browser, { googleJwk: g.jwk, sdk: SDK });
+    tabs.push(fourth);
+    await fourth.ready();
+    await settle();
+    expect(recordsOf(fourth)).toHaveLength(3);
+  });
+
+  it('an older SDK’s reload never backfills NEAR, even with the API taking it', async () => {
+    const browser = new Browser();
+    const s = await session({}, browser);
+    await waitRecords(s.t, 1);
+    nearApi(browser);
+    const old = await readyTab(browser, { googleJwk: g.jwk, sdk: '0.3.1' });
+    tabs.push(old);
+    await old.ready();
+    await settle();
+    expect(recordsOf(old)).toHaveLength(1);
   });
 });

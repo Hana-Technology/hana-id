@@ -66,8 +66,17 @@ export interface AppConfig {
   identityEmail?: 'off' | 'on_request' | 'at_login';
   /** pk_test_ apps: the API's own total and phases; checked where used (isServerTimings). */
   timings?: unknown;
+  /**
+   * The wallet chains this API takes in the export window's `exportChain` and in `POST /v1/wallets/record`'s
+   * `wallets` (D755). Older APIs omit it: Stellar and EVM only. Typed unknown on purpose: read it with apiTakesNear,
+   * which treats anything else as "no NEAR".
+   */
+  walletChains?: unknown;
   requestId: string;
 }
+
+/** True when an app config says the API takes NEAR in `exportChain` and the wallet record (D755). */
+export const apiTakesNear = (app: Pick<AppConfig, 'walletChains'> | null | undefined): boolean => Array.isArray(app?.walletChains) && (app.walletChains as unknown[]).includes('near');
 
 /** Contract Session as create_session and get_session return it. */
 export interface SessionView {
@@ -130,9 +139,10 @@ export interface LoginBody extends CreateSessionBody {
   linkImmediate?: boolean;
   /**
    * The export window only: which chain's key it is exporting, a label for the API's `key_exported` event. Not in
-   * the session nonce, the contract call or the CKD payload; the API refuses it from any other page.
+   * the session nonce, the contract call or the CKD payload; the API refuses it from any other page. `'near'` only to
+   * an API whose `GET /v1/app` lists it in `walletChains` (older APIs refuse the value, failing the export).
    */
-  exportChain?: 'stellar' | 'evm';
+  exportChain?: 'stellar' | 'evm' | 'near';
 }
 
 export { MAINNET_DEMO_EVENTS_ENDPOINT } from './demo-config.ts';

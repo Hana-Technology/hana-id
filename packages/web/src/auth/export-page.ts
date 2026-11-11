@@ -41,6 +41,7 @@ import {
   SALT_BYTES,
   type WindowMessage,
   addressOfExport,
+  apiTakesNear,
   base64UrlEncode,
   chainPrivateKey,
   ckdAppId,
@@ -557,9 +558,10 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         signature: jsonBytes(signature),
         pk1,
         pk2,
-        // The API's key_exported event names the chain (D430): a label only, never relayed or in the nonce. The API
-        // takes 'stellar' or 'evm' there today: a NEAR export sends none, so its event is recorded with no chain (D724).
-        ...(ctx.chain === 'near' ? {} : { exportChain: ctx.chain }),
+        // The API's key_exported event names the chain (D430): a label only, never relayed or in the nonce. 'near' only
+        // to an API that lists it in walletChains (D755): an older one refuses the value with a 400 that would fail the
+        // export, so a NEAR export sends none to it and its event is recorded with no chain (D724).
+        ...(ctx.chain !== 'near' || apiTakesNear(app) ? { exportChain: ctx.chain } : {}),
       };
       idToken = null;
       let result: CkdResult;

@@ -85,8 +85,10 @@ import {
   nearHashString,
   nearKeyString,
   base64UrlEncode,
+  apiTakesNear,
   fromHex,
   sdkAtLeast,
+  toHex,
   vaultPayload,
   walletRecordEvmDigest,
 } from '@hana-id/core';
@@ -97,7 +99,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { type ConsentProof, VaultApi } from './api.ts';
 import { SHARE_LAUNCHER_HELLO_MS, type ConsentSigner, type SheetOutcome, ShareSheet, consentProof } from './email-share.ts';
 import { type CachedIdentity, cacheUsable, copyProofs, demoEventBody, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
-import { reportWallets, signWalletRecords } from './wallet-record.ts';
+import { nearRecordedIn, reportWallets, signWalletRecords } from './wallet-record.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
@@ -114,7 +116,9 @@ import {
   type RecordStore,
   type RecordV1,
   openConsent,
+  nearRecordedKey,
   openPrk,
+  parseNearRecorded,
   parseRecord,
   parseRootPin,
   recordKey,
@@ -2349,6 +2353,8 @@ export class Vault {
       idleTimer: null,
     });
     this.channel?.postMessage({ v: 1, t: 'counter', shareId: Uint8Array.from(record.shareId), counter: record.counter });
+    // D756: a session from before NEAR (or whose NEAR record was missed) records it now, once (the mark stops it after).
+    if (this.session) this.recordWallets(this.session, true);
   }
 
   /** One signed share call with an explicit counter. */
@@ -2541,31 +2547,58 @@ export class Vault {
 
   /**
    * Right after the login's result is on its way (a timer, so the signatures never delay it), while the session is
-   * still this one and PRK is in memory, signs its two wallet records and the session signature over the request and
+   * still this one and PRK is in memory, signs its wallet records and the session signature over the request and
    * sends them without waiting (wallet-record.ts): one call, a 15 s limit, every failure dropped. The login's result
-   * never depends on it.
+   * never depends on it. At an unlock (`unlock`), only when NEAR should be recorded and this session's NEAR record
+   * isn't marked as recorded yet (D756): how a user who signed in before NEAR, or with an older SDK, gets the row.
    */
-  private recordWallets(s: Session): void {
-    this.timers.setTimeout(() => void this.sendWalletRecords(s), 0);
+  private recordWallets(s: Session, unlock = false): void {
+    this.timers.setTimeout(() => void this.sendWalletRecords(s, unlock), 0);
   }
 
-  private async sendWalletRecords(s: Session): Promise<void> {
+  private async sendWalletRecords(s: Session, unlock: boolean): Promise<void> {
     const api = this.api;
+    const live = () => this.api === api && this.session === s && !s.prk.every((b) => b === 0);
     // A session that already ended (or went dormant: PRK zeroed) records nothing; the next login does.
-    if (!api || this.session !== s || s.prk.every((b) => b === 0)) return;
+    if (!api || !live()) return;
+    // NEAR (D755) only for an SDK of 0.4.0 or later (the partner sees in its console what its SDK hands out, D725) and
+    // only to an API that takes it (an older API refuses a three-chain body, which would lose the other two).
+    const app = this.sdkTakesNear ? await this.appConfig().catch(() => null) : null;
+    const withNear = this.sdkTakesNear && apiTakesNear(app);
+    if (unlock && (!withNear || (await this.nearRecorded(s)))) return;
+    if (!live()) return;
     const ctx = { env: this.env.name, signer: this.env.signer, appId: this.config.appId, scopeId: this.config.scopeId, path: s.path, sessionPublicKey: s.sessionPk, issuedAtMs: this.clock.now() };
     let signed;
     try {
-      // The digest is refused as a raw EVM request from now on, before the first await (D179, D317).
+      // The digest is refused as a raw EVM request from now on, before the next await (D179, D317).
       s.recordDigest = walletRecordEvmDigest(ctx, s.addresses.evm);
       // The chain keys sign synchronously inside (PRK checked live just above); then the session key, asynchronously.
-      // Exactly Stellar and EVM: the API's POST /v1/wallets/record takes those two (D725).
-      signed = await signWalletRecords(s.prk, s.keyPair.privateKey, ctx, { stellar: s.addresses.stellar, evm: s.addresses.evm });
+      signed = await signWalletRecords(s.prk, s.keyPair.privateKey, ctx, { stellar: s.addresses.stellar, evm: s.addresses.evm, ...(withNear ? { near: s.addresses.near } : {}) });
     } catch {
       return;
     }
     if (this.session !== s) return;
-    void reportWallets((body, signal) => api.recordWallets(body, signal), signed.body, this.timers);
+    void reportWallets((body, signal) => api.recordWallets(body, signal), signed.body, this.timers).then((answer) => {
+      if (withNear && nearRecordedIn(answer)) void this.markNearRecorded(s).catch(() => undefined);
+    });
+  }
+
+  /** Whether the API already recorded this session's NEAR account (the mark beside the record, D756). */
+  private async nearRecorded(s: Session): Promise<boolean> {
+    const store = this.store;
+    if (!store) return false;
+    try {
+      return parseNearRecorded(await store.get(nearRecordedKey(this.recordId))) === toHex(s.sessionPk);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Marks this session's NEAR account as recorded ('session' mode only: a 'none' session has no record to unlock). */
+  private async markNearRecorded(s: Session): Promise<void> {
+    const store = this.store;
+    if (!store || s.persistence !== 'session') return;
+    await store.put(nearRecordedKey(this.recordId), { v: 1, t: 'near-recorded', sessionPk: toHex(s.sessionPk) });
   }
 
   // ---- partner identity token (docs/identity-token-spec.md) ----

@@ -117,6 +117,12 @@ describe('parseUserSearch', () => {
     for (const staff of [true, false]) {
       expect(parseUserSearch(` ${G} `, { staff })).toEqual({ kind: 'address', chain: 'stellar', address: G });
       expect(parseUserSearch(E, { staff })).toEqual({ kind: 'address', chain: 'evm', address: E });
+      // A NEAR implicit account id (D755), any case, lowercased; 63 or 65 hex characters is none.
+      const N = 'ab'.repeat(32);
+      expect(parseUserSearch(N, { staff })).toEqual({ kind: 'address', chain: 'near', address: N });
+      expect(parseUserSearch(N.toUpperCase(), { staff })).toEqual({ kind: 'address', chain: 'near', address: N });
+      expect(parseUserSearch(N.slice(1), { staff })?.kind).not.toBe('address');
+      expect(parseUserSearch(`${N}a`, { staff })?.kind).not.toBe('address');
       expect(parseUserSearch(userId, { staff })).toEqual({ kind: 'userId', userId });
       expect(parseUserSearch('HANA-ABCD-1234', { staff })).toEqual({ kind: 'supportId', code: 'ABCD1234' });
     }

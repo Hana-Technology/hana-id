@@ -81,7 +81,7 @@ export function upsertUser(db: D1Database, u: DirectoryUser, scopeId: string, at
 }
 
 /** A wallet of the user whose internal id (`hu_…`) is `internalId`. */
-export function upsertWallet(db: D1Database, internalId: string, w: { chain: 'stellar' | 'evm'; address: string; keyIndex: number }, at: number): D1PreparedStatement {
+export function upsertWallet(db: D1Database, internalId: string, w: { chain: 'stellar' | 'evm' | 'near'; address: string; keyIndex: number }, at: number): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)

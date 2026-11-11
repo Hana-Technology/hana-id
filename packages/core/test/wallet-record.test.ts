@@ -9,13 +9,19 @@ import { hashMessage, hashTypedData, keccak256, parseTransaction, recoverAddress
 import { describe, expect, it } from 'vitest';
 import { APPROVAL_DIGEST_DOMAIN } from '../src/approval.ts';
 import { fromHex, sha256, toHex } from '../src/bytes.ts';
-import { deriveAddresses, withChainKey } from '../src/derivation.ts';
+import { deriveAddresses, deriveWalletAddresses, withChainKey } from '../src/derivation.ts';
+import { encodeNep413Message, nearDelegateActionHash, nearTransactionHash, nep413Hash } from '../src/near/codec.ts';
+import { signNep413Message } from '../src/near/sign.ts';
+import { ed25519 } from '@noble/curves/ed25519';
+import { functionCall, nearDelegateBytes, nearTxBytes, transfer } from './near-fixtures.ts';
 import { IDENTITY_MESSAGE_DOMAIN, IDENTITY_WALLET_DOMAIN, walletProofMessage } from '../src/identity.ts';
 import { CKD_PAYLOAD_PREFIX, CREATE_PROOF_PREFIX, SESSION_MESSAGE_DOMAIN, VAULT_MESSAGE_DOMAIN } from '../src/layouts.ts';
 import { recoverEvmAddress } from '../src/signers/evm.ts';
 import { sep53MessageHash, stellarTransactionHash, verifyStellarSignature } from '../src/signers/stellar.ts';
 import {
   WALLET_RECORD_DOMAIN,
+  WALLET_RECORD_PROOFS_DOMAIN,
+  WALLET_RECORD_PROOFS_DOMAIN_V2,
   WALLET_RECORD_SESSION_DOMAIN,
   type WalletRecordChain,
   type WalletRecordContext,
@@ -32,7 +38,7 @@ import {
 
 const PRK = fromHex('11'.repeat(32));
 const OTHER_PRK = fromHex('22'.repeat(32));
-const ADDR = deriveAddresses(PRK);
+const ADDR = deriveWalletAddresses(PRK);
 const PK = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
 const CTX: WalletRecordContext = {
   env: 'local-e2e',
@@ -217,8 +223,10 @@ function referenceSessionMessage(c: WalletRecordContext, proofs: WalletRecordPro
   };
   const t = Buffer.alloc(8);
   t.writeBigUInt64LE(BigInt(c.issuedAtMs));
+  const near = proofs.near ? [b('near'), b(proofs.near.address), bb(proofs.near.signature)] : [];
+  const domain = proofs.near ? 'hana-id/wallet-record-proofs/v2' : 'hana-id/wallet-record-proofs/v1';
   const p = createHash('sha256')
-    .update(Buffer.concat([Buffer.from('hana-id/wallet-record-proofs/v1'), Buffer.of(0), b('stellar'), b(proofs.stellar.address), bb(proofs.stellar.signature), b('evm'), b(proofs.evm.address), bb(proofs.evm.signature)]))
+    .update(Buffer.concat([Buffer.from(domain), Buffer.of(0), b('stellar'), b(proofs.stellar.address), bb(proofs.stellar.signature), b('evm'), b(proofs.evm.address), bb(proofs.evm.signature), ...near]))
     .digest();
   return Buffer.concat([Buffer.from('hana-id/wallet-record-session/v1'), Buffer.of(0), b(c.env), b(c.signer), b(c.appId), b(c.scopeId), b(c.path), Buffer.from(c.sessionPublicKey), t, p]);
 }
@@ -281,6 +289,98 @@ describe('the session signature over the whole record', () => {
       // Different within the first 8 bytes ("hana-id/" vs "hana-id-") or later, never a prefix of each other.
       expect(Buffer.from(m.subarray(0, other.length)).toString('utf8')).not.toBe(other);
     }
+  });
+});
+
+// ---- NEAR (D755): the third record, under the v2 proofs domain ----
+
+describe('the NEAR record', () => {
+  const seed = () => withChainKey(PRK, 'near', 0, (k) => Uint8Array.from(k));
+  const signature = sign('near');
+  const statement = walletRecordStatement(CTX, 'near', ADDR.near);
+
+  it('is the documented layout with chain "near" and the implicit account id', () => {
+    expect(toHex(statement)).toBe(referenceStatement(CTX, 'near', ADDR.near).toString('hex'));
+    expect(ADDR.near).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  it('verifies by the account’s own key only, for the canonical (lowercase) id only, and binds every field', () => {
+    expect(verifyWalletRecord(CTX, 'near', { address: ADDR.near, signature })).toBe(ADDR.near);
+    const other = deriveWalletAddresses(OTHER_PRK);
+    expect(verifyWalletRecord(CTX, 'near', { address: ADDR.near, signature: sign('near', CTX, OTHER_PRK, ADDR.near) })).toBeNull();
+    expect(verifyWalletRecord(CTX, 'near', { address: other.near, signature })).toBeNull();
+    expect(verifyWalletRecord(CTX, 'near', { address: ADDR.near.toUpperCase(), signature })).toBeNull();
+    expect(verifyWalletRecord(CTX, 'near', { address: `${ADDR.near}.testnet`, signature })).toBeNull();
+    expect(verifyWalletRecord(CTX, 'near', { address: ADDR.near, signature: signature.subarray(1) })).toBeNull();
+    // The Stellar record (same curve, another key and chain) is not a NEAR record, nor the other way round.
+    expect(verifyWalletRecord(CTX, 'near', { address: ADDR.near, signature: sign('stellar') })).toBeNull();
+    expect(verifyWalletRecord(CTX, 'stellar', { address: ADDR.stellar, signature })).toBeNull();
+    expect(() => walletRecordStatement(CTX, 'near', ADDR.near.toUpperCase())).toThrow(/canonical/u);
+    for (const c of [{ path: 's1#google#9999#0' }, { issuedAtMs: CTX.issuedAtMs + 1 }, { appId: 'app_Other' }, { env: 'sandbox-dev' }, { sessionPublicKey: new Uint8Array(32).fill(9) }]) {
+      expect(verifyWalletRecord({ ...CTX, ...c }, 'near', { address: ADDR.near, signature })).toBeNull();
+    }
+  });
+
+  it('is never a NEAR transaction, delegate action or NEP-413 signature: those sign a 32-byte sha256, the record signs the longer statement', () => {
+    const pk = fromHex(ADDR.near);
+    expect(statement.length).toBeGreaterThan(32);
+    expect(ed25519.verify(signature, statement, pk, { zip215: false })).toBe(true);
+    // Whatever 32-byte hash a NEAR signer could have made from these bytes, the record signature is not over it.
+    expect(ed25519.verify(signature, sha256(statement), pk)).toBe(false);
+    expect(ed25519.verify(signature, nearTransactionHash(statement), pk)).toBe(false);
+    expect(ed25519.verify(signature, nearDelegateActionHash(statement), pk)).toBe(false);
+    expect(ed25519.verify(signature, nep413Hash(statement), pk)).toBe(false);
+    // And the other way round: the vault's real NEAR signatures over real requests are not records.
+    const s = seed();
+    try {
+      const tx = nearTxBytes([transfer(1n)]);
+      const da = nearDelegateBytes([functionCall('add_message', { text: 'hi' }, 30_000_000_000_000n, 0n)]);
+      const txSig = ed25519.sign(nearTransactionHash(tx), s);
+      const daSig = ed25519.sign(nearDelegateActionHash(da), s);
+      // A partner page could ask for a NEP-413 message whose text is the statement itself, with any recipient.
+      const nep = encodeNep413Message({ message: new TextDecoder().decode(statement), recipient: 'hana-id', nonce: new Uint8Array(32), callbackUrl: null });
+      const nepSig = Buffer.from(signNep413Message(s, nep).signature, 'base64');
+      for (const sig of [txSig, daSig, Uint8Array.from(nepSig)]) expect(verifyWalletRecord(CTX, 'near', { address: ADDR.near, signature: Uint8Array.from(sig) })).toBeNull();
+    } finally {
+      s.fill(0);
+    }
+  });
+});
+
+describe('the session signature with a NEAR record (v2 proofs)', () => {
+  const proofs3 = (ctx: WalletRecordContext, prk = PRK): WalletRecordProofs => {
+    const a = deriveWalletAddresses(prk);
+    return {
+      stellar: { address: a.stellar, signature: sign('stellar', ctx, prk, a.stellar) },
+      evm: { address: a.evm, signature: sign('evm', ctx, prk, a.evm) },
+      near: { address: a.near, signature: sign('near', ctx, prk, a.near) },
+    };
+  };
+
+  it('is the documented layout, v2 domain, stellar, evm then near', () => {
+    const p = proofs3(CTX);
+    expect(toHex(walletRecordSessionMessage(CTX, p))).toBe(referenceSessionMessage(CTX, p).toString('hex'));
+    expect(WALLET_RECORD_PROOFS_DOMAIN_V2).not.toBe(WALLET_RECORD_PROOFS_DOMAIN);
+    expect(WALLET_RECORD_PROOFS_DOMAIN_V2.startsWith(WALLET_RECORD_PROOFS_DOMAIN) || WALLET_RECORD_PROOFS_DOMAIN.startsWith(WALLET_RECORD_PROOFS_DOMAIN_V2)).toBe(false);
+  });
+
+  it('can’t be taken for two chains, nor two for three: a NEAR record can’t be added to or taken from a signed body', async () => {
+    const s = await sessionKey();
+    const ctx = { ...CTX, sessionPublicKey: s.publicKey };
+    const three = proofs3(ctx);
+    const { near, ...two } = three;
+    const sig3 = await signWalletRecordSession(s.privateKey, ctx, three);
+    const sig2 = await signWalletRecordSession(s.privateKey, ctx, two);
+    expect(verifyWalletRecordSession(ctx, three, sig3)).toBe(true);
+    expect(verifyWalletRecordSession(ctx, two, sig2)).toBe(true);
+    expect(verifyWalletRecordSession(ctx, two, sig3)).toBe(false);
+    expect(verifyWalletRecordSession(ctx, three, sig2)).toBe(false);
+    // An attacker's own NEAR record added to the victim's two-chain body.
+    const attacker = deriveWalletAddresses(OTHER_PRK);
+    expect(verifyWalletRecordSession(ctx, { ...two, near: { address: attacker.near, signature: sign('near', ctx, OTHER_PRK, attacker.near) } }, sig2)).toBe(false);
+    // Every NEAR byte is bound.
+    expect(verifyWalletRecordSession(ctx, { ...three, near: { ...near!, address: attacker.near } }, sig3)).toBe(false);
+    expect(verifyWalletRecordSession(ctx, { ...three, near: { ...near!, signature: Uint8Array.from(near!.signature, (x, i) => (i === 0 ? x ^ 1 : x)) } }, sig3)).toBe(false);
   });
 });
 

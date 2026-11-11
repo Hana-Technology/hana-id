@@ -1042,8 +1042,18 @@ describe('/export', () => {
       await flush();
       expect(r.clipboardWrites[0]).toMatch(/^ed25519:[1-9A-HJ-NP-Za-km-z]{80,90}$/u);
       expect(addressOfExport('near', r.clipboardWrites[0] as string)).toBe(address);
-      // The API takes exportChain 'stellar' or 'evm' only today: a NEAR export sends none (its event has no chain).
+      // An API that doesn't list near in walletChains (older ones omit the field) refuses exportChain 'near' with a 400
+      // that would fail the export: the page sends none to it (its event has no chain).
       expect(Object.keys(r.loginBodies[0] as object)).not.toContain('exportChain');
+    });
+
+    it('names near in the login body only to an API that lists it in walletChains (D755)', async () => {
+      const address = addressFor('near');
+      const { r } = await toReveal({ chain: 'near', address, config: appConfig({ walletChains: ['stellar', 'evm', 'near'] }) });
+      expect((r.loginBodies[0] as { exportChain?: string }).exportChain).toBe('near');
+      // Anything else in the field (a malformed or partial answer) is "no NEAR": nothing sent.
+      const other = await toReveal({ chain: 'near', address, config: appConfig({ walletChains: 'near' }) });
+      expect(Object.keys(other.r.loginBodies[0] as object)).not.toContain('exportChain');
     });
 
     it('copies an EVM key as 0x + 64 lowercase hex', async () => {

@@ -147,21 +147,34 @@ export async function handleMainnetDemoEvent(request: Request, env: Env, request
  */
 export async function recordKeyExport(
   env: Env,
-  a: { appId: string | null; scopeId: string; root: { provider: string; sub: string }; chain: 'stellar' | 'evm' | null; requestId: string },
+  a: { appId: string | null; scopeId: string; root: { provider: string; sub: string }; chain: 'stellar' | 'evm' | 'near' | null; requestId: string },
 ): Promise<void> {
   const user = await directoryUser(env, a.scopeId, a.root).catch(() => 'no_user_id_key' as const);
   if (typeof user === 'string') {
     log({ event: 'key_export_unrecorded', requestId: a.requestId, appId: a.appId ?? undefined, code: user }, 'warn');
     return;
   }
-  try {
-    await env.DB.prepare(
+  const insert = (chain: string | null) =>
+    env.DB.prepare(
       `INSERT INTO user_events (kind, app_id, scope_id, user_id, chain, network, address, usd_micros, request_id, at)
        VALUES ('key_exported', ?1, ?2, ?3, ?4, NULL, NULL, NULL, ?5, ?6)`,
     )
-      .bind(a.appId, a.scopeId, user.internalId, a.chain, a.requestId, Date.now())
+      .bind(a.appId, a.scopeId, user.internalId, chain, a.requestId, Date.now())
       .run();
+  try {
+    await insert(a.chain);
   } catch {
+    // Before migration 0019 the table's CHECK takes 'stellar' and 'evm' only (D755): a NEAR export is then recorded
+    // as before the change, with no chain, rather than not at all.
+    if (a.chain === 'near') {
+      try {
+        await insert(null);
+        log({ event: 'key_export_chain_dropped', requestId: a.requestId, appId: a.appId ?? undefined, code: 'near_chain_unsupported' }, 'warn');
+        return;
+      } catch {
+        // Fall through to the generic note.
+      }
+    }
     log({ event: 'key_export_unrecorded', requestId: a.requestId, appId: a.appId ?? undefined, code: 'write_failed' }, 'warn');
   }
 }

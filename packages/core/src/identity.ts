@@ -21,8 +21,8 @@
 import { ed25519 } from '@noble/curves/ed25519';
 import { hmac } from '@noble/hashes/hmac';
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2';
-import { STRKEY_VERSION, checksumEvmAddress, decodeStrKey, parseEvmAddress } from './addresses.ts';
-import { type Bytes, base64UrlEncode, borshString, concatBytes, sha256, toBytes, u32le, u64le, utf8 } from './bytes.ts';
+import { STRKEY_VERSION, checksumEvmAddress, decodeStrKey, isNearImplicitAccountId, parseEvmAddress } from './addresses.ts';
+import { type Bytes, base64UrlEncode, borshString, concatBytes, fromHex, sha256, toBytes, u32le, u64le, utf8 } from './bytes.ts';
 import { recoverEvmAddress, signEvmDigest } from './signers/evm.ts';
 
 export const IDENTITY_MESSAGE_DOMAIN = 'hana-id-identity-v1:';
@@ -60,6 +60,11 @@ export const IDENTITY_MAX_MAX_AGE_MS = IDENTITY_TOKEN_MAX_LIFETIME_S * 1000;
 
 export type IdentityChain = 'stellar' | 'evm';
 export const IDENTITY_CHAINS: readonly IdentityChain[] = ['stellar', 'evm'];
+/**
+ * A chain whose address a Hana proof can name: the identity chains and NEAR (the wallet record's third chain, D755).
+ * IDENTITY_CHAINS stays exactly Stellar then EVM: the identity token's proofs hash iterates it.
+ */
+export type ProofChain = IdentityChain | 'near';
 /** Login providers a path can carry (`scope#provider#sub#key_index`). Email and Apple come with their batches. */
 export type LoginProvider = string;
 
@@ -147,7 +152,7 @@ export interface WalletProofContext {
 }
 
 /** "hana-id/identity-wallet/v1" ‖ 0x00 ‖ borsh(signer) ‖ borsh(appId) ‖ sessionPk(32) ‖ borsh(chain) ‖ borsh(address). */
-export function walletProofMessage(ctx: WalletProofContext, chain: IdentityChain, address: string): Bytes {
+export function walletProofMessage(ctx: WalletProofContext, chain: ProofChain, address: string): Bytes {
   if (ctx.sessionPublicKey.length !== 32) throw new Error('Session public key must be 32 bytes');
   return concatBytes(utf8(IDENTITY_WALLET_DOMAIN), Uint8Array.of(0), borshString(ctx.signer), borshString(ctx.appId), toBytes(ctx.sessionPublicKey), borshString(chain), borshString(address));
 }
@@ -166,24 +171,30 @@ export function walletProofsHash(proofs: WalletProofs): Bytes {
 }
 
 /**
- * A wallet proof by `key` (the Stellar Ed25519 seed or the EVM secp256k1 key `d`, as derivation.ts withChainKey hands
- * it). Synchronous, so it fits inside withChainKey; the key is never kept.
+ * A wallet proof by `key` (the Stellar or NEAR Ed25519 seed, or the EVM secp256k1 key `d`, as derivation.ts
+ * withChainKey hands it). Ed25519 signs the message itself; EVM its sha256. Synchronous, so it fits inside
+ * withChainKey; the key is never kept.
  */
-export function signWalletProof(chain: IdentityChain, key: Uint8Array, message: Uint8Array): Bytes {
-  if (chain === 'stellar') {
+export function signWalletProof(chain: ProofChain, key: Uint8Array, message: Uint8Array): Bytes {
+  if (chain === 'stellar' || chain === 'near') {
     if (key.length !== 32) throw new Error('Ed25519 seed must be 32 bytes');
     return toBytes(ed25519.sign(message, key));
   }
   return signEvmDigest(key, sha256(message));
 }
 
-/** The canonical form of an address for the proof message (G… as is, EVM in EIP-55), or null when malformed. */
-export function canonicalWalletAddress(chain: IdentityChain, address: string): string | null {
+/**
+ * The canonical form of an address for the proof message (G… as is, EVM in EIP-55, a NEAR implicit account id as is:
+ * 64 lowercase hex characters, no other case), or null when malformed.
+ */
+export function canonicalWalletAddress(chain: ProofChain, address: string): string | null {
   try {
     if (chain === 'stellar') {
       decodeStrKey(STRKEY_VERSION.ed25519PublicKey, address);
       return address;
     }
+    if (chain === 'near') return isNearImplicitAccountId(address) ? address : null;
+    if (chain !== 'evm') return null;
     return checksumEvmAddress(parseEvmAddress(address));
   } catch {
     return null;
@@ -195,14 +206,14 @@ export function canonicalWalletAddress(chain: IdentityChain, address: string): s
  * message) and the signature over walletProofMessage(ctx, chain, canonical) is by that address's key. Returns the
  * canonical address, or null.
  */
-export function verifyWalletProof(ctx: WalletProofContext, chain: IdentityChain, proof: WalletProof): string | null {
+export function verifyWalletProof(ctx: WalletProofContext, chain: ProofChain, proof: WalletProof): string | null {
   const address = canonicalWalletAddress(chain, proof.address);
   if (address === null) return null;
   const message = walletProofMessage(ctx, chain, address);
   try {
-    if (chain === 'stellar') {
+    if (chain === 'stellar' || chain === 'near') {
       if (proof.signature.length !== 64) return null;
-      const pk = decodeStrKey(STRKEY_VERSION.ed25519PublicKey, address);
+      const pk = chain === 'near' ? fromHex(address) : decodeStrKey(STRKEY_VERSION.ed25519PublicKey, address);
       // zip215: false, the strict RFC 8032 rules (canonical encodings), as the contract's verifier.
       return ed25519.verify(proof.signature, message, pk, { zip215: false }) ? address : null;
     }

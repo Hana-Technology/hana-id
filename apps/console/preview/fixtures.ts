@@ -353,7 +353,7 @@ export function pendingUpgrades(now: number, paused = false): PendingUpgradesVie
 }
 
 export function users(now: number) {
-  const u = (n: number, sup: string, kinds: { kind: string; status: 'active' | 'pending' }[], evm: string, stellar: string, seen: number) => ({
+  const u = (n: number, sup: string, kinds: { kind: string; status: 'active' | 'pending' }[], evm: string, stellar: string, seen: number, email: string | null = null) => ({
     userId: `u1_${hex(`user${n}`, 22).replace(/[0-9]/gu, (c) => 'AbCdEfGhIj'[Number(c)]!)}`,
     supportId: sup,
     scopeId: 's_lumen_live',
@@ -364,12 +364,21 @@ export function users(now: number) {
       { chain: 'evm' as const, address: evm, firstSeenAt: now - (30 - n) * D, lastUsedAt: now - seen },
       { chain: 'stellar' as const, address: stellar, firstSeenAt: now - (30 - n) * D, lastUsedAt: now - seen },
     ],
+    email,
   });
   return [
     u(1, 'HANA-7KQ2-M4XD', [{ kind: 'google', status: 'active' }], '0x4E2a9c1B7d3F6e8A0b5C9d2E7f1A3b6C8d0E2f41', 'GBX4K7QWZ2M5N8P3R6T9V2Y5B8E1H4K7N0Q3S6U9W2Z5C8F1J4L7P2', 14 * 60_000),
     u(2, 'HANA-9TPL-2WRN', [{ kind: 'google', status: 'active' }, { kind: 'email', status: 'active' }], '0x91bD3e7F0a2C4d6E8f1A3b5C7d9E0f2A4b6C8d1E', 'GCQ7M2P5R8T1V4X7Z0B3D6F9H2K5M8P1R4T7V0X3Z6B9D2F5H8K1M4', 3 * H),
-    u(3, 'HANA-4HJS-8BQC', [{ kind: 'email', status: 'active' }, { kind: 'google', status: 'pending' }], '0x0c7A2e9B4d1F6a3C8e5B0d7F2a9C4e1B6d3F8a51', 'GDA2C5E8G1J4L7N0Q3S6U9W2Y5A8C1E4G7J0L3N6Q9S2U5W8Y1A4C7', 2 * D),
+    u(3, 'HANA-4HJS-8BQC', [{ kind: 'email', status: 'active' }, { kind: 'google', status: 'pending' }], '0x0c7A2e9B4d1F6a3C8e5B0d7F2a9C4e1B6d3F8a51', 'GDA2C5E8G1J4L7N0Q3S6U9W2Y5A8C1E4G7J0L3N6Q9S2U5W8Y1A4C7', 2 * D, 'mei.lin@example.com'),
   ];
+}
+
+/** One user's detail (`GET /api/orgs/:org/users/:userId`): the list's fields and each app's shared address. */
+export function userDetail(now: number, userId: string) {
+  const user = users(now).find((x) => x.userId === userId);
+  if (!user) return undefined;
+  const emails = user.email ? [{ appId: 'app_Lm4Pq9Zs2v', appName: 'Lumen Wallet', email: user.email, sharedAt: now - 5 * D }] : [];
+  return { ...user, emails };
 }
 
 export function audit(now: number): AuditAnswer {

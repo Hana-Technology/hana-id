@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: "Audit": the titles and details' words from `@hana-id/console-core/audit-words`, shared with the feed digests, every code titled, a null field as "none", D704); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: "An app's page": changes in force never shown as waiting, the re-read at the next effective time, the snippet's environment, the install line's version, the Audit's details; the Users screen from the manifest; D701–D703; after review: "waiting" on the server's clock, "Unnamed app"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the phone-width header and tables; Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer shows the scope's internal id); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
+Last verified: 2026-11-11 (branch `fix/console-users-table`, not merged, not deployed: the Users list in a card like every console table, its ids kept whole, its wallets shortened with a copy each, the header band's rounded corners, the preview's user detail); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: "Audit": the titles and details' words from `@hana-id/console-core/audit-words`, shared with the feed digests, every code titled, a null field as "none", D704); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: "An app's page": changes in force never shown as waiting, the re-read at the next effective time, the snippet's environment, the install line's version, the Audit's details; the Users screen from the manifest; D701–D703; after review: "waiting" on the server's clock, "Unnamed app"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the phone-width header and tables; Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer shows the scope's internal id); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
 2026-11-06 (branch `fix/session-expiry-ux`: the session's end mid-task, the banner, the warning before
 the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenarios, D424); 2026-11-06 (branch
 `feat/console-ux-redesign`: the SPA's layout, error display and the local preview, D421).
@@ -84,7 +84,14 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
 - **Users** (`/orgs/:org/users`): on where the env's manifest sets `console.usersScreen: true` (`gen` writes
   `USERS_SCREEN`; testnet only, sandbox-dev has it on, D702); off elsewhere, the tab hidden and its routes `404` (D357).
   It shows a user's email address only once the user shared it with one of the org's apps (D411); an app name that
-  isn't one display-safe line shows as "Unnamed app" rather than hiding the user.
+  isn't one display-safe line shows as "Unnamed app" rather than hiding the user. The list sits in a card like every
+  console table (`.table-wrap` under the content; the others sit in panels); the User ID and the Support ID never break
+  mid-id (the table scrolls inside its card instead, below about 1280 px wide); a wallet address shows as its ends
+  (`0x4E2a…2f41`, `ui.tsx` `ShortValue`), with the whole address in its title, read out by screen readers and copied by
+  its Copy button; an email address wraps only after its `@`. A user's detail shows each address in full, with a Copy.
+- **Tables**: a table directly in the content sits in a card (`.content > .table-wrap > .table`: surface, border,
+  rounded corners, the header band rounded to match); a table in a panel gets the panel's inner frame instead. A bare
+  table on the page background is a bug.
 
 ## Brand
 
@@ -141,4 +148,6 @@ answers 401: the "Your session has ended" banner; switch to `owner` in another t
 (new, no origins), `app_Lg5Yn3Wq8d` (suspended). The fresh sign-in page's states: `/actions/act_demo_origin`,
 `act_demo_policy`, `act_demo_settings`, `act_demo_invite`, `act_demo_owner`, `act_demo_ok`, `act_demo_failed`,
 `act_demo_expired`. "Confirm with Google" in the preview marks the action done and comes straight back (no Google).
-The invite and cancel pages: `/invite#t=<43 characters>`, `/cancel/gc_Ch4kq81Ns#t=<43 characters>`.
+The invite and cancel pages: `/invite#t=<43 characters>`, `/cancel/gc_Ch4kq81Ns#t=<43 characters>`. The Users page
+(`/orgs/org_7Hq2Lm9Xc4/users`) lists three made-up users, the third with a shared email; clicking a User ID opens
+its detail.

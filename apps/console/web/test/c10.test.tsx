@@ -396,6 +396,35 @@ describe('the Users screen (D310, D346)', () => {
     await waitFor(() => expect(calls.some((c) => c.url === '/api/orgs/org_a/users?search=ada%40user.example')).toBe(true));
   });
 
+  it('the list sits in the card wrapper; a wallet is shortened on screen, read out whole and copied whole', async () => {
+    usersOn();
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const address = USER.wallets[0]!.address;
+    routes['/api/orgs/org_a/users'] = { body: { users: [USER] } };
+    routes['/api/orgs/org_a/users/u1_AbCdEfGhIjKlMnOpQrStUv'] = { body: { user: { ...USER, emails: [] } } };
+    at('/orgs/org_a/users');
+    const table = (await screen.findByRole('columnheader', { name: 'Wallets' })).closest('table')!;
+    expect(table.parentElement!.classList.contains('table-wrap')).toBe(true);
+    const short = within(table).getByText('0x5290…9EE7');
+    expect(short.getAttribute('aria-hidden')).toBe('true');
+    const whole = within(table).getByText(address);
+    expect(whole.className).toBe('visually-hidden');
+    expect(whole.closest('code')!.getAttribute('title')).toBe(address);
+    fireEvent.click(within(table).getByRole('button', { name: 'Copy EVM address' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(address));
+    fireEvent.click(within(table).getByRole('button', { name: 'Copy User ID' }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('u1_AbCdEfGhIjKlMnOpQrStUv'));
+    // The detail shows the address in full, with its own copy button.
+    fireEvent.click(screen.getByRole('button', { name: 'Open u1_AbCdEfGhIjKlMnOpQrStUv' }));
+    const detail = (await screen.findByRole('heading', { name: 'User' })).closest('section')!;
+    await waitFor(() => expect(within(detail).getByText(address).tagName).toBe('CODE'));
+    fireEvent.click(within(detail).getByRole('button', { name: 'Copy EVM address' }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(address));
+    fireEvent.click(within(detail).getByRole('button', { name: 'Copy User ID' }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('u1_AbCdEfGhIjKlMnOpQrStUv'));
+  });
+
   it('a user’s detail lists each app’s shared address with its date, or "Not shared"', async () => {
     usersOn();
     const sharedAt = Date.UTC(2026, 10, 2, 12);

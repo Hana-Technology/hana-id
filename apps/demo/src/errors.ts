@@ -3,6 +3,7 @@
 // Hana code in `data.code`; a network failure inside the SDK can surface as a TypeError. Either carries the Hana API
 // request it came from in `data.requestId` (D405), when it came from one.
 import { isApiRequestId } from '@hana-id/core';
+import { displayText } from './near.ts';
 
 /** `near`: the NEAR card's gasless guestbook write (activate, sign, relay) and its reads from NEAR testnet. */
 export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy' | 'identity' | 'near';
@@ -96,13 +97,13 @@ const RELAYER_REASONS: Readonly<Record<string, string>> = {
   // After relaying.
   contract_rejected: 'The guestbook contract refused the message (is it 1 to 200 characters?). Nothing was stored.',
   delegate_rejected: 'NEAR testnet refused the signed request. Try again: the demo reads a fresh nonce and block.',
-  timeout: 'NEAR testnet hasn’t confirmed the transaction yet. Refresh the guestbook list in a moment to see whether it landed.',
+  timeout: 'NEAR testnet hasn’t confirmed the transaction yet: it may still land. Click Refresh on the guestbook list in a moment to see.',
   near_rejected: 'NEAR testnet refused the relayed transaction. Try again; the guestbook list shows whether it landed.',
   near_error: 'NEAR testnet returned an error for the relayed transaction. Try again; the guestbook list shows whether it landed.',
   near_unavailable: 'Hana’s relayer couldn’t reach NEAR testnet. Try again in a minute.',
   // Capacity and limits.
   app_budget_exhausted: 'The demo app has used up today’s free NEAR relays. Try again tomorrow (UTC).',
-  relay_budget_exhausted: 'Hana’s relayer has used up today’s testnet budget. Try again tomorrow (UTC).',
+  relay_budget_exhausted: 'The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).',
   relayer_busy: 'Hana’s relayer is busy. Wait a few seconds and try again.',
   relayer_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
   relayer_unconfigured: 'Hana’s relayer isn’t set up on this environment yet. Tell the Hana team.',
@@ -122,6 +123,11 @@ function nearMessage(e: unknown, code: string | number | null, reason: string | 
   // The relayer's answers carry their HTTP status in data.status (the SDK's relay and activate); the vault's don't.
   const fromRelayer = isObj(e) && isObj(e.data) && typeof e.data.status === 'number';
   if (action !== 'near' || !fromRelayer) return null;
+  // The contract's own panic text (the API's `error`, the SDK's message): from the chain, so shown made safe and short.
+  if (reason === 'contract_rejected') {
+    const why = displayText(errorInfo(e).message, 160).trim();
+    return `The guestbook contract refused the message${why ? `: ${why}` : ''}. Nothing was stored.`;
+  }
   if (reason !== null && Object.hasOwn(RELAYER_REASONS, reason) && (code === 4100 || code === 'api_unavailable' || code === 'rate_limited')) return RELAYER_REASONS[reason]!;
   if (code === 4100) return `${RELAYER_REFUSED}${reason ? ` (${reason})` : ''}. ${REPORT}`;
   if (code === 'api_unavailable') return reason ? `${RELAYER_DOWN} (${reason})` : 'Could not reach Hana’s relayer. Check your connection and try again.';

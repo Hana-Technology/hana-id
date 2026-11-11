@@ -257,7 +257,8 @@ export class Chain {
     if (method === 'e2e_near_activate') {
       const created = !this.nearAccounts.has(account);
       if (created) this.nearAccounts.set(account, (NEAR_HEIGHT - 1n) * 1_000_000n);
-      return { created };
+      // The relayer's answer (apps/api's POST /v1/near/activate): the key's nonce and the height it was read at.
+      return { created, accountId: account, accessKeyNonce: String(this.nearAccounts.get(account)), blockHeight: Number(NEAR_HEIGHT) };
     }
     const text = String(p.text).trim();
     this.guestbook.push({ account_id: account, text, block_timestamp_ms: Date.now() });

@@ -68,6 +68,17 @@ export interface NearRelayResult {
 export interface NearActivateResult {
   /** true when Hana's relayer created the account now; false when it already existed. */
   created: boolean;
+  /** The user's account (the session's). */
+  accountId: string;
+  /**
+   * The access key's nonce as the relayer read it (decimal u64), or null when the account exists without the user's key.
+   * With `blockHeight`, what `nearDelegateNonce({ keyNonce, blockHeight })` takes; absent from a relayer that doesn't say.
+   */
+  accessKeyNonce?: string | null;
+  /** The final height the relayer read it at. */
+  blockHeight?: number;
+  /** base58 hash of the transfer that created the account, when `created`. */
+  transactionHash?: string;
 }
 
 export type NearSignTransactionResult = PortResultMap['near_signTransaction'];
@@ -171,8 +182,16 @@ export class HanaNear {
     const accountId = this.#host.nearAccountId();
     if (accountId === null) throw hanaError(4100, 'Not logged in, or this Hana vault has no NEAR account yet');
     const b = await this.#post('activate', { accountId });
-    if (typeof b.created !== 'boolean') throw hanaError('api_unavailable', 'Hana’s relayer gave an answer the SDK can’t read');
-    return { created: b.created };
+    if (typeof b.created !== 'boolean' || (b.accountId !== undefined && b.accountId !== accountId)) throw hanaError('api_unavailable', 'Hana’s relayer gave an answer the SDK can’t read');
+    // The optional fields only in their exact shapes (anything else is left out, not trusted).
+    const nonce = b.accessKeyNonce === null || (typeof b.accessKeyNonce === 'string' && /^(?:0|[1-9]\d{0,19})$/u.test(b.accessKeyNonce)) ? b.accessKeyNonce : undefined;
+    return {
+      created: b.created,
+      accountId,
+      ...(nonce !== undefined ? { accessKeyNonce: nonce } : {}),
+      ...(Number.isSafeInteger(b.blockHeight) && (b.blockHeight as number) > 0 ? { blockHeight: b.blockHeight as number } : {}),
+      ...(isBase58Hash(b.transactionHash) ? { transactionHash: b.transactionHash } : {}),
+    };
   }
 
   /** POST {apiUrl}/v1/near/{path} with the publishable key: the answer's JSON object, or the HanaError of a refusal. */

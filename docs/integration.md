@@ -838,14 +838,18 @@ another refusal (`data.reason` is the API's code, `data.requestId` its request I
 **A new account: activate it first.** A user's implicit account doesn't exist on chain until something is sent to
 it, so a brand-new user's first delegate action is refused (`near_key_unknown`). `hana.near.activate()` asks Hana's
 relayer to create it (`POST /v1/near/activate` with the user's own account, the same publishable key and origin check
-as `relay`; no popup) and resolves `{ created }`: `true` when it created the account now, `false` when it already
-existed, so calling it again is harmless. It rejects like `relay`. Do it before the click (when the gasless button
-appears), then read `view_access_key` for the nonce: an account that didn't exist has no key to read before.
+as `relay`; no popup) and resolves `{ created, accountId, accessKeyNonce, blockHeight, transactionHash? }`: `created`
+is `true` when it created the account now and `false` when it already existed, so calling it again is harmless;
+`accessKeyNonce` (a decimal string, or `null` if the account exists without this key) and `blockHeight` are what the
+relayer read, ready for `nearDelegateNonce`. It rejects like `relay`; right after a login it can answer 4100 with
+`data.reason: 'near_account_unrecorded'` for a few seconds (Hana records the account just after login): retry for
+about 20 s. Do it before the click (when the gasless button appears or the user starts typing).
 
 ```ts
 // Before the click: once per account and session.
-await hana.near.activate();   // { created: true } the first time, { created: false } after
-const key = await rpc('query', { request_type: 'view_access_key', finality: 'final', account_id: accountId, public_key: publicKey.toString() });
+const a = await hana.near.activate();   // { created: true, ... } the first time, { created: false, ... } after
+const nonce = nearDelegateNonce({ keyNonce: BigInt(a.accessKeyNonce!), blockHeight: a.blockHeight! });
+// Signing more than a few seconds later: read view_access_key again for a fresh nonce and height.
 ```
 
 **Sign in with NEAR (NEP-413).** A signature that proves the user holds the account, for your backend:

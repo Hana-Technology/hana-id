@@ -59,8 +59,8 @@ test('screens of the NEAR card', async ({ page, browserName }) => {
     const body = req.postDataJSON() as Record<string, string>;
     if (req.url().endsWith('/activate')) {
       await activation.wait;
-      const { created } = await chain('e2e_near_activate', { account_id: body.accountId });
-      return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ created }) });
+      const answer = await chain('e2e_near_activate', { account_id: body.accountId });
+      return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(answer) });
     }
     if (failNext) return route.fulfill({ status: 403, headers: cors, contentType: 'application/json', body: JSON.stringify({ code: 'receiver_not_allowed', error: 'receiver not allowed' }) });
     await relaying.wait;

@@ -186,7 +186,7 @@ describe('hana.near.activate', () => {
   it("POSTs the user's own account to /v1/near/activate with the publishable key, and reads { created }", async () => {
     s = setup({ apiUrl: API, fetch: answer({ created: true }) });
     await s.vault.connect(NEAR_IN);
-    await expect(s.client.near.activate()).resolves.toEqual({ created: true });
+    await expect(s.client.near.activate()).resolves.toEqual({ created: true, accountId: NEAR });
     const [url, init] = s.fetch.mock.calls.at(-1) as [string, RequestInit];
     expect(url).toBe(`${API}/v1/near/activate`);
     expect(init.method).toBe('POST');
@@ -200,7 +200,27 @@ describe('hana.near.activate', () => {
   it('an account that exists already: { created: false }; extra fields are dropped', async () => {
     s = setup({ apiUrl: API, fetch: answer({ created: false, extra: '<b>' }) });
     await s.vault.connect(NEAR_IN);
-    await expect(s.client.near.activate()).resolves.toEqual({ created: false });
+    await expect(s.client.near.activate()).resolves.toEqual({ created: false, accountId: NEAR });
+  });
+
+  it("passes on the relayer's key nonce, height and transaction, each only in its exact shape", async () => {
+    const TX = '11111111111111111111111111111111';
+    s = setup({ apiUrl: API, fetch: answer({ created: true, accountId: NEAR, accessKeyNonce: '199999999000000', blockHeight: 200_000_000, transactionHash: TX, nearTx: {} }) });
+    await s.vault.connect(NEAR_IN);
+    await expect(s.client.near.activate()).resolves.toEqual({ created: true, accountId: NEAR, accessKeyNonce: '199999999000000', blockHeight: 200_000_000, transactionHash: TX });
+    s.client.destroy();
+    s = setup({ apiUrl: API, fetch: answer({ created: false, accountId: NEAR, accessKeyNonce: null, blockHeight: 200_000_000 }) });
+    await s.vault.connect(NEAR_IN);
+    await expect(s.client.near.activate()).resolves.toEqual({ created: false, accountId: NEAR, accessKeyNonce: null, blockHeight: 200_000_000 });
+    s.client.destroy();
+    s = setup({ apiUrl: API, fetch: answer({ created: false, accessKeyNonce: 12, blockHeight: -1, transactionHash: 'x' }) });
+    await s.vault.connect(NEAR_IN);
+    await expect(s.client.near.activate()).resolves.toEqual({ created: false, accountId: NEAR });
+    s.client.destroy();
+    // Another account's answer is not this user's.
+    s = setup({ apiUrl: API, fetch: answer({ created: true, accountId: 'cd'.repeat(32) }) });
+    await s.vault.connect(NEAR_IN);
+    expect((await rejection(s.client.near.activate())).code).toBe('api_unavailable');
   });
 
   it('refuses before any call while logged out or with a vault that has no NEAR account (4100)', async () => {

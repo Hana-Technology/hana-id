@@ -102,9 +102,10 @@ describe('plainMessage', () => {
     expect(plainMessage(relayer(4100, 409, 'near_account_unrecorded'), 'near')).toMatch(/still setting up your NEAR account/u);
     expect(plainMessage(relayer(4100, 409, 'near_account_unknown'), 'near')).toMatch(/log out and log in again/u);
     expect(plainMessage(relayer('rate_limited', 429, 'app_budget_exhausted'), 'near')).toMatch(/used up today’s free NEAR relays/u);
-    expect(plainMessage(relayer(4100, 422, 'contract_rejected'), 'near')).toMatch(/guestbook contract refused/u);
+    expect(plainMessage(new HanaError(4100, 'Guestbook: text is longer than 200 characters after trimming\u202E', { status: 422, reason: 'contract_rejected' }), 'near')).toBe('The guestbook contract refused the message: Guestbook: text is longer than 200 characters after trimming\uFFFD. Nothing was stored.');
+    expect(plainMessage(relayer('api_unavailable', 504, 'timeout'), 'near')).toMatch(/may still land/u);
     expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'near')).toMatch(/only for calls to the demo guestbook/u);
-    expect(plainMessage(relayer('api_unavailable', 503, 'relay_budget_exhausted'), 'near')).toMatch(/used up today’s testnet budget/u);
+    expect(plainMessage(relayer('api_unavailable', 503, 'relay_budget_exhausted'), 'near')).toBe('The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).');
     expect(plainMessage(relayer(4100, 400, 'something_new'), 'near')).toMatch(/^Hana’s relayer refused this request \(something_new\)\. /u);
     expect(plainMessage(relayer(4100, 400), 'near')).toMatch(/^Hana’s relayer refused this request\. /u);
     expect(plainMessage(relayer('api_unavailable', 502, 'whatever'), 'near')).toBe('Hana’s relayer is unavailable right now. Try again in a minute. (whatever)');

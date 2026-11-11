@@ -171,8 +171,8 @@ describe('the mocked NEAR testnet for the demo’s NEAR card', () => {
   it('a user account exists only after activation, with its key at the creation height × 10^6, and the latest block', async () => {
     const chain = new Chain();
     expect((await call(chain, 'query', { request_type: 'view_access_key', finality: 'final', account_id: USER, public_key: 'ed25519:x' })).error?.cause.name).toBe('UNKNOWN_ACCOUNT');
-    expect((await call(chain, 'e2e_near_activate', { account_id: USER })).result).toEqual({ created: true });
-    expect((await call(chain, 'e2e_near_activate', { account_id: USER })).result).toEqual({ created: false });
+    expect((await call(chain, 'e2e_near_activate', { account_id: USER })).result).toMatchObject({ created: true, accountId: USER, accessKeyNonce: String((NEAR_HEIGHT - 1n) * 1_000_000n), blockHeight: Number(NEAR_HEIGHT) });
+    expect((await call(chain, 'e2e_near_activate', { account_id: USER })).result).toMatchObject({ created: false });
     const key = (await call(chain, 'query', { request_type: 'view_access_key', finality: 'final', account_id: USER, public_key: 'ed25519:x' })).result!;
     expect(BigInt(key.nonce as number)).toBe((NEAR_HEIGHT - 1n) * 1_000_000n);
     expect((await call(chain, 'query', { request_type: 'view_account', finality: 'final', account_id: USER })).result).toMatchObject({ amount: '0' });

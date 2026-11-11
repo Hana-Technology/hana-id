@@ -720,6 +720,35 @@ describe('the NEAR card', () => {
     expect(fake.near.signDelegateAction).not.toHaveBeenCalled();
   });
 
+  it("uses the relayer's answer to activate (the key's nonce and height) when the RPC doesn't show the new key yet", async () => {
+    boot();
+    rpc.key = null;
+    await loginFlow();
+    await settle();
+    fake.near.activate.mockImplementationOnce(async () => ({ created: true, accountId: NEAR_ACCOUNT, accessKeyNonce: '199999999000000', blockHeight: 200_000_005 }));
+    ($('near-text') as HTMLInputElement).value = 'lagging rpc';
+    click('near-write-button');
+    await settle();
+    expect(rpc.key).toBeNull();
+    expect(signedDelegate()).toMatchObject({ nonce: 199_999_999_000_001n, maxBlockHeight: 200_000_605n });
+    expect($('near-done-text').textContent).toContain('Your NEAR account was created for it.');
+  });
+
+  it('a relay that timed out may still land: says so and looks at the list again', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    fake.near.relay.mockImplementationOnce(async () => {
+      rpc.messages = [message(0, NEAR_ACCOUNT, 'slow one')];
+      throw hanaError('api_unavailable', { status: 504, reason: 'timeout' });
+    });
+    type('slow one');
+    click('near-write-button');
+    await settle();
+    expect($('near-error').textContent).toMatch(/it may still land/u);
+    expect($('near-messages').textContent).toContain('slow one');
+  });
+
   it('cancels the prepared window when reading NEAR fails, and says so in the card', async () => {
     boot();
     await loginFlow();

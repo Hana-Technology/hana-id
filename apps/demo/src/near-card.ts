@@ -10,7 +10,7 @@
 // (PREP_MAX_AGE_MS) builds the bytes and signs synchronously. Without one (the first seconds, a slow RPC, an expired
 // read), the click calls `hana.prepareApproval()` first, which opens the window inside the click, then reads, then
 // signs into that window; if reading fails, the ticket is cancelled.
-import type { ApprovalTicket } from '@hana-id/web';
+import type { ApprovalTicket, NearActivateResult } from '@hana-id/web';
 import type { DemoConfig } from './config.ts';
 import { type DemoAction, errorInfo } from './errors.ts';
 import {
@@ -123,7 +123,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
   let reading: { accountId: string; promise: Promise<Prep> } | null = null;
   /** Accounts known to exist on testnet this session (a key was read, or activate answered). */
   const activated = new Set<string>();
-  const activating = new Map<string, Promise<boolean>>();
+  const activating = new Map<string, Promise<NearActivateResult>>();
   /** Accounts this page's activation created, until their first write says so. */
   const justCreated = new Set<string>();
   /** The highest nonce this page signed per account, so a second write before the next read still goes up. */
@@ -180,15 +180,15 @@ export function startNearCard(deps: NearCardDeps): NearCard {
   }
 
   /** hana.near.activate once per account and session (a failure is forgotten, so the next try asks again). */
-  function activateOnce(): Promise<boolean> {
+  function activateOnce(): Promise<NearActivateResult> {
     const accountId = c.near.accountId!;
     let p = activating.get(accountId);
     if (!p) {
       p = whileUnrecorded(() => c.near.activate()).then(
-        ({ created }) => {
+        (r) => {
           activated.add(accountId);
-          if (created) justCreated.add(accountId);
-          return created;
+          if (r.created) justCreated.add(accountId);
+          return r;
         },
         (e: unknown) => {
           activating.delete(accountId);
@@ -200,18 +200,31 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     return p;
   }
 
-  /** A read showing the account's key: activates a new account first, then waits for its key to show. */
-  async function ensureReady(accountId: string, stage: (text: string) => void): Promise<{ prep: Prep; created: boolean }> {
+  /**
+   * A read showing the account's key: activates a new account first. The relayer's answer carries the key's nonce and
+   * the height it read them at, which serve as the read (the RPC may lag a block behind the new account); without
+   * them, the card reads the RPC until the key shows.
+   */
+  async function ensureReady(accountId: string, stage: (text: string) => void): Promise<{ prep: Prep }> {
     let p = fresh(accountId) ?? (await refresh(accountId));
-    if (p.key) return { prep: p, created: false };
+    if (p.key) return { prep: p };
     stage(STAGES.activating);
-    const created = await activateOnce();
+    const a = await activateOnce();
+    if (typeof a.accessKeyNonce === 'string' && a.blockHeight !== undefined) {
+      const height = BigInt(a.blockHeight);
+      p = { ...p, key: { nonce: BigInt(a.accessKeyNonce), blockHeight: height, blockHash: p.hash }, height: height > p.height ? height : p.height, at: clock() };
+      if (c.near.accountId === accountId) {
+        prep = p;
+        renderBalance();
+      }
+      return { prep: p };
+    }
     for (let i = 0; i < ACTIVATION_TRIES && !p.key; i++) {
-      if (i > 0 || !created) await deps.sleep(1000);
+      if (i > 0 || !a.created) await deps.sleep(1000);
       p = await refresh(accountId);
     }
     if (!p.key) throw nearPageError('near_account_pending', 'The account has no key on testnet yet');
-    return { prep: p, created };
+    return { prep: p };
   }
 
   /**
@@ -369,6 +382,8 @@ export function startNearCard(deps: NearCardDeps): NearCard {
           await loadList({ accountId, text: check.text });
         } catch (e) {
           stage(null);
+          // The relayer gave up waiting (504 `timeout`, the transaction pending): it may still land, so look again.
+          if (errorInfo(e).reason === 'timeout') loadList({ accountId, text: check.text }).catch(() => {});
           throw e;
         }
       },

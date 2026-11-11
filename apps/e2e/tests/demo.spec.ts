@@ -109,8 +109,8 @@ async function routeNearRelayer(page: Page): Promise<{ relayed: string[] }> {
     expect(req.headers()['x-hana-key']).toBe(DEMO_PK);
     const body = req.postDataJSON() as Record<string, string>;
     if (req.url().endsWith('/v1/near/activate')) {
-      const { created } = await chain('e2e_near_activate', { account_id: body.accountId });
-      return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ created, accountId: body.accountId }) });
+      const answer = await chain('e2e_near_activate', { account_id: body.accountId });
+      return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(answer) });
     }
     const { delegateAction: d } = decodeNearSignedDelegateAction(base64Decode(body.signedDelegateAction!));
     const call = d.actions[0] as { type: string; methodName: string; args: Uint8Array };

@@ -8,6 +8,7 @@
 //   hana.prepareApproval();      // in a click handler, before awaiting a quote: opens the approval popup now (D99)
 //   hana.logout(); hana.exportKey(chain); hana.revokeOtherDevices();
 //   await hana.getIdentityToken();  // a short-lived JWT for the partner's backend, or null (no popup; any handler)
+//   await hana.getProfile();        // the name the user shared with this app, from that token, or null
 //   hana.stellar; hana.ethereum; hana.signRaw(params);
 //
 // The client holds no key material and no token: it mounts the vault iframe (vault-connection.ts), opens the login
@@ -45,6 +46,7 @@ import { Emitter } from './emitter.ts';
 import { HanaError, RpcCode, asHanaError, hanaError } from './errors.ts';
 import { type EvmConfig, HanaEthereumProvider, announceEip6963, rdnsFor, validateEvmConfig } from './ethereum.ts';
 import { LoginAttempt, type LoginOptions, loginRequest, openLoginPopup } from './login.ts';
+import { type HanaProfile, profileFromIdentityToken, sameProfile } from './profile.ts';
 import { type FetchLike } from './rpc.ts';
 import { partnerPageIssues } from './requirements.ts';
 import { HanaStellarSigner, type StellarConfig, validateStellarConfig } from './stellar.ts';
@@ -105,6 +107,13 @@ export interface HanaEvents {
    * session ended (logout, expiry, revocation, a newer login).
    */
   identityTokenChanged: [string | null];
+  /**
+   * The user's shared name (`hana.profile`) changed: a new identity token carries a different `given_name` or
+   * `family_name` than the last one, or the token went (null) or came back after none. It doesn't fire for a new
+   * token with the same name. A change the user makes in Hana Home arrives with the next token minted for this app (up
+   * to about 55 min later: see getProfile).
+   */
+  profileChanged: [HanaProfile | null];
   /**
    * `supportId` changed: the user's Support ID arrived with a login or a restored session, or went (null) with the
    * session.
@@ -217,6 +226,8 @@ export class HanaClient extends Emitter<HanaEvents> {
   #lastLogin: LoginResult | null = null;
   #readyTimings: Record<string, number> | null = null;
   #identity: { token: string; expiresAtMs: number } | null = null;
+  /** The profile #identity's token carries (profile.ts), kept with it. */
+  #profile: HanaProfile | null = null;
   readonly #now: () => number;
   readonly #createdAt: number;
   readonly #testApp: boolean;
@@ -363,6 +374,14 @@ export class HanaClient extends Emitter<HanaEvents> {
   /** When that token expires (ms since the epoch), or null. */
   get identityTokenExpiresAtMs(): number | null {
     return this.#identity?.expiresAtMs ?? null;
+  }
+
+  /**
+   * The name in the last identity token this page received (`identityToken`), or null when there is none (logged out,
+   * or no token yet: call getProfile()). `profileChanged` fires when it changes. The same object until it does.
+   */
+  get profile(): HanaProfile | null {
+    return this.#profile;
   }
 
   /** The last login's full result (pk_test_ apps also get per-stage `timings`). */
@@ -564,6 +583,23 @@ export class HanaClient extends Emitter<HanaEvents> {
     return r.identityToken;
   }
 
+  /**
+   * The name the user set in Hana Home and shared with this app: `{givenName, familyName}`, each null when not set or
+   * not shared, read from the identity token's `given_name` and `family_name` claims (getIdentityToken, with the same
+   * `maxAgeMs`). Resolves null while logged out. Rejects exactly as getIdentityToken does.
+   *
+   * For display only: the page reads the token without checking its signature. Anything your backend trusts must come
+   * from the token itself, verified there against Hana's JWKS.
+   *
+   * When the user changes or stops sharing their name in Hana Home, this app sees it with its next identity token. The
+   * vault reuses a token until less than 5 min of its lifetime (at most 1 h) remain, so that is up to about 55 min;
+   * `getProfile({ maxAgeMs })` asks for a token minted at most that long ago (at least 30 s), so for a fresher name.
+   * Parts that aren't a name Hana would sign (too long, control or invisible characters) read as null.
+   */
+  async getProfile(opts: IdentityTokenOptions = {}): Promise<HanaProfile | null> {
+    return profileFromIdentityToken(await this.getIdentityToken(opts));
+  }
+
   /** Removes the vault iframe and every listener; pending and later calls reject with 4900. */
   destroy(): void {
     if (this.#destroyed) return;
@@ -751,11 +787,19 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.emit('mainnetDemoChanged', next);
   }
 
-  /** Records the current identity token and emits identityTokenChanged when it is a different one. */
+  /**
+   * Records the current identity token and emits identityTokenChanged when it is a different one, then profileChanged
+   * when its name differs from the last token's (both getters are updated before either event).
+   */
   #setIdentity(next: { token: string; expiresAtMs: number } | null): void {
     if ((this.#identity?.token ?? null) === (next?.token ?? null)) return;
     this.#identity = next;
+    const profile = profileFromIdentityToken(next?.token ?? null);
+    const profileChanged = !sameProfile(this.#profile, profile);
+    if (profileChanged) this.#profile = profile;
     this.emit('identityTokenChanged', next?.token ?? null);
+    // Unless a listener above already moved the token on (that change emitted its own events).
+    if (profileChanged && this.#identity === next) this.emit('profileChanged', profile);
   }
 
   #loggedOut(): void {

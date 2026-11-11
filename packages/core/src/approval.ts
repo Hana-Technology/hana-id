@@ -46,8 +46,8 @@ export type ApprovalChain = 'stellar' | 'evm' | 'near';
 export const APPROVAL_CHAINS: readonly ApprovalChain[] = ['stellar', 'evm', 'near'];
 
 /**
- * Kinds no auto-approve policy can ever cover. The NEAR kinds are here because no policy format covers NEAR yet
- * (D722): every NEAR request gets the approval popup.
+ * Kinds no auto-approve policy can ever cover. The NEAR kinds are here because no policy format covers NEAR yet:
+ * every NEAR request gets the approval popup.
  */
 export const NEVER_AUTO_APPROVED_KINDS: ReadonlySet<ApprovalKind> = new Set([
   'raw',

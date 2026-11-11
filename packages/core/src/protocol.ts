@@ -172,7 +172,7 @@ const isInt = (v: unknown, min: number, max: number): v is number => Number.isSa
 const isBytes = (v: unknown, min: number, max: number): v is Uint8Array => v instanceof Uint8Array && v.length >= min && v.length <= max;
 /** The chains of the first protocol (autoApproved events, raw signing): Stellar and EVM. */
 const isChain = (v: unknown): v is 'stellar' | 'evm' => v === 'stellar' || v === 'evm';
-/** Every wallet chain (approval requests, exports): Stellar, EVM and NEAR (D722). */
+/** Every wallet chain (approval requests, exports): Stellar, EVM and NEAR. */
 export type WalletChain = 'stellar' | 'evm' | 'near';
 const isWalletChain = (v: unknown): v is WalletChain => v === 'stellar' || v === 'evm' || v === 'near';
 const isHex = (v: unknown): v is `0x${string}` => typeof v === 'string' && /^0x(?:[0-9a-fA-F]{2})*$/u.test(v);
@@ -245,7 +245,7 @@ export const PORT_METHODS = [
    * `popupBlocked: true` when it couldn't, and the vault's launcher opens it).
    */
   'hana_requestEmailSharing',
-  /** NEAR (D722): sent only by an SDK of NEAR_SDK_MIN or later, to a vault that reported a NEAR address. */
+  /** NEAR: sent only by an SDK of NEAR_SDK_MIN or later, to a vault that reported a NEAR address. */
   'near_signTransaction',
   'near_signMessage',
   'near_signDelegateAction',
@@ -469,7 +469,7 @@ export interface PortAddresses {
   stellar: string;
   evm: string;
   /**
-   * The NEAR implicit account id (D722). Sent only to an SDK of NEAR_SDK_MIN or later (an older SDK's validators refuse
+   * The NEAR implicit account id. Sent only to an SDK of NEAR_SDK_MIN or later (an older SDK's validators refuse
    * a key they don't know, and would drop the whole answer); absent from a vault that predates NEAR.
    */
   near?: string;
@@ -477,7 +477,7 @@ export interface PortAddresses {
 
 /**
  * The first SDK version that takes `near` in PortAddresses and sends the near_* methods. The vault adds `near` to the
- * addresses only for an SDK whose `hana:hello` names this version or later (D725).
+ * addresses only for an SDK whose `hana:hello` names this version or later.
  */
 export const NEAR_SDK_MIN = '0.4.0';
 

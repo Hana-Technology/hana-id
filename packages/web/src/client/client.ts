@@ -73,7 +73,7 @@ export interface HanaAddresses {
   stellar: string;
   evm: string;
   /**
-   * The NEAR implicit account id (64 lowercase hex, D720). Absent only while Hana's vault predates NEAR (a deployment
+   * The NEAR implicit account id (64 lowercase hex). Absent only while Hana's vault predates NEAR (a deployment
    * in progress); `hana.near.accountId` is the same value or null.
    */
   near?: string;
@@ -210,7 +210,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   readonly ready: Promise<void>;
   readonly stellar: HanaStellarSigner;
   readonly ethereum: HanaEthereumProvider;
-  /** NEAR (D720–D729): the implicit account, transactions, delegate actions, NEP-413 messages and the relay. */
+  /** NEAR: the implicit account, transactions, delegate actions, NEP-413 messages and the relay. */
   readonly near: HanaNear;
   readonly vaultOrigin: string;
   readonly authOrigin: string;

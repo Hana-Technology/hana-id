@@ -39,7 +39,7 @@ export const DERIVATION_V1 = Object.freeze({
 } as const);
 
 /**
- * NEAR's tuple (D720): additive, in derivation v1 (same salt and expand label), not a member of DERIVATION_V1, whose
+ * NEAR's tuple: additive, in derivation v1 (same salt and expand label), not a member of DERIVATION_V1, whose
  * JSON is hashed by the Stellar and EVM guard. FROZEN at the address freeze like DERIVATION_V1.
  */
 export const DERIVATION_V1_NEAR = Object.freeze({ namespace: 'near', curve: 'ed25519', length: 32 } as const);
@@ -82,7 +82,7 @@ export function stellarSeed(prk: Uint8Array, account = 0): Bytes {
   return expandPrk(prk, derivationInfo(namespace, curve, account), length);
 }
 
-/** The RFC 8032 Ed25519 seed for NEAR account `account` (D720). The caller zeroes it. */
+/** The RFC 8032 Ed25519 seed for NEAR account `account`. The caller zeroes it. */
 export function nearSeed(prk: Uint8Array, account = 0): Bytes {
   const { namespace, curve, length } = DERIVATION_V1_NEAR;
   return expandPrk(prk, derivationInfo(namespace, curve, account), length);
@@ -154,7 +154,7 @@ export interface Addresses {
 }
 
 /**
- * Every wallet address: Addresses plus NEAR's implicit account id (D720). A separate type, so the frozen
+ * Every wallet address: Addresses plus NEAR's implicit account id. A separate type, so the frozen
  * deriveAddresses, the wallet proofs and the wallet record (which the API takes as exactly Stellar and EVM) keep their
  * shape.
  */

@@ -96,7 +96,7 @@ export const isTestEvmChain = (chainId: number): boolean => Number.isSafeInteger
 /** Whether a test app may sign for this Stellar network. */
 export const isTestStellarNetwork = (passphrase: string): boolean => passphrase !== STELLAR_MAINNET_PASSPHRASE;
 
-/** Whether a test app may sign a NEAR transaction or delegate action for this network (testnet only, D726). */
+/** Whether a test app may sign a NEAR transaction or delegate action for this network (testnet only). */
 export const isTestNearNetwork = (network: string): boolean => network === 'testnet';
 
 /** The user-facing explanation (vault errors, the partner client's errors, the approval popup). */

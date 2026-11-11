@@ -115,7 +115,7 @@ export function nearMethodName(name: string): { text: string | null; hex: string
   return { text: name.length > 0 && isDisplaySafeLine(name) ? name : null, hex: toHex(new TextEncoder().encode(name)) };
 }
 
-/** Why an action changes who controls an account (D110's rule, D723): shown under the red warning. */
+/** Why an action changes who controls an account (the rule Stellar's account-control operations follow): shown under the red warning. */
 export type NearControlChange = 'add_full_access_key' | 'add_function_call_key' | 'delete_key' | 'delete_account' | 'deploy_contract' | 'use_global_contract';
 
 /**

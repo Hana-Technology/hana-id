@@ -18,7 +18,7 @@
 import type { ScopeRow } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { mailLabel } from './env.ts';
-import { onChainChanged, onChainPending, type ScopeState } from './email/messages.ts';
+import { onChainChanged, onChainPending, type ScopeState, stableJson } from './email/messages.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
 import { type Budget, meteredEnv, recipients, sendToAll } from './mail.ts';
@@ -37,7 +37,8 @@ export interface WatchResult {
   failed: number;
 }
 
-const canon = (l: unknown[]): string => JSON.stringify(l.map((x) => JSON.stringify(x)).sort());
+// Key order must not matter: the snapshot is read back from jsonb, which reorders an owner's keys (stableJson).
+const canon = (l: unknown[]): string => JSON.stringify(l.map((x) => stableJson(x)).sort());
 export const sameState = (a: ScopeState, b: ScopeState): boolean => canon(a.owners) === canon(b.owners) && canon(a.clients) === canon(b.clients) && a.allowShared === b.allowShared;
 
 /**

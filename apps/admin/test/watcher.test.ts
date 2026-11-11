@@ -40,6 +40,33 @@ describe('the watcher', () => {
     expect(fake.about(app.scope)).toEqual([]);
   });
 
+  it('a snapshot read back with its keys reordered (Postgres jsonb) is the same state: no email, run after run', async () => {
+    const app = await seedHotApp();
+    chainScope(app.scope);
+    const data = storeAt(app.scope);
+    // What jsonb hands back for the chain's {"provider","sub"}: shorter keys first.
+    data.snapshots.set(app.scope, { owners: [{ Oidc: { sub: 'owner-sub-1', provider: 'google' } }], clients: [['google', 'client-1.apps.googleusercontent.com']], allowShared: false, seenAt: 1 });
+    for (let i = 0; i < 3; i++) {
+      data.state.set(WATCH_CURSOR, { value: app.scope.slice(0, -1), updatedAt: 0 });
+      const { r, fake } = await run(data);
+      expect(fake.about(app.scope)).toEqual([]);
+      expect(r.diffsNotified).toBe(0);
+    }
+  });
+
+  it('a real owner change against a reordered snapshot lists only what changed', async () => {
+    const app = await seedHotApp();
+    chainScope(app.scope, { owners: [OWNER, NEW_OWNER] });
+    const data = storeAt(app.scope);
+    data.snapshots.set(app.scope, { owners: [{ Oidc: { sub: 'owner-sub-1', provider: 'google' } }], clients: [['google', 'client-1.apps.googleusercontent.com']], allowShared: false, seenAt: 1 });
+    const { fake } = await run(data);
+    const mails = fake.about(app.scope);
+    expect(mails.length).toBeGreaterThan(0);
+    expect(mails[0]!.text).toContain('owner added: google sign-in attacker-sub-9');
+    expect(mails[0]!.text).not.toContain('owner removed');
+    expect(mails[0]!.text).not.toContain('owner added: google sign-in owner-sub-1');
+  });
+
   it('a pending proposal whose unlock time is not a valid time is never emailed or marked notified (fails closed)', async () => {
     const app = await seedHotApp();
     chainScope(app.scope, { pending: [{ id: 9, change: { SetOwners: { owners: [OWNER, NEW_OWNER] } }, unlock_at_ms: 1e300 }] });

@@ -339,7 +339,7 @@ describe('the scope page', () => {
     expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'owner_action', params: { scopeId: 's1', method: 'propose_change', change: { kind: 'AddClient', aud: '123-abc.apps.googleusercontent.com', clientProof: 'a.b.c', piiWarningAccepted: true } }, returnTo: { page: 'scope' } });
   });
 
-  it('a waiting change: one re-read when it unlocks on the server’s clock (the reader’s 3 h slow), then Execute (D712)', async () => {
+  it('a waiting change: one re-read when it unlocks on the server’s clock (the reader’s 3 h slow), then Execute (D713)', async () => {
     const real = Date.now.bind(Date);
     const unlockAt = real() + 300;
     let reads = 0;
@@ -354,7 +354,7 @@ describe('the scope page', () => {
     expect(await screen.findByText('Turn shared login on')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Execute' })).toBeNull();
     expect(await screen.findByRole('button', { name: 'Execute' }, { timeout: 4000 })).toBeTruthy();
-    expect(screen.getByText('Unlocked: anyone can execute it')).toBeTruthy();
+    expect(screen.getByText('Unlocked: any owner can execute it')).toBeTruthy();
     expect(reads).toBe(2);
   });
 

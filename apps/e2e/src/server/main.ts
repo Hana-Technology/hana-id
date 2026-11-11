@@ -1,5 +1,6 @@
 // Starts the local stack (Playwright's webServer, playwright.config.ts): builds the bundles, then serves, with the
-// default port base 4410 (HANA_E2E_PORT_BASE, src/stack.ts; each port is base + the offset shown)
+// default port base 4410 (HANA_E2E_PORT_BASE, src/ports.ts; each port is base + the offset shown; a linked worktree's
+// default base is its own, src/checkout-port.ts)
 //
 //   http://localhost:4410                  the partner test app
 //   http://site-b.localhost:4411           the partner test app on a second partner site
@@ -20,6 +21,7 @@
 //
 // Google is not served here: the tests route accounts.google.com and www.googleapis.com to an OIDC stub inside the
 // browser context (src/google-stub.ts), so the bundles keep their hard-coded Google endpoints.
+import '../port-env.ts'; // first: this checkout's port base, before stack.ts reads it
 import { buildAll } from '../build.ts';
 import { stackFingerprint } from '../fingerprint.ts';
 import { EMAIL_ISS, LIVE_API_URL, LIVE_AUTH_ORIGIN, LIVE_ENV_NAME, LIVE_NEAR_RPC, LIVE_VAULT_ORIGIN, PORTS } from '../stack.ts';

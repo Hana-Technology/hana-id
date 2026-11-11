@@ -134,6 +134,18 @@ describe('docs/integration.md', () => {
     expect(lines[0]!.length).toBeLessThan(200);
   });
 
+  it('names the current SDK release: the tarballs, the Last verified line and its release notes', () => {
+    const version = (JSON.parse(readText('../package.json')) as { version: string }).version;
+    for (const doc of [guide, ...['../README.md', '../../web/README.md', '../../react/README.md', '../../sodax/README.md'].map(readText)]) {
+      const tarballs = [...doc.matchAll(/hana-id-(?:core|web|react|sodax)-(\d+\.\d+\.\d+(?:-[\w.]+)?)\.tgz/gu)].map((x) => x[1]);
+      expect(tarballs.length).toBeGreaterThan(0);
+      expect(new Set(tarballs)).toEqual(new Set([version]));
+    }
+    expect(guide.split('\n').find((l) => l.startsWith('Last verified'))).toContain(`SDK ${version}.`);
+    const s2 = guide.slice(guide.indexOf('## 2. Install'), guide.indexOf('## 3. Create the client'));
+    expect(s2).toContain(`### Release notes\n\n**${version}**`);
+  });
+
   it("lists sandbox-dev's Hana origins as the manifest sets them", () => {
     const m = JSON.parse(readText('../../../envs/sandbox-dev.json')) as { vaultOrigin: string; authOrigin: string };
     expect(guide).toContain(`| \`vaultOrigin\` | \`${m.vaultOrigin}\` |`);

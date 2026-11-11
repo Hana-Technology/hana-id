@@ -105,6 +105,18 @@ export function shiftClock(ms: number): (more: number) => void {
   return (more) => void (offset += more);
 }
 
+/**
+ * For tests of a fixed window this isolate's clock doesn't reach (shiftClock can't move it): the console's Cloudflare
+ * rate-limiting binding, which miniflare counts in its own isolate by the real clock in windows aligned to the minute,
+ * and the RateLimiter objects of the auxiliary API Worker. Waits, if needed, until at least `headroomMs` remain in the
+ * current real minute, so the counted requests fall into one window (apps/api/test/helpers.ts minuteHeadroom).
+ */
+export async function minuteHeadroom(headroomMs = 15_000): Promise<void> {
+  // The real clock (`new Date()` doesn't follow a spied Date.now): the windows it waits for are on it.
+  const left = 60_000 - (new Date().getTime() % 60_000);
+  if (left < headroomMs) await new Promise((r) => setTimeout(r, left + 250));
+}
+
 // ---- the hot DB behind the real API (shared with the auxiliary API Worker as HOT_DB) ----
 
 export interface HotApp {

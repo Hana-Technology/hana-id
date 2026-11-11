@@ -1,14 +1,15 @@
 // The app's Email login page (build plan batch 9, D444, D447) in the SPA, in happy-dom with the API answered at `fetch`:
 // each state's controls, the turning-on steps as server actions, the in-page confirmation for turning it off, and every
 // control that can't work replaced by a line saying why (a viewer, a frozen org, not an on-chain owner, no issuer); the
-// one re-read at the unlock time on the server's clock (D712); each fresh sign-in's way back to the page that started
+// one re-read at the unlock time on the server's clock (D713); each fresh sign-in's way back to the page that started
 // it, and a hostile return value ignored (D711).
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 import { clockTime } from '../src/lib.tsx';
+import { useReloadAt } from '../src/pages/Apps.tsx';
 
 const H = 3_600_000;
 
@@ -153,6 +154,57 @@ describe('EmailLogin', () => {
     expect(reads).toBe(1 + 1);
     await new Promise((r) => setTimeout(r, 1500));
     expect(reads).toBe(2);
+  });
+
+  it('Execute only on the server’s word: an unlock time already past with `executable: false` offers nothing, and sets no re-read loop', async () => {
+    let reads = 0;
+    signedIn({});
+    routes[API] = () => {
+      reads++;
+      return { body: { ...base, emailOn: true, scope: { ...owner, pending: { changeId: 12, unlockAt: Date.now() - 60_000, executable: false } }, now: Date.now() } };
+    };
+    at(PAGE);
+    expect(await screen.findByText('Waiting for the chain')).toBeTruthy();
+    expect(screen.queryByText('Ready to execute')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Execute the change' })).toBeNull();
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(reads).toBe(1);
+    expect(screen.queryByRole('button', { name: 'Execute the change' })).toBeNull();
+  });
+
+  it('after Execute, the line says what changed: this app’s users when its email login is on, else the scope only and step 1 still to do', async () => {
+    routes['/api/orgs/org_a/scopes/s1/execute'] = { body: { status: 'ok', nearTx: 'abc' } };
+    const ready = { ...owner, pending: { changeId: 12, unlockAt: Date.now() - 1000, executable: true } };
+    signedIn({ ...base, emailOn: true, scope: ready });
+    at(PAGE);
+    fireEvent.click(await screen.findByRole('button', { name: 'Execute the change' }));
+    expect(await screen.findByText('Executed: users of this app can now sign in with email.')).toBeTruthy();
+    cleanup();
+    // Another app of the scope proposed it, or this app turned email off while it waited.
+    signedIn({ ...base, emailOn: false, scope: ready });
+    at(PAGE);
+    fireEvent.click(await screen.findByRole('button', { name: 'Execute the change' }));
+    expect(await screen.findByText('Executed: the scope now accepts email sign-in. This app still needs step 1 before its users are offered email.')).toBeTruthy();
+    expect(screen.queryByText(/users of this app can now sign in/u)).toBeNull();
+  });
+
+  it('the unlock timer and the visibility listener go with the page: nothing re-reads after unmount', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    try {
+      const reload = vi.fn();
+      const added = vi.spyOn(document, 'addEventListener');
+      const removed = vi.spyOn(document, 'removeEventListener');
+      const at0 = Date.now() + 60_000;
+      const h = renderHook(() => useReloadAt(at0, reload, 0));
+      const listener = added.mock.calls.find((c) => c[0] === 'visibilitychange')![1];
+      h.unmount();
+      expect(removed.mock.calls.some((c) => c[0] === 'visibilitychange' && c[1] === listener)).toBe(true);
+      vi.advanceTimersByTime(2 * 60_000);
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(reload).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('back on a hidden tab after the unlock time, the page re-reads at once (a sleeping laptop’s timer fires late)', async () => {

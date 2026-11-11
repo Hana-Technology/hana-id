@@ -1,11 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { type Manifest, loadEnv, manifestSchema } from '@hana-id/env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ckdKeyProblem } from '../scripts/ckd-key.ts';
-import { GENERATED_PATH, envsModule, hanaEnv, loadManifests, main, packageEnvsProblem, placeholderProblems } from '../scripts/gen-envs.ts';
+import { GENERATED_PATH, envsModule, hanaEnv, loadManifests, main, packageEnvsProblem, placeholderProblems, writeAtomically } from '../scripts/gen-envs.ts';
 import type { HanaEnv } from '../src/hana-env.ts';
 
 const dirs: string[] = [];
@@ -149,5 +149,30 @@ describe('ckdKeyProblem (@hana-id/core)', () => {
 
   it('refuses a bls12381g2:<base58> key that is not a valid G2 point', () => {
     expect(ckdKeyProblem({ name: 'sandbox-w', ckdNetworkKey: 'bls12381g2:abc' })).toMatch(/sandbox-w\.json ckdNetworkKey is not a valid bls12381g2 point/u);
+  });
+});
+
+describe('writeAtomically (several packages regenerate the module at once while others read it)', () => {
+  it('writes through a temp file renamed over the target, leaves nothing else, and skips an unchanged file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hana-gen-envs-'));
+    try {
+      const out = join(dir, 'envs.generated.ts');
+      writeAtomically(out, 'one');
+      expect(readFileSync(out, 'utf8')).toBe('one');
+      writeAtomically(out, 'two');
+      expect(readFileSync(out, 'utf8')).toBe('two');
+      expect(readdirSync(dir)).toEqual(['envs.generated.ts']);
+      // The same text again: not rewritten (its inode and mtime stay), so no reader can catch a write in progress.
+      const before = statSync(out);
+      writeAtomically(out, 'two');
+      const after = statSync(out);
+      expect([after.ino, after.mtimeMs]).toEqual([before.ino, before.mtimeMs]);
+      // A changed one is a new file put in place (a rename), never the old one truncated.
+      writeFileSync(join(dir, 'probe'), '');
+      writeAtomically(out, 'three');
+      expect(statSync(out).ino).not.toBe(after.ino);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

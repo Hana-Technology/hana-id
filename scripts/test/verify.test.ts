@@ -417,7 +417,8 @@ describe('the run: phases in order, lanes side by side, a lane one step at a tim
     return { events, run };
   }
   const steps = [st('install', 0), st('unit', 1), st('docs', 1), st('sandbox', 2), st('pack', 2, 'web'), st('e2e', 2, 'web'), st('skipped', 2, 'web', 'not here')];
-  const quiet = { log: () => {}, logDir: tmpdir() };
+  // Never written (the fake runner ignores it), but a run's own directory, not the shared temp dir's fixed names.
+  const quiet = { log: () => {}, logDir: mkdtempSync(join(tmpdir(), 'hana-verify-test-')) };
 
   it('runs the lanes of a phase side by side and a lane in order; the next phase waits for every lane', async () => {
     const f = fake({ sandbox: 80, pack: 10, e2e: 10 });

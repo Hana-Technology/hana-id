@@ -10,6 +10,7 @@ import { DIRECTORY_ROWS_PER_DAY, DIRECTORY_ROWS_PER_HOUR, UNVERIFIED_CLAIM_WARNI
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DIRECTORY_APPS_MAX, DirectoryRpc, budgetObjectName, resetDirectoryAccess, termHash } from '../src/directory-rpc.ts';
 import { DIRECTORY_ROW_LIMITS } from '../src/limits.ts';
+import { startOfMinuteClock } from './helpers.ts';
 
 const TEAM = 'hana-admin-test.cloudflareaccess.com';
 const AUD = 'cd'.repeat(32);
@@ -347,6 +348,7 @@ describe('get', () => {
 
 describe('the row budget (per staff email: 500 identities an hour, 2 000 a day; provisional)', () => {
   it('counts rows returned, refuses past the hour with rate_limited and the window, without an audit row; other staff unaffected', async () => {
+    startOfMinuteClock(); // fixed hour and day windows: not in an hour's last minute
     const now = Date.now();
     await seed(...Array.from({ length: 100 }, (_, k) => ({ email: `b${k}@budget.example`, seen: now - k })));
     const as = await accessJwt({ email: 'budget@hana.example' });

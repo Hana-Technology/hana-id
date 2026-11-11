@@ -198,7 +198,7 @@ function takesEffect(kind: string, d: Record<string, unknown>): string {
     return 'Not at once. After you confirm, it is announced by email to your organisation’s security contacts and takes effect after the security delay (24 hours on production deployments). Any owner can cancel it until then, from the app’s page or the email.';
   if (kind === 'member.invite') return 'The invite email goes out after every owner and your security contacts have been told. The link works once, for that address only.';
   if (kind === 'member.role' && d.role === 'owner') return 'They become an owner after 24 hours as a viewer; any owner can cancel that meanwhile.';
-  if (kind === 'owner_action') return d.immediate === true ? 'At once, when the contract runs it.' : 'After the contract’s timelock. Any on-chain owner can cancel it meanwhile; once it unlocks, anyone can execute it from the scope’s page.';
+  if (kind === 'owner_action') return d.immediate === true ? 'At once, when the contract runs it.' : 'After the contract’s timelock. Any on-chain owner can cancel it meanwhile; once it unlocks, any owner can execute it in the console.';
   return 'At once, when you confirm.';
 }
 

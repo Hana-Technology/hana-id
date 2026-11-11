@@ -67,7 +67,8 @@ describe('the mainnet demo in the vault', () => {
     expect(m).toMatchObject({ context: { chainId: 8453 }, testApp: true, mainnetDemo: true });
     answer(s.t, popup, m, true);
     expect(evmTxSigner((await reply).result as string, tx)).toBe(s.evm);
-    await sleepReal(20);
+    await s.t.waitUntil(() => demoEvents(s.t).length > 0, 'the demo event'); // posted after the reply (signed first)
+    await sleepReal(20); // and no second one
     const events = demoEvents(s.t);
     expect(events).toHaveLength(1);
     // The event, signed by the session key with the session's wallet proof of the address (D428 as reviewed): no key,
@@ -94,7 +95,7 @@ describe('the mainnet demo in the vault', () => {
     expect(m).toMatchObject({ context: { networkPassphrase: STELLAR_MAINNET_PASSPHRASE }, testApp: true });
     answer(s.t, popup, m, true);
     expect((await reply).error).toBeUndefined();
-    await sleepReal(20);
+    await s.t.waitUntil(() => demoEvents(s.t).length > 0, 'the demo event'); // posted after the reply (signed first)
     expect(demoEvents(s.t)[0]!.body).toMatchObject({ chain: 'stellar', network: 'pubnet', kind: 'stellar_tx', walletProof: { address: s.stellar } });
   });
 
@@ -124,7 +125,7 @@ describe('the mainnet demo in the vault', () => {
       const popup = openApproval(s.t);
       answer(s.t, popup, await popup.next('hana:approve-request'), true);
       expect((await reply).error).toBeUndefined();
-      await sleepReal(20);
+      await s.t.waitUntil(() => demoEvents(s.t).length > 0, 'the demo event'); // posted after the reply (signed first)
       expect(demoEvents(s.t)[0]!.body).toMatchObject({ chain: 'evm', network: '8453', kind: 'evm_tx', usdMicros: '1050001', walletProof: { address: s.evm } });
     });
 
@@ -288,7 +289,7 @@ describe('the mainnet demo in the vault', () => {
       expect(m).toMatchObject({ demoPrices: LIVE });
       answer(s.t, popup, m, true);
       expect(evmTxSigner((await reply).result as string, tx)).toBe(s.evm);
-      await sleepReal(20);
+      await s.t.waitUntil(() => demoEvents(s.t).length > 0, 'the demo event'); // posted after the reply (signed first)
       // The report is the value at the prices it was decided with, not the table's.
       expect((demoEvents(s.t)[0]!.body as { usdMicros: string }).usdMicros).toBe('4503598');
     });
@@ -343,7 +344,8 @@ describe('the mainnet demo in the vault', () => {
       browser.backend.app = { ...browser.backend.app, mainnetDemo: true, mainnetDemoPrices: LIVE };
       const t = await readyTab(browser, { googleJwk: g.jwk, config: makeConfig({ serverTimeMs: NOW, settings: { mainnetDemo: true } }) });
       tabs.push(t);
-      await sleepReal(20);
+      // The API's prices come after ready (its GET /v1/app): wait for them, not for a guessed time.
+      await t.waitUntil(() => t.events.some((e) => e.event === 'mainnetDemo') && JSON.stringify(pricesOf(t).at(-1)) === JSON.stringify(LIVE), 'the API’s prices');
       const names = t.events.map((e) => e.event);
       expect(names.indexOf('mainnetDemoPrices')).toBeLessThan(names.indexOf('mainnetDemo'));
       expect(pricesOf(t)[0]).toEqual({ atMs: null, assets: { ETH: { usdMicros: '8000000000', source: 'fixed' }, XLM: { usdMicros: '1000000', source: 'fixed' }, USDC: { usdMicros: '1050000', source: 'fixed' }, EURC: { usdMicros: '1350000', source: 'fixed' } } });
@@ -355,8 +357,9 @@ describe('the mainnet demo in the vault', () => {
       await s.t.request('eth_signTransaction', { tx: refusedAnyway() });
       const before = s.t.browser.backend.count('/v1/app');
       s.t.browser.timers.advance(5 * 60_000 + 1);
-      await sleepReal(20);
+      await s.t.waitUntil(() => s.t.browser.backend.count('/v1/app') > before, 'the price re-read');
       expect(s.t.browser.backend.count('/v1/app')).toBeGreaterThan(before);
+      await sleepReal(20); // its answer applied and the refresh re-armed
       s.t.browser.backend.app = { ...s.t.browser.backend.app, mainnetDemo: false };
       s.t.browser.timers.advance(5 * 60_000 + 1);
       await sleepReal(20);
@@ -400,7 +403,10 @@ describe('the mainnet demo in the vault', () => {
     };
     const s = await session({ policy });
     const grant = s.t.request("hana_requestAutoApprove");
-    await sleepReal(50);
+    // The consent's launcher, or the grant's early answer (then shown, not waited out).
+    let early: unknown;
+    void grant.then((r) => (early = r));
+    await s.t.waitUntil(() => s.t.launcher.label !== null || early !== undefined, 'the consent launcher');
     if (s.t.launcher.label === null) throw new Error(`no consent: ${JSON.stringify(await grant)}`);
     const popup = openApproval(s.t);
     answerConsent(s.t, popup, await popup.next('hana:consent-request'), true);

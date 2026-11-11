@@ -3,6 +3,8 @@
 //
 //   pnpm --filter @hana-id/e2e e2e:install   # once: the three browsers (CI adds their system dependencies)
 //   pnpm --filter @hana-id/e2e e2e [--project webkit] [tests/login.spec.ts]
+// First: this checkout's port base (src/port-env.ts) before src/stack.ts reads it.
+import './src/port-env.ts';
 import { defineConfig, devices } from '@playwright/test';
 import { API_URL } from './src/stack.ts';
 

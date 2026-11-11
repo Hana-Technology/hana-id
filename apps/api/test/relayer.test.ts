@@ -47,7 +47,8 @@ async function crash(stub: DurableObjectStub<RelayerKey>): Promise<void> {
 
 async function until(cond: () => boolean): Promise<void> {
   for (let i = 0; !cond(); i++) {
-    if (i > 200) throw new Error('Timed out waiting for a condition');
+    // A bound on polls, not time (the timing tests' clock stands still): about 10 s at the least, as untilBusy's.
+    if (i > 2000) throw new Error('Timed out waiting for a condition');
     await new Promise((r) => setTimeout(r, 5));
   }
 }

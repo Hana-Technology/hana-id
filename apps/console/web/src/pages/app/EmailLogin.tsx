@@ -3,7 +3,7 @@
 // timelocked, then an owner executes it), turning it off at once, and the app's own mail deliverability. A viewer sees
 // the state and the numbers; every control says why it isn't offered. Both steps' confirmations come back here (D711).
 // While the change waits out the timelock, one timer to its unlock time on the server's clock re-reads the page once
-// (so does coming back to a hidden tab after that time), so Execute appears without a reload and without polling (D712).
+// (so does coming back to a hidden tab after that time), so Execute appears without a reload and without polling (D713).
 import type { AppEmailAnswer, DeliverabilityDay } from '@hana-id/console-core';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -72,8 +72,10 @@ export function EmailLogin() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const offset = useMemo(() => (a && typeof a.now === 'number' ? clockOffset(a.now, Date.now()) : ctl.serverNow() - Date.now()), [a]);
   const pending = a && !('unavailable' in a.scope) ? a.scope.pending : null;
-  // Waiting out the timelock: one re-read at the unlock time, when the server answers `executable` (D712). No polling.
-  useReloadAt(pending && !pending.executable ? pending.unlockAt : null, r.reload, offset);
+  // Waiting out the timelock: one re-read at the unlock time, when the server answers `executable` (D713). No polling:
+  // an answer that says "not yet" for a time already past on its own clock sets no timer (a reload reads it again).
+  const answeredAt = a && typeof a.now === 'number' ? a.now : Number.NEGATIVE_INFINITY;
+  useReloadAt(pending && !pending.executable && pending.unlockAt > answeredAt ? pending.unlockAt : null, r.reload, offset);
 
   if (r.error) return <ErrorNote error={r.error} onRetry={r.reload} />;
   if (!a) return <Loading />;
@@ -193,7 +195,7 @@ export function EmailLogin() {
                           onClick={() =>
                             void exec.run(async () => {
                               await postJson(`/api/orgs/${org}/scopes/${a.scopeId}/execute`, { changeId: scope.pending!.changeId });
-                              setDone('Executed: users of this app can now sign in with email.');
+                              setDone(a.emailOn ? 'Executed: users of this app can now sign in with email.' : 'Executed: the scope now accepts email sign-in. This app still needs step 1 before its users are offered email.');
                               r.reload();
                             })
                           }

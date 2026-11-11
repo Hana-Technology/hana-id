@@ -407,7 +407,8 @@ describe('the policy in force, re-read while the vault stays open', () => {
     const before = s.t.browser.backend.count('/v1/app');
     s.t.browser.timers.advance(POLICY_REFRESH_MS);
     for (let i = 0; i < 100 && s.t.browser.backend.count('/v1/app') === before; i++) await sleepReal(5);
-    await sleepReal(10);
+    // Its answer applied: wait for the policy to go, not for a guessed time.
+    for (let i = 0; i < 200 && (await s.t.request('hana_autoApproveStatus')).result !== null; i++) await sleepReal(5);
     expect((await s.t.request('hana_autoApproveStatus')).result).toBeNull();
     expect((await s.t.request('hana_requestAutoApprove')).error?.code).toBe(4100);
     const m = await shownForApproval(s);

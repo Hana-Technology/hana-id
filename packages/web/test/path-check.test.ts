@@ -1,6 +1,6 @@
 // D263: a path through another identity is confirmed on two providers, each read alone (src/path-check.ts).
 import { identityKeyHex, type IdentityView } from '@hana-id/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PathCheckError, type ViewRead, confirmPath } from '../src/path-check.ts';
 
 const S = 's1';
@@ -81,9 +81,20 @@ describe('confirmPath reads both providers in parallel (the second provider is s
 
   it('every read (the view and the root, on each provider) starts before any of them ends', async () => {
     const log: Log = [];
-    const started = performance.now();
-    expect(await reason(confirmPath({ scopeId: S, via: G, viaView: member, path: E, views: { primary: timed('primary', 60, log), second: timed('second', 150, log) } }))).toBeNull();
-    const elapsed = performance.now() - started;
+    // On a fake clock, so the time taken is the providers' and never the machine's load.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    let elapsed = Number.NaN;
+    try {
+      const started = performance.now();
+      const run = reason(confirmPath({ scopeId: S, via: G, viaView: member, path: E, views: { primary: timed('primary', 60, log), second: timed('second', 150, log) } })).then((r) => {
+        elapsed = performance.now() - started;
+        return r;
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await run).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
     const firstEnd = log.findIndex((e) => e.at === 'end');
     expect(log.slice(0, firstEnd).map((e) => `${e.name} ${e.at}`)).toEqual(['primary start', 'second start', 'primary start', 'second start']);
     // One round of the slow provider, not one per read (one after the other would be 2 × 60 + 2 × 150 ms).

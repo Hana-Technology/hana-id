@@ -17,7 +17,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
 > an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
 
-Last verified against code: 2026-11-11 (a sign-out's `reason: 'signed_out'`), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
+Last verified against code: 2026-11-11 (SDK 0.3.1 and its release notes in section 2), SDK 0.3.1. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
 
 ## How it works
 
@@ -188,13 +188,13 @@ release with their SHA-256 checksums: check them (`shasum -a 256 *.tgz`), then i
 or yarn. Install every package you use, `@hana-id/core` included, from its tarball, never from a registry:
 
 ```sh
-npm install ./hana-id-core-0.3.0.tgz ./hana-id-web-0.3.0.tgz              # always
-npm install ./hana-id-react-0.3.0.tgz                                      # React apps
-npm install ./hana-id-sodax-0.3.0.tgz @sodax/types@2.2.0                   # Sodax adapters
+npm install ./hana-id-core-0.3.1.tgz ./hana-id-web-0.3.1.tgz              # always
+npm install ./hana-id-react-0.3.1.tgz                                      # React apps
+npm install ./hana-id-sodax-0.3.1.tgz @sodax/types@2.2.0                   # Sodax adapters
 ```
 
 Commit the tarballs to your repository (or a private artifact store) and depend on them by path
-(`"@hana-id/web": "file:vendor/hana-id-web-0.3.0.tgz"`), so every install gets the same bytes.
+(`"@hana-id/web": "file:vendor/hana-id-web-0.3.1.tgz"`), so every install gets the same bytes.
 
 | Package | What | Peer dependencies (tested) |
 |---|---|---|
@@ -214,6 +214,32 @@ for (Hana origins, NEAR accounts, RPC, pinned MPC key; all public values), and y
 `createHana({ environment })`. `HANA_ENVIRONMENTS` lists the names. A release ships exactly the deployed envs; this
 pilot ships `sandbox-dev`, whose Hana side runs on NEAR testnet (your users' wallets are Stellar and EVM; see the note
 at the top). A new environment means a new release.
+
+### Release notes
+
+**0.3.1** (after 0.3.0; same environments: `sandbox-dev`). **Nothing to change**: code written for 0.3.0 builds and
+runs as it is. Replace all the tarballs you use together (they depend on each other at `^0.3.1`).
+
+- `disconnect` now says when Hana signed this device out: `{ code: 4900, reason: 'signed_out' }` (the user signed the
+  device out from Hana's own page, used `revokeOtherDevices()` on another device, signed in to your app again in
+  another tab of this device, or your app's settings ended the session). The vault is fine: you may want to show
+  "You were signed out, log in again" for it rather than a reload message ([section 3](#3-create-the-client)).
+  Without `reason`, `disconnect` means what it did before. New types: `HanaDisconnect` (the event) and
+  `DisconnectReason`.
+- `launcher` now has `clickable`: `true` for Hana's button the user must click ("Review in Hana", "Sign in with
+  Hana", an export), `false` for the short "Signed by Hana under …" notice after an auto-signed request and whenever
+  it is hidden. If you point users at the button, do it only when `visible && clickable`
+  ([section 5](#5-your-page-origins-csp-popups)).
+- The mainnet demo's refusal reasons include `mainnet_demo_wrong_destination` in the types (a Sodax deposit, bridge or
+  swap that would send funds anywhere but the user's own wallets, [section 12](#12-test-and-live-keys)).
+- `@hana-id/core` also exports what Hana's own pages use (`evmChainInfo`, `KNOWN_EVM_MAINNETS`, the
+  `@hana-id/core/home` layouts); your app needs none of them.
+
+Arrived from Hana's side with every SDK release, no upgrade needed: an open tab of your app that was signed out from
+Hana's own page ends its session within about a minute while it is in use, and the vault checks again before each
+signature you ask the user to approve and each cached identity token ([section 4](#4-log-in-log-out), "Signed out
+from Hana"); a request refused for that rejects with 4900 and `data.reason: 'signed_out'` (show the same signed-out
+notice for it).
 
 ### Testnet quick start (Sodax)
 
@@ -313,7 +339,7 @@ hana.on('linkChanged', ({ provider, status, effectiveAtMs }) => {}); // a sign-i
 hana.on('supportIdChanged', (supportId) => {}); // 'HANA-XXXX-XXXX' or null (section 4, "Support ID")
 ```
 
-`disconnect` is always code 4900. With `reason: 'signed_out'` (SDK releases after 0.3.0) Hana ended this device's
+`disconnect` is always code 4900. With `reason: 'signed_out'` (SDK 0.3.1 or later) Hana ended this device's
 session: the user signed the device out from Hana's own page, or used "log out other devices"
 (`revokeOtherDevices()`) on another device, or signed in to your app again in another tab of this device, or your
 app's settings ended it (persistence turned off, the origin removed). The vault is fine: show "You were signed out,
@@ -412,7 +438,7 @@ button.addEventListener('click', async () => {
   device). A tab of your app already open there can't sign after about a minute, and ends its session within about a
   minute while it is shown and in use (a few minutes in a tab nobody is using, at once when a hidden tab is shown
   again, or at its next signature or identity-token request): your page gets `accountsChanged` with no addresses and
-  `disconnect` (code 4900, `reason: 'signed_out'` in SDK releases after 0.3.0), then shows signed out; tell the user
+  `disconnect` (code 4900, `reason: 'signed_out'` in SDK 0.3.1 or later), then shows signed out; tell the user
   to log in again, no reload is needed. A signature waiting for approval in that moment rejects with 4900 and
   `data.reason: 'signed_out'` (with every SDK release: it comes from the vault). To do this the vault asks Hana's
   API about once a minute while a wallet is open in a shown tab in use, every 5 minutes when nothing happens there, and
@@ -516,7 +542,7 @@ of the viewport. Don't cover it: whenever the popup couldn't open in the click (
 continue without it. The `launcher` event tells you when it
 shows, if you want to point at it: prompt the user to click only when `visible && clickable`. The same frame also
 shows short notices that need no click ("Signed by Hana under {label}" for about 3 seconds after each auto-signed
-request, section 9): those arrive with `clickable: false`. `clickable` is in SDK releases after 0.3.0; with 0.3.0 or
+request, section 9): those arrive with `clickable: false`. `clickable` is in SDK 0.3.1 or later; with 0.3.0 or
 earlier the field is absent, and a notice can't be told from a button.
 
 Removing an origin from your app signs out the users who signed in there.
@@ -861,7 +887,7 @@ await hana.revokeAutoApprove();    // the user can also stop it from any Hana po
 Without `requestAutoApprove()`, the first matching request shows the consent screen. A request that doesn't match
 gets the normal popup, which tells the user why it wasn't auto-approved. After each auto-signed request the vault
 emits `autoApproved` and its button briefly shows "Signed by Hana under {label}": a notice, not a prompt, so the
-`launcher` event for it has `clickable: false` (SDK releases after 0.3.0) and there is nothing for the user to click.
+`launcher` event for it has `clickable: false` (SDK 0.3.1 or later) and there is nothing for the user to click.
 
 Hana records each consent on its API, so auto-approve can't be turned on while the API can't record it. After the
 user presses Allow, `requestAutoApprove()` rejects with `api_unavailable` (`data.reason` is `consent_not_recorded`,

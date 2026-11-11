@@ -364,6 +364,21 @@ describe('where the action page returns (D711)', () => {
     expect((await returnOf(m, step1.body.id)).returnTo).toBe(`${base}/apps/${app.id}/email`);
   });
 
+  it('an action stored before returnTo existed (no returnTo in its row) answers the kind’s default page from its ids', async () => {
+    const { m, app } = await ownerWithApp();
+    const settings = await build(m, { kind: 'app.settings', params: { appId: app.id, identityEmail: 'off' }, returnTo: { page: 'email', appId: app.id } });
+    await setScope({ id: app.scope, owners: [oidc(m.sub)], action_nonce: 1, allow_shared: true, clients: [['google', 'c-1.apps.googleusercontent.com']] });
+    const owner = await build(m, { kind: 'owner_action', params: { scopeId: app.scope, method: 'disable_shared_login' }, returnTo: { page: 'email', appId: app.id } });
+    const invite = await build(m, { kind: 'member.invite', params: { email: 'old@partner.example', role: 'viewer' } });
+    for (const id of [settings.body.id, owner.body.id, invite.body.id]) {
+      await db.prepare("UPDATE pending_actions SET action_json = json_remove(action_json, '$.returnTo') WHERE id = ?").bind(id).run();
+      expect(await db.prepare('SELECT action_json FROM pending_actions WHERE id = ?').bind(id).first<string>('action_json')).not.toContain('returnTo');
+    }
+    expect((await returnOf(m, settings.body.id)).returnTo).toBe(`/orgs/${m.org}/apps/${app.id}/sessions`);
+    expect((await returnOf(m, owner.body.id)).returnTo).toBe(`/orgs/${m.org}/scopes/${app.scope}`);
+    expect((await returnOf(m, invite.body.id)).returnTo).toBe(`/orgs/${m.org}/members`);
+  });
+
   it('a hostile returnTo is refused before anything is stored: a URL, an unknown page, a page the kind has no use for, an app that isn’t the action’s', async () => {
     const { m, app } = await ownerWithApp();
     const params = { appId: app.id, sessionTtlMs: 8 * 3600_000 };

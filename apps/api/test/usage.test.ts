@@ -16,7 +16,7 @@ import { IDENTITY_SYNC_DAYS, RECORD_IDENTITY_SQL, syncIdentityUsage } from '../s
 import { ENSURE_PARTITIONS_SQL, USAGE_PARTITION_MONTHS, ensureUsagePartitions } from '../src/usage/partitions.ts';
 import { RECORD_EVENT_SQL, USAGE_RETRY_DELAY_MS, classifyWriteError, recordUsage, usageTransport } from '../src/usage/record.ts';
 import { relayFacts, wasRelayed } from '../src/usage/event.ts';
-import { ORIGIN, appHeaders, call, chain, deriveBody, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
+import { ORIGIN, appHeaders, call, chain, deriveBody, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid, startOfMinuteClock } from './helpers.ts';
 import { hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
 import { MOCK_RECEIPT_GAS, MOCK_TX_GAS, panic } from './near-mock.ts';
 import { eventFor, ledger, realTransport, usageOf } from './usage-ledger.ts';
@@ -189,6 +189,7 @@ describe('logins never depend on the ledger', () => {
 
 describe('events', () => {
   it('one event per post-gate outcome on every endpoint; none for gate rejections or GET /v1/app', async () => {
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     await seedPlan(`p${uid()}`, 1000, 100000, 1).catch(() => undefined);
     const { app, aud, near } = await loginSetup();
     const ids = async (r: Response) => (await body(r)).requestId as string;
@@ -442,6 +443,8 @@ describe('identity token counts into the ledger (hourly)', () => {
   const DAY = 86_400_000;
 
   it('copies the last IDENTITY_SYNC_DAYS days per app with its org and scope; a replay never lowers a count', async () => {
+
+    await startOfMinuteClock(); // rows keyed by the UTC day: not in a day's last minute (helpers.ts)
     const app = await seedApp();
     await env.DB.prepare("UPDATE scopes SET org_id = 'org_ident' WHERE scope_id = ?1").bind(app.scope).run();
     for (const [ago, n] of [[0, 5], [(IDENTITY_SYNC_DAYS - 1) * DAY, 2], [IDENTITY_SYNC_DAYS * DAY, 9]] as const) {

@@ -3,7 +3,7 @@
 // with a SetOwners proposal, and the owner actions (each a fresh sign-in whose token the contract checks). AddClient
 // needs a client proof from the client itself: the helper is a download the partner opens on one of the client's own
 // origins, and the pasted token is accepted only after the warning that it becomes public on chain. A pending change is
-// judged on the server's clock, and the page re-reads once when the next one unlocks (D701, D712).
+// judged on the server's clock, and the page re-reads once when the next one unlocks (D701, D713).
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { postJson } from '../api.ts';
@@ -102,9 +102,10 @@ export function ScopePage() {
   const step = useStepUp(org!, { page: 'scope' });
   const w = useWrite();
   useNow(30_000); // the countdowns
-  // The server's clock (D701): one re-read when the next waiting change unlocks, so its Execute appears (D712).
+  // The server's clock (D701): one re-read when the next waiting change unlocks, so its Execute appears (D713).
   const offset = useMemo(() => clockOffset(r.data?.now, Date.now()), [r.data]);
-  const locked = (r.data?.scope.pending ?? []).filter((p) => !p.executable).map((p) => p.unlockAt);
+  const answeredAt = typeof r.data?.now === 'number' ? r.data.now : Number.NEGATIVE_INFINITY;
+  const locked = (r.data?.scope.pending ?? []).filter((p) => !p.executable && p.unlockAt > answeredAt).map((p) => p.unlockAt);
   useReloadAt(locked.length ? Math.min(...locked) : null, r.reload, offset);
   const head = (
     <PageHeader
@@ -212,7 +213,7 @@ export function ScopePage() {
                     <td>{changeText(p.change)}</td>
                     <td>
                       {when(p.unlockAt)}
-                      <div className="muted small">{p.executable ? 'Unlocked: anyone can execute it' : relative(p.unlockAt, now)}</div>
+                      <div className="muted small">{p.executable ? 'Unlocked: any owner can execute it' : relative(p.unlockAt, now)}</div>
                     </td>
                     {owner && (
                       <td className="cell-actions">

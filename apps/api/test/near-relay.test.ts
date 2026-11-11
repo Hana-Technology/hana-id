@@ -789,7 +789,9 @@ describe('what raises the floor, and the limiter’s amounts (L-C, L-D)', () => 
     const s = await setup();
     const bindings = { ...relayConfig({ inFlightNear: 0.000001 }), NEAR_RELAY_KEYS: JSON.stringify([(JSON.parse(env.NEAR_RELAY_KEYS!) as string[])[0]]) };
     let release!: () => void;
-    s.near.onNearSend = () => new Promise<void>((r) => (release = r));
+    // Created here, not inside the key object: a promise settled across Durable Objects is refused by workerd.
+    const held = new Promise<void>((r) => (release = r));
+    s.near.onNearSend = () => held;
     const first = relay(s.app, plainRelay(delegate(knownUser(s.app.scope))), bindings);
     await new Promise((r) => setTimeout(r, 200));
     const mine = plainRelay(delegate(s.user));

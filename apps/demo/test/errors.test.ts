@@ -1,6 +1,6 @@
 import { HanaError, ProviderRpcError } from '@hana-id/web';
 import { describe, expect, it } from 'vitest';
-import { errorInfo, plainMessage } from '../src/errors.ts';
+import { SIGNED_OUT_MESSAGE, errorInfo, isSignedOut, plainMessage } from '../src/errors.ts';
 
 describe('errorInfo', () => {
   it('prefers the Hana code an EIP-1193 error carries in data.code', () => {
@@ -60,6 +60,21 @@ describe('plainMessage', () => {
     expect(plainMessage(new ProviderRpcError(4001, 'x'), 'sign')).toBe('Rejected in the Hana window: nothing was signed.');
     expect(plainMessage(new HanaError(4100, 'x', { reason: 'share_not_fresh' }), 'revoke')).toMatch(/within 5 minutes/u);
     expect(plainMessage(new HanaError('rate_limited', 'x'), 'export')).toMatch(/exports/u);
+  });
+
+  it('D695: a 4900 with reason signed_out is a sign-out (log in again, no reload); a 4900 without it is a lost vault', () => {
+    const signedOut = 'You were signed out on this device (from Hana Home, or by signing in again elsewhere). Log in again.';
+    expect(SIGNED_OUT_MESSAGE).toBe(signedOut);
+    // The refused signature (either error shape) and the disconnect event the page turns into one.
+    for (const e of [new HanaError(4900, 'x', { reason: 'signed_out' }), new ProviderRpcError(4900, 'x', { reason: 'signed_out' }), { code: 4900, data: { reason: 'signed_out' } }]) {
+      expect(isSignedOut(e)).toBe(true);
+      for (const action of ['load', 'sign', 'export', 'identity'] as const) expect(plainMessage(e, action)).toBe(signedOut);
+    }
+    for (const e of [new HanaError(4900, 'x'), { code: 4900 }, new HanaError(4900, 'x', { reason: 'other' }), new HanaError(4100, 'x', { reason: 'signed_out' })]) expect(isSignedOut(e)).toBe(false);
+    expect(plainMessage({ code: 4900 }, 'load')).toBe('The connection to the Hana vault was lost. Reload the page.');
+    expect(plainMessage(new ProviderRpcError(4900, 'x'), 'sign')).toBe('The connection to the Hana vault was lost. Reload the page.');
+    // Plain words: no em or en dash.
+    expect(signedOut).not.toMatch(/[\u2013\u2014]/u);
   });
 
   it('turns a network failure into a network message, and anything else into a report hint with its code', () => {

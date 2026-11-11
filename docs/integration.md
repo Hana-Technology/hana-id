@@ -14,7 +14,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
 > an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
 
-Last verified against code: 2026-11-10 (app names; onboarding; a sign-out reaching an open tab), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
+Last verified against code: 2026-11-11 (a sign-out's `reason: 'signed_out'`), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
 
 ## How it works
 
@@ -301,7 +301,7 @@ Events:
 hana.on('statusChanged', (status) => {});
 hana.on('accountsChanged', (addresses) => {}); // { stellar, evm } or null
 hana.on('sessionExpired', () => {});            // the session reached its limit: log in again
-hana.on('disconnect', ({ code }) => {});        // 4900: the vault connection is gone
+hana.on('disconnect', ({ code, reason }) => {}); // 4900; reason 'signed_out': Hana signed this device out (log in again), else the vault is gone
 hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'email_code' | 'token' | 'linking' | 'chain' | 'key_pending' | 'done'
 hana.on('launcher', ({ visible, label, clickable }) => {}); // Hana's button or notice is shown or hidden; clickable: the user must click it ("Review in Hana", …)
 hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
@@ -309,6 +309,14 @@ hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't 
 hana.on('linkChanged', ({ provider, status, effectiveAtMs }) => {}); // a sign-in method added, activated or removed (section 4)
 hana.on('supportIdChanged', (supportId) => {}); // 'HANA-XXXX-XXXX' or null (section 4, "Support ID")
 ```
+
+`disconnect` is always code 4900. With `reason: 'signed_out'` (SDK releases after 0.3.0) Hana ended this device's
+session: the user signed the device out from Hana's own page, or signed in to your app again in another tab, or your
+app's settings ended it (persistence turned off, the origin removed). The vault is fine: show "You were signed out,
+log in again", not "reload". Without `reason` the vault connection is gone (reload, or create the client again), or
+another tab of your app logged out. The request that was waiting when it happened (a signature, an export) rejects
+with 4900 and the same `data.reason: 'signed_out'`, so show one message for both. Your own `logout()` sends no
+`disconnect` (only `accountsChanged` with null).
 
 `loginProgress: key_pending` means Google has just started signing with a new key that Hana ID hasn't activated yet
 (it goes live within minutes): the vault waits up to 30 s and tries once more, then reports `chain` again. Show
@@ -396,8 +404,10 @@ button.addEventListener('click', async () => {
 - **Signed out from Hana.** A user can sign a device out of your app from Hana's own page (for a lost or stolen
   device). A tab of your app already open there can't sign after about a minute, and ends its session within about a
   minute while it is shown and in use (a few minutes in a tab nobody is using, at once when a hidden tab is shown
-  again, or at its next signature or identity-token request): your page gets `disconnect` (code 4900) and
-  `accountsChanged` with no addresses, then shows signed out; nothing else is needed. To do this the vault asks Hana's
+  again, or at its next signature or identity-token request): your page gets `accountsChanged` with no addresses and
+  `disconnect` (code 4900, `reason: 'signed_out'` in SDK releases after 0.3.0), then shows signed out; tell the user
+  to log in again, no reload is needed. A signature waiting for approval in that moment rejects with 4900 and
+  `data.reason: 'signed_out'` (with every SDK release: it comes from the vault). To do this the vault asks Hana's
   API about once a minute while a wallet is open in a shown tab in use, every 5 minutes when nothing happens there, and
   before each signature you ask the user to approve and each cached identity token. If Hana's API can't be reached for
   more than 3 minutes, such a request fails with `api_unavailable` and `data.reason: 'share_unconfirmed'` before any
@@ -1047,7 +1057,7 @@ window, not returned.
 | `4001` | The user rejected, closed the popup, or let it time out | nothing; let them retry |
 | `4100` | Not logged in, wrong address, or not allowed for this app (raw signing off, no policy, a mainnet for a test app: `data.reason`) | log in, or check the call |
 | `4200` | Unsupported method (`eth_sign`, …) | use a supported method |
-| `4900` | The vault is gone (logged out, session ended, frame replaced) | create the client again, or log in |
+| `4900` | The session or the vault is gone. `data.reason: 'signed_out'`: Hana signed this device out (Hana's own page, a newer sign-in in another tab, or your app's settings), and the vault is fine. Without it: the vault connection is gone (frame replaced), or the session ended another way (a logout, its end) | with `signed_out`, ask the user to log in again (no reload); otherwise create the client again, or log in |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
 | `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins (`no_answer`'s `data.origin` against the portal's **Origins** tab), the network. A wrong origin or key takes about 3 s to report (`no_answer`; about 10 s with SDK 0.2.0) |
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
@@ -1068,7 +1078,7 @@ window, not returned.
 | `storage_unavailable` | The Hana popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
 | `busy` | An export is already running | wait |
 | `identity_unavailable` | `getIdentityToken()`: Hana's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |
-| `session_ended` | `getIdentityToken()`: the Hana session is over (`sessionExpired` fires too), or ends within 30 s (`data.reason: 'session_ending'`) | treat as logged out |
+| `session_ended` | `getIdentityToken()`: the Hana session is over (`sessionExpired` fires too; `data.reason: 'signed_out'` when Hana signed this device out), or ends within 30 s (`data.reason: 'session_ending'`) | treat as logged out |
 
 <a id="getting-help"></a>**Getting help.** When a user reports a problem, send Hana the user's Support ID
 (`hana.supportId`, section 4) and the failed call's request ID (`error.requestId`; keep the last few in your
@@ -1118,8 +1128,8 @@ await fetch('/api/session', { method: 'POST', headers: { authorization: `Bearer 
   session) and with `null` at logout, expiry, revocation or a newer login. `hana.identityToken` is the last one.
 - **Errors.** `getIdentityToken()` resolves `null` while logged out; it rejects with `identity_unavailable` (Hana's API
   or signer is down, or this browser couldn't keep the session in an app that keeps logins: `data.reason: 'no_share'`;
-  retry later), `session_ended` (the session is over: `sessionExpired` fires too; `data.reason: 'session_ending'` when
-  less than 30 s remain) or `rate_limited` (more than 10 mints a minute for one session or 30 for one user, or your
+  retry later), `session_ended` (the session is over: `sessionExpired` fires too; `data.reason: 'signed_out'` when
+  Hana signed this device out, `'session_ending'` when less than 30 s remain) or `rate_limited` (more than 10 mints a minute for one session or 30 for one user, or your
   app's own identity-token quota: 10 × your plan's per-minute rate a minute and your plan's daily rate an hour, apart
   from the quota your logins and unlocks use).
 - **React.** `const { identityToken, refresh, error } = useIdentityToken();` mints on first use while logged in, keeps

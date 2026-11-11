@@ -14,6 +14,7 @@ import {
   base64Encode,
   base64UrlDecode,
   base64UrlEncode,
+  bytesEqual,
   ckdAppId,
   consentDigest,
   encryptRelayPayload,
@@ -1271,3 +1272,20 @@ export function answerConsent(tab: Tab, popup: FakeWindow, m: Record<string, unk
 
 export const relayIdOf = relayIdFor;
 export const sleepReal = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** For each `disconnect` the tab sent, the `disconnectReason` right before it (D695: `signed_out`), or null. */
+export function disconnectedWith(tab: Tab): (string | null)[] {
+  return tab.events.flatMap((e, i) => {
+    if (e.event !== 'disconnect') return [];
+    const before = tab.events[i - 1];
+    return [before?.event === 'disconnectReason' ? (before.data as { reason: string }).reason : null];
+  });
+}
+
+/** The `signedOut` and `revoked` broadcasts the browser's tabs sent about `shareId`, in order (D695). */
+export function shareBroadcasts(browser: Browser, shareId: Uint8Array): string[] {
+  return browser.bus.sent
+    .map((m) => m.data as { t: string; shareId?: Uint8Array })
+    .filter((m) => (m.t === 'signedOut' || m.t === 'revoked') && m.shareId !== undefined && bytesEqual(m.shareId, shareId))
+    .map((m) => m.t);
+}

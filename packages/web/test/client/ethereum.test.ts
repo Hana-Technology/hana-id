@@ -501,6 +501,18 @@ describe('signing', () => {
     expect(rpc.calls.map((c) => c.method)).not.toContain('eth_sendRawTransaction');
   });
 
+  it('D695: a signature refused because Hana signed the device out is 4900 with data.reason signed_out, as the vault said', async () => {
+    const rpc = await loggedIn();
+    s.vault.handle('eth_signTransaction', () => ({ error: { code: 4900, message: 'This session was revoked', data: { reason: 'signed_out' } } }));
+    const e = await s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] }).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(e).toBeInstanceOf(ProviderRpcError);
+    expect(e).toMatchObject({ code: 4900, data: { reason: 'signed_out' } });
+    expect(rpc.calls.map((c) => c.method)).not.toContain('eth_sendRawTransaction');
+  });
+
   it('eth_signTransaction fills and returns the raw signed tx without broadcasting', async () => {
     const rpc = await loggedIn();
     s.vault.handle('eth_signTransaction', () => ({ result: RAW }));

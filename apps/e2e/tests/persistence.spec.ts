@@ -121,6 +121,8 @@ test("logout wipes every tab of that app, and the record and share", async ({ co
   await okValue(a, 'logout');
   await expect.poll(() => status(b)).toBe('logged_out');
   expect(await b.evaluate(() => (window as any).e2e.events.some((e: { name: string }) => e.name === 'disconnect'))).toBe(true);
+  // Another tab's logout is no sign-out by Hana (D695): no reason.
+  expect(await b.evaluate(() => (window as any).e2e.events.filter((e: { name: string }) => e.name === 'disconnect').map((e: { data: unknown }) => e.data))).toEqual([{ code: 4900 }]);
   expect(await vaultRecordKeys(a)).toEqual([]);
   // The login's root pin stays (D263): keyed by the identity key, a hash, never the Google sub.
   const pins = await vaultPinKeys(a);

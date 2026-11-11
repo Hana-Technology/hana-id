@@ -7,7 +7,7 @@
 import type { HanaAddresses, HanaClient, HanaConfig, HanaStatus } from '@hana-id/web';
 import type { DemoConfig } from './config.ts';
 import { type ErrorRecord, type LoginTiming, diagnosticsJson } from './diagnostics.ts';
-import { type DemoAction, errorInfo, plainMessage } from './errors.ts';
+import { type DemoAction, errorInfo, isSignedOut, plainMessage } from './errors.ts';
 import { TEST_MESSAGE, testEvmTransaction, utf8Hex } from './requests.ts';
 
 /** The part of the partner client the page uses. */
@@ -182,6 +182,13 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
   function showError(action: DemoAction, e: unknown): void {
     const info = errorInfo(e);
     errors.push({ at: new Date(clock()).toISOString(), action, code: info.code, reason: info.reason, message: info.message, requestId: info.requestId });
+    // Signed out by Hana (D695): a notice, not an error. The `disconnect` and the request it refused say the same thing,
+    // so whichever comes second leaves the one notice in place.
+    if (isSignedOut(e)) {
+      clearError();
+      notice(plainMessage(e, action));
+      return;
+    }
     const box = el('error');
     box.textContent = plainMessage(e, action);
     box.hidden = false;
@@ -336,8 +343,9 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     notice('Your session ended. Log in again.');
     render();
   });
-  c.on('disconnect', ({ code }) => {
-    showError('load', { code });
+  c.on('disconnect', ({ code, reason }) => {
+    // `reason: 'signed_out'`: Hana signed this device out (Hana Home, or a newer sign-in); without it, the vault is gone.
+    showError('load', reason === undefined ? { code } : { code, data: { reason } });
     render();
   });
 

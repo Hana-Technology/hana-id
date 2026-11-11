@@ -23,7 +23,7 @@
 import { normalizeProfileName } from '@hana-id/core/identity';
 import type { Env } from '../env.ts';
 import { type Ctx, done, lap, newCtx, reject } from '../handlers.ts';
-import { type ProfileName, noNameTables, storedName } from '../identity/name.ts';
+import { LIVE_NAME_SHARE, type ProfileName, noNameTables, storedName } from '../identity/name.ts';
 import { homeGate } from './identity.ts';
 import { type HomeRoot, confirmedRoot, scopeRoot } from './root.ts';
 
@@ -101,7 +101,7 @@ export async function handleHomeProfileGet(request: Request, env: Env, requestId
       if (a) {
         const root = await confirmed(env, ctx, await scopeRoot(env, a.scopeId, who), who);
         if (!root) return chainDown(ctx);
-        const hit = root.userSub === null ? null : await env.DB.prepare('SELECT 1 AS hit FROM name_shares WHERE app_id = ?1 AND user_sub = ?2').bind(appId, root.userSub).first();
+        const hit = root.userSub === null ? null : await env.DB.prepare(`SELECT 1 AS hit FROM name_shares n WHERE n.app_id = ?1 AND n.user_sub = ?2 AND ${LIVE_NAME_SHARE('?3')}`).bind(appId, root.userSub, now).first();
         app = { appId, shared: hit !== null };
       }
     }
@@ -109,8 +109,8 @@ export async function handleHomeProfileGet(request: Request, env: Env, requestId
       env.DB.prepare('SELECT given_name, family_name FROM home_profiles WHERE provider = ?1 AND sub = ?2').bind(who.provider, who.sub),
       env.DB.prepare(
         `SELECT n.app_id, a.name, a.scope_id, n.shared_at FROM name_shares n JOIN apps a ON a.id = n.app_id
-          WHERE n.provider = ?1 AND n.sub = ?2 AND a.deleted_at IS NULL ORDER BY n.shared_at DESC, n.app_id LIMIT ?3`,
-      ).bind(who.provider, who.sub, HOME_NAME_SHARES_MAX + 1),
+          WHERE n.provider = ?1 AND n.sub = ?2 AND a.deleted_at IS NULL AND ${LIVE_NAME_SHARE('?4')} ORDER BY n.shared_at DESC, n.app_id LIMIT ?3`,
+      ).bind(who.provider, who.sub, HOME_NAME_SHARES_MAX + 1, now),
     ]);
     lap(ctx, 'rows');
     const name = storedName((profile?.results[0] as { given_name: string | null; family_name: string | null } | undefined) ?? null);
@@ -189,11 +189,11 @@ export async function handleHomeNameSharing(request: Request, env: Env, requestI
     // One share per app × account: sharing again (or from another identity of the account) names this identity's name.
     // Written only while the name exists, in the same statement, so a removal racing this can't leave a share behind.
     const res = await env.DB.prepare(
-      `INSERT INTO name_shares (app_id, user_sub, provider, sub, shared_at)
-       SELECT ?1, ?2, ?3, ?4, ?5 WHERE EXISTS (SELECT 1 FROM home_profiles WHERE provider = ?3 AND sub = ?4)
-       ON CONFLICT (app_id, user_sub) DO UPDATE SET provider = excluded.provider, sub = excluded.sub, shared_at = excluded.shared_at`,
+      `INSERT INTO name_shares (app_id, user_sub, provider, sub, via, shared_at)
+       SELECT ?1, ?2, ?3, ?4, ?6, ?5 WHERE EXISTS (SELECT 1 FROM home_profiles WHERE provider = ?3 AND sub = ?4)
+       ON CONFLICT (app_id, user_sub) DO UPDATE SET provider = excluded.provider, sub = excluded.sub, via = excluded.via, shared_at = excluded.shared_at`,
     )
-      .bind(appId, root.userSub, who.provider, who.sub, now)
+      .bind(appId, root.userSub, who.provider, who.sub, now, root.member ? 'member' : 'own')
       .run();
     if (res.meta.changes === 0) return noName(ctx);
     return done(ctx, 200, { shared: true });

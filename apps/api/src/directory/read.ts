@@ -29,7 +29,7 @@ import {
 } from '@hana-id/console-core';
 import { canonicalWalletAddress } from '@hana-id/core/identity';
 import { refuse } from '../changes/cas.ts';
-import { storedName } from '../identity/name.ts';
+import { LIVE_NAME_SHARE, storedName } from '../identity/name.ts';
 import type { HotDb } from '../changes/db.ts';
 import { type Q, join, q, raw } from '../changes/sql.ts';
 
@@ -54,7 +54,7 @@ const SHARED = `FROM email_consents c JOIN apps a ON a.id = c.app_id AND a.org_i
 // that shared it (migration 0019 holds no copy), the latest share first.
 const NAME_SHARED = `FROM name_shares n JOIN apps a ON a.id = n.app_id AND a.org_id = s.org_id AND a.scope_id = u.scope_id AND a.deleted_at IS NULL
      JOIN home_profiles p ON p.provider = n.provider AND p.sub = n.sub
-     WHERE n.user_sub = u.token_sub`;
+     WHERE n.user_sub = u.token_sub AND ${LIVE_NAME_SHARE('(unixepoch() * 1000)')}`;
 const PARTNER_COLUMNS = raw(`u.token_sub, u.support_code, u.scope_id, u.created_at, u.last_seen_at,
   (SELECT c.email ${SHARED} ORDER BY c.decided_at DESC, c.app_id LIMIT 1) AS email,
   (SELECT json_object('given_name', p.given_name, 'family_name', p.family_name) ${NAME_SHARED} ORDER BY n.shared_at DESC, n.app_id LIMIT 1) AS name_json,

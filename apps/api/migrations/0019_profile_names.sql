@@ -22,11 +22,18 @@ CREATE TABLE home_profiles (
 -- Off by default: no row, no name. A partner reads it in its identity tokens (`given_name`, `family_name`) and on the
 -- console's Users screen. Deleted: with the profile, by "Stop sharing", by `uid-erase` (the account's User IDs), and with
 -- the app (the monthly retention job, as `email_consents`).
+--
+-- `via`: how the sharing identity reached the account. `own`: it is the account's root (the User ID is computed from it,
+-- so the share can't outlive its place in the account). `member`: a linked login of another root's account; such a share
+-- counts only while the wallet directory lists that identity as a live member of the account and the share is no older
+-- than its link (identity/name.ts LIVE_NAME_SHARE): an unlinked login's name stops at once, and never comes back by
+-- itself if the login is linked again.
 CREATE TABLE name_shares (
   app_id    TEXT NOT NULL REFERENCES apps (id) ON DELETE CASCADE,
   user_sub  TEXT NOT NULL,                       -- the account's User ID in the app's scope
   provider  TEXT NOT NULL,                       -- the Home identity whose name is shared
   sub       TEXT NOT NULL,
+  via       TEXT NOT NULL CHECK (via IN ('own', 'member')),
   shared_at INTEGER NOT NULL,                    -- unix ms
   PRIMARY KEY (app_id, user_sub)
 );

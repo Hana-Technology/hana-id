@@ -106,7 +106,7 @@ function deps(over: Partial<UidEraseDeps> = {}): UidEraseDeps {
   };
 }
 
-/** `consents: false` for an API D1 before migration 0014; `ledger: false` to seed only the two D1s. */
+/** `consents: false` for an API D1 before migration 0014 (and so before 0019's names); `ledger: false` to seed only the two D1s. */
 async function seed(opts: { consents?: boolean; ledger?: boolean } = {}): Promise<void> {
   const root = await userOf(GOOGLE);
   const emailOwn = await userOf(EMAIL); // the email identity's own account, from before it was linked
@@ -130,6 +130,24 @@ async function seed(opts: { consents?: boolean; ledger?: boolean } = {}): Promis
     c.run('app_a', userSub(OTHER), mac(3), 'granted', 'olivia@example.com', SCOPE);
     c.run('app_b', userSub(GOOGLE, 's8'), mac(1), 'granted', 'alice@gmail.com', 's8');
     c.run('app_b2', userSub(GOOGLE), mac(1), 'granted', 'alice@gmail.com', 's8');
+  }
+  // Names (migration 0019, D714): Alice's Google name (she is also in s8: it stays), her email identity's (seen only in
+  // s7: it goes, with its share in s8), Olivia's (not this account's: stays). Shares: Alice's account's with an s7 app
+  // (goes), Olivia's (stays), Alice's in s8 by her Google name (stays) and by her email identity's name (goes).
+  if (opts.consents !== false) {
+    for (const sc of [SCOPE, 's8']) api.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, created_at, assigned_at) VALUES (?, 'org_legacy', 'test', 0, 0)").run(sc);
+    const app = api.prepare("INSERT INTO apps (id, name, scope_id, publishable_key, created_at) VALUES (?, 'n', ?, ?, 1)");
+    app.run('app_n1', SCOPE, 'pk_test_n1');
+    app.run('app_n2', 's8', 'pk_test_n2');
+    const p = api.prepare('INSERT INTO home_profiles (provider, sub, given_name, family_name, updated_at) VALUES (?, ?, ?, ?, 1)');
+    p.run(GOOGLE.provider, GOOGLE.sub, 'Alice', 'Liddell');
+    p.run(EMAIL.provider, EMAIL.sub, 'Ali', null);
+    p.run(OTHER.provider, OTHER.sub, 'Olivia', null);
+    const ns = api.prepare('INSERT INTO name_shares (app_id, user_sub, provider, sub, via, shared_at) VALUES (?, ?, ?, ?, ?, 5)');
+    ns.run('app_n1', userSub(GOOGLE), GOOGLE.provider, GOOGLE.sub, 'own');
+    ns.run('app_n1', userSub(OTHER), OTHER.provider, OTHER.sub, 'own');
+    ns.run('app_n2', userSub(GOOGLE, 's8'), GOOGLE.provider, GOOGLE.sub, 'own');
+    ns.run('app_n2', tokenSub(9), EMAIL.provider, EMAIL.sub, 'member');
   }
   w.run(root, ALICE_A);
   w.run(root, ALICE_B);
@@ -219,6 +237,11 @@ describe('uid-erase: the plan (dry run)', PGLITE, () => {
     expect(plan.directory).toEqual({ users: 2, wallets: 3, identities: 2 });
     // The account's consents of s7: its User ID's two, the email identity's own, and the one by the root row's token_sub.
     expect(plan.consents).toBe(4);
+    // D714: the account's share with the s7 app and every share of the email identity's name; that name only (her
+    // Google one is used in s8, Olivia's isn't this account's).
+    expect(plan.names).toEqual({ shares: 2, profiles: 1 });
+    expect(lines.join('\n')).toMatch(/names {5}2 name share\(s\) deleted, 1 Hana Home name\(s\) deleted/u);
+    expect(lines.join('\n')).not.toMatch(/Alice|Liddell|Olivia/u);
     expect(plan.userSubs.sort()).toEqual([userSub(GOOGLE), userSub(EMAIL), tokenSub(1), tokenSub(2)].sort());
     expect(lines.join('\n')).toMatch(/consents {2}4 email consent row\(s\) of the scope deleted/u);
     // No consent key in the output: the computed User IDs never appear (only the directory rows' own, as before).
@@ -246,7 +269,10 @@ describe('uid-erase: the plan (dry run)', PGLITE, () => {
 describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('erases the account’s rows in the ledger, the wallet directory and the issuer, records it, and leaves everyone else alone', async () => {
     const out = await uidErase([...ARGV, '--yes'], deps());
-    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, directoryUsers: 2, userEvents: 6, issuerApps: 2, issuerEmails: 1 });
+    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userEvents: 6, issuerApps: 2, issuerEmails: 1 });
+    // D714: the names that stay, and the shares that stay.
+    expect(api.prepare('SELECT provider, sub FROM home_profiles ORDER BY provider, sub').all().map((r) => `${r.provider}:${r.sub}`)).toEqual([`google:${GOOGLE.sub}`, `google:${OTHER.sub}`]);
+    expect(api.prepare('SELECT app_id, sub FROM name_shares ORDER BY app_id, sub').all().map((r) => `${r.app_id}:${r.sub}`)).toEqual([`app_n1:${OTHER.sub}`, `app_n2:${GOOGLE.sub}`]);
     // user_events: Alice's rows by internal id and every row carrying one of her addresses; Olivia's and the s8 user's
     // export stay.
     const events = (api.prepare('SELECT user_id, scope_id, address FROM user_events ORDER BY id').all() as { user_id: string; scope_id: string; address: string | null }[]).map((x) => [x.user_id, x.scope_id, x.address]);
@@ -312,7 +338,7 @@ describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('is re-runnable: a second run finds nothing and still answers', async () => {
     await uidErase([...ARGV, '--yes'], deps());
     const again = await uidErase([...ARGV, '--yes'], deps());
-    expect(again!.erased).toEqual({ ledgerEvents: 0, ledgerAppUsers: 0, directoryWallets: 0, directoryIdentities: 0, emailConsents: 0, directoryUsers: 0, userEvents: 0, issuerApps: 0, issuerEmails: 0 });
+    expect(again!.erased).toEqual({ ledgerEvents: 0, ledgerAppUsers: 0, directoryWallets: 0, directoryIdentities: 0, emailConsents: 0, nameShares: 0, homeNames: 0, directoryUsers: 0, userEvents: 0, issuerApps: 0, issuerEmails: 0 });
   });
 
   it('works from the root identity too, with the sub on stdin', async () => {
@@ -324,7 +350,7 @@ describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('an env without an issuer erases the ledger and the wallet directory; --no-ledger skips the ledger and records nothing', async () => {
     const noIssuer = { ...M, emailIssuer: undefined } as Manifest;
     const out = await uidErase([...ARGV, '--yes', '--no-ledger'], deps({ loadManifest: () => noIssuer, issuerD1: async () => Promise.reject(new Error('no issuer')) }));
-    expect(out!.erased).toEqual({ directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, directoryUsers: 2, userEvents: 6 });
+    expect(out!.erased).toEqual({ directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userEvents: 6 });
     expect((await ledgerCount(GOOGLE)).e).toBe(2);
     expect((await ledger.query('SELECT 1 FROM ops.erasures')).rows).toEqual([]);
     expect(lines.join('\n')).toMatch(/record the ticket and these counts in the support log by hand/u);
@@ -347,7 +373,7 @@ describe('uid-erase and user_events (readiness 7.17)', PGLITE, () => {
     api.exec('DROP TABLE user_events');
     const out = await uidErase([...ARGV, '--yes'], deps());
     expect(out!.plan.events).toBeNull();
-    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, directoryUsers: 2, issuerApps: 2, issuerEmails: 1 });
+    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, issuerApps: 2, issuerEmails: 1 });
     expect(lines.join('\n')).toMatch(/events {4}none \(the API's D1 has no user_events: migration 0013 not applied\)/u);
   });
 });
@@ -430,6 +456,9 @@ describe('uid-erase refusals', PGLITE, () => {
     expect(out!.plan.consents).toBeNull();
     expect(lines.join('\n')).toMatch(/consents {2}none: the API's D1 has no email_consents table \(migration 0014 not applied\)/u);
     expect(out!.erased).not.toHaveProperty('emailConsents');
+    expect(out!.erased).not.toHaveProperty('nameShares');
+    expect(out!.plan.names).toBeNull();
+    expect(lines.join('\n')).toMatch(/names {5}none: the API's D1 has no name tables/u);
     expect(out!.erased).toMatchObject({ directoryUsers: 2, issuerApps: 2 });
   });
 });

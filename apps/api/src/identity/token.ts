@@ -376,7 +376,7 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
   const email = await mintEmail(env, ctx, { app, userSub, sessionPk: req.sessionPk, sealedEmail: req.sealedEmail, now });
   lap(ctx, 'email');
   // The name the user shared with this app from Hana Home (D714; never an error).
-  const name = await mintName(env, ctx, { appId: app.id, userSub });
+  const name = await mintName(env, ctx, { appId: app.id, userSub, now });
   lap(ctx, 'name');
 
   return sign(env, ctx, config, app, { ...lifetime, root, sessionPk: req.sessionPk, wallets: wallets as Record<IdentityChain, string>, email, name }, exec);

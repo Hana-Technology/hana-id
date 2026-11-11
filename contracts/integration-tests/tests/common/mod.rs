@@ -325,6 +325,24 @@ pub fn deploy_wasm() -> Result<Vec<u8>> {
         .map_err(|e| anyhow!(e))
 }
 
+static GUESTBOOK_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
+
+/// The hackathon demo contract (`contracts/hana-guestbook`) exactly as `deploy-guestbook` builds what it deploys
+/// (`cargo near build non-reproducible-wasm --no-abi`, scripts/lib/guestbook-deploy.ts), into `target/wasm-guestbook`.
+/// `HANA_GUESTBOOK_WASM=<path>` overrides it.
+pub fn guestbook_wasm() -> Result<Vec<u8>> {
+    GUESTBOOK_WASM
+        .get_or_init(|| {
+            if let Ok(path) = std::env::var("HANA_GUESTBOOK_WASM") {
+                return std::fs::read(&path).map_err(|e| format!("reading HANA_GUESTBOOK_WASM={path}: {e}"));
+            }
+            let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("wasm-guestbook");
+            build_wasm_at(&contracts_dir().join("hana-guestbook"), "hana_guestbook.wasm", &target, &["--no-abi"]).map_err(|e| format!("{e:#}"))
+        })
+        .clone()
+        .map_err(|e| anyhow!(e))
+}
+
 static V3_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
 
 /// The v3 hana-signer wasm: `contracts/hana-signer` at `V3_COMMIT`, exported with `git archive` into

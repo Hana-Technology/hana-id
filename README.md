@@ -51,6 +51,7 @@ Rules the contract enforces:
 ```
 contracts/hana-signer/   Rust NEAR contract (near-sdk 5): OIDC verification, scope registry, sessions, CKD
 contracts/mock-mpc/      Test MPC contract for the sandbox tests
+contracts/hana-guestbook/  NEAR hackathon demo contract: a 50-message guestbook written through meta transactions
 contracts/integration-tests/  near-workspaces sandbox tests (CI job "Sandbox e2e")
 apps/api/                Cloudflare Worker + Durable Objects + D1: the relayer partners call (publishable keys)
 apps/smoke/              Local smoke-test pages (Vite, http://localhost:5173): login through the vault, plus the direct flow

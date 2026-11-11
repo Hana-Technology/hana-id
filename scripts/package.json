@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "deploy-contract": "tsx deploy-contract.ts",
+    "deploy-guestbook": "tsx deploy-guestbook.ts",
     "post-google-keys": "tsx post-google-keys.ts",
     "fetch-ckd-key": "tsx fetch-ckd-key.ts",
     "admin": "tsx admin.ts",

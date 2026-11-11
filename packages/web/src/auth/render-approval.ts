@@ -704,12 +704,6 @@ function originHost(origin: string | undefined): string | null {
 export const nearRecipientMismatch = (recipient: string, host: string): string =>
   `This app is at ${host}, but the signature is for ${recipient}. Sign only if you are signing in to ${recipient} on purpose.`;
 
-/** The neutral line for a recipient that is a name, not a host: "The signature is for {recipient}. This app is at {host}." */
-export const nearRecipientNote = (recipient: string, host: string): string => `The signature is for ${recipient}. This app is at ${host}.`;
-
-/** A recipient that reads as a host or a URL (a dot or a scheme, no spaces): only then is a mismatch a danger. */
-const looksLikeHost = (r: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//iu.test(r) || (/^[^\s/]+\.[^\s/]+$/u.test(r) && !r.endsWith('.near') && !r.endsWith('.testnet'));
-
 /** A recipient with characters outside printable ASCII, which can imitate another name, written with \u escapes. */
 export const nearRecipientLookalike = (escaped: string): string => `The recipient has characters that can imitate another name. Written out: ${escaped}`;
 
@@ -722,7 +716,9 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
   const lookalike = /[^\x20-\x7e]/u.test(p.recipient);
   return [
     d.h('p', { class: 'warn' }, nearMessageWarning(p.recipient)),
-    host !== null && !sameSite ? (looksLikeHost(p.recipient) ? d.h('p', { class: 'danger' }, nearRecipientMismatch(p.recipient, host)) : d.h('p', { class: 'note' }, nearRecipientNote(p.recipient, host))) : null,
+    // Any recipient that isn't exactly this page's host or origin, whatever its shape (a page picks the recipient, so no
+    // shape may soften this): one factual line in the warning style.
+    host !== null && !sameSite ? d.h('p', { class: 'warn recipient-mismatch' }, nearRecipientMismatch(p.recipient, host)) : null,
     lookalike ? d.h('p', { class: 'danger' }, nearRecipientLookalike(asciiEscaped(p.recipient))) : null,
     rows(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl)), row(d, 'Nonce', mono(d, toHex(p.nonce)))]),
     d.h('p', { class: 'note' }, NO_NETWORK_NOTE),

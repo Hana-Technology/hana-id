@@ -15,7 +15,6 @@ import {
   NEAR_DELEGATE_NONE,
   NEAR_OWN_CONTRACT_TOTAL,
   markOverflowing,
-  nearRecipientNote,
   overflowNote,
   nearMessageWarning,
   nearNetworkLine,
@@ -242,18 +241,14 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
       const bytes = encodeNep413Message({ message: 'Sign in', nonce: new Uint8Array(32), recipient, callbackUrl: null });
       return renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'P', { envNetwork: 'testnet', testApp: false, ...(parentOrigin ? { parentOrigin } : {}) });
     };
+    const mismatches = (el: HTMLElement) => [...el.querySelectorAll('p.recipient-mismatch')].map((p) => [p.className, p.textContent]);
     const dangers = (el: HTMLElement) => [...el.querySelectorAll('p.danger')].map((p) => p.textContent);
-    expect(dangers(msg('guestbook.example', 'https://guestbook.example'))).toEqual([]);
-    expect(dangers(msg('https://guestbook.example', 'https://guestbook.example'))).toEqual([]);
-    expect(dangers(msg('bank.example', 'https://guestbook.example'))).toEqual([nearRecipientMismatch('bank.example', 'guestbook.example')]);
-    expect(dangers(msg('https://bank.example/login', 'https://guestbook.example'))).toEqual([nearRecipientMismatch('https://bank.example/login', 'guestbook.example')]);
-    // A name, not a host (an app or contract name): a neutral line, no danger, so the danger line keeps its weight.
-    for (const name of ['Guestbook', 'guestbook.testnet', 'app.near']) {
-      const el = msg(name, 'https://guestbook.example');
-      expect(dangers(el)).toEqual([]);
-      expect([...el.querySelectorAll('p.note')].map((p) => p.textContent)).toContain(nearRecipientNote(name, 'guestbook.example'));
+    expect(mismatches(msg('guestbook.example', 'https://guestbook.example'))).toEqual([]);
+    expect(mismatches(msg('https://guestbook.example', 'https://guestbook.example'))).toEqual([]);
+    // Every other shape gets the same line, in the same style: no pattern can soften it.
+    for (const recipient of ['bank.example', 'https://bank.example/login', 'guestbook.near', 'guestbook.testnet', 'guestbook.example/login', 'Guestbook']) {
+      expect(mismatches(msg(recipient, 'https://guestbook.example'))).toEqual([['warn recipient-mismatch', nearRecipientMismatch(recipient, 'guestbook.example')]]);
     }
-    expect(nearRecipientNote('Guestbook', 'guestbook.example')).toBe('The signature is for Guestbook. This app is at guestbook.example.');
     expect(dangers(msg('gооgle.com', 'https://gооgle.com'.normalize()))).toContain(nearRecipientLookalike('g\\u043e\\u043egle.com'));
     expect(nearRecipientMismatch('bank.example', 'guestbook.example')).toBe('This app is at guestbook.example, but the signature is for bank.example. Sign only if you are signing in to bank.example on purpose.');
   });

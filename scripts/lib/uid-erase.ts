@@ -239,7 +239,7 @@ async function userAddresses(c: Ctx, internalIds: readonly string[], events: boo
 
 type CountsOf = Pick<Plan, 'uids' | 'internalIds' | 'account' | 'identities' | 'userSubs' | 'consentTable' | 'nameTables' | 'addresses'> & { eventsTable: boolean };
 
-async function counts(c: Ctx, p: CountsOf): Promise<Pick<Plan, 'ledger' | 'directory' | 'consents' | 'issuer' | 'events'>> {
+async function counts(c: Ctx, p: CountsOf): Promise<Pick<Plan, 'ledger' | 'directory' | 'consents' | 'names' | 'issuer' | 'events'>> {
   let ledger: Plan['ledger'] = null;
   if (c.ledger) {
     const [r] = await c.ledger.query<{ events: string; app_users: string }>(

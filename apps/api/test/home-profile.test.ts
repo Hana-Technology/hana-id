@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { base64Decode } from '../src/bytes.ts';
 import { HotDb } from '../src/changes/db.ts';
 import { purgeDirectory } from '../src/changes/retention.ts';
+import { adminProfileNames } from '../src/directory/read.ts';
 import { HOME_NAME_SHARES_MAX, HOME_NAME_SHARING_ENDPOINT, HOME_PROFILE_ENDPOINT, HOME_PROFILE_WRITE_PER_KEY_MINUTE } from '../src/home/profile.ts';
 import { mintName, storedName } from '../src/identity/name.ts';
 import { clearIdentitySignerCache } from '../src/identity/signer.ts';
@@ -52,7 +53,7 @@ afterEach(() => {
 
 interface Identity {
   sub: string;
-  send(method: string, path: string, body?: unknown, init?: { ip?: string; origin?: string | null; raw?: string }): Promise<Response>;
+  send(method: string, path: string, body?: unknown, init?: { ip?: string; origin?: string | null; raw?: string; env?: Partial<typeof env> }): Promise<Response>;
 }
 
 async function home(sub = `${Date.now()}${Math.floor(Math.random() * 1e6)}`, o: { email?: boolean } = {}): Promise<Identity> {
@@ -60,6 +61,8 @@ async function home(sub = `${Date.now()}${Math.floor(Math.random() * 1e6)}`, o: 
     // H10: an email Home identity counts while the issuer's Home audience is on the chain's exit list.
     withEmail(near, []);
     near.exit = [['email', HOME_EMAIL_AUDIENCE]];
+    // The config view (and its exit list) may be cached from an earlier request of the test.
+    clearViewCaches();
   }
   const kp = KeyPair.fromRandom('ed25519');
   const pub = Uint8Array.from(kp.getPublicKey().data);
@@ -81,7 +84,7 @@ async function home(sub = `${Date.now()}${Math.floor(Math.random() * 1e6)}`, o: 
       };
       const origin = init.origin === undefined ? AUTH : init.origin;
       if (origin !== null) headers.origin = origin;
-      return call(path, { method, headers, ...(text === '' ? {} : { rawBody: text }), ...(o.email ? { env: emailEnv() } : {}) });
+      return call(path, { method, headers, ...(text === '' ? {} : { rawBody: text }), ...(o.email || init.env ? { env: { ...(o.email ? emailEnv() : {}), ...init.env } } : {}) });
     },
   };
 }
@@ -362,6 +365,17 @@ describe('sharing the name with an app', () => {
     expect(await sharesOf(me.sub)).toEqual([]);
   });
 
+  it('an env without IDENTITY_SUB_KEY: a share or a stop is 503 name_sharing_unavailable and writes nothing; GET says not shared', async () => {
+    const me = await home();
+    const app = await seedApp();
+    await named(me, 'Ada', null);
+    const noKey = { env: { IDENTITY_SUB_KEY: '' } };
+    for (const share of [true, false]) await expectCode(await me.send('POST', HOME_NAME_SHARING_ENDPOINT, { appId: app.id, share }, noKey), 503, 'name_sharing_unavailable');
+    expect(await shareRows(app.id)).toEqual([]);
+    const res = await me.send('GET', `${HOME_PROFILE_ENDPOINT}?appId=${app.id}`, undefined, noKey);
+    expect(((await answer(res)) as unknown as ProfileAnswer).app).toEqual({ appId: app.id, shared: false });
+  });
+
   it('the body is exactly {appId, share: boolean}; a malformed or doubled GET query is 400', async () => {
     const me = await home();
     await named(me, 'Ada', null);
@@ -422,6 +436,18 @@ describe('sharing the name with an app', () => {
     await named(me, null, null);
     expect(Object.keys(await claimsFor(b, me.sub))).not.toContain('given_name');
     expect(await sharesOf(me.sub)).toEqual([]);
+  });
+
+  it('app.shared needs the sharer’s profile: a share row left without one reads not shared, and carries no name', async () => {
+    const me = await home();
+    const app = await seedApp();
+    await named(me, 'Ada', null);
+    await shares(me, app);
+    expect((await profile(me, `?appId=${app.id}`)).app).toEqual({ appId: app.id, shared: true });
+    // Not reachable through the API (a removal deletes the shares in the same batch): a row orphaned by hand.
+    await env.DB.prepare("DELETE FROM home_profiles WHERE provider = 'google' AND sub = ?1").bind(me.sub).run();
+    expect(await profile(me, `?appId=${app.id}`)).toEqual({ name: null, shares: [], more: false, app: { appId: app.id, shared: false } });
+    expect(Object.keys(await claimsFor(app, me.sub))).not.toContain('given_name');
   });
 
   it('sharing again is idempotent (one row a app × account, shared_at moves)', async () => {
@@ -491,10 +517,11 @@ describe('a linked member’s share (D661)', () => {
     expect(claims.sub).toBe(userSub);
     expect(nameClaims(claims)).toEqual({ given_name: 'Mia', family_name: 'Member' });
     expect(await profile(mem, `?appId=${app.id}`)).toMatchObject({ app: { appId: app.id, shared: true }, shares: [{ appId: app.id }] });
-    // The root sees the account's share for the app (whichever identity shared it), not in its own list.
-    expect(await profile(root, `?appId=${app.id}`)).toEqual({ name: null, shares: [], more: false, app: { appId: app.id, shared: false } });
+    // The root sees the account's share for the app (whichever identity shared it, with or without a name of its own),
+    // but not in its own list.
+    expect(await profile(root, `?appId=${app.id}`)).toEqual({ name: null, shares: [], more: false, app: { appId: app.id, shared: true } });
     await named(root, 'Rita', null);
-    expect((await profile(root, `?appId=${app.id}`)).app).toEqual({ appId: app.id, shared: true });
+    expect(await profile(root, `?appId=${app.id}`)).toEqual({ name: { givenName: 'Rita', familyName: null }, shares: [], more: false, app: { appId: app.id, shared: true } });
     // The root reads no chain.
     const after = identityReads();
     await profile(root, `?appId=${app.id}`);
@@ -731,6 +758,10 @@ describe('ConsoleRpc and AdminRpc: the Users screens', () => {
       { provider: 'email', sub: ada.sub, givenName: 'Eve', familyName: null },
       { provider: 'google', sub: ada.sub, givenName: 'Ada', familyName: 'Lovelace' },
     ]);
+    // Before migration 0019: nobody has a name (an empty answer); any other failure is not hidden.
+    const failing = (message: string) => ({ all: () => Promise.reject(new Error(message)) }) as unknown as HotDb;
+    expect(await adminProfileNames(failing('D1_ERROR: no such table: home_profiles: SQLITE_ERROR'), ids)).toEqual([]);
+    await expect(adminProfileNames(failing('D1_ERROR: network'), ids)).rejects.toThrow('network');
     for (const actor of [member(), system()]) expect(await adminRpc().profileNames({ ...actor, identities: ids })).toMatchObject({ ok: false, code: 'forbidden' });
     for (const bad of [[], Array.from({ length: 51 }, (_, k) => ({ provider: 'google', sub: `s${k}` })), [{ provider: 'Google', sub: 'x' }], [{ provider: 'google', sub: '' }], [{ provider: 'google', sub: 'x', extra: 1 }]]) {
       expect(await adminRpc().profileNames({ ...hana(), identities: bad })).toMatchObject({ ok: false, code: 'bad_request' });

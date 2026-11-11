@@ -1,16 +1,18 @@
 // An app's Email login (build plan batch 9, D444, D447; `GET …/apps/:app/email`): whether users can sign in with email,
 // the steps to turn it on (a fresh sign-in for the app's setting; an on-chain owner adds the scope's email client,
-// timelocked, then anyone executes it), turning it off at once, and the app's own mail deliverability. A viewer sees the
-// state and the numbers; every control says why it isn't offered.
+// timelocked, then an owner executes it), turning it off at once, and the app's own mail deliverability. A viewer sees
+// the state and the numbers; every control says why it isn't offered. Both steps' confirmations come back here (D711).
+// While the change waits out the timelock, one timer to its unlock time on the server's clock re-reads the page once
+// (so does coming back to a hidden tab after that time), so Execute appears without a reload and without polling (D713).
 import type { AppEmailAnswer, DeliverabilityDay } from '@hana-id/console-core';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { postJson } from '../../api.ts';
-import { relative, useApi, useStepUp, useWrite, when } from '../../lib.tsx';
+import { clockTime, useApi, useStepUp, useWrite } from '../../lib.tsx';
 import { Badge, Callout, ConfirmButton, Empty, ErrorNote, Loading, Panel, StepUpHint, Why, WriteNote } from '../../ui.tsx';
-import { useApp } from '../Apps.tsx';
+import { clockOffset, useApp, useReloadAt } from '../Apps.tsx';
 
-const pct = (a: number, b: number): string => (b > 0 ? `${((a / b) * 100).toFixed(1)}%` : '—');
+const pct = (a: number, b: number): string => (b > 0 ? `${((a / b) * 100).toFixed(1)}%` : 'none sent');
 
 function Deliverability({ d }: { d: AppEmailAnswer['deliverability'] }) {
   if ('unavailable' in d) return <Why>Mail numbers are unavailable right now. The email issuer didn’t answer; try again in a moment.</Why>;
@@ -59,12 +61,21 @@ export function EmailLogin() {
   const ctl = useApp();
   const { app, owner, frozen } = ctl;
   const r = useApi<AppEmailAnswer>(`/api/orgs/${org}/apps/${app.id}/email`);
-  const step = useStepUp(org!);
+  // Both steps' confirmations come back to this tab (D711).
+  const step = useStepUp(org!, { page: 'email', appId: app.id });
   const off = useWrite();
   const exec = useWrite();
   const [done, setDone] = useState<string | undefined>();
   const a = r.data;
   const base = `/api/orgs/${org}/apps/${app.id}`;
+  // The server's clock, measured against this answer as it arrives; without its `now`, the app read's (D701).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const offset = useMemo(() => (a && typeof a.now === 'number' ? clockOffset(a.now, Date.now()) : ctl.serverNow() - Date.now()), [a]);
+  const pending = a && !('unavailable' in a.scope) ? a.scope.pending : null;
+  // Waiting out the timelock: one re-read at the unlock time, when the server answers `executable` (D713). No polling:
+  // an answer that says "not yet" for a time already past on its own clock sets no timer (a reload reads it again).
+  const answeredAt = a && typeof a.now === 'number' ? a.now : Number.NEGATIVE_INFINITY;
+  useReloadAt(pending && !pending.executable && pending.unlockAt > answeredAt ? pending.unlockAt : null, r.reload, offset);
 
   if (r.error) return <ErrorNote error={r.error} onRetry={r.reload} />;
   if (!a) return <Loading />;
@@ -76,10 +87,22 @@ export function EmailLogin() {
     );
 
   const scope = 'unavailable' in a.scope ? null : a.scope;
-  const state = !a.emailOn ? 'off' : !scope ? 'unknown' : scope.clientOnChain ? 'on' : scope.pending ? 'waiting' : 'almost';
+  const state = !a.emailOn ? 'off' : !scope ? 'unknown' : scope.clientOnChain ? 'on' : scope.pending ? (scope.pending.executable ? 'ready' : 'waiting') : 'almost';
   const label =
-    state === 'on' ? <Badge tone="ok">On</Badge> : state === 'off' ? <Badge tone="neutral">Off</Badge> : state === 'waiting' ? <Badge tone="warn">Waiting for the chain</Badge> : state === 'almost' ? <Badge tone="warn">One step left</Badge> : <Badge tone="neutral">Unknown</Badge>;
-  const scopeLink = <Link to={`/orgs/${org}/scopes/${a.scopeId}`}>scope</Link>;
+    state === 'on' ? (
+      <Badge tone="ok">On</Badge>
+    ) : state === 'off' ? (
+      <Badge tone="neutral">Off</Badge>
+    ) : state === 'waiting' ? (
+      <Badge tone="warn">Waiting for the chain</Badge>
+    ) : state === 'ready' ? (
+      <Badge tone="warn">Ready to execute</Badge>
+    ) : state === 'almost' ? (
+      <Badge tone="warn">One step left</Badge>
+    ) : (
+      <Badge tone="neutral">Unknown</Badge>
+    );
+  const scopePage = `/orgs/${org}/scopes/${a.scopeId}`;
   const executing = exec.busy;
 
   return (
@@ -89,7 +112,7 @@ export function EmailLogin() {
           <dt>Status</dt>
           <dd>{label}</dd>
         </dl>
-        {!scope && <Why>The scope’s on-chain state can’t be read right now: try reloading.</Why>}
+        {!scope && <Why>Hana couldn’t read your scope’s settings from the NEAR blockchain just now: try again in a moment.</Why>}
         {a.otherAppsEmailOn > 0 && <p className="muted small">{`${a.otherAppsEmailOn} other ${a.otherAppsEmailOn === 1 ? 'app' : 'apps'} of this scope also ${a.otherAppsEmailOn === 1 ? 'uses' : 'use'} email login.`}</p>}
         {state !== 'on' && (
           <ol className="checklist">
@@ -99,7 +122,7 @@ export function EmailLogin() {
               </span>
               <div className="check-body">
                 <p className="check-title">Turn email login on for this app</p>
-                <p>The app starts offering email next to Google once the scope has its email client. Takes a fresh sign-in.</p>
+                <p>This app’s own setting, in force as soon as you confirm it with a fresh Google sign-in. Users see email next to Google once step 2 is done too.</p>
                 {!a.emailOn &&
                   (!owner ? (
                     <Why>Only owners can turn email login on.</Why>
@@ -123,15 +146,23 @@ export function EmailLogin() {
               <div className="check-body">
                 <p className="check-title">Add the scope’s email client on chain</p>
                 <p>
-                  Adds the client <span className="mono small">email:{a.scopeId}</span> to the {scopeLink}. An on-chain owner proposes it; it waits out the scope’s timelock, then anyone can execute it.
+                  Your apps’ <Link to={scopePage}>scope</Link> (the apps that share each user’s wallet) keeps the sign-in methods it accepts on the NEAR blockchain. This step adds Hana’s email sign-in there, as the client{' '}
+                  <span className="mono small">email:{a.scopeId}</span> (<span className="mono small">{a.scopeId}</span> is your scope’s ID). One of the scope’s on-chain owners proposes it; the chain then holds it for a set time (the timelock), so
+                  the other owners can cancel it; after that, any owner executes it.
                 </p>
-                {a.emailOn && scope && !scope.clientOnChain && !scope.pending && (
-                  !owner ? (
+                {!a.emailOn && scope && !scope.clientOnChain && !scope.pending && <p className="muted small">Do step 1 first.</p>}
+                {a.emailOn &&
+                  scope &&
+                  !scope.clientOnChain &&
+                  !scope.pending &&
+                  (!owner ? (
                     <Why>Only owners can propose this.</Why>
                   ) : frozen ? (
                     <Why>This can’t be proposed while Hana has frozen the organisation.</Why>
                   ) : !scope.youAreOnChainOwner ? (
-                    <Why>Your Google account isn’t an on-chain owner of this scope: ask one of its owners (see the {scopeLink} page).</Why>
+                    <Why>
+                      Only an on-chain owner of the scope can propose this, and your Google account isn’t one. <Link to={scopePage}>The scope’s page</Link> lists its on-chain owners: ask one of them.
+                    </Why>
                   ) : (
                     <>
                       <button type="button" className="btn btn-primary" disabled={step.busy} onClick={() => void step.start('owner_action', { scopeId: a.scopeId, method: 'propose_change', change: { kind: 'AddEmailClient' } })}>
@@ -140,37 +171,46 @@ export function EmailLogin() {
                       <StepUpHint email={ctl.email} />
                       <WriteNote error={step.error} />
                     </>
-                  )
-                )}
+                  ))}
                 {scope?.pending && (
                   <>
-                    <p>
-                      {scope.pending.executable ? 'The timelock has passed: anyone can execute it now.' : `Proposed; it unlocks ${relative(scope.pending.unlockAt, Date.now())} (${when(scope.pending.unlockAt)}).`}
-                    </p>
-                    {owner && !frozen && scope.pending.executable && (
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        disabled={executing}
-                        onClick={() =>
-                          void exec.run(async () => {
-                            await postJson(`/api/orgs/${org}/scopes/${a.scopeId}/execute`, { changeId: scope.pending!.changeId });
-                            setDone('Executed. Email login is on once the chain confirms.');
-                            r.reload();
-                          })
-                        }
-                      >
-                        {executing ? 'Executing…' : 'Execute the change'}
-                      </button>
+                    {scope.pending.executable ? (
+                      <p>The timelock has passed: the change can be executed now.</p>
+                    ) : (
+                      <>
+                        <p className="strong">You can execute this from {clockTime(scope.pending.unlockAt, Date.now() + offset)}.</p>
+                        <p className="muted small">Proposed. This page checks again at that time: you don’t need to reload it.</p>
+                      </>
                     )}
-                    <WriteNote error={exec.error} done={done} />
+                    {scope.pending.executable &&
+                      (!owner ? (
+                        <Why>Only owners can execute the change.</Why>
+                      ) : frozen ? (
+                        <Why>The change can’t be executed while Hana has frozen the organisation.</Why>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          disabled={executing}
+                          onClick={() =>
+                            void exec.run(async () => {
+                              await postJson(`/api/orgs/${org}/scopes/${a.scopeId}/execute`, { changeId: scope.pending!.changeId });
+                              setDone(a.emailOn ? 'Executed: users of this app can now sign in with email.' : 'Executed: the scope now accepts email sign-in. This app still needs step 1 before its users are offered email.');
+                              r.reload();
+                            })
+                          }
+                        >
+                          {executing ? 'Executing…' : 'Execute the change'}
+                        </button>
+                      ))}
+                    <WriteNote error={exec.error} />
                   </>
                 )}
               </div>
             </li>
           </ol>
         )}
-        {state === 'on' && <p>Users of this app can sign in with email. Partners can see a shared address only when the user shares it (Login &amp; sessions).</p>}
+        {state === 'on' && <p>Users of this app can sign in with a code sent to their email. You see a user’s email address only if they share it with your app (Login &amp; sessions).</p>}
         {a.emailOn && (
           <div className="form-actions">
             {!owner ? (
@@ -191,25 +231,32 @@ export function EmailLogin() {
                 }
               />
             )}
-            <WriteNote error={off.error} done={done} />
+            <WriteNote error={off.error} />
           </div>
         )}
         {!a.emailOn && scope?.clientOnChain && (
           <div className="form-actions">
             {a.otherAppsEmailOn > 0 ? (
-              <Why>The scope’s email client stays while another app of this scope uses email login.</Why>
+              <Why>Email sign-in stays on the scope while another app of the scope uses it.</Why>
             ) : !owner ? (
-              <Why>Only owners can remove the scope’s email client.</Why>
+              <Why>Only owners can remove email sign-in from the scope.</Why>
             ) : !scope.youAreOnChainOwner ? (
-              <Why>Only an on-chain owner of this scope can remove its email client.</Why>
+              <Why>Only an on-chain owner of this scope can remove email sign-in from it.</Why>
             ) : (
               <>
-                <ConfirmButton label="Remove the scope’s email client from the chain" confirm="Continue" detail="At once, for every app of this scope. Adding it back takes the timelock again." busy={step.busy} onConfirm={() => void step.start('owner_action', { scopeId: a.scopeId, method: 'remove_client', aud: `email:${a.scopeId}` })} />
+                <ConfirmButton
+                  label="Remove the scope’s email client from the chain"
+                  confirm="Continue"
+                  detail="At once, for every app of this scope. Adding it back takes the timelock again."
+                  busy={step.busy}
+                  onConfirm={() => void step.start('owner_action', { scopeId: a.scopeId, method: 'remove_client', aud: `email:${a.scopeId}` })}
+                />
                 <WriteNote error={step.error} />
               </>
             )}
           </div>
         )}
+        <WriteNote done={done} />
       </Panel>
       <Panel title="Email deliverability" description="Your app’s own mail per day: only counts, never an address.">
         <Deliverability d={a.deliverability} />

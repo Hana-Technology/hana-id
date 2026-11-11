@@ -226,8 +226,17 @@ export interface CreatedAction {
   expiresAt: number;
 }
 
+/**
+ * The page that starts an action, where its confirmation page's back link returns (D711): a page name the server
+ * checks against the kind's allowlist and turns into a path itself; `appId` names the app whose tab it is.
+ */
+export interface ReturnTo {
+  page: 'origins' | 'signing' | 'suspend' | 'sessions' | 'email' | 'scope' | 'members';
+  appId?: string;
+}
+
 /** Builds an action on the server; the caller sends the member to `/actions/:id` to review and confirm it. */
-export const createAction = (org: string, kind: string, params: unknown): Promise<CreatedAction> => postJson<CreatedAction>(`/api/orgs/${org}/actions`, { kind, params });
+export const createAction = (org: string, kind: string, params: unknown, returnTo?: ReturnTo): Promise<CreatedAction> => postJson<CreatedAction>(`/api/orgs/${org}/actions`, { kind, params, ...(returnTo ? { returnTo } : {}) });
 
 /** Starts the action's fresh sign-in: the whole window goes to the auth origin, then Google. */
 export async function confirmWithGoogle(actionId: string): Promise<void> {

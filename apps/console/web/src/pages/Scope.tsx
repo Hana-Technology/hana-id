@@ -2,12 +2,14 @@
 // its owners (members by address, never a Google account id), clients, shared login and pending changes, owner drift
 // with a SetOwners proposal, and the owner actions (each a fresh sign-in whose token the contract checks). AddClient
 // needs a client proof from the client itself: the helper is a download the partner opens on one of the client's own
-// origins, and the pasted token is accepted only after the warning that it becomes public on chain.
-import { useState } from 'react';
+// origins, and the pasted token is accepted only after the warning that it becomes public on chain. A pending change is
+// judged on the server's clock, and the page re-reads once when the next one unlocks (D701, D713).
+import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { postJson } from '../api.ts';
-import { relative, useApi, useOrg, useStepUp, useWrite, when } from '../lib.tsx';
+import { relative, useApi, useNow, useOrg, useStepUp, useWrite, when } from '../lib.tsx';
 import { Callout, ConfirmButton, CopyButton, ErrorNote, Loading, PageHeader, Panel, StepUpHint, Why, WriteNote } from '../ui.tsx';
+import { clockOffset, useReloadAt } from './Apps.tsx';
 
 type Owner = { kind: 'near'; accountId: string } | { kind: 'member'; userId: string; email: string; orgOwner: boolean } | { kind: 'other_google' } | { kind: 'other'; provider: string };
 
@@ -22,6 +24,8 @@ interface ScopeAnswer {
   };
   drift: { hasDrift: boolean; missingOnChain: { userId: string; email: string }[]; notOrgOwners: { userId: string; email: string }[]; unknownOnChain: number };
   youAreOnChainOwner: boolean;
+  /** The Worker's clock when it judged `executable` (D701). */
+  now?: number;
 }
 
 function ownerText(o: Owner): string {
@@ -95,8 +99,14 @@ export function ScopePage() {
   const { org, scope } = useParams();
   const ctx = useOrg();
   const r = useApi<ScopeAnswer>(`/api/orgs/${org}/scopes/${scope}`);
-  const step = useStepUp(org!);
+  const step = useStepUp(org!, { page: 'scope' });
   const w = useWrite();
+  useNow(30_000); // the countdowns
+  // The server's clock (D701): one re-read when the next waiting change unlocks, so its Execute appears (D713).
+  const offset = useMemo(() => clockOffset(r.data?.now, Date.now()), [r.data]);
+  const answeredAt = typeof r.data?.now === 'number' ? r.data.now : Number.NEGATIVE_INFINITY;
+  const locked = (r.data?.scope.pending ?? []).filter((p) => !p.executable && p.unlockAt > answeredAt).map((p) => p.unlockAt);
+  useReloadAt(locked.length ? Math.min(...locked) : null, r.reload, offset);
   const head = (
     <PageHeader
       back={{ to: `/orgs/${org}`, label: 'Apps' }}
@@ -122,7 +132,7 @@ export function ScopePage() {
   const owner = ctx?.role === 'owner' && !ctx.frozen;
   const can = owner && youAreOnChainOwner;
   const act = (params: Record<string, unknown>) => void step.start('owner_action', { scopeId: s.id, ...params });
-  const now = Date.now();
+  const now = Date.now() + offset;
   return (
     <>
       {head}
@@ -203,7 +213,7 @@ export function ScopePage() {
                     <td>{changeText(p.change)}</td>
                     <td>
                       {when(p.unlockAt)}
-                      <div className="muted small">{p.executable ? 'Unlocked: anyone can execute it' : relative(p.unlockAt, now)}</div>
+                      <div className="muted small">{p.executable ? 'Unlocked: any owner can execute it' : relative(p.unlockAt, now)}</div>
                     </td>
                     {owner && (
                       <td className="cell-actions">

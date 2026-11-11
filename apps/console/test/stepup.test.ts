@@ -335,6 +335,80 @@ describe('owner actions (spec "On-chain owner actions")', () => {
   });
 });
 
+describe('where the action page returns (D711)', () => {
+  type Built = { id: string; returnTo: string; error?: { code: string; message: string } };
+  const build = (m: Awaited<ReturnType<typeof member>>, body: unknown) => postAs<Built>(m, `/api/orgs/${m.org}/actions`, body);
+  const returnOf = async (m: Awaited<ReturnType<typeof member>>, id: string) => (await actionOf(m, id)).body as unknown as { returnTo: string };
+
+  it('each kind returns to the page that starts it by default; the Email login tab for both of its steps', async () => {
+    const { m, app } = await ownerWithApp();
+    const base = `/orgs/${m.org}`;
+    const origin = await build(m, { kind: 'origin.add', params: { appId: app.id, add: ['https://back.partner.example'] } });
+    expect(origin.body.returnTo).toBe(`${base}/apps/${app.id}/origins`);
+    const settings = await build(m, { kind: 'app.settings', params: { appId: app.id, sessionTtlMs: 8 * 3600_000 } });
+    expect(settings.body.returnTo).toBe(`${base}/apps/${app.id}/sessions`);
+    const invite = await build(m, { kind: 'member.invite', params: { email: 'back@partner.example', role: 'viewer' }, returnTo: { page: 'members' } });
+    expect(invite.body.returnTo).toBe(`${base}/members`);
+    // Step 1 of Email login (an app setting) and step 2 (an owner action on the app's scope) both come back to the tab.
+    const step1 = await build(m, { kind: 'app.settings', params: { appId: app.id, identityEmail: 'off' }, returnTo: { page: 'email', appId: app.id } });
+    expect(step1.body.returnTo).toBe(`${base}/apps/${app.id}/email`);
+    await setScope({ id: app.scope, owners: [oidc(m.sub)], action_nonce: 1, allow_shared: true, clients: [['google', 'c-1.apps.googleusercontent.com']] });
+    const step2 = await build(m, { kind: 'owner_action', params: { scopeId: app.scope, method: 'disable_shared_login' }, returnTo: { page: 'email', appId: app.id } });
+    expect(step2.status).toBe(200);
+    expect(step2.body.returnTo).toBe(`${base}/apps/${app.id}/email`);
+    const fromScope = await build(m, { kind: 'owner_action', params: { scopeId: app.scope, method: 'disable_shared_login' } });
+    expect(fromScope.body.returnTo).toBe(`${base}/scopes/${app.scope}`);
+    // Kept with the action, so the page reads it back after Google's redirect.
+    expect((await returnOf(m, step2.body.id)).returnTo).toBe(`${base}/apps/${app.id}/email`);
+    await stepUp(google, m, step1.body.id);
+    expect((await returnOf(m, step1.body.id)).returnTo).toBe(`${base}/apps/${app.id}/email`);
+  });
+
+  it('an action stored before returnTo existed (no returnTo in its row) answers the kind’s default page from its ids', async () => {
+    const { m, app } = await ownerWithApp();
+    const settings = await build(m, { kind: 'app.settings', params: { appId: app.id, identityEmail: 'off' }, returnTo: { page: 'email', appId: app.id } });
+    await setScope({ id: app.scope, owners: [oidc(m.sub)], action_nonce: 1, allow_shared: true, clients: [['google', 'c-1.apps.googleusercontent.com']] });
+    const owner = await build(m, { kind: 'owner_action', params: { scopeId: app.scope, method: 'disable_shared_login' }, returnTo: { page: 'email', appId: app.id } });
+    const invite = await build(m, { kind: 'member.invite', params: { email: 'old@partner.example', role: 'viewer' } });
+    for (const id of [settings.body.id, owner.body.id, invite.body.id]) {
+      await db.prepare("UPDATE pending_actions SET action_json = json_remove(action_json, '$.returnTo') WHERE id = ?").bind(id).run();
+      expect(await db.prepare('SELECT action_json FROM pending_actions WHERE id = ?').bind(id).first<string>('action_json')).not.toContain('returnTo');
+    }
+    expect((await returnOf(m, settings.body.id)).returnTo).toBe(`/orgs/${m.org}/apps/${app.id}/sessions`);
+    expect((await returnOf(m, owner.body.id)).returnTo).toBe(`/orgs/${m.org}/scopes/${app.scope}`);
+    expect((await returnOf(m, invite.body.id)).returnTo).toBe(`/orgs/${m.org}/members`);
+  });
+
+  it('a hostile returnTo is refused before anything is stored: a URL, an unknown page, a page the kind has no use for, an app that isn’t the action’s', async () => {
+    const { m, app } = await ownerWithApp();
+    const params = { appId: app.id, sessionTtlMs: 8 * 3600_000 };
+    const other = await seedHotApp(m.org);
+    const foreign = await seedHotApp();
+    for (const returnTo of [
+      'https://evil.example/phish',
+      '//evil.example',
+      { page: 'https://evil.example' },
+      { page: '../../evil' },
+      { page: 'email', appId: 'app_x/../../evil' },
+      { page: 'email', appId: app.id, to: 'https://evil.example' },
+      { page: 'members' },
+      { page: 'email', appId: other.id },
+    ]) {
+      const r = await build(m, { kind: 'app.settings', params, returnTo });
+      expect([r.status, r.body.error?.code], JSON.stringify(returnTo)).toEqual([400, 'bad_request']);
+    }
+    await setScope({ id: app.scope, owners: [oidc(m.sub)], action_nonce: 1, allow_shared: true, clients: [['google', 'c-1.apps.googleusercontent.com']] });
+    const owner = (returnTo: unknown) => build(m, { kind: 'owner_action', params: { scopeId: app.scope, method: 'disable_shared_login' }, returnTo });
+    // A scope action from an app's tab: the app must be this org's and on that scope.
+    expect((await owner({ page: 'email' })).status).toBe(400);
+    expect((await owner({ page: 'email', appId: other.id })).status).toBe(400);
+    expect((await owner({ page: 'email', appId: foreign.id })).status).toBe(404);
+    expect((await owner({ page: 'origins', appId: app.id })).status).toBe(400);
+    const n = await db.prepare('SELECT COUNT(*) AS n FROM pending_actions WHERE org_id = ?').bind(m.org).first<number>('n');
+    expect(n).toBe(0);
+  });
+});
+
 describe('clock', () => {
   it('an action lives 5 minutes', async () => {
     const m = await member('owner');

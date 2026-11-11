@@ -55,9 +55,10 @@ function FirstApp() {
           <strong>Every origin your app runs on</strong>, exactly (<code>https://app.example.com</code>, no path). For development on a test app, add <code>http://localhost:5173</code> (your port).
         </li>
         <li>
-          <strong>Which Google client to use</strong>: Hana’s shared one (nothing to set up) or your own (partner guide, section 6).
+          <strong>Who owns it and who hears about changes</strong>: the Google account of each person who will own the organisation (up to 5; invite them under Members first), and a security contact’s email address for Hana’s security notices.
         </li>
       </ol>
+      <p>Your testers should sign in with email for now: Hana’s Google sign-in only lets in the accounts Hana adds. Your own Google client can come later (partner guide, section 6).</p>
       <p className="muted">Then you install the SDK, create the client with your key and add a sign-in button. The app’s page walks you through it.</p>
     </Empty>
   );
@@ -138,17 +139,34 @@ export function nextEffectAt(a: AppDetail, now: number): number | null {
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 /**
- * While the page is open, one timer to the next time something of the app takes effect on the server's clock (the
- * reader's plus `offsetMs`), then one re-read of the app (1 s after, so the server has passed it too). No polling: the
- * re-read's answer sets the next timer, if any.
+ * While the page is open, one timer to `at` on the server's clock (the reader's plus `offsetMs`), then one re-read
+ * (1 s after, so the server has passed it too). No polling: the re-read's answer sets the next time, if any. Back on a
+ * hidden tab whose time has passed (a sleeping laptop's timers fire late), the re-read happens at once instead.
  */
-export function useReloadAtNextEffect(a: AppDetail | undefined, reload: () => void, offsetMs = 0): void {
-  const at = a ? nextEffectAt(a, Date.now() + offsetMs) : null;
+export function useReloadAt(at: number | null, reload: () => void, offsetMs = 0): void {
   useEffect(() => {
     if (at === null) return;
-    const t = setTimeout(reload, Math.min(Math.max(at - (Date.now() + offsetMs), 0) + 1_000, MAX_TIMEOUT_MS));
-    return () => clearTimeout(t);
+    let fired = false;
+    const fire = () => {
+      if (fired) return;
+      fired = true;
+      reload();
+    };
+    const t = setTimeout(fire, Math.min(Math.max(at - (Date.now() + offsetMs), 0) + 1_000, MAX_TIMEOUT_MS));
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() + offsetMs >= at) fire();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [at, reload, offsetMs]);
+}
+
+/** `useReloadAt` the next time something of the app takes effect (`nextEffectAt`), on the server's clock (D701). */
+export function useReloadAtNextEffect(a: AppDetail | undefined, reload: () => void, offsetMs = 0): void {
+  useReloadAt(a ? nextEffectAt(a, Date.now() + offsetMs) : null, reload, offsetMs);
 }
 
 /** The server's clock minus the reader's, from an app read's `now` (taken when the answer arrives); 0 without one. */

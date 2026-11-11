@@ -91,7 +91,7 @@ describe('the session ends mid-task', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_inv'));
     const [first, second] = posts('/api/orgs/org_a/actions');
     expect(second!.init!.body).toBe(first!.init!.body);
-    expect(JSON.parse(String(second!.init!.body))).toEqual({ kind: 'member.invite', params: { email: 'new@partner.example', role: 'owner' } });
+    expect(JSON.parse(String(second!.init!.body))).toEqual({ kind: 'member.invite', params: { email: 'new@partner.example', role: 'owner' }, returnTo: { page: 'members' } });
     expect(new Headers(second!.init!.headers).get('x-hana-console')).toBe('1');
     await waitFor(() => expect(banner()).toBeNull());
   });

@@ -25,6 +25,7 @@ interface ActionRecord {
   status: 'pending' | 'ok' | 'failed' | 'expired';
   decoded: Record<string, unknown>;
   expiresAt: number;
+  returnTo?: string;
   outcome?: Record<string, unknown>;
 }
 
@@ -33,6 +34,12 @@ export class PreviewState {
   readonly actions = new Map<string, ActionRecord>();
   /** The Email login page's state; `/__preview/<scenario>?email=<state>` picks it. */
   emailState = 'off';
+  /** When it was picked: `unlocking` waits 60 s from then, as sandbox-dev's timelock does, then is ready. */
+  emailSince = Date.now();
+  pickEmail(state: string, now = Date.now()): void {
+    this.emailState = state;
+    this.emailSince = now;
+  }
   private n = 0;
   nextActionId(): string {
     this.n += 1;
@@ -119,6 +126,17 @@ function decodedFor(kind: string, params: Record<string, unknown>, now: number):
   }
 }
 
+/** The page an action returns to, as the console builds it (apps/console/src/actions.ts `returnPath`, D711), from its known names only. */
+function returnFor(orgId: string, kind: string, params: Record<string, unknown>, r: unknown): string {
+  const page = typeof r === 'object' && r !== null ? (r as { page?: unknown }).page : undefined;
+  const appId = typeof params.appId === 'string' ? params.appId : typeof r === 'object' && r !== null && typeof (r as { appId?: unknown }).appId === 'string' ? (r as { appId: string }).appId : undefined;
+  const def: Record<string, string> = { 'origin.add': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.resume': 'suspend', 'app.settings': 'sessions', owner_action: 'scope' };
+  const p = typeof page === 'string' && ['origins', 'signing', 'suspend', 'sessions', 'email', 'scope', 'members'].includes(page) ? page : (def[kind] ?? 'members');
+  if (p === 'members') return `/orgs/${orgId}/members`;
+  if (p === 'scope') return `/orgs/${orgId}/scopes/${String(params.scopeId)}`;
+  return appId && F.appDetails(Date.now()).some((x) => x.id === appId) ? `/orgs/${orgId}/apps/${appId}/${p}` : `/orgs/${orgId}`;
+}
+
 const ORG_PATH = /^\/api\/orgs\/([^/]+)(\/.*)?$/u;
 
 /** The answer to one `/api/*` request in a scenario (pure apart from `state.actions`; the tests call it). */
@@ -173,7 +191,7 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
     const a = apps.find((x) => x.id === emailM[1]);
     if (!a) return fail(404, 'not_found', 'Not found');
     if (scenario === 'errors') return fail(503, 'near_unavailable', 'NEAR RPC is unavailable: try again');
-    return ok(F.emailStatus(a, now, state.emailState));
+    return ok(F.emailStatus(a, now, state.emailState, state.emailSince));
   }
   if (rest === '/members') return ok(scenario === 'new-org' ? { members: [F.members(now).members[0]!], invites: [], grants: [] } : F.members(now));
   if (rest === '/audit') return ok(F.audit(now));
@@ -214,9 +232,9 @@ function write(scenario: Scenario, orgId: string, rest: string, body: unknown, s
     const kind = String(b.kind);
     const params = (b.params ?? {}) as Record<string, unknown>;
     const id = state.nextActionId();
-    const a: ActionRecord = { id, kind, status: 'pending', decoded: decodedFor(kind, params, now), expiresAt: now + 5 * 60_000 };
+    const a: ActionRecord = { id, kind, status: 'pending', decoded: decodedFor(kind, params, now), expiresAt: now + 5 * 60_000, returnTo: returnFor(orgId, kind, params, b.returnTo) };
     state.actions.set(id, a);
-    return ok({ id, kind, decoded: a.decoded, expiresAt: a.expiresAt });
+    return ok({ id, kind, decoded: a.decoded, expiresAt: a.expiresAt, returnTo: a.returnTo });
   }
   if (rest.endsWith('/policy/check')) {
     const v = checked(b.policy, 12 * 3_600_000);

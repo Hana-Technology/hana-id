@@ -3,7 +3,7 @@
 import type { SignInError } from '@hana-id/console-core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
-import { ApiError, createAction, getJson } from './api.ts';
+import { ApiError, type ReturnTo, createAction, getJson } from './api.ts';
 
 export interface Loaded<T> {
   data: T | undefined;
@@ -62,6 +62,16 @@ export function useFragmentToken(key = 't'): string | null | undefined {
 export function when(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return '—';
   return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/**
+ * A time as the reader's wall clock shows it, `HH:MM`, with the day when it isn't today (`14:05 on 12 Nov`). `nowMs`
+ * is the server's clock (`AppCtl.serverNow`), so "today" is judged by it, not by a reader's clock that is off.
+ */
+export function clockTime(atMs: number, nowMs: number): string {
+  const d = new Date(atMs);
+  const hm = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return d.toDateString() === new Date(nowMs).toDateString() ? hm : `${hm} on ${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
 }
 
 /** A duration in ms as the largest whole unit that fits (2 h, 30 min, 45 s). */
@@ -156,18 +166,21 @@ export function useWrite(): { busy: boolean; error: ApiError | undefined; done: 
 
 /**
  * A change that needs a fresh sign-in: the server builds the action, then the member reviews exactly what will be
- * applied on `/actions/:id` and confirms it with Google there.
+ * applied on `/actions/:id` and confirms it with Google there. `from` is the page starting it: the confirmation's
+ * back link returns there, after Google too (the server keeps it with the action, D711).
  */
-export function useStepUp(org: string): { busy: boolean; error: ApiError | undefined; start: (kind: string, params: unknown) => Promise<void> } {
+export function useStepUp(org: string, from?: ReturnTo): { busy: boolean; error: ApiError | undefined; start: (kind: string, params: unknown) => Promise<void> } {
   const navigate = useNavigate();
   const w = useWrite();
+  const page = from?.page;
+  const appId = from?.appId;
   const start = useCallback(
     (kind: string, params: unknown) =>
       w.run(async () => {
-        const a = await createAction(org, kind, params);
+        const a = await createAction(org, kind, params, page ? { page, ...(appId ? { appId } : {}) } : undefined);
         navigate(`/actions/${a.id}`, { state: { org } });
       }),
-    [org, navigate, w],
+    [org, navigate, w, page, appId],
   );
   return { busy: w.busy, error: w.error, start };
 }

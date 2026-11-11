@@ -232,7 +232,7 @@ describe('no control that can’t work: one line says why', () => {
     fireEvent.change(screen.getByLabelText(/Idle timeout \(minutes\)/u), { target: { value: '45' } });
     fireEvent.click(button);
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_s'));
-    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'app.settings', params: { appId: 'app_1', sessionTtlMs: 8 * H, idleTtlMs: 45 * 60_000 } });
+    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'app.settings', params: { appId: 'app_1', sessionTtlMs: 8 * H, idleTtlMs: 45 * 60_000 }, returnTo: { page: 'sessions', appId: 'app_1' } });
   });
 
   it('a logo of the wrong type or over 512 KiB is refused before upload', async () => {
@@ -277,7 +277,12 @@ describe('empty states and the app overview', () => {
     routes['/api/orgs/org_a/apps'] = { body: { apps: [] } };
     at('/orgs/org_a');
     const empty = (await screen.findByText('No apps yet')).parentElement!;
-    expect(within(empty).getAllByRole('listitem').map((li) => li.textContent?.split(',')[0])).toEqual(['The app’s name', 'Every origin your app runs on', 'Which Google client to use: Hana’s shared one (nothing to set up) or your own (partner guide']);
+    expect(within(empty).getAllByRole('listitem').map((li) => li.textContent?.split(',')[0])).toEqual(['The app’s name', 'Every origin your app runs on', 'Who owns it and who hears about changes: the Google account of each person who will own the organisation (up to 5; invite them under Members first)']);
+    // A scope starts on Hana's shared Google sign-in and Hana never registers a client id a partner sends: the page
+    // doesn't ask for one, and points testers at email sign-in while Google is in testing mode.
+    expect(empty.textContent).not.toMatch(/Which Google client/u);
+    expect(empty.textContent).toContain('Your testers should sign in with email for now');
+    expect(empty.textContent).not.toMatch(/[–—]/u);
   });
 
   it('the checklist ticks what the console can see, and the snippet carries the app’s key', async () => {

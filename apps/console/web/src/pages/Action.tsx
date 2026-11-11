@@ -17,6 +17,8 @@ interface ActionAnswer {
   status: 'pending' | 'ok' | 'failed' | 'expired';
   decoded: Record<string, unknown>;
   expiresAt: number;
+  /** The page that started it (D711), a console path the server built from ids; checked again below before use. */
+  returnTo?: unknown;
   outcome?: { status: string; code?: string; message?: string; nearTx?: string; [k: string]: unknown };
 }
 
@@ -196,7 +198,7 @@ function takesEffect(kind: string, d: Record<string, unknown>): string {
     return 'Not at once. After you confirm, it is announced by email to your organisation’s security contacts and takes effect after the security delay (24 hours on production deployments). Any owner can cancel it until then, from the app’s page or the email.';
   if (kind === 'member.invite') return 'The invite email goes out after every owner and your security contacts have been told. The link works once, for that address only.';
   if (kind === 'member.role' && d.role === 'owner') return 'They become an owner after 24 hours as a viewer; any owner can cancel that meanwhile.';
-  if (kind === 'owner_action') return d.immediate === true ? 'At once, when the contract runs it.' : 'After the contract’s timelock. Any on-chain owner can cancel it meanwhile; once it unlocks, anyone can execute it from the scope’s page.';
+  if (kind === 'owner_action') return d.immediate === true ? 'At once, when the contract runs it.' : 'After the contract’s timelock. Any on-chain owner can cancel it meanwhile; once it unlocks, any owner can execute it in the console.';
   return 'At once, when you confirm.';
 }
 
@@ -210,9 +212,26 @@ const OUTCOME_TEXT: Record<string, string> = {
 };
 
 const APP_TAB: Record<string, string> = { 'origin.add': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.settings': 'sessions', 'app.resume': 'suspend' };
+const TAB_LABEL: Record<string, string> = { origins: 'Origins', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login' };
 
-/** Where "back" goes: the page the change came from, when the member has one organisation (else the org list). */
+/**
+ * The server's `returnTo`, only as one of the console's own pages that start actions: an app's tab, a scope's page or
+ * the members page. Anything else (another origin, `//host`, a path with `..`, an unknown page) is ignored, so the link
+ * can never leave the console whatever the answer says (D711).
+ */
+const SAFE_RETURN = /^\/orgs\/[A-Za-z0-9_]{1,128}(?:\/apps\/[A-Za-z0-9_]{1,128}\/(origins|signing|suspend|sessions|email)|\/scopes\/([A-Za-z0-9_]{1,128})|\/(members))$/u;
+
+export function safeReturn(v: unknown): { to: string; label: string } | null {
+  const m = typeof v === 'string' ? SAFE_RETURN.exec(v) : null;
+  if (!m) return null;
+  const label = m[1] ? `Back to ${TAB_LABEL[m[1]]}` : m[2] ? 'Back to the scope' : 'Back to members';
+  return { to: v as string, label };
+}
+
+/** Where "back" goes: the page that started the action (the server's `returnTo`); else, for an older answer, the kind's page when the member has one organisation (else the org list). */
 function backTo(a: ActionAnswer, me: MeAnswer | undefined): { to: string; label: string } {
+  const own = safeReturn(a.returnTo);
+  if (own) return own;
   const only = me?.memberships.length === 1 ? me.memberships[0]!.orgId : undefined;
   if (!only) return { to: '/', label: 'Back to the console' };
   const d = a.decoded;

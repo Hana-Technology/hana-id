@@ -19,7 +19,7 @@ export function Members() {
   const r = useApi<MembersAnswer>(`/api/orgs/${org}/members`);
   const o = useApi<OrgAnswer>(`/api/orgs/${org}`);
   const w = useWrite();
-  const step = useStepUp(org!);
+  const step = useStepUp(org!, { page: 'members' });
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'viewer' | 'owner'>('viewer');
   const [hd, setHd] = useState<string | null>(null);

@@ -5,7 +5,8 @@
 //    its digest and the Google nonce (the origin-change or settings-change layout for a guarded change, which the API
 //    recomputes; the contract's owner-action layout for an owner action, at the scope's `action_nonce` read uncached;
 //    the generic step-up layout, bound to this session, otherwise), stores a `pending_actions` row (5 min) and answers
-//    `{id, kind, decoded, expiresAt}`: the screen shows exactly what will be applied.
+//    `{id, kind, decoded, expiresAt, returnTo}`: the screen shows exactly what will be applied; `returnTo` is the page
+//    that started it (an allowlisted page, built here from ids: D711), where its back link goes after the callback.
 // 2. `POST /api/actions/:id/google`: an `auth_flows` row (`purpose = 'step_up'`, `scope = 'openid'`, the session's
 //    `sub` as `login_hint`, the action's nonce) and `{startUrl}`; the SPA navigates there top-level.
 // 3. The callback (auth origin; auth-flow.ts) verifies the token, then `runStepUp` here: the token's `sub` must be the
@@ -138,7 +139,29 @@ const params = {
     .strict(),
 } as const satisfies Record<StepUpKind, z.ZodType>;
 
-const actionBody = z.object({ kind: z.enum(STEP_UP_KINDS), params: z.unknown().optional() }).strict();
+const actionBody = z.object({ kind: z.enum(STEP_UP_KINDS), params: z.unknown().optional(), returnTo: z.unknown().optional() }).strict();
+
+/**
+ * Where the action page's "back" goes (D711): the page that started the action, from this allowlist per kind (the
+ * first is the default, for a body without `returnTo`). The path is built here from the org, the action's own app or
+ * scope and a page name, never taken from the request: no URL, and no id the action didn't check, reaches the link.
+ */
+export const RETURN_PAGES = {
+  'origin.add': ['origins'],
+  'policy.set': ['signing'],
+  'raw_sign.on': ['signing'],
+  'app.resume': ['suspend'],
+  'app.settings': ['sessions', 'email'],
+  owner_action: ['scope', 'email'],
+  'member.invite': ['members'],
+  'member.role': ['members'],
+  'member.remove': ['members'],
+  'org.policy': ['members'],
+} as const satisfies Record<StepUpKind, readonly string[]>;
+type ReturnPage = (typeof RETURN_PAGES)[StepUpKind][number];
+const APP_PAGES: ReadonlySet<string> = new Set(['origins', 'signing', 'suspend', 'sessions', 'email']);
+/** `returnTo`: a page name and, for an app's page reached from a scope action (the Email login tab), the app. */
+const returnInput = z.object({ page: z.enum(['origins', 'signing', 'suspend', 'sessions', 'email', 'scope', 'members']), appId: appIdInput.optional() }).strict();
 
 /** The org and role a session route resolved. */
 export interface OrgCaller {
@@ -415,18 +438,22 @@ async function buildOwnerAction(env: Env, c: OrgCaller, ctx: RpcCtx, p: z.infer<
 
 const writer = (s: Session, info: RequestInfo, now: number): Writer => ({ actor: actorOf(s), requestId: info.requestId, now, ipPrefix: ipPrefix(info.clientIp), country: info.country });
 
-/** `POST /api/orgs/:org/actions {kind, params}` → `{id, kind, decoded, expiresAt}`. The caller checked owner and active. */
+/** `POST /api/orgs/:org/actions {kind, params, returnTo?}` → `{id, kind, decoded, expiresAt, returnTo}`. The caller checked owner and active. */
 export async function createAction(request: Request, env: Env, info: RequestInfo, c: OrgCaller): Promise<Response> {
   const body = await readJson(request, MAX_ACTION_BODY);
   if (!body.ok) return errorResponse(body.code);
   const parsed = actionBody.safeParse(body.value);
   if (!parsed.success) return errorResponse('bad_request', 'Expected {kind, params}');
   const { kind } = parsed.data;
+  const ret = parsed.data.returnTo === undefined ? undefined : returnInput.safeParse(parsed.data.returnTo);
+  if (ret && !ret.success) return errorResponse('bad_request', 'returnTo must be {page, appId?}, a page of the console');
   const now = Date.now();
   const ctx: RpcCtx = { actor: actorOf(c.session), requestId: info.requestId, clientIp: info.clientIp };
   let built: Built;
+  let returnTo: string;
   try {
     built = await build(env, c, ctx, kind, parsed.data.params, now);
+    returnTo = await returnPath(env, c, ctx, kind, built.decoded, ret?.data);
   } catch (err) {
     if (err instanceof BuildRefusal) {
       log({ event: 'step_up_create', requestId: info.requestId, orgId: c.orgId, method: kind, outcome: 'rejected', code: err.code });
@@ -446,7 +473,7 @@ export async function createAction(request: Request, env: Env, info: RequestInfo
       c.session.idHash,
       c.orgId,
       kind,
-      canonicalize({ action: built.action, decoded: built.decoded }),
+      canonicalize({ action: built.action, decoded: built.decoded, returnTo }),
       built.digest,
       nonceOf(built.digest),
       built.owner?.scopeId ?? null,
@@ -458,7 +485,44 @@ export async function createAction(request: Request, env: Env, info: RequestInfo
     )
     .run();
   log({ event: 'step_up_create', requestId: info.requestId, orgId: c.orgId, method: kind, outcome: 'ok' });
-  return json(200, { id, kind, decoded: built.decoded, expiresAt });
+  return json(200, { id, kind, decoded: built.decoded, expiresAt, returnTo });
+}
+
+/** The path of an allowlisted page: `/orgs/:org/members`, `/orgs/:org/scopes/:scope` or `/orgs/:org/apps/:app/:page`. */
+function pagePath(orgId: string, page: ReturnPage, ids: { appId?: string | undefined; scopeId?: string | undefined }): string | null {
+  const org = `/orgs/${orgId}`;
+  if (page === 'members') return `${org}/members`;
+  if (page === 'scope') return ids.scopeId ? `${org}/scopes/${ids.scopeId}` : null;
+  return ids.appId && APP_PAGES.has(page) ? `${org}/apps/${ids.appId}/${page}` : null;
+}
+
+const idOf = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+
+/**
+ * `returnTo` checked against the kind's allowlist; an app page names the action's own app, or (a scope action from the
+ * Email login tab) an app of this org on that scope, read from the API. Throws BuildRefusal.
+ */
+async function returnPath(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, decoded: Record<string, unknown>, r: z.infer<typeof returnInput> | undefined): Promise<string> {
+  const pages: readonly ReturnPage[] = RETURN_PAGES[kind];
+  const page = (r?.page ?? pages[0]!) as ReturnPage;
+  if (!pages.includes(page)) return no('bad_request', `A ${kind} action can't return to ${page}`);
+  const own = idOf(decoded.appId);
+  let appId = own;
+  if (APP_PAGES.has(page)) {
+    if (own !== undefined && r?.appId !== undefined && r.appId !== own) no('bad_request', 'returnTo.appId is not the action’s app');
+    if (own === undefined) {
+      if (r?.appId === undefined) return no('bad_request', 'returnTo needs the app whose page started the action');
+      const app = await appOf(env, ctx, c.orgId, r.appId);
+      if (app.scopeId !== decoded.scopeId) no('bad_request', 'returnTo.appId is not an app of the action’s scope');
+      appId = app.id;
+    }
+  }
+  return pagePath(c.orgId, page, { appId, scopeId: idOf(decoded.scopeId) }) ?? no('bad_request', `A ${kind} action can't return to ${page}`);
+}
+
+/** An action stored before `returnTo` was kept: the kind's default page, from its ids. */
+function defaultReturn(orgId: string, kind: StepUpKind, decoded: Record<string, unknown>): string {
+  return pagePath(orgId, RETURN_PAGES[kind][0] as ReturnPage, { appId: idOf(decoded.appId), scopeId: idOf(decoded.scopeId) }) ?? `/orgs/${orgId}`;
 }
 
 const ACTION_ID_RE = /^act_[1-9A-HJ-NP-Za-km-z]{12,17}$/u;
@@ -516,18 +580,21 @@ export interface ActionAnswer {
   status: 'pending' | 'ok' | 'failed' | 'expired';
   decoded: Record<string, unknown>;
   expiresAt: number;
+  /** Where the page's back link goes (D711): a console path built when the action was created. */
+  returnTo: string;
   outcome?: Record<string, unknown>;
 }
 
 /** `GET /api/actions/:id`: the action's own user only (any of their sessions: the callback may end in a new one). */
 export async function actionStatus(env: Env, s: Session, actionId: string): Promise<Response> {
   if (!ACTION_ID_RE.test(actionId)) return errorResponse('not_found');
-  const row = await env.CONSOLE_DB.prepare('SELECT id, user_id, kind, action_json, used_at, outcome, expires_at FROM pending_actions WHERE id = ?').bind(actionId).first<ActionRow>();
+  const row = await env.CONSOLE_DB.prepare('SELECT id, user_id, org_id, kind, action_json, used_at, outcome, expires_at FROM pending_actions WHERE id = ?').bind(actionId).first<ActionRow>();
   if (!row || row.user_id !== s.userId) return errorResponse('not_found');
-  const stored = JSON.parse(row.action_json) as { decoded: Record<string, unknown> };
+  const stored = JSON.parse(row.action_json) as { decoded: Record<string, unknown>; returnTo?: unknown };
   const outcome = row.outcome ? (JSON.parse(row.outcome) as Record<string, unknown>) : undefined;
   const status: ActionAnswer['status'] = row.used_at === null ? (row.expires_at <= Date.now() ? 'expired' : 'pending') : outcome?.status === 'ok' ? 'ok' : 'failed';
-  const body: ActionAnswer = { id: row.id, kind: row.kind, status, decoded: stored.decoded, expiresAt: row.expires_at, ...(outcome ? { outcome } : {}) };
+  const returnTo = typeof stored.returnTo === 'string' ? stored.returnTo : defaultReturn(row.org_id, row.kind, stored.decoded);
+  const body: ActionAnswer = { id: row.id, kind: row.kind, status, decoded: stored.decoded, expiresAt: row.expires_at, returnTo, ...(outcome ? { outcome } : {}) };
   return json(200, body);
 }
 

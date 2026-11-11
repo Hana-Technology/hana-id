@@ -25,7 +25,7 @@ function Policy({ chain }: { chain: ChainOwner }) {
   const s = app.settings;
   const w = useWrite();
   const chk = useWrite();
-  const step = useStepUp(org);
+  const step = useStepUp(org, { page: 'signing', appId: app.id });
   const [text, setText] = useState(s.policy ? JSON.stringify(s.policy.json, null, 2) : '');
   const [checked, setChecked] = useState<Checked | undefined>();
   const base = `/api/orgs/${org}/apps/${app.id}`;
@@ -131,7 +131,7 @@ function RawSigning({ chain }: { chain: ChainOwner }) {
   const ctl = useApp();
   const { app, owner, frozen, org } = ctl;
   const w = useWrite();
-  const step = useStepUp(org);
+  const step = useStepUp(org, { page: 'signing', appId: app.id });
   const on = app.settings.rawSign === 'approval';
   const pending = app.changes.some((c) => c.kind === 'raw_sign_on' && isWaiting(c, ctl.serverNow()));
   return (

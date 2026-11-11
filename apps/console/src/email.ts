@@ -58,7 +58,7 @@ export async function appEmailRoute(env: Env, ctx: RpcCtx, orgId: string, appId:
       log({ event: 'console_rpc', method: 'deliverability', requestId: ctx.requestId, orgId, outcome: 'error', code: 'issuer_unavailable' }, 'warn');
     }
   }
-  const body: AppEmailAnswer = { emailOn, scopeId: app.scopeId, scope, otherAppsEmailOn, available, deliverability };
+  const body: AppEmailAnswer = { emailOn, scopeId: app.scopeId, scope, otherAppsEmailOn, available, deliverability, now };
   return json(200, body);
 }
 

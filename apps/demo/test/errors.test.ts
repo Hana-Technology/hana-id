@@ -78,7 +78,7 @@ describe('plainMessage', () => {
   });
 
   it('explains every NEAR refusal of the vault, in any action, in plain words', () => {
-    const reasons = ['near_key_unknown', 'near_block_unknown', 'near_network_mismatch', 'near_delegate_nonce_used', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'near_delegate_nonce_stale', 'near_relayed_delegate'];
+    const reasons = ['near_key_unknown', 'near_block_unknown', 'near_network_mismatch', 'near_delegate_nonce_used', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'near_delegate_nonce_stale', 'near_relayed_delegate', 'near_delegate_test_app_action'];
     const seen = new Set<string>();
     for (const reason of reasons) {
       for (const action of ['near', 'sign'] as const) {

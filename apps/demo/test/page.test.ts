@@ -603,7 +603,7 @@ describe('the NEAR card', () => {
     expect(fake.near.signDelegateAction.mock.calls[0]![0].network).toBe('testnet');
     const d = signedDelegate();
     expect(d).toMatchObject({ senderId: NEAR_ACCOUNT, receiverId: 'hana-id-guestbook-dev1.testnet', nonce: 199_999_900_000_000n, maxBlockHeight: BigInt(rpc.height) + 600n });
-    expect(d.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'gm from Hana' })), gas: 30_000_000_000_000n, deposit: 0n }]);
+    expect(d.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'gm from Hana' })), gas: 10_000_000_000_000n, deposit: 0n }]);
     sign.resolve({ signature: 'c2ln', signedDelegateAction: 'U0RB' });
     await settle();
     expect($('near-stage').textContent).toBe('Sending it through Hana’s relayer, which pays the fee…');
@@ -734,6 +734,25 @@ describe('the NEAR card', () => {
     expect($('near-done-text').textContent).toContain('Your NEAR account was created for it.');
   });
 
+  it('a busy relayer (503 relayer_busy) is retried twice, then said so', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    const busy = () => hanaError('api_unavailable', { status: 503, reason: 'relayer_busy' });
+    fake.near.relay.mockRejectedValueOnce(busy()).mockRejectedValueOnce(busy());
+    type('second try');
+    click('near-write-button');
+    await settle();
+    expect(fake.near.relay).toHaveBeenCalledTimes(3);
+    expect($('near-done').hidden).toBe(false);
+    fake.near.relay.mockRejectedValue(busy());
+    type('busy');
+    click('near-write-button');
+    await settle();
+    expect(fake.near.relay).toHaveBeenCalledTimes(6);
+    expect($('near-error').textContent).toBe('Hana’s relayer is busy. Try again in a moment.');
+  });
+
   it('a relay that timed out may still land: says so and looks at the list again', async () => {
     boot();
     await loginFlow();
@@ -831,7 +850,7 @@ describe('the NEAR card', () => {
     expect(network).toBe('testnet');
     const tx = decodeNearTransaction(transaction as Uint8Array);
     expect(tx).toMatchObject({ signerId: NEAR_ACCOUNT, receiverId: 'hana-id-guestbook-dev1.testnet', nonce: 1001n, blockHash: base58.decode(BLOCK_HASH) });
-    expect(tx.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'signed only' })), gas: 30_000_000_000_000n, deposit: 0n }]);
+    expect(tx.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'signed only' })), gas: 10_000_000_000_000n, deposit: 0n }]);
     await settle();
     const item = $('near-results').querySelector('li')!;
     expect(item.textContent).toContain('NEAR transaction (add_message on the guestbook): signed, not sent');

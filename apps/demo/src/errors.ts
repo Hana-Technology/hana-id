@@ -62,6 +62,8 @@ const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
   near_delegate_expiry: 'The NEAR request expired before it was approved, or expires too far ahead. Try again.',
   near_delegate_nonce_stale: 'That NEAR request was prepared too long ago (its nonce is behind testnet’s current block). Try again: the demo reads a fresh one.',
   near_relayed_delegate: 'Refused: Hana doesn’t sign a transaction that relays someone else’s delegate action.',
+  // Name provisional (the core's rule for test apps: a .testnet receiver, never an action on the account itself).
+  near_delegate_test_app_action: 'Refused: a test app’s gasless request may only call a testnet contract, never act on your own account.',
 };
 
 /**
@@ -104,7 +106,7 @@ const RELAYER_REASONS: Readonly<Record<string, string>> = {
   // Capacity and limits.
   app_budget_exhausted: 'The demo app has used up today’s free NEAR relays. Try again tomorrow (UTC).',
   relay_budget_exhausted: 'The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).',
-  relayer_busy: 'Hana’s relayer is busy. Wait a few seconds and try again.',
+  relayer_busy: 'Hana’s relayer is busy. Try again in a moment.',
   relayer_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
   relayer_unconfigured: 'Hana’s relayer isn’t set up on this environment yet. Tell the Hana team.',
   rate_limiter_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',

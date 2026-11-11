@@ -105,11 +105,11 @@ describe('the bytes the user signs (decoded with the vault’s codec)', () => {
   const key = { type: 'ed25519', bytes: nearImplicitPublicKey(NEAR_ACCOUNT) };
   const call = (text: string) => [{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text })), gas: GUESTBOOK_GAS, deposit: 0n }];
 
-  it('a delegate action: the user calls add_message on the guestbook with 30 Tgas, no deposit, expiring a few hundred blocks ahead', () => {
+  it('a delegate action: the user calls add_message on the guestbook with 10 Tgas, no deposit, expiring a few hundred blocks ahead', () => {
     const bytes = addMessageDelegate({ accountId: NEAR_ACCOUNT, guestbook: BOOK, text: 'gm "quoted" ‮', nonce: 1_000_001n, blockHeight: 200_000_000n });
     const d = decodeNearDelegateAction(bytes);
     expect(d).toEqual({ senderId: NEAR_ACCOUNT, receiverId: BOOK, actions: call('gm "quoted" ‮'), nonce: 1_000_001n, maxBlockHeight: 200_000_000n + DELEGATE_TTL_BLOCKS, publicKey: key });
-    expect(GUESTBOOK_GAS).toBe(30n * 10n ** 12n);
+    expect(GUESTBOOK_GAS).toBe(10n * 10n ** 12n);
     expect(DELEGATE_TTL_BLOCKS).toBeGreaterThanOrEqual(300n);
     // The relayer refuses more than its head + 1000 (and the vault more than + 10,000).
     expect(DELEGATE_TTL_BLOCKS).toBeLessThanOrEqual(1000n);

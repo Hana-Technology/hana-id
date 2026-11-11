@@ -49,6 +49,8 @@ export const UNRECORDED_WAIT_MS = 20_000;
  * coordinator's `near_account_unrecorded`, and `near_account_unknown`, which the relayer build's docs mark retryable.
  */
 const UNRECORDED_REASONS: ReadonlySet<string> = new Set(['near_account_unrecorded', 'near_account_unknown']);
+/** How many times activate and relay are retried while the relayer answers `relayer_busy` (503). */
+const BUSY_RETRIES = 2;
 /** How long the card waits for a new account to show its key after activation (1 s per try). */
 const ACTIVATION_TRIES = 10;
 
@@ -163,16 +165,19 @@ export function startNearCard(deps: NearCardDeps): NearCard {
   /**
    * Retries `call` while Hana's API answers `near_account_unrecorded` (HTTP 409: the vault records the user's NEAR
    * account in Hana's wallet directory in the background after login, within about 15 s), for UNRECORDED_WAIT_MS
-   * with a growing pause; then the last refusal stands. Safe for relay too: a refused relay sent nothing.
+   * with a growing pause, and up to BUSY_RETRIES times while it answers `relayer_busy` (503); then the last refusal
+   * stands. Safe for relay too: a refused relay sent nothing.
    */
   async function whileUnrecorded<T>(call: () => Promise<T>): Promise<T> {
     let waited = 0;
+    let busy = 0;
     for (let pause = 500; ; pause = Math.min(pause * 2, 4000)) {
       try {
         return await call();
       } catch (e) {
         const reason = errorInfo(e).reason;
-        if (reason === null || !UNRECORDED_REASONS.has(reason) || waited + pause > UNRECORDED_WAIT_MS) throw e;
+        const retry = reason === 'relayer_busy' ? busy++ < BUSY_RETRIES : reason !== null && UNRECORDED_REASONS.has(reason) && waited + pause <= UNRECORDED_WAIT_MS;
+        if (!retry) throw e;
         waited += pause;
         await deps.sleep(pause);
       }

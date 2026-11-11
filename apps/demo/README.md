@@ -30,7 +30,7 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
   - **Write to the guestbook (no NEAR needed)**: a message of 1 to 200 characters, counted as the contract counts
     them (Rust's `trim`, Unicode scalar values), written to `near.demoGuestbook` through Hana's relayer: `hana.near.
     activate()` for a new account (once per account and session; retried for about 20 s while the API says the
-    account isn't in the wallet directory yet), a `DelegateAction` calling `add_message({ text })` with 30 Tgas and
+    account isn't in the wallet directory yet), a `DelegateAction` calling `add_message({ text })` with 10 Tgas and
     no deposit, expiring 600 blocks after the latest final block, `hana.near.signDelegateAction` and
     `hana.near.relay`. Each stage is shown ("Preparing your NEAR account…", "Waiting for your approval in the Hana
     window…", "Sending it through Hana’s relayer, which pays the fee…"), then the result with the transaction's link;

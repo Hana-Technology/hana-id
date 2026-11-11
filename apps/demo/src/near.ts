@@ -113,12 +113,12 @@ export function formatNear(yocto: bigint): string {
 
 // ---- the bytes the user signs ----
 
-/** Gas on the add_message call: the contract burns about 1.4 Tgas (its README); 30 Tgas is ample. */
-export const GUESTBOOK_GAS = 30_000_000_000_000n;
+/** Gas on the add_message call: the contract burns about 1.45 Tgas (its README); 10 Tgas fits the relayer's cap (10 Tgas a delegate on sandbox-dev). */
+export const GUESTBOOK_GAS = 10_000_000_000_000n;
 /** A delegate action's lifetime: the latest final height plus this many blocks (about 10 minutes on testnet); the relayer takes at most its head + 1000. */
 export const DELEGATE_TTL_BLOCKS = 600n;
 /**
- * The balance from which "Sign a transaction" also sends it: the 30 Tgas it prepays cost about 0.003 NEAR at testnet's
+ * The balance from which "Sign a transaction" also sends it: the 10 Tgas it prepays cost about 0.001 NEAR at testnet's
  * gas price, so 0.01 NEAR leaves a margin. Below it the transaction is signed and shown, not sent.
  */
 export const TX_FEE_RESERVE = 10n ** 22n;

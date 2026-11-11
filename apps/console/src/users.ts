@@ -1,11 +1,12 @@
 // The partner Users screen (D310; docs/batch-c-spec.md "Users and Support ID" → "What partners never see"): an org's
 // end users across its own scopes, with the user id, the Support ID, when the user was first and last seen, the kinds of
 // account connected ("google", "email"), the wallet addresses, and an email only once the user shared it with one of
-// the org's apps (D411: the API's own copy of a granted consent, never the issuer's directory). Never an unshared
-// address, a Google `sub`, an identity key or any other identity detail: the API's ConsoleRpc answers partner views
-// only (the wallet directory, D315), and the console re-shapes every row through the allowlist below before it
-// answers, so a field the API adds later (or a bug there) can't reach a partner's screen. The shape is the data
-// contract the tests pin, not just what the UI renders.
+// the org's apps (D411: the API's own copy of a granted consent, never the issuer's directory), and the user's name
+// only once they shared it from Hana Home with one of the org's live apps (D714). Never an unshared address, a Google
+// `sub`, an identity key or any other identity detail: the API's ConsoleRpc answers partner views only (the wallet
+// directory, D315), and the console re-shapes every row through the allowlist below before it answers, so a field the
+// API adds later (or a bug there) can't reach a partner's screen. The shape is the data contract the tests pin, not
+// just what the UI renders.
 //
 // Behind `USERS_SCREEN` (off by default; D357): the ConsoleRpc reads (`listUsers`, `getUser`) are the wallet
 // directory's (D310, D315) with D346's User ID (`userId` = the identity token's `sub`, `u1_…`; `supportId` its short
@@ -22,6 +23,7 @@ import {
   APP_NAME_MAX,
   isDisplaySafeName,
 } from '@hana-id/console-core';
+import { normalizeProfileName } from '@hana-id/core/identity';
 import type { Env } from './env.ts';
 import { errorResponse, json } from './http.ts';
 import type { RequestInfo } from './links.ts';
@@ -52,6 +54,8 @@ export interface PartnerUserOut {
   email: string | null;
   /** A user's detail only: every address shared with the org's apps, per app. */
   emails?: { appId: string; appName: string; email: string; sharedAt: number }[];
+  /** The name shared from Hana Home with one of the org's live apps (D714), or null ("Not shared"). */
+  name: { givenName: string | null; familyName: string | null } | null;
 }
 
 /**
@@ -88,11 +92,30 @@ const isAppName = (v: unknown): v is string => typeof v === 'string' && v.trim()
 /** Shown instead of an app name that isn't one display-safe line: the user and their shared address stay listed. */
 export const UNNAMED_APP = 'Unnamed app';
 
+/** One part of a shared name: null, or a string already in `normalizeProfileName`'s form (D714); undefined otherwise. */
+const namePart = (v: unknown): string | null | undefined => (v === null ? null : typeof v === 'string' && normalizeProfileName(v) === v ? v : undefined);
+
+/**
+ * A shared name as the screen may show it (D714): null when not shared (or absent: an API before profile names), else
+ * exactly `{givenName, familyName}`, each part null or a string `normalizeProfileName` leaves unchanged (NFC, trimmed,
+ * 1..50 code points, one display-safe line), at least one set; undefined (the row is dropped) for anything else.
+ */
+function sharedName(v: unknown): PartnerUserOut['name'] | undefined {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) return undefined;
+  const x = v as Record<string, unknown>;
+  const givenName = namePart(x.givenName);
+  const familyName = namePart(x.familyName);
+  if (givenName === undefined || familyName === undefined || (givenName === null && familyName === null)) return undefined;
+  return { givenName, familyName };
+}
+
 /**
  * One user as a partner may see it, rebuilt field by field from the API's answer, or null when the row doesn't have
  * the expected form (dropped and logged, never passed through). An account is its kind only; a wallet is a chain, an
  * address of that chain's form and two times; `email` a shared address or null; `emails` (a detail only) an app id, its
- * name, the address and when it was shared. An entry's other keys are dropped, as an account's or a wallet's.
+ * name, the address and when it was shared; `name` a shared name's two parts or null (`sharedName`). An entry's other
+ * keys are dropped, as an account's, a wallet's or a name's.
  */
 export function partnerUserView(u: unknown): PartnerUserOut | null {
   if (typeof u !== 'object' || u === null) return null;
@@ -133,7 +156,10 @@ export function partnerUserView(u: unknown): PartnerUserOut | null {
       emails.push({ appId: x.appId, appName: isAppName(x.appName) ? x.appName : UNNAMED_APP, email: x.email, sharedAt });
     }
   }
-  return { userId: r.userId, supportId: r.supportId, scopeId: r.scopeId, createdAt, lastSeenAt, accounts, wallets, email, ...(emails ? { emails } : {}) };
+  // Missing (an API before profile names): not shared. Malformed: the row is dropped, as for `email`.
+  const name = sharedName(r.name);
+  if (name === undefined) return null;
+  return { userId: r.userId, supportId: r.supportId, scopeId: r.scopeId, createdAt, lastSeenAt, accounts, wallets, email, ...(emails ? { emails } : {}), name };
 }
 
 export const usersScreenOn = (env: Pick<Env, 'USERS_SCREEN'>): boolean => env.USERS_SCREEN === '1';

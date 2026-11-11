@@ -3,7 +3,8 @@
 // and confirmed with Google; immediate writes behind a second click; a frozen org's controls; the emailed cancel pages
 // (the token from the fragment, gone from the address bar, sent only in a POST after a click; a second confirm told
 // it's no longer pending); the AddClient PII warning; the email sharing setting (D411) through the settings action; the
-// Users tab only when the server has it on, an email only as shared ("Not shared" otherwise), each app's in a detail.
+// Users tab only when the server has it on, an email only as shared ("Not shared" otherwise), each app's in a detail;
+// a Hana Home name likewise (D714), as text only.
 import { validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
@@ -382,13 +383,13 @@ describe('the Users screen (D310, D346)', () => {
     expect(await screen.findByRole('link', { name: 'Users' })).toBeTruthy();
   });
 
-  const USER = { userId: 'u1_AbCdEfGhIjKlMnOpQrStUv', supportId: 'HANA-ABCD-EFGH', scopeId: 's1', createdAt: 0, lastSeenAt: 0, accounts: [{ kind: 'google', status: 'active' }, { kind: 'email', status: 'pending' }], wallets: [{ chain: 'evm', address: '0x52908400098527886E0F7030069857D2E4169EE7', firstSeenAt: 0, lastUsedAt: 0 }], email: null };
+  const USER = { userId: 'u1_AbCdEfGhIjKlMnOpQrStUv', supportId: 'HANA-ABCD-EFGH', scopeId: 's1', createdAt: 0, lastSeenAt: 0, accounts: [{ kind: 'google', status: 'active' }, { kind: 'email', status: 'pending' }], wallets: [{ chain: 'evm', address: '0x52908400098527886E0F7030069857D2E4169EE7', firstSeenAt: 0, lastUsedAt: 0 }], email: null, name: null as { givenName: string | null; familyName: string | null } | null };
   const usersOn = () => {
     routes['/api/me'] = { body: { ...ME, features: { users: true } } };
     routes['/api/orgs/org_a'] = { body: org('viewer') };
   };
 
-  it('shows the User ID, the Support ID, account kinds and wallets; an unshared email as "Not shared"; nothing else', async () => {
+  it('shows the User ID, the Support ID, account kinds and wallets; an unshared name and email as "Not shared"; nothing else', async () => {
     usersOn();
     routes['/api/orgs/org_a/users'] = { body: { users: [USER] } };
     at('/orgs/org_a/users');
@@ -397,7 +398,8 @@ describe('the Users screen (D310, D346)', () => {
     expect(screen.getByText('Google, Email (pending)')).toBeTruthy();
     expect(screen.getByText(/0x52908400098527886E0F7030069857D2E4169EE7/u)).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Email' })).toBeTruthy();
-    expect(screen.getByText('Not shared')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeTruthy();
+    expect(screen.getAllByText('Not shared')).toHaveLength(2); // the name and the email
     expect(document.body.textContent).not.toMatch(/@(?!partner\.example)/u);
   });
 
@@ -407,7 +409,7 @@ describe('the Users screen (D310, D346)', () => {
     routes['/api/orgs/org_a/users?search=ada%40user.example'] = { body: { users: [{ ...USER, email: 'ada@user.example' }] } };
     at('/orgs/org_a/users');
     expect(await screen.findByText('ada@user.example')).toBeTruthy();
-    expect(screen.queryByText('Not shared')).toBeNull();
+    expect(screen.getAllByText('Not shared')).toHaveLength(1); // the name only
     const box = screen.getByLabelText(/full email address/u);
     expect(screen.getByText(/matches exactly, and only among the addresses users shared with your apps/u)).toBeTruthy();
     fireEvent.change(box, { target: { value: ' ada@user.example ' } });
@@ -460,6 +462,32 @@ describe('the Users screen (D310, D346)', () => {
     expect(screen.getByText('ada@work.example')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Open u1_ZyXwVuTsRqPoNmLkJiHgFA' }));
     await waitFor(() => expect(screen.queryByText(/Shared with Wallet/u)).toBeNull());
-    await waitFor(() => expect(screen.getAllByText('Not shared')).toHaveLength(2)); // the list row and the detail
+    const detail = (await screen.findByRole('heading', { name: 'User' })).closest('section')!;
+    await waitFor(() => expect(within(detail).getAllByText('Not shared')).toHaveLength(2)); // the detail's name and email
+  });
+
+  it('a shared name (D714) in the Name column and the detail, as text only; a one-part name says which part it is', async () => {
+    usersOn();
+    const markup = '<img src=x onerror=alert(1)>';
+    const ada = { ...USER, name: { givenName: 'Ada', familyName: 'Lovelace' } };
+    const solo = { ...USER, userId: 'u1_ZyXwVuTsRqPoNmLkJiHgFA', supportId: 'HANA-ZZZZ-ZZZZ', name: { givenName: null, familyName: markup } };
+    routes['/api/orgs/org_a/users'] = { body: { users: [ada, solo] } };
+    routes['/api/orgs/org_a/users/u1_AbCdEfGhIjKlMnOpQrStUv'] = { body: { user: { ...ada, emails: [] } } };
+    routes['/api/orgs/org_a/users/u1_ZyXwVuTsRqPoNmLkJiHgFA'] = { body: { user: { ...solo, emails: [] } } };
+    at('/orgs/org_a/users');
+    const table = (await screen.findByRole('columnheader', { name: 'Name' })).closest('table')!;
+    expect(within(table).getByText('Ada Lovelace').tagName).toBe('TD');
+    expect(within(table).getByText(markup).tagName).toBe('TD');
+    expect(within(table).getAllByText('Not shared')).toHaveLength(2); // both emails
+    expect(document.querySelector('img')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open u1_AbCdEfGhIjKlMnOpQrStUv' }));
+    const detail = (await screen.findByRole('heading', { name: 'User' })).closest('section')!;
+    await waitFor(() => expect(within(detail).getByText('Ada Lovelace').tagName).toBe('DD'));
+    expect(within(detail).queryByText(/name only/u)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open u1_ZyXwVuTsRqPoNmLkJiHgFA' }));
+    await waitFor(() => expect(within(screen.getByRole('heading', { name: 'User' }).closest('section')!).getByText('(last name only)')).toBeTruthy());
+    const dd = within(screen.getByRole('heading', { name: 'User' }).closest('section')!).getByText('(last name only)').closest('dd')!;
+    expect(dd.textContent).toBe(`${markup} (last name only)`);
+    expect(document.querySelector('img')).toBeNull();
   });
 });

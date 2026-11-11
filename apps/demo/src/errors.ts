@@ -33,6 +33,18 @@ export function errorInfo(e: unknown): ErrorInfo {
 
 const REPORT = 'If it keeps happening, use “Copy diagnostics” and send it to the Hana team.';
 
+/** What the page says when Hana signed this device out (4900 with `data.reason` `signed_out`, D695). */
+export const SIGNED_OUT_MESSAGE = 'You were signed out on this device (from Hana Home, another tab or another device). Log in again.';
+
+/**
+ * Hana signed this device out: the `disconnect` event or a refused request with code 4900 and `data.reason`
+ * `signed_out`. The vault is fine and no reload is needed, only a new login. A 4900 without the reason is a lost vault.
+ */
+export function isSignedOut(e: unknown): boolean {
+  const { code, reason } = errorInfo(e);
+  return code === 4900 && reason === 'signed_out';
+}
+
 /** What to tell the user, for an error of `action`. */
 export function plainMessage(e: unknown, action: DemoAction): string {
   const { code, reason } = errorInfo(e);
@@ -108,6 +120,7 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       if (reason === 'mainnet_not_allowed') return 'Refused: this demo app signs for test networks only.';
       return 'Not allowed: you may have been logged out. Log in and try again.';
     case 4900:
+      if (reason === 'signed_out') return SIGNED_OUT_MESSAGE;
       return 'The connection to the Hana vault was lost. Reload the page.';
     case 4902:
       return 'This EVM chain is not configured on the demo.';

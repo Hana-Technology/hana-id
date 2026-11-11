@@ -15,6 +15,7 @@ export type { HanaClient, MainnetDemo, MainnetDemoPrice, MainnetDemoPrices } fro
 export {
   type HanaAddresses,
   type HanaConfig,
+  type HanaDisconnect,
   type HanaEvents,
   type HanaOrigins,
   type HanaStatus,
@@ -25,6 +26,8 @@ export { type ApprovalTicket } from './client/approval-window.ts';
 export type { LoginOptions } from './client/login.ts';
 // The wallet's sign-in methods (`hana.account()`, `linkChanged`, `hana.linkAccount()`; build plan batches 7 and 8b).
 export type { AccountMethod, AccountResult, LinkChange } from '@hana-id/core';
+// `disconnect`'s `reason` (`signed_out`: Hana signed this device out).
+export type { DisconnectReason } from '@hana-id/core';
 export { HanaError, ProviderRpcError, RpcCode, type ClientErrorCode, type SwkError } from './client/errors.ts';
 export {
   HanaEthereumProvider,

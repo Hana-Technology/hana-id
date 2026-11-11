@@ -491,6 +491,49 @@ describe('events and disconnects', () => {
     ]);
   });
 
+  it('D695: disconnectReason just before a disconnect gives the page {code, reason}; none, or anything between them, gives {code}', async () => {
+    s = setup();
+    const seen: unknown[] = [];
+    const provider: unknown[] = [];
+    s.client.on('disconnect', (d) => seen.push(d));
+    s.client.ethereum.on('disconnect', (e) => provider.push(['disconnect', e.code]));
+    s.client.ethereum.on('accountsChanged', (a) => provider.push(['accounts', a]));
+    await s.vault.connect(LOGGED_IN);
+    s.vault.emit('disconnectReason', { reason: 'signed_out' });
+    s.vault.emit('disconnect', { code: ErrorCode.disconnected });
+    await flush();
+    expect(s.client.status).toBe('logged_out');
+    expect(s.client.addresses).toBeNull();
+    // A vault older than the field (or a disconnect it has no reason for) sends none.
+    s.vault.emit('accountsChanged', { addresses: { stellar: STELLAR, evm: EVM } });
+    s.vault.emit('disconnect', { code: ErrorCode.disconnected });
+    // A reason names the next event only: it never carries over to a later disconnect.
+    s.vault.emit('accountsChanged', { addresses: { stellar: STELLAR, evm: EVM } });
+    s.vault.emit('disconnectReason', { reason: 'signed_out' });
+    s.vault.emit('accountsChanged', { addresses: null });
+    s.vault.emit('disconnect', { code: ErrorCode.disconnected });
+    await flush();
+    expect(seen).toEqual([{ code: 4900, reason: 'signed_out' }, { code: 4900 }, { code: 4900 }]);
+    // EIP-1193 is unchanged: a session's end is accountsChanged [], never the provider's disconnect.
+    expect(provider.filter((e) => (e as unknown[])[0] === 'disconnect')).toEqual([]);
+    expect(provider).toContainEqual(['accounts', []]);
+  });
+
+  // The SDK's own 4900 never takes the vault's reason: this fails if the lost-connection disconnect ever read a reason
+  // left pending. (Clearing that pending reason in #onDisconnect is defence in depth only: nothing reads it afterwards.)
+  it('D695: a lost vault connection is a disconnect with no reason, even right after a disconnectReason', async () => {
+    s = setup();
+    const seen: unknown[] = [];
+    s.client.on('disconnect', (d) => seen.push(d));
+    await s.vault.connect(LOGGED_IN);
+    s.vault.emit('disconnectReason', { reason: 'signed_out' });
+    await flush();
+    s.vault.load();
+    await flush();
+    expect(seen).toEqual([{ code: 4900 }]);
+    expect(s.client.status).toBe('error');
+  });
+
   it('a second load (vault document replaced) disconnects: pending requests reject 4900, status error, disconnect emitted once', async () => {
     s = setup();
     await s.vault.connect(LOGGED_IN);

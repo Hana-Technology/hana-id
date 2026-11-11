@@ -294,6 +294,48 @@ describe('demo page', () => {
     expect($('error').textContent).toMatch(/Could not load the Hana vault/u);
   });
 
+  it('D695: signed out by Hana while a signature waits: one notice to log in again, never the reload text, also after the refusal', async () => {
+    boot();
+    await loginFlow();
+    let reject!: (e: unknown) => void;
+    fake.ethereum.request.mockImplementationOnce(() => new Promise((_res, rej) => (reject = rej)));
+    click('sign-personal');
+    // The vault ends the session: the client reports logged out, then the disconnect with its reason.
+    fake.addresses = null;
+    fake.status = 'logged_out';
+    fake.emit('accountsChanged', null);
+    fake.emit('statusChanged', 'logged_out');
+    fake.emit('disconnect', { code: 4900, reason: 'signed_out' });
+    const signedOut = 'You were signed out on this device (from Hana Home, another tab or another device). Log in again.';
+    expect($('notice').textContent).toBe(signedOut);
+    expect($('notice').hidden).toBe(false);
+    expect($('error').hidden).toBe(true);
+    // The approved signature is refused in the same moment: it must not turn this into "reload".
+    reject(hanaError(4900, { reason: 'signed_out' }));
+    await flush();
+    expect($('notice').textContent).toBe(signedOut);
+    expect($('error').hidden).toBe(true);
+    expect(document.body.textContent).not.toContain('Reload the page');
+    expect($('results').textContent).toContain(`EVM personal_sign: not signed${signedOut}`);
+    expect($('login').hidden).toBe(false);
+    // Both are in the diagnostics, with their reason.
+    click('copy-diagnostics');
+    await flush();
+    const d = JSON.parse(copied.at(-1)!) as { errors: { action: string; code: unknown; reason: unknown }[] };
+    expect(d.errors.map((e) => [e.action, e.code, e.reason])).toEqual([
+      ['load', 4900, 'signed_out'],
+      ['sign', 4900, 'signed_out'],
+    ]);
+  });
+
+  it('D695: a disconnect with no reason is still a lost vault: the reload text', async () => {
+    boot();
+    await loginFlow();
+    fake.emit('disconnect', { code: 4900 });
+    expect($('error').hidden).toBe(false);
+    expect($('error').textContent).toBe('The connection to the Hana vault was lost. Reload the page.');
+  });
+
   it('exports through the Hana window, logs out other devices and logs out', async () => {
     boot();
     await loginFlow();

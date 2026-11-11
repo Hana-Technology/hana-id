@@ -683,7 +683,21 @@ export interface PortEventMap {
    */
   mainnetDemoPrices: MainnetDemoPriceBook;
   accountsChanged: { addresses: PortAddresses | null };
+  /**
+   * The session in this tab ended without a request from this page (4900): its share was found revoked or gone,
+   * another tab of the app logged out, or its record failed to open. `disconnectReason` comes just before it when the
+   * vault knows why.
+   */
   disconnect: { code: number };
+  /**
+   * Why the `disconnect` that comes right after it happened (sent only just before one, in the same turn): `signed_out`,
+   * Hana ended this device's session because its share was revoked (Hana Home's "Sign out this device",
+   * `revokeOtherDevices()` on another device, a newer sign-in of the app in another tab of this device, or the app's
+   * settings). The SDK adds it to that `disconnect` for the page. A separate
+   * event because `disconnect` takes exactly `{code}`: an SDK that predates this one keeps the `disconnect` it can read,
+   * and simply drops this.
+   */
+  disconnectReason: { reason: DisconnectReason };
   sessionExpired: null;
   loginProgress: { stage: (typeof LOGIN_STAGES)[number] };
   ui: { launcher: 'show' | 'hide'; label: string };
@@ -723,6 +737,11 @@ export interface PortEventMap {
   emailSharingChanged: { state: 'granted' | 'declined' };
 }
 
+/** Why a session ended, where the vault knows it for certain (the `disconnectReason` event). */
+export const DISCONNECT_REASONS = ['signed_out'] as const;
+export type DisconnectReason = (typeof DISCONNECT_REASONS)[number];
+export const isDisconnectReason = (v: unknown): v is DisconnectReason => (DISCONNECT_REASONS as readonly unknown[]).includes(v);
+
 export type PortEventName = keyof PortEventMap;
 export type PortEvent = { [E in PortEventName]: { v: 1; event: E; data: PortEventMap[E] } }[PortEventName];
 
@@ -734,6 +753,7 @@ const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
     isPlainObject(d) && (d.warning === undefined || d.warning === 'storage_unavailable') && (d.timings === undefined || isTimings(d.timings)) && isStatusResult(d, ['warning', 'timings']),
   accountsChanged: (d) => isPlainObject(d) && exactKeys(d, ['addresses']) && (d.addresses === null || isPortAddresses(d.addresses)),
   disconnect: (d) => isPlainObject(d) && exactKeys(d, ['code']) && isInt(d.code, 0, 9999),
+  disconnectReason: (d) => isPlainObject(d) && exactKeys(d, ['reason']) && isDisconnectReason(d.reason),
   sessionExpired: (d) => d === null,
   loginProgress: (d) => isPlainObject(d) && exactKeys(d, ['stage']) && (LOGIN_STAGES as readonly unknown[]).includes(d.stage),
   ui: (d) => isPlainObject(d) && exactKeys(d, ['launcher', 'label']) && (d.launcher === 'show' || d.launcher === 'hide') && isStr(d.label, 0, 80),
@@ -1278,6 +1298,9 @@ export function approvalContent(request: Extract<PortRequest, { method: SignMeth
  * - `counter`: a tab advanced this share's counter (unlock, touch).
  * - `revoked`: this share is dead (the API said 410, or a newer login on this device replaced it); only the tabs
  *   holding that share end their session.
+ * - `signedOut`: sent just before `revoked` when the share was revoked (not expired or unknown): a tab that knows it
+ *   ends its session with `disconnectReason` `signed_out`, and the `revoked` after it then finds nothing to end. A tab
+ *   of an older build drops it and ends on `revoked`, as before.
  * - `logout`: the user logged out of this app on this device; every tab of the app ends its session.
  * - `identity`: an identity token minted for a session; the tabs of that session share it (no key material: the token
  *   is what the partner page gets anyway).
@@ -1286,6 +1309,7 @@ export type VaultBroadcast =
   | { v: 1; t: 'counter'; shareId: Uint8Array; counter: number }
   | { v: 1; t: 'logout' }
   | { v: 1; t: 'revoked'; shareId: Uint8Array }
+  | { v: 1; t: 'signedOut'; shareId: Uint8Array }
   /** A tab minted an identity token for the session of `sessionPk`: the tabs of that session cache it too. */
   | { v: 1; t: 'identity'; sessionPk: Uint8Array; identityToken: string; iatMs: number; expiresAtMs: number };
 
@@ -1295,7 +1319,7 @@ export function parseVaultBroadcast(data: unknown): VaultBroadcast | null {
   if (data.t === 'counter') {
     return exactKeys(data, ['v', 't', 'shareId', 'counter']) && isBytes(data.shareId, SHARE_ID_BYTES, SHARE_ID_BYTES) && isMs(data.counter) ? (data as VaultBroadcast) : null;
   }
-  if (data.t === 'revoked') return exactKeys(data, ['v', 't', 'shareId']) && isBytes(data.shareId, SHARE_ID_BYTES, SHARE_ID_BYTES) ? (data as VaultBroadcast) : null;
+  if (data.t === 'revoked' || data.t === 'signedOut') return exactKeys(data, ['v', 't', 'shareId']) && isBytes(data.shareId, SHARE_ID_BYTES, SHARE_ID_BYTES) ? (data as VaultBroadcast) : null;
   if (data.t === 'logout') return exactKeys(data, ['v', 't']) ? (data as VaultBroadcast) : null;
   if (data.t === 'identity') {
     return exactKeys(data, ['v', 't', 'sessionPk', 'identityToken', 'iatMs', 'expiresAtMs']) &&

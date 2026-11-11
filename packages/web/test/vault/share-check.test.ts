@@ -3,7 +3,8 @@
 // (every 5 minutes once the tab is idle), with the light POST /v1/vault/share-status, or the policy's own GET /v1/app in
 // an app with a policy; it ends the session on `'revoked'`, never extends one, backs off on failures, pauses while the tab
 // is hidden, and a signature from the approval popup or a cached identity token needs a fresh `'live'` answer (with a
-// 3-minute grace when the API can't answer).
+// 3-minute grace when the API can't answer). A session it ends says it was signed out (D695): `disconnectReason
+// {signed_out}` before its `disconnect`, `data.reason: 'signed_out'` on what it refuses; one that ended otherwise doesn't.
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { base64UrlEncode, bytesEqual } from '@hana-id/core';
 import { functionSelector } from '@hana-id/core/decode';
@@ -21,7 +22,29 @@ import {
   STATUS_READ_MS,
   TOUCH_EVERY_MS,
 } from '../../src/vault/vault.ts';
-import { APP_ID, Browser, ENV, type Google, HOUR, SCOPE, START_MS, type Tab, type TabOptions, answer, answerConsent, apiError, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
+import {
+  APP_ID,
+  Browser,
+  ENV,
+  type Google,
+  HOUR,
+  SCOPE,
+  START_MS,
+  type Tab,
+  type TabOptions,
+  answer,
+  answerConsent,
+  apiError,
+  disconnectedWith,
+  google,
+  login,
+  makeConfig,
+  openApproval,
+  readyTab,
+  shareBroadcasts,
+  sleepReal,
+  waitLauncher,
+} from './harness.ts';
 import { CHAIN, EVM_VAULT, evmTx } from './chains.ts';
 
 let g: Google;
@@ -106,15 +129,25 @@ const signOutFromHome = (t: Tab) => {
   shareOf(t).revoked = true;
 };
 
-/** The tab ended as a touch's 410 ends it: disconnect 4900, logged out, PRK zeroed, record gone, other tabs told. */
+/**
+ * The tab ended as a touch's 410 ends it: disconnect 4900 right after `disconnectReason {signed_out}` (D695), logged
+ * out, PRK zeroed, record gone, other tabs told (`signedOut`, then `revoked`).
+ */
 async function endedByRevoke(t: Tab, prk: Uint8Array, shareId: Uint8Array): Promise<void> {
   await eventually(() => internals(t).session === null, 'the session ended');
   expect(prk.every((b) => b === 0)).toBe(true);
   expect(await t.waitEvent('disconnect')).toEqual({ code: 4900 });
+  expect(disconnectedWith(t)).toEqual(['signed_out']);
   expect(t.events.filter((e) => e.event === 'accountsChanged').at(-1)!.data).toEqual({ addresses: null });
   expect(await statusOf(t)).toBe('logged_out');
   await eventually(async () => (await stored(t)) === undefined, 'the record deleted');
-  expect(t.browser.bus.sent.some((m) => (m.data as { t: string }).t === 'revoked' && bytesEqual((m.data as { shareId: Uint8Array }).shareId, shareId))).toBe(true);
+  // Every tab that found it says so the same way (two tabs on one share each tell the other): whole `signedOut`,
+  // `revoked` pairs, so the list always ends in `revoked`, which tabs of an older build end on.
+  const told = shareBroadcasts(t.browser, shareId);
+  expect(told.length).toBeGreaterThan(0);
+  expect(told.length % 2).toBe(0);
+  expect(told.at(-1)).toBe('revoked');
+  expect(told).toEqual(told.map((_, i) => (i % 2 === 0 ? 'signedOut' : 'revoked')));
 }
 
 const outage = (t: Tab) => {
@@ -589,7 +622,8 @@ describe('before an approval-popup signature', () => {
     signOutFromHome(t);
     const before = checks(t).length;
     const reply = await t.request('stellar_signMessage', { message: 'stolen device' });
-    expect(reply.error?.code).toBe(4900);
+    expect(reply.error).toEqual({ code: 4900, message: 'This session was revoked', data: { reason: 'signed_out' } });
+    expect(disconnectedWith(t)).toEqual(['signed_out']);
     expect(checks(t).length).toBe(before + 1);
     expect(lightReads(t).length).toBeGreaterThan(0);
     expect(t.opened.filter((w) => w.url.endsWith('/approve'))).toHaveLength(0);
@@ -616,7 +650,22 @@ describe('before an approval-popup signature', () => {
     answer(t, popup, m, true);
     const r = await reply;
     expect(r.result).toBeUndefined();
-    expect(r.error?.code).toBe(4900);
+    expect(r.error).toMatchObject({ code: 4900, data: { reason: 'signed_out' } });
+    expect(disconnectedWith(t)).toEqual(['signed_out']);
+  });
+
+  it('a popup still open when the minute’s read finds the device signed out: the popup ends and the request is refused, signed out', async () => {
+    const t = await signedIn();
+    const reply = t.request('stellar_signMessage', { message: 'still deciding' });
+    await waitLauncher(t, 'Review in Hana');
+    const popup = openApproval(t);
+    await popup.next('hana:approve-request');
+    signOutFromHome(t);
+    t.browser.timers.advance(STATUS_READ_MS);
+    const r = await reply;
+    expect(r.result).toBeUndefined();
+    expect(r.error).toEqual({ code: 4900, message: 'This session was signed out', data: { reason: 'signed_out' } });
+    expect(disconnectedWith(t)).toEqual(['signed_out']);
   });
 
   it('the API can’t answer: signs within the 3 minutes’ grace since the last live answer', async () => {
@@ -823,6 +872,7 @@ describe('a cached identity token (D692)', () => {
     signOutFromHome(t);
     expect((await t.request('hana_identityToken')).result).toEqual({ identityToken: null, expiresAtMs: null });
     expect(await statusOf(t)).toBe('logged_out');
+    expect(disconnectedWith(t)).toEqual(['signed_out']);
   });
 
   it('a dormant session’s token: the light read, no unlock; signed out → dropped', async () => {
@@ -844,6 +894,9 @@ describe('a cached identity token (D692)', () => {
     expect(lightReads(t).length).toBe(light + 1);
     expect(t.browser.backend.count('/v1/vault/unlock')).toBe(unlocks);
     expect(internals(t).dormant).toBeNull();
+    // A dormant session ends signed out too (D695).
+    expect(disconnectedWith(t)).toEqual(['signed_out']);
+    expect(shareBroadcasts(t.browser, shareOf(t).shareId)).toEqual(['signedOut', 'revoked']);
   });
 
   it('the API can’t answer past the grace: refused (share_unconfirmed), the session stays', async () => {

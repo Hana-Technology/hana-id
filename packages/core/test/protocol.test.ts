@@ -548,6 +548,13 @@ describe('window messages', () => {
     }
   });
 
+  it('`disconnect` takes exactly `{code}` (an SDK that shipped drops anything else); `disconnectReason` is its own event (D695)', () => {
+    expect(parsePortEvent({ v: 1, event: 'disconnect', data: { code: 4900, reason: 'signed_out' } })).toBeNull();
+    expect(parsePortEvent({ v: 1, event: 'disconnectReason', data: { reason: 'signed_out' } })).toEqual({ v: 1, event: 'disconnectReason', data: { reason: 'signed_out' } });
+    for (const bad of [{ reason: 'logged_out' }, { reason: 'signed_out', code: 4900 }, {}, null, 'signed_out']) expect(parsePortEvent({ v: 1, event: 'disconnectReason', data: bad })).toBeNull();
+    expect(parsePortEvent({ v: 1, event: 'disconnectReason' })).toBeNull();
+  });
+
   it('`ui` takes exactly its two fields (an SDK that shipped drops anything else); `launcherKind` is its own event', () => {
     expect(parsePortEvent({ v: 1, event: 'ui', data: { launcher: 'show', label: 'Review in Hana' } })).not.toBeNull();
     expect(parsePortEvent({ v: 1, event: 'ui', data: { launcher: 'show', label: 'Review in Hana', clickable: true } })).toBeNull();
@@ -740,6 +747,11 @@ describe('vault BroadcastChannel', () => {
     expect(parseVaultBroadcast({ v: 1, t: 'revoked' })).toBeNull();
     expect(parseVaultBroadcast({ v: 1, t: 'revoked', shareId: new Uint8Array(15) })).toBeNull();
     expect(parseVaultBroadcast({ v: 1, t: 'revoked', shareId: new Uint8Array(16), counter: 1 })).toBeNull();
+    // D695: a revocation (not an expiry) is announced as `signedOut` first, in the same shape; `revoked` keeps its own.
+    expect(parseVaultBroadcast({ v: 1, t: 'signedOut', shareId: new Uint8Array(16) })).toEqual({ v: 1, t: 'signedOut', shareId: new Uint8Array(16) });
+    expect(parseVaultBroadcast({ v: 1, t: 'signedOut' })).toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'signedOut', shareId: new Uint8Array(15) })).toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'revoked', shareId: new Uint8Array(16), reason: 'signed_out' })).toBeNull();
     expect(parseVaultBroadcast({ v: 1, t: 'logout', shareId: new Uint8Array(16) })).toBeNull();
     expect(parseVaultBroadcast({ v: 1, t: 'counter', shareId: new Uint8Array(15), counter: 4 })).toBeNull();
     expect(parseVaultBroadcast({ v: 1, t: 'logout', prk: new Uint8Array(32) })).toBeNull();

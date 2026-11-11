@@ -88,8 +88,9 @@ describe('an error from an API answer carries its request ID', () => {
     expect((await t.request('hana_identityToken')).error).toEqual({ code: 'rate_limited', message: 'Too many identity token requests, try again later', data: { requestId: RAY } });
     browser.backend.overrides.set('/v1/identity/token', () => refusal(503, 'identity_signer_unavailable', UUID));
     expect((await t.request('hana_identityToken')).error).toMatchObject({ code: 'identity_unavailable', data: { api: '503 identity_signer_unavailable', requestId: UUID } });
+    // The share revoked (D695): the reason beside the ID.
     browser.backend.overrides.set('/v1/identity/token', () => refusal(410, 'session_ended', RAY, { reason: 'share_revoked' }));
-    expect((await t.request('hana_identityToken')).error).toEqual({ code: 'session_ended', message: 'The Hana session has ended', data: { requestId: RAY } });
+    expect((await t.request('hana_identityToken')).error).toEqual({ code: 'session_ended', message: 'The Hana session has ended', data: { reason: 'signed_out', requestId: RAY } });
   });
 
   it('hana_revokeOtherDevices on a share the API says is gone: 4900 with the ID', async () => {
@@ -97,6 +98,14 @@ describe('an error from an API answer carries its request ID', () => {
     const t = await tab(browser);
     await login(t, g);
     browser.backend.overrides.set('/v1/vault/revoke-all', () => refusal(410, 'share_revoked', UUID));
+    expect((await t.request('hana_revokeOtherDevices')).error).toEqual({ code: 4900, message: 'This session was revoked', data: { reason: 'signed_out', requestId: UUID } });
+  });
+
+  it('hana_revokeOtherDevices on a share the API says expired: 4900 with the ID and no reason (D695: not a sign-out)', async () => {
+    const browser = new Browser();
+    const t = await tab(browser);
+    await login(t, g);
+    browser.backend.overrides.set('/v1/vault/revoke-all', () => refusal(410, 'share_expired', UUID));
     expect((await t.request('hana_revokeOtherDevices')).error).toEqual({ code: 4900, message: 'This session was revoked', data: { requestId: UUID } });
   });
 

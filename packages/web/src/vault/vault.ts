@@ -35,6 +35,10 @@
 //   the record again, which works while the server share is alive; in 'none' mode it ends.
 // - One session per app per device: a login replaces the record and revokes the shares it replaces, a logout ends
 //   every tab's session, and a `revoked` broadcast ends only the tabs holding that share.
+// - A session ended because the API said its share was revoked (a status read's `'revoked'`, a `410 share_revoked`, a
+//   newer login on this device, another tab's `signedOut` broadcast) says so (D695): `disconnectReason {signed_out}`
+//   just before its `disconnect`, and the requests it refuses carry `data.reason: 'signed_out'` (code still 4900). A
+//   session that ended any other way (logout, expiry, a share expired or unknown, a lost record) says nothing more.
 import {
   type AccountMethod,
   type AccountResult,
@@ -47,6 +51,7 @@ import {
   mainnetOfRequest,
   type LoginResult,
   NEVER_AUTO_APPROVED_KINDS,
+  type DisconnectReason,
   type PortEventMap,
   type PortEventName,
   type PortRequest,
@@ -291,6 +296,8 @@ interface Session {
   lastActivityAt: number;
   expiryTimer: unknown;
   idleTimer: unknown;
+  /** Set when the session ended because its share was revoked (D695): its refused requests say `signed_out`. */
+  signedOut?: true;
 }
 
 /** The background persist of one login (D79). */
@@ -346,6 +353,23 @@ interface Dormant {
 
 /** A session whose share the API is asked about (D680, D692): the live one with its share, or the dormant one. */
 type ShareHolder = { kind: 'live'; s: Session; share: Share } | { kind: 'dormant'; d: Dormant };
+
+/**
+ * Whether an API refusal says the share was revoked (D695): `410 share_revoked`, or `410 session_ended` with reason
+ * `share_revoked`. A share that expired, or one the API doesn't know, is not: those say nothing about a sign-out.
+ */
+function shareRevokedRefusal(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 410 && (e.code === 'share_revoked' || (e.code === 'session_ended' && e.details.reason === 'share_revoked'));
+}
+
+/**
+ * The 4900 a request of session `s` gets once `s` has ended: with `data.reason: 'signed_out'` when it ended because its
+ * share was revoked (D695), so the page can tell a sign-out from a lost vault. wagmi, viem and ethers see the same 4900.
+ */
+function sessionEnded(s: Session | null | undefined, message?: string): VaultError {
+  if (s?.signedOut) return new VaultError(ErrorCode.disconnected, message ?? 'This session was signed out', { reason: 'signed_out' satisfies DisconnectReason });
+  return disconnected(message);
+}
 
 /** The session an identity token is minted for (vault.identityTarget). */
 interface IdentityTarget {
@@ -904,19 +928,22 @@ export class Vault {
     return h.kind === 'live' ? h.share.shareId : h.d.shareId;
   }
 
-  /** The API said the share is revoked: as a touch's 410, the record deleted, other tabs told, the session ended. */
+  /**
+   * The API said the share is revoked: as a touch's 410, the record deleted, other tabs told, the session ended, signed
+   * out (D695).
+   */
   private endHolder(h: ShareHolder): void {
     if (!this.holderCurrent(h)) return;
     const shareId = Uint8Array.from(this.holderShareId(h));
     if (h.kind === 'live') {
       void this.deleteRecordIf(h.s).catch(() => undefined);
-      this.broadcastRevoked(shareId);
-      this.endSession(true);
+      this.broadcastRevoked(shareId, true);
+      this.endSession(true, { reason: 'signed_out' });
       return;
     }
     void this.deleteRecordIf({ sessionPk: h.d.sessionPk, share: { shareId, counter: 0, createdAt: null } }).catch(() => undefined);
-    this.broadcastRevoked(shareId);
-    this.dropDormant(true);
+    this.broadcastRevoked(shareId, true);
+    this.dropDormant(true, 'signed_out');
   }
 
   /**
@@ -1020,10 +1047,13 @@ export class Vault {
     throw new VaultError('api_unavailable', 'Could not confirm with Hana that this device is still signed in', { reason: 'share_unconfirmed' });
   }
 
-  /** confirmHolder for a signature in `s`: a session that ended meanwhile (signed out) is `disconnected`. */
+  /**
+   * confirmHolder for a signature in `s`: a session that ended meanwhile is `disconnected`, with `signed_out` when the
+   * check (or anything else) found its share revoked (D695).
+   */
   private async shareConfirmed(s: Session): Promise<void> {
     const ok = await this.confirmHolder(s.share ? { kind: 'live', s, share: s.share } : null);
-    if (!ok || this.live() !== s) throw disconnected('This session was revoked');
+    if (!ok || this.live() !== s) throw sessionEnded(s, 'This session was revoked');
   }
 
   /** After the 60 s read: a consent found revoked is cleared here, so a tab's status reflects it without any request. */
@@ -1670,7 +1700,8 @@ export class Vault {
     if (previous?.share) {
       // Its consent ends with the share: the API's status read sees that from the share row.
       revoked.push(Uint8Array.from(previous.share.shareId));
-      this.broadcastRevoked(previous.share.shareId);
+      // The other tabs on it were signed out by this sign-in (D695).
+      this.broadcastRevoked(previous.share.shareId, true);
       void this.revokeDetached({ keyPair: previous.keyPair, share: { ...previous.share } }).catch(() => undefined);
     } else if (previous?.consent?.consentId) {
       // 'none' mode has no share to end its consent with.
@@ -1844,7 +1875,7 @@ export class Vault {
       // The record it overwrote is this device's older session (another tab's login): one session per app per device.
       const old = replaced as RecordV1 | null;
       if (old && !revoked.some((id) => bytesEqual(id, old.shareId))) {
-        this.broadcastRevoked(old.shareId);
+        this.broadcastRevoked(old.shareId, true);
         void this.revokeDetached({ keyPair: old.sessionKeyPair, share: { shareId: old.shareId, counter: old.counter, createdAt: null } }).catch(() => undefined);
       }
       if (outcome === 'cancelled') await this.revokeDetached({ keyPair, share: made }).catch(() => undefined);
@@ -1876,7 +1907,7 @@ export class Vault {
         const r = await this.readRecord();
         if (r === null || r === 'invalid' || !bytesEqual(r.shareId, older)) return;
         if (!revoked.some((id) => bytesEqual(id, r.shareId))) {
-          this.broadcastRevoked(r.shareId);
+          this.broadcastRevoked(r.shareId, true);
           void this.revokeDetached({ keyPair: r.sessionKeyPair, share: { shareId: r.shareId, counter: r.counter, createdAt: null } }).catch(() => undefined);
         }
         await store.delete(this.recordId);
@@ -2029,7 +2060,7 @@ export class Vault {
       ...(s.share.liveAt !== undefined && s.share.livePerf !== undefined ? { liveAt: s.share.liveAt, livePerf: s.share.livePerf } : {}),
     };
     // The same session goes on, dormant: its identity token stays valid.
-    this.endSession(false, ErrorCode.disconnected, true);
+    this.endSession(false, { keepIdentity: true });
     this.dormant = dormant;
     const delay = Math.max(0, s.expiresAtMs - this.clock.now());
     dormant.expiryTimer = this.timers.setTimeout(() => this.expireDormant(dormant), Math.min(delay, 0x7fffffff));
@@ -2061,19 +2092,31 @@ export class Vault {
     await this.waking;
   }
 
-  /** Drops a dormant session for good (logout, revocation); `announce` tells the partner page. */
-  private dropDormant(announce: boolean): void {
+  /**
+   * Drops a dormant session for good (logout, revocation); `announce` tells the partner page, with `reason` when the
+   * vault knows why (D695).
+   */
+  private dropDormant(announce: boolean, reason?: DisconnectReason): void {
     if (!this.dormant) return;
     this.clearDormant();
     this.dropIdentity();
-    if (announce) {
-      this.emit('disconnect', { code: ErrorCode.disconnected });
-      this.emit('accountsChanged', { addresses: null });
-    }
+    if (announce) this.announceEnd(reason);
   }
 
-  /** Tells this app's other tabs that `shareId` is dead: the ones holding it end their session. */
-  private broadcastRevoked(shareId: Uint8Array): void {
+  /** `disconnect` (with `disconnectReason` just before it when the reason is known, D695), then no accounts. */
+  private announceEnd(reason: DisconnectReason | undefined): void {
+    if (reason) this.emit('disconnectReason', { reason });
+    this.emit('disconnect', { code: ErrorCode.disconnected });
+    this.emit('accountsChanged', { addresses: null });
+  }
+
+  /**
+   * Tells this app's other tabs that `shareId` is dead: the ones holding it end their session. `signedOut`: the share
+   * was revoked (not expired or unknown), and a `signedOut` message goes first, so a tab of this build ends with
+   * `signed_out` (D695); a tab of an older build drops it and ends on `revoked`.
+   */
+  private broadcastRevoked(shareId: Uint8Array, signedOut = false): void {
+    if (signedOut) this.channel?.postMessage({ v: 1, t: 'signedOut', shareId: Uint8Array.from(shareId) });
     this.channel?.postMessage({ v: 1, t: 'revoked', shareId: Uint8Array.from(shareId) });
   }
 
@@ -2088,24 +2131,23 @@ export class Vault {
 
   /**
    * Zeroes PRK and drops the session; pending approvals and an export end, and so does its identity token unless the
-   * session only goes dormant (`keepIdentity`).
+   * session only goes dormant (`keepIdentity`). `reason` `signed_out`: its share was revoked (D695); the session is
+   * marked so its refused requests say so, and `announce` sends `disconnectReason` first.
    */
-  private endSession(announce: boolean, code: number = ErrorCode.disconnected, keepIdentity = false): void {
+  private endSession(announce: boolean, o: { keepIdentity?: boolean; reason?: DisconnectReason } = {}): void {
     const s = this.session;
     if (!s) return;
     this.session = null;
-    if (!keepIdentity) this.dropIdentity();
+    if (o.reason === 'signed_out') s.signedOut = true;
+    if (!o.keepIdentity) this.dropIdentity();
     // A share or record still being made for this session must not outlive it (persistLogin checks this).
     if (s.persist) s.persist.cancelled = true;
     this.timers.clearTimeout(s.expiryTimer);
     this.timers.clearTimeout(s.idleTimer);
     s.prk.fill(0);
     this.approvals?.cancelAll('cancelled');
-    this.cancelExport(disconnected());
-    if (announce) {
-      this.emit('disconnect', { code });
-      this.emit('accountsChanged', { addresses: null });
-    }
+    this.cancelExport(sessionEnded(s));
+    if (announce) this.announceEnd(o.reason);
   }
 
   private async expire(s: Session): Promise<void> {
@@ -2209,7 +2251,7 @@ export class Vault {
           }
           if (e.status === 404 || e.status === 410 || e.status === 401 || e.code === 'bad_counter') {
             await store.delete(this.recordId);
-            if (e.status === 410) this.broadcastRevoked(r.shareId);
+            if (e.status === 410) this.broadcastRevoked(r.shareId, shareRevokedRefusal(e));
           }
           return null;
         }
@@ -2343,10 +2385,13 @@ export class Vault {
       if (s?.share && bytesEqual(s.share.shareId, m.shareId)) s.share.counter = Math.max(s.share.counter, m.counter);
       return;
     }
-    if (m.t === 'revoked') {
-      // Only the tabs holding that share: a stale tab's 410 must not end a newer session in another tab.
-      if (s?.share && bytesEqual(s.share.shareId, m.shareId)) this.endSession(true);
-      if (this.dormant && bytesEqual(this.dormant.shareId, m.shareId)) this.dropDormant(true);
+    if (m.t === 'revoked' || m.t === 'signedOut') {
+      // Only the tabs holding that share: a stale tab's 410 must not end a newer session in another tab. `signedOut`
+      // comes just before `revoked` when the share was revoked (D695): the session ends on it, with the reason, and
+      // the `revoked` then finds nothing to end.
+      const reason: DisconnectReason | undefined = m.t === 'signedOut' ? 'signed_out' : undefined;
+      if (s?.share && bytesEqual(s.share.shareId, m.shareId)) this.endSession(true, { reason });
+      if (this.dormant && bytesEqual(this.dormant.shareId, m.shareId)) this.dropDormant(true, reason);
       return;
     }
     // logout: the user logged out of this app on this device.
@@ -2408,7 +2453,7 @@ export class Vault {
     // Right after a login its share may still be in the making: wait for it rather than refuse.
     await this.persisted(first);
     const s = this.live();
-    if (s !== first) throw disconnected();
+    if (s !== first) throw sessionEnded(first);
     const share = s.share;
     if (!share) throw new VaultError(ErrorCode.unauthorized, 'This app does not keep the wallet across reloads', { reason: 'persistence_off' });
     if (share.createdAt === null || this.clock.now() - share.createdAt >= FRESH_LOGIN_MS) {
@@ -2420,10 +2465,12 @@ export class Vault {
     } catch (e) {
       if (e instanceof ApiError && e.code === 'share_not_fresh') throw new VaultError(ErrorCode.unauthorized, 'Only within 5 minutes of a fresh sign-in', { reason: 'share_not_fresh' }).fromRequest(e);
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
+        // Signed out only when the API says revoked (D695); an expired or unknown share ends without a reason.
+        const signedOut = shareRevokedRefusal(e);
         await this.deleteRecordIf(s).catch(() => undefined);
-        this.broadcastRevoked(share.shareId);
-        if (this.session === s) this.endSession(true);
-        throw disconnected('This session was revoked').fromRequest(e);
+        this.broadcastRevoked(share.shareId, signedOut);
+        if (this.session === s) this.endSession(true, signedOut ? { reason: 'signed_out' } : {});
+        throw sessionEnded(s, 'This session was revoked').fromRequest(e);
       }
       throw e instanceof ApiError ? apiErrorToVault(e) : e;
     }
@@ -2439,9 +2486,11 @@ export class Vault {
     const perf = this.perfNow();
     void this.shareAction('touch').then(() => this.noteShareLive(share, at, perf), (e: unknown) => {
       if (e instanceof ApiError && (e.status === 404 || e.status === 410) && this.session === s) {
+        // Signed out only when the API says revoked (D695); an expired or unknown share ends without a reason.
+        const signedOut = shareRevokedRefusal(e);
         void this.deleteRecordIf(s).catch(() => undefined);
-        this.broadcastRevoked(share.shareId);
-        this.endSession(true);
+        this.broadcastRevoked(share.shareId, signedOut);
+        this.endSession(true, signedOut ? { reason: 'signed_out' } : {});
       }
     });
   }
@@ -2816,8 +2865,10 @@ export class Vault {
 
   private identityRefusal(e: ApiError, t: IdentityTarget): VaultError {
     if (e.code === 'session_ended') {
-      this.endIdentitySession(t);
-      return new VaultError('session_ended', 'The Hana session has ended');
+      // The share revoked (D695): `data.reason` says signed out; the event stays `sessionExpired`, as before.
+      const signedOut = shareRevokedRefusal(e);
+      this.endIdentitySession(t, signedOut);
+      return new VaultError('session_ended', 'The Hana session has ended', signedOut ? { reason: 'signed_out' satisfies DisconnectReason } : undefined);
     }
     if (e.code === 'session_ending') return new VaultError('session_ended', 'The Hana session ends in less than 30 seconds', { reason: 'session_ending' });
     if (e.status === 429) return new VaultError('rate_limited', 'Too many identity token requests, try again later');
@@ -2825,19 +2876,19 @@ export class Vault {
     return new VaultError('identity_unavailable', 'Identity tokens are unavailable, try again later', { api: `${e.status} ${e.code}`.slice(0, 80) });
   }
 
-  private endIdentitySession(t: IdentityTarget): void {
+  private endIdentitySession(t: IdentityTarget, signedOut: boolean): void {
     const s = t.live;
     if (s && this.session === s) {
       const share = s.share;
       if (share) {
         void this.deleteRecordIf(s).catch(() => undefined);
-        this.broadcastRevoked(share.shareId);
+        this.broadcastRevoked(share.shareId, signedOut);
       }
-      this.endSession(false);
+      this.endSession(false, signedOut ? { reason: 'signed_out' } : {});
     } else if (t.dormant && this.dormant === t.dormant) {
       const d = t.dormant;
       void this.deleteRecordIf({ sessionPk: d.sessionPk, share: { shareId: d.shareId, counter: 0, createdAt: null } }).catch(() => undefined);
-      this.broadcastRevoked(d.shareId);
+      this.broadcastRevoked(d.shareId, signedOut);
       this.dropDormant(false);
     } else return;
     this.emit('sessionExpired', null);
@@ -2852,23 +2903,23 @@ export class Vault {
     // Raw signing is re-read before every raw request (setting it to 'off' takes effect in open tabs).
     // A test app's raw request is refused outright (approvalSubject), with no API read.
     const rawSign: RawSign = request.method === 'hana_signRaw' && !this.testApp ? await this.freshRawSign() : 'off';
-    if (this.live() !== s) throw disconnected();
+    if (this.live() !== s) throw sessionEnded(s);
     // A test app's mainnet request (D39) is signed only under the mainnet demo (D428), confirmed fresh.
     const demo = this.testApp && Vault.namesMainnet(request);
     const mainnetDemo = demo ? await this.freshMainnetDemo() : null;
-    if (this.live() !== s) throw disconnected();
+    if (this.live() !== s) throw sessionEnded(s);
     const subject = this.subjectOf(request, s.addresses, { rawSign, testApp: this.testApp, mainnetDemo, reservedEvmDigests: this.reservedEvmDigests(s.addresses.evm) });
     // A mainnet demo request always gets the approval popup and its banner: never auto-approved.
     const eligible = !demo && !NEVER_AUTO_APPROVED_KINDS.has(subject.kind);
     // The policy read below also names the consent, so it is loaded first: one read then answers both.
     if (eligible && this.policy && !s.consent) await this.withConsent(s, async (c) => ({ value: c }));
-    if (this.live() !== s) throw disconnected();
+    if (this.live() !== s) throw sessionEnded(s);
     const policy = eligible ? await this.freshPolicy() : null;
-    if (this.live() !== s) throw disconnected();
+    if (this.live() !== s) throw sessionEnded(s);
     let note: { label: string; active: boolean; reason?: string } | undefined;
     if (policy) {
       const standing = await this.confirmConsent(s, policy);
-      if (this.live() !== s) throw disconnected();
+      if (this.live() !== s) throw sessionEnded(s);
       // 'hold': no answer for this consent, or it was just found revoked: this request goes to the approval popup,
       // with no consent screen and no note.
       if (standing !== 'hold') {
@@ -2887,7 +2938,7 @@ export class Vault {
               granted = false;
               this.launcher.flash('Auto-approve couldn’t be turned on', AUTO_APPROVED_FLASH_MS);
             }
-            if (this.live() !== s) throw disconnected();
+            if (this.live() !== s) throw sessionEnded(s);
             // The consent screen can stay up for minutes: the policy must still be in force to sign under it.
             if (granted && (await this.freshPolicy())?.policyId === policy.policyId) {
               auto = await this.tryAutoSign(s, request, subject, policy);
@@ -2904,12 +2955,12 @@ export class Vault {
     // D682: a device signed out from Hana Home completes no approval: checked before the popup (so a refusal costs no
     // click; usually the minute's read already answered) and again after it when the popup stayed up past the bound.
     await this.shareConfirmed(s);
-    if (this.live() !== s) throw disconnected();
+    if (this.live() !== s) throw sessionEnded(s);
     const outcome = await this.approvals!.requestApproval(subject, note, mainnetDemo?.prices);
-    if (outcome === 'cancelled' || this.live() !== s) throw disconnected();
+    if (outcome === 'cancelled' || this.live() !== s) throw sessionEnded(s);
     if (outcome !== 'approved') throw userRejected();
     await this.shareConfirmed(s);
-    if (this.live() !== s) throw disconnected();
+    if (this.live() !== s) throw sessionEnded(s);
     const result = signRequest(s.prk, request, subject);
     this.maybeTouch();
     if (demo && mainnetDemo) this.reportDemoSignature(s, subject, mainnetDemo.prices);
@@ -2952,7 +3003,7 @@ export class Vault {
     type Outcome = { kind: 'signed'; result: unknown; match: Extract<AutoApproveResult, { ok: true }> } | { kind: 'no_consent' } | { kind: 'miss'; reason: string } | { kind: 'unconfirmed' };
     const outcome = await this.withConsent<Outcome>(s, async (consent) => {
       // A logout or expiry while the lock was awaited zeroed PRK: never sign with it.
-      if (this.live() !== s) throw disconnected();
+      if (this.live() !== s) throw sessionEnded(s);
       const now = this.clock.now();
       // The lock can be slow: the policy must still be this one, confirmed within the bound, when the signature is made.
       if (this.policy?.policyId !== policy.policyId || !this.policyFresh()) return { value: { kind: 'unconfirmed' } };
@@ -2983,13 +3034,13 @@ export class Vault {
     // memory if it never will), never to a memory copy that the new record then silently drops.
     if (s.persist) {
       await this.persisted(s);
-      if (this.session !== s) throw disconnected();
+      if (this.session !== s) throw sessionEnded(s);
     }
     if (!s.share || !this.store) {
       // No record and no per-app lock here: one at a time per session, so parallel requests each see the last one's
       // counters and the daily limits bind.
       const run = async (): Promise<T> => {
-        if (this.session !== s) throw disconnected();
+        if (this.session !== s) throw sessionEnded(s);
         const out = await fn(s.consent);
         if (out.write !== undefined) s.consent = out.write;
         return out.value;
@@ -3044,7 +3095,7 @@ export class Vault {
       }
       return { v: out.value };
     });
-    if (gone) throw disconnected();
+    if (gone) throw sessionEnded(s);
     if (tampered || value === null) {
       this.endSession(true);
       throw disconnected('The vault record was tampered with');
@@ -3115,7 +3166,7 @@ export class Vault {
    */
   private async registerConsent(s: Session, policy: PolicyInForce, consentId: string, expiresAtMs: number): Promise<void> {
     if (s.persist) await this.persisted(s);
-    if (this.live() !== s) throw disconnected();
+    if (this.live() !== s) throw sessionEnded(s);
     const id = fromHex(consentId);
     const policyBytes = fromHex(policy.policyId);
     const payload = consentRegisterPayload({ consentId: id, policyId: policyBytes, expiresAtMs, parentOrigin: this.parentOrigin! });
@@ -3131,7 +3182,7 @@ export class Vault {
         if (!(e instanceof ApiError) || e.code !== 'session_not_visible' || attempt >= CONSENT_NOT_VISIBLE_RETRIES) throw e;
         const retryS = e.details.retryAfterS;
         await sleep(this.timers, Math.max(CONSENT_RETRY_MIN_MS, Math.min(typeof retryS === 'number' ? retryS * 1000 : CONSENT_RETRY_MIN_MS, CONSENT_RETRY_MAX_MS)));
-        if (this.live() !== s) throw disconnected();
+        if (this.live() !== s) throw sessionEnded(s);
       }
     }
   }
@@ -3149,7 +3200,7 @@ export class Vault {
     // The end the Allow is for, bounded by the session and by the share's absolute end (the API's rule).
     const expiresAtMs = Math.min(consentEnd(policy, this.clock.now(), s.expiresAtMs), s.share?.absExpiresAtMs ?? Number.POSITIVE_INFINITY);
     const outcome: ApprovalOutcome = await this.approvals!.requestConsent(policy.policy, policy.policyId, expiresAtMs);
-    if (outcome === 'cancelled' || this.live() !== s) throw disconnected();
+    if (outcome === 'cancelled' || this.live() !== s) throw sessionEnded(s);
     if (outcome !== 'approved') {
       this.declinedPolicyId = policy.policyId;
       return false;
@@ -3159,15 +3210,17 @@ export class Vault {
     try {
       await this.registerConsent(s, policy, consentId, expiresAtMs);
     } catch (e) {
-      if (this.live() !== s) throw disconnected();
+      if (this.live() !== s) throw sessionEnded(s);
       if (e instanceof ApiError && e.status === 410 && (s.share || e.details.reason !== 'unknown_share')) {
         // The session is over on the server: end it here as a touch's 410 does, rather than offer a screen that can't work.
         // A session with no share is told `unknown_share` when the app keeps logins and it has none (its share was never
         // made, or the app switched to 'session' after this tab loaded). That session is fine in memory: it fails closed.
+        // Signed out only when the API says revoked (D695).
+        const signedOut = shareRevokedRefusal(e);
         void this.deleteRecordIf(s).catch(() => undefined);
-        if (s.share) this.broadcastRevoked(s.share.shareId);
-        this.endSession(true);
-        throw disconnected('This session was revoked').fromRequest(e);
+        if (s.share) this.broadcastRevoked(s.share.shareId, signedOut);
+        this.endSession(true, signedOut ? { reason: 'signed_out' } : {});
+        throw sessionEnded(s, 'This session was revoked').fromRequest(e);
       }
       // The API says how late the share may really run (a lowered session TTL): the next Allow asks for that end.
       const cap = e instanceof ApiError && e.code === 'bad_expiry' ? e.details.maxExpiresAtMs : undefined;
@@ -3178,7 +3231,7 @@ export class Vault {
     // A session that ended during the register: nothing is stored, and the row just made is stopped.
     if (this.live() !== s) {
       this.sendConsentRevoke({ keyPair: s.keyPair, sessionPk: s.sessionPk, share: s.share }, consentId);
-      throw disconnected();
+      throw sessionEnded(s);
     }
     try {
       await this.withConsent(s, async () => ({ value: null, write: newConsent(policy, this.clock.now(), expiresAtMs, consentId) }));
@@ -3196,11 +3249,11 @@ export class Vault {
     if (this.policy && !s.consent) await this.withConsent(s, async (c) => ({ value: c }));
     // A stale policy is re-read first; if that fails, the consent screen still shows the cached one (signing re-checks).
     const policy = (await this.freshPolicy()) ?? this.policy;
-    if (this.live() !== s) throw disconnected();
+    if (this.live() !== s) throw sessionEnded(s);
     if (!policy) throw new VaultError(ErrorCode.unauthorized, 'This app has no auto-approve policy in force');
     // A consent the API says has ended is cleared before this answers; one it can't confirm stays, and isn't reported as granted.
     const standing = await this.confirmConsent(s, policy);
-    if (this.live() !== s) throw disconnected();
+    if (this.live() !== s) throw sessionEnded(s);
     const active = await this.withConsent(s, async (c) => ({ value: consentActive(c, policy, this.clock.now(), s.expiresAtMs) ? c : null }));
     if (active && standing === 'hold') throw new VaultError('api_unavailable', 'Hana could not confirm auto-approve right now', { granted: false, reason: 'consent_unconfirmed' });
     if (active) return { granted: true, policyId: policy.policyId, expiresAtMs: active.expiresAtMs };

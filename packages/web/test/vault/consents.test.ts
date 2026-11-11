@@ -5,7 +5,7 @@ import { base64UrlEncode, fromHex, toHex } from '@hana-id/core';
 import { functionSelector } from '@hana-id/core/decode';
 import { CONSENT_ASK_AGAIN_MS, CONSENT_NOT_VISIBLE_RETRIES, CONSENT_RETRY_MAX_MS, POLICY_FRESH_MS, POLICY_REFRESH_MS } from '../../src/vault/vault.ts';
 import { openRecordStore, recordKey } from '../../src/vault/record.ts';
-import { APP_ID, Browser, ENV, type FakeWindow, type Google, HOUR, type Tab, type TabOptions, SCOPE, START_MS, answer, answerConsent, apiError, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
+import { APP_ID, Browser, ENV, type FakeWindow, type Google, HOUR, type Tab, type TabOptions, SCOPE, START_MS, answer, answerConsent, apiError, disconnectedWith, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
 import { CHAIN, EVM_VAULT, evmTx, evmTxSigner } from './chains.ts';
 
 let g: Google;
@@ -202,7 +202,9 @@ describe('register before use', () => {
     const s = await session();
     shareOf(s).revoked = true;
     const { reply } = await allow(s);
-    expect(reply.error?.code).toBe(4900);
+    // The API said the share was revoked: signed out (D695), on the refusal and on the event.
+    expect(reply.error).toMatchObject({ code: 4900, data: { reason: 'signed_out' } });
+    expect(disconnectedWith(s.t)).toEqual(['signed_out']);
     expect((s.t.vault as unknown as { session: unknown }).session).toBeNull();
     expect(((await s.t.request('hana_status')).result as { status: string }).status).toBe('logged_out');
     const store = await openRecordStore(s.t.browser.idb);

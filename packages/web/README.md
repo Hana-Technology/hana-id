@@ -169,7 +169,8 @@ section 12.
 Methods reject with `HanaError { code, message, data? }`; the EIP-1193 provider uses `ProviderRpcError` with numeric
 codes (the Hana code in `data.code`). An error from Hana's API carries its request ID (`error.requestId`,
 `data.requestId`): send it to Hana with the user's Support ID (`hana.supportId`) when you report a problem. The common ones: `4001` the user rejected or closed the popup; `4100` not
-logged in or not allowed (`data.reason`); `4900` the vault is gone; `4902` chain not in `evm.chains`;
+logged in or not allowed (`data.reason`); `4900` the vault is gone, or with `data.reason: 'signed_out'` Hana signed this
+device out (the `disconnect` event then has `reason: 'signed_out'` too): ask the user to log in again, no reload; `4902` chain not in `evm.chains`;
 `vault_unavailable` (`data.reason`; `no_answer` when the page's origin isn't one of your app's origins), `popup_blocked`,
 `login_timeout`, `rate_limited`.
 

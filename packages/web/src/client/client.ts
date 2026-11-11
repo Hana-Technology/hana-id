@@ -23,6 +23,7 @@ import {
   isApprovalPopupMethod,
   type AccountResult,
   type AutoApproveStatus,
+  type DisconnectReason,
   type LinkChange,
   type LoginMethod,
   type LoginResult,
@@ -61,6 +62,12 @@ export interface HanaConfig {
 
 export type HanaStatus = 'logged_out' | 'unlocking' | 'logging_in' | 'logged_in' | 'error';
 
+/** The `disconnect` event: `code` 4900, and `reason` when the vault said why (`signed_out`). */
+export interface HanaDisconnect {
+  code: number;
+  reason?: DisconnectReason;
+}
+
 export interface HanaAddresses {
   stellar: string;
   evm: string;
@@ -70,7 +77,15 @@ export interface HanaEvents {
   statusChanged: [HanaStatus];
   accountsChanged: [HanaAddresses | null];
   sessionExpired: [];
-  disconnect: [{ code: number }];
+  /**
+   * The session or the vault ended without this page asking (always `code` 4900): Hana ended the session on this
+   * device, another tab of the app logged out, or the vault connection is gone. `reason: 'signed_out'` when Hana signed
+   * this device out (its session was revoked: Hana Home's "Sign out this device", `revokeOtherDevices()` on another
+   * device, a newer sign-in to the app in another tab of this device, or the app's settings): no reload is needed, only
+   * a new login. Without `reason`, the vault doesn't say why (a lost vault connection, another tab's logout, a share
+   * that expired or that Hana doesn't know, a record that failed to open, a vault or another tab older than this field).
+   */
+  disconnect: [HanaDisconnect];
   loginProgress: [PortEventMap['loginProgress']];
   autoApproved: [PortEventMap['autoApproved']];
   /**
@@ -216,6 +231,8 @@ export class HanaClient extends Emitter<HanaEvents> {
   #mainnetDemoPrices: MainnetDemoPrices | null = null;
   /** Whether the launcher the next `ui` show announces can be clicked (the vault's `launcherKind` event). */
   #launcherClickable = true;
+  /** The vault's `disconnectReason`, for the `disconnect` that comes right after it (and no other event). */
+  #disconnectReason: DisconnectReason | null = null;
   /** Whether `ready` resolved: the vault has said whatever it was going to say about the demo. */
   #mainnetDemoKnown = false;
   readonly #windows: ApprovalWindows;
@@ -647,6 +664,9 @@ export class HanaClient extends Emitter<HanaEvents> {
   }
 
   #onEvent(e: PortEvent): void {
+    // `disconnectReason` names the next event only, which the vault sends at once: anything else in between drops it.
+    const reason = this.#disconnectReason;
+    this.#disconnectReason = null;
     switch (e.event) {
       case 'connected':
       case 'ready':
@@ -664,9 +684,12 @@ export class HanaClient extends Emitter<HanaEvents> {
         if (this.#status === 'logged_in' || this.#status === 'logged_out') this.#setStatus(e.data.addresses ? 'logged_in' : 'logged_out');
         return;
       }
+      case 'disconnectReason':
+        this.#disconnectReason = e.data.reason;
+        return;
       case 'disconnect':
         this.#loggedOut();
-        this.emit('disconnect', { code: e.data.code });
+        this.emit('disconnect', reason === null ? { code: e.data.code } : { code: e.data.code, reason });
         return;
       case 'sessionExpired':
         this.#loggedOut();
@@ -745,6 +768,9 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   #onDisconnect(launcherWasVisible: boolean): void {
     this.#vaultDown = true;
+    // The connection itself died: its disconnect below never has a reason. Clearing a reason the vault sent for a
+    // disconnect that never came is defence in depth only: nothing reads it once the vault is down.
+    this.#disconnectReason = null;
     // The connection hid the frame; tell a partner that mirrors the launcher (PART-1).
     if (launcherWasVisible && !this.#destroyed) this.emit('launcher', { visible: false, label: '', clickable: false });
     this.#attempt?.abort(hanaError(ErrorCode.disconnected));

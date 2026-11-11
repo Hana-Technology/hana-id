@@ -63,6 +63,10 @@ async function narrow(page: Page, name: string, browserName: string): Promise<vo
   await page.emulateMedia({ colorScheme: 'light' });
 }
 
+/** The partner page's `disconnect` events, as the SDK gave them (D695: `reason: 'signed_out'` after a sign-out). */
+const disconnects = (page: Page): Promise<unknown[]> =>
+  page.evaluate(() => ((window as unknown as { e2e: { events: { name: string; data: unknown }[] } }).e2e.events ?? []).filter((e) => e.name === 'disconnect').map((e) => e.data));
+
 const DEPOSIT_CONTRACT = '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
 const AUTO_POLICY = {
   v: 1,
@@ -178,6 +182,8 @@ test('stopping auto-approve in Hana Home stops auto-signing in the open partner 
   await page.bringToFront();
   await expect.poll(() => status(page), { timeout: 75_000, intervals: [1000] }).toBe('logged_out');
   expect(Date.now() - outAt).toBeLessThan(75_000);
+  // The page is told it was signed out, not that the vault was lost.
+  expect(await disconnects(page)).toEqual([{ code: 4900, reason: 'signed_out' }]);
   // And a reload stays signed out.
   await page.reload();
   await waitReady(page);
@@ -224,6 +230,7 @@ test('signing a device out in Hana Home ends an open tab of an app with no polic
   await page.bringToFront();
   await expect.poll(() => status(page), { timeout: 75_000, intervals: [1000] }).toBe('logged_out');
   expect(Date.now() - outAt).toBeLessThan(75_000);
+  expect(await disconnects(page)).toEqual([{ code: 4900, reason: 'signed_out' }]);
   // Nothing more can be signed there, and a reload stays signed out.
   await runAction(page, 'after', 'personalSign', 'after the sign-out');
   await errorOf(page, 'after');

@@ -21,6 +21,7 @@ import {
   type Tab,
   answer,
   apiError,
+  disconnectedWith,
   google,
   deliverToken,
   login,
@@ -639,6 +640,8 @@ describe('tabs', () => {
     browser.timers.advance(TOUCH_EVERY_MS);
     await approvedSign(a);
     expect(await a.waitEvent('disconnect')).toEqual({ code: 4900 });
+    // A newer sign-in on this device revoked it: signed out (D695).
+    expect(disconnectedWith(a)).toEqual(['signed_out']);
     const revocations = browser.bus.sent.filter((m) => (m.data as { t: string }).t === 'revoked').map((m) => (m.data as { shareId: Uint8Array }).shareId);
     expect(revocations.at(-1) && bytesEqual(revocations.at(-1)!, staleShare)).toBe(true);
     await sleepReal(30);
@@ -682,7 +685,8 @@ describe('expiry', () => {
     const m = await popup.next('hana:approve-request');
     browser.timers.now += 2 * 60_000;
     answer(first, popup, m, true);
-    expect((await reply).error?.code).toBe(4900);
+    // An expiry is no sign-out (D695): no reason.
+    expect((await reply).error).toEqual({ code: 4900, message: 'The vault is disconnected' });
     expect(prk.every((b) => b === 0)).toBe(true);
   });
 

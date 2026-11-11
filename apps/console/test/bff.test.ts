@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MockGoogle, account, getWith, landing, signIn } from './google.ts';
 import { hana, linkPair, rid, seedHotApp, seedOrg, staffRpc, system } from './helpers.ts';
 import { db } from './helpers.ts';
+import { envNameOf } from '../src/bff.ts';
 
 let google: MockGoogle;
 beforeEach(async () => {
@@ -195,7 +196,16 @@ describe('/api/me', () => {
     const row = await db.prepare('SELECT auth_at, absolute_expires_at FROM console_sessions WHERE user_id = ? AND revoked_at IS NULL ORDER BY auth_at DESC LIMIT 1').bind(a.userId).first<{ auth_at: number; absolute_expires_at: number }>();
     expect(me.body.sessionExpiresAt).toBe(row!.absolute_expires_at);
     expect(row!.absolute_expires_at - row!.auth_at).toBe(12 * 3_600_000);
-    expect(Object.keys(me.body).sort()).toEqual(['features', 'memberships', 'sessionExpiresAt', 'user']);
+    expect(Object.keys(me.body).sort()).toEqual(['envName', 'features', 'memberships', 'sessionExpiresAt', 'user']);
     expect(JSON.stringify(me.body)).not.toContain(a.cs);
+  });
+
+  it('answers the env’s name (ENV_NAME, the manifest’s) as envName for the client snippet, and nothing of another shape', async () => {
+    const a = await signedIn();
+    const me = await getJson<Record<string, unknown>>(a.cs, '/api/me');
+    expect(me.body.envName).toBe(env.ENV_NAME);
+    expect(env.ENV_NAME).toBe('sandbox-test');
+    expect(envNameOf({ ENV_NAME: 'sandbox-dev' })).toBe('sandbox-dev');
+    for (const bad of ['', 'Sandbox', "x'; alert(1)", 'a b', 'x'.repeat(65), undefined as unknown as string]) expect(envNameOf({ ENV_NAME: bad }), String(bad)).toBeUndefined();
   });
 });

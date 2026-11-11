@@ -46,6 +46,11 @@ export const meAnswer = z
      * limit isn't a fixed time (each request moves it) and isn't answered.
      */
     sessionExpiresAt: ms.optional(),
+    /**
+     * This console's Hana environment (the manifest's `name`, e.g. `sandbox-dev`): what a partner passes as
+     * `createHana({ environment })`. Public; the SPA shows it in the client snippet.
+     */
+    envName: z.string().regex(/^[a-z0-9-]{1,64}$/u).optional(),
   })
   .strict();
 export type MeAnswer = z.infer<typeof meAnswer>;

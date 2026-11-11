@@ -54,9 +54,15 @@ export async function memberships(env: Env, s: Session, now: number, orgId?: str
   return results.map((r) => ({ orgId: r.id, orgName: r.name, status: r.status, role: (r.is_owner ? 'owner' : 'viewer') as Role }));
 }
 
-/** `GET /api/me` → `{user, memberships}`. */
+/** The env's name as `GET /api/me` answers it: a manifest name (packages/env: `[a-z0-9-]+`), else none. */
+export const envNameOf = (env: Pick<Env, 'ENV_NAME'>): string | undefined => (typeof env.ENV_NAME === 'string' && /^[a-z0-9-]{1,64}$/u.test(env.ENV_NAME) ? env.ENV_NAME : undefined);
+
+/** `GET /api/me` → `{user, memberships, features, sessionExpiresAt, envName}`. */
 export async function me(env: Env, s: Session, now: number): Promise<Response> {
   const body: MeAnswer = { user: { id: s.userId, email: s.email }, memberships: await memberships(env, s, now), features: { users: usersScreenOn(env) }, sessionExpiresAt: s.absoluteExpiresAt };
+  // The env's name for the partner's `createHana({ environment })` (the Getting started snippet); left out if unusable.
+  const envName = envNameOf(env);
+  if (envName) body.envName = envName;
   return json(200, body);
 }
 

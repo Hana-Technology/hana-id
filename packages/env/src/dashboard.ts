@@ -45,6 +45,11 @@ export const consoleSchema = z
     authWorkerName: workerName,
     /** Its origin; the console client's only redirect URI is `authOrigin + "/callback"`. */
     authOrigin: z.string(),
+    /**
+     * The partner Users screen (D357, D702): `true` writes the console var `USERS_SCREEN = "1"`; absent or `false`, the
+     * screen and its routes are off. Turn it on only where the env's API serves the wallet directory with D346's ids.
+     */
+    usersScreen: z.boolean().optional(),
   })
   .strict();
 

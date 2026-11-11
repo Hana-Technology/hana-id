@@ -103,6 +103,34 @@ describe('staff proposals and the blocking notice', () => {
     expect(await change(c.id)).toMatchObject({ status: 'active' });
   });
 
+  it('an app read shows a change in force as active before the hourly job records it, and stops counting it as waiting', async () => {
+    const app = await orgApp({ firstSession: null });
+    const c = await staffOrigin(app);
+    const read = async () => {
+      const detail = (await ok(consoleRpc().getApp({ ...member(), orgId: app.org, appId: app.id }))).app;
+      const summary = (await ok(consoleRpc().listApps({ ...member(), orgId: app.org }))).apps.find((a) => a.id === app.id)!;
+      const staff = (await ok(adminRpc().getApp({ ...hana(), orgId: app.org, appId: app.id }))).app;
+      return { status: detail.changes.find((x) => x.id === c.id)?.status, waiting: summary.pendingChanges, staffStatus: staff.changes.find((x) => x.id === c.id)?.status };
+    };
+    // Not announced, then announced with its clock running: pending and counted, for partners and staff alike.
+    expect(await read()).toEqual({ status: 'pending', waiting: 1, staffStatus: 'pending' });
+    await ack(c.id);
+    clock.advance(DELAY - 1);
+    expect(await read()).toEqual({ status: 'pending', waiting: 1, staffStatus: 'pending' });
+    // Its clock passed: in force by the gate's predicate, so the read says active and nothing waits, while the stored
+    // row stays pending until the hourly job records it.
+    clock.advance(1);
+    expect(await originsOf(app.key)).toContain(NEW);
+    expect(await change(c.id)).toMatchObject({ status: 'pending' });
+    expect(await read()).toEqual({ status: 'active', waiting: 0, staffStatus: 'active' });
+    // Cancel is refused (the origin is in force: an owner removes it instead), and nothing changed.
+    expect(await consoleRpc().cancelChange({ ...member(), orgId: app.org, changeId: c.id })).toMatchObject({ ok: false, code: 'not_pending' });
+    expect(await originsOf(app.key)).toContain(NEW);
+    await guardedChangesMaintenance(env);
+    expect(await change(c.id)).toMatchObject({ status: 'active' });
+    expect(await read()).toEqual({ status: 'active', waiting: 0, staffStatus: 'active' });
+  });
+
   it('a retry after a failed send acks with the same link token; the stored hash is the token’s', async () => {
     const app = await orgApp();
     const c = await staffOrigin(app);

@@ -109,7 +109,7 @@ describe('signed in', () => {
             { origin: 'https://xn--bcher-kva.example', display: 'https://bücher.example', idn: true, activeFrom: null, changeId: 'gc_1' },
           ],
           settings: { persistence: 'session', sessionTtlMs: 7_200_000, idleTtlMs: 1_800_000, googleWebClientId: null, rawSign: 'off', policy: null },
-          changes: [{ id: 'gc_1', appId: 'app_1', kind: 'origin_add', origin: 'https://xn--bcher-kva.example', display: 'https://bücher.example', idn: true, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: 0, notifiedAt: 1, activeFrom: 86_400_000 }],
+          changes: [{ id: 'gc_1', appId: 'app_1', kind: 'origin_add', origin: 'https://xn--bcher-kva.example', display: 'https://bücher.example', idn: true, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: 0, notifiedAt: 1, activeFrom: Date.now() + 86_400_000 }],
           keys: [{ id: 'key_1', prefix: 'pk_test_', key: 'pk_test_abc', createdBy: 'hana', createdAt: 0 }],
         },
       },

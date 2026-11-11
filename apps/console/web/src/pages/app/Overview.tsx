@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { duration } from '../../lib.tsx';
 import { Badge, Callout, Panel, Snippet } from '../../ui.tsx';
 import { suspension, useApp } from '../Apps.tsx';
-import { PendingChanges } from './Changes.tsx';
+import { PendingChanges, isWaiting } from './Changes.tsx';
 
 type Done = 'done' | 'partly' | 'todo' | 'code';
 
@@ -27,6 +27,26 @@ function Step({ n, title, state, children }: { n: number; title: string; state: 
   );
 }
 
+/** A Hana environment name as the manifest names them; anything else (or none) gets the placeholder. */
+const ENV_NAME_RE = /^[a-z0-9-]{1,64}$/u;
+
+/**
+ * Step 4's code: the app's newest key and this console's environment (`GET /api/me` `envName`, the name a partner
+ * passes to `createHana`, docs/integration.md section 3). Without a usable name, the placeholder and where to find it.
+ */
+export function clientSnippet(key: string | undefined, envName: string | undefined): string {
+  const environment = envName !== undefined && ENV_NAME_RE.test(envName) ? `'${envName}',` : `'…', // the environment name Hana gave you with the SDK`;
+  return `import { createHana } from '@hana-id/web';
+
+const hana = createHana({
+  publishableKey: '${key ?? 'pk_…'}',
+  environment: ${environment}
+});
+
+// In a click handler:
+await hana.login();`;
+}
+
 export function Overview() {
   const ctl = useApp();
   const { app: a } = ctl;
@@ -37,15 +57,7 @@ export function Overview() {
   const key = a.keys.filter((k) => k.revokedAt === undefined).sort((x, y) => y.createdAt - x.createdAt)[0];
   const s = a.settings;
   const susp = suspension(a.suspendedBy);
-  const client = `import { createHana } from '@hana-id/web';
-
-const hana = createHana({
-  publishableKey: '${key?.key ?? 'pk_…'}',
-  environment: '…', // the environment name Hana gave you with the SDK
-});
-
-// In a click handler:
-await hana.login();`;
+  const client = clientSnippet(key?.key, ctl.envName);
   return (
     <div className="stack">
       {susp && (
@@ -55,7 +67,7 @@ await hana.login();`;
           </p>
         </Callout>
       )}
-      {a.changes.some((c) => c.status === 'pending') && (
+      {a.changes.some((c) => isWaiting(c, now)) && (
         <Panel title="Changes waiting" description="These take effect on their own after the security delay unless someone cancels them.">
           <PendingChanges ctl={ctl} kinds={['origin_add', 'policy_set', 'raw_sign_on']} title={null} />
         </Panel>
@@ -78,7 +90,7 @@ await hana.login();`;
             </p>
           </Step>
           <Step n={3} title="Install the SDK" state="code">
-            <p>Install the tarballs Hana sent you (guide, section 2):</p>
+            <p>Install the tarballs Hana sent you (guide, section 2), with the version in their file names:</p>
             <Snippet label="install command" code="npm install ./hana-id-core-<version>.tgz ./hana-id-web-<version>.tgz" />
           </Step>
           <Step n={4} title="Create the client and log in from a click" state="code">

@@ -11,7 +11,7 @@ import { Badge, ConfirmButton, CopyButton, Panel, StepUpHint, Why, WriteNote } f
 import { useApp } from '../Apps.tsx';
 import { ConsentPreview } from '../Consent.tsx';
 import { type ChainOwner, ChainOwnerGate, useChainOwner } from './ChainOwner.tsx';
-import { PendingChanges } from './Changes.tsx';
+import { PendingChanges, isWaiting } from './Changes.tsx';
 
 interface Checked {
   policyId: string;
@@ -30,7 +30,7 @@ function Policy({ chain }: { chain: ChainOwner }) {
   const [checked, setChecked] = useState<Checked | undefined>();
   const base = `/api/orgs/${org}/apps/${app.id}`;
   const parentOrigin = app.origins.find((o) => o.activeFrom !== null && o.activeFrom <= Date.now())?.display ?? null;
-  const pending = app.changes.some((c) => c.kind === 'policy_set' && c.status === 'pending');
+  const pending = app.changes.some((c) => c.kind === 'policy_set' && isWaiting(c, Date.now()));
   return (
     <Panel
       title="Auto-approve policy"
@@ -133,7 +133,7 @@ function RawSigning({ chain }: { chain: ChainOwner }) {
   const w = useWrite();
   const step = useStepUp(org);
   const on = app.settings.rawSign === 'approval';
-  const pending = app.changes.some((c) => c.kind === 'raw_sign_on' && c.status === 'pending');
+  const pending = app.changes.some((c) => c.kind === 'raw_sign_on' && isWaiting(c, Date.now()));
   return (
     <Panel title="Raw signing" description="Signing messages Hana can’t decode (raw bytes). Users approve each one in the Hana popup, with a warning that Hana can’t show what it is. Leave it off unless your app needs it.">
       <div className="current">

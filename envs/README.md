@@ -42,8 +42,10 @@ Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.t
   `hana-id-<x>-sandbox-dev` on `tingtc.workers.dev`, `admin.accessAud` still `UNSET`, `admin.accessTeamDomain` a
   placeholder until the Zero Trust team exists). With them, `admin.ts app:changes:announce` refuses the env (its admin
   Worker announces), and the API's `gen` passes `FILES_ORIGIN` and the longer `REFUSED_ORIGINS` (below).
-  - `console`: `{workerName, d1Name, origin, authWorkerName, authOrigin}` (the partner console and its script-free
-    Google sign-in origin; the console client's only redirect URI is `authOrigin + "/callback"`).
+  - `console`: `{workerName, d1Name, origin, authWorkerName, authOrigin, usersScreen?}` (the partner console and its
+    script-free Google sign-in origin; the console client's only redirect URI is `authOrigin + "/callback"`;
+    `usersScreen: true` turns the partner Users screen on, `gen` writing `USERS_SCREEN = "1"`, off when absent, D702;
+    on in `sandbox-dev`).
   - `files`: `{workerName, origin, logosBucket, statementsBucket, exportsBucket}` (logos origin and the R2 buckets).
   - `admin`: `{workerName, origin, accessTeamDomain, accessAud, staffEmails, accessSessionDuration?}`:
     `accessSessionDuration` is the Access session in whole hours, `1h` to `8h`, default `1h`, and anything but `1h` is

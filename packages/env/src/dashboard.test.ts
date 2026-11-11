@@ -102,6 +102,14 @@ describe('dashboard blocks', () => {
     }
   });
 
+  it('console.usersScreen is an optional boolean, off when absent (D702); sandbox-dev sets it on', () => {
+    expect(messages(withDashboard())).toEqual([]);
+    expect(manifestSchema.parse(withDashboard()).console!.usersScreen).toBeUndefined();
+    for (const v of [true, false]) expect(messages(withDashboard((d) => (block(d, 'console').usersScreen = v)))).toEqual([]);
+    for (const bad of ['1', 1, 'true', null]) expect(messages(withDashboard((d) => (block(d, 'console').usersScreen = bad))).length, String(bad)).toBeGreaterThan(0);
+    expect(loadEnv('sandbox-dev').console!.usersScreen).toBe(true);
+  });
+
   it('refuse unknown keys in a block', () => {
     expect(messages(withDashboard((d) => (block(d, 'console').extra = 1))).length).toBeGreaterThan(0);
   });

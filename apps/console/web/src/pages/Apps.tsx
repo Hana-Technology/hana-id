@@ -7,9 +7,11 @@
 // suspending, keys, the name and the logo) are a second click. A frozen org shows only the cancels and the kill
 // switches; where a control isn't offered, one line says why.
 import type { AppDetail, AppSummary, MembersAnswer } from '@hana-id/console-core';
+import { useEffect } from 'react';
 import { Link, NavLink, Outlet, useOutletContext, useParams } from 'react-router-dom';
 import { type OrgContext, useApi, useOrg } from '../lib.tsx';
 import { Badge, CopyField, Empty, ErrorNote, Loading, PageHeader, Why } from '../ui.tsx';
+import { isWaiting } from './app/Changes.tsx';
 
 const SUSPENDED = [
   [1, 'by Hana'],
@@ -121,11 +123,34 @@ const SECTIONS = [
   ['suspend', 'Suspend'],
 ] as const;
 
+/** The next time after `now` that one of the app's waiting changes or origins takes effect, or null. */
+export function nextEffectAt(a: AppDetail, now: number): number | null {
+  const times = [...a.changes.filter((c) => c.status === 'pending').map((c) => c.activeFrom), ...a.origins.map((o) => o.activeFrom)].filter((t): t is number => typeof t === 'number' && t > now);
+  return times.length ? Math.min(...times) : null;
+}
+
+/** setTimeout's longest wait (about 24.8 days); a later time is waited for in steps (the delays are at most 7 days). */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * While the page is open, one timer to the next time something of the app takes effect, then one re-read of the app
+ * (1 s after, so the server's clock has passed it too). No polling: the re-read's answer sets the next timer, if any.
+ */
+export function useReloadAtNextEffect(a: AppDetail | undefined, reload: () => void): void {
+  const at = a ? nextEffectAt(a, Date.now()) : null;
+  useEffect(() => {
+    if (at === null) return;
+    const t = setTimeout(reload, Math.min(Math.max(at - Date.now(), 0) + 1_000, MAX_TIMEOUT_MS));
+    return () => clearTimeout(t);
+  }, [at, reload]);
+}
+
 export function AppLayout() {
   const { org, app } = useParams();
   const ctx = useOrg();
   const r = useApi<{ app: AppDetail }>(`/api/orgs/${org}/apps/${app}`);
   const m = useApi<MembersAnswer>(`/api/orgs/${org}/members`);
+  useReloadAtNextEffect(r.data?.app, r.reload);
   const back = { to: `/orgs/${org}`, label: 'Apps' };
   if (r.error)
     return (
@@ -145,7 +170,8 @@ export function AppLayout() {
   };
   const base = `/orgs/${org}/apps/${a.id}`;
   const key = a.keys.filter((k) => k.revokedAt === undefined).sort((x, y) => y.createdAt - x.createdAt)[0];
-  const pending = a.changes.filter((c) => c.status === 'pending').length;
+  const now = Date.now();
+  const waiting = a.changes.filter((c) => isWaiting(c, now));
   return (
     <>
       <PageHeader
@@ -176,8 +202,8 @@ export function AppLayout() {
         {SECTIONS.map(([path, label]) => (
           <NavLink key={path} to={path ? `${base}/${path}` : base} end={!path}>
             {label}
-            {path === 'origins' && pending > 0 && a.changes.some((c) => c.status === 'pending' && c.kind === 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}
-            {path === 'signing' && a.changes.some((c) => c.status === 'pending' && c.kind !== 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}
+            {path === 'origins' && waiting.some((c) => c.kind === 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}
+            {path === 'signing' && waiting.some((c) => c.kind !== 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}
           </NavLink>
         ))}
       </nav>

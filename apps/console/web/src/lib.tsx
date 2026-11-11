@@ -122,6 +122,8 @@ export interface OrgContext {
   frozen: boolean;
   /** The signed-in member's address (a fresh sign-in must use the same Google account). */
   email?: string | undefined;
+  /** This console's Hana environment (`GET /api/me` `envName`), for the client snippet; undefined when not answered. */
+  envName?: string | undefined;
 }
 
 export const useOrg = (): OrgContext => useOutletContext<OrgContext>();

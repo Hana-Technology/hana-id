@@ -3,7 +3,7 @@
 // B's app is `not_found`, exactly like an app that doesn't exist.
 import type { AppDetail, AppSummary } from '@hana-id/console-core';
 import { originDisplay } from '@hana-id/console-core';
-import { type Writer, refuse, refuseReplay, replayRow } from './cas.ts';
+import { NOT_YET, type Writer, refuse, refuseReplay, replayRow } from './cas.ts';
 import type { HotDb } from './db.ts';
 import { policyInForce, rawSignInForce, storedPolicy } from './policy.ts';
 import { type Q, q, raw } from './sql.ts';
@@ -26,10 +26,13 @@ import {
 
 const orgFilter = (orgId: string | null): Q => (orgId === null ? raw('1') : q`a.org_id = ${orgId}`);
 
-/** Active origins (in force now) and pending guarded changes of app `a`, for summaries. */
+/**
+ * Active origins (in force now) and the guarded changes of app `a` still waiting (pending and not yet in force:
+ * cas.ts NOT_YET; one whose clock has passed is in force, though the hourly job records it later), for summaries.
+ */
 const COUNTS = (now: number): Q =>
   q`(SELECT COUNT(*) FROM app_origins o WHERE o.app_id = a.id AND o.active_from IS NOT NULL AND o.active_from <= ${now}) AS active_origins,
-    (SELECT COUNT(*) FROM guarded_changes g WHERE g.app_id = a.id AND g.status = 'pending') AS pending_changes`;
+    (SELECT COUNT(*) FROM guarded_changes g WHERE g.app_id = a.id AND ${NOT_YET(now, 'g')}) AS pending_changes`;
 
 export async function listApps(db: HotDb, orgId: string, now: number, filesOrigin?: string): Promise<AppSummary[]> {
   const rows = await db.all<AppRow & { active_origins: number; pending_changes: number }>(
@@ -98,7 +101,8 @@ export async function detailView(
       identityEmail: row.identity_email === 'on_request' || row.identity_email === 'at_login' ? row.identity_email : 'off',
       loginMethods: row.login_methods === 'email' || row.login_methods === 'google,email' ? row.login_methods : 'google',
     },
-    changes: changes.map(changeView),
+    // Each change's status as it is in force now (changeView), so a page never offers Cancel on a change in force.
+    changes: changes.map((c) => changeView(c, now)),
     keys: keys.map(keyView),
   };
 }

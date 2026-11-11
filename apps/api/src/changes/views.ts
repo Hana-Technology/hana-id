@@ -42,12 +42,19 @@ export const CHANGE_JSON = (alias: string): string =>
     .map((c) => `'${c}', ${alias}.${c}`)
     .join(', ')})`;
 
-export function changeView(r: ChangeRow): GuardedChange {
+/**
+ * A change row as the RPC shows it. With `now` (an app's read: getApp, listApps' counts), the status is the one in force
+ * by the API's own predicate (cas.ts IN_FORCE): an announced `pending` change whose `active_from` has passed is
+ * `active`, as the gate already serves it, not the stored status the hourly job (guarded/cron.ts) records up to an
+ * hour later. Without `now` (a write's answer), the stored status.
+ */
+export function changeView(r: ChangeRow, now?: number): GuardedChange {
+  const inForce = now !== undefined && r.status === 'pending' && r.active_from !== null && r.active_from <= now;
   const v: GuardedChange = {
     id: r.id,
     appId: r.app_id,
     kind: r.kind,
-    status: r.status,
+    status: inForce ? 'active' : r.status,
     proposedByKind: r.proposed_by_kind,
     proposedBy: r.proposed_by,
     proposedAt: r.proposed_at,

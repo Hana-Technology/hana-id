@@ -87,6 +87,9 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { assetsDir?: st
       // Batch C10: the origin rules the API applies (the same vars it gets), checked before an origin add's sign-in.
       NETWORK: m.network,
       REFUSED_ORIGINS: JSON.stringify(hanaOwnOrigins(m)),
+      // The partner Users screen (D357, D702): on only where the manifest says so; every gen writes it, so a deploy
+      // never loses it.
+      USERS_SCREEN: c.usersScreen === true ? '1' : '0',
     },
     d1_databases: [{ binding: 'CONSOLE_DB', database_name: c.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     // The API's ConsoleRpc entrypoint: the console is its only caller (the admin Worker binds AdminRpc).

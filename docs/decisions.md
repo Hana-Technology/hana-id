@@ -11176,9 +11176,9 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   mercy); a new Durable Object class (a wrangler migration for the same nonce logic).
 - Address impact: none.
 
-### D735. Who may call: the app gate only (the SDK from the partner's page); a session proof is optional for now (proposed)
-- Date 2026-11-11 · Status: as D730 · Built: `relay.ts` (`nearRelayPayload`, `nearActivatePayload`, `provenSession`,
-  `liveSession`)
+### D735. Who may call: the app gate only (the SDK from the partner's page), for a directory-listed account (proposed)
+- Date 2026-11-11 · Status: as D730 · Built: `relay.ts` (`knownAccount`, `nearDirectory`; the session proof's
+  `nearRelayPayload` / `provenUser` were removed after the re-review of 8b6fbdf5)
 - Decision: the core build's SDK (`hana.near.relay`, `hana.near.activate`) calls both routes from the partner's page
   with the publishable key and no session credential, so both take the app gate (`appGate` kinds `near` and
   `near-activate`: an origin in force for the app, or the vault; their own per-IP windows) and require nothing more.
@@ -11194,7 +11194,7 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   build records it at login, signed by the NEAR key), through one seam, `nearAccountKnown`; an unknown account is
   `409 near_account_unrecorded` (activate: `retryable`, `retry-after: 2`, since the record can lag the login); per-user
   limits key on the directory's user. `false` is testnet only (the schema); sandbox-dev runs `true` (the directory build is
-  merged into this branch; the seam calls its `nearAccountUser`). The session proof stays an optional extra.
+  merged into this branch; the seam calls its `nearAccountUser`). The session proof was later removed (below).
 - Rejected for this round: requiring the session proof (the SDK built in parallel calls from the partner page, D720–D729);
   a wallet proof by the NEAR key over the session key (any key the caller holds can sign it, so it proves nothing more).
 - Address impact: none.
@@ -11203,7 +11203,7 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
 - Date 2026-11-11 · Status: as D730 · Built: `relay.ts` (`quota`, `reserveBudget`, `settleBudget`), `relay-funds.ts`,
   migration 0020, `console-core` `SECURITY_EVENT_KINDS`
 - Decision: per IP 30 relays / 10 activations a minute (the app gate's window); per sender `perSenderPerDay` (100;
-  sandbox-dev 50); with a session proof, per user 200 relays and 5 activations a day; per app 120 a minute and
+  sandbox-dev 50); per user 200 relays and 5 activations a day (later 2, the directory's user); per app 120 a minute and
   `perAppPerDay` (5000; sandbox-dev 2000) and `activationsPerAppPerDay` (200) a day; across the env `relaysPerDay`
   (20000; sandbox-dev 10000) and `activationsPerDay` (1000); the per-IP windows hold across every app (window names
   without the app id); each per-app cap and the per-app budget `appDailyBudgetNear` (1) must be below the env's (the
@@ -11249,7 +11249,12 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   nonce floor (the highest nonce sent; only grows) drops anything at or below it with no chain read; the sender's
   minute window is gone; the daily windows are given back when nothing is sent or created. And once more: the sender's
   minute window comes back, after the floor (only the key's holder reaches it); a chain answer of a used nonce raises
-  the floor to the chain's nonce and gives the app's and env's minute hits back; a failed floor write fails closed. A concurrent copy of one activation
+  the floor to the chain's nonce and gives the app's and env's minute hits back; a failed floor write fails closed.
+  Last, after the re-review of 8b6fbdf5: the optional session proof is removed from both routes (it cost chain reads
+  before any counted window; the directory gives the user); a chain-stale delegate gives the sender's minute back too;
+  activate counts an account's own minute (5) before the shared minutes; three explicit states: certainly not sent
+  (the key object's `notSent`, before any broadcast) forgets the request, anything else (sent or unknown) raises the
+  floor and keeps the copy mark; a `delegate_nonce_used` answer's `accessKeyNonce` is the lowest nonce Hana won't take (the larger of its floor and the chain's), which the SDK and the demo read; no field or code renamed. A concurrent copy of one activation
   answers `created: false`. The key-in-a-pool check compares public keys; the relay account is never `RELAYER_ACCOUNT`
   or `SIGNER_ACCOUNT`.
 - Address impact: none.

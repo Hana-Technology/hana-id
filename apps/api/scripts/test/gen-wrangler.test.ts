@@ -87,6 +87,12 @@ describe('.dev.vars', () => {
     expect(Object.keys(parsed).sort()).toEqual(['KEYS_UPDATER_KEY', 'OWNER_RELAYER_KEYS', 'RELAYER_KEYS']);
   });
 
+  it('round-trips NEAR_RELAY_KEYS (the NEAR relay, D734) and refuses a malformed one', () => {
+    const parsed = dotenvParse(devVarsContent({ nearRelayKeys: relayerKeys }));
+    expect(parseRelayerKeys(parsed.NEAR_RELAY_KEYS, 'NEAR_RELAY_KEYS')).toEqual(relayerKeys);
+    expect(() => devVarsContent({ nearRelayKeys: [] })).toThrow();
+  });
+
   it('rejects malformed secrets instead of writing them', () => {
     expect(() => devVarsContent({ relayerKeys: ["ed25519:a'b"] })).toThrow();
     expect(() => devVarsContent({ relayerKeys: 'ed25519:abc' })).toThrow();

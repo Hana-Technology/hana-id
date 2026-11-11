@@ -100,7 +100,7 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `/v1/vault/shares`, `/unlock`, `/touch`, `/revoke`, `/revoke-all` | POST, OPTIONS | `vault/endpoints.ts` | publishable key + vault origin + session signature (vault message) | B |
 | `/v1/vault/share-status` | POST, OPTIONS | `vault/share-status.ts` | publishable key + vault origin + allowed parent; the share id names the share (no signature, D690) | B |
 | `/v1/identity/token` | POST, OPTIONS | `identity/token.ts` | publishable key + vault origin + session signature (identity message) | I |
-| `/v1/near/activate`, `/v1/near/relay` | POST, OPTIONS | `near/relay.ts` | publishable key + caller rule (a partner origin of the app, or the vault); no session required (an optional session proof); relay: the delegate's own signature | N |
+| `/v1/near/activate`, `/v1/near/relay` | POST, OPTIONS | `near/relay.ts` | publishable key + caller rule (a partner origin of the app, or the vault); no session; the account listed in the wallet directory (`requireKnownAccount`); relay: the delegate's own signature | N |
 | `/v1/wallets/record` | POST, OPTIONS | `directory/record.ts` | publishable key + vault origin + each address's own signature (wallet record) + the session key's signature over the request + a live session on that path | W |
 | `/v1/home/config` | GET, OPTIONS | `home/config.ts` | `AUTH_ORIGIN` only (no identity yet) | H1 |
 | `/v1/home/apps` | GET, OPTIONS | `home/apps.ts` | `AUTH_ORIGIN` + Home identity (`homeGate`) | H2 |
@@ -221,7 +221,7 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 | `POST /v1/vault/share-status` | 600/min across apps, *per location*, before the app lookup (binding `VAULT_STATUS_IP_LIMIT`, key `<env>:vault-status-ip:<ipSubject>`) | — | 30/min per share, *per location* (binding `VAULT_STATUS_SHARE_LIMIT`, key `<env>:vault-status-share:<appId>:<hex>`), after the body check; not counted in the vault windows below (D690) |
 | vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95). `/v1/vault/consents*` count in the same window (their share's, or in `'none'` mode the session key's) |
 | `/v1/identity/token` (I, D176) | the vault endpoints' 60/min binding, before the body | its own windows on `app:<id>`, never `vault:minute`: `identity:minute` 10 × plan `per_minute`, `identity:hour` plan `per_day` (at most 100 000), sliding, counted after every other check | per session key 10/min, *per location* (`IDENTITY_SESSION_LIMIT`, key `<env>:identity-session:<appId>:<hex sessionPk>`), after the signature; per account root 30/min, *per location* (`IDENTITY_ROOT_LIMIT`, key `<env>:identity-root:<scopeId>:<hex sub bytes>`); per scope `identity:hour` 2 × the app's (`identity:scope:<scopeId>`, sliding); then global on `identity:global`, sliding: a hard breaker of 1 000 000/h (`503 identity_busy`; `IDENTITY_GLOBAL_HOURLY_MAX` overrides; ≥ 10 × any app's ceiling) and a soft line at 100 000/h that only logs `identity_volume_alert`. A refusal by a later window takes the hit back from the earlier ones |
-| `/v1/near/relay`, `/v1/near/activate` (N) | 30 relays / 10 activations a minute across every app (the app gate's windows `near-relay:minute`, `near-activate:minute`), before the body | relays 120/min and `near.relay.perAppPerDay` (5000) a day, activations 1000 a day | per sender `near.relay.perSenderPerDay` (100) a day; with a session proof, per user 200 relays, 5 activations a day; 1000 activations a day across the env; the daily NEAR budget (`near.relay.dailyBudgetNear`, 5): "NEAR relay" |
+| `/v1/near/relay`, `/v1/near/activate` (N) | 30 relays / 10 activations a minute across every app (the app gate's windows `near-relay:minute`, `near-activate:minute`), before the body | relays 120/min and `near.relay.perAppPerDay` (5000) a day; activations 60/min and 200 a day | per sender 10/min and `near.relay.perSenderPerDay` (100) a day; per directory user 200 relays, 2 activations a day; per account id 5 activation requests a minute; across the env `relaysPerMinute`, `relaysPerDay`, 300 activation requests a minute and 1000 activations a day; the app's and env's daily NEAR budgets: "NEAR relay" |
 | `/v1/wallets/record` (W) | the vault endpoints' 60/min binding, before the body | the vault endpoints' `vault:minute` (10 × plan `per_minute`) | one per login by design (the vault never retries); a replay changes no row |
 | login relay | writes 40/min, reads 120/min (about 5 writes per linking login, D267) | — | not per app |
 | `/v1/owner-actions`, `ConsoleRpc.ownerAction` (one limiter: the RPC's `clientIp`) | 10/min | per scope 10/min, 20 a UTC day (`owner-actions:scope:<scopeId>`), `propose_change` only | `propose_change`: per owner identity 2/min, 4/day (`owner-actions:owner:<hex sha256(provider#sub)>`: the scope's windows divided by the contract's `MAX_OWNERS`, so no owner can use up its co-owners' proposals, D236), then per scope, then global 20/min, 200/day (`owner-actions:global`). `execute_change` (no auth): its own 10/min, 50/day per scope (`owner-actions:execute:<scopeId>`), then global. The safety budget, `cancel_change`, `remove_client` and `disable_shared_login`: none of those; 5/min, 20/day per owner identity (windows `safety:minute`, `safety:day`), then 25/min, 100/day per target scope (`owner-actions:safety:<scopeId>`: the contract's `MAX_OWNERS` = 5 owners at their own cap), then a spend-bound ceiling of 100/min, 1000/day (`owner-actions:safety-global`). Counted only after every off-chain check passes, the owner proof against the target scope's on-chain owners included; a request a later window refuses is taken back from the earlier ones (D100, D236). A refusal writes an `owner_cap` security event, once per window |
@@ -972,77 +972,81 @@ the user signs a `DelegateAction`, Hana's relay account wraps it in its own tran
   flight the relayer also holds about 10× its prepaid gas at the pessimistic gas price (0.03 NEAR for 30 Tgas), refunded
   a few blocks later.
 
-**Which accounts (D735, after the security review of 2026-11-11).** With `near.relay.requireKnownAccount` (the default;
-sandbox-dev `true` since the directory build is merged into this branch), both routes act only for a NEAR account the
-wallet directory holds for a user of the app's scope: the vault records each user's NEAR account at login with a proof
-signed by the NEAR key (`feat/near-directory`), and both routes look it up through one seam,
-`nearAccountKnown(db, {scopeId, accountId})` (`nearDirectory.lookup` in `src/near/relay.ts`, which calls the directory's
-`nearAccountUser`, `src/directory/near.ts`: `end_user_wallets` chain `near`, migration 0019). An
-account it doesn't hold: `409 near_account_unrecorded` with `retryable: true` and `retry-after: 2`, on both routes: the
-vault's wallet record usually lands within a second of the login and can lag up to 15 s, so the client retries for
-about 20 s. A failed directory read is `503 directory_unavailable`, never "unrecorded". The directory's user then
-also counts per user. Order for the client: login (the vault records the wallets) → `activate` → sign → `relay`.
-`false` (testnet only, the schema refuses it elsewhere) leaves the limits alone, and anyone holding a publishable key
-can spend the relay within them.
-
-**Who may call (D735).** Both routes take the app gate (`appGate` kind `near` / `near-activate`): `x-hana-key`, and
+**Who may call (D735).** Both routes take the app gate (`appGate` kinds `near` and `near-activate`): `x-hana-key` and
 an `Origin` in force for the app (the SDK's `hana.near.relay` and `hana.near.activate` call from the partner's page,
-`credentials: 'omit'`), or the vault with an allowed `x-hana-parent-origin`; CORS and preflight as `/v1/app`. **No
-session credential is required**: anyone holding an app's publishable key can call them (an `Origin` header binds
-browsers only), so the limits, the budget and the policy below are what bound the spend (`docs/security.md` "The NEAR
-meta-transaction relay", open issue (s)). A body may carry the vault's session proof as well (all four fields or none;
-not sent by the SDK today): the session key's Ed25519 signature over `identityMessage` (`@hana-id/core/identity`:
-`"hana-id-identity-v1:" ‖ borsh(SIGNER_ACCOUNT) ‖ borsh(apps.id) ‖ session_pk(32) ‖ u64le(issuedAtMs) ‖ nonce(16) ‖
-sha256(payload)`) with
+`credentials: 'omit'`), or the vault with an allowed `x-hana-parent-origin`; CORS and preflight as `/v1/app`. No session
+credential is taken (the optional session proof of earlier rounds is removed: it cost chain reads before any counted
+window). With `near.relay.requireKnownAccount` (the default; sandbox-dev `true`) both routes act only for a NEAR account
+the wallet directory holds for exactly one user of the app's scope (`nearAccountKnown` → the directory's
+`nearAccountUser`, `src/directory/near.ts`: `end_user_wallets` chain `near`, migration 0019); that user is counted too.
+Otherwise `409 near_account_unrecorded` with `retryable: true` and `retry-after: 2` (the vault's wallet record usually
+lands within a second of the login and can lag up to 15 s: the client retries for about 20 s); a failed read is `503
+directory_unavailable`. Order for the client: login (the vault records the wallets) → `activate` → sign → `relay`.
+`false` (testnet only) leaves the limits alone: anyone holding a publishable key can spend the relay within them.
 
-```
-relay:    payload = "near-relay"    ‖ borsh(network) ‖ sha256(signedDelegateAction bytes)
-activate: payload = "near-activate" ‖ borsh(network) ‖ borsh(accountId)
-```
-
-(`nearRelayPayload` / `nearActivatePayload` in `src/near/relay.ts`). When present it is checked (`|now − issuedAtMs| ≤
-60 s`, the session live on chain in the app's scope, used once) and the request also counts per user; when absent there
-is no per-user window. A later round can require it.
-
-**Bodies** (≤ 8 KiB, no other fields; `network` optional, `testnet` when absent; the optional proof's `sessionPublicKey`, `nonce`, `signature` are byte arrays of 32, 16, 64):
+**Bodies** (≤ 8 KiB, no other fields; `network` optional, `testnet` when absent):
 
 | Route | Body | 200 |
 |---|---|---|
-| `/v1/near/activate` | `{accountId: <64 lowercase hex>, network?: "testnet", (sessionPublicKey, issuedAtMs, nonce, signature)?}`; idempotent | `{created: true, accountId, accessKeyNonce: "<u64>", blockHeight, transactionHash, nearTx}`, or `{created: false, accountId, accessKeyNonce: "<u64>" or null (the key was removed), blockHeight}` when the account already exists (nothing sent) |
-| `/v1/near/relay` | `{signedDelegateAction: <canonical base64 of borsh(SignedDelegateAction), ≤ 4096 bytes>, network?: "testnet", (sessionPublicKey, issuedAtMs, nonce, signature)?}` | `{transactionHash, status: "executed", nearTx}`: every receipt succeeded |
+| `/v1/near/activate` | `{accountId: <64 lowercase hex>, network?: "testnet"}`; idempotent | `{created: true, accountId, accessKeyNonce: "<u64>", blockHeight, transactionHash, nearTx}` (the chain's nonce of the new key), or `{created: false, accountId, accessKeyNonce: "<u64>" or null (the key was removed), blockHeight}` when the account exists (nothing sent; a concurrent copy of a creation answers this too) |
+| `/v1/near/relay` | `{signedDelegateAction: <canonical base64 of borsh(SignedDelegateAction), ≤ 4096 bytes>, network?: "testnet"}` | `{transactionHash, status: "executed", nearTx}`: every receipt succeeded |
 
-A delegate's nonce may be any value above the key's nonce (`accessKeyNonce`) and below (head height + 1) × 10^6 (the core
-picks one near (height − 10 000) × 10^6 for test apps; nothing here assumes `accessKeyNonce + 1`), and its
-`max_block_height` between the head + 3 and the head + 1000 (`blockHeight` in the activation answer).
+A delegate's nonce may be any value above `accessKeyNonce` and below (head height + 1) × 10^6. In activate's 200
+`accessKeyNonce` is the chain's nonce of the account's key; in a `409 delegate_nonce_used` it is the lowest nonce Hana
+will not accept for the sender, the larger of Hana's floor and (when the chain was read) the key's nonce on chain: a
+client builds above it and asks the user to approve again (the core picks one near
+(height − 10 000) × 10^6 for test apps); its `max_block_height` between the head + 3 and the head + 1000 (`blockHeight`
+in the activation answer).
 
-**Checks, in order** (relay; activate skips the delegate steps): the app gate (`401 missing_key` / `unknown_app`, `403
-app_suspended`, `403 scope_conflict`, `403 origin_not_allowed`, then the per-IP window, across every app: 30 relays /
-10 activations a minute, `429 rate_limited`) → the relay configured
-(`503 relayer_unconfigured` unless `NETWORK` is `testnet`, `NEAR_RELAY` parses with at least one receiver, and
-`NEAR_RELAY_KEYS` holds distinct keys none of which a pool holds) → the body (`400 bad_request`; `413`) → `network`
-(`403 mainnet_not_allowed` for `mainnet`, `400 bad_request` otherwise) → the strict decode (`400 bad_delegate` with `reason` `truncated`, `trailing_bytes`, `too_large`,
-`bad_account`, `bad_method`, `key_type` (not Ed25519), `signature_type`, `too_many_actions` (> 4)) → the policy:
-`400 sender_not_implicit` (`sender_id` is not hex of the delegate's own public key), `403 action_not_allowed` (`index`,
-`action`: anything but `FunctionCall`), `400 bad_delegate` (no actions), `403 deposit_not_allowed` (`index`), `403
-receiver_not_allowed` (`receiverId`: not in `near.relay.receivers`), `403 gas_too_high` (`maxGas`: the inner calls'
-gas together above `near.relay.maxGasTgas`) → `400 bad_delegate_signature` (the delegate's own Ed25519 signature
-over `sha256(u32le(2^30 + 366) ‖ borsh(DelegateAction))`) → the directory (`409 near_account_unrecorded`, `503
-directory_unavailable`; with `requireKnownAccount`) → with a session proof only: `400 stale_proof` (with
-`serverTimeMs`), `401 invalid_signature`, `410 session_ended`, `403 scope_mismatch`, `502 near_unavailable`, `409
-proof_replayed` → two chain reads, side by side (the
-final block's height and gas price; the sender's key, `view_access_key` then `view_account` to tell a missing key from a
-missing account; `502 near_unavailable`): `409 account_not_activated`, `409 access_key_missing`, `409
-delegate_nonce_used` (`accessKeyNonce`), `400 delegate_nonce_too_large`, `400 delegate_expired` (`max_block_height` below
-the head + 3; `blockHeight`), `400 block_height_too_far` (above the head + 1000; `blockHeight`, `maxBlockHeight`) → the
-limits (below; `429 rate_limited` + `retry-after`) → the budgets (the app's: `429 app_budget_exhausted`; the env's: `503
-relay_budget_exhausted`; `retry-after` to the next UTC day) → the relay.
+**Relay checks, in order** (each counter, where it is charged and given back, and who can cause it: `docs/security.md`
+"The NEAR meta-transaction relay"):
+1. The app gate (`401 missing_key` / `unknown_app`, `403 app_suspended` / `scope_conflict` / `origin_not_allowed`), then
+   the per-IP window across every app (30 a minute, `429 rate_limited`).
+2. The relay configured (`503 relayer_unconfigured` unless `NETWORK` is `testnet`, `NEAR_RELAY` parses with at least one
+   receiver, the relay account is neither `RELAYER_ACCOUNT` nor `SIGNER_ACCOUNT`, and `NEAR_RELAY_KEYS` holds distinct
+   keys none of which a pool holds, compared by public key).
+3. The body (`400 bad_request`; `413`), `network` (`403 mainnet_not_allowed` for `mainnet`, `400 bad_request` otherwise).
+4. The strict decode (`400 bad_delegate` with `reason` `truncated`, `trailing_bytes`, `too_large`, `bad_account`,
+   `bad_method`, `key_type`, `signature_type`, `too_many_actions`) and the policy: `400 sender_not_implicit`, `403
+   action_not_allowed` (`index`, `action`: anything but `FunctionCall`), `400 bad_delegate` (no actions), `403
+   deposit_not_allowed` (`index`), `403 receiver_not_allowed` (`receiverId`), `403 gas_too_high` (`maxGas`); then `400
+   bad_delegate_signature` (the delegate's Ed25519 signature over `sha256(u32le(2^30 + 366) ‖ borsh(DelegateAction))`).
+5. The directory (above).
+6. **The sender's nonce floor** (the highest nonce this relay sent or saw used on chain for the sender; durable, only
+   grows): at or below it, `409 delegate_nonce_used {accessKeyNonce: the floor}` with no chain read and nothing counted.
+7. A copy of a request in flight (its hash, 20 minutes): `409 already_relayed`, nothing counted.
+8. The sender's minute (10), then the app's minute (120) and the env's minute (`relaysPerMinute`, 300; sandbox-dev 200):
+   `429 rate_limited` (`error` names the window).
+9. Two chain reads side by side (the final head block, cached a second per isolate; the sender's key): `502
+   near_unavailable`, `409 account_not_activated`, `409 access_key_missing`, `409 delegate_nonce_used {accessKeyNonce}`
+   (the chain's nonce: the floor rises to it and the three minute hits of step 8 are given back), `400
+   delegate_nonce_too_large`, `400 delegate_expired` (`blockHeight`), `400 block_height_too_far` (`blockHeight`,
+   `maxBlockHeight`).
+10. The daily windows: the sender (`perSenderPerDay`, 100; sandbox-dev 50), the directory user (200), the app
+    (`perAppPerDay`, 5000; sandbox-dev 2000), the env (`relaysPerDay`, 20000; sandbox-dev 10000).
+11. The budgets: the app's day (`appDailyBudgetNear`, 1 NEAR: `429 app_budget_exhausted`), the env's day
+    (`dailyBudgetNear`, 5 NEAR: `503 relay_budget_exhausted`), each with `retry-after` to the next UTC day. A relay
+    reserves `(inner gas + 5 Tgas) × gas price`.
+12. The relay (below). A refusal at steps 10–11, or a relay the key object refused before any broadcast (it says so:
+    the in-flight cap, its own config, testnet and role checks, a key it can't load, a chain read before the first
+    send), gives back the daily windows and forgets the hash: nothing can land. Anything else, sent or unknown (executed,
+    failed on chain, a timeout, an RPC error during the send, a node refusal, a key object that failed or couldn't be
+    reached), is treated as sent: the sender's floor rises to the delegate's nonce and the copy mark stays; the client
+    re-signs with a higher nonce. The budget gives back what never executed. The settlement gives back the reservation less what
+    burnt, and charges a spend above it.
 
-**The relay** goes through the key object `near-relay-key-<i>` (`i` = sha256(sender) mod the key count, so copies of one
-request meet; the claim is the signed bytes' hash: a copy within 30 s of a success is `409 already_relayed`). The
-object signs `Transaction {signer: near.relay.account, receiver: the sender, actions: [Delegate(the signed bytes exactly
-as received)]}` (activation: `[Transfer(near.relay.activationYocto, default 0)]`) with the nonce machinery the pools
-use (reservations, one retry on InvalidNonce, an expired block hash or a dropped transaction: none of them executed;
-the delegate's own nonce keeps a resend from running twice), checks `NETWORK` again, and waits for every receipt
+**Activate checks, in order:** the gate (per IP 10 a minute across apps), the config, the body, the directory; then the
+account's minute (5: one public id can't spend the shared minutes), the app's (60) and the env's (300) activation
+minutes, every request counted, "already exists" answers included; the chain reads; an existing account answers
+`created: false`; for a missing one the directory user's day (2), the app's (`activationsPerAppPerDay`, 200) and the
+env's (`activationsPerDay`, 1000) days, then the budgets (an activation reserves `100 Tgas × gas price +
+activationYocto`), all given back when nothing is created; the settlement never gives back the transferred amount.
+
+**The relay** goes through the key object `near-relay-key-<i>` (`i` = sha256(sender) mod the key count). It signs
+`Transaction {signer: near.relay.account, receiver: the sender, actions: [Delegate(the signed bytes exactly as
+received)]}` (activation: `[Transfer(near.relay.activationYocto, default 0)]`), one action, with the pools' nonce
+machinery, checks `NETWORK` and its role again, and takes at most `inFlightNear ÷ (keys × (maxGas + 5 Tgas) × gas price ×
+12)` relays in flight (sandbox-dev 83 per key; beyond it `503 relayer_busy`, nothing sent). It waits for every receipt
 (`EXECUTED_OPTIMISTIC`) up to 30 s. Answers past the relay:
 
 | Status | Code | When |
@@ -1052,60 +1056,22 @@ the delegate's own nonce keeps a resend from running twice), checks `NETWORK` ag
 | 422 | `delegate_rejected` | NEAR refused the delegate itself (`reason` `expired`, `invalid_nonce`, `nonce_too_large`, `access_key`, `invalid_signature`, `sender_mismatch`, `account_missing`; `status: "failed"`) |
 | 504 | `timeout` | no outcome in 30 s (`status: "pending"`, `transactionHash`: poll it; never resend blind) |
 | 409 | `already_relayed` | a copy of a request this key relayed in the last 30 s |
-| 502 | `near_unavailable`, `near_rejected`, `near_error` | as "Relay errors" (`near_rejected` includes a relay account short of balance) |
-| 503 | `relayer_busy`, `relayer_unavailable` (`retry-after: 1`), `relayer_unconfigured` | as "Relay errors" |
+| 502 | `near_unavailable`, `near_rejected`, `near_error` | as "Relay errors"; `near_rejected` includes a relay account short of balance (`NotEnoughBalance`: the reservation is kept, log `near_relay_balance_short`) |
+| 503 | `relayer_busy`, `relayer_unavailable` (`retry-after: 1`), `relayer_unconfigured` | as "Relay errors"; `relayer_busy` also for the in-flight cap |
 
-**Limits and budget** (D736; all exact, in `RateLimiter` objects; a refusal by a later window gives the earlier ones
-back): per IP subject 30 relays / 10 activations a minute across every app (the app gate's window, `ip:<subject>`,
-windows `near-relay:minute`, `near-activate:minute`: no app id, so many keys don't multiply it), before the body; per sender account `near.relay.perSenderPerDay`
-(default 100) a UTC day (`near-relay:sender:<account>`); per user 200 relays and 2 activations a UTC day (the directory's
-user, `near-relay:user:<user id>`, the default; or a session proof's account root, `near-relay:user:<first 16 bytes of
-sha256(scope#provider#sub), hex>`); per app 120 a minute and `near.relay.perAppPerDay` (default 5000) a day for relays,
-`near.relay.activationsPerAppPerDay` (default 200) activations a day (`app:<id>`, windows `near-relay:*`,
-`near-activate:day`); across the env `near.relay.relaysPerMinute` (300) relays a minute, `near.relay.relaysPerDay` (20000)
-relays and `near.relay.activationsPerDay` (1000) activations a day (`near-relay:global`, `near-activate:global`). Nothing
-scoped to a sender or a user is reachable by a third party (a signed delegate is public once on chain; an account id is
-public): the relay keeps, per sender, the highest delegate nonce it has sent (`RateLimiter.floor` on
-`near-relay:sender:<account>`, durable, only grows, never expires), and a delegate at or below it is refused `409
-delegate_nonce_used` right after the local checks (decode, policy, signature), with no chain read and no count. A nonce
-above it needs a fresh signature by the sender's key, which only the key's holder can make. A copy of a request in
-flight is `409 already_relayed` (the hash, remembered 20 minutes, for concurrent copies only). Before the chain reads
-(M3): the sender's minute (10; past the floor, so only the key's holder reaches it), then the app's and the env's
-minute, which come back when the chain says the delegate's nonce is used (the floor then rises to the chain's nonce:
-a stale delegate costs the shared windows nothing, once); a floor that can't be written answers `503
-rate_limiter_unavailable` (retryable); for activate 60 requests a minute per
-app and 300 across the env, "already exists" answers included. The daily windows (sender, user, app, env) count only a
-delegate that passed every check, right before the budget and the relay; a later refusal, or a relay that didn't run,
-gives them back (and forgets the hash); anything else raises the sender's floor to the delegate's nonce. An activation
-of an existing account answers `created: false` and counts nothing of the user's; the user's day counts only for an
-account about to be created, and comes back when nothing is created. The head block is cached for a second per isolate. Each per-app cap must be below the env's (the schema
-and the parser refuse otherwise), so one leaked publishable key can't use up the env's day. The NEAR budgets: `near.relay.appDailyBudgetNear` (default 1, or a fifth of the env's if less; below it) per app
-(`app:<id>`, window `near-relay:day`), then `near.relay.dailyBudgetNear` (default 5) a UTC day across the env
-(`near-relay:budget`, `RateLimiter.spend`; a refusal by the env's gives the app's back); a relay reserves `(inner gas + 5 Tgas) × gas price`, an activation
-`100 Tgas × gas price + activationYocto`, both above what they burn; after the outcome it gives back the reservation less what the transaction and its receipts burnt (`tokens_burnt`)
-less what it transferred (an activation's `activationYocto`), all of it when nothing executed; a spend above the
-reservation is charged (`RateLimiter.charge`). Once a day's reservations
-reach 80% of the budget, one `near_relay_budget_high` security event a day (`{day, spentYocto, budgetYocto,
-thresholdPct}`, amounts only; migration 0020). Not counted in the app's relay quota or the usage ledger (not billed).
-
-**In flight and the account's balance (M1 of the review of 2026-11-11).** A relay holds its prepaid gas (inner gas +
-5 Tgas overhead) at the pessimistic gas price until the refund (about 10.3× the plain price, measured; counted 12×). Each
-key object takes at most `inFlightNear ÷ (keys × (maxGas + 5 Tgas) × gas price × 12)` relays in flight
-(`inFlightCapPerKey`), and answers `503 relayer_busy` (`retry-after: 1`, nothing sent, the reservation given back)
-beyond it, so the relays in flight never hold more than `near.relay.inFlightNear`. sandbox-dev: (10 + 5) Tgas × 10^8 ×
-12 = 0.018 NEAR a relay, `inFlightNear` 3 over 2 keys → 83 per key, 166 in all. A transaction NEAR refuses for the
-account's balance (`NotEnoughBalance`) answers `502 near_rejected` and keeps its reservation (and the windows it took),
-so a burst that starves the account can't repeat for free. Fund the account with at least `inFlightNear` +
-`lowBalanceNear` + `dailyBudgetNear` (sandbox-dev 3 + 2 + 5 = 10 NEAR; keep about 15).
+**Budget alerts.** Once a day's reservations reach 80% of the env's budget, one `near_relay_budget_high` security event
+a day (`{day, spentYocto, budgetYocto, thresholdPct}`, amounts only; migration 0020). Not counted in the app's relay
+quota or the usage ledger (not billed).
 
 **Funds check** (hourly cron, `relay-funds.ts`): the relay account's balance (`view_account`, final) below
 `near.relay.lowBalanceNear` (default 2 NEAR), or the account missing, writes one `near_relay_balance_low` security event a
 UTC day (`{account, balanceYocto, missing, thresholdYocto, day}`); off without `NEAR_RELAY`, `NEAR_RELAY_KEYS` or on
-another network. The admin's Security & monitoring view shows both kinds; its feed emails them.
+another network. The admin's Security & monitoring view shows both kinds; its feed emails them; playbooks
+`near-relay-budget-high`, `near-relay-balance-low`.
 
 Logs: the request line (`code`, `nearTx`), `relay_dispatched` / `relay_retry` / `relay_rejected` with `pool: "near"` and
-`method` `delegate` or `activate`; `near_relay_alert_failed`, `near_relay_funds_check`. No account id, key, signature or
-path is logged.
+`method` `delegate` or `activate`; `near_relay_alert_failed`, `near_relay_funds_check`, `near_relay_balance_short`,
+`near_relay_floor_failed`. No account id, key, signature or path is logged.
 
 ### Identity token · I
 

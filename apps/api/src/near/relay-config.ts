@@ -61,7 +61,7 @@ export const NEAR_RELAY_BOUNDS = {
 
 /** Fixed limits (not in the manifest): see docs/api.md "NEAR relay". */
 export const NEAR_RELAY_LIMITS = {
-  /** Relays per Hana user (the directory's user, or a session proof's account root) per UTC day, across their NEAR accounts. */
+  /** Relays per Hana user (the wallet directory's user) per UTC day, across their NEAR accounts. */
   perUserPerDay: 200,
   /** Relays per app per minute. */
   perAppPerMinute: 120,
@@ -73,6 +73,8 @@ export const NEAR_RELAY_LIMITS = {
   activationsPerUserPerDay: 2,
   /** Activations per IP subject per minute, across every app. */
   activationsPerIpPerMinute: 10,
+  /** Activation requests per account id per minute, counted first (one public id can't use up the shared minutes). */
+  activateReadsPerAccountPerMinute: 5,
   /** Activation requests per app per minute, counted before the chain reads ("already exists" answers too). */
   activateReadsPerAppPerMinute: 60,
   /** Activation requests across the env per minute, counted before the chain reads. */

@@ -256,7 +256,7 @@ export const nearSchema = z
  * full-access and pay any deposit a delegate attaches, which the API refuses); receivers are distinct, never the relay
  * account, the signer or the relayer (a relayed call into hana-signer would act as the user's implicit account there).
  */
-function nearRules(m: { signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; near?: z.infer<typeof nearSchema> | undefined }, ctx: z.RefinementCtx): void {
+function nearRelayRules(m: { signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; near?: z.infer<typeof nearSchema> | undefined }, ctx: z.RefinementCtx): void {
   const relay = m.near?.relay;
   if (!relay) return;
   const taken: [string, string][] = [['signer', m.signer], ['relayer', m.relayer], ['owner', m.owner], ['mpc', m.mpc], ...(m.watchdogs ?? []).map((w): [string, string] => ['watchdog', w])];
@@ -443,11 +443,16 @@ export const manifestSchema = z
      * `scripts/email-issuer.ts <env> init` writes it.
      */
     emailIssuer: emailIssuerSchema.optional(),
-    /** NEAR wallet settings: the demo guestbook and the meta-transaction relay (nearSchema). Optional. */
+    /**
+     * NEAR as a wallet chain (D740, D733). Optional, additive. `demoGuestbook`: the account of the hackathon demo contract
+     * (`contracts/hana-guestbook`) a user's NEAR wallet writes to through a relayed meta transaction;
+     * `deploy-guestbook` deploys it. A named `.testnet` account of its own (`nearRules`). `relay`: the meta-transaction
+     * relay (`nearRelaySchema`, `nearRelayRules`).
+     */
     near: nearSchema.optional(),
   })
   .superRefine((m, ctx) => {
-    nearRules(m, ctx);
+    nearRelayRules(m, ctx);
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
       const value = m[field];
       const problem = value === undefined ? null : endpointUrlProblem(value, m.name);
@@ -459,6 +464,7 @@ export const manifestSchema = z
     if (m.identityToken) identityTokenRules(m, m.identityToken, ctx);
     if (m.emailIssuer) emailIssuerRules(m, m.emailIssuer, ctx);
     governance(m, ctx);
+    if (m.near) nearRules(m, m.near, ctx);
     dashboardRules(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'rpcFallback must be a different endpoint from rpc' });
@@ -595,6 +601,38 @@ function governance(m: GovernanceFields, ctx: z.RefinementCtx): void {
       path: ['allowSignerFullAccessKey'],
       message: 'allowSignerFullAccessKey is refused outside testnet: a mainnet signer never has a full-access key (D86)',
     });
+  }
+}
+
+/**
+ * `near.demoGuestbook` (D740): on testnet a named account ending in `.testnet` (a top-level account or a sub-account,
+ * never an implicit or `.near` account), and an account of its own: deploy-guestbook deploys code to it, so it must
+ * never be the signer, the relayer, the owner, the MPC or a governance account.
+ */
+function nearRules(
+  m: GovernanceFields & { mpc: string; watchdog?: { account: string } | undefined },
+  near: { demoGuestbook?: string | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  const book = near.demoGuestbook;
+  if (book === undefined) return;
+  const path = ['near', 'demoGuestbook'];
+  if (m.network === 'testnet' && !book.endsWith('.testnet')) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.demoGuestbook ${book} must be a .testnet account on testnet` });
+  }
+  const taken: [string, string | undefined][] = [
+    ['signer', m.signer],
+    ['relayer', m.relayer],
+    ['owner', m.owner],
+    ['mpc', m.mpc],
+    ['council.factory', m.council?.factory],
+    ['council.dao', m.council?.dao],
+    ...(m.council?.members ?? []).map((a): [string, string] => ['a council member', a]),
+    ...(m.watchdogs ?? []).map((a): [string, string] => ['a watchdog', a]),
+    ['watchdog.account', m.watchdog?.account],
+  ];
+  for (const [role, account] of taken) {
+    if (account === book) ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.demoGuestbook must be its own account, not ${role} (${book}): deploy-guestbook deploys code to it` });
   }
 }
 

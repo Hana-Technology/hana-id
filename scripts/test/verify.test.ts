@@ -240,6 +240,10 @@ describe('the plan', () => {
     expect(ran(rust)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'unit', 'docs', 'sandbox']);
     expect(step(rust, 'pack').skip).toBe('no web change');
 
+    // The demo guestbook is a contract too (D744): its change runs the contract and sandbox lanes.
+    const guestbook = plan('default', ['contracts/hana-guestbook/src/lib.rs']);
+    expect(ran(guestbook)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'unit', 'docs', 'sandbox']);
+
     const both = plan('default', ['apps/api/src/gas.ts']);
     expect(ran(both)).toContain('contract');
     expect(ran(both)).toContain('e2e');
@@ -351,11 +355,13 @@ describe('.github/workflows/ci.yml: every job has its step, with the same comman
     for (const c of ['cargo test --locked', 'cargo near build non-reproducible-wasm', `cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`, 'pnpm run pack:check', 'pnpm -r typecheck', 'pnpm -r test', 'pnpm install --frozen-lockfile']) {
       expect(yml, c).toContain(`run: ${c}`);
     }
-    expect(cmds('contract')).toEqual(['cargo test --locked', 'cargo near build non-reproducible-wasm']);
+    expect(cmds('contract')).toEqual(['cargo test --locked', 'cargo near build non-reproducible-wasm', 'cargo test --locked', 'cargo near build non-reproducible-wasm']);
     // CI's e2e job runs the first; the second (the API's meta-transaction tests on the same binary) is local only while CI is off (D387).
     expect(cmds('sandbox')).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`, 'pnpm --filter @hana-id/api run test:sandbox']);
     expect(cmds('pack')).toEqual(['pnpm run pack:check']);
-    expect(p.steps.find((s) => s.id === 'contract')!.run[0]!.cwd).toBe('contracts/hana-signer');
+    expect(p.steps.find((s) => s.id === 'contract')!.run.map((c) => c.cwd)).toEqual(['contracts/hana-signer', 'contracts/hana-signer', 'contracts/hana-guestbook', 'contracts/hana-guestbook']);
+    // CI's contract job runs both crates too (D744).
+    expect(yml).toContain('working-directory: contracts/hana-guestbook');
     expect(p.steps.find((s) => s.id === 'sandbox')!.run[0]!.cwd).toBe('contracts/integration-tests');
   });
 });

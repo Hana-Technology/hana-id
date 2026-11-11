@@ -16,6 +16,13 @@ rsa = { version = "0.9", features = ["sha2"] }
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
+# The guestbook meta-transaction tests (tests/guestbook.rs) build NEP-366 delegate actions and send them over the
+# sandbox's RPC: near-workspaces has no Delegate action. The versions near-workspaces itself uses (already in
+# Cargo.lock).
+near-primitives = "0.37"
+near-crypto = "0.37"
+near-jsonrpc-client = "0.22"
+near-jsonrpc-primitives = "0.37"
 # near-crypto 0.37.4 pins aws-lc-rs =1.16.2; rustls >= 0.23.46 needs aws-lc-rs ^1.18. Not used directly.
 rustls = { version = ">=0.23, <0.23.46", default-features = false }
 

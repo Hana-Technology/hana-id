@@ -31,6 +31,7 @@ import {
   randomBytes,
 } from '@hana-id/core';
 import type { LoginBody, LoginResponse } from '@hana-id/core';
+import { normalizeProfileName } from '@hana-id/core/identity';
 import type { Fetch } from './api.ts';
 
 /** `GET /v1/home/config`: what the page needs before a sign-in. */
@@ -301,8 +302,8 @@ export async function newHomeIdentity(signer: string, nowMs: number): Promise<Ho
   };
 }
 
-/** Every Home API call the page makes; the devices list and its stops are `HomeDevicesApi`'s. */
-export interface HomeApi extends HomeDevicesApi {
+/** Every Home API call the page makes; the devices list and its stops are `HomeDevicesApi`'s, the name `HomeProfileApi`'s. */
+export interface HomeApi extends HomeDevicesApi, HomeProfileApi {
   /** `GET /v1/home/config`. No identity yet. */
   config(): Promise<HomeConfig>;
   /** `GET /v1/home/apps`, signed by `identity`. One request, never repeated here. */
@@ -517,11 +518,130 @@ export function homeDevicesApi(apiUrl: string, fetchFn: Fetch = (...args) => fet
 
 const NO_BODY = new Uint8Array(0);
 
+// ---- the user's name (`GET`/`POST /v1/home/profile`, `POST /v1/home/name-sharing`, D714) ----
+
+/** A name as the API stores it: each part a `normalizeProfileName` value, at least one of them set. */
+export interface HomeProfileName {
+  givenName: string | null;
+  familyName: string | null;
+}
+
+/** One app the signed-in identity shares its name with. `name` is the partner's: shown as text only. */
+export interface HomeNameShare {
+  appId: string;
+  name: string;
+  scopeId: string;
+  sharedAtMs: number;
+}
+
+/** `GET /v1/home/profile[?appId=]`: the name, the apps it is shared with, and with `appId` whether that app gets it. */
+export interface HomeProfile {
+  name: HomeProfileName | null;
+  shares: HomeNameShare[];
+  /** More apps share it than the answer lists. */
+  more: boolean;
+  /** Null without `appId`, or for an app Home can't share a name with (deleted, or never signed in to). */
+  app: { appId: string; shared: boolean } | null;
+}
+
+/** What saving answered: the name as stored, or (both parts empty) removed, with how many shares ended. */
+export type HomeProfileSaved = { name: HomeProfileName } | { name: null; stopped: number };
+
+/** What a share or a stop answered (`stopped`: how many shares ended, 0 when there was none). */
+export type HomeNameSharing = { shared: true } | { shared: false; stopped: number };
+
+/** The apps a name is shared with, in one answer at most (the API's HOME_NAME_SHARES_MAX). */
+export const HOME_NAME_SHARES_MAX = 100;
+
+/** A name of the API's shape: null, or each part exactly as `normalizeProfileName` leaves it, not both empty. */
+function parseProfileName(v: unknown): HomeProfileName | null | undefined {
+  if (v === null) return null;
+  if (!isObj(v)) return undefined;
+  const ok = (x: unknown): x is string | null => x === null || (typeof x === 'string' && normalizeProfileName(x) === x);
+  if (!ok(v.givenName) || !ok(v.familyName) || (v.givenName === null && v.familyName === null)) return undefined;
+  return { givenName: v.givenName, familyName: v.familyName };
+}
+
+const isCount = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+
+/** Reads a `GET /v1/home/profile` answer strictly; a malformed share is dropped, a malformed answer is `bad_response`. */
+export function parseHomeProfile(body: unknown, appId: string | null = null): HomeProfile {
+  const what = '/v1/home/profile';
+  if (!isObj(body) || !Array.isArray(body.shares)) throw bad(what);
+  const name = parseProfileName(body.name);
+  if (name === undefined) throw bad(what);
+  let app: HomeProfile['app'] = null;
+  if (body.app !== null && body.app !== undefined) {
+    // Only the app that was asked about, and only a yes or a no.
+    if (!isObj(body.app) || appId === null || body.app.appId !== appId || typeof body.app.shared !== 'boolean') throw bad(what);
+    app = { appId, shared: name !== null && body.app.shared };
+  }
+  const seen = new Set<string>();
+  const shares: HomeNameShare[] = [];
+  // A share without a name shares nothing: the list is empty then, whatever came.
+  for (const s of name === null ? [] : body.shares.slice(0, HOME_NAME_SHARES_MAX)) {
+    if (!isObj(s) || typeof s.appId !== 'string' || !HOME_APP_ID.test(s.appId) || seen.has(s.appId) || !isScopeId(s.scopeId) || !isMs(s.sharedAtMs)) continue;
+    seen.add(s.appId);
+    shares.push({ appId: s.appId, name: homeAppName(s.name), scopeId: s.scopeId, sharedAtMs: s.sharedAtMs });
+  }
+  return { name, shares, more: name !== null && body.more === true, app };
+}
+
+/** `POST /v1/home/profile`'s body: exactly the two parts, each already normalized (null: not set). */
+export function homeProfileBody(name: HomeProfileName): string {
+  for (const part of [name.givenName, name.familyName]) if (part !== null && normalizeProfileName(part) !== part) throw new Error('A name part must be normalized first');
+  return JSON.stringify({ givenName: name.givenName, familyName: name.familyName });
+}
+
+/** The user's name and who gets it, signed by `identity`. One request each, never repeated here. */
+export interface HomeProfileApi {
+  profile(identity: HomeIdentity, appId?: string | null): Promise<HomeProfile>;
+  /** Saves `name` (both parts null: removes it, and every share of it ends). */
+  saveName(identity: HomeIdentity, name: HomeProfileName): Promise<HomeProfileSaved>;
+  shareName(identity: HomeIdentity, appId: string, share: boolean): Promise<HomeNameSharing>;
+}
+
+export function homeProfileApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...args)): HomeProfileApi {
+  const base = new URL(apiUrl).origin;
+  const init = (extra: RequestInit): RequestInit => ({ cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', ...extra });
+  const post = async (identity: HomeIdentity, path: string, body: string): Promise<Record<string, unknown>> => {
+    const url = new URL(`${base}${path}`);
+    // The key signs these exact bytes, so the same bytes are sent.
+    const bytes = new TextEncoder().encode(body);
+    const header = await identity.header('POST', url, bytes);
+    return parseApiResponse(await fetchFn(url.toString(), init({ method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', [HOME_IDENTITY_HEADER]: header }, body: bytes })));
+  };
+  return {
+    async profile(identity, appId = null) {
+      if (appId !== null && !HOME_APP_ID.test(appId)) throw new Error('Not an app id');
+      const url = new URL(`${base}/v1/home/profile${appId === null ? '' : `?${new URLSearchParams({ appId }).toString()}`}`);
+      const header = await identity.header('GET', url, NO_BODY);
+      return parseHomeProfile(await parseApiResponse(await fetchFn(url.toString(), init({ headers: { accept: 'application/json', [HOME_IDENTITY_HEADER]: header } }))), appId);
+    },
+    async saveName(identity, name) {
+      const out = await post(identity, '/v1/home/profile', homeProfileBody(name));
+      const saved = parseProfileName(out.name);
+      if (saved === null && isCount(out.stopped)) return { name: null, stopped: out.stopped };
+      // What was stored is what was sent: anything else isn't believed.
+      if (saved && saved.givenName === name.givenName && saved.familyName === name.familyName) return { name: saved };
+      throw bad('/v1/home/profile');
+    },
+    async shareName(identity, appId, share) {
+      if (!HOME_APP_ID.test(appId)) throw new Error('Not an app id');
+      const out = await post(identity, '/v1/home/name-sharing', JSON.stringify({ appId, share }));
+      if (share && out.shared === true) return { shared: true };
+      if (!share && out.shared === false && isCount(out.stopped)) return { shared: false, stopped: out.stopped };
+      throw bad('/v1/home/name-sharing');
+    },
+  };
+}
+
 export function homeApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...args)): HomeApi {
   const base = new URL(apiUrl).origin;
   const init = (extra: RequestInit): RequestInit => ({ cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', ...extra });
   return {
     ...homeDevicesApi(apiUrl, fetchFn),
+    ...homeProfileApi(apiUrl, fetchFn),
     async config() {
       return parseHomeConfig(await parseApiResponse(await fetchFn(`${base}/v1/home/config`, init({ headers: { accept: 'application/json' } }))));
     },

@@ -1753,98 +1753,65 @@ it only as the fallback. So the partner page, and any script on it, holds a Wind
 NEAR implicit account, which holds no NEAR, act through NEP-366 meta transactions paid by Hana's relay account. Testnet
 only: the env's `NETWORK`, the request's `network` and the key object each refuse anything else (D733).
 
-**What NEAR makes the relayer pay** (measured on near-sandbox 2.13.4, protocol 86; `apps/api/test-sandbox/meta-tx.test.ts`
-pins each one). The relayer pays all the gas, including what the inner calls attach, and **every deposit the inner
-actions carry**: a delegated `Transfer` of 1 NEAR from a zero-balance account moved 1 NEAR from the relayer to the
-receiver, and a FunctionCall's attached deposit reached the contract from the relayer too (nearcore's
-`apply_delegate_action`: "Relayer prepaid all fees and all things required by actions: attached deposits and attached
-gas"). So a delegate action CAN make the relayer transfer its own funds, to anyone, unless the relayer refuses it. A
-failed delegate (expired, reused or too-large nonce, missing account) still costs the relayer its receipt (≈ 0.00008
-NEAR). An activation costs ≈ 0.0071 NEAR (the implicit account's creation burns 70 Tgas), a small relay ≈ 0.0002 NEAR,
-and each relay in flight holds ≈ 10× its prepaid gas until the refund.
+**What NEAR makes the relayer pay** (measured on near-sandbox 2.13.4, protocol 86; testnet runs 88, not measured;
+`apps/api/test-sandbox/meta-tx.test.ts` pins each one). The relayer pays all the gas, including what the inner calls
+attach, and **every deposit the inner actions carry**: a delegated `Transfer` of 1 NEAR from a zero-balance account moved
+1 NEAR from the relayer to the receiver, and a FunctionCall's deposit reached the contract from the relayer too
+(nearcore's `apply_delegate_action`). So a delegate action can make the relayer transfer its own funds unless the relay
+refuses it. A failed delegate still costs the relayer its receipt (≈ 0.00008 NEAR); an activation ≈ 0.0071 NEAR (the
+implicit account's creation burns 70 Tgas; the account's 182 bytes are free under NEP-448's zero-balance allowance, so
+nobody pays storage); a small relay ≈ 0.0002 NEAR; each relay in flight holds ≈ 10× its prepaid gas until the refund.
 
 **What the relay refuses** (`near/delegate.ts` `policyRefusal`, before any chain read): any inner action but a
-`FunctionCall` (no `Transfer`, `AddKey`, `DeleteKey`, `DeleteAccount`, `DeployContract`, `Stake`, nested `Delegate`,
-global contracts); any deposit (even 1 yocto); a receiver outside `near.relay.receivers` (the manifest forbids the
-signer, the relayer and the relay account there); the inner calls' gas together above `near.relay.maxGasTgas` (30 on
+`FunctionCall` (`403 action_not_allowed`: `Transfer` even of 0, `Stake`, `AddKey`, `DeleteKey`, `DeleteAccount`,
+`DeployContract`, a nested `Delegate`, the global-contract actions, `DeterministicStateInit`, any unknown tag); any
+deposit (`403 deposit_not_allowed`, even 1 yocto); a receiver outside `near.relay.receivers` (the manifest forbids the
+signer, the relayer and the relay account there); the inner calls' gas together above `near.relay.maxGasTgas` (10 on
 sandbox-dev; at most 300); more than 4 actions or 4096 bytes; a sender that isn't the implicit account of the delegate's
-own key; a bad delegate signature. Then, from the chain: an account not yet created, a key not on it, a used or
-too-large nonce, a `max_block_height` within 3 blocks of the head or more than 1000 ahead (NEAR itself accepts any height
-ahead, which would let a signed delegate wait for months). The relayer forwards the exact bytes it decoded (the strict
-decoder consumes all of them), never a re-encoding.
+own key; a bad delegate signature. The outer transaction carries exactly one action, the decoded bytes, never a
+re-encoding.
 
-**Which accounts: the directory's (D735, after the security review of 2026-11-11).** With
-`near.relay.requireKnownAccount` (the default) both routes act only for a NEAR account the wallet directory holds for
-a user of the app's scope, recorded by the vault at login with a proof signed by that NEAR key (the
-`feat/near-directory` build): an unforgeable per-user fact that needs no credential from the SDK, so made-up keys get
-`409 near_account_unrecorded` and spend nothing, and every limit counts per directory user. sandbox-dev runs it `true`
-(the directory build is merged into this branch). `false` is refused by the schema off testnet; with it, the paragraph
-below is what holds. A directory row proves "the holder of this user's session also holds this key", not "Hana derived
-this key", so every spend is bounded per directory user: 2 activations (an honest user needs one ever, plus a retry)
-and 200 relays a day, charged before the relay. Sybil users (many Google or email accounts, each with a session) remain
-possible; the per-app and env budgets bound them. Worst case on sandbox-dev: one user can spend at most 2 × 0.0071 +
-200 × 0.0002 ≈ 0.054 NEAR a day, so about 18 sybil users fill an app's 1 NEAR budget and about 92 the env's 5 NEAR;
-past that every relay answers `429 app_budget_exhausted` or `503 relay_budget_exhausted` until 00:00 UTC (a denial of
-the relay, never of logins), and the relays in flight never hold more than `inFlightNear` (3 NEAR).
+**Which accounts.** With `requireKnownAccount` (the default, and sandbox-dev) both routes act only for a NEAR account the
+wallet directory holds for exactly one user of the app's scope, recorded by the vault at login with a proof signed by
+that NEAR key. A directory row proves "the holder of this user's session also holds this key", not "Hana derived this
+key", so every spend is also bounded per directory user (2 activations and 200 relays a day). Sybil users (many Google
+or email accounts, each with a session) remain possible; the per-app and env budgets bound them: one user can spend at
+most 2 × 0.0071 + 200 × 0.0002 ≈ 0.054 NEAR a day, so about 18 sybil users fill an app's 1 NEAR budget and about 92 the
+env's 5 NEAR; past that the relay answers `429 app_budget_exhausted` or `503 relay_budget_exhausted` until 00:00 UTC
+(a denial of the relay, never of logins). With `requireKnownAccount: false` (testnet only) anyone holding a publishable
+key can activate fresh accounts and relay from keys they make up, within the same limits and budgets.
 
-**With `requireKnownAccount: false`: anyone with a publishable key.** The SDK calls both routes from the partner's page with the
-publishable key and the app gate only (D735): no Hana session is required, and an `Origin` header binds browsers only,
-so a script anywhere can call them for any app's public key. Anyone can therefore (a) activate any number of fresh
-implicit accounts (each ≈ 0.0071 NEAR of the relayer's, the account's 182 bytes of storage free under NEP-448's
-zero-balance allowance, so nobody pays storage), and (b) have the relay pay for zero-deposit calls to the allowlisted
-contracts from any implicit account whose key they generate. Nothing ties a sender to a Hana user. What bounds it is
-the per-IP (across apps), per-sender, per-app and env-wide limits and, above all, the per-app and env NEAR budgets
-below (each per-app cap below the env's, so one leaked key can't use up the day for every other app): the worst a flood can
-do is spend one day's budget (5 NEAR on sandbox-dev) on gas and creation fees and spam the guestbook (its own 50-message
-ring), then get `503 relay_budget_exhausted` (real users too) until the UTC day turns. Accepted on testnet, open before
-mainnet (issue (s)). A body may carry the vault's session proof (a live session of the app's scope signed this exact
-request, within 60 s, once), which then also counts per user; a later round can require it, and the wallet directory's
-NEAR record can bind `sender_id` to the session user's own address.
+**Counters: where charged, where given back, who can cause it** (the relay's order of checks is `docs/api.md` "Relay
+checks, in order"; public inputs: a relayed delegate is on chain for anyone to re-post, an account id is public):
 
-**Order of checks and who can consume each counter** (`POST /v1/near/relay`, after three security reviews on
-2026-11-11). Public inputs: a relayed delegate is on chain for anyone to re-post; an account id is public.
+| Counter | Charged | Given back | Who can cause it, at what cost |
+|---|---|---|---|
+| Per IP, 30 relays / 10 activations a minute, across apps | the app gate, before the body | never | anyone, from their own IPs |
+| Sender's nonce floor (not a counter: drops at or below it) | — | — | only grows: by a delegate sent (or that may have been), or a chain answer of a used nonce |
+| Sender's minute (10) | after the floor and the in-flight hash check | on a chain answer of a used nonce (the floor rises, so once per stale delegate) | only the key's holder: a fresh signature above the floor; a third party's public delegates are below the floor, or stale on chain once (given back) |
+| App's (120) and env's (`relaysPerMinute`) relay minutes | after the sender's minute, before the chain reads | on a chain answer of a used nonce | the holder of any listed account's key (with `requireKnownAccount`, a directory user), each request bounded by its sender's minute and its IP |
+| Sender's, user's, app's and env's relay days | after every chain check, right before the budget | when the budget refuses or nothing was sent | only a delegate about to be sent, by its key's holder |
+| App's and env's NEAR budgets (1 / 5 NEAR on sandbox-dev) | after the daily windows, at the worst case | the difference to what burnt; all of it when nothing was sent; a spend above the reservation is charged | as the daily windows |
+| Account's activation minute (5) | first, for every activation request | never | anyone naming the account (its id is public); its owner loses at most a minute's retries, and a request naming it either creates it or answers `created: false` |
+| App's (60) and env's (300) activation minutes | after the account's minute, before the chain reads | never | anyone, bounded per account id and per IP: a shared denial for a minute, not aimed at one user |
+| User's (2), app's (200) and env's (1000) activation days, and the budgets | only for an account about to be created | when nothing is created | anyone naming a missing listed account: it creates the account for its owner, using only that creation's share of the owner's day |
+| In flight per key (`inFlightNear` spread over the keys: 83 per key on sandbox-dev) | in the key object, before signing | when the relay ends | anyone reaching the relay; beyond it `503 relayer_busy`, nothing sent, everything given back |
 
-1. The app gate's per-IP window (30 a minute across apps): anyone, at the cost of their own IPs.
-2. Body, decode, policy, the delegate's Ed25519 signature: local, nothing counted.
-3. The directory lookup (`requireKnownAccount`): one D1 read, nothing counted.
-4. **The sender's nonce floor** (the highest nonce this relay sent for the sender, durable, only grows): a delegate at
-   or below it is refused `delegate_nonce_used` with no chain read and nothing counted. Anyone can post old delegates;
-   they cost the sender nothing, ever.
-5. The in-flight copy check (the hash, 20 minutes): `already_relayed`, nothing counted.
-6. **The sender's minute** (10): only past the floor, so only the key's holder (a fresh signature above the floor) can
-   use it up, at the cost of their own relays.
-7. **The app's and the env's minute** (120, sandbox-dev env 200): only the key's holder of some sender can reach them;
-   when the chain then says the delegate is stale (used nonce: executed elsewhere or older than the key), the floor
-   rises to the chain's nonce and both hits are given back, so each stale delegate costs the shared windows nothing and
-   can't be used twice. A floor that can't be written fails closed (`503`, retryable). What stays is the cost of the
-   chain reads for delegates refused for other reasons (expired, too far, missing account), bounded by the sender's
-   minute per key and the per-IP window; keys are free to make, so a flood of fresh keys is bounded by IPs and by
-   these shared minutes (a denial for the app or the env for a minute, never for one chosen user).
-8. Chain reads, then the delegate's checks (nonce, expiry, account and key).
-9. **The daily windows** (sender 100, directory user 200, app 5000, env 20000) and **the budgets** (app 1 NEAR, env 5
-   NEAR): only a delegate that will be sent, by its key's holder; given back when nothing is sent. Anything sent raises
-   the floor to its nonce.
+A floor that can't be written fails closed (`503 rate_limiter_unavailable`, retryable). The floor rises only for an
+outcome that reached the chain or may have (L-C of the re-review): a relay that certainly wasn't sent (`relayer_busy`,
+`near_rejected`, `near_unavailable`, …) leaves it, so the same signed delegate can be sent again.
 
-`POST /v1/near/activate`: the per-IP window, then the app's (60) and env's (300) activation minutes for every request
-(an account id is public, so these are shared, not aimed at a user); an existing account answers `created: false` and
-counts nothing more; for a missing one the directory user's day (2), the app's (200) and env's (1000) days, then the
-budgets, all given back when nothing is created. Naming a victim's missing account creates it for them (their day,
-used only by that creation).
-
-**Limits and the drain bound** (D736). Per IP 30 relays and 10 activations a minute; per sender 100 relays a day
-(sandbox-dev 50); per directory user 200 relays and 2 activations a day; per app 120 a minute and 5000 a day
-(sandbox-dev 2000) and 200 activations a day; across the env 300 relays a minute (sandbox-dev 200), 20000 a day
-(sandbox-dev 10000) and 1000 activations a day; at most `inFlightNear` (sandbox-dev 3 NEAR) held by relays in flight;
-the per-app daily NEAR budget (1 NEAR); and the env's daily NEAR budget (`near.relay.dailyBudgetNear`, 5 NEAR on sandbox-dev), reserved
-at the worst case before a relay is sent ((inner gas + 5 Tgas) × gas price; an activation 100 Tgas × gas price) and
-settled to what burnt. The budget is the hard bound on a day's spend whatever the other limits let through; past 80% it
-writes `near_relay_budget_high`, and the hourly check writes `near_relay_balance_low` below 2 NEAR. The worst a
-compromised vault or a flood of real sessions can do is spend one day's budget on gas, on allowlisted contracts, then
-get `503 relay_budget_exhausted` until the UTC day turns. The relay account's balance bounds a stolen relay key.
+**In flight and the account's balance.** Each key object takes at most `inFlightNear ÷ (keys × (maxGas + 5 Tgas) × gas
+price × 12)` relays in flight (sandbox-dev: 0.018 NEAR a relay, 83 per key, 166 in all, at most 3 NEAR held). A
+transaction refused for the account's balance (`NotEnoughBalance`) answers `502 near_rejected` and keeps its reservation,
+so a burst that starves the account can't repeat for free. Fund the account with at least `inFlightNear +
+lowBalanceNear + dailyBudgetNear` (sandbox-dev 10 NEAR; keep about 15); past 80% of the day's budget
+`near_relay_budget_high`, below `lowBalanceNear` `near_relay_balance_low`.
 
 **Separation.** The relay account and its keys are separate from `relayer` and its pools (whose function-call keys
 can't sign a `Delegate`): a relay flood never spends a login's allowance, and a relay key opens nothing in hana-signer.
-The key objects reuse the pools' nonce machinery (`relayer-key.ts`); an object serves one role for its life.
+A relay key is full-access: its account's balance is what a stolen key can take. The key objects reuse the pools' nonce
+machinery (`relayer-key.ts`); an object serves one role for its life.
 
 **Logs.** No account id, key, signature or path (the log line has no field for them): the request's code and
 transaction hash only.
@@ -2259,7 +2226,7 @@ market on 2026-11-06 and expire on 2026-12-21; if the market rose past them befo
 $9.99 through per transaction (by the ratio). Review them against a live source before each demo (`docs/operations.md`
 "Reviewing the prices").
 
-**(s) The NEAR relay pays for anyone holding a publishable key while `requireKnownAccount` is off. Accepted on testnet (sandbox-dev until the directory build merges), open before mainnet (D735).** With the setting on (the default) only directory-recorded accounts are served. `POST /v1/near/relay` and `/v1/near/activate` take the app gate only (the SDK calls them from the partner's page, with no Hana session): anyone with an app's public key can activate fresh implicit accounts and relay zero-deposit calls to the allowlisted contracts from keys they make up. Bounded by the per-IP, per-sender, per-app and env-wide limits and the daily NEAR budget ("The NEAR meta-transaction relay"); a flood can use up a day's budget and deny the relay to real users until 00:00 UTC. Fix before mainnet: the vault sends its session proof (the routes already check it when present) and the routes require it, then the wallet directory records each path's NEAR address (signed by the NEAR key) and the relay requires `sender_id` to be it.
+**(s) The NEAR relay pays for anyone holding a publishable key while `requireKnownAccount` is off. Accepted on testnet only, open before mainnet (D735).** With the setting on (the default, sandbox-dev included) only accounts the wallet directory holds for one user of the app's scope are served, and every spend is bounded per directory user. Off (testnet only), anyone with an app's public key can activate fresh implicit accounts and relay zero-deposit calls to the allowlisted contracts from keys they make up, bounded by the per-IP, per-sender, per-app and env-wide limits and the NEAR budgets ("The NEAR meta-transaction relay"). With it on, sybil users with real sessions remain, bounded by the per-app and env budgets (about 18 users fill an app's day on sandbox-dev). Before mainnet: who pays and the budgets (readiness 1.21).
 
 **(r) The mainnet demo's USDC bridge didn't bind the spoke `to` (the hub wallet). Fixed, live on sandbox-dev (D476; security review of 2026-11-09, High).** A compromised page on the allowed app could build a correct bridge with the user's own recipient and set `to` to another hub wallet: the funds are delivered there first, and the popup still showed the user's own recipient. `checkBridgeCalls` now requires `to` to be exactly the signing address's own hub wallet, computed offline (`sodaxHubWallet`, the same maths in the vault and the popup, no network read at signing), so the vault refuses before any popup and the popup names a recipient only once the hub wallet is verified. Tests: `packages/core/test/mainnet-demo.test.ts` (the factory's own answers as vectors; empty, wrong length, another user's, the wrong chain's relay id, both directions and both modes), `packages/web/test/vault/mainnet-demo.test.ts`, `packages/web/test/auth/approve-page.test.ts`. Residual: the formula is what the factory's UUPS implementation `0x0b45be992010f95d428c03cc67751827ed65cf9a` computes on 2026-11-09; the owner can upgrade it, and a change that alters the derivation makes bridges refused until the formula is reviewed and rebuilt (fail closed). The check proves the address, not the wallet's code. Extended to swaps and plain deposits (from `fix/demo-swap-hub-wallet`, live on sandbox-dev, D492): the check now sits in `checkSodaxHubCalls` and covers every Sodax deposit, so a factory upgrade that changes the derivation refuses them all. A swap's intent is bound with it: creator, source, destination, solver, data and output asset (D492), closing the spec's R5 for where a swap's output goes. Still open: the intent's minimum output isn't enforced, so a compromised page can set it to almost nothing and a filler could take the deposit for dust, bounded by the $9.99 cap. The popup shows the minimum, so the user can see it before approving.
 

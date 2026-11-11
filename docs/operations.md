@@ -1150,7 +1150,7 @@ From the repo root of the main checkout, at the deployed commit:
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/sandbox-dev/near-relay-keys.json")))' \
      | corepack pnpm --dir apps/api exec wrangler secret put NEAR_RELAY_KEYS
    ```
-   (`env-secrets sandbox-dev` lists `NEAR_RELAY_KEYS` as optional from now on.)
+   (`env-secrets sandbox-dev` lists `NEAR_RELAY_KEYS` as optional from now on; `gen sandbox-dev --dev-vars` writes it to `.dev.vars` for `wrangler dev` when the file exists.)
 5. **Deploy the API** (`corepack pnpm --filter @hana-id/api run deploy`, then `deploy-check`). The guestbook contract
    must be deployed at `near.demoGuestbook` (the contract build's own steps) before a relay to it can succeed.
 6. **Check**: the relay answers `503 relayer_unconfigured` until steps 1–5 are done. With the core build's vault and
@@ -1172,8 +1172,8 @@ vault must be deployed for the relay to serve anyone). Turning it off: remove `n
 
 | Signal | What it means | Do |
 |---|---|---|
-| `near_relay_balance_low` security event (hourly; one a day) | The relay account is below `lowBalanceNear`, or missing | Top it up (step 1's `send-near`). Missing: re-create it (step 1) and re-add the keys (step 2's `add-key` lines) |
-| `near_relay_budget_high` security event, then `503 relay_budget_exhausted` | A day's spend reached 80%, then 100%, of `dailyBudgetNear` | Real use: raise `dailyBudgetNear`, `gen`, deploy. Unexplained: look for one app or sender in the request logs (`/v1/near/relay` 200s), lower its limits or set `receivers: []`; the budget resets at 00:00 UTC |
+| `near_relay_balance_low` security event (hourly; one a day) | The relay account is below `lowBalanceNear`, or missing | Top it up (step 1's `send-near`). Missing: re-create it (step 1) and re-add the keys (step 2's `add-key` lines); playbook [near-relay-balance-low](playbooks.md#near-relay-balance-low) |
+| `near_relay_budget_high` security event, then `503 relay_budget_exhausted` | A day's spend reached 80%, then 100%, of `dailyBudgetNear` | Real use: raise `dailyBudgetNear`, `gen`, deploy. Unexplained: look for one app or sender in the request logs (`/v1/near/relay` 200s), lower its limits or set `receivers: []`; the budget resets at 00:00 UTC; playbook [near-relay-budget-high](playbooks.md#near-relay-budget-high) |
 | Relays answer `502 near_rejected` (log `near_relay_balance_short`) | The relay account can't cover the pessimistic gas hold of the relays in flight (`NotEnoughBalance`): its balance is below `inFlightNear` + what it spends; these keep their budget reservation | Top it up to at least `inFlightNear` + `lowBalanceNear` + `dailyBudgetNear`, or lower `inFlightNear` (fewer relays in flight, more `503 relayer_busy`); see the account on a testnet explorer |
 | `503 relayer_busy` / `relay_retry` `invalid_nonce` repeatedly | Something else sends with a relay key (they must be the API's only), or a stuck key object | Never use the keys elsewhere. A key's object re-reads its nonce on `InvalidNonce`; replacing the key (below) gives it a fresh life |
 | `504 timeout` with `status: "pending"` | No outcome in 30 s (RPC slow) | The client polls the transaction hash; nothing to do unless it persists (then the RPC: "Logs and latency") |

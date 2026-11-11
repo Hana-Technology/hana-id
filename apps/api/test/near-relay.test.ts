@@ -8,17 +8,17 @@ import { env } from 'cloudflare:workers';
 import { KeyPair } from '@near-js/crypto';
 import { type Action, actionCreators, buildDelegateAction, createTransaction, encodeDelegateAction, encodeSignedDelegate, encodeTransaction, Signature, SignedDelegate } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
-import { identityMessage } from '@hana-id/core/identity';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { base64Encode, hex } from '../src/bytes.ts';
 import { decodeSignedDelegate, encodeRelayTransaction, MAX_SIGNED_DELEGATE_BYTES, policyRefusal, TGAS, verifyDelegateSignature } from '../src/near/delegate.ts';
 import { checkNearRelayFunds } from '../src/near/relay-funds.ts';
 import { NEAR_RELAY_DEFAULTS, nearRelayVar, parseNearRelayConfig } from '../src/near/relay-config.ts';
-import { budgetSettlement, defaultNearAccountLookup, delegateFailure, forgetHead, keyIndexFor, nearActivatePayload, nearAccountKnown, nearDirectory, nearRelayPayload, toActivateRequest, toRelayRequest } from '../src/near/relay.ts';
+import { budgetSettlement, defaultNearAccountLookup, delegateFailure, forgetHead, keyIndexFor, nearAccountKnown, nearDirectory, reachedChain, toActivateRequest, toRelayRequest } from '../src/near/relay.ts';
 import { inFlightCapPerKey, inFlightHold } from '../src/near/relay-config.ts';
 import { nearRelayKeyName, type RelayerKey, type RelayResult } from '../src/relayer-key.ts';
 import { runInDurableObject } from 'cloudflare:test';
-import { appHeaders, call, type Chain, newSessionKey, ORIGIN, sessionKeyPair, type SeededApp } from './helpers.ts';
+import { appHeaders, call, type Chain, ORIGIN, type SeededApp } from './helpers.ts';
+import { MOCK_RECEIPT_GAS, MOCK_TX_GAS } from './near-mock.ts';
 import { spentSession, vaultHeaders, vaultSetup } from './vault-helpers.ts';
 
 const GUESTBOOK = 'guestbook.test.near';
@@ -54,23 +54,6 @@ function delegate(user: User, o: { receiverId?: string; actions?: Action[]; nonc
 // The delegate's hash, synchronously (nodejs_compat's node:crypto), so tests can build delegates inline.
 const sha256Sync = (data: Uint8Array): Uint8Array => new Uint8Array(createHash('sha256').update(data).digest());
 
-/** The session proof the vault sends with each request (D735), over `payload`. */
-function proof(app: { id: string }, spk: number[], payload: Uint8Array, o: { issuedAtMs?: number; signWith?: number[] } = {}) {
-  const nonce = crypto.getRandomValues(new Uint8Array(16));
-  const issuedAtMs = o.issuedAtMs ?? Date.now();
-  const message = identityMessage({ signer: env.SIGNER_ACCOUNT, appId: app.id, sessionPublicKey: Uint8Array.from(spk), issuedAtMs, nonce, payload });
-  return { sessionPublicKey: spk, issuedAtMs, nonce: [...nonce], signature: [...sessionKeyPair(o.signWith ?? spk).sign(message).signature] };
-}
-
-async function relayBody(app: { id: string }, spk: number[], signed: Uint8Array, o: { network?: string; issuedAtMs?: number; signWith?: number[] } = {}) {
-  const network = o.network ?? 'testnet';
-  return { network, signedDelegateAction: base64Encode(signed), ...proof(app, spk, await nearRelayPayload(network, signed), o) };
-}
-
-function activateBody(app: { id: string }, spk: number[], accountId: string, network = 'testnet') {
-  return { network, accountId, ...proof(app, spk, nearActivatePayload(network, accountId)) };
-}
-
 /** What the SDK sends (`hana.near.relay`): no session credential. */
 const plainRelay = (signed: Uint8Array, network = 'testnet') => ({ network, signedDelegateAction: base64Encode(signed) });
 const relay = (app: SeededApp, b: unknown, bindings?: Partial<typeof env>, headers = appHeaders(app)) => call('/v1/near/relay', { headers, body: b, env: bindings });
@@ -102,10 +85,9 @@ function knownUser(scope: string, userId?: string): User {
   return u;
 }
 
-async function setup(): Promise<{ app: SeededApp; near: Chain; spk: number[]; user: User }> {
+async function setup(): Promise<{ app: SeededApp; near: Chain; user: User }> {
   const { app, near } = await vaultSetup();
-  const spk = spentSession(near, app.scope, { sub: `near-${Math.random().toString(36).slice(2)}` });
-  return { app, near, spk, user: knownUser(app.scope) };
+  return { app, near, user: knownUser(app.scope) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -278,23 +260,18 @@ describe('NEAR_RELAY config', () => {
 });
 
 describe('request bodies', () => {
-  it('take only their fields; network optional; the session proof all or nothing', async () => {
+  it('take only their fields; network optional; no session proof fields (removed, review of 2026-11-11)', async () => {
     const user = newUser();
-    const spk = newSessionKey();
     const signed = delegate(user);
-    expect(toRelayRequest({ signedDelegateAction: base64Encode(signed) })).toMatchObject({ network: 'testnet', proof: null });
+    expect(toRelayRequest({ signedDelegateAction: base64Encode(signed) })).toMatchObject({ network: 'testnet' });
     expect(toRelayRequest(plainRelay(signed, 'mainnet'))).toMatchObject({ network: 'mainnet' });
-    const b = await relayBody({ id: 'app_x' }, spk, signed);
-    expect(toRelayRequest(b)?.proof).not.toBeNull();
-    expect(toRelayRequest({ ...b, extra: 1 })).toBeNull();
-    const { signature: _s, ...partial } = b;
-    expect(toRelayRequest(partial)).toBeNull();
-    expect(toRelayRequest({ ...b, nonce: [1, 2, 3] })).toBeNull();
+    expect(toRelayRequest({ ...plainRelay(signed), extra: 1 })).toBeNull();
+    for (const field of ['sessionPublicKey', 'issuedAtMs', 'nonce', 'signature']) expect(toRelayRequest({ ...plainRelay(signed), [field]: 1 }), field).toBeNull();
     expect(toRelayRequest({ signedDelegateAction: `${base64Encode(signed)}=` })).toBeNull();
     expect(toRelayRequest({ signedDelegateAction: 'not base64!' })).toBeNull();
     expect(toRelayRequest({ network: 5, signedDelegateAction: base64Encode(signed) })).toBeNull();
-    expect(toActivateRequest({ accountId: user.accountId })).toMatchObject({ accountId: user.accountId, network: 'testnet', proof: null });
-    expect(toActivateRequest(activateBody({ id: 'app_x' }, spk, user.accountId))?.proof).not.toBeNull();
+    expect(toActivateRequest({ accountId: user.accountId })).toMatchObject({ accountId: user.accountId, network: 'testnet' });
+    expect(toActivateRequest({ accountId: user.accountId, sessionPublicKey: [] })).toBeNull();
     expect(toActivateRequest({ accountId: 'alice.testnet' })).toBeNull();
     expect(toActivateRequest({ accountId: user.accountId.toUpperCase() })).toBeNull();
     expect(toActivateRequest({ accountId: user.accountId, extra: true })).toBeNull();
@@ -325,8 +302,8 @@ describe('POST /v1/near/relay', () => {
     expect((await body(await relay(s.app, plainRelay(signed)))).code).toBe('delegate_nonce_used');
   });
 
-  it('takes the vault too, with the session proof (then also counted per user)', async () => {
-    const res = await relay(s.app, await relayBody(s.app, s.spk, delegate(s.user)), undefined, vaultHeaders(s.app));
+  it('takes the vault too', async () => {
+    const res = await relay(s.app, plainRelay(delegate(s.user)), undefined, vaultHeaders(s.app));
     expect([res.status, (await body(res)).status]).toEqual([200, 'executed']);
   });
 
@@ -366,15 +343,11 @@ describe('POST /v1/near/relay', () => {
     expect(s.near.nearSent.length).toBe(0);
   });
 
-  it('refuses mainnet, another network, a malformed body; with a proof: stale, by another key, over other bytes', async () => {
+  it('refuses mainnet, another network, a malformed body', async () => {
     const signed = delegate(s.user);
     expect((await body(await relay(s.app, plainRelay(signed, 'mainnet')))).code).toBe('mainnet_not_allowed');
     expect((await body(await relay(s.app, plainRelay(signed, 'betanet')))).code).toBe('bad_request');
     expect((await body(await relay(s.app, { ...plainRelay(signed), extra: true }))).code).toBe('bad_request');
-    expect((await body(await relay(s.app, await relayBody(s.app, s.spk, signed, { issuedAtMs: Date.now() - 120_000 })))).code).toBe('stale_proof');
-    expect((await body(await relay(s.app, await relayBody(s.app, s.spk, signed, { signWith: newSessionKey() })))).code).toBe('invalid_signature');
-    const other = await relayBody(s.app, s.spk, delegate(s.user, { nonce: 999n }));
-    expect((await body(await relay(s.app, { ...other, signedDelegateAction: base64Encode(signed) }))).code).toBe('invalid_signature');
     expect(s.near.nearSent.length).toBe(0);
   });
 
@@ -402,16 +375,6 @@ describe('POST /v1/near/relay', () => {
       expect(res.status).toBeGreaterThanOrEqual(400);
     }
     expect(s.near.nearSent.length).toBe(0);
-  });
-
-  it('with a proof: needs a live session of the app’s scope, and each proof once', async () => {
-    const res = await relay(s.app, await relayBody(s.app, newSessionKey(), delegate(s.user)));
-    expect([res.status, (await body(res)).code]).toEqual([410, 'session_ended']);
-    const other = spentSession(s.near, 'another-scope');
-    expect((await body(await relay(s.app, await relayBody(s.app, other, delegate(s.user))))).code).toBe('scope_mismatch');
-    const once = await relayBody(s.app, s.spk, delegate(s.user));
-    expect((await relay(s.app, once)).status).toBe(200);
-    expect((await body(await relay(s.app, once))).code).toBe('proof_replayed');
   });
 
   it('reads the chain before paying: account missing, key missing, nonce used or too large, expired or too far ahead', async () => {
@@ -471,29 +434,32 @@ describe('POST /v1/near/relay', () => {
     expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 103n })), bindings))).error).toBe('Rate limit exceeded (per account)');
   });
 
-  it('a sender flooding above-floor but chain-stale delegates exhausts only its own minute; the app’s window comes back; the floor rises from the chain', async () => {
+  it('chain-stale delegates (Hana’s floor behind the chain): the shared and the sender’s minutes all come back; the floor rises from the chain', async () => {
     const pk = s.user.keyPair.getPublicKey().toString();
-    let n = 0;
-    for (; n < 11; n++) {
-      // Each delegate above the floor, each already used on chain (executed elsewhere): the chain nonce stays ahead.
+    for (let n = 0; n < 11; n++) {
+      // Each delegate above Hana's floor, each already used on chain (executed elsewhere): the chain nonce stays ahead.
       s.near.akNonce.set(pk, BigInt(20_000 + n * 10));
-      const res = await relay(s.app, plainRelay(delegate(s.user, { nonce: BigInt(20_000 + n * 10 - 5) })));
-      if (res.status === 429) {
-        expect((await body(res)).error).toBe('Rate limit exceeded (per account per minute)');
-        break;
-      }
-      expect((await body(res)).code).toBe('delegate_nonce_used');
+      expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: BigInt(20_000 + n * 10 - 5) }))))).code).toBe('delegate_nonce_used');
     }
-    expect(n).toBe(10);
-    // The app's minute window took nothing from the stale ones (a probe with a cap of 1 passes).
-    const app = await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`app:${s.app.id}`)).hit([{ name: 'near-relay:minute', windowMs: 60_000, max: 1 }]);
-    expect(app.ok).toBe(true);
+    // Nothing of the sender's, the app's or the env's minute is left taken (probes with a cap of 1 pass).
+    const probe = (name: string) => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(name)).hit([{ name: 'near-relay:minute', windowMs: 60_000, max: 1 }]);
+    expect((await probe(`app:${s.app.id}`)).ok).toBe(true);
+    expect((await probe(`near-relay:sender:${s.user.accountId}`)).ok).toBe(true);
     // The floor rose to the chain's nonce: an older above-the-old-floor delegate is dropped with no chain read.
     const reads = s.near.rpcMethods.length;
     expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 20_050n }))))).code).toBe('delegate_nonce_used');
     expect(s.near.rpcMethods.length).toBe(reads);
-    // Another sender of the app is unaffected.
     expect((await relay(s.app, plainRelay(delegate(knownUser(s.app.scope))))).status).toBe(200);
+  });
+
+  it('12 public stale delegates of a victim posted at once (Hana’s floor at 0) can’t keep the victim out: their honest delegate goes through', async () => {
+    const victim = knownUser(s.app.scope);
+    s.near.akNonce.set(victim.keyPair.getPublicKey().toString(), 50_000n);
+    // Stale on chain, above Hana's floor (0): what a third party can collect from the chain for a key used outside Hana.
+    const stale = Array.from({ length: 12 }, (_, i) => plainRelay(delegate(victim, { nonce: BigInt(100 + i) })));
+    const answers = await Promise.all(stale.map(async (b) => (await body(await relay(s.app, b))).code));
+    expect(answers.every((c) => c === 'delegate_nonce_used' || c === 'rate_limited')).toBe(true);
+    expect((await relay(s.app, plainRelay(delegate(victim, { nonce: 50_001n })))).status).toBe(200);
   });
 
   it('a delegate refused by the chain checks (expired) counts in no daily window', async () => {
@@ -615,7 +581,7 @@ describe('POST /v1/near/activate', () => {
   it('naming a victim’s existing account answers created: false and never uses up the victim’s daily activations', async () => {
     const victim = 'hu_victim';
     const existing = knownUser(s.app.scope, victim);
-    for (let i = 0; i < 6; i++) expect((await body(await activate(s.app, { accountId: existing.accountId }))).created).toBe(false);
+    for (let i = 0; i < 5; i++) expect((await body(await activate(s.app, { accountId: existing.accountId }))).created).toBe(false);
     // The victim's 2 a day are untouched: two new accounts of theirs still activate.
     for (let i = 0; i < 2; i++) {
       const fresh = knownUser(s.app.scope, victim);
@@ -638,19 +604,15 @@ describe('POST /v1/near/activate', () => {
     expect(s.near.nearSent.at(-1)!.amount).toBe(1000n);
   });
 
-  it('refuses the gate’s refusals, an unconfigured env, mainnet, a bad id; a proof is checked when present', async () => {
+  it('refuses the gate’s refusals, an unconfigured env, mainnet, a bad id', async () => {
     const b = { accountId: s.user.accountId };
     expect((await body(await activate(s.app, b, { NETWORK: 'mainnet' }))).code).toBe('relayer_unconfigured');
     expect((await body(await activate(s.app, b, undefined, appHeaders(s.app, 'https://evil.example')))).code).toBe('origin_not_allowed');
     expect((await body(await activate(s.app, { ...b, network: 'mainnet' }))).code).toBe('mainnet_not_allowed');
     expect((await body(await activate(s.app, { accountId: 'alice.testnet' }))).code).toBe('bad_request');
-    const proven = activateBody(s.app, s.spk, s.user.accountId);
-    expect((await body(await activate(s.app, { ...proven, accountId: knownUser(s.app.scope).accountId }))).code).toBe('invalid_signature');
-    expect((await activate(s.app, proven)).status).toBe(200);
-    expect((await body(await activate(s.app, proven))).code).toBe('proof_replayed');
   });
 
-  it('per IP: 10 a minute across apps; 2 a day per directory user; with a proof also per session user', async () => {
+  it('per IP: 10 a minute across apps; 2 a day per directory user', async () => {
     const headers = { ...appHeaders(s.app), 'cf-connecting-ip': '10.250.2.2' };
     let n = 0;
     for (; n < 11; n++) {
@@ -665,14 +627,6 @@ describe('POST /v1/near/activate', () => {
       const u = knownUser(s.app.scope, 'hu_one_user');
       s.near.missingAccounts.add(u.accountId);
       last = (await activate(s.app, { accountId: u.accountId })).status;
-    }
-    expect(last).toBe(429);
-    // With the directory off, a session proof still counts per user.
-    const off = relayConfig({ requireKnownAccount: false });
-    for (let i = 0; i < 6; i++) {
-      const u = newUser();
-      s.near.missingAccounts.add(u.accountId);
-      last = (await activate(s.app, activateBody(s.app, s.spk, u.accountId), off)).status;
     }
     expect(last).toBe(429);
   });
@@ -732,6 +686,9 @@ describe('in flight, balance and budget settlement (the review of 2026-11-11)', 
     const r = (o: Partial<RelayResult>) => ({ ok: false, status: 502, code: 'near_rejected', error: 'x', ...o }) as RelayResult;
     expect(budgetSettlement(100n, r({ rejection: 'not_enough_balance' }))).toBe(0n);
     expect(budgetSettlement(100n, r({}))).toBe(100n);
+    // Not sent (the node refused it): the floor stays, so the same signed delegate goes through once the account is funded.
+    s.near.nearRejection = undefined;
+    expect((await relay(s.app, plainRelay(delegate(s.user)))).status).toBe(200);
   });
 
   it('settles a reservation: all back when nothing ran, less what burnt and what transferred, a spend above it charged', () => {
@@ -756,11 +713,22 @@ describe('in flight, balance and budget settlement (the review of 2026-11-11)', 
     expect([res.status, (await body(res)).error]).toEqual([429, 'Rate limit exceeded (across the env)']);
   });
 
-  it('activate counts before the chain reads, "already exists" answers too (60 a minute per app)', async () => {
+  it('activate counts before the chain reads, "already exists" answers too (60 a minute per app, 5 per account first)', async () => {
     const s = await setup();
     let n = 0;
-    for (; n < 61; n++) if ((await activate(s.app, { accountId: s.user.accountId })).status === 429) break;
+    for (; n < 61; n++) if ((await activate(s.app, { accountId: knownUser(s.app.scope).accountId })).status === 429) break;
     expect(n).toBe(60);
+  });
+
+  it('one account id, from many IPs, takes at most 5 of the app’s activation minute (L-B)', async () => {
+    const s = await setup();
+    const codes: number[] = [];
+    for (let i = 0; i < 20; i++) codes.push((await activate(s.app, { accountId: s.user.accountId }, undefined, { ...appHeaders(s.app), 'cf-connecting-ip': `10.251.${i}.1` })).status);
+    expect(codes.filter((c) => c === 200).length).toBe(5);
+    // The app's minute holds 5: another account still activates, 55 times.
+    let n = 0;
+    for (; n < 56; n++) if ((await activate(s.app, { accountId: knownUser(s.app.scope).accountId })).status === 429) break;
+    expect(n).toBe(55);
   });
 
   it('concurrent copies of one activation: both answer 200, one created, one created: false (L6)', async () => {
@@ -785,6 +753,62 @@ describe('in flight, balance and budget settlement (the review of 2026-11-11)', 
     const seen = new Set<number>();
     for (let i = 0; i < 40; i++) seen.add(await keyIndexFor(newUser().accountId, 2));
     expect([...seen].sort()).toEqual([0, 1]);
+  });
+});
+
+describe('what raises the floor, and the limiter’s amounts (L-C, L-D)', () => {
+  it('the floor rises only when the transaction reached the chain or may have', () => {
+    const no = (code: string, nearTx?: string) => ({ ok: false, status: 500, code, error: 'x', ...(nearTx ? { nearTx } : {}) }) as RelayResult;
+    expect(reachedChain({ ok: true, result: null, nearTx: 'h' })).toBe(true);
+    for (const code of ['relayer_busy', 'near_unavailable', 'near_rejected', 'relayer_unconfigured', 'method_not_allowed', 'already_relayed']) expect(reachedChain(no(code, 'h')), code).toBe(false);
+    expect(reachedChain(no('relayer_unavailable'))).toBe(false);
+    expect(reachedChain(no('relayer_unavailable', 'h'))).toBe(true);
+    for (const code of ['contract_rejected', 'delegate_rejected', 'timeout', 'near_error']) expect(reachedChain(no(code, 'h')), code).toBe(true);
+  });
+
+  it('a relay refused in flight (relayer_busy) leaves the floor: the same signed delegate goes through later', async () => {
+    const s = await setup();
+    const bindings = { ...relayConfig({ inFlightNear: 0.000001 }), NEAR_RELAY_KEYS: JSON.stringify([(JSON.parse(env.NEAR_RELAY_KEYS!) as string[])[0]]) };
+    let release!: () => void;
+    s.near.onNearSend = () => new Promise<void>((r) => (release = r));
+    const first = relay(s.app, plainRelay(delegate(knownUser(s.app.scope))), bindings);
+    await new Promise((r) => setTimeout(r, 200));
+    const mine = plainRelay(delegate(s.user));
+    expect((await body(await relay(s.app, mine, bindings))).code).toBe('relayer_busy');
+    release();
+    await first;
+    s.near.onNearSend = undefined;
+    expect((await relay(s.app, mine, bindings)).status).toBe(200);
+  });
+
+  it('a spend above the reservation is charged to the budgets (settleBudget)', async () => {
+    const s = await setup();
+    // A gas price of 1 yocto makes the reservation (35 Tgas × 1) far below what the mock burns.
+    s.near.gasPrice = '1';
+    expect((await relay(s.app, plainRelay(delegate(s.user)))).status).toBe(200);
+    const burnt = BigInt(MOCK_TX_GAS.tokens_burnt) + 2n * BigInt(MOCK_RECEIPT_GAS.tokens_burnt);
+    const spent = await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`app:${s.app.id}`)).spend('near-relay:day', 86_400_000, (10n ** 30n).toString(), '0');
+    expect(spent.spent).toBe(burnt.toString());
+  });
+
+  it('RateLimiter: charge adds whatever the total, never to an ended window; floor only grows', async () => {
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`limiter-units-${Math.random()}`));
+    const now = Date.now();
+    expect(await stub.spend('b', 60_000, '10', '8', now)).toMatchObject({ ok: true, spent: '8' });
+    await stub.charge('b', 60_000, '5', now, now);
+    expect(await stub.spend('b', 60_000, '100', '0', now)).toMatchObject({ ok: true, spent: '13' });
+    expect(await stub.spend('b', 60_000, '10', '1', now)).toMatchObject({ ok: false, spent: '13' });
+    await stub.charge('b', 60_000, '5', now - 120_000, now);
+    await stub.charge('b', 60_000, '-3', now, now);
+    expect(await stub.spend('b', 60_000, '100', '0', now)).toMatchObject({ spent: '13' });
+    await stub.giveBack('b', 60_000, '20', now);
+    expect(await stub.spend('b', 60_000, '100', '0', now)).toMatchObject({ spent: '0' });
+    expect(await stub.floor('f')).toBe('0');
+    await stub.raiseFloor('f', '5');
+    await stub.raiseFloor('f', '3');
+    expect(await stub.floor('f')).toBe('5');
+    await stub.raiseFloor('f', '18446744073709551615');
+    expect(await stub.floor('f')).toBe('18446744073709551615');
   });
 });
 

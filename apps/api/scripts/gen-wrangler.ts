@@ -230,7 +230,7 @@ export function existingD1Id(path: string, d1Name: string): string | null {
 const SECRET_KEY_RE = /^ed25519:[1-9A-HJ-NP-Za-km-z]+$/u;
 
 /** A pool's keys as a single-quoted dotenv value (JSON array of ed25519 keys; base58 never contains a quote). */
-function poolLine(name: 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS' | 'HOME_RELAYER_KEYS', file: string, keys: unknown): string {
+function poolLine(name: 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS' | 'HOME_RELAYER_KEYS' | 'NEAR_RELAY_KEYS', file: string, keys: unknown): string {
   if (!Array.isArray(keys) || keys.length === 0 || !keys.every((k) => typeof k === 'string' && SECRET_KEY_RE.test(k))) {
     throw new Error(`${file} must be a non-empty JSON array of ed25519:<base58> secret keys`);
   }
@@ -300,11 +300,13 @@ export function identityDevVarsLines(m: Pick<Manifest, 'name' | 'identityToken'>
   return lines;
 }
 
-export function devVarsContent(secrets: { relayerKeys?: unknown; ownerRelayerKeys?: unknown; homeRelayerKeys?: unknown; keysUpdaterKey?: string; identity?: string[] }): string {
+export function devVarsContent(secrets: { relayerKeys?: unknown; ownerRelayerKeys?: unknown; homeRelayerKeys?: unknown; nearRelayKeys?: unknown; keysUpdaterKey?: string; identity?: string[] }): string {
   const lines: string[] = [];
   if (secrets.relayerKeys !== undefined) lines.push(poolLine('RELAYER_KEYS', 'relayer-keys.json', secrets.relayerKeys));
   if (secrets.ownerRelayerKeys !== undefined) lines.push(poolLine('OWNER_RELAYER_KEYS', 'owner-relayer-keys.json', secrets.ownerRelayerKeys));
   if (secrets.homeRelayerKeys !== undefined) lines.push(poolLine('HOME_RELAYER_KEYS', 'home-relayer-keys.json', secrets.homeRelayerKeys));
+  // The NEAR relay's full-access keys (D734), when near-relay-keys made them for this env.
+  if (secrets.nearRelayKeys !== undefined) lines.push(poolLine('NEAR_RELAY_KEYS', 'near-relay-keys.json', secrets.nearRelayKeys));
   if (secrets.keysUpdaterKey !== undefined) {
     if (!SECRET_KEY_RE.test(secrets.keysUpdaterKey)) throw new Error('keys-updater.json has no ed25519 private_key');
     lines.push(`KEYS_UPDATER_KEY=${secrets.keysUpdaterKey}`);
@@ -343,6 +345,7 @@ export function writeDevVars(envName: string, root: string = repoRoot, dir: stri
   const relayerKeys = readSecretJsonIfExists(join(secrets, 'relayer-keys.json'));
   const ownerRelayerKeys = readSecretJsonIfExists(join(secrets, 'owner-relayer-keys.json'));
   const homeRelayerKeys = readSecretJsonIfExists(join(secrets, 'home-relayer-keys.json'));
+  const nearRelayKeys = readSecretJsonIfExists(join(secrets, 'near-relay-keys.json'));
   const updaterFile = join(secrets, 'keys-updater.json');
   let keysUpdaterKey: string | undefined;
   const updater = readSecretJsonIfExists(updaterFile) as { private_key?: unknown } | undefined;
@@ -356,14 +359,14 @@ export function writeDevVars(envName: string, root: string = repoRoot, dir: stri
     sealKey: readSecretTextIfExists(join(secrets, IDENTITY_SECRET_FILES.sealKey)),
     consentKey: readSecretTextIfExists(join(secrets, IDENTITY_SECRET_FILES.emailConsentKey)),
   });
-  const content = devVarsContent({ relayerKeys, ownerRelayerKeys, homeRelayerKeys, keysUpdaterKey, identity });
+  const content = devVarsContent({ relayerKeys, ownerRelayerKeys, homeRelayerKeys, nearRelayKeys, keysUpdaterKey, identity });
   const path = join(dir, '.dev.vars');
   // A fresh 0600 file renamed over the old one: an existing world-readable .dev.vars never holds the new secrets.
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
   writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
-  return { path, count: [relayerKeys, ownerRelayerKeys, homeRelayerKeys, keysUpdaterKey].filter((v) => v !== undefined).length + identity.length };
+  return { path, count: [relayerKeys, ownerRelayerKeys, homeRelayerKeys, nearRelayKeys, keysUpdaterKey].filter((v) => v !== undefined).length + identity.length };
 }
 
 /**

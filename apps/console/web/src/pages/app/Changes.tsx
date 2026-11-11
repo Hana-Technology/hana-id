@@ -16,9 +16,9 @@ export function changeTitle(c: GuardedChange): string {
 }
 
 /**
- * Still waiting to take effect on the reader's clock: pending and not announced, or announced with its time still ahead
- * (the API's NOT_YET). A pending change whose time has passed is in force (the API serves it, and refuses its Cancel),
- * even when the page was read before that time.
+ * Still waiting to take effect at `now` (the server's clock, `AppCtl.serverNow`): pending and not announced, or announced
+ * with its time still ahead (the API's NOT_YET). A pending change whose time has passed is in force (the API serves it,
+ * and refuses its Cancel), even when the page was read before that time.
  */
 export const isWaiting = (c: GuardedChange, now: number): boolean => c.status === 'pending' && (c.activeFrom === null || c.activeFrom === undefined || c.activeFrom > now);
 
@@ -31,10 +31,11 @@ export function changeState(c: GuardedChange, now: number): string {
 
 /** The changes of `kinds` still waiting, each with its timeline and (for an owner) Cancel. */
 export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }: { ctl: AppCtl; kinds: GuardedChange['kind'][]; title?: string | null }) {
-  const now = useNow(30_000);
+  useNow(30_000); // re-render every 30 s: the countdowns and the moment a change takes effect
   const w = useWrite();
-  // Read now, not only at the last tick, so a change never shows as waiting (with Cancel) once its time has passed.
-  const at = Math.max(now, Date.now());
+  // On the server's clock (D701): a change the server would still let you cancel keeps its Cancel, whatever the
+  // reader's clock says, and one in force there never shows as waiting.
+  const at = ctl.serverNow();
   const list = ctl.app.changes.filter((c) => isWaiting(c, at) && kinds.includes(c.kind));
   if (list.length === 0) return null;
   return (

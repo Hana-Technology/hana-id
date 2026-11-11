@@ -1104,11 +1104,13 @@ checked (signature, `aud`, nonce, the claim allow-list, D350) after a warning th
 page also shows owner drift (the org's owners against the scope's on-chain `Oidc` owners) and offers a SetOwners built
 from the org's owners (D353). The emailed cancel links land on `/cancel/:changeId#t=` and `/cancel-owner/:grantId#t=`,
 SPA pages that POST only after a click. The partner Users screen (D310, D346: the User ID is the identity token's `sub`,
-the Support ID its short form; account kinds and wallet addresses, never an email or a Google account id) is behind
+the Support ID its short form; account kinds and wallet addresses, and an email address only once the user shared it with one of the org's apps
+(D411); never a Google account id or an unshared address) is behind
 `USERS_SCREEN`, which the console's `gen` writes from the manifest's `console.usersScreen` (D357, D702: on in
 sandbox-dev, off elsewhere). An app's page never shows a change in force as waiting: `getApp` answers a pending change
-whose `active_from` has passed as `active` (D701), the SPA judges "waiting" on its own clock and re-reads the app once
-at the next effective time; the client snippet names the env (`GET /api/me` `envName`, D703).
+whose `active_from` has passed as `active` (D701), the SPA judges "waiting" on the server's clock (the app read's `now`, so a
+reader's clock that runs fast never hides a Cancel the server would accept) and re-reads the app once at the next
+effective time; of two `policy_set` changes in force before the hourly job, only the latest reads `active`; the client snippet names the env (`GET /api/me` `envName`, D703).
 
 ### Key export
 

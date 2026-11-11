@@ -29,8 +29,8 @@ function Policy({ chain }: { chain: ChainOwner }) {
   const [text, setText] = useState(s.policy ? JSON.stringify(s.policy.json, null, 2) : '');
   const [checked, setChecked] = useState<Checked | undefined>();
   const base = `/api/orgs/${org}/apps/${app.id}`;
-  const parentOrigin = app.origins.find((o) => o.activeFrom !== null && o.activeFrom <= Date.now())?.display ?? null;
-  const pending = app.changes.some((c) => c.kind === 'policy_set' && isWaiting(c, Date.now()));
+  const parentOrigin = app.origins.find((o) => o.activeFrom !== null && o.activeFrom <= ctl.serverNow())?.display ?? null;
+  const pending = app.changes.some((c) => c.kind === 'policy_set' && isWaiting(c, ctl.serverNow()));
   return (
     <Panel
       title="Auto-approve policy"
@@ -133,7 +133,7 @@ function RawSigning({ chain }: { chain: ChainOwner }) {
   const w = useWrite();
   const step = useStepUp(org);
   const on = app.settings.rawSign === 'approval';
-  const pending = app.changes.some((c) => c.kind === 'raw_sign_on' && isWaiting(c, Date.now()));
+  const pending = app.changes.some((c) => c.kind === 'raw_sign_on' && isWaiting(c, ctl.serverNow()));
   return (
     <Panel title="Raw signing" description="Signing messages Hana can’t decode (raw bytes). Users approve each one in the Hana popup, with a warning that Hana can’t show what it is. Leave it off unless your app needs it.">
       <div className="current">

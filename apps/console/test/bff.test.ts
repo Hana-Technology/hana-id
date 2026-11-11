@@ -89,6 +89,8 @@ describe('the views', () => {
     const detail = await getJson<{ app: { id: string; origins: { origin: string; idn: boolean }[]; changes: { kind: string; status: string }[]; keys: { key: string }[]; settings: { persistence: string } } }>(cs, `/api/orgs/${org}/apps/${app.id}`);
     expect(detail.status).toBe(200);
     expect(detail.body.app.id).toBe(app.id);
+    // The answer's time on the server's clock (the SPA judges "waiting" by it, D701).
+    expect(Math.abs((detail.body as unknown as { now: number }).now - Date.now())).toBeLessThan(60_000);
     // The pending origin is listed with its change and no activeFrom yet.
     expect(detail.body.app.origins.map((o) => o.origin).sort()).toEqual(['https://app.partner.example', 'https://new.partner.example', 'https://xn--bcher-kva.example']);
     expect(detail.body.app.origins.find((o) => o.origin.startsWith('https://xn--'))!.idn).toBe(true);

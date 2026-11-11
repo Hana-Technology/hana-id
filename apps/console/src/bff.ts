@@ -88,7 +88,9 @@ export async function orgRoute(url: URL, env: Env, info: RequestInfo, s: Session
   const ctx = { actor: memberActor(s), requestId: info.requestId, clientIp: info.clientIp };
   if (apps && appId) {
     const r = await env.API.getApp({ ...ctx, orgId: orgId!, appId });
-    return r.ok ? json(200, { app: r.app }) : rpcError(r, info, 'getApp');
+    // `now`: this answer's time on the server's clock, so the SPA judges what is still waiting by it, not by the
+    // reader's clock (a laptop running fast must never hide a Cancel the server would still accept; D701).
+    return r.ok ? json(200, { app: r.app, now: Date.now() }) : rpcError(r, info, 'getApp');
   }
   if (apps) {
     const r = await env.API.listApps({ ...ctx, orgId: orgId! });

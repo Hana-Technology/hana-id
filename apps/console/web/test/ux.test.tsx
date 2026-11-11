@@ -17,7 +17,7 @@ import { actionLabel, detail, detailFields, detailValue } from '../src/pages/Aud
 import { when } from '../src/lib.tsx';
 import { logoProblem } from '../src/pages/app/Branding.tsx';
 import { clientSnippet } from '../src/pages/app/Overview.tsx';
-import { nextEffectAt, useReloadAtNextEffect } from '../src/pages/Apps.tsx';
+import { clockOffset, nextEffectAt, useReloadAtNextEffect } from '../src/pages/Apps.tsx';
 import { ErrorNote } from '../src/ui.tsx';
 
 type Answer = { status?: number; body: unknown };
@@ -358,6 +358,48 @@ describe('empty states and the app overview', () => {
     expect(screen.getByText('Allow your app’s origins').closest('li')!.textContent).toContain('2 origins are active.');
   });
 
+  it('a reader’s clock 3 h fast: a change the server says is still ahead keeps Cancel and its timeline not reached', async () => {
+    const real = Date.now.bind(Date);
+    const serverT = real();
+    const change = { id: 'gc_f', appId: 'app_1', kind: 'origin_add', origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: serverT - 120_000, notifiedAt: serverT - 60_000, activeFrom: serverT + H };
+    signedIn();
+    const body = { ...APP, origins: [...APP.origins, { origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, activeFrom: serverT + H, changeId: 'gc_f' }], changes: [change] };
+    routes['/api/orgs/org_a/apps/app_1'] = () => ({ body: { app: body, now: real() } });
+    vi.spyOn(Date, 'now').mockImplementation(() => real() + 3 * H);
+    at('/orgs/org_a/apps/app_1');
+    const item = (await screen.findByText('Add origin https://new.partner.example')).closest('li')!;
+    expect(screen.getByText('Changes waiting')).toBeTruthy();
+    expect(within(item).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    const track = within(item).getByRole('list', { name: 'Progress of this change' });
+    expect([...track.querySelectorAll('li')].map((li) => li.className)).toEqual(['done', 'done', 'current']);
+    // Counted on the server's clock: about an hour ahead, never "due".
+    expect(item.textContent).toMatch(/\(in (59 min|1 h)\)/u);
+    expect(screen.getByText('Allow your app’s origins').closest('li')!.textContent).toContain('1 origin is active, 1 waiting.');
+    expect(screen.getByRole('link', { name: /Origins/u }).querySelector('.tab-dot')).not.toBeNull();
+  });
+
+  it('a reader’s clock 3 h slow: a change in force on the server isn’t waiting, and one due shortly is re-read at the server’s time', async () => {
+    const real = Date.now.bind(Date);
+    const serverT = real();
+    const passed = { id: 'gc_p', appId: 'app_1', kind: 'origin_add', origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: serverT - 240_000, notifiedAt: serverT - 60_000, activeFrom: serverT - 60_000 };
+    const soon = { ...passed, id: 'gc_s', origin: 'https://new.partner.example', display: 'https://new.partner.example', activeFrom: serverT + 300 };
+    signedIn();
+    let reads = 0;
+    routes['/api/orgs/org_a/apps/app_1'] = () => {
+      reads++;
+      const origins = [...APP.origins, { origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, activeFrom: passed.activeFrom, changeId: 'gc_p' }, { origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, activeFrom: soon.activeFrom, changeId: 'gc_s' }];
+      return { body: { app: { ...APP, origins, changes: [passed, reads === 1 ? soon : { ...soon, status: 'active' }] }, now: real() } };
+    };
+    vi.spyOn(Date, 'now').mockImplementation(() => real() - 3 * H);
+    at('/orgs/org_a/apps/app_1');
+    expect(await screen.findByText('Add origin https://new.partner.example')).toBeTruthy();
+    expect(screen.queryByText('Add origin http://localhost:5173')).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Cancel' })).toHaveLength(1);
+    await waitFor(() => expect(screen.queryByText('Changes waiting')).toBeNull(), { timeout: 4000 });
+    expect(reads).toBe(2);
+    expect(screen.getByText('Allow your app’s origins').closest('li')!.textContent).toContain('3 origins are active.');
+  });
+
   it('the re-read at the next effective time: one timer, one reload, no polling; nothing set when nothing waits on a clock', () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     try {
@@ -378,6 +420,19 @@ describe('empty states and the app overview', () => {
       vi.advanceTimersByTime(7 * 24 * H);
       expect(reload).toHaveBeenCalledTimes(1);
       h.unmount();
+      // A reader's clock 3 h fast (offset -3 h): the timer still waits for the server's time, not the reader's.
+      const fast = vi.fn();
+      const serverT = Date.now() - 3 * H;
+      const h2 = renderHook(() => useReloadAtNextEffect(app([change(serverT + 60_000)]), fast, -3 * H));
+      vi.advanceTimersByTime(60_999);
+      expect(fast).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(fast).toHaveBeenCalledTimes(1);
+      h2.unmount();
+      expect(clockOffset(1_000, 400)).toBe(600);
+      expect(clockOffset(undefined, 400)).toBe(0);
+      expect(clockOffset('1000', 400)).toBe(0);
+      expect(clockOffset(Number.NaN, 400)).toBe(0);
     } finally {
       vi.useRealTimers();
     }

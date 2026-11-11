@@ -51,7 +51,7 @@ export function Overview() {
   const ctl = useApp();
   const { app: a } = ctl;
   const base = `/orgs/${ctl.org}/apps/${a.id}`;
-  const now = Date.now();
+  const now = ctl.serverNow();
   const active = a.origins.filter((o) => o.activeFrom !== null && o.activeFrom <= now);
   const waiting = a.origins.filter((o) => o.activeFrom === null || o.activeFrom > now);
   const key = a.keys.filter((k) => k.revokedAt === undefined).sort((x, y) => y.createdAt - x.createdAt)[0];

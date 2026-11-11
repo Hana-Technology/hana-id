@@ -131,6 +131,36 @@ describe('staff proposals and the blocking notice', () => {
     expect(await read()).toEqual({ status: 'active', waiting: 0, staffStatus: 'active' });
   });
 
+  it('policy_set: the read’s status follows the policy in force; of two in force before the hourly job, only the latest reads active', async () => {
+    const app = await orgApp({ live: true });
+    const detail = async () => (await ok(consoleRpc().getApp({ ...member(), orgId: app.org, appId: app.id }))).app;
+    const statusOf = (a: Awaited<ReturnType<typeof detail>>, id: string) => a.changes.find((x) => x.id === id)?.status;
+    const inForce = async () => (await effectiveSettings((await getSettingsRow(env.DB, app.id))!, app.id, Date.now())).autoApprovePolicy?.label ?? null;
+    const p1 = (await ok(adminRpc().proposeChange({ ...hana(), orgId: app.org, appId: app.id, kind: 'policy_set', policy: autoApprovePolicy('one'), expectedVersion: 0 }))).change;
+    await ok(ack(p1.id).then((x) => x.r));
+    clock.advance(DELAY - 1);
+    let a = await detail();
+    expect([statusOf(a, p1.id), a.settings.policy, await inForce()]).toEqual(['pending', null, null]);
+    clock.advance(1);
+    a = await detail();
+    expect([statusOf(a, p1.id), a.settings.policy?.label, await inForce()]).toEqual(['active', 'one', 'one']);
+    expect(await change(p1.id)).toMatchObject({ status: 'pending' });
+    // A second policy, in force too before the job runs: the read shows only it active, the first ended, as the job will.
+    const p2 = (await ok(adminRpc().proposeChange({ ...hana(), orgId: app.org, appId: app.id, kind: 'policy_set', policy: autoApprovePolicy('two'), expectedVersion: 1 }))).change;
+    await ok(ack(p2.id).then((x) => x.r));
+    a = await detail();
+    expect([statusOf(a, p1.id), statusOf(a, p2.id), a.settings.policy?.label, await inForce()]).toEqual(['active', 'pending', 'one', 'one']);
+    clock.advance(DELAY);
+    a = await detail();
+    expect([statusOf(a, p1.id), statusOf(a, p2.id), a.settings.policy?.label, await inForce()]).toEqual(['ended', 'active', 'two', 'two']);
+    expect(a.settings.policy?.policyId).toBe(p2.policyId);
+    expect(a.pendingChanges).toBe(0);
+    await guardedChangesMaintenance(env);
+    expect([(await change(p1.id))!.status, (await change(p2.id))!.status]).toEqual(['ended', 'active']);
+    a = await detail();
+    expect([statusOf(a, p1.id), statusOf(a, p2.id)]).toEqual([undefined, 'active']);
+  });
+
   it('a retry after a failed send acks with the same link token; the stored hash is the token’s', async () => {
     const app = await orgApp();
     const c = await staffOrigin(app);

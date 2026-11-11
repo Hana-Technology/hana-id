@@ -262,6 +262,10 @@ export function changedFiles(base, cwd = ROOT) {
 const GITLEAKS = ['--no-banner', '--redact', '--config', '.gitleaks.toml', '--exit-code', '1'];
 export const BROWSERS = ['chromium', 'firefox', 'webkit'];
 
+/** The deployable contracts the contract step tests and builds, in order: hana-signer, then the hackathon demo
+ * guestbook (D744). The test-only mock-mpc is built by the sandbox tests. */
+export const CONTRACT_CRATES = ['contracts/hana-signer', 'contracts/hana-guestbook'];
+
 /** Sandbox tests run this many at a time, each with its own sandbox node (D423; CI's e2e job runs the same). */
 export const SANDBOX_TEST_THREADS = 8;
 
@@ -297,10 +301,10 @@ export function plan({ mode, files, pkgs, reads, dirty = false, cpus = available
     step('secrets', `gitleaks (history${dirty ? ', uncommitted' : ''}, rule self-test)`, 1, secrets),
     step('typecheck', `typecheck (${count(sel)})`, 1, [recursive('typecheck', sel, Math.max(4, Math.floor(cpus / 2)))], empty(sel)),
     // Beside the typecheck, not the unit tests: from cold its cargo builds use every core for minutes (D140).
-    step('contract', 'contract (cargo test + wasm)', 1, [
-      cmd('cargo', ['test', '--locked'], 'contracts/hana-signer'),
-      cmd('cargo', ['near', 'build', 'non-reproducible-wasm'], 'contracts/hana-signer'),
-    ], notQuick ?? (jobs.rust ? null : 'no Rust change')),
+    step('contract', 'contract (cargo test + wasm)', 1, CONTRACT_CRATES.flatMap((dir) => [
+      cmd('cargo', ['test', '--locked'], dir),
+      cmd('cargo', ['near', 'build', 'non-reproducible-wasm'], dir),
+    ]), notQuick ?? (jobs.rust ? null : 'no Rust change')),
     // Needs the network and cargo-audit, and an advisory can fail it with no change here: before a deploy, not each merge.
     step('audit', 'dependency advisories', 1, [cmd('node', ['scripts/dep-audit.mjs'])], mode === 'full' ? null : 'only in --full'),
     // CI=true as in CI: vitest then fails on a stray `.only`. pnpm's default 4 at a time, for the PGlite suites; a

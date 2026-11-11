@@ -130,5 +130,6 @@
     "adminHyperdrive": "hana-id-usage-admin-sandbox-dev"
   },
   "email": { "from": "Hana ID <team@hanawallet.io>", "securityAlias": "hello@ting.rocks" },
-  "ownerGrantDelayMs": 60000
+  "ownerGrantDelayMs": 60000,
+  "near": { "demoGuestbook": "hana-id-guestbook-dev1.testnet" }
 }

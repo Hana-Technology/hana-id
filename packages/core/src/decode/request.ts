@@ -4,7 +4,7 @@
 import { isNearImplicitAccountId, nearImplicitPublicKey } from '../addresses.ts';
 import { type ApprovalSubject, type NearNetwork, validateApprovalSubject } from '../approval.ts';
 import { bytesEqual } from '../bytes.ts';
-import { type NearPublicKey, decodeNearDelegateAction, decodeNearTransaction, decodeNep413Message, nearTransactionHashString } from '../near/codec.ts';
+import { type NearPublicKey, decodeNearDelegateAction, decodeNearTransaction, decodeNep413Message, nearRelaysDelegate, nearTransactionHashString } from '../near/codec.ts';
 import { type DecodedNearDelegate, type DecodedNearMessage, type DecodedNearTx, nearMessageView } from './near.ts';
 import { type NormalizedTypedData, normalizeTypedData, typedDataChainId } from '../typed-data.ts';
 import { type TypedDataView, typedDataView } from './eip712.ts';
@@ -107,6 +107,8 @@ export function decodeApprovalRequest(s: ApprovalSubject): DecodedApproval {
     case 'near_tx': {
       const tx = decodeNearTransaction(s.bytes);
       checkNearSigner(s.address, tx.signerId, tx.publicKey, 'transaction');
+      // Its signer would prepay every deposit of the delegate it relays: never shown, never signed.
+      if (nearRelaysDelegate(tx)) fail('unsupported', 'Hana doesn’t sign a NEAR transaction that relays a delegate action: its signer pays the delegate’s deposits');
       return { kind: s.kind, network: ctx.nearNetwork as NearNetwork, tx, hash: nearTransactionHashString(s.bytes) };
     }
     case 'near_delegate': {

@@ -6,6 +6,7 @@ import { functionSelector } from '../src/decode/abi.ts';
 import { MAX_PER_DAY_COUNT, MIN_CONSENT_MS, POLICY_LABEL_MAX, policyId, validateAutoApprovePolicy } from '../src/policy/index.ts';
 import { supportIdFromSub } from '../src/support-id.ts';
 import { NEP413_TAG } from '../src/near/codec.ts';
+import { NEAR_DELEGATE_MAX_BLOCKS } from '../src/near/delegate.ts';
 import { readText } from './helpers.ts';
 
 const guide = readText('../../../docs/integration.md');
@@ -158,7 +159,7 @@ describe('docs/integration.md', () => {
 describe('docs/integration.md: NEAR (section 8)', () => {
   const s8 = guide.slice(guide.indexOf('### NEAR'), guide.indexOf('### Raw signing'));
   const client = readText('../../web/src/client/near.ts');
-  const vault = readText('../../web/src/vault/vault.ts');
+  const vault = readText('../../web/src/vault/vault.ts') + readText('../../web/src/vault/signing.ts');
 
   it('names the SDK methods and the refusal reasons the code has', () => {
     for (const m of ['signTransaction', 'signDelegateAction', 'signMessage', 'relay']) {
@@ -170,7 +171,7 @@ describe('docs/integration.md: NEAR (section 8)', () => {
     expect(client).toContain('\n  async activate(): Promise<NearActivateResult> {');
     expect(client).toContain('/v1/near/${path}');
     expect(s8).toContain('POST /v1/near/activate');
-    for (const reason of ['near_block_unknown', 'near_network_mismatch', 'near_key_unknown', 'near_delegate_nonce_used', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'near_rpc_unavailable']) {
+    for (const reason of ['near_block_unknown', 'near_network_mismatch', 'near_relayed_delegate', 'near_key_unknown', 'near_delegate_nonce_used', 'near_delegate_nonce_stale', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'near_rpc_unavailable']) {
       expect(s8).toContain(reason);
       expect(vault).toContain(`'${reason}'`);
     }
@@ -179,7 +180,10 @@ describe('docs/integration.md: NEAR (section 8)', () => {
   it("states NEP-413's tag and the delegate expiry bound the vault enforces", () => {
     expect(NEP413_TAG).toBe(2 ** 31 + 413);
     expect(s8).toContain('`u32le(2^31 + 413)`');
-    expect(vault).toContain('export const NEAR_DELEGATE_MAX_BLOCKS = 10_000;');
+    expect(NEAR_DELEGATE_MAX_BLOCKS).toBe(10_000);
+    expect(s8).toContain("import { nearDelegateNonce } from '@hana-id/core/near';");
+    expect(s8).toContain('nearDelegateNonce({ keyNonce: key.nonce, blockHeight: key.block_height })');
+    expect(vault).toContain('near_delegate_nonce_stale');
     expect(s8).toContain('by at most 10,000 blocks');
   });
 });

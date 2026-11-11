@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NEP366_SIGNING_PREFIX, base64Encode, concatBytes, nearImplicitPublicKey, nearPublicKeyString, u32le } from '@hana-id/core';
 import { HanaError } from '../../src/client/errors.ts';
-import { stripDelegatePrefix } from '../../src/client/near.ts';
+import { NEAR_RELAY_TIMEOUT_MS, stripDelegatePrefix } from '../../src/client/near.ts';
 import { EVM, LOGGED_IN, PK, STELLAR, type Setup, flush, setup } from './harness.ts';
 
 const NEAR = 'ab'.repeat(32);
@@ -142,6 +142,29 @@ describe('hana.near.relay', () => {
     const e = await rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: SDA }));
     expect(e.code).toBe(code);
     expect(e.data).toMatchObject({ status, reason: body.code });
+  });
+
+  it('the deadline covers reading the body: a relayer that sends headers and then stalls is cut off', async () => {
+    let signal: AbortSignal | undefined;
+    s = setup({
+      apiUrl: API,
+      fetch: async (_url: string, init: RequestInit) => {
+        signal = init.signal ?? undefined;
+        // Headers arrive at once; the body never does, until the call is aborted.
+        return { ok: true, status: 200, json: () => new Promise((_, reject) => signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))) } as unknown as Response;
+      },
+    });
+    vi.useFakeTimers();
+    try {
+      const p = rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: SDA }));
+      await vi.advanceTimersByTimeAsync(NEAR_RELAY_TIMEOUT_MS + 1);
+      const e = await p;
+      expect(e.code).toBe('api_unavailable');
+      expect(e.message).toMatch(/in time/u);
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a network failure, an unreadable answer, mainnet and a build without the API URL', async () => {

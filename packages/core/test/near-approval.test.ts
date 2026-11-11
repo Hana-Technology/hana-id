@@ -234,7 +234,7 @@ describe('NEAR display helpers', () => {
     expect(tx.tx.actions.map(nearAccountControl)).toEqual([[], [], [], [], ['add_full_access_key'], ['add_function_call_key'], ['delete_key'], ['delete_account'], ['deploy_contract'], [], ['use_global_contract']]);
     expect(nearChangesControl(tx.tx.actions)).toBe(true);
     expect(nearChangesControl(tx.tx.actions.slice(0, 4))).toBe(false);
-    expect(nearDeposits(tx.tx.actions)).toEqual({ total: 5n, staked: 7n, deletesAccount: true });
+    expect(nearDeposits(tx.tx.actions)).toEqual({ total: 5n, staked: 7n, burned: 10n ** 20n, deletesAccount: true });
   });
 });
 

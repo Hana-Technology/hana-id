@@ -78,7 +78,7 @@ describe('plainMessage', () => {
   });
 
   it('explains every NEAR refusal of the vault, in any action, in plain words', () => {
-    const reasons = ['near_key_unknown', 'near_block_unknown', 'near_network_mismatch', 'near_delegate_nonce_used', 'near_delegate_nonce_too_large', 'near_delegate_expiry'];
+    const reasons = ['near_key_unknown', 'near_block_unknown', 'near_network_mismatch', 'near_delegate_nonce_used', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'near_delegate_nonce_stale', 'near_relayed_delegate'];
     const seen = new Set<string>();
     for (const reason of reasons) {
       for (const action of ['near', 'sign'] as const) {
@@ -94,6 +94,7 @@ describe('plainMessage', () => {
     expect(plainMessage({ code: 'near_page_rpc_failed', message: 'x' }, 'near')).toMatch(/couldn’t read NEAR testnet/u);
     expect(plainMessage({ code: 'near_account_pending', message: 'x' }, 'near')).toMatch(/still creating your NEAR account/u);
     expect(plainMessage({ code: 'near_send_failed', message: 'x' }, 'sign')).toMatch(/gasless write/u);
+    expect(plainMessage({ code: 'near_nonce_wait', message: 'x' }, 'near')).toMatch(/needs a new block/u);
   });
 
   it("maps the relayer's refusals (relay, activate) by data.reason, with a default for codes it doesn't know", () => {

@@ -179,11 +179,12 @@ export class HanaNear {
   async #post(path: 'relay' | 'activate', payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const apiUrl = this.#host.apiUrl;
     if (!apiUrl) throw hanaError('api_unavailable', 'This build of the Hana SDK has no API URL for its environment');
+    // One deadline for the whole exchange: the abort stays armed until the body has been read, so a server that sends
+    // its headers and then stalls can't hold the call open.
     const ctl = new AbortController();
     const timer = globalThis.setTimeout(() => ctl.abort(), NEAR_RELAY_TIMEOUT_MS);
-    // The timer stays armed until the body is read: a server that sends headers and then stalls is cut off too.
     let res: Response;
-    let body: unknown;
+    let body: unknown = null;
     try {
       try {
         res = await this.#host.fetch(`${apiUrl}/v1/near/${path}`, {
@@ -201,6 +202,7 @@ export class HanaNear {
       try {
         body = await res.json();
       } catch {
+        if (ctl.signal.aborted) throw hanaError('api_unavailable', 'Hana’s relayer did not answer in time');
         body = null;
       }
     } finally {

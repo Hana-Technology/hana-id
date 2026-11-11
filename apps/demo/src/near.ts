@@ -5,7 +5,7 @@
 // borsh implementation and no NEAR SDK. Everything read from NEAR is attacker-controlled: anyone can write any text to
 // the guestbook, so the list is parsed strictly, bounded, and shown as text with invisible and direction-changing
 // characters neutralised.
-import { type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, isNearAccountId, nearImplicitPublicKey, toBytes, utf8 } from '@hana-id/core';
+import { type NearAction, base64Encode, encodeNearDelegateAction, nearDelegateNonce, encodeNearTransaction, isNearAccountId, nearImplicitPublicKey, toBytes, utf8 } from '@hana-id/core';
 import { base58 } from '@scure/base';
 
 // ---- the guestbook's text rule (contracts/hana-guestbook) ----
@@ -123,22 +123,18 @@ export const DELEGATE_TTL_BLOCKS = 600n;
  */
 export const TX_FEE_RESERVE = 10n ** 22n;
 
-/** NEAR's window for a delegate action's nonce under a test app (the vault's rule): this many blocks below the height. */
-export const DELEGATE_NONCE_WINDOW_BLOCKS = 10_000n;
-const NONCES_PER_BLOCK = 1_000_000n;
-
 /**
- * The nonce of the next delegate action: above the key's nonce and above any this page signed already, at least
- * (height − 10,000) × 10^6 + 1 and below height × 10^6 (the vault refuses a test app's delegate action outside that
- * window). The one place the card picks a nonce, so the core's helper can replace it.
+ * The nonce of the next delegate action: core's `nearDelegateNonce` (the key's nonce + 1, or (height − 100) × 10^6 if
+ * higher, so it passes the vault's window above (height − 10,000) × 10^6 and below height × 10^6), counted from the
+ * highest of the key's nonce and any nonce this page signed since its last read.
  */
 export function delegateNonce(p: { keyNonce: bigint; blockHeight: bigint; lastSigned?: bigint | undefined }): bigint {
-  const floor = (p.blockHeight - DELEGATE_NONCE_WINDOW_BLOCKS) * NONCES_PER_BLOCK + 1n;
-  let nonce = p.keyNonce + 1n;
-  if (p.lastSigned !== undefined && p.lastSigned + 1n > nonce) nonce = p.lastSigned + 1n;
-  if (floor > nonce) nonce = floor;
-  if (nonce >= p.blockHeight * NONCES_PER_BLOCK) throw nearPageError('near_page_rpc_failed', 'The key’s nonce is ahead of the block height NEAR reported');
-  return nonce;
+  const keyNonce = p.lastSigned !== undefined && p.lastSigned > p.keyNonce ? p.lastSigned : p.keyNonce;
+  try {
+    return nearDelegateNonce({ keyNonce, blockHeight: p.blockHeight });
+  } catch {
+    throw nearPageError('near_nonce_wait', 'The key’s nonce is at the bound for the block height NEAR reported');
+  }
 }
 
 /** The nonce of the next ordinary transaction: above the key's (0 for a key not on chain yet) and any this page signed. */
@@ -173,7 +169,7 @@ export function addMessageTransaction(p: { accountId: string; guestbook: string;
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
 /** A failure of the page's own NEAR read, with a code errors.ts maps to plain words. */
-export const nearPageError = (code: 'near_page_rpc_failed' | 'near_account_pending' | 'near_send_failed', message: string): Error => Object.assign(new Error(message), { code });
+export const nearPageError = (code: 'near_page_rpc_failed' | 'near_account_pending' | 'near_send_failed' | 'near_nonce_wait', message: string): Error => Object.assign(new Error(message), { code });
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const causeName = (b: Record<string, unknown>): unknown => (isObj(b.error) && isObj(b.error.cause) ? b.error.cause.name : undefined);

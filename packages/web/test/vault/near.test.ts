@@ -18,12 +18,14 @@ import {
   nearTransactionHash,
   nearTransactionHashString,
   nep413Hash,
+  nearDelegateNonce,
   encodeNep413Message,
   sha256,
   utf8,
 } from '@hana-id/core';
 import { openRecordStore, recordKey } from '../../src/vault/record.ts';
 import { NEAR_DELEGATE_MAX_BLOCKS } from '../../src/vault/vault.ts';
+import { NEAR_RELAYED_DELEGATE_RULE } from '../../src/vault/signing.ts';
 import { APP_ID, Browser, ENV, type Google, RPC_FALLBACK, SCOPE, type Tab, answer, google, login, makeConfig, openApproval, readyTab, waitLauncher } from './harness.ts';
 
 let g: Google;
@@ -39,6 +41,7 @@ afterEach(() => {
 });
 
 const SDK = '0.4.0';
+const ENV2 = Object.freeze({ ...ENV, rpcFallback: RPC_FALLBACK });
 const LIVE = 'pk_live_1111111111111111111111';
 const BLOCK = sha256(utf8('a testnet block'));
 const CALL: NearAction = { type: 'functionCall', methodName: 'add_message', args: utf8('{"text":"gm"}'), gas: 30_000_000_000_000n, deposit: 0n };
@@ -69,7 +72,7 @@ function delegateBytes(s: NearSession, over: { nonce?: bigint; maxBlockHeight?: 
     senderId: s.addresses.near,
     receiverId: 'guestbook.testnet',
     actions: [CALL],
-    nonce: over.nonce ?? 276_000_000_000_001n,
+    nonce: over.nonce ?? nearDelegateNonce({ keyNonce: 276_000_000_000_000n, blockHeight: s.t.browser.backend.nearHeight }),
     maxBlockHeight: over.maxBlockHeight ?? BigInt(s.t.browser.backend.nearHeight + 600),
     publicKey: key(s.addresses.near),
   });
@@ -177,6 +180,21 @@ describe('near_signTransaction', () => {
     expect(reply.error).toBeUndefined();
   });
 
+  it('refuses a transaction that relays a delegate action (its signer pays the delegate’s deposits), before any popup', async () => {
+    const s = await session({ config: makeConfig({ publishableKey: LIVE }) });
+    const inner = { senderId: 'bob.testnet', receiverId: 'attacker.testnet', actions: [{ type: 'transfer', deposit: 10n ** 27n }] as NearAction[], nonce: 1n, maxBlockHeight: 5n, publicKey: { type: 'ed25519' as const, bytes: new Uint8Array(32).fill(4) } };
+    const relaying = txBytes(s, { actions: [{ type: 'delegate', signedDelegate: { delegateAction: inner, signature: { type: 'ed25519', bytes: new Uint8Array(64) } } }] });
+    const reply = await s.t.request('near_signTransaction', { network: 'testnet', transaction: base64Encode(relaying) });
+    expect(reply.error).toEqual({ code: 4100, message: NEAR_RELAYED_DELEGATE_RULE, data: { reason: 'near_relayed_delegate' } });
+    expect(s.t.launcher.label).toBeNull();
+  });
+
+  it('a test app: a block only one provider vouches for is refused', async () => {
+    const s = await session({ env: ENV2 });
+    s.t.browser.backend.rpcLies.set(RPC_FALLBACK, (b) => (b.method === 'block' ? { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_BLOCK' } } } : undefined));
+    expect((await s.t.request('near_signTransaction', { network: 'testnet', transaction: base64Encode(txBytes(s)) })).error).toMatchObject({ code: 4100, data: { reason: 'near_block_unknown' } });
+  });
+
   it('a test app: NEAR mainnet is refused at once (mainnet_not_allowed), whatever the block', async () => {
     const s = await session();
     expect((await s.t.request('near_signTransaction', { network: 'mainnet', transaction: base64Encode(txBytes(s, { block: sha256(utf8('m')) })) })).error).toMatchObject({ code: 4100, data: { reason: 'mainnet_not_allowed', chain: 'near', network: 'mainnet' } });
@@ -199,7 +217,9 @@ describe('near_signDelegateAction', () => {
 
   it.each([
     ['the key is not on testnet', null, {}, 'near_key_unknown'],
-    ['a used nonce', 277_000_000_000_005, { nonce: 277_000_000_000_005n }, 'near_delegate_nonce_used'],
+    ['a used nonce', 276_999_950_000_000, { nonce: 276_999_950_000_000n }, 'near_delegate_nonce_used'],
+    ['a nonce from an old height (the key’s nonce + 1, as near-api-js picks)', 276_000_000_000_000, { nonce: 276_000_000_000_001n }, 'near_delegate_nonce_stale'],
+    ['a nonce just at the floor', 0, { nonce: (277_000_000n - BigInt(NEAR_DELEGATE_MAX_BLOCKS)) * 1_000_000n }, 'near_delegate_nonce_stale'],
     ['a nonce past height × 10^6', 0, { nonce: 277_000_000_000_000_000n }, 'near_delegate_nonce_too_large'],
     ['an expiry already passed', 0, { maxBlockHeight: 277_000_000n }, 'near_delegate_expiry'],
     ['an expiry too far ahead', 0, { maxBlockHeight: BigInt(277_000_000 + NEAR_DELEGATE_MAX_BLOCKS + 1) }, 'near_delegate_expiry'],
@@ -216,6 +236,20 @@ describe('near_signDelegateAction', () => {
     withKey(s);
     expect((await s.t.request('near_signDelegateAction', { network: 'mainnet', delegateAction: base64Encode(delegateBytes(s)) })).error).toMatchObject({ code: 4100, data: { reason: 'mainnet_not_allowed' } });
     s.t.browser.backend.rpcDown.add(ENV.rpc);
+    s.t.browser.backend.rpcDown.add(RPC_FALLBACK);
+    expect((await s.t.request('near_signDelegateAction', { network: 'testnet', delegateAction: base64Encode(delegateBytes(s)) })).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'near_rpc_unavailable' } });
+  });
+
+  it('a test app: every provider must agree (one lying provider can’t vouch for a key or a height)', async () => {
+    const s = await session({ env: ENV2 });
+    withKey(s);
+    // The fallback reports a height far ahead: the nonce floor there refuses the action.
+    s.t.browser.backend.rpcLies.set(RPC_FALLBACK, (b) => (b.params.request_type === 'view_access_key' ? { result: { nonce: 1, permission: 'FullAccess', block_height: 300_000_000, block_hash: '11111111111111111111111111111111' } } : undefined));
+    expect((await s.t.request('near_signDelegateAction', { network: 'testnet', delegateAction: base64Encode(delegateBytes(s)) })).error).toMatchObject({ code: 4100, data: { reason: 'near_delegate_nonce_stale' } });
+    // A fallback that doesn't know the key refuses too; one that doesn't answer fails closed.
+    s.t.browser.backend.rpcLies.set(RPC_FALLBACK, (b) => (b.params.request_type === 'view_access_key' ? { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCESS_KEY' } } } : undefined));
+    expect((await s.t.request('near_signDelegateAction', { network: 'testnet', delegateAction: base64Encode(delegateBytes(s)) })).error).toMatchObject({ code: 4100, data: { reason: 'near_key_unknown' } });
+    s.t.browser.backend.rpcLies.delete(RPC_FALLBACK);
     s.t.browser.backend.rpcDown.add(RPC_FALLBACK);
     expect((await s.t.request('near_signDelegateAction', { network: 'testnet', delegateAction: base64Encode(delegateBytes(s)) })).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'near_rpc_unavailable' } });
   });

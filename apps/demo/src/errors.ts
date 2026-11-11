@@ -59,6 +59,8 @@ const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
   near_delegate_nonce_used: 'That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one.',
   near_delegate_nonce_too_large: 'Hana refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
   near_delegate_expiry: 'The NEAR request expired before it was approved, or expires too far ahead. Try again.',
+  near_delegate_nonce_stale: 'That NEAR request was prepared too long ago (its nonce is behind testnet’s current block). Try again: the demo reads a fresh one.',
+  near_relayed_delegate: 'Refused: Hana doesn’t sign a transaction that relays someone else’s delegate action.',
 };
 
 /**
@@ -113,6 +115,7 @@ const RELAYER_DOWN = 'Hana’s relayer is unavailable right now. Try again in a 
 function nearMessage(e: unknown, code: string | number | null, reason: string | null, action: DemoAction): string | null {
   if (code === 'near_page_rpc_failed') return 'This page couldn’t read NEAR testnet (its RPC didn’t answer). Check your connection and try again.';
   if (code === 'near_account_pending') return 'Hana’s relayer is still creating your NEAR account. Wait a few seconds and try again.';
+  if (code === 'near_nonce_wait') return 'NEAR testnet needs a new block before this request. Wait a few seconds and try again.';
   if (code === 'near_send_failed') return 'NEAR testnet refused or failed the transaction. Use the gasless write instead.';
   if (code === 4100 && reason !== null && Object.hasOwn(NEAR_VAULT_REASONS, reason)) return NEAR_VAULT_REASONS[reason]!;
   if (code === 'api_unavailable' && reason === 'near_rpc_unavailable') return 'Hana couldn’t reach NEAR testnet to check this request. Try again in a minute.';

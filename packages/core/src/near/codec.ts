@@ -483,3 +483,10 @@ export const nep413Hash = (messageBytes: Uint8Array): Bytes => sha256(messageByt
 
 /** `ed25519:<base58>` of a decoded public key. */
 export const nearKeyString = (pk: NearPublicKey): string => nearPublicKeyString(pk.bytes, pk.type);
+
+/**
+ * Whether a transaction relays a NEP-366 delegate action (a `Delegate` action). Its signer prepays every deposit
+ * inside the delegate (nearcore's `total_deposit` counts them), so it would pay whatever the delegate's sender chose:
+ * Hana never signs one for a user (refusal reason `near_relayed_delegate`).
+ */
+export const nearRelaysDelegate = (tx: Pick<NearTransaction, 'actions'>): boolean => tx.actions.some((a) => a.type === 'delegate');

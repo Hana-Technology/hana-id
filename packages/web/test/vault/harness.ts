@@ -278,6 +278,8 @@ export class FakeBackend {
    * the function gives the honest answer.
    */
   readonly viewLies = new Map<string, (method: string, args: Record<string, unknown>) => unknown>();
+  /** Per endpoint: a JSON-RPC body to answer instead (a lying or different provider), or undefined to answer normally. */
+  readonly rpcLies = new Map<string, (body: { method: string; params: Record<string, unknown> }) => Record<string, unknown> | undefined>();
   /** What GET /v1/app answers. */
   app: Record<string, unknown> = { scopeId: SCOPE, signer: ENV.signer, google: { clientId: CLIENT_ID, mode: 'shared' }, name: 'Partner' };
   /** The auto-approve policy in force that GET /v1/app answers: each new tab's page sets it (the page is current). */
@@ -795,6 +797,8 @@ export class FakeBackend {
 
   private rpc(body: { method: string; params: Record<string, unknown> }, endpoint: string): Response {
     this.rpcCalls.push({ ...body, endpoint });
+    const lied = this.rpcLies.get(endpoint)?.(body);
+    if (lied !== undefined) return json(200, { jsonrpc: '2.0', id: 'x', ...lied });
     if (body.method === 'query' && body.params.request_type === 'view_access_key') {
       const nonce = this.nearKeys.get(`${body.params.account_id as string}|${body.params.public_key as string}`);
       if (nonce === undefined) return json(200, { jsonrpc: '2.0', id: 'x', error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCESS_KEY', info: {} } } });

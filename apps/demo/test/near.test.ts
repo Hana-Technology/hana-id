@@ -1,7 +1,7 @@
 // The NEAR card's logic (src/near.ts): the guestbook's text rule as the contract counts it, the hostile list made safe,
 // the borsh bytes (decoded back with the vault's own codec), and the reads from the env's NEAR RPC with its fallback.
 import { describe, expect, it, vi } from 'vitest';
-import { base64Encode, decodeNearDelegateAction, decodeNearTransaction, fromUtf8, nearImplicitPublicKey, utf8 } from '@hana-id/core';
+import { base64Encode, decodeNearDelegateAction, decodeNearTransaction, fromUtf8, nearDelegateNonce, nearImplicitPublicKey, utf8 } from '@hana-id/core';
 import { base58 } from '@scure/base';
 import {
   DELEGATE_TTL_BLOCKS,
@@ -127,16 +127,17 @@ describe('nonces', () => {
   const H = 200_000_000n;
   const M = 1_000_000n;
 
-  it("a delegate action's: above the key's and the last signed, within (height − 10,000) × 10^6 .. height × 10^6", () => {
-    // A key created recently: its nonce + 1.
+  it("a delegate action's: core's nearDelegateNonce, counted from the key's nonce or the last one this page signed", () => {
+    // A key used recently: its nonce + 1.
     expect(delegateNonce({ keyNonce: (H - 5n) * M, blockHeight: H })).toBe((H - 5n) * M + 1n);
-    // An old key (or one far below the window): the window's floor.
-    expect(delegateNonce({ keyNonce: 1000n, blockHeight: H })).toBe((H - 10_000n) * M + 1n);
+    // An old key: (height − 100) × 10^6, inside the vault's window above (height − 10,000) × 10^6.
+    expect(delegateNonce({ keyNonce: 1000n, blockHeight: H })).toBe((H - 100n) * M);
+    expect(delegateNonce({ keyNonce: 1000n, blockHeight: H })).toBe(nearDelegateNonce({ keyNonce: 1000n, blockHeight: H }));
     // Above what this page signed before the next read.
     expect(delegateNonce({ keyNonce: (H - 5n) * M, blockHeight: H, lastSigned: (H - 5n) * M + 3n })).toBe((H - 5n) * M + 4n);
-    expect(delegateNonce({ keyNonce: 1000n, blockHeight: H, lastSigned: (H - 10_000n) * M + 1n })).toBe((H - 10_000n) * M + 2n);
-    // Never at or past height × 10^6.
-    expect(() => delegateNonce({ keyNonce: H * M - 1n, blockHeight: H })).toThrow();
+    expect(delegateNonce({ keyNonce: 1000n, blockHeight: H, lastSigned: (H - 100n) * M })).toBe((H - 100n) * M + 1n);
+    // At nearcore's bound (height × 10^6): wait for a block.
+    expect(() => delegateNonce({ keyNonce: H * M - 1n, blockHeight: H })).toThrow(expect.objectContaining({ code: 'near_nonce_wait' }));
   });
 
   it("a transaction's: the key's nonce + 1 (1 for a key not on chain), or above the last signed", () => {

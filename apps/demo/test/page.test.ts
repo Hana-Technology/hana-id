@@ -602,7 +602,7 @@ describe('the NEAR card', () => {
     expect(($('near-write-button') as HTMLButtonElement).disabled).toBe(true);
     expect(fake.near.signDelegateAction.mock.calls[0]![0].network).toBe('testnet');
     const d = signedDelegate();
-    expect(d).toMatchObject({ senderId: NEAR_ACCOUNT, receiverId: 'hana-id-guestbook-dev1.testnet', nonce: 199_990_000_000_001n, maxBlockHeight: BigInt(rpc.height) + 600n });
+    expect(d).toMatchObject({ senderId: NEAR_ACCOUNT, receiverId: 'hana-id-guestbook-dev1.testnet', nonce: 199_999_900_000_000n, maxBlockHeight: BigInt(rpc.height) + 600n });
     expect(d.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'gm from Hana' })), gas: 30_000_000_000_000n, deposit: 0n }]);
     sign.resolve({ signature: 'c2ln', signedDelegateAction: 'U0RB' });
     await settle();
@@ -626,7 +626,7 @@ describe('the NEAR card', () => {
     // A second write before the next read still uses a higher nonce.
     type('again');
     click('near-write-button');
-    expect(signedDelegate().nonce).toBe(199_990_000_000_002n);
+    expect(signedDelegate().nonce).toBe(199_999_900_000_001n);
     await settle();
   });
 
@@ -672,8 +672,8 @@ describe('the NEAR card', () => {
     activation.resolve({ created: true });
     await settle();
     expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
-    // The key's nonce is far below testnet's window: the nonce is the window's floor.
-    expect(signedDelegate().nonce).toBe(199_990_000_000_001n);
+    // The key's nonce is far below testnet's window: the nonce is the floor, (height − 100) × 10^6 (core’s nearDelegateNonce).
+    expect(signedDelegate().nonce).toBe(199_999_900_000_000n);
     expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. You paid no gas.');
     // Cached for the session: the next write doesn't activate again.
     type('second');

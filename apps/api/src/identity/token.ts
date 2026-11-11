@@ -7,6 +7,9 @@
 // `identity_email` isn't 'off' (`emailStatus` says why a token has none). A `sealedEmail` in the body is covered by the
 // session proof and opened only for that.
 //
+// `given_name` and `family_name` (D714; identity/name.ts mintName): the name the user set in Hana Home, only for an app
+// they shared it with there.
+//
 // SECURITY: the response carries a bearer credential for the partner's backend. Nothing here logs the token, `sub`,
 // `sid`, an address or the body; the request log has the app id, outcome, code, kid and timings.
 import {
@@ -57,6 +60,7 @@ import {
 } from './limits.ts';
 import { type IdentityConfig, IdentitySignerError, identityConfig } from './signer.ts';
 import { type MintEmail, mintEmail } from './email.ts';
+import { type ProfileName, mintName } from './name.ts';
 import { identitySigner } from './signers.ts';
 
 export const IDENTITY_TOKEN_ENDPOINT = '/v1/identity/token';
@@ -368,10 +372,14 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
   lap(ctx, 'limits');
 
   // The email (never an error: `emailStatus` says why a token has none).
-  const email = await mintEmail(env, ctx, { app, userSub: identitySub(config.subKey, app.scope_id, root), sessionPk: req.sessionPk, sealedEmail: req.sealedEmail, now });
+  const userSub = identitySub(config.subKey, app.scope_id, root);
+  const email = await mintEmail(env, ctx, { app, userSub, sessionPk: req.sessionPk, sealedEmail: req.sealedEmail, now });
   lap(ctx, 'email');
+  // The name the user shared with this app from Hana Home (D714; never an error).
+  const name = await mintName(env, ctx, { appId: app.id, userSub });
+  lap(ctx, 'name');
 
-  return sign(env, ctx, config, app, { ...lifetime, root, sessionPk: req.sessionPk, wallets: wallets as Record<IdentityChain, string>, email }, exec);
+  return sign(env, ctx, config, app, { ...lifetime, root, sessionPk: req.sessionPk, wallets: wallets as Record<IdentityChain, string>, email, name }, exec);
 }
 
 async function sign(
@@ -379,7 +387,7 @@ async function sign(
   ctx: Ctx,
   config: IdentityConfig,
   app: App,
-  t: { iat: number; exp: number; root: { provider: string; sub: string }; sessionPk: Uint8Array; wallets: Record<IdentityChain, string>; email: MintEmail },
+  t: { iat: number; exp: number; root: { provider: string; sub: string }; sessionPk: Uint8Array; wallets: Record<IdentityChain, string>; email: MintEmail; name: ProfileName | null },
   exec?: ExecutionContext,
 ): Promise<Response> {
   let token: string;
@@ -400,6 +408,8 @@ async function sign(
       // Without account linking (email login, D119) an account has one method: its root's provider.
       loginMethods: [t.root.provider],
       email: t.email.email,
+      givenName: t.name?.givenName ?? null,
+      familyName: t.name?.familyName ?? null,
     });
     const input = identitySigningInput(identityTokenHeader(kid), claims);
     token = `${input.text}.${base64UrlEncode(await signer.sign(input.bytes))}`;

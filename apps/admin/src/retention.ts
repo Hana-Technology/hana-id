@@ -202,7 +202,7 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
   });
   await step('directory', async () => {
     for (;;) {
-      const r = await rpc<{ scopes: number; users: number; wallets: number; identities: number; emailConsents?: number }>('directory', () =>
+      const r = await rpc<{ scopes: number; users: number; wallets: number; identities: number; emailConsents?: number; nameShares?: number }>('directory', () =>
         api.purgeDirectory({ ...systemCtx(), before: deletedAppCutoff(d.now), limit: RETENTION_BATCH }),
       );
       if (!r) return;
@@ -212,7 +212,9 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
       add('directoryIdentities', r.identities);
       // D411: a deleted app's email consents, in pages of the same size (an API before 0014's build answers none).
       add('emailConsentsPurged', r.emailConsents ?? 0);
-      if (r.users < RETENTION_BATCH && (r.emailConsents ?? 0) < RETENTION_BATCH) return;
+      // D714: a deleted app's name shares, the same way (an API before migration 0019's build answers none).
+      add('nameSharesPurged', r.nameShares ?? 0);
+      if (r.users < RETENTION_BATCH && (r.emailConsents ?? 0) < RETENTION_BATCH && (r.nameShares ?? 0) < RETENTION_BATCH) return;
     }
   });
   await step('user_events', async () => {

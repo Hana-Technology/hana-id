@@ -23,6 +23,7 @@ import { hmac } from '@noble/hashes/hmac';
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2';
 import { STRKEY_VERSION, checksumEvmAddress, decodeStrKey, parseEvmAddress } from './addresses.ts';
 import { type Bytes, base64UrlEncode, borshString, concatBytes, sha256, toBytes, u32le, u64le, utf8 } from './bytes.ts';
+import { isDisplaySafeLine } from './display-safe.ts';
 import { recoverEvmAddress, signEvmDigest } from './signers/evm.ts';
 
 export const IDENTITY_MESSAGE_DOMAIN = 'hana-id-identity-v1:';
@@ -301,6 +302,9 @@ export interface IdentityClaims {
   login_methods: string[];
   email?: string;
   email_verified?: true;
+  /** The name the user set in Hana Home and shared with this app (each part only when set). */
+  given_name?: string;
+  family_name?: string;
 }
 
 export interface IdentityClaimsInput {
@@ -317,6 +321,30 @@ export interface IdentityClaimsInput {
   loginMethods: readonly string[];
   /** A verified address (build step 6); `email_verified: true` comes with it, never alone. */
   email?: string | null;
+  /** The name the user shared with this app from Hana Home: each part a `normalizeProfileName` value, or null. */
+  givenName?: string | null;
+  familyName?: string | null;
+}
+
+// ---- the profile name (Hana Home: the user's own first and last name, shared per app) ----
+
+/** Each part of a profile name, in code points, after trimming. */
+export const PROFILE_NAME_MAX = 50;
+
+/**
+ * One part of a profile name (a first or a last name) as Hana stores and signs it: NFC, trimmed, inner runs of spaces
+ * space folded to one space, 1 to PROFILE_NAME_MAX code points, and display-safe on one line (no control, format,
+ * bidi, zero-width or private-use character: core/display-safe.ts). `null` for null, undefined or an empty string
+ * (the part isn't set); `undefined` for anything else that fails (not a string, too long, unsafe).
+ */
+export function normalizeProfileName(v: unknown): string | null | undefined {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'string') return undefined;
+  if (v.length > PROFILE_NAME_MAX * 8) return undefined;
+  const s = v.normalize('NFC').replace(/[\p{Zs}\t]+/gu, ' ').trim();
+  if (s === '') return null;
+  if ([...s].length > PROFILE_NAME_MAX || !isDisplaySafeLine(s)) return undefined;
+  return s;
 }
 
 const SUB_RE = /^u1_[A-Za-z0-9_-]{22}$/u;
@@ -324,7 +352,8 @@ const SID_RE = /^s1_[A-Za-z0-9_-]{22}$/u;
 
 /**
  * Exactly the spec's claims, in its order: iss, aud, sub, sid, iat, exp, jti, wallets (stellar then evm), the sorted
- * distinct login_methods, and `email` + `email_verified: true` only together. Throws on anything malformed, so a bug
+ * distinct login_methods, `email` + `email_verified: true` only together, then `given_name` and `family_name` (each only
+ * when set). Throws on anything malformed, so a bug
  * can never put an unexpected value in a signed token.
  */
 export function buildIdentityClaims(i: IdentityClaimsInput): IdentityClaims {
@@ -357,6 +386,11 @@ export function buildIdentityClaims(i: IdentityClaimsInput): IdentityClaims {
     if (typeof i.email !== 'string' || i.email.length < 3 || i.email.length > 254 || !i.email.includes('@')) throw new Error('Malformed email');
     claims.email = i.email;
     claims.email_verified = true;
+  }
+  for (const [claim, value] of [['given_name', i.givenName], ['family_name', i.familyName]] as const) {
+    if (value === undefined || value === null) continue;
+    if (normalizeProfileName(value) !== value) throw new Error(`Malformed ${claim}`);
+    claims[claim] = value;
   }
   return claims;
 }

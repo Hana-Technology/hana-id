@@ -3,14 +3,15 @@
 // budget (two reads, changes/db.ts).
 //
 // - Staff (`StaffUser`): every scope; the three ids (User ID `u1_…`, Support ID, internal id `hu_…`, D346);
-//   identities with their subs, roles, statuses and identity keys; wallets with their key index and how many other
-//   users list the same address. The email is not here: the admin Worker joins each identity's `directoryKey` with
+//   identities with their subs, roles, statuses, identity keys and Hana Home names (D714: whatever the user shared);
+//   wallets with their key index and how many other users list the same address. The email is not here: the admin Worker joins each identity's `directoryKey` with
 //   D275's DirectoryRpc (the API never reads the issuer).
 // - Partners (`PartnerUser`): only users of the org's own scopes (`scopes.org_id`, the same filter every ConsoleRpc
 //   query has); the User ID (the identity token's `sub`), Support ID, times, the connected account kinds that are
 //   active or pending, the wallet addresses, and the email the user shared with one of the org's live apps (D411:
 //   the `granted` rows of migration 0014's `email_consents`, the API's own copy; null when none). An email search is a
-//   full address, matched by its MAC among those shared rows only (D315: nothing else can be probed). The SELECT never names `u.user_id` (the internal id), `sub` or
+//   full address, matched by its MAC among those shared rows only (D315: nothing else can be probed). The name the user
+//   shared from Hana Home with one of the org's live apps (D714, migration 0019's `name_shares`), else null. The SELECT never names `u.user_id` (the internal id), `sub` or
 //   `identity_key` as an output column, so no bug in the mapping can hand one out; a page cursor is `lastSeenAt:u1_…`.
 import {
   STAFF_USER_EVENTS_MAX,
@@ -20,12 +21,15 @@ import {
   type StaffUser,
   type UserSearch,
   type AppNameView,
+  type ProfileNameRow,
+  type ProfileNameView,
   type WalletChain,
   formatSupportId,
   parseUserSearch,
 } from '@hana-id/console-core';
 import { canonicalWalletAddress } from '@hana-id/core/identity';
 import { refuse } from '../changes/cas.ts';
+import { storedName } from '../identity/name.ts';
 import type { HotDb } from '../changes/db.ts';
 import { type Q, join, q, raw } from '../changes/sql.ts';
 
@@ -34,8 +38,8 @@ export const USER_FIND_MAX = 50;
 
 const STAFF_COLUMNS = raw(`u.user_id, u.token_sub, u.support_code, u.scope_id, s.org_id, u.created_at, u.last_seen_at,
   (SELECT json_group_array(json_object('provider', i.provider, 'sub', i.sub, 'identity_key', i.identity_key, 'role', i.role, 'status', i.status,
-     'effective_at', i.effective_at, 'first_seen_at', i.first_seen_at, 'observed_at', i.observed_at))
-     FROM end_user_identities i WHERE i.user_id = u.user_id) AS identities_json,
+     'effective_at', i.effective_at, 'first_seen_at', i.first_seen_at, 'observed_at', i.observed_at, 'given_name', p.given_name, 'family_name', p.family_name))
+     FROM end_user_identities i LEFT JOIN home_profiles p ON p.provider = i.provider AND p.sub = i.sub WHERE i.user_id = u.user_id) AS identities_json,
   (SELECT json_group_array(json_object('chain', w.chain, 'address', w.address, 'key_index', w.key_index, 'first_seen_at', w.first_seen_at,
      'last_used_at', w.last_used_at,
      'shared', (SELECT COUNT(*) FROM end_user_wallets x WHERE x.chain = w.chain AND x.address = w.address AND x.user_id <> w.user_id)))
@@ -46,8 +50,14 @@ const STAFF_COLUMNS = raw(`u.user_id, u.token_sub, u.support_code, u.scope_id, s
 // D411: the shared copies, only of the org's live apps in the user's scope (`s` is the org's scope row).
 const SHARED = `FROM email_consents c JOIN apps a ON a.id = c.app_id AND a.org_id = s.org_id AND a.scope_id = u.scope_id AND a.deleted_at IS NULL
      WHERE c.user_sub = u.token_sub AND c.state = 'granted'`;
+// D714: the name shared from Hana Home with one of the org's live apps in the user's scope, read through the identity
+// that shared it (migration 0019 holds no copy), the latest share first.
+const NAME_SHARED = `FROM name_shares n JOIN apps a ON a.id = n.app_id AND a.org_id = s.org_id AND a.scope_id = u.scope_id AND a.deleted_at IS NULL
+     JOIN home_profiles p ON p.provider = n.provider AND p.sub = n.sub
+     WHERE n.user_sub = u.token_sub`;
 const PARTNER_COLUMNS = raw(`u.token_sub, u.support_code, u.scope_id, u.created_at, u.last_seen_at,
   (SELECT c.email ${SHARED} ORDER BY c.decided_at DESC, c.app_id LIMIT 1) AS email,
+  (SELECT json_object('given_name', p.given_name, 'family_name', p.family_name) ${NAME_SHARED} ORDER BY n.shared_at DESC, n.app_id LIMIT 1) AS name_json,
   (SELECT json_group_array(json_object('provider', i.provider, 'status', i.status, 'effective_at', i.effective_at, 'role', i.role))
      FROM end_user_identities i WHERE i.user_id = u.user_id AND i.status IN ('active', 'pending')) AS identities_json,
   (SELECT json_group_array(json_object('chain', w.chain, 'address', w.address, 'first_seen_at', w.first_seen_at, 'last_used_at', w.last_used_at))
@@ -59,6 +69,8 @@ const ORDER = raw(' ORDER BY u.last_seen_at DESC, u.token_sub DESC');
 interface Row {
   /** Partner rows: the latest shared address (D411), or null. */
   email?: string | null;
+  /** Partner rows: the name shared with one of the org's apps (D714), as `{given_name, family_name}` JSON, or null. */
+  name_json?: string | null;
   /** getUser only: every shared address, per app. */
   emails_json?: string;
   token_sub: string;
@@ -87,6 +99,11 @@ export function statusAt(status: string, effectiveAt: number | null, now: number
   return status as StaffIdentity['status'];
 }
 
+/** A stored name's two parts as the views give them (identity/name.ts storedName's rule), or null when neither is set. */
+function nameOf(given: unknown, family: unknown): ProfileNameView | null {
+  return storedName({ given_name: typeof given === 'string' ? given : null, family_name: typeof family === 'string' ? family : null });
+}
+
 const byWallet = (a: { chain: string; address: string }, b: { chain: string; address: string }) => (a.chain === b.chain ? (a.address < b.address ? -1 : 1) : a.chain === 'stellar' ? -1 : 1);
 const ROLE_ORDER = { root: 0, member: 1 } as const;
 
@@ -106,9 +123,12 @@ export function staffUser(r: StaffRow, now: number): StaffUser {
         firstSeenAt: n(i.first_seen_at),
         observedAt: n(i.observed_at),
         directoryKey: sub === null ? null : { provider, sub },
+        name: nameOf(i.given_name, i.family_name),
       };
     })
     .sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || a.firstSeenAt - b.firstSeenAt);
+  // The account's name: the root's (sorted first), else the first identity's that has one.
+  const name = identities.find((i) => i.name !== null)?.name ?? null;
   const wallets = list(r.wallets_json)
     .map((w) => ({ chain: w.chain as WalletChain, address: String(w.address), keyIndex: n(w.key_index), firstSeenAt: n(w.first_seen_at), lastUsedAt: n(w.last_used_at), sharedWith: n(w.shared) }))
     .sort(byWallet);
@@ -121,6 +141,7 @@ export function staffUser(r: StaffRow, now: number): StaffUser {
     createdAt: r.created_at,
     lastSeenAt: r.last_seen_at,
     identities,
+    name,
     wallets,
   };
 }
@@ -133,7 +154,9 @@ export function partnerUser(r: Row, now: number): PartnerUser {
   const wallets = list(r.wallets_json)
     .map((w) => ({ chain: w.chain as WalletChain, address: String(w.address), firstSeenAt: n(w.first_seen_at), lastUsedAt: n(w.last_used_at) }))
     .sort(byWallet);
-  const user: PartnerUser = { userId: r.token_sub, supportId: formatSupportId(r.support_code), scopeId: r.scope_id, createdAt: r.created_at, lastSeenAt: r.last_seen_at, accounts, wallets, email: typeof r.email === 'string' ? r.email : null };
+  const shared = typeof r.name_json === 'string' ? (JSON.parse(r.name_json) as Json) : null;
+  const name = shared ? nameOf(shared.given_name, shared.family_name) : null;
+  const user: PartnerUser = { userId: r.token_sub, supportId: formatSupportId(r.support_code), scopeId: r.scope_id, createdAt: r.created_at, lastSeenAt: r.last_seen_at, accounts, wallets, email: typeof r.email === 'string' ? r.email : null, name };
   if (r.emails_json !== undefined) {
     user.emails = list(r.emails_json)
       .map((e) => ({ appId: String(e.app_id), appName: String(e.app_name), email: String(e.email), sharedAt: n(e.decided_at) }))
@@ -276,6 +299,23 @@ export async function adminAppNames(db: HotDb, appIds: readonly string[]): Promi
     q`SELECT a.id, a.name, a.org_id, a.scope_id, s.environment, a.deleted_at FROM apps a LEFT JOIN scopes s ON s.scope_id = a.scope_id WHERE a.id IN (${join(ids.map((id) => q`${id}`), ', ')}) ORDER BY a.id`,
   );
   return rows.map((r) => ({ id: r.id, name: r.name, orgId: r.org_id, scopeId: r.scope_id, environment: r.environment === 'test' || r.environment === 'live' ? r.environment : null, deletedAt: r.deleted_at ?? null }));
+}
+
+/**
+ * The Users screen's names (D714): the Hana Home names of up to PROFILE_NAMES_MAX sign-in identities, for the directory
+ * rows the issuer answered (the issuer doesn't hold names). One SELECT; identities with no name are left out. Staff only.
+ */
+export async function adminProfileNames(db: HotDb, identities: readonly { provider: string; sub: string }[]): Promise<ProfileNameRow[]> {
+  const pairs = identities.map((i) => q`(p.provider = ${i.provider} AND p.sub = ${i.sub})`);
+  const rows = await db.all<{ provider: string; sub: string; given_name: string | null; family_name: string | null }>(
+    q`SELECT p.provider, p.sub, p.given_name, p.family_name FROM home_profiles p WHERE ${join(pairs, ' OR ')} ORDER BY p.provider, p.sub`,
+  );
+  const out: ProfileNameRow[] = [];
+  for (const r of rows) {
+    const name = storedName(r);
+    if (name) out.push({ provider: r.provider, sub: r.sub, ...name });
+  }
+  return out;
 }
 
 // ---- partners ----

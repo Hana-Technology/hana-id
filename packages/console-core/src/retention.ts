@@ -79,6 +79,8 @@ export interface PurgeDirectoryResult {
   identities: number;
   /** D411: email consents of apps deleted 30 days ago or more (an API before 0014's build omits it). */
   emailConsents?: number;
+  /** D714: name shares of apps deleted 30 days ago or more (an API before migration 0019's build omits it). */
+  nameShares?: number;
 }
 export interface PurgeUserEventsResult {
   /** Events past 24 months. */

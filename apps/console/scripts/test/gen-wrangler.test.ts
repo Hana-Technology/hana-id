@@ -5,7 +5,7 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MAX_APP_CHANGE_DELAY_MS, MIN_APP_CHANGE_DELAY_MS, type Manifest, manifestSchema } from '@hana-id/env';
+import { MAX_APP_CHANGE_DELAY_MS, MIN_APP_CHANGE_DELAY_MS, type Manifest, loadEnv, manifestSchema } from '@hana-id/env';
 import { describe, expect, it } from 'vitest';
 import { wranglerConfig as adminConfig } from '../../../admin/scripts/gen-wrangler.ts';
 import { wranglerConfig as apiConfig } from '../../../api/scripts/gen-wrangler.ts';
@@ -39,6 +39,18 @@ describe('the console config', () => {
     expect(vars.NETWORK).toBe(TEST_MANIFEST.network);
     expect(vars.REFUSED_ORIGINS).toBe(api.REFUSED_ORIGINS);
     expect(JSON.parse(vars.REFUSED_ORIGINS!)).toContain('https://console.test');
+  });
+
+  it('writes USERS_SCREEN from the manifest’s console.usersScreen: "1" only when true, "0" when false or absent (D357, D702)', () => {
+    const vars = (m: typeof TEST_MANIFEST) => (wranglerConfig(m, LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    expect(TEST_MANIFEST.console!.usersScreen).toBeUndefined();
+    expect(vars(TEST_MANIFEST).USERS_SCREEN).toBe('0');
+    expect(vars({ ...TEST_MANIFEST, console: { ...TEST_MANIFEST.console!, usersScreen: false } }).USERS_SCREEN).toBe('0');
+    expect(vars({ ...TEST_MANIFEST, console: { ...TEST_MANIFEST.console!, usersScreen: true } }).USERS_SCREEN).toBe('1');
+    // sandbox-dev (testnet) has it on, as the user confirmed on 2026-11-11; any other env stays off unless its manifest says so.
+    const sandbox = loadEnv('sandbox-dev');
+    expect(sandbox.network).toBe('testnet');
+    expect(vars(sandbox).USERS_SCREEN).toBe('1');
   });
 
   it('validates as a manifest with every dashboard block (the test manifest is a real one)', () => {

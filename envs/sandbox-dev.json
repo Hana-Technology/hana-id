@@ -106,7 +106,8 @@
     "d1Name": "hana-id-console-sandbox-dev",
     "origin": "https://hana-id-console-sandbox-dev.tingtc.workers.dev",
     "authWorkerName": "hana-id-console-auth-sandbox-dev",
-    "authOrigin": "https://hana-id-console-auth-sandbox-dev.tingtc.workers.dev"
+    "authOrigin": "https://hana-id-console-auth-sandbox-dev.tingtc.workers.dev",
+    "usersScreen": true
   },
   "files": {
     "workerName": "hana-id-files-sandbox-dev",

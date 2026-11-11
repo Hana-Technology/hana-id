@@ -6,14 +6,18 @@
 // guarded-change timeline with Cancel; the action page's back link, timing and expiry; the org switcher; the audit's
 // words; an unknown page.
 import { StrictMode } from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import type { AppDetail, PartnerAuditEntry } from '@hana-id/console-core';
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 import { explain } from '../src/messages.ts';
-import { actionLabel } from '../src/pages/Audit.tsx';
+import { actionLabel, detail, detailFields, detailValue } from '../src/pages/Audit.tsx';
+import { when } from '../src/lib.tsx';
 import { logoProblem } from '../src/pages/app/Branding.tsx';
+import { clientSnippet } from '../src/pages/app/Overview.tsx';
+import { clockOffset, nextEffectAt, useReloadAtNextEffect } from '../src/pages/Apps.tsx';
 import { ErrorNote } from '../src/ui.tsx';
 
 type Answer = { status?: number; body: unknown };
@@ -285,6 +289,155 @@ describe('empty states and the app overview', () => {
     expect(screen.getByText(/publishableKey: 'pk_live_k9'/u)).toBeTruthy();
   });
 
+  it('the client snippet names this console’s environment (GET /api/me envName), on screen and in its Copy', async () => {
+    signedIn({ environment: 'test', keys: [key('k9')] });
+    routes['/api/me'] = { body: { ...ME, envName: 'sandbox-dev' } };
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    at('/orgs/org_a/apps/app_1');
+    expect(await screen.findByText(/environment: 'sandbox-dev',/u)).toBeTruthy();
+    expect(screen.queryByText(/the environment name Hana gave you/u)).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Copy client code' })));
+    expect(writeText).toHaveBeenCalledWith(clientSnippet('pk_live_k9', 'sandbox-dev'));
+    expect(String((writeText.mock.calls[0] as unknown[])[0])).toContain("environment: 'sandbox-dev',");
+    // The install step keeps the version placeholder (the console can't know which release Hana sent).
+    expect(screen.getByText('npm install ./hana-id-core-<version>.tgz ./hana-id-web-<version>.tgz')).toBeTruthy();
+  });
+
+  it('without a usable environment name, the snippet keeps the placeholder and says where the name comes from', async () => {
+    signedIn({ keys: [key('k9')] });
+    at('/orgs/org_a/apps/app_1');
+    expect(await screen.findByText(/environment: '…', \/\/ the environment name Hana gave you with the SDK/u)).toBeTruthy();
+    for (const bad of [undefined, '', 'Sandbox Dev', "x', evil: '1"]) {
+      const code = clientSnippet('pk_test_x', bad);
+      expect(code, String(bad)).toContain("environment: '…', // the environment name Hana gave you with the SDK");
+    }
+    expect(clientSnippet(undefined, 'sandbox-dev')).toContain("publishableKey: 'pk_…',");
+  });
+
+  it('a change whose time has passed is in effect: not listed as waiting, no Cancel, no tab dot, step 1 agrees', async () => {
+    const now = Date.now();
+    // The API before D701 (or a page read before the time) still said `pending` for a change already in force.
+    const change = { id: 'gc_7', appId: 'app_1', kind: 'origin_add', origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: now - 24 * 60_000, waiver: 'no_session', notifiedAt: now - 20 * 60_000, activeFrom: now - 20 * 60_000 };
+    signedIn({ environment: 'test', origins: [{ origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, activeFrom: now - 20 * 60_000, changeId: 'gc_7' }], changes: [change] });
+    at('/orgs/org_a/apps/app_1');
+    const step = (await screen.findByText('Allow your app’s origins')).closest('li')!;
+    expect(step.textContent).toContain('1 origin is active.');
+    expect(screen.queryByText('Changes waiting')).toBeNull();
+    expect(screen.queryByText(/Pending: active from/u)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Origins' }).querySelector('.tab-dot')).toBeNull();
+    // The Origins tab shows it as active, with Remove, and nothing waiting.
+    fireEvent.click(screen.getByRole('link', { name: 'Origins' }));
+    const row = (await screen.findAllByText('http://localhost:5173')).map((e) => e.closest('tr')).find(Boolean)!;
+    expect(within(row).getByText('Active')).toBeTruthy();
+    expect(screen.queryByText('Origins waiting to take effect')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+
+  it('an announced change still ahead: waiting with Cancel and its next step not reached; at its time the app is read once more and it moves to in effect', async () => {
+    const at0 = Date.now() + 300;
+    const pending = { id: 'gc_8', appId: 'app_1', kind: 'origin_add', origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: at0 - 120_000, notifiedAt: at0 - 60_000, activeFrom: at0 };
+    signedIn({ origins: [...APP.origins, { origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, activeFrom: at0, changeId: 'gc_8' }], changes: [pending] });
+    let reads = 0;
+    routes['/api/orgs/org_a/apps/app_1'] = () => {
+      reads++;
+      const status = reads === 1 ? 'pending' : 'active';
+      return { body: { app: { ...APP, origins: [...APP.origins, { origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, activeFrom: at0, changeId: 'gc_8' }], changes: [{ ...pending, status }] } } };
+    };
+    at('/orgs/org_a/apps/app_1');
+    const item = (await screen.findByText('Add origin https://new.partner.example')).closest('li')!;
+    expect(screen.getByText('Changes waiting')).toBeTruthy();
+    expect(within(item).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    const track = within(item).getByRole('list', { name: 'Progress of this change' });
+    expect([...track.querySelectorAll('li')].map((li) => li.className)).toEqual(['done', 'done', 'current']);
+    expect(within(track).getByText('Takes effect')).toBeTruthy();
+    expect(within(track).queryByText('In effect')).toBeNull();
+    await waitFor(() => expect(screen.queryByText('Changes waiting')).toBeNull(), { timeout: 4000 });
+    expect(reads).toBe(2);
+    expect(screen.getByText('Allow your app’s origins').closest('li')!.textContent).toContain('2 origins are active.');
+  });
+
+  it('a reader’s clock 3 h fast: a change the server says is still ahead keeps Cancel and its timeline not reached', async () => {
+    const real = Date.now.bind(Date);
+    const serverT = real();
+    const change = { id: 'gc_f', appId: 'app_1', kind: 'origin_add', origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: serverT - 120_000, notifiedAt: serverT - 60_000, activeFrom: serverT + H };
+    signedIn();
+    const body = { ...APP, origins: [...APP.origins, { origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, activeFrom: serverT + H, changeId: 'gc_f' }], changes: [change] };
+    routes['/api/orgs/org_a/apps/app_1'] = () => ({ body: { app: body, now: real() } });
+    vi.spyOn(Date, 'now').mockImplementation(() => real() + 3 * H);
+    at('/orgs/org_a/apps/app_1');
+    const item = (await screen.findByText('Add origin https://new.partner.example')).closest('li')!;
+    expect(screen.getByText('Changes waiting')).toBeTruthy();
+    expect(within(item).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    const track = within(item).getByRole('list', { name: 'Progress of this change' });
+    expect([...track.querySelectorAll('li')].map((li) => li.className)).toEqual(['done', 'done', 'current']);
+    // Counted on the server's clock: about an hour ahead, never "due".
+    expect(item.textContent).toMatch(/\(in (59 min|1 h)\)/u);
+    expect(screen.getByText('Allow your app’s origins').closest('li')!.textContent).toContain('1 origin is active, 1 waiting.');
+    expect(screen.getByRole('link', { name: /Origins/u }).querySelector('.tab-dot')).not.toBeNull();
+  });
+
+  it('a reader’s clock 3 h slow: a change in force on the server isn’t waiting, and one due shortly is re-read at the server’s time', async () => {
+    const real = Date.now.bind(Date);
+    const serverT = real();
+    const passed = { id: 'gc_p', appId: 'app_1', kind: 'origin_add', origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: serverT - 240_000, notifiedAt: serverT - 60_000, activeFrom: serverT - 60_000 };
+    const soon = { ...passed, id: 'gc_s', origin: 'https://new.partner.example', display: 'https://new.partner.example', activeFrom: serverT + 300 };
+    signedIn();
+    let reads = 0;
+    routes['/api/orgs/org_a/apps/app_1'] = () => {
+      reads++;
+      const origins = [...APP.origins, { origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, activeFrom: passed.activeFrom, changeId: 'gc_p' }, { origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, activeFrom: soon.activeFrom, changeId: 'gc_s' }];
+      return { body: { app: { ...APP, origins, changes: [passed, reads === 1 ? soon : { ...soon, status: 'active' }] }, now: real() } };
+    };
+    vi.spyOn(Date, 'now').mockImplementation(() => real() - 3 * H);
+    at('/orgs/org_a/apps/app_1');
+    expect(await screen.findByText('Add origin https://new.partner.example')).toBeTruthy();
+    expect(screen.queryByText('Add origin http://localhost:5173')).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Cancel' })).toHaveLength(1);
+    await waitFor(() => expect(screen.queryByText('Changes waiting')).toBeNull(), { timeout: 4000 });
+    expect(reads).toBe(2);
+    expect(screen.getByText('Allow your app’s origins').closest('li')!.textContent).toContain('3 origins are active.');
+  });
+
+  it('the re-read at the next effective time: one timer, one reload, no polling; nothing set when nothing waits on a clock', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    try {
+      const t0 = Date.now();
+      const change = (activeFrom: number | null, status = 'pending') => ({ id: `gc_${activeFrom}`, appId: 'app_1', kind: 'policy_set', status, proposedByKind: 'member', proposedBy: 'usr_a', proposedAt: t0 - 1, activeFrom });
+      const app = (changes: unknown[], origins: unknown[] = APP.origins) => ({ ...APP, changes, origins }) as unknown as AppDetail;
+      expect(nextEffectAt(app([change(t0 + 5_000), change(t0 + 2_000), change(null), change(t0 - 1)]), t0)).toBe(t0 + 2_000);
+      expect(nextEffectAt(app([change(t0 + 2_000, 'active')], [{ origin: 'https://o.example', display: 'https://o.example', idn: false, activeFrom: t0 + 9_000 }]), t0)).toBe(t0 + 9_000);
+      expect(nextEffectAt(app([change(t0 - 1), change(null)]), t0)).toBeNull();
+      const reload = vi.fn();
+      const h = renderHook(({ a }: { a: AppDetail }) => useReloadAtNextEffect(a, reload), { initialProps: { a: app([change(t0 + 60_000)]) } });
+      vi.advanceTimersByTime(60_999);
+      expect(reload).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(reload).toHaveBeenCalledTimes(1);
+      // The re-read's answer: nothing ahead any more, so no further timer however long the page stays open.
+      h.rerender({ a: app([change(t0 + 60_000, 'active')]) });
+      vi.advanceTimersByTime(7 * 24 * H);
+      expect(reload).toHaveBeenCalledTimes(1);
+      h.unmount();
+      // A reader's clock 3 h fast (offset -3 h): the timer still waits for the server's time, not the reader's.
+      const fast = vi.fn();
+      const serverT = Date.now() - 3 * H;
+      const h2 = renderHook(() => useReloadAtNextEffect(app([change(serverT + 60_000)]), fast, -3 * H));
+      vi.advanceTimersByTime(60_999);
+      expect(fast).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(fast).toHaveBeenCalledTimes(1);
+      h2.unmount();
+      expect(clockOffset(1_000, 400)).toBe(600);
+      expect(clockOffset(undefined, 400)).toBe(0);
+      expect(clockOffset('1000', 400)).toBe(0);
+      expect(clockOffset(Number.NaN, 400)).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a guarded change: where it is (not announced yet), who asked, and Cancel after a confirm', async () => {
     const change = { id: 'gc_9', appId: 'app_1', kind: 'origin_add', origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, status: 'pending', proposedByKind: 'member', proposedBy: 'usr_a', proposedAt: 0 };
     signedIn({ changes: [change] });
@@ -361,5 +514,26 @@ describe('navigation', () => {
     expect(await screen.findByText('Key rotated')).toBeTruthy();
     expect(screen.getByText('key.rotated')).toBeTruthy();
     expect(screen.queryByText(new RegExp(String(at_), 'u'))).toBeNull();
+  });
+
+  it('the audit’s details read as words: dates, no empty fields, lists of objects as plain lists, unknown keys kept', async () => {
+    const t = Date.UTC(2026, 10, 11, 5, 5);
+    const created = { source: 'api', seq: 5, at: t - 240_000, appId: 'app_1', kind: 'app.created', detail: { name: 'Rewards', plan: 'free', environment: 'test', keyId: 'key_1', scopeCreated: true, newOrg: true, waiver: 'no_session', origins: [{ changeId: 'gc_1', origin: 'http://localhost:5173' }] }, actorKind: 'hana', actorId: 'hana', requestId: 'req_created1' };
+    const announced = { source: 'api', seq: 6, at: t, appId: 'app_1', kind: 'change.announced', detail: { changeId: 'gc_1', kind: 'origin_add', origin: 'http://localhost:5173', policyId: null, activeFrom: t, waiver: 'no_session', channel: 'email' }, actorKind: 'system', actorId: 'admin', requestId: 'req_announce1' };
+    expect(detail(announced as PartnerAuditEntry)).toBe(`app_1 · change id: gc_1 · kind: origin_add · origin: http://localhost:5173 · active from: ${when(t)} · waiver: no_session · channel: email`);
+    expect(detail(created as PartnerAuditEntry)).toBe('app_1 · name: Rewards · plan: free · environment: test · key id: key_1 · scope created: yes · new org: yes · waiver: no_session · origins: change id: gc_1, origin: http://localhost:5173');
+    // Unknown keys and shapes are still shown (nothing hidden), empty lists say so, nested objects read as fields.
+    expect(detailFields({ someNewThing: 7, list: ['a', 'b'], empty: [], nested: { untilAt: null, note: 'x' }, flag: false, snake_case: 'y' })).toEqual(['some new thing: 7', 'list: a; b', 'empty: none', 'nested: note: x', 'flag: no', 'snake case: y']);
+    expect(detailValue('policyId', null)).toBeNull();
+    expect(detailValue('count', 1794373559173)).toBe('1794373559173');
+    routes['/api/me'] = { body: ME };
+    routes['/api/orgs/org_a'] = { body: { org: { id: 'org_a', name: 'Acme', status: 'active' }, role: 'owner' } };
+    routes['/api/orgs/org_a/audit'] = { body: { entries: [announced, created] } };
+    at('/orgs/org_a/audit');
+    expect(await screen.findByText('Change announced')).toBeTruthy();
+    expect(screen.getByText('change.announced')).toBeTruthy();
+    expect(screen.queryByText(new RegExp(String(t), 'u'))).toBeNull();
+    expect(screen.queryByText(/policyId|null|\[\{/u)).toBeNull();
+    expect(screen.getByText(/origins: change id: gc_1, origin: http:\/\/localhost:5173/u)).toBeTruthy();
   });
 });

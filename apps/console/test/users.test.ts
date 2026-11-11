@@ -6,7 +6,7 @@
 import { newId } from '@hana-id/console-core';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env.ts';
-import { type ConsoleUsersClient, type PartnerUserOut, partnerUserView, usersClient, usersRoute } from '../src/users.ts';
+import { type ConsoleUsersClient, type PartnerUserOut, UNNAMED_APP, partnerUserView, usersClient, usersRoute } from '../src/users.ts';
 import { member, getAs } from './c10.ts';
 
 const USER = 'u1_AbCdEfGhIjKlMnOpQrStUA';
@@ -102,11 +102,6 @@ describe('partnerUserView: the allowlist', () => {
       { appId: 'org_one1' },
       { appId: 'app_' },
       { appId: 'app_a-b' },
-      { appName: '' },
-      { appName: '   ' },
-      { appName: 'x'.repeat(65) },
-      { appName: 'Evil\u202eApp' },
-      { appName: 7 },
       { email: 'not-an-address' },
       { email: null },
       { sharedAt: -1 },
@@ -114,6 +109,13 @@ describe('partnerUserView: the allowlist', () => {
     ]) {
       expect(partnerUserView({ ...leaky(), emails: [{ ...share, ...edit }] }), JSON.stringify(edit)).toBeNull();
     }
+    // An app name that isn't one display-safe line is shown as a placeholder: the user and the share stay listed.
+    for (const appName of ['', '   ', 'x'.repeat(65), 'Evil\u202eApp', 7, null, undefined]) {
+      const bad = partnerUserView({ ...leaky(), emails: [{ ...share, appName }] });
+      expect(bad, JSON.stringify(appName)).not.toBeNull();
+      expect(bad!.emails, JSON.stringify(appName)).toEqual([{ ...share, appName: UNNAMED_APP }]);
+    }
+    expect(UNNAMED_APP).toBe('Unnamed app');
     expect(partnerUserView({ ...leaky(), emails: 'ada@partner-user.example' })).toBeNull();
     expect(partnerUserView({ ...leaky(), emails: [null] })).toBeNull();
   });
@@ -185,7 +187,7 @@ describe('the routes', () => {
     expect((await usersRoute(on, new URL('https://console.test/x'), info, ctx(), USER)).status).toBe(404);
   });
 
-  it('the deployed config has the screen off: GET /api/orgs/:org/users is 404 for a member', async () => {
+  it('the tests’ config (the test manifest, no usersScreen) has the screen off: GET /api/orgs/:org/users is 404 for a member', async () => {
     const m = await member('viewer');
     expect((await getAs(m, `/api/orgs/${m.org}/users`)).status).toBe(404);
   });

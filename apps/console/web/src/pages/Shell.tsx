@@ -175,7 +175,7 @@ export function OrgShell() {
               <p>Hana has frozen this organisation: only cancels and kill switches (removing an origin, turning the policy or raw signing off, suspending, revoking a key) work until it is unfrozen. Everything stays readable. Contact Hana to find out why.</p>
             </Callout>
           )}
-          <Outlet context={{ org: org!, role: o.data.role, frozen: o.data.org.status === 'frozen', email: me.data?.user.email } satisfies OrgContext} />
+          <Outlet context={{ org: org!, role: o.data.role, frozen: o.data.org.status === 'frozen', email: me.data?.user.email, envName: me.data?.envName } satisfies OrgContext} />
         </>
       )}
     </Layout>

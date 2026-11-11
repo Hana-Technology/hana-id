@@ -103,6 +103,64 @@ describe('staff proposals and the blocking notice', () => {
     expect(await change(c.id)).toMatchObject({ status: 'active' });
   });
 
+  it('an app read shows a change in force as active before the hourly job records it, and stops counting it as waiting', async () => {
+    const app = await orgApp({ firstSession: null });
+    const c = await staffOrigin(app);
+    const read = async () => {
+      const detail = (await ok(consoleRpc().getApp({ ...member(), orgId: app.org, appId: app.id }))).app;
+      const summary = (await ok(consoleRpc().listApps({ ...member(), orgId: app.org }))).apps.find((a) => a.id === app.id)!;
+      const staff = (await ok(adminRpc().getApp({ ...hana(), orgId: app.org, appId: app.id }))).app;
+      return { status: detail.changes.find((x) => x.id === c.id)?.status, waiting: summary.pendingChanges, staffStatus: staff.changes.find((x) => x.id === c.id)?.status };
+    };
+    // Not announced, then announced with its clock running: pending and counted, for partners and staff alike.
+    expect(await read()).toEqual({ status: 'pending', waiting: 1, staffStatus: 'pending' });
+    await ack(c.id);
+    clock.advance(DELAY - 1);
+    expect(await read()).toEqual({ status: 'pending', waiting: 1, staffStatus: 'pending' });
+    // Its clock passed: in force by the gate's predicate, so the read says active and nothing waits, while the stored
+    // row stays pending until the hourly job records it.
+    clock.advance(1);
+    expect(await originsOf(app.key)).toContain(NEW);
+    expect(await change(c.id)).toMatchObject({ status: 'pending' });
+    expect(await read()).toEqual({ status: 'active', waiting: 0, staffStatus: 'active' });
+    // Cancel is refused (the origin is in force: an owner removes it instead), and nothing changed.
+    expect(await consoleRpc().cancelChange({ ...member(), orgId: app.org, changeId: c.id })).toMatchObject({ ok: false, code: 'not_pending' });
+    expect(await originsOf(app.key)).toContain(NEW);
+    await guardedChangesMaintenance(env);
+    expect(await change(c.id)).toMatchObject({ status: 'active' });
+    expect(await read()).toEqual({ status: 'active', waiting: 0, staffStatus: 'active' });
+  });
+
+  it('policy_set: the read’s status follows the policy in force; of two in force before the hourly job, only the latest reads active', async () => {
+    const app = await orgApp({ live: true });
+    const detail = async () => (await ok(consoleRpc().getApp({ ...member(), orgId: app.org, appId: app.id }))).app;
+    const statusOf = (a: Awaited<ReturnType<typeof detail>>, id: string) => a.changes.find((x) => x.id === id)?.status;
+    const inForce = async () => (await effectiveSettings((await getSettingsRow(env.DB, app.id))!, app.id, Date.now())).autoApprovePolicy?.label ?? null;
+    const p1 = (await ok(adminRpc().proposeChange({ ...hana(), orgId: app.org, appId: app.id, kind: 'policy_set', policy: autoApprovePolicy('one'), expectedVersion: 0 }))).change;
+    await ok(ack(p1.id).then((x) => x.r));
+    clock.advance(DELAY - 1);
+    let a = await detail();
+    expect([statusOf(a, p1.id), a.settings.policy, await inForce()]).toEqual(['pending', null, null]);
+    clock.advance(1);
+    a = await detail();
+    expect([statusOf(a, p1.id), a.settings.policy?.label, await inForce()]).toEqual(['active', 'one', 'one']);
+    expect(await change(p1.id)).toMatchObject({ status: 'pending' });
+    // A second policy, in force too before the job runs: the read shows only it active, the first ended, as the job will.
+    const p2 = (await ok(adminRpc().proposeChange({ ...hana(), orgId: app.org, appId: app.id, kind: 'policy_set', policy: autoApprovePolicy('two'), expectedVersion: 1 }))).change;
+    await ok(ack(p2.id).then((x) => x.r));
+    a = await detail();
+    expect([statusOf(a, p1.id), statusOf(a, p2.id), a.settings.policy?.label, await inForce()]).toEqual(['active', 'pending', 'one', 'one']);
+    clock.advance(DELAY);
+    a = await detail();
+    expect([statusOf(a, p1.id), statusOf(a, p2.id), a.settings.policy?.label, await inForce()]).toEqual(['ended', 'active', 'two', 'two']);
+    expect(a.settings.policy?.policyId).toBe(p2.policyId);
+    expect(a.pendingChanges).toBe(0);
+    await guardedChangesMaintenance(env);
+    expect([(await change(p1.id))!.status, (await change(p2.id))!.status]).toEqual(['ended', 'active']);
+    a = await detail();
+    expect([statusOf(a, p1.id), statusOf(a, p2.id)]).toEqual([undefined, 'active']);
+  });
+
   it('a retry after a failed send acks with the same link token; the stored hash is the token’s', async () => {
     const app = await orgApp();
     const c = await staffOrigin(app);

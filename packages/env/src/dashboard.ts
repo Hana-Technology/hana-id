@@ -45,6 +45,11 @@ export const consoleSchema = z
     authWorkerName: workerName,
     /** Its origin; the console client's only redirect URI is `authOrigin + "/callback"`. */
     authOrigin: z.string(),
+    /**
+     * The partner Users screen (D357, D702): `true` writes the console var `USERS_SCREEN = "1"`; absent or `false`, the
+     * screen and its routes are off. Turn it on only where the env's API serves the wallet directory with D346's ids.
+     */
+    usersScreen: z.boolean().optional(),
   })
   .strict();
 
@@ -153,10 +158,21 @@ export function appChangeDelayProblems(m: Pick<DashboardFields, 'network' | 'cha
   return out;
 }
 
-/** Dashboard rules: blocks together, origins valid and distinct, names distinct. */
+/**
+ * The partner Users screen is confirmed for testnet only (D702): `console.usersScreen: true` on any other network is
+ * refused until a decision for that network says otherwise.
+ */
+export function usersScreenProblem(m: Pick<DashboardFields, 'network' | 'console'>): string | null {
+  if (m.console?.usersScreen !== true || m.network === 'testnet') return null;
+  return `console.usersScreen is confirmed for testnet only (D702): turning the partner Users screen on for ${m.network} needs its own decision first`;
+}
+
+/** Dashboard rules: blocks together, origins valid and distinct, names distinct; the Users screen's network. */
 export function dashboardRules(m: DashboardFields, ctx: z.RefinementCtx): void {
   const issue = (path: (string | number)[], message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path, message });
   for (const p of appChangeDelayProblems(m)) issue([p.path], p.message);
+  const users = usersScreenProblem(m);
+  if (users) issue(['console', 'usersScreen'], users);
 
   const present = DASHBOARD_BLOCKS.filter((k) => m[k] !== undefined);
   if (present.length === 0) return;

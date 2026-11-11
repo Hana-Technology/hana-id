@@ -7,9 +7,11 @@
 // suspending, keys, the name and the logo) are a second click. A frozen org shows only the cancels and the kill
 // switches; where a control isn't offered, one line says why.
 import type { AppDetail, AppSummary, MembersAnswer } from '@hana-id/console-core';
+import { useEffect, useMemo } from 'react';
 import { Link, NavLink, Outlet, useOutletContext, useParams } from 'react-router-dom';
 import { type OrgContext, useApi, useOrg } from '../lib.tsx';
 import { Badge, CopyField, Empty, ErrorNote, Loading, PageHeader, Why } from '../ui.tsx';
+import { isWaiting } from './app/Changes.tsx';
 
 const SUSPENDED = [
   [1, 'by Hana'],
@@ -106,6 +108,11 @@ export interface AppCtl extends OrgContext {
   reload: () => void;
   /** A member's address by user id (for "requested by"), or undefined. */
   nameOf: (userId: string) => string | undefined;
+  /**
+   * Now on the server's clock (the reader's clock plus the offset the last app read measured): what is still waiting,
+   * the timeline and the re-read are judged by it, so a reader's clock that runs fast or slow changes nothing (D701).
+   */
+  serverNow: () => number;
 }
 
 export const useApp = (): AppCtl => useOutletContext<AppCtl>();
@@ -121,11 +128,42 @@ const SECTIONS = [
   ['suspend', 'Suspend'],
 ] as const;
 
+/** The next time after `now` that one of the app's waiting changes or origins takes effect, or null. */
+export function nextEffectAt(a: AppDetail, now: number): number | null {
+  const times = [...a.changes.filter((c) => c.status === 'pending').map((c) => c.activeFrom), ...a.origins.map((o) => o.activeFrom)].filter((t): t is number => typeof t === 'number' && t > now);
+  return times.length ? Math.min(...times) : null;
+}
+
+/** setTimeout's longest wait (about 24.8 days); a later time is waited for in steps (the delays are at most 7 days). */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * While the page is open, one timer to the next time something of the app takes effect on the server's clock (the
+ * reader's plus `offsetMs`), then one re-read of the app (1 s after, so the server has passed it too). No polling: the
+ * re-read's answer sets the next timer, if any.
+ */
+export function useReloadAtNextEffect(a: AppDetail | undefined, reload: () => void, offsetMs = 0): void {
+  const at = a ? nextEffectAt(a, Date.now() + offsetMs) : null;
+  useEffect(() => {
+    if (at === null) return;
+    const t = setTimeout(reload, Math.min(Math.max(at - (Date.now() + offsetMs), 0) + 1_000, MAX_TIMEOUT_MS));
+    return () => clearTimeout(t);
+  }, [at, reload, offsetMs]);
+}
+
+/** The server's clock minus the reader's, from an app read's `now` (taken when the answer arrives); 0 without one. */
+export function clockOffset(serverNow: unknown, readerNow: number): number {
+  return typeof serverNow === 'number' && Number.isFinite(serverNow) ? serverNow - readerNow : 0;
+}
+
 export function AppLayout() {
   const { org, app } = useParams();
   const ctx = useOrg();
-  const r = useApi<{ app: AppDetail }>(`/api/orgs/${org}/apps/${app}`);
+  const r = useApi<{ app: AppDetail; now?: number }>(`/api/orgs/${org}/apps/${app}`);
   const m = useApi<MembersAnswer>(`/api/orgs/${org}/members`);
+  // Measured once per answer: the answer's server time against the reader's clock as it arrives.
+  const offset = useMemo(() => clockOffset(r.data?.now, Date.now()), [r.data]);
+  useReloadAtNextEffect(r.data?.app, r.reload, offset);
   const back = { to: `/orgs/${org}`, label: 'Apps' };
   if (r.error)
     return (
@@ -142,10 +180,11 @@ export function AppLayout() {
     owner: ctx?.role === 'owner' && !a.deleted,
     reload: r.reload,
     nameOf: (id) => m.data?.members.find((x) => x.userId === id)?.email,
+    serverNow: () => Date.now() + offset,
   };
   const base = `/orgs/${org}/apps/${a.id}`;
   const key = a.keys.filter((k) => k.revokedAt === undefined).sort((x, y) => y.createdAt - x.createdAt)[0];
-  const pending = a.changes.filter((c) => c.status === 'pending').length;
+  const waiting = a.changes.filter((c) => isWaiting(c, ctl.serverNow()));
   return (
     <>
       <PageHeader
@@ -176,8 +215,8 @@ export function AppLayout() {
         {SECTIONS.map(([path, label]) => (
           <NavLink key={path} to={path ? `${base}/${path}` : base} end={!path}>
             {label}
-            {path === 'origins' && pending > 0 && a.changes.some((c) => c.status === 'pending' && c.kind === 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}
-            {path === 'signing' && a.changes.some((c) => c.status === 'pending' && c.kind !== 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}
+            {path === 'origins' && waiting.some((c) => c.kind === 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}
+            {path === 'signing' && waiting.some((c) => c.kind !== 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}
           </NavLink>
         ))}
       </nav>

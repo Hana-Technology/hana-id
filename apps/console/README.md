@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the phone-width header and tables; Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer shows the scope's internal id); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
+Last verified: 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: "An app's page": changes in force never shown as waiting, the re-read at the next effective time, the snippet's environment, the install line's version, the Audit's details; the Users screen from the manifest; D701–D703; after review: "waiting" on the server's clock, "Unnamed app"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the phone-width header and tables; Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer shows the scope's internal id); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
 2026-11-06 (branch `fix/session-expiry-ux`: the session's end mid-task, the banner, the warning before
 the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenarios, D424); 2026-11-06 (branch
 `feat/console-ux-redesign`: the SPA's layout, error display and the local preview, D421).
@@ -60,6 +60,27 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
   before the next click. The 2 h idle end isn't warned of: each request moves it, and a check to find it would itself
   count as activity. The fresh sign-in page says when the session ends inside the confirmation's 5 minutes (the
   confirmation counts only with the session that started it, `session_ended`).
+
+## An app's page
+
+- **Changes waiting** (Overview, Origins, Signing) lists only guarded changes not yet in force on the server's clock
+  (`isWaiting`: pending and not announced, or announced with `activeFrom` ahead), each with its timeline and an owner's
+  Cancel. The server's clock is the reader's plus the offset the last app read measured (`GET /api/orgs/:org/apps/:app`
+  answers `now`; `AppCtl.serverNow`), so a reader's clock that runs fast or slow never hides a Cancel the server would
+  accept, nor shows a change in force as waiting; the timeline and the re-read are judged by it too. A change whose time has passed is in force (the API serves it and refuses its Cancel): it is never listed as
+  waiting, the tab dots and "Getting started" step 1 agree, and the API's `getApp` answers it as `active` before the
+  hourly job records it (D701). While the page is open, one timer to the next time something of the app takes effect
+  (plus 1 s) re-reads the app once (`useReloadAtNextEffect`); the answer sets the next timer, if any. No polling.
+- **Getting started**, step 4: the client snippet (and its Copy) names this console's environment, `GET /api/me`
+  `envName` (the manifest's `name`, what `createHana({ environment })` takes, `docs/integration.md` section 3); without a
+  usable name, the placeholder and where to find it. Step 3 keeps `<version>` in the tarball names: the console is
+  deployed apart from SDK releases, so it can't know which release Hana sent (D703).
+- **Audit**: each row keeps its action code under the title; its details read as words (times as dates, empty fields
+  left out, yes or no, lists and objects as plain text, keys in words), with no key hidden (D703).
+- **Users** (`/orgs/:org/users`): on where the env's manifest sets `console.usersScreen: true` (`gen` writes
+  `USERS_SCREEN`; testnet only, sandbox-dev has it on, D702); off elsewhere, the tab hidden and its routes `404` (D357).
+  It shows a user's email address only once the user shared it with one of the org's apps (D411); an app name that
+  isn't one display-safe line shows as "Unnamed app" rather than hiding the user.
 
 ## Brand
 

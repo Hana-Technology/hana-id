@@ -15,7 +15,8 @@ const MAX_PER_REQUEST = 20;
 export function Origins() {
   const ctl = useApp();
   const { app, owner, frozen, org } = ctl;
-  const now = useNow(30_000);
+  useNow(30_000); // re-render every 30 s
+  const now = ctl.serverNow();
   const w = useWrite();
   const step = useStepUp(org);
   const chain = useChainOwner(org, app.scopeId, owner && !frozen);

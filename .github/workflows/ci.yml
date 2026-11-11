@@ -130,7 +130,9 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
         with:
-          workspaces: contracts/hana-signer
+          workspaces: |
+            contracts/hana-signer
+            contracts/hana-guestbook
       # Prebuilt release binary, checksum-verified (building it needs Rust >= 1.93 and libudev, and takes ~15 min).
       - name: Install cargo-near
         working-directory: .
@@ -147,6 +149,13 @@ jobs:
       - run: cargo near build non-reproducible-wasm
       - name: Wasm size
         run: ls -l target/near/hana_signer.wasm
+      # The hackathon demo guestbook (D744), with its own Cargo.lock and toolchain.
+      - name: Guestbook tests
+        working-directory: contracts/hana-guestbook
+        run: cargo test --locked
+      - name: Guestbook wasm
+        working-directory: contracts/hana-guestbook
+        run: cargo near build non-reproducible-wasm
 
   typescript:
     name: TypeScript (typecheck + tests)
@@ -238,7 +247,7 @@ jobs:
         with:
           fetch-depth: 0
       - run: rustup show active-toolchain
-      # The tests build hana-signer and mock-mpc with their own pinned toolchain.
+      # The tests build hana-signer, mock-mpc and hana-guestbook with their own pinned toolchain.
       - run: rustup toolchain install 1.85.1 --target wasm32-unknown-unknown --profile minimal
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
         with:
@@ -246,6 +255,7 @@ jobs:
             contracts/integration-tests
             contracts/hana-signer
             contracts/mock-mpc
+            contracts/hana-guestbook
       # Prebuilt release binary, checksum-verified (building it needs Rust >= 1.93 and libudev, and takes ~15 min).
       - name: Install cargo-near
         working-directory: .

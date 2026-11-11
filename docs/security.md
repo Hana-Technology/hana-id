@@ -1463,8 +1463,10 @@ handshake removes the frame and closes its port, as `destroy()` does.
   checks the claim on its env's RPC before any popup: a `testnet` transaction's block hash must be a testnet block
   (fail closed), a `mainnet` one's must not; a test app's `mainnet` request is refused; a test app's delegate action
   must have the user's key on testnet, a nonce above it, above (height − 10,000) × 10^6 and below height × 10^6, and an
-  expiry within 10,000 blocks (fail closed); for a test app both of the env's providers are asked and every answer
-  must pass (one lying RPC can't vouch for a block, a key or a height). The popup labels a network it didn't see checked as the app's claim. NEP-413 messages name no network
+  expiry within 10,000 blocks (fail closed), and only FunctionCall and Transfer actions to a `*.testnet` receiver
+  other than the user's own (`near_delegate_test_app_action`, `near_delegate_test_app_receiver`); for a test app both
+  of the env's providers are asked and every answer must pass (one lying RPC can't vouch for a block, a key or a
+  height), and an env with one provider fails closed outside local* envs (`near_rpc_single_provider`). The popup labels a network it didn't see checked as the app's claim. NEP-413 messages name no network
   and are not refused for test apps, like SEP-53 and EIP-191 (D35); the popup flags a recipient that isn't the page's
   host and writes out non-ASCII recipients.
 - Approval binds the whole request through `approvalDigest` (`packages/core/src/approval.ts:179`). Its network
@@ -1893,14 +1895,24 @@ findings are tracked with their own fixes.
 
 ## Known open issues
 
-- **NEAR delegate actions of test apps (D726, D729).** A DelegateAction names no network. Hana binds a test app's to
-  testnet by its key, nonce and expiry: the nonce above (testnet's height − 10,000) × 10^6 and the expiry within 10,000
-  blocks of it. nearcore runs it on another network only while that network's height is between nonce / 10^6 and
-  `max_block_height`, that is within about 20,000 blocks of testnet's height when it was signed, and only if the same
-  implicit account exists there with that key and a lower nonce. Mainnet was ~53 M blocks behind testnet on 2026-11-11
-  (224 M vs 277 M, both ~1.7 blocks/s); the binding holds as long as the two heights stay more than ~20,000 blocks
-  apart (re-check if mainnet's block rate ever exceeds testnet's). A live app's delegate action, and any NEP-413
-  message, is valid wherever the account has the key; the popup says so.
+- **NEAR delegate actions of test apps can be replayed on mainnet about a year later (D726, D729).** A DelegateAction
+  names no network: nearcore runs it on any network whose own height H has nonce < H × 10^6 and H ≤ max_block_height,
+  if the sender's key there has a lower nonce. Hana's bounds (nonce > (h − 10,000) × 10^6, max_block_height ≤ h +
+  10,000, h = testnet's height at signing) pin that to a fixed window of at most 20,000 blocks (about 700 with
+  `nearDelegateNonce` and a 600-block expiry). Mainnet was ~53.2 M blocks behind testnet on 2026-11-11 (224.0 M vs
+  277.2 M) and grows at the same ~1.7 blocks/s, so it passes through the window about 361 days after signing.
+  Preconditions for a replay then: someone kept the signed action (the test app's page can), the user's implicit
+  account exists on mainnet with that key (anyone can create it with a transfer) and a lower nonce, and someone pays
+  the gas. What it could do is limited by the test-app rule (`nearTestAppDelegateProblem`): only FunctionCall and
+  Transfer, only to `*.testnet` accounts other than the user's own. `testnet` doesn't exist on mainnet (checked
+  2026-11-11) and, being under 32 characters, can be created there only by the `registrar` account (NEAR's governance);
+  `x.testnet` only by `testnet`. So a replayed call or transfer reaches a missing account and fails (its NEAR, the
+  relayer's, is refunded to the user). Residual exposure: if `registrar` ever created `testnet` on mainnet and a
+  contract appeared at the receiver, a zero-deposit call in the user's name; accepted for test apps, whose addresses
+  must never hold mainnet funds (the guide and the partner page say so). Not built, considered: a mainnet RPC read
+  that the key doesn't exist there (TOCTOU: the account can be created after signing, and the vault has no mainnet
+  RPC). A live app's delegate action, and any NEP-413 message, is valid wherever the account has the key; the popup
+  says so, and a live app's binding is a mainnet-readiness decision (row 1.21).
 
 Status: **fixed** (a), (b), (c), (d), (f), (g), (n), (r) ((r) live on sandbox-dev); **fixed in code** (h) (the keys on chain change at each env's next `deploy-contract`); **fixed on sandbox-dev** (e) (the governance contract and watchdog run there
 since 2026-10-30; mainnet ships with them once its delay, council and watchdog account are set up: D80, D81, D86);

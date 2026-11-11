@@ -96,6 +96,11 @@ step. It then takes effect:
 | "Security events were recorded" | Something Hana's systems flagged. Reply, or tell your Hana contact, if it is unexpected |
 | Others | Someone invited to your organisation, "Email login turned on for {app}", a change to your scope proposed or made on chain |
 
+**Never fund a test app's addresses on mainnet.** Your test app's wallets (Stellar, EVM and NEAR) use keys from Hana's
+testnet MPC, which can be reset or lost. Keep them on test networks, and tell your testers the same: a NEAR signature
+your test app collects names no network, so a copy kept somewhere could be used on mainnet later if that address held
+funds there.
+
 **Hana never asks you to approve anything from an email.** An email only tells you, or lets you cancel. Approving
 happens in the console, after a fresh Google sign-in.
 

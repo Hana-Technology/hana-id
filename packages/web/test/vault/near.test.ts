@@ -54,7 +54,7 @@ interface NearSession {
 }
 
 async function session(o: Parameters<typeof readyTab>[1] = {}, browser = new Browser()): Promise<NearSession> {
-  const t = await readyTab(browser, { googleJwk: g.jwk, sdk: SDK, ...o });
+  const t = await readyTab(browser, { googleJwk: g.jwk, sdk: SDK, env: ENV2, ...o });
   tabs.push(t);
   const { reply } = await login(t, g);
   const addresses = (reply.result as { addresses: NearSession['addresses'] }).addresses;
@@ -260,6 +260,39 @@ describe('near_signDelegateAction', () => {
     const s = await session({ config: makeConfig({ publishableKey: LIVE }) });
     const { reply } = await approved(s, 'near_signDelegateAction', { network: 'mainnet', delegateAction: base64Encode(delegateBytes(s)) });
     expect(reply.error).toBeUndefined();
+  });
+
+  it('a test app: only calls and transfers to *.testnet accounts, refused before any RPC read or popup', async () => {
+    const s = await session();
+    withKey(s);
+    const enc = (actions: NearAction[], receiverId = 'hana-id-guestbook-dev1.testnet') =>
+      base64Encode(encodeNearDelegateAction({ senderId: s.addresses.near, receiverId, actions, nonce: nearDelegateNonce({ keyNonce: 0, blockHeight: s.t.browser.backend.nearHeight }), maxBlockHeight: BigInt(s.t.browser.backend.nearHeight + 600), publicKey: key(s.addresses.near) }));
+    const reads = s.t.browser.backend.rpcCalls.length;
+    const addKey: NearAction = { type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } };
+    expect((await s.t.request('near_signDelegateAction', { network: 'testnet', delegateAction: enc([CALL, addKey]) })).error).toMatchObject({ code: 4100, data: { reason: 'near_delegate_test_app_action', chain: 'near' } });
+    for (const receiver of [s.addresses.near, 'guestbook.near']) {
+      expect((await s.t.request('near_signDelegateAction', { network: 'testnet', delegateAction: enc([CALL], receiver) })).error).toMatchObject({ code: 4100, data: { reason: 'near_delegate_test_app_receiver' } });
+    }
+    expect(s.t.browser.backend.rpcCalls.length).toBe(reads);
+    expect(s.t.launcher.label).toBeNull();
+    // The hackathon demo's delegate passes.
+    const { reply } = await approved(s, 'near_signDelegateAction', { network: 'testnet', delegateAction: enc([CALL]) });
+    expect(reply.error).toBeUndefined();
+  });
+
+  it('a live app’s delegate action is not restricted to *.testnet calls', async () => {
+    const s = await session({ config: makeConfig({ publishableKey: LIVE }) });
+    const addKey: NearAction = { type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } };
+    const da = encodeNearDelegateAction({ senderId: s.addresses.near, receiverId: s.addresses.near, actions: [addKey], nonce: 1n, maxBlockHeight: 2n, publicKey: key(s.addresses.near) });
+    const { reply } = await approved(s, 'near_signDelegateAction', { network: 'mainnet', delegateAction: base64Encode(da) });
+    expect(reply.error).toBeUndefined();
+  });
+
+  it('a test app in an env with one NEAR provider fails closed (near_rpc_single_provider)', async () => {
+    const s = await session({ env: ENV });
+    withKey(s);
+    expect((await s.t.request('near_signDelegateAction', { network: 'testnet', delegateAction: base64Encode(delegateBytes(s)) })).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'near_rpc_single_provider' } });
+    expect((await s.t.request('near_signTransaction', { network: 'testnet', transaction: base64Encode(txBytes(s)) })).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'near_rpc_single_provider' } });
   });
 
   it('refuses a delegate action from another sender (4100)', async () => {

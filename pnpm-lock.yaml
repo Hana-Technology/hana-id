@@ -560,6 +560,12 @@ importers:
         specifier: 15.0.0
         version: 15.0.0
     devDependencies:
+      '@near-js/crypto':
+        specifier: 2.5.1
+        version: 2.5.1(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1))
+      '@near-js/transactions':
+        specifier: 2.5.1
+        version: 2.5.1(@near-js/crypto@2.5.1(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1)))(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1))
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5

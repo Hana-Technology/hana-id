@@ -91,7 +91,7 @@
     "build:lib": "tsx ../../scripts/sdk-build.ts",
     "prepack": "pnpm run build:lib",
     "test": "vitest run",
-    "gen-vectors": "node scripts/gen-layout-vectors.mjs && node scripts/gen-derivation-vectors.mjs && node scripts/gen-identity-vectors.mjs && node scripts/gen-home-vectors.mjs",
+    "gen-vectors": "node scripts/gen-layout-vectors.mjs && node scripts/gen-derivation-vectors.mjs && node scripts/gen-derivation-near-vectors.mjs && node scripts/gen-identity-vectors.mjs && node scripts/gen-home-vectors.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
@@ -101,6 +101,8 @@
     "@stellar/stellar-base": "15.0.0"
   },
   "devDependencies": {
+    "@near-js/crypto": "2.5.1",
+    "@near-js/transactions": "2.5.1",
     "@types/node": "22.20.5",
     "tsx": "4.23.15",
     "typescript": "5.9.3",

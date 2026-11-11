@@ -74,7 +74,7 @@ describe('a sign-in, step by step', () => {
     expect(s.complete!.headers.get('cache-control')).toBe('no-store');
     const me = await getWith(s.browser.cs, '/api/me');
     expect(me.status).toBe(200);
-    expect(await me.json()).toEqual({ user: { id: userId, email: acct.email }, memberships: [{ orgId: org, orgName: `Org ${org}`, status: 'active', role: 'owner' }], features: { users: false }, sessionExpiresAt: expect.any(Number) });
+    expect(await me.json()).toEqual({ user: { id: userId, email: acct.email }, memberships: [{ orgId: org, orgName: `Org ${org}`, status: 'active', role: 'owner' }], features: { users: false }, sessionExpiresAt: expect.any(Number), envName: 'sandbox-test' });
     const audit = await auditRows("action = 'session.signed_in' AND target = ?", userId);
     expect(audit).toMatchObject([{ actor_kind: 'member', actor_id: userId, details_json: '{"invite":false}', outcome: 'ok' }]);
     const u = await db.prepare('SELECT last_sign_in_at FROM console_users WHERE id = ?').bind(userId).first<number>('last_sign_in_at');

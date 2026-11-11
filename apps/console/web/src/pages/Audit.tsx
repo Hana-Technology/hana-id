@@ -24,12 +24,41 @@ export function actionLabel(code: string): string {
   return words ? words[0]!.toUpperCase() + words.slice(1) : code;
 }
 
-/** A detail value: times (`…At` keys holding ms) as dates, the rest as text. */
-const value = (k: string, v: unknown): string => (typeof v === 'number' && /At$/u.test(k) && v > 1e12 ? when(v) : typeof v === 'string' ? v : JSON.stringify(v));
+/** A detail key in words: `activeFrom` → "active from", `scope_id` → "scope id". Unknown keys stay recognisable. */
+export const keyLabel = (k: string): string => k.replace(/_/gu, ' ').replace(/([a-z0-9])([A-Z])/gu, '$1 $2').toLowerCase();
 
-function detail(e: PartnerAuditEntry): string {
-  const d = e.source === 'console' ? e.details : e.detail;
-  const parts = Object.entries(d).map(([k, v]) => `${k}: ${value(k, v)}`);
+/** A time in ms under a key that names one (`…At`, `…From`, `…Until`): shown as a date. */
+const isTime = (k: string, v: unknown): v is number => typeof v === 'number' && /(At|From|Until)$/u.test(k) && v > 1e12;
+
+/**
+ * One detail value as plain text: times as dates, yes or no, lists joined, an object as its fields; empty (null,
+ * undefined) gives null and the field is left out. Nothing else is dropped.
+ */
+export function detailValue(k: string, v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (isTime(k, v)) return when(v);
+  if (typeof v === 'boolean') return v ? 'yes' : 'no';
+  if (typeof v === 'string' || typeof v === 'number') return String(v);
+  if (Array.isArray(v)) {
+    const items = v.map((x) => detailValue(k, x)).filter((x): x is string => x !== null);
+    return items.length ? items.join('; ') : 'none';
+  }
+  if (typeof v === 'object') {
+    const fields = detailFields(v as Record<string, unknown>);
+    return fields.length ? fields.join(', ') : 'none';
+  }
+  return JSON.stringify(v) ?? null;
+}
+
+/** An object's fields as "label: value", empty ones left out. */
+export const detailFields = (d: Record<string, unknown>): string[] =>
+  Object.entries(d).flatMap(([k, v]) => {
+    const text = detailValue(k, v);
+    return text === null ? [] : [`${keyLabel(k)}: ${text}`];
+  });
+
+export function detail(e: PartnerAuditEntry): string {
+  const parts = detailFields(e.source === 'console' ? e.details : e.detail);
   if (e.source === 'console' && e.target) parts.unshift(e.target);
   if (e.appId) parts.unshift(e.appId);
   return parts.join(' · ');

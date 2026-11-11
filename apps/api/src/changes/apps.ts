@@ -1,9 +1,9 @@
 // Reads of the RPC (docs/batch-c-spec.md "RPC interfaces"): an org's apps, one app in detail, the org's change ledger,
 // and the plan read every app write starts with. Every org-facing query has `WHERE org_id = ?`: org A asking for org
 // B's app is `not_found`, exactly like an app that doesn't exist.
-import type { AppDetail, AppSummary } from '@hana-id/console-core';
+import type { AppDetail, AppSummary, GuardedChange } from '@hana-id/console-core';
 import { originDisplay } from '@hana-id/console-core';
-import { type Writer, refuse, refuseReplay, replayRow } from './cas.ts';
+import { NOT_YET, type Writer, refuse, refuseReplay, replayRow } from './cas.ts';
 import type { HotDb } from './db.ts';
 import { policyInForce, rawSignInForce, storedPolicy } from './policy.ts';
 import { type Q, q, raw } from './sql.ts';
@@ -26,10 +26,13 @@ import {
 
 const orgFilter = (orgId: string | null): Q => (orgId === null ? raw('1') : q`a.org_id = ${orgId}`);
 
-/** Active origins (in force now) and pending guarded changes of app `a`, for summaries. */
+/**
+ * Active origins (in force now) and the guarded changes of app `a` still waiting (pending and not yet in force:
+ * cas.ts NOT_YET; one whose clock has passed is in force, though the hourly job records it later), for summaries.
+ */
 const COUNTS = (now: number): Q =>
   q`(SELECT COUNT(*) FROM app_origins o WHERE o.app_id = a.id AND o.active_from IS NOT NULL AND o.active_from <= ${now}) AS active_origins,
-    (SELECT COUNT(*) FROM guarded_changes g WHERE g.app_id = a.id AND g.status = 'pending') AS pending_changes`;
+    (SELECT COUNT(*) FROM guarded_changes g WHERE g.app_id = a.id AND ${NOT_YET(now, 'g')}) AS pending_changes`;
 
 export async function listApps(db: HotDb, orgId: string, now: number, filesOrigin?: string): Promise<AppSummary[]> {
   const rows = await db.all<AppRow & { active_origins: number; pending_changes: number }>(
@@ -98,9 +101,26 @@ export async function detailView(
       identityEmail: row.identity_email === 'on_request' || row.identity_email === 'at_login' ? row.identity_email : 'off',
       loginMethods: row.login_methods === 'email' || row.login_methods === 'google,email' ? row.login_methods : 'google',
     },
-    changes: changes.map(changeView),
+    // Each change's status as it is in force now (changeView), so a page never offers Cancel on a change in force.
+    changes: latestPolicyOnly(changes.map((c) => changeView(c, now))),
     keys: keys.map(keyView),
   };
+}
+
+/**
+ * Only one `policy_set` is in force at a time. Between a waiver or an expedite and the hourly job, two can read `active`
+ * (the older recorded, or both past `active_from`); the latest by `active_from` (then proposal time, then id) is the one
+ * in force, and the others read `ended`, which is what the job records for them (guarded/cron.ts ends the replaced one).
+ */
+export function latestPolicyOnly(views: GuardedChange[]): GuardedChange[] {
+  const active = views.filter((v) => v.kind === 'policy_set' && v.status === 'active');
+  if (active.length < 2) return views;
+  const key = (v: GuardedChange): [number, number, string] => [v.activeFrom ?? 0, v.proposedAt, v.id];
+  const latest = active.reduce((a, b) => {
+    const [x, y] = [key(a), key(b)];
+    return x[0] !== y[0] ? (x[0] > y[0] ? a : b) : x[1] !== y[1] ? (x[1] > y[1] ? a : b) : x[2] >= y[2] ? a : b;
+  });
+  return views.map((v) => (v.kind === 'policy_set' && v.status === 'active' && v !== latest ? { ...v, status: 'ended' } : v));
 }
 
 export async function listChanges(db: HotDb, orgId: string, beforeSeq: number | undefined, limit: number) {

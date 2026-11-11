@@ -42,6 +42,8 @@ export function me(scenario: { multi: boolean; users: boolean; role: 'owner' | '
       ...(scenario.multi ? [{ orgId: ORG2_ID, orgName: 'Kestrel Games', status: 'active' as const, role: 'viewer' as const }] : []),
     ],
     features: { users: scenario.users },
+    // The env's name, as the console answers it (the Getting started snippet shows it).
+    envName: 'sandbox-dev',
   };
 }
 
@@ -375,8 +377,12 @@ export function audit(now: number): AuditAnswer {
   return {
     entries: [
       c(212, now - 9 * 60_000, 'step_up.confirmed', { appId: 'app_Lm4Pq9Zs2v', details: { kind: 'origin.add' } }),
+      // A staff-created app's first origin: announced with the no_session waiver, then recorded by the hourly job.
+      { source: 'api', seq: 984, at: now - 40 * 60_000, appId: 'app_Rw2Bt7Kd5c', kind: 'origin.activated', detail: { changeId: 'gc_Rw7Lh2Qa9', kind: 'origin_add', origin: 'http://localhost:5173', policyId: null, activeFrom: now - 3 * H + 4 * 60_000 }, actorKind: 'system', actorId: 'cron', requestId: `${hex('rq984', 16)}-SIN` },
       { source: 'api', seq: 981, at: now - 2 * H, appId: 'app_Lm4Pq9Zs2v', kind: 'key.created', detail: { prefix: 'pk_live_' }, actorKind: 'member', actorId: 'usr_Ak3Pz8Qw2n', requestId: `${hex('rq981', 16)}-SIN` },
       { source: 'api', seq: 980, at: now - 2 * H, appId: 'app_Lm4Pq9Zs2v', kind: 'key.rotated', detail: { oldKeyRevokedAt: now + 22 * H }, actorKind: 'member', actorId: 'usr_Ak3Pz8Qw2n', requestId: `${hex('rq980', 16)}-SIN` },
+      { source: 'api', seq: 983, at: now - 3 * H + 4 * 60_000, appId: 'app_Rw2Bt7Kd5c', kind: 'change.announced', detail: { changeId: 'gc_Rw7Lh2Qa9', kind: 'origin_add', origin: 'http://localhost:5173', policyId: null, activeFrom: now - 3 * H + 4 * 60_000, waiver: 'no_session', channel: 'email' }, actorKind: 'system', actorId: 'admin', requestId: `${hex('rq983', 16)}-AMS` },
+      { source: 'api', seq: 982, at: now - 3 * H, appId: 'app_Rw2Bt7Kd5c', kind: 'app.created', detail: { name: 'Rewards beta', plan: 'free', environment: 'test', keyId: 'key_Rb9Xc2Lp7', scopeCreated: true, waiver: 'no_session', origins: [{ changeId: 'gc_Rw7Lh2Qa9', origin: 'http://localhost:5173' }] }, actorKind: 'hana', actorId: 'hana', requestId: `${hex('rq982', 16)}-AMS` },
       c(211, now - 5 * H, 'member.role', { target: 'usr_Pr4Gh6Tn1s', details: { role: 'owner' } }),
       { ...c(210, now - 6 * H, 'app.logo_set', { appId: 'app_Ts6Ry1Hn8b', details: { code: 'logo_type' } }), outcome: 'failed' as const },
       { source: 'console', seq: 209, at: now - D, actorKind: 'hana', actorId: 'hana', action: 'invite.issued', target: 'inv_Le8Tx4Kp6', details: { role: 'owner' }, requestId: `${hex('rq209', 16)}-AMS`, outcome: 'ok' },

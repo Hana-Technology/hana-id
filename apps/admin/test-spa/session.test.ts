@@ -19,6 +19,7 @@ function orgsApi(invite: (c: Call, n: number) => Answer) {
   let n = 0;
   return (c: Call): Answer => {
     if (c.method === 'GET' && c.path === '/api/orgs') return { body: { orgs: ORGS } };
+    if (c.method === 'GET' && c.path === '/api/invites/new-orgs') return { body: { invites: [], truncated: false } };
     if (c.method === 'POST' && c.path === '/api/invites') return invite(c, (n += 1));
     return { status: 404, body: { error: { code: 'not_found', message: 'Not found' } } };
   };

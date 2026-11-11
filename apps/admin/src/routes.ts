@@ -12,7 +12,7 @@
 // screen (retention-routes.ts); C8b's Users screen (users.ts: `/api/users/search`, `/find`, `/get`, D275); C15's
 // Support ID lookup (`POST /api/support/lookup`, support.ts).
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
-import { type AppChange, type AuditRow, DIRECTORY_AUDIT_ACTIONS, type DirectoryAuditRow, type MemberView } from '@hana-id/console-core';
+import { type AppChange, type AuditRow, DIRECTORY_AUDIT_ACTIONS, type DirectoryAuditRow, type MemberView, NEW_ORG_INVITES_MAX } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { auditCsv } from './export.ts';
 import { errorResponse, json, readJson } from './http.ts';
@@ -202,6 +202,8 @@ const ROUTES: Route[] = [
 
   // ---- invites, members, owner grants ----
   { method: 'POST', pattern: '/api/invites', handler: (c) => answer('POST /api/invites', c.staff, () => c.env.CONSOLE.issueInvite({ ...staffCtx(c.staff), ...pick(c.body, 'email', 'role', 'orgId', 'newOrgName', 'kind') })) },
+  // Invites to organisations not created yet (D696): open, and ended in the last 30 days; the Organisations page's panel.
+  { method: 'GET', pattern: '/api/invites/new-orgs', handler: (c) => answer('GET /api/invites/new-orgs', c.staff, () => c.env.CONSOLE.newOrgInvites({ ...staffCtx(c.staff), limit: NEW_ORG_INVITES_MAX })) },
   { method: 'POST', pattern: '/api/invites/:id/revoke', handler: (c) => answer('POST /api/invites/:id/revoke', c.staff, () => c.env.CONSOLE.revokeInvite({ ...staffCtx(c.staff), inviteId: c.params.id })) },
   { method: 'POST', pattern: '/api/users/:user/disable', handler: (c) => answer('POST /api/users/:user/disable', c.staff, () => c.env.CONSOLE.disableUser({ ...staffCtx(c.staff), userId: c.params.user, ...pick(c.body, 'disabled') })) },
   { method: 'POST', pattern: '/api/owner-grants/:id/cancel', handler: (c) => answer('POST /api/owner-grants/:id/cancel', c.staff, () => c.env.CONSOLE.cancelOwnerGrant({ ...staffCtx(c.staff), grantId: c.params.id })) },

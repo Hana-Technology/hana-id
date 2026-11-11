@@ -15,18 +15,28 @@ export function changeTitle(c: GuardedChange): string {
   return TITLE.raw_sign_on;
 }
 
+/**
+ * Still waiting to take effect at `now` (the server's clock, `AppCtl.serverNow`): pending and not announced, or announced
+ * with its time still ahead (the API's NOT_YET). A pending change whose time has passed is in force (the API serves it,
+ * and refuses its Cancel), even when the page was read before that time.
+ */
+export const isWaiting = (c: GuardedChange, now: number): boolean => c.status === 'pending' && (c.activeFrom === null || c.activeFrom === undefined || c.activeFrom > now);
+
 /** One-line state for tables and summaries. */
 export function changeState(c: GuardedChange, now: number): string {
-  if (c.status === 'pending') return c.notifiedAt === undefined ? 'Waiting for the announcement email: the delay starts once it is sent' : `Pending: active from ${new Date(c.activeFrom ?? 0).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
-  if (c.status === 'active') return 'In effect';
+  if (isWaiting(c, now)) return c.notifiedAt === undefined ? 'Waiting for the announcement email: the delay starts once it is sent' : `Pending: active from ${new Date(c.activeFrom ?? 0).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
+  if (c.status === 'active' || c.status === 'pending') return 'In effect';
   return c.status === 'cancelled' ? 'Cancelled' : 'Ended';
 }
 
-/** The pending changes of `kinds`, each with its timeline and (for an owner) Cancel. */
+/** The changes of `kinds` still waiting, each with its timeline and (for an owner) Cancel. */
 export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }: { ctl: AppCtl; kinds: GuardedChange['kind'][]; title?: string | null }) {
-  const now = useNow(30_000);
+  useNow(30_000); // re-render every 30 s: the countdowns and the moment a change takes effect
   const w = useWrite();
-  const list = ctl.app.changes.filter((c) => c.status === 'pending' && kinds.includes(c.kind));
+  // On the server's clock (D701): a change the server would still let you cancel keeps its Cancel, whatever the
+  // reader's clock says, and one in force there never shows as waiting.
+  const at = ctl.serverNow();
+  const list = ctl.app.changes.filter((c) => isWaiting(c, at) && kinds.includes(c.kind));
   if (list.length === 0) return null;
   return (
     <div className="pending">
@@ -57,9 +67,9 @@ export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }:
             </div>
             <p className="pending-by muted small">
               Requested by {(c.proposedByKind === 'member' && ctl.nameOf(c.proposedBy)) || proposer(c)}
-              {c.proposedByKind === 'member' && ctl.nameOf(c.proposedBy) && c.requestCountry ? ` (from ${c.requestCountry})` : ''}. {changeState(c, now)}.
+              {c.proposedByKind === 'member' && ctl.nameOf(c.proposedBy) && c.requestCountry ? ` (from ${c.requestCountry})` : ''}. {changeState(c, at)}.
             </p>
-            <ChangeTrack change={c} now={now} />
+            <ChangeTrack change={c} now={at} />
           </li>
         ))}
       </ul>

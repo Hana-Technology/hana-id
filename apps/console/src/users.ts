@@ -85,6 +85,8 @@ export function isShownEmail(v: unknown): v is string {
 
 /** An app name as the API stores it: one display-safe line of 1..64 code points. */
 const isAppName = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && [...v].length <= APP_NAME_MAX && isDisplaySafeName(v);
+/** Shown instead of an app name that isn't one display-safe line: the user and their shared address stay listed. */
+export const UNNAMED_APP = 'Unnamed app';
 
 /**
  * One user as a partner may see it, rebuilt field by field from the API's answer, or null when the row doesn't have
@@ -127,8 +129,8 @@ export function partnerUserView(u: unknown): PartnerUserOut | null {
     for (const e of r.emails as unknown[]) {
       const x = (e ?? {}) as Record<string, unknown>;
       const sharedAt = time(x.sharedAt);
-      if (typeof x.appId !== 'string' || !APP_ID_RE.test(x.appId) || !isAppName(x.appName) || !isShownEmail(x.email) || sharedAt === null) return null;
-      emails.push({ appId: x.appId, appName: x.appName, email: x.email, sharedAt });
+      if (typeof x.appId !== 'string' || !APP_ID_RE.test(x.appId) || !isShownEmail(x.email) || sharedAt === null) return null;
+      emails.push({ appId: x.appId, appName: isAppName(x.appName) ? x.appName : UNNAMED_APP, email: x.email, sharedAt });
     }
   }
   return { userId: r.userId, supportId: r.supportId, scopeId: r.scopeId, createdAt, lastSeenAt, accounts, wallets, email, ...(emails ? { emails } : {}) };

@@ -74,7 +74,7 @@ async function membershipRules(env: Env, info: RequestInfo, id: HandoffResult, i
     const tokenHash = fromHex(inv.h.toLowerCase());
     const r = await acceptInvite(
       db,
-      { tokenHash, email: id.email, provider: id.provider, sub: id.sub, hd: id.hd, requestId: info.requestId, now, ipPrefix: ipPrefix(info.clientIp), country: info.country },
+      { tokenHash, email: id.email, provider: id.provider, sub: id.sub, hd: id.hd, requestId: info.requestId, now, ipPrefix: ipPrefix(info.clientIp), country: info.country, network: env.NETWORK },
       () => ownerGrantDelayMs(env),
     );
     if (!r.ok) {

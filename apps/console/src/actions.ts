@@ -640,7 +640,7 @@ async function runConsoleKind(env: Env, w: Writer, a: LiveAction, act: Record<st
   let outcome: Outcome = { status: 'ok' };
   let noop = false;
   if (a.kind === 'member.invite') {
-    const inv = await issueInvite(db, w, { email: act.email as string, role: act.role as 'owner' | 'viewer', orgId: a.org_id, createdByKind: 'member', stepUpId: a.id, consume: consumeIt });
+    const inv = await issueInvite(db, w, { email: act.email as string, role: act.role as 'owner' | 'viewer', orgId: a.org_id, createdByKind: 'member', stepUpId: a.id, consume: consumeIt, network: env.NETWORK });
     outcome = { status: 'ok', inviteId: inv.id };
   } else if (a.kind === 'member.role' || a.kind === 'member.remove') {
     const r = await setMember(db, w, { orgId: a.org_id, userId: act.user_id as string, role: a.kind === 'member.remove' ? null : (act.role as 'owner' | 'viewer'), stepUpId: a.id, consume: consumeIt });

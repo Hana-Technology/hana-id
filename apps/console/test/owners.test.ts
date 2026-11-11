@@ -25,7 +25,7 @@ async function announcedOwnerInvite(org: string, email: string) {
 }
 
 const accept = (tokenHash: Uint8Array, u: { email: string; sub: string }, o: { hd?: string | null; now?: number; requestId?: string } = {}): Promise<AcceptanceOutcome> =>
-  acceptInvite(db, { tokenHash, email: u.email, provider: 'google', sub: u.sub, hd: o.hd ?? null, requestId: o.requestId ?? `req_${Math.random().toString(36).slice(2)}`, now: o.now ?? Date.now(), ipPrefix: ipPrefix('203.0.113.9'), country: 'AU' }, delay);
+  acceptInvite(db, { tokenHash, email: u.email, provider: 'google', sub: u.sub, hd: o.hd ?? null, requestId: o.requestId ?? `req_${Math.random().toString(36).slice(2)}`, now: o.now ?? Date.now(), ipPrefix: ipPrefix('203.0.113.9'), country: 'AU', network: 'testnet' }, delay);
 
 const person = () => ({ email: `${Math.random().toString(36).slice(2)}@partner.example`, sub: `g-${Math.random().toString(36).slice(2)}` });
 

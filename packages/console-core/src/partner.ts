@@ -26,7 +26,7 @@ export interface AuthStartAnswer {
  * The codes a failed sign-in ends with. `/api/auth/complete` is a top-level navigation, so it answers them as a 303 to
  * `/signin#error=<code>` (D292), never as a page with the identity in it.
  */
-export const SIGN_IN_ERRORS = ['not_invited', 'invite_invalid', 'already_member', 'user_disabled', 'expired', 'rate_limited', 'internal'] as const;
+export const SIGN_IN_ERRORS = ['not_invited', 'invite_invalid', 'already_member', 'user_disabled', 'passkeys_required', 'expired', 'rate_limited', 'internal'] as const;
 export type SignInError = (typeof SIGN_IN_ERRORS)[number];
 
 // ---- the signed-in member ----
@@ -46,6 +46,11 @@ export const meAnswer = z
      * limit isn't a fixed time (each request moves it) and isn't answered.
      */
     sessionExpiresAt: ms.optional(),
+    /**
+     * This console's Hana environment (the manifest's `name`, e.g. `sandbox-dev`): what a partner passes as
+     * `createHana({ environment })`. Public; the SPA shows it in the client snippet.
+     */
+    envName: z.string().regex(/^[a-z0-9-]{1,64}$/u).optional(),
   })
   .strict();
 export type MeAnswer = z.infer<typeof meAnswer>;

@@ -110,6 +110,7 @@ export const SIGN_IN_MESSAGES: Record<SignInError, string> = {
   invite_invalid: 'This invite can’t be used: it was used, revoked or has expired, or it was sent to another address or Workspace domain. Ask for a new one.',
   already_member: 'You’re already a member of that organisation. Sign in without the invite.',
   user_disabled: 'This account is disabled. Contact Hana.',
+  passkeys_required: 'This invite would create a second partner organisation, which Hana can’t allow here until passkeys are available. Contact Hana.',
   expired: 'That sign-in took too long or was finished in another browser. Start again.',
   rate_limited: 'Too many sign-in attempts from your network. Wait a minute, then start again.',
   internal: 'Something went wrong. Try again in a few minutes.',
@@ -122,6 +123,8 @@ export interface OrgContext {
   frozen: boolean;
   /** The signed-in member's address (a fresh sign-in must use the same Google account). */
   email?: string | undefined;
+  /** This console's Hana environment (`GET /api/me` `envName`), for the client snippet; undefined when not answered. */
+  envName?: string | undefined;
 }
 
 export const useOrg = (): OrgContext => useOutletContext<OrgContext>();

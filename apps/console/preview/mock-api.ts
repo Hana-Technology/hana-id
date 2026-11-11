@@ -166,7 +166,7 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   const appM = /^\/apps\/([^/]+)$/u.exec(rest);
   if (appM) {
     const a = apps.find((x) => x.id === appM[1]);
-    return a ? ok({ app: a }) : fail(404, 'not_found', 'Not found');
+    return a ? ok({ app: a, now }) : fail(404, 'not_found', 'Not found');
   }
   const emailM = /^\/apps\/([^/]+)\/email$/u.exec(rest);
   if (emailM) {

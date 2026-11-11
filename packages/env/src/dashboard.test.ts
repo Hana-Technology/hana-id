@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { accessSessionDurationOf, accessSessionDurationProblem, appChangeDelayProblems, DASHBOARD_BLOCKS, DEFAULT_ACCESS_SESSION_DURATION, emailFromProblem, hanaOwnOrigins, loadEnv, manifestPath, manifestSchema } from './index.ts';
+import { accessSessionDurationOf, accessSessionDurationProblem, appChangeDelayProblems, DASHBOARD_BLOCKS, DEFAULT_ACCESS_SESSION_DURATION, emailFromProblem, hanaOwnOrigins, loadEnv, manifestPath, manifestSchema, usersScreenProblem } from './index.ts';
 
 type Raw = Record<string, unknown>;
 // Without identityToken: these tests move apiUrl, and the identity issuer must follow it (tested in identity.test.ts).
@@ -100,6 +100,25 @@ describe('dashboard blocks', () => {
       const m = withDashboard((d) => delete d[k]);
       expect(messages(m).join('\n')).toContain(`missing: ${k}`);
     }
+  });
+
+  it('console.usersScreen is an optional boolean, off when absent (D702); sandbox-dev sets it on', () => {
+    expect(messages(withDashboard())).toEqual([]);
+    expect(manifestSchema.parse(withDashboard()).console!.usersScreen).toBeUndefined();
+    for (const v of [true, false]) expect(messages(withDashboard((d) => (block(d, 'console').usersScreen = v)))).toEqual([]);
+    for (const bad of ['1', 1, 'true', null]) expect(messages(withDashboard((d) => (block(d, 'console').usersScreen = bad))).length, String(bad)).toBeGreaterThan(0);
+    expect(loadEnv('sandbox-dev').console!.usersScreen).toBe(true);
+  });
+
+  it('console.usersScreen: true is refused on any network but testnet, naming the decision it needs (D702)', () => {
+    const c = (usersScreen?: boolean) => ({ ...(dashboard().console as Raw), ...(usersScreen === undefined ? {} : { usersScreen }) }) as never;
+    expect(usersScreenProblem({ network: 'testnet', console: c(true) })).toBeNull();
+    for (const network of ['mainnet', 'staging-net']) {
+      expect(usersScreenProblem({ network, console: c(true) })).toMatch(/console\.usersScreen is confirmed for testnet only \(D702\).*needs its own decision/u);
+      expect(usersScreenProblem({ network, console: c(false) })).toBeNull();
+      expect(usersScreenProblem({ network, console: c() })).toBeNull();
+    }
+    expect(usersScreenProblem({ network: 'mainnet', console: undefined })).toBeNull();
   });
 
   it('refuse unknown keys in a block', () => {

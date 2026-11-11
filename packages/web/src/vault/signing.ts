@@ -27,6 +27,7 @@ import {
   decodeNearTransaction,
   isNearImplicitAccountId,
   nearImplicitPublicKey,
+  nearRelaysDelegate,
   signNearDelegateAction,
   signNearTransaction,
   signNep413Message,
@@ -141,10 +142,12 @@ export function approvalSubject(request: SignRequest, addresses: SigningAddresse
   // NEAR: the bytes must decode (codec.ts, strict), and name this account and its key as the signer (D722).
   if (request.method === 'near_signTransaction' || request.method === 'near_signDelegateAction') {
     let signer: { account: string; key: NearPublicKey };
+    let relays = false;
     try {
       if (request.method === 'near_signTransaction') {
         const tx = decodeNearTransaction(content.bytes);
         signer = { account: tx.signerId, key: tx.publicKey };
+        relays = nearRelaysDelegate(tx);
       } else {
         const da = decodeNearDelegateAction(content.bytes);
         signer = { account: da.senderId, key: da.publicKey };
@@ -153,6 +156,8 @@ export function approvalSubject(request: SignRequest, addresses: SigningAddresse
       throw new VaultError(ErrorCode.unauthorized, 'The request is malformed', { reason: 'invalid_request' });
     }
     if (signer.account !== address || signer.key.type !== 'ed25519' || !bytesEqual(signer.key.bytes, nearImplicitPublicKey(address))) throw addressMismatch();
+    // H1 of the review: the signer of a transaction relaying a delegate action prepays the delegate's deposits.
+    if (relays) throw new VaultError(ErrorCode.unauthorized, NEAR_RELAYED_DELEGATE_RULE, { reason: 'near_relayed_delegate' });
   }
   const subject: ApprovalSubject = { kind: APPROVAL_KIND[request.method], chain, address, ...content };
   // Before any popup or policy: a test app's keys come from the testnet MPC and must never sign for a mainnet, except
@@ -198,6 +203,9 @@ export function demoRefusalFlash(reason: string): string {
       return 'Refused: Hana can’t tell how much this mainnet request moves';
   }
 }
+
+/** Why a NEAR transaction that relays a delegate action is refused (`near_relayed_delegate`). */
+export const NEAR_RELAYED_DELEGATE_RULE = 'Hana doesn’t sign a NEAR transaction that relays a delegate action: its signer pays every deposit inside it';
 
 const addressMismatch = (): VaultError => new VaultError(ErrorCode.unauthorized, 'The request names another address');
 

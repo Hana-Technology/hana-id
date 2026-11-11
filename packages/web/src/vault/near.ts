@@ -158,34 +158,56 @@ export class NearView {
   }
 
   /**
-   * Whether `blockHash` (base58) is a block of this env's network (D726): a test app's NEAR transaction must name a
-   * testnet block, which ties its signature to testnet (a transaction is valid only with a recent block hash of the
-   * network it is sent to). True when the node returns that block, false when it says it doesn't know it (an
-   * UNKNOWN_BLOCK error); throws when no endpoint gives either answer. A block is unknown to a node once it has
-   * garbage-collected it (after about five epochs, longer than a transaction's validity), so a valid one never is.
+   * One read, from the primary with the fallback (`independent` false), or from each of the env's two providers
+   * separately (`independent` true, when the env has two; D263's rule for answers a lying provider could forge): every
+   * provider must answer, and the caller gets each answer to check them all.
    */
-  async blockExists(blockHash: string): Promise<boolean> {
-    const unknown = (b: Record<string, unknown>) => isObj(b.error) && isObj(b.error.cause) && b.error.cause.name === 'UNKNOWN_BLOCK';
-    const body = await this.call('block', { block_id: blockHash }, (b) => (b.error === undefined && isObj(b.result)) || unknown(b));
-    if (unknown(body)) return false;
-    const header = isObj(body.result) ? body.result.header : undefined;
-    return isObj(header) && header.hash === blockHash;
+  private async reads(method: string, params: unknown, usable: (b: Record<string, unknown>) => boolean, independent: boolean): Promise<Record<string, unknown>[]> {
+    const ends = independent ? independentEndpoints(this.endpoints) : null;
+    if (!ends) return [await this.call(method, params, usable)];
+    const o = { id: 'hana-vault', usable, ...(this.timeoutMs ? { timeoutMs: this.timeoutMs } : {}) };
+    return Promise.all(ends.map((url) => nearCallAt(url, this.fetchFn, method, params, o)));
   }
 
   /**
-   * `view_access_key` at final finality: the key's nonce and the height it was read at, or null when the account or the
-   * key doesn't exist on this env's network. Throws when no endpoint gives either answer.
+   * Whether `blockHash` (base58) is a block of this env's network (D726), as each provider asked says (one answer per
+   * provider; see `reads`): a NEAR transaction is valid only with a recent block hash of the network it is sent to, so
+   * the block hash is what ties it to one. True when the node returns that block, false when it says it doesn't know it
+   * (UNKNOWN_BLOCK); throws when a provider gives neither answer. A block is unknown to a node once it has
+   * garbage-collected it (after about five epochs, longer than a transaction's validity), so a valid one never is.
+   *
+   * What a lying RPC can do here: say a mainnet block is a testnet one (the user is then shown "checked on testnet"
+   * for a transaction valid on mainnet), or refuse a good one. For a test app the vault asks both providers
+   * (`independent`), so one lying provider alone can't do the first.
    */
-  async accessKey(accountId: string, publicKey: string): Promise<{ nonce: bigint; blockHeight: bigint } | null> {
+  async blockExists(blockHash: string, independent = false): Promise<boolean[]> {
+    const unknown = (b: Record<string, unknown>) => isObj(b.error) && isObj(b.error.cause) && b.error.cause.name === 'UNKNOWN_BLOCK';
+    const bodies = await this.reads('block', { block_id: blockHash }, (b) => (b.error === undefined && isObj(b.result)) || unknown(b), independent);
+    return bodies.map((body) => {
+      if (unknown(body)) return false;
+      const header = isObj(body.result) ? body.result.header : undefined;
+      return isObj(header) && header.hash === blockHash;
+    });
+  }
+
+  /**
+   * `view_access_key` at final finality, one answer per provider asked (see `reads`): the key's nonce and the height it
+   * was read at, or null when the account or the key doesn't exist on this env's network. Throws when a provider gives
+   * neither answer. A lying provider could report a height or nonce that lets a test app's delegate action through on
+   * mainnet: for test apps the vault asks both providers and checks every answer.
+   */
+  async accessKey(accountId: string, publicKey: string, independent = false): Promise<({ nonce: bigint; blockHeight: bigint } | null)[]> {
     const missing = (b: Record<string, unknown>) =>
       (isObj(b.error) && isObj(b.error.cause) && (b.error.cause.name === 'UNKNOWN_ACCESS_KEY' || b.error.cause.name === 'UNKNOWN_ACCOUNT')) ||
       // Older nodes answer a missing key inside `result`.
       (isObj(b.result) && typeof b.result.error === 'string' && /does not exist/u.test(b.result.error));
     const answered = (b: Record<string, unknown>) => b.error === undefined && isObj(b.result) && Number.isSafeInteger(b.result.nonce) && Number.isSafeInteger(b.result.block_height);
-    const body = await this.call('query', { request_type: 'view_access_key', finality: 'final', account_id: accountId, public_key: publicKey }, (b) => answered(b) || missing(b));
-    if (missing(body)) return null;
-    const r = body.result as { nonce: number; block_height: number };
-    return { nonce: BigInt(r.nonce), blockHeight: BigInt(r.block_height) };
+    const bodies = await this.reads('query', { request_type: 'view_access_key', finality: 'final', account_id: accountId, public_key: publicKey }, (b) => answered(b) || missing(b), independent);
+    return bodies.map((body) => {
+      if (missing(body)) return null;
+      const r = body.result as { nonce: number; block_height: number };
+      return { nonce: BigInt(r.nonce), blockHeight: BigInt(r.block_height) };
+    });
   }
 
   /** The outcome of a relayed transaction (sender: the pinned RELAYER). Network errors throw. */

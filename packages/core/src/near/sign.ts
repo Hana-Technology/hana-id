@@ -15,6 +15,7 @@ import {
   nearDelegateActionHash,
   nearTransactionHash,
   nearTransactionHashString,
+  nearRelaysDelegate,
   nep413Hash,
 } from './codec.ts';
 
@@ -36,6 +37,9 @@ export interface NearSignedTransactionResult {
 export function signNearTransaction(seed: Uint8Array, txBytes: Uint8Array): NearSignedTransactionResult {
   const tx: NearTransaction = decodeNearTransaction(txBytes);
   checkSigner(seed, tx.publicKey, 'transaction');
+  // The signer of a transaction that relays a delegate action prepays every deposit inside it: a wallet user is not a
+  // relayer, so Hana never signs one (nearRelaysDelegate).
+  if (nearRelaysDelegate(tx)) throw new Error('A NEAR transaction that relays a delegate action is never signed');
   const sig = toBytes(ed25519.sign(nearTransactionHash(txBytes), seed));
   return {
     signature: base64Encode(sig),

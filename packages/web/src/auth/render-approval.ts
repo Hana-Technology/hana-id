@@ -26,6 +26,7 @@ import {
   nearChangesControl,
   nearCodeHash,
   nearDeposits,
+  nearGlobalContractBurn,
   nearHash58,
   nearKeyText,
   nearMethodName,
@@ -398,7 +399,8 @@ export const NEAR_ACCOUNT_CONTROL_BANNER =
 
 /** A delegate action (NEP-366) names no network; a relayer pays its fee. */
 export const NEAR_DELEGATE_NOTES = {
-  relayer: 'A relayer sends this for you and pays the network fee. Any NEAR it attaches or sends still comes from your account.',
+  relayer:
+    'A relayer sends this for you: it pays the network fee and any NEAR this attaches or sends (if an action fails, that NEAR is refunded to your account). The actions run as your account: a contract they call acts in your name and can move tokens you hold with it.',
   network: 'This authorization doesn’t name a network: it is valid on any NEAR network where your account has this key.',
 } as const;
 
@@ -429,12 +431,33 @@ export function nearControlWarnings(a: NearAction, receiver: string, me: string)
   }
 }
 
-/** Arguments: the first ARGS_SHOWN characters, the rest one click away (nothing is hidden from the user). */
-const ARGS_SHOWN = 1500;
+/**
+ * The red warnings of actions that don't change who controls the account but can still cost it dearly: a call to a
+ * contract on the user's own account (it runs with the account's full authority), and publishing a global contract
+ * (its NEAR is burnt).
+ */
+export function nearCostWarnings(a: NearAction, receiver: string, me: string): string[] {
+  switch (a.type) {
+    case 'functionCall':
+      return receiver === me ? ['This calls a contract on your own account. A contract there runs with your account’s full authority: it can move everything in it.'] : [];
+    case 'deployGlobalContract':
+      return [`This publishes a global contract and burns ${formatNear(nearGlobalContractBurn(a.code.length))} from ${receiver === me ? 'your account' : receiver} (0.0001 NEAR per byte of code). Burnt NEAR is gone for good.`];
+    default:
+      return [];
+  }
+}
 
+/** Text longer than this gets a line saying so above it: the box scrolls, and the user must read to its end. */
+export const LONG_TEXT_CHARS = 1500;
+
+/** "Long: N characters. Scroll through all of it before you approve." */
+export const longTextNote = (n: number): string => `Long: ${n} characters. Scroll through all of it before you approve.`;
+
+/** All of `text`, always (never cut): in a scrolling box, with a warning line above it when it is long. */
 function longText(d: Dom, text: string, cls: string): HTMLElement {
-  if (text.length <= ARGS_SHOWN) return d.h('pre', { class: cls }, text);
-  return d.h('div', {}, d.h('pre', { class: cls }, `${text.slice(0, ARGS_SHOWN)}…`), d.h('details', {}, d.h('summary', {}, `Show all ${text.length} characters`), d.h('pre', { class: cls }, text)));
+  const box = d.h('pre', { class: cls }, text);
+  if (text.length <= LONG_TEXT_CHARS) return box;
+  return d.h('div', {}, d.h('p', { class: 'warn long-text' }, longTextNote(text.length)), box);
 }
 
 function nearArgs(d: Dom, args: Uint8Array): HTMLElement {
@@ -525,7 +548,7 @@ function nearActionList(d: Dom, actions: readonly NearAction[], receiver: string
       'ol',
       { class: 'ops' },
       ...actions.map((a, i) => {
-        const warnings = nested ? [] : nearControlWarnings(a, receiver, me);
+        const warnings = nested ? [] : [...nearControlWarnings(a, receiver, me), ...nearCostWarnings(a, receiver, me)];
         return d.h(
           'li',
           { class: warnings.length > 0 ? 'op takeover-op' : 'op' },
@@ -539,10 +562,34 @@ function nearActionList(d: Dom, actions: readonly NearAction[], receiver: string
 }
 
 /** The NEAR leaving the account: deposits (and stake), and whether a DeleteAccount sends everything. */
-function nearTotal(d: Dom, actions: readonly NearAction[], fees: string): HTMLElement {
+/** A transaction's NEAR: deposits and transfers leave the signer's account; Stake locks, a global contract burns. */
+function nearTotal(d: Dom, actions: readonly NearAction[]): HTMLElement {
+  const t = nearDeposits(actions);
+  const leaving = t.total + t.burned;
+  return rows(d, [
+    row(d, 'NEAR leaving your account', t.deletesAccount ? d.h('strong', { class: 'danger' }, 'All of it (the account is deleted)') : d.h('strong', {}, formatNear(leaving)), ' (plus the network fee for gas)'),
+    t.burned > 0n && row(d, 'NEAR burnt', d.h('strong', { class: 'danger' }, formatNear(t.burned)), ' (publishing a global contract)'),
+    t.staked > 0n && row(d, 'NEAR staked (locked)', formatNear(t.staked)),
+  ]);
+}
+
+/**
+ * A delegate action's NEAR (nearcore): the relayer's transaction prepays every deposit and transfer in it, which go
+ * to their receivers on success and back to the user's account (the receipt's predecessor) on failure; gas is the
+ * relayer's. What the user's own balance loses is only what acts on the user's account itself: a DeleteAccount
+ * (everything), Stake (locked) and a global contract's burn.
+ */
+function nearDelegateTotal(d: Dom, actions: readonly NearAction[]): HTMLElement {
   const t = nearDeposits(actions);
   return rows(d, [
-    row(d, 'NEAR leaving your account', t.deletesAccount ? d.h('strong', { class: 'danger' }, 'All of it (the account is deleted)') : d.h('strong', {}, formatNear(t.total)), ` ${fees}`),
+    row(
+      d,
+      'NEAR leaving your account',
+      t.deletesAccount ? d.h('strong', { class: 'danger' }, 'All of it (the account is deleted)') : d.h('strong', {}, t.burned > 0n ? formatNear(t.burned) : 'None'),
+      t.deletesAccount || t.burned > 0n ? '' : ' (the relayer pays the fee and what this sends)',
+    ),
+    t.total > 0n && row(d, 'NEAR this sends, paid by the relayer', formatNear(t.total)),
+    t.burned > 0n && row(d, 'NEAR burnt', d.h('strong', { class: 'danger' }, formatNear(t.burned)), ' (publishing a global contract)'),
     t.staked > 0n && row(d, 'NEAR staked (locked)', formatNear(t.staked)),
   ]);
 }
@@ -555,6 +602,8 @@ export interface NearRenderContext {
   readonly envNetwork: 'testnet' | 'mainnet';
   /** A pk_test_ app: the vault binds its delegate actions to the env network too. */
   readonly testApp: boolean;
+  /** The partner page's origin, as the vault pinned it (a NEP-413 recipient is compared with its host). */
+  readonly parentOrigin?: string;
 }
 
 /**
@@ -585,7 +634,7 @@ function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>, 
       row(d, 'Block hash', mono(d, nearHash58(tx.blockHash))),
       row(d, 'Transaction hash', mono(d, decoded.hash)),
     ]),
-    nearTotal(d, tx.actions, '(plus the network fee for gas)'),
+    nearTotal(d, tx.actions),
     nearActionList(d, tx.actions, tx.receiverId, tx.signerId, false),
   ];
 }
@@ -603,19 +652,45 @@ function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_de
       row(d, 'Valid until block', String(da.maxBlockHeight)),
       row(d, 'Nonce', mono(d, String(da.nonce))),
     ]),
-    nearTotal(d, da.actions, '(the relayer pays the network fee)'),
+    nearDelegateTotal(d, da.actions),
     nearActionList(d, da.actions, da.receiverId, da.senderId, false),
   ];
 }
 
-function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>): HTMLElement[] {
+/** The page's host (`https://app.example:8443` → `app.example`), or null for a value that isn't an origin. */
+function originHost(origin: string | undefined): string | null {
+  if (!origin) return null;
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** A NEP-413 recipient that isn't the requesting page: whoever holds the signature can use it as proof at `recipient`. */
+export const nearRecipientMismatch = (recipient: string, host: string): string =>
+  `This app is at ${host}, but the signature is for ${recipient}. Sign only if you are signing in to ${recipient} on purpose.`;
+
+/** A recipient with characters outside printable ASCII, which can imitate another name, written with \u escapes. */
+export const nearRecipientLookalike = (escaped: string): string => `The recipient has characters that can imitate another name. Written out: ${escaped}`;
+
+const asciiEscaped = (s: string): string => Array.from(s, (ch) => (/^[\x20-\x7e]$/u.test(ch) ? ch : Array.from({ length: ch.length }, (_, i) => `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`).join(''))).join('');
+
+function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: NearRenderContext): HTMLElement[] {
   const p = decoded.payload;
+  const host = originHost(ctx.parentOrigin);
+  const sameSite = host !== null && (p.recipient === host || p.recipient === ctx.parentOrigin);
+  const lookalike = /[^\x20-\x7e]/u.test(p.recipient);
+  const text = decoded.message.text;
   return [
     d.h('p', { class: 'warn' }, nearMessageWarning(p.recipient)),
+    host !== null && !sameSite ? d.h('p', { class: 'danger' }, nearRecipientMismatch(p.recipient, host)) : null,
+    lookalike ? d.h('p', { class: 'danger' }, nearRecipientLookalike(asciiEscaped(p.recipient))) : null,
     rows(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl)), row(d, 'Nonce', mono(d, toHex(p.nonce)))]),
     d.h('p', { class: 'note' }, NO_NETWORK_NOTE),
+    ...(text !== null && text.length > LONG_TEXT_CHARS ? [d.h('p', { class: 'warn long-text' }, longTextNote(text.length))] : []),
     ...message(d, decoded.message),
-  ];
+  ].filter((x): x is HTMLElement => x !== null);
 }
 
 const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM chains' } as const;
@@ -679,7 +754,7 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
       parts.push(d.h('h2', {}, 'NEAR transaction, fee paid by a relayer'), ...nearDelegate(d, decoded, near));
       break;
     case 'near_message':
-      parts.push(d.h('h2', {}, 'Sign in with your NEAR account'), ...nearMessage(d, decoded));
+      parts.push(d.h('h2', {}, 'Sign in with your NEAR account'), ...nearMessage(d, decoded, near));
       break;
   }
   return d.h('div', { class: 'request' }, ...parts);

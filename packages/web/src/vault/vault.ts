@@ -84,6 +84,9 @@ import {
   decodeNearTransaction,
   nearHashString,
   nearKeyString,
+  NEAR_DELEGATE_MAX_BLOCKS,
+  NEAR_NONCE_PER_BLOCK,
+  nearDelegateNonceFloor,
   base64UrlEncode,
   apiTakesNear,
   fromHex,
@@ -340,11 +343,8 @@ class PersistFailure extends Error {
   }
 }
 
-/**
- * A test app's NEAR delegate action must expire within this many blocks of testnet's height (D726): about 1.6 hours at
- * ~1.7 blocks a second (near-api-js's default is 600 blocks).
- */
-export const NEAR_DELEGATE_MAX_BLOCKS = 10_000;
+/** A test app's NEAR delegate action must expire within this many blocks of testnet's height (D726; core's rule). */
+export { NEAR_DELEGATE_MAX_BLOCKS } from '@hana-id/core';
 
 /** A failed POST /v1/vault/shares is tried once more after this long (D79). */
 export const PERSIST_RETRY_MS = 1_000;
@@ -3067,8 +3067,12 @@ export class Vault {
     const blockHash = nearHashString(decodeNearTransaction(txBytes).blockHash);
     const here = this.env.network;
     let known: boolean;
+    let either: boolean;
     try {
-      known = await this.near!.blockExists(blockHash);
+      // A test app's answer comes from both providers when the env has two (a lying RPC alone can't vouch for a block).
+      const answers = await this.near!.blockExists(blockHash, this.testApp);
+      known = answers.every(Boolean);
+      either = answers.some(Boolean);
     } catch {
       if (claimed !== here) return;
       throw new VaultError('api_unavailable', `Hana couldn’t check this transaction’s block on NEAR ${here}, try again`, { reason: 'near_rpc_unavailable' });
@@ -3080,40 +3084,44 @@ export class Vault {
         blockHash,
       });
     }
-    if (claimed !== here && known) {
+    if (claimed !== here && either) {
       throw new VaultError(ErrorCode.unauthorized, `This transaction names NEAR ${claimed}, but its block hash is a NEAR ${here} block`, { reason: 'near_network_mismatch', chain: 'near', blockHash });
     }
   }
 
   /**
    * A test app's delegate action must be bound to testnet (D726). A DelegateAction has no block hash; what ties it to a
-   * network is its key, nonce and expiry, read here from this env's (testnet) RPC at final finality:
+   * network is its key, nonce and expiry, read here from this env's (testnet) RPC at final finality, from both providers
+   * when the env has two (every answer must pass):
    * - the sender's access key must exist on testnet with this public key (else 4100 `near_key_unknown`: activate the
    *   account first);
-   * - nonce > the key's nonce (else `near_delegate_nonce_used`) and < height × 10^6, nearcore's upper bound, so it can
-   *   run on testnet now (else `near_delegate_nonce_too_large`);
+   * - nonce > the key's nonce (else `near_delegate_nonce_used`), nonce > (height − NEAR_DELEGATE_MAX_BLOCKS) × 10^6
+   *   (else `near_delegate_nonce_stale`), and nonce < height × 10^6, nearcore's upper bound (else
+   *   `near_delegate_nonce_too_large`); `nearDelegateNonce` in `@hana-id/core/near` picks such a nonce;
    * - height < max_block_height ≤ height + NEAR_DELEGATE_MAX_BLOCKS (else `near_delegate_expiry`).
-   * On mainnet nearcore refuses a nonce ≥ mainnet height × 10^6, and the action is void past max_block_height, so it
-   * could run there only while mainnet's height is between nonce / 10^6 (at least the testnet height its key was added
-   * at, ≥ 277 million for every Hana NEAR key: the tuple is from 2026-11) and max_block_height (testnet's height now
-   * plus at most NEAR_DELEGATE_MAX_BLOCKS). Mainnet is ~53 million blocks behind testnet (224 M vs 277 M on
-   * 2026-11-11, both at ~1.7 blocks/s), so that range is years ahead of it at best, and its account would also need this
-   * key with a lower nonce. RPC down: `api_unavailable` (fail closed).
+   * On another network nearcore refuses a nonce ≥ its height × 10^6 and an action past max_block_height, so it could
+   * run there only while that network's height is between nonce / 10^6 (> testnet's height now − 10,000) and
+   * max_block_height (≤ testnet's height now + 10,000): within about 20,000 blocks of testnet's height today, which
+   * mainnet (~53 million blocks behind on 2026-11-11, both at ~1.7 blocks/s) does not reach while the action is valid.
+   * RPC down: `api_unavailable` (fail closed).
    */
   private async checkNearDelegate(delegateBytes: Uint8Array): Promise<void> {
     const da = decodeNearDelegateAction(delegateBytes);
-    let key: { nonce: bigint; blockHeight: bigint } | null;
+    let keys: ({ nonce: bigint; blockHeight: bigint } | null)[];
     try {
-      key = await this.near!.accessKey(da.senderId, nearKeyString(da.publicKey));
+      keys = await this.near!.accessKey(da.senderId, nearKeyString(da.publicKey), true);
     } catch {
       throw new VaultError('api_unavailable', `Hana couldn’t check this delegate action on NEAR ${this.env.network}, try again`, { reason: 'near_rpc_unavailable' });
     }
     const refuse = (reason: string, message: string) => new VaultError(ErrorCode.unauthorized, `${message}. ${TEST_APP_NETWORK_RULE}`, { reason, chain: 'near' });
-    if (!key) throw refuse('near_key_unknown', `This NEAR account has no such key on ${this.env.network} yet: create (activate) the account first`);
-    if (da.nonce <= key.nonce) throw refuse('near_delegate_nonce_used', `This delegate action's nonce is used: take the key's nonce from ${this.env.network} and add 1`);
-    if (da.nonce >= key.blockHeight * 1_000_000n) throw refuse('near_delegate_nonce_too_large', 'This delegate action’s nonce is too large for the current block height');
-    if (da.maxBlockHeight <= key.blockHeight || da.maxBlockHeight > key.blockHeight + BigInt(NEAR_DELEGATE_MAX_BLOCKS)) {
-      throw refuse('near_delegate_expiry', `This delegate action must expire within ${NEAR_DELEGATE_MAX_BLOCKS} blocks of ${this.env.network}'s current height`);
+    for (const key of keys) {
+      if (!key) throw refuse('near_key_unknown', `This NEAR account has no such key on ${this.env.network} yet: create (activate) the account first`);
+      if (da.nonce <= key.nonce) throw refuse('near_delegate_nonce_used', `This delegate action's nonce is used: build it again with nearDelegateNonce from the key's nonce and height on ${this.env.network}`);
+      if (da.nonce <= nearDelegateNonceFloor(key.blockHeight)) throw refuse('near_delegate_nonce_stale', `This delegate action's nonce is too low for ${this.env.network}'s current height: build it with nearDelegateNonce`);
+      if (da.nonce >= key.blockHeight * NEAR_NONCE_PER_BLOCK) throw refuse('near_delegate_nonce_too_large', 'This delegate action’s nonce is too large for the current block height');
+      if (da.maxBlockHeight <= key.blockHeight || da.maxBlockHeight > key.blockHeight + BigInt(NEAR_DELEGATE_MAX_BLOCKS)) {
+        throw refuse('near_delegate_expiry', `This delegate action must expire within ${NEAR_DELEGATE_MAX_BLOCKS} blocks of ${this.env.network}'s current height`);
+      }
     }
   }
 

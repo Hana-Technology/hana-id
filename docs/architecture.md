@@ -784,10 +784,13 @@ borsh(DelegateAction)) (NEP-461) and sha256 of the NEP-413 bytes, with the seed 
 The vault (`vault/signing.ts`) refuses a request whose signer, sender or key isn't the user's (4100). NEAR's bytes
 name no network, so the vault checks the claimed one on its env's RPC (`vault/near.ts`, D726) before any popup: every
 app's `testnet` transaction must name a block the RPC knows (`block`, fail closed), a `mainnet` one must not; a test
-app's delegate action must have the user's key on testnet (`view_access_key`), a nonce above the key's and below
-height × 10^6, and `max_block_height` within `NEAR_DELEGATE_MAX_BLOCKS` (10,000) of testnet's height. The popup
+app's delegate action must have the user's key on testnet (`view_access_key`), a nonce above the key's, above
+(height − 10,000) × 10^6 and below height × 10^6 (`nearDelegateNonce` in `@hana-id/core/near` picks one), and
+`max_block_height` within `NEAR_DELEGATE_MAX_BLOCKS` (10,000) of testnet's height; for test apps both providers are
+asked (`independentEndpoints`) and every answer must pass. A transaction relaying a delegate action is refused
+(`near_relayed_delegate`: its signer prepays the delegate's deposits). The popup
 (`render-approval.ts`) says which network claims Hana checked. `hana.near.relay` posts a `SignedDelegateAction` to
-`POST /v1/near/relay` on the env's `apiUrl` (the relayer build's endpoint); the vault isn't involved.
+`POST /v1/near/relay` on the env's `apiUrl` (where the environment runs a relayer); the vault isn't involved.
 
 Addresses (D725): `PortAddresses` gains an optional `near`, sent only to an SDK whose hello names `NEAR_SDK_MIN`
 (0.4.0) or later (0.3.x SDKs check the object's exact keys). The vault derives the NEAR account from PRK at login and

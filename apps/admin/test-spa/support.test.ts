@@ -172,6 +172,25 @@ describe('the Support ID lookup screen', () => {
     expect(t).toContain('Kept 24 months, then deleted by the monthly retention job (and at once by an erasure request).');
   });
 
+  it('shows a NEAR account and a NEAR key export as NEAR; a match without one says "No NEAR account yet" (D755)', async () => {
+    const near = 'ab'.repeat(32);
+    const view = { ...unboundView(), matches: [match(1), match(2)], activity: [null, null] };
+    const first = view.matches[0]!.user as Record<string, unknown>;
+    first.wallets = [...(first.wallets as unknown[]), { chain: 'near', address: near, keyIndex: 0, firstSeenAt: T - DAY, lastUsedAt: T }];
+    first.events = [{ kind: 'key_exported', appId: 'app_1', chain: 'near', network: null, address: null, usdMicros: null, at: T - 2000 }];
+    const s = boot('/support', () => ({ body: view }));
+    await vi.waitFor(() => expect(s.text()).toContain('Support ID lookup'));
+    s.field('query').value = 'HANA-2750-G5HM';
+    s.field('ticket').value = 'ZD-1234';
+    s.submit();
+    await vi.waitFor(() => expect(s.text()).toContain('Key exports and mainnet demo signatures'));
+    const t = s.text();
+    expect(t).toContain(`NEAR${near}`);
+    const cells = [...s.main().querySelectorAll('td')].map((c) => c.textContent);
+    expect(cells.filter((c) => c === 'NEAR')).toHaveLength(2); // the wallet row and the export's chain
+    expect(t.match(/No NEAR account yet/gu)).toHaveLength(1); // the second match only
+  });
+
   it('a user whose events were purged or erased: the lookup still shows the match, with the 24-month empty state', async () => {
     const view = unboundView();
     (view.matches[0]!.user as Record<string, unknown>).events = [];

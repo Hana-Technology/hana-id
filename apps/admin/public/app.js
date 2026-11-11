@@ -644,10 +644,10 @@ function userEventsBlock(u) {
           time(e.at),
           e.kind === 'key_exported' ? h('span', { class: 'badge warning' }, 'Key exported') : h('span', { class: 'badge' }, 'Mainnet demo signature (reported by the vault)'),
           e.appId === null ? h('span', { class: 'sub' }, 'Hana Home') : h('code', {}, e.appId),
-          e.chain ? chainLabel(e.chain) : e.appId === null ? 'both chains (Hana Home)' : 'unknown (older export window)',
+          e.chain ? chainLabel(e.chain) : e.appId === null ? 'every chain (Hana Home)' : 'unknown (older export window)',
           e.kind === 'key_exported'
             ? e.appId === null
-              ? 'Hana Home signed in again and derived the key (one sign-in opens both chains); the user may have shown or copied it.'
+              ? 'Hana Home signed in again and derived the key (one sign-in opens every chain); the user may have shown or copied it.'
               : 'The export window signed in again and derived the key; the user may have shown or copied it.'
             : h('span', {}, `${e.network === 'pubnet' ? 'Stellar public network' : `EVM chain ${e.network}`}, about ${usdMicros(e.usdMicros || 0)} from `, h('code', {}, e.address), h('span', { class: 'sub' }, ' reported by the vault')),
         ),
@@ -2741,7 +2741,7 @@ const OPENED_MAX = 50;
 /** Labels shared with the partner console's Users screen (apps/console/web/src/pages/Users.tsx). */
 const KIND = { google: 'Google', email: 'Email', apple: 'Apple' };
 const kindLabel = (k) => KIND[k] || k;
-const chainLabel = (c) => (c === 'stellar' ? 'Stellar' : c === 'evm' ? 'EVM' : c);
+const chainLabel = (c) => (c === 'stellar' ? 'Stellar' : c === 'evm' ? 'EVM' : c === 'near' ? 'NEAR' : c);
 /** The help text of every support-reference field (the same rule for the console's and the issuer's audits). */
 const TICKET_HELP = 'Your ticket or case number, e.g. ZD-4127: letters, digits and . _ # : - only. It is recorded in the audit with your name.';
 /** Opens one identity's page from memory: the fixed path, the identity never in the URL or history state. */
@@ -2771,7 +2771,8 @@ const fullAddress = (q) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(q.trim());
 /** What the search box names that the wallet directory answers (AdminRpc.findUsers) instead of the issuer's directory. */
 function walletQuery(q) {
   const s = q.trim();
-  return /^G[A-Z2-7]{55}$/u.test(s) || /^0x[0-9a-fA-F]{40}$/u.test(s) || /^u1_[A-Za-z0-9_-]{22}$/u.test(s) || /^hu_[0-9a-z]{26}$/iu.test(s) || supportIdQuery(s);
+  // A NEAR implicit account id (D755): 64 hex characters, any case (the API lowercases it).
+  return /^G[A-Z2-7]{55}$/u.test(s) || /^0x[0-9a-fA-F]{40}$/u.test(s) || /^[0-9a-fA-F]{64}$/u.test(s) || /^u1_[A-Za-z0-9_-]{22}$/u.test(s) || /^hu_[0-9a-z]{26}$/iu.test(s) || supportIdQuery(s);
 }
 
 const unverifiedBadge = () => h('span', { class: 'badge warning' }, 'UNVERIFIED claim');
@@ -2824,6 +2825,8 @@ function walletUserBlock(u) {
       u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, h('span', { class: 'badge warning' }, `also listed by ${w.sharedWith} other user(s): not proof of ownership`)) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
       { empty: 'No wallet yet.' },
     ),
+    // D755: NEAR is recorded only from a session of an SDK of 0.4.0 or later; say so rather than leave a gap.
+    u.wallets.length && !u.wallets.some((w) => w.chain === 'near') ? h('p', { class: 'hint' }, 'No NEAR account yet: it is recorded at the user’s next sign-in through an app on SDK 0.4.0 or later.') : '',
     ...userEventsBlock(u),
   );
 }
@@ -2890,7 +2893,7 @@ async function usersPage(main) {
         await runSearch(null);
       },
     },
-    field({ name: 'q', type: 'search', label: 'Email, User ID, Support ID or wallet', optional: false, value: f.q || '', placeholder: 'farah@ or HANA-2750-G5HM', help: 'Part of an email (3+ characters) browses. A full email, User ID (u1_…), internal id (hu_…) or wallet finds one person. A Support ID opens the Support ID lookup.' }),
+    field({ name: 'q', type: 'search', label: 'Email, User ID, Support ID or wallet', optional: false, value: f.q || '', placeholder: 'farah@ or HANA-2750-G5HM', help: 'Part of an email (3+ characters) browses. A full email, User ID (u1_…), internal id (hu_…) or wallet (G…, 0x… or a 64-hex NEAR account) finds one person. A Support ID opens the Support ID lookup.' }),
     field({ name: 'ticket', label: 'Support reference', optionalText: ' (to find one person)', value: f.ticket || '', placeholder: 'ZD-4127', help: TICKET_HELP }),
     h(
       'details',
@@ -3103,6 +3106,8 @@ function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
       u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, h('span', { class: 'badge warning' }, `also listed by ${w.sharedWith} other user(s): not proof of ownership`)) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
       { empty: 'No wallet yet.' },
     ),
+    // D755: NEAR is recorded only from a session of an SDK of 0.4.0 or later; say so rather than leave a gap.
+    u.wallets.length && !u.wallets.some((w) => w.chain === 'near') ? h('p', { class: 'hint' }, 'No NEAR account yet: it is recorded at the user’s next sign-in through an app on SDK 0.4.0 or later.') : '',
     ...userEventsBlock(u),
     h('h3', {}, 'Apps of the scope'),
     table(['App', 'Organisation', 'Environment', 'Persistence', 'Deleted'], m.apps.map((a) => tr(named(a.name, a.appId), mono(a.orgId), a.environment ? envBadge(a.environment) : 'unknown', a.persistence, a.deletedAt ? time(a.deletedAt) : ''))),

@@ -101,7 +101,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                ({scope}#{provider}#{sub}#0), and per scope its User ID (u1_…, the identity token's sub), Support ID,
                internal id (hu_…), role in the account and wallets (the wallet directory, D310, D346, in the API's
                D1). --search -: the text on stdin (kept out of the shell history)
-  user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json]
+  user:find [--email <address> | --sub <sub> | --address <G…|0x…|NEAR account> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json]
                one user by exact address (as typed, or normalized as email logins store it) or by sub, with its user
                ids and wallets; --address: every user listing that wallet, --user: a User ID, internal id or Support ID, each with
                its accounts (provider, sub, role, status, address); with no flag, any of these is read from stdin.

@@ -5,6 +5,8 @@
 // address. Never an unshared address or a Google account id: the console's answer has no such field (src/users.ts).
 // Shown only when the server has the screen on (`/api/me` features). The list sits in a card like every console table;
 // its ids stay whole on one line and its wallet addresses are shortened, each copied whole (the detail shows them full).
+// NEAR (D755): the user's implicit account, recorded only once they sign in through an SDK of 0.4.0 or later; a user
+// without one shows just Stellar and EVM in the list, and "No NEAR account yet" in the detail.
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApi, when } from '../lib.tsx';
@@ -17,7 +19,7 @@ interface PartnerUser {
   createdAt: number;
   lastSeenAt: number;
   accounts: { kind: string; status: 'active' | 'pending' }[];
-  wallets: { chain: 'stellar' | 'evm'; address: string; firstSeenAt: number; lastUsedAt: number }[];
+  wallets: { chain: 'stellar' | 'evm' | 'near'; address: string; firstSeenAt: number; lastUsedAt: number }[];
   /** The address most recently shared with one of the org's apps, or null. */
   email: string | null;
   /** A user's detail only: each app's shared address. */
@@ -41,17 +43,24 @@ function Moment({ ms }: { ms: number }) {
 }
 const accountsText = (u: PartnerUser): string => u.accounts.map((a) => `${KIND[a.kind] ?? 'Other'}${a.status === 'pending' ? ' (pending)' : ''}`).join(', ') || '—';
 
-const CHAIN = { stellar: 'Stellar', evm: 'EVM' } as const;
+const CHAIN: Record<string, string> = { stellar: 'Stellar', evm: 'EVM', near: 'NEAR' };
+const chainName = (c: string): string => CHAIN[c] ?? c;
+const NO_NEAR = 'No NEAR account yet';
 
-/** The wallets in full, each with its copy button (a user's detail). */
+/** The wallets in full, each with its copy button (a user's detail), and a plain line when NEAR isn't recorded yet. */
 function Wallets({ u }: { u: PartnerUser }) {
   return (
     <>
       {u.wallets.map((w) => (
         <div key={`${w.chain}:${w.address}`}>
-          <span className="muted small">{CHAIN[w.chain]}</span> <code className="mono small">{w.address}</code> <CopyButton value={w.address} label={`${CHAIN[w.chain]} address`} />
+          <span className="muted small">{chainName(w.chain)}</span> <code className="mono small">{w.address}</code> <CopyButton value={w.address} label={`${chainName(w.chain)} address`} />
         </div>
       ))}
+      {!u.wallets.some((w) => w.chain === 'near') && (
+        <div>
+          <span className="muted small">NEAR</span> <span className="muted small">{NO_NEAR}</span>
+        </div>
+      )}
     </>
   );
 }
@@ -62,7 +71,7 @@ function ShortWallets({ u }: { u: PartnerUser }) {
     <>
       {u.wallets.map((w) => (
         <div key={`${w.chain}:${w.address}`} className="nowrap">
-          <span className="muted small">{CHAIN[w.chain]}</span> <ShortValue value={w.address} label={`${CHAIN[w.chain]} address`} />
+          <span className="muted small">{chainName(w.chain)}</span> <ShortValue value={w.address} label={`${chainName(w.chain)} address`} />
         </div>
       ))}
     </>
@@ -159,7 +168,7 @@ export function Users() {
       >
         <label className="field field-grow">
           <span className="field-label">Find by wallet address, User ID, Support ID or full email address</span>
-          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="0x…, G…, u1_…, HANA-… or an email address" />
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="0x…, G…, a NEAR account, u1_…, HANA-… or an email address" />
         </label>
         <button type="submit" className="btn">
           Search

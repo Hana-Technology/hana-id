@@ -2,9 +2,10 @@
 // need no sign-in): who may call what, the 10-open-invites cap, notice first (no working link before the admin
 // Worker's ack), the passkey gate, revocation, replays, and that no answer, row view or audit row ever carries a token,
 // a token hash or (in the audit trail) the invitee's address.
-import { LEGACY_ORG_ID, MAX_OPEN_INVITES, type MemberNotice } from '@hana-id/console-core';
+import { LEGACY_ORG_ID, MAX_OPEN_INVITES, type MemberNotice, NEW_ORG_INVITES_WINDOW_MS, newId, randomBytes } from '@hana-id/console-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { auditRows, db, hana, linkPair, member, seedMember, seedOrg, staffRpc, system } from './helpers.ts';
+import { newOrgInvites } from '../src/invites.ts';
+import { DAY, HOUR, auditRows, db, hana, linkPair, member, seedMember, seedOrg, staffRpc, system } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -232,7 +233,8 @@ describe('notice first (fails closed)', () => {
     const org = await seedOrg();
     const r = await issue({ orgId: org });
     if (!r.ok) throw new Error(r.code);
-    await db.prepare('UPDATE invites SET expires_at = created_at + 1 WHERE id = ?').bind(r.invite.id).run();
+    // Ended 9 ms ago (SQLite's SET reads the old created_at): `created_at + 1` could still be open in the same millisecond.
+    await db.prepare('UPDATE invites SET created_at = created_at - 10, expires_at = created_at - 9 WHERE id = ?').bind(r.invite.id).run();
     expect((await notices()).some((n) => n.invite?.id === r.invite.id)).toBe(false);
     expect(await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: (await linkPair()).hashB64 })).toMatchObject({ ok: false, code: 'not_pending' });
   });
@@ -286,5 +288,114 @@ describe('getOrg, listOrgs, listMembers', () => {
     expect(all).toContain(LEGACY_ORG_ID);
     expect([...all].sort()).toEqual(all);
     expect(new Set(all).size).toBe(all.length);
+  });
+});
+
+/**
+ * An invite row as the console writes one, at chosen times (the window's edges need exact ones): to a new org unless
+ * `orgId`; expiring 7 days after `created`; `notified`, `accepted`, `revoked` set the matching columns.
+ */
+async function seedInviteAt(o: { created: number; notified?: number; accepted?: number; revoked?: number; orgId?: string; kind?: 'partner' | 'internal' }): Promise<string> {
+  const id = newId('invite');
+  const accepted = o.accepted ?? null;
+  await db
+    .prepare(
+      `INSERT INTO invites (id, token_hash, email_norm, org_id, new_org_name, new_org_kind, role, created_by_kind, created_by, notified_at, created_at, expires_at, accepted_at, accepted_user_id, accepted_by_sub, revoked_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'owner', 'hana', 'access-sub-staff-1', ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      id,
+      o.notified !== undefined ? randomBytes(32) : null,
+      `${id.toLowerCase()}@partner.example`,
+      o.orgId ?? null,
+      o.orgId ? null : `New ${id}`,
+      o.orgId ? null : (o.kind ?? 'internal'),
+      o.notified ?? null,
+      o.created,
+      o.created + 7 * DAY,
+      accepted,
+      accepted !== null ? newId('user') : null,
+      accepted !== null ? 'sub-accepted' : null,
+      o.revoked ?? null,
+    )
+    .run();
+  return id;
+}
+
+describe('newOrgInvites (D696: the admin Organisations page\'s "Pending invites")', () => {
+  // A clock far ahead of the suite's own rows, so every invite another test wrote has ended more than 30 days before it.
+  const T = Date.now() + 1000 * DAY;
+  const W = NEW_ORG_INVITES_WINDOW_MS;
+
+  it('lists open invites to new orgs first, then those that ended inside the window, newest first; never an existing org’s', async () => {
+    const unsent = await seedInviteAt({ created: T - HOUR, kind: 'partner' });
+    const sent = await seedInviteAt({ created: T - 2 * HOUR, notified: T - 2 * HOUR + 60_000 });
+    const accepted = await seedInviteAt({ created: T - 11 * DAY, notified: T - 11 * DAY + 60_000, accepted: T - 10 * DAY });
+    const revoked = await seedInviteAt({ created: T - 30 * DAY, revoked: T - 29 * DAY });
+    const expired = await seedInviteAt({ created: T - 10 * DAY, notified: T - 10 * DAY + 60_000 });
+    // The edges: ended exactly W before T is out; a millisecond later is in.
+    const edgeIn = await seedInviteAt({ created: T - W - 7 * DAY + 1 });
+    await seedInviteAt({ created: T - W - 7 * DAY });
+    await seedInviteAt({ created: T - 40 * DAY, revoked: T - W });
+    await seedInviteAt({ created: T - 32 * DAY, accepted: T - W - 1 });
+    // An open invite to an existing org is the org page's, not this list's.
+    await seedInviteAt({ created: T - HOUR, orgId: await seedOrg() });
+
+    const r = await newOrgInvites(db, T, 100);
+    expect(r.truncated).toBe(false);
+    expect(r.invites.map((i) => i.id)).toEqual([unsent, sent, expired, accepted, revoked, edgeIn]);
+    const byId = new Map(r.invites.map((i) => [i.id, i]));
+    expect(byId.get(unsent)).toEqual({
+      id: unsent,
+      email: `${unsent.toLowerCase()}@partner.example`,
+      newOrgName: `New ${unsent}`,
+      newOrgKind: 'partner',
+      role: 'owner',
+      createdByKind: 'hana',
+      createdBy: 'access-sub-staff-1',
+      createdAt: T - HOUR,
+      expiresAt: T - HOUR + 7 * DAY,
+    });
+    expect(byId.get(sent)).toMatchObject({ newOrgKind: 'internal', notifiedAt: T - 2 * HOUR + 60_000 });
+    expect(byId.get(accepted)).toMatchObject({ acceptedAt: T - 10 * DAY, acceptedUserId: expect.stringMatching(/^usr_/u) });
+    expect(byId.get(revoked)).toMatchObject({ revokedAt: T - 29 * DAY });
+    expect(byId.get(expired)!.expiresAt).toBeLessThan(T);
+    for (const i of r.invites) expect(i.orgId).toBeUndefined();
+    // No token or hash column ever leaves (D240).
+    expect(JSON.stringify(r)).not.toMatch(/token|hash/iu);
+  });
+
+  it('answers at most `limit` rows, open ones before ended ones, and says when there were more', async () => {
+    const T2 = T + 200 * DAY;
+    const ended = await seedInviteAt({ created: T2 - 2 * DAY - 7 * DAY });
+    const open = [await seedInviteAt({ created: T2 - 3 * HOUR }), await seedInviteAt({ created: T2 - 2 * HOUR }), await seedInviteAt({ created: T2 - HOUR })];
+    const two = await newOrgInvites(db, T2, 2);
+    expect(two).toEqual({ invites: [expect.objectContaining({ id: open[2] }), expect.objectContaining({ id: open[1] })], truncated: true });
+    const three = await newOrgInvites(db, T2, 3);
+    expect(three.invites.map((i) => i.id)).toEqual([open[2], open[1], open[0]]);
+    expect(three.truncated).toBe(true);
+    expect(await newOrgInvites(db, T2, 4)).toEqual({ invites: [...three.invites, expect.objectContaining({ id: ended })], truncated: false });
+  });
+
+  it('through StaffRpc: staff only, validated, and an issued then revoked invite shows each state; no address in the log', async () => {
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const email = `first.owner.${Math.random().toString(36).slice(2)}@newco.example`;
+    const issued = await issue({ newOrgName: 'Newco Labs', role: 'owner', kind: 'internal', email });
+    if (!issued.ok) throw new Error(issued.code);
+    const listed = await staffRpc().newOrgInvites({ ...hana(), limit: 100 });
+    if (!listed.ok) throw new Error(listed.code);
+    expect(listed.invites.find((i) => i.id === issued.invite.id)).toEqual({ ...issued.invite, newOrgKind: 'internal' });
+    expect(issued.invite.newOrgKind).toBe('internal');
+    expect(await staffRpc().revokeInvite({ ...hana(), inviteId: issued.invite.id })).toEqual({ ok: true });
+    const after = await staffRpc().newOrgInvites({ ...hana(), limit: 100 });
+    if (!after.ok) throw new Error(after.code);
+    expect(after.invites.find((i) => i.id === issued.invite.id)?.revokedAt).toEqual(expect.any(Number));
+    const link = { actor: { kind: 'link' as const, id: 'gc_x' }, requestId: 'req_12345678', clientIp: '203.0.113.1' };
+    for (const ctx of [member(), link, system()]) expect(await staffRpc().newOrgInvites({ ...ctx, limit: 10 })).toMatchObject({ ok: false, code: 'forbidden' });
+    for (const bad of [{ limit: 0 }, { limit: 101 }, { limit: 1.5 }, {}, { limit: 10, orgId: 'org_x1' }]) expect(await staffRpc().newOrgInvites({ ...hana(), ...bad })).toMatchObject({ ok: false, code: 'bad_request' });
+    const text = logs.mock.calls.flat().join('\n');
+    expect(text).toContain('staff.newOrgInvites');
+    expect(text).not.toContain(email);
+    expect(text).not.toContain('@newco.example');
   });
 });

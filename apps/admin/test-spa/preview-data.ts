@@ -34,6 +34,33 @@ export const orgs = [
   { id: 'org_01jdcorvid', name: 'Corvid Pay', kind: 'partner', status: 'active', createdAt: ago(DAY) },
 ];
 
+/**
+ * GET /api/invites/new-orgs (D696): invites to organisations not created yet, one of each state the "Pending invites"
+ * panel says (open first, then the newest), as the console's `newOrgInvites` answers them.
+ */
+const newOrgInvite = (id: string, newOrgName: string, newOrgKind: 'partner' | 'internal', email: string, created: number, extra: Record<string, unknown> = {}) => ({
+  id,
+  email,
+  newOrgName,
+  newOrgKind,
+  role: 'owner',
+  createdByKind: 'hana',
+  createdBy: 'access-sub-1',
+  createdAt: ago(created),
+  expiresAt: ago(created) + 7 * DAY,
+  ...extra,
+});
+export const newOrgInvites = {
+  invites: [
+    newOrgInvite('inv_01jdtidepool', 'Tidepool Finance', 'partner', 'mira.okafor@tidepool.example', 3 * MIN),
+    newOrgInvite('inv_01jdhanaqa', 'Hana QA', 'internal', 'qa-lead@hana.example', 3 * HOUR, { notifiedAt: ago(3 * HOUR - 4 * MIN) }),
+    newOrgInvite('inv_01jdcorvid', 'Corvid Pay', 'partner', 'kai.berg@corvidpay.example', 2 * DAY, { notifiedAt: ago(2 * DAY - 5 * MIN), acceptedAt: ago(DAY), acceptedUserId: 'usr_01jdcorvkai' }),
+    newOrgInvite('inv_01jdheron', 'Heron Labs', 'partner', 'sam.lee@heron.example', 6 * DAY, { notifiedAt: ago(6 * DAY - 3 * MIN), revokedAt: ago(5 * DAY) }),
+    newOrgInvite('inv_01jcquill', 'Quill Wallet', 'partner', 'ana.silva@quill.example', 12 * DAY, { notifiedAt: ago(12 * DAY - 4 * MIN) }),
+  ],
+  truncated: false,
+};
+
 const member = (userId: string, email: string, role: 'owner' | 'viewer', since: number, extra: Record<string, unknown> = {}) => ({ userId, sub: `g-${userId}`, email, role, roleSince: ago(since), disabled: false, ...extra });
 
 export const orgDetail: Record<string, unknown> = {

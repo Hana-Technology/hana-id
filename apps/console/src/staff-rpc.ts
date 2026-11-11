@@ -9,7 +9,8 @@
 // error is logged (method, request id, actor kind, org: never an email, sub or token) and answered `internal`.
 //
 // Built in C7; `recordStaffAction` added in C12 (D327); `purgeAudit` in C13 (the admin's monthly retention job only, a
-// `system` actor, D360); `health` for the admin console's System status page (D425: staff only, read-only, no user data).
+// `system` actor, D360); `health` for the admin console's System status page (D425: staff only, read-only, no user data);
+// `newOrgInvites` for the admin's Organisations page (D696: staff only, read-only).
 import {
   ORGLESS_STAFF_ACTIONS,
   type Actor,
@@ -24,6 +25,7 @@ import {
   issueInviteInput,
   listMembersInput,
   listOrgsInput,
+  newOrgInvitesInput,
   pendingMemberNoticesInput,
   purgeAuditInput,
   queryAuditInput,
@@ -43,7 +45,7 @@ import type { Env } from './env.ts';
 import { RpcRefusal } from './errors.ts';
 import { HOURLY_JOB } from './cron.ts';
 import { cancelOwnerGrant } from './grants.ts';
-import { ackMemberNotice, invitesOf, issueInvite, pendingMemberNotices, revokeInvite } from './invites.ts';
+import { ackMemberNotice, invitesOf, issueInvite, newOrgInvites, pendingMemberNotices, revokeInvite } from './invites.ts';
 import { ipPrefix } from './ip.ts';
 import { log } from './log.ts';
 import { disableUser, freezeOrg, getOrgRow, listOrgs, setMember } from './members.ts';
@@ -126,6 +128,14 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
       await revokeInvite(this.db, w, i.inviteId);
       return {};
     });
+  }
+
+  /**
+   * Invites to organisations that don't exist yet (D696): open ones and those that ended in the last 30 days, open first.
+   * Staff only (the admin's Organisations page); a read, so no audit row, as `getOrg`.
+   */
+  newOrgInvites(c: unknown) {
+    return runStaff('staff.newOrgInvites', newOrgInvitesInput, c, HANA, (i, w) => newOrgInvites(this.db, w.now, i.limit));
   }
 
   pendingMemberNotices(c: unknown) {

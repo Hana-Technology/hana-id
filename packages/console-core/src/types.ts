@@ -339,6 +339,8 @@ export const inviteView = z
     email,
     orgId: id.optional(),
     newOrgName: z.string().optional(),
+    /** The kind of the org a new-org invite creates (`invites.new_org_kind`, D242); set exactly with `newOrgName`. Additive (D696). */
+    newOrgKind: z.enum(ORG_KINDS).optional(),
     role,
     createdByKind: z.enum(GRANTOR_KINDS),
     createdBy: z.string(),

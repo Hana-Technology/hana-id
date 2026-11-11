@@ -22,6 +22,10 @@ const ms = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const MAX_OPEN_INVITES = 10;
 /** An invite works for 7 days from its creation (the notice's wait counts against it). */
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60_000;
+/** `newOrgInvites` (D696): an ended new-org invite stays listed this long after it ended (accepted, revoked, expired). */
+export const NEW_ORG_INVITES_WINDOW_MS = 30 * 24 * 60 * 60_000;
+/** `newOrgInvites`: at most this many rows per call (open ones first). */
+export const NEW_ORG_INVITES_MAX = 100;
 /** The longest org name, in code points (the app-name rule, `normaliseAppName`). */
 export const ORG_NAME_MAX = 64;
 
@@ -53,6 +57,11 @@ export const issueInviteInput = ctx
     if (v.newOrgName !== undefined && v.role !== 'owner') c.addIssue({ code: z.ZodIssueCode.custom, path: ['role'], message: "A new org's first member is its owner" });
   });
 export const revokeInviteInput = ctx.extend({ inviteId: inviteIdInput }).strict();
+/**
+ * `newOrgInvites` (D696): staff's list of invites to organisations that don't exist yet (`org_id` NULL), the open ones
+ * and those that ended (accepted, revoked or expired) within NEW_ORG_INVITES_WINDOW_MS.
+ */
+export const newOrgInvitesInput = ctx.extend({ limit: limit(NEW_ORG_INVITES_MAX) }).strict();
 export const pendingMemberNoticesInput = ctx.extend({ limit: limit(100) }).strict();
 export const ackMemberNoticeInput = ctx
   .extend({ inviteId: inviteIdInput.optional(), grantId: ownerGrantIdInput.optional(), tokenHash: b64url32 })
@@ -122,6 +131,7 @@ export type ListOrgsInput = z.infer<typeof listOrgsInput>;
 export type GetOrgInput = z.infer<typeof getOrgInput>;
 export type IssueInviteInput = z.infer<typeof issueInviteInput>;
 export type RevokeInviteInput = z.infer<typeof revokeInviteInput>;
+export type NewOrgInvitesInput = z.infer<typeof newOrgInvitesInput>;
 export type PendingMemberNoticesInput = z.infer<typeof pendingMemberNoticesInput>;
 export type AckMemberNoticeInput = z.infer<typeof ackMemberNoticeInput>;
 export type CancelOwnerGrantInput = z.infer<typeof cancelOwnerGrantInput>;

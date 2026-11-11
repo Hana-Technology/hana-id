@@ -856,13 +856,59 @@ function newPartnerForm() {
     ],
     'Send invite',
     (v) => api('POST', '/api/invites', { email: v.email, role: 'owner', newOrgName: v.newOrgName, kind: v.kind }),
-    { done: (v) => `Invite sent to ${v.email.trim()} for the new organisation “${v.newOrgName.trim()}”. The email goes out within 5 minutes; the organisation is listed here once they accept.` },
+    { done: (v) => `Invite sent to ${v.email.trim()} for the new organisation “${v.newOrgName.trim()}”. The email goes out within 5 minutes; follow it under Pending invites. The organisation is listed here once they accept.` },
+  );
+}
+
+/**
+ * An invite to an organisation that doesn't exist yet (D696), in plain words: what happened last, and when it ended.
+ * Ended ones are kept 30 days by the console's list.
+ */
+function newOrgInviteState(i, now) {
+  if (i.acceptedAt) return { open: false, text: 'Accepted', kind: 'ok', at: i.acceptedAt };
+  if (i.revokedAt) return { open: false, text: 'Revoked', kind: '', at: i.revokedAt };
+  if (i.expiresAt <= now) return { open: false, text: 'Expired', kind: '', at: i.expiresAt };
+  if (i.notifiedAt) return { open: true, text: 'Email sent, waiting for them to accept', kind: 'info' };
+  return { open: true, text: 'Waiting for the email to go out', kind: 'warning' };
+}
+
+/** "Pending invites" on the Organisations page (D696): new organisations' first-owner invites, open and recently ended. */
+function pendingInvitesPanel(read) {
+  if (!read.ok) return panel('Pending invites', {}, errorBox(read.e));
+  const invites = Array.isArray(read.v && read.v.invites) ? read.v.invites : [];
+  if (!invites.length) return '';
+  const now = Date.now();
+  return panel(
+    'Pending invites',
+    { anchor: 'pending-invites', hint: 'Invites to organisations that don’t exist yet: each one is created when its first owner accepts. A link works only once its email has gone out (the job runs every 5 minutes), for 7 days. Ended invites stay here for 30 days.' },
+    table(
+      ['Organisation', 'Type', 'Invited', 'State', 'Sent', 'Expires', ''],
+      invites.map((i) => {
+        const st = newOrgInviteState(i, now);
+        const name = i.newOrgName;
+        return tr(
+          named(name, i.id),
+          ORG_KIND[i.newOrgKind] || i.newOrgKind || '',
+          i.email,
+          h('span', {}, badge(st.text, `${st.kind} long`), st.at ? h('span', { class: 'sub' }, time(st.at)) : ''),
+          i.notifiedAt ? when(i.notifiedAt) : h('span', { class: 'muted' }, 'not yet'),
+          // An accepted or revoked invite no longer expires; an open or expired one shows when.
+          !i.acceptedAt && !i.revokedAt ? when(i.expiresAt) : '',
+          st.open ? actionButton('Revoke', () => api('POST', `/api/invites/${encodeURIComponent(i.id)}/revoke`), `Revoke the invite for ${i.email} to the new organisation “${name}”? Its link stops working, and the organisation isn’t created.`, true, { done: `The invite for ${i.email} was revoked.` }) : '',
+        );
+      }),
+    ),
+    read.v.truncated ? h('p', { class: 'hint' }, 'Showing the first 100: open invites first, then the newest.') : '',
   );
 }
 
 async function orgsPage(main) {
   const cursor = new URLSearchParams(location.search).get('cursor');
-  const data = await api('GET', `/api/orgs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+  // The pending invites are read beside the list; their failure is said in their panel and doesn't fail the page.
+  const [data, pending] = await Promise.all([
+    api('GET', `/api/orgs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+    api('GET', '/api/invites/new-orgs').then((v) => ({ ok: true, v }), (e) => ({ ok: false, e })),
+  ]);
   const invite = disclosure('Invite a new partner', panel('Invite a new partner', { hint: 'Creates the organisation when its first owner accepts. Then create their apps, or move their existing scope from Legacy apps.' }, newPartnerForm()), { primary: true, open: openInvite });
   openInvite = false;
   // Legacy apps last: it is a holding place, not a partner.
@@ -870,6 +916,7 @@ async function orgsPage(main) {
   main.append(
     pageHead('Organisations', { subtitle: 'Partners and their apps. Start here to onboard a partner, change an app or freeze an organisation.', actions: [invite.button] }),
     invite.box,
+    pendingInvitesPanel(pending),
     panel(
       `${data.orgs.length} organisation${data.orgs.length === 1 ? '' : 's'}`,
       {},

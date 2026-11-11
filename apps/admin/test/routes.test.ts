@@ -114,6 +114,49 @@ describe('orgs, contacts, members, invites, grants', () => {
   });
 });
 
+describe('pending invites to new organisations (D696)', () => {
+  it('GET /api/invites/new-orgs lists an issued new-org invite with its kind, then revoked through the route; no address in a log line', async () => {
+    const logs = vi.spyOn(console, 'log');
+    const email = `first-${uid()}@newco.example`;
+    const issued = await adminRequest('/api/invites', { body: { email, role: 'owner', newOrgName: 'Newco Labs', kind: 'internal' } });
+    expect(issued.status).toBe(200);
+    const { invite } = await json<{ invite: { id: string } }>(issued);
+    const list = async () => {
+      const res = await adminRequest('/api/invites/new-orgs');
+      expect(res.status).toBe(200);
+      return json<{ invites: { id: string; email: string; newOrgName: string; newOrgKind: string; orgId?: string; notifiedAt?: number; revokedAt?: number; expiresAt: number }[]; truncated: boolean }>(res);
+    };
+    const before = await list();
+    expect(before.truncated).toBe(false);
+    expect(before.invites.find((i) => i.id === invite.id)).toMatchObject({ email, newOrgName: 'Newco Labs', newOrgKind: 'internal', role: 'owner', createdByKind: 'hana', createdBy: STAFF_SUB });
+    expect(before.invites.every((i) => i.orgId === undefined)).toBe(true);
+    expect(JSON.stringify(before)).not.toMatch(/token|hash/iu);
+    expect((await adminRequest(`/api/invites/${invite.id}/revoke`, { body: {} })).status).toBe(200);
+    expect((await list()).invites.find((i) => i.id === invite.id)?.revokedAt).toEqual(expect.any(Number));
+    // An invite to an existing org is the org page's, never this list's.
+    const org = await seedConsoleOrg();
+    const toOrg = await json<{ invite: { id: string } }>(await adminRequest('/api/invites', { body: { email: `p-${uid()}@partner.example`, role: 'viewer', orgId: org } }));
+    expect((await list()).invites.some((i) => i.id === toOrg.invite.id)).toBe(false);
+    const text = logs.mock.calls.flat().join('\n');
+    expect(text).toContain('GET /api/invites/new-orgs');
+    expect(text).not.toContain(email);
+  });
+
+  it('is staff only, as every org route: no Access token is 401, an identity not on the staff list is 403, a write method is 405', async () => {
+    expect((await adminRequest('/api/invites/new-orgs', { jwt: null })).status).toBe(401);
+    const notStaff = await adminRequest('/api/invites/new-orgs', { jwt: await staffJwt({ email: 'someone@hana.example' }) });
+    expect(notStaff.status).toBe(403);
+    expect(await json<{ error: { code: string } }>(notStaff)).toMatchObject({ error: { code: 'not_staff' } });
+    expect((await adminRequest('/api/invites/new-orgs', { method: 'POST', body: {} })).status).toBe(405);
+  });
+
+  it('answers 503 when the console Worker is down', async () => {
+    const res = await worker.fetch(new Request(`${ADMIN}/api/invites/new-orgs`, { headers: { 'cf-access-jwt-assertion': await staffJwt() } }), envWith({ CONSOLE: downBinding() }));
+    expect(res.status).toBe(503);
+    expect(await json(res)).toMatchObject({ error: { code: 'upstream_unavailable' } });
+  });
+});
+
 describe('apps, changes, keys', () => {
   it('createApp and assignScopeOrg pass the org’s usable owners’ subs from listMembers (not viewers, not disabled)', async () => {
     const org = await seedConsoleOrg();
@@ -236,6 +279,7 @@ describe('the route table', () => {
         "POST /api/orgs/:org/members/:user",
         "GET /api/orgs/:org/changes",
         "POST /api/invites",
+        "GET /api/invites/new-orgs",
         "POST /api/invites/:id/revoke",
         "POST /api/users/:user/disable",
         "POST /api/owner-grants/:id/cancel",

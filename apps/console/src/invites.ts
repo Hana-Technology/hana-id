@@ -12,7 +12,7 @@
 // `ownerGrantDelayMs` after acceptance, cancellable by any owner, staff or the grant notice's link. The grant's own notice
 // (with that cancel link) must be accepted before the invite can be accepted. If the org has no usable owner at
 // acceptance (the first-owner exception), the grant is applied at once.
-import { type InviteView, LEGACY_ORG_ID, type MemberNotice, type OwnerGrantView, type Role, INVITE_TTL_MS, MAX_OPEN_INVITES, fromB64url, hex, newId, normaliseAppName } from '@hana-id/console-core';
+import { type InviteView, LEGACY_ORG_ID, type MemberNotice, type OwnerGrantView, type Role, INVITE_TTL_MS, MAX_OPEN_INVITES, NEW_ORG_INVITES_WINDOW_MS, fromB64url, hex, newId, normaliseAppName } from '@hana-id/console-core';
 import { type Writer, auditInsert, entry, replayOf } from './audit.ts';
 import { PASSKEYS_SHIPPED } from './config.ts';
 import { refuse } from './errors.ts';
@@ -167,6 +167,26 @@ export async function revokeInvite(db: D1Database, w: Writer, inviteId: string, 
 export async function invitesOf(db: D1Database, orgId: string): Promise<InviteView[]> {
   const { results } = await db.prepare(`SELECT ${INVITE_COLUMNS} FROM invites WHERE org_id = ? ORDER BY created_at DESC LIMIT 100`).bind(orgId).all<InviteRow>();
   return results.map(inviteView);
+}
+
+/**
+ * Staff's list of invites to organisations that don't exist yet (`org_id` NULL; the org is created when the first owner
+ * accepts), D696: every open one, and those that ended (accepted, revoked or expired) less than
+ * NEW_ORG_INVITES_WINDOW_MS before `now`. An invite ends at `accepted_at`, else `revoked_at`, else `expires_at` (an open
+ * invite's `expires_at` is after `now`, so it is always inside the window). Open ones first, then newest first; at most
+ * `limit`, with `truncated` when more matched. The cron purges ended invites 90 days on, so the window never reaches past
+ * what is kept.
+ */
+export async function newOrgInvites(db: D1Database, now: number, limit: number): Promise<{ invites: InviteView[]; truncated: boolean }> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${INVITE_COLUMNS} FROM invites i
+        WHERE i.org_id IS NULL AND COALESCE(i.accepted_at, i.revoked_at, i.expires_at) > ${lit(now - NEW_ORG_INVITES_WINDOW_MS)}
+        ORDER BY (${openInvite('i', now)}) DESC, i.created_at DESC, i.id DESC LIMIT ?`,
+    )
+    .bind(limit + 1)
+    .all<InviteRow>();
+  return { invites: results.slice(0, limit).map(inviteView), truncated: results.length > limit };
 }
 
 /**

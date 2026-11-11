@@ -121,6 +121,10 @@ describe('app_changes', () => {
     expect(mine[0]!.text).toContain(app.id);
     expect(mine[0]!.text).toContain("suspension.set");
     expect(mine[0]!.text).not.toContain('origin.proposed');
+    // Designed (D704): the fixed heading, the row's code and app; still a blocking-class purpose (bypasses suppressions).
+    expect(mine[0]!.html).toMatch(/>(A change|Changes) to your apps<\/h1>/u);
+    expect(mine[0]!.html).toContain('suspension<span>.</span><wbr>set on ');
+    expect(mine[0]!.bypassSuppressions).toBe(true);
     const max = await env.HOT_DB.prepare('SELECT MAX(seq) AS m FROM app_changes').first<number>('m');
     expect(Number(data.state.get(FEED_CURSORS.changes)!.value)).toBe(max);
     // A restart (a new store over the same state) sends nothing again.
@@ -242,7 +246,10 @@ describe('audit_log', () => {
     const mine = fake.to(app.contact);
     expect(mine).toHaveLength(1);
     expect(mine[0]!.text).toContain('org.frozen');
-    const max = await env.CONSOLE_TEST_DB.prepare('SELECT MAX(seq) AS m FROM audit_log').first<number>('m');
+    // Designed (D704), and still a routine purpose: SendGrid's suppression lists apply (D401 as amended).
+    expect(mine[0]!.html).toContain('>Console activity</h1>');
+    expect(mine[0]!.bypassSuppressions).toBe(false);
+    const max =await env.CONSOLE_TEST_DB.prepare('SELECT MAX(seq) AS m FROM audit_log').first<number>('m');
     expect(Number(data.state.get(FEED_CURSORS.audit)!.value)).toBe(max);
     const again = new FakeEmail();
     await feedAudit(env, memoryOps(data), again, big());
@@ -283,6 +290,27 @@ describe('security_events', () => {
     const again = new FakeEmail();
     await feedSecurityEvents(env, again, big());
     expect(again.about(id)).toEqual([]);
+  });
+
+  it('the digest is designed (D704), and an event whose time is not a valid one is mailed flagged with the rest, never stuck', async () => {
+    await drain(env);
+    const app = await seedHotApp();
+    const bad = `se_${uid()}`;
+    const good = `se_${uid()}`;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Past the Date range (8.64e15 ms) but a safe integer: before D704 the render threw and every run stopped here.
+    await env.HOT_DB.prepare("INSERT INTO security_events (id, detected_at, kind, org_id, app_id, detail_json) VALUES (?1, 8700000000000000, 'drift', ?2, ?3, '{\"what\":\"origin\"}')").bind(bad, app.org, app.id).run();
+    await env.HOT_DB.prepare("INSERT INTO security_events (id, detected_at, kind, org_id, app_id, detail_json) VALUES (?1, ?2, 'breaker', ?3, ?4, '{}')").bind(good, Date.now(), app.org, app.id).run();
+    const fake = new FakeEmail();
+    await feedSecurityEvents(env, fake, big());
+    const mine = fake.sent.filter((m) => m.to === app.contact);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.text).toContain(`- not a valid time: 8700000000000000 drift (${bad})`);
+    expect(mine[0]!.text).toContain(`breaker (${good})`);
+    expect(mine[0]!.html).toContain('>Security events were recorded</h1>');
+    expect(mine[0]!.html).not.toContain('href=');
+    expect(warn.mock.calls.map((a) => String(a[0])).some((l) => l.includes('"event":"digest_bad_time"'))).toBe(true);
+    for (const id of [bad, good]) expect(await env.HOT_DB.prepare('SELECT notified_at FROM security_events WHERE id = ?1').bind(id).first('notified_at')).not.toBeNull();
   });
 });
 

@@ -39,6 +39,7 @@ describe('mailHtml', () => {
         { kind: 'kv', rows: [[hostile, hostile]] },
         { kind: 'list', items: [hostile] },
         { kind: 'pre', text: hostile },
+        { kind: 'entries', items: [{ title: hostile, fields: [[hostile, hostile]], detail: hostile }] },
         { kind: 'button', label: hostile, url: 'https://console.example/a?b="><script>' },
       ],
       { title: hostile, preheader: hostile, envNotice: hostile, footer: hostile },
@@ -100,6 +101,29 @@ describe('mailHtml', () => {
     for (const node of un.split(/<[^>]+>/u)) expect(node).not.toMatch(/evil\.example|https:\/\//u);
     const pre = /<pre[^>]*>([\s\S]*?)<\/pre>/u.exec(un)![1]!.replace(/<[^>]+>/gu, '').replace(/&#(\d+);/gu, (_m, n: string) => String.fromCodePoint(Number(n)));
     expect(pre).toBe(json);
+  });
+
+  it('log entries (D704): a bold title, labelled lines, a monospaced detail; unlinked runs split, plain strings unchanged; dark classes', () => {
+    const html = body(
+      base([
+        {
+          kind: 'entries',
+          items: [
+            { title: [{ unlinked: 'origin.added on app_1' }], fields: [['When', [{ unlinked: '2026-11-11T05:01:36.861Z' }]], ['By', 'a.b']], detail: [{ unlinked: '{"origin":"https://evil.example/x?y=1#z"}' }] },
+            { title: 'org.frozen', fields: [] },
+          ],
+        },
+      ]),
+    );
+    expect(html).toContain('<div style="font-weight:700">origin<span>.</span><wbr>added on app_1</div>');
+    expect(html).toContain('<span class="hm-muted" style="color:#665d80">When</span> 2026-11-11T05:01:36<span>.</span><wbr>861Z');
+    expect(html).toContain('<span class="hm-muted" style="color:#665d80">By</span> a.b</div>');
+    expect(html).toContain('https:<span>/</span><wbr><span>/</span><wbr>evil<span>.</span><wbr>example<span>/</span><wbr>x<span>?</span><wbr>y<span>=</span><wbr>1<span>#</span><wbr>z');
+    for (const node of html.replace(/a\.b/u, '').split(/<[^>]+>/u)) expect(node).not.toMatch(/evil\.example|https:\/\/|origin\.added/u);
+    // One row per entry, the rule and text colours carried by classes the dark sheet overrides; no detail line without one.
+    expect(html.match(/<td class="hm-ink hm-line"/gu)).toHaveLength(2);
+    expect(html.match(/class="hm-ink2"/gu)).toHaveLength(1);
+    expect(html).not.toMatch(/href=|<a /u);
   });
 
   it('keeps the preview line to its text, padded so the body (and a code) does not fill the rest', () => {

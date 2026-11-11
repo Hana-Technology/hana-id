@@ -3,7 +3,8 @@
 // The link tokens are passed in as finished URLs; nothing here sees a key.
 import type { AppChange, AuditRow, InviteView, MemberNotice, SecurityEvent } from '@hana-id/console-core';
 import type { ChangeNotice } from '../env.ts';
-import { type Block, type Design, type Rendered, duration, isoTime, oneLine, readableTime, render } from './render.ts';
+import { log } from '../log.ts';
+import { type Block, type Design, type Rendered, duration, oneLine, readableTime, render, rowTime } from './render.ts';
 
 export interface MailContext {
   env: string;
@@ -212,45 +213,104 @@ const detailText = (d: Record<string, unknown>): string => {
   return s === '{}' ? '' : s.slice(0, 400);
 };
 
+/** Who did it, in words, the id kept for support (D704; the text part keeps the code, as before). */
+const actorWords = (kind: string, id: string): string =>
+  `${kind === 'hana' ? 'Hana staff' : kind === 'member' ? 'a console member' : kind === 'system' ? 'the system' : kind === 'link' ? 'an emailed link' : kind} (${id})`;
+
+/**
+ * Each row's time (D704): the exact ISO time (D697: a digest is a log, its times copied into tickets and compared with
+ * the console's Audit page and logs). One that isn't a valid time is shown raw and flagged in both parts, and logged
+ * (a count only), so it can't hold back the rest of the digest or its source's cursor.
+ */
+function rowTimes(source: string, orgId: string | null, ms: unknown[]): string[] {
+  const out = ms.map(rowTime);
+  const bad = out.filter((t) => !t.valid).length;
+  if (bad) log({ event: 'digest_bad_time', step: source, ...(orgId ? { orgId } : {}), count: bad }, 'warn');
+  return out.map((t) => t.text);
+}
+
+/**
+ * The designed layout for a feed digest (D704, asked for by the user; amends D700): a fixed heading and preview line,
+ * never an organisation's or app's name, the hosted logo; no button (the digests link nowhere).
+ */
+const digestDesign = (c: MailContext, heading: string, preheader: string): Design => notice(c, heading, preheader);
+
 /** One digest per org and source: the rows, oldest first. */
 export function changesDigest(c: MailContext, orgId: string, rows: AppChange[]): Rendered {
+  const times = rowTimes('app_changes', orgId, rows.map((r) => r.at));
   return render(
     c.env,
     `${rows.length} app change${rows.length === 1 ? '' : 's'} in ${orgId}`,
     [
       { kind: 'p', text: `These changes were made to the apps of ${orgId}. They are already in force or done; nothing here needs an answer unless you didn't expect it.` },
-      { kind: 'list', items: rows.map((r) => `${isoTime(r.at)} ${r.kind}${r.appId ? ` on ${r.appId}` : ''} by ${r.actorKind} ${r.actorId}${detailText(r.detail) ? ` ${detailText(r.detail)}` : ''}`) },
+      {
+        kind: 'rows',
+        items: rows.map((r, i) => ({
+          line: `${times[i]} ${r.kind}${r.appId ? ` on ${r.appId}` : ''} by ${r.actorKind} ${r.actorId}${detailText(r.detail) ? ` ${detailText(r.detail)}` : ''}`,
+          title: r.appId ? `${r.kind} on ${r.appId}` : r.kind,
+          fields: [
+            ['When', times[i]!],
+            ['By', actorWords(r.actorKind, r.actorId)],
+          ],
+          ...(detailText(r.detail) ? { detail: detailText(r.detail) } : {}),
+        })),
+      },
       { kind: 'p', text: 'If one is unexpected, an owner can undo it in the console, or ask Hana security.' },
     ],
     c.consoleOrigin,
     c.label,
+    digestDesign(c, rows.length === 1 ? 'A change to your apps' : 'Changes to your apps', 'Changes made to your apps in the Hana ID partner console. They are already in force or done.'),
   );
 }
 
 export function auditDigest(c: MailContext, orgId: string | null, rows: AuditRow[]): Rendered {
+  const times = rowTimes('audit_log', orgId, rows.map((r) => r.at));
   return render(
     c.env,
     `${rows.length} console event${rows.length === 1 ? '' : 's'}${orgId ? ` in ${orgId}` : ''}`,
     [
       { kind: 'p', text: `Members, invites and organisation settings changed${orgId ? ` in ${orgId}` : ''}:` },
-      { kind: 'list', items: rows.map((r) => `${isoTime(r.at)} ${r.action}${r.target ? ` ${r.target}` : ''} by ${r.actorKind} ${r.actorId} (${r.outcome})${detailText(r.details) ? ` ${detailText(r.details)}` : ''}`) },
+      {
+        kind: 'rows',
+        items: rows.map((r, i) => ({
+          line: `${times[i]} ${r.action}${r.target ? ` ${r.target}` : ''} by ${r.actorKind} ${r.actorId} (${r.outcome})${detailText(r.details) ? ` ${detailText(r.details)}` : ''}`,
+          title: r.target ? `${r.action} ${r.target}` : r.action,
+          fields: [
+            ['When', times[i]!],
+            ['By', actorWords(r.actorKind, r.actorId)],
+            ['Outcome', r.outcome],
+          ],
+          ...(detailText(r.details) ? { detail: detailText(r.details) } : {}),
+        })),
+      },
     ],
     c.consoleOrigin,
     c.label,
+    digestDesign(c, 'Console activity', 'Members, invites and organisation settings changed in the Hana ID partner console.'),
   );
 }
 
 export function securityDigest(c: MailContext, orgId: string | null, events: SecurityEvent[]): Rendered {
+  const times = rowTimes('security_events', orgId, events.map((e) => e.detectedAt));
   return render(
     c.env,
     `Security event${events.length === 1 ? '' : 's'}: ${[...new Set(events.map((e) => e.kind))].join(', ')}${orgId ? ` in ${orgId}` : ''}`,
     [
       { kind: 'p', text: 'The API recorded these security events:' },
-      { kind: 'list', items: events.map((e) => `${isoTime(e.detectedAt)} ${e.kind} (${e.id})${e.appId ? ` app ${e.appId}` : ''}${e.scopeId ? ` scope ${e.scopeId}` : ''} ${detailText(e.detail)}`) },
+      {
+        kind: 'rows',
+        items: events.map((e, i) => ({
+          line: `${times[i]} ${e.kind} (${e.id})${e.appId ? ` app ${e.appId}` : ''}${e.scopeId ? ` scope ${e.scopeId}` : ''} ${detailText(e.detail)}`,
+          title: `${e.kind} (${e.id})`,
+          fields: [['When', times[i]!], ...(e.appId ? ([['App', e.appId]] as [string, string][]) : []), ...(e.scopeId ? ([['Scope', e.scopeId]] as [string, string][]) : [])],
+          ...(detailText(e.detail) ? { detail: detailText(e.detail) } : {}),
+        })),
+      },
       { kind: 'p', text: 'docs/playbooks.md has the recovery steps for each kind.' },
     ],
     c.consoleOrigin,
     c.label,
+    digestDesign(c, events.length === 1 ? 'A security event was recorded' : 'Security events were recorded', 'The Hana ID API recorded security events.'),
   );
 }
 

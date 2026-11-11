@@ -1,6 +1,6 @@
 // Plain text plus HTML for every email (docs/batch-c-spec.md "Email"): no remote image, no script, links only to
 // `console.origin`, never an approve link. The HTML is plain semantic markup, or, for a mail that passes `design`
-// (the partner invite, D672; the security notices partners receive, D700), Hana's designed layout (@hana-id/brand/email)
+// (the partner invite, D672; the security notices partners receive, D700; the feed's digests, D704), Hana's designed layout (@hana-id/brand/email)
 // built from the same blocks, with the same text part; in it every paragraph, table value, list item and warning is
 // written so mail clients don't turn a host or address into a link, preformatted JSON included. Partner-controlled text (app and org names, origins, policy labels) is escaped for HTML and stripped of
 // control characters; a subject is one line.
@@ -12,7 +12,19 @@ export type Block =
   | { kind: 'kv'; rows: [string, string][] }
   | { kind: 'list'; items: string[] }
   | { kind: 'pre'; text: string }
-  | { kind: 'link'; label: string; url: string };
+  | { kind: 'link'; label: string; url: string }
+  | { kind: 'rows'; items: LogRow[] };
+
+/**
+ * A digest's log row (D704): `line` is its one line in the text part (and the plain HTML's list item), as the digests
+ * always wrote it; the designed HTML part shows the same facts as a title, labelled lines and the details.
+ */
+export interface LogRow {
+  line: string;
+  title: string;
+  fields: [string, string][];
+  detail?: string;
+}
 
 /** A mail drawn with the designed layout: its heading (the subject without the env and Hana prefixes) and its preview line. */
 export interface Design {
@@ -95,6 +107,19 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
         html.push(`<ul>${b.items.map((i) => `<li>${escapeHtml(oneLine(i, 500))}</li>`).join('')}</ul>`);
         designed.push({ kind: 'list', items: b.items.map((i) => [{ unlinked: oneLine(i, 500) }]) });
         break;
+      case 'rows':
+        text.push(b.items.map((r) => `- ${oneLine(r.line, 500)}`).join('\n'));
+        html.push(`<ul>${b.items.map((r) => `<li>${escapeHtml(oneLine(r.line, 500))}</li>`).join('')}</ul>`);
+        // Every part of a row can carry a partner's text (an origin, an address, a label in the details): unlinked.
+        designed.push({
+          kind: 'entries',
+          items: b.items.map((r) => ({
+            title: [{ unlinked: oneLine(r.title, 500) }],
+            fields: r.fields.map(([k, v]) => [k, [{ unlinked: oneLine(v, 500) }]] as const),
+            ...(r.detail ? { detail: [{ unlinked: oneLine(r.detail, 500) }] } : {}),
+          })),
+        });
+        break;
       case 'pre':
         text.push(clean(b.text));
         html.push(`<pre>${escapeHtml(clean(b.text))}</pre>`);
@@ -135,9 +160,20 @@ export function duration(ms: number): string {
 
 /**
  * An exact UTC time (copyable, sortable): `2026-11-18T04:54:59.777Z`, whole seconds without `.000`. Staff mails' tables
- * and the digests' lists use it (D697); the partner notices use `readableTime`. Throws on an invalid time.
+ * and the digests' rows use it (D697, D704); the partner notices use `readableTime`. Throws on an invalid time (a digest
+ * row uses `rowTime`, which doesn't).
  */
 export const isoTime = (ms: number): string => new Date(ms).toISOString().replace('.000Z', 'Z');
+
+/**
+ * A digest row's time (D704): `isoTime`, or, for a time that isn't one, the raw value flagged ("not a valid time: …"),
+ * so one bad row is still mailed with the rest and never stops its source's cursor (a digest is after the fact; the
+ * blocking notices still refuse to render, `readableTime`).
+ */
+export function rowTime(ms: unknown): { text: string; valid: boolean } {
+  const n = typeof ms === 'number' ? new Date(ms).getTime() : Number.NaN;
+  return Number.isFinite(n) ? { text: isoTime(n), valid: true } : { text: `not a valid time: ${oneLine(String(ms), 40)}`, valid: false };
+}
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /**

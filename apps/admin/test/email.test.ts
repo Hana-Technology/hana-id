@@ -7,9 +7,10 @@ import { MAIL_LOGO_PATH } from '@hana-id/brand/mail-logo';
 import { SENDGRID_URL } from '@hana-id/sendgrid';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mailLabel } from '../src/env.ts';
-import { changePending, changesDigest, inviteLink, inviteNotice, loginMethodsChanged, onChainChanged, onChainPending, ownerGrantNotice } from '../src/email/messages.ts';
-import { retentionFailed } from '../src/email/ledger-messages.ts';
-import { consoleLink, isoTime, oneLine, readableTime, render } from '../src/email/render.ts';
+import { auditDigest, changePending, changesDigest, inviteLink, inviteNotice, loginMethodsChanged, onChainChanged, onChainPending, ownerGrantNotice, securityDigest } from '../src/email/messages.ts';
+import { retentionFailed, statementIssued } from '../src/email/ledger-messages.ts';
+import { consoleLink, isoTime, oneLine, readableTime, render, rowTime } from '../src/email/render.ts';
+import { FEED_PAGE } from '../src/feed.ts';
 import { ADMIN_CATEGORY, outbound, sendgridSender } from '../src/email/sender.ts';
 import { ACCEPTED_MEMO_MS, Budget, bypassesSuppressions, forgetAccepted, linkKey, messageKey, recipients, sendToAll } from '../src/mail.ts';
 import { FakeEmail, visibleText } from './helpers.ts';
@@ -316,10 +317,128 @@ describe('rendering', () => {
       }
     });
 
-    it('staff digests keep their plain form (D674)', () => {
+  });
+
+  describe('the feed digests: the designed layout (D704)', () => {
+    const files = 'https://files.test';
+    const c = { ...ctx, label: '[SANDBOX]', filesOrigin: files };
+    const at = Date.parse('2026-11-11T05:01:36.861Z');
+    // A partner's own text reaches a digest through a row's details, an audit target and an actor id.
+    const hostileName = 'evil.example/login?x=1 <b>bold</b>';
+    const urlDetail = { name: hostileName, note: 'Urgent: cancel at https://evil.example/cancel?x=1#y', origin: 'http://localhost:5173' };
+    const change = (i: number, extra: Record<string, unknown> = {}) =>
+      ({ seq: i + 1, at: at + i * 60_000, orgId: 'org_1', appId: 'app_1', kind: 'origin.added', detail: urlDetail, actorKind: 'member', actorId: 'usr_1', requestId: `req_${i}`, ...extra }) as never;
+    const audit = (i: number, extra: Record<string, unknown> = {}) =>
+      ({ seq: i + 1, at: at + i * 60_000, actorKind: 'member', actorId: 'usr_1', orgId: 'org_1', action: 'member.invite', target: hostileName, details: urlDetail, requestId: `req_${i}`, outcome: 'ok', ...extra }) as never;
+    const event = (i: number, extra: Record<string, unknown> = {}) =>
+      ({ id: `se_${i}`, detectedAt: at + i * 60_000, kind: 'drift', orgId: 'org_1', appId: 'app_1', scopeId: 's1', detail: urlDetail, ...extra }) as never;
+    const mails = {
+      changesDigest: changesDigest(c, 'org_1', [change(0), change(1, { kind: 'org.security_contacts', appId: undefined, actorKind: 'hana', actorId: 'staff-sub', detail: { old: ['a@evil.example'], new: ['b@evil.example'] } })]),
+      auditDigest: auditDigest(c, 'org_1', [audit(0), audit(1, { outcome: 'failed', target: undefined, details: {} })]),
+      auditDigestNoOrg: auditDigest(c, null, [audit(0, { orgId: undefined })]),
+      securityDigest: securityDigest(c, 'org_1', [event(0), event(1, { kind: 'breaker', scopeId: undefined })]),
+      securityDigestOne: securityDigest(c, null, [event(0, { orgId: undefined, appId: undefined, scopeId: undefined, kind: 'home_budget_high', detail: { derives: 400 } })]),
+    };
+    const headings: Record<keyof typeof mails, string> = {
+      changesDigest: 'Changes to your apps',
+      auditDigest: 'Console activity',
+      auditDigestNoOrg: 'Console activity',
+      securityDigest: 'Security events were recorded',
+      securityDigestOne: 'A security event was recorded',
+    };
+
+    for (const [name, m] of Object.entries(mails) as [keyof typeof mails, ReturnType<typeof changesDigest>][]) {
+      it(`${name}: the layout with a fixed heading, the banner, the logo, the footer and no link; no markup or linkable text from a partner's values`, () => {
+        expect(m.html).toContain('<html lang="en"');
+        expect(m.html).toContain(`>${headings[name]}</h1>`);
+        expect(m.html.match(/<h1/gu)).toHaveLength(1);
+        expect(m.html.match(/<title>[^<]*<\/title>/u)![0]).toBe(`<title>${headings[name]}</title>`);
+        expect(visibleText(m.html)).toContain('[SANDBOX] Not production: this email is from Hana ID sandbox-test (testnet), for testing.');
+        expect(visibleText(m.html)).toContain('Hana never asks you to approve anything from an email.');
+        expect(m.text).toContain('Hana never asks you to approve anything from an email.');
+        expect([...m.html.matchAll(/src="([^"]*)"/gu)].map((x) => x[1])).toEqual([`${files}${MAIL_LOGO_PATH}`]);
+        expect(m.html).not.toMatch(/<script|<form|javascript:/iu);
+        // The plain digests link nowhere; the designed ones add no link either.
+        expect(m.html).not.toMatch(/href=|<a /u);
+        // No markup from a partner's value (a name, a target), and no host, URL or address in one text node.
+        expect(m.html).not.toContain('<b>bold</b>');
+        for (const textNode of m.html.split(/<[^>]+>/u)) expect(textNode, name).not.toMatch(/evil&#46;example|evil\.example|localhost:5173\/|https?:\/\//u);
+        // Every paragraph of the text part (not the row lines) is in the HTML part.
+        const html = visibleText(m.html);
+        for (const para of m.text.split('\n\n').filter((p) => !p.startsWith('- '))) expect(html, para).toContain(para.replace(/\s+/gu, ' ').trim());
+      });
+    }
+
+    it('the text part keeps each row on one line as before (ISO time, codes, JSON); the HTML shows the same facts per row', () => {
+      const ch = mails.changesDigest;
+      expect(ch.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 2 app changes in org_1');
+      expect(ch.text).toContain(`- 2026-11-11T05:01:36.861Z origin.added on app_1 by member usr_1 ${JSON.stringify(urlDetail)}\n`);
+      expect(ch.text).toContain('- 2026-11-11T05:02:36.861Z org.security_contacts by hana staff-sub {"old":["a@evil.example"],"new":["b@evil.example"]}\n');
+      const chHtml = visibleText(ch.html);
+      for (const fact of ['origin.added on app_1', 'When 2026-11-11T05:01:36.861Z', 'By a console member (usr_1)', JSON.stringify(urlDetail), 'org.security_contacts', 'By Hana staff (staff-sub)', '{"old":["a@evil.example"],"new":["b@evil.example"]}']) expect(chHtml, fact).toContain(fact);
+      const au = mails.auditDigest;
+      expect(au.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 2 console events in org_1');
+      expect(au.text).toContain(`- 2026-11-11T05:01:36.861Z member.invite ${hostileName} by member usr_1 (ok) ${JSON.stringify(urlDetail)}\n`);
+      expect(au.text).toContain('- 2026-11-11T05:02:36.861Z member.invite by member usr_1 (failed)\n');
+      const auHtml = visibleText(au.html);
+      for (const fact of [`member.invite ${hostileName}`, 'When 2026-11-11T05:01:36.861Z', 'By a console member (usr_1)', 'Outcome ok', 'Outcome failed', JSON.stringify(urlDetail)]) expect(auHtml, fact).toContain(fact);
+      expect(mails.auditDigestNoOrg.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 1 console event');
+      const se = mails.securityDigest;
+      expect(se.subject).toBe('[SANDBOX] [Hana ID sandbox-test] Security events: drift, breaker in org_1');
+      expect(se.text).toContain(`- 2026-11-11T05:01:36.861Z drift (se_0) app app_1 scope s1 ${JSON.stringify(urlDetail)}\n`);
+      const seHtml = visibleText(se.html);
+      for (const fact of ['drift (se_0)', 'When 2026-11-11T05:01:36.861Z', 'App app_1', 'Scope s1', 'breaker (se_1)', JSON.stringify(urlDetail)]) expect(seHtml, fact).toContain(fact);
+      // One entry per row, each with its When line.
+      expect(se.html.match(/>When</gu)).toHaveLength(2);
+      expect(mails.securityDigestOne.subject).toBe('[SANDBOX] [Hana ID sandbox-test] Security event: home_budget_high');
+    });
+
+    it('a row time that is not a valid one is shown raw and flagged in both parts; the other rows and the digest still render (D704)', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      for (const bad of [Number.NaN, 8.64e15 + 1, 1e300]) {
+        const flag = `not a valid time: ${String(bad)}`;
+        for (const m of [changesDigest(c, 'org_1', [change(0, { at: bad }), change(1)]), auditDigest(c, 'org_1', [audit(0, { at: bad }), audit(1)]), securityDigest(c, 'org_1', [event(0, { detectedAt: bad }), event(1)])]) {
+          expect(m.text).toContain(`- ${flag} `);
+          expect(visibleText(m.html)).toContain(`When ${flag}`);
+          // The good row is untouched.
+          expect(m.text).toContain('- 2026-11-11T05:02:36.861Z ');
+          expect(visibleText(m.html)).toContain('When 2026-11-11T05:02:36.861Z');
+        }
+      }
+      // Logged as a count, never the value or the row.
+      const lines = warn.mock.calls.map((a) => JSON.parse(String(a[0])) as Record<string, unknown>);
+      expect(lines).toHaveLength(9);
+      expect(lines.map((l) => l.step)).toEqual(Array(3).fill(['app_changes', 'audit_log', 'security_events']).flat());
+      for (const l of lines) expect(l).toMatchObject({ level: 'warn', event: 'digest_bad_time', orgId: 'org_1', count: 1 });
+      expect(rowTime(Date.UTC(2026, 10, 18, 4, 54))).toEqual({ text: '2026-11-18T04:54:00Z', valid: true });
+      expect(rowTime('1700000000000')).toEqual({ text: 'not a valid time: 1700000000000', valid: false });
+      // The blocking notices still refuse to render (fail closed, D700).
+      expect(() => readableTime(Number.NaN)).toThrow(RangeError);
+    });
+
+    it('50 rows (a feed page, the most one digest holds) with details at the 400-character cap stay under Gmail’s 102 KB clip', () => {
+      const fat = (i: number) => ({ note: `see https://app.partner.example/settings?tab=origins&id=${i}#top and https://docs.partner.example/a/b/c.html`, origin: 'https://app.partner.example', label: 'x'.repeat(260) });
+      const rows = Array.from({ length: FEED_PAGE }, (_, i) => i);
+      for (const m of [changesDigest(c, 'org_1', rows.map((i) => change(i, { detail: fat(i) }))), auditDigest(c, 'org_1', rows.map((i) => audit(i, { target: 'inv_01jdnew', details: fat(i) }))), securityDigest(c, 'org_1', rows.map((i) => event(i, { detail: fat(i) })))]) {
+        expect(m.html.match(/>When</gu)).toHaveLength(FEED_PAGE);
+        expect(new TextEncoder().encode(m.html).length).toBeLessThan(95_000);
+      }
+    });
+
+    it('an empty digest still renders (the feed never sends one)', () => {
       const d = changesDigest(c, 'org_1', []);
-      expect(d.html.startsWith('<!doctype html><html><body>')).toBe(true);
-      expect(d.html).not.toContain('<h1');
+      expect(d.html).toContain('>Changes to your apps</h1>');
+      expect(d.html).not.toContain('>When<');
+    });
+  });
+
+  describe('mails that stay plain', () => {
+    it('the statement notice and the staff alerts keep the plain HTML (D674, D700, D704)', () => {
+      const r = retentionFailed(ctx, { kind: 'overdue', month: '2026-10', dueAt: Date.UTC(2026, 10, 1, 3), latest: null });
+      expect(r.html.startsWith('<!doctype html><html><body>')).toBe(true);
+      expect(r.html).not.toContain('<h1');
+      const s = statementIssued(ctx, { orgId: 'org_1', orgName: 'Acme', month: '2026-10', asOf: Date.UTC(2026, 10, 1), csvSha256: 'a'.repeat(64), pdfSha256: null });
+      expect(s.html.startsWith('<!doctype html><html><body>')).toBe(true);
     });
   });
 

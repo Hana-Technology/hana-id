@@ -62,7 +62,8 @@ export function addressOfExport(chain: DerivationChain, exported: string): strin
     if (chain === 'near') {
       const m = /^ed25519:([1-9A-HJ-NP-Za-km-z]{80,90})$/u.exec(exported);
       if (!m) throw new Error('Malformed NEAR secret key');
-      key = toBytes(base58.decode(m[1]!));
+      // The decoded buffer itself, not a copy: `finally` zeroes the only one there is.
+      key = base58.decode(m[1]!) as Bytes;
       if (key.length !== 64 || base58.encode(key) !== m[1]) throw new Error('Malformed NEAR secret key');
       // The second half must be the first half's public key, as importers assume (they read the key from it).
       if (!bytesEqual(ed25519.getPublicKey(key.subarray(0, 32)), key.subarray(32))) throw new Error('NEAR secret key halves disagree');

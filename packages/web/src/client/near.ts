@@ -152,29 +152,34 @@ export class HanaNear {
     const signedDelegateAction = toBase64(p.signedDelegateAction, 'signedDelegateAction');
     const apiUrl = this.#host.apiUrl;
     if (!apiUrl) throw hanaError('api_unavailable', 'This build of the Hana SDK has no API URL for its environment');
+    // One deadline for the whole exchange: the abort stays armed until the body has been read, so a server that sends
+    // its headers and then stalls can't hold the call open.
     const ctl = new AbortController();
     const timer = globalThis.setTimeout(() => ctl.abort(), NEAR_RELAY_TIMEOUT_MS);
     let res: Response;
+    let body: unknown = null;
     try {
-      res = await this.#host.fetch(`${apiUrl}/v1/near/relay`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-hana-key': this.#host.publishableKey },
-        body: JSON.stringify({ network: 'testnet', signedDelegateAction }),
-        credentials: 'omit',
-        cache: 'no-store',
-        referrerPolicy: 'no-referrer',
-        signal: ctl.signal,
-      });
-    } catch {
-      throw hanaError('api_unavailable', 'Hana’s relayer could not be reached');
+      try {
+        res = await this.#host.fetch(`${apiUrl}/v1/near/relay`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-hana-key': this.#host.publishableKey },
+          body: JSON.stringify({ network: 'testnet', signedDelegateAction }),
+          credentials: 'omit',
+          cache: 'no-store',
+          referrerPolicy: 'no-referrer',
+          signal: ctl.signal,
+        });
+      } catch {
+        throw hanaError('api_unavailable', 'Hana’s relayer could not be reached');
+      }
+      try {
+        body = await res.json();
+      } catch {
+        if (ctl.signal.aborted) throw hanaError('api_unavailable', 'Hana’s relayer did not answer in time');
+        body = null;
+      }
     } finally {
       globalThis.clearTimeout(timer);
-    }
-    let body: unknown;
-    try {
-      body = await res.json();
-    } catch {
-      body = null;
     }
     const b = typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
     if (!res.ok) throw relayError(res.status, b);

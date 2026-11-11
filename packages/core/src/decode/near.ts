@@ -36,7 +36,9 @@ export type NearArgsView = { readonly kind: 'json'; readonly text: string; reado
 /** Arguments over this many bytes are shown as hex, not parsed (the popup still shows all of them). */
 export const NEAR_ARGS_JSON_MAX_BYTES = 64 * 1024;
 
-const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
+// ignoreBOM: a leading BOM stays in the text, so arguments that start with one fail strict JSON and show as hex (what is
+// sent, byte for byte), instead of being shown without it.
+const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 const escapeChar = (ch: string): string => Array.from({ length: ch.length }, (_, i) => `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`).join('');
 
@@ -144,20 +146,49 @@ export function nearAccountControl(a: NearAction): NearControlChange[] {
 export const nearChangesControl = (actions: readonly NearAction[]): boolean => actions.some((a) => nearAccountControl(a).length > 0);
 
 /**
- * The NEAR that leaves the signer's account by these actions: Transfer and FunctionCall deposits (Stake locks its
- * amount, shown apart; DeleteAccount sends everything, flagged apart; gas is paid on top). A nested delegate's
- * deposits are its sender's, not the signer's.
+ * What DeployGlobalContract burns per byte of code: the protocol's `global_contract_storage_amount_per_byte`,
+ * 10^20 yoctoNEAR (0.0001 NEAR), taken from the account the action runs on (always the signer's own: nearcore lets
+ * only the account itself deploy) and burnt, not stored. UseGlobalContract burns nothing.
  */
-export function nearDeposits(actions: readonly NearAction[]): { total: bigint; staked: bigint; deletesAccount: boolean } {
+export const NEAR_GLOBAL_CONTRACT_YOCTO_PER_BYTE = 10n ** 20n;
+
+/** The NEAR a DeployGlobalContract of `codeLength` bytes burns. */
+export const nearGlobalContractBurn = (codeLength: number): bigint => BigInt(codeLength) * NEAR_GLOBAL_CONTRACT_YOCTO_PER_BYTE;
+
+export interface NearDeposits {
+  /** Transfer and FunctionCall deposits, a relayed delegate's included (the signer prepays those). */
+  readonly total: bigint;
+  /** Stake: locked, not sent. */
+  readonly staked: bigint;
+  /** DeployGlobalContract: burnt. */
+  readonly burned: bigint;
+  /** A DeleteAccount: everything goes. */
+  readonly deletesAccount: boolean;
+}
+
+/**
+ * The NEAR these actions take, for the account that signs a transaction with them: Transfer and FunctionCall
+ * deposits (nearcore's `total_deposit`, which counts a Delegate action's inner deposits too: the transaction's signer
+ * prepays them), Stake apart (locked), DeployGlobalContract's burn apart, DeleteAccount flagged (everything). Gas is
+ * paid on top. Hana never signs a transaction that relays a delegate action (near_relayed_delegate), so in practice
+ * the delegate case only keeps this sum honest.
+ */
+export function nearDeposits(actions: readonly NearAction[]): NearDeposits {
   let total = 0n;
   let staked = 0n;
+  let burned = 0n;
   let deletesAccount = false;
   for (const a of actions) {
     if (a.type === 'transfer' || a.type === 'functionCall') total += a.deposit;
     else if (a.type === 'stake') staked += a.stake;
     else if (a.type === 'deleteAccount') deletesAccount = true;
+    else if (a.type === 'deployGlobalContract') burned += nearGlobalContractBurn(a.code.length);
+    else if (a.type === 'delegate') {
+      const inner = nearDeposits(a.signedDelegate.delegateAction.actions);
+      total += inner.total;
+    }
   }
-  return { total, staked, deletesAccount };
+  return { total, staked, burned, deletesAccount };
 }
 
 /** base58 sha256 of contract code, as NEAR shows code hashes. */

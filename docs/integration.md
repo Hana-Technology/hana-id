@@ -231,8 +231,9 @@ NEAR). Replace all the tarballs you use together (they depend on each other at `
   deployment), and `hana.near` then refuses requests with 4100. New types: `NearSignTransactionParams`,
   `NearSignDelegateActionParams`, `NearSignMessageParams`, `NearRelayParams` and their results, `NearNetwork`.
 - A test app signs NEAR testnet only (4100 `mainnet_not_allowed`); new refusal reasons `near_block_unknown`,
-  `near_network_mismatch`, `near_key_unknown`, `near_delegate_nonce_used`, `near_delegate_nonce_too_large`,
-  `near_delegate_expiry` and (with `api_unavailable`) `near_rpc_unavailable`.
+  `near_network_mismatch`, `near_relayed_delegate`, `near_key_unknown`, `near_delegate_nonce_used`,
+  `near_delegate_nonce_stale`, `near_delegate_nonce_too_large`, `near_delegate_expiry` and (with `api_unavailable`)
+  `near_rpc_unavailable`. `nearDelegateNonce` (`@hana-id/core/near`) picks a delegate action's nonce.
 - Not yet NEAR: the identity token's `wallets` (still Stellar and EVM), Hana Home and the partner portal.
 
 **0.3.1** (after 0.3.0; same environments: `sandbox-dev`). **Nothing to change**: code written for 0.3.0 builds and
@@ -780,7 +781,8 @@ button.addEventListener('click', () => {
 });
 ```
 
-`signTransaction` returns `{ signature, signedTransaction, hash }`: base64 of the 64-byte signature, base64 of the
+A transaction that relays someone else's delegate action (a `Delegate` action) is refused (4100
+`near_relayed_delegate`): its signer would prepay every deposit inside it. `signTransaction` returns `{ signature, signedTransaction, hash }`: base64 of the 64-byte signature, base64 of the
 borsh `SignedTransaction` (what `send_tx` takes) and the base58 transaction hash. The transaction's signer and key must
 be the user's (4100 otherwise). NEAR's bytes name no network, so you say which (`'testnet'` or `'mainnet'`) and Hana
 checks it: a `testnet` transaction's block hash must be a testnet block (`near_block_unknown` otherwise; if Hana can't
@@ -789,11 +791,17 @@ must not be (`near_network_mismatch`). A test app signs for testnet only. Use a 
 rule). Transactions with a priority fee (`TransactionV1`) and actions newer than `UseGlobalContract` are refused, and
 a request is at most 192 KiB of base64.
 
-**Gasless (a meta transaction).** Sign a NEP-366 delegate action instead and let Hana's relayer pay the gas: it wraps
-it in its own transaction (`POST /v1/near/relay`, checked against your publishable key and your page's origin like
-every `/v1` call). Any NEAR the actions attach or send still comes from the user's account.
+**Gasless (a meta transaction).** Sign a NEP-366 delegate action instead and let a relayer send it: it wraps it in
+its own transaction. `hana.near.relay` uses Hana's relayer (`POST /v1/near/relay`, checked against your publishable
+key and your page's origin like every `/v1` call), available where the environment runs a relayer (sandbox-dev will);
+any NEP-366 relayer takes the same `signedDelegateAction`. **Who pays** (nearcore): the relayer's transaction pays the
+gas and prepays every deposit and transfer in the delegate action; on success those go to their receivers, and if an
+action fails its NEAR is refunded to the user's account. So the user's balance goes down only for what acts on the
+account itself: deleting it (everything), staking (locked) or publishing a global contract (burnt). The actions run
+as the user's account, so a contract they call acts in the user's name (it can move tokens the user holds there).
 
 ```ts
+import { nearDelegateNonce } from '@hana-id/core/near';
 import { buildDelegateAction, encodeDelegateAction } from '@near-js/transactions';
 
 // Before the click, with `key` from view_access_key as above.
@@ -801,7 +809,7 @@ const delegate = buildDelegateAction({
   senderId: accountId,
   receiverId: 'guestbook.testnet',
   actions: [actionCreators.functionCall('add_message', { text: 'gasless gm' }, 30_000_000_000_000n, 0n)],
-  nonce: BigInt(key.nonce) + 1n,
+  nonce: nearDelegateNonce({ keyNonce: key.nonce, blockHeight: key.block_height }),   // tied to the current height
   maxBlockHeight: BigInt(key.block_height) + 600n,   // expires in about 6 minutes
   publicKey,
 });
@@ -816,10 +824,14 @@ button.addEventListener('click', () => {
 `signDelegateAction` takes the borsh `DelegateAction` with or without NEP-461's prefix (`encodeDelegateAction` adds
 it) and returns `{ signature, signedDelegateAction }` (base64 borsh `SignedDelegateAction`, which any NEP-366 relayer
 takes). A delegate action has no block hash, so for a **test app** Hana ties it to testnet another way, on testnet's
-RPC: the account must already exist there with this key (`near_key_unknown`: fund or create the account first), the
-nonce must be above the key's current one (`near_delegate_nonce_used`) and within NEAR's bound for the current height
-(`near_delegate_nonce_too_large`), and `maxBlockHeight` must be ahead of testnet's height by at most 10,000 blocks
-(`near_delegate_expiry`). `relay` rejects with `rate_limited` (429), `origin_not_allowed`, `app_suspended`, 4100 for
+RPC (both of the environment's providers, when it has two): the account must already exist there with this key
+(`near_key_unknown`: fund or create the account first); the nonce must be above the key's current one
+(`near_delegate_nonce_used`), above (testnet's height − 10,000) × 10^6 (`near_delegate_nonce_stale`: the key's nonce
++ 1, as near-api-js picks, is usually too low) and below height × 10^6 (`near_delegate_nonce_too_large`); and
+`maxBlockHeight` must be ahead of testnet's height by at most 10,000 blocks (`near_delegate_expiry`).
+`nearDelegateNonce({ keyNonce, blockHeight })` from `@hana-id/core/near` picks a nonce that passes (the key's nonce + 1,
+or (height − 100) × 10^6 if that is higher); the key's nonce moves up to it once the action runs, which later
+transactions and delegate actions simply continue from. `relay` rejects with `rate_limited` (429), `origin_not_allowed`, `app_suspended`, 4100 for
 another refusal (`data.reason` is the API's code, `data.requestId` its request ID) or `api_unavailable`.
 
 **Sign in with NEAR (NEP-413).** A signature that proves the user holds the account, for your backend:
@@ -832,14 +844,16 @@ const { accountId, publicKey, signature } = await hana.near.signMessage({ messag
 Your backend rebuilds NEP-413's payload (`u32le(2^31 + 413)` ‖ borsh `{ message, nonce, recipient, callbackUrl }`),
 verifies `signature` (base64, Ed25519) over its sha256 with `publicKey`, checks that `publicKey`'s hex is `accountId`
 (an implicit account is its key), and accepts the nonce only once. `recipient` and `callbackUrl` are one line of
-visible text each; Hana's window shows the recipient first. Like other messages it names no network, so a test app may
-sign it.
+visible text each; Hana's window shows the recipient first, flags one that isn't your page's host, and writes out a
+recipient with characters outside plain ASCII (look-alikes). Like other messages it names no network, so a test app
+may sign it.
 
 **What the approval window shows** (decoded by Hana from the bytes, never from your description): the network and
 whether Hana checked it, sender and receiver, every action in plain words (a call with its method, attached deposit,
-gas in Tgas and its arguments as escaped JSON, or hex when they aren't JSON), and the NEAR leaving the account. Adding
-or removing a key, deleting the account and deploying or setting a contract change who controls the account: they
-are shown under a red warning. No NEAR request is ever signed automatically (no policy covers NEAR yet).
+gas in Tgas and its arguments as escaped JSON, or hex when they aren't JSON, always in full), and the NEAR leaving the
+account (including what publishing a global contract burns: 0.0001 NEAR per byte of code). Adding or removing a key,
+deleting the account and deploying or setting a contract change who controls the account: they are shown under a
+red warning; so are a call to a contract on the user's own account and a global contract's burn. No NEAR request is ever signed automatically (no policy covers NEAR yet).
 
 `hana.exportKey('near')` exports the key as `ed25519:<base58>` (near-cli and NEAR wallets import that form), with the
 same safeguards as the other chains.

@@ -458,23 +458,45 @@ function longText(d: Dom, text: string, cls: string): HTMLElement {
 
 /**
  * After layout: every `pre.message` box whose content is taller than the box (scrollHeight > clientHeight) gets the
- * `overflows` class (an always-visible scrollbar and a fade at its foot, auth.css) and a warning line above it. Decided
+ * `overflows` class (an always-visible scrollbar and a stronger border, auth.css) and a warning line above it. Decided
  * by what the box shows, not by length: 20 short JSON keys overflow, 1,000 characters on one wrapped line may not.
  * Shared by every request kind (Stellar and EVM messages use the same box). Idempotent; call again after a resize.
  */
 export function markOverflowing(root: ParentNode): void {
-  for (const box of Array.from(root.querySelectorAll<HTMLElement>('pre.message'))) {
-    const over = box.scrollHeight > box.clientHeight + 1;
-    const note = box.previousElementSibling?.classList.contains('overflow-note') ? (box.previousElementSibling as HTMLElement) : null;
-    box.classList.toggle('overflows', over);
-    if (over && !note) {
-      const p = box.ownerDocument.createElement('p');
-      p.className = 'warn overflow-note';
-      p.setAttribute('role', 'note');
-      p.textContent = overflowNote(box.textContent?.length ?? 0);
-      box.before(p);
-    } else if (!over && note) note.remove();
+  for (const box of Array.from(root.querySelectorAll<HTMLElement>('pre.message'))) markOne(box);
+}
+
+/**
+ * Keeps the mark right as the boxes change size (a width change reflows the text without any resize event): one
+ * ResizeObserver over every `pre.message` under `root`, or, where the browser has none, the window's resize event.
+ * Returns a function that stops watching.
+ */
+export function watchOverflowing(root: ParentNode, win: { ResizeObserver?: typeof ResizeObserver; addEventListener(t: 'resize', l: () => void): void; removeEventListener(t: 'resize', l: () => void): void }): () => void {
+  markOverflowing(root);
+  const RO = win.ResizeObserver;
+  if (typeof RO === 'function') {
+    const ro = new RO((entries) => {
+      for (const e of entries) markOne(e.target as HTMLElement);
+    });
+    for (const box of Array.from(root.querySelectorAll<HTMLElement>('pre.message'))) ro.observe(box);
+    return () => ro.disconnect();
   }
+  const onResize = () => markOverflowing(root);
+  win.addEventListener('resize', onResize);
+  return () => win.removeEventListener('resize', onResize);
+}
+
+function markOne(box: HTMLElement): void {
+  const over = box.scrollHeight > box.clientHeight + 1;
+  const note = box.previousElementSibling?.classList.contains('overflow-note') ? (box.previousElementSibling as HTMLElement) : null;
+  box.classList.toggle('overflows', over);
+  if (over && !note) {
+    const p = box.ownerDocument.createElement('p');
+    p.className = 'warn overflow-note';
+    p.setAttribute('role', 'note');
+    p.textContent = overflowNote(box.textContent?.length ?? 0);
+    box.before(p);
+  } else if (!over && note) note.remove();
 }
 
 function nearArgs(d: Dom, args: Uint8Array): HTMLElement {

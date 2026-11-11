@@ -66,7 +66,19 @@ async function callOne(fetchFn: Fetch, url: string, body: string, timeoutMs: num
  * fallback (a path through another identity can then never be confirmed, and is refused).
  */
 export function independentEndpoints(e: NearEndpoints): readonly [string, string] | null {
-  return e.rpcFallback && e.rpcFallback !== e.rpc ? [e.rpc, e.rpcFallback] : null;
+  return e.rpcFallback && sameEndpoint(e.rpcFallback, e.rpc) === false ? [e.rpc, e.rpcFallback] : null;
+}
+
+/**
+ * Whether two endpoint URLs name the same endpoint once normalised (`https://x` and `https://X/` are one), or null
+ * when either isn't a URL (then they are treated as not independent).
+ */
+function sameEndpoint(a: string, b: string): boolean | null {
+  try {
+    return new URL(a).href === new URL(b).href;
+  } catch {
+    return null;
+  }
 }
 
 /** One endpoint's usable body, with no fallback; throws when it fails or the body isn't usable. */

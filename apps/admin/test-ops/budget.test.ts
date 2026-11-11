@@ -501,7 +501,7 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
     expect(total).toBeLessThanOrEqual(RUN_BUDGET);
     expect(mine.length).toBeLessThanOrEqual(RPC_BUDGET);
     // A blocking notice is never half-sent: each one emailed in this run was acked in this run.
-    const emailedNotices = new Set(sent.flatMap((m) => /^\[Hana ID [^\]]*\] Pending change for (gc_n\d+)/u.exec(m.subject)?.[1] ?? []));
+    const emailedNotices = new Set(sent.flatMap((m) => /^\[Hana ID [^\]]*\] New allowed origin proposed for (gc_n\d+)/u.exec(m.subject)?.[1] ?? []));
     if (sent.length) expect(sent.some((m) => m.subject.startsWith('[Hana ID '))).toBe(true);
     for (const id of emailedNotices) expect(acked.has(id) && !before.acked.has(id), id).toBe(true);
     return { sum, total, mine, sent };

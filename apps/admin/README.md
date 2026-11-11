@@ -20,12 +20,42 @@ The left nav groups the screens by task (D420):
 | Group | Screens |
 |---|---|
 | Overview | **Status** (D425): the landing page (`/`), every part of the env at a glance, below |
-| Partners | **Organisations**: the list and "Invite a new partner" (a new organisation's first owner); an organisation's members, invites, owner grants, "Register a scope for this organisation" (below), apps ("Create an app", "Move a legacy scope here"), security contacts, recent app changes and its danger zone (freeze, suspend every app); an app's suspension switches, allowed origins, guarded changes, signing settings, publishable keys and danger zone. **Legacy apps** (`org_legacy`) has its own page: its scopes, each with "Move to an organisation" |
+| Partners | **Organisations**: the list, "Invite a new partner" (a new organisation's first owner) and **Pending invites** (below); an organisation's members, invites, owner grants, "Register a scope for this organisation" (below), apps ("Create an app", "Move a legacy scope here"), security contacts, recent app changes and its danger zone (freeze, suspend every app); an app's suspension switches, allowed origins, guarded changes, signing settings, publishable keys and danger zone. **Legacy apps** (`org_legacy`) has its own page: its scopes, each with "Move to an organisation" |
 | Support | **Users** (C8b), **Support ID lookup** (C15) |
 | Security | **Security & monitoring**, **Feed and notices**, **Pending upgrades**, **Playbooks** (C14), **Audit log** (the console's rows, an org's app changes, the issuer's directory reads) |
 | Email login | **Email issuer**: tokens, mail with bounce and complaint rates, refusals by limit, alert occurrences per app and day, and the signer policy against the pins (batch 10's KMS figures say so). **Account links**: links per app and day, today against the 7-day median (build plan batch 9, D446, D448) |
 | Money | **Reports**, **Statements**, **Rates** (C12) |
 | System | **Retention** (C13) |
+
+**Pending invites (D696).** An invite to a new organisation has no organisation page until its first owner accepts
+(the organisation is created then), so the Organisations page lists these invites itself, above the organisations,
+whenever there is at least one (and at once after "Invite a new partner" sends one, the page re-reads it): the
+organisation's name (the invite id under it), its type, the invited address, the state in words (**Waiting for the
+email to go out**, **Email sent, waiting for them to accept**, **Accepted**, **Revoked**, **Expired**, an ended one with
+when it ended), when the email went out, when it expires, and **Revoke** on an open one (confirmed in the page; the
+existing `POST /api/invites/:id/revoke`). Open invites, then those that ended in the last 30 days, at most 100
+(`GET /api/invites/new-orgs`, `StaffRpc.newOrgInvites`). A failed read is said in the panel; the list still shows.
+Invitations into an existing organisation stay on that organisation's page ("Invites", where Revoke is likewise on open
+invites only: an expired one can't be revoked).
+
+**After "Create an app"** the green "Created app_…" box with the publishable key stays where it is and the Apps table
+above it is re-read and redrawn in place (the page isn't re-rendered, so the key isn't lost); if that read fails, the
+box says to reload. **`passkeys_required`** (D242's gate, which the console applies on every network but testnet,
+D698) reads "Only one partner organisation for now", with the real cause and the two ways on (revoke the open partner
+invite, or choose type Internal).
+
+**Times in emails (D697).** A time in a sentence reads as a date ("18 November 2026, 04:54 UTC", `readableTime` in
+`src/email/render.ts`): the invite's expiry, in the body and the preview line, and the retention job's "was due at".
+Tables and lists keep the exact ISO time (`isoTime`) in staff mails and the digests, so it can be copied and compared;
+the designed partner notices below show their table times in words too.
+
+**Partner security notices (D699, D700).** The pending change (every kind), the invite notice to owners and contacts,
+the owner grant, the login-methods change and the on-chain proposal and change use the designed layout
+(`render(..., design)`, `notice` in `src/email/messages.ts`): a fixed heading, D419's banner, the hosted logo, the
+cancel or console link as the one button, every value as unlinked text. The pending change's subject names the change
+("New allowed origin proposed for {app}", "Auto-approve policy proposed for {app}", "Raw signing proposed for {app}")
+and its "Change" row reads "Add an allowed origin (gc_…)". The feed's digests, the statement notice and the staff alerts
+keep the plain HTML.
 
 **Register a scope for this organisation (D651).** A partner's apps need a scope on chain whose Google owners are
 owners of the organisation, and registering one is a council action, so the panel prepares it and sends nothing. It
@@ -251,7 +281,7 @@ past it every `/api/*` request is a 302 to a fake Access login on another origin
 the warning at once and the expired banner 4 minutes later; `0.4` the expired banner after 24 s.
 
 `test-spa/preview.ts` serves `public/` with the Worker's own headers and CSP and answers `/api/*` from
-`test-spa/preview-data.ts`: fake organisations (Legacy apps with its scopes, partners with members, invites and
+`test-spa/preview-data.ts`: fake organisations (Legacy apps with its scopes, pending invites to new organisations in each state (D696), partners with members, invites and
 grants, a frozen one, one without a security contact, and for the scope-registration panel Orbit Labs (an owner invite
 not accepted) and Corvid Pay (two owners, one in the grant period, an open owner invite, no app)), apps, users, a Support ID lookup, the feed, monitoring,
 upgrades, the real playbooks, reports, statements, rates and retention. Writes succeed, except the refusals the real
@@ -299,7 +329,7 @@ lookup screen and the Users screen's ways into it (`support.test.ts`), the UI pr
 the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`), and the System status page over each
 preview scenario's real answer (`status.test.ts`); the status route's checks, call count and cache are `test/status.test.ts`.
 
-Last verified: 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's logo and unlinked paragraphs, D685, D687); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's designed HTML part, D672, D674); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: "Register a scope for this organisation", the staff "Propose origins" help, `ux.test.ts`'s `scope:register` rule changed, D651, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: an alert's "Details and deliveries" shows the latest result per channel above the last 20 rows, D570); 2026-11-09 (branch `feat/email-login-9`, not merged: the Email login screens, D446, D448); 2026-11-09 (branch `chore/status-access-followups`: System status's NEAR RPC tile, one line per endpoint the API can use, the calls per load and the preview's `critical`, D435's note; the Access session's length, D437); 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
+Last verified: 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: the Organisations page's "Pending invites" panel, `GET /api/invites/new-orgs`, `test-spa/pending-invites.test.ts`, D696; after the dry run: "Create an app" refreshes the Apps table in place, the Invites panel's Revoke on open invites only, `passkeys_required`'s words, readable times in email sentences, `test-spa/onboarding.test.ts`, D697; the gate's words for a network that keeps it, D698; the designed partner security notices, D699, D700); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's logo and unlinked paragraphs, D685, D687); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's designed HTML part, D672, D674); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: "Register a scope for this organisation", the staff "Propose origins" help, `ux.test.ts`'s `scope:register` rule changed, D651, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: an alert's "Details and deliveries" shows the latest result per channel above the last 20 rows, D570); 2026-11-09 (branch `feat/email-login-9`, not merged: the Email login screens, D446, D448); 2026-11-09 (branch `chore/status-access-followups`: System status's NEAR RPC tile, one line per endpoint the API can use, the calls per load and the preview's `critical`, D435's note; the Access session's length, D437); 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
 before `exp`, `GET /api/me` `accessExp`, `/signed-in`, the preview's `PREVIEW_SESSION_MIN`, `session.test.ts`, D424);
 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

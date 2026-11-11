@@ -30,9 +30,11 @@ export type MailBlock =
   | { kind: 'callout'; text: string | readonly MailInline[]; tone: 'info' | 'warn' }
   /** One button, with its URL repeated under it as text (the only link; the text copy isn't a link). */
   | { kind: 'button'; label: string; url: string; urlLabel?: string }
-  | { kind: 'kv'; rows: readonly (readonly [string, string])[] }
-  | { kind: 'list'; items: readonly string[] }
-  | { kind: 'pre'; text: string };
+  /** A value or an item may be inline runs (`{ unlinked }` for an origin or a partner's name that clients mustn't link). */
+  | { kind: 'kv'; rows: readonly (readonly [string, string | readonly MailInline[]])[] }
+  | { kind: 'list'; items: readonly (string | readonly MailInline[])[] }
+  /** Preformatted text; `unlinked`: each `.`, `/`, `#`, `?` and `=` in its own element (D700), copying gives the same text. */
+  | { kind: 'pre'; text: string; unlinked?: boolean };
 
 export interface MailLayout {
   /** The document title (the subject, without any env prefix). */
@@ -197,13 +199,13 @@ function block(b: MailBlock): string {
       return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;border-collapse:collapse">${b.rows
         .map(
           ([k, v]) =>
-            `<tr><td class="hm-muted hm-line" valign="top" style="padding:8px 12px 8px 0;border-top:1px solid ${L.line};font-family:${FONT};font-size:14px;line-height:1.45;color:${L.muted};width:34%">${mailText(k)}</td><td class="hm-ink hm-line" valign="top" style="padding:8px 0;border-top:1px solid ${L.line};font-family:${FONT};font-size:14px;line-height:1.45;color:${L.ink};font-weight:600;word-break:break-word">${mailText(v)}</td></tr>`,
+            `<tr><td class="hm-muted hm-line" valign="top" style="padding:8px 12px 8px 0;border-top:1px solid ${L.line};font-family:${FONT};font-size:14px;line-height:1.45;color:${L.muted};width:34%">${mailText(k)}</td><td class="hm-ink hm-line" valign="top" style="padding:8px 0;border-top:1px solid ${L.line};font-family:${FONT};font-size:14px;line-height:1.45;color:${L.ink};font-weight:600;word-break:break-word">${inline(v)}</td></tr>`,
         )
         .join('')}</table>`;
     case 'list':
-      return `<ul class="hm-ink" style="margin:0 0 16px;padding-left:22px;font-family:${FONT};font-size:15px;line-height:1.55;color:${L.ink}">${b.items.map((i) => `<li style="margin:0 0 6px">${mailText(i)}</li>`).join('')}</ul>`;
+      return `<ul class="hm-ink" style="margin:0 0 16px;padding-left:22px;font-family:${FONT};font-size:15px;line-height:1.55;color:${L.ink}">${b.items.map((i) => `<li style="margin:0 0 6px">${inline(i)}</li>`).join('')}</ul>`;
     case 'pre':
-      return `<pre class="hm-codebox hm-ink" style="margin:0 0 16px;padding:12px;background-color:${L.codeBg};border:1px solid ${L.codeLine};border-radius:8px;font-family:${MONO};font-size:12px;line-height:1.45;color:${L.ink};white-space:pre-wrap;word-break:break-all">${mailText(b.text)}</pre>`;
+      return `<pre class="hm-codebox hm-ink" style="margin:0 0 16px;padding:12px;background-color:${L.codeBg};border:1px solid ${L.codeLine};border-radius:8px;font-family:${MONO};font-size:12px;line-height:1.45;color:${L.ink};white-space:pre-wrap;word-break:break-all">${b.unlinked ? unlinked(b.text) : mailText(b.text)}</pre>`;
   }
 }
 

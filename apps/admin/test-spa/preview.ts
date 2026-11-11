@@ -58,6 +58,7 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
     if (p === '/api/me') return ok({ ...data.me, accessExp: Math.floor(sessionEndsAt / 1000) });
     if (p === '/api/status') return ok(await previewStatus(statusScenario));
     if (p === '/api/orgs') return ok({ orgs: data.orgs });
+    if (p === '/api/invites/new-orgs') return ok(data.newOrgInvites);
     if ((m = /^\/api\/orgs\/([^/]+)\/changes$/u.exec(p))) return ok(data.orgChanges(decodeURIComponent(m[1]!)));
     if ((m = /^\/api\/orgs\/([^/]+)$/u.exec(p))) {
       const d = data.orgDetail[decodeURIComponent(m[1]!)];

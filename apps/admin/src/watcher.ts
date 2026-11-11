@@ -81,7 +81,7 @@ export async function runWatcher(rawEnv: Env, ops: OpsStore, sender: EmailSender
     }
     return contactsOf.get(orgId)!;
   };
-  const ctx = { env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env) };
+  const ctx = { env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env), filesOrigin: env.FILES_ORIGIN };
   let lastDone: string | null = stored ?? null;
   let stopped = false;
   for (const scope of page.scopes) {

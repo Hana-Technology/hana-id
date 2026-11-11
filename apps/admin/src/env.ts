@@ -120,6 +120,8 @@ export interface StaffRpcClient {
   getOrg(c: unknown): Answer<{ org: OrgView; members: MemberView[]; invites: InviteView[]; grants?: OwnerGrantView[] }>;
   issueInvite(c: unknown): Answer<{ invite: InviteView }>;
   revokeInvite(c: unknown): Loose;
+  /** The Organisations page's "Pending invites" (D696): invites to organisations not created yet, open and recently ended. */
+  newOrgInvites(c: unknown): Answer<{ invites: InviteView[]; truncated: boolean }>;
   pendingMemberNotices(c: unknown): Answer<{ notices: MemberNotice[] }>;
   ackMemberNotice(c: unknown): Answer<Record<string, never>>;
   cancelOwnerGrant(c: unknown): Loose;

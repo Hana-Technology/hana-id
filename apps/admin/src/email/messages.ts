@@ -3,7 +3,7 @@
 // The link tokens are passed in as finished URLs; nothing here sees a key.
 import type { AppChange, AuditRow, InviteView, MemberNotice, SecurityEvent } from '@hana-id/console-core';
 import type { ChangeNotice } from '../env.ts';
-import { type Block, type Rendered, duration, isoTime, oneLine, render } from './render.ts';
+import { type Block, type Design, type Rendered, duration, isoTime, oneLine, readableTime, render } from './render.ts';
 
 export interface MailContext {
   env: string;
@@ -14,7 +14,16 @@ export interface MailContext {
   filesOrigin?: string;
 }
 
+/**
+ * The designed layout for a security notice partners receive (D700, asked for by the user; amends D674): a fixed
+ * heading and preview line, never an app's, organisation's or person's name (D687's rule), and the env's hosted logo.
+ */
+const notice = (c: MailContext, heading: string, preheader: string): Design => ({ heading, preheader, ...(c.filesOrigin ? { filesOrigin: c.filesOrigin } : {}) });
+
 const KIND_LABEL: Record<string, string> = { origin_add: 'a new allowed origin', policy_set: 'an auto-approve policy', raw_sign_on: 'raw signing (with approval)' };
+/** Each guarded change kind in plain words (D699): the notice's subject and its "Change" row (the id kept after it for support). */
+const KIND_SUBJECT: Record<string, string> = { origin_add: 'New allowed origin proposed', policy_set: 'Auto-approve policy proposed', raw_sign_on: 'Raw signing proposed' };
+const KIND_ACTION: Record<string, string> = { origin_add: 'Add an allowed origin', policy_set: 'Set an auto-approve policy', raw_sign_on: 'Turn on raw signing (with approval)' };
 
 /** Every path in a policy where `addressArgs` is `'any'` (any address may be passed: the notice calls each out). */
 export function anyAddressPaths(v: unknown, path = 'policy'): string[] {
@@ -36,7 +45,7 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
     ['App', `${n.app.name} (${n.app.id})`],
     ['Organisation', n.app.orgId],
     ['Scope', `${n.app.scopeId} (${n.app.environment})`],
-    ['Change', `${ch.kind} (${ch.id})`],
+    ['Change', `${KIND_ACTION[ch.kind] ?? ch.kind} (${ch.id})`],
   ];
   const blocks: Block[] = [{ kind: 'p', text: `Someone proposed ${what} for ${oneLine(n.app.name, 80)}. It is not in force yet.` }];
   if (ch.kind === 'origin_add' && ch.origin) {
@@ -45,7 +54,7 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
   }
   if (ch.kind === 'policy_set' && ch.policyId) rows.push(['Policy id', ch.policyId]);
   rows.push(['Proposed by', `${ch.proposedByKind === 'hana' ? 'Hana staff' : ch.proposedByKind === 'member' ? 'a console member' : 'the system'} (${ch.proposedBy})`]);
-  rows.push(['Proposed at', isoTime(ch.proposedAt)]);
+  rows.push(['Proposed at', readableTime(ch.proposedAt)]);
   if (ch.requestCountry) rows.push(['Request country', ch.requestCountry]);
   blocks.push({ kind: 'kv', rows });
   if (ch.idn) blocks.push({ kind: 'warn', text: `This origin is an internationalised domain name. Its ASCII form is ${ch.origin ?? ''}; check that it is the domain you expect and not a lookalike.` });
@@ -67,7 +76,8 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
     { kind: 'link', label: 'Cancel this change', url: o.cancelUrl },
     { kind: 'p', text: 'An owner can also cancel it in the console, and Hana security can cancel it from the admin console.' },
   );
-  return render(c.env, `Pending change for ${oneLine(n.app.name, 60)}: ${ch.kind}`, blocks, c.consoleOrigin, c.label);
+  const title = KIND_SUBJECT[ch.kind] ?? 'Change proposed';
+  return render(c.env, `${title} for ${oneLine(n.app.name, 60)}`, blocks, c.consoleOrigin, c.label, notice(c, title, 'A change to one of your apps is waiting. It is not in force yet, and you can cancel it.'));
 }
 
 const orgLabel = (invite: InviteView, orgName: string | undefined): string => (invite.newOrgName ? `${invite.newOrgName} (new organisation)` : orgName ? `${orgName} (${invite.orgId})` : (invite.orgId ?? 'an organisation'));
@@ -93,13 +103,13 @@ export function inviteLink(c: MailContext, invite: InviteView, o: { orgName?: st
     [
       { kind: 'p', text: `You have been invited to join ${org} in the Hana ID partner console as ${invite.role === 'owner' ? 'an owner' : 'a viewer'}, by ${by}.` },
       { kind: 'p', text: does },
-      { kind: 'p', text: `Sign in with the Google account of this address. The invitation expires on ${isoTime(invite.expiresAt)}.` },
+      { kind: 'p', text: `Sign in with the Google account of this address. The invitation expires on ${readableTime(invite.expiresAt)}.` },
       { kind: 'link', label: 'Accept the invitation', url: o.inviteUrl },
       { kind: 'p', text: 'The link works once, for this address only. If you were not expecting this, ignore this email.' },
     ],
     c.consoleOrigin,
     c.label,
-    { heading: subject, ...(c.filesOrigin ? { filesOrigin: c.filesOrigin } : {}), preheader: `Join ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} in the Hana ID partner console. The invitation expires on ${isoTime(invite.expiresAt)}.` },
+    { heading: subject, ...(c.filesOrigin ? { filesOrigin: c.filesOrigin } : {}), preheader: `Join ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} in the Hana ID partner console. The invitation expires on ${readableTime(invite.expiresAt)}.` },
   );
 }
 
@@ -116,8 +126,8 @@ export function inviteNotice(c: MailContext, invite: InviteView, o: { orgName?: 
           ['Invited', invite.email],
           ['Role', invite.role],
           ['Invited by', byLabel(invite.createdByKind, invite.createdBy)],
-          ['Invited at', isoTime(invite.createdAt)],
-          ['Expires', isoTime(invite.expiresAt)],
+          ['Invited at', readableTime(invite.createdAt)],
+          ['Expires', readableTime(invite.expiresAt)],
           ['Invite', invite.id],
         ],
       },
@@ -125,6 +135,7 @@ export function inviteNotice(c: MailContext, invite: InviteView, o: { orgName?: 
     ],
     c.consoleOrigin,
     c.label,
+    notice(c, `A new ${invite.role === 'owner' ? 'owner' : 'viewer'} was invited`, 'Someone was invited to your organisation in the Hana ID partner console.'),
   );
 }
 
@@ -143,7 +154,7 @@ export function ownerGrantNotice(c: MailContext, n: MemberNotice, o: { orgName?:
         rows: [
           ['Becomes owner', when],
           ['Granted by', byLabel(g.grantedByKind, g.grantedBy)],
-          ['Requested at', isoTime(g.createdAt)],
+          ['Requested at', readableTime(g.createdAt)],
           ['Grant', g.id],
         ],
       },
@@ -153,6 +164,7 @@ export function ownerGrantNotice(c: MailContext, n: MemberNotice, o: { orgName?:
     ],
     c.consoleOrigin,
     c.label,
+    notice(c, 'Owner rights requested', 'Someone is to become an owner of your organisation. You can cancel it.'),
   );
 }
 
@@ -176,7 +188,7 @@ export function loginMethodsChanged(c: MailContext, r: AppChange, o: { appName?:
           ...(r.scopeId ? ([['Scope', r.scopeId]] as [string, string][]) : []),
           ['Login methods now', String(r.detail.loginMethods)],
           ['Changed by', `${r.actorKind === 'hana' ? 'Hana staff' : r.actorKind === 'member' ? 'a console member' : 'the system'} (${r.actorId})`],
-          ['Changed at', isoTime(r.at)],
+          ['Changed at', readableTime(r.at)],
         ],
       },
       ...(on
@@ -189,6 +201,7 @@ export function loginMethodsChanged(c: MailContext, r: AppChange, o: { appName?:
     ],
     c.consoleOrigin,
     c.label,
+    notice(c, `Email login turned ${on ? 'on' : 'off'}`, 'An app’s sign-in methods changed. This is already in force.'),
   );
 }
 
@@ -282,9 +295,9 @@ export function onChainPending(c: MailContext, p: PendingOnChain): Rendered {
   } else {
     blocks.push({ kind: 'pre', text: JSON.stringify(p.change, null, 2).slice(0, 5000) });
   }
-  blocks.unshift({ kind: 'kv', rows: [['Scope', `${p.scopeId} (${p.orgId})`], ['Change', String(p.changeId)], ['Can execute from', isoTime(p.unlockAtMs)]] });
+  blocks.unshift({ kind: 'kv', rows: [['Scope', `${p.scopeId} (${p.orgId})`], ['Change', String(p.changeId)], ['Can execute from', readableTime(p.unlockAtMs)]] });
   blocks.push({ kind: 'p', text: `Any owner of the scope can cancel it before then (cancel_change, in the console's scope page), or ask Hana security. If you made this proposal, no action is needed.` });
-  return render(c.env, `On-chain proposal for ${p.scopeId}: ${what}`, blocks, c.consoleOrigin, c.label);
+  return render(c.env, `On-chain proposal for ${p.scopeId}: ${what}`, blocks, c.consoleOrigin, c.label, notice(c, 'A change to your scope was proposed on chain', 'An on-chain proposal for your scope is waiting. It can be cancelled before it executes.'));
 }
 
 export interface ScopeState {
@@ -319,5 +332,6 @@ export function onChainChanged(c: MailContext, scopeId: string, orgId: string, b
     ],
     c.consoleOrigin,
     c.label,
+    notice(c, 'Your scope changed on chain', 'The on-chain state of your scope changed since the last check.'),
   );
 }

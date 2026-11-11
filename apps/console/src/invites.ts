@@ -12,9 +12,9 @@
 // `ownerGrantDelayMs` after acceptance, cancellable by any owner, staff or the grant notice's link. The grant's own notice
 // (with that cancel link) must be accepted before the invite can be accepted. If the org has no usable owner at
 // acceptance (the first-owner exception), the grant is applied at once.
-import { type InviteView, LEGACY_ORG_ID, type MemberNotice, type OwnerGrantView, type Role, INVITE_TTL_MS, MAX_OPEN_INVITES, fromB64url, hex, newId, normaliseAppName } from '@hana-id/console-core';
+import { type InviteView, LEGACY_ORG_ID, type MemberNotice, type OwnerGrantView, type Role, INVITE_TTL_MS, MAX_OPEN_INVITES, NEW_ORG_INVITES_WINDOW_MS, fromB64url, hex, newId, normaliseAppName } from '@hana-id/console-core';
 import { type Writer, auditInsert, entry, replayOf } from './audit.ts';
-import { PASSKEYS_SHIPPED } from './config.ts';
+import { onePartnerGate } from './config.ts';
 import { refuse } from './errors.ts';
 import { consumeGuard, consumeStmt } from './members.ts';
 import { applied, frag, gate, gated, isReplay, lit, orgHasOwner, ownerNow, runBatch } from './sql.ts';
@@ -45,13 +45,15 @@ export interface IssueInvite {
   stepUpId?: string | null;
   /** A member's step-up: consumed in the invite's own batch, only while unused and unexpired (members.ts consumeGuard). */
   consume?: { actionId: string };
+  /** The env's network (`Env.NETWORK`): decides the one-partner gate (`onePartnerGate`, D242, D698). Always passed, so no caller forgets it. */
+  network: string | undefined;
 }
 
 /**
  * Issues an invite (unusable until its notice is acked). Refusals: `forbidden` for `org_legacy`; `not_found` for an
  * unknown org; `conflict` for a frozen org, the 11th open invite of an org, or a second open invite of the same address
  * to it; `passkeys_required` for a second partner org while passkeys haven't shipped (an open new-partner-org invite
- * counts); `bad_request` for an unusable org name.
+ * counts), on every network but testnet (`onePartnerGate`, D698); `bad_request` for an unusable org name.
  */
 export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Promise<InviteView> {
   if ((i.orgId === undefined) === (i.newOrgName === undefined)) refuse('bad_request', 'Exactly one of orgId and newOrgName');
@@ -84,7 +86,8 @@ export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Pr
     guards.push(c.sql);
     binds.push(...c.binds);
   }
-  if (kind === 'partner' && !PASSKEYS_SHIPPED) {
+  const partnerGate = kind === 'partner' && onePartnerGate(i.network);
+  if (partnerGate) {
     guards.push(
       `NOT EXISTS (SELECT 1 FROM orgs WHERE kind = 'partner' AND id <> '${LEGACY_ORG_ID}')`,
       `NOT EXISTS (SELECT 1 FROM invites i WHERE i.new_org_kind = 'partner' AND ${openInvite('i', now)})`,
@@ -119,12 +122,12 @@ export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Pr
   if (i.consume) stmts.push(consumeStmt(db, i.consume.actionId, now, g));
   // A replay can't compare the target: each call draws a fresh invite id.
   const results = await runBatch(db, stmts, replayOf(w, action, null));
-  if (!applied(results)) await whyNotIssued(db, i, kind, now);
+  if (!applied(results)) await whyNotIssued(db, i, partnerGate, now);
   const row = await db.prepare(`SELECT ${INVITE_COLUMNS} FROM invites WHERE id = ?`).bind(id).first<InviteRow>();
   return inviteView(row!);
 }
 
-async function whyNotIssued(db: D1Database, i: IssueInvite, kind: string | null, now: number): Promise<never> {
+async function whyNotIssued(db: D1Database, i: IssueInvite, partnerGate: boolean, now: number): Promise<never> {
   if (i.orgId !== undefined) {
     const org = await db.prepare('SELECT status FROM orgs WHERE id = ?').bind(i.orgId).first<{ status: string }>();
     if (!org) refuse('not_found', 'No such org');
@@ -136,7 +139,8 @@ async function whyNotIssued(db: D1Database, i: IssueInvite, kind: string | null,
     if ((open?.same ?? 0) > 0) refuse('conflict', 'This address already has an open invite to the org');
     if ((open?.n ?? 0) >= MAX_OPEN_INVITES) refuse('conflict', `The org has ${MAX_OPEN_INVITES} open invites`);
   }
-  if (kind === 'partner') refuse('passkeys_required', 'A second partner org needs member passkeys first');
+  // Only where the gate was in the guard: on testnet (D698) a refused new-partner invite is never `passkeys_required`.
+  if (partnerGate) refuse('passkeys_required', 'A second partner org needs member passkeys first');
   return refuse('conflict', i.consume ? 'The invite was not issued: this confirmation was already used or has expired' : 'The invite was not issued; retry');
 }
 
@@ -167,6 +171,26 @@ export async function revokeInvite(db: D1Database, w: Writer, inviteId: string, 
 export async function invitesOf(db: D1Database, orgId: string): Promise<InviteView[]> {
   const { results } = await db.prepare(`SELECT ${INVITE_COLUMNS} FROM invites WHERE org_id = ? ORDER BY created_at DESC LIMIT 100`).bind(orgId).all<InviteRow>();
   return results.map(inviteView);
+}
+
+/**
+ * Staff's list of invites to organisations that don't exist yet (`org_id` NULL; the org is created when the first owner
+ * accepts), D696: every open one, and those that ended (accepted, revoked or expired) less than
+ * NEW_ORG_INVITES_WINDOW_MS before `now`. An invite ends at `accepted_at`, else `revoked_at`, else `expires_at` (an open
+ * invite's `expires_at` is after `now`, so it is always inside the window). Open ones first, then newest first; at most
+ * `limit`, with `truncated` when more matched. The cron purges ended invites 90 days on, so the window never reaches past
+ * what is kept.
+ */
+export async function newOrgInvites(db: D1Database, now: number, limit: number): Promise<{ invites: InviteView[]; truncated: boolean }> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${INVITE_COLUMNS} FROM invites i
+        WHERE i.org_id IS NULL AND COALESCE(i.accepted_at, i.revoked_at, i.expires_at) > ${lit(now - NEW_ORG_INVITES_WINDOW_MS)}
+        ORDER BY (${openInvite('i', now)}) DESC, i.created_at DESC, i.id DESC LIMIT ?`,
+    )
+    .bind(limit + 1)
+    .all<InviteRow>();
+  return { invites: results.slice(0, limit).map(inviteView), truncated: results.length > limit };
 }
 
 /**
@@ -322,11 +346,17 @@ export interface Acceptance {
   now: number;
   ipPrefix: string | null;
   country: string | null;
+  /**
+   * The env's network (`Env.NETWORK`): on a network the one-partner gate applies to (`onePartnerGate`, D242, D698),
+   * accepting a new-partner-org invite is refused while a partner org other than `org_legacy` exists, checked in the
+   * batch's own commit row. Invites issued while the gate was lifted (testnet) can't add a second partner org later.
+   */
+  network: string | undefined;
 }
 
 export type AcceptanceOutcome =
   | { ok: true; userId: string; orgId: string; role: Role; newUser: boolean }
-  | { ok: false; code: 'invite_invalid' | 'already_member' | 'user_disabled' };
+  | { ok: false; code: 'invite_invalid' | 'already_member' | 'user_disabled' | 'passkeys_required' };
 
 /**
  * Accepts an invite in one D1 batch (docs/batch-c-spec.md "Membership rules at sign-in"): every id is resolved from
@@ -342,13 +372,17 @@ export async function acceptInvite(db: D1Database, a: Acceptance, delayMs: () =>
   const newUserId = newId('user');
   const newOrgId = newId('org');
   const delay = delayMs();
+  const partnerGate = onePartnerGate(a.network);
+  // The one-partner gate at acceptance too (D698 as amended): a new partner org only while none exists.
+  const gateSql = partnerGate ? `AND (i.new_org_kind IS NULL OR i.new_org_kind <> 'partner' OR NOT EXISTS (SELECT 1 FROM orgs po WHERE po.kind = 'partner' AND po.id <> '${LEGACY_ORG_ID}'))` : '';
   // V(i): the invite is acceptable by this person now: the spec's, plus not already a member of its org, and its
   // owner grant's notice (with the cancel link) accepted.
   const V = `i.token_hash = ? AND i.email_norm = ? AND ${openInvite('i', t)}
       AND (i.org_id IS NULL OR EXISTS (SELECT 1 FROM orgs o WHERE o.id = i.org_id AND o.status = 'active' AND (o.required_hd IS NULL OR o.required_hd = ?)))
       AND NOT EXISTS (SELECT 1 FROM console_users u WHERE u.provider = ? AND u.sub = ? AND u.disabled_at IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM members mm JOIN console_users uu ON uu.id = mm.user_id WHERE uu.provider = ? AND uu.sub = ? AND mm.org_id = i.org_id)
-      AND NOT EXISTS (SELECT 1 FROM owner_grants vg WHERE vg.invite_id = i.id AND vg.cancelled_at IS NULL AND vg.notified_at IS NULL)`;
+      AND NOT EXISTS (SELECT 1 FROM owner_grants vg WHERE vg.invite_id = i.id AND vg.cancelled_at IS NULL AND vg.notified_at IS NULL)
+      ${gateSql}`;
   const vBinds = [a.tokenHash, a.email, a.hd, a.provider, a.sub, a.provider, a.sub];
   // The role the member gets, decided before any row changes: an owner invite to an existing org waits behind its grant
   // unless the org has no usable owner (the first-owner exception); a cancelled grant leaves a viewer.
@@ -428,7 +462,11 @@ export async function acceptInvite(db: D1Database, a: Acceptance, delayMs: () =>
   }
   const user = await db.prepare('SELECT id, disabled_at FROM console_users WHERE provider = ? AND sub = ?').bind(a.provider, a.sub).first<{ id: string; disabled_at: number | null }>();
   if (user?.disabled_at != null) return { ok: false, code: 'user_disabled' };
-  const inv = await db.prepare('SELECT org_id, accepted_at FROM invites WHERE token_hash = ?').bind(a.tokenHash).first<{ org_id: string | null; accepted_at: number | null }>();
+  const inv = await db.prepare('SELECT org_id, accepted_at, revoked_at, expires_at, new_org_kind FROM invites WHERE token_hash = ?').bind(a.tokenHash).first<{ org_id: string | null; accepted_at: number | null; revoked_at: number | null; expires_at: number; new_org_kind: string | null }>();
+  if (partnerGate && inv && inv.new_org_kind === 'partner' && inv.accepted_at === null && inv.revoked_at === null && inv.expires_at > t) {
+    const partner = await db.prepare(`SELECT 1 AS x FROM orgs WHERE kind = 'partner' AND id <> '${LEGACY_ORG_ID}' LIMIT 1`).first();
+    if (partner) return { ok: false, code: 'passkeys_required' };
+  }
   if (user && inv?.org_id && inv.accepted_at === null) {
     const member = await db.prepare('SELECT 1 AS x FROM members WHERE org_id = ? AND user_id = ?').bind(inv.org_id, user.id).first();
     if (member) return { ok: false, code: 'already_member' };

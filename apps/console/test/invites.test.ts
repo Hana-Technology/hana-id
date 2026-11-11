@@ -2,9 +2,13 @@
 // need no sign-in): who may call what, the 10-open-invites cap, notice first (no working link before the admin
 // Worker's ack), the passkey gate, revocation, replays, and that no answer, row view or audit row ever carries a token,
 // a token hash or (in the audit trail) the invitee's address.
-import { LEGACY_ORG_ID, MAX_OPEN_INVITES, type MemberNotice } from '@hana-id/console-core';
+import { LEGACY_ORG_ID, MAX_OPEN_INVITES, type MemberNotice, NEW_ORG_INVITES_WINDOW_MS, newId, randomBytes } from '@hana-id/console-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { auditRows, db, hana, linkPair, member, seedMember, seedOrg, staffRpc, system } from './helpers.ts';
+import { createExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import { acceptInvite, newOrgInvites } from '../src/invites.ts';
+import { StaffRpc } from '../src/staff-rpc.ts';
+import { DAY, HOUR, auditRows, db, hana, linkPair, member, seedMember, seedOrg, staffRpc, system } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -168,22 +172,98 @@ describe('issueInvite', () => {
   });
 });
 
-describe('the passkey gate (Deferred: no second partner org before passkeys)', () => {
-  it('allows the first partner org, refuses a second with passkeys_required; an open new-partner invite counts', async () => {
+describe('the passkey gate (D242: no second partner org before passkeys; D698: lifted on testnet only)', () => {
+  /** StaffRpc in an env on `network` (undefined: the var missing). The suite's own env is testnet (TEST_MANIFEST). */
+  const rpcOn = (network: string | undefined) => new StaffRpc(createExecutionContext(), { ...env, NETWORK: network } as typeof env);
+  const issueOn = (network: string | undefined, o: Record<string, unknown>) => rpcOn(network).issueInvite({ ...hana(), role: 'owner', email: `p${Math.random().toString(36).slice(2)}@partner.example`, ...o });
+
+  for (const network of ['mainnet', undefined, '', 'Testnet', 'testnet ']) {
+    it(`on ${JSON.stringify(network)}: allows the first partner org, refuses a second with passkeys_required; an open new-partner invite counts`, async () => {
+      await clearPartnerOrgs();
+      const first = await issueOn(network, { newOrgName: 'Sodax' });
+      expect(first.ok).toBe(true);
+      // The first is still only an invite, and already counts.
+      expect(await issueOn(network, { newOrgName: 'Second', kind: 'partner' })).toMatchObject({ ok: false, code: 'passkeys_required' });
+      // Internal orgs pass, and org_legacy (internal) never counts.
+      expect((await issueOn(network, { newOrgName: 'Hana QA', kind: 'internal' })).ok).toBe(true);
+      // Revoking the open one lets a partner org in; an existing partner org then blocks the next.
+      if (first.ok) expect((await staffRpc().revokeInvite({ ...hana(), inviteId: first.invite.id })).ok).toBe(true);
+      await seedOrg({ kind: 'partner' });
+      expect(await issueOn(network, { newOrgName: 'Third' })).toMatchObject({ ok: false, code: 'passkeys_required' });
+      // Inviting into an existing partner org is not a new partner org.
+      const partner = await db.prepare("SELECT id FROM orgs WHERE kind = 'partner' LIMIT 1").first<string>('id');
+      expect((await issueOn(network, { orgId: partner, role: 'viewer' })).ok).toBe(true);
+    });
+  }
+
+  it('off testnet, the check is in the insert\'s own batch: of concurrent first-partner invites exactly one is issued', async () => {
     await clearPartnerOrgs();
-    const first = await issue({ newOrgName: 'Sodax', role: 'owner' });
-    expect(first.ok).toBe(true);
-    // The first is still only an invite, and already counts.
-    expect(await issue({ newOrgName: 'Second', role: 'owner', kind: 'partner' })).toMatchObject({ ok: false, code: 'passkeys_required' });
-    // Internal orgs pass, and org_legacy (internal) never counts.
-    expect((await issue({ newOrgName: 'Hana QA', role: 'owner', kind: 'internal' })).ok).toBe(true);
-    // Revoking the open one lets a partner org in; an existing partner org then blocks the next.
-    if (first.ok) expect((await staffRpc().revokeInvite({ ...hana(), inviteId: first.invite.id })).ok).toBe(true);
+    const results = await Promise.all(Array.from({ length: 4 }, (_, n) => issueOn('mainnet', { newOrgName: `Race ${n}` })));
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok).map((r) => (r as { code: string }).code)).toEqual(['passkeys_required', 'passkeys_required', 'passkeys_required']);
+    const open = await db.prepare("SELECT COUNT(*) AS n FROM invites WHERE new_org_kind = 'partner' AND accepted_at IS NULL AND revoked_at IS NULL").first<number>('n');
+    expect(open).toBe(1);
+  });
+
+  it('on testnet: a second partner org and a second open partner invite are allowed, and accepting each makes a partner org', async () => {
+    await clearPartnerOrgs();
     await seedOrg({ kind: 'partner' });
-    expect(await issue({ newOrgName: 'Third', role: 'owner' })).toMatchObject({ ok: false, code: 'passkeys_required' });
-    // Inviting into an existing partner org is not a new partner org.
-    const partner = await db.prepare("SELECT id FROM orgs WHERE kind = 'partner' LIMIT 1").first<string>('id');
-    expect((await issue({ orgId: partner })).ok).toBe(true);
+    const a = await issueOn('testnet', { newOrgName: 'Second Partner' });
+    const b = await issueOn('testnet', { newOrgName: 'Third Partner', kind: 'partner' });
+    expect(a).toMatchObject({ ok: true, invite: { newOrgKind: 'partner' } });
+    expect(b).toMatchObject({ ok: true, invite: { newOrgKind: 'partner' } });
+    // The suite's own env (TEST_MANIFEST, network testnet) is the same.
+    expect((await issue({ newOrgName: 'Fourth Partner', role: 'owner' })).ok).toBe(true);
+    for (const r of [a, b]) {
+      if (!r.ok) throw new Error(r.code);
+      const { hash, hashB64 } = await linkPair();
+      expect((await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: hashB64 })).ok).toBe(true);
+      const out = await acceptInvite(db, { tokenHash: hash, email: r.invite.email, provider: 'google', sub: `sub-${r.invite.id}`, hd: null, requestId: `req_${r.invite.id}`, now: Date.now(), ipPrefix: null, country: null, network: 'testnet' }, () => 60_000);
+      expect(out).toMatchObject({ ok: true, role: 'owner' });
+      if (out.ok) expect(await db.prepare('SELECT kind FROM orgs WHERE id = ?').bind(out.orgId).first('kind')).toBe('partner');
+    }
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM orgs WHERE kind = 'partner'").first<number>('n')).toBe(3);
+    // Back off testnet, the gate holds again at once.
+    expect(await issueOn('mainnet', { newOrgName: 'Fifth Partner' })).toMatchObject({ ok: false, code: 'passkeys_required' });
+  });
+
+  it('off testnet, acceptance re-checks the gate in its batch: invites collected on testnet add no second partner org', async () => {
+    await clearPartnerOrgs();
+    const acceptOn = async (network: string | undefined, r: { invite: { id: string; email: string } }, hash: Uint8Array) =>
+      acceptInvite(db, { tokenHash: hash, email: r.invite.email, provider: 'google', sub: `sub-${r.invite.id}-${network}`, hd: null, requestId: `req_${Math.random().toString(36).slice(2)}`, now: Date.now(), ipPrefix: null, country: null, network }, () => 60_000);
+    const announced = [];
+    for (const name of ['Gate One', 'Gate Two']) {
+      const r = await issueOn('testnet', { newOrgName: name });
+      if (!r.ok) throw new Error(r.code);
+      const { hash, hashB64 } = await linkPair();
+      expect((await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: hashB64 })).ok).toBe(true);
+      announced.push({ r, hash });
+    }
+    // The first partner org is allowed anywhere; the second is refused off testnet, and nothing is written.
+    expect(await acceptOn('mainnet', announced[0]!.r, announced[0]!.hash)).toMatchObject({ ok: true, role: 'owner' });
+    const auditBefore = await db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'invite.accepted'").first<number>('n');
+    for (const network of ['mainnet', undefined]) {
+      expect(await acceptOn(network, announced[1]!.r, announced[1]!.hash)).toEqual({ ok: false, code: 'passkeys_required' });
+    }
+    expect(await db.prepare('SELECT accepted_at FROM invites WHERE id = ?').bind(announced[1]!.r.invite.id).first('accepted_at')).toBeNull();
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM orgs WHERE name = 'Gate Two'").first<number>('n')).toBe(0);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'invite.accepted'").first<number>('n')).toBe(auditBefore);
+    // Concurrent acceptances of two open partner invites off testnet with no partner org yet: exactly one org.
+    await clearPartnerOrgs();
+    const pair = [];
+    for (const name of ['Race A', 'Race B']) {
+      const r = await issueOn('testnet', { newOrgName: name });
+      if (!r.ok) throw new Error(r.code);
+      const { hash, hashB64 } = await linkPair();
+      expect((await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: hashB64 })).ok).toBe(true);
+      pair.push({ r, hash });
+    }
+    const outs = await Promise.all(pair.map((p) => acceptOn('mainnet', p.r, p.hash)));
+    expect(outs.filter((o) => o.ok)).toHaveLength(1);
+    expect(outs.filter((o) => !o.ok)).toEqual([{ ok: false, code: 'passkeys_required' }]);
+    // The invite left over is still open: on testnet it can be accepted.
+    const left = pair[outs.findIndex((o) => !o.ok)]!;
+    expect(await acceptOn('testnet', left.r, left.hash)).toMatchObject({ ok: true, role: 'owner' });
   });
 });
 
@@ -232,7 +312,8 @@ describe('notice first (fails closed)', () => {
     const org = await seedOrg();
     const r = await issue({ orgId: org });
     if (!r.ok) throw new Error(r.code);
-    await db.prepare('UPDATE invites SET expires_at = created_at + 1 WHERE id = ?').bind(r.invite.id).run();
+    // Ended 9 ms ago (SQLite's SET reads the old created_at): `created_at + 1` could still be open in the same millisecond.
+    await db.prepare('UPDATE invites SET created_at = created_at - 10, expires_at = created_at - 9 WHERE id = ?').bind(r.invite.id).run();
     expect((await notices()).some((n) => n.invite?.id === r.invite.id)).toBe(false);
     expect(await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: (await linkPair()).hashB64 })).toMatchObject({ ok: false, code: 'not_pending' });
   });
@@ -286,5 +367,118 @@ describe('getOrg, listOrgs, listMembers', () => {
     expect(all).toContain(LEGACY_ORG_ID);
     expect([...all].sort()).toEqual(all);
     expect(new Set(all).size).toBe(all.length);
+  });
+});
+
+/**
+ * An invite row as the console writes one, at chosen times (the window's edges need exact ones): to a new org unless
+ * `orgId`; expiring 7 days after `created`; `notified`, `accepted`, `revoked` set the matching columns.
+ */
+async function seedInviteAt(o: { created: number; notified?: number; accepted?: number; revoked?: number; orgId?: string; kind?: 'partner' | 'internal' }): Promise<string> {
+  const id = newId('invite');
+  const accepted = o.accepted ?? null;
+  await db
+    .prepare(
+      `INSERT INTO invites (id, token_hash, email_norm, org_id, new_org_name, new_org_kind, role, created_by_kind, created_by, notified_at, created_at, expires_at, accepted_at, accepted_user_id, accepted_by_sub, revoked_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'owner', 'hana', 'access-sub-staff-1', ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      id,
+      o.notified !== undefined ? randomBytes(32) : null,
+      `${id.toLowerCase()}@partner.example`,
+      o.orgId ?? null,
+      o.orgId ? null : `New ${id}`,
+      o.orgId ? null : (o.kind ?? 'internal'),
+      o.notified ?? null,
+      o.created,
+      o.created + 7 * DAY,
+      accepted,
+      accepted !== null ? newId('user') : null,
+      accepted !== null ? 'sub-accepted' : null,
+      o.revoked ?? null,
+    )
+    .run();
+  return id;
+}
+
+describe('newOrgInvites (D696: the admin Organisations page\'s "Pending invites")', () => {
+  // A clock far ahead of the suite's own rows, so every invite another test wrote has ended more than 30 days before it.
+  const T = Date.now() + 1000 * DAY;
+  const W = NEW_ORG_INVITES_WINDOW_MS;
+
+  it('lists open invites to new orgs first, then those that ended inside the window, newest first; never an existing org’s', async () => {
+    const unsent = await seedInviteAt({ created: T - HOUR, kind: 'partner' });
+    const sent = await seedInviteAt({ created: T - 2 * HOUR, notified: T - 2 * HOUR + 60_000 });
+    const accepted = await seedInviteAt({ created: T - 11 * DAY, notified: T - 11 * DAY + 60_000, accepted: T - 10 * DAY });
+    const revoked = await seedInviteAt({ created: T - 30 * DAY, revoked: T - 29 * DAY });
+    const expired = await seedInviteAt({ created: T - 10 * DAY, notified: T - 10 * DAY + 60_000 });
+    // Newer than every open one, but ended: open first puts it below them.
+    const recentRevoked = await seedInviteAt({ created: T - 10 * 60_000, revoked: T - 9 * 60_000 });
+    // The edges: ended exactly W before T is out; a millisecond later is in.
+    const edgeIn = await seedInviteAt({ created: T - W - 7 * DAY + 1 });
+    await seedInviteAt({ created: T - W - 7 * DAY });
+    await seedInviteAt({ created: T - 40 * DAY, revoked: T - W });
+    await seedInviteAt({ created: T - 32 * DAY, accepted: T - W - 1 });
+    // Revoked before the window while its expiry (T − 25 d) is inside it: the revocation is when it ended, so it is out.
+    await seedInviteAt({ created: T - 32 * DAY, revoked: T - W - 1 });
+    // An open invite to an existing org is the org page's, not this list's.
+    await seedInviteAt({ created: T - HOUR, orgId: await seedOrg() });
+
+    const r = await newOrgInvites(db, T, 100);
+    expect(r.truncated).toBe(false);
+    expect(r.invites.map((i) => i.id)).toEqual([unsent, sent, recentRevoked, expired, accepted, revoked, edgeIn]);
+    const byId = new Map(r.invites.map((i) => [i.id, i]));
+    expect(byId.get(unsent)).toEqual({
+      id: unsent,
+      email: `${unsent.toLowerCase()}@partner.example`,
+      newOrgName: `New ${unsent}`,
+      newOrgKind: 'partner',
+      role: 'owner',
+      createdByKind: 'hana',
+      createdBy: 'access-sub-staff-1',
+      createdAt: T - HOUR,
+      expiresAt: T - HOUR + 7 * DAY,
+    });
+    expect(byId.get(sent)).toMatchObject({ newOrgKind: 'internal', notifiedAt: T - 2 * HOUR + 60_000 });
+    expect(byId.get(accepted)).toMatchObject({ acceptedAt: T - 10 * DAY, acceptedUserId: expect.stringMatching(/^usr_/u) });
+    expect(byId.get(revoked)).toMatchObject({ revokedAt: T - 29 * DAY });
+    expect(byId.get(expired)!.expiresAt).toBeLessThan(T);
+    for (const i of r.invites) expect(i.orgId).toBeUndefined();
+    // No token or hash column ever leaves (D240).
+    expect(JSON.stringify(r)).not.toMatch(/token|hash/iu);
+  });
+
+  it('answers at most `limit` rows, open ones before ended ones, and says when there were more', async () => {
+    const T2 = T + 200 * DAY;
+    const ended = await seedInviteAt({ created: T2 - 2 * DAY - 7 * DAY });
+    const open = [await seedInviteAt({ created: T2 - 3 * HOUR }), await seedInviteAt({ created: T2 - 2 * HOUR }), await seedInviteAt({ created: T2 - HOUR })];
+    const two = await newOrgInvites(db, T2, 2);
+    expect(two).toEqual({ invites: [expect.objectContaining({ id: open[2] }), expect.objectContaining({ id: open[1] })], truncated: true });
+    const three = await newOrgInvites(db, T2, 3);
+    expect(three.invites.map((i) => i.id)).toEqual([open[2], open[1], open[0]]);
+    expect(three.truncated).toBe(true);
+    expect(await newOrgInvites(db, T2, 4)).toEqual({ invites: [...three.invites, expect.objectContaining({ id: ended })], truncated: false });
+  });
+
+  it('through StaffRpc: staff only, validated, and an issued then revoked invite shows each state; no address in the log', async () => {
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const email = `first.owner.${Math.random().toString(36).slice(2)}@newco.example`;
+    const issued = await issue({ newOrgName: 'Newco Labs', role: 'owner', kind: 'internal', email });
+    if (!issued.ok) throw new Error(issued.code);
+    const listed = await staffRpc().newOrgInvites({ ...hana(), limit: 100 });
+    if (!listed.ok) throw new Error(listed.code);
+    expect(listed.invites.find((i) => i.id === issued.invite.id)).toEqual({ ...issued.invite, newOrgKind: 'internal' });
+    expect(issued.invite.newOrgKind).toBe('internal');
+    expect(await staffRpc().revokeInvite({ ...hana(), inviteId: issued.invite.id })).toEqual({ ok: true });
+    const after = await staffRpc().newOrgInvites({ ...hana(), limit: 100 });
+    if (!after.ok) throw new Error(after.code);
+    expect(after.invites.find((i) => i.id === issued.invite.id)?.revokedAt).toEqual(expect.any(Number));
+    const link = { actor: { kind: 'link' as const, id: 'gc_x' }, requestId: 'req_12345678', clientIp: '203.0.113.1' };
+    for (const ctx of [member(), link, system()]) expect(await staffRpc().newOrgInvites({ ...ctx, limit: 10 })).toMatchObject({ ok: false, code: 'forbidden' });
+    for (const bad of [{ limit: 0 }, { limit: 101 }, { limit: 1.5 }, {}, { limit: 10, orgId: 'org_x1' }]) expect(await staffRpc().newOrgInvites({ ...hana(), ...bad })).toMatchObject({ ok: false, code: 'bad_request' });
+    const text = logs.mock.calls.flat().join('\n');
+    expect(text).toContain('staff.newOrgInvites');
+    expect(text).not.toContain(email);
+    expect(text).not.toContain('@newco.example');
   });
 });

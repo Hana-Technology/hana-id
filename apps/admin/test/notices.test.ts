@@ -2,6 +2,7 @@
 // `change_pending`, `member_invite` and `owner_grant` go to the alias and every contact (and every owner, and the
 // invitee), one message each, and are acked only after every send was accepted; a provider failure leaves the change,
 // invite or grant unannounced, and a retry acks with the same link token. Against the real API and console.
+import { mailLogoUrl } from '@hana-id/brand/email';
 import { linkToken } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,10 +38,12 @@ describe('change_pending', () => {
     const mine = fake.about(id);
     expect(mine.map((m) => m.to).sort()).toEqual([ALIAS, ...contacts].sort());
     for (const m of mine) {
-      expect(m.subject).toContain('[Hana ID sandbox-test] Pending change');
+      expect(m.subject).toContain('[Hana ID sandbox-test] New allowed origin proposed for');
       expect(m.text).toContain('https://xn--bcher-kva.example');
       expect(m.text).toContain('internationalised domain name');
-      expect(m.html).not.toMatch(/<img|<script|src=/iu);
+      // The designed layout (D700): no script, and the only image is Hana's hosted logo (D685).
+      expect(m.html).not.toMatch(/<script/iu);
+      expect([...m.html.matchAll(/src="([^"]*)"/gu)].map((x) => x[1])).toEqual([mailLogoUrl(env.FILES_ORIGIN)]);
       // Every link is to the console origin; no approve link.
       expect(m.text).toContain('https://bücher.example');
       for (const url of m.text.match(/https?:\/\/[^\s]+/gu) ?? []) if (!/xn--bcher-kva\.example|bücher\.example/u.test(url)) expect(url.startsWith(`${CONSOLE}/`), url).toBe(true);

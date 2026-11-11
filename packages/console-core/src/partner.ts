@@ -26,7 +26,7 @@ export interface AuthStartAnswer {
  * The codes a failed sign-in ends with. `/api/auth/complete` is a top-level navigation, so it answers them as a 303 to
  * `/signin#error=<code>` (D292), never as a page with the identity in it.
  */
-export const SIGN_IN_ERRORS = ['not_invited', 'invite_invalid', 'already_member', 'user_disabled', 'expired', 'rate_limited', 'internal'] as const;
+export const SIGN_IN_ERRORS = ['not_invited', 'invite_invalid', 'already_member', 'user_disabled', 'passkeys_required', 'expired', 'rate_limited', 'internal'] as const;
 export type SignInError = (typeof SIGN_IN_ERRORS)[number];
 
 // ---- the signed-in member ----

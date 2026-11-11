@@ -32,6 +32,7 @@ export interface InviteRow {
   email_norm: string;
   org_id: string | null;
   new_org_name: string | null;
+  new_org_kind: 'partner' | 'internal' | null;
   role: Role;
   created_by_kind: InviteView['createdByKind'];
   created_by: string;
@@ -43,13 +44,14 @@ export interface InviteRow {
   revoked_at: number | null;
 }
 /** Every invite column a view needs; never `token_hash`. */
-export const INVITE_COLUMNS = 'id, email_norm, org_id, new_org_name, role, created_by_kind, created_by, notified_at, created_at, expires_at, accepted_at, accepted_user_id, revoked_at';
+export const INVITE_COLUMNS = 'id, email_norm, org_id, new_org_name, new_org_kind, role, created_by_kind, created_by, notified_at, created_at, expires_at, accepted_at, accepted_user_id, revoked_at';
 
 export const inviteView = (r: InviteRow): InviteView => ({
   id: r.id,
   email: r.email_norm,
   ...(r.org_id !== null ? { orgId: r.org_id } : {}),
   ...(r.new_org_name !== null ? { newOrgName: r.new_org_name } : {}),
+  ...(r.new_org_kind !== null ? { newOrgKind: r.new_org_kind } : {}),
   role: r.role,
   createdByKind: r.created_by_kind,
   createdBy: r.created_by,

@@ -348,7 +348,8 @@ const ERRORS = {
   policy_invalid: ['The policy isn’t valid', 'The details name the field to fix.'],
   invalid_client_proof: ['The client proof isn’t valid', 'Check the value and try again.'],
   owner_nonce_mismatch: ['The on-chain state moved on', 'Reload the page and try again.'],
-  passkeys_required: ['This organisation requires passkeys', 'The member has to add a passkey first.'],
+  // The gate of D242 (not member passkeys, which aren't built): one partner organisation until passkeys ship, off testnet (D698).
+  passkeys_required: ['Only one partner organisation for now', 'Until partner passkeys ship, only one partner organisation can exist on this network (testnet has no such limit), and another partner organisation, or an open invite to create one, already exists. Revoke that invite under Pending invites if it was a mistake, or choose type Internal.'],
   org_frozen: ['This organisation is frozen', 'Unfreeze it first if the change should go ahead.'],
   user_disabled: ['This user is disabled', 'Enable the user first if the change should go ahead.'],
   already_member: ['This person is already a member', 'Change their role in Members instead.'],
@@ -856,13 +857,59 @@ function newPartnerForm() {
     ],
     'Send invite',
     (v) => api('POST', '/api/invites', { email: v.email, role: 'owner', newOrgName: v.newOrgName, kind: v.kind }),
-    { done: (v) => `Invite sent to ${v.email.trim()} for the new organisation “${v.newOrgName.trim()}”. The email goes out within 5 minutes; the organisation is listed here once they accept.` },
+    { done: (v) => `Invite sent to ${v.email.trim()} for the new organisation “${v.newOrgName.trim()}”. The email goes out within 5 minutes; follow it under Pending invites. The organisation is listed here once they accept.` },
+  );
+}
+
+/**
+ * An invite to an organisation that doesn't exist yet (D696), in plain words: what happened last, and when it ended.
+ * Ended ones are kept 30 days by the console's list.
+ */
+function newOrgInviteState(i, now) {
+  if (i.acceptedAt) return { open: false, text: 'Accepted', kind: 'ok', at: i.acceptedAt };
+  if (i.revokedAt) return { open: false, text: 'Revoked', kind: '', at: i.revokedAt };
+  if (i.expiresAt <= now) return { open: false, text: 'Expired', kind: '', at: i.expiresAt };
+  if (i.notifiedAt) return { open: true, text: 'Email sent, waiting for them to accept', kind: 'info' };
+  return { open: true, text: 'Waiting for the email to go out', kind: 'warning' };
+}
+
+/** "Pending invites" on the Organisations page (D696): new organisations' first-owner invites, open and recently ended. */
+function pendingInvitesPanel(read) {
+  if (!read.ok) return panel('Pending invites', {}, errorBox(read.e));
+  const invites = Array.isArray(read.v && read.v.invites) ? read.v.invites : [];
+  if (!invites.length) return '';
+  const now = Date.now();
+  return panel(
+    'Pending invites',
+    { anchor: 'pending-invites', hint: 'Invites to organisations that don’t exist yet: each one is created when its first owner accepts. A link works only once its email has gone out (the job runs every 5 minutes), and expires 7 days after the invite was created here: the wait for the email counts against those 7 days. Ended invites stay here for 30 days.' },
+    table(
+      ['Organisation', 'Type', 'Invited', 'State', 'Sent', 'Expires', ''],
+      invites.map((i) => {
+        const st = newOrgInviteState(i, now);
+        const name = i.newOrgName;
+        return tr(
+          named(name, i.id),
+          ORG_KIND[i.newOrgKind] || i.newOrgKind || '',
+          i.email,
+          h('span', {}, badge(st.text, `${st.kind} long`), st.at ? h('span', { class: 'sub' }, time(st.at)) : ''),
+          i.notifiedAt ? when(i.notifiedAt) : h('span', { class: 'muted' }, 'not yet'),
+          // An accepted or revoked invite no longer expires; an open or expired one shows when.
+          !i.acceptedAt && !i.revokedAt ? when(i.expiresAt) : '',
+          st.open ? actionButton('Revoke', () => api('POST', `/api/invites/${encodeURIComponent(i.id)}/revoke`), `Revoke the invite for ${i.email} to the new organisation “${name}”? Its link stops working, and the organisation isn’t created.`, true, { done: `The invite for ${i.email} was revoked.` }) : '',
+        );
+      }),
+    ),
+    read.v.truncated ? h('p', { class: 'hint' }, 'Showing the first 100: open invites first, then the newest.') : '',
   );
 }
 
 async function orgsPage(main) {
   const cursor = new URLSearchParams(location.search).get('cursor');
-  const data = await api('GET', `/api/orgs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+  // The pending invites are read beside the list; their failure is said in their panel and doesn't fail the page.
+  const [data, pending] = await Promise.all([
+    api('GET', `/api/orgs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+    api('GET', '/api/invites/new-orgs').then((v) => ({ ok: true, v }), (e) => ({ ok: false, e })),
+  ]);
   const invite = disclosure('Invite a new partner', panel('Invite a new partner', { hint: 'Creates the organisation when its first owner accepts. Then create their apps, or move their existing scope from Legacy apps.' }, newPartnerForm()), { primary: true, open: openInvite });
   openInvite = false;
   // Legacy apps last: it is a holding place, not a partner.
@@ -870,6 +917,7 @@ async function orgsPage(main) {
   main.append(
     pageHead('Organisations', { subtitle: 'Partners and their apps. Start here to onboard a partner, change an app or freeze an organisation.', actions: [invite.button] }),
     invite.box,
+    pendingInvitesPanel(pending),
     panel(
       `${data.orgs.length} organisation${data.orgs.length === 1 ? '' : 's'}`,
       {},
@@ -941,7 +989,7 @@ function membersPanel(o, d) {
 function invitesPanel(d) {
   if (!d.invites.length) return '';
   const now = Date.now();
-  const state = (i) => (i.acceptedAt ? badge('Accepted', 'ok') : i.revokedAt ? badge('Revoked') : i.expiresAt < now ? badge('Expired') : i.notifiedAt ? badge('Open', 'info') : badge('Email not sent yet', 'warning'));
+  const state = (i) => (i.acceptedAt ? badge('Accepted', 'ok') : i.revokedAt ? badge('Revoked') : i.expiresAt <= now ? badge('Expired') : i.notifiedAt ? badge('Open', 'info') : badge('Email not sent yet', 'warning'));
   return panel(
     'Invites',
     { hint: 'An invite works only once its email has gone out (the job runs every 5 minutes).' },
@@ -954,7 +1002,8 @@ function invitesPanel(d) {
           i.notifiedAt ? when(i.notifiedAt) : h('span', { class: 'muted' }, 'not yet'),
           when(i.expiresAt),
           state(i),
-          !i.acceptedAt && !i.revokedAt ? actionButton('Revoke', () => api('POST', `/api/invites/${encodeURIComponent(i.id)}/revoke`), `Revoke the invite for ${i.email}? Its link stops working.`, true, { done: `The invite for ${i.email} was revoked.` }) : '',
+          // Open invites only: an accepted, revoked or expired one can't be revoked (not_pending).
+          !i.acceptedAt && !i.revokedAt && i.expiresAt > now ? actionButton('Revoke', () => api('POST', `/api/invites/${encodeURIComponent(i.id)}/revoke`), `Revoke the invite for ${i.email}? Its link stops working.`, true, { done: `The invite for ${i.email} was revoked.` }) : '',
         ),
       ),
     ),
@@ -1005,6 +1054,16 @@ async function legacyScopeOptions() {
 function appsPanel(o, d) {
   // createApp refuses an organisation without a security contact; moving a legacy scope here doesn't need one.
   const blocked = d.flags.noSecurityContacts ? 'Add a security contact before creating an app: an organisation without one can’t get new apps.' : '';
+  // The table is refreshed in place after "Create app", so the confirmation (with the publishable key) stays on screen.
+  const tableBox = h('div', {}, appsTable(o, d.apps));
+  const refreshApps = async (status) => {
+    try {
+      const fresh = await api('GET', `/api/orgs/${encodeURIComponent(o.id)}`);
+      tableBox.replaceChildren(appsTable(o, fresh.apps));
+    } catch {
+      status.append(h('p', { class: 'hint' }, 'The app list above couldn’t be refreshed: reload the page to see the new app in it.'));
+    }
+  };
   const create = disclosure(
     'Create an app',
     h(
@@ -1020,7 +1079,12 @@ function appsPanel(o, d) {
         ],
         'Create app',
         (v) => api('POST', '/api/apps', { orgId: o.id, scopeId: v.scopeId, environment: v.environment, name: v.name, origins: lines(v.origins) }),
-        { after: (out, status) => status.replaceChildren(note('ok', `Created ${out.app.id}`, h('p', {}, 'Its publishable key (give it to the partner; it is also listed on the app’s page): ', h('code', {}, out.publishableKey)), h('p', {}, link(`/orgs/${encodeURIComponent(o.id)}/apps/${encodeURIComponent(out.app.id)}`, 'Open the app')))) },
+        {
+          after: (out, status) => {
+            status.replaceChildren(note('ok', `Created ${out.app.id}`, h('p', {}, 'Its publishable key (give it to the partner; it is also listed on the app’s page): ', h('code', {}, out.publishableKey)), h('p', {}, link(`/orgs/${encodeURIComponent(o.id)}/apps/${encodeURIComponent(out.app.id)}`, 'Open the app'))));
+            return refreshApps(status);
+          },
+        },
       ),
     ),
   );
@@ -1050,7 +1114,7 @@ function appsPanel(o, d) {
     'Apps',
     { actions: blocked ? [move.button] : [create.button, move.button] },
     blocked ? note('warn', '', blocked) : '',
-    appsTable(o, d.apps),
+    tableBox,
     blocked ? '' : create.box,
     move.box,
   );

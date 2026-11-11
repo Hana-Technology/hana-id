@@ -549,16 +549,36 @@ function nearTotal(d: Dom, actions: readonly NearAction[], fees: string): HTMLEl
 
 const NEAR_NETWORK_NAMES = { testnet: 'NEAR testnet', mainnet: 'NEAR mainnet' } as const;
 
+/** What the popup knows about the network a NEAR request names (D726). */
+export interface NearRenderContext {
+  /** This build's env network: the one the vault checks NEAR requests against (its RPC). */
+  readonly envNetwork: 'testnet' | 'mainnet';
+  /** A pk_test_ app: the vault binds its delegate actions to the env network too. */
+  readonly testApp: boolean;
+}
+
+/**
+ * The network line of a NEAR request (D726). NEAR's bytes name no network, so the popup says what the vault checked:
+ * a transaction on the env's network had its block hash found there (the vault refuses it otherwise, failing closed);
+ * a test app's delegate action had its key, nonce and expiry checked there; anything else is the app's claim.
+ */
+export function nearNetworkLine(kind: 'near_tx' | 'near_delegate', network: 'testnet' | 'mainnet', ctx: NearRenderContext): string {
+  const name = NEAR_NETWORK_NAMES[network];
+  if (network === ctx.envNetwork && kind === 'near_tx') return `${name} (Hana found its block hash on ${network})`;
+  if (network === ctx.envNetwork && ctx.testApp) return `${name} (Hana checked your key, nonce and expiry on ${network})`;
+  return `${name}, as the app says: Hana can’t check this`;
+}
+
 function nearBanner(d: Dom, actions: readonly NearAction[]): HTMLElement[] {
   return nearChangesControl(actions) ? [d.h('p', { class: 'danger takeover banner', attrs: { role: 'alert' } }, NEAR_ACCOUNT_CONTROL_BANNER)] : [];
 }
 
-function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>): HTMLElement[] {
+function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>, ctx: NearRenderContext): HTMLElement[] {
   const tx = decoded.tx;
   return [
     ...nearBanner(d, tx.actions),
     rows(d, [
-      row(d, 'Network', NEAR_NETWORK_NAMES[decoded.network]),
+      row(d, 'Network', nearNetworkLine('near_tx', decoded.network, ctx)),
       row(d, 'From', mono(d, tx.signerId)),
       row(d, 'To', mono(d, tx.receiverId)),
       row(d, 'Nonce', mono(d, String(tx.nonce))),
@@ -570,14 +590,14 @@ function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>):
   ];
 }
 
-function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>): HTMLElement[] {
+function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>, ctx: NearRenderContext): HTMLElement[] {
   const da = decoded.delegate;
   return [
     ...nearBanner(d, da.actions),
     d.h('p', { class: 'note' }, NEAR_DELEGATE_NOTES.relayer),
     d.h('p', { class: 'note' }, NEAR_DELEGATE_NOTES.network),
     rows(d, [
-      row(d, 'Network', `${NEAR_NETWORK_NAMES[decoded.network]} (as the app says)`),
+      row(d, 'Network', nearNetworkLine('near_delegate', decoded.network, ctx)),
       row(d, 'From', mono(d, da.senderId)),
       row(d, 'To', mono(d, da.receiverId)),
       row(d, 'Valid until block', String(da.maxBlockHeight)),
@@ -607,7 +627,7 @@ const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM chains' } as const;
 export const NO_NETWORK_NOTE = 'This signature isn’t tied to one network.';
 
 /** The body of the approval screen for a decoded request. */
-export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string): HTMLElement {
+export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
   const parts: HTMLElement[] = [];
   switch (decoded.kind) {
     case 'stellar_tx':
@@ -653,10 +673,10 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
       );
       break;
     case 'near_tx':
-      parts.push(d.h('h2', {}, 'NEAR transaction'), ...nearTx(d, decoded));
+      parts.push(d.h('h2', {}, 'NEAR transaction'), ...nearTx(d, decoded, near));
       break;
     case 'near_delegate':
-      parts.push(d.h('h2', {}, 'NEAR transaction, fee paid by a relayer'), ...nearDelegate(d, decoded));
+      parts.push(d.h('h2', {}, 'NEAR transaction, fee paid by a relayer'), ...nearDelegate(d, decoded, near));
       break;
     case 'near_message':
       parts.push(d.h('h2', {}, 'Sign in with your NEAR account'), ...nearMessage(d, decoded));

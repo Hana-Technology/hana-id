@@ -80,8 +80,10 @@ import {
   NEAR_SDK_MIN,
   type PortAddresses,
   TEST_APP_NETWORK_RULE,
+  decodeNearDelegateAction,
   decodeNearTransaction,
   nearHashString,
+  nearKeyString,
   base64UrlEncode,
   fromHex,
   sdkAtLeast,
@@ -333,6 +335,12 @@ class PersistFailure extends Error {
     super(reason);
   }
 }
+
+/**
+ * A test app's NEAR delegate action must expire within this many blocks of testnet's height (D726): about 1.6 hours at
+ * ~1.7 blocks a second (near-api-js's default is 600 blocks).
+ */
+export const NEAR_DELEGATE_MAX_BLOCKS = 10_000;
 
 /** A failed POST /v1/vault/shares is tried once more after this long (D79). */
 export const PERSIST_RETRY_MS = 1_000;
@@ -2944,10 +2952,16 @@ export class Vault {
     const mainnetDemo = demo ? await this.freshMainnetDemo() : null;
     if (this.live() !== s) throw sessionEnded(s);
     const subject = this.subjectOf(request, s.addresses, { rawSign, testApp: this.testApp, mainnetDemo, reservedEvmDigests: this.reservedEvmDigests(s.addresses.evm) });
-    // D726: a test app's NEAR transaction must name a block of this env's network (testnet), which is what ties its
-    // signature to testnet (NEAR's bytes name no network). Before any popup, so a refusal costs no click.
-    if (this.testApp && request.method === 'near_signTransaction') {
-      await this.checkNearBlock(subject.bytes);
+    // D726: NEAR's bytes name no network, so the network a request claims is checked on this env's RPC before any
+    // popup (a refusal costs no click). A transaction's block hash ties it to one network: every app's testnet claim
+    // must name a testnet block (the popup then shows the network as checked), and a mainnet claim must not. A test
+    // app's delegate action must be bound to testnet by its key, nonce and expiry (checkNearDelegate).
+    if (request.method === 'near_signTransaction') {
+      await this.checkNearBlock(subject.bytes, request.params.network);
+      if (this.live() !== s) throw sessionEnded(s);
+    }
+    if (this.testApp && request.method === 'near_signDelegateAction') {
+      await this.checkNearDelegate(subject.bytes);
       if (this.live() !== s) throw sessionEnded(s);
     }
     // A mainnet demo request always gets the approval popup and its banner: never auto-approved.
@@ -3009,24 +3023,64 @@ export class Vault {
   }
 
   /**
-   * Refuses a NEAR transaction whose block hash isn't a block of this env's network (D726): 4100 `near_block_unknown`
-   * when the RPC says it doesn't know the block, `api_unavailable` (reason `near_rpc_unavailable`) when no endpoint
-   * answers. Only test apps are checked: a test app signs for NEAR testnet only, as for the other chains (D39).
+   * The network check of a NEAR transaction (D726). A transaction runs only with a recent block hash of the network it
+   * is sent to, so its block hash is what binds it to one. This env's RPC (its `network`, testnet) is asked about it:
+   * - claimed `testnet`: the block must be a testnet block, else 4100 `near_block_unknown`; when no endpoint answers,
+   *   `api_unavailable` (reason `near_rpc_unavailable`): fail closed, the popup shows the network as checked;
+   * - claimed `mainnet` (a live app; a test app's was refused before): the block must not be a testnet block, else
+   *   4100 `near_network_mismatch`; Hana has no mainnet RPC, so the popup shows mainnet as the app's claim.
    */
-  private async checkNearBlock(txBytes: Uint8Array): Promise<void> {
+  private async checkNearBlock(txBytes: Uint8Array, claimed: 'testnet' | 'mainnet'): Promise<void> {
     const blockHash = nearHashString(decodeNearTransaction(txBytes).blockHash);
+    const here = this.env.network;
     let known: boolean;
     try {
       known = await this.near!.blockExists(blockHash);
     } catch {
-      throw new VaultError('api_unavailable', 'Hana couldn’t check this transaction’s block on NEAR testnet, try again', { reason: 'near_rpc_unavailable' });
+      if (claimed !== here) return;
+      throw new VaultError('api_unavailable', `Hana couldn’t check this transaction’s block on NEAR ${here}, try again`, { reason: 'near_rpc_unavailable' });
     }
-    if (!known) {
-      throw new VaultError(ErrorCode.unauthorized, `${TEST_APP_NETWORK_RULE}. This transaction’s block hash is not a NEAR ${this.env.network} block: use a recent one from a ${this.env.network} RPC`, {
+    if (claimed === here && !known) {
+      throw new VaultError(ErrorCode.unauthorized, `This transaction’s block hash is not a NEAR ${here} block: use a recent one from a ${here} RPC${this.testApp ? `. ${TEST_APP_NETWORK_RULE}` : ''}`, {
         reason: 'near_block_unknown',
         chain: 'near',
         blockHash,
       });
+    }
+    if (claimed !== here && known) {
+      throw new VaultError(ErrorCode.unauthorized, `This transaction names NEAR ${claimed}, but its block hash is a NEAR ${here} block`, { reason: 'near_network_mismatch', chain: 'near', blockHash });
+    }
+  }
+
+  /**
+   * A test app's delegate action must be bound to testnet (D726). A DelegateAction has no block hash; what ties it to a
+   * network is its key, nonce and expiry, read here from this env's (testnet) RPC at final finality:
+   * - the sender's access key must exist on testnet with this public key (else 4100 `near_key_unknown`: activate the
+   *   account first);
+   * - nonce > the key's nonce (else `near_delegate_nonce_used`) and < height × 10^6, nearcore's upper bound, so it can
+   *   run on testnet now (else `near_delegate_nonce_too_large`);
+   * - height < max_block_height ≤ height + NEAR_DELEGATE_MAX_BLOCKS (else `near_delegate_expiry`).
+   * On mainnet nearcore refuses a nonce ≥ mainnet height × 10^6, and the action is void past max_block_height, so it
+   * could run there only while mainnet's height is between nonce / 10^6 (at least the testnet height its key was added
+   * at, ≥ 277 million for every Hana NEAR key: the tuple is from 2026-11) and max_block_height (testnet's height now
+   * plus at most NEAR_DELEGATE_MAX_BLOCKS). Mainnet is ~53 million blocks behind testnet (224 M vs 277 M on
+   * 2026-11-11, both at ~1.7 blocks/s), so that range is years ahead of it at best, and its account would also need this
+   * key with a lower nonce. RPC down: `api_unavailable` (fail closed).
+   */
+  private async checkNearDelegate(delegateBytes: Uint8Array): Promise<void> {
+    const da = decodeNearDelegateAction(delegateBytes);
+    let key: { nonce: bigint; blockHeight: bigint } | null;
+    try {
+      key = await this.near!.accessKey(da.senderId, nearKeyString(da.publicKey));
+    } catch {
+      throw new VaultError('api_unavailable', `Hana couldn’t check this delegate action on NEAR ${this.env.network}, try again`, { reason: 'near_rpc_unavailable' });
+    }
+    const refuse = (reason: string, message: string) => new VaultError(ErrorCode.unauthorized, `${message}. ${TEST_APP_NETWORK_RULE}`, { reason, chain: 'near' });
+    if (!key) throw refuse('near_key_unknown', `This NEAR account has no such key on ${this.env.network} yet: create (activate) the account first`);
+    if (da.nonce <= key.nonce) throw refuse('near_delegate_nonce_used', `This delegate action's nonce is used: take the key's nonce from ${this.env.network} and add 1`);
+    if (da.nonce >= key.blockHeight * 1_000_000n) throw refuse('near_delegate_nonce_too_large', 'This delegate action’s nonce is too large for the current block height');
+    if (da.maxBlockHeight <= key.blockHeight || da.maxBlockHeight > key.blockHeight + BigInt(NEAR_DELEGATE_MAX_BLOCKS)) {
+      throw refuse('near_delegate_expiry', `This delegate action must expire within ${NEAR_DELEGATE_MAX_BLOCKS} blocks of ${this.env.network}'s current height`);
     }
   }
 

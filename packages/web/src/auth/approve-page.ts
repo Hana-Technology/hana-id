@@ -427,7 +427,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
         auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded
-          ? renderApproval(d, decoded, msg.appName)
+          ? renderApproval(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true })
           : d.h('div', { class: 'request' }, d.h('p', { class: 'danger' }, 'Hana can’t read this request, so it can’t be approved.'), d.h('p', { class: 'muted' }, problem)),
         buttons('Approve', decoded !== null),
         auto?.active ? stopAutoApproveButton(auto.label) : null,

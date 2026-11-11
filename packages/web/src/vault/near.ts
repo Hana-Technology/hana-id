@@ -172,6 +172,22 @@ export class NearView {
     return isObj(header) && header.hash === blockHash;
   }
 
+  /**
+   * `view_access_key` at final finality: the key's nonce and the height it was read at, or null when the account or the
+   * key doesn't exist on this env's network. Throws when no endpoint gives either answer.
+   */
+  async accessKey(accountId: string, publicKey: string): Promise<{ nonce: bigint; blockHeight: bigint } | null> {
+    const missing = (b: Record<string, unknown>) =>
+      (isObj(b.error) && isObj(b.error.cause) && (b.error.cause.name === 'UNKNOWN_ACCESS_KEY' || b.error.cause.name === 'UNKNOWN_ACCOUNT')) ||
+      // Older nodes answer a missing key inside `result`.
+      (isObj(b.result) && typeof b.result.error === 'string' && /does not exist/u.test(b.result.error));
+    const answered = (b: Record<string, unknown>) => b.error === undefined && isObj(b.result) && Number.isSafeInteger(b.result.nonce) && Number.isSafeInteger(b.result.block_height);
+    const body = await this.call('query', { request_type: 'view_access_key', finality: 'final', account_id: accountId, public_key: publicKey }, (b) => answered(b) || missing(b));
+    if (missing(body)) return null;
+    const r = body.result as { nonce: number; block_height: number };
+    return { nonce: BigInt(r.nonce), blockHeight: BigInt(r.block_height) };
+  }
+
   /** The outcome of a relayed transaction (sender: the pinned RELAYER). Network errors throw. */
   async txOutcome(txHash: string): Promise<TxOutcome> {
     const body = await this.call('EXPERIMENTAL_tx_status', { tx_hash: txHash, sender_account_id: this.relayer, wait_until: 'EXECUTED_OPTIMISTIC' }, (b) => b.error === undefined || isPendingTxError(b.error));

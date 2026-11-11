@@ -217,6 +217,24 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
+/**
+ * A long public value (a wallet address, an id) shortened to its two ends on one line, as the policy ID is shortened
+ * on the Signing tab: the full value is in the hover title, read out by screen readers (the short form is hidden from
+ * them), and copied whole by its button.
+ */
+export function ShortValue({ value, label, head = 6, tail = 4 }: { value: string; label: string; head?: number; tail?: number }) {
+  const short = value.length > head + tail + 1 ? `${value.slice(0, head)}…${value.slice(-tail)}` : value;
+  return (
+    <span className="nowrap">
+      <code className="mono small" title={value}>
+        <span aria-hidden="true">{short}</span>
+        <span className="visually-hidden">{value}</span>
+      </code>{' '}
+      <CopyButton value={value} label={label} />
+    </span>
+  );
+}
+
 /** A labelled value with a copy button. */
 export function CopyField({ label, value, hint }: { label: string; value: string; hint?: ReactNode }) {
   return (

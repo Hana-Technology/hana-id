@@ -11035,7 +11035,8 @@ secret or cron change: only the version, the docs and the tarballs.
      live member of the account and the share is no older than its link (`LIVE_NAME_SHARE`): an unlink stops the name
      at once, and linking again doesn't bring it back. A root's own share (`via = 'own'`) can't outlive its place,
      since the User ID is computed from it. Residual: an unlink whose directory sync failed leaves the row `active`
-     (D661's case) until the account's next login sync.
+     (D661's case) until the account's next login sync; and a member row the directory wrote with no `effective_at`
+     (a sync from `get_identity` alone) can't tell a relink, so an old share would count again after one.
   4. **Partners.** Identity tokens carry the OIDC claims `given_name` and `family_name`, each only when set and shared
      (after `email`). The SDK reads them from the token in the page: `hana.getProfile({maxAgeMs?})`, `hana.profile`,
      the `profileChanged` event (only when the name changes), React `useProfile()`. No vault or protocol change, so it

@@ -239,7 +239,8 @@ describe('hana_identityToken', () => {
     const reloaded = await tab(browser);
     await reloaded.waitUntil(() => true, 'ready');
     expect(await tokenOf(reloaded)).toBeTruthy();
-    await sleepReal(20);
+    // The upgrade runs in the background (lock, read, put): wait for it, not for a guessed time.
+    for (let i = 0; i < 400 && ((await store.get(KEY)) as Record<string, unknown> | undefined)?.v !== 2; i++) await sleepReal(5);
     const upgraded = (await store.get(KEY)) as Record<string, unknown>;
     expect(upgraded.v).toBe(2);
     expect(proofsMatch(upgraded.walletProofs, addresses)).toBe(true);

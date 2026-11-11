@@ -260,6 +260,8 @@ describe('app checks (in order)', () => {
   }
 
   it('rate limits per app per minute (requests that passed every check)', async () => {
+    // Fixed windows: start the run a second into one (helpers.ts startOfMinuteClock), or a minute boundary resets it.
+    await startOfMinuteClock();
     const { near, valid } = await quotaApp(2, 1000);
     const statuses = [];
     for (let i = 0; i < 3; i++) statuses.push((await valid()).status);
@@ -273,6 +275,7 @@ describe('app checks (in order)', () => {
   });
 
   it('rate limits per app per day', async () => {
+    await startOfMinuteClock(); // not in a UTC day's last minute
     const { valid } = await quotaApp(1000, 2);
     const statuses = [];
     for (let i = 0; i < 3; i++) statuses.push((await valid()).status);
@@ -282,6 +285,7 @@ describe('app checks (in order)', () => {
 
   it('unauthenticated junk never uses up the app’s quota (APIW-1): every check runs before it is counted', async () => {
     // A day quota of 2: before the fix, two junk requests locked every user of the app out until 00:00 UTC.
+    await startOfMinuteClock();
     const { app, aud, near, valid } = await quotaApp(2, 2);
     const evil = await rsaSigner('evil-kid');
     near.jwks = { keys: [google.jwk, evil.jwk] }; // a well-formed token signed by a key the chain doesn't trust
@@ -309,6 +313,7 @@ describe('app checks (in order)', () => {
   });
 
   it('rate limits per IP per minute (other IPs unaffected)', async () => {
+    await startOfMinuteClock();
     const plan = `p${uid()}`;
     await seedPlan(plan, 1000, 1000, 2);
     const app = await seedApp({ plan });
@@ -340,6 +345,7 @@ describe('rate limit order', () => {
   });
 
   it('keys IPv6 clients on their /64', async () => {
+    await startOfMinuteClock();
     const plan = `p${uid()}`;
     await seedPlan(plan, 1000, 1000, 2);
     const app = await seedApp({ plan });

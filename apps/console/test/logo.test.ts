@@ -10,7 +10,7 @@ import type { Env } from '../src/env.ts';
 import { LOGO_MAX_INPUT_BYTES, LOGO_OUTPUT, LOGO_TRANSFORM, type LogoCaller, logoRemoveRoute, logoUploadRoute } from '../src/logo.ts';
 import { pngChunkTypes } from '../src/logo-format.ts';
 import { AVIF, type FakeImages, GIF, HTML_TAIL, METADATA_CHUNKS, SVG, ZIP_TAIL, concat, fakeImages, jpeg, png, webp } from './logo-fixtures.ts';
-import { CSRF, ORIGIN, auditRows, request, rid, seedHotApp } from './helpers.ts';
+import { CSRF, ORIGIN, auditRows, minuteHeadroom, request, rid, seedHotApp } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -206,6 +206,8 @@ describe('logo upload: stored and pointed at', () => {
   });
 
   it('uploads are limited per org (each is a paid transform)', async () => {
+    // The binding's windows are real-clock minutes: the whole run in one (helpers.ts minuteHeadroom).
+    await minuteHeadroom();
     const app = await seedHotApp();
     const c = caller(app.org, app.id);
     const statuses: number[] = [];

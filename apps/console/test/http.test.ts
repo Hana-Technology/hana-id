@@ -6,7 +6,7 @@ import { BUILD_PATH } from '@hana-id/env/build-id';
 import { describe, expect, it } from 'vitest';
 import worker, { type Env } from '../src/index.ts';
 import { consoleCsp } from '../src/headers.ts';
-import { CSRF, ORIGIN, post, request } from './helpers.ts';
+import { CSRF, ORIGIN, minuteHeadroom, post, request } from './helpers.ts';
 
 const EXPECTED = {
   'content-security-policy':
@@ -174,6 +174,8 @@ describe('CSRF: every non-GET request needs all four checks', () => {
 
 describe('the link routes’ per-IP limit (10 a minute)', () => {
   it('refuses the 11th request from one IP with 429 and retry-after, and not another IP', async () => {
+    // The binding's windows are real-clock minutes: the whole run in one (helpers.ts minuteHeadroom).
+    await minuteHeadroom();
     const ip = '192.0.2.77';
     const statuses: number[] = [];
     for (let i = 0; i < 11; i++) statuses.push((await post('/api/owner-grants/cancel', { grantId: 'og_x', token: 'A'.repeat(43) }, { ip })).status);
@@ -186,6 +188,7 @@ describe('the link routes’ per-IP limit (10 a minute)', () => {
   });
 
   it('counts an IPv6 /64 as one requester', async () => {
+    await minuteHeadroom();
     const statuses: number[] = [];
     for (let i = 0; i < 11; i++) statuses.push((await post('/api/owner-grants/cancel', { grantId: 'og_x', token: 'A'.repeat(43) }, { ip: `2001:db8:77:1::${i + 1}` })).status);
     expect(statuses[10]).toBe(429);

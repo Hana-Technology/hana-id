@@ -28,7 +28,22 @@ const EMAIL_TOKEN = '{"payload":"eyJ","signatures":[{"protected":"eyJ","signatur
 const LINK = { linkTicket: 'T'.repeat(43), emailSub: `e1.${'Q'.repeat(43)}` };
 const jwt = (claims: Record<string, unknown>) => [{ alg: 'RS256' }, claims].map((p) => Buffer.from(JSON.stringify(p)).toString('base64url')).concat('c2ln').join('.');
 
+// The relay encryptions the pages start, so a test can wait for them (not for a guessed time). The real function runs.
+const encryptions = vi.hoisted(() => new Set<Promise<unknown>>());
+vi.mock('@hana-id/core', async (importOriginal) => {
+  const core = await importOriginal<typeof import('@hana-id/core')>();
+  return {
+    ...core,
+    encryptRelayPayload: (...args: Parameters<typeof core.encryptRelayPayload>) => {
+      const p = core.encryptRelayPayload(...args);
+      encryptions.add(p);
+      return p;
+    },
+  };
+});
+
 beforeEach(() => {
+  encryptions.clear();
   resetDom();
   vi.stubGlobal(
     'fetch',
@@ -44,8 +59,14 @@ const submit = (id: string) => (document.getElementById(id) as HTMLButtonElement
 const typeInto = (id: string, value: string) => {
   (document.getElementById(id) as HTMLInputElement).value = value;
 };
-/** The page encrypts its close value as it shows the screen (WebCrypto answers on a later task). */
-const encrypted = () => new Promise((r) => setTimeout(r, 20));
+/**
+ * The page encrypts its close value as it shows the screen (WebCrypto answers on a later task, later still under load):
+ * every relay encryption started so far, tracked by the wrapper below, has settled and its callbacks have run.
+ */
+const encrypted = async (): Promise<void> => {
+  await Promise.allSettled([...encryptions]);
+  await flush();
+};
 const entryOf = (state: string) => {
   const raw = window.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + state);
   return raw ? JSON.parse(raw) : null;

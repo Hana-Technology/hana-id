@@ -70,12 +70,13 @@ let slot = 0;
 const realNow = Date.now.bind(Date);
 /**
  * Moves this isolate's clock (the Worker, its objects and D1's callers share it) to its own far-future window, with time
- * still running, so each test gets a fresh breaker hour and a full budget. `freeze` stops it (budget tests).
+ * still running, so each test gets a fresh breaker hour and a full budget. `freeze` stops it (budget tests). The window
+ * starts a second into a clock hour, so a test never straddles the fixed hours (the breaker event's once an hour).
  */
 export function ownClock(opts: { freeze?: boolean } = {}): { now: () => number; advance: (ms: number) => void } {
   const real = realNow;
   const start = real();
-  let offset = (++slot) * 3 * HOUR;
+  let offset = (++slot) * 3 * HOUR - (start % HOUR) + 1000;
   vi.spyOn(Date, 'now').mockImplementation(() => (opts.freeze ? start : real()) + offset);
   return { now: () => Date.now(), advance: (ms) => void (offset += ms) };
 }

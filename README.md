@@ -112,7 +112,7 @@ deploy. `pnpm verify:install-hook` (optional) makes a push to `develop` or `main
 | After any deploy: every Worker and page bundle on this commit, no D1 migration pending | `pnpm --filter @hana-id/scripts run deploy-check <env> [--d1] [--skip-head] [--strict]` (`docs/operations.md` "Checking a deploy") |
 | Recovery playbooks doc | `pnpm --filter @hana-id/playbooks gen-docs` (writes `docs/playbooks.md`; edit `packages/playbooks`) |
 | SDK tarballs: build, check, install outside the repo | `pnpm run pack:check` · version: `pnpm --filter @hana-id/scripts run sdk-version <x.y.z>` (`docs/operations.md` "Releasing the SDK packages") |
-| Browser tests | `pnpm --filter @hana-id/e2e e2e` (`HANA_E2E_PORT_BASE` for a second worktree; `apps/e2e/README.md`) |
+| Browser tests | `pnpm --filter @hana-id/e2e e2e` (ports from 4410; a linked worktree gets its own base, `HANA_E2E_PORT_BASE` overrides; `apps/e2e/README.md`) |
 | Hosted demo | `pnpm --filter @hana-id/demo run deploy` (`apps/demo/README.md`; its origin must be on the app first) |
 
 The `@hana-id/scripts` commands take the environment name (`envs/<env>.json`) first and print `--help`.

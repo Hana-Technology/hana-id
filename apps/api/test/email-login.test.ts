@@ -13,7 +13,7 @@ import { sessionStanding } from '../src/session-standing.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { autoLinkNonce, createProofPayload, linkAccountNonce, linkChangeNonce, linkNewNonce, linkedCkdPayload, sessionNonce, sessionNoncePreimage } from '../src/session-crypto.ts';
 import { EMAIL_ISS, type EmailChain, emailAud, emailEnv, emailSigner, emailToken, ikSync, issuer, setLoginMethods, withEmail } from './email-helpers.ts';
-import { appHeaders, bytes, call, chain, google, newSessionKey, seedApp, sessionBody, signSession, uid, minuteHeadroom } from './helpers.ts';
+import { appHeaders, bytes, call, chain, google, newSessionKey, seedApp, sessionBody, signSession, uid, minuteHeadroom, startOfMinuteClock } from './helpers.ts';
 import { appKey, hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
 import { panic } from './near-mock.ts';
 import { ledger } from './usage-ledger.ts';
@@ -69,6 +69,8 @@ describe('POST /v1/sessions: email tokens and the proof of possession (D137)', (
   });
 
   it('relays an email token for an app with email on, with the proof as `signature`, and counts an email session', async () => {
+
+    await startOfMinuteClock(); // rows keyed by the UTC day: not in a day's last minute (helpers.ts)
     const { app, near } = await setup();
     const req = await emailSessionBody(app.scope);
     const res = await sessions(app, req);
@@ -197,6 +199,8 @@ describe('POST /v1/login with a link (D133)', () => {
   }
 
   it('case A: relays link_jwt and link_immediate with 250 Tgas, signed over the linked payload, and counts a link', async () => {
+
+    await startOfMinuteClock(); // rows keyed by the UTC day: not in a day's last minute (helpers.ts)
     const { app, aud, near, e, g, ek } = await caseA();
     const req = await linkedLogin(app, aud, { sub: e, join: 1, joiner: g, target: ek, immediate: true });
     const res = await login(app, req);
@@ -379,6 +383,8 @@ describe('POST /v1/link (explicit linking)', () => {
   }
 
   it('relays link_identity with 250 Tgas, answers effectiveAtMs, revokes the account’s shares in every app of the scope, counts a link', async () => {
+
+    await startOfMinuteClock(); // rows keyed by the UTC day: not in a day's last minute (helpers.ts)
     const { app, near, req } = await explicit();
     const sibling = await seedApp({ scope: app.scope });
     const rootShare = await seedShare(sibling.id, `${app.scope}#google#${G_SUB}#0`);
@@ -542,6 +548,8 @@ describe('email counts into the usage ledger (hourly, D233)', () => {
   const day = (msAgo: number) => new Date(Date.now() - msAgo).toISOString().slice(0, 10);
 
   it('an email login counts in email_usage; the hourly copy sends it with the app’s org and scope; a replay never lowers it', async () => {
+
+    await startOfMinuteClock(); // rows keyed by the UTC day: not in a day's last minute (helpers.ts)
     const { app } = await setup();
     expect((await sessions(app, await emailSessionBody(app.scope))).status).toBe(200);
     await env.DB.prepare('INSERT INTO email_usage (app_id, day, links) VALUES (?1, ?2, 4)').bind(app.id, day(86_400_000)).run();

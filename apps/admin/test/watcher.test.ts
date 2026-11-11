@@ -40,6 +40,19 @@ describe('the watcher', () => {
     expect(fake.about(app.scope)).toEqual([]);
   });
 
+  it('a pending proposal whose unlock time is not a valid time is never emailed or marked notified (fails closed)', async () => {
+    const app = await seedHotApp();
+    chainScope(app.scope, { pending: [{ id: 9, change: { SetOwners: { owners: [OWNER, NEW_OWNER] } }, unlock_at_ms: 1e300 }] });
+    const data = storeAt(app.scope);
+    const fake = new FakeEmail();
+    // The render throws (as isoTime always did), so the run stops before any send for it.
+    await expect(run(data, fake)).rejects.toThrow(RangeError);
+    expect(fake.about(`scope ${app.scope}`)).toEqual([]);
+    expect(data.watch.get(`${app.scope}#9`)?.notifiedAt ?? null).toBeNull();
+    // Leave the fake chain valid for the other tests.
+    chainScope(app.scope);
+  });
+
   it('emails a SetOwners adding an Oidc owner once, to the alias and the contacts, with the new owner marked', async () => {
     const app = await seedHotApp();
     const unlock = Date.now() + 86_400_000;

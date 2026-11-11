@@ -218,13 +218,52 @@ describe('the passkey gate (D242: no second partner org before passkeys; D698: l
       if (!r.ok) throw new Error(r.code);
       const { hash, hashB64 } = await linkPair();
       expect((await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: hashB64 })).ok).toBe(true);
-      const out = await acceptInvite(db, { tokenHash: hash, email: r.invite.email, provider: 'google', sub: `sub-${r.invite.id}`, hd: null, requestId: `req_${r.invite.id}`, now: Date.now(), ipPrefix: null, country: null }, () => 60_000);
+      const out = await acceptInvite(db, { tokenHash: hash, email: r.invite.email, provider: 'google', sub: `sub-${r.invite.id}`, hd: null, requestId: `req_${r.invite.id}`, now: Date.now(), ipPrefix: null, country: null, network: 'testnet' }, () => 60_000);
       expect(out).toMatchObject({ ok: true, role: 'owner' });
       if (out.ok) expect(await db.prepare('SELECT kind FROM orgs WHERE id = ?').bind(out.orgId).first('kind')).toBe('partner');
     }
     expect(await db.prepare("SELECT COUNT(*) AS n FROM orgs WHERE kind = 'partner'").first<number>('n')).toBe(3);
     // Back off testnet, the gate holds again at once.
     expect(await issueOn('mainnet', { newOrgName: 'Fifth Partner' })).toMatchObject({ ok: false, code: 'passkeys_required' });
+  });
+
+  it('off testnet, acceptance re-checks the gate in its batch: invites collected on testnet add no second partner org', async () => {
+    await clearPartnerOrgs();
+    const acceptOn = async (network: string | undefined, r: { invite: { id: string; email: string } }, hash: Uint8Array) =>
+      acceptInvite(db, { tokenHash: hash, email: r.invite.email, provider: 'google', sub: `sub-${r.invite.id}-${network}`, hd: null, requestId: `req_${Math.random().toString(36).slice(2)}`, now: Date.now(), ipPrefix: null, country: null, network }, () => 60_000);
+    const announced = [];
+    for (const name of ['Gate One', 'Gate Two']) {
+      const r = await issueOn('testnet', { newOrgName: name });
+      if (!r.ok) throw new Error(r.code);
+      const { hash, hashB64 } = await linkPair();
+      expect((await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: hashB64 })).ok).toBe(true);
+      announced.push({ r, hash });
+    }
+    // The first partner org is allowed anywhere; the second is refused off testnet, and nothing is written.
+    expect(await acceptOn('mainnet', announced[0]!.r, announced[0]!.hash)).toMatchObject({ ok: true, role: 'owner' });
+    const auditBefore = await db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'invite.accepted'").first<number>('n');
+    for (const network of ['mainnet', undefined]) {
+      expect(await acceptOn(network, announced[1]!.r, announced[1]!.hash)).toEqual({ ok: false, code: 'passkeys_required' });
+    }
+    expect(await db.prepare('SELECT accepted_at FROM invites WHERE id = ?').bind(announced[1]!.r.invite.id).first('accepted_at')).toBeNull();
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM orgs WHERE name = 'Gate Two'").first<number>('n')).toBe(0);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'invite.accepted'").first<number>('n')).toBe(auditBefore);
+    // Concurrent acceptances of two open partner invites off testnet with no partner org yet: exactly one org.
+    await clearPartnerOrgs();
+    const pair = [];
+    for (const name of ['Race A', 'Race B']) {
+      const r = await issueOn('testnet', { newOrgName: name });
+      if (!r.ok) throw new Error(r.code);
+      const { hash, hashB64 } = await linkPair();
+      expect((await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: hashB64 })).ok).toBe(true);
+      pair.push({ r, hash });
+    }
+    const outs = await Promise.all(pair.map((p) => acceptOn('mainnet', p.r, p.hash)));
+    expect(outs.filter((o) => o.ok)).toHaveLength(1);
+    expect(outs.filter((o) => !o.ok)).toEqual([{ ok: false, code: 'passkeys_required' }]);
+    // The invite left over is still open: on testnet it can be accepted.
+    const left = pair[outs.findIndex((o) => !o.ok)]!;
+    expect(await acceptOn('testnet', left.r, left.hash)).toMatchObject({ ok: true, role: 'owner' });
   });
 });
 

@@ -346,11 +346,17 @@ export interface Acceptance {
   now: number;
   ipPrefix: string | null;
   country: string | null;
+  /**
+   * The env's network (`Env.NETWORK`): on a network the one-partner gate applies to (`onePartnerGate`, D242, D698),
+   * accepting a new-partner-org invite is refused while a partner org other than `org_legacy` exists, checked in the
+   * batch's own commit row. Invites issued while the gate was lifted (testnet) can't add a second partner org later.
+   */
+  network: string | undefined;
 }
 
 export type AcceptanceOutcome =
   | { ok: true; userId: string; orgId: string; role: Role; newUser: boolean }
-  | { ok: false; code: 'invite_invalid' | 'already_member' | 'user_disabled' };
+  | { ok: false; code: 'invite_invalid' | 'already_member' | 'user_disabled' | 'passkeys_required' };
 
 /**
  * Accepts an invite in one D1 batch (docs/batch-c-spec.md "Membership rules at sign-in"): every id is resolved from
@@ -366,13 +372,17 @@ export async function acceptInvite(db: D1Database, a: Acceptance, delayMs: () =>
   const newUserId = newId('user');
   const newOrgId = newId('org');
   const delay = delayMs();
+  const partnerGate = onePartnerGate(a.network);
+  // The one-partner gate at acceptance too (D698 as amended): a new partner org only while none exists.
+  const gateSql = partnerGate ? `AND (i.new_org_kind IS NULL OR i.new_org_kind <> 'partner' OR NOT EXISTS (SELECT 1 FROM orgs po WHERE po.kind = 'partner' AND po.id <> '${LEGACY_ORG_ID}'))` : '';
   // V(i): the invite is acceptable by this person now: the spec's, plus not already a member of its org, and its
   // owner grant's notice (with the cancel link) accepted.
   const V = `i.token_hash = ? AND i.email_norm = ? AND ${openInvite('i', t)}
       AND (i.org_id IS NULL OR EXISTS (SELECT 1 FROM orgs o WHERE o.id = i.org_id AND o.status = 'active' AND (o.required_hd IS NULL OR o.required_hd = ?)))
       AND NOT EXISTS (SELECT 1 FROM console_users u WHERE u.provider = ? AND u.sub = ? AND u.disabled_at IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM members mm JOIN console_users uu ON uu.id = mm.user_id WHERE uu.provider = ? AND uu.sub = ? AND mm.org_id = i.org_id)
-      AND NOT EXISTS (SELECT 1 FROM owner_grants vg WHERE vg.invite_id = i.id AND vg.cancelled_at IS NULL AND vg.notified_at IS NULL)`;
+      AND NOT EXISTS (SELECT 1 FROM owner_grants vg WHERE vg.invite_id = i.id AND vg.cancelled_at IS NULL AND vg.notified_at IS NULL)
+      ${gateSql}`;
   const vBinds = [a.tokenHash, a.email, a.hd, a.provider, a.sub, a.provider, a.sub];
   // The role the member gets, decided before any row changes: an owner invite to an existing org waits behind its grant
   // unless the org has no usable owner (the first-owner exception); a cancelled grant leaves a viewer.
@@ -452,7 +462,11 @@ export async function acceptInvite(db: D1Database, a: Acceptance, delayMs: () =>
   }
   const user = await db.prepare('SELECT id, disabled_at FROM console_users WHERE provider = ? AND sub = ?').bind(a.provider, a.sub).first<{ id: string; disabled_at: number | null }>();
   if (user?.disabled_at != null) return { ok: false, code: 'user_disabled' };
-  const inv = await db.prepare('SELECT org_id, accepted_at FROM invites WHERE token_hash = ?').bind(a.tokenHash).first<{ org_id: string | null; accepted_at: number | null }>();
+  const inv = await db.prepare('SELECT org_id, accepted_at, revoked_at, expires_at, new_org_kind FROM invites WHERE token_hash = ?').bind(a.tokenHash).first<{ org_id: string | null; accepted_at: number | null; revoked_at: number | null; expires_at: number; new_org_kind: string | null }>();
+  if (partnerGate && inv && inv.new_org_kind === 'partner' && inv.accepted_at === null && inv.revoked_at === null && inv.expires_at > t) {
+    const partner = await db.prepare(`SELECT 1 AS x FROM orgs WHERE kind = 'partner' AND id <> '${LEGACY_ORG_ID}' LIMIT 1`).first();
+    if (partner) return { ok: false, code: 'passkeys_required' };
+  }
   if (user && inv?.org_id && inv.accepted_at === null) {
     const member = await db.prepare('SELECT 1 AS x FROM members WHERE org_id = ? AND user_id = ?').bind(inv.org_id, user.id).first();
     if (member) return { ok: false, code: 'already_member' };

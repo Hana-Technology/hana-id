@@ -2,7 +2,7 @@
 // `console.origin`, never an approve link. The HTML is plain semantic markup, or, for a mail that passes `design`
 // (the partner invite, D672; the security notices partners receive, D700), Hana's designed layout (@hana-id/brand/email)
 // built from the same blocks, with the same text part; in it every paragraph, table value, list item and warning is
-// written so mail clients don't turn a host or address into a link. Partner-controlled text (app and org names, origins, policy labels) is escaped for HTML and stripped of
+// written so mail clients don't turn a host or address into a link, preformatted JSON included. Partner-controlled text (app and org names, origins, policy labels) is escaped for HTML and stripped of
 // control characters; a subject is one line.
 import { MAIL_INVISIBLE_SOURCE, type MailBlock, mailHtml, mailLogoUrl } from '@hana-id/brand/email';
 
@@ -98,7 +98,8 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
       case 'pre':
         text.push(clean(b.text));
         html.push(`<pre>${escapeHtml(clean(b.text))}</pre>`);
-        designed.push({ kind: 'pre', text: clean(b.text) });
+        // A policy's or a change's JSON can hold a partner's free text (a label with a URL): unlinked (D700).
+        designed.push({ kind: 'pre', text: clean(b.text), unlinked: true });
         break;
       case 'link': {
         if (new URL(b.url).origin !== consoleOrigin) throw new Error('A link must stay on the console origin');
@@ -132,13 +133,21 @@ export function duration(ms: number): string {
   return parts.slice(0, 2).join(' ') || '0 s';
 }
 
-/** An exact UTC time for tables and lists (copyable, sortable): `2026-11-18T04:54:59.777Z`, whole seconds without `.000`. */
+/**
+ * An exact UTC time (copyable, sortable): `2026-11-18T04:54:59.777Z`, whole seconds without `.000`. Staff mails' tables
+ * and the digests' lists use it (D697); the partner notices use `readableTime`. Throws on an invalid time.
+ */
 export const isoTime = (ms: number): string => new Date(ms).toISOString().replace('.000Z', 'Z');
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-/** A UTC time as a sentence reads it: `18 November 2026, 04:54 UTC` (to the minute, seconds dropped). */
+/**
+ * A UTC time as a person reads it: `18 November 2026, 04:54 UTC` (to the minute, seconds dropped). Throws a RangeError
+ * on a time that isn't one (NaN, past the Date range), as `isoTime` does, so a mail with a bad time (a chain value, say)
+ * is never sent and its notice stays unacked, as before (fails closed).
+ */
 export function readableTime(ms: number): string {
   const d = new Date(ms);
+  if (!Number.isFinite(d.getTime())) throw new RangeError('Invalid time value');
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
 }

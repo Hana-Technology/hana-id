@@ -33,7 +33,8 @@ export type MailBlock =
   /** A value or an item may be inline runs (`{ unlinked }` for an origin or a partner's name that clients mustn't link). */
   | { kind: 'kv'; rows: readonly (readonly [string, string | readonly MailInline[]])[] }
   | { kind: 'list'; items: readonly (string | readonly MailInline[])[] }
-  | { kind: 'pre'; text: string };
+  /** Preformatted text; `unlinked`: each `.`, `/`, `#`, `?` and `=` in its own element (D700), copying gives the same text. */
+  | { kind: 'pre'; text: string; unlinked?: boolean };
 
 export interface MailLayout {
   /** The document title (the subject, without any env prefix). */
@@ -204,7 +205,7 @@ function block(b: MailBlock): string {
     case 'list':
       return `<ul class="hm-ink" style="margin:0 0 16px;padding-left:22px;font-family:${FONT};font-size:15px;line-height:1.55;color:${L.ink}">${b.items.map((i) => `<li style="margin:0 0 6px">${inline(i)}</li>`).join('')}</ul>`;
     case 'pre':
-      return `<pre class="hm-codebox hm-ink" style="margin:0 0 16px;padding:12px;background-color:${L.codeBg};border:1px solid ${L.codeLine};border-radius:8px;font-family:${MONO};font-size:12px;line-height:1.45;color:${L.ink};white-space:pre-wrap;word-break:break-all">${mailText(b.text)}</pre>`;
+      return `<pre class="hm-codebox hm-ink" style="margin:0 0 16px;padding:12px;background-color:${L.codeBg};border:1px solid ${L.codeLine};border-radius:8px;font-family:${MONO};font-size:12px;line-height:1.45;color:${L.ink};white-space:pre-wrap;word-break:break-all">${b.unlinked ? unlinked(b.text) : mailText(b.text)}</pre>`;
   }
 }
 

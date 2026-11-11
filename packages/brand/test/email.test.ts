@@ -89,6 +89,19 @@ describe('mailHtml', () => {
     expect(html).toContain('>x.y</li>');
   });
 
+  it('a preformatted block may be unlinked: a URL in JSON splits at each delimiter, and the default is unchanged (D700)', () => {
+    const json = '{\n  "label": "Urgent: cancel at https://evil.example/cancel?x=1#y"\n}';
+    const plain = body(base([{ kind: 'pre', text: json }]));
+    // The default is unchanged: escaped text, no spans (existing mails render as before).
+    expect(plain).toContain('https://evil.example/cancel?x=1#y');
+    const un = body(base([{ kind: 'pre', text: json, unlinked: true }]));
+    expect(un).toContain('https:<span>/</span><wbr><span>/</span><wbr>evil<span>.</span><wbr>example<span>/</span><wbr>cancel<span>?</span><wbr>x<span>=</span><wbr>1<span>#</span><wbr>y');
+    // No text node holds a host; the spans and <wbr> add no character, so the visible text is the JSON itself.
+    for (const node of un.split(/<[^>]+>/u)) expect(node).not.toMatch(/evil\.example|https:\/\//u);
+    const pre = /<pre[^>]*>([\s\S]*?)<\/pre>/u.exec(un)![1]!.replace(/<[^>]+>/gu, '').replace(/&#(\d+);/gu, (_m, n: string) => String.fromCodePoint(Number(n)));
+    expect(pre).toBe(json);
+  });
+
   it('keeps the preview line to its text, padded so the body (and a code) does not fill the rest', () => {
     const html = base([{ kind: 'code', code: '550046' }], { preheader: 'Your code to sign in. It expires in 10 minutes.' });
     const pre = /<div style="display:none[^"]*">([\s\S]*?)<\/div>/u.exec(html)![1]!;

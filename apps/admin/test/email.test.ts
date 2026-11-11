@@ -241,11 +241,15 @@ describe('rendering', () => {
       ownerGrantNotice: ownerGrantNotice(c, { kind: 'owner_grant', grant, member: { userId: 'usr_1', email: 'promoted@evil.example' }, owners: [] } as never, { orgName: hostile, cancelUrl: 'https://console.test/cancel-owner/og_1#t=abc', delayMs: 86_400_000 }),
       loginMethodsChanged: loginMethodsChanged(c, { seq: 1, at: Date.UTC(2026, 10, 11, 5), appId: 'app_1', orgId: 'org_1', scopeId: 's1', kind: 'app.settings', actorKind: 'member', actorId: 'usr_1', detail: { loginMethods: 'google,email' } } as never, { appName: hostile, undoUrl: 'https://console.test/orgs/org_1/apps/app_1/email' }),
       onChainPending: onChainPending(c, { scopeId: 's1', orgId: 'org_1', changeId: 7, change: { SetAllowShared: { allow: true } }, unlockAtMs: Date.UTC(2026, 10, 12, 5), currentOwners: [], activeOrigins: ['https://app.evil.example', 'http://localhost:5173'] }),
+      policyLabelUrl: changePending(c, { change: { id: 'gc_3', appId: 'app_1', kind: 'policy_set', policyId: 'pol_1', status: 'pending', proposedByKind: 'member', proposedBy: 'usr_1', proposedAt: 0 } as never, contacts: [], app, policy: { label: 'Urgent: cancel at https://evil.example/cancel', rules: [{ contract: 'swap.evil.example', methods: ['swap'] }] } }, { cancelUrl: 'https://console.test/cancel/gc_3#t=abc', delayMs: 60_000 }),
+      onChainUnknown: onChainPending(c, { scopeId: 's1', orgId: 'org_1', changeId: 8, change: { SomeFutureChange: { note: 'see https://evil.example/x?y=1' } }, unlockAtMs: Date.UTC(2026, 10, 12, 5), currentOwners: [] }),
       onChainChanged: onChainChanged(c, 's1', 'org_1', { owners: [], clients: [], allowShared: false }, { owners: [{ Oidc: { provider: 'google', sub: '123' } }], clients: [['google', 'x.apps.googleusercontent.com']], allowShared: true }),
     };
     const headings: Record<keyof typeof mails, string> = {
       changePending: 'New allowed origin proposed',
       changePendingIdn: 'New allowed origin proposed',
+      policyLabelUrl: 'Auto-approve policy proposed',
+      onChainUnknown: 'A change to your scope was proposed on chain',
       inviteNotice: 'A new owner was invited',
       ownerGrantNotice: 'Owner rights requested',
       loginMethodsChanged: 'Email login turned on',
@@ -301,6 +305,15 @@ describe('rendering', () => {
       expect(visibleText(mails.inviteNotice.html)).toContain('Invitednew.owner@evil.example');
       expect(visibleText(mails.onChainPending.html)).toContain('https://app.evil.example');
       expect(visibleText(mails.onChainPending.html)).toContain('Can execute from12 November 2026, 05:00 UTC');
+    });
+
+    it('a URL in a policy label or an unknown on-chain change is shown in the JSON as text, never one linkable node (D700)', () => {
+      for (const m of [mails.policyLabelUrl, mails.onChainUnknown]) {
+        const pre = /<pre[^>]*>([\s\S]*?)<\/pre>/u.exec(m.html)![1]!;
+        expect(visibleText(pre)).toMatch(/https:\/\/evil\.example\/(cancel|x\?y=1)/u);
+        for (const node of pre.split(/<[^>]+>/u)) expect(node).not.toMatch(/evil\.example|https:\/\//u);
+        expect((m.html.match(/href="/gu) ?? []).length).toBeLessThanOrEqual(1);
+      }
     });
 
     it('staff digests keep their plain form (D674)', () => {
@@ -384,12 +397,17 @@ describe('rendering', () => {
     expect(inviteLink(ctx, { id: 'inv_1', role: 'owner', newOrgName: 'Acme', createdByKind: 'hana', createdBy: 's', expiresAt: 0 } as never, { inviteUrl: url }).html).not.toContain('<img');
   });
 
-  it('times in sentences read as dates (`18 November 2026, 04:54 UTC`); tables keep the exact ISO time', () => {
+  it('readable times (`18 November 2026, 04:54 UTC`) in sentences and partner notices; ISO for staff tables; both refuse an invalid time', () => {
     const t = Date.parse('2026-11-18T04:54:59.777Z');
     expect(readableTime(t)).toBe('18 November 2026, 04:54 UTC');
     expect(readableTime(Date.UTC(2027, 0, 1, 0, 5))).toBe('1 January 2027, 00:05 UTC');
     expect(isoTime(t)).toBe('2026-11-18T04:54:59.777Z');
     expect(isoTime(Date.UTC(2026, 10, 18, 4, 54))).toBe('2026-11-18T04:54:00Z');
+    // Fails closed, as isoTime always did: a mail with a time that isn't one is never rendered, so never sent.
+    for (const bad of [Number.NaN, 8.64e15 + 1, 1e300, Number.POSITIVE_INFINITY]) {
+      expect(() => readableTime(bad)).toThrow(RangeError);
+      expect(() => isoTime(bad)).toThrow(RangeError);
+    }
     const overdue = retentionFailed(ctx, { kind: 'overdue', month: '2026-10', dueAt: Date.UTC(2026, 10, 1, 3), latest: null });
     expect(overdue.text).toContain('The monthly retention job for 2026-10 was due at 1 November 2026, 03:00 UTC and no run has completed since.');
   });

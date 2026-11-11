@@ -11049,6 +11049,15 @@ secret or cron change: only the version, the docs and the tarballs.
   6. **Erasure and retention.** `uid-erase` deletes the account's name shares of the scope's apps, and each identity's
      name, with every share of it, once the wallet directory sees that identity in no other scope (the issuer's
      `user_emails` rule). The monthly retention job deletes the name shares of apps deleted 30+ days ago.
+  7. **The screens.** Home's front page has a collapsed "Your name" section ("Show my name": the two optional inputs,
+     Save, "Remove my name" after a confirmation, and the apps the name is shared with, each with "Stop sharing"); each
+     app's page has a collapsed name-sharing part ("Share my name with {App}" / "Stop sharing my name"). A share or a
+     stop acts at once, with no confirmation (it can be undone; the sentence after it says tokens already issued keep
+     the name up to an hour); only removing the name asks first. An app's state is the account's share, whichever of its
+     logins made it, so any login can see and stop it. The partner console's Users list and detail have a Name column
+     ("Not shared"); a malformed name drops the row, as a malformed address does. The admin's Users list, detail, wallet
+     users and Support ID lookup matches show names; its search now asks the issuer for at most 50 rows a page (was 100;
+     the screen already sent 50) so one `profileNames` call covers a page.
 - Security: the name is personal data the user typed. It leaves Hana only to an app the user shared it with, and is
   never logged by the API, the CLI or the admin. Every Home read and write is keyed by the verified Home identity or
   the User ID computed from it (root.ts), so a request can't name another user's rows. Names are shown as text only

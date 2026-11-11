@@ -1797,11 +1797,15 @@ mainnet (issue (s)). A body may carry the vault's session proof (a live session 
 request, within 60 s, once), which then also counts per user; a later round can require it, and the wallet directory's
 NEAR record can bind `sender_id` to the session user's own address.
 
-**Replays can't lock a sender out.** A relayed delegate is public on chain, so anyone can re-post it: the relay drops a
-delegate whose hash it relayed in the last 20 minutes (or is relaying) before counting anything, the chain check refuses
-it after that (used nonce), and a refused delegate counts in no daily window; only the sender's minute window (10) and
-the app's and env's minute windows are counted before the chain reads, so a flood of replays delays a victim by at most
-a minute. Naming a victim's existing account in `activate` answers `created: false` and counts nothing of theirs.
+**Replays can't lock a sender out.** A relayed delegate is public on chain, so anyone can re-post it, at any time. The
+relay keeps per sender the highest nonce it has sent (durable, only grows, never expires) and drops any delegate at or
+below it after the local checks, before any chain read or count; a delegate above it carries a fresh signature by the
+sender's key, which no third party can make. So no sender- or user-scoped window is reachable by anyone but the key's
+holder: before the chain reads only the app's and the env's minute windows count, and the sender's and user's daily
+windows count only a delegate that will be sent (given back if it isn't). In `activate`, an account id is public:
+naming a victim's existing account answers `created: false` and counts nothing of theirs; naming a missing one creates
+it for them (counted in their day, which only that creation uses; given back if nothing is created). The app-wide and
+env-wide windows remain shared, a denial for everyone bounded by the budgets, not aimed at one user.
 
 **Limits and the drain bound** (D736). Per IP 30 relays and 10 activations a minute; per sender 100 relays a day
 (sandbox-dev 50); per directory user 200 relays and 2 activations a day; per app 120 a minute and 5000 a day

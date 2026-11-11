@@ -63,8 +63,10 @@ const DAY = 24 * 60 * MINUTE;
 const MIN_BLOCKS_AHEAD = 3n;
 
 const BUDGET_SUBJECT = 'near-relay:budget';
-/** How long a relayed delegate's hash is remembered: past its `max_block_height` (≤ 1000 blocks ahead), after which NEAR refuses it anyway. */
+/** How long a relayed delegate's hash is remembered (concurrent copies only; the sender's nonce floor covers every later copy). */
 const RELAYED_MARK_MS = 20 * MINUTE;
+/** The sender's nonce floor (RateLimiter.floor on `near-relay:sender:<account>`). */
+const NONCE_FLOOR = 'near-relay:nonce';
 const BUDGET_WINDOW = 'near-relay:day';
 
 type Obj = Record<string, unknown>;
@@ -265,6 +267,11 @@ async function knownAccount(env: Env, ctx: Ctx, app: App, config: NearRelayConfi
   return { ok: true, value: `near-relay:user:${found.userId}` };
 }
 
+/** Gives back windows `quota` took at `at` (a request refused or not sent after them). Never throws. */
+async function giveBackWindows(env: Env, windows: Window[], at: number): Promise<void> {
+  await Promise.all(windows.map((w) => limiter(env, w.subject).unhit(w.limits, at))).catch(() => undefined);
+}
+
 interface Window {
   subject: string;
   limits: Limit[];
@@ -272,8 +279,7 @@ interface Window {
 }
 
 /** Asks each window in turn; a refusal by a later one takes the hit back from the earlier ones (D100). Null when all accept. */
-async function quota(env: Env, ctx: Ctx, windows: Window[]): Promise<Response | null> {
-  const now = Date.now();
+async function quota(env: Env, ctx: Ctx, windows: Window[], now: number = Date.now()): Promise<Response | null> {
   const taken: Window[] = [];
   try {
     for (const w of windows) {
@@ -465,19 +471,24 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
     user ??= await userSubject(app.scope_id, proven.value);
   }
 
-  // A delegate already relayed (or being relayed) is dropped before anything aimed at its sender is counted: a signed
-  // delegate is public once on chain, and re-posting it must not use up its sender's quota (review of 2026-11-11).
+  // Freshness for the sender's key before anything is counted or read (review of 2026-11-11): a signed delegate is public
+  // once on chain, so re-posting one must cost its sender nothing. The highest nonce this relay sent for the sender only
+  // grows and never expires; a delegate at or below it is dropped with no chain read. One above it carries a signature
+  // by the sender's key that no third party can make, so only such a delegate reaches a sender-scoped window.
   const hash = hex(await sha256(req.signedDelegate));
+  const senderSubject = `near-relay:sender:${d.senderId}`;
   const marks = `near-relay:relayed:${d.senderId}`;
   try {
+    const floor = BigInt(await limiter(env, senderSubject).floor(NONCE_FLOOR));
+    if (d.nonce <= floor) return done(ctx, 409, { error: 'The delegate nonce is already used', code: 'delegate_nonce_used', accessKeyNonce: floor.toString() });
+    // A copy of a request in flight right now (the hash, for concurrent copies only).
     if (!(await limiter(env, marks).reserve(hash, Date.now(), Date.now()))) return reject(ctx, 409, ALREADY_RELAYED, 'This delegate action was already relayed');
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
-  // Counted before any chain read (M3), with windows no one can aim at a victim to lock them out: the app's and the
-  // env's minute, and the sender's minute (a short delay at worst). A request NEAR then refuses still counts here.
+  // Counted before any chain read (M3), with windows no one can aim at a user: the app's and the env's minute. A
+  // request NEAR then refuses still counts here.
   const pre = await quota(env, ctx, [
-    { subject: `near-relay:sender:${d.senderId}`, limits: [{ name: 'near-relay:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.perSenderPerMinute }], what: 'per account per minute' },
     { subject: `app:${app.id}`, limits: [{ name: 'near-relay:minute', windowMs: MINUTE, max: NEAR_RELAY_LIMITS.perAppPerMinute }], what: 'per app' },
     { subject: 'near-relay:global', limits: [{ name: 'near-relay:minute', windowMs: MINUTE, max: config.relaysPerMinute }], what: 'across the env' },
   ]);
@@ -510,12 +521,14 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
   const unmark = () => limiter(env, marks).release(hash).catch(() => undefined);
-  const q = await quota(env, ctx, [
-    { subject: `near-relay:sender:${d.senderId}`, limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.perSenderPerDay }], what: 'per account' },
+  const daily: Window[] = [
+    { subject: senderSubject, limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.perSenderPerDay }], what: 'per account' },
     ...(user ? [{ subject: user, limits: [{ name: 'near-relay:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.perUserPerDay }], what: 'per user' }] : []),
     { subject: `app:${app.id}`, limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.perAppPerDay }], what: 'per app' },
     { subject: 'near-relay:global', limits: [{ name: 'near-relay:day', windowMs: DAY, max: config.relaysPerDay }], what: 'across the env' },
-  ]);
+  ];
+  const dailyAt = Date.now();
+  const q = await quota(env, ctx, daily, dailyAt);
   if (q) {
     await unmark();
     return q;
@@ -524,7 +537,7 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   const reserved = (innerGas(d) + RELAY_OVERHEAD_GAS) * head.gasPrice;
   const budget = await reserveBudget(env, ctx, app, config, reserved, now);
   if (!budget.ok) {
-    await unmark();
+    await Promise.all([unmark(), giveBackWindows(env, daily, dailyAt)]);
     return budget.response;
   }
   lap(ctx, 'limits');
@@ -532,8 +545,10 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   const maxInFlight = inFlightCapPerKey(config, RELAY_OVERHEAD_GAS, head.gasPrice, keyCount);
   const result = await relayThrough(env, ctx, keyCount, { receiverId: d.senderId, action: { kind: 'delegate', signedDelegate: req.signedDelegate }, maxInFlight }, `delegate:${hash}`);
   lapRelay(ctx, result);
-  // Nothing ran: the client may send the same delegate again.
-  if (!result.ok && NOT_EXECUTED.has(result.code)) await unmark();
+  // Nothing ran: the client may send the same delegate again. Anything else may have used the nonce on chain: it
+  // becomes the sender's floor (only grows), so this delegate and every older one are dropped from now on.
+  if (!result.ok && NOT_EXECUTED.has(result.code)) await Promise.all([unmark(), giveBackWindows(env, daily, dailyAt)]);
+  else await limiter(env, senderSubject).raiseFloor(NONCE_FLOOR, d.nonce.toString()).catch(() => undefined);
   await settleBudget(env, ctx, app, reserved, result, now);
   return relayAnswer(ctx, result, d.senderId);
 }
@@ -581,22 +596,30 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
     // Already there: nothing to send. The key's nonce tells the client what to sign next.
     return done(ctx, 200, { created: false, accountId: req.accountId, accessKeyNonce: key.kind === 'key' ? key.nonce.toString() : null, blockHeight: Number(key.kind === 'key' && key.height > head.height ? key.height : head.height) });
   }
-  const q = await quota(env, ctx, [
+  // The user's day counts only for an account about to be created, and is given back when nothing is created (the
+  // budget refuses, nothing ran, a concurrent copy created it): naming a victim's account can't use it up.
+  const daily: Window[] = [
     ...(user ? [{ subject: user, limits: [{ name: 'near-activate:day', windowMs: DAY, max: NEAR_RELAY_LIMITS.activationsPerUserPerDay }], what: 'per user' }] : []),
     { subject: `app:${app.id}`, limits: [{ name: 'near-activate:day', windowMs: DAY, max: config.activationsPerAppPerDay }], what: 'per app' },
     { subject: 'near-activate:global', limits: [{ name: 'near-activate:day', windowMs: DAY, max: config.activationsPerDay }], what: 'across the env' },
-  ]);
+  ];
+  const dailyAt = Date.now();
+  const q = await quota(env, ctx, daily, dailyAt);
   if (q) return q;
   const now = Date.now();
   const reserved = ACTIVATE_GAS * head.gasPrice + config.activationYocto;
   const budget = await reserveBudget(env, ctx, app, config, reserved, now);
-  if (!budget.ok) return budget.response;
+  if (!budget.ok) {
+    await giveBackWindows(env, daily, dailyAt);
+    return budget.response;
+  }
   lap(ctx, 'limits');
 
   const maxInFlight = inFlightCapPerKey(config, RELAY_OVERHEAD_GAS, head.gasPrice, keyCount);
   const result = await relayThrough(env, ctx, keyCount, { receiverId: req.accountId, action: { kind: 'activate', amount: config.activationYocto }, maxInFlight }, `activate:${req.accountId}`);
   lapRelay(ctx, result);
   await settleBudget(env, ctx, app, reserved, result, now, config.activationYocto);
+  if (!result.ok && (NOT_EXECUTED.has(result.code) || result.code === ALREADY_RELAYED)) await giveBackWindows(env, daily, dailyAt);
   // A concurrent copy of this activation was relayed first (L6): the account exists now, so answer as a repeat does.
   if (!result.ok && result.code === ALREADY_RELAYED) {
     const now2 = await implicitAccountKey(nearRpc(env), req.accountId).catch(() => null);

@@ -321,8 +321,8 @@ describe('POST /v1/near/relay', () => {
     expect(tx.delegate).toEqual({ senderId: s.user.accountId, receiverId: GUESTBOOK, nonce: 101n, maxBlockHeight: 1100n, methods: ['add_message'] });
     const nearKeys = (JSON.parse(env.NEAR_RELAY_KEYS!) as string[]).map((k) => KeyPair.fromString(k as `ed25519:${string}`).getPublicKey().toString());
     expect(nearKeys).toContain(tx.publicKey);
-    // The same signed delegate again: its key object relayed it already (claims, D455).
-    expect((await body(await relay(s.app, plainRelay(signed)))).code).toBe('already_relayed');
+    // The same signed delegate again: at or below the sender's nonce floor, dropped.
+    expect((await body(await relay(s.app, plainRelay(signed)))).code).toBe('delegate_nonce_used');
   });
 
   it('takes the vault too, with the session proof (then also counted per user)', async () => {
@@ -439,7 +439,7 @@ describe('POST /v1/near/relay', () => {
     expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 1001n * 1_000_000n - 1n, maxBlockHeight: 2000n })))).status).toBe(200);
     // A nonce near (height − 10 000) × 10^6, as the core's test-app rule makes them, far above the key's: accepted (no `nonce + 1` assumed).
     reset();
-    expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 999n * 1_000_000n + 7n })))).status).toBe(200);
+    expect((await relay(s.app, plainRelay(delegate(knownUser(s.app.scope), { nonce: 999n * 1_000_000n + 7n })))).status).toBe(200);
   });
 
   it('answers a failed inner call as 422 contract_rejected, a refused delegate as 422 delegate_rejected', async () => {
@@ -451,15 +451,18 @@ describe('POST /v1/near/relay', () => {
     expect([b.code, b.reason, b.status]).toEqual(['delegate_rejected', 'expired', 'failed']);
   });
 
-  it('re-posting a relayed delegate (public once on chain) never touches its sender’s daily count; the next honest relay goes through', async () => {
+  it('re-posting any relayed delegate of a sender, at any later time, counts nothing of the sender’s and reads no chain; the next honest relay goes through', async () => {
     const bindings = relayConfig({ perSenderPerDay: 2 });
-    const once = plainRelay(delegate(s.user, { nonce: 101n }));
-    expect((await relay(s.app, once, bindings)).status).toBe(200);
-    // While the key's nonce hasn't moved on yet (the hash is remembered), and after it has (the nonce check): refused, uncounted.
-    for (let i = 0; i < 5; i++) expect((await body(await relay(s.app, once, bindings))).code).toBe('already_relayed');
-    s.near.akNonce.set(s.user.keyPair.getPublicKey().toString(), 101n);
-    const other = plainRelay(delegate(s.user, { nonce: 101n, maxBlockHeight: 1101n }));
-    for (let i = 0; i < 3; i++) expect((await body(await relay(s.app, other, bindings))).code).toBe('delegate_nonce_used');
+    const first = delegate(s.user, { nonce: 101n });
+    expect((await relay(s.app, plainRelay(first), bindings)).status).toBe(200);
+    // Past the 20-minute hash mark (dropped here as if expired): the nonce floor, which never expires, still drops it.
+    await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`near-relay:relayed:${s.user.accountId}`)).release(hex(new Uint8Array(createHash('sha256').update(first).digest())));
+    const reads = s.near.rpcMethods.length;
+    for (let i = 0; i < 20; i++) expect((await body(await relay(s.app, plainRelay(first), bindings))).code).toBe('delegate_nonce_used');
+    // An older delegate of the sender (a lower nonce, another expiry): dropped the same way.
+    for (let i = 0; i < 5; i++) expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 100n, maxBlockHeight: 1050n })), bindings))).code).toBe('delegate_nonce_used');
+    expect(s.near.rpcMethods.length).toBe(reads);
+    // The sender's day still has its second relay: the honest next one goes through, the third is refused.
     expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 102n })), bindings)).status).toBe(200);
     expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: 103n })), bindings))).error).toBe('Rate limit exceeded (per account)');
   });
@@ -468,12 +471,6 @@ describe('POST /v1/near/relay', () => {
     const bindings = relayConfig({ perSenderPerDay: 1 });
     for (let i = 0; i < 3; i++) expect((await body(await relay(s.app, plainRelay(delegate(s.user, { nonce: BigInt(200 + i), maxBlockHeight: 1001n })), bindings))).code).toBe('delegate_expired');
     expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 300n })), bindings)).status).toBe(200);
-  });
-
-  it('per sender: 10 requests a minute before the chain reads (a short delay at worst)', async () => {
-    let n = 0;
-    for (; n < 11; n++) if ((await relay(s.app, plainRelay(delegate(s.user, { nonce: BigInt(400 + n), maxBlockHeight: 1001n })))).status === 429) break;
-    expect(n).toBe(10);
   });
 
   it('counts per sender per day (manifest perSenderPerDay)', async () => {
@@ -570,6 +567,20 @@ describe('POST /v1/near/activate', () => {
     const again = await body(await activate(s.app, { accountId: s.user.accountId, network: 'testnet' }));
     expect([again.created, again.accessKeyNonce, again.blockHeight]).toEqual([false, '100', 1000]);
     expect(s.near.nearSent.length).toBe(1);
+  });
+
+  it('an activation refused by the budget gives the user’s day back (no account created, nothing of the user’s used)', async () => {
+    const victim = 'hu_budget_victim';
+    for (let i = 0; i < 3; i++) {
+      const u = knownUser(s.app.scope, victim);
+      s.near.missingAccounts.add(u.accountId);
+      expect((await body(await activate(s.app, { accountId: u.accountId }, relayConfig({ dailyBudgetNear: 1, appDailyBudgetNear: 0.000001 })))).code).toBe('app_budget_exhausted');
+    }
+    for (let i = 0; i < 2; i++) {
+      const u = knownUser(s.app.scope, victim);
+      s.near.missingAccounts.add(u.accountId);
+      expect((await body(await activate(s.app, { accountId: u.accountId }))).created).toBe(true);
+    }
   });
 
   it('naming a victim’s existing account answers created: false and never uses up the victim’s daily activations', async () => {

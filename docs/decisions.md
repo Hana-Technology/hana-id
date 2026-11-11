@@ -11241,7 +11241,10 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   block is cached a second. Per directory user: 2 activations and 200 relays a day. Amended after the next review the
   same day: a counter aimed at the sender (its day, the user's day) counts only a delegate that passed the nonce, expiry
   and already-relayed checks; before the chain reads only the sender's minute (10), the app's and the env's minute; a
-  delegate's hash is remembered 20 minutes (refused `already_relayed` before any count), forgotten if nothing ran. A concurrent copy of one activation
+  delegate's hash is remembered 20 minutes (refused `already_relayed` before any count), forgotten if nothing ran.
+  Amended again (the review after): no sender-scoped window before the delegate is known fresh: a durable per-sender
+  nonce floor (the highest nonce sent; only grows) drops anything at or below it with no chain read; the sender's
+  minute window is gone; the daily windows are given back when nothing is sent or created. A concurrent copy of one activation
   answers `created: false`. The key-in-a-pool check compares public keys; the relay account is never `RELAYER_ACCOUNT`
   or `SIGNER_ACCOUNT`.
 - Address impact: none.

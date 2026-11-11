@@ -1056,15 +1056,19 @@ user, `near-relay:user:<user id>`, the default; or a session proof's account roo
 sha256(scope#provider#sub), hex>`); per app 120 a minute and `near.relay.perAppPerDay` (default 5000) a day for relays,
 `near.relay.activationsPerAppPerDay` (default 200) activations a day (`app:<id>`, windows `near-relay:*`,
 `near-activate:day`); across the env `near.relay.relaysPerMinute` (300) relays a minute, `near.relay.relaysPerDay` (20000)
-relays and `near.relay.activationsPerDay` (1000) activations a day (`near-relay:global`, `near-activate:global`). Counted
-before any chain read (M3), only with windows no one can aim at a victim: the sender's minute (10 requests: a short
-delay at worst), the app's and the env's minute for a relay; 60 activation requests a minute per app and 300 across the
-env, "already exists" answers included. A delegate whose hash was relayed in the last 20 minutes (or is being relayed)
-is refused `409 already_relayed` before anything is counted (a signed delegate is public once on chain); one the chain
-checks refuse (used nonce, expired) counts in no daily window. The daily windows (sender, user, app, env) count only a
-delegate that passed every check, right before the budget and the relay; a later refusal gives the earlier ones back,
-and a relay that didn't execute forgets its hash so the client can resend. An activation of an existing account answers
-`created: false` without counting the user's daily activations. The head block is cached for a second per isolate. Each per-app cap must be below the env's (the schema
+relays and `near.relay.activationsPerDay` (1000) activations a day (`near-relay:global`, `near-activate:global`). Nothing
+scoped to a sender or a user is reachable by a third party (a signed delegate is public once on chain; an account id is
+public): the relay keeps, per sender, the highest delegate nonce it has sent (`RateLimiter.floor` on
+`near-relay:sender:<account>`, durable, only grows, never expires), and a delegate at or below it is refused `409
+delegate_nonce_used` right after the local checks (decode, policy, signature), with no chain read and no count. A nonce
+above it needs a fresh signature by the sender's key, which only the key's holder can make. A copy of a request in
+flight is `409 already_relayed` (the hash, remembered 20 minutes, for concurrent copies only). Before the chain reads
+only windows no one can aim at a user count (M3): the app's and the env's minute; for activate 60 requests a minute per
+app and 300 across the env, "already exists" answers included. The daily windows (sender, user, app, env) count only a
+delegate that passed every check, right before the budget and the relay; a later refusal, or a relay that didn't run,
+gives them back (and forgets the hash); anything else raises the sender's floor to the delegate's nonce. An activation
+of an existing account answers `created: false` and counts nothing of the user's; the user's day counts only for an
+account about to be created, and comes back when nothing is created. The head block is cached for a second per isolate. Each per-app cap must be below the env's (the schema
 and the parser refuse otherwise), so one leaked publishable key can't use up the env's day. The NEAR budgets: `near.relay.appDailyBudgetNear` (default 1, or a fifth of the env's if less; below it) per app
 (`app:<id>`, window `near-relay:day`), then `near.relay.dailyBudgetNear` (default 5) a UTC day across the env
 (`near-relay:budget`, `RateLimiter.spend`; a refusal by the env's gives the app's back); a relay reserves `(inner gas + 5 Tgas) × gas price`, an activation

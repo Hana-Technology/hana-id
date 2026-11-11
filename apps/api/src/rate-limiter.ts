@@ -321,6 +321,19 @@ export class RateLimiter extends DurableObject<Env> {
     kv.put(key, (next > 0n ? next : 0n).toString());
   }
 
+  /**
+   * A value that only grows (the highest delegate nonce the NEAR relay sent for one sender, D736): stored durably, never
+   * expires. Decimal strings (u64). `floor` reads it ('0' when none), `raiseFloor` keeps the larger.
+   */
+  floor(name: string): string {
+    return this.ctx.storage.kv.get<string>(`floor:${name}`) ?? '0';
+  }
+
+  raiseFloor(name: string, value: string): void {
+    const kv = this.ctx.storage.kv;
+    if (BigInt(value) > BigInt(kv.get<string>(`floor:${name}`) ?? '0')) kv.put(`floor:${name}`, value);
+  }
+
   /** Drops a marker (a reservation whose relay definitely did not execute). */
   release(key: string): void {
     this.ctx.storage.kv.delete(`mark:${key}`);

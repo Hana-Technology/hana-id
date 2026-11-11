@@ -159,6 +159,16 @@ describe('decodeSignedDelegate (strict borsh)', () => {
       expect(d.ok && d.value.otherAction, name).toEqual({ index: 1, name });
       expect(d.ok && policyRefusal(d.value, { receivers: [GUESTBOOK], maxGas: 100n * TGAS }), name).toEqual({ code: 'action_not_allowed', index: 1, action: name });
     }
+    // Tags @near-js can't build into a delegate: a nested Delegate (8), the global contract actions (9, 10), and any
+    // later or unknown tag; NEAR's own encoder would refuse a nested delegate, a forged byte stream must be refused too.
+    const raw = (tag: number) => {
+      const s = (x: string) => [...new Uint8Array(new Uint32Array([x.length]).buffer), ...new TextEncoder().encode(x)];
+      return Uint8Array.from([...s(user.accountId), ...s(GUESTBOOK), 1, 0, 0, 0, tag, 0, 0, 0, 0]);
+    };
+    for (const [tag, name] of [[8, 'Delegate'], [9, 'DeployGlobalContract'], [10, 'UseGlobalContract'], [11, 'DeterministicStateInit'], [42, 'action 42']] as const) {
+      const d = decodeSignedDelegate(raw(tag));
+      expect(d.ok && policyRefusal(d.value, { receivers: [GUESTBOOK], maxGas: 100n * TGAS }), name).toEqual({ code: 'action_not_allowed', index: 0, action: name });
+    }
   });
 });
 
@@ -301,7 +311,7 @@ describe('POST /v1/near/relay', () => {
     expect(res.headers.get('access-control-allow-origin')).toBe(ORIGIN);
     expect(b.transactionHash).toMatch(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/u);
     const tx = s.near.nearSent.at(-1)!;
-    expect([tx.hash, tx.signerId, tx.receiverId, tx.kind]).toEqual([b.transactionHash, RELAY_ACCOUNT, s.user.accountId, 'delegate']);
+    expect([tx.hash, tx.signerId, tx.receiverId, tx.kind, tx.actionCount]).toEqual([b.transactionHash, RELAY_ACCOUNT, s.user.accountId, 'delegate', 1]);
     expect(tx.delegate).toEqual({ senderId: s.user.accountId, receiverId: GUESTBOOK, nonce: 101n, maxBlockHeight: 1100n, methods: ['add_message'] });
     const nearKeys = (JSON.parse(env.NEAR_RELAY_KEYS!) as string[]).map((k) => KeyPair.fromString(k as `ed25519:${string}`).getPublicKey().toString());
     expect(nearKeys).toContain(tx.publicKey);
@@ -361,6 +371,13 @@ describe('POST /v1/near/relay', () => {
     const cases: [Uint8Array, string, Record<string, unknown>][] = [
       [new Uint8Array([1, 2, 3]), 'bad_delegate', { reason: 'truncated' }],
       [delegate(s.user, { actions: [actionCreators.transfer(10n ** 24n)] }), 'action_not_allowed', { action: 'Transfer', index: 0 }],
+      [delegate(s.user, { actions: [actionCreators.transfer(0n)] }), 'action_not_allowed', { action: 'Transfer', index: 0 }],
+      [delegate(s.user, { actions: [actionCreators.stake(1n, KeyPair.fromRandom('ed25519').getPublicKey())] }), 'action_not_allowed', { action: 'Stake', index: 0 }],
+      [delegate(s.user, { actions: [actionCreators.addKey(KeyPair.fromRandom('ed25519').getPublicKey(), actionCreators.fullAccessKey())] }), 'action_not_allowed', { action: 'AddKey', index: 0 }],
+      [delegate(s.user, { actions: [actionCreators.deleteKey(KeyPair.fromRandom('ed25519').getPublicKey())] }), 'action_not_allowed', { action: 'DeleteKey', index: 0 }],
+      [delegate(s.user, { actions: [actionCreators.deleteAccount('attacker.test.near')] }), 'action_not_allowed', { action: 'DeleteAccount', index: 0 }],
+      [delegate(s.user, { actions: [actionCreators.deployContract(new Uint8Array([0, 97, 115, 109]))] }), 'action_not_allowed', { action: 'DeployContract', index: 0 }],
+      [delegate(s.user, { actions: [call_(), call_('add_message', 10n, 1n)] }), 'deposit_not_allowed', { index: 1 }],
       [delegate(s.user, { actions: [call_('add_message', 30n, 1n)] }), 'deposit_not_allowed', { index: 0 }],
       [delegate(s.user, { receiverId: 'signer.test.near' }), 'receiver_not_allowed', { receiverId: 'signer.test.near' }],
       [delegate(s.user, { actions: [call_('add_message', 51n)] }), 'gas_too_high', { maxGas: (50n * TGAS).toString() }],
@@ -409,6 +426,9 @@ describe('POST /v1/near/relay', () => {
     // At the bounds: 1000 blocks ahead of the head, nonce just below (height + 1) × 10^6.
     reset();
     expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 1001n * 1_000_000n - 1n, maxBlockHeight: 2000n })))).status).toBe(200);
+    // A nonce near (height − 10 000) × 10^6, as the core's test-app rule makes them, far above the key's: accepted (no `nonce + 1` assumed).
+    reset();
+    expect((await relay(s.app, plainRelay(delegate(s.user, { nonce: 999n * 1_000_000n + 7n })))).status).toBe(200);
   });
 
   it('answers a failed inner call as 422 contract_rejected, a refused delegate as 422 delegate_rejected', async () => {
@@ -455,10 +475,11 @@ describe('POST /v1/near/relay', () => {
   it('only for a NEAR account the directory holds for a user of the app’s scope (requireKnownAccount, the default)', async () => {
     const stranger = newUser();
     let res = await relay(s.app, plainRelay(delegate(stranger)));
-    expect([res.status, (await body(res)).code, res.headers.get('retry-after')]).toEqual([409, 'near_account_unknown', null]);
+    const unknownBody = await body(res);
+    expect([res.status, unknownBody.code, unknownBody.retryable, res.headers.get('retry-after')]).toEqual([409, 'near_account_unrecorded', true, '2']);
     // Known in another scope only: still unknown here.
     const elsewhere = knownUser('another-scope');
-    expect((await body(await relay(s.app, plainRelay(delegate(elsewhere))))).code).toBe('near_account_unknown');
+    expect((await body(await relay(s.app, plainRelay(delegate(elsewhere))))).code).toBe('near_account_unrecorded');
     // With the setting off (testnet only), the limits alone apply.
     res = await relay(s.app, plainRelay(delegate(stranger)), relayConfig({ requireKnownAccount: false }));
     expect(res.status).toBe(200);
@@ -509,7 +530,7 @@ describe('POST /v1/near/activate', () => {
     expect([res.status, b.created, b.accountId, typeof b.transactionHash, b.accessKeyNonce]).toEqual([200, true, s.user.accountId, 'string', '100']);
     expect(res.headers.get('access-control-allow-origin')).toBe(ORIGIN);
     const tx = s.near.nearSent.at(-1)!;
-    expect([tx.kind, tx.signerId, tx.receiverId, tx.amount]).toEqual(['transfer', RELAY_ACCOUNT, s.user.accountId, 0n]);
+    expect([tx.kind, tx.signerId, tx.receiverId, tx.amount, tx.actionCount]).toEqual(['transfer', RELAY_ACCOUNT, s.user.accountId, 0n, 1]);
     const again = await body(await activate(s.app, { accountId: s.user.accountId, network: 'testnet' }));
     expect([again.created, again.accessKeyNonce, again.blockHeight]).toEqual([false, '100', 1000]);
     expect(s.near.nearSent.length).toBe(1);
@@ -560,10 +581,12 @@ describe('POST /v1/near/activate', () => {
     expect(last).toBe(429);
   });
 
-  it('an account the directory doesn’t hold yet: 409 near_account_unknown, retryable (retry-after: 2), nothing sent', async () => {
+  it('an account the directory doesn’t hold yet: 409 near_account_unrecorded, retryable (retry-after: 2), nothing sent; a failed read 503', async () => {
     const res = await activate(s.app, { accountId: newUser().accountId });
     const b = await body(res);
-    expect([res.status, b.code, b.retryable, res.headers.get('retry-after')]).toEqual([409, 'near_account_unknown', true, '2']);
+    expect([res.status, b.code, b.retryable, res.headers.get('retry-after')]).toEqual([409, 'near_account_unrecorded', true, '2']);
+    nearDirectory.lookup = () => Promise.reject(new Error('D1 down'));
+    expect((await body(await activate(s.app, { accountId: s.user.accountId }))).code).toBe('directory_unavailable');
     expect(s.near.nearSent.length).toBe(0);
   });
 

@@ -30,6 +30,8 @@ export interface SentNearTx {
   receiverId: string;
   nonce: bigint;
   kind: 'delegate' | 'transfer';
+  /** How many actions the outer transaction carries (the relay's: exactly one). */
+  actionCount: number;
   /** The delegate action as @near-js decodes it (delegate only). */
   delegate?: { senderId: string; receiverId: string; nonce: bigint; maxBlockHeight: bigint; methods: string[] };
   /** Transfer only: the amount, yocto. */
@@ -280,6 +282,7 @@ export class NearMock {
       receiverId: t.receiverId,
       nonce,
       kind: sd ? 'delegate' : 'transfer',
+      actionCount: t.actions.length,
       ...(sd
         ? { delegate: { senderId: sd.delegateAction.senderId, receiverId: sd.delegateAction.receiverId, nonce: BigInt(sd.delegateAction.nonce), maxBlockHeight: BigInt(sd.delegateAction.maxBlockHeight), methods: sd.delegateAction.actions.map((x) => x.functionCall?.methodName ?? '?') } }
         : { amount: BigInt((a.transfer as unknown as { deposit: bigint }).deposit) }),

@@ -1746,7 +1746,7 @@ decoder consumes all of them), never a re-encoding.
 `near.relay.requireKnownAccount` (the default) both routes act only for a NEAR account the wallet directory holds for
 a user of the app's scope, recorded by the vault at login with a proof signed by that NEAR key (the
 `feat/near-directory` build): an unforgeable per-user fact that needs no credential from the SDK, so made-up keys get
-`409 near_account_unknown` and spend nothing, and every limit can count per directory user. Until that build merges the
+`409 near_account_unrecorded` and spend nothing, and every limit can count per directory user. Until that build merges the
 lookup finds nothing, so sandbox-dev runs with `requireKnownAccount: false` for the demo, and then the paragraph below
 is what holds; the setting goes to `true` with the merge. `false` is refused by the schema off testnet.
 

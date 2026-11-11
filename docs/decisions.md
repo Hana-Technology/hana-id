@@ -10357,7 +10357,7 @@ Built on `feat/hana-home-h9` (from `develop` with H7 and H8), not merged, not de
 ### D610. "Last used" comes from the share's idle limit; no new column
 - Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **confirmed by the user 2026-11-10** · Built: `home/devices.ts` (`lastUsedAt`)
 - Decision: an unlock or an approved signature's touch sets `idle_until` to that moment plus the app's idle limit, so the last use is `idle_until − idle_ttl_ms` (never before sign-in). Where the slide was cut short by the share's end, it can't be told and the page shows no "Last used". An auto-signature doesn't touch (D539), so it is the last time the user was there, not the last signature. A changed idle limit shifts the estimate until the next use.
-- Options: (a) this, no migration; (b) migration 0019 adding `vault_shares.last_used_at`, written by every unlock and touch (exact; one more column in the hot path and a deploy order). **Recommendation: (a)**; (b) if exact times are wanted.
+- Options: (a) this, no migration; (b) migration 0020 adding `vault_shares.last_used_at`, written by every unlock and touch (exact; one more column in the hot path and a deploy order). **Recommendation: (a)**; (b) if exact times are wanted.
 - Address impact: none.
 
 ### D611. The vault labels a device by browser and system family only
@@ -11120,7 +11120,7 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
 - Amended the same day after the security review: with `near.relay.requireKnownAccount` (default true) both routes
   act only for a NEAR account the wallet directory holds for a user of the app's scope (the `feat/near-directory`
   build records it at login, signed by the NEAR key), through one seam, `nearAccountKnown`; an unknown account is
-  `409 near_account_unknown` (activate: `retryable`, `retry-after: 2`, since the record can lag the login); per-user
+  `409 near_account_unrecorded` (activate: `retryable`, `retry-after: 2`, since the record can lag the login); per-user
   limits key on the directory's user. `false` is testnet only (the schema); sandbox-dev runs `false` until the
   directory build merges, then `true`. The session proof stays an optional extra.
 - Rejected for this round: requiring the session proof (the SDK built in parallel calls from the partner page, D720–D729);
@@ -11129,7 +11129,7 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
 
 ### D736. Limits and a daily NEAR budget, in the RateLimiter objects; two security event kinds (proposed)
 - Date 2026-11-11 · Status: as D730 · Built: `relay.ts` (`quota`, `reserveBudget`, `settleBudget`), `relay-funds.ts`,
-  migration 0019, `console-core` `SECURITY_EVENT_KINDS`
+  migration 0020, `console-core` `SECURITY_EVENT_KINDS`
 - Decision: per IP 30 relays / 10 activations a minute (the app gate's window); per sender `perSenderPerDay` (100;
   sandbox-dev 50); with a session proof, per user 200 relays and 5 activations a day; per app 120 a minute and
   `perAppPerDay` (5000; sandbox-dev 2000) and `activationsPerAppPerDay` (200) a day; across the env `relaysPerDay`
@@ -11139,7 +11139,7 @@ Shared interface: the NEAR builds' spec (core D720–D729, relayer D730–D739, 
   amount counter (`RateLimiter.spend`): a relay reserves (inner gas + 5 Tgas) × gas price, an activation 100 Tgas × gas
   price + its amount, then gives back the difference to what burnt (all of it when nothing executed). Past 80%:
   `near_relay_budget_high` (one a day); hourly, the account below `lowBalanceNear` (2) or missing:
-  `near_relay_balance_low`. No D1 counter; 0019 only adds the two kinds. Not in the app's relay quota or the usage
+  `near_relay_balance_low`. No D1 counter; 0020 only adds the two kinds. Not in the app's relay quota or the usage
   ledger (not billed).
 - Address impact: none.
 

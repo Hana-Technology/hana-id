@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { type Action, actionCreators, buildDelegateAction, encodeDelegateAction, encodeSignedDelegate, Signature, SignedDelegate } from '@near-js/transactions';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ACTIVATE_GAS, decodeSignedDelegate, encodeRelayTransaction, encodeSignedTransaction, innerGas, nearPublicKeyString, policyRefusal, RELAY_OVERHEAD_GAS, type RelayAction, verifyDelegateSignature } from '../src/near/delegate.ts';
-import { failedExecutor, failureText } from '../src/near/tx.ts';
+import { burntGas, failedExecutor, failureText } from '../src/near/tx.ts';
 import { accessKeyState, headBlock, implicitAccountKey } from '../src/near/relay-chain.ts';
 import type { FinalOutcome } from '../src/near/rpc.ts';
 import {
@@ -129,6 +129,8 @@ describe.skipIf(!bin)('NEAR meta transactions on near-sandbox (D731)', () => {
     expect(relayCost).toBeLessThan((innerGas(d) + RELAY_OVERHEAD_GAS) * block.gasPrice);
     expect(activationCost).toBeLessThan(ACTIVATE_GAS * block.gasPrice);
     expect(activationCost).toBeGreaterThan(relayCost);
+    // The relayer's balance moved by gas only: exactly what the transaction and its receipts burnt, no deposit.
+    expect(relayCost).toBe(burntGas(out)!.tokensBurnt);
     // Recorded for the docs (operations.md "NEAR relay"): what an activation and a relay cost on this node.
     console.info(JSON.stringify({ activationCostYocto: activationCost.toString(), relayCostYocto: relayCost.toString(), gasPrice: block.gasPrice.toString() }));
   }, 120_000);

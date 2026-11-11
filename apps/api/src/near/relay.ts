@@ -215,13 +215,16 @@ async function provenUser(env: Env, ctx: Ctx, app: App, proof: SessionProof, pay
 /**
  * The directory's user for a NEAR account in a scope, or null when it holds none. The seam both routes call: the
  * wallet directory's NEAR record (the `feat/near-directory` build: the vault records each user's NEAR account at
- * login with a proof signed by the NEAR key, as `/v1/wallets/record` does for Stellar and EVM). Until that build
- * lands, the default reads `end_user_wallets` rows of chain `near` (which migration 0011's CHECK can't hold yet, so it
- * finds none); the merge wires the directory's real table. Tests replace `nearDirectory.lookup`.
+ * login with a proof signed by the NEAR key, as `/v1/wallets/record` does for Stellar and EVM, in `end_user_wallets`
+ * with chain `near`, its migration 0019). The default reads exactly what that build's
+ * `nearAccountUser(db, scopeId, accountId)` (`directory/near.ts`) reads; at the merge it can call it instead. Before
+ * that migration the CHECK holds no `near` row, so it finds none. A failed read throws. Tests replace
+ * `nearDirectory.lookup`.
  */
 export type NearAccountLookup = (db: D1Database, q: { scopeId: string; accountId: string }) => Promise<{ userId: string } | null>;
 
 export const defaultNearAccountLookup: NearAccountLookup = async (db, { scopeId, accountId }) => {
+  if (!IMPLICIT_ACCOUNT_RE.test(accountId)) return null;
   const row = await db
     .prepare("SELECT w.user_id AS user_id FROM end_user_wallets w JOIN end_users u ON u.user_id = w.user_id WHERE w.chain = 'near' AND w.address = ?1 AND u.scope_id = ?2 LIMIT 1")
     .bind(accountId, scopeId)
@@ -237,11 +240,13 @@ export async function nearAccountKnown(db: D1Database, q: { scopeId: string; acc
 }
 
 /**
- * With `near.relay.requireKnownAccount` (the default): the account must be a directory user's of the app's scope
- * (`409 near_account_unknown`; for an activation also `retry-after: 2` and `retryable: true`, since the vault's wallet
- * record can land a moment after the login). The value is the user's limiter subject, or null with the setting off.
+ * With `near.relay.requireKnownAccount` (the default): the account must be a directory user's of the app's scope:
+ * `409 near_account_unrecorded`, retryable (`retryable: true`, `retry-after: 2`) on both routes, since the vault's
+ * background wallet record usually lands within a second of the login and can lag up to 15 s (the client retries for
+ * about 20 s). A failed read is `503 directory_unavailable`, never "unknown". The value is the user's limiter subject,
+ * or null with the setting off.
  */
-async function knownAccount(env: Env, ctx: Ctx, app: App, config: NearRelayConfig, accountId: string, activation: boolean): Promise<Step<string | null>> {
+async function knownAccount(env: Env, ctx: Ctx, app: App, config: NearRelayConfig, accountId: string): Promise<Step<string | null>> {
   if (!config.requireKnownAccount) return { ok: true, value: null };
   let found: { userId: string } | null;
   try {
@@ -251,8 +256,7 @@ async function knownAccount(env: Env, ctx: Ctx, app: App, config: NearRelayConfi
   }
   lap(ctx, 'directory');
   if (!found) {
-    const error = 'This NEAR account is not a Hana wallet of this app’s users (yet): sign in first';
-    return { ok: false, response: activation ? done(ctx, 409, { error, code: 'near_account_unknown', retryable: true }, { 'retry-after': '2' }) : done(ctx, 409, { error, code: 'near_account_unknown' }) };
+    return { ok: false, response: done(ctx, 409, { error: 'This NEAR account is not recorded for a user of this app (yet): sign in, then retry', code: 'near_account_unrecorded', retryable: true }, { 'retry-after': '2' }) };
   }
   return { ok: true, value: `near-relay:user:${found.userId}` };
 }
@@ -415,7 +419,7 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   if (refused) return refused;
   if (!(await verifyDelegateSignature(d))) return reject(ctx, 400, 'bad_delegate_signature', "The delegate action's signature does not verify");
   lap(ctx, 'checks');
-  const known = await knownAccount(env, ctx, app, config, d.senderId, false);
+  const known = await knownAccount(env, ctx, app, config, d.senderId);
   if (!known.ok) return known.response;
   let user: string | null = known.value;
   if (req.proof) {
@@ -485,7 +489,7 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
   if (!req) return reject(ctx, 400, 'bad_request', 'Not a NEAR activation request');
   const net = networkRefusal(ctx, req.network);
   if (net) return net;
-  const known = await knownAccount(env, ctx, app, config, req.accountId, true);
+  const known = await knownAccount(env, ctx, app, config, req.accountId);
   if (!known.ok) return known.response;
   let user: string | null = known.value;
   if (req.proof) {

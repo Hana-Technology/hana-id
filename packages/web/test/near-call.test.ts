@@ -3,7 +3,7 @@
 import { identityKeyHex } from '@hana-id/core';
 import { describe, expect, it, vi } from 'vitest';
 import { nearReader } from '../src/auth/near-rpc.ts';
-import { isPendingTxError, nearCall, nearEndpoints } from '../src/near-call.ts';
+import { independentEndpoints, isPendingTxError, nearCall, nearEndpoints } from '../src/near-call.ts';
 import { confirmPath } from '../src/path-check.ts';
 import { NearView } from '../src/vault/near.ts';
 
@@ -187,4 +187,20 @@ describe('D263 confirmation over the real readers: the two providers are read at
       expect(elapsed).toBeLessThan(200 + 150);
     });
   }
+});
+
+describe('independentEndpoints: the same endpoint spelled two ways is one provider', () => {
+  it.each([
+    ['https://rpc.primary.test', 'https://rpc.primary.test/'], 
+    ['https://rpc.primary.test', 'https://RPC.primary.test'], 
+    ['https://rpc.primary.test:443', 'https://rpc.primary.test'], 
+  ])('%s and %s', (rpc, rpcFallback) => {
+    expect(independentEndpoints({ rpc, rpcFallback })).toBeNull();
+  });
+
+  it('two providers are two; a fallback that is not a URL counts as none', () => {
+    expect(independentEndpoints(ENDS)).toEqual([PRIMARY, FALLBACK]);
+    expect(independentEndpoints({ rpc: PRIMARY, rpcFallback: 'not a url' })).toBeNull();
+    expect(independentEndpoints({ rpc: PRIMARY })).toBeNull();
+  });
 });

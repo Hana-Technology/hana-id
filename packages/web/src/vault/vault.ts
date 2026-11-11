@@ -112,6 +112,7 @@ import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, 
 import { type IssuerApi, issuerApi } from './issuer.ts';
 import type { GoogleEmailFlow } from '../auth/google.ts';
 import { NearView } from './near.ts';
+import { isLoopbackHost } from '../client/urls.ts';
 import {
   type ConsentV1,
   DERIVATION_VERSION,
@@ -344,6 +345,19 @@ class PersistFailure extends Error {
     super(reason);
   }
 }
+
+/**
+ * A local env for the NEAR provider rule: a `local*` name AND a loopback vault origin. A name alone could be given to a
+ * deployed env; a loopback vault origin can't serve anyone else's users.
+ */
+export const nearLocalEnv = (env: Pick<HanaEnv, 'name' | 'vaultOrigin'>): boolean => {
+  if (!env.name.startsWith('local')) return false;
+  try {
+    return isLoopbackHost(new URL(env.vaultOrigin).hostname);
+  } catch {
+    return false;
+  }
+};
 
 /** A test app's NEAR delegate action must expire within this many blocks of testnet's height (D726; core's rule). */
 export { NEAR_DELEGATE_MAX_BLOCKS } from '@hana-id/core';
@@ -3119,12 +3133,12 @@ export class Vault {
   }
 
   /**
-   * A test app's NEAR checks trust no single RPC (D729): outside local* envs the env must have a second, independent
-   * provider (`rpcFallback`; sandbox-dev's is rpc.testnet.near.org beside fastnear), else the request fails closed with
-   * `api_unavailable`, reason `near_rpc_single_provider`.
+   * A test app's NEAR checks trust no single RPC (D729): outside a local env (nearLocalEnv) the env must have a second,
+   * independent provider (`rpcFallback`; sandbox-dev's is rpc.testnet.near.org beside fastnear), else the request fails
+   * closed with `api_unavailable`, reason `near_rpc_single_provider`.
    */
   private requireIndependentNear(): void {
-    if (this.env.name.startsWith('local') || this.near!.independentProviders()) return;
+    if (nearLocalEnv(this.env) || this.near!.independentProviders()) return;
     throw new VaultError('api_unavailable', 'This Hana environment has one NEAR provider, so it can’t check a test app’s NEAR request', { reason: 'near_rpc_single_provider' });
   }
 

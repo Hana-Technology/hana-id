@@ -26,7 +26,7 @@ import {
   verifyWalletRecordSession,
 } from '@hana-id/core';
 import { NEAR_RECORD_CONFLICT_DEFER_MS, NEAR_RECORD_DEFER_MS, nearRecordedKey, openRecordStore, recordKey } from '../../src/vault/record.ts';
-import { NEAR_DELEGATE_MAX_BLOCKS } from '../../src/vault/vault.ts';
+import { NEAR_DELEGATE_MAX_BLOCKS, nearLocalEnv } from '../../src/vault/vault.ts';
 import { NEAR_RELAYED_DELEGATE_RULE } from '../../src/vault/signing.ts';
 import { APP_ID, Browser, ENV, type Google, RPC_FALLBACK, SCOPE, type Tab, answer, google, login, makeConfig, openApproval, readyTab, waitLauncher } from './harness.ts';
 
@@ -286,6 +286,18 @@ describe('near_signDelegateAction', () => {
     const da = encodeNearDelegateAction({ senderId: s.addresses.near, receiverId: s.addresses.near, actions: [addKey], nonce: 1n, maxBlockHeight: 2n, publicKey: key(s.addresses.near) });
     const { reply } = await approved(s, 'near_signDelegateAction', { network: 'mainnet', delegateAction: base64Encode(da) });
     expect(reply.error).toBeUndefined();
+  });
+
+  it('a local* name alone doesn’t lift the two-provider rule: its vault origin must be loopback too', async () => {
+    expect(nearLocalEnv({ name: 'local-dev', vaultOrigin: 'http://localhost:8787' })).toBe(true);
+    expect(nearLocalEnv({ name: 'local-dev', vaultOrigin: 'http://127.0.0.1:8787' })).toBe(true);
+    expect(nearLocalEnv({ name: 'local-dev', vaultOrigin: 'https://vault.example' })).toBe(false);
+    expect(nearLocalEnv({ name: 'sandbox-dev', vaultOrigin: 'http://localhost:8787' })).toBe(false);
+    expect(nearLocalEnv({ name: 'local-dev', vaultOrigin: 'not a url' })).toBe(false);
+    // A deployed vault whose env is named local*: still fails closed with one provider.
+    const s = await session({ env: { ...ENV, name: 'local-test' } });
+    withKey(s);
+    expect((await s.t.request('near_signDelegateAction', { network: 'testnet', delegateAction: base64Encode(delegateBytes(s)) })).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'near_rpc_single_provider' } });
   });
 
   it('a test app in an env with one NEAR provider fails closed (near_rpc_single_provider)', async () => {

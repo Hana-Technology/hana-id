@@ -696,7 +696,8 @@ describe('expiry', () => {
     browser.timers.advance(12 * HOUR);
     expect(await first.waitEvent('sessionExpired')).toBeNull();
     expect(prk.every((b) => b === 0)).toBe(true);
-    await sleepReal(30);
+    // The delete runs under the lock, after the event: wait for it, not for a guessed time.
+    await until(async () => (await stored(browser)) === undefined, 'the record deleted');
     expect(await stored(browser)).toBeUndefined();
   });
 });

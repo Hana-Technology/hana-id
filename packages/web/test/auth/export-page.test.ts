@@ -847,8 +847,10 @@ describe('/export', () => {
     });
 
     it('never outlives the session: a session ending in 2 min ends the export at 2 min', async () => {
-      const r = await toConfirm({ sessionExpiresAtMs: Date.now() + 2 * 60_000 });
-      vi.advanceTimersByTime(2 * 60_000 - 1_000);
+      const expiresAtMs = Date.now() + 2 * 60_000;
+      const r = await toConfirm({ sessionExpiresAtMs: expiresAtMs });
+      // The fake clock follows real time (shouldAdvanceTime) through the sign-in's real crypto: to a second before the end.
+      vi.advanceTimersByTime(expiresAtMs - Date.now() - 1_000);
       expect(r.page.state).toBe('confirm');
       vi.advanceTimersByTime(1_000);
       ended(r, 'session_ended');

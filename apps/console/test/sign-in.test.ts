@@ -9,7 +9,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUTH_ORIGIN_CSP } from '../src/auth-flow.ts';
 import { AUTH, CLIENT_ID, MockGoogle, account, authOrigin, getWith, landing, setCookie, setCookieLine, signIn } from './google.ts';
-import { CSRF, ORIGIN, auditRows, db, post, request, seedOrg, shiftClock } from './helpers.ts';
+import { CSRF, ORIGIN, auditRows, db, minuteHeadroom, post, request, seedOrg, shiftClock } from './helpers.ts';
 
 let google: MockGoogle;
 beforeEach(async () => {
@@ -375,6 +375,8 @@ describe('CSRF and rate limits on the auth routes', () => {
   });
 
   it('10 a minute per IP across /api/auth/* and the auth origin: the 11th is 429, another IP is not', async () => {
+    // The binding's windows are real-clock minutes: the whole run in one (helpers.ts minuteHeadroom).
+    await minuteHeadroom();
     const ip = '192.0.2.188';
     const statuses: number[] = [];
     for (let i = 0; i < 10; i++) statuses.push((await post('/api/auth/start', { purpose: 'login' }, { ip })).status);

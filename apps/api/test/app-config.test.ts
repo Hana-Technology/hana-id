@@ -105,7 +105,8 @@ describe('GET /v1/app (batch B)', () => {
     let hang = true;
     near.onView = (method) => (method === 'get_config' && hang ? new Promise<void>(() => {}) : undefined);
     void getConfig(env); // its request "cancelled": neither the answer nor the timeout ever comes
-    await new Promise((r) => setTimeout(r, 10));
+    // Its read reached the chain (and hangs there): wait for that, not for a guessed time.
+    for (let i = 0; i < 2000 && !near.viewCalls.some((c) => c.method === 'get_config'); i++) await new Promise((r) => setTimeout(r, 5));
     hang = false;
     const realNow = Date.now.bind(Date);
     vi.spyOn(Date, 'now').mockImplementation(() => realNow() + CONFIG_READ_STALE_MS + 1);

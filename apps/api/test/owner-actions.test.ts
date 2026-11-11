@@ -287,6 +287,8 @@ describe('POST /v1/owner-actions', () => {
   });
 
   it('limits an IPv6 client per /64, not per address', async () => {
+
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     near();
     const statuses: number[] = [];
     // Every request from a different address in the same /64 (as a host with a routed /64 can do).
@@ -556,6 +558,10 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it('the per-owner windows are the scope’s divided by the contract’s MAX_OWNERS: one owner can’t use up a scope’s proposals (D236)', async () => {
+
+    // Fixed windows (minute, UTC day; the day starts on a minute) counted partly on the real clock: one window for the run.
+
+    await minuteHeadroom(15_000);
     expect(OWNER_ACTIONS_PER_SCOPE_MINUTE).toBeGreaterThanOrEqual(CONTRACT_MAX_OWNERS * OWNER_ACTIONS_PER_OWNER_MINUTE);
     expect(OWNER_ACTIONS_PER_SCOPE_DAY).toBeGreaterThanOrEqual(CONTRACT_MAX_OWNERS * OWNER_ACTIONS_PER_OWNER_DAY);
     // One owner spends its whole day; a co-owner still proposes.
@@ -702,6 +708,10 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it('the safety budget also covers remove_client and disable_shared_login; propose_change keeps the general windows', async () => {
+
+    // Fixed windows (minute, UTC day; the day starts on a minute) counted partly on the real clock: one window for the run.
+
+    await minuteHeadroom(15_000);
     const owner = { provider: 'google', sub: OWNER_SUB };
     for (const method of ['remove_client', 'disable_shared_login']) {
       const w = (await ownerActionWindows(method, { scopeId: 's1', owner }))!;
@@ -720,6 +730,10 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`caps owner actions per scope at ${OWNER_ACTIONS_PER_SCOPE_DAY} a UTC day (the spec's cap)`, async () => {
+
+    // Fixed windows (minute, UTC day; the day starts on a minute) counted partly on the real clock: one window for the run.
+
+    await minuteHeadroom(15_000);
     near();
     expect(OWNER_ACTIONS_PER_SCOPE_DAY).toBe(20);
     const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(scopeLimiterKey('s1')));
@@ -729,6 +743,10 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it('reaching a cap writes one owner_cap security event per window, with the scope and its org, and no owner identity', async () => {
+
+    // Fixed windows (minute, UTC day; the day starts on a minute) counted partly on the real clock: one window for the run.
+
+    await minuteHeadroom(15_000);
     near();
     await env.DB.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s3', 'org_cap_test', 'test', NULL, 0, 0)").run();
     await env.DB.prepare("DELETE FROM security_events WHERE kind = 'owner_cap'").run();

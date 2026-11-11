@@ -15,7 +15,7 @@ import { sessionNonce } from '../src/session-crypto.ts';
 import { clearViewCaches, type ConfigView } from '../src/views.ts';
 import vectors from '../../../packages/core/test/vectors/home-v1.json';
 import { emailEnv, emailToken, withEmail } from './email-helpers.ts';
-import { GOOGLE_ISS, appHeaders, call, chain, google, newSessionKey, seedApp, sessionBody, uid, type Chain, minuteHeadroom } from './helpers.ts';
+import { GOOGLE_ISS, appHeaders, call, chain, google, newSessionKey, seedApp, sessionBody, uid, type Chain, minuteHeadroom, startOfMinuteClock } from './helpers.ts';
 
 const AUTH = env.AUTH_ORIGIN!;
 const SHARED = 'shared-client.apps.googleusercontent.com';
@@ -477,6 +477,8 @@ describe('Home identity: every refusal in the spec’s list', () => {
   });
 
   it('the per-IP limit is checked before the token (an unsigned flood costs one object call)', async () => {
+
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     const ip = '10.200.200.1';
     const opts = { ...OPTS, ipPerMinute: 1, window: `w${uid()}` };
     expect((await refusal(await gate(makeRequest(null, { ip }), {}, opts))).code).toBe('missing_home_identity');
@@ -485,6 +487,8 @@ describe('Home identity: every refusal in the spec’s list', () => {
   });
 
   it('the per-Home-key limit refuses after the signature and doesn’t spend the counter', async () => {
+
+    await startOfMinuteClock(); // fixed windows: start a second into one (helpers.ts)
     const id = await newIdentity();
     const opts = { ...OPTS, keyPerMinute: 1, window: `w${uid()}` };
     expect((await gate(makeRequest(id.headerFor(1)), {}, opts)).ok).toBe(true);

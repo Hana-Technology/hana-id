@@ -341,6 +341,7 @@ export async function startOfMinuteClock(): Promise<void> {
  * least `headroomMs` remain in the current minute, so the counted requests fall into one window.
  */
 export async function minuteHeadroom(headroomMs = 8000): Promise<void> {
-  const left = 60_000 - (Date.now() % 60_000);
+  // The real clock (`new Date()` doesn't follow a spied Date.now): the windows it waits for are on it.
+  const left = 60_000 - (new Date().getTime() % 60_000);
   if (left < headroomMs) await new Promise((r) => setTimeout(r, left + 250));
 }

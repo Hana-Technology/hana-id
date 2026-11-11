@@ -1,7 +1,7 @@
 // One NEAR RPC read with the optional rpcFallback (src/near-call.ts; docs/batch-b-spec.md Q9): the fallback only when
 // the primary fails, each answer whole from one endpoint, the next read back at the primary.
 import { identityKeyHex } from '@hana-id/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { nearReader } from '../src/auth/near-rpc.ts';
 import { isPendingTxError, nearCall, nearEndpoints } from '../src/near-call.ts';
 import { confirmPath } from '../src/path-check.ts';
@@ -165,9 +165,19 @@ describe('D263 confirmation over the real readers: the two providers are read at
     it(`${who}: the slow second provider's reads overlap the primary's, in one round`, async () => {
       const chain = slowChain({ [PRIMARY]: 40, [FALLBACK]: 200 });
       const views = who.startsWith('the export') ? nearReader(ENDS, chain.fetchFn).independent('signer.testnet') : new NearView(ENDS, 'signer.testnet', 'relayer.testnet', chain.fetchFn).independent();
-      const started = performance.now();
-      await confirmPath({ scopeId: 's1', via: G, viaView, path: { provider: 'email', sub: E_SUB }, views });
-      const elapsed = performance.now() - started;
+      // On a fake clock, so the time taken is the providers' and never the machine's load.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+      let elapsed = Number.NaN;
+      try {
+        const started = performance.now();
+        const run = confirmPath({ scopeId: 's1', via: G, viaView, path: { provider: 'email', sub: E_SUB }, views }).then(() => {
+          elapsed = performance.now() - started;
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+        await run;
+      } finally {
+        vi.useRealTimers();
+      }
       expect(chain.log.filter((l) => l.url === PRIMARY)).toHaveLength(2);
       expect(chain.log.filter((l) => l.url === FALLBACK)).toHaveLength(2);
       // Every request started before the first one answered: the primary's and the second provider's overlap.

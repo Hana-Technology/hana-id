@@ -12,7 +12,7 @@
 // is the published package's variant (`build:lib`, docs/operations.md "Releasing the SDK packages"): the same file, and
 // it also fails unless at least one env is included and none is a loopback `local*` env, since a partner's install
 // must carry exactly the deployed envs.
-import { readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, emailIssuerUrl, isDevEnv, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
@@ -105,8 +105,24 @@ export function loadManifests(envsDir: string = join(repoRoot, 'envs')): Manifes
 export function main(opts: { manifests?: readonly Manifest[]; out?: string; forPackage?: boolean } = {}): string[] {
   const manifests = opts.manifests ?? loadManifests();
   const out = opts.out ?? GENERATED_PATH;
-  writeFileSync(out, envsModule(manifests, { forPackage: opts.forPackage ?? false }));
+  writeAtomically(out, envsModule(manifests, { forPackage: opts.forPackage ?? false }));
   return includedEnvs(manifests).map((e) => e.name);
+}
+
+/**
+ * Writes `text` to `path` unless it is there already, through a temp file renamed over it: `pnpm -r typecheck` and
+ * `test` run this from several packages at once while others' tsc and vitest read the file, which must never see it
+ * empty or half-written (a plain write truncates first).
+ */
+export function writeAtomically(path: string, text: string): void {
+  try {
+    if (readFileSync(path, 'utf8') === text) return;
+  } catch {
+    // not there yet
+  }
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

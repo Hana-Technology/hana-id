@@ -159,6 +159,10 @@ describe('POST /api/users/search (the issuer’s directory)', () => {
   });
 
   it('a budget refusal is 429 with Retry-After, and the security alias is emailed (directory_budget), once per window', async () => {
+    // One instant for both requests: the alert's window is the minute it opens, rounded (users.ts budgetAlert), so two
+    // requests on a running clock can fall either side of a rounding edge and count as two windows.
+    const t = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(t);
     const fake = useFakeEmail();
     const budget = { window: '1h', limit: 500, retryAfterMs: 20 * 60_000 };
     const e = envWith({ ISSUER: overrideBinding(env.ISSUER!, { search: async () => ({ ok: false, code: 'rate_limited', budget }) }) });

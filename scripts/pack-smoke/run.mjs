@@ -37,7 +37,7 @@ assert.equal(typeof web.createHana, 'function');
 for (const env of expectedEnvs) {
   assert.throws(() => web.createHana({ publishableKey: 'pk_test_x', environment: env }), /createHana runs in a browser page/);
 }
-assert.throws(() => web.createHana({ publishableKey: 'pk_test_x', environment: 'no-such-env' }), /Unknown Hana environment "no-such-env"/);
+assert.throws(() => web.createHana({ publishableKey: 'pk_test_x', environment: 'no-such-env' }), /Unknown Journear Passport environment "no-such-env"/);
 assert.equal(typeof swk.HanaIdModule, 'function');
 
 // React: the hooks and the provider, server-rendered (the client is created in an effect, so no window is needed).

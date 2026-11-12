@@ -213,6 +213,98 @@ function watchdogRules(
   }
 }
 
+/**
+ * The NEAR meta-transaction relay (D733; docs/api.md "NEAR relay"): the account whose full-access keys
+ * (`NEAR_RELAY_KEYS`, a Worker secret) pay for Hana wallets' NEAR transactions, the contracts it relays calls to
+ * (empty = nothing is relayed), and its limits. Optional: without it the relay routes answer 503. Bounds as the API's
+ * parser (apps/api/src/near/relay-config.ts) enforces them.
+ */
+export const nearRelaySchema = z
+  .object({
+    account: nearAccount,
+    receivers: z.array(nearAccount).max(16),
+    /** Gas all inner calls of one delegate may attach together, Tgas (default 50). */
+    maxGasTgas: z.number().int().min(1).max(300).optional(),
+    /** NEAR the relay may spend per UTC day across the env (default 5). */
+    dailyBudgetNear: z.number().positive().max(1000).optional(),
+    /** NEAR one app may spend per UTC day (default 1, or a fifth of `dailyBudgetNear` if less); below `dailyBudgetNear`. */
+    appDailyBudgetNear: z.number().positive().max(1000).optional(),
+    /** Relays per sender account per UTC day (default 100). */
+    perSenderPerDay: z.number().int().min(1).max(10_000).optional(),
+    /** Relays per app per UTC day (default 5000); below `relaysPerDay`. */
+    perAppPerDay: z.number().int().min(1).max(1_000_000).optional(),
+    /** Relays across the env per UTC day (default 20000). */
+    relaysPerDay: z.number().int().min(1).max(10_000_000).optional(),
+    /** Relays across the env per minute (default 300). */
+    relaysPerMinute: z.number().int().min(1).max(100_000).optional(),
+    /**
+     * NEAR the relay account may hold at once for relays in flight (default 2): sets the in-flight cap per key, so
+     * fund the account with at least this + `lowBalanceNear` + `dailyBudgetNear` (docs/operations.md "NEAR relay").
+     */
+    inFlightNear: z.number().positive().max(1000).optional(),
+    /** Activations per app per UTC day (default 200); below `activationsPerDay`. */
+    activationsPerAppPerDay: z.number().int().min(1).max(1_000_000).optional(),
+    /** Activations across the env per UTC day (default 1000). */
+    activationsPerDay: z.number().int().min(1).max(1_000_000).optional(),
+    /**
+     * Relay and activate only for a NEAR account the wallet directory holds for a user of the app's scope (default
+     * true, D735). `false`, testnet only: anyone with a publishable key can spend the relay within the limits.
+     */
+    requireKnownAccount: z.boolean().optional(),
+    /** Below this balance (NEAR) the hourly check writes `near_relay_balance_low` (default 2). */
+    lowBalanceNear: z.number().positive().max(1000).optional(),
+    /** The activation's Transfer in yocto (default "0": a zero Transfer creates an implicit account); at most 0.01 NEAR. */
+    activationYocto: z
+      .string()
+      .regex(/^(0|[1-9]\d{0,22})$/u, 'activationYocto is a decimal yocto amount')
+      .refine((v) => BigInt(v) <= 10n ** 22n, 'activationYocto is at most 0.01 NEAR')
+      .optional(),
+  })
+  .strict();
+
+/** NEAR wallet settings (D733, D740): the demo guestbook contract and the meta-transaction relay. */
+export const nearSchema = z
+  .object({
+    /** The demo guestbook contract (contracts/hana-guestbook). */
+    demoGuestbook: nearAccount.optional(),
+    relay: nearRelaySchema.optional(),
+  })
+  .strict();
+
+/**
+ * The relay account is its own (never the signer, relayer, owner, MPC, a watchdog or the guestbook: its keys are
+ * full-access and pay any deposit a delegate attaches, which the API refuses); receivers are distinct, never the relay
+ * account, the signer or the relayer (a relayed call into hana-signer would act as the user's implicit account there).
+ */
+function nearRelayRules(m: { network: string; signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; near?: z.infer<typeof nearSchema> | undefined }, ctx: z.RefinementCtx): void {
+  const relay = m.near?.relay;
+  if (!relay) return;
+  const taken: [string, string][] = [['signer', m.signer], ['relayer', m.relayer], ['owner', m.owner], ['mpc', m.mpc], ...(m.watchdogs ?? []).map((w): [string, string] => ['watchdog', w])];
+  if (m.near?.demoGuestbook) taken.push(['near.demoGuestbook', m.near.demoGuestbook]);
+  for (const [what, account] of taken) {
+    if (relay.account === account) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'account'], message: `near.relay.account must be its own account, not the ${what}` });
+  }
+  if (new Set(relay.receivers).size !== relay.receivers.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'receivers'], message: 'near.relay.receivers must be distinct' });
+  // One app (one leaked publishable key) must never be able to use up the env's day (D736): each per-app cap below the env's.
+  const pairs: [string, number, string, number][] = [
+    ['perAppPerDay', relay.perAppPerDay ?? 5000, 'relaysPerDay', relay.relaysPerDay ?? 20_000],
+    ['activationsPerAppPerDay', relay.activationsPerAppPerDay ?? 200, 'activationsPerDay', relay.activationsPerDay ?? 1000],
+    ['appDailyBudgetNear', relay.appDailyBudgetNear ?? Math.min(1, (relay.dailyBudgetNear ?? 5) / 5), 'dailyBudgetNear', relay.dailyBudgetNear ?? 5],
+  ];
+  for (const [app, appValue, env, envValue] of pairs) {
+    if (appValue >= envValue) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', app], message: `near.relay.${app} (${appValue}) must be below ${env} (${envValue})` });
+  }
+  if (relay.appDailyBudgetNear !== undefined && Math.round(relay.appDailyBudgetNear * 1_000_000) < 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'appDailyBudgetNear'], message: 'near.relay.appDailyBudgetNear is at least 0.000001' });
+  if (relay.requireKnownAccount === false && m.network !== 'testnet') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'requireKnownAccount'], message: 'near.relay.requireKnownAccount: false is testnet only (the relay then pays for anyone holding a publishable key)' });
+  }
+  for (const r of relay.receivers) {
+    if (r === relay.account || r === m.signer || r === m.relayer) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'receivers'], message: `near.relay.receivers must not list ${r} (the relay account, the signer or the relayer)` });
+    }
+  }
+}
+
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */
 export const manifestSchema = z
   .object({
@@ -384,8 +476,16 @@ export const manifestSchema = z
      * `scripts/email-issuer.ts <env> init` writes it.
      */
     emailIssuer: emailIssuerSchema.optional(),
+    /**
+     * NEAR as a wallet chain (D740, D733). Optional, additive. `demoGuestbook`: the account of the hackathon demo contract
+     * (`contracts/hana-guestbook`) a user's NEAR wallet writes to through a relayed meta transaction;
+     * `deploy-guestbook` deploys it. A named `.testnet` account of its own (`nearRules`). `relay`: the meta-transaction
+     * relay (`nearRelaySchema`, `nearRelayRules`).
+     */
+    near: nearSchema.optional(),
   })
   .superRefine((m, ctx) => {
+    nearRelayRules(m, ctx);
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
       const value = m[field];
       const problem = value === undefined ? null : endpointUrlProblem(value, m.name);
@@ -397,6 +497,7 @@ export const manifestSchema = z
     if (m.identityToken) identityTokenRules(m, m.identityToken, ctx);
     if (m.emailIssuer) emailIssuerRules(m, m.emailIssuer, ctx);
     governance(m, ctx);
+    if (m.near) nearRules(m, m.near, ctx);
     dashboardRules(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'rpcFallback must be a different endpoint from rpc' });
@@ -533,6 +634,38 @@ function governance(m: GovernanceFields, ctx: z.RefinementCtx): void {
       path: ['allowSignerFullAccessKey'],
       message: 'allowSignerFullAccessKey is refused outside testnet: a mainnet signer never has a full-access key (D86)',
     });
+  }
+}
+
+/**
+ * `near.demoGuestbook` (D740): on testnet a named account ending in `.testnet` (a top-level account or a sub-account,
+ * never an implicit or `.near` account), and an account of its own: deploy-guestbook deploys code to it, so it must
+ * never be the signer, the relayer, the owner, the MPC or a governance account.
+ */
+function nearRules(
+  m: GovernanceFields & { mpc: string; watchdog?: { account: string } | undefined },
+  near: { demoGuestbook?: string | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  const book = near.demoGuestbook;
+  if (book === undefined) return;
+  const path = ['near', 'demoGuestbook'];
+  if (m.network === 'testnet' && !book.endsWith('.testnet')) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.demoGuestbook ${book} must be a .testnet account on testnet` });
+  }
+  const taken: [string, string | undefined][] = [
+    ['signer', m.signer],
+    ['relayer', m.relayer],
+    ['owner', m.owner],
+    ['mpc', m.mpc],
+    ['council.factory', m.council?.factory],
+    ['council.dao', m.council?.dao],
+    ...(m.council?.members ?? []).map((a): [string, string] => ['a council member', a]),
+    ...(m.watchdogs ?? []).map((a): [string, string] => ['a watchdog', a]),
+    ['watchdog.account', m.watchdog?.account],
+  ];
+  for (const [role, account] of taken) {
+    if (account === book) ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.demoGuestbook must be its own account, not ${role} (${book}): deploy-guestbook deploys code to it` });
   }
 }
 

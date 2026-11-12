@@ -1,4 +1,4 @@
-// Profile names (D714, migration 0019): the name a user sets in Hana Home (GET/POST /v1/home/profile), sharing it per
+// Profile names (D714, migration 0021): the name a user sets in Hana Home (GET/POST /v1/home/profile), sharing it per
 // app (POST /v1/home/name-sharing), the identity token's `given_name`/`family_name`, the console's and the admin's
 // Users screens, retention, and logs. Only the signed-in identity's own name; a share is per app × account (a linked
 // member's through its root, confirmed on chain, D661), and counts only while that link holds; nothing shared by
@@ -326,7 +326,7 @@ describe('the Home gate, routes and failures', () => {
     expect((await profile(me)).name).toEqual({ givenName: `Ada ${HOME_PROFILE_WRITE_PER_KEY_MINUTE - 2}`, familyName: null });
   });
 
-  it('a D1 failure is 503 home_directory_unavailable; an env before migration 0019 answers 503 profile_unavailable', async () => {
+  it('a D1 failure is 503 home_directory_unavailable; an env before migration 0021 answers 503 profile_unavailable', async () => {
     const me = await home();
     await named(me, 'Ada', null);
     vi.spyOn(env.DB, 'batch').mockRejectedValueOnce(new Error('D1 down'));
@@ -758,7 +758,7 @@ describe('ConsoleRpc and AdminRpc: the Users screens', () => {
       { provider: 'email', sub: ada.sub, givenName: 'Eve', familyName: null },
       { provider: 'google', sub: ada.sub, givenName: 'Ada', familyName: 'Lovelace' },
     ]);
-    // Before migration 0019: nobody has a name (an empty answer); any other failure is not hidden.
+    // Before migration 0021: nobody has a name (an empty answer); any other failure is not hidden.
     const failing = (message: string) => ({ all: () => Promise.reject(new Error(message)) }) as unknown as HotDb;
     expect(await adminProfileNames(failing('D1_ERROR: no such table: home_profiles: SQLITE_ERROR'), ids)).toEqual([]);
     await expect(adminProfileNames(failing('D1_ERROR: network'), ids)).rejects.toThrow('network');

@@ -75,6 +75,44 @@ const homeBudgetHigh: Playbook = {
   related: ['relayer-key-stolen'],
 };
 
+const nearRelayBudgetHigh: Playbook = {
+  id: 'near-relay-budget-high',
+  title: "The NEAR relay's daily budget reached 80%",
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "A `near_relay_budget_high` security event: a day's NEAR relay spend (gas and activations paid for Hana's NEAR wallets) reached 80% of `near.relay.dailyBudgetNear` (sandbox-dev 5 NEAR).",
+  signals: ["A `near_relay_budget_high` row in the admin's Security & monitoring, emailed by the feed (one a day; amounts only)."],
+  impact: ["At the budget every relay and activation answers `503 relay_budget_exhausted` until 00:00 UTC; an app at its own day budget (`appDailyBudgetNear`) answers `429 app_budget_exhausted`. Logins, owner actions and Hana Home are on other accounts and unaffected."],
+  steps: [
+    { title: 'Tell real use from abuse', who: 'a founder', detail: "In the API's request logs, count `/v1/near/relay` and `/v1/near/activate` answers per app (`appId`) for the day. One app far ahead of the others, or many activations without relays, points at a leaked publishable key or many sybil sign-ins." },
+    { title: 'Raise or stop it', who: 'a founder', detail: "Real demand: raise `near.relay.dailyBudgetNear` (and fund the relay account to at least `inFlightNear + lowBalanceNear + dailyBudgetNear`), regenerate and redeploy the API. Abuse: lower that app's limits, set `near.relay.receivers` to `[]`, or delete the `NEAR_RELAY_KEYS` secret to stop every relay at once." },
+  ],
+  verify: ["The next day's spend stays under 80%, or relays answer again after the budget was raised."],
+  followUps: ['If one app keeps causing it, suspend the app or rotate its publishable key.'],
+  refs: ['docs/operations.md#near-relay-meta-transactions-d730d739', 'D736'],
+  related: ['near-relay-balance-low'],
+};
+
+const nearRelayBalanceLow: Playbook = {
+  id: 'near-relay-balance-low',
+  title: 'The NEAR relay account is running low',
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "A `near_relay_balance_low` security event: the hourly check found `near.relay.account` below `near.relay.lowBalanceNear` (default 2 NEAR), or missing.",
+  signals: ["A `near_relay_balance_low` row in the admin's Security & monitoring, emailed by the feed (one a day; the account and its balance).", "`502 near_rejected` from `/v1/near/relay` with `near_relay_balance_short` in the API log (the relays in flight outgrew the balance)."],
+  impact: ['Relays and activations fail (`502 near_rejected`) once the account can no longer cover the relays in flight; their budget reservation is kept. Nothing else uses this account.'],
+  steps: [
+    { title: 'Check the account', who: 'a founder', detail: "Look at the relay account on a testnet explorer: a steady drain matching the day's relays is use; a single large transfer out means a relay key leaked (the keys are full-access): then delete it at once (docs/operations.md \"NEAR relay\", the runbook)." },
+    { title: 'Top it up', who: 'a founder', detail: "Send testnet NEAR from a funded testnet account (never a mainnet one): `near tokens <funded testnet account> send-near <near.relay.account> '5 NEAR' network-config testnet sign-with-legacy-keychain send`, to at least `inFlightNear + lowBalanceNear + dailyBudgetNear`." },
+  ],
+  verify: ['The next hourly check writes no event, and relays answer 200 again.'],
+  followUps: ['If the account was missing, re-create it and re-add the keys (`near-relay-keys`), then re-upload `NEAR_RELAY_KEYS`.'],
+  refs: ['docs/operations.md#near-relay-meta-transactions-d730d739', 'D736'],
+  related: ['near-relay-budget-high'],
+};
+
 const relayerKeyStolen: Playbook = {
   id: 'relayer-key-stolen',
   title: 'A relayer key stolen (session pool or owner pool)',
@@ -927,6 +965,8 @@ const identityKmsSigner: Playbook = {
 
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   homeBudgetHigh,
+  nearRelayBudgetHigh,
+  nearRelayBalanceLow,
   updaterKeyStolen,
   relayerKeyStolen,
   vaultKekLeaked,

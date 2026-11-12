@@ -446,6 +446,34 @@ describe('the Users screen (D310, D346)', () => {
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('u1_AbCdEfGhIjKlMnOpQrStUv'));
   });
 
+  it('a NEAR account is listed and copied like the others; a user without one says "No NEAR account yet" in the detail (D755)', async () => {
+    usersOn();
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const near = 'a8f3c2d17e4b9056c1d2e3f40718293a4b5c6d7e8f9012a3b4c5d6e7f8091a2b';
+    const withNear = { ...USER, wallets: [...USER.wallets, { chain: 'near', address: near, firstSeenAt: 0, lastUsedAt: 0 }] };
+    const other = { ...USER, userId: 'u1_ZyXwVuTsRqPoNmLkJiHgFA', supportId: 'HANA-ZZZZ-ZZZZ' };
+    routes['/api/orgs/org_a/users'] = { body: { users: [withNear, other] } };
+    routes['/api/orgs/org_a/users/u1_AbCdEfGhIjKlMnOpQrStUv'] = { body: { user: { ...withNear, emails: [] } } };
+    routes['/api/orgs/org_a/users/u1_ZyXwVuTsRqPoNmLkJiHgFA'] = { body: { user: { ...other, emails: [] } } };
+    at('/orgs/org_a/users');
+    const table = (await screen.findByRole('columnheader', { name: 'Wallets' })).closest('table')!;
+    expect(within(table).getByText('a8f3c2…1a2b')).toBeTruthy();
+    expect(within(table).getAllByText('NEAR')).toHaveLength(1);
+    // The list says nothing for the user without one (no empty NEAR row in a table cell).
+    expect(within(table).queryByText('No NEAR account yet')).toBeNull();
+    fireEvent.click(within(table).getByRole('button', { name: 'Copy NEAR address' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(near));
+    fireEvent.click(screen.getByRole('button', { name: 'Open u1_AbCdEfGhIjKlMnOpQrStUv' }));
+    const detail = (await screen.findByRole('heading', { name: 'User' })).closest('section')!;
+    await waitFor(() => expect(within(detail).getByText(near).tagName).toBe('CODE'));
+    expect(within(detail).queryByText('No NEAR account yet')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open u1_ZyXwVuTsRqPoNmLkJiHgFA' }));
+    expect(await screen.findByText('No NEAR account yet')).toBeTruthy();
+    // The search hint names a NEAR account.
+    expect((screen.getByRole('searchbox') as HTMLInputElement).placeholder).toMatch(/NEAR account/u);
+  });
+
   it('a user’s detail lists each app’s shared address with its date, or "Not shared"', async () => {
     usersOn();
     const sharedAt = Date.UTC(2026, 10, 2, 12);

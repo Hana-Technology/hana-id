@@ -462,6 +462,7 @@ export const walletUser = {
   wallets: [
     { chain: 'stellar', address: 'GCFX7TQ2M4LJZ5W3R6N8K1B9H0V2D4S6A8E3Y5U7I9O1P3Q5R7T9V2X4', keyIndex: 0, firstSeenAt: ago(18 * DAY), lastUsedAt: ago(3 * HOUR), sharedWith: 0 },
     { chain: 'evm', address: '0x5aE3c1B9f2D47a6E08c1d3B5f7A9e2C4d6F8b0A1', keyIndex: 0, firstSeenAt: ago(12 * DAY), lastUsedAt: ago(2 * DAY), sharedWith: 1 },
+    { chain: 'near', address: 'a8f3c2d17e4b9056c1d2e3f40718293a4b5c6d7e8f9012a3b4c5d6e7f8091a2b', keyIndex: 0, firstSeenAt: ago(3 * HOUR), lastUsedAt: ago(3 * HOUR), sharedWith: 0 },
   ],
 };
 

@@ -106,7 +106,7 @@ function deps(over: Partial<UidEraseDeps> = {}): UidEraseDeps {
   };
 }
 
-/** `consents: false` for an API D1 before migration 0014 (and so before 0019's names); `ledger: false` to seed only the two D1s. */
+/** `consents: false` for an API D1 before migration 0014 (and so before 0021's names); `ledger: false` to seed only the two D1s. */
 async function seed(opts: { consents?: boolean; ledger?: boolean } = {}): Promise<void> {
   const root = await userOf(GOOGLE);
   const emailOwn = await userOf(EMAIL); // the email identity's own account, from before it was linked
@@ -131,7 +131,7 @@ async function seed(opts: { consents?: boolean; ledger?: boolean } = {}): Promis
     c.run('app_b', userSub(GOOGLE, 's8'), mac(1), 'granted', 'alice@gmail.com', 's8');
     c.run('app_b2', userSub(GOOGLE), mac(1), 'granted', 'alice@gmail.com', 's8');
   }
-  // Names (migration 0019, D714): Alice's Google name (she is also in s8: it stays), her email identity's (seen only in
+  // Names (migration 0021, D714): Alice's Google name (she is also in s8: it stays), her email identity's (seen only in
   // s7: it goes, with its share in s8), Olivia's (not this account's: stays). Shares: Alice's account's with an s7 app
   // (goes), Olivia's (stays), Alice's in s8 by her Google name (stays) and by her email identity's name (goes).
   if (opts.consents !== false) {

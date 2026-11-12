@@ -7,7 +7,7 @@
 //
 // Everything here is public: publishable keys ship in partner pages, and the origins are in the manifest. This module
 // runs in the browser too, so it takes the manifest as data (loading it needs Node).
-import { STELLAR_MAINNET_PASSPHRASE, TEST_EVM_CHAINS, isPublishableKey, isTestEvmChain, isTestPublishableKey } from '@hana-id/core';
+import { STELLAR_MAINNET_PASSPHRASE, TEST_EVM_CHAINS, isNearAccountId, isPublishableKey, isTestEvmChain, isTestPublishableKey } from '@hana-id/core';
 
 export const DEFAULT_ENV = 'sandbox-dev';
 
@@ -41,6 +41,21 @@ export interface DemoConfig {
     /** StellarExpert-style base URL (`<explorer>/account/<G…>`), or null for none. */
     explorer: string | null;
   };
+  /** The env's Hana API (manifest `apiUrl`): `hana.near.relay` and `hana.near.activate` call it from this page. */
+  apiUrl: string;
+  near: DemoNear;
+}
+
+/** NEAR testnet, as the manifest names it (the env's own RPCs and the demo guestbook's account). */
+export interface DemoNear {
+  /** Manifest `rpc`: the page reads the user's access key, the latest block and the guestbook here. */
+  rpcUrl: string;
+  /** Manifest `rpcFallback`, read when `rpcUrl` fails; null when the env has none. */
+  rpcFallbackUrl: string | null;
+  /** Manifest `near.demoGuestbook` (contracts/hana-guestbook), or null: no guestbook on this env. */
+  guestbook: string | null;
+  /** NearBlocks-style base URL (`<explorer>/address/<id>`, `<explorer>/txns/<hash>`), or null for none. */
+  explorer: string | null;
 }
 
 /** Base Sepolia: a testnet with a public RPC; the demo only signs on it, never broadcasts. */
@@ -56,11 +71,18 @@ export const DEFAULT_STELLAR: DemoConfig['stellar'] = Object.freeze({
   explorer: 'https://stellar.expert/explorer/testnet',
 });
 
+/** NEAR testnet's explorer (the RPCs and the guestbook come from the manifest). */
+export const NEAR_TESTNET_EXPLORER = 'https://testnet.nearblocks.io';
+
 /** The manifest fields the demo needs (a structural slice of @hana-id/env's Manifest). */
 export interface ManifestSlice {
   name: string;
   network: string;
   vaultOrigin?: string | undefined;
+  apiUrl: string;
+  rpc: string;
+  rpcFallback?: string | undefined;
+  near?: { demoGuestbook?: string | undefined } | undefined;
 }
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -101,8 +123,14 @@ export function validateDemoConfig(c: DemoConfig): DemoConfig {
   if (c.evm.explorer !== null) check(() => webOrigin(c.evm.explorer!, 'evm.explorer'));
   if (c.stellar.networkPassphrase === STELLAR_MAINNET_PASSPHRASE) problems.push('stellar.networkPassphrase must not be the public network');
   if (c.stellar.explorer !== null) check(() => webOrigin(c.stellar.explorer!, 'stellar.explorer'));
+  check(() => webOrigin(c.apiUrl, 'apiUrl'));
+  check(() => webOrigin(c.near.rpcUrl, 'near.rpcUrl'));
+  if (c.near.rpcFallbackUrl !== null) check(() => webOrigin(c.near.rpcFallbackUrl!, 'near.rpcFallbackUrl'));
+  if (c.near.explorer !== null) check(() => webOrigin(c.near.explorer!, 'near.explorer'));
+  // A testnet guestbook only (the manifest's rule too): the demo never writes to a mainnet account.
+  if (c.near.guestbook !== null && (!isNearAccountId(c.near.guestbook) || !c.near.guestbook.endsWith('.testnet'))) problems.push(`near.guestbook ${JSON.stringify(c.near.guestbook)} is not a .testnet account`);
   if (problems.length) throw new Error(`Invalid demo configuration:\n- ${problems.join('\n- ')}`);
-  return Object.freeze({ ...c, evm: Object.freeze({ ...c.evm }), stellar: Object.freeze({ ...c.stellar }) });
+  return Object.freeze({ ...c, evm: Object.freeze({ ...c.evm }), stellar: Object.freeze({ ...c.stellar }), near: Object.freeze({ ...c.near }) });
 }
 
 export type DemoVars = Readonly<Record<string, string | undefined>>;
@@ -126,5 +154,7 @@ export function demoConfigFromVars(vars: DemoVars, loadManifest: (name: string) 
     vaultOrigin: m.vaultOrigin,
     evm: DEFAULT_EVM,
     stellar: DEFAULT_STELLAR,
+    apiUrl: m.apiUrl,
+    near: { rpcUrl: m.rpc, rpcFallbackUrl: m.rpcFallback ?? null, guestbook: m.near?.demoGuestbook ?? null, explorer: NEAR_TESTNET_EXPLORER },
   });
 }

@@ -1,4 +1,4 @@
-// Hana Home: the user's own name, and the apps it is shared with (D714, migration 0019). Both parts are optional.
+// Hana Home: the user's own name, and the apps it is shared with (D714, migration 0021). Both parts are optional.
 //
 //   GET  /v1/home/profile[?appId=app_…]  the name this identity set, the apps it shares it with (newest first, at most
 //                                        HOME_NAME_SHARES_MAX), and with `appId` whether the account shares a name with
@@ -42,7 +42,7 @@ const APP_RE = /^app_[A-Za-z0-9_-]{1,64}$/u;
 type Who = { provider: string; sub: string };
 
 const unavailable = (ctx: Ctx): Response => reject(ctx, 503, 'home_directory_unavailable', 'Could not reach the records, try again');
-/** Before migration 0019: names can't be stored in this environment yet. */
+/** Before migration 0021: names can't be stored in this environment yet. */
 const notYet = (ctx: Ctx): Response => reject(ctx, 503, 'profile_unavailable', 'Names are unavailable in this environment');
 const noName = (ctx: Ctx): Response => reject(ctx, 409, 'no_profile_name', 'Set a name first');
 const chainDown = (ctx: Ctx): Response => reject(ctx, 503, 'near_unavailable', 'Could not confirm the account on NEAR, try again', { 'retry-after': '2' });

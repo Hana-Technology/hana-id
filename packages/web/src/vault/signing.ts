@@ -22,6 +22,18 @@ import {
   personalSign,
   signEvmDigest,
   signEvmTransaction,
+  base64Decode,
+  decodeNearDelegateAction,
+  decodeNearTransaction,
+  isNearImplicitAccountId,
+  nearImplicitPublicKey,
+  nearRelaysDelegate,
+  nearTestAppDelegateProblem,
+  type NearDelegateAction,
+  signNearDelegateAction,
+  signNearTransaction,
+  signNep413Message,
+  type NearPublicKey,
 } from '@hana-id/core';
 import { withChainKey } from '@hana-id/core/derivation';
 import { type DemoAssessment, MAINNET_DEMO, type MainnetDemoPriceBook, assessMainnetDemo, formatUsd } from '@hana-id/core/mainnet-demo';
@@ -33,8 +45,14 @@ import {
   signStellarRaw,
   signStellarTransaction,
 } from '@hana-id/core/signers/stellar';
-import type { RecordAddresses } from './record.ts';
 import { VaultError } from './errors.ts';
+
+/** The session's addresses: Stellar and EVM, and NEAR's implicit account id (D720; absent only in old test doubles). */
+export interface SigningAddresses {
+  stellar: string;
+  evm: string;
+  near?: string;
+}
 
 export type SignRequest = Extract<PortRequest, { method: SignMethod }>;
 
@@ -84,13 +102,14 @@ function refuseReservedRaw(request: SignRequest, rules: SubjectRules): void {
  * the request can't be signed as given (malformed typed data, non-canonical XDR, an envelope that doesn't parse for its
  * network).
  */
-export function approvalSubject(request: SignRequest, addresses: RecordAddresses, rules: SubjectRules): ApprovalSubject {
+export function approvalSubject(request: SignRequest, addresses: SigningAddresses, rules: SubjectRules): ApprovalSubject {
   // A test app never signs raw (D39): a raw digest can be a mainnet transaction's hash. Before the app's setting.
   if (request.method === 'hana_signRaw' && rules.testApp) throw new VaultError(ErrorCode.unauthorized, TEST_APP_RAW_RULE, { reason: 'raw_not_allowed_for_test_apps' });
   if (request.method === 'hana_signRaw' && rules.rawSign !== 'approval') throw new VaultError(ErrorCode.unauthorized, 'Raw signing is off for this app', { reason: 'raw_sign_off' });
   refuseReservedRaw(request, rules);
   const chain = approvalChain(request);
-  const address = chain === 'stellar' ? addresses.stellar : addresses.evm;
+  if (chain === 'near' && !isNearImplicitAccountId(addresses.near)) throw new VaultError(ErrorCode.unsupportedMethod, 'This session has no NEAR account');
+  const address = chain === 'stellar' ? addresses.stellar : chain === 'near' ? (addresses.near as string) : addresses.evm;
   switch (request.method) {
     case 'stellar_signTransaction':
     case 'stellar_signAuthEntry':
@@ -122,13 +141,42 @@ export function approvalSubject(request: SignRequest, addresses: RecordAddresses
   } catch {
     throw new VaultError(ErrorCode.unauthorized, 'The request is malformed', { reason: 'invalid_request' });
   }
+  // NEAR: the bytes must decode (codec.ts, strict), and name this account and its key as the signer (D722).
+  if (request.method === 'near_signTransaction' || request.method === 'near_signDelegateAction') {
+    let signer: { account: string; key: NearPublicKey };
+    let relays = false;
+    let delegate: NearDelegateAction | null = null;
+    try {
+      if (request.method === 'near_signTransaction') {
+        const tx = decodeNearTransaction(content.bytes);
+        signer = { account: tx.signerId, key: tx.publicKey };
+        relays = nearRelaysDelegate(tx);
+      } else {
+        const da = decodeNearDelegateAction(content.bytes);
+        signer = { account: da.senderId, key: da.publicKey };
+        delegate = da;
+      }
+    } catch {
+      throw new VaultError(ErrorCode.unauthorized, 'The request is malformed', { reason: 'invalid_request' });
+    }
+    if (signer.account !== address || signer.key.type !== 'ed25519' || !bytesEqual(signer.key.bytes, nearImplicitPublicKey(address))) throw addressMismatch();
+    // H1 of the review: the signer of a transaction relaying a delegate action prepays the delegate's deposits.
+    if (relays) throw new VaultError(ErrorCode.unauthorized, NEAR_RELAYED_DELEGATE_RULE, { reason: 'near_relayed_delegate' });
+    // A test app's delegate action names no network and could be kept and replayed elsewhere (D729): only calls and
+    // transfers to *.testnet accounts, which a replay on mainnet can't reach (nearTestAppDelegateProblem).
+    if (delegate && rules.testApp) {
+      const problem = nearTestAppDelegateProblem(delegate);
+      if (problem) throw new VaultError(ErrorCode.unauthorized, `${problem.message}. ${TEST_APP_NETWORK_RULE}`, { reason: problem.reason, chain: 'near' });
+    }
+  }
   const subject: ApprovalSubject = { kind: APPROVAL_KIND[request.method], chain, address, ...content };
   // Before any popup or policy: a test app's keys come from the testnet MPC and must never sign for a mainnet, except
   // under the mainnet demo (D428), which signs only what it can value under its cap.
   if (rules.testApp) {
     const mainnet = mainnetOfRequest(request);
     if (mainnet) {
-      if (!rules.mainnetDemo) throw new VaultError(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', ...mainnet });
+      // The mainnet demo covers Base and Stellar's public network only: NEAR mainnet is always refused (D726).
+      if (!rules.mainnetDemo || mainnet.chain === 'near') throw new VaultError(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', ...mainnet });
       // Both of the session's addresses: a Sodax bridge or swap must deliver to this user's own wallet on the other chain.
       const assessed = assessMainnetDemo(subject, rules.mainnetDemo.nowMs, rules.mainnetDemo.prices, { wallets: addresses });
       if (!assessed.ok) throw demoRefusal(assessed, mainnet);
@@ -165,6 +213,9 @@ export function demoRefusalFlash(reason: string): string {
       return 'Refused: Hana can’t tell how much this mainnet request moves';
   }
 }
+
+/** Why a NEAR transaction that relays a delegate action is refused (`near_relayed_delegate`). */
+export const NEAR_RELAYED_DELEGATE_RULE = 'Hana doesn’t sign a NEAR transaction that relays a delegate action: its signer pays every deposit inside it';
 
 const addressMismatch = (): VaultError => new VaultError(ErrorCode.unauthorized, 'The request names another address');
 
@@ -206,6 +257,21 @@ export function signRequest(prk: Uint8Array, request: SignRequest, subject: Appr
         const params = request.params;
         if (params.chain === 'stellar') return { signature: withChainKey(prk, 'stellar', ACCOUNT, (seed) => signStellarRaw(seed, params.bytes)) };
         return { signature: withChainKey(prk, 'evm', ACCOUNT, (d) => signEvmDigest(d, params.digest)) };
+      }
+      case 'near_signTransaction': {
+        const bytes = base64Decode(request.params.transaction);
+        return withChainKey(prk, 'near', ACCOUNT, (seed) => signNearTransaction(seed, bytes));
+      }
+      case 'near_signDelegateAction': {
+        const bytes = base64Decode(request.params.delegateAction);
+        return withChainKey(prk, 'near', ACCOUNT, (seed) => signNearDelegateAction(seed, bytes));
+      }
+      case 'near_signMessage': {
+        // The approved bytes: NEP-413's tag and payload, rebuilt from the request just above and compared.
+        const bytes = again.bytes;
+        const signed = withChainKey(prk, 'near', ACCOUNT, (seed) => signNep413Message(seed, bytes));
+        if (signed.accountId !== subject.address) throw new Error('The NEAR key is not the session’s account');
+        return signed;
       }
     }
   } catch (e) {

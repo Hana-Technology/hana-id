@@ -90,7 +90,7 @@ export function parseSupportId(input: string): string | null {
 // ---- search ----
 
 export type UserSearch =
-  | { kind: 'address'; chain: 'stellar' | 'evm'; address: string }
+  | { kind: 'address'; chain: WalletChain; address: string }
   | { kind: 'userId'; userId: string }
   | { kind: 'internalId'; internalId: string }
   | { kind: 'supportId'; code: string }
@@ -100,9 +100,12 @@ export type UserSearch =
 
 const STELLAR_RE = /^G[A-Z2-7]{55}$/u;
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/u;
+/** A NEAR implicit account id (D755), typed in any case: the directory stores it lowercase. */
+const NEAR_RE = /^[0-9a-fA-F]{64}$/u;
 
 /**
- * What a search string names: a Stellar `G…` or EVM `0x…` address (the API canonicalizes it), a User ID (`u1_…`, exact
+ * What a search string names: a Stellar `G…` or EVM `0x…` address or a NEAR implicit account id (64 hex characters,
+ * lowercased; the API canonicalizes each), a User ID (`u1_…`, exact
  * case), a Support ID, and for staff only an internal id (`hu_…`, any case) or else a sub. Null when it can be nothing
  * (empty, too long, whitespace inside a sub) and, for a partner, for an internal id or a sub: those are never a
  * partner's search.
@@ -113,6 +116,8 @@ export function parseUserSearch(input: string, opts: { staff: boolean }): UserSe
   if (!q || q.length > 255) return null;
   if (STELLAR_RE.test(q)) return { kind: 'address', chain: 'stellar', address: q };
   if (EVM_RE.test(q)) return { kind: 'address', chain: 'evm', address: q };
+  // 64 hex characters is a NEAR account, never a sub (a staff search for such a sub names its provider: adminFindUsers).
+  if (NEAR_RE.test(q)) return { kind: 'address', chain: 'near', address: q.toLowerCase() };
   if (USER_ID_RE.test(q)) return { kind: 'userId', userId: q };
   if (INTERNAL_ID_RE.test(q.toLowerCase())) return opts.staff ? { kind: 'internalId', internalId: q.toLowerCase() } : null;
   const code = /^hana[\s-]?/iu.test(q) || /^[0-9a-z]{4}-?[0-9a-z]{4}$/iu.test(q) ? parseSupportId(q) : null;
@@ -197,14 +202,15 @@ export type ConsoleGetUserInput = z.infer<typeof consoleGetUserInput>;
 
 // ---- answers ----
 
-export type WalletChain = 'stellar' | 'evm';
+/** `near` since D755: recorded only for sessions of SDK 0.4.0 or later (a user may have no NEAR row). */
+export type WalletChain = 'stellar' | 'evm' | 'near';
 export type IdentityRole = 'root' | 'member';
 /** `pending` until the link's `effectiveAt` (read at answer time), then `active`; `unlinked` / `cancelled` once removed. */
 export type IdentityStatus = 'active' | 'pending' | 'unlinked' | 'cancelled';
 
 export interface WalletView {
   chain: WalletChain;
-  /** G… StrKey, or EIP-55. */
+  /** G… StrKey, EIP-55, or a NEAR implicit account id (64 lowercase hex characters). */
   address: string;
   /** First and last login that recorded it (not on-chain activity). */
   firstSeenAt: number;

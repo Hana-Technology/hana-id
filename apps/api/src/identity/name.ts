@@ -1,4 +1,4 @@
-// The profile name in identity tokens (D714, migration 0019): the first and last name the user set in Hana Home, only for
+// The profile name in identity tokens (D714, migration 0021): the first and last name the user set in Hana Home, only for
 // an app they shared it with there (`name_shares`, keyed by the app and the account's User ID, the token's `sub`). Read
 // through the identity that shared it, so a token always carries the name as it is now (an edit, a removal or a stop in
 // Home reaches the next mint). Never an error: a mint without the table, or failing to read it, carries no name.
@@ -22,7 +22,7 @@ export function storedName(r: { given_name: string | null; family_name: string |
   return givenName === null && familyName === null ? null : { givenName, familyName };
 }
 
-/** Whether a D1 error is migration 0019's tables missing (an env before profile names). */
+/** Whether a D1 error is migration 0021's tables missing (an env before profile names). */
 export const noNameTables = (err: unknown): boolean => err instanceof Error && /no such table: (home_profiles|name_shares)/u.test(err.message);
 
 /**

@@ -12,6 +12,11 @@ HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # a base of yo
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```
 
+The hosted demo's NEAR card (D750–D754): `tests/demo.spec.ts` writes to the guestbook on the mocked NEAR testnet
+(`src/server/chain.ts`: users' implicit accounts, `block`, the guestbook's `get_messages`, and the test-only
+`e2e_near_activate` / `e2e_guestbook_add` the test's mocked relayer routes call); `tests/demo-near-shots.spec.ts` saves
+its screens with `HANA_SHOTS_DIR=<dir>` (Chromium only, skipped otherwise).
+
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown
 key is masked). Buttons behind the guard (Approve, the export's Continue and Show key) take `approve()` or

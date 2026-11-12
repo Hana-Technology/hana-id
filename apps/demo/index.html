@@ -16,9 +16,11 @@
         <span id="env-badge" class="badge"></span>
       </header>
 
-      <p class="banner" id="testnet-banner"><strong>Testnet demo — test networks only, nothing here holds real funds.</strong></p>
+      <p class="banner" id="testnet-banner"><strong>Testnet demo: Stellar, EVM and NEAR test networks only, nothing here holds real funds.</strong></p>
       <p class="lead">
-        Sign in with Google to get a Stellar and an EVM wallet, with no extension or seed phrase. This page is a partner
+        <strong>Log in with email</strong> (a code sent to your inbox; Google sign-in works for listed testers) to get a
+        Stellar, an EVM and a NEAR wallet, with no extension or seed phrase. On NEAR you can
+        write to a guestbook contract right away with zero NEAR: Hana’s relayer pays the fee. This page is a partner
         app built on <code>@hana-id/web</code>: your keys and your Google sign-in stay inside Hana’s own windows and
         frame, and this page only sees your addresses and the signatures you approve. Every signature needs your
         approval in a Hana window.
@@ -31,8 +33,8 @@
       <section aria-labelledby="h-account">
         <h2 id="h-account">Account</h2>
         <div class="row">
-          <button id="login" type="button" class="primary">Log in with Google</button>
-          <button id="login-email" type="button">Log in with email</button>
+          <button id="login-email" type="button" class="primary">Log in with email</button>
+          <button id="login" type="button">Log in with Google</button>
           <button id="cancel-login" type="button" hidden>Cancel sign-in</button>
           <button id="logout" type="button" hidden>Log out</button>
           <button id="revoke" type="button" hidden>Log out other devices</button>
@@ -62,6 +64,58 @@
         <p class="muted small">Same Google account, same addresses, on any device. Faucets can fund them, but you don’t need funds to try this page.</p>
       </section>
 
+      <section id="near" class="near" aria-labelledby="h-near" hidden>
+        <h2 id="h-near">NEAR (testnet)</h2>
+        <div class="address">
+          <span class="label">Your NEAR account</span>
+          <code id="near-account" title="Your NEAR implicit account"></code>
+          <span class="actions">
+            <button id="copy-near" type="button" class="small-button">Copy</button>
+            <a id="near-link" target="_blank" rel="noopener noreferrer" hidden>View on NearBlocks ↗</a>
+          </span>
+        </div>
+        <details id="near-full" class="near-full">
+          <summary>Show the full account id</summary>
+          <code id="near-account-full"></code>
+        </details>
+        <p id="near-balance" class="muted small" hidden></p>
+
+        <div id="near-write" class="near-write" hidden>
+          <h3>Write to the guestbook</h3>
+          <p class="muted small">Your message is stored on NEAR testnet by the guestbook contract <code id="near-guestbook"></code>. You sign it in Hana’s window; Hana’s relayer sends it and pays the fee, so your account needs no NEAR.</p>
+          <label for="near-text" class="field-label">Your message</label>
+          <div class="near-input-row">
+            <input id="near-text" type="text" maxlength="800" autocomplete="off" spellcheck="true" placeholder="gm from Hana ID" aria-describedby="near-count" />
+            <span id="near-count" class="muted small count" aria-live="polite">0 / 200</span>
+          </div>
+          <div class="row">
+            <button id="near-write-button" type="button" class="primary">Write to the guestbook (no NEAR needed)</button>
+          </div>
+          <p id="near-hint" class="muted small" hidden></p>
+          <p id="near-stage" class="stage" role="status" aria-live="polite" hidden></p>
+          <p id="near-error" class="error" role="alert" hidden></p>
+          <p id="near-done" class="done" hidden><span class="ok">✓</span> <span id="near-done-text"></span> <a id="near-tx-link" target="_blank" rel="noopener noreferrer" hidden>View the transaction ↗</a></p>
+        </div>
+
+        <div id="near-book" class="near-book" hidden>
+          <div class="book-head">
+            <h3>Latest messages</h3>
+            <button id="near-refresh" type="button" class="small-button">Refresh</button>
+          </div>
+          <p id="near-book-status" class="muted small" role="status" aria-live="polite"></p>
+          <ol id="near-messages" class="messages"></ol>
+        </div>
+
+        <h3>Sign</h3>
+        <p class="muted small">Like the buttons above: each opens a Hana window to approve. The transaction is sent only if your account holds NEAR for its fee.</p>
+        <div class="row">
+          <button id="sign-near-message" type="button">Sign a message (NEP-413)</button>
+          <button id="sign-near-tx" type="button">Sign a transaction</button>
+        </div>
+        <ul id="near-results" class="results"></ul>
+        <p id="near-unavailable" class="muted small" hidden></p>
+      </section>
+
       <section id="signing" aria-labelledby="h-signing" hidden>
         <h2 id="h-signing">Sign</h2>
         <p class="muted small">Each request opens a Hana window where you review and approve it. Nothing is broadcast.</p>
@@ -79,6 +133,7 @@
         <div class="row">
           <button id="export-stellar" type="button">Export Stellar key</button>
           <button id="export-evm" type="button">Export EVM key</button>
+          <button id="export-near" type="button" hidden>Export NEAR key</button>
         </div>
       </section>
 

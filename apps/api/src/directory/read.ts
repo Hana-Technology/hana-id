@@ -11,7 +11,7 @@
 //   active or pending, the wallet addresses, and the email the user shared with one of the org's live apps (D411:
 //   the `granted` rows of migration 0014's `email_consents`, the API's own copy; null when none). An email search is a
 //   full address, matched by its MAC among those shared rows only (D315: nothing else can be probed). The name the user
-//   shared from Hana Home with one of the org's live apps (D714, migration 0019's `name_shares`), else null. The SELECT never names `u.user_id` (the internal id), `sub` or
+//   shared from Hana Home with one of the org's live apps (D714, migration 0021's `name_shares`), else null. The SELECT never names `u.user_id` (the internal id), `sub` or
 //   `identity_key` as an output column, so no bug in the mapping can hand one out; a page cursor is `lastSeenAt:u1_…`.
 import {
   STAFF_USER_EVENTS_MAX,
@@ -104,7 +104,10 @@ function nameOf(given: unknown, family: unknown): ProfileNameView | null {
   return storedName({ given_name: typeof given === 'string' ? given : null, family_name: typeof family === 'string' ? family : null });
 }
 
-const byWallet = (a: { chain: string; address: string }, b: { chain: string; address: string }) => (a.chain === b.chain ? (a.address < b.address ? -1 : 1) : a.chain === 'stellar' ? -1 : 1);
+/** Stellar, EVM, then NEAR (D755), each chain's addresses in order. */
+const CHAIN_ORDER: Record<string, number> = { stellar: 0, evm: 1, near: 2 };
+const byWallet = (a: { chain: string; address: string }, b: { chain: string; address: string }) =>
+  a.chain === b.chain ? (a.address < b.address ? -1 : 1) : (CHAIN_ORDER[a.chain] ?? 9) - (CHAIN_ORDER[b.chain] ?? 9);
 const ROLE_ORDER = { root: 0, member: 1 } as const;
 
 export function staffUser(r: StaffRow, now: number): StaffUser {
@@ -267,7 +270,7 @@ export async function withEvents(db: HotDb, users: StaffUser[]): Promise<StaffUs
       .map((r) => ({
         kind: r.kind === 'key_exported' ? 'key_exported' : 'mainnet_signature',
         appId: r.app_id,
-        chain: r.chain === 'stellar' || r.chain === 'evm' ? r.chain : null,
+        chain: r.chain === 'stellar' || r.chain === 'evm' || r.chain === 'near' ? r.chain : null,
         network: r.network,
         address: r.address,
         usdMicros: r.usd_micros,
@@ -311,7 +314,7 @@ export async function adminProfileNames(db: HotDb, identities: readonly { provid
   try {
     rows = await db.all(q`SELECT p.provider, p.sub, p.given_name, p.family_name FROM home_profiles p WHERE ${join(pairs, ' OR ')} ORDER BY p.provider, p.sub`);
   } catch (err) {
-    // Before migration 0019 nobody has a name.
+    // Before migration 0021 nobody has a name.
     if (noNameTables(err)) return [];
     throw err;
   }

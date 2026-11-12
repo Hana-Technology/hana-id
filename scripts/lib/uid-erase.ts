@@ -11,7 +11,7 @@
 //   the email consents           the API's D1 (migration 0014, D411): the account's email_consents rows of the scope,
 //                                with the copy of any address the user shared with an app (keyed by the User ID, the
 //                                identity token's `sub`; none when the table isn't there yet)
-//   the names                    the API's D1 (migration 0019, D714): the account's name_shares rows of the scope's apps
+//   the names                    the API's D1 (migration 0021, D714): the account's name_shares rows of the scope's apps
 //                                (by the same User IDs), and each identity's Hana Home name (home_profiles) with every
 //                                share of it once the wallet directory sees that identity in no other scope (as the
 //                                issuer's user_emails below; none when the tables aren't there yet)
@@ -107,7 +107,7 @@ export interface Plan {
   userSubs: string[];
   /** Whether the API's D1 has migration 0014's email_consents. */
   consentTable: boolean;
-  /** Whether the API's D1 has migration 0019's name tables. */
+  /** Whether the API's D1 has migration 0021's name tables. */
   nameTables: boolean;
   /**
    * Every wallet address of those users (the directory's wallets and their own events'), for their `user_events` rows
@@ -118,7 +118,7 @@ export interface Plan {
   directory: { users: number; wallets: number; identities: number };
   /** The account's email_consents rows of the scope (null: no table). */
   consents: number | null;
-  /** The name shares and Hana Home names that go (null: no tables, migration 0019). */
+  /** The name shares and Hana Home names that go (null: no tables, migration 0021). */
   names: { shares: number; profiles: number } | null;
   /** The `user_events` rows by those internal ids or addresses; null when the env's D1 has no such table (0013). */
   events: number | null;
@@ -126,7 +126,7 @@ export interface Plan {
   otherScopes: string[];
 }
 
-/** 1 when the API's D1 has migration 0019's name_shares table (home_profiles comes with it). */
+/** 1 when the API's D1 has migration 0021's name_shares table (home_profiles comes with it). */
 export const NAME_TABLES_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'name_shares'";
 
 /** 1 when the API's D1 has migration 0014's email_consents table. */
@@ -373,7 +373,7 @@ export function formatPlan(p: Plan, where: string): string[] {
       ? "  consents  none: the API's D1 has no email_consents table (migration 0014 not applied)"
       : `  consents  ${p.consents} email consent row(s) of the scope deleted, with any address shared with an app (the API's D1, D411)`,
     p.names === null
-      ? "  names     none: the API's D1 has no name tables (migration 0019 not applied)"
+      ? "  names     none: the API's D1 has no name tables (migration 0021 not applied)"
       : `  names     ${p.names.shares} name share(s) deleted, ${p.names.profiles} Hana Home name(s) deleted (identities seen in no other scope; the API's D1, D714)`,
     p.events === null
       ? '  events    none (the API\'s D1 has no user_events: migration 0013 not applied)'

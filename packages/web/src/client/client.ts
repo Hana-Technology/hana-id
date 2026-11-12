@@ -9,7 +9,7 @@
 //   hana.logout(); hana.exportKey(chain); hana.revokeOtherDevices();
 //   await hana.getIdentityToken();  // a short-lived JWT for the partner's backend, or null (no popup; any handler)
 //   await hana.getProfile();        // the name the user shared with this app, from that token, or null
-//   hana.stellar; hana.ethereum; hana.signRaw(params);
+//   hana.stellar; hana.ethereum; hana.near; hana.signRaw(params);
 //
 // The client holds no key material and no token: it mounts the vault iframe (vault-connection.ts), opens the login
 // popup (login.ts) and, inside the user's click, the approval popup for signing requests (approval-window.ts, D99),
@@ -49,6 +49,7 @@ import { LoginAttempt, type LoginOptions, loginRequest, openLoginPopup } from '.
 import { type HanaProfile, profileFromIdentityToken, sameProfile } from './profile.ts';
 import { type FetchLike } from './rpc.ts';
 import { partnerPageIssues } from './requirements.ts';
+import { HanaNear } from './near.ts';
 import { HanaStellarSigner, type StellarConfig, validateStellarConfig } from './stellar.ts';
 import { type ReadyStatus, VaultConnection } from './vault-connection.ts';
 
@@ -73,6 +74,11 @@ export interface HanaDisconnect {
 export interface HanaAddresses {
   stellar: string;
   evm: string;
+  /**
+   * The NEAR implicit account id (64 lowercase hex). Absent only while Hana's vault predates NEAR (a deployment
+   * in progress); `hana.near.accountId` is the same value or null.
+   */
+  near?: string;
 }
 
 export interface HanaEvents {
@@ -189,10 +195,12 @@ export interface IdentityTokenOptions {
 
 export type SignRawParams = PortParamsMap['hana_signRaw'];
 
-/** The two Hana origins of an env (the partner client needs nothing else from the manifest). */
+/** The Hana origins of an env (the partner client needs nothing else from the manifest). */
 export interface HanaOrigins {
   vaultOrigin: string;
   authOrigin: string;
+  /** The env's Hana API (manifest `apiUrl`), which `hana.near.relay` calls. */
+  apiUrl?: string;
 }
 
 export interface HanaClientDeps {
@@ -211,6 +219,8 @@ export class HanaClient extends Emitter<HanaEvents> {
   readonly ready: Promise<void>;
   readonly stellar: HanaStellarSigner;
   readonly ethereum: HanaEthereumProvider;
+  /** NEAR: the implicit account, transactions, delegate actions, NEP-413 messages and the relay. */
+  readonly near: HanaNear;
   readonly vaultOrigin: string;
   readonly authOrigin: string;
 
@@ -281,6 +291,14 @@ export class HanaClient extends Emitter<HanaEvents> {
       evm,
     );
 
+    this.near = new HanaNear({
+      nearAccountId: () => this.#addresses?.near ?? null,
+      request: (m, p) => this.#request(m, p),
+      apiUrl: deps.origins.apiUrl ?? null,
+      publishableKey: config.publishableKey,
+      fetch: deps.fetch,
+    });
+
     this.#conn = new VaultConnection({
       win: deps.win,
       container: config.container ?? null,
@@ -331,7 +349,7 @@ export class HanaClient extends Emitter<HanaEvents> {
     return this.#mainnetDemoKnown;
   }
 
-  /** `{stellar, evm}` while logged in, else null. */
+  /** `{stellar, evm, near}` while logged in, else null. */
   get addresses(): HanaAddresses | null {
     return this.#addresses === null ? null : { ...this.#addresses };
   }
@@ -532,8 +550,12 @@ export class HanaClient extends Emitter<HanaEvents> {
     );
   }
 
-  /** Starts a key export: the vault shows its launcher, and the key is shown only in a Hana window. */
-  exportKey(chain: 'stellar' | 'evm'): Promise<null> {
+  /**
+   * Starts a key export: the vault shows its launcher, and the key is shown only in a Hana window. `near` needs a vault
+   * that reported a NEAR account (4100 otherwise: an older vault would drop the request).
+   */
+  exportKey(chain: 'stellar' | 'evm' | 'near'): Promise<null> {
+    if (chain === 'near' && !this.#addresses?.near) return Promise.reject(hanaError(ErrorCode.unauthorized, 'Not logged in, or this Hana vault has no NEAR account yet'));
     return this.#request('hana_export', { chain });
   }
 
@@ -710,7 +732,7 @@ export class HanaClient extends Emitter<HanaEvents> {
       case 'accountsChanged': {
         const prev = this.#addresses;
         const next = e.data.addresses;
-        const changed = prev?.stellar !== next?.stellar || prev?.evm !== next?.evm;
+        const changed = prev?.stellar !== next?.stellar || prev?.evm !== next?.evm || prev?.near !== next?.near;
         // Another session's addresses: its Support ID isn't known until hana_status says (a login's own result sets
         // it right after this event, which the refresh then confirms).
         if (changed) this.#setSupportId(null);
@@ -833,8 +855,8 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   #setAddresses(next: HanaAddresses | null): void {
     const prev = this.#addresses;
-    if (prev?.stellar === next?.stellar && prev?.evm === next?.evm) return;
-    this.#addresses = next === null ? null : { stellar: next.stellar, evm: next.evm };
+    if (prev?.stellar === next?.stellar && prev?.evm === next?.evm && prev?.near === next?.near) return;
+    this.#addresses = next === null ? null : { stellar: next.stellar, evm: next.evm, ...(next.near !== undefined ? { near: next.near } : {}) };
     this.emit('accountsChanged', next === null ? null : { ...next });
     this.ethereum.accountsChanged(next?.evm ?? null);
   }

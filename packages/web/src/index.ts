@@ -42,6 +42,21 @@ export {
   type RequestArguments,
 } from './client/ethereum.ts';
 export { HanaStellarSigner, STELLAR_NETWORKS, type StellarConfig, type StellarSignOptions } from './client/stellar.ts';
+export {
+  HanaNear,
+  NEAR_RELAY_TIMEOUT_MS,
+  type NearActivateResult,
+  type NearBytes,
+  type NearRelayParams,
+  type NearRelayResult,
+  type NearSignDelegateActionParams,
+  type NearSignDelegateActionResult,
+  type NearSignMessageParams,
+  type NearSignMessageResult,
+  type NearSignTransactionParams,
+  type NearSignTransactionResult,
+} from './client/near.ts';
+export type { NearNetwork } from '@hana-id/core';
 export { isInAppWebView, partnerPageIssues, type PartnerIssue, type PartnerIssueCode } from './client/requirements.ts';
 export { HANA_ID_ICON, HANA_ID_NAME } from './client/icon.ts';
 export { isLoopbackHost, serviceUrl } from './client/urls.ts';

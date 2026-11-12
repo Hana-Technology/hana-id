@@ -251,12 +251,13 @@ export class VaultApi {
   }
 
   /**
-   * POST /v1/wallets/record: the wallet directory's report (wallet-record.ts), in the background after a login. Throws
-   * ApiError or a network error (the caller drops both).
+   * POST /v1/wallets/record: the wallet directory's report (wallet-record.ts), in the background after a login. The
+   * answer, `{recorded: true, near?}`. Throws ApiError or a network error (the caller drops both).
    */
-  async recordWallets(body: WalletRecordBody, signal?: AbortSignal): Promise<void> {
+  async recordWallets(body: WalletRecordBody, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const { res, body: answer } = await this.request('/v1/wallets/record', { method: 'POST', headers: this.headers(true), body: JSON.stringify(body), ...(signal ? { signal } : {}) });
     if (!isWalletRecordResponse(answer)) throw new ApiError(res.status, 'bad_response', 'Unexpected /v1/wallets/record response', null, str(answer.requestId));
+    return answer as unknown as Record<string, unknown>;
   }
 
   /**

@@ -29,7 +29,7 @@ import { stackFingerprint } from '../src/fingerprint.ts';
 import { CALLBACK_URL, CALLBACK_URLS, GOOGLE_AUTH_URL, GoogleStub, checkAuthRequest } from '../src/google-stub.ts';
 import { MockApi } from '../src/server/api.ts';
 import { type ApiModules, loadApiModules } from '../src/server/api-modules.ts';
-import { Chain, mpcAnswer } from '../src/server/chain.ts';
+import { Chain, NEAR_BLOCK_HASH, NEAR_HEIGHT, mpcAnswer } from '../src/server/chain.ts';
 import { D1Shim } from '../src/server/d1.ts';
 import { LocalIssuer, newIssuerKey } from '../src/server/issuer.ts';
 import { serve, servedAt } from '../src/server/http.ts';
@@ -40,6 +40,7 @@ import {
   DEFAULT_PORT_BASE,
   DEMO_ORIGIN,
   E2E_ENV,
+  E2E_GUESTBOOK,
   GOOGLE_CLIENT_ID,
   ISSUER_URL,
   LIVE_API_URL,
@@ -160,6 +161,37 @@ describe('test MPC', () => {
     const s1 = decryptCkd(mpcAnswer(k1.publicKey.AppPublicKeyPV.pk1, path), k1.a, ckdAppId(E2E_ENV.signer, path), TEST_CKD_NETWORK_KEY);
     const s2 = decryptCkd(mpcAnswer(k2.publicKey.AppPublicKeyPV.pk1, path), k2.a, ckdAppId(E2E_ENV.signer, path), TEST_CKD_NETWORK_KEY);
     expect(s1).toEqual(s2);
+  });
+});
+
+describe('the mocked NEAR testnet for the demo’s NEAR card', () => {
+  const call = async (chain: Chain, method: string, params: Record<string, unknown>) => (await chain.rpc({ jsonrpc: '2.0', id: 1, method, params }).json()) as { result?: Record<string, unknown>; error?: { cause: { name: string } } };
+  const USER = 'ab'.repeat(32);
+
+  it('a user account exists only after activation, with its key at the creation height × 10^6, and the latest block', async () => {
+    const chain = new Chain();
+    expect((await call(chain, 'query', { request_type: 'view_access_key', finality: 'final', account_id: USER, public_key: 'ed25519:x' })).error?.cause.name).toBe('UNKNOWN_ACCOUNT');
+    expect((await call(chain, 'e2e_near_activate', { account_id: USER })).result).toMatchObject({ created: true, accountId: USER, accessKeyNonce: String((NEAR_HEIGHT - 1n) * 1_000_000n), blockHeight: Number(NEAR_HEIGHT) });
+    expect((await call(chain, 'e2e_near_activate', { account_id: USER })).result).toMatchObject({ created: false });
+    const key = (await call(chain, 'query', { request_type: 'view_access_key', finality: 'final', account_id: USER, public_key: 'ed25519:x' })).result!;
+    expect(BigInt(key.nonce as number)).toBe((NEAR_HEIGHT - 1n) * 1_000_000n);
+    expect((await call(chain, 'query', { request_type: 'view_account', finality: 'final', account_id: USER })).result).toMatchObject({ amount: '0' });
+    expect((await call(chain, 'block', { finality: 'final' })).result).toEqual({ header: { height: Number(NEAR_HEIGHT), hash: NEAR_BLOCK_HASH } });
+    expect((await call(chain, 'block', { block_id: NEAR_BLOCK_HASH })).result).toBeDefined();
+    expect((await call(chain, 'block', { block_id: '11111111111111111111111111111111' })).error?.cause.name).toBe('UNKNOWN_BLOCK');
+  });
+
+  it('the guestbook lists what the relayer stored, newest first', async () => {
+    const chain = new Chain();
+    await call(chain, 'e2e_guestbook_add', { account_id: USER, text: ' first ', nonce: '5' });
+    await call(chain, 'e2e_guestbook_add', { account_id: 'bob.testnet', text: 'second' });
+    const r = (await call(chain, 'query', { request_type: 'call_function', finality: 'optimistic', account_id: E2E_GUESTBOOK, method_name: 'get_messages', args_base64: '' })).result!;
+    const list = JSON.parse(new TextDecoder().decode(Uint8Array.from(r.result as number[]))) as { index: number; account_id: string; text: string }[];
+    expect(list.map((m) => [m.index, m.account_id, m.text])).toEqual([
+      [1, 'bob.testnet', 'second'],
+      [0, USER, 'first'],
+    ]);
+    expect(chain.nearAccounts.get(USER)).toBe(5n);
   });
 });
 

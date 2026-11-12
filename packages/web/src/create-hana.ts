@@ -14,7 +14,7 @@ export function createHana(config: HanaConfig): HanaClient {
   warnPartnerIssues(window);
   return new HanaClient(config, {
     win: window,
-    origins: { vaultOrigin: env.vaultOrigin, authOrigin: env.authOrigin },
+    origins: { vaultOrigin: env.vaultOrigin, authOrigin: env.authOrigin, apiUrl: env.apiUrl },
     fetch: (input, init) => fetch(input, init),
   });
 }

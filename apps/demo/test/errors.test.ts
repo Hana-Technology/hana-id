@@ -77,6 +77,48 @@ describe('plainMessage', () => {
     expect(signedOut).not.toMatch(/[\u2013\u2014]/u);
   });
 
+  it('explains every NEAR refusal of the vault, in any action, in plain words', () => {
+    const reasons = ['near_key_unknown', 'near_block_unknown', 'near_network_mismatch', 'near_delegate_nonce_used', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'near_delegate_nonce_stale', 'near_relayed_delegate', 'near_delegate_test_app_action', 'near_delegate_test_app_receiver'];
+    const seen = new Set<string>();
+    for (const reason of reasons) {
+      for (const action of ['near', 'sign'] as const) {
+        const m = plainMessage(new HanaError(4100, 'x', { reason }), action);
+        expect(m, reason).not.toMatch(/Not allowed: you may have been logged out|Something went wrong|[–—]/u);
+        seen.add(m);
+      }
+    }
+    expect(seen.size).toBe(reasons.length);
+    expect(plainMessage(new HanaError(4100, 'x', { reason: 'near_key_unknown' }), 'near')).toMatch(/doesn’t exist on testnet yet.*creates the account first/u);
+    expect(plainMessage(new HanaError('api_unavailable', 'x', { reason: 'near_rpc_unavailable' }), 'sign')).toBe('Hana couldn’t reach NEAR testnet to check this request. Try again in a minute.');
+    // The page's own reads.
+    expect(plainMessage({ code: 'near_page_rpc_failed', message: 'x' }, 'near')).toMatch(/couldn’t read NEAR testnet/u);
+    expect(plainMessage({ code: 'near_account_pending', message: 'x' }, 'near')).toMatch(/still creating your NEAR account/u);
+    expect(plainMessage({ code: 'near_send_failed', message: 'x' }, 'sign')).toMatch(/gasless write/u);
+    expect(plainMessage({ code: 'near_nonce_wait', message: 'x' }, 'near')).toMatch(/needs a new block/u);
+    expect(plainMessage(new HanaError('api_unavailable', 'x', { reason: 'near_rpc_single_provider' }), 'near')).toMatch(/only one NEAR provider/u);
+  });
+
+  it("maps the relayer's refusals (relay, activate) by data.reason, with a default for codes it doesn't know", () => {
+    const relayer = (code: string | number, status: number, reason?: string) => new HanaError(code as never, 'x', { status, ...(reason ? { reason } : {}) });
+    expect(plainMessage(relayer(4100, 409, 'near_account_unrecorded'), 'near')).toMatch(/still setting up your NEAR account/u);
+    expect(plainMessage(relayer(4100, 409, 'near_account_unknown'), 'near')).toMatch(/log out and log in again/u);
+    expect(plainMessage(relayer('rate_limited', 429, 'app_budget_exhausted'), 'near')).toMatch(/used up today’s free NEAR relays/u);
+    expect(plainMessage(new HanaError(4100, 'Guestbook: text is longer than 200 characters after trimming\u202E', { status: 422, reason: 'contract_rejected' }), 'near')).toBe('The guestbook contract refused the message: Guestbook: text is longer than 200 characters after trimming\uFFFD. Nothing was stored.');
+    expect(plainMessage(relayer('api_unavailable', 504, 'timeout'), 'near')).toMatch(/may still land/u);
+    expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'near')).toMatch(/only for calls to the demo guestbook/u);
+    expect(plainMessage(relayer('api_unavailable', 503, 'relay_budget_exhausted'), 'near')).toBe('The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).');
+    expect(plainMessage(relayer(4100, 400, 'something_new'), 'near')).toMatch(/^Hana’s relayer refused this request \(something_new\)\. /u);
+    expect(plainMessage(relayer(4100, 400), 'near')).toMatch(/^Hana’s relayer refused this request\. /u);
+    expect(plainMessage(relayer('api_unavailable', 502, 'whatever'), 'near')).toBe('Hana’s relayer is unavailable right now. Try again in a minute. (whatever)');
+    expect(plainMessage(relayer('rate_limited', 429, 'rate_limited'), 'near')).toMatch(/Too many guestbook writes/u);
+    // Not from the relayer (no HTTP status): the usual texts.
+    expect(plainMessage(new HanaError(4100, 'x'), 'near')).toBe('Not allowed: you may have been logged out. Log in and try again.');
+    expect(plainMessage(new HanaError('api_unavailable', 'x'), 'near')).toBe('Could not reach Hana’s service. Check your connection and try again.');
+    expect(plainMessage(new HanaError(4001, 'x'), 'near')).toBe('Rejected in the Hana window: nothing was signed.');
+    // The same reason outside the card is not the relayer's.
+    expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'sign')).toBe('Not allowed: you may have been logged out. Log in and try again.');
+  });
+
   it('turns a network failure into a network message, and anything else into a report hint with its code', () => {
     expect(plainMessage(new TypeError('Failed to fetch'), 'sign')).toBe('Network error. Check your connection and try again.');
     expect(plainMessage(new TypeError('Load failed'), 'login')).toBe('Network error. Check your connection and try again.');

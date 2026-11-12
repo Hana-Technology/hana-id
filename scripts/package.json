@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "deploy-contract": "tsx deploy-contract.ts",
+    "deploy-guestbook": "tsx deploy-guestbook.ts",
     "post-google-keys": "tsx post-google-keys.ts",
     "fetch-ckd-key": "tsx fetch-ckd-key.ts",
     "admin": "tsx admin.ts",
@@ -25,7 +26,8 @@
     "coop-canary": "tsx coop-canary.ts",
     "env-secrets": "tsx env-secrets.ts",
     "d1-move": "tsx d1-move.ts",
-    "access-setup": "tsx access-setup.ts"
+    "access-setup": "tsx access-setup.ts",
+    "near-relay-keys": "tsx near-relay-keys.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",

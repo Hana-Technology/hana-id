@@ -313,6 +313,26 @@ describe('key_exported (D430)', () => {
     expect(await rows(app.id)).toEqual([]);
   });
 
+  it('a NEAR export is labelled near (D755), and staff see it so', async () => {
+    const { app, aud } = await demoApp(false);
+    withCombinedCall(chain({ [aud]: app.scope }));
+    const res = await call('/v1/login', { headers: hanaHeaders(app, AUTH), body: { ...(await loginBody(app.scope, aud, {}, { sub: 'near-export-1' })), exportChain: 'near' } });
+    expect(res.status).toBe(200);
+    const [row] = (await rows(app.id)) as { chain: string; user_id: string }[];
+    expect(row).toMatchObject({ kind: 'key_exported', chain: 'near', network: null, address: null });
+    const got = (await new AdminRpc(createExecutionContext(), env).getUser({ ...hana(), internalId: row!.user_id })) as unknown as { ok: true; user: { events: Record<string, unknown>[] } };
+    expect(got.user.events).toEqual([expect.objectContaining({ kind: 'key_exported', chain: 'near' })]);
+  });
+
+  it('the database refuses near on a mainnet demo signature (the demo is Stellar and EVM only)', async () => {
+    const { app } = await demoApp(false);
+    await expect(
+      env.DB.prepare("INSERT INTO user_events (kind, app_id, scope_id, user_id, chain, network, address, usd_micros, request_id, at) VALUES ('mainnet_signature', ?1, ?2, ?3, 'near', 'mainnet', ?4, 1, 'r', 1)")
+        .bind(app.id, app.scope, `hu_${'a'.repeat(26)}`, EVM)
+        .run(),
+    ).rejects.toThrow(/CHECK/u);
+  });
+
   it('an older export window without the label still records the event, with no chain', async () => {
     const { app, aud } = await demoApp(false);
     withCombinedCall(chain({ [aud]: app.scope }));

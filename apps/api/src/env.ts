@@ -44,6 +44,17 @@ export interface Env {
   OWNER_RELAYER_KEYS?: string;
   /** Secret: Home pool. JSON array of `ed25519:...` secret keys, one by default, used by POST /v1/home/login only. Without it that endpoint answers 503. */
   HOME_RELAYER_KEYS?: string;
+  /**
+   * Optional var (manifest `near.relay`, D733): the NEAR meta-transaction relay's account, receiver allowlist and limits
+   * as JSON (near/relay-config.ts). Absent or unreadable: POST /v1/near/relay and /v1/near/activate answer 503
+   * relayer_unconfigured.
+   */
+  NEAR_RELAY?: string;
+  /**
+   * Optional secret (D734): JSON array of `ed25519:...` secret keys, full-access keys of the NEAR relay account (never
+   * RELAYER_ACCOUNT's pool keys: a function-call key can't sign a Delegate action). One Durable Object per key.
+   */
+  NEAR_RELAY_KEYS?: string;
   /** Optional var (manifest `homeDerivesPerDay`): Home derives allowed per UTC day across the env, 0 for none. Default 500 (home/login.ts). */
   HOME_DERIVES_PER_DAY?: string;
   /**

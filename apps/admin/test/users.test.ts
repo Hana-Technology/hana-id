@@ -73,7 +73,7 @@ async function seedWalletUser(scope: string, identities: { provider: string; sub
   return { internalId, userId, supportId: supportIdOf(userId), stellar, keys };
 }
 
-/** A Hana Home name (migration 0019's `home_profiles`), as the API's Home endpoint stores it. */
+/** A Hana Home name (migration 0021's `home_profiles`), as the API's Home endpoint stores it. */
 async function seedName(provider: string, sub: string, givenName: string | null, familyName: string | null): Promise<void> {
   await env.HOT_DB.prepare('INSERT INTO home_profiles (provider, sub, given_name, family_name, updated_at) VALUES (?, ?, ?, ?, ?)').bind(provider, sub, givenName, familyName, Date.now()).run();
 }

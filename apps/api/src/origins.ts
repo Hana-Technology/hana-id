@@ -59,6 +59,8 @@ export function hanaPage(env: { VAULT_ORIGIN?: string; AUTH_ORIGIN?: string }, o
  */
 export const HANA_CALLERS: Readonly<Record<string, readonly HanaPage[]>> = {
   '/v1/app': ['vault', 'auth'],
+  '/v1/near/relay': ['vault'],
+  '/v1/near/activate': ['vault'],
   '/v1/login': ['vault', 'auth'],
   '/v1/sessions': ['vault'],
   '/v1/derive': ['vault'],
@@ -70,7 +72,8 @@ export const HANA_CALLERS: Readonly<Record<string, readonly HanaPage[]>> = {
 };
 
 /** Endpoints partner pages may call with any key, in any env. */
-const PARTNER_ENDPOINTS: ReadonlySet<string> = new Set(['/v1/app']);
+/** The NEAR relay (D735) is called by the SDK from the partner's page, and may be by the vault. */
+const PARTNER_ENDPOINTS: ReadonlySet<string> = new Set(['/v1/app', '/v1/near/relay', '/v1/near/activate']);
 /** Endpoints partner pages may call only for test-scope apps in dev envs (`apps/smoke` until it moves to the vault). */
 const PARTNER_DEV_TEST_ENDPOINTS: ReadonlySet<string> = new Set(['/v1/sessions', '/v1/derive', '/v1/sessions/revoke']);
 

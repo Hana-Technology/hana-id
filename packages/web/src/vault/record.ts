@@ -126,10 +126,45 @@ export function parseRootPin(v: unknown): string | null {
   return r.v === 1 && r.t === 'root-pin' && typeof r.root === 'string' && /^[0-9a-f]{64}$/u.test(r.root) ? r.root : null;
 }
 
+// ---- the NEAR wallet record's mark (D756) ----
+//
+// Beside the record, one entry saying the API recorded this session's NEAR account in the wallet directory
+// (POST /v1/wallets/record answered `near: true`), so an unlock sends the record only until then: a user who signed in
+// before NEAR (or whose record was missed) gets the row at the next unlock, without a call at every page load. Only the
+// session public key (public on chain) and a time, never an address. When the API answered `near: false` (migration
+// 0019 not applied, the account listed under another user, D762) the entry says `near-deferred` until `untilMs`: no
+// unlock resends before then (D763).
+
+export interface NearRecordedMark {
+  v: 1;
+  t: 'near-recorded' | 'near-deferred';
+  /** The session public key, 64 hex. */
+  sessionPk: string;
+  /** `near-deferred` only: no unlock sends the NEAR record again before this (the vault's clock, ms). */
+  untilMs?: number;
+}
+
+export const nearRecordedKey = (recordId: string): string => `near|${recordId}`;
+
+/** The entry as stored, or null (none, or a value of another shape). */
+export function parseNearRecorded(v: unknown): { sessionPk: string; deferredUntilMs: number | null } | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  if (r.v !== 1 || typeof r.sessionPk !== 'string' || !/^[0-9a-f]{64}$/u.test(r.sessionPk)) return null;
+  if (r.t === 'near-recorded') return { sessionPk: r.sessionPk, deferredUntilMs: null };
+  if (r.t === 'near-deferred' && Number.isSafeInteger(r.untilMs) && (r.untilMs as number) >= 0) return { sessionPk: r.sessionPk, deferredUntilMs: r.untilMs as number };
+  return null;
+}
+
+/** How long an unlock waits after `near: false` before sending the NEAR record again (D763). */
+export const NEAR_RECORD_DEFER_MS = 30 * 60_000;
+/** The same after the API said another user lists the account, or this user another one: only a new login changes it. */
+export const NEAR_RECORD_CONFLICT_DEFER_MS = 24 * 3_600_000;
+
 /** The object store, as the vault uses it. Every method may throw (storage blocked, quota, private mode). */
 export interface RecordStore {
   get(key: string): Promise<unknown>;
-  put(key: string, record: RecordV1 | RootPinRecord): Promise<void>;
+  put(key: string, record: RecordV1 | RootPinRecord | NearRecordedMark): Promise<void>;
   delete(key: string): Promise<void>;
 }
 

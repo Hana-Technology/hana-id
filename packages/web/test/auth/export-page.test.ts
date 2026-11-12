@@ -44,7 +44,7 @@ const SUB = '110248495921238986420';
 const PATH = `${SCOPE}#google#${SUB}#0`;
 
 /** The address the fixed MPC network gives PATH (S doesn't depend on the ephemeral app key). */
-function addressFor(chain: 'stellar' | 'evm', path = PATH): string {
+function addressFor(chain: 'stellar' | 'evm' | 'near', path = PATH): string {
   const { expected } = simulateMpc(newAppKey().publicKey.AppPublicKeyPV.pk1, ckdAppId(ENV.signer, path), NET);
   const prk = extractPrk(Uint8Array.from(expected));
   return chainAddress(prk, chain, 0);
@@ -83,7 +83,7 @@ interface Run {
 
 function run(
   o: {
-    chain?: 'stellar' | 'evm';
+    chain?: 'stellar' | 'evm' | 'near';
     address?: string;
     config?: AppConfig;
     loginPath?: string;
@@ -1032,6 +1032,28 @@ describe('/export', () => {
       expect(secret.textContent).toBe(writes[0]);
       // It never reads the clipboard (that would need a permission prompt).
       expect(readText).not.toHaveBeenCalled();
+    });
+
+    it('copies a NEAR key as ed25519: + base58(seed ‖ public key), the form near-cli imports (D724)', async () => {
+      const address = addressFor('near');
+      const { r, copy } = await toReveal({ chain: 'near', address });
+      expect(pageText()).toContain('Your NEAR key');
+      click(copy);
+      await flush();
+      expect(r.clipboardWrites[0]).toMatch(/^ed25519:[1-9A-HJ-NP-Za-km-z]{80,90}$/u);
+      expect(addressOfExport('near', r.clipboardWrites[0] as string)).toBe(address);
+      // An API that doesn't list near in walletChains (older ones omit the field) refuses exportChain 'near' with a 400
+      // that would fail the export: the page sends none to it (its event has no chain).
+      expect(Object.keys(r.loginBodies[0] as object)).not.toContain('exportChain');
+    });
+
+    it('names near in the login body only to an API that lists it in walletChains (D755)', async () => {
+      const address = addressFor('near');
+      const { r } = await toReveal({ chain: 'near', address, config: appConfig({ walletChains: ['stellar', 'evm', 'near'] }) });
+      expect((r.loginBodies[0] as { exportChain?: string }).exportChain).toBe('near');
+      // Anything else in the field (a malformed or partial answer) is "no NEAR": nothing sent.
+      const other = await toReveal({ chain: 'near', address, config: appConfig({ walletChains: 'near' }) });
+      expect(Object.keys(other.r.loginBodies[0] as object)).not.toContain('exportChain');
     });
 
     it('copies an EVM key as 0x + 64 lowercase hex', async () => {

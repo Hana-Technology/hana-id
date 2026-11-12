@@ -1,8 +1,8 @@
-// Address and key encodings: Stellar StrKey (SEP-23) and EVM EIP-55. Moved from apps/smoke/src/chain-keys.ts (its
-// PROVISIONAL derivation is replaced by derivation.ts).
+// Address and key encodings: Stellar StrKey (SEP-23), EVM EIP-55 and NEAR (implicit account ids, `ed25519:` keys,
+// account id rules). Moved from apps/smoke/src/chain-keys.ts (its PROVISIONAL derivation is replaced by derivation.ts).
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
-import { base32 } from '@scure/base';
+import { base32, base58 } from '@scure/base';
 import { type Bytes, toBytes, toHex, utf8 } from './bytes.ts';
 
 /** SEP-23 version bytes. */
@@ -103,6 +103,65 @@ export function parseEvmAddress(text: string): Bytes {
 export function isEvmAddress(text: string): boolean {
   try {
     parseEvmAddress(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---- NEAR ----
+
+/**
+ * A NEAR account id as nearcore validates it (2 to 64 characters; parts of `[a-z0-9]` runs joined by single `-` or
+ * `_`, separated by `.`): named accounts (`alice.testnet`), implicit ones (64 lowercase hex) and ETH-implicit ones
+ * (`0x` + 40 lowercase hex) all pass. Every such id is ASCII, so it is always safe to show.
+ */
+export const isNearAccountId = (v: unknown): v is string =>
+  typeof v === 'string' && /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u.test(v);
+
+/** A NEAR implicit account id: the 64 lowercase hex characters of an Ed25519 public key. */
+export const isNearImplicitAccountId = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/u.test(v);
+
+/** The implicit account id of a 32-byte Ed25519 public key (lowercase hex, 64 characters). */
+export function nearImplicitAccountId(publicKey: Uint8Array): string {
+  if (publicKey.length !== 32) throw new Error('NEAR Ed25519 public key must be 32 bytes');
+  return toHex(publicKey);
+}
+
+/** The Ed25519 public key of an implicit account id (the inverse of nearImplicitAccountId). */
+export function nearImplicitPublicKey(accountId: string): Bytes {
+  if (!isNearImplicitAccountId(accountId)) throw new Error('Not a NEAR implicit account id');
+  return Uint8Array.from({ length: 32 }, (_, i) => Number.parseInt(accountId.slice(2 * i, 2 * i + 2), 16));
+}
+
+/** The NEAR key types (borsh `KeyType`): 0 Ed25519 (32-byte keys, 64-byte signatures), 1 secp256k1 (64, 65). */
+export type NearKeyType = 'ed25519' | 'secp256k1';
+export const NEAR_KEY_LENGTHS: Readonly<Record<NearKeyType, number>> = Object.freeze({ ed25519: 32, secp256k1: 64 });
+
+/** `ed25519:<base58>` (or `secp256k1:<base58>` for a 64-byte key), as NEAR RPCs and wallets print public keys. */
+export function nearPublicKeyString(publicKey: Uint8Array, type: NearKeyType = 'ed25519'): string {
+  if (publicKey.length !== NEAR_KEY_LENGTHS[type]) throw new Error(`NEAR ${type} public key must be ${NEAR_KEY_LENGTHS[type]} bytes`);
+  return `${type}:${base58.encode(publicKey)}`;
+}
+
+/**
+ * Parses `ed25519:<base58>` (or `secp256k1:<base58>`) strictly: the prefix is required, and the base58 must decode
+ * to the key's exact length and encode back to the same text.
+ */
+export function parseNearPublicKey(text: string): { type: NearKeyType; bytes: Bytes } {
+  const m = /^(ed25519|secp256k1):([1-9A-HJ-NP-Za-km-z]{1,100})$/u.exec(text);
+  if (!m) throw new Error('Malformed NEAR public key');
+  const type = m[1] as NearKeyType;
+  const bytes = toBytes(base58.decode(m[2]!));
+  if (bytes.length !== NEAR_KEY_LENGTHS[type] || base58.encode(bytes) !== m[2]) throw new Error('Malformed NEAR public key');
+  return { type, bytes };
+}
+
+/** True for a well-formed `ed25519:` or `secp256k1:` NEAR public key string. */
+export function isNearPublicKey(text: unknown): text is string {
+  if (typeof text !== 'string') return false;
+  try {
+    parseNearPublicKey(text);
     return true;
   } catch {
     return false;

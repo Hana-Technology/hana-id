@@ -79,6 +79,23 @@ describe('partnerUserView: the allowlist', () => {
     expect(partnerUserView(null)).toBeNull();
   });
 
+  it('a NEAR account (D755) passes as the others do; a malformed one drops the row; a chain it doesn’t know is left out', () => {
+    const near = 'ab'.repeat(32);
+    const w = (chain: string, address: string) => ({ chain, address, firstSeenAt: 1, lastUsedAt: 2, keyIndex: 0 });
+    const v = partnerUserView({ ...leaky(), wallets: [w('stellar', G), w('evm', EVM), w('near', near)] })!;
+    expect(v.wallets).toEqual([
+      { chain: 'stellar', address: G, firstSeenAt: 1, lastUsedAt: 2 },
+      { chain: 'evm', address: EVM, firstSeenAt: 1, lastUsedAt: 2 },
+      { chain: 'near', address: near, firstSeenAt: 1, lastUsedAt: 2 },
+    ]);
+    for (const bad of [near.toUpperCase(), near.slice(2), 'alice.testnet', 'person@gmail.com', G]) {
+      expect(partnerUserView({ ...leaky(), wallets: [w('near', bad)] }), bad).toBeNull();
+    }
+    const later = partnerUserView({ ...leaky(), wallets: [w('stellar', G), w('solana', 'So1ana'), w('__proto__', 'x')] })!;
+    expect(later.wallets).toEqual([{ chain: 'stellar', address: G, firstSeenAt: 1, lastUsedAt: 2 }]);
+    expect(JSON.stringify(later)).not.toContain('So1ana');
+  });
+
   it('a shared address (D411) passes in `email`; the accounts’ own addresses and subs still never do', () => {
     const v = partnerUserView({ ...leaky(), email: 'ada@partner-user.example' })!;
     expect(v.email).toBe('ada@partner-user.example');

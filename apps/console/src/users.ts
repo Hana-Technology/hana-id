@@ -49,7 +49,7 @@ export interface PartnerUserOut {
   lastSeenAt: number;
   /** Connected account kinds only: no address, no Google account id. */
   accounts: { kind: 'google' | 'email' | 'apple' | 'other'; status: 'active' | 'pending' }[];
-  wallets: { chain: 'stellar' | 'evm'; address: string; firstSeenAt: number; lastUsedAt: number }[];
+  wallets: { chain: 'stellar' | 'evm' | 'near'; address: string; firstSeenAt: number; lastUsedAt: number }[];
   /** The address most recently shared with one of the org's apps (D411), or null ("Not shared"). */
   email: string | null;
   /** A user's detail only: every address shared with the org's apps, per app. */
@@ -67,6 +67,10 @@ const SUPPORT_ID_RE = /^HANA-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/u;
 const SCOPE_RE = /^(global|s[0-9a-z]{1,32})$/u;
 const STELLAR_RE = /^G[A-Z2-7]{55}$/u;
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/u;
+/** A NEAR implicit account id (D755): 64 lowercase hex characters, as the API stores it. */
+const NEAR_RE = /^[0-9a-f]{64}$/u;
+/** The chains this console shows; a wallet of a chain it doesn't know yet is left out (not passed through), the user kept. */
+const WALLET_RES: Record<string, RegExp> = { stellar: STELLAR_RE, evm: EVM_RE, near: NEAR_RE };
 /** The API's page cursor (console-core's pattern), passed back as given. */
 export const USER_CURSOR_RE = CORE_CURSOR_RE;
 const KINDS = new Set(['google', 'email', 'apple']);
@@ -138,9 +142,12 @@ export function partnerUserView(u: unknown): PartnerUserOut | null {
     const first = time(x.firstSeenAt);
     const last = time(x.lastUsedAt);
     if (first === null || last === null || typeof x.address !== 'string') return null;
-    if (x.chain === 'stellar' && STELLAR_RE.test(x.address)) wallets.push({ chain: 'stellar', address: x.address, firstSeenAt: first, lastUsedAt: last });
-    else if (x.chain === 'evm' && EVM_RE.test(x.address)) wallets.push({ chain: 'evm', address: x.address, firstSeenAt: first, lastUsedAt: last });
-    else return null;
+    if (typeof x.chain !== 'string') return null;
+    const re = Object.hasOwn(WALLET_RES, x.chain) ? WALLET_RES[x.chain] : undefined;
+    // A chain this console doesn't know (an API newer than it): that wallet is left out, the user still listed.
+    if (!re) continue;
+    if (!re.test(x.address)) return null;
+    wallets.push({ chain: x.chain as 'stellar' | 'evm' | 'near', address: x.address, firstSeenAt: first, lastUsedAt: last });
   }
   // Always present (null: not shared); a missing or malformed one drops the row rather than guess.
   const email = r.email === null ? null : isShownEmail(r.email) ? r.email : undefined;

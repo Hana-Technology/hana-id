@@ -3,8 +3,10 @@
 // Hana code in `data.code`; a network failure inside the SDK can surface as a TypeError. Either carries the Hana API
 // request it came from in `data.requestId` (D405), when it came from one.
 import { isApiRequestId } from '@hana-id/core';
+import { displayText } from './near.ts';
 
-export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy' | 'identity';
+/** `near`: the NEAR card's gasless guestbook write (activate, sign, relay) and its reads from NEAR testnet. */
+export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy' | 'identity' | 'near';
 
 export interface ErrorInfo {
   /** The most specific code: the Hana string code when there is one, else the numeric code, else null. */
@@ -45,9 +47,104 @@ export function isSignedOut(e: unknown): boolean {
   return code === 4900 && reason === 'signed_out';
 }
 
+const GASLESS = '“Write to the guestbook (no NEAR needed)”';
+
+/**
+ * The vault's NEAR refusals (4100 with `data.reason`, docs/integration.md section 8), by reason. Each is about a
+ * request the page built, so the advice is to try again: the card reads a fresh nonce and block for every attempt.
+ */
+const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
+  near_key_unknown: `Your NEAR account doesn’t exist on testnet yet, so Hana can’t check this request. Click ${GASLESS} again: the demo creates the account first.`,
+  near_block_unknown: 'Hana couldn’t find this transaction’s block on NEAR testnet. Try again: the demo reads a fresh block.',
+  near_network_mismatch: 'Refused: this transaction names a block of another NEAR network than the one it claims.',
+  near_delegate_nonce_used: 'That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one.',
+  near_delegate_nonce_too_large: 'Hana refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
+  near_delegate_expiry: 'The NEAR request expired before it was approved, or expires too far ahead. Try again.',
+  near_delegate_nonce_stale: 'That NEAR request was prepared too long ago (its nonce is behind testnet’s current block). Try again: the demo reads a fresh one.',
+  near_relayed_delegate: 'Refused: Hana doesn’t sign a transaction that relays someone else’s delegate action.',
+  // A test app's delegate actions: only calls and transfers (…_action), to a .testnet account other than the user's (…_receiver).
+  near_delegate_test_app_action: 'Refused: a test app’s gasless request may only call a contract or send NEAR, never change your account.',
+  near_delegate_test_app_receiver: 'Refused: a test app’s gasless request may only go to a testnet account other than your own.',
+};
+
+/**
+ * The relayer's refusals of `POST /v1/near/relay` and `/v1/near/activate` (the SDK makes a 4xx 4100 and a 5xx
+ * `api_unavailable`, with the API's code in `data.reason` and the HTTP status in `data.status`). The codes are those of
+ * docs/api.md "NEAR relay" on the relayer build's branch; add a row here for a new one. Anything else falls back to
+ * RELAYER_REFUSED or RELAYER_DOWN.
+ */
+const RELAYER_REASONS: Readonly<Record<string, string>> = {
+  // 409 until the vault has recorded the user's NEAR account in Hana's wallet directory (seconds after login); the
+  // card retries for about 20 s (near-card.ts UNRECORDED_REASONS) before it shows these.
+  near_account_unrecorded: 'Hana is still setting up your NEAR account for this app (it takes a few seconds after you sign in). Try again in a moment.',
+  near_account_unknown: 'Hana doesn’t have your NEAR account on record for the demo app yet. Wait a few seconds and try again; if it keeps happening, log out and log in again.',
+  directory_unavailable: 'Hana couldn’t check your NEAR account right now. Try again in a minute.',
+  // The relayer's policy: zero-deposit calls to an allowed contract, from an implicit account, with bounded gas.
+  receiver_not_allowed: 'Hana’s relayer pays only for calls to the demo guestbook, and refused this one.',
+  action_not_allowed: 'Hana’s relayer pays only for function calls, and refused this request.',
+  deposit_not_allowed: 'Hana’s relayer refused a request that attaches NEAR: the guestbook needs none.',
+  gas_too_high: 'Hana’s relayer refused the request’s gas: it pays for at most what the guestbook needs.',
+  sender_not_implicit: 'Hana’s relayer acts only for Hana’s own NEAR accounts, and refused this one.',
+  bad_delegate: 'Hana’s relayer could not read the signed request. Try again.',
+  bad_delegate_signature: 'Hana’s relayer found the request’s signature invalid. Try again.',
+  bad_request: 'Hana’s relayer could not read the request. Try again.',
+  mainnet_not_allowed: 'Hana’s relayer works on NEAR testnet only.',
+  // Checked on chain before relaying.
+  account_not_activated: 'Your NEAR account doesn’t exist on testnet yet. Try again: the demo creates it first.',
+  access_key_missing: 'Your NEAR account has no Hana key on testnet any more (was it changed elsewhere?), so the relayer can’t act for it.',
+  delegate_nonce_used: 'That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one.',
+  delegate_nonce_too_large: 'Hana’s relayer refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
+  delegate_expired: 'The signed request expired before the relayer sent it. Try again.',
+  block_height_too_far: 'The signed request expires too far ahead for Hana’s relayer. Try again.',
+  already_relayed: 'Hana’s relayer sent this exact request a moment ago. Check the guestbook list.',
+  // After relaying.
+  contract_rejected: 'The guestbook contract refused the message (is it 1 to 200 characters?). Nothing was stored.',
+  delegate_rejected: 'NEAR testnet refused the signed request. Try again: the demo reads a fresh nonce and block.',
+  timeout: 'NEAR testnet hasn’t confirmed the transaction yet: it may still land. Click Refresh on the guestbook list in a moment to see.',
+  near_rejected: 'NEAR testnet refused the relayed transaction. Try again; the guestbook list shows whether it landed.',
+  near_error: 'NEAR testnet returned an error for the relayed transaction. Try again; the guestbook list shows whether it landed.',
+  near_unavailable: 'Hana’s relayer couldn’t reach NEAR testnet. Try again in a minute.',
+  // Capacity and limits.
+  app_budget_exhausted: 'The demo app has used up today’s free NEAR relays. Try again tomorrow (UTC).',
+  relay_budget_exhausted: 'The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).',
+  relayer_busy: 'Hana’s relayer is busy. Try again in a moment.',
+  not_enough_balance: 'Hana’s relayer is low on testnet NEAR right now. Tell the Hana team.',
+  relayer_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
+  relayer_unconfigured: 'Hana’s relayer isn’t set up on this environment yet. Tell the Hana team.',
+  rate_limiter_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
+};
+const RELAYER_REFUSED = 'Hana’s relayer refused this request';
+const RELAYER_DOWN = 'Hana’s relayer is unavailable right now. Try again in a minute.';
+
+/** The NEAR card's own failures (src/near.ts), and the NEAR answers of every action; null for any other error. */
+function nearMessage(e: unknown, code: string | number | null, reason: string | null, action: DemoAction): string | null {
+  if (code === 'near_page_rpc_failed') return 'This page couldn’t read NEAR testnet (its RPC didn’t answer). Check your connection and try again.';
+  if (code === 'near_account_pending') return 'Hana’s relayer is still creating your NEAR account. Wait a few seconds and try again.';
+  if (code === 'near_nonce_wait') return 'NEAR testnet needs a new block before this request. Wait a few seconds and try again.';
+  if (code === 'near_send_failed') return 'NEAR testnet refused or failed the transaction. Use the gasless write instead.';
+  if (code === 4100 && reason !== null && Object.hasOwn(NEAR_VAULT_REASONS, reason)) return NEAR_VAULT_REASONS[reason]!;
+  if (code === 'api_unavailable' && reason === 'near_rpc_unavailable') return 'Hana couldn’t reach NEAR testnet to check this request. Try again in a minute.';
+  if (code === 'api_unavailable' && reason === 'near_rpc_single_provider') return `This Hana environment has only one NEAR provider, so Hana can’t check a test app’s NEAR request. ${REPORT}`;
+  // The relayer's answers carry their HTTP status in data.status (the SDK's relay and activate); the vault's don't.
+  const fromRelayer = isObj(e) && isObj(e.data) && typeof e.data.status === 'number';
+  if (action !== 'near' || !fromRelayer) return null;
+  // The contract's own panic text (the API's `error`, the SDK's message): from the chain, so shown made safe and short.
+  if (reason === 'contract_rejected') {
+    const why = displayText(errorInfo(e).message, 160).trim();
+    return `The guestbook contract refused the message${why ? `: ${why}` : ''}. Nothing was stored.`;
+  }
+  if (reason !== null && Object.hasOwn(RELAYER_REASONS, reason) && (code === 4100 || code === 'api_unavailable' || code === 'rate_limited')) return RELAYER_REASONS[reason]!;
+  if (code === 4100) return `${RELAYER_REFUSED}${reason ? ` (${reason})` : ''}. ${REPORT}`;
+  if (code === 'api_unavailable') return reason ? `${RELAYER_DOWN} (${reason})` : 'Could not reach Hana’s relayer. Check your connection and try again.';
+  if (code === 'rate_limited') return 'Too many guestbook writes from this app in a short time. Wait a minute and try again.';
+  return null;
+}
+
 /** What to tell the user, for an error of `action`. */
 export function plainMessage(e: unknown, action: DemoAction): string {
   const { code, reason } = errorInfo(e);
+  const near = nearMessage(e, code, reason, action);
+  if (near !== null) return near;
   switch (code) {
     case 'popup_blocked':
       return 'Your browser blocked the Hana sign-in window. Allow pop-ups for this site and click “Log in with Google” again.';

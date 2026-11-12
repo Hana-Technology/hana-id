@@ -258,7 +258,7 @@ NEAR). Replace all the tarballs you use together (they depend on each other at `
 - Not yet NEAR: auto-approve policies (every NEAR request asks the user), the identity token's `wallets` (still
   Stellar and EVM; prove a NEAR account with `hana.near.signMessage`) and the React hooks (use
   `useHana().client.near`). The partner portal's Users page and Passport Home show a user's NEAR account once they sign
-  in through SDK 0.4.0; Passport Home's "Move this wallet" offers the NEAR key since D779.
+  in through SDK 0.4.0; Passport Home's "Move this wallet" offers the NEAR key too.
 
 **Upgrading from 0.3.1 to 0.4.0:**
 

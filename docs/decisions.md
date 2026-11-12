@@ -11645,7 +11645,7 @@ From `develop` @ 1464a744. The staff System status page (D425, D772) gains a "NE
 staff see the gasless relay (D730–D739) without a block explorer. No migration, no new var or secret, no route.
 
 ### D784. The NEAR relay's facts come through `AdminRpc.systemStatus`, read live by the API at each cold read
-- Date 2026-11-12 · Status: decided while building 2026-11-12, to confirm · Built: `apps/api/src/near/relay-status.ts` (`nearRelayStatus`), `apps/api/src/system-status.ts` (`nearRelay`), `packages/console-core/src/health.ts` (`NearRelayStatus`), `apps/admin/src/status.ts` (`nearRelayTile`); tests `apps/api/test/near-relay-status.test.ts`, `apps/admin/test/status.test.ts`, `apps/admin/test-spa/status.test.ts`
+- Date 2026-11-12 · Status: decided while building 2026-11-12, confirmed by the user 2026-11-12 · Built: `apps/api/src/near/relay-status.ts` (`nearRelayStatus`), `apps/api/src/system-status.ts` (`nearRelay`), `packages/console-core/src/health.ts` (`NearRelayStatus`), `apps/admin/src/status.ts` (`nearRelayTile`); tests `apps/api/test/near-relay-status.test.ts`, `apps/admin/test/status.test.ts`, `apps/admin/test-spa/status.test.ts`
 - Cause: the relay raised only two security events (`near_relay_balance_low` hourly, `near_relay_budget_high` at 80%); its balance, keys and spend were visible only on an explorer. The relayer tile's facts come from the watchdog's stored 5-minute reading of the relayer account plus the API's pool keys in `systemStatus`; the watchdog doesn't know the relay account, its keys or its spend, and the API holds all three.
 - Decision: the API answers `nearRelay` in the same `systemStatus` call the page already makes: its state (off, `bad_config`, `no_keys`, `bad_keys`, on), the manifest's account and lines, `view_account` and `view_access_key_list` of the relay account (in parallel, 5 s per endpoint through its failover), the API's relay keys compared with the account's full-access keys by public key inside the API (`nearRelayKeys`, shared with `nearRelayReady`), and the day's spend (D785). The admin judges it as it judges the others: each part fails on its own (Unknown, with an issue unless the NEAR RPC tile already says every endpoint is down), the 30 s isolate cache, and the relayer tile's staleness rule on the reading's `readAt` (never stale today: the read is live).
 - Calls: none added to the admin's page budget (still 20 on sandbox-dev, 22 at most) or to any cron; inside the API's status invocation two NEAR reads and one RateLimiter call when a relay config is set, none without.
@@ -11653,18 +11653,18 @@ staff see the gasless relay (D730–D739) without a block explorer. No migration
 - Address impact: none.
 
 ### D785. Today's spend is read from the budget's own RateLimiter, read only, env-wide, amounts only
-- Date 2026-11-12 · Status: decided while building 2026-11-12, to confirm · Built: `apps/api/src/rate-limiter.ts` (`spent`), `apps/api/src/near/relay.ts` (`nearRelaySpent`)
+- Date 2026-11-12 · Status: decided while building 2026-11-12, confirmed by the user 2026-11-12 · Built: `apps/api/src/rate-limiter.ts` (`spent`), `apps/api/src/near/relay.ts` (`nearRelaySpent`)
 - Decision: a new read-only `RateLimiter.spent(name, windowMs, now)` returns the window's total that `spend` counted (`budget:<name>@<start>`, '0' when none) on `near-relay:budget`, window `near-relay:day` (the UTC day the budget uses). The answer carries the total in yocto and the day; no per-app split (the per-app budgets stay in their own objects; the playbook's request logs answer "which app").
 - Why: it is the number the budget refuses on, so the tile and the 503 agree; a new method on an existing Durable Object class needs no migration.
 - Address impact: none.
 
 ### D786. How the tile judges: the manifest's lines, a fifth for red, the API's 80%
-- Date 2026-11-12 · Status: decided while building 2026-11-12, to confirm · Built: `apps/admin/src/status.ts` (`NEAR_RELAY_CRITICAL_DIVISOR`, `nearRelayTile`)
+- Date 2026-11-12 · Status: decided while building 2026-11-12, confirmed by the user 2026-11-12 · Built: `apps/admin/src/status.ts` (`NEAR_RELAY_CRITICAL_DIVISOR`, `nearRelayTile`)
 - Decision: balance (available: amount less storage, as the watchdog's) amber below `lowBalanceNear`, red below a fifth of it (every default pair of the watchdog's `relayerFunds` has its critical line at a fifth of its warning line: 5/1, 0.5/0.1, 0.1/0.02, 1/0.2), red with the account missing. Spend amber from the API's `budgetAlertPct` (80, the `near_relay_budget_high` line, answered by the API so they can't drift), red when used up. Any API relay key that isn't a full-access key on the account red (relays through it fail; as the session pool's). `NEAR_RELAY_KEYS` absent amber (the runbook's off switch, so it may be meant), unusable keys or a config the API refuses red, an env without `near.relay`, with empty `receivers` or off testnet Not measured ("Off") and never an issue. Three lines: Balance, Today's spend, Keys.
 - Note: the hourly event judges the amount, the tile the available balance: the tile can turn amber a few thousandths of a NEAR earlier.
 - Address impact: none.
 
 ### D787. The other NEAR accounts' balances are left out of the page for now (proposed follow-up)
-- Date 2026-11-12 · Status: decided while building 2026-11-12, to confirm · Built: nothing
+- Date 2026-11-12 · Status: decided while building 2026-11-12, confirmed by the user 2026-11-12 · Built: nothing
 - Decision: the optional row of the signer contract's, the watchdog's and the council DAO's balances isn't built. The API knows the signer only (the watchdog and council accounts would be new API vars from `gen`), and it would add three NEAR reads to every cold read for accounts that move rarely. If wanted, a separate branch can read them in the API's status call behind a cache, or the watchdog can report them.
 - Address impact: none.

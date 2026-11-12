@@ -4,6 +4,7 @@
 // code is never in the subject or in the preview line (lock-screen previews, Q8). The app is "named by the app" (D118):
 // its name is shown only when it passes the display-safety rule and the app-name rule (D686), else a neutral wording;
 // the HTML part's heading never holds it (D687).
+import { BRAND } from '@hana-id/brand';
 import { type MailBlock, type MailInline, mailHtml, mailLogoUrl } from '@hana-id/brand/email';
 import { appNameProblem } from '@hana-id/console-core';
 import { isDisplaySafeLine } from './bytes.ts';
@@ -15,7 +16,8 @@ const MAX_APP_NAME = 64;
 
 /**
  * The app's name as mails show it, or null when it isn't safe to display: control, bidi or invisible characters, or a
- * name the app-name rule refuses (D686: one that looks like a web address or holds "Hana"). The API refuses such names
+ * name the app-name rule refuses (D686 as extended by D765: one that looks like a web address or holds "Hana",
+ * "Journear" or "Passport Home"). The API refuses such names
  * when an app is named; a name stored before the rule lands here and the mail says "an app".
  */
 export function displayAppName(name: string): string | null {
@@ -39,7 +41,7 @@ const hostOf = (origin: string): string => {
 export function mailEnvNotice(env: { ENV_NAME: string; ENV_LABEL?: string | undefined; NEAR_NETWORK?: string | undefined }): string {
   const label = env.ENV_LABEL ?? '';
   if (env.NEAR_NETWORK !== 'testnet' || !(MAIL_LABELS as readonly string[]).includes(label)) return '';
-  return `${label} Not production: this email is from Hana ID ${env.ENV_NAME} (testnet), for testing.`;
+  return `${label} Not production: this email is from ${BRAND.product} ${env.ENV_NAME} (testnet), for testing.`;
 }
 
 /** How an env's mail looks: its env banner (`mailEnvNotice`) and its logo's URL (`mailLook`). */
@@ -55,7 +57,11 @@ export function mailLook(env: { ENV_NAME: string; ENV_LABEL?: string | undefined
   return { ...(envNotice ? { envNotice } : {}), ...(logoUrl ? { logoUrl } : {}) };
 }
 
-const FOOTER = 'Sent automatically by Hana ID.';
+/**
+ * The HTML part's small print (D765): who sent it, and the anti-phishing line every mail ends with. The text part has
+ * no footer (unchanged since D670).
+ */
+const FOOTER = `Sent automatically by ${BRAND.product}. ${BRAND.company} never asks you to approve anything from an email.`;
 
 const designed = (title: string, preheader: string, blocks: MailBlock[], look: MailLook | undefined): string =>
   mailHtml({ title, preheader, blocks, footer: FOOTER, ...(look?.envNotice ? { envNotice: look.envNotice } : {}), ...(look?.logoUrl ? { logoUrl: look.logoUrl } : {}) });
@@ -74,9 +80,13 @@ export const CODE_HEADINGS: Readonly<Record<Purpose, string>> = Object.freeze({
   link_account: 'Your code to allow another sign-in method',
   link_change: 'Your code to remove a sign-in method',
   auto_link: 'Your code to link your Google sign-in',
-  home: 'Your sign-in code for Hana Home',
-  home_session: 'Your code to open a wallet in Hana Home',
+  home: `Your sign-in code for ${BRAND.home}`,
+  home_session: `Your code to open a wallet in ${BRAND.home}`,
 });
+
+/** A stand-in for the app in a subject that names none: `purposeText`'s subject is cut before it. */
+const NO_APP = '\u0000';
+const NO_APP_TAIL = / (?:for|in) \u0000$/u;
 
 /**
  * What a code does, per purpose (tokens review M1, D199): each purpose has its own subject and wording, so a code for
@@ -110,15 +120,15 @@ export function purposeText(purpose: Purpose, appText: string): { subject: strin
         what: `link your Google sign-in to the wallet this email opens in ${appText}`,
         ignore: 'If you didn’t just sign in with Google, ignore this mail: nothing changes.',
       };
-    // Hana Home's codes name Hana Home and the action, never an app: the issuer reads no app for them, and a name the
-    // page sent would let anyone put words in a Hana mail.
+    // Passport Home's codes name Passport Home and the action, never an app: the issuer reads no app for them, and a
+    // name the page sent would let anyone put words in a Journear mail.
     case 'home':
-      return { subject: 'Your sign-in code for Hana Home', what: 'sign in to Hana Home', ignore: 'If you didn’t try to sign in to Hana Home, ignore this mail.' };
+      return { subject: `Your sign-in code for ${BRAND.home}`, what: `sign in to ${BRAND.home}`, ignore: `If you didn’t try to sign in to ${BRAND.home}, ignore this mail.` };
     case 'home_session':
       return {
-        subject: 'Your code to open a wallet in Hana Home',
-        what: 'open one of your wallets in Hana Home, where its private key can be shown to move it to another wallet app',
-        ignore: 'If you didn’t ask Hana Home to open a wallet, ignore this mail: nothing changes. Never give this code to anyone: it opens your wallet.',
+        subject: `Your code to open a wallet in ${BRAND.home}`,
+        what: `open one of your wallets in ${BRAND.home}, where its private key can be shown to move it to another wallet app`,
+        ignore: `If you didn’t ask ${BRAND.home} to open a wallet, ignore this mail: nothing changes. Never give this code to anyone: it opens your wallet.`,
       };
   }
 }
@@ -128,13 +138,13 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
   const appText = app ? `“${app}”` : 'an app';
   const host = hostOf(input.authOrigin);
   const t = purposeText(input.purpose, appText);
-  const warning = `Type this code only in the Hana window you opened (${host}). Hana never asks for it by phone, chat or on another site.`;
-  // Hana Home's own words already name Hana.
-  const by = isHomePurpose(input.purpose) ? '' : ' with Hana';
+  const warning = `Type this code only in the ${BRAND.company} window you opened (${host}). ${BRAND.company} never asks for it by phone, chat or on another site.`;
+  // Passport Home's own words already name the service.
+  const by = isHomePurpose(input.purpose) ? '' : ` with ${BRAND.company}`;
   const intro = `Your code to ${t.what}${by}:`;
   const text = [intro, '', input.code, '', 'It expires in 10 minutes.', '', warning, '', t.ignore, ''].join('\n');
   // Subjects name the app only when it is display-safe; the code is never in a subject.
-  const subject = app ? t.subject.replaceAll('“', '').replaceAll('”', '') : purposeText(input.purpose, 'Hana').subject.replace(/ (?:for|in) Hana$/u, '');
+  const subject = app ? t.subject.replaceAll('“', '').replaceAll('”', '') : purposeText(input.purpose, NO_APP).subject.replace(NO_APP_TAIL, '');
   // The heading, the title and the preview line hold fixed words only (D687); the preview line never the code (D671).
   const heading = CODE_HEADINGS[input.purpose];
   const preheader = `${heading}. It expires in 10 minutes.`;
@@ -143,7 +153,7 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
     { kind: 'heading', text: heading },
     { kind: 'p', text: withApp(intro, app ? appText : null) },
     { kind: 'code', code: input.code, caption: 'It expires in 10 minutes.' },
-    { kind: 'callout', tone: 'info', text: ['Type this code only in the Hana window you opened (', { host }, '). ', { strong: 'Hana never asks for it by phone, chat or on another site.' }] },
+    { kind: 'callout', tone: 'info', text: [`Type this code only in the ${BRAND.company} window you opened (`, { host }, '). ', { strong: `${BRAND.company} never asks for it by phone, chat or on another site.` }] },
     { kind: 'p', text: t.ignore },
   ];
   return {
@@ -162,8 +172,8 @@ export function linkNoticeMail(input: { to: string; appName: string; authOrigin:
   const appText = app ? `“${app}”` : 'an app';
   const cancel = `${input.authOrigin.replace(/\/+$/u, '')}/link/cancel`;
   const what = input.pending
-    ? `This email is being linked to a Hana wallet in ${appText} together with a Google sign-in. The link takes effect after a waiting period (24 hours on Hana's live network), and can be cancelled until then.`
-    : `This email now opens a Hana wallet in ${appText} together with a Google sign-in.`;
+    ? `This email is being linked to a ${BRAND.company} wallet in ${appText} together with a Google sign-in. The link takes effect after a waiting period (24 hours on ${BRAND.company}'s live network), and can be cancelled until then.`
+    : `This email now opens a ${BRAND.company} wallet in ${appText} together with a Google sign-in.`;
   const notYou = `Not you? ${cancel}`;
   const subject = app ? `A sign-in method was added in ${app}` : 'A sign-in method was added';
   return {
@@ -172,7 +182,7 @@ export function linkNoticeMail(input: { to: string; appName: string; authOrigin:
     text: [what, '', notYou, ''].join('\n'),
     html: designed(
       'A sign-in method was added',
-      'A sign-in method was added to a Hana wallet this email opens.',
+      `A sign-in method was added to a ${BRAND.company} wallet this email opens.`,
       [{ kind: 'heading', text: 'A sign-in method was added' }, { kind: 'p', text: withApp(what, app ? appText : null) }, { kind: 'p', text: [{ strong: 'Not you?' }] }, { kind: 'button', label: 'Open the cancel page', url: cancel }],
       input.look,
     ),
@@ -188,16 +198,16 @@ export function linkNoticeMail(input: { to: string; appName: string; authOrigin:
  */
 export function unlockMail(input: { to: string; token: string; authOrigin: string; look?: MailLook }): MailMessage {
   const link = `${input.authOrigin.replace(/\/+$/u, '')}/email/unlock#${input.token}`;
-  const what = 'Hana support unlocked sign-in with this email, as you asked. To sign in, open this link in the browser where you use the app. It works once, within 24 hours.';
-  const notYou = 'Didn’t ask Hana support for this? Ignore this mail: nothing changes.';
-  const subject = 'Your Hana sign-in is unlocked';
+  const what = `${BRAND.company} support unlocked sign-in with this email, as you asked. To sign in, open this link in the browser where you use the app. It works once, within 24 hours.`;
+  const notYou = `Didn’t ask ${BRAND.company} support for this? Ignore this mail: nothing changes.`;
+  const subject = `Your ${BRAND.company} sign-in is unlocked`;
   return {
     to: input.to,
     subject,
     text: [what, '', link, '', notYou, ''].join('\n'),
     html: designed(
       subject,
-      'Hana support unlocked sign-in with this email, as you asked.',
+      `${BRAND.company} support unlocked sign-in with this email, as you asked.`,
       [{ kind: 'heading', text: subject }, { kind: 'p', text: what }, { kind: 'button', label: 'Open the sign-in link', url: link }, { kind: 'p', text: notYou, muted: true }],
       input.look,
     ),
@@ -208,16 +218,16 @@ export function unlockMail(input: { to: string; token: string; authOrigin: strin
 /** A staff unsuppress's confirmation, mailed to the address (abuse review M3): mail resumes only once its holder confirms. */
 export function confirmMail(input: { to: string; token: string; authOrigin: string; look?: MailLook }): MailMessage {
   const link = `${input.authOrigin.replace(/\/+$/u, '')}/email/confirm#${input.token}`;
-  const what = 'Hana stopped sending sign-in codes to this email after a bounce or a spam report. To receive them again, open this link. It works once, within 24 hours.';
-  const notYou = 'Didn’t ask Hana support for this? Ignore this mail: nothing changes.';
-  const subject = 'Confirm to receive Hana sign-in codes again';
+  const what = `${BRAND.company} stopped sending sign-in codes to this email after a bounce or a spam report. To receive them again, open this link. It works once, within 24 hours.`;
+  const notYou = `Didn’t ask ${BRAND.company} support for this? Ignore this mail: nothing changes.`;
+  const subject = `Confirm to receive ${BRAND.company} sign-in codes again`;
   return {
     to: input.to,
     subject,
     text: [what, '', link, '', notYou, ''].join('\n'),
     html: designed(
       subject,
-      'Hana stopped sending sign-in codes to this email after a bounce or a spam report.',
+      `${BRAND.company} stopped sending sign-in codes to this email after a bounce or a spam report.`,
       [{ kind: 'heading', text: subject }, { kind: 'p', text: what }, { kind: 'button', label: 'Receive codes again', url: link }, { kind: 'p', text: notYou, muted: true }],
       input.look,
     ),

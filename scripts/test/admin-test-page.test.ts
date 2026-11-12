@@ -18,7 +18,7 @@ const PLAN = {
   env: 'sandbox-test',
   network: 'testnet',
   severity: 'critical',
-  title: '[SANDBOX] CRITICAL: TEST (no action needed): paging check [Hana ID sandbox-test]',
+  title: '[SANDBOX] CRITICAL: TEST (no action needed): paging check [Journear Passport sandbox-test]',
   text: 'TEST PAGE. NO ACTION NEEDED.\nsecond line',
   channels: [
     { channel: 'pager', configured: true, provider: 'ntfy' },

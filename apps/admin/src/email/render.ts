@@ -1,9 +1,10 @@
 // Plain text plus HTML for every email (docs/batch-c-spec.md "Email"): no remote image, no script, links only to
 // `console.origin`, never an approve link. The HTML is plain semantic markup, or, for a mail that passes `design`
-// (the partner invite, D672; the security notices partners receive, D700; the feed's digests, D704), Hana's designed layout (@hana-id/brand/email)
+// (the partner invite, D672; the security notices partners receive, D700; the feed's digests, D704), the designed layout (@hana-id/brand/email, D765)
 // built from the same blocks, with the same text part; in it every paragraph, table value, list item and warning is
 // written so mail clients don't turn a host or address into a link, preformatted JSON included. Partner-controlled text (app and org names, origins, policy labels) is escaped for HTML and stripped of
 // control characters; a subject is one line.
+import { BRAND } from '@hana-id/brand';
 import { MAIL_INVISIBLE_SOURCE, type MailBlock, type MailEntry, mailHtml, mailLogoUrl } from '@hana-id/brand/email';
 
 export type Block =
@@ -30,7 +31,7 @@ export interface LogRow {
   detail?: string;
 }
 
-/** A mail drawn with the designed layout: its heading (the subject without the env and Hana prefixes) and its preview line. */
+/** A mail drawn with the designed layout: its heading (the subject without the env and product prefixes) and its preview line. */
 export interface Design {
   heading: string;
   preheader: string;
@@ -95,7 +96,7 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
   const text: string[] = [];
   const html: string[] = [];
   const tag = oneLine(label, 20);
-  const notice = tag ? `${tag} Not production: this email is from Hana ID ${oneLine(env, 60)} (testnet), for testing.` : '';
+  const notice = tag ? `${tag} Not production: this email is from ${BRAND.product} ${oneLine(env, 60)} (testnet), for testing.` : '';
   if (notice) {
     text.push(notice);
     html.push(`<p><strong>${escapeHtml(notice)}</strong></p>`);
@@ -162,7 +163,8 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
       }
     }
   }
-  const footer = 'Sent by Hana ID security. Hana never asks you to approve anything from an email. To reach Hana security, reply to this address or write to your Hana contact.';
+  // The small print every partner and staff mail ends with (D765: the names only; the words as before).
+  const footer = `Sent by ${BRAND.product} security. ${BRAND.company} never asks you to approve anything from an email. To reach ${BRAND.company} security, reply to this address or write to your ${BRAND.company} contact.`;
   text.push(footer);
   html.push(`<p><small>${escapeHtml(footer)}</small></p>`);
   // The designed HTML part showing at most `shown` rows of each digest list; a list cut short says so after its rows.
@@ -201,7 +203,7 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
     }
   }
   return {
-    subject: oneLine(`${tag ? `${tag} ` : ''}[Hana ID ${env}] ${subject}`, 200),
+    subject: oneLine(`${tag ? `${tag} ` : ''}[${BRAND.product} ${env}] ${subject}`, 200),
     text: `${text.join('\n\n')}\n`,
     html: design ? out : `<!doctype html><html><body>${html.join('\n')}</body></html>`,
   };

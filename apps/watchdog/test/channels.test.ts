@@ -77,14 +77,14 @@ describe('Email (SendGrid, D401)', () => {
 
   it('sends with the watchdog’s own key, one copy per founder, tracking off; counts it only on a 202', async () => {
     const calls = stubFetch(() => new Response(null, { status: 202, headers: { 'x-message-id': 'msg_1' } }));
-    const email = emailSender(sendgridEmail(KEY, 'Hana ID watchdog <alerts@notify.example.com>'), ['a@example.com', 'b@example.com'], 'sandbox-test');
+    const email = emailSender(sendgridEmail(KEY, 'Journear Passport watchdog <alerts@notify.example.com>'), ['a@example.com', 'b@example.com'], 'sandbox-test');
     expect(await email.send(msg({ resend: true }))).toEqual({ ok: true, ref: 'msg_1' });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(SENDGRID_URL);
     expect(calls[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
     const body = JSON.parse(calls[0]!.body) as Record<string, any>;
     expect(body.personalizations).toEqual([{ to: [{ email: 'a@example.com' }] }, { to: [{ email: 'b@example.com' }] }]);
-    expect(body.from).toEqual({ email: 'alerts@notify.example.com', name: 'Hana ID watchdog' });
+    expect(body.from).toEqual({ email: 'alerts@notify.example.com', name: 'Journear Passport watchdog' });
     expect(body.subject).toBe('CRITICAL (re-sent): Forged key k9 [Journear Passport sandbox-test]');
     expect(body.content).toEqual([{ type: 'text/plain', value: 'kid: k9' }]);
     expect(body.categories).toEqual([WATCHDOG_CATEGORY]);

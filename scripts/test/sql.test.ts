@@ -134,6 +134,14 @@ describe('app names (OPER-11)', () => {
     expect(assertAppName('Sodax · Stellar 🌸')).toBe('Sodax · Stellar 🌸');
   });
 
+  it('refuses the service\'s names (D686 as extended by D765): "Hana", "Journear" and their look-alikes, "Passport Home"; "Passport" alone passes', () => {
+    for (const bad of ['Hana Pay', 'Journear', 'J0urnear', 'JOURNEAR', 'journear-pay', `J${String.fromCharCode(0x043e)}urnear`, 'J o u r n e a r', 'Passport Home']) {
+      expect(() => assertAppName(bad), bad).toThrow(/App name: The name must not contain/u);
+    }
+    expect(assertAppName('Passport Travel')).toBe('Passport Travel');
+    expect(assertAppName('Passport')).toBe('Passport');
+  });
+
   it('prints stored names with unsafe characters escaped (an ANSI escape or bidi override in D1 never reaches the terminal raw)', () => {
     expect(printable('Wal‮let\u001b[2J')).toBe('Wal\\u{202e}let\\u{1b}[2J');
     expect(printable('Plain name')).toBe('Plain name');

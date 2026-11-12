@@ -54,7 +54,7 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
     if (ch.display && ch.display !== ch.origin) rows.push(['Shown as', ch.display]);
   }
   if (ch.kind === 'policy_set' && ch.policyId) rows.push(['Policy id', ch.policyId]);
-  rows.push(['Proposed by', `${ch.proposedByKind === 'hana' ? 'Hana staff' : ch.proposedByKind === 'member' ? 'a console member' : 'the system'} (${ch.proposedBy})`]);
+  rows.push(['Proposed by', `${ch.proposedByKind === 'hana' ? 'Journear staff' : ch.proposedByKind === 'member' ? 'a console member' : 'the system'} (${ch.proposedBy})`]);
   rows.push(['Proposed at', readableTime(ch.proposedAt)]);
   if (ch.requestCountry) rows.push(['Request country', ch.requestCountry]);
   blocks.push({ kind: 'kv', rows });
@@ -75,7 +75,7 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
     { kind: 'p', text: `It takes effect about ${duration(o.delayMs)} after this notice. It may take effect at once if it qualifies for a waiver: a loopback origin on a test app, or a scope that no user has used yet.` },
     { kind: 'p', text: 'If you did not expect this change, cancel it now. The page asks you to confirm; opening the link alone changes nothing.' },
     { kind: 'link', label: 'Cancel this change', url: o.cancelUrl },
-    { kind: 'p', text: 'An owner can also cancel it in the console, and Hana security can cancel it from the admin console.' },
+    { kind: 'p', text: 'An owner can also cancel it in the console, and Journear security can cancel it from the admin console.' },
   );
   const title = KIND_SUBJECT[ch.kind] ?? 'Change proposed';
   return render(c.env, `${title} for ${oneLine(n.app.name, 60)}`, blocks, c.consoleOrigin, c.label, notice(c, title, 'A change to one of your apps is waiting. It is not in force yet, and you can cancel it.'));
@@ -83,14 +83,14 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
 
 const orgLabel = (invite: InviteView, orgName: string | undefined): string => (invite.newOrgName ? `${invite.newOrgName} (new organisation)` : orgName ? `${orgName} (${invite.orgId})` : (invite.orgId ?? 'an organisation'));
 
-const byLabel = (kind: string, id: string): string => (kind === 'hana' ? `Hana staff (${id})` : `an owner (${id})`);
+const byLabel = (kind: string, id: string): string => (kind === 'hana' ? `Journear staff (${id})` : `an owner (${id})`);
 
 /** `member_invite`, to the invitee: the link (its token in the fragment, so it never reaches a server log). */
 export function inviteLink(c: MailContext, invite: InviteView, o: { orgName?: string; inviteUrl: string }): Rendered {
-  const subject = `You're invited to ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} on Hana ID`;
+  const subject = `You're invited to ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} on Journear Passport`;
   const org = orgLabel(invite, o.orgName);
   // Who invited, by role only (D672): the invitee learns no staff address or member id.
-  const by = invite.createdByKind === 'hana' ? 'Hana staff' : 'an owner of the organisation';
+  const by = invite.createdByKind === 'hana' ? 'Journear staff' : 'an owner of the organisation';
   // What accepting does (docs/integration.md "Members"): an owner invited to an existing organisation is a viewer
   // until its owner grant matures; a new organisation's first owner is its owner at once.
   const does = invite.newOrgName
@@ -102,7 +102,7 @@ export function inviteLink(c: MailContext, invite: InviteView, o: { orgName?: st
     c.env,
     subject,
     [
-      { kind: 'p', text: `You have been invited to join ${org} in the Hana ID partner console as ${invite.role === 'owner' ? 'an owner' : 'a viewer'}, by ${by}.` },
+      { kind: 'p', text: `You have been invited to join ${org} in the Journear Passport partner console as ${invite.role === 'owner' ? 'an owner' : 'a viewer'}, by ${by}.` },
       { kind: 'p', text: does },
       { kind: 'p', text: `Sign in with the Google account of this address. The invitation expires on ${readableTime(invite.expiresAt)}.` },
       { kind: 'link', label: 'Accept the invitation', url: o.inviteUrl },
@@ -110,7 +110,7 @@ export function inviteLink(c: MailContext, invite: InviteView, o: { orgName?: st
     ],
     c.consoleOrigin,
     c.label,
-    { heading: subject, ...(c.filesOrigin ? { filesOrigin: c.filesOrigin } : {}), preheader: `Join ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} in the Hana ID partner console. The invitation expires on ${readableTime(invite.expiresAt)}.` },
+    { heading: subject, ...(c.filesOrigin ? { filesOrigin: c.filesOrigin } : {}), preheader: `Join ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} in the Journear Passport partner console. The invitation expires on ${readableTime(invite.expiresAt)}.` },
   );
 }
 
@@ -120,7 +120,7 @@ export function inviteNotice(c: MailContext, invite: InviteView, o: { orgName?: 
     c.env,
     `New ${invite.role} invited to ${oneLine(invite.newOrgName ?? o.orgName ?? invite.orgId ?? 'an organisation', 60)}`,
     [
-      { kind: 'p', text: `A ${invite.role} was invited to ${orgLabel(invite, o.orgName)} in the Hana ID partner console.` },
+      { kind: 'p', text: `A ${invite.role} was invited to ${orgLabel(invite, o.orgName)} in the Journear Passport partner console.` },
       {
         kind: 'kv',
         rows: [
@@ -132,11 +132,11 @@ export function inviteNotice(c: MailContext, invite: InviteView, o: { orgName?: 
           ['Invite', invite.id],
         ],
       },
-      { kind: 'p', text: 'If this is unexpected, an owner can revoke the invite in the console (Members), or ask Hana security to revoke it.' },
+      { kind: 'p', text: 'If this is unexpected, an owner can revoke the invite in the console (Members), or ask Journear security to revoke it.' },
     ],
     c.consoleOrigin,
     c.label,
-    notice(c, `A new ${invite.role === 'owner' ? 'owner' : 'viewer'} was invited`, 'Someone was invited to your organisation in the Hana ID partner console.'),
+    notice(c, `A new ${invite.role === 'owner' ? 'owner' : 'viewer'} was invited`, 'Someone was invited to your organisation in the Journear Passport partner console.'),
   );
 }
 
@@ -161,7 +161,7 @@ export function ownerGrantNotice(c: MailContext, n: MemberNotice, o: { orgName?:
       },
       { kind: 'p', text: 'If this is unexpected, cancel it. The page asks you to confirm; opening the link alone changes nothing. Cancelling leaves the person a viewer.' },
       { kind: 'link', label: 'Cancel the owner grant', url: o.cancelUrl },
-      { kind: 'p', text: 'Any owner can also cancel it in the console, and Hana security from the admin console.' },
+      { kind: 'p', text: 'Any owner can also cancel it in the console, and Journear security from the admin console.' },
     ],
     c.consoleOrigin,
     c.label,
@@ -188,16 +188,16 @@ export function loginMethodsChanged(c: MailContext, r: AppChange, o: { appName?:
           ['Organisation', r.orgId],
           ...(r.scopeId ? ([['Scope', r.scopeId]] as [string, string][]) : []),
           ['Login methods now', String(r.detail.loginMethods)],
-          ['Changed by', `${r.actorKind === 'hana' ? 'Hana staff' : r.actorKind === 'member' ? 'a console member' : 'the system'} (${r.actorId})`],
+          ['Changed by', `${r.actorKind === 'hana' ? 'Journear staff' : r.actorKind === 'member' ? 'a console member' : 'the system'} (${r.actorId})`],
           ['Changed at', readableTime(r.at)],
         ],
       },
       ...(on
         ? ([
             { kind: 'p', text: 'Users of this app can sign in with email once the scope’s email client is on chain. If the scope already has that client, they can do so now.' },
-            { kind: 'p', text: 'If you did not expect this, turn it off now: any owner can do so on the app’s Email login page in the console. It takes effect at once and needs no fresh sign-in. Hana security can also turn it off.' },
+            { kind: 'p', text: 'If you did not expect this, turn it off now: any owner can do so on the app’s Email login page in the console. It takes effect at once and needs no fresh sign-in. Journear security can also turn it off.' },
           ] as Block[])
-        : ([{ kind: 'p', text: 'New sign-ins with email for this app stop at once. If you did not expect this, an owner can turn it on again on the app’s Email login page in the console, or ask Hana security.' }] as Block[])),
+        : ([{ kind: 'p', text: 'New sign-ins with email for this app stop at once. If you did not expect this, an owner can turn it on again on the app’s Email login page in the console, or ask Journear security.' }] as Block[])),
       { kind: 'link', label: 'Open the app’s Email login page', url: o.undoUrl },
     ],
     c.consoleOrigin,
@@ -221,7 +221,7 @@ const detailText = (d: Record<string, unknown>): string => {
 
 /** Who did it, in words, the id kept for support (D704; the text part keeps the code, as before). */
 const actorWords = (kind: string, id: string): string =>
-  `${kind === 'hana' ? 'Hana staff' : kind === 'member' ? 'a console member' : kind === 'system' ? 'the system' : kind === 'link' ? 'an emailed link' : kind} (${id})`;
+  `${kind === 'hana' ? 'Journear staff' : kind === 'member' ? 'a console member' : kind === 'system' ? 'the system' : kind === 'link' ? 'an emailed link' : kind} (${id})`;
 
 /** A row's time in both forms: `text` for the text part (the exact ISO time), `words` for the HTML part. */
 interface RowTime {
@@ -315,11 +315,11 @@ export function changesDigest(c: MailContext, orgId: string, rows: AppChange[]):
     [
       { kind: 'p', text: `${rows.length === 1 ? '1 change was' : `${rows.length} changes were`} made to the apps of ${orgId}. ${rows.length === 1 ? 'It is' : 'They are'} already in force or done; nothing here needs an answer unless you didn't expect it.` },
       { kind: 'rows', items: rows.map((r, i) => changeRow(r, times[i]!)), elsewhere: AUDIT_PAGE },
-      { kind: 'p', text: 'If one is unexpected, an owner can undo it in the console, or ask Hana security.' },
+      { kind: 'p', text: 'If one is unexpected, an owner can undo it in the console, or ask Journear security.' },
     ],
     c.consoleOrigin,
     c.label,
-    digestDesign(c, rows.length === 1 ? 'A change to your apps' : 'Changes to your apps', 'Changes made to your apps in the Hana ID partner console. They are already in force or done.'),
+    digestDesign(c, rows.length === 1 ? 'A change to your apps' : 'Changes to your apps', 'Changes made to your apps in the Journear Passport partner console. They are already in force or done.'),
   );
 }
 
@@ -334,7 +334,7 @@ export function auditDigest(c: MailContext, orgId: string | null, rows: AuditRow
     ],
     c.consoleOrigin,
     c.label,
-    digestDesign(c, 'Console activity', 'Members, invites and organisation settings changed in the Hana ID partner console.'),
+    digestDesign(c, 'Console activity', 'Members, invites and organisation settings changed in the Journear Passport partner console.'),
   );
 }
 
@@ -345,14 +345,14 @@ export function securityDigest(c: MailContext, orgId: string | null, events: Sec
     `Security event${events.length === 1 ? '' : 's'}: ${[...new Set(events.map((e) => e.kind))].join(', ')}${orgId ? ` in ${orgId}` : ''}`,
     [
       { kind: 'p', text: `The API recorded ${events.length === 1 ? 'this security event' : `these ${events.length} security events`}:` },
-      // Security events aren't on the console's Audit page: Hana security has them.
-      { kind: 'rows', items: events.map((e, i) => eventRow(e, times[i]!)), elsewhere: 'ask Hana security (reply to this email)' },
+      // Security events aren't on the console's Audit page: Journear security has them.
+      { kind: 'rows', items: events.map((e, i) => eventRow(e, times[i]!)), elsewhere: 'ask Journear security (reply to this email)' },
       // To the org's contacts and the alias (the alias alone without an org): words for both, no internal path (D704).
-      { kind: 'p', text: 'Hana security receives every security event too and has a recovery playbook for each kind. To ask about one, reply to this email or write to your Hana contact.' },
+      { kind: 'p', text: 'Journear security receives every security event too and has a recovery playbook for each kind. To ask about one, reply to this email or write to your Journear contact.' },
     ],
     c.consoleOrigin,
     c.label,
-    digestDesign(c, events.length === 1 ? 'A security event was recorded' : 'Security events were recorded', 'The Hana ID API recorded security events.'),
+    digestDesign(c, events.length === 1 ? 'A security event was recorded' : 'Security events were recorded', 'The Journear Passport API recorded security events.'),
   );
 }
 
@@ -404,13 +404,13 @@ export function onChainPending(c: MailContext, p: PendingOnChain): Rendered {
     blocks.push({ kind: 'p', text: `A proposal on chain adds a login client to scope ${p.scopeId}:` }, { kind: 'kv', rows: [['Provider', String(ch.AddClient.provider)], ['Client id', String(ch.AddClient.aud)]] });
   } else if (ch?.SetAllowShared) {
     what = 'shared login';
-    blocks.push({ kind: 'p', text: `A proposal on chain turns on shared login (Hana's shared Google client) for scope ${p.scopeId}.` });
+    blocks.push({ kind: 'p', text: `A proposal on chain turns on shared login (Journear's shared Google client) for scope ${p.scopeId}.` });
     if (p.activeOrigins) blocks.push({ kind: 'p', text: p.activeOrigins.length ? 'These origins are active on the scope’s apps and would accept shared-client logins:' : 'No origin is active on the scope’s apps.' }, ...(p.activeOrigins.length ? [{ kind: 'list' as const, items: p.activeOrigins }] : []));
   } else {
     blocks.push({ kind: 'pre', text: cut(JSON.stringify(p.change, null, 2), 5000) });
   }
   blocks.unshift({ kind: 'kv', rows: [['Scope', `${p.scopeId} (${p.orgId})`], ['Change', String(p.changeId)], ['Can execute from', readableTime(p.unlockAtMs)]] });
-  blocks.push({ kind: 'p', text: `Any owner of the scope can cancel it before then (cancel_change, in the console's scope page), or ask Hana security. If you made this proposal, no action is needed.` });
+  blocks.push({ kind: 'p', text: `Any owner of the scope can cancel it before then (cancel_change, in the console's scope page), or ask Journear security. If you made this proposal, no action is needed.` });
   return render(c.env, `On-chain proposal for ${p.scopeId}: ${what}`, blocks, c.consoleOrigin, c.label, notice(c, 'A change to your scope was proposed on chain', 'An on-chain proposal for your scope is waiting. It can be cancelled before it executes.'));
 }
 
@@ -442,7 +442,7 @@ export function onChainChanged(c: MailContext, scopeId: string, orgId: string, b
     [
       { kind: 'p', text: `The on-chain state of scope ${scopeId} (${orgId}) changed since the last check:` },
       { kind: 'list', items },
-      { kind: 'p', text: 'This covers executed proposals and immediate owner actions (remove_client, disable_shared_login), whether or not they were sent through the console. If one is unexpected, contact Hana security.' },
+      { kind: 'p', text: 'This covers executed proposals and immediate owner actions (remove_client, disable_shared_login), whether or not they were sent through the console. If one is unexpected, contact Journear security.' },
     ],
     c.consoleOrigin,
     c.label,

@@ -204,7 +204,7 @@ describe('per-purpose mail texts (tokens review M1)', () => {
     for (const [purpose, [subject, what]] of Object.entries(want)) {
       const m = codeMail({ to: 'a@example.com', code: '482913', appName: 'Wallet', authOrigin: 'https://auth.test', purpose: purpose as never });
       expect(m.subject).toBe(subject);
-      expect(m.text).toContain(`Your code to ${what} with Hana:`);
+      expect(m.text).toContain(`Your code to ${what} with Journear:`);
       expect(m.subject).not.toContain('482913');
       expect(m.text).not.toMatch(/https?:\/\//u);
       subjects.add(m.subject);

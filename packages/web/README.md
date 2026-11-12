@@ -153,6 +153,21 @@ once at the first login. Once shared, identity tokens carry `email` and `email_v
 sharing on the same sheet or in the approval window; new tokens then have no email. Rejects with
 `email_sharing_unavailable` (`data.reason`: `off`, `no_address`, `unavailable`).
 
+### Profile name
+
+```ts
+const profile = await hana.getProfile(); // { givenName, familyName } (each string | null), or null while logged out
+hana.profile;                            // the same, from the last identity token this page received
+hana.on('profileChanged', (p) => { /* the name changed, or null after logout or expiry */ });
+```
+
+Users can set a first and last name in Hana and choose which apps see it. A shared name is in the identity token as
+`given_name` and `family_name` (each only when set); `getProfile()` reads them from the token `getIdentityToken()`
+returns (same `{ maxAgeMs }`, same errors). The page doesn't check the token's signature: show the name, but let your
+backend take it from the verified token. A change the user makes reaches your page with the next token, up to about
+55 min later (the SDK reuses a token until 5 min before `exp`); `getProfile({ maxAgeMs })` asks for a fresher one.
+`profileChanged` fires only when the name differs, not on every new token.
+
 ## Your page must
 
 | Requirement | If not |

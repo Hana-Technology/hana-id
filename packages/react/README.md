@@ -1,7 +1,7 @@
 # @hana-id/react
 
-React bindings for Hana ID (`@hana-id/web`): `HanaProvider`, `useHana`, `useWallet`, `useIdentityToken` and
-`useEmailSharing`. React 18 and 19.
+React bindings for Hana ID (`@hana-id/web`): `HanaProvider`, `useHana`, `useWallet`, `useIdentityToken`,
+`useEmailSharing` and `useProfile`. React 18 and 19.
 
 ## Install
 
@@ -18,7 +18,7 @@ declarations.
 ## Use
 
 ```tsx
-import { HanaProvider, useEmailSharing, useHana, useIdentityToken, useMainnetDemo, useWallet } from '@hana-id/react';
+import { HanaProvider, useEmailSharing, useHana, useIdentityToken, useMainnetDemo, useProfile, useWallet } from '@hana-id/react';
 
 const config = {
   publishableKey: 'pk_test_…', // your app's page in Hana's partner portal (header: Publishable key)
@@ -50,6 +50,7 @@ const { address, signer } = useWallet('stellar'); // signer is hana.stellar
 const { address, provider } = useWallet('evm');   // provider is hana.ethereum (EIP-1193)
 const { identityToken, refresh, error } = useIdentityToken(); // a JWT for your backend, kept fresh while visible
 const { request, state, error } = useEmailSharing();          // <button onClick={request}>: Hana's email sharing sheet (0.3.0)
+const { profile, refresh, error } = useProfile();             // the name the user shared: { givenName, familyName } or null
 const { demo, known } = useMainnetDemo();                     // Hana's sandbox mainnet demo: off, not known yet, or on
 ```
 
@@ -71,6 +72,11 @@ const { demo, known } = useMainnetDemo();                     // Hana's sandbox 
 - `useMainnetDemo()` returns `{ demo, known }` for Hana's own sandbox mainnet demo (not available to partner apps):
   `demo` is `hana.mainnetDemo` (its rules and the prices it values with, `demo.prices.assets.ETH.usd` …) or null, and
   `known` is false until the client is ready, so `known && !demo` means off and `!known` means not known yet.
+- `useProfile()` returns `{ profile, refresh, error }`: `profile` is `hana.profile` (the name in the current
+  identity token, each part null when not shared; null while logged out) and re-renders only when the name changes.
+  Like `useIdentityToken` it gets a token once logged in and keeps it fresh while the page is visible, so a name the
+  user changes in Hana arrives within about 55 min, sooner with `refresh({ maxAgeMs })`. For display: your backend
+  takes the name from the verified token.
 - Server rendering (Next.js): the modules are `'use client'` and the client is created in an effect, so a server
   render shows the initial state (`status: 'unlocking'`, no addresses, `signer`/`provider` null) and never touches
   `window`.

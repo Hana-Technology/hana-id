@@ -19,7 +19,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Hana's NEAR accounts.
 
-Last verified against code: 2026-11-12 (section 8's NEAR: the gasless flow, Hana's relay, every refusal), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-12 (section 8's NEAR: the gasless flow, Hana's relay, every refusal; the user’s name after 0.4.0), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -177,7 +177,7 @@ address of your Google Workspace domain. Your security contacts are set by Hana:
 **Reports.** **Usage** shows logins, unlocks, identity tokens, active and new users, failures by code and costs, by
 day or month. **Statements** are monthly (from the 3rd of the next month), as CSV, PDF and the ledger CSV, with their
 SHA-256. **Users** (where Hana has turned it on) finds a user by wallet address (Stellar, EVM or a NEAR account), User
-ID (`u1_…`) or Support ID (`HANA-…`); it never shows email addresses. **Audit** lists everything done in your organisation, with a request ID to
+ID (`u1_…`) or Support ID (`HANA-…`); it shows a user's email address or name only once the user shared it with one of your apps. **Audit** lists everything done in your organisation, with a request ID to
 quote to Hana. **Pending upgrades** shows changes queued on Hana's contract that affect you.
 
 If Hana freezes your organisation (a security response), only cancels and kill switches still work: removing an
@@ -254,6 +254,11 @@ NEAR). Replace all the tarballs you use together (they depend on each other at `
    through 0.4.0. Code that reads `stellar` and `evm` is unaffected; code that checks the object's keys exactly, or
    stores it whole, should expect `near` (optional in the types: it is missing while Hana's vault predates NEAR).
 4. Nothing else: the Stellar and EVM calls, the identity token and the auto-approve policies behave as in 0.3.1.
+
+**After 0.4.0** (in the next release, not yet published). **Nothing to change.** New: `hana.getProfile()`, `hana.profile`, the
+`profileChanged` event and React `useProfile()`, for the name a user chose to share with your app
+([section 15](#15-identity-token-your-backend), "The user's name"). The identity token's `given_name` and `family_name`
+claims arrive from Hana's side, so they reach any SDK version.
 
 **0.3.1** (after 0.3.0; same environments: `sandbox-dev`). **Nothing to change**: code written for 0.3.0 builds and
 runs as it is. Replace all the tarballs you use together (they depend on each other at `^0.3.1`).
@@ -1574,6 +1579,7 @@ past the Hana session:
 | `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Hana session proved control of each address's key (a signature bound to this session and app). Stellar and EVM only: the user's NEAR account isn't listed (SDK 0.4.0 changes nothing here); prove it with `hana.near.signMessage` ([section 8, NEAR](#near)) |
 | `login_methods` | the account's login providers, sorted (`["google"]` today) |
 | `email`, `email_verified` | only for a user who shared their address with your app on Hana's sheet ("Email sharing" below): the verified address and `true`. Absent otherwise. Key users on `sub`, not on the address (it can change, and a user can stop sharing) |
+| `given_name`, `family_name` | only for a user who shared their name with your app from Hana's own page ("The user's name" below), each only when set: the first and last name as the user typed them (at most 50 characters each, one line). Absent otherwise. A display name, not an identity: never key anything on it |
 
 ### Email sharing
 
@@ -1613,6 +1619,31 @@ const token = await hana.getIdentityToken(); // with `email` when granted
 - An app on its **own Google client** can read the address from Google whatever the user chooses here; the sheet
   says so.
 - SDK 0.3.0 or later (the event and the hook; older SDKs never get the event).
+
+### The user's name
+
+Users can set their own first and last name on Hana's own page (Hana Home), both optional, and choose app by app whether
+to share it. Nothing is shared until they turn it on for your app, and they can stop or change it there at any time.
+There is no setting on your side and nothing you can ask for: you get the name when the user shared it.
+
+```ts
+const profile = await hana.getProfile(); // null while logged out
+// { givenName: 'Ada', familyName: 'Lovelace' }, or { givenName: null, familyName: null } when nothing is shared
+hana.on('profileChanged', (profile) => render(profile)); // only when the name changes (or at logout: null)
+```
+
+- **From the identity token.** The SDK reads `given_name` and `family_name` from the token the page already has: no
+  popup, no extra request. In the page, treat it as display data; on your server, read the claims from a token you
+  verified ("Verify it" below).
+- **When a change shows.** A name the user edits, shares or stops sharing reaches your page at its next identity token:
+  up to about 55 minutes later while a token is cached, sooner with `hana.getProfile({ maxAgeMs: 60_000 })` (the same
+  `maxAgeMs` as `getIdentityToken`). `profileChanged` fires when a newer token carries a different name. Your
+  portal's **Users** screen shows the change at once (a Name column, "Not shared" otherwise).
+- **Show it as text.** It is what the user typed (any script, at most 50 characters a part, no control or invisible
+  characters), so put it in the page as text, never as HTML. Either part may be missing: some users set only one.
+- **Stopping.** A stop removes the name from new tokens and your portal at once; tokens you already received keep it
+  until they expire (≤ 1 h), and a copy you stored is yours to delete on request, as for a shared email.
+- React: `const { profile, refresh, error } = useProfile();`. Errors are `getIdentityToken()`'s.
 
 What `wallets` proves, and what it doesn't: the session's holder controls each key. It is **not** proof that the
 address is the Hana-derived wallet of that `sub`: a user who tampers with their own vault can attach another key they

@@ -9,6 +9,7 @@ import type {
   ApiSystemStatus,
   ConsoleHealth,
   AppNameView,
+  ProfileNameRow,
   DirectoryRpcClient,
   AppChange,
   AuditRow,
@@ -106,6 +107,8 @@ export interface AdminRpcClient {
   findUsers(c: unknown): Answer<{ users: StaffUser[] }>;
   /** The Users screen's app labels (C8b): names, orgs, scopes, environments of up to 50 app ids. */
   appNames(c: unknown): Answer<{ apps: AppNameView[] }>;
+  /** The Users screen's names (D714): the Hana Home names of up to 50 sign-in identities `{provider, sub}`; ones with no name left out. */
+  profileNames(c: unknown): Answer<{ names: ProfileNameRow[] }>;
   /** The links view's counts (batch 9, D445): per app and day, the cron's jump check too. */
   linkStats(c: unknown): Answer<{ rows: LinkStatsRow[] }>;
   /** The Support ID lookup's hot-DB part (C15, staff only): matches, their apps, shares and the apps' changes. */

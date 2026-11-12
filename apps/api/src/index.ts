@@ -14,6 +14,7 @@ import { HOME_CONFIG_ENDPOINT, handleHomeConfig } from './home/config.ts';
 import { HOME_DEVICES_ENDPOINT, handleHomeDevices } from './home/devices.ts';
 import { handleHomeRevoke, isHomeRevokeEndpoint } from './home/revoke.ts';
 import { HOME_LOGIN_ENDPOINT, handleHomeLogin } from './home/login.ts';
+import { HOME_NAME_SHARING_ENDPOINT, HOME_PROFILE_ENDPOINT, handleHomeNameSharing, handleHomeProfileGet, handleHomeProfileSet } from './home/profile.ts';
 import { homePreflight } from './home/identity.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { identityMaintenance } from './identity/maintenance.ts';
@@ -206,6 +207,19 @@ export default {
         // Hana Home's stops (H9): a consent, a device, email sharing; only the identity's own rows (404 otherwise).
         if (request.method === 'OPTIONS') return homePreflight(request, env);
         if (request.method === 'POST') return await handleHomeRevoke(request, env, pathname, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (pathname === HOME_PROFILE_ENDPOINT) {
+        // Hana Home's name (D714): the identity's own first and last name, and the apps it shares it with. D1 only.
+        if (request.method === 'OPTIONS') return homePreflight(request, env);
+        if (request.method === 'GET') return await handleHomeProfileGet(request, env, requestId);
+        if (request.method === 'POST') return await handleHomeProfileSet(request, env, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, POST, OPTIONS' });
+      }
+      if (pathname === HOME_NAME_SHARING_ENDPOINT) {
+        // Hana Home's name sharing (D714): start or stop sharing the name with one app; only the account's own row.
+        if (request.method === 'OPTIONS') return homePreflight(request, env);
+        if (request.method === 'POST') return await handleHomeNameSharing(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (pathname === HOME_LOGIN_ENDPOINT) {

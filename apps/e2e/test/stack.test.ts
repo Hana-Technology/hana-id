@@ -86,7 +86,27 @@ describe('the e2e env', () => {
   });
 
   it('takes its ports from HANA_E2E_PORT_BASE (4410 by default), so worktrees can run side by side', () => {
-    expect(portBase(undefined)).toBe(DEFAULT_PORT_BASE);
+    // portBase's parameter defaults to process.env.HANA_E2E_PORT_BASE, and a default parameter applies to an explicit
+    // undefined too: so "unset" is the variable unset, not the ambient value this run was started with (a linked
+    // worktree's own base, or one the caller chose).
+    for (const unset of [undefined, '', '  ']) {
+      vi.stubEnv('HANA_E2E_PORT_BASE', unset);
+      try {
+        expect(portBase()).toBe(DEFAULT_PORT_BASE);
+        expect(portBase(undefined)).toBe(DEFAULT_PORT_BASE);
+        expect(portBase(unset)).toBe(DEFAULT_PORT_BASE);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    }
+    vi.stubEnv('HANA_E2E_PORT_BASE', '4610');
+    try {
+      expect(portBase()).toBe(4610);
+      // An explicit value wins over the variable.
+      expect(portBase('4510')).toBe(4510);
+    } finally {
+      vi.unstubAllEnvs();
+    }
     expect(portBase('')).toBe(DEFAULT_PORT_BASE);
     expect(portBase('4510')).toBe(4510);
     expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, issuer: 4542, near: 4550, nearFallback: 4551, evm: 4560 });
@@ -132,7 +152,8 @@ describe('the e2e env', () => {
 
   it("the stack's fingerprint covers the port base the bundles are built for", () => {
     const now = stackFingerprint();
-    vi.stubEnv('HANA_E2E_PORT_BASE', String(portBase() + 100));
+    // Another valid base, whatever this run's is (this run's + 100 can be refused: 4910 + 100 puts the EVM RPC on 5060).
+    vi.stubEnv('HANA_E2E_PORT_BASE', String(portBase() === 4510 ? 4610 : 4510));
     try {
       expect(stackFingerprint()).not.toBe(now);
     } finally {

@@ -93,12 +93,15 @@ export async function purgeDirectory(db: HotDb, i: { before: number; limit: numb
   // D411: a deleted app's consents (and the shared copies in them) go with its other per-user rows, 30 days on, in pages
   // of the same size; a live app's consents stay (a decline must be remembered).
   const consents = q`SELECT c.rowid FROM email_consents c JOIN apps a ON a.id = c.app_id WHERE a.deleted_at IS NOT NULL AND a.deleted_at <= ${cutoff} LIMIT ${i.limit}`;
-  const [scopes, wallets, identities, users, emailConsents] = await db.batch([
+  // D714: a deleted app's name shares, the same way (the names themselves are the users' own, kept in Home).
+  const nameShares = q`SELECT n.rowid FROM name_shares n JOIN apps a ON a.id = n.app_id WHERE a.deleted_at IS NOT NULL AND a.deleted_at <= ${cutoff} LIMIT ${i.limit}`;
+  const [scopes, wallets, identities, users, emailConsents, names] = await db.batch([
     q`SELECT COUNT(DISTINCT scope_id) AS n FROM end_users WHERE user_id IN (${page})`,
     q`DELETE FROM end_user_wallets WHERE user_id IN (${page})`,
     q`DELETE FROM end_user_identities WHERE user_id IN (${page})`,
     q`DELETE FROM end_users WHERE user_id IN (${page})`,
     q`DELETE FROM email_consents WHERE rowid IN (${consents})`,
+    q`DELETE FROM name_shares WHERE rowid IN (${nameShares})`,
   ]);
   const n = (scopes!.results as { n: number }[] | undefined)?.[0]?.n ?? 0;
   return {
@@ -107,6 +110,7 @@ export async function purgeDirectory(db: HotDb, i: { before: number; limit: numb
     wallets: wallets!.meta.changes ?? 0,
     identities: identities!.meta.changes ?? 0,
     emailConsents: emailConsents!.meta.changes ?? 0,
+    nameShares: names!.meta.changes ?? 0,
   };
 }
 

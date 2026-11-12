@@ -11394,3 +11394,120 @@ rule, protocol string or address changes: only what users read and how pages loo
   - Fontsource's Latin subset (U+0000–00FF and the usual punctuation) replaces Montserrat's wider U+0000–017F. Latin Extended-A characters (such as "Ł" or "ő") are drawn by the system fallback.
 - Why: the user is moving the product to the Journear Passport brand. One token set and one component file keep every page consistent and make the next change a one-place change.
 - Address impact: none.
+
+### D766. The signed demo and smoke test texts name Journear Passport
+- Date 2026-11-12 · Status: **decided by the user 2026-11-12** ("Rename") · Built: `apps/demo/src/requests.ts` (`TEST_MESSAGE`), `src/near-card.ts` (`NEAR_TEST_MESSAGE`, `DEFAULT_TX_TEXT`), `apps/smoke/src/vault-page.ts` (`TEST_MESSAGE_HEX`, `RAW_TEST_BYTES`), `apps/e2e/tests/demo-near-shots.spec.ts`; tests `apps/demo/test/brand.test.ts`, `page.test.ts`
+- Decision: "Journear Passport testnet demo: …", "Hello from Journear Passport (a signed NEAR transaction)", "Journear Passport smoke test: …". Users see these texts in the approval popup and on chain. They are arbitrary test payloads, not domain tags, so no address or protocol changes. The smoke auto-approve policy's label (`apps/smoke/policies/demo-auto-approve.json`) is unchanged, because it is the label of a policy already set on chain.
+- Address impact: none.
+
+### D767. The staff playbooks' bodies name Journear and Passport Home
+- Date 2026-11-12 · Status: **decided by the user 2026-11-12** ("Rename the bodies") · Built: `packages/playbooks/src/alerts.ts`, `incidents.ts`, `docs/playbooks.md` (regenerated)
+- Decision: "Hana's …" becomes "Journear's …", "Hana Home" becomes "Passport Home", and "Hana API" becomes "Journear Passport API" in every summary, impact, step and verification line. Playbook ids (`hana-origin-compromised` and the rest), codes and commands are unchanged.
+
+### D768. The Support ID keeps its HANA- prefix
+- Date 2026-11-12 · Status: **decided by the user 2026-11-12** ("Keep HANA-") · Built: nothing (`SUPPORT_ID_PREFIX` in core, the API, the admin lookup unchanged)
+- Decision: Support IDs stay `HANA-XXXX-XXXX` on every screen, in mail and in the API.
+- Why: partners and staff may have stored them, and the staff lookup reads that format. A new prefix would need a dual-accept lookup and a migration note, for a cosmetic gain.
+
+### D769. Partner app names may not hold "Journear" or "Passport Home", besides "Hana"
+- Date 2026-11-12 · Status: "Journear" **decided by the user 2026-11-12**; "Passport Home" proposed while building and **confirmed by the user 2026-11-12** ("Keep it") · Built: `packages/console-core/src/names.ts` (`brandNameIn`, `journearWordIn`; `hanaWordIn` kept), `apps/api/src/changes/settings.ts`, `scripts/lib/admin-sql.ts` (`assertAppName`), `apps/email-issuer/src/mail.ts` (`displayAppName`); tests in console-core, the API, scripts and the issuer · Amends D686
+- Decision: an app name is refused when its skeleton holds "Hana", "Journear" or "Passport Home", in any case, accent, look-alike (Cyrillic, Greek, Armenian, digits, `$`, `ø`), or split into separate letters. "Journear" is matched inside words ("MyJournear"); letters split by spaces or punctuation count only from the start of a word, so "Bonjour nearby" is allowed. "Passport", "Passport Travel" and "Passport Homes" are allowed. The refusal names the word that matched.
+- Why: an app called "Passport Home" would get the subject "Your sign-in code for Passport Home", identical to the real Passport Home mail (what D620 and D686 closed for "Hana Home").
+
+### D770. The end-user pages on the design system: the badge, confirm and sign, the 3-step export, Passport Home
+- Date 2026-11-12 · Status: asked for by the user (D765); the details below decided while building, for the user to confirm · Built: `packages/web/scripts/build-auth-pages.ts` (`PASSPORT_BADGE`, `HOME_HEADER`), `src/auth/auth.css`, `src/auth/css/` (new), `src/auth/ui.ts`, `src/auth/toast.ts` (new), `render-approval.ts` (`amountHeadline`), `key-reveal.ts` (`EXPORT_STEPS`, `EXPORT_ACK`), `export-page.ts`, `login-page.ts`, `email-page.ts`, `home-*.ts`, `errors.ts`, `src/vault/launcher.ts`, `src/vault/*` (labels and messages); tests `packages/web/test/auth/*`, `test/vault/*`, the e2e specs · Amends D426 (the Hana bar), D268 and D430 (export), D110 and D471 (the approval popup's presentation)
+- Decision:
+  - **Popup shell:** a `.jp-modal` card. Beneath it sits a static footer badge, the Journear mark at 20 px (the logo's minimum, not the specimen's 14) and "Secured by Journear Passport". The badge sits outside `#app`, has no link, and has no partner-controlled content. It takes over the Hana bar's job of keeping our brand apart from the partner's name. Passport Home has a static lockup header instead.
+  - **Theme:** popups follow the device's light or dark setting. They aren't forced `.jp-dark`, because each popup is its own browser window, not a modal inside the host page. The one element drawn inside host pages, the vault launcher, always uses Journear's dark ink surface.
+  - **Sign-in:** Google is the primary provider and email the second; there is no passkey method. The email step's fields have labels above and are checked on blur, with the error taking the hint's place. The code stays one field, so one-time-code autofill and paste keep working.
+  - **Approval (confirm and sign):**
+    - An amount headline, "Sends …", appears only where one number says what moves: an EVM transfer with no call data on a named chain, one native XLM payment or account creation, or NEAR transfers only. A Stellar credit asset never gets a headline, because its code is its issuer's choice: anyone can issue "USDC" or "XLM". This followed the commit security review of 2026-11-12. The rows still show code and issuer.
+    - The facts appear as mono key/value rows, with Reject (secondary) and Approve (primary).
+    - The out-of-policy line is now a warning alert.
+    - Guards, timings and facts are unchanged.
+  - **Export, 3 steps:** Verify, then Understand (the typed EXPORT is kept), then Export. Show key and Copy key stay disabled until a box is ticked: "No one can see my screen, and I'll paste this key only into the wallet app I'm moving to." A scripted tick is refused, unticking hides a shown key, and the erase disables the box. Show key is the danger button; once the key is shown it becomes a secondary "Hide key". Everything D268 and D430 set is unchanged.
+  - **Passport Home:**
+    - Apps appear as cards. Devices, tabs and email sharing are setting rows.
+    - Each Stop is a secondary button that opens the existing confirmation. The confirm button there is the page's only danger button.
+    - A successful Copy shows a toast. Stop outcomes stay inline, because they say when the change reaches the device.
+    - No sign-in-methods screen was added.
+  - **Launcher labels** read "Sign in with / Add a sign-in method in / Share your email in / Export key in / Review in Journear Passport". Partners see them in the `ui` launcher event, but they are not identifiers.
+  - **CSP:** unchanged. The bundled CSS holds exactly one `data:` URI, the select chevron, within the existing `img-src 'self' data:`, and a test pins it.
+- **User action:** Google's consent screen shows the OAuth project's own app name. Rename it in Google Cloud so that "share your email address with Journear" matches.
+- Address impact: none.
+
+### D771. The partner console on the design system
+- Date 2026-11-12 · Status: asked for by the user (D765); the details decided while building, for the user to confirm · Built: `apps/console/web/src/styles.css`, `ui.tsx` (`Lockup`, `ConfirmButton`), `toast.tsx`, `icons.tsx`, the pages, `messages.ts`, `apps/console/vite.config.ts`, `packages/console-core/src/reports.ts`, `origins.ts`; tests `web/test/design.test.tsx`, `scripts/test/brand.test.ts`
+- Decision:
+  - A write's success is a toast; errors stay as inline alerts.
+  - **Setting rows and a save bar** on Login & sessions, Branding and Members' Workspace domain. Where a change needs step-up, Save reads "Review and confirm with Google" and opens `/actions/:id` as before.
+  - Fields are checked on blur, then follow typing until the value is fixed. Optional fields are marked.
+  - Choice cards for email sharing and the invite role; persistence stays a switch row.
+  - A stats strip on the app overview and email deliverability. Usage gets none, because D373 says that page adds nothing up.
+  - `ConfirmButton`'s second click is the danger button. The emailed cancel page's button is primary, because the page itself is the confirmation.
+  - Labels: "Passport Home logins", and "Journear Passport usage statement {month}". Statements already issued keep their PDF's old words, while the screen shows the new ones (a gap D92 accepts, for the user to confirm).
+- Address impact: none.
+
+### D772. The staff admin console on the design system
+- Date 2026-11-12 · Status: asked for by the user (D765); the details decided while building, for the user to confirm · Built: `apps/admin/public/` (`index.html`, `app.css`, `app.js`, `fonts/`), `scripts/sync-brand.ts`, `apps/admin/src/` (staff-visible messages), `apps/watchdog/src/` (check titles); tests `test-spa/design.test.ts`, `status.test.ts`, `test/http.test.ts`
+- Decision:
+  - **Type:** page titles are IBM Plex Sans 24 px semibold and section titles 17 px, because the system's 44 px h1 is too large for a dense staff tool. Archivo appears only in the logo.
+  - **Nav:** the left nav uses the dark ink surface with the white lockup and a "Staff admin" label.
+  - Success messages are toasts, while anything to copy (a new key, a hash) stays on the page.
+  - The security contacts form gets a save bar. An app's signing settings are setting rows, each change its own guarded action.
+  - The council members are choice cards.
+  - Lists use the pager, breadcrumbs and badges.
+  - Stats strips on System status and the Email login and Account links dashboards, with a 7/14/31-day segmented control.
+  - `sync-brand` drops the select chevron's `data:` line, and `app.css` draws it with gradients, so the stylesheet still loads only fonts.
+  - Fixed while restyling: on Reports, several cells sat under the wrong header.
+- Address impact: none.
+
+### D773. The designed mails in the design system's colours, with the Journear lockup
+- Date 2026-11-12 · Status: asked for by the user (D765); the details decided while building, for the user to confirm · Built: `packages/brand/src/email.ts` (`MAIL_COLOURS`, `MAIL_FONT`, `MAIL_MONO`, `MAIL_LOGO_ALT`), `scripts/mail-logo.ts`, `mail/journear-mail-logo.png`, `src/mail-logo.ts`, `apps/files`, `apps/email-issuer/src/`, `apps/admin/src/email/`, `envs/sandbox-dev.json` (`email.from`); tests `packages/brand/test/email.test.ts`, the issuer's and the admin's mail tests · Amends D670, D685, D700, D704
+- Decision:
+  - **Look:**
+    - Colours and shapes: teal primary, ink and the neutrals. Buttons are 48 px with an 8 px radius, cards 12 px, the heading 24 px.
+    - Callouts are the system's inline alerts, with a 3 px left rule so their kind survives a client that drops backgrounds.
+    - There is no orange in the mails.
+    - Fonts: IBM Plex Sans and Mono lead the system stacks, and no web font is loaded.
+    - The gradient rule is gone.
+  - **Logo:** the Journear lockup PNG (296 × 88, shown at 148 × 44) on a light plate, at `/brand/journear-mail-logo-<sha16>.png`, alt "Journear Passport".
+  - **Footers:** user mails end "Sent automatically by Journear Passport. Journear never asks you to approve anything from an email." Partner and staff mails keep their footer, with the names changed.
+  - **Subjects:** the prefix is `[Journear Passport <env>]`. The Passport Home mails' subjects and headings are renamed.
+  - **Unchanged:** the text parts (except the names), the no-auto-linking technique, the 90 KB digest budget, and AA in both schemes.
+  - **Sender:** the From display name is "Journear Passport" (testnet: "Journear Passport (testnet)"). The address and domain are unchanged, and the change takes effect after `gen` and a deploy.
+- **User actions:**
+  - Staff mail and pager filters keyed on "[Hana ID" need updating.
+  - If SendGrid refuses the new display name, revert it in the manifest.
+  - The display name no longer matches the `hanawallet.io` domain.
+- Address impact: none.
+
+### D774. The SDK's names in wallet pickers and messages
+- Date 2026-11-12 · Status: asked for by the user (D765); the details decided while building, for the user to confirm · Built: `packages/web/src/client/*` (`icon.ts`: `HANA_ID_NAME`, `HANA_ID_ICON`; messages), `packages/react`, `packages/sodax`, `packages/oidc`, `packages/core` (user-visible refusals), `apps/api/src` (messages and page titles), `apps/watchdog`; tests `packages/web/test/client/icon.test.ts`, `brand-copy.test.ts` in web, react and sodax
+- Decision:
+  - **Name and icon:** the EIP-6963 `info.name` and the Stellar Wallets Kit `productName` are "Journear Passport". The icon is the Journear mark in its own colours, on a transparent square. `rdns`, `productId: 'hana-id'`, the error codes and every SDK symbol are unchanged.
+  - **Brand constants:** the published SDK can't import the private brand package, so the name and mark are copied into it, and a test pins them to `@hana-id/brand`.
+  - **Messages:** say "Journear Passport" for the product's things (vault, client, session, token) and "Journear" when the company acts. The READMEs tell partners to match on error codes, never on messages.
+  - **Guard test:** a test fails if a string literal in the SDK's sources says "Hana".
+- **Partner impact:** SDK messages and the launcher labels changed text. A new SDK release (and re-vendoring in the sample repo) carries them to partners.
+- Address impact: none.
+
+### D775. The demo and the smoke pages on the design system
+- Date 2026-11-12 · Status: asked for by the user (D765); the details decided while building, for the user to confirm · Built: `apps/demo` (`style.css`, `page.ts`, `result.ts`, `toast.ts`, `vite.config.ts`), `apps/smoke/src/smoke.css`; tests `apps/demo/test/toast.test.ts`, `brand.test.ts`, `page.test.ts`, `apps/smoke/test/style.test.ts`
+- Decision:
+  - The demo is titled "Journear Passport testnet demo", with the lockup in a sticky top bar.
+  - It has one primary button per view, signing results in the confirm-and-sign layout, toasts for transient results, inline alerts for errors, a stats strip over the login timings, a wallet pill, and the guestbook message checked on blur.
+  - Below 600 px the env badge leaves the top bar. The testnet alert and the footer still show the env.
+  - The demo has no export flow of its own, so no 3-step export: export happens in Journear's window.
+  - "Log out other devices" stays secondary with no confirm.
+  - The smoke pages get the tokens, the fonts and the names, and behave as before.
+- Address impact: none.
+
+### D776. The sample partner site: only Journear's own elements are restyled
+- Date 2026-11-12 · Status: scope **decided by the user 2026-11-12** ("the sample partner site itself should maintain Sodax styling … Only Hana ID related stuff gets restyled"); the details decided while building, for the user to confirm · Built: `hana-id-sample-partner` `feat/journear-design` (`src/journear/SignIn.tsx`, `journear.css`, `icons.tsx`, the status chip, the Signed out alert, the README)
+- Decision:
+  - **Restyled:** the sign-in card, in the login modal's look: Google first, then the email field, "Continue with email", and the "Secured by Journear Passport" badge. Also its notices, the Signed out alert, and the header status chip as a badge.
+  - **Scoping:** the styles sit under `.jp-scope`, with no `:root` tokens, and a test checks the scoping.
+  - **Fonts:** IBM Plex Sans 400 and 600 are self-hosted from Fontsource.
+  - **Kept:** everything else keeps the Sodax look, with the new names in its text. Package names and symbols are unchanged.
+  - Until the SDK is re-released and re-vendored, the vault iframe's title and the SDK's own messages in this sample still say Hana.

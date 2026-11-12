@@ -12,6 +12,7 @@
 // the System status page (D425) `systemStatus` (staff only, read-only, no user data).
 import {
   adminAppNamesInput,
+  adminProfileNamesInput,
   adminFindUsersInput,
   adminGetUserInput,
   adminListUsersInput,
@@ -77,7 +78,7 @@ import { proposeSetting, setLogo, setMainnetDemo, turnOff, updateSettings } from
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
 import { systemStatus } from '../system-status.ts';
-import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
+import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers, adminProfileNames } from '../directory/read.ts';
 import { supportLookup, userShares } from '../directory/support.ts';
 import { linkStats } from '../link-usage.ts';
 import { deletedApps, purgeAudit, purgeDirectory, purgeUserEvents } from '../changes/retention.ts';
@@ -287,6 +288,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** The Users screen's app labels (C8b): names, orgs, scopes and environments of up to 50 app ids, deleted ones too. */
   appNames(c: unknown) {
     return runRpc(this.env, 'admin.appNames', adminAppNamesInput, c, { actors: HANA }, async ({ input, db }) => ({ apps: await adminAppNames(db, input.appIds) }));
+  }
+
+  /** The Users screen's names (D714): the Hana Home names of up to 50 sign-in identities; ones with no name left out. */
+  profileNames(c: unknown) {
+    return runRpc(this.env, 'admin.profileNames', adminProfileNamesInput, c, { actors: HANA }, async ({ input, db }) => ({ names: await adminProfileNames(db, input.identities) }));
   }
 
   // ---- the links view (build plan batch 9, D445) ----

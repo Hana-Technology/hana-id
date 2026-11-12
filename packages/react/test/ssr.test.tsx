@@ -4,7 +4,7 @@
 import { createHana } from '@hana-id/web';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { HanaProvider, INITIAL_STATE, useHana, useWallet } from '../src/index.ts';
+import { HanaProvider, INITIAL_STATE, useHana, useProfile, useWallet } from '../src/index.ts';
 
 vi.mock('@hana-id/web', async (importOriginal) => {
   const real = await importOriginal<typeof import('@hana-id/web')>();
@@ -54,6 +54,20 @@ describe('server render', () => {
       evm: { address: null, provider: null },
     });
     expect(INITIAL_STATE.status).toBe('unlocking');
+    expect(vi.mocked(createHana)).not.toHaveBeenCalled();
+  });
+
+  it('useProfile renders null (no client, no token) and never calls createHana', () => {
+    function ProfileProbe() {
+      const { profile, error } = useProfile();
+      return <pre>{JSON.stringify({ profile, error })}</pre>;
+    }
+    const html = renderToString(
+      <HanaProvider config={CONFIG}>
+        <ProfileProbe />
+      </HanaProvider>,
+    );
+    expect(html.replaceAll('&quot;', '"')).toBe('<pre>{"profile":null,"error":null}</pre>');
     expect(vi.mocked(createHana)).not.toHaveBeenCalled();
   });
 });

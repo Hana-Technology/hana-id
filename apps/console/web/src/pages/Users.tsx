@@ -1,8 +1,10 @@
 // The org's end users (D310, D346; `GET /api/orgs/:org/users`): the User ID (the identity token's `sub`, `u1_…`, the
 // one id partners see, like Privy's DID) and its short form, the Support ID; when the user was first and last seen; the
 // kinds of account connected; the wallet addresses; and the email only once the user shared it with one of the org's
-// apps (D411: "Not shared" otherwise). A user's detail (`GET /api/orgs/:org/users/:userId`) lists each app's shared
-// address. Never an unshared address or a Google account id: the console's answer has no such field (src/users.ts).
+// apps (D411: "Not shared" otherwise), and the name the user set in Hana Home likewise only once shared with one of
+// them (D714). A user's detail (`GET /api/orgs/:org/users/:userId`) lists each app's shared address. Names and
+// addresses are rendered as text only. Never an unshared address or a Google account id: the console's answer has no
+// such field (src/users.ts).
 // Shown only when the server has the screen on (`/api/me` features). The list sits in a card like every console table;
 // its ids stay whole on one line and its wallet addresses are shortened, each copied whole (the detail shows them full).
 // NEAR (D755): the user's implicit account, recorded only once they sign in through an SDK of 0.4.0 or later; a user
@@ -24,6 +26,8 @@ interface PartnerUser {
   email: string | null;
   /** A user's detail only: each app's shared address. */
   emails?: { appId: string; appName: string; email: string; sharedAt: number }[];
+  /** The name shared from Hana Home with one of the org's apps (each part optional, at least one set), or null. */
+  name: { givenName: string | null; familyName: string | null } | null;
 }
 
 const KIND: Record<string, string> = { google: 'Google', email: 'Email', apple: 'Apple', other: 'Other' };
@@ -41,6 +45,10 @@ function Moment({ ms }: { ms: number }) {
     </>
   );
 }
+/** A shared name as one line: the first name, then the last, whichever are set. */
+const nameText = (n: NonNullable<PartnerUser['name']>): string => [n.givenName, n.familyName].filter((p): p is string => p !== null).join(' ');
+/** Which part a one-part name is, in a user's detail (a partner storing it needs to know). */
+const namePartHint = (n: NonNullable<PartnerUser['name']>): string | null => (n.familyName === null ? 'first name only' : n.givenName === null ? 'last name only' : null);
 const accountsText = (u: PartnerUser): string => u.accounts.map((a) => `${KIND[a.kind] ?? 'Other'}${a.status === 'pending' ? ' (pending)' : ''}`).join(', ') || '—';
 
 const CHAIN: Record<string, string> = { stellar: 'Stellar', evm: 'EVM', near: 'NEAR' };
@@ -113,6 +121,17 @@ function UserDetail({ org, userId, onClose }: { org: string; userId: string; onC
           </dd>
           <dt>Support ID</dt>
           <dd className="mono nowrap">{r.data.user.supportId}</dd>
+          <dt>Name</dt>
+          <dd>
+            {r.data.user.name ? (
+              <>
+                {nameText(r.data.user.name)}
+                {namePartHint(r.data.user.name) && <span className="muted small"> ({namePartHint(r.data.user.name)})</span>}
+              </>
+            ) : (
+              <span className="muted">{NOT_SHARED}</span>
+            )}
+          </dd>
           <dt>Accounts</dt>
           <dd>{accountsText(r.data.user)}</dd>
           <dt>Wallets</dt>
@@ -157,7 +176,7 @@ export function Users() {
   const r = useApi<{ users: PartnerUser[]; next?: string }>(`/api/orgs/${org}/users${qs ? `?${qs}` : ''}`);
   return (
     <>
-      <PageHeader title="Users" description="The people who have signed in to your apps. Each has a User ID (the identity token’s sub, the id your backend stores) and a short Support ID to quote to Journear. An email address appears only once the user shares it with one of your apps." />
+      <PageHeader title="Users" description="The people who have signed in to your apps. Each has a User ID (the identity token’s sub, the id your backend stores) and a short Support ID to quote to Journear. An email address or a name appears only once the user shares it with one of your apps." />
       <form
         className="form form-inline filters"
         onSubmit={(e) => {
@@ -203,6 +222,7 @@ export function Users() {
                   <tr>
                     <th scope="col">User ID</th>
                     <th scope="col">Support ID</th>
+                    <th scope="col">Name</th>
                     <th scope="col">Email</th>
                     <th scope="col">Accounts</th>
                     <th scope="col">Wallets</th>
@@ -220,6 +240,7 @@ export function Users() {
                         <CopyButton value={u.userId} label="User ID" />
                       </td>
                       <td className="mono">{u.supportId}</td>
+                      <td>{u.name ? nameText(u.name) : <span className="muted">{NOT_SHARED}</span>}</td>
                       <td>{u.email ? <EmailText email={u.email} /> : <span className="muted">{NOT_SHARED}</span>}</td>
                       <td>{accountsText(u)}</td>
                       <td>

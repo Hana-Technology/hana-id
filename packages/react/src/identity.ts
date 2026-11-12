@@ -9,7 +9,7 @@ import type { HanaError, HanaClient } from '@hana-id/web';
 import { HanaError as HanaErrorClass } from '@hana-id/web';
 import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { HanaContext } from './provider.tsx';
-import { INITIAL_STATE } from './store.ts';
+import { type HanaState, INITIAL_STATE } from './store.ts';
 
 /** Refresh this long before `exp` (the vault's own margin: it would mint then anyway). */
 export const IDENTITY_REFRESH_BEFORE_MS = 5 * 60_000;
@@ -26,15 +26,15 @@ export interface UseIdentityTokenResult {
 }
 
 const noop = (): void => {};
-const notMounted = (): Promise<never> => Promise.reject(new HanaErrorClass(4900, 'Journear Passport is not mounted yet (HanaProvider has not run its effect)'));
+export const notMounted = (): Promise<never> => Promise.reject(new HanaErrorClass(4900, 'Journear Passport is not mounted yet (HanaProvider has not run its effect)'));
 
-function asError(e: unknown): HanaError {
+export function asError(e: unknown): HanaError {
   return e instanceof HanaErrorClass ? e : new HanaErrorClass(-32603, e instanceof Error ? e.message : 'Internal error');
 }
 
 const visible = (): boolean => typeof document === 'undefined' || document.visibilityState !== 'hidden';
 
-function subscribeToken(client: HanaClient | null) {
+export function subscribeToken(client: HanaClient | null) {
   return (onChange: () => void): (() => void) => {
     if (!client) return noop;
     client.on('identityTokenChanged', onChange);
@@ -73,7 +73,17 @@ export function useIdentityToken(): UseIdentityTokenResult {
     [client],
   );
 
-  // Lazy first mint and the refresh timer, while logged in and visible.
+  useIdentityUpkeep(client, status, identityToken, refresh);
+
+  return useMemo(() => ({ identityToken, refresh, error }), [identityToken, refresh, error]);
+}
+
+/**
+ * The lazy first mint and the refresh timer at exp − 5 min, while `client` is logged in and the page is visible
+ * (useIdentityToken, useProfile). `refresh` gets a token through the hook's own call, so its failures land in that
+ * hook's `error`; a failure is retried after IDENTITY_RETRY_MS. Re-runs when the token changes.
+ */
+export function useIdentityUpkeep(client: HanaClient | null, status: HanaState['status'], identityToken: string | null, refresh: () => Promise<unknown>): void {
   useEffect(() => {
     if (!client || status !== 'logged_in') return undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -106,6 +116,4 @@ export function useIdentityToken(): UseIdentityTokenResult {
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [client, status, identityToken, refresh]);
-
-  return useMemo(() => ({ identityToken, refresh, error }), [identityToken, refresh, error]);
 }

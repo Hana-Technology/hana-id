@@ -95,7 +95,9 @@ partner" and no form. An organisation that already has an app keeps it behind "P
 offered in "Create an app" (no view lists them: D655). Tests: `test-spa/scope-register.test.ts`. The full onboarding
 sequence: `docs/operations.md` "Onboarding a partner on testnet".
 
-**Users (C8b; D275 as confirmed 2026-11-05).** Search the email issuer's user directory by address (a full address
+**Users (C8b; D275 as confirmed 2026-11-05).** Every row and opened user shows the person's Hana Home name (D714:
+whatever they shared with apps; "not set" when none, "unknown" when it wasn't read, "Names unavailable" when the read
+failed), read from the API (`AdminRpc.profileNames`, one call a page of at most 50). Search the email issuer's user directory by address (a full address
 exactly, else ≥ 3 characters of one), account kind, app, sub or "unverified only" (`POST /api/users/search`; a support
 reference required for a sub or a full address, optional to browse; D410), or the wallet directory by wallet address,
 User ID or internal id (`POST /api/users/find`; a support reference required, audited first as `users.find`); a

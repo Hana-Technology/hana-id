@@ -21,3 +21,92 @@
 @import './css/export.css';
 @import './css/home.css';
 
+
+/* ---- Hana Home: "Your name" (home-profile.ts), on the front page and on an app's page, after the devices ---- */
+.home-profile {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.home-profile h2,
+.home-profile h3 {
+  margin-top: 0;
+}
+
+.home-profile h3#home-name-shares-title {
+  margin-top: 18px;
+}
+
+/* The two parts side by side where there is room, one above the other on a phone. */
+.home-name-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 0 14px;
+}
+
+.home-name-field label {
+  margin-bottom: 4px;
+}
+
+.home-name-form > .muted {
+  margin: 4px 0 0;
+}
+
+input[aria-invalid='true'] {
+  border-color: var(--danger-text);
+}
+
+.field-error {
+  color: var(--danger-text);
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin: 0 0 8px;
+}
+
+/* The user's name and the apps' names are typed by people: kept apart from the sentence around them, wrapped anywhere. */
+.home-name-value,
+.home-name-share strong,
+.home-name-app strong {
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
+
+.home-name-shares {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.home-name-share,
+.home-name-app {
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.home-name-shares .home-name-share {
+  margin-bottom: 0;
+}
+
+.home-name-share p,
+.home-name-app p {
+  margin: 0 0 4px;
+}
+
+.home-name-share .actions.start,
+.home-name-app .actions.start {
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+/* "Share my name with {App}": an app's name can be one long word; the button wraps it rather than overflow. */
+.home-name-app button {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+}

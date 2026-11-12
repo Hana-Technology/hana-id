@@ -17,11 +17,11 @@ describe('@hana-id/react', () => {
   });
 
   it('exports HanaProvider, useHana and useWallet', () => {
-    for (const name of ['HanaProvider', 'HanaContext', 'useHana', 'useWallet', 'useIdentityToken', 'INITIAL_STATE']) expect(react).toHaveProperty(name);
+    for (const name of ['HanaProvider', 'HanaContext', 'useHana', 'useWallet', 'useIdentityToken', 'useEmailSharing', 'useProfile', 'INITIAL_STATE']) expect(react).toHaveProperty(name);
   });
 
   it("marks the provider and hooks modules 'use client' (Next.js app router)", () => {
-    for (const file of ['provider.tsx', 'hooks.ts', 'identity.ts']) expect(read(`../src/${file}`).startsWith("'use client';\n")).toBe(true);
+    for (const file of ['provider.tsx', 'hooks.ts', 'identity.ts', 'email-sharing.ts', 'profile.ts']) expect(read(`../src/${file}`).startsWith("'use client';\n")).toBe(true);
   });
 
   it("takes react as a peer dependency, so the partner's single React is used (18 or 19)", () => {

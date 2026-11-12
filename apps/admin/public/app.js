@@ -2892,6 +2892,7 @@ const RETENTION_LABELS = {
   directoryWallets: 'wallet directory wallets',
   directoryIdentities: 'wallet directory identities',
   emailConsentsPurged: 'email consents of deleted apps',
+  nameSharesPurged: 'name shares of deleted apps',
   userEventsExpired: 'key exports and mainnet demo signatures (24 months)',
   userEventsDeadScopes: 'key exports and mainnet demo signatures of scopes left without apps',
   appChangesDeleted: 'app_changes (60 months)',
@@ -3169,15 +3170,33 @@ function walletQuery(q) {
 
 const unverifiedBadge = () => badge('UNVERIFIED claim', 'warning');
 
-function directoryRows(users, warning) {
+/**
+ * A Hana Home name (D714) as text: the first name, then the last; a one-part name says which part it is. Staff see it
+ * whatever the user shared. `null`: the identity set none; `undefined`: not read (the answer says why, or an older API).
+ */
+function nameView(n) {
+  if (n === undefined) return h('span', { class: 'muted' }, 'unknown');
+  if (n === null) return h('span', { class: 'muted' }, 'not set');
+  const given = typeof n.givenName === 'string' && n.givenName !== '' ? n.givenName : null;
+  const family = typeof n.familyName === 'string' && n.familyName !== '' ? n.familyName : null;
+  if (given === null && family === null) return h('span', { class: 'muted' }, 'not set');
+  const hint = family === null ? 'first name only' : given === null ? 'last name only' : '';
+  return h('span', {}, [given, family].filter((p) => p !== null).join(' '), hint ? h('span', { class: 'sub' }, hint) : '');
+}
+/** The note a page shows when its names couldn't be read (`namesError` / `nameError`); the rest of it stands. */
+const namesUnavailable = (code, plural) => note('warn', plural ? 'Names unavailable' : 'Name unavailable', `The Hana Home ${plural ? 'names' : 'name'} couldn’t be read (${code}); everything else here is complete. ${plural ? 'Search' : 'Open the person'} again to retry.`);
+
+function directoryRows(users, warning, namesError) {
   const claims = users.filter((u) => u.unverifiedClaim).length;
   return [
     claims ? note('warn', '', `${warning} (${claims} row${claims === 1 ? '' : 's'} below, listed last).`) : '',
+    namesError ? namesUnavailable(namesError, true) : '',
     table(
-      ['Email', 'Account', 'Verified', 'Google-hosted', { text: 'Apps', num: true }, 'Last seen', ''],
+      ['Email', 'Name', 'Account', 'Verified', 'Google-hosted', { text: 'Apps', num: true }, 'Last seen', ''],
       users.map((u) =>
         tr(
           u.unverifiedClaim ? h('span', {}, u.email, ' ', unverifiedBadge()) : u.email,
+          nameView(u.name),
           kindLabel(u.provider),
           u.emailVerified ? 'yes' : h('strong', { class: 'warn' }, 'no'),
           u.hosted === null ? '' : u.hosted ? 'yes' : 'no',
@@ -3198,6 +3217,8 @@ function walletUserBlock(u) {
     facts([
       ['User ID', mono(u.userId)],
       ['Support ID', mono(u.supportId)],
+      // The account's name: its root's, else the first identity's that has one (each identity's is in the table below).
+      ['Name', nameView(u.name)],
       ['Internal id', mono(u.internalId)],
       ['Scope', mono(u.scopeId)],
       ['Organisation', mono(u.orgId || '')],
@@ -3208,8 +3229,8 @@ function walletUserBlock(u) {
     h('p', {}, h('button', { type: 'button', class: btn('secondary', { small: true }), onclick: () => openLookup(u.userId, usersState.ticket, false) }, 'Support ID lookup: activity, sessions, emails')),
     h('h3', {}, 'Sign-in identities'),
     table(
-      ['Account', 'Sub', 'Role', 'Status', 'Effective', 'Observed'],
-      u.identities.map((i) => tr(kindLabel(i.provider), i.sub ? userLink(i.provider, i.sub, i.sub) : h('span', { class: 'muted' }, 'seen on chain only'), i.role, i.status, i.effectiveAt ? time(i.effectiveAt) : '', time(i.observedAt))),
+      ['Account', 'Sub', 'Name', 'Role', 'Status', 'Effective', 'Observed'],
+      u.identities.map((i) => tr(kindLabel(i.provider), i.sub ? userLink(i.provider, i.sub, i.sub) : h('span', { class: 'muted' }, 'seen on chain only'), nameView(i.name), i.role, i.status, i.effectiveAt ? time(i.effectiveAt) : '', time(i.observedAt))),
     ),
     h('h3', {}, 'Wallets'),
     table(
@@ -3233,7 +3254,7 @@ async function usersPage(main) {
       results.replaceChildren(panel('Wallet directory', {}, r.users.length ? h('div', {}, r.users.map(walletUserBlock)) : emptyState('Nobody has this id or wallet', 'A Support ID resolves only for users who logged in since the wallet directory’s deploy.')));
       return undefined;
     }
-    results.replaceChildren(panel(`Directory: ${r.users.length}${r.next ? '+' : ''} ${r.users.length === 1 ? 'person' : 'people'}`, {}, ...directoryRows(r.users, r.unverifiedWarning), r.next ? pager([{ text: 'Next page', onclick: () => runSearch(r.next) }]) : ''));
+    results.replaceChildren(panel(`Directory: ${r.users.length}${r.next ? '+' : ''} ${r.users.length === 1 ? 'person' : 'people'}`, {}, ...directoryRows(r.users, r.unverifiedWarning, r.namesError), r.next ? pager([{ text: 'Next page', onclick: () => runSearch(r.next) }]) : ''));
     return undefined;
   };
   const runSearch = async (cursor) => {
@@ -3335,15 +3356,19 @@ function standingBlock(s) {
 function userDetail(main, d) {
   const u = d.user;
   if (d.warning) main.append(note('warn', '', d.warning));
+  if (d.nameError) main.append(namesUnavailable(d.nameError, false));
+  // The identity's Hana Home name (D714) is the API's, not the directory's: shown with or without a directory row.
+  const name = d.nameError ? undefined : d.name;
   main.append(
     panel(
       'Directory',
       {},
       !u
-        ? emptyState('No directory row', 'The issuer hasn’t seen this identity log in since the directory’s deploy, its app is on no issuer env, or a best-effort write was lost.')
+        ? [emptyState('No directory row', 'The issuer hasn’t seen this identity log in since the directory’s deploy, its app is on no issuer env, or a best-effort write was lost.'), name ? facts([['Name', nameView(name)]]) : '']
         : [
             facts([
               ['Email', u.unverifiedClaim ? h('span', {}, u.email, ' ', unverifiedBadge()) : u.email],
+              ['Name', nameView(name)],
               ['Account', kindLabel(u.provider)],
               ['Sub', h('code', {}, u.sub)],
               ['Verified', u.provider === 'email' ? 'yes (a sign-in code)' : u.emailVerified ? 'yes (Google)' : h('strong', { class: 'warn' }, 'NO: Google hasn’t verified this address; the account only claims it')],
@@ -3475,6 +3500,8 @@ function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
     facts([
       ['User ID', mono(u.userId)],
       ['Support ID', mono(u.supportId)],
+      // The account's name: its root's, else the first identity's that has one (each identity's is in the table below).
+      ['Name', nameView(u.name)],
       ['Internal id', mono(u.internalId)],
       ['Scope', mono(u.scopeId)],
       ['Organisation', mono(u.orgId || '')],
@@ -3483,12 +3510,13 @@ function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
     ]),
     h('h3', {}, 'Sign-in identities'),
     table(
-      ['Account', 'Email (the issuer’s directory)', 'Sub', 'Role', 'Status', 'Effective', 'Observed'],
+      ['Account', 'Email (the issuer’s directory)', 'Sub', 'Name', 'Role', 'Status', 'Effective', 'Observed'],
       u.identities.map((i) =>
         tr(
           kindLabel(i.provider),
           emailCell(i.directoryKey, i.directoryKey ? emails.get(emailKey(i.directoryKey.provider, i.directoryKey.sub)) : undefined),
           i.sub ? userLink(i.provider, i.sub, i.sub) : h('span', { class: 'muted' }, 'seen on chain only'),
+          nameView(i.name),
           i.role,
           i.status,
           i.effectiveAt ? time(i.effectiveAt) : '',

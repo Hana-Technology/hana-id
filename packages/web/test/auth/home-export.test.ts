@@ -552,6 +552,32 @@ describe('golden: Hana Home opens the vault’s address', () => {
     const other = start({ scopes: [mineScope({ addresses: [...records, { chain: 'near', address: 'ab'.repeat(32) }] })] });
     await other.unlock();
     expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from this wallet’s');
+    // What is shown is the wallet's own NEAR account and key, never the record's.
+    expect(document.getElementById('home-export-address-near')?.textContent).toBe(near);
+    // The app's page above lists the record (the API's word); the section never shows it.
+    expect(document.getElementById('home-export')?.textContent).not.toContain('ab'.repeat(32));
+    const r = other.reveal('near');
+    expect(document.querySelector('#home-export .account code')?.textContent).toBe(near);
+    pressEl(other, r.toggle);
+    expect(r.secret.textContent).toBe(nearVector(OWN).export);
+    expect(addressOfExport('near', r.secret.textContent as string)).toBe(near);
+  });
+
+  it('on a linked member’s path a NEAR record alone that differs stops the move: nothing is shown or kept (D601, D758)', async () => {
+    const root = vector(ROOT).accounts[0]!;
+    const h = start({
+      identity: member,
+      chainPath: ROOT,
+      scopes: [mineScope({ addresses: [{ chain: 'stellar', address: root.stellar.address }, { chain: 'evm', address: root.evm.address }, { chain: 'near', address: 'ab'.repeat(32) }] })],
+    });
+    await h.toApp();
+    await h.open();
+    expect(h.page.moving.state).toBe('refused');
+    expect(h.page.moving.errorCode).toBe('address_mismatch');
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(zeroed.has(vector(ROOT).prkHex)).toBe(true);
+    expect(document.getElementById('home-export-addresses')).toBeNull();
+    expect(pageText()).not.toContain(nearVector(ROOT).accountId);
   });
 
   it('on a linked member’s path a different address on record stops the move: nothing is shown or kept', async () => {
@@ -1355,13 +1381,79 @@ describe('NEAR: the third key of the opened wallet (D768)', () => {
     expect(document.querySelector('.secret')).toBeNull();
   });
 
+  it('a deadline passed while the timers ran late: pressing NEAR key erases the wallet and shows nothing (expired())', async () => {
+    const h = start();
+    await h.unlock();
+    // The server clock passes the 5 minutes; no timer has fired yet (a sleeping laptop, a throttled tab).
+    now += HOME_PRK_LIFETIME_MS;
+    expect(h.page.moving.holdsSecret).toBe(true);
+    h.click('home-export-near');
+    expect(h.page.moving.state).toBe('ended');
+    expect(h.page.moving.chain).toBeNull();
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(zeroed.has(vector(OWN).prkHex)).toBe(true);
+    expect(document.getElementById('home-export-ended')?.textContent).toBe(HOME_EXPORT_END_TEXT.expired);
+    expect(document.getElementById('home-export-confirm')).toBeNull();
+    expect(document.getElementById('home-export-near-notes')).toBeNull();
+    expect(document.querySelector('.secret')).toBeNull();
+  });
+
+  it('Show key and Copy key on the NEAR key do nothing on a click the guard didn’t arm', async () => {
+    const h = start();
+    await h.unlock();
+    const r = h.reveal('near');
+    // A click with no arming gesture on this screen (a carried-over or scripted click).
+    r.toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    r.copy.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    await tick();
+    expect(r.secret.textContent).toBe('••••••••');
+    expect(r.toggle.textContent).toBe('Show key');
+    expect(h.clipboardWrites).toEqual([]);
+    expect(pageText()).not.toContain(nearVector(OWN).export);
+    // The same buttons, armed, do act (so the clicks above were refused, not lost).
+    pressEl(h, r.toggle);
+    expect(r.secret.textContent).toBe(nearVector(OWN).export);
+    pressEl(h, r.toggle);
+    expect(r.secret.textContent).toBe('••••••••');
+    // Armed and enabled now, a keyboard click (detail 0) with no keydown of its own after the arming gesture, and no
+    // dwell on the button, still does nothing: the guard is checked at the click, not only through `disabled`.
+    expect(r.toggle.disabled).toBe(false);
+    r.toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+    r.copy.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+    await tick();
+    expect(r.secret.textContent).toBe('••••••••');
+    expect(h.clipboardWrites).toEqual([]);
+  });
+
   it('writes nothing to storage, the address or the console; no message or request carries the NEAR key or its seed', async () => {
     const h = start();
     await h.unlock();
+    const selfPost = vi.spyOn(window, 'postMessage');
+    const parentPost = window.parent === window ? selfPost : vi.spyOn(window.parent, 'postMessage');
+    const opener = remoteWindow();
+    (h.win as { opener: Window | null }).opener = opener as unknown as Window;
     const r = h.reveal('near');
     pressEl(h, r.toggle);
     pressEl(h, r.copy);
     await tick();
+    // No attribute anywhere in the document carries it (only the box's text node does, while shown).
+    const want0 = nearVector(OWN);
+    const attrs = [...document.querySelectorAll('*')].flatMap((el) => [...el.attributes].map((a) => `${a.name}=${a.value}`)).join('\n');
+    for (const s of [want0.export, want0.export.slice('ed25519:'.length), want0.seedHex]) expect(attrs).not.toContain(s);
+    expect(r.secret.textContent).toBe(want0.export);
+    // Nothing is posted to the page itself, its parent or an opener.
+    expect(selfPost).not.toHaveBeenCalled();
+    expect(parentPost).not.toHaveBeenCalled();
+    expect(opener.postMessage).not.toHaveBeenCalled();
+    // And in the source: the one postMessage is the sign-in child's parameters (no window.postMessage, parent, opener
+    // or top), and no attribute is set from anything but fixed words and ids.
+    const source = readFileSync(join(process.cwd(), 'src', 'auth', 'home-export.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//gu, '')
+      .replace(/^\s*\/\/.*$/gmu, '');
+    expect([...source.matchAll(/postMessage\(/gu)]).toHaveLength(1);
+    expect(source).toMatch(/child\.postMessage\(r\.params, env\.authOrigin\)/u);
+    expect(source).not.toMatch(/\b(?:parent|opener|top)\b\s*[?.]/u);
+    expect(source).not.toMatch(/setAttribute|\.dataset/u);
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
     expect(h.win.replaced).toEqual([]);

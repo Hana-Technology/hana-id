@@ -396,7 +396,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
       const button = visible && clickable;
       launcher = !visible ? '' : button ? `shown: "${label}" (click it)` : `notice: "${label}"`;
       if (button) launcherShownCount += 1;
-      if (visible) logEvent(button ? `Hana launcher: "${label}"` : `Hana notice: "${label}"`);
+      if (visible) logEvent(button ? `Journear launcher: "${label}"` : `Journear notice: "${label}"`);
       render();
     });
     c.on('autoApproved', (d) => {
@@ -560,7 +560,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
   async function exportKey(chain: 'stellar' | 'evm'): Promise<void> {
     const c = client;
     if (!c) return;
-    logEvent(`Export ${chain}: click the Hana launcher; the key is shown only in the Hana export window`);
+    logEvent(`Export ${chain}: click the Journear launcher; the key is shown only in the Journear export window`);
     await c.exportKey(chain);
     logEvent(`Export ${chain}: done`);
   }
@@ -619,7 +619,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
     c.prepareApproval();
     exclusive(async () => {
       signs += 1;
-      const outcome = h('td', {}, 'waiting (approve or reject in the Hana popup)…');
+      const outcome = h('td', {}, 'waiting (approve or reject in the Journear popup)…');
       const took = h('td', { class: 'num' }, '…');
       $('signs').prepend(h('tr', {}, h('td', {}, String(signs)), h('td', {}, label), outcome, took));
       // Whether consent was in force before: a covered request without it opens the consent screen first, which may

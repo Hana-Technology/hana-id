@@ -1,23 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="narrow">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
     <title>Google email scope spike</title>
-    <style>
-      :root { color-scheme: light dark; font: 14px/1.45 system-ui, sans-serif; }
-      body { max-width: 900px; margin: 0 auto; padding: 16px; }
-      code, pre { font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; white-space: pre-wrap; }
-      input[type='text'] { font: inherit; padding: 3px 6px; width: 36em; }
-      button { font: inherit; padding: 4px 10px; margin: 4px 6px 4px 0; cursor: pointer; }
-      .note { background: #d0a03022; border: 1px solid #d0a030; padding: 8px 10px; border-radius: 4px; }
-    </style>
+    <link rel="stylesheet" href="/src/smoke.css" />
   </head>
   <body>
     <h1>Google <code>email</code> scope spike (email login build plan batch 0)</h1>
     <p class="note">
-      Local only: no Hana API, no chain. Tokens are decoded in this page; the access token goes only to Google
+      Local only: no Journear API, no chain. Tokens are decoded in this page; the access token goes only to Google
       (<code>tokeninfo</code> by POST, <code>userinfo</code>; never revoked, as production since D265: revoking ends
       the whole grant, so Google would ask again at every login). Nothing personal reaches the summary:
       no address, no <code>sub</code>, no token. The on-chain ID token must stay openid-only (D25). A and B compare one

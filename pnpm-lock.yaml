@@ -421,6 +421,9 @@ importers:
         specifier: 15.0.0
         version: 15.0.0
     devDependencies:
+      '@hana-id/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@hana-id/env':
         specifier: workspace:*
         version: link:../../packages/env

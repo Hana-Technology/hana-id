@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { ApiError, postJson } from '../../api.ts';
 import { useStepUp, useWrite } from '../../lib.tsx';
-import { Badge, ConfirmButton, CopyButton, Panel, StepUpHint, Why, WriteNote } from '../../ui.tsx';
+import { Badge, ConfirmButton, CopyButton, Field, Panel, StepUpHint, Why, WriteNote } from '../../ui.tsx';
 import { useApp } from '../Apps.tsx';
 import { ConsentPreview } from '../Consent.tsx';
 import { type ChainOwner, ChainOwnerGate, useChainOwner } from './ChainOwner.tsx';
@@ -48,7 +48,7 @@ function Policy({ chain }: { chain: ChainOwner }) {
           </>
         ) : (
           <p>
-            <Badge>None</Badge> Users approve every request in the Hana popup.
+            <Badge>None</Badge> Users approve every request in the Journear Passport popup.
           </p>
         )}
         {owner && s.policy && (
@@ -66,26 +66,24 @@ function Policy({ chain }: { chain: ChainOwner }) {
             }
           />
         )}
-        <WriteNote error={w.error} done={w.done} />
+        <WriteNote error={w.error} />
       </div>
       <PendingChanges ctl={ctl} kinds={['policy_set']} title="Policy waiting to take effect" />
       {!owner ? (
         <Why>Only owners can set or remove the policy.</Why>
       ) : frozen ? (
-        <Why>A new policy can’t be proposed while Hana has frozen the organisation. Removing the policy still works.</Why>
+        <Why>A new policy can’t be proposed while Journear has frozen the organisation. Removing the policy still works.</Why>
       ) : chain.state !== 'yes' ? (
         <ChainOwnerGate chain={chain} org={org} scopeId={app.scopeId} what="Setting a policy" />
       ) : (
         <div className="editor">
-          <label className="field">
-            <span className="field-label">Policy (JSON, v: 1)</span>
-            <textarea className="mono code-input" rows={12} spellCheck={false} value={text} onChange={(e) => (setText(e.target.value), setChecked(undefined))} />
-            <span className="field-hint">Checked exactly as the wallet checks it. The format is in the partner guide, section 9.</span>
-          </label>
+          <Field label="Policy (JSON, v: 1)" hint="Checked exactly as the wallet checks it. The format is in the partner guide, section 9.">
+            {(c) => <textarea {...c} className="jp-input code-input" rows={12} spellCheck={false} value={text} onChange={(e) => (setText(e.target.value), setChecked(undefined))} />}
+          </Field>
           <div className="form-actions">
             <button
               type="button"
-              className="btn"
+              className="jp-btn jp-btn-secondary"
               disabled={chk.busy || !text.trim()}
               onClick={() =>
                 void chk.run(async () => {
@@ -111,7 +109,7 @@ function Policy({ chain }: { chain: ChainOwner }) {
                 <Why>A policy change is already waiting: cancel it above to propose this one.</Why>
               ) : (
                 <>
-                  <button type="button" className="btn btn-primary" disabled={step.busy} onClick={() => void step.start('policy.set', { appId: app.id, policy: checked.policy })}>
+                  <button type="button" className="jp-btn jp-btn-primary" disabled={step.busy} onClick={() => void step.start('policy.set', { appId: app.id, policy: checked.policy })}>
                     Propose this policy (confirm with Google)
                   </button>
                   <p className="muted small">It is announced to your security contacts, then takes effect after the security delay. Any owner can cancel it until then.</p>
@@ -135,7 +133,7 @@ function RawSigning({ chain }: { chain: ChainOwner }) {
   const on = app.settings.rawSign === 'approval';
   const pending = app.changes.some((c) => c.kind === 'raw_sign_on' && isWaiting(c, ctl.serverNow()));
   return (
-    <Panel title="Raw signing" description="Signing messages Hana can’t decode (raw bytes). Users approve each one in the Hana popup, with a warning that Hana can’t show what it is. Leave it off unless your app needs it.">
+    <Panel title="Raw signing" description="Signing messages Journear can’t decode (raw bytes). Users approve each one in the Journear Passport popup, with a warning that it can’t show what it is. Leave it off unless your app needs it.">
       <div className="current">
         <p>{on ? <Badge tone="warn">On, with approval</Badge> : <Badge>Off</Badge>}</p>
         {owner && on && (
@@ -155,20 +153,20 @@ function RawSigning({ chain }: { chain: ChainOwner }) {
         )}
       </div>
       <PendingChanges ctl={ctl} kinds={['raw_sign_on']} title="Waiting to take effect" />
-      {!on && app.environment === 'test' && <Why>Test apps never sign raw: their keys come from the testnet MPC, so Hana refuses anything that could move real funds.</Why>}
-      {!on && app.environment === 'live' && owner && frozen && <Why>Raw signing can’t be turned on while Hana has frozen the organisation.</Why>}
+      {!on && app.environment === 'test' && <Why>Test apps never sign raw: their keys come from the testnet signing network, so Journear refuses anything that could move real funds.</Why>}
+      {!on && app.environment === 'live' && owner && frozen && <Why>Raw signing can’t be turned on while Journear has frozen the organisation.</Why>}
       {!on && app.environment === 'live' && !owner && <Why>Only owners can turn raw signing on or off.</Why>}
       {owner && !on && !frozen && app.environment === 'live' && !pending && chain.state !== 'yes' && <ChainOwnerGate chain={chain} org={org} scopeId={app.scopeId} what="Turning raw signing on" />}
       {owner && !on && !frozen && app.environment === 'live' && !pending && chain.state === 'yes' && (
         <>
-          <button type="button" className="btn" disabled={step.busy} onClick={() => void step.start('raw_sign.on', { appId: app.id })}>
+          <button type="button" className="jp-btn jp-btn-secondary" disabled={step.busy} onClick={() => void step.start('raw_sign.on', { appId: app.id })}>
             Turn raw signing on (confirm with Google)
           </button>
           <p className="muted small">It is announced to your security contacts, then takes effect after the security delay. Turning it off is immediate.</p>
           <StepUpHint email={ctl.email} />
         </>
       )}
-      <WriteNote error={w.error ?? step.error} done={w.done} />
+      <WriteNote error={w.error ?? step.error} />
     </Panel>
   );
 }

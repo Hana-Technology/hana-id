@@ -62,7 +62,7 @@ describe('an Access redirect is an expired sign-in, not a network error', () => 
     expect(bannerButton(s, 'Try again')).toBeTruthy();
     // Not the network wording, no success line, and every typed value still in its field.
     expect(s.doc.body.textContent).not.toContain('Can’t reach the admin console');
-    expect(s.text()).not.toContain('Invite sent');
+    expect(s.toasts()).not.toContain('Invite sent');
     expect(s.field('newOrgName').value).toBe('Tidepool');
     expect(s.field('email').value).toBe('owner@tidepool.example');
     expect(s.field('kind').value).toBe('internal');
@@ -76,7 +76,7 @@ describe('an Access redirect is an expired sign-in, not a network error', () => 
     s.submit();
     await vi.waitFor(() => expect(bannerButton(s, 'Try again')).toBeTruthy());
     bannerButton(s, 'Try again')!.click();
-    await vi.waitFor(() => expect(s.text()).toContain('Invite sent to owner@tidepool.example for the new organisation “Tidepool”'));
+    await vi.waitFor(() => expect(s.toasts()).toContain('Invite sent to owner@tidepool.example for the new organisation “Tidepool”'));
     const [first, second] = invites(s);
     expect(second).toEqual(first);
     expect(second!.raw).toBe(first!.raw);
@@ -95,9 +95,9 @@ describe('an Access redirect is an expired sign-in, not a network error', () => 
     await vi.waitFor(() => expect(banner(s).textContent).toContain('Still signed out: finish signing in in the other tab'));
     expect(invites(s)).toHaveLength(2);
     expect(s.field('email').value).toBe('owner@tidepool.example');
-    expect(s.text()).not.toContain('Invite sent');
+    expect(s.toasts()).not.toContain('Invite sent');
     bannerButton(s, 'Try again')!.click();
-    await vi.waitFor(() => expect(s.text()).toContain('Invite sent to owner@tidepool.example'));
+    await vi.waitFor(() => expect(s.toasts()).toContain('Invite sent to owner@tidepool.example'));
     expect(invites(s)).toHaveLength(3);
     expect(new Set(invites(s).map((c) => c.raw)).size).toBe(1);
   });
@@ -115,9 +115,9 @@ describe('an Access redirect is an expired sign-in, not a network error', () => 
     await vi.waitFor(() => expect(banner(s).textContent).toContain('You’re signed in again'));
     expect(banner(s).querySelector('[role=status]')).toBeTruthy();
     expect(invites(s)).toHaveLength(1);
-    expect(s.text()).not.toContain('Invite sent');
+    expect(s.toasts()).not.toContain('Invite sent');
     bannerButton(s, 'Try again')!.click();
-    await vi.waitFor(() => expect(s.text()).toContain('Invite sent to owner@tidepool.example'));
+    await vi.waitFor(() => expect(s.toasts()).toContain('Invite sent to owner@tidepool.example'));
     expect(invites(s)).toHaveLength(2);
     expect(banner(s).textContent).toBe('');
   });

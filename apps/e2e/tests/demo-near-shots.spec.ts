@@ -75,7 +75,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   // Other writers, one of them hostile.
   await chain('e2e_guestbook_add', { account_id: 'alice.testnet', text: 'First! gm from NEAR testnet 🌸' });
   await chain('e2e_guestbook_add', { account_id: 'mallory.testnet', text: '<img src=x onerror=alert(1)> ‮gnp.exe https://evil.example' });
-  await chain('e2e_guestbook_add', { account_id: 'a'.repeat(20) + '.' + 'b'.repeat(20) + '.testnet', text: 'Building on NEAR with Hana ID: sign in with email, write with zero NEAR, no extension, no seed phrase.' });
+  await chain('e2e_guestbook_add', { account_id: 'a'.repeat(20) + '.' + 'b'.repeat(20) + '.testnet', text: 'Building on NEAR with Journear Passport: sign in with email, write with zero NEAR, no extension, no seed phrase.' });
 
   await newApp({ name: 'Hana ID demo', origins: [DEMO_ORIGIN], publishableKey: DEMO_PK });
   await page.setViewportSize(VIEWPORTS.desktop);
@@ -92,7 +92,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await shots(page, '02-signed-in-card');
 
   // A first write with the activation held: "Preparing your NEAR account…".
-  await page.locator('#near-text').fill('gm from Hana ID: my first NEAR transaction, and I hold zero NEAR');
+  await page.locator('#near-text').fill('gm from Journear Passport: my first NEAR transaction, and I hold zero NEAR');
   const approvalP = page.waitForEvent('popup');
   await page.getByRole('button', { name: 'Write to the guestbook (no NEAR needed)' }).click();
   await expect(page.locator('#near-stage')).toHaveText('Preparing your NEAR account…');
@@ -100,7 +100,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await page.bringToFront();
   await shots(page, '03-stage-preparing');
   activation.open();
-  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Hana window…');
+  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
   await shots(page, '04-stage-approving');
   await expect(approval.getByRole('heading', { name: 'NEAR transaction, fee paid by a relayer' })).toBeVisible();
   for (const scheme of ['light', 'dark'] as const) {
@@ -108,7 +108,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
     await approval.screenshot({ path: `${SHOTS}/04-approval-window-${scheme}.png`, fullPage: true, animations: 'disabled' });
   }
   await approve(approval);
-  await expect(page.locator('#near-stage')).toHaveText('Sending it through Hana’s relayer, which pays the fee…');
+  await expect(page.locator('#near-stage')).toHaveText('Sending it through Journear’s relayer, which pays the fee…');
   await shots(page, '05-stage-relaying');
   relaying.open();
   await expect(page.locator('#near-done')).toBeVisible();

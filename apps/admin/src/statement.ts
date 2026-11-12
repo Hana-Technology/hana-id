@@ -75,7 +75,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
   if (!i.internal) {
     const own = new Set([...i.apps.values()].map((a) => a.scopeId));
     const foreign = [...i.dayRows, ...i.monthRows].find((r) => reportRowKind(r) === 'home' && !own.has(r.scope_id));
-    if (foreign) throw new StatementRefused(`Hana Home logins of scope ${foreign.scope_id} are recorded for ${i.orgId}, which has no app in that scope: not issued (check the API's HANA_ORG_ID and the ledger)`);
+    if (foreign) throw new StatementRefused(`Passport Home logins of scope ${foreign.scope_id} are recorded for ${i.orgId}, which has no app in that scope: not issued (check the API's HANA_ORG_ID and the ledger)`);
   }
 
   const cells = (r: ReportSqlRow, day: string, total: boolean): string[] => {

@@ -34,7 +34,7 @@ describe('headers', () => {
       expect(res.headers.get('content-type'), path).toMatch(/^text\/html/u);
       expectSecurityHeaders(res);
       const html = await res.text();
-      expect(html).toContain('Hana ID console');
+      expect(html).toContain('Journear Passport console');
       expect(html).not.toMatch(/<script/u);
     }
     const head = await request('/', { method: 'HEAD' });

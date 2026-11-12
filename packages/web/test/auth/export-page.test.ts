@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthApi } from '../../src/auth/api.ts';
 import {
+  EXPORT_ACK,
   EXPORT_CHECK_MS,
   EXPORT_CLIPBOARD_CLEAR_MS,
   EXPORT_CONFIRMATION,
@@ -241,12 +242,21 @@ function revealControls(): { toggle: HTMLButtonElement; copy: HTMLButtonElement;
   };
 }
 
-/** Confirm screen → typed confirmation → Continue: the reveal step. */
+/** The reveal step's checkbox (the export pattern, D765): ticked by the user, so Show key and Copy key can act. */
+const ackBox = () => document.querySelector('.reveal-ack input[type="checkbox"]') as HTMLInputElement;
+function tick(on = true): void {
+  const box = ackBox();
+  box.checked = on;
+  box.dispatchEvent(new Event('change'));
+}
+
+/** Confirm screen → typed confirmation → Continue: the reveal step, its checkbox ticked. */
 function continueToReveal(): ReturnType<typeof revealControls> {
   const input = document.querySelector('input') as HTMLInputElement;
   input.value = EXPORT_CONFIRMATION;
   input.dispatchEvent(new Event('input'));
   click(button(/Continue/u));
+  tick();
   return revealControls();
 }
 
@@ -407,7 +417,7 @@ describe('/export resolves the path through get_identity (batch 7) and takes an 
 describe('/export: what the user is told and what the API hears (D430)', () => {
   it('warns plainly on the first and the confirm screen: funds, no recovery, never into a website', async () => {
     expect(EXPORT_WARNING).toContain('Anyone with this key controls your funds');
-    expect(EXPORT_WARNING).toContain('Hana can’t recover it');
+    expect(EXPORT_WARNING).toContain('Journear can’t recover it');
     expect(EXPORT_WARNING).toContain('Never paste it into a website');
     const r = run();
     await vi.waitFor(() => expect(r.page.state).toBe('ready'));
@@ -535,7 +545,8 @@ describe('/export', () => {
     click(cont);
     expect(r.page.state).toBe('reveal');
 
-    // Show key / Hide key (D268): a click shows it, selectable, and a second click hides it.
+    // Show key / Hide key (D268): a click shows it, selectable, and a second click hides it, once the box is ticked.
+    tick();
     const { toggle, secret } = revealControls();
     expect(secret.textContent).toBe('••••••••');
     expect(secret.hasAttribute('data-shown')).toBe(false);
@@ -581,6 +592,7 @@ describe('/export', () => {
     input.value = EXPORT_CONFIRMATION;
     input.dispatchEvent(new Event('input'));
     click(button(/Continue/u));
+    tick();
     click(revealControls().toggle);
     const shown = document.querySelector('.secret')?.textContent as string;
     expect(shown).toMatch(/^0x[0-9a-f]{64}$/u);
@@ -971,6 +983,7 @@ describe('/export', () => {
       expect(cont.disabled).toBe(false);
       click(cont);
       expect(r.page.state).toBe('reveal');
+      tick();
       const { toggle, copy, secret } = revealControls();
       // The reveal screen starts over: the click that confirmed (or a second one) can't land on Show or Copy.
       expect(toggle.disabled).toBe(true);
@@ -981,6 +994,66 @@ describe('/export', () => {
       expect(r.clipboardWrites).toEqual([]);
       click(toggle);
       expect(secret.textContent).toMatch(STELLAR_KEY);
+    });
+
+    it('the export pattern (D765): three steps, and Show key (the danger button) acts only once the user ticks the box', async () => {
+      const r = run();
+      const steps = () => [...document.querySelectorAll('.export-steps > [role="listitem"]')].map((s) => `${s.textContent}:${s.className || '-'}${s.getAttribute('aria-current') === 'step' ? ':current' : ''}`);
+      await vi.waitFor(() => expect(r.page.state).toBe('ready'));
+      expect(steps()).toEqual(['Verify:now:current', 'Understand:-', 'Export:-']);
+      await signIn(r);
+      expect(steps()).toEqual(['Verify:now:current', 'Understand:-', 'Export:-']);
+      await r.deliver();
+      expect(await r.page.settled).toBe('confirm');
+      expect(steps()).toEqual(['Verify:done', 'Understand:now:current', 'Export:-']);
+      // No checkbox and no danger button before the last step.
+      expect(document.querySelector('.reveal-ack')).toBeNull();
+      expect(document.querySelector('.jp-btn-danger')).toBeNull();
+      const input = document.querySelector('input') as HTMLInputElement;
+      input.value = EXPORT_CONFIRMATION;
+      input.dispatchEvent(new Event('input'));
+      click(button(/Continue/u));
+      expect(r.page.state).toBe('reveal');
+      expect(steps()).toEqual(['Verify:done', 'Understand:done', 'Export:now:current']);
+      expect(document.querySelector('.reveal-ack')?.textContent).toBe(EXPORT_ACK);
+      const { toggle, copy, secret } = revealControls();
+      expect(toggle.classList.contains('jp-btn-danger')).toBe(true);
+      expect(document.querySelectorAll('.jp-btn-danger')).toHaveLength(1);
+      // Guard armed, box not ticked: Show and Copy stay disabled and act on nothing.
+      r.win.dispatch('pointermove', { pointerType: 'mouse', movementX: 2, movementY: 0, clientX: 1, clientY: 1 });
+      expect(toggle.disabled).toBe(true);
+      expect(copy.disabled).toBe(true);
+      click(toggle);
+      click(copy);
+      await flush();
+      expect(secret.textContent).toBe('••••••••');
+      expect(r.clipboardWrites).toEqual([]);
+      // A script's tick doesn't count: the box unticks itself.
+      r.setGesture(false);
+      tick();
+      expect(ackBox().checked).toBe(false);
+      expect(toggle.disabled).toBe(true);
+      r.setGesture(true);
+      // The user's tick enables both; Show turns the danger button into a plain Hide key.
+      tick();
+      expect(toggle.disabled).toBe(false);
+      expect(copy.disabled).toBe(false);
+      click(toggle);
+      expect(secret.textContent).toMatch(/^S[A-Z2-7]{55}$/u);
+      expect(toggle.textContent).toBe('Hide key');
+      expect(toggle.classList.contains('jp-btn-danger')).toBe(false);
+      expect(toggle.classList.contains('jp-btn-secondary')).toBe(true);
+      // Unticking hides the key at once and disables Show and Copy again.
+      tick(false);
+      expect(secret.textContent).toBe('••••••••');
+      expect(toggle.textContent).toBe('Show key');
+      expect(toggle.classList.contains('jp-btn-danger')).toBe(true);
+      expect(toggle.disabled).toBe(true);
+      expect(copy.disabled).toBe(true);
+      // The erase disables the box for good.
+      r.win.dispatch('pagehide');
+      expect(ackBox().disabled).toBe(true);
+      expect(ackBox().checked).toBe(false);
     });
 
     it('synthetic (non-gesture) clicks neither show the key nor copy it', async () => {

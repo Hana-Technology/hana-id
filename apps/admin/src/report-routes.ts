@@ -106,7 +106,7 @@ export async function statementRoute(c: RouteCtx): Promise<Response> {
     // Tamper evidence: the file must still be the one whose hash Neon froze.
     if ((await sha256Hex(bytes)) !== want) {
       log({ event: 'bff', route: 'GET /api/statements/:org/:month', requestId: c.staff.requestId, orgId: org, outcome: 'error', code: 'statement_hash_mismatch' }, 'error');
-      return errorResponse('internal', 'The stored file does not match its statement hash: tell Hana security');
+      return errorResponse('internal', 'The stored file does not match its statement hash: tell Journear security');
     }
     return new Response(bytes, {
       status: 200,

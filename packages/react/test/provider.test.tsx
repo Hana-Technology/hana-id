@@ -168,7 +168,7 @@ describe('HanaProvider', () => {
     );
     expect(caught).toHaveLength(1);
     expect(caught[0]).toBeInstanceOf(TypeError);
-    expect(String(caught[0])).toMatch(/Unknown Hana environment/u);
+    expect(String(caught[0])).toMatch(/Unknown Journear Passport environment/u);
     expect(view.container.textContent).toBe('failed');
     expect(vaultFrames()).toBe(0);
   });

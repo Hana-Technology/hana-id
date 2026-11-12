@@ -3,11 +3,15 @@
 A private briefing for the founder: how Hana ID works, what it protects, where it is weak, and how to answer hard
 questions honestly. It states every gap plainly. Decide later what to share outside the company.
 
-Last verified: 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Hana Home's "Move this wallet" offers the NEAR key, D768); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
+Last verified: 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Passport Home's "Move this wallet" offers the NEAR key, D779); 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the product's names users read, the user's line in section 1, the export's three steps and checkbox in 2.6, D765); 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
 reference docs and checked against the code where they were vague; no code changed). Where the docs lag the code or git,
 this file says so. Sandbox-dev's live state is as `docs/operations.md` "What sandbox-dev runs" records it, corrected on
 2026-11-10 by the person who ran that day's deploy and tests (Hana Home, the email co-signer, alerting, the Google
 consent screen, partner onboarding, the demo site, priorities). Nothing else here was checked against the live system.
+
+Names: users, partners and staff now read the product as **Journear Passport**, the company or service as **Journear**,
+and Hana Home as **Passport Home** (D765, built on branch `feat/journear-design`, not merged, not deployed). This
+briefing keeps the internal names, which the code, packages and env names still use.
 
 How to read it: section 1 is the one-page version. Sections 2 and 3 explain the moving parts. Section 4 is the security
 case, including what Hana itself can do. Section 5 is the question bank. Section 6 is where things stand. Section 7 is
@@ -44,7 +48,7 @@ gives different addresses, because each partner has its own **scope** (its own o
 
 **What it means for each party, in one sentence:**
 
-- **User:** "I sign in with Google and get a wallet; every transaction asks me to approve it in a Hana window (unless I
+- **User:** "I sign in with Google and get a wallet; every transaction asks me to approve it in a Journear Passport window (unless I
   accepted an app's auto-approve rules), and I can export my private keys whenever I want."
 - **Partner:** "I add an SDK and get standard wallet interfaces (EIP-1193 for EVM, a Stellar signer), without ever
   touching my users' keys or Google tokens."
@@ -193,7 +197,9 @@ recorded on Hana's server, so the user can stop it from another device; an open 
 
 From the vault's "Export" button, a separate top-level Hana window opens. It runs **its own fresh login** (Google with
 a forced re-sign-in, or an email code), derives the key itself (it never reuses the vault's), and checks the address
-matches. After the user types `EXPORT`, it shows the private key behind Show key / Copy key, both guarded like Approve.
+matches. It walks three steps (Verify, Understand, Export). After the user types `EXPORT` and ticks a box saying no one can see
+their screen and they will paste the key only into the wallet app they're moving to, it shows the private key behind
+Show key / Copy key, both guarded like Approve.
 The key hides after 60 s and is erased 5 minutes after it was derived. Exports are limited to 3 per hour per user per
 app, and each one is recorded for Hana staff (`key_exported`). Partners can't switch export off.
 
@@ -535,7 +541,7 @@ anything. After a forged key, the runbook retires older sessions before unpausin
 ### 4e. Recovery and exit
 
 - **Key export** is always available and partners can't remove it. It is the user's exit to any Stellar or EVM wallet
-  (and, with SDK 0.4.0, any NEAR wallet; Hana Home's "Move this wallet" offers all three keys, D768).
+  (and, with SDK 0.4.0, any NEAR wallet; Passport Home's "Move this wallet" offers all three keys, D779).
 - **Hana Home** lets users reach every app's wallet from one Hana page, even after a partner shuts down or switches off
   Hana's shared login, through the exit client. It runs on sandbox-dev, but nothing links to it yet, so users can't
   find it, and the exit route hasn't been tried live (section 2.7).

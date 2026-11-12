@@ -1,0 +1,91 @@
+/* The smoke test pages' stylesheet (internal tooling, a light restyle): Journear Passport's tokens and self-hosted
+   fonts (packages/brand, D765), light and dark by the system setting, over the pages' own plain elements. Layout is
+   kept dense on purpose; colours come only from the --jp-* tokens. */
+@import '@hana-id/brand/tokens.css';
+@import '@hana-id/brand/fonts.css';
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html { color-scheme: light dark; }
+
+body {
+  margin: 0 auto;
+  padding: var(--jp-space-4);
+  max-width: 1100px;
+  background: var(--jp-bg);
+  color: var(--jp-fg);
+  font: var(--jp-weight-regular) 14px / 1.45 var(--jp-font-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.narrow body { max-width: 900px; }
+
+h1 { font-family: var(--jp-font-display); font-weight: 700; font-size: var(--jp-text-2xl); letter-spacing: var(--jp-tracking-tight); line-height: var(--jp-leading-tight); margin: 0 0 var(--jp-space-2); }
+h2 { font-size: var(--jp-text-lg); font-weight: var(--jp-weight-semibold); margin: var(--jp-space-6) 0 var(--jp-space-2); }
+h3 { font-size: var(--jp-text-md); font-weight: var(--jp-weight-semibold); margin: var(--jp-space-4) 0 var(--jp-space-2); }
+
+a { color: var(--jp-link); }
+
+section { border-top: 1px solid var(--jp-border); }
+
+code, pre, .mono { font-family: var(--jp-font-mono); font-size: 12px; word-break: break-all; }
+
+label { display: inline-flex; gap: 6px; align-items: center; margin: 4px 12px 4px 0; }
+
+input[type='text'], input[type='number'] {
+  font: inherit;
+  padding: 4px 8px;
+  border-radius: var(--jp-radius-sm);
+  border: 1px solid var(--jp-border-strong);
+  background: var(--jp-surface);
+  color: var(--jp-fg);
+}
+
+input[type='text']:focus-visible, input[type='number']:focus-visible { outline: 2px solid var(--jp-focus); outline-offset: 1px; }
+
+button {
+  font: inherit;
+  font-weight: var(--jp-weight-semibold);
+  font-size: 13px;
+  padding: 5px 12px;
+  margin: 4px 6px 4px 0;
+  border-radius: var(--jp-radius-md);
+  border: 1px solid var(--jp-border-strong);
+  background: var(--jp-surface);
+  color: var(--jp-fg);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { background: var(--jp-bg-subtle); }
+button:focus-visible { outline: 2px solid var(--jp-focus); outline-offset: 2px; }
+button:disabled { opacity: 0.45; cursor: default; }
+
+table { border-collapse: collapse; width: 100%; margin: 6px 0; }
+th, td { border: 1px solid var(--jp-border); padding: 3px 6px; text-align: left; vertical-align: top; }
+th { font-weight: var(--jp-weight-semibold); background: var(--jp-bg-subtle); }
+td.num { text-align: right; white-space: nowrap; }
+
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0; }
+dt { font-weight: var(--jp-weight-semibold); }
+dd { margin: 0; }
+
+pre { max-height: 220px; overflow: auto; background: var(--jp-bg-subtle); border: 1px solid var(--jp-border); border-radius: var(--jp-radius-sm); padding: 6px; margin: 6px 0; }
+
+.banner, .note { padding: 8px 10px; border-radius: var(--jp-radius-md); margin: 8px 0; border: 1px solid transparent; }
+.error { background: var(--jp-danger-bg); color: var(--jp-fg); border-color: var(--jp-danger); }
+.warn, .note { background: var(--jp-warning-bg); color: var(--jp-fg); border-color: var(--jp-warning); }
+.ok { color: var(--jp-success); font-weight: var(--jp-weight-semibold); }
+.fail { color: var(--jp-danger); font-weight: var(--jp-weight-semibold); }
+.info, .muted { color: var(--jp-fg-muted); }
+.derivation { font-weight: var(--jp-weight-semibold); color: var(--jp-warning); }
+#log { max-height: 240px; overflow: auto; background: var(--jp-bg-subtle); border: 1px solid var(--jp-border); border-radius: var(--jp-radius-sm); padding: 6px; white-space: pre-wrap; }
+.table-wrap { overflow-x: auto; }
+
+/* The pages' own field widths. */
+input#pk { width: 28em; max-width: 100%; }
+input#account { width: 12em; }
+input[type='number'] { width: 7em; }
+.narrow input[type='text'] { width: 36em; max-width: 100%; }
+.narrow code, .narrow pre { white-space: pre-wrap; }

@@ -268,7 +268,7 @@ describe('POST /v1/identity/token: refusals, in order', () => {
     near.paused = true;
     clearViewCaches();
     const res = await mint(app, spk);
-    await expectCode(res, 503, 'paused');
+    expect((await expectCode(res, 503, 'paused')).error).toBe('Journear Passport is paused, try again later');
     expect(res.headers.get('retry-after')).toBe('60');
   });
 

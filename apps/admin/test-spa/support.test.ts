@@ -144,7 +144,7 @@ describe('the Support ID lookup screen', () => {
     expect(t).toContain('no user id on the event');
     expect(t).toContain('No ledger event for: req_missing1, req_missing2 (an unknown id');
     // An error outcome is badged as one.
-    const badges = [...s.main().querySelectorAll('.badge.critical')].map((b) => b.textContent);
+    const badges = [...s.main().querySelectorAll('.jp-badge[data-kind=critical]')].map((b) => b.textContent);
     expect(badges).toEqual(['error']);
   });
 
@@ -211,7 +211,7 @@ describe('the Support ID lookup screen', () => {
     s.submit();
     // The refusal in plain words, the server's own detail, what to do, and the code (small) for support.
     await vi.waitFor(() => expect(s.text()).toContain('Check what you entered'));
-    const box = s.main().querySelector('.alert.error')!;
+    const box = s.main().querySelector('.jp-alert-danger')!;
     expect(box.getAttribute('role')).toBe('alert');
     expect(box.textContent).toContain('ticket: a support reference');
     expect(box.textContent).toContain('Fix it and try again');

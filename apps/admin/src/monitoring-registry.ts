@@ -27,6 +27,6 @@ export const CHECK_VIEWS: Readonly<Record<string, CheckView>> = {
   alert_delivery: { title: 'Alert deliveries and 15-minute re-sends', shownIn: 'Alert history (deliveries)' },
   digest: { title: 'Daily info digest', shownIn: 'Checks' },
   heartbeat: { title: "Dead-man's switch ping", shownIn: 'Heartbeat' },
-  email_jwks: { title: "Hana's email JWKS against the pins", shownIn: 'Checks; email pins' },
-  identity_jwks: { title: "Hana's identity JWKS and discovery document against the pins", shownIn: 'Checks; identity keys' },
+  email_jwks: { title: "Journear's email JWKS against the pins", shownIn: 'Checks; email pins' },
+  identity_jwks: { title: "Journear's identity JWKS and discovery document against the pins", shownIn: 'Checks; identity keys' },
 };

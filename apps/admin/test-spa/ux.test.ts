@@ -91,7 +91,7 @@ describe('Legacy apps (org_legacy): only what can work there', () => {
     s.submit(select.closest('form') as unknown as HTMLFormElement);
     await vi.waitFor(() => expect(s.main().querySelector('.confirm')).toBeTruthy());
     (s.main().querySelector('.confirm button') as unknown as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(s.text()).toContain('Scope s_wend now belongs to Lumen Pay (org_lumen)'));
+    await vi.waitFor(() => expect(s.toasts()).toContain('Scope s_wend now belongs to Lumen Pay (org_lumen)'));
     expect(writes(s)).toEqual([{ method: 'POST', path: '/api/scopes/s_wend/assign', headers: expect.objectContaining({ 'x-hana-admin': '1' }), body: { orgId: 'org_lumen' } }]);
     expect(s.dialogs).toEqual([]);
   });
@@ -109,7 +109,7 @@ describe('Legacy apps (org_legacy): only what can work there', () => {
     s.submit();
     await vi.waitFor(() => expect(writes(s)).toHaveLength(1));
     expect(writes(s)[0]!.body).toEqual({ email: 'owner@tidepool.example', role: 'owner', newOrgName: 'Tidepool', kind: 'partner' });
-    await vi.waitFor(() => expect(s.text()).toContain('Invite sent to owner@tidepool.example for the new organisation “Tidepool”'));
+    await vi.waitFor(() => expect(s.toasts()).toContain('Invite sent to owner@tidepool.example for the new organisation “Tidepool”'));
   });
 
   it('lists Legacy apps last on the organisations page, with what it is for', async () => {
@@ -132,9 +132,9 @@ describe('errors in plain words', () => {
     const invite = s.main().querySelector('#members form') as unknown as HTMLFormElement;
     (invite.querySelector('[name=email]') as unknown as HTMLInputElement).value = 'x@lumen.example';
     s.submit(invite);
-    await vi.waitFor(() => expect(s.main().querySelector('.alert.error')).toBeTruthy());
-    const box = s.main().querySelector('.alert.error')!;
-    expect(box.querySelector('strong')!.textContent).toBe('Legacy apps has no members');
+    await vi.waitFor(() => expect(s.main().querySelector('.jp-alert-danger')).toBeTruthy());
+    const box = s.main().querySelector('.jp-alert-danger')!;
+    expect(box.querySelector('b')!.textContent).toBe('Legacy apps has no members');
     expect(box.textContent).toContain('invite their first owner to a new organisation');
     expect(box.querySelector('.code')!.textContent).toBe('Error code forbidden (HTTP 403)');
     expect(box.textContent).not.toMatch(/^forbidden:/u);
@@ -143,16 +143,16 @@ describe('errors in plain words', () => {
   it.each([
     [409, 'version_conflict', 'expectedVersion is 6', 'Someone changed this first', 'Reload the page'],
     [409, 'no_security_contact', 'The org has no security contact: set them first', 'This organisation has no security contact', 'Add at least one security contact'],
-    [503, 'upstream_unavailable', 'A Hana service did not answer; try again shortly', 'A Hana service didn’t answer', 'Nothing was changed'],
+    [503, 'upstream_unavailable', 'A Journear service did not answer; try again shortly', 'A Journear service didn’t answer', 'Nothing was changed'],
     [418, 'teapot', 'short and stout', 'The server refused the request (HTTP 418)', 'Read the details'],
   ])('HTTP %i %s: a title, the detail, what to do and the code', async (status, code, message, title, next) => {
     const s = boot('/orgs/org_lumen', orgsApi(refuse(status, code, message)));
     await vi.waitFor(() => expect(s.button('Make owner')).toBeTruthy());
     s.button('Make owner').click();
     (s.main().querySelector('.confirm button') as unknown as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(s.main().querySelector('.alert.error')).toBeTruthy());
-    const box = s.main().querySelector('.alert.error')!;
-    expect(box.querySelector('strong')!.textContent).toBe(title);
+    await vi.waitFor(() => expect(s.main().querySelector('.jp-alert-danger')).toBeTruthy());
+    const box = s.main().querySelector('.jp-alert-danger')!;
+    expect(box.querySelector('b')!.textContent).toBe(title);
     expect(box.querySelector('.detail')!.textContent).toBe(message);
     expect(box.textContent).toContain(next);
     expect(box.querySelector('.code')!.textContent).toBe(`Error code ${code} (HTTP ${status})`);
@@ -195,7 +195,7 @@ describe('destructive and guarded actions are confirmed in the page', () => {
     expect(writes(s)).toEqual([]);
     s.buttons('Remove')[1]!.click();
     (s.main().querySelector('.confirm button') as unknown as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(s.text()).toContain('bob@lumen.example was removed.'));
+    await vi.waitFor(() => expect(s.toasts()).toContain('bob@lumen.example was removed.'));
     expect(writes(s)).toEqual([{ method: 'POST', path: '/api/orgs/org_lumen/members/usr_bob', headers: expect.objectContaining({ 'x-hana-admin': '1' }), body: { role: null } }]);
     expect(s.dialogs).toEqual([]);
   });
@@ -211,7 +211,7 @@ describe('destructive and guarded actions are confirmed in the page', () => {
     (s.main().querySelector('#contacts .confirm button') as unknown as HTMLButtonElement).click();
     await vi.waitFor(() => expect(writes(s)).toHaveLength(1));
     expect(writes(s)[0]).toMatchObject({ method: 'PUT', path: '/api/orgs/org_lumen/security-contacts', body: { emails: ['a@lumen.example', 'b@lumen.example'] } });
-    await vi.waitFor(() => expect(s.text()).toContain('Security contacts replaced.'));
+    await vi.waitFor(() => expect(s.toasts()).toContain('Security contacts replaced.'));
   });
 
   it('the source opens no browser dialog', async () => {
@@ -243,9 +243,9 @@ describe('apps and scopes on an organisation: only what the API takes', () => {
     await vi.waitFor(() => expect(s.main().querySelector('select[name=orgId]')).toBeTruthy());
     s.submit(s.main().querySelector('select[name=orgId]')!.closest('form'));
     (s.main().querySelector('.confirm button') as unknown as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(s.main().querySelector('.alert.error')).toBeTruthy());
-    const box = s.main().querySelector('.alert.error')!;
-    expect(box.querySelector('strong')!.textContent).toBe('The scope doesn’t fit this organisation');
+    await vi.waitFor(() => expect(s.main().querySelector('.jp-alert-danger')).toBeTruthy());
+    const box = s.main().querySelector('.jp-alert-danger')!;
+    expect(box.querySelector('b')!.textContent).toBe('The scope doesn’t fit this organisation');
     expect(box.textContent).toContain('If the scope has Google-account owners on chain, each must be an owner of that organisation first (scopes owned only by a NEAR account move freely).');
     expect(box.querySelector('.detail')!.textContent).toBe('The scope has 1 on-chain OIDC owner(s) who are not owners of this org');
     expect(box.querySelector('.code')!.textContent).toBe('Error code scope_conflict (HTTP 409)');

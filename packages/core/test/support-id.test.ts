@@ -130,7 +130,7 @@ describe('supportIdFromSub (exported to partners; console-core re-exports it)', 
 
   it('refuses anything that is not a sub (prefix, length, a non-canonical last character, padding)', () => {
     for (const bad of ['', 'u1_', `U${VECTOR_SUB.slice(1)}`, `u2${VECTOR_SUB.slice(2)}`, `${VECTOR_SUB.slice(0, -1)}x`, VECTOR_SUB.slice(0, -1), `${VECTOR_SUB}=`, 'HANA-04HM-ASW9', 42 as unknown as string]) {
-      expect(() => supportIdFromSub(bad), String(bad)).toThrow(TypeError);
+      expect(() => supportIdFromSub(bad), String(bad)).toThrow(new TypeError('Not a Journear Passport identity sub (u1_...)'));
     }
   });
 

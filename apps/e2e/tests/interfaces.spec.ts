@@ -12,12 +12,12 @@ import { approve, chooseAccount, clickAction, clickLauncher, evmBroadcasts, expe
 
 /**
  * Runs a connect action from a click, then finishes the login it starts: through the login popup, or (WebKit) through
- * the vault's "Sign in with Hana" launcher.
+ * the vault's "Sign in with Journear Passport" launcher.
  */
 async function connectFromClick(page: Page, name: string, action: string, viaLauncher: boolean): Promise<void> {
   if (viaLauncher) {
     await clickAction(page, name, action);
-    const popup = await clickLauncher(page, 'Sign in with Hana');
+    const popup = await clickLauncher(page, 'Sign in with Journear Passport');
     expect(new URL(popup.url()).search).toBe('?from=vault');
     await chooseAccount(popup);
   } else {
@@ -28,7 +28,7 @@ async function connectFromClick(page: Page, name: string, action: string, viaLau
 }
 
 async function approveNext(page: Page): Promise<void> {
-  await approve(await clickLauncher(page, 'Review in Hana'));
+  await approve(await clickLauncher(page, 'Review in Journear Passport'));
 }
 
 test.describe('EVM', () => {
@@ -38,7 +38,7 @@ test.describe('EVM', () => {
     const { evm } = await login(page);
 
     await runAction(page, 'msg', 'viemSignMessage', 'hello from viem');
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     await approve(popup);
     expect(await okValue(page, 'msg')).toEqual({ account: evm, valid: true });
 

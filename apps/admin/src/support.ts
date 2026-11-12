@@ -131,7 +131,7 @@ async function lookupEmails(c: RouteCtx, result: SupportLookupResult, ticket: st
   const b = budget as DirectoryBudgetRefusal | null;
   if (b) await budgetAlert(c, b);
   const notes: string[] = [];
-  if (b) notes.push(`Directory row budget reached (${b.limit} identities ${b.window === '1h' ? 'an hour' : 'a day'} per staff member); Hana security has been emailed. Reads open again in ${Math.max(1, Math.ceil(b.retryAfterMs / 60_000))} min`);
+  if (b) notes.push(`Directory row budget reached (${b.limit} identities ${b.window === '1h' ? 'an hour' : 'a day'} per staff member); Journear security has been emailed. Reads open again in ${Math.max(1, Math.ceil(b.retryAfterMs / 60_000))} min`);
   if (emails.some((e) => !e.found && e.reason === 'not_read')) notes.push(`Only the first ${SUPPORT_EMAILS_MAX} identities' addresses are read per lookup`);
   return { emails, ...(notes.length ? { emailsNote: notes.join('. ') } : {}) };
 }

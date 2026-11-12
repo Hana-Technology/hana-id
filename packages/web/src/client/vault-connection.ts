@@ -53,12 +53,12 @@ export const FRAME_ATTEMPTS = 2;
 
 /** `vault_unavailable`'s `data.reason`, and its message. */
 export const VAULT_UNAVAILABLE_MESSAGES = {
-  csp_frame_src: "This page's Content-Security-Policy blocks the Hana vault frame (frame-src must allow the vault origin)",
-  frame_timeout: "The Hana vault page didn't load in time (check the network)",
+  csp_frame_src: "This page's Content-Security-Policy blocks the Journear Passport vault frame (frame-src must allow the vault origin)",
+  frame_timeout: "The Journear Passport vault page didn't load in time (check the network)",
   no_answer:
-    "The Hana vault frame loaded but the vault didn't answer: this page's origin (or a page framing it) is probably not exactly one of the app's allowed origins (scheme, host and port must match), or the publishable key is unknown or suspended",
-  ready_timeout: "The Hana vault answered but didn't finish starting in time (the Hana API was slow or unreachable)",
-  frame_replaced: 'The Hana vault frame was navigated away before it was ready',
+    "The Journear Passport vault frame loaded but the vault didn't answer: this page's origin (or a page framing it) is probably not exactly one of the app's allowed origins (scheme, host and port must match), or the publishable key is unknown or suspended",
+  ready_timeout: "The Journear Passport vault answered but didn't finish starting in time (the Journear Passport API was slow or unreachable)",
+  frame_replaced: 'The Journear Passport vault frame was navigated away before it was ready',
 } as const;
 export type VaultUnavailableReason = keyof typeof VAULT_UNAVAILABLE_MESSAGES;
 
@@ -68,7 +68,7 @@ export type VaultUnavailableReason = keyof typeof VAULT_UNAVAILABLE_MESSAGES;
  * server that moved to another port when its own was busy is the usual case.
  */
 export function noAnswerMessage(origin: string): string {
-  return `The Hana vault didn't answer this page (${origin}). Check that ${origin} is exactly one of your app's allowed origins (scheme, host and port: a dev server that moved to another port is another origin) and that every page framing it is too; otherwise the publishable key is unknown or the app is suspended`;
+  return `The Journear Passport vault didn't answer this page (${origin}). Check that ${origin} is exactly one of your app's allowed origins (scheme, host and port: a dev server that moved to another port is another origin) and that every page framing it is too; otherwise the publishable key is unknown or the app is suspended`;
 }
 export const LAUNCHER_WIDTH_PX = 320;
 export const LAUNCHER_HEIGHT_PX = 72;
@@ -181,7 +181,7 @@ export class VaultConnection {
     const container = this.#o.container ?? doc.body;
     const frame = doc.createElement('iframe');
     frame.name = this.frameName;
-    frame.title = 'Hana ID';
+    frame.title = 'Journear Passport';
     frame.src = `${this.#o.vaultOrigin}/vault?pk=${encodeURIComponent(this.#o.publishableKey)}`;
     this.#hide(frame);
     frame.addEventListener('load', () => this.#onLoad(frame));
@@ -346,7 +346,7 @@ export class VaultConnection {
     this.#pending.delete(id);
     const reply = parsePortReply(data, pending.method);
     // The port reaches only the vault, so a malformed reply is a vault fault: fail the call instead of hanging it.
-    if (!reply) pending.reject(new HanaError(RpcCode.internal, `Malformed reply from the Hana vault to ${pending.method}`));
+    if (!reply) pending.reject(new HanaError(RpcCode.internal, `Malformed reply from the Journear Passport vault to ${pending.method}`));
     else if ('error' in reply) pending.reject(HanaError.from(reply.error));
     else pending.resolve(reply.result as never);
   }

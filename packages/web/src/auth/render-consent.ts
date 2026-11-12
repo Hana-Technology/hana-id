@@ -18,13 +18,17 @@ import {
   verifiedContractOnAll,
 } from '@hana-id/core';
 import type { AutoApprovePolicyV1, FunctionRule } from '@hana-id/core/policy';
+import { BRAND } from '@hana-id/brand';
 import { type Child, type Dom, originText, row, rows } from './dom.ts';
 import { formatUnits } from './render-approval.ts';
+import { alert } from './ui.ts';
 
 const mono = (d: Dom, text: string) => d.h('code', { class: 'mono' }, text);
+/** The policy's facts in the design system's key/value rows (D765). */
+const facts = (d: Dom, entries: Parameters<typeof rows>[1]): HTMLDListElement => rows(d, entries, 'jp-kv facts');
 
 function rule(d: Dom, r: FunctionRule): HTMLElement {
-  if (r.decoder !== undefined) return d.h('span', { class: 'muted' }, `checked by Hana's ${r.decoder} decoder`);
+  if (r.decoder !== undefined) return d.h('span', { class: 'muted' }, `checked by ${BRAND.company}’s ${r.decoder} decoder`);
   return r.addressArgs === 'any'
     ? d.h('strong', { class: 'danger' }, 'can send to any address')
     : d.h('span', { class: 'muted' }, 'only to you or the contracts listed here');
@@ -55,7 +59,7 @@ export function contractLine(d: Dom, chains: readonly ContractChain[], address: 
   const verified = verifiedContractOnAll(chains, address);
   let name: HTMLElement;
   if (verified) {
-    name = d.h('strong', { class: 'verified', attrs: { title: 'On Hana’s list of verified contracts' } }, `✓ ${verified.name}`);
+    name = d.h('strong', { class: 'verified', attrs: { title: `On ${BRAND.company}’s list of verified contracts` } }, `✓ ${verified.name}`);
   } else {
     const collision = nameCollision(partnerName, chains, address);
     name = d.h(
@@ -141,14 +145,15 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
     d.h('h1', {}, 'Allow automatic signing?'),
     d.h('p', {}, d.h('strong', {}, appName), ' at ', originText(d, parentOrigin), ' asks to sign some requests without asking you each time.'),
     d.h('p', { class: 'label' }, `“${policy.label}”`),
-    d.h(
-      'p',
+    alert(
+      d,
+      'warning',
       { class: 'warn' },
-      'Requests that match the rules below are signed by Hana without a prompt. Anything else still asks you. You can stop this at any time from any Hana prompt.',
+      `Requests that match the rules below are signed by ${BRAND.product} without asking you. Anything else still asks you. You can stop this at any time from any ${BRAND.product} window.`,
     ),
-    hasAny(policy) ? d.h('p', { class: 'danger' }, 'Some functions below can send to any address. Only allow this if you trust this app completely.') : null,
+    hasAny(policy) ? alert(d, 'danger', { class: 'danger' }, 'Some functions below can send to any address. Only allow this if you trust this app completely.') : null,
     hasImitation(policy)
-      ? d.h('p', { class: 'danger' }, `${appName} gave some contracts below names that look like verified ones, but they are other contracts. Don’t allow this unless you know why.`)
+      ? alert(d, 'danger', { class: 'danger' }, `${appName} gave some contracts below names that look like verified ones, but they are other contracts. Don’t allow this unless you know why.`)
       : null,
   ];
 
@@ -157,7 +162,7 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
     const chains: ContractChain[] = s.networkPassphrases.map((p) => ({ kind: 'stellar', networkPassphrase: p }));
     parts.push(
       d.h('h2', {}, 'Stellar'),
-      rows(d, [
+      facts(d, [
         row(d, s.networkPassphrases.length === 1 ? 'Network' : 'Networks', s.networkPassphrases.join(', ')),
         row(d, 'Maximum fee per transaction', `${formatUnits(s.maxFeeStroops, 7)} XLM`),
         s.changeTrustAssets && s.changeTrustAssets.length > 0 && row(d, 'May add trustlines for', ...s.changeTrustAssets.flatMap((a, i) => [i > 0 ? ', ' : '', mono(d, a)])),
@@ -181,7 +186,7 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
   for (const ch of policy.evm?.chains ?? []) {
     parts.push(
       evmChainHeading(d, ch.chainId),
-      rows(d, [
+      facts(d, [
         row(d, 'Maximum value plus network fees, per transaction', nativeAmount(ch.chainId, ch.maxValueWei)),
         row(d, 'Maximum value plus network fees, per day', nativeAmount(ch.chainId, ch.maxValueWeiPerDay)),
         row(d, 'Maximum network fee per transaction', nativeAmount(ch.chainId, ch.maxFeeWei)),
@@ -207,7 +212,7 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
 
   parts.push(
     d.h('h2', {}, 'Limits'),
-    rows(d, [
+    facts(d, [
       row(d, 'Requests per day', `at most ${policy.limits.perDayCount} (UTC day, on this device)`),
       row(
         d,
@@ -215,7 +220,7 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
         `${formatEndTime(view.expiresAtMs)} (about ${formatDuration(view.expiresAtMs - view.nowMs)} from now), or earlier if you sign out or stop it`,
       ),
     ]),
-    d.h('p', { class: 'note lingering' }, lingeringSignaturesNote(appName)),
+    alert(d, 'info', { class: 'note lingering' }, lingeringSignaturesNote(appName)),
   );
   return d.h('div', { class: 'consent' }, ...parts);
 }

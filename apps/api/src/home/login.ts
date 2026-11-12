@@ -244,7 +244,7 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     }
     if (count === null) {
       await takeBack();
-      return reject(ctx, 429, 'home_busy', 'Hana Home is busy, try again tomorrow', { 'retry-after': String(secondsToNextUtcDay(hitAt)) });
+      return reject(ctx, 429, 'home_busy', 'Passport Home is busy, try again tomorrow', { 'retry-after': String(secondsToNextUtcDay(hitAt)) });
     }
     const alertAt = Math.ceil((max * HOME_USAGE_ALERT_PCT) / 100);
     if (count >= alertAt && count < alertAt + HOME_USAGE_ALERT_TRIES) await inBackground(exec, () => noteBudgetHigh(env, day, count as number, max, requestId));
@@ -270,7 +270,7 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
     if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
 
-    // After the answer: the account's key_exported event (chain null: one derive opens every chain, D98 item 6, D770; app_id
+    // After the answer: the account's key_exported event (chain null: one derive opens every chain, D98 item 6, D781; app_id
     // null, D520) and, for a user the directory or the chain already knows here (D527), its directory row (D500: it is
     // what turns a linked member `mine` in Home's list). A stranger gets no row, so no `mine` and no unlaunched apps.
     const root = standing.member?.root ?? { provider: token.provider, sub: token.sub };

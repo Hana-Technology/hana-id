@@ -11,7 +11,7 @@ const FILES: Record<string, [string, string]> = {
   '/other.html': ['text/html; charset=utf-8', '<!doctype html><title>other</title>'],
   '/assets/index-DTeOmnGk.js': ['text/javascript', 'console.log(1)'],
   '/favicon.svg': ['image/svg+xml', '<svg/>'],
-  '/assets/Montserrat-400-B3kQ8vYp.woff2': ['font/woff2', 'wOF2'],
+  '/assets/ibm-plex-sans-400-B3kQ8vYp.woff2': ['font/woff2', 'wOF2'],
   '/sneaky': ['text/html', '<script>alert(1)</script>'],
 };
 
@@ -58,7 +58,7 @@ describe('handleDemo', () => {
     expect(js.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
     expectSecurityHeaders(js, NON_PAGE_CSP);
     // Hana's fonts (D426): hashed by Vite like the bundles, so immutable too.
-    const font = await get('/assets/Montserrat-400-B3kQ8vYp.woff2');
+    const font = await get('/assets/ibm-plex-sans-400-B3kQ8vYp.woff2');
     expect(font.headers.get('content-type')).toBe('font/woff2');
     expect(font.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
     expectSecurityHeaders(font, NON_PAGE_CSP);

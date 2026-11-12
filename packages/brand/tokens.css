@@ -1,94 +1,169 @@
 /*
- * Hana's brand tokens for Hana ID's own pages (packages/brand, D426): the colours, type and shape every Hana-run page
- * shares (the staff admin console, the partner console, the sign-in, approval and export pages). Variables only: no
- * selector but :root, nothing loaded. Fonts are in fonts.css. Light by default, dark with prefers-color-scheme (no
- * toggle, nothing stored). Every text/background pair a page uses is checked for WCAG AA in test/brand.test.ts.
- *
- * Sources: hana-app src/utils/designTokens.ts (palette, paletteDark, newColors, gradientColors), hana-extension
- * src/common/utils/designTokens.ts, and hanawallet.io's stylesheet (--lf-ink, --lf-line, --lf-accent-from/-to, the
- * hana-*-purple colours). Status colours (ok, warn, danger) are not Hana purples on purpose: a state must never read as
- * a brand accent.
+ * Journear Passport's design tokens for its own pages (packages/brand, D426 as amended by D765): the design system's
+ * tokens.css v0.1 "Customs" (the Journear Passport design system, v0.5), taken as published with three fixes for WCAG
+ * AA (D765): the light warning text is #935F12 (the system's #B7791F is 3.3:1 on its own warning background); the dark
+ * pressed primary is #2A9488 (#248578 gave its dark label 3.8:1); and --jp-on-danger is new (the danger button's light
+ * text on the dark scheme's #F87171 was 2.7:1).
+ * Import once; components read only these variables. Dark with prefers-color-scheme, or [data-theme="dark"] on <html>;
+ * .jp-dark / .jp-light force a subtree (the embedded popups). Fonts are in fonts.css, components in components.css.
+ * Every text/background pair the components use is checked in test/brand.test.ts.
  */
 :root {
-  /* Surfaces: Hana's lilac-white page, white cards, its card grey (palette.gray.cards). */
-  --hana-bg: #faf9fe;
-  --hana-surface: #ffffff;
-  --hana-surface-2: #f4f2f9;
-  --hana-surface-3: #ece8f6;
-  /* Text: Hana ink (palette.black), Hana purple (hanawallet.io hana-purple), the meta grey darkened for AA on cards. */
-  --hana-ink: #16073a;
-  --hana-ink-2: #4c3d7f;
-  --hana-muted: #665d80;
-  /* Lines: Hana stroke purple and white purple. */
-  --hana-line: #e6e0f7;
-  --hana-line-strong: #c9bfe6;
-  /* The one accent: Hana primary (palette.primary). */
-  --hana-accent: #3308a8;
-  --hana-accent-hover: #26067f;
-  --hana-accent-ink: #ffffff;
-  --hana-accent-soft: #ebe5fb;
-  /* Focus: the gradient's violet start (gradientColors[0]), distinct from the accent fill. */
-  --hana-focus: #6256e9;
-  /* Hana's gradient (gradientColors, hanawallet.io bg-custom-gradient): decoration only, never behind text. */
-  --hana-gradient: linear-gradient(90deg, #6256e9, #7e5deb 45%, #d772d3);
-  /* The mark: Hana ink with light purple (logo-hana-new.svg). */
-  --hana-mark-bg: #16073a;
-  --hana-mark-fg: #d4c5f9;
-  /* State. */
-  --hana-ok: #146c3d;
-  --hana-ok-soft: #e2f6ec;
-  --hana-ok-line: #a6dcbf;
-  --hana-warn: #7a4f00;
-  --hana-warn-soft: #fff3d1;
-  --hana-warn-line: #e8c977;
-  --hana-danger: #b3261e;
-  --hana-danger-hover: #93201a;
-  --hana-danger-soft: #fdecea;
-  --hana-danger-line: #f1b8b3;
-  --hana-on-danger: #ffffff;
-  /* Type. */
-  --hana-font: 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --hana-font-display: 'Montserrat Alternates', 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --hana-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-  /* Shape: pills for buttons (hanawallet.io rounded-full), soft cards (rounded-[14px]), tinted shadows. */
-  --hana-radius-sm: 6px;
-  --hana-radius: 10px;
-  --hana-radius-lg: 16px;
-  --hana-radius-pill: 999px;
-  --hana-shadow: 0 1px 2px rgb(22 7 58 / 0.05), 0 6px 20px -8px rgb(98 86 233 / 0.14);
+  /* Brand */
+  --jp-teal-50:  #EEF7F5;
+  --jp-teal-100: #D2ECE7;
+  --jp-teal-200: #A6D8CF;
+  --jp-teal-300: #6EBDB0;
+  --jp-teal-400: #3A9C8E;
+  --jp-teal-500: #0F766E;   /* primary */
+  --jp-teal-600: #0C5F59;
+  --jp-teal-700: #0A4B46;
+  --jp-teal-800: #073632;
+  --jp-teal-900: #0B1F1E;   /* ink */
+
+  --jp-orange-50:  #FFF4EB;
+  --jp-orange-100: #FFE3CC;
+  --jp-orange-300: #FDB47A;
+  --jp-orange-500: #F97316;  /* stamp / accent */
+  --jp-orange-600: #D95F0C;
+  --jp-orange-700: #B04A06;
+
+  /* Neutrals, hue-biased to teal */
+  --jp-gray-0:   #FCFDFD;
+  --jp-gray-50:  #F5F8F7;
+  --jp-gray-100: #E9EFED;
+  --jp-gray-200: #D5DEDB;
+  --jp-gray-300: #B3C1BD;
+  --jp-gray-400: #86978F;
+  --jp-gray-500: #5F6F6A;
+  --jp-gray-600: #46534F;
+  --jp-gray-700: #2F3A37;
+  --jp-gray-800: #1C2523;
+  --jp-gray-900: #0B1F1E;
+
+  /* Semantic, separate from the accent */
+  --jp-success: #1E7A4A; --jp-success-bg: #E6F4EC;
+  --jp-warning: #935F12; --jp-warning-bg: #FBF3E3;
+  --jp-danger:  #B42318; --jp-danger-bg:  #FBEAE8; --jp-on-danger: #FCFDFD;
+  --jp-info:    #1D4ED8; --jp-info-bg:    #E8EEFC;
+
+  /* Roles */
+  --jp-bg:            var(--jp-gray-0);
+  --jp-bg-subtle:     var(--jp-gray-50);
+  --jp-surface:       var(--jp-gray-0);
+  --jp-surface-raised:var(--jp-gray-0);
+  --jp-fg:            var(--jp-gray-900);
+  --jp-fg-muted:      var(--jp-gray-500);
+  --jp-fg-faint:      var(--jp-gray-400);
+  --jp-border:        var(--jp-gray-200);
+  --jp-border-strong: var(--jp-gray-300);
+  --jp-primary:       var(--jp-teal-500);
+  --jp-primary-hover: var(--jp-teal-600);
+  --jp-primary-active:var(--jp-teal-700);
+  --jp-on-primary:    #FCFDFD;
+  --jp-primary-soft:  var(--jp-teal-50);
+  --jp-accent:        var(--jp-orange-500);
+  --jp-accent-hover:  var(--jp-orange-600);
+  --jp-on-accent:     #1A0D00;
+  --jp-focus:         var(--jp-orange-600);
+  --jp-link:          var(--jp-teal-600);
+  --jp-overlay:       rgba(11,31,30,.55);
+
+  /* Type */
+  --jp-font-display: "Archivo", "Inter", system-ui, sans-serif;
+  --jp-font-body:    "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --jp-font-mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --jp-text-xs: 12px; --jp-text-sm: 13px; --jp-text-md: 15px; --jp-text-lg: 17px;
+  --jp-text-xl: 20px; --jp-text-2xl: 24px; --jp-text-3xl: 32px; --jp-text-4xl: 44px; --jp-text-5xl: 60px;
+  --jp-leading-tight: 1.1; --jp-leading-snug: 1.3; --jp-leading-body: 1.5;
+  --jp-tracking-tight: -0.02em; --jp-tracking-caps: 0.12em;
+  --jp-weight-regular: 400; --jp-weight-medium: 500; --jp-weight-semibold: 600; --jp-weight-black: 900;
+
+  /* Space (4px grid) */
+  --jp-space-1: 4px; --jp-space-2: 8px; --jp-space-3: 12px; --jp-space-4: 16px;
+  --jp-space-5: 20px; --jp-space-6: 24px; --jp-space-8: 32px; --jp-space-10: 40px;
+  --jp-space-12: 48px; --jp-space-16: 64px;
+
+  /* Shape */
+  --jp-radius-sm: 6px; --jp-radius-md: 8px; --jp-radius-lg: 12px; --jp-radius-xl: 18px; --jp-radius-full: 999px;
+  --jp-border-w: 1px;
+
+  /* Elevation */
+  --jp-shadow-sm: 0 1px 2px rgba(11,31,30,.06);
+  --jp-shadow-md: 0 4px 12px rgba(11,31,30,.10);
+  --jp-shadow-lg: 0 16px 40px rgba(11,31,30,.18);
+
+  /* Motion */
+  --jp-ease: cubic-bezier(.25,1,.5,1); /* ease-out-quart */
+  --jp-dur-fast: 120ms; --jp-dur-base: 180ms; --jp-dur-slow: 240ms;
+
+  /* Ink surfaces (toasts on dark, code, save bar, tooltip, banner) */
+  --jp-ink-surface: #0B1F1E; --jp-ink-raised: #1A2C2B; --jp-ink-border: #223634;
+  --jp-ink-fg: #ECF2F0; --jp-ink-muted: #9FB1AC; --jp-ink-faint: #6F827D;
+  --jp-ink-link: #5FC6B9; --jp-ink-tint: #A6D8CF; --jp-ink-comment: #6EBDB0; --jp-ink-string: #FDB47A;
+
+  /* Layers */
+  --jp-z-dropdown: 100; --jp-z-sticky: 200; --jp-z-modal: 1000; --jp-z-toast: 1100;
+
+  /* Control sizes */
+  --jp-control-sm: 32px; --jp-control-md: 40px; --jp-control-lg: 48px;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    /* Hana's dark: paletteDark.blacker, the dark cards and divider. */
-    --hana-bg: #0d0229;
-    --hana-surface: #170b36;
-    --hana-surface-2: #1f133f;
-    --hana-surface-3: #2a1c52;
-    --hana-ink: #f1edfc;
-    --hana-ink-2: #d4c5f9;
-    --hana-muted: #a99cc9;
-    --hana-line: #2c1b57;
-    --hana-line-strong: #4a3683;
-    /* Light purple (paletteDark.offPurple, lifted) as the accent; ink on it. */
-    --hana-accent: #bba8f6;
-    --hana-accent-hover: #d0c2fa;
-    --hana-accent-ink: #0d0229;
-    --hana-accent-soft: #2b1c5e;
-    --hana-focus: #c9a3f0;
-    --hana-mark-bg: #d4c5f9;
-    --hana-mark-fg: #16073a;
-    --hana-ok: #7dd3a3;
-    --hana-ok-soft: #10301f;
-    --hana-ok-line: #2c6446;
-    --hana-warn: #f0c565;
-    --hana-warn-soft: #33290f;
-    --hana-warn-line: #6b551d;
-    --hana-danger: #f4908a;
-    --hana-danger-hover: #f7aba6;
-    --hana-danger-soft: #3d1620;
-    --hana-danger-line: #74333a;
-    --hana-on-danger: #1d0b0a;
-    --hana-shadow: none;
+  :root:not([data-theme="light"]) { color-scheme: dark;
+    --jp-bg: #0E1716; --jp-bg-subtle: #122020; --jp-surface: #142322; --jp-surface-raised: #1A2C2B;
+    --jp-fg: #ECF2F0; --jp-fg-muted: #9FB1AC; --jp-fg-faint: #6F827D;
+    --jp-border: #223634; --jp-border-strong: #2F4845;
+    --jp-primary: #2E9C90; --jp-primary-hover: #3DB0A3; --jp-primary-active: #2A9488; --jp-on-primary: #06201D;
+    --jp-primary-soft: #11302D; --jp-link: #5FC6B9;
+    --jp-success: #4ADE80; --jp-success-bg: #10291A; --jp-warning: #FBBF24; --jp-warning-bg: #2E2410;
+    --jp-danger: #F87171; --jp-danger-bg: #331614; --jp-on-danger: #1D0B0A; --jp-info: #7FA7FF; --jp-info-bg: #14213A;
+    --jp-overlay: rgba(0,0,0,.6);
+    --jp-shadow-sm: 0 1px 2px rgba(0,0,0,.4); --jp-shadow-md: 0 4px 12px rgba(0,0,0,.45); --jp-shadow-lg: 0 16px 40px rgba(0,0,0,.6);
   }
+}
+:root[data-theme="dark"] { color-scheme: dark;
+  --jp-bg: #0E1716; --jp-bg-subtle: #122020; --jp-surface: #142322; --jp-surface-raised: #1A2C2B;
+  --jp-fg: #ECF2F0; --jp-fg-muted: #9FB1AC; --jp-fg-faint: #6F827D;
+  --jp-border: #223634; --jp-border-strong: #2F4845;
+  --jp-primary: #2E9C90; --jp-primary-hover: #3DB0A3; --jp-primary-active: #2A9488; --jp-on-primary: #06201D;
+  --jp-primary-soft: #11302D; --jp-link: #5FC6B9;
+  --jp-success: #4ADE80; --jp-success-bg: #10291A; --jp-warning: #FBBF24; --jp-warning-bg: #2E2410;
+  --jp-danger: #F87171; --jp-danger-bg: #331614; --jp-on-danger: #1D0B0A; --jp-info: #7FA7FF; --jp-info-bg: #14213A;
+  --jp-overlay: rgba(0,0,0,.6);
+  --jp-shadow-sm: 0 1px 2px rgba(0,0,0,.4); --jp-shadow-md: 0 4px 12px rgba(0,0,0,.45); --jp-shadow-lg: 0 16px 40px rgba(0,0,0,.6);
+}
+
+/* Scope overrides: force a subtree dark or light regardless of the page theme
+   (the embedded modal uses .jp-dark inside light host apps). */
+.jp-dark { color-scheme: dark;
+  --jp-bg: #0E1716; --jp-bg-subtle: #122020; --jp-surface: #142322; --jp-surface-raised: #1A2C2B;
+  --jp-fg: #ECF2F0; --jp-fg-muted: #9FB1AC; --jp-fg-faint: #6F827D;
+  --jp-border: #223634; --jp-border-strong: #2F4845;
+  --jp-primary: #2E9C90; --jp-primary-hover: #3DB0A3; --jp-primary-active: #2A9488; --jp-on-primary: #06201D;
+  --jp-primary-soft: #11302D; --jp-link: #5FC6B9;
+  --jp-success: #4ADE80; --jp-success-bg: #10291A; --jp-warning: #FBBF24; --jp-warning-bg: #2E2410;
+  --jp-danger: #F87171; --jp-danger-bg: #331614; --jp-on-danger: #1D0B0A; --jp-info: #7FA7FF; --jp-info-bg: #14213A;
+  --jp-overlay: rgba(0,0,0,.6);
+  --jp-shadow-sm: 0 1px 2px rgba(0,0,0,.4); --jp-shadow-md: 0 4px 12px rgba(0,0,0,.45); --jp-shadow-lg: 0 16px 40px rgba(0,0,0,.6);
+  color: var(--jp-fg); background: var(--jp-bg);
+}
+.jp-light { color-scheme: light;
+  --jp-bg: var(--jp-gray-0); --jp-bg-subtle: var(--jp-gray-50); --jp-surface: var(--jp-gray-0); --jp-surface-raised: var(--jp-gray-0);
+  --jp-fg: var(--jp-gray-900); --jp-fg-muted: var(--jp-gray-500); --jp-fg-faint: var(--jp-gray-400);
+  --jp-border: var(--jp-gray-200); --jp-border-strong: var(--jp-gray-300);
+  --jp-primary: var(--jp-teal-500); --jp-primary-hover: var(--jp-teal-600); --jp-primary-active: var(--jp-teal-700); --jp-on-primary: #FCFDFD;
+  --jp-primary-soft: var(--jp-teal-50); --jp-link: var(--jp-teal-600);
+  --jp-success: #1E7A4A; --jp-success-bg: #E6F4EC; --jp-warning: #935F12; --jp-warning-bg: #FBF3E3;
+  --jp-danger: #B42318; --jp-danger-bg: #FBEAE8; --jp-on-danger: #FCFDFD; --jp-info: #1D4ED8; --jp-info-bg: #E8EEFC;
+  --jp-overlay: rgba(11,31,30,.55);
+  --jp-shadow-sm: 0 1px 2px rgba(11,31,30,.06); --jp-shadow-md: 0 4px 12px rgba(11,31,30,.10); --jp-shadow-lg: 0 16px 40px rgba(11,31,30,.18);
+
+  color: var(--jp-fg); background: var(--jp-bg);
+}
+
+/* Touch: 44px minimum targets, 16px inputs so iOS doesn't zoom on focus. */
+@media (pointer: coarse) {
+  :root { --jp-control-sm: 44px; --jp-control-md: 44px; --jp-control-lg: 52px;
+          --jp-text-xs: 13px; --jp-text-sm: 14px; --jp-text-md: 16px; }
 }

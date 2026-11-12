@@ -71,7 +71,7 @@ export function pageHeaders(directives: string[], extra: Record<string, string> 
   };
 }
 
-const ERROR_HTML = '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Hana ID</title></head><body></body></html>\n';
+const ERROR_HTML = '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Journear Passport</title></head><body></body></html>\n';
 
 /** 403 or 503 with no config script: the vault script then does nothing and the SDK raises `vault_unavailable`. */
 function errorPage(status: number, requestId: string, appId: string | undefined, code: string, head: boolean): Response {
@@ -85,7 +85,7 @@ export function renderVaultHtml(config: VaultConfig): string {
     '<html lang="en">',
     '<head>',
     '<meta charset="utf-8">',
-    '<title>Hana ID</title>',
+    '<title>Journear Passport</title>',
     `<script type="application/json" id="hana-config">${jsonForHtml(config)}</script>`,
     `<script type="module" src="${VAULT_SCRIPT_PATH}"></script>`,
     '</head>',

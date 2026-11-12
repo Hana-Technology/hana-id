@@ -9,8 +9,8 @@ import { localBuild } from '@hana-id/env/local-build';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { FONT_FILES } from '@hana-id/brand';
-import { ASSET_DIR, type BuiltEnv, FILES_DIR, FONT_LICENCE, HANA_BAR, ORIGIN_DIR, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
+import { BRAND, FONT_FILES } from '@hana-id/brand';
+import { ASSET_DIR, type BuiltEnv, FILES_DIR, HOME_HEADER, ORIGIN_DIR, PASSPORT_BADGE, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
 import { GOOGLE_TOKENINFO_ORIGIN, GOOGLE_TOKENINFO_URL } from '../../src/auth/google.ts';
 import { AUTH_PAGES, LOGO_PAGES, authPageCsp, authPageMetaCsp, connectSources, imgSources } from '../../src/auth/pages.ts';
@@ -208,58 +208,97 @@ describe('per-env build', () => {
     }
   });
 
-  it('D426: the brand’s fonts are files on this origin, under /assets/files/, with their OFL licence beside them', () => {
+  /** The faces src/auth/fonts.css declares (D765): Plex Sans for text, Plex Mono for codes, Archivo for Home's lockup. */
+  const FACES = ['archivo-700', 'ibm-plex-mono-400', 'ibm-plex-mono-500', 'ibm-plex-sans-400', 'ibm-plex-sans-500', 'ibm-plex-sans-600'];
+
+  it('D426, D765: the brand’s fonts are files on this origin, under /assets/files/, with their OFL licences beside them', () => {
     const filesDir = join(built.dir, ASSET_DIR, FILES_DIR);
     const shipped = readdirSync(filesDir).sort();
-    // The three faces the pages use (fonts.css), content-hashed, and the licence.
-    expect(shipped.filter((f) => f.endsWith('.woff2'))).toHaveLength(3);
-    expect(shipped).toContain(FONT_LICENCE);
-    expect(shipped.every((f) => f === FONT_LICENCE || /^(Montserrat|MontserratAlternates)-(400|600|700)-[A-Z0-9]+\.woff2$/u.test(f))).toBe(true);
-    const brandOfl = readFileSync(fileURLToPath(import.meta.resolve('@hana-id/brand/fonts/OFL.txt')));
-    expect(readFileSync(join(filesDir, FONT_LICENCE)).equals(brandOfl)).toBe(true);
-    // Each is the brand's own file, byte for byte (its sha256 in @hana-id/brand's manifest).
+    // The faces the pages use (fonts.css), content-hashed, and one licence per family.
+    const fonts = shipped.filter((f) => f.endsWith('.woff2'));
+    expect(fonts.map((f) => f.replace(/-[A-Z0-9]+\.woff2$/u, '')).sort()).toEqual(FACES);
+    const licences = shipped.filter((f) => !f.endsWith('.woff2'));
+    expect(licences).toEqual(['OFL-Archivo.txt', 'OFL-IBMPlexMono.txt', 'OFL-IBMPlexSans.txt']);
+    for (const l of licences) {
+      const brandOfl = readFileSync(fileURLToPath(import.meta.resolve(`@hana-id/brand/fonts/${l}`)));
+      expect(readFileSync(join(filesDir, l)).equals(brandOfl), l).toBe(true);
+    }
+    // Each is the brand's own file, byte for byte (its sha256 in @hana-id/brand's manifest), and no Montserrat is left.
     const hashes = new Set(FONT_FILES.map((f) => f.sha256));
-    for (const f of shipped.filter((x) => x.endsWith('.woff2'))) expect(hashes.has(createHash('sha256').update(readFileSync(join(filesDir, f))).digest('hex')), f).toBe(true);
+    for (const f of fonts) expect(hashes.has(createHash('sha256').update(readFileSync(join(filesDir, f))).digest('hex')), f).toBe(true);
+    expect(shipped.join(' ')).not.toMatch(/montserrat/iu);
   });
 
-  it('D426: the stylesheet loads only those files, relatively from this origin, with font-display optional', () => {
+  it('D426, D765: the stylesheet loads only those files, relatively from this origin, with font-display optional', () => {
     const css = readFileSync(join(built.dir, built.pages.login.stylesheet.slice(1)), 'utf8');
     const urls = [...css.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gu)].map((m) => m[1]!);
-    expect(urls).toHaveLength(3);
-    for (const u of urls) {
+    // The fonts, and the design system's one data: URI (select.jp-input's chevron, an image under img-src 'self' data:).
+    const fontUrls = urls.filter((u) => !u.startsWith('data:'));
+    expect(fontUrls).toHaveLength(FACES.length);
+    for (const u of fontUrls) {
       expect(u).toMatch(/^\.\/files\/[\w-]+\.woff2$/u);
       expect(existsSync(join(built.dir, ASSET_DIR, u))).toBe(true);
     }
-    expect(css).not.toMatch(/@import|https?:|data:|\/\//u);
+    const dataUris = css.match(/url\("data:[^"]*"\)/gu) ?? [];
+    expect(dataUris).toHaveLength(1);
+    expect(dataUris[0]).toMatch(/^url\("data:image\/svg\+xml,/u);
+    expect(css).toMatch(/select\.jp-input\{[^}]*background-image:url\("data:image\/svg\+xml,/u);
+    const rest = css.replace(/url\("data:image\/svg\+xml,[^"]*"\)/u, '');
+    expect(rest).not.toMatch(/@import|https?:|data:|\/\//u);
     const faces = [...css.matchAll(/@font-face\{([^}]*)\}/gu)].map((m) => m[1]!);
-    expect(faces).toHaveLength(3);
+    expect(faces).toHaveLength(FACES.length);
     for (const f of faces) expect(f).toContain('font-display:optional');
-    // The brand's tokens are in, and every page shares this one stylesheet.
-    expect(css).toContain('--hana-ink:');
+    // The design system's tokens and components are in, the old brand's are gone, and every page shares this stylesheet.
+    expect(css).toContain('--jp-primary:');
+    expect(css).toContain('.jp-modal{');
+    expect(css).not.toMatch(/--hana-|Montserrat/u);
     for (const page of AUTH_PAGES) expect(built.pages[page.name].stylesheet).toBe(built.pages.login.stylesheet);
   });
 
-  it('D426: the faces in src/auth/fonts.css are the brand’s files with the brand’s unicode-range', () => {
+  it('D765: no --hana- variable and no colour of its own in the pages’ stylesheets: only the brand’s tokens', () => {
+    const dir = new URL('../../src/auth/', import.meta.url);
+    const sheets = ['auth.css', ...readdirSync(new URL('css/', dir)).map((f) => `css/${f}`)];
+    for (const f of sheets) {
+      const css = readFileSync(new URL(f, dir), 'utf8').replace(/\/\*[\s\S]*?\*\//gu, '');
+      expect(css, f).not.toMatch(/--hana-|Montserrat/u);
+      expect(css, f).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/iu);
+    }
+  });
+
+  it('D426, D765: the faces in src/auth/fonts.css are the brand’s files with the brand’s unicode-range', () => {
     const own = readFileSync(new URL('../../src/auth/fonts.css', import.meta.url), 'utf8');
     const brand = readFileSync(fileURLToPath(import.meta.resolve('@hana-id/brand/fonts.css')), 'utf8');
     const faces = (css: string) =>
       new Map([...css.matchAll(/@font-face\s*\{([^}]*)\}/gu)].map((m) => [/url\('[^']*\/(\w[\w-]*\.woff2)'\)/u.exec(m[1]!)![1]!, /unicode-range:([^;]*);/u.exec(m[1]!)![1]!.trim()]));
     const mine = faces(own);
     const theirs = faces(brand);
-    expect([...mine.keys()].sort()).toEqual(['Montserrat-400.woff2', 'Montserrat-600.woff2', 'MontserratAlternates-700.woff2']);
+    expect([...mine.keys()].sort()).toEqual(FACES.map((f) => `${f}.woff2`));
     for (const [file, range] of mine) expect(range, file).toBe(theirs.get(file));
   });
 
-  it('D426: every page has the one Hana bar before its content: the mark and wordmark inline, no text, no URL', () => {
-    for (const page of AUTH_PAGES) {
+  it('D765: every popup has the one badge after its content, outside #app: the mark inline and the brand’s words only', () => {
+    for (const page of AUTH_PAGES.filter((p) => p.name !== 'home')) {
       const html = readFileSync(join(built.dir, page.file), 'utf8');
-      expect(html.split(HANA_BAR)).toHaveLength(2);
-      expect(html).toContain(`<body>${HANA_BAR}<main id="app">`);
+      expect(html.split(PASSPORT_BADGE), page.name).toHaveLength(2);
+      expect(html, page.name).toContain(`<body class="popup"><div class="jp-modal popup-modal"><main id="app"><noscript>${BRAND.product} needs JavaScript to continue.</noscript></main>${PASSPORT_BADGE}</div></body>`);
+      expect(html, page.name).not.toContain('home-top');
     }
-    expect(HANA_BAR).toContain('role="img" aria-label="Hana"');
-    expect(HANA_BAR).not.toMatch(/https?:|href|<image|<use|style=|\son[a-z]+=|<script/iu);
-    // Only tags between tags: the bar adds no text node a test or a reader could take for the app's name.
-    expect(HANA_BAR.replace(/<[^>]+>/gu, '')).toBe('');
+    expect(PASSPORT_BADGE).not.toMatch(/https?:|href|<image|<use|<img|style=|\son[a-z]+=|<script/iu);
+    // Its only text is the badge's: nothing a reader could take for the app's name, nothing a partner controls.
+    expect(PASSPORT_BADGE.replace(/<[^>]+>/gu, '')).toBe(BRAND.badge);
+    expect(BRAND.badge).toBe('Secured by Journear Passport');
+    // The mark is decorative (the words beside it name the brand).
+    expect(PASSPORT_BADGE).toContain('aria-hidden="true"');
+  });
+
+  it('D765: Passport Home has the Journear lockup above its content, and no popup badge', () => {
+    const html = readFileSync(join(built.dir, 'home.html'), 'utf8');
+    expect(html).toContain(`<body class="home-page">${HOME_HEADER}<main id="app">`);
+    expect(html).not.toContain('passport-badge');
+    expect(HOME_HEADER).toContain(`role="img" aria-label="${BRAND.product}"`);
+    expect(HOME_HEADER).not.toMatch(/https?:\/\/(?!www\.w3\.org)|href|<image|<use|<img|style=|\son[a-z]+=|<script/iu);
+    // Only the lockup's own "PASSPORT", never as big as the wordmark (the logo rules).
+    expect(HOME_HEADER.replace(/<[^>]+>/gu, '')).toBe('PASSPORT');
   });
 
   it('batch C11: an env with a files origin builds it into the logo pages’ meta img-src, and not the callback’s', () => {

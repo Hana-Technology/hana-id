@@ -18,7 +18,7 @@ export const CHECKS = {
   links: 'get_link_stats() (D200): a link alarm threshold reached in the current or previous hour, per scope or in all (the links went through: the contract only counts), and the current hour past half the total threshold',
   exit_clients: 'get_config()\'s exit_clients and pending_exit_clients against the pinned expected list (watchdog.pinnedExitClients, D468, D493; pending unpinned is critical, in force unpinned pauses) and the hourly exit counter (exit_window, D487) against EXIT_ALERT_PER_HOUR, per hour and at 1.5 times it for the current and previous hours together; the exit lists\' own changes are in governance_diff',
   identity_on_chain:
-    "No issuer key on chain (Google's and the email issuer's active keys, any pending addition) has an identity token key's thumbprint as its kid (the pins, and the keys Hana published at the last identity_jwks read): the contract must never trust an identity key (alert only)",
+    "No issuer key on chain (Google's and the email issuer's active keys, any pending addition) has an identity token key's thumbprint as its kid (the pins, and the keys Journear published at the last identity_jwks read): the contract must never trust an identity key (alert only)",
   governance_diff: "get_config().unrecorded_wallets outside a dev env (D139); config and governance against the last run: upgrades, owner, withdrawals, watchdogs, updater keys, delays, audiences, pause and unpause, the session floor, unrecorded_wallets, the owner DAO's code and policy, the owner's immediate issuer actions (Google and email), the link alarm thresholds and a pending raise (D200)",
   unexecuted_changes: 'Key changes past their executable time that nobody executed',
   relayer_funds: "The relayer account's available balance and each pool key's remaining allowance (session, owner and Home pools) against their thresholds; read-only, never tops up",
@@ -26,9 +26,9 @@ export const CHECKS = {
   digest: 'Daily info digest email',
   heartbeat: "Ping the dead-man's switch",
   // Advisory: after the run is recorded and its lock released, guarded (its third-party read can't hold back anything protective).
-  email_jwks: "Hana's published email JWKS against the pins and the active email keys (warning only: Hana controls it, the contract never reads it)",
+  email_jwks: "Journear's published email JWKS against the pins and the active email keys (warning only: Journear controls it, the contract never reads it)",
   identity_jwks:
-    "Hana's partner identity JWKS ({iss}/jwks.json) and discovery document against watchdog.pinnedIdentityKeys and identityToken.iss (D210): an unpinned or private key, a wrong issuer or jwks_uri, or an answer that can't be judged (redirect, oversized, not JSON, duplicate members, wrong shape, or 3 failed fetches) is critical; no pause (the chain isn't involved: partners verify these tokens, the contract never does)",
+    "Journear's partner identity JWKS ({iss}/jwks.json) and discovery document against watchdog.pinnedIdentityKeys and identityToken.iss (D210): an unpinned or private key, a wrong issuer or jwks_uri, or an answer that can't be judged (redirect, oversized, not JSON, duplicate members, wrong shape, or 3 failed fetches) is critical; no pause (the chain isn't involved: partners verify these tokens, the contract never does)",
 } as const;
 export type CheckId = keyof typeof CHECKS;
 export const CHECK_IDS = Object.keys(CHECKS) as CheckId[];
@@ -107,24 +107,24 @@ export const ALERT_KINDS = {
     severity: 'critical',
     check: 'identity_jwks',
     description:
-      "Hana's identity JWKS publishes a key whose RFC 7638 thumbprint isn't in watchdog.pinnedIdentityKeys, that isn't a P-256 key, or that has members beyond kty, crv, x, y, kid, use, alg: partners that trust the JWKS URL accept tokens it signs, for any user of any app. Alert only, no pause: the chain isn't involved",
+      "Journear's identity JWKS publishes a key whose RFC 7638 thumbprint isn't in watchdog.pinnedIdentityKeys, that isn't a P-256 key, or that has members beyond kty, crv, x, y, kid, use, alg: partners that trust the JWKS URL accept tokens it signs, for any user of any app. Alert only, no pause: the chain isn't involved",
   },
   identity_private_key_published: {
     severity: 'critical',
     check: 'identity_jwks',
-    description: "Hana's identity JWKS publishes private key material (`d` or another private member): anyone who read it can sign identity tokens with that key. Alert only, no pause",
+    description: "Journear's identity JWKS publishes private key material (`d` or another private member): anyone who read it can sign identity tokens with that key. Alert only, no pause",
   },
   identity_discovery_mismatch: {
     severity: 'critical',
     check: 'identity_jwks',
     description:
-      "Hana's identity discovery document names another issuer than identityToken.iss, or a jwks_uri other than {iss}/jwks.json (a partner following discovery would fetch keys the watchdog doesn't check). Alert only, no pause",
+      "Journear's identity discovery document names another issuer than identityToken.iss, or a jwks_uri other than {iss}/jwks.json (a partner following discovery would fetch keys the watchdog doesn't check). Alert only, no pause",
   },
   identity_jwks_unreadable: {
     severity: 'critical',
     check: 'identity_jwks',
     description:
-      "Hana's identity JWKS or discovery document can't be judged as published: a redirect (never followed), a body over 64 KB, not JSON, duplicate members, or the wrong shape (`:<document>:answer:<reason>`, at once), or 3 failed fetches in a row (`:<document>:sustained`). Each can hide a key from the watchdog that partners still see. Alert only, no pause",
+      "Journear's identity JWKS or discovery document can't be judged as published: a redirect (never followed), a body over 64 KB, not JSON, duplicate members, or the wrong shape (`:<document>:answer:<reason>`, at once), or 3 failed fetches in a row (`:<document>:sustained`). Each can hide a key from the watchdog that partners still see. Alert only, no pause",
   },
   identity_key_on_chain: {
     severity: 'critical',
@@ -156,12 +156,12 @@ export const ALERT_KINDS = {
   email_jwks_mismatch: {
     severity: 'warning',
     check: 'email_jwks',
-    description: "Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint) or lacks an active email key, or it failed 3 fetches in a row while email keys are active (informational)",
+    description: "Journear's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint) or lacks an active email key, or it failed 3 fetches in a row while email keys are active (informational)",
   },
   identity_key_missing: {
     severity: 'warning',
     check: 'identity_jwks',
-    description: "A key in watchdog.pinnedIdentityKeys isn't in Hana's identity JWKS under its thumbprint as kid: a rotation half done (pinned before it was published, or unpublished before it was unpinned), or a kid changed",
+    description: "A key in watchdog.pinnedIdentityKeys isn't in Journear's identity JWKS under its thumbprint as kid: a rotation half done (pinned before it was published, or unpublished before it was unpinned), or a kid changed",
   },
   signer_policy_transition: {
     severity: 'warning',

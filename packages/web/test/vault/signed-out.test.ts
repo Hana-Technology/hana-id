@@ -54,7 +54,7 @@ async function until(cond: () => boolean | Promise<boolean>, what: string): Prom
 /** A stellar_signMessage left waiting in the approval popup; returns its (pending) reply. */
 async function waitingSign(t: Tab): Promise<{ reply: ReturnType<Tab['request']> }> {
   const reply = t.request('stellar_signMessage', { message: 'waiting' });
-  await waitLauncher(t, 'Review in Hana');
+  await waitLauncher(t, 'Review in Journear Passport');
   const popup = openApproval(t);
   await popup.next('hana:approve-request');
   return { reply };
@@ -75,7 +75,7 @@ describe('D695: a session Hana signed out says so', () => {
     browser.backend.shareAnswer = () => 'live';
     browser.timers.advance(TOUCH_EVERY_MS);
     const reply = a.request('stellar_signMessage', { message: 'hello' });
-    await waitLauncher(a, 'Review in Hana');
+    await waitLauncher(a, 'Review in Journear Passport');
     const popup = openApproval(a);
     answer(a, popup, await popup.next('hana:approve-request'), true);
     expect((await reply).error).toBeUndefined();
@@ -130,7 +130,7 @@ describe('D695: a session Hana signed out says so', () => {
   it('an identity mint refused for a revoked share: session_ended with signed_out; this tab still gets sessionExpired; the others are told signed out', async () => {
     const { browser, a, b, shareId } = await twoTabs();
     browser.backend.overrides.set('/v1/identity/token', () => apiError(410, 'session_ended', { reason: 'share_revoked' }));
-    expect((await a.request('hana_identityToken')).error).toEqual({ code: 'session_ended', message: 'The Hana session has ended', data: { reason: 'signed_out' } });
+    expect((await a.request('hana_identityToken')).error).toEqual({ code: 'session_ended', message: 'The Journear Passport session has ended', data: { reason: 'signed_out' } });
     expect(await a.waitEvent('sessionExpired')).toBeNull();
     expect(disconnectedWith(a)).toEqual([]);
     await b.waitEvent('disconnect');
@@ -173,7 +173,7 @@ describe('D695: a session Hana signed out says so', () => {
   it('an export waiting for its window fails 4900 signed_out when the device is signed out', async () => {
     const { browser, b, shareId } = await twoTabs();
     const reply = b.request('hana_export', { chain: 'evm' });
-    await waitLauncher(b, 'Export key in Hana');
+    await waitLauncher(b, 'Export key in Journear Passport');
     b.launcher.click();
     fromAnotherTab(browser, [
       { v: 1, t: 'signedOut', shareId },
@@ -192,7 +192,7 @@ describe('D695: a session that ended any other way says nothing more', () => {
     browser.backend.overrides.set('/v1/vault/touch', refusal);
     browser.timers.advance(TOUCH_EVERY_MS);
     const reply = a.request('stellar_signMessage', { message: 'hello' });
-    await waitLauncher(a, 'Review in Hana');
+    await waitLauncher(a, 'Review in Journear Passport');
     const popup = openApproval(a);
     answer(a, popup, await popup.next('hana:approve-request'), true);
     expect((await reply).error).toBeUndefined();
@@ -225,7 +225,7 @@ describe('D695: a session that ended any other way says nothing more', () => {
   it('an identity mint refused for any other reason (no_session): session_ended with no reason, the other tabs get revoked alone', async () => {
     const { browser, a, b, shareId } = await twoTabs();
     browser.backend.overrides.set('/v1/identity/token', () => apiError(410, 'session_ended', { reason: 'no_session' }));
-    expect((await a.request('hana_identityToken')).error).toEqual({ code: 'session_ended', message: 'The Hana session has ended' });
+    expect((await a.request('hana_identityToken')).error).toEqual({ code: 'session_ended', message: 'The Journear Passport session has ended' });
     await b.waitEvent('disconnect');
     expect(disconnectedWith(b)).toEqual([null]);
     expect(shareBroadcasts(browser, shareId)).toEqual(['revoked']);

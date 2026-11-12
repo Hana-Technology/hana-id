@@ -73,7 +73,7 @@ describe('a pk_test_ app and mainnet chains', () => {
     const s = await session();
     const tx = evmTx();
     const reply = s.t.request('eth_signTransaction', { tx });
-    await waitLauncher(s.t, 'Review in Hana');
+    await waitLauncher(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     const m = await popup.next('hana:approve-request');
     expect(m).toMatchObject({ context: { chainId: CHAIN }, testApp: true });
@@ -113,7 +113,7 @@ describe('a pk_test_ app and mainnet chains', () => {
     };
     const s = await session({ settings: { autoApprovePolicy: policy } });
     const grant = s.t.request('hana_requestAutoApprove');
-    await waitLauncher(s.t, 'Review in Hana');
+    await waitLauncher(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     const m = await popup.next('hana:consent-request');
     expect(m.testApp).toBe(true);
@@ -131,7 +131,7 @@ describe('a pk_live_ app', () => {
     const s = await session({ publishableKey: LIVE_PK });
     const tx = evmTx({ chainId: '0x1' });
     const reply = s.t.request('eth_signTransaction', { tx });
-    await waitLauncher(s.t, 'Review in Hana');
+    await waitLauncher(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     const m = await popup.next('hana:approve-request');
     expect(m).toMatchObject({ context: { chainId: 1 } });

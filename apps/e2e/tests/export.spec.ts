@@ -15,7 +15,7 @@ for (const chain of ['stellar', 'evm'] as const) {
     const loginsBefore = requests.count(LOGIN_ENDPOINT);
 
     await runAction(page, 'export', 'exportKey', chain);
-    const exportWindow = await clickLauncher(page, 'Export key in Hana');
+    const exportWindow = await clickLauncher(page, 'Export key in Journear Passport');
     expect(new URL(exportWindow.url()).origin).toBe(AUTH_ORIGIN);
     expect(new URL(exportWindow.url()).pathname).toBe('/export');
     expect(await okValue(page, 'export')).toBeNull();
@@ -34,6 +34,9 @@ for (const chain of ['stellar', 'evm'] as const) {
     // Show key / Hide key (D268): one click shows it, and it stays shown (and selectable) until the next click.
     const secret = exportWindow.locator('code.secret');
     await expect(secret).toHaveText('••••••••');
+    // The export pattern (D765): Show key (the danger button) and Copy key wait for the user's tick.
+    await expect(exportWindow.getByRole('button', { name: 'Show key' })).toBeDisabled();
+    await exportWindow.locator('.reveal-ack input').check();
     await guardedClick(exportWindow, 'Show key');
     const keyText = chain === 'stellar' ? /^S[A-Z2-7]{55}$/u : /^0x[0-9a-f]{64}$/u;
     await expect(secret).toHaveText(keyText);

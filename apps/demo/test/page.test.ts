@@ -104,6 +104,12 @@ class FakeClient {
 }
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
+/** The toasts on screen, oldest first: "title" or "title: line". */
+const toastTexts = (): string[] =>
+  [...$('toasts').querySelectorAll('.jp-toast:not(.out)')].map((t) => {
+    const body = t.querySelector('.tx span')?.textContent;
+    return `${t.querySelector('.tx b')!.textContent}${body ? `: ${body}` : ''}`;
+  });
 const click = (id: string): void => ($(id) as HTMLButtonElement).click();
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const hanaError = (code: unknown, data?: unknown) => Object.assign(new Error(String(code)), { code, data });
@@ -186,11 +192,13 @@ describe('demo page', () => {
       stellar: { networkPassphrase: 'Test SDF Network ; September 2015' },
     });
     expect($('testnet-banner').textContent).toBe('Testnet demo: Stellar, EVM and NEAR test networks only, nothing here holds real funds.');
-    expect(document.querySelector('.lead')!.textContent).toMatch(/^\s*Log in with email \(a code sent to your inbox; Google sign-in works for listed testers\) to get a\s+Stellar, an EVM and a NEAR wallet/u);
-    expect($('login-email').classList.contains('primary')).toBe(true);
+    expect(document.querySelector('.lead')!.textContent).toMatch(/^\s*Log in with email \(we send a code to your inbox; Google sign-in works for listed testers\) to get\s+a Stellar, an EVM and a NEAR wallet/u);
+    // One primary action per view: signed out, it is the email login.
+    expect($('login-email').classList.contains('jp-btn-primary')).toBe(true);
+    expect([...document.querySelectorAll('#h-account ~ .row .jp-btn-primary')].map((b) => b.id)).toEqual(['login-email']);
     expect($('footer-env').textContent).toContain('NEAR: testnet, guestbook hana-id-guestbook-dev1.testnet');
     expect($('env-badge').textContent).toBe('sandbox-dev · testnet');
-    expect($('status').textContent).toBe('Connecting to the Hana vault…');
+    expect($('status').textContent).toBe('Connecting to the Journear vault…');
     expect(($('login') as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -237,7 +245,9 @@ describe('demo page', () => {
     click('copy-evm');
     await flush();
     expect(copied).toEqual([ADDRESSES.evm]);
-    expect($('notice').textContent).toBe('EVM address copied.');
+    // A transient result: a toast, not the inline notice.
+    expect(toastTexts()).toEqual(['EVM address copied']);
+    expect($('notice').hidden).toBe(true);
   });
 
   it('signs a personal_sign message, a Stellar message and a test transaction, never broadcasting', async () => {
@@ -274,11 +284,11 @@ describe('demo page', () => {
     fake.emit('launcher', { visible: true, label: 'Signed by Hana under Demo', clickable: false });
     expect($('notice').textContent ?? '').not.toContain('Click');
     fake.emit('launcher', { visible: true, label: 'Review in Hana', clickable: true });
-    expect($('notice').textContent).toBe('Click “Review in Hana” on the Hana button at the bottom right of the page to continue.');
+    expect($('notice').textContent).toBe('Click “Review in Hana” on the Journear button at the bottom right of the page to continue.');
     reject(Object.assign(new Error('User rejected'), { code: 4001 }));
     await flush();
     expect($('error').hidden).toBe(false);
-    expect($('error').textContent).toBe('Rejected in the Hana window: nothing was signed.');
+    expect($('error').textContent).toBe('Rejected in the Journear window: nothing was signed.');
     expect(($('sign-stellar') as HTMLButtonElement).disabled).toBe(false);
     expect($('results').textContent).toContain('EVM personal_sign: not signed');
   });
@@ -293,7 +303,7 @@ describe('demo page', () => {
     expect(fake.cancelLogin).toHaveBeenCalled();
     fake.finishLogin!(hanaError('popup_blocked'));
     await flush();
-    expect($('error').textContent).toMatch(/blocked the Hana sign-in window/u);
+    expect($('error').textContent).toMatch(/blocked the Journear sign-in window/u);
     click('login');
     expect($('error').hidden).toBe(true);
     fake.finishLogin!(hanaError('login_cancelled'));
@@ -304,10 +314,10 @@ describe('demo page', () => {
     boot();
     fake.rejectReady(hanaError('vault_unavailable'));
     await flush();
-    expect($('error').textContent).toMatch(/Could not load the Hana vault/u);
+    expect($('error').textContent).toMatch(/Could not load the Journear vault/u);
   });
 
-  it('D695: signed out by Hana while a signature waits: one notice to log in again, never the reload text, also after the refusal', async () => {
+  it('D695: signed out by Journear while a signature waits: one notice to log in again, never the reload text, also after the refusal', async () => {
     boot();
     await loginFlow();
     let reject!: (e: unknown) => void;
@@ -319,7 +329,7 @@ describe('demo page', () => {
     fake.emit('accountsChanged', null);
     fake.emit('statusChanged', 'logged_out');
     fake.emit('disconnect', { code: 4900, reason: 'signed_out' });
-    const signedOut = 'You were signed out on this device (from Hana Home, another tab or another device). Log in again.';
+    const signedOut = 'You were signed out on this device (from Passport Home, another tab or another device). Log in again.';
     expect($('notice').textContent).toBe(signedOut);
     expect($('notice').hidden).toBe(false);
     expect($('error').hidden).toBe(true);
@@ -329,7 +339,9 @@ describe('demo page', () => {
     expect($('notice').textContent).toBe(signedOut);
     expect($('error').hidden).toBe(true);
     expect(document.body.textContent).not.toContain('Reload the page');
-    expect($('results').textContent).toContain(`EVM personal_sign: not signed${signedOut}`);
+    const refused = $('results').querySelector('li')!;
+    expect(refused.querySelector('.result-title')!.textContent).toBe('EVM personal_sign: not signed');
+    expect(refused.querySelector('.result-note')!.textContent).toBe(signedOut);
     expect($('login').hidden).toBe(false);
     // Both are in the diagnostics, with their reason.
     click('copy-diagnostics');
@@ -346,10 +358,10 @@ describe('demo page', () => {
     await loginFlow();
     fake.emit('disconnect', { code: 4900 });
     expect($('error').hidden).toBe(false);
-    expect($('error').textContent).toBe('The connection to the Hana vault was lost. Reload the page.');
+    expect($('error').textContent).toBe('The connection to the Journear vault was lost. Reload the page.');
   });
 
-  it('exports through the Hana window, logs out other devices and logs out', async () => {
+  it('exports through the Journear window, logs out other devices and logs out', async () => {
     boot();
     await loginFlow();
     click('export-stellar');
@@ -359,10 +371,10 @@ describe('demo page', () => {
     click('export-near');
     await flush();
     expect(fake.exportKey).toHaveBeenLastCalledWith('near');
-    expect($('notice').textContent).toMatch(/export window is open/u);
+    expect(toastTexts().at(-1)).toBe('Export window open: Your key is shown only in the Journear window, never on this page.');
     click('revoke');
     await flush();
-    expect($('notice').textContent).toBe('Signed out 2 other devices.');
+    expect(toastTexts().at(-1)).toBe('Signed out 2 other devices: This app, everywhere else. This device stays signed in.');
     fake.revokeOtherDevices.mockRejectedValueOnce(hanaError(4100, { reason: 'share_not_fresh' }));
     click('revoke');
     await flush();
@@ -467,6 +479,78 @@ describe('demo page', () => {
   });
 });
 
+describe('the design system’s patterns on the demo (D765)', () => {
+  it('signed in: the wallet pill in the top bar, with the EVM address short, linking to the addresses; gone on logout', async () => {
+    boot();
+    fake.readyWith(null);
+    await flush();
+    expect($('wallet-pill').hidden).toBe(true);
+    await loginFlow();
+    expect($('wallet-pill').hidden).toBe(false);
+    expect($('wallet-pill-address').textContent).toBe('0x8ba1…BA72');
+    expect($('wallet-pill').getAttribute('href')).toBe('#wallet');
+    expect($('status').dataset.state).toBe('logged_in');
+    click('logout');
+    await flush();
+    expect($('wallet-pill').hidden).toBe(true);
+    expect($('status').dataset.state).toBe('logged_out');
+    // The logout's outcome is a toast.
+    expect(toastTexts()).toEqual(['Logged out: On this device, in every tab of this site.']);
+  });
+
+  it('a signature is shown confirm-style: the outcome, the chain’s badge, then the signature as a mono row', async () => {
+    boot();
+    await loginFlow();
+    click('sign-personal');
+    await flush();
+    const item = $('results').querySelector('li.result.ok')!;
+    expect(item.querySelector('.result-title')!.textContent).toBe('EVM personal_sign: signed');
+    expect(item.querySelector('.jp-chain.chain-evm')!.textContent).toBe('Base Sepolia');
+    expect([...item.querySelectorAll('.jp-kv dt')].map((d) => d.textContent)).toEqual(['Signature']);
+    expect(item.querySelector('.jp-kv dd code')!.textContent).toBe(`0x${'ab'.repeat(65)}`);
+    expect(item.querySelector('.result-note')).toBeNull();
+    click('sign-stellar');
+    await flush();
+    expect($('results').querySelector('li .jp-chain')!.textContent).toBe('Stellar testnet');
+  });
+
+  it('the stats strip: the latest login’s total, sign-in and wallet-key times; and a restored session', async () => {
+    boot();
+    expect($('login-stats').hidden).toBe(true);
+    await loginFlow();
+    const cells = () => [...$('login-stats').querySelectorAll('.jp-statcell')].map((c) => [c.querySelector('.k')!.textContent, c.querySelector('.v')!.textContent]);
+    expect($('login-stats').hidden).toBe(false);
+    expect(cells()).toEqual([
+      ['Last login', '7.0s'],
+      ['Sign-in step', '4.0s'],
+      ['Wallet key', '6.2s'],
+    ]);
+
+    document.body.innerHTML = body;
+    t = 0;
+    boot();
+    t = 180;
+    fake.readyWith(ADDRESSES);
+    await flush();
+    expect(cells()).toEqual([['Session restore', '180ms']]);
+  });
+
+  it('errors are inline alerts, notices that last are info alerts, and neither is a toast', async () => {
+    boot();
+    await loginFlow();
+    fake.emit('launcher', { visible: true, label: 'Review in Hana', clickable: true });
+    expect($('notice').classList.contains('jp-alert-info')).toBe(true);
+    expect($('notice').hidden).toBe(false);
+    fake.ethereum.request.mockRejectedValueOnce(Object.assign(new Error('User rejected'), { code: 4001 }));
+    click('sign-personal');
+    await flush();
+    expect($('error').classList.contains('jp-alert-danger')).toBe(true);
+    expect($('error').getAttribute('role')).toBe('alert');
+    expect($('error').hidden).toBe(false);
+    expect(toastTexts()).toEqual([]);
+  });
+});
+
 describe('status text', () => {
   it('formats the remaining session time', () => {
     expect(untilText(10_000)).toBe('now');
@@ -475,7 +559,7 @@ describe('status text', () => {
   });
 
   it('describes each status and the storage fallback', () => {
-    expect(statusText(null, 0)).toBe('The Hana client could not start.');
+    expect(statusText(null, 0)).toBe('The Journear client could not start.');
     expect(statusText({ status: 'error', expiresAtMs: null, persistence: null, warning: null }, 0)).toMatch(/Reload/u);
     expect(statusText({ status: 'logged_in', expiresAtMs: null, persistence: 'none', warning: 'storage_unavailable' }, 0)).toBe(
       'Logged in · persistence: none, every page load signs in again (your browser blocks storage here).',
@@ -528,7 +612,7 @@ describe('the NEAR card', () => {
     click('copy-near');
     await flush();
     expect(copied).toEqual([NEAR_ACCOUNT]);
-    expect($('notice').textContent).toBe('NEAR account copied.');
+    expect(toastTexts()).toEqual(['NEAR account copied']);
     // Reads only, at login: no activation, no signing.
     expect(fake.near.activate).not.toHaveBeenCalled();
     expect(rpc.count((c) => c.params.request_type === 'view_access_key')).toBe(1);
@@ -582,6 +666,37 @@ describe('the NEAR card', () => {
     expect(fake.prepareApproval).not.toHaveBeenCalled();
   });
 
+  it('validates the message on blur, not on each key: the field turns invalid with the reason, and fixing it clears it', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    const input = $('near-text') as HTMLInputElement;
+    // Typing past the limit only updates the count.
+    type('a'.repeat(201));
+    expect($('near-hint').hidden).toBe(true);
+    expect($('near-field').classList.contains('is-invalid')).toBe(false);
+    input.dispatchEvent(new Event('blur'));
+    expect($('near-hint').hidden).toBe(false);
+    expect($('near-hint').textContent).toBe('That is 201 characters: the guestbook takes at most 200.');
+    expect($('near-field').classList.contains('is-invalid')).toBe(true);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    // Still too long: it stays; back within the limit: it goes at once.
+    type('a'.repeat(202));
+    expect($('near-hint').hidden).toBe(false);
+    type('a'.repeat(200));
+    expect($('near-hint').hidden).toBe(true);
+    expect($('near-field').classList.contains('is-invalid')).toBe(false);
+    expect(input.hasAttribute('aria-invalid')).toBe(false);
+    // An empty box left alone says nothing; a box of spaces says what's missing.
+    type('');
+    input.dispatchEvent(new Event('blur'));
+    expect($('near-hint').hidden).toBe(true);
+    type('   ');
+    input.dispatchEvent(new Event('blur'));
+    expect($('near-hint').textContent).toBe('Write a message first (1 to 200 characters).');
+    expect(fake.near.signDelegateAction).not.toHaveBeenCalled();
+  });
+
   it('prepared: the click signs at once (the popup opens in the click), then relays, shows each stage, the transaction and the list', async () => {
     boot();
     rpc.messages = [message(0, 'alice.testnet', 'first!')];
@@ -598,7 +713,7 @@ describe('the NEAR card', () => {
     // Synchronously in the click: the request is sent, and no window was opened in advance.
     expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
     expect(fake.prepareApproval).not.toHaveBeenCalled();
-    expect($('near-stage').textContent).toBe('Waiting for your approval in the Hana window…');
+    expect($('near-stage').textContent).toBe('Waiting for your approval in the Journear window…');
     expect(($('near-write-button') as HTMLButtonElement).disabled).toBe(true);
     expect(fake.near.signDelegateAction.mock.calls[0]![0].network).toBe('testnet');
     const d = signedDelegate();
@@ -606,7 +721,7 @@ describe('the NEAR card', () => {
     expect(d.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'gm from Hana' })), gas: 10_000_000_000_000n, deposit: 0n }]);
     sign.resolve({ signature: 'c2ln', signedDelegateAction: 'U0RB' });
     await settle();
-    expect($('near-stage').textContent).toBe('Sending it through Hana’s relayer, which pays the fee…');
+    expect($('near-stage').textContent).toBe('Sending it through Journear’s relayer, which pays the fee…');
     expect(fake.near.relay).toHaveBeenCalledWith({ network: 'testnet', signedDelegateAction: 'U0RB' });
     rpc.messages = [message(1, NEAR_ACCOUNT, 'gm from Hana'), ...rpc.messages];
     relay.resolve({ transactionHash: TX_HASH, status: 'executed' });
@@ -771,7 +886,7 @@ describe('the NEAR card', () => {
     click('near-write-button');
     await settle();
     expect(fake.near.relay).toHaveBeenCalledTimes(6);
-    expect($('near-error').textContent).toBe('Hana’s relayer is busy. Try again in a moment.');
+    expect($('near-error').textContent).toBe('Journear’s relayer is busy. Try again in a moment.');
   });
 
   it('a relay that timed out may still land: says so and looks at the list again', async () => {
@@ -812,9 +927,9 @@ describe('the NEAR card', () => {
   it.each([
     ['the vault refuses an unknown key', 'signDelegateAction', hanaError(4100, { reason: 'near_key_unknown' }), /doesn’t exist on testnet yet/u],
     ['the vault refuses an expired action', 'signDelegateAction', hanaError(4100, { reason: 'near_delegate_expiry' }), /expired before it was approved/u],
-    ['the user rejects', 'signDelegateAction', hanaError(4001), /^Rejected in the Hana window: nothing was signed\.$/u],
+    ['the user rejects', 'signDelegateAction', hanaError(4001), /^Rejected in the Journear window: nothing was signed\.$/u],
     ['the relayer refuses the receiver', 'relay', hanaError(4100, { status: 403, reason: 'receiver_not_allowed' }), /pays only for calls to the demo guestbook/u],
-    ['the relayer refuses with a code the demo doesn’t know', 'relay', hanaError(4100, { status: 400, reason: 'brand_new_code' }), /^Hana’s relayer refused this request \(brand_new_code\)/u],
+    ['the relayer refuses with a code the demo doesn’t know', 'relay', hanaError(4100, { status: 400, reason: 'brand_new_code' }), /^Journear’s relayer refused this request \(brand_new_code\)/u],
     ['the relayer is down', 'relay', hanaError('api_unavailable', { status: 503, reason: 'relayer_unavailable' }), /relayer is unavailable right now/u],
     ['the relayer rate-limits', 'relay', hanaError('rate_limited', { status: 429, reason: 'rate_limited' }), /Too many guestbook writes/u],
   ] as const)('shows a plain message in the card when %s', async (_name, method, error, text) => {
@@ -890,7 +1005,7 @@ describe('the NEAR card', () => {
     await settle();
     expect(rpc.sent).toEqual(['U0lHTkVEVFJBTlNBQ1RJT05TSUdORURUUkFOU0FDVElPTg==']);
     const tx = decodeNearTransaction(fake.near.signTransaction.mock.calls[0]![0].transaction as Uint8Array);
-    expect(JSON.parse(new TextDecoder().decode((tx.actions[0] as { args: Uint8Array }).args))).toEqual({ text: 'Hello from Hana ID (a signed NEAR transaction)' });
+    expect(JSON.parse(new TextDecoder().decode((tx.actions[0] as { args: Uint8Array }).args))).toEqual({ text: 'Hello from Journear Passport (a signed NEAR transaction)' });
     const item = $('near-results').querySelector('li')!;
     expect(item.textContent).toContain('signed and sent');
     expect(item.querySelector('a')!.getAttribute('href')).toBe(`https://testnet.nearblocks.io/txns/${TX_HASH}`);
@@ -903,7 +1018,7 @@ describe('the NEAR card', () => {
     click('sign-near-message');
     expect(fake.near.signMessage).toHaveBeenCalledTimes(1);
     const p = fake.near.signMessage.mock.calls[0]![0];
-    expect(p.message).toBe('Hana ID testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.');
+    expect(p.message).toBe('Journear Passport testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.');
     expect(p.recipient).toBe('hana-id-demo-sandbox-dev.tingtc.workers.dev');
     expect((p.nonce as Uint8Array).length).toBe(32);
     await settle();

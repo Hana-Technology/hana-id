@@ -35,8 +35,11 @@ export async function closeWindow() {
   open = null;
 }
 
-/** The SPA at `path`, answering each API call with `answer`; GET /api/me with `opts.me` when given. */
-export function boot(path: string, answer: (c: Call) => Answer, opts: { me?: (c: Call) => Answer } = {}) {
+/**
+ * The SPA at `path`, answering each API call with `answer`; GET /api/me with `opts.me` when given. `opts.expose` names
+ * top-level functions or constants of the script to hand back (`exposed`), for tests of one helper.
+ */
+export function boot(path: string, answer: (c: Call) => Answer, opts: { me?: (c: Call) => Answer; expose?: string[] } = {}) {
   const w = new Window({ url: `https://admin.test${path}` });
   open = w;
   w.document.body.innerHTML = BODY.replace(/<script[^>]*><\/script>/gu, '');
@@ -66,7 +69,8 @@ export function boot(path: string, answer: (c: Call) => Answer, opts: { me?: (c:
       return t;
     },
   };
-  new Function(...Object.keys(globals), SRC)(...Object.values(globals));
+  const tail = opts.expose?.length ? `\n;return { ${opts.expose.join(', ')} };` : '';
+  const exposed = (new Function(...Object.keys(globals), SRC + tail)(...Object.values(globals)) ?? {}) as Record<string, unknown>;
   const doc = w.document;
   const main = () => doc.getElementById('app')!;
   const text = () => main().textContent ?? '';
@@ -77,5 +81,7 @@ export function boot(path: string, answer: (c: Call) => Answer, opts: { me?: (c:
   const buttons = (label: string) => [...main().querySelectorAll('button')].filter((b) => (b.textContent ?? '').startsWith(label) && !b.hidden && !b.closest('[hidden]')) as unknown as HTMLButtonElement[];
   const button = (label: string) => buttons(label)[0]!;
   const api = () => calls.filter((c) => c.path !== '/api/me');
-  return { w, doc, calls, api, main, text, form, field, submit, button, buttons, dialogs };
+  /** The toasts' words (a success says what it did there, outside the page: `#toasts`). */
+  const toasts = () => doc.getElementById('toasts')!.textContent ?? '';
+  return { w, doc, calls, api, main, text, toasts, form, field, submit, button, buttons, dialogs, exposed };
 }

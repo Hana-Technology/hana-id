@@ -81,7 +81,7 @@ describe('Register a scope for this organisation', () => {
       expect(c).not.toContain('--client');
     }
     expect(p.textContent).toContain('A partner who wants their own Google client adds it from their console’s scope page once the scope exists');
-    expect(p.textContent).toContain('Hana never registers a client id a partner sends');
+    expect(p.textContent).toContain('Journear never registers a client id a partner sends');
   });
 
   it('two owners in member order; untick all is refused; at most five, none ticked by default', async () => {
@@ -217,7 +217,7 @@ describe('the staff "Propose origins" help', () => {
   };
   const help = async (s: ReturnType<typeof boot>) => {
     await vi.waitFor(() => expect(s.text()).toContain('Propose origins'));
-    return s.main().querySelector('textarea[name=add], input[name=add]')!.closest('label')!.querySelector('.help')!.textContent ?? '';
+    return s.main().querySelector('textarea[name=add], input[name=add]')!.closest('.jp-field')!.querySelector('.jp-hint')!.textContent ?? '';
   };
 
   it('a test app in a dev env: localhost allowed, but a staff proposal waits the full period; never "Full https:// origins"', async () => {

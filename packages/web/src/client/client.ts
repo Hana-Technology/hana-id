@@ -555,7 +555,7 @@ export class HanaClient extends Emitter<HanaEvents> {
    * that reported a NEAR account (4100 otherwise: an older vault would drop the request).
    */
   exportKey(chain: 'stellar' | 'evm' | 'near'): Promise<null> {
-    if (chain === 'near' && !this.#addresses?.near) return Promise.reject(hanaError(ErrorCode.unauthorized, 'Not logged in, or this Hana vault has no NEAR account yet'));
+    if (chain === 'near' && !this.#addresses?.near) return Promise.reject(hanaError(ErrorCode.unauthorized, 'Not logged in, or this Journear Passport vault has no NEAR account yet'));
     return this.#request('hana_export', { chain });
   }
 
@@ -880,6 +880,6 @@ export function warnPartnerIssues(win: Window): void {
   for (const issue of partnerPageIssues(win)) {
     if (warned.has(issue.code)) continue;
     warned.add(issue.code);
-    console.warn(`[Hana ID] ${issue.message}`);
+    console.warn(`[Journear Passport] ${issue.message}`);
   }
 }

@@ -60,7 +60,7 @@ export async function verifyStepUpToken(env: Env, jwt: string, actor: Actor, now
   } catch {
     return refuse('near_unavailable', 'NEAR RPC is unavailable: try again');
   }
-  if (!config.console_audiences.some(([p, a]) => p === t.provider && a === t.aud)) return refuse('forbidden', 'The step-up token is not for a Hana console audience');
+  if (!config.console_audiences.some(([p, a]) => p === t.provider && a === t.aud)) return refuse('forbidden', 'The step-up token is not for a Journear Passport console audience');
   if (t.iat === undefined) return refuse('forbidden', 'The step-up token has no iat');
   const iatMs = t.iat * 1000;
   if (iatMs < now - STEP_UP_MAX_AGE_MS) return refuse('forbidden', 'The step-up token is older than 300 s: sign in again');

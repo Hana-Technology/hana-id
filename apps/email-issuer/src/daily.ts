@@ -11,6 +11,7 @@
 // the mailbox's or domain's limiter key (an HMAC, never an address): it only separates one target's once-a-day slot from
 // another's, and stays out of the mail and of the metric's name. Mail goes through the issuer's own sender; the message
 // never holds an address, a sub, a key or a token.
+import { BRAND } from '@hana-id/brand';
 import type { Deps } from './deps.ts';
 import { log } from './log.ts';
 import type { Limit } from './rate-limiter.ts';
@@ -111,7 +112,7 @@ export function alertMail(kind: AlertKind, code: string, appId: string | null, e
   const lines = [t.what, '', `Environment: ${env}`, `Code: ${code || '-'}`, ...(appId ? [`App: ${appId}`] : []), '', t.hint];
   return {
     to,
-    subject: `[Hana ID ${env}] ${t.title}`,
+    subject: `[${BRAND.product} ${env}] ${t.title}`,
     text: lines.join('\n'),
     html: lines.map((l) => (l ? `<p>${l.replace(/[&<>]/gu, (c) => `&#${c.charCodeAt(0)};`)}</p>` : '')).join(''),
     kind: 'alert',

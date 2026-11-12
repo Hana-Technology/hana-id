@@ -57,14 +57,14 @@ export class HanaError extends Error {
 
 /** Default messages for the codes the client raises itself. */
 const MESSAGES: Partial<Record<ClientErrorCode, string>> = {
-  [ErrorCode.disconnected]: 'The Hana vault is disconnected',
+  [ErrorCode.disconnected]: 'The Journear Passport vault is disconnected',
   [ErrorCode.chainNotConfigured]: 'This EVM chain is not configured',
   [ErrorCode.unsupportedMethod]: 'Unsupported method',
-  [ErrorCode.unauthorized]: 'Not logged in to Hana ID',
-  vault_unavailable: "The Hana vault didn't load (check the page's CSP frame-src and the network)",
-  popup_blocked: 'The browser blocked the Hana sign-in window',
-  coop_blocks_popup: "The Hana sign-in window closed before it connected (the page's Cross-Origin-Opener-Policy may be same-origin)",
-  login_timeout: "The Hana sign-in window didn't connect in time",
+  [ErrorCode.unauthorized]: 'Not logged in to Journear Passport',
+  vault_unavailable: "The Journear Passport vault didn't load (check the page's CSP frame-src and the network)",
+  popup_blocked: 'The browser blocked the Journear Passport sign-in window',
+  coop_blocks_popup: "The Journear Passport sign-in window closed before it connected (the page's Cross-Origin-Opener-Policy may be same-origin)",
+  login_timeout: "The Journear Passport sign-in window didn't connect in time",
   login_cancelled: 'The sign-in was cancelled',
 };
 

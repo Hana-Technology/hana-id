@@ -266,16 +266,16 @@ describe('auth origin Worker', () => {
     expect((await call(authWorker, env, `${AUTH}/style.css`)).headers.get('content-type')).toBe('text/css');
   });
 
-  it('D426: serves the brand’s fonts and their licence like any asset: the binding’s type, same-origin CORP, nosniff', async () => {
+  it('D426, D765: serves the brand’s fonts and their licences like any asset: the binding’s type, same-origin CORP, nosniff', async () => {
     const env = authEnv({
       ASSETS: assets({
-        '/assets/files/Montserrat-400-ABCD1234.woff2': { body: 'wOF2', type: 'font/woff2' },
-        '/assets/files/OFL.txt': { body: 'SIL OPEN FONT LICENSE Version 1.1', type: 'text/plain' },
+        '/assets/files/ibm-plex-sans-400-ABCD1234.woff2': { body: 'wOF2', type: 'font/woff2' },
+        '/assets/files/OFL-IBMPlexSans.txt': { body: 'SIL OPEN FONT LICENSE Version 1.1', type: 'text/plain' },
       }),
     });
     for (const [path, type] of [
-      ['/assets/files/Montserrat-400-ABCD1234.woff2', 'font/woff2'],
-      ['/assets/files/OFL.txt', 'text/plain'],
+      ['/assets/files/ibm-plex-sans-400-ABCD1234.woff2', 'font/woff2'],
+      ['/assets/files/OFL-IBMPlexSans.txt', 'text/plain'],
     ] as const) {
       const res = await call(authWorker, env, `${AUTH}${path}`);
       expect(res.status, path).toBe(200);

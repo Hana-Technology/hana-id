@@ -22,7 +22,7 @@ export async function digestText(store: Store, since: number, now: number, envNa
   const open = (await store.openAlerts()).filter((a) => a.severity === 'critical' && a.acked_at === null);
   const count = (o: string) => runs.filter((r) => r.outcome === o).length;
   const lines = [
-    `Hana ID watchdog, env ${envName}: ${new Date(since).toISOString()} to ${new Date(now).toISOString()}`,
+    `Journear Passport watchdog, env ${envName}: ${new Date(since).toISOString()} to ${new Date(now).toISOString()}`,
     '',
     `Runs: ${runs.length} (ok ${count('ok')}, degraded ${count('degraded')}, error ${count('error')})`,
     `Unacknowledged critical alerts: ${open.length}${open.length ? ` (${open.map((a) => `#${a.id}`).join(', ')})` : ''}`,
@@ -44,7 +44,7 @@ export async function maybeSendDigest(store: Store, notifier: Notifier, now: num
   if (!notifier.digest.configured) return 'not_configured';
   const since = last?.at ?? now - DAY_MS;
   const text = await digestText(store, since, now, envName);
-  const res = await notifier.digest.send(`[Hana ID ${envName}] Watchdog daily digest ${date}`, text).catch(() => ({ ok: false as const, error: 'threw' }));
+  const res = await notifier.digest.send(`[Journear Passport ${envName}] Watchdog daily digest ${date}`, text).catch(() => ({ ok: false as const, error: 'threw' }));
   await store.recordDelivery({ alertId: null, channel: 'email', kind: 'digest', at: now, ok: res.ok, error: res.ok ? null : res.error });
   if (!res.ok) {
     log({ event: 'digest', outcome: 'error', channel: 'email' }, 'warn');

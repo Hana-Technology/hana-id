@@ -179,7 +179,7 @@ describe('EVM on Base', () => {
     expect(ok(evmTx({ to: FRIEND, value: CAP_WEI })).usdMicros).toBe(9_990_000n);
     const r = refused(evmTx({ to: FRIEND, value: CAP_WEI + 1n }));
     expect(r.reason).toBe('mainnet_demo_over_cap');
-    expect(r.message).toBe('Hana’s mainnet demo signs at most $9.99 per transaction; this one can move about $10.00');
+    expect(r.message).toBe('Journear’s mainnet demo signs at most $9.99 per transaction; this one can move about $10.00');
   });
 
   it('counts the maximum fee', () => {

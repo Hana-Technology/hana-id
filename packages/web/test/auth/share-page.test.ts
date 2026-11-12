@@ -76,7 +76,7 @@ describe('opener modes', () => {
   it('refuses a window Hana didn’t open', () => {
     win = new FakeWindow('/share-email', '?from=login');
     startSharePage({ win, env: ENV, api: { emailPreview: vi.fn(async () => 'x@y.z') }, isGesture: () => true });
-    expect(pageText()).toContain('wasn’t opened by Hana');
+    expect(pageText()).toContain('wasn’t opened by Journear Passport');
   });
 });
 

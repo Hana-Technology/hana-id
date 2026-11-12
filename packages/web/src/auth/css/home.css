@@ -1,0 +1,769 @@
+/*
+ * Passport Home (home-page.ts, home-devices.ts, home-email.ts; toasts in toast.ts), on the design system (D765): the
+ * page shell (the static lockup header from pageHtml, then `main#app`), the sign-in card, the app list as cards, an
+ * app's page, "Devices and auto-approve" as cards of setting rows with each stop behind its confirmation, the email code
+ * screens, and the toast stack. Tokens only. Partner content (app names, origins, the app's words for its rule) keeps
+ * its neutral boxes and its bidi isolation; Journear's headings are always the page's own words.
+ */
+
+/* ---- the page shell ---- */
+body.home-page {
+  background: var(--jp-bg);
+}
+
+.home-top {
+  display: flex;
+  align-items: center;
+  padding: var(--jp-space-4) max(var(--jp-space-4), calc((100% - 760px) / 2 + var(--jp-space-4)));
+  background: var(--jp-surface);
+  border-bottom: 1px solid var(--jp-border);
+}
+
+/* The lockup at 168 px (the system's minimum is 120), with the clear space of its chevron around it. */
+.home-top .jp-lockup {
+  display: block;
+  width: 168px;
+  height: auto;
+  margin: 4px 0;
+}
+
+body.home-page > main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--jp-space-8) var(--jp-space-4) var(--jp-space-16);
+}
+
+/* ---- headings and rhythm ---- */
+.panel.home {
+  gap: var(--jp-space-4);
+}
+
+.home h1 {
+  font-size: var(--jp-text-3xl);
+  line-height: var(--jp-leading-tight);
+  margin: 0;
+}
+
+.home h2 {
+  font-size: var(--jp-text-xl);
+  margin: var(--jp-space-8) 0 var(--jp-space-3);
+}
+
+.home h3 {
+  font-size: var(--jp-text-md);
+  margin: var(--jp-space-5) 0 var(--jp-space-2);
+}
+
+.home #home-content > h2:first-child {
+  margin-top: var(--jp-space-2);
+}
+
+.home p {
+  margin: 0 0 var(--jp-space-2);
+}
+
+/* Headings that take focus when the view changes (so a screen reader starts there) show no ring for it. */
+.home [tabindex='-1']:focus {
+  outline: none;
+}
+
+/* The banner and notice slots stay in the page while empty (live regions), without the panel's gap. */
+.panel.home > #home-banner:empty,
+.panel.home > #home-notice:empty {
+  margin-top: calc(-1 * var(--jp-space-4));
+}
+
+@media (max-width: 560px) {
+  body.home-page > main {
+    padding-top: var(--jp-space-6);
+  }
+
+  .home h1 {
+    font-size: var(--jp-text-2xl);
+  }
+}
+
+/* ---- signed out, loading, signing in: one card in the middle, the login modal's providers ---- */
+.panel.home.home-gate {
+  max-width: 440px;
+  margin: var(--jp-space-4) auto 0;
+  padding: var(--jp-space-8) var(--jp-space-6) var(--jp-space-6);
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-xl);
+  box-shadow: var(--jp-shadow-md);
+  gap: var(--jp-space-3);
+}
+
+.home-gate h1 {
+  font-size: var(--jp-text-2xl);
+}
+
+@media (max-width: 480px) {
+  .panel.home.home-gate {
+    margin-top: 0;
+    padding: var(--jp-space-6) var(--jp-space-4);
+    box-shadow: none;
+  }
+}
+
+/* ---- the signed-in header: the title, who is signed in, Sign out ---- */
+.home-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jp-space-2) var(--jp-space-4);
+}
+
+.home-who {
+  display: flex;
+  align-items: center;
+  gap: var(--jp-space-3);
+  min-width: 0;
+  margin: 0 !important;
+  font-size: var(--jp-text-sm);
+}
+
+/* "Signed in as <address>": a line of its own under the title, the address wrapping at its own break points (dom.ts
+   addressText) so a long one takes more lines, never the page's width; Sign out stays at the line's end. */
+.home-who.home-who-email {
+  flex: 1 1 100%;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.home-who > span {
+  min-width: 0;
+}
+
+.home-who > button {
+  flex: none;
+}
+
+.home-who .mail-address {
+  color: var(--jp-fg);
+}
+
+/* ---- alerts on the page: the session's banner, a refusal ---- */
+.home-banner > .body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jp-space-2) var(--jp-space-4);
+}
+
+.home-banner .body > p {
+  flex: 1 1 260px;
+  margin: 0;
+}
+
+.home-banner.home-banner-email {
+  padding: var(--jp-space-5);
+}
+
+.home-problem .body > p {
+  margin: 0 0 var(--jp-space-1);
+}
+
+/* The code and request lines, for support: small, wrapping at their separators. */
+.home-problem .code {
+  font-size: var(--jp-text-xs);
+  color: var(--jp-fg-muted);
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.home-problem button.link {
+  margin-top: var(--jp-space-1);
+}
+
+/* ---- empty states ---- */
+.home-empty {
+  padding: var(--jp-space-6);
+  font-size: var(--jp-text-sm);
+}
+
+.home-empty b {
+  color: var(--jp-fg);
+}
+
+/* ---- the app list: cards ---- */
+.home-cards {
+  list-style: none;
+  margin: 0 0 var(--jp-space-3);
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--jp-space-3);
+}
+
+.home-card.jp-card {
+  padding: var(--jp-space-4);
+  gap: var(--jp-space-3);
+}
+
+.home-card-apps {
+  display: grid;
+  gap: var(--jp-space-3);
+}
+
+/* Which app: the partner's own name, logo and origin, in the neutral box partner content always sits in. */
+.home-app-all {
+  background: var(--jp-bg-subtle);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
+  padding: var(--jp-space-3);
+  margin-bottom: var(--jp-space-2);
+}
+
+.home-app {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--jp-space-1);
+  min-width: 0;
+}
+
+.home-app img.app-logo {
+  flex: none;
+  margin-top: 1px;
+}
+
+.home-app-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.home-app-text p {
+  margin: 0;
+}
+
+/* An app name can be 200 characters with no space to break at. */
+.home-app-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jp-space-1) var(--jp-space-2);
+  overflow-wrap: anywhere;
+}
+
+.home-app-name strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.home-app-origins {
+  margin-top: 2px !important;
+}
+
+.home-app-origins .origin {
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-xs);
+}
+
+.home-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jp-space-3);
+  margin-top: auto;
+  padding-top: var(--jp-space-3);
+  border-top: 1px solid var(--jp-border);
+}
+
+/* ---- finding an app ---- */
+.home-find .jp-field {
+  max-width: 420px;
+}
+
+.home-find .actions {
+  margin-top: var(--jp-space-3);
+}
+
+#home-results {
+  margin-top: var(--jp-space-4);
+}
+
+/* ---- an app's page ---- */
+.home-back {
+  margin: 0 0 var(--jp-space-2) calc(-1 * var(--jp-space-3));
+}
+
+#home-coverage .jp-badge {
+  margin-right: var(--jp-space-1);
+}
+
+.home-addresses {
+  display: grid;
+  gap: var(--jp-space-3);
+  margin-bottom: var(--jp-space-3);
+}
+
+.home-address {
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-lg);
+  padding: var(--jp-space-3) var(--jp-space-4);
+}
+
+.home-address p {
+  margin: 0;
+}
+
+.home-address-label {
+  color: var(--jp-fg-muted);
+  font-size: 11px;
+  font-weight: var(--jp-weight-semibold);
+  letter-spacing: var(--jp-tracking-caps);
+  text-transform: uppercase;
+  margin-bottom: var(--jp-space-1) !important;
+}
+
+.home-address-value {
+  color: var(--jp-fg);
+}
+
+.home-address-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jp-space-2) var(--jp-space-4);
+  margin-top: var(--jp-space-3) !important;
+}
+
+a.explorer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jp-space-1);
+  font-size: var(--jp-text-sm);
+  font-weight: var(--jp-weight-medium);
+}
+
+.home-support p:first-of-type {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jp-space-2) var(--jp-space-3);
+}
+
+/* Only a copy that didn't work is said here (one that did is a toast): the user has to copy by hand. */
+p.copy-status:not(:empty) {
+  color: var(--jp-warning);
+  font-size: var(--jp-text-sm);
+  margin-top: var(--jp-space-2);
+}
+
+/* ---- "Devices and auto-approve": cards of setting rows ---- */
+.home-devices {
+  margin-top: var(--jp-space-8);
+  padding-top: var(--jp-space-2);
+  border-top: 1px solid var(--jp-border);
+}
+
+.home-devices h2,
+.home-devices h3 {
+  margin-top: var(--jp-space-5);
+}
+
+.home-devices > .actions.start {
+  margin-top: var(--jp-space-3);
+}
+
+.home-devices > .home-problem {
+  margin-bottom: var(--jp-space-3);
+}
+
+.home-devices-group {
+  margin: var(--jp-space-4) 0 var(--jp-space-5);
+  display: grid;
+  gap: var(--jp-space-3);
+}
+
+.home-devices-group > p {
+  margin: 0;
+}
+
+/* Which app a group is for: the partner's names, in the neutral box partner content always sits in. */
+.home-devices-apps {
+  background: var(--jp-bg-subtle);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
+  padding: var(--jp-space-2) var(--jp-space-3);
+  overflow-wrap: anywhere;
+  font-size: var(--jp-text-sm);
+}
+
+.home-devices-apps p {
+  margin: 0;
+}
+
+/* A stop's outcome: kept rendered while empty (a live region), shown only once it says something. */
+.home-devices-note:empty {
+  display: none;
+}
+
+.home-device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--jp-space-3);
+}
+
+/* A device (or a tab, or an app's email sharing) is a card; each thing about it is a setting row inside. */
+.home-device.jp-card,
+.home-email.jp-card {
+  padding: 0;
+  gap: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The rows aren't clickable themselves: only their control is. */
+.home-setting.jp-setting {
+  cursor: default;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: var(--jp-space-3) var(--jp-space-4);
+}
+
+.home-setting.jp-setting:hover {
+  background: transparent;
+}
+
+.home-setting.jp-setting > .home-setting-text {
+  flex: 1 1 260px;
+  gap: var(--jp-space-1);
+  font-size: var(--jp-text-sm);
+}
+
+.home-setting-text p {
+  margin: 0;
+}
+
+.home-setting.jp-setting > .home-setting-control {
+  flex: none;
+  display: flex;
+}
+
+/* The row before an open confirmation keeps its line under it. */
+.home-setting + .home-confirm {
+  margin-top: 0;
+}
+
+.home-device-name {
+  font-size: var(--jp-text-md);
+  overflow-wrap: anywhere;
+}
+
+/* When, as key/value rows: muted keys, the values in the text face (dates aren't addresses or codes). Scoped above
+   any other page's `dl.jp-kv` rules. */
+.home-device dl.home-device-facts.jp-kv {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px var(--jp-space-3);
+  margin: var(--jp-space-1) 0 0;
+  padding: 0;
+  border: 0;
+  font-size: var(--jp-text-xs);
+}
+
+.home-device dl.home-device-facts.jp-kv dd {
+  display: block;
+  min-width: 0;
+  font-family: var(--jp-font-body);
+  font-size: var(--jp-text-xs);
+  color: var(--jp-fg);
+}
+
+.home-consent-state .jp-badge {
+  margin-right: var(--jp-space-1);
+}
+
+/* The app's own words for its rule: quoted, set apart, wrapped anywhere. */
+.home-policy-label {
+  font-weight: var(--jp-weight-semibold);
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
+@media (max-width: 480px) {
+  .home-device dl.home-device-facts.jp-kv {
+    grid-template-columns: 1fr;
+  }
+
+  .home-device-facts dd {
+    margin-bottom: var(--jp-space-1);
+  }
+}
+
+/* A stop's confirmation, under its row: what it does and doesn't, then the stop itself (the only danger button). */
+.home-confirm {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  column-gap: var(--jp-space-3);
+  margin: 0 var(--jp-space-4) var(--jp-space-4);
+  padding: var(--jp-space-3) var(--jp-space-4);
+  border: 1px solid var(--jp-warning);
+  border-radius: var(--jp-radius-md);
+  background: var(--jp-warning-bg);
+  color: var(--jp-fg);
+  font-size: var(--jp-text-sm);
+}
+
+.home-confirm > .home-confirm-ic {
+  grid-row: 1;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  color: var(--jp-warning);
+}
+
+.home-confirm > :not(.home-confirm-ic) {
+  grid-column: 2;
+}
+
+.home-confirm-title {
+  font-weight: var(--jp-weight-semibold);
+  margin: 0 0 var(--jp-space-1) !important;
+}
+
+.home-confirm ul {
+  margin: 0 0 var(--jp-space-2);
+  padding-left: 18px;
+}
+
+.home-confirm li {
+  margin: 2px 0;
+}
+
+.home-confirm-more {
+  margin: 0 0 var(--jp-space-2);
+}
+
+.home-confirm-more summary {
+  cursor: pointer;
+  font-weight: var(--jp-weight-semibold);
+  color: var(--jp-link);
+  width: fit-content;
+}
+
+.home-confirm-more summary:focus-visible {
+  outline: 2px solid var(--jp-focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.home-confirm-more ul {
+  margin: var(--jp-space-2) 0 0;
+}
+
+.home-confirm .actions {
+  margin-top: var(--jp-space-1);
+}
+
+/* ---- an email code's screens on Passport Home (home-email.ts: the sign-in, and a per-app code when moving a
+   wallet): one rhythm, set by the containers' gaps ---- */
+.home .email-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+}
+
+.home form.email-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-4);
+}
+
+.home .email-step > *,
+.home form.email-form > * {
+  margin: 0;
+}
+
+.home .email-step .jp-field {
+  max-width: 420px;
+}
+
+/* The address the code goes to can be one long word. */
+.home .email-step strong {
+  overflow-wrap: anywhere;
+}
+
+.home .email-step .actions {
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.home form.email-form > p.links {
+  text-align: left;
+  margin: 0;
+}
+
+.home-code-input.jp-input {
+  max-width: 200px;
+  font-family: var(--jp-font-mono);
+  font-size: var(--jp-text-xl);
+  letter-spacing: 0.3em;
+  height: var(--jp-control-lg);
+}
+
+/* ---- toasts (toast.ts): bottom-right on a desktop, at the top on a phone; at most 380 px, three at once ---- */
+.home-toasts {
+  position: fixed;
+  right: var(--jp-space-4);
+  bottom: var(--jp-space-4);
+  width: calc(100vw - 2 * var(--jp-space-4));
+  z-index: var(--jp-z-toast);
+  pointer-events: none;
+}
+
+.home-toasts > .jp-toast {
+  pointer-events: auto;
+}
+
+.home-toasts .jp-toast > .ic {
+  width: 28px;
+  height: 28px;
+}
+
+.home-toasts .jp-toast .x .ic {
+  width: 16px;
+  height: 16px;
+}
+
+.home-toasts .bar {
+  display: block;
+}
+
+@media (max-width: 640px) {
+  .home-toasts {
+    top: max(var(--jp-space-4), env(safe-area-inset-top, 0px));
+    bottom: auto;
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+}
+
+/* ---- Passport Home: "Your name" (home-profile.ts), on the front page and on an app's page, after the devices ---- */
+.home-profile {
+  margin-top: var(--jp-space-8);
+  padding-top: var(--jp-space-2);
+  border-top: 1px solid var(--jp-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+}
+
+.home-profile > * {
+  margin: 0;
+}
+
+.home-profile h2,
+.home-profile h3 {
+  margin-top: var(--jp-space-5);
+}
+
+.home-profile h3#home-name-shares-title {
+  margin-top: var(--jp-space-4);
+}
+
+/* The form: the two parts side by side where there is room, one above the other on a phone; then the help, the
+   buttons, the removal's confirmation. */
+.home-name-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+  max-width: 560px;
+}
+
+.home-name-form > * {
+  margin: 0;
+}
+
+.home-name-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: var(--jp-space-3) var(--jp-space-4);
+}
+
+/* The hint and the error that replaces it take the same line, so nothing below moves when a part is checked on blur. */
+.home-name-field .jp-hint,
+.home-name-field .jp-error {
+  min-height: 18px;
+  line-height: 18px;
+  margin: 0;
+}
+
+.home-name-field .jp-error .ic {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  margin-right: var(--jp-space-1);
+}
+
+.home-name-form .actions.start {
+  margin: 0;
+}
+
+.home-name-form .home-confirm {
+  margin: 0;
+}
+
+/* The user's name and the apps' names are typed by people: kept apart from the sentence around them, wrapped anywhere. */
+.home-name-value,
+.home-name-share strong,
+.home-name-app strong {
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
+
+/* The apps it is shared with (front page) and this page's apps: one card of setting rows. */
+.home-name-shares.jp-card,
+.home-name-apps.jp-card {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  min-width: 0;
+}
+
+.home-setting-item {
+  border-bottom: 1px solid var(--jp-border);
+  min-width: 0;
+}
+
+.home-setting-item:last-child {
+  border-bottom: 0;
+}
+
+.home-setting-item > .home-setting.jp-setting {
+  border-bottom: 0;
+}
+
+.home-setting-title {
+  font-weight: var(--jp-weight-semibold);
+  font-size: var(--jp-text-md);
+  overflow-wrap: anywhere;
+}
+
+.home-setting-title .jp-badge {
+  margin-left: var(--jp-space-1);
+  vertical-align: 1px;
+}
+
+/* An outcome under its row. */
+.home-setting-item > .home-devices-note.jp-alert {
+  margin: 0 var(--jp-space-4) var(--jp-space-4);
+  width: auto;
+}
+
+/* "Share my name with {App}": an app's name can be one long word; the button wraps it rather than overflow. */
+.home-name-app .home-setting-control .jp-btn {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--jp-control-sm);
+  padding-top: var(--jp-space-1);
+  padding-bottom: var(--jp-space-1);
+  overflow-wrap: anywhere;
+}

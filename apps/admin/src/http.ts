@@ -51,10 +51,10 @@ export function json(status: number, body: unknown, headers: Record<string, stri
 
 const MESSAGES: Partial<Record<ErrorCode, string>> = {
   unauthenticated: 'Sign in through Cloudflare Access',
-  not_staff: 'This account is not on the Hana staff list',
+  not_staff: 'This account is not on the Journear staff list',
   csrf: 'The request is missing the admin console’s same-origin checks',
   access_unavailable: 'The Access check is unavailable; try again shortly',
-  upstream_unavailable: 'A Hana service did not answer; try again shortly',
+  upstream_unavailable: 'A Journear service did not answer; try again shortly',
   ledger_unavailable: 'The usage ledger is unavailable; try again shortly',
   not_found: 'Not found',
   method_not_allowed: 'Method not allowed',

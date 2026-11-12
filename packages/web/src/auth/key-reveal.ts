@@ -1,10 +1,15 @@
-// The key reveal the export window (export-page.ts) and Hana Home (home-page.ts) share: the buttons that sit behind
+// The key reveal the export window (export-page.ts) and Passport Home (home-page.ts) share: the buttons that sit behind
 // the approval popup's guard, and the box that shows a private key on "Show key" / "Hide key" and copies it on
-// "Copy key". One implementation, so the safeguards are the same wherever a key can appear.
+// "Copy key". One implementation, so the safeguards are the same wherever a key can appear. Both follow the design
+// system's recovery and export pattern (D765): three steps (`exportSteps`: Verify, Understand, Export), and the danger
+// button (Show key) only on the last, enabled only once the user ticks the box that they are somewhere private and
+// will paste the key only into the wallet app they are moving to (`ack`).
 //
 // What it does:
 // - Continue, Show key and Copy key act only on a real click that started after the guard armed (approve-guard.ts:
 //   1 s after the screen and the window's focus, then a moving pointer or Tab, the keyboard dwell). Hide never waits.
+// - Show key and Copy key also wait for the box to be ticked by the user's own click (a script's change unticks it);
+//   unticking it hides a shown key.
 // - A shown key hides again EXPORT_SHOW_MS (60 s) after Show, when the window loses focus, when the tab is hidden and
 //   before the page is printed. Hidden, the box holds dots and can't be selected.
 // - Copy writes to the clipboard inside the click and never puts the key in the page. The reveal tries to blank a key
@@ -17,8 +22,10 @@
 // no `aria-live`, so a translator or a screen reader never takes the key on its own. Nothing here logs.
 import { exportStringOf } from '@hana-id/core';
 import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
+import { BRAND } from '@hana-id/brand';
 import type { Dom } from './dom.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
+import { BTN } from './ui.ts';
 
 /** What the user types to confirm. */
 export const EXPORT_CONFIRMATION = 'EXPORT';
@@ -28,7 +35,7 @@ export const EXPORT_CLIPBOARD_CLEAR_MS = 60_000;
 export const EXPORT_SHOW_MS = 60_000;
 /** What the key is, in plain words: shown before the sign-in and again before the key. */
 export const EXPORT_WARNING =
-  'Anyone with this key controls your funds at this address, in every app and wallet. Hana can’t recover it for you or undo what someone does with it. Never paste it into a website, and never share it with anyone, including Hana.';
+  `Anyone with this key controls your funds at this address, in every app and wallet. ${BRAND.company} can’t recover it for you or undo what someone does with it. Never paste it into a website, and never share it with anyone, including ${BRAND.company}.`;
 /** How long "Copy key" says "Copied". */
 export const EXPORT_COPIED_MS = 2_000;
 /** Shown when the Clipboard API is missing or refuses the write. */
@@ -37,6 +44,27 @@ export const EXPORT_COPY_UNAVAILABLE = 'Copy isn’t available here: show the ke
 export const EXPORT_CLIPBOARD_NOTE =
   'A copied key stays in your clipboard until you copy something else, and other apps or your clipboard history may read it there: paste it only into the wallet you are moving to. We try to clear it after 60 seconds if this window is still open, but not every browser allows that, so the copy is yours to look after.';
 const HIDDEN_TEXT = '••••••••';
+/** The box the user ticks before Show key and Copy key act (the export pattern's checkbox). */
+export const EXPORT_ACK = 'No one can see my screen, and I’ll paste this key only into the wallet app I’m moving to.';
+
+/** The export pattern's three steps, in order. */
+export const EXPORT_STEPS = Object.freeze(['Verify', 'Understand', 'Export'] as const);
+
+/**
+ * The system's step bar (`.jp-steps`) for an export: the steps before `at` done, `at` current (`aria-current="step"`).
+ * 1: signing in again; 2: reading the warning and typing EXPORT; 3: the key.
+ */
+export function exportSteps(d: Dom, at: 1 | 2 | 3): HTMLElement {
+  return d.h(
+    'div',
+    { class: 'jp-steps export-steps', attrs: { role: 'list', 'aria-label': `Step ${at} of ${EXPORT_STEPS.length}` } },
+    ...EXPORT_STEPS.map((label, i) => {
+      const n = i + 1;
+      const cls = n < at ? 'done' : n === at ? 'now' : '';
+      return d.h('div', { ...(cls ? { class: cls } : {}), attrs: { role: 'listitem', ...(n === at ? { 'aria-current': 'step' } : {}) } }, d.h('span', {}, label));
+    }),
+  );
+}
 
 /** The one Clipboard API call a reveal makes: it writes, it never reads. */
 export interface ExportClipboard {
@@ -143,6 +171,8 @@ export interface KeyRevealDeps {
 export interface KeyReveal {
   /** The box the key shows in. */
   readonly out: HTMLElement;
+  /** The checkbox (`label.jp-check`) the user ticks before Show key and Copy key act; placed above `actions`. */
+  readonly ack: HTMLElement;
   /** "Show key" / "Hide key" and "Copy key". */
   readonly actions: HTMLElement;
   /** The copy's outcome when it failed; never the key. */
@@ -159,8 +189,15 @@ export function keyReveal(deps: KeyRevealDeps): KeyReveal {
   // No aria-live: a screen reader reads the key only when the user moves to it, never on its own; and translate="no",
   // so a page translator never sends it anywhere. Selectable only while shown.
   const out = d.h('code', { class: 'secret mono', attrs: { translate: 'no' } }, HIDDEN_TEXT);
-  const toggle = d.h('button', { class: 'primary', attrs: { type: 'button', 'aria-pressed': 'false' } }, 'Show key');
-  const copy = d.h('button', { attrs: { type: 'button' } }, 'Copy key');
+  // The danger button (Show key) and Copy key wait for the box to be ticked, by the user's own click.
+  const box = d.h('input', { attrs: { type: 'checkbox' } });
+  const ack = d.h('label', { class: 'jp-check reveal-ack' }, box, d.h('span', {}, EXPORT_ACK));
+  const ticked = (): boolean => box.checked && !box.disabled;
+  // Shown, the toggle is "Hide key", a plain button: only showing is the danger (Hide never waits, never warns).
+  const TOGGLE_SHOW = `${BTN.danger} reveal-toggle`;
+  const TOGGLE_HIDE = `${BTN.secondary} reveal-toggle`;
+  const toggle = d.h('button', { class: TOGGLE_SHOW, attrs: { type: 'button', 'aria-pressed': 'false' } }, 'Show key');
+  const copy = d.h('button', { class: BTN.secondary, attrs: { type: 'button' } }, 'Copy key');
   const status = d.h('p', { class: 'copy-status', attrs: { role: 'status' } });
   let shown = false;
   let ended = false;
@@ -169,9 +206,9 @@ export function keyReveal(deps: KeyRevealDeps): KeyReveal {
   let copiedLabel: ReturnType<typeof setTimeout> | null = null;
   let showTimer: ReturnType<typeof setTimeout> | null = null;
   let clipboardTimer: ReturnType<typeof setTimeout> | null = null;
-  // Show needs the guard; Hide never does (the click handler lets a shown key hide whatever the guard says).
-  guard.button(toggle);
-  guard.button(copy);
+  // Show needs the guard and the box; Hide never does (the click handler lets a shown key hide whatever the guard says).
+  guard.button(toggle, () => shown || ticked());
+  guard.button(copy, ticked);
 
   const hide = (): void => {
     if (showTimer !== null) clearTimeout(showTimer);
@@ -180,16 +217,19 @@ export function keyReveal(deps: KeyRevealDeps): KeyReveal {
     out.textContent = HIDDEN_TEXT;
     out.removeAttribute('data-shown');
     toggle.textContent = 'Show key';
+    toggle.className = TOGGLE_SHOW;
     toggle.setAttribute('aria-pressed', 'false');
+    guard.sync();
   };
   const show = (): void => {
-    if (ended || !deps.ready()) return;
+    if (ended || !ticked() || !deps.ready()) return;
     const text = deps.secret();
     if (text === null) return;
     shown = true;
     out.textContent = text;
     out.setAttribute('data-shown', '');
     toggle.textContent = 'Hide key';
+    toggle.className = TOGGLE_HIDE;
     toggle.setAttribute('aria-pressed', 'true');
     if (showTimer !== null) clearTimeout(showTimer);
     showTimer = setTimeout(hide, EXPORT_SHOW_MS);
@@ -250,8 +290,14 @@ export function keyReveal(deps: KeyRevealDeps): KeyReveal {
     if (clipboardTimer !== null) clearTimeout(clipboardTimer);
     clipboardTimer = setTimeout(clearClipboard, EXPORT_CLIPBOARD_CLEAR_MS);
   };
+  // A tick counts only from the user's own gesture; unticking hides a shown key.
+  box.addEventListener('change', (e) => {
+    if (box.checked && !isGesture(e)) box.checked = false;
+    if (!box.checked && shown) hide();
+    guard.sync();
+  });
   copy.addEventListener('click', (e) => {
-    if (ended || !guard.click(e) || !deps.ready()) return;
+    if (ended || !ticked() || !guard.click(e) || !deps.ready()) return;
     const c = deps.clipboard();
     if (!c) {
       copyUnavailable();
@@ -282,6 +328,7 @@ export function keyReveal(deps: KeyRevealDeps): KeyReveal {
 
   return {
     out,
+    ack,
     actions: d.h('div', { class: 'actions reveal' }, toggle, copy),
     status,
     get shown() {
@@ -291,6 +338,8 @@ export function keyReveal(deps: KeyRevealDeps): KeyReveal {
     end() {
       if (ended) return;
       ended = true;
+      box.checked = false;
+      box.disabled = true;
       hide();
       if (copiedLabel !== null) clearTimeout(copiedLabel);
       copiedLabel = null;

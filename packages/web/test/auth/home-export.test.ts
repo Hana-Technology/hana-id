@@ -35,11 +35,27 @@ import { mpcNetwork, readJson, simulateMpc } from '../../../core/test/helpers.ts
 import { maskedAddress } from '../../src/auth/dom.ts';
 import { homeApi } from '../../src/auth/home-api.ts';
 import type { HomeEmailApi, HomeIdentityCommitment, HomeSessionCommitment } from '../../src/auth/home-email.ts';
-import { HOME_EXPORT_ABOUT, HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_OPEN, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportNearNotes, homeExportRoute } from '../../src/auth/home-export.ts';
+import { HOME_EXPORT_NEAR_NOTES_TITLE, HOME_EXPORT_ABOUT, HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_OPEN, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportNearNotes, homeExportRoute } from '../../src/auth/home-export.ts';
 import { type HomePage, coverageText, startHomePage } from '../../src/auth/home-page.ts';
 import { EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_SHOW_MS, EXPORT_WARNING } from '../../src/auth/key-reveal.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
 import { CLIENT_ID, ENV, FakeWindow, type RemoteWindow, type TokenSigner, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
+
+/**
+ * The chain keys home-export.ts hands to `exportString` (each Show or Copy), kept by reference so a test can check the
+ * very buffer was zeroed after the call (a value check can't tell: the HKDF step zeroes a block holding the same bytes).
+ */
+const keyBuffers = vi.hoisted(() => [] as Uint8Array[]);
+vi.mock('../../src/auth/key-reveal.ts', async (load) => {
+  const real = await load<typeof import('../../src/auth/key-reveal.ts')>();
+  return {
+    ...real,
+    exportString: (chain: Parameters<typeof real.exportString>[0], key: Uint8Array) => {
+      keyBuffers.push(key);
+      return real.exportString(chain, key);
+    },
+  };
+});
 
 /** The frozen derivation vectors: the same paths, secrets, addresses and export strings the vault is held to. */
 interface Vector {
@@ -411,6 +427,10 @@ function start(o: Opts = {}): H {
       h.press('home-export-continue');
       expect(page.moving.state).toBe('reveal');
       const section = el('home-export');
+      // The export pattern's checkbox (D765): the user ticks it before Show key and Copy key act.
+      const box = section.querySelector('.reveal-ack input[type="checkbox"]') as HTMLInputElement;
+      box.checked = true;
+      box.dispatchEvent(new Event('change'));
       return {
         secret: section.querySelector('.secret') as HTMLElement,
         toggle: [...section.querySelectorAll('button')].find((b) => /^(Show|Hide) key$/u.test(b.textContent ?? '')) as HTMLButtonElement,
@@ -587,7 +607,7 @@ describe('golden: Hana Home opens the vault’s address', () => {
     await h.open();
     expect(h.page.moving.state).toBe('refused');
     expect(h.page.moving.errorCode).toBe('address_mismatch');
-    expect(document.getElementById('home-export-problem')?.textContent).toContain('is not the one Hana has on record for you in this app, so nothing is shown');
+    expect(document.getElementById('home-export-problem')?.textContent).toContain('is not the one Journear has on record for you in this app, so nothing is shown');
     expect(h.page.moving.holdsSecret).toBe(false);
     expect(zeroed.has(vector(ROOT).prkHex)).toBe(true);
     expect(document.getElementById('home-export-addresses')).toBeNull();
@@ -655,7 +675,7 @@ describe('nothing starts from the page’s address', () => {
     expect(document.getElementById('home-coverage')?.textContent).not.toMatch(/move/u);
     g.click('home-export-open');
     expect(document.getElementById('home-export-off')?.textContent).toBe(HOME_EXPORT_OFF_TEXT.link);
-    expect(HOME_EXPORT_OFF_TEXT.link).toContain('open Hana Home yourself, without the link');
+    expect(HOME_EXPORT_OFF_TEXT.link).toContain('open Passport Home yourself, without the link');
     expect(document.getElementById('home-export-start')).toBeNull();
     expect(pageText()).not.toContain(EXPORT_WARNING);
     // Going back to the list and opening the same app again changes nothing, nor does signing in again.
@@ -797,13 +817,13 @@ describe('the per-app sign-in', () => {
 
 describe('the two NEAR providers (a path that isn’t the identity’s own)', () => {
   it.each([
-    ['only the first provider says "member" (a lying RPC)', { identity: member, second: () => undefined } as Opts, 'path_disputed', 'NEAR providers disagree about which wallet this sign-in opens'],
-    ['the env has no second provider', { identity: member, second: null } as Opts, 'path_unconfirmed', 'couldn’t confirm on NEAR which wallet this sign-in opens'],
+    ['only the first provider says "member" (a lying RPC)', { identity: member, second: () => undefined } as Opts, 'path_disputed', 'Journear’s checks disagree about which wallet this sign-in opens'],
+    ['the env has no second provider', { identity: member, second: null } as Opts, 'path_unconfirmed', 'couldn’t confirm which wallet this sign-in opens'],
     [
       'the providers name different roots',
       { identity: member, second: ((p, s) => (s === SUB ? { ...member(p, s), root: { provider: 'google', sub: '555' } } : undefined)) as IdentityFn } as Opts,
       'path_disputed',
-      'NEAR providers disagree',
+      'Journear’s checks disagree',
     ],
   ])('refuses when %s: nothing relayed, nothing derived', async (_, opts, code, words) => {
     const h = start({ ...opts, chainPath: ROOT });
@@ -829,16 +849,16 @@ describe('the two NEAR providers (a path that isn’t the identity’s own)', ()
 describe('refusals read as Hana’s own sentences', () => {
   it.each([
     [404, 'home_no_wallet', 'There is no wallet for this sign-in in that app.'],
-    [429, 'home_busy', 'Hana Home has reached its limit for today. Try again tomorrow.'],
+    [429, 'home_busy', 'Passport Home has reached its limit for today. Try again tomorrow.'],
     [429, 'rate_limited', 'This wallet was opened too many times. Try again later.'],
-    [403, 'home_account_mismatch', 'Sign in as the same account you used in Hana Home.'],
+    [403, 'home_account_mismatch', 'Sign in as the same account you used in Passport Home.'],
     [409, 'link_pending', 'A sign-in method is still being added to this wallet. Try again once that has finished.'],
-    [403, 'shared_login_disabled', 'Hana can’t open this wallet from here. If the app still runs, use the app itself.'],
-    [403, 'unregistered_client', 'Hana can’t open this wallet from here. If the app still runs, use the app itself.'],
-    [403, 'unknown_scope', 'Hana doesn’t know that app.'],
-    [502, 'near_unavailable', 'Hana Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
-    [503, 'home_directory_unavailable', 'Hana Home is not reachable right now.'],
-    [503, 'rate_limiter_unavailable', 'Hana Home is not reachable right now.'],
+    [403, 'shared_login_disabled', 'Journear can’t open this wallet from here. If the app still runs, use the app itself.'],
+    [403, 'unregistered_client', 'Journear can’t open this wallet from here. If the app still runs, use the app itself.'],
+    [403, 'unknown_scope', 'Journear doesn’t know that app.'],
+    [502, 'near_unavailable', 'Passport Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
+    [503, 'home_directory_unavailable', 'Passport Home is not reachable right now.'],
+    [503, 'rate_limiter_unavailable', 'Passport Home is not reachable right now.'],
     [422, 'ckd_failed', 'The key service didn’t produce the key this time. Nothing was shown. Sign in again to retry.'],
     [400, 'nonce_mismatch', 'Google’s answer could not be verified. Sign in again to retry.'],
     [400, 'some_new_code', 'Something went wrong. Try again.'],
@@ -917,7 +937,7 @@ describe('refusals read as Hana’s own sentences', () => {
     await h.toApp();
     await h.open('another-sub');
     expect(h.page.moving.errorCode).toBe('home_account_mismatch');
-    expect(document.getElementById('home-export-problem')?.textContent).toContain('Sign in as the same account you used in Hana Home.');
+    expect(document.getElementById('home-export-problem')?.textContent).toContain('Sign in as the same account you used in Passport Home.');
     expect(h.logins()).toEqual([]);
     expect(h.nearCalls.filter((c) => c.method === 'get_identity')).toEqual([]);
   });
@@ -1038,7 +1058,8 @@ describe('the secret’s life', () => {
     expectCollapsed();
     const root = document.getElementById('home-export')!;
     expect(root.getAttribute('aria-labelledby')).toBe('home-export-title');
-    expect(root.querySelector('#home-export-open')?.className).toBe('');
+    // A secondary button, not the primary (the devices section's shape).
+    expect(root.querySelector('#home-export-open')?.className).toBe('jp-btn jp-btn-secondary');
     expect(document.getElementById('home-export-start')).toBeNull();
     h.click('home-export-open');
     expect(document.activeElement?.id).toBe('home-export-title');
@@ -1126,6 +1147,46 @@ describe('the guard and the auto-hide', () => {
     h.type(EXPORT_CONFIRMATION);
     h.press('home-export-continue');
     expect(h.page.moving.state).toBe('reveal');
+  });
+
+  it('the export pattern (D765): three steps, and Show key (the only danger button) waits for the user to tick the box', async () => {
+    const h = start();
+    await h.toApp();
+    const steps = () => [...document.querySelectorAll('#home-export .export-steps > [role="listitem"]')].map((s) => `${s.textContent}:${s.className || '-'}`);
+    // Collapsed: no steps yet; expanded, the first step.
+    expect(steps()).toEqual([]);
+    h.click('home-export-open');
+    expect(steps()).toEqual(['Verify:now', 'Understand:-', 'Export:-']);
+    h.click('home-export-close');
+    await h.open();
+    expect(h.page.moving.state).toBe('unlocked');
+    expect(steps()).toEqual(['Verify:done', 'Understand:now', 'Export:-']);
+    h.click('home-export-stellar');
+    expect(steps()).toEqual(['Verify:done', 'Understand:now', 'Export:-']);
+    expect(document.querySelector('#home-export .reveal-ack')).toBeNull();
+    expect(document.querySelector('#home-export .jp-btn-danger')).toBeNull();
+    h.type(EXPORT_CONFIRMATION);
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+    expect(steps()).toEqual(['Verify:done', 'Understand:done', 'Export:now']);
+    const section = document.getElementById('home-export')!;
+    expect(section.querySelector('[aria-current="step"]')?.textContent).toBe('Export');
+    const toggle = [...section.querySelectorAll('button')].find((b) => b.textContent === 'Show key') as HTMLButtonElement;
+    const box = section.querySelector('.reveal-ack input[type="checkbox"]') as HTMLInputElement;
+    const secret = section.querySelector('.secret') as HTMLElement;
+    expect([...section.querySelectorAll('.jp-btn-danger')]).toEqual([toggle]);
+    // Unticked: even a guarded click shows nothing.
+    pressEl(h, toggle);
+    expect(secret.textContent).toBe('••••••••');
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    pressEl(h, toggle);
+    expect(secret.textContent).toBe(vector(OWN).accounts[0]!.stellar.export);
+    // Unticking hides it again.
+    box.checked = false;
+    box.dispatchEvent(new Event('change'));
+    expect(secret.textContent).toBe('••••••••');
+    expect(toggle.disabled).toBe(true);
   });
 
   it('Show key and Copy key need a guarded click each; the key hides after 60 s, on blur, and before printing', async () => {
@@ -1229,9 +1290,9 @@ describe('words and source', () => {
   });
 });
 
-// ---- NEAR (D768–D771) ----
+// ---- NEAR (D779–D782) ----
 
-describe('NEAR: the third key of the opened wallet (D768)', () => {
+describe('NEAR: the third key of the opened wallet (D779)', () => {
   const notes = homeExportNearNotes('testnet');
   const notesShown = (): string[] => [...document.querySelectorAll('#home-export-near-notes li')].map((li) => li.textContent ?? '');
 
@@ -1253,9 +1314,16 @@ describe('NEAR: the third key of the opened wallet (D768)', () => {
     expect(h.page.moving.chain).toBe('near');
     expect(document.getElementById('home-export-title')?.textContent).toBe('Your NEAR key');
     expect(document.querySelector('#home-export .account code')?.textContent).toBe(want.accountId);
+    // Watched from here: opening the wallet already zeroed the seed it worked the address out with.
+    zeroed.clear();
+    keyBuffers.length = 0;
     pressEl(h, r.toggle);
     expect(r.secret.textContent).toBe(want.export);
     expect(addressOfExport('near', r.secret.textContent as string)).toBe(want.accountId);
+    // The very buffer the key was made from is all zeros once Show returned.
+    expect(keyBuffers).toHaveLength(1);
+    expect(keyBuffers[0]!.length).toBe(32);
+    expect(keyBuffers[0]!.every((b) => b === 0)).toBe(true);
     // The NEAR seed lived only inside that Show (the 64-byte seed ‖ public key buffer too).
     expect(zeroed.has(want.seedHex)).toBe(true);
     expect([...zeroed].some((z) => z.startsWith(want.seedHex) && z.length === 128)).toBe(true);
@@ -1286,7 +1354,9 @@ describe('NEAR: the third key of the opened wallet (D768)', () => {
     expect(notes[0]).toContain('full control of the account');
     expect(notes[1]).toContain('Choose NEAR testnet in the other wallet app');
     expect(notes[1]).toContain('doesn’t exist on NEAR yet');
-    expect(notes[2]).toContain('Hana pays NEAR fees only for a few calls it has approved');
+    expect(notes[2]).toContain('Journear pays NEAR fees only for a few calls it has approved');
+    expect(notes[2]).toContain('only in apps that use Journear Passport');
+    expect(notes.join(' ')).not.toMatch(/\bHana\b/u);
     const h = start();
     await h.unlock();
     for (const c of ['stellar', 'evm'] as const) {
@@ -1310,6 +1380,58 @@ describe('NEAR: the third key of the opened wallet (D768)', () => {
     expect(notesShown()).toEqual([...notes]);
     // The notes are fixed words: no link, no markup, no address of anyone's.
     expect(document.querySelectorAll('#home-export-near-notes a, #home-export-near-notes code')).toHaveLength(0);
+  });
+
+  it('the export pattern for NEAR: the three steps, the notes as an info alert on steps 2 and 3, and Show key and Copy key wait for the box', async () => {
+    const h = start();
+    await h.unlock();
+    const section = document.getElementById('home-export')!;
+    const steps = () => [...section.querySelectorAll('.export-steps > [role="listitem"]')].map((x) => `${x.textContent}:${x.className || '-'}`);
+    // Step 2, the choice: no notes yet (they belong to NEAR's own screens).
+    expect(steps()).toEqual(['Verify:done', 'Understand:now', 'Export:-']);
+    expect(document.getElementById('home-export-near-notes')).toBeNull();
+    h.click('home-export-near');
+    // Step 2, NEAR's confirmation: the danger alert, then NEAR's info alert, no checkbox or danger button yet.
+    expect(steps()).toEqual(['Verify:done', 'Understand:now', 'Export:-']);
+    const notesEl = () => document.getElementById('home-export-near-notes')!;
+    expect(notesEl().className).toContain('jp-alert-info');
+    expect(notesEl().querySelector('b')?.textContent).toBe(HOME_EXPORT_NEAR_NOTES_TITLE);
+    expect(section.querySelectorAll('.jp-alert-danger')).toHaveLength(1);
+    expect(section.querySelector('.reveal-ack')).toBeNull();
+    expect(section.querySelector('.jp-btn-danger')).toBeNull();
+    expect(section.querySelector('.jp-kv.account code')?.textContent).toBe(nearVector(OWN).accountId);
+    h.type(EXPORT_CONFIRMATION);
+    h.press('home-export-continue');
+    // Step 3: the notes again, the box, and Show key the only danger button.
+    expect(steps()).toEqual(['Verify:done', 'Understand:done', 'Export:now']);
+    expect(notesEl().querySelectorAll('li')).toHaveLength(3);
+    const toggle = [...section.querySelectorAll('button')].find((b) => b.textContent === 'Show key') as HTMLButtonElement;
+    const copy = [...section.querySelectorAll('button')].find((b) => b.textContent === 'Copy key') as HTMLButtonElement;
+    const box = section.querySelector('.reveal-ack input[type="checkbox"]') as HTMLInputElement;
+    const secret = section.querySelector('.secret') as HTMLElement;
+    expect([...section.querySelectorAll('.jp-btn-danger')]).toEqual([toggle]);
+    // Unticked: even guarded clicks show and copy nothing.
+    pressEl(h, toggle);
+    pressEl(h, copy);
+    await tick();
+    expect(secret.textContent).toBe('••••••••');
+    expect(h.clipboardWrites).toEqual([]);
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    pressEl(h, toggle);
+    expect(secret.textContent).toBe(nearVector(OWN).export);
+    // Unticking hides it, and the buttons wait again.
+    box.checked = false;
+    box.dispatchEvent(new Event('change'));
+    expect(secret.textContent).toBe('••••••••');
+    expect(toggle.disabled).toBe(true);
+    expect(copy.disabled).toBe(true);
+    // Locking ends the reveal: the box is unticked and disabled.
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    h.click('home-export-lock');
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(true);
   });
 
   it('Continue needs the typed word and a guarded click, as for the other chains', async () => {
@@ -1680,7 +1802,7 @@ describe('H10: email users (D463)', () => {
     await until(() => document.getElementById('home-email-code') !== null, 'the code screen');
     const form = document.getElementById('home-email-code')!.closest('form')!;
     expect(form.classList.contains('email-form')).toBe(true);
-    expect([...form.children].map((c) => `${c.tagName.toLowerCase()}${c.className ? `.${c.className.replace(/ /gu, '.')}` : ''}`)).toEqual(['p', 'label', 'div.actions.start', 'p.muted.links']);
+    expect([...form.children].map((c) => `${c.tagName.toLowerCase()}${c.className ? `.${c.className.replace(/ /gu, '.')}` : ''}`)).toEqual(['p', 'div.jp-field', 'div.actions.start', 'p.muted.links']);
   });
 
   it.each([

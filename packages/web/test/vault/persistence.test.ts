@@ -94,7 +94,7 @@ const deaf = (browser: Browser) => ({
 /** An approved stellar_signMessage in `t` (the launcher opens the popup). */
 async function approvedSign(t: Tab): Promise<void> {
   const reply = t.request('stellar_signMessage', { message: 'hello' });
-  await until(() => t.launcher.label === 'Review in Hana', 'the launcher');
+  await until(() => t.launcher.label === 'Review in Journear Passport', 'the launcher');
   const popup = openApproval(t);
   answer(t, popup, await popup.next('hana:approve-request'), true);
   expect((await reply).error).toBeUndefined();
@@ -680,7 +680,7 @@ describe('expiry', () => {
     const prk = prkOf(first)!;
     browser.timers.now += 12 * HOUR - 60_000;
     const reply = first.request('stellar_signMessage', { message: 'almost' });
-    await until(() => first.launcher.label === 'Review in Hana', 'the launcher');
+    await until(() => first.launcher.label === 'Review in Journear Passport', 'the launcher');
     const popup = openApproval(first);
     const m = await popup.next('hana:approve-request');
     browser.timers.now += 2 * 60_000;
@@ -713,7 +713,7 @@ describe('in-memory idle limit (Q28)', () => {
 
   async function signMessage(t: Tab, message: string): Promise<string> {
     const reply = t.request('stellar_signMessage', { message });
-    await until(() => t.launcher.label === 'Review in Hana', 'the launcher');
+    await until(() => t.launcher.label === 'Review in Journear Passport', 'the launcher');
     const popup = openApproval(t);
     answer(t, popup, await popup.next('hana:approve-request'), true);
     const r = await reply;
@@ -786,7 +786,7 @@ describe('in-memory idle limit (Q28)', () => {
     };
     // An export left waiting (it counts, at the login's time) makes a second one busy, which doesn't count.
     const exporting = first.request('hana_export', { chain: 'evm' });
-    await until(() => first.launcher.label === 'Export key in Hana', 'the export launcher');
+    await until(() => first.launcher.label === 'Export key in Journear Passport', 'the export launcher');
     browser.timers.advance(4 * 60_000);
     expect((await first.request('hana_export', { chain: 'stellar' })).error?.code).toBe('busy');
     browser.timers.advance(IDLE - 4 * 60_000 - 60_000);
@@ -813,7 +813,7 @@ describe('in-memory idle limit (Q28)', () => {
     browser.timers.now += 15 * 60_000;
     const before = unlocks(browser);
     const reply = first.request('stellar_signMessage', { message: 'late' });
-    await until(() => first.launcher.label === 'Review in Hana', 'the launcher');
+    await until(() => first.launcher.label === 'Review in Journear Passport', 'the launcher');
     expect(prk.every((b) => b === 0)).toBe(true);
     expect(unlocks(browser)).toBe(before + 1);
     const popup = openApproval(first);

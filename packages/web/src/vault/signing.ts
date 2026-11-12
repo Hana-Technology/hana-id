@@ -198,24 +198,24 @@ function demoRefusal(a: Extract<DemoAssessment, { ok: false }>, mainnet: NonNull
 /** The reasons a mainnet demo refusal carries (`mainnet_not_allowed` stays D39's). */
 export const MAINNET_DEMO_REFUSALS: ReadonlySet<string> = new Set(['mainnet_demo_unknown_call', 'mainnet_demo_unpriced', 'mainnet_demo_wrong_destination', 'mainnet_demo_over_cap', 'mainnet_demo_prices_stale']);
 
-/** What the launcher flashes when the vault refuses a mainnet demo request (in Hana's own UI, at most 80 characters). */
+/** What the launcher flashes when the vault refuses a mainnet demo request (in Journear Passport's own UI, at most 80 characters). */
 export function demoRefusalFlash(reason: string): string {
   switch (reason) {
     case 'mainnet_demo_over_cap':
-      return `Refused: over Hana’s ${formatUsd(MAINNET_DEMO.txCapUsdMicros)} mainnet demo limit per transaction`;
+      return `Refused: over Journear’s ${formatUsd(MAINNET_DEMO.txCapUsdMicros)} mainnet demo limit per transaction`;
     case 'mainnet_demo_unpriced':
-      return 'Refused: Hana has no price for an asset this moves (mainnet demo)';
+      return 'Refused: Journear has no price for an asset this moves (mainnet demo)';
     case 'mainnet_demo_prices_stale':
-      return 'Refused: Hana’s mainnet demo prices need a review';
+      return 'Refused: Journear’s mainnet demo prices need a review';
     case 'mainnet_demo_wrong_destination':
       return 'Refused: this sends funds to a wallet that isn’t yours (mainnet demo)';
     default:
-      return 'Refused: Hana can’t tell how much this mainnet request moves';
+      return 'Refused: Journear can’t tell how much this mainnet request moves';
   }
 }
 
 /** Why a NEAR transaction that relays a delegate action is refused (`near_relayed_delegate`). */
-export const NEAR_RELAYED_DELEGATE_RULE = 'Hana doesn’t sign a NEAR transaction that relays a delegate action: its signer pays every deposit inside it';
+export const NEAR_RELAYED_DELEGATE_RULE = 'Journear doesn’t sign a NEAR transaction that relays a delegate action: its signer pays every deposit inside it';
 
 const addressMismatch = (): VaultError => new VaultError(ErrorCode.unauthorized, 'The request names another address');
 

@@ -33,9 +33,9 @@ test('a demo app signs a small Stellar public-network payment behind the red ban
   const demo = await page.evaluate(() => (window as unknown as { e2e: { hana: { mainnetDemo: unknown } } }).e2e.hana.mainnetDemo);
   expect(demo).toMatchObject({ evmChains: [8453], stellarNetworkPassphrase: 'Public Global Stellar Network ; September 2015', txCapUsd: '9.99' });
   await runAction(page, 'sig', 'stellarSignPubnet', '2');
-  const popup = await clickLauncher(page, 'Review in Hana');
+  const popup = await clickLauncher(page, 'Review in Journear Passport');
   await expect(popup.getByText('Real funds, test custody: these funds may be lost')).toBeVisible();
-  await expect(popup.getByText('This request can move about $2.01, fee included. Hana’s limit is $9.99 per transaction.')).toBeVisible();
+  await expect(popup.getByText('This request can move about $2.01, fee included. Journear’s limit is $9.99 per transaction.')).toBeVisible();
   await expect(popup.getByText('This wallet holds about $25.00: keep test funds under $10.00 — move the rest out.')).toBeVisible();
   await shot(popup, 'mainnet-1-approval-banner', browserName);
   await approve(popup);
@@ -49,7 +49,7 @@ test('over the cap: refused before any popup, and the launcher says why; without
   await login(page);
   await runAction(page, 'big', 'stellarSignPubnet', '20');
   expect(await errorOf(page, 'big')).toMatchObject({ code: 4100, reason: 'mainnet_demo_over_cap' });
-  await expect(launcher(page).getByText('Refused: over Hana’s $9.99 mainnet demo limit per transaction')).toBeVisible();
+  await expect(launcher(page).getByText('Refused: over Journear’s $9.99 mainnet demo limit per transaction')).toBeVisible();
   await shot(page, 'mainnet-2-cap-refusal', browserName);
 
   const plain = await newApp();
@@ -66,7 +66,7 @@ test('key export: plain warnings, a fresh sign-in, a guarded reveal that hides a
   await openPartner(page, app);
   const addresses = await login(page);
   await runAction(page, 'export', 'exportKey', 'stellar');
-  const exportWindow = await clickLauncher(page, 'Export key in Hana');
+  const exportWindow = await clickLauncher(page, 'Export key in Journear Passport');
   await expect(exportWindow.getByText('Anyone with this key controls your funds', { exact: false })).toBeVisible();
   await shot(exportWindow, 'export-1-warnings', browserName);
 
@@ -81,6 +81,7 @@ test('key export: plain warnings, a fresh sign-in, a guarded reveal that hides a
   await guardedClick(exportWindow, 'Continue');
   const secret = exportWindow.locator('code.secret');
   await expect(secret).toHaveText('••••••••');
+  await exportWindow.locator('.reveal-ack input').check();
   await guardedClick(exportWindow, 'Show key');
   await expect(secret).toHaveText(/^S[A-Z2-7]{55}$/u);
   expect(addressOfExport('stellar', (await secret.textContent()) ?? '')).toBe(addresses.stellar);

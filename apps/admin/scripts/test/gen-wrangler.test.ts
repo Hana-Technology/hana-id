@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FONT_FILES, MARK_PATHS } from '@hana-id/brand';
+import { FONT_FILES, FONT_LICENCE_FILES } from '@hana-id/brand';
 import { contrast, hexVars, woff2Names } from '@hana-id/brand/check';
 import { SUPPORT_TICKET_RE } from '@hana-id/console-core';
 import { ENV_ALERT_LABELS, envAlertLabel, loadEnv, MAX_API_RPC_FALLBACKS, type Manifest, manifestSchema } from '@hana-id/env';
@@ -25,7 +25,7 @@ import { MAIL_LABELS } from '../../src/labels.ts';
 import { MAX_NEAR_BACKUPS } from '../../src/status-probes.ts';
 import { scopeRegistrationOf } from '../../src/scope-registration.ts';
 import { adminCsp } from '../../src/headers.ts';
-import { BRAND_END, BRAND_FONT_FILES, BRAND_START, brandBlock } from '../sync-brand.ts';
+import { BRAND_CSS_DROPPED, BRAND_END, BRAND_FONT_FILES, BRAND_START, LOCKUP_END, LOCKUP_START, brandBlock, brandComponents, lockupBlock } from '../sync-brand.ts';
 import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, accountCrons, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, scopeRegistrationVar, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
@@ -454,7 +454,8 @@ describe('source checks', () => {
 
   it('public/ is the SPA alone, plus the brand fonts: the local preview harness and its fake data stay in test-spa/, never served', () => {
     expect(readdirSync(new URL('../../public/', import.meta.url)).sort()).toEqual(['app.css', 'app.js', 'fonts', 'index.html']);
-    // public/fonts holds packages/brand's WOFF2 files and their OFL licence, byte for byte, and nothing else (D426).
+    // public/fonts holds packages/brand's WOFF2 files and their OFL licences, byte for byte, and nothing else (D426,
+    // D765): Archivo, IBM Plex Sans and IBM Plex Mono; no Montserrat.
     expect(readdirSync(new URL('../../public/fonts/', import.meta.url)).sort()).toEqual(BRAND_FONT_FILES);
     for (const f of BRAND_FONT_FILES) {
       const shipped = readFileSync(new URL(`../../public/fonts/${f}`, import.meta.url));
@@ -463,15 +464,26 @@ describe('source checks', () => {
     for (const f of FONT_FILES) {
       const buf = readFileSync(new URL(`../../public/fonts/${f.file}`, import.meta.url));
       expect(createHash('sha256').update(buf).digest('hex'), f.file).toBe(f.sha256);
-      expect(woff2Names(buf).get(13), f.file).toContain('SIL Open Font License, Version 1.1');
+      // The file names its own family and version (Fontsource's subsets carry no licence string: the OFL is beside it).
+      expect(woff2Names(buf).get(1), f.file).toMatch(new RegExp(`^${f.family}\\b`, 'u'));
+      expect(woff2Names(buf).get(5), f.file).toBe(f.version);
+      expect(BRAND_FONT_FILES, f.file).toContain(f.licence);
     }
-    expect(readFileSync(new URL('../../public/fonts/OFL.txt', import.meta.url), 'utf8')).toContain('SIL OPEN FONT LICENSE Version 1.1');
+    for (const l of FONT_LICENCE_FILES) expect(readFileSync(new URL(`../../public/fonts/${l}`, import.meta.url), 'utf8'), l).toContain('SIL OPEN FONT LICENSE Version 1.1');
+    expect(BRAND_FONT_FILES.join(' ')).not.toMatch(/montserrat/iu);
   });
 
   it("the stylesheet loads only the brand fonts, from this origin: no import, image or other URL (CSP font-src and img-src 'self')", () => {
     const css = readFileSync(new URL('../../public/app.css', import.meta.url), 'utf8');
-    // The brand block is packages/brand's fonts.css and tokens.css as they are (scripts/sync-brand.ts).
+    // The brand block is packages/brand's fonts.css, tokens.css and components.css as they are (scripts/sync-brand.ts),
+    // but for components.css's one data: image (the select's chevron), left out and drawn by app.css's own gradients.
     expect(css.includes(brandBlock()), 'public/app.css: run sync-brand').toBe(true);
+    const components = readFileSync(new URL('../../../../packages/brand/components.css', import.meta.url), 'utf8').trimEnd();
+    expect(components.replace(BRAND_CSS_DROPPED, '')).toBe(brandComponents());
+    expect(components.length - brandComponents().length).toBeLessThan(400);
+    expect(css).toMatch(/select\.jp-input \{ background-image: linear-gradient\(/u);
+    // No variable of the old brand, and no Montserrat, anywhere in the stylesheet (D765).
+    expect(css).not.toMatch(/--hana-|montserrat/iu);
     expect(css.split(BRAND_START)).toHaveLength(2);
     // Every url() is one of the font files, relative to /app.css (so /fonts/…); nothing else is loaded.
     const urls = [...css.matchAll(/url\(([^)]*)\)/gu)].map((m) => m[1]);
@@ -479,37 +491,50 @@ describe('source checks', () => {
     expect([...css.matchAll(/@font-face\s*\{/gu)]).toHaveLength(FONT_FILES.length);
     expect(css).not.toMatch(/@import|https?:|data:|\/\/[a-z]/iu);
     expect(css).not.toMatch(/proxima|agrandir/iu);
+    // The console's own rules colour only with the brand's tokens: no hex, rgb() or named colour of their own.
+    const own = css.slice(css.indexOf(BRAND_END) + BRAND_END.length);
+    expect(own).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/iu);
   });
 
-  it('the shell draws the Hana mark inline from packages/brand (no image request, no script, colours from the stylesheet)', () => {
+  it('the shell draws the white Journear lockup inline from packages/brand (no image request, no script, no style)', () => {
     const html = readFileSync(new URL('../../public/index.html', import.meta.url), 'utf8');
-    const svg = /<svg class="mark"[^>]*>([\s\S]*?)<\/svg>/u.exec(html);
-    expect(svg).not.toBeNull();
-    expect(svg![0]).toContain('aria-hidden="true"');
-    expect([...svg![1]!.matchAll(/ d="([^"]+)"/gu)].map((m) => m[1])).toEqual([...MARK_PATHS]);
-    expect(svg![0]).not.toMatch(/href|fill=|style|<script|<image|on\w+=/u);
+    // The block is logo/journear-lockup-white.svg as it is (scripts/sync-brand.ts), once: the nav is ink in both themes.
+    expect(html.includes(lockupBlock()), 'public/index.html: run sync-brand').toBe(true);
+    expect(html.split(LOCKUP_START)).toHaveLength(2);
+    const svg = html.slice(html.indexOf(LOCKUP_START), html.indexOf(LOCKUP_END));
+    expect(svg).toContain('role="img" aria-label="Journear Passport"');
+    expect(svg).toContain('>PASSPORT</text>');
+    expect(svg).not.toMatch(/href|style|<script|<image|on\w+=|url\(/u);
     expect(html).not.toMatch(/<img\b/u);
+    expect(html).toContain('<title>Journear Passport admin</title>');
+    expect(html).not.toMatch(/Hana/u);
   });
 
-  it('the left nav and the env badge keep their own colours at WCAG AA in light and dark', () => {
+  it('the left nav (Journear ink, the brand\'s dark tokens in both themes) and the env badge are WCAG AA', () => {
     const css = readFileSync(new URL('../../public/app.css', import.meta.url), 'utf8');
+    const html = readFileSync(new URL('../../public/index.html', import.meta.url), 'utf8');
+    // The nav is a .jp-dark subtree on the ink surface: its text and badges read the brand's dark tokens in both themes.
+    expect(html).toContain('<aside class="sidebar jp-dark">');
+    expect(html).toContain('<span id="env" class="env jp-badge jp-badge-warning"></span>');
     const own = css.slice(css.indexOf(BRAND_END));
-    const darkAt = own.indexOf('@media (prefers-color-scheme: dark)');
-    const light = hexVars(own.slice(0, darkAt));
-    const dark = new Map([...light, ...hexVars(own.slice(darkAt, own.indexOf('* { box-sizing')))]);
+    expect(own).toMatch(/\.sidebar \{[^}]*background: var\(--jp-ink-surface\);[^}]*color: var\(--jp-ink-fg\);/u);
+    const block = (sel: string) => {
+      const at = css.indexOf(sel);
+      return css.slice(at, css.indexOf('}', at));
+    };
+    const root = hexVars(block(':root {'));
+    const dark = new Map([...root, ...hexVars(block('.jp-dark {'))]);
+    // A token that names another (`--jp-focus: var(--jp-orange-600)`) takes that one's colour.
+    for (const m of block(':root {').matchAll(/(--[\w-]+)\s*:\s*var\((--[\w-]+)\)/gu)) if (!dark.has(m[1]!) && dark.has(m[2]!)) dark.set(m[1]!, dark.get(m[2]!)!);
     const pairs: [string, string, number][] = [
-      ['--side-ink', '--side-bg', 7],
-      ['--side-ink-2', '--side-bg', 4.5],
-      ['--side-ink-2', '--side-hover', 4.5],
-      ['--side-muted', '--side-bg', 4.5],
-      ['--side-active-ink', '--side-active-bg', 4.5],
-      ['--side-focus', '--side-bg', 3],
-      ['--side-active-bg', '--side-bg', 3],
-      ['--env-ink', '--env-bg', 7],
-      ['--env-bg', '--side-bg', 3],
+      ['--jp-ink-fg', '--jp-ink-surface', 7],
+      ['--jp-ink-muted', '--jp-ink-surface', 4.5],
+      ['--jp-ink-fg', '--jp-ink-raised', 4.5],
+      ['--jp-ink-link', '--jp-primary-soft', 4.5],
+      ['--jp-warning', '--jp-warning-bg', 4.5],
+      ['--jp-warning', '--jp-ink-surface', 4.5],
+      ['--jp-focus', '--jp-ink-surface', 3],
     ];
-    for (const [name, v] of [['light', light], ['dark', dark]] as const) {
-      for (const [fg, bg, min] of pairs) expect(contrast(v.get(fg)!, v.get(bg)!), `${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(min);
-    }
+    for (const [fg, bg, min] of pairs) expect(contrast(dark.get(fg)!, dark.get(bg)!), `${fg} on ${bg}`).toBeGreaterThanOrEqual(min);
   });
 });

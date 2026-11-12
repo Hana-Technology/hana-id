@@ -120,8 +120,8 @@ describe('/login/callback', () => {
 
   it.each([
     ['409 relay_used', new ApiError(409, 'relay_used', 'used', null, null), 'already completed'],
-    ['a network error', new TypeError('Failed to fetch'), 'could not be reached'],
-    ['429', new ApiError(429, 'rate_limited', 'slow down', null, null), 'could not be reached'],
+    ['a network error', new TypeError('Failed to fetch'), 'couldn’t be reached'],
+    ['429', new ApiError(429, 'rate_limited', 'slow down', null, null), 'couldn’t be reached'],
   ])('stays open on %s', async (_, err, text) => {
     const { win } = started((st) => `#id_token=${TOKEN}&state=${st}`);
     const a = api(async () => {

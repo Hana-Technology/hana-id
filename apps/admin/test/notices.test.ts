@@ -38,7 +38,7 @@ describe('change_pending', () => {
     const mine = fake.about(id);
     expect(mine.map((m) => m.to).sort()).toEqual([ALIAS, ...contacts].sort());
     for (const m of mine) {
-      expect(m.subject).toContain('[Hana ID sandbox-test] New allowed origin proposed for');
+      expect(m.subject).toContain('[Journear Passport sandbox-test] New allowed origin proposed for');
       expect(m.text).toContain('https://xn--bcher-kva.example');
       expect(m.text).toContain('internationalised domain name');
       // The designed layout (D700): no script, and the only image is Hana's hosted logo (D685).

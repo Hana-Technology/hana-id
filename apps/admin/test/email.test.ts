@@ -28,7 +28,7 @@ describe('the SendGrid adapter', () => {
       calls.push({ url: String(url), init: init! });
       return new Response(null, { status: 202, headers: { 'x-message-id': 'msg-123' } });
     });
-    expect(await sendgridSender(KEY, 'Hana ID <team@hanawallet.example>').send(msg)).toEqual({ ok: true, id: 'msg-123' });
+    expect(await sendgridSender(KEY, 'Journear Passport <team@hanawallet.example>').send(msg)).toEqual({ ok: true, id: 'msg-123' });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(SENDGRID_URL);
     const headers = calls[0]!.init.headers as Record<string, string>;
@@ -36,7 +36,7 @@ describe('the SendGrid adapter', () => {
     expect(Object.keys(headers).sort()).toEqual(['authorization', 'content-type']);
     const body = JSON.parse(String(calls[0]!.init.body)) as Record<string, any>;
     expect(body.personalizations).toEqual([{ to: [{ email: 'a@partner.example' }] }]);
-    expect(body.from).toEqual({ email: 'team@hanawallet.example', name: 'Hana ID' });
+    expect(body.from).toEqual({ email: 'team@hanawallet.example', name: 'Journear Passport' });
     expect(body.subject).toBe('s');
     expect(body.content).toEqual([
       { type: 'text/plain', value: 't' },
@@ -184,7 +184,7 @@ describe('rendering', () => {
       { cancelUrl: consoleLink('https://console.test', '/cancel/gc_1#t=abc'), delayMs: 86_400_000 },
     );
     expect(r.subject).not.toMatch(/[\r\n]/u);
-    expect(r.subject.startsWith('[Hana ID sandbox-test] New allowed origin proposed for')).toBe(true);
+    expect(r.subject.startsWith('[Journear Passport sandbox-test] New allowed origin proposed for')).toBe(true);
     expect(r.html).not.toContain('<img src=x');
     expect(r.html).not.toMatch(/onerror=alert[^<]*>/u);
     expect(visibleText(r.html)).toContain('<img src=x onerror=alert(1)> Bcc: victim@example.com');
@@ -212,7 +212,7 @@ describe('rendering', () => {
     ];
     for (const [kind, extra, subject, row] of cases) {
       const r = notice(kind, extra);
-      expect(r.subject).toBe(`[SANDBOX] [Hana ID sandbox-test] ${subject}`);
+      expect(r.subject).toBe(`[SANDBOX] [Journear Passport sandbox-test] ${subject}`);
       expect(r.text).toMatch(new RegExp(`Change:\\s+${row.replace(/[()]/gu, '\\$&')}\n`, 'u'));
       expect(r.text).toMatch(/Proposed at:\s+11 November 2026, 05:01 UTC\n/u);
       expect(visibleText(r.html)).toContain(`Change${row}`);
@@ -265,9 +265,9 @@ describe('rendering', () => {
         expect(m.html.match(/<h1/gu)).toHaveLength(1);
         // The title and heading never carry a partner's value.
         expect(m.html.match(/<title>[^<]*<\/title>/u)![0]).not.toMatch(/evil|bold/u);
-        expect(visibleText(m.html)).toContain('[SANDBOX] Not production: this email is from Hana ID sandbox-test (testnet), for testing.');
-        expect(visibleText(m.html)).toContain('Hana never asks you to approve anything from an email.');
-        expect(m.text).toContain('Hana never asks you to approve anything from an email.');
+        expect(visibleText(m.html)).toContain('[SANDBOX] Not production: this email is from Journear Passport sandbox-test (testnet), for testing.');
+        expect(visibleText(m.html)).toContain('Journear never asks you to approve anything from an email.');
+        expect(m.text).toContain('Journear never asks you to approve anything from an email.');
         // The only image is the hosted logo; no script; links only to the console, at most the one button.
         expect([...m.html.matchAll(/src="([^"]*)"/gu)].map((x) => x[1])).toEqual([`${files}${MAIL_LOGO_PATH}`]);
         expect(m.html).not.toMatch(/<script|<form|javascript:/iu);
@@ -361,9 +361,9 @@ describe('rendering', () => {
         expect(m.html).toContain(`>${headings[name]}</h1>`);
         expect(m.html.match(/<h1/gu)).toHaveLength(1);
         expect(m.html.match(/<title>[^<]*<\/title>/u)![0]).toBe(`<title>${headings[name]}</title>`);
-        expect(visibleText(m.html)).toContain('[SANDBOX] Not production: this email is from Hana ID sandbox-test (testnet), for testing.');
-        expect(visibleText(m.html)).toContain('Hana never asks you to approve anything from an email.');
-        expect(m.text).toContain('Hana never asks you to approve anything from an email.');
+        expect(visibleText(m.html)).toContain('[SANDBOX] Not production: this email is from Journear Passport sandbox-test (testnet), for testing.');
+        expect(visibleText(m.html)).toContain('Journear never asks you to approve anything from an email.');
+        expect(m.text).toContain('Journear never asks you to approve anything from an email.');
         expect([...m.html.matchAll(/src="([^"]*)"/gu)].map((x) => x[1])).toEqual([`${files}${MAIL_LOGO_PATH}`]);
         expect(m.html).not.toMatch(/<script|<form|javascript:/iu);
         // The plain digests link nowhere; the designed ones add no link either.
@@ -379,31 +379,31 @@ describe('rendering', () => {
 
     it('the text part keeps each row on one line as before (ISO time, codes, JSON); the HTML reads it in words with the code kept (D704)', () => {
       const ch = mails.changesDigest;
-      expect(ch.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 2 app changes in org_1');
+      expect(ch.subject).toBe('[SANDBOX] [Journear Passport sandbox-test] 2 app changes in org_1');
       expect(ch.text).toContain(`- 2026-11-11T05:01:36.861Z origin.added on app_1 by member usr_1 ${JSON.stringify(urlDetail)}\n`);
       expect(ch.text).toContain('- 2026-11-11T05:02:36.861Z org.security_contacts by hana staff-sub {"old":["a@evil.example"],"new":["b@evil.example"]}\n');
       const chHtml = visibleText(ch.html);
       // The title in words, its code under it, the time in words, the details as the console's Audit page reads them.
-      for (const fact of ['Origin addedorigin.addedWhen 11 November 2026, 05:01 UTCBy a console member (usr_1)App app_1', `name: ${hostileName} · note: "Urgent: cancel at https://evil.example/cancel?x=1#y" · origin: http://localhost:5173`, 'Security contacts replacedorg.security_contactsWhen 11 November 2026, 05:02 UTCBy Hana staff (staff-sub)old: a@evil.example · new: b@evil.example']) expect(chHtml, fact).toContain(fact);
+      for (const fact of ['Origin addedorigin.addedWhen 11 November 2026, 05:01 UTCBy a console member (usr_1)App app_1', `name: ${hostileName} · note: "Urgent: cancel at https://evil.example/cancel?x=1#y" · origin: http://localhost:5173`, 'Security contacts replacedorg.security_contactsWhen 11 November 2026, 05:02 UTCBy Journear staff (staff-sub)old: a@evil.example · new: b@evil.example']) expect(chHtml, fact).toContain(fact);
       // The exact time and the JSON stay in the text part only.
       expect(chHtml).not.toContain('2026-11-11T05:01:36.861Z');
       expect(chHtml).not.toContain(JSON.stringify(urlDetail));
       const au = mails.auditDigest;
-      expect(au.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 2 console events in org_1');
+      expect(au.subject).toBe('[SANDBOX] [Journear Passport sandbox-test] 2 console events in org_1');
       expect(au.text).toContain(`- 2026-11-11T05:01:36.861Z member.invite ${hostileName} by member usr_1 (ok) ${JSON.stringify(urlDetail)}\n`);
       expect(au.text).toContain('- 2026-11-11T05:02:36.861Z member.invite by member usr_1 (failed)\n');
       const auHtml = visibleText(au.html);
       for (const fact of [`Member invitemember.inviteWhen 11 November 2026, 05:01 UTCBy a console member (usr_1)About ${hostileName}Outcome succeededname: ${hostileName} · note: "Urgent: cancel at https://evil.example/cancel?x=1#y" · origin: http://localhost:5173`, 'Member invitemember.inviteWhen 11 November 2026, 05:02 UTCBy a console member (usr_1)Outcome failedEnd of']) expect(auHtml, fact).toContain(fact);
-      expect(mails.auditDigestNoOrg.subject).toBe('[SANDBOX] [Hana ID sandbox-test] 1 console event');
+      expect(mails.auditDigestNoOrg.subject).toBe('[SANDBOX] [Journear Passport sandbox-test] 1 console event');
       const se = mails.securityDigest;
-      expect(se.subject).toBe('[SANDBOX] [Hana ID sandbox-test] Security events: drift, breaker in org_1');
+      expect(se.subject).toBe('[SANDBOX] [Journear Passport sandbox-test] Security events: drift, breaker in org_1');
       expect(se.text).toContain(`- 2026-11-11T05:01:36.861Z drift (se_0) app app_1 scope s1 ${JSON.stringify(urlDetail)}\n`);
       const seHtml = visibleText(se.html);
       for (const fact of [`App setting in force without a noticedrift · se_0When 11 November 2026, 05:01 UTCApp app_1Scope s1name: ${hostileName} · note: "Urgent: cancel at https://evil.example/cancel?x=1#y" · origin: http://localhost:5173`, 'Too many destructive changes in an hourbreaker · se_1When 11 November 2026, 05:02 UTCApp app_1name:']) expect(seHtml, fact).toContain(fact);
-      expect(visibleText(mails.securityDigestOne.html)).toContain('Hana Home daily budget running highhome_budget_high · se_0When 11 November 2026, 05:01 UTCderives: 400');
+      expect(visibleText(mails.securityDigestOne.html)).toContain('Passport Home daily budget running highhome_budget_high · se_0When 11 November 2026, 05:01 UTCderives: 400');
       // One entry per row, each with its When line.
       expect(se.html.match(/>When</gu)).toHaveLength(2);
-      expect(mails.securityDigestOne.subject).toBe('[SANDBOX] [Hana ID sandbox-test] Security event: home_budget_high');
+      expect(mails.securityDigestOne.subject).toBe('[SANDBOX] [Journear Passport sandbox-test] Security event: home_budget_high');
       // The row count is said before the rows and after them, in both parts (D704).
       const said: [ReturnType<typeof changesDigest>, string, string][] = [
         [ch, "2 changes were made to the apps of org_1. They are already in force or done; nothing here needs an answer unless you didn't expect it.", 'End of the 2 rows.'],
@@ -423,7 +423,7 @@ describe('rendering', () => {
       }
       // The security digest's last line is for partners and staff alike: no internal path (D704).
       for (const m of [se, mails.securityDigestOne]) {
-        const last = 'Hana security receives every security event too and has a recovery playbook for each kind. To ask about one, reply to this email or write to your Hana contact.';
+        const last = 'Journear security receives every security event too and has a recovery playbook for each kind. To ask about one, reply to this email or write to your Journear contact.';
         expect(m.text).toContain(last);
         expect(visibleText(m.html)).toContain(last);
         expect(`${m.text}${m.html}`).not.toContain('playbooks.md');
@@ -538,7 +538,7 @@ describe('rendering', () => {
         ['dots', changesDigest(c, 'org_1', rows.map((i) => change(i, { detail: { label: '.'.repeat(400) } }))), "the console's Audit page"],
         ['quotes', changesDigest(c, 'org_1', rows.map((i) => change(i, { detail: { label: '"'.repeat(400) } }))), "the console's Audit page"],
         ['targets', auditDigest(c, 'org_1', rows.map((i) => audit(i, { target, details: { label: './'.repeat(200) } }))), "the console's Audit page"],
-        ['events', securityDigest(c, 'org_1', rows.map((i) => event(i, { scopeId: target, detail: { label: '?='.repeat(200) } }))), 'ask Hana security (reply to this email)'],
+        ['events', securityDigest(c, 'org_1', rows.map((i) => event(i, { scopeId: target, detail: { label: '?='.repeat(200) } }))), 'ask Journear security (reply to this email)'],
       ];
       for (const [name, m, elsewhere] of cases) {
         expect(new TextEncoder().encode(m.html).length, name).toBeLessThanOrEqual(DIGEST_HTML_BUDGET);
@@ -552,7 +552,7 @@ describe('rendering', () => {
         // The note comes after the last row shown, before the end line; the footer is still there.
         expect(v.indexOf('not shown here'), name).toBeGreaterThan(v.lastIndexOf('When '));
         expect(v.indexOf('End of the 50 rows.'), name).toBeGreaterThan(v.indexOf('not shown here'));
-        expect(v, name).toContain('Hana never asks you to approve anything from an email.');
+        expect(v, name).toContain('Journear never asks you to approve anything from an email.');
         // The text part has every row.
         expect(m.text.split('\n').filter((l) => l.startsWith('- ')), name).toHaveLength(FEED_PAGE);
         expect(m.text, name).toContain('End of the 50 rows.');
@@ -582,22 +582,22 @@ describe('rendering', () => {
 
   it('a non-production env labels every subject and opens every body with it (D419); production carries none', () => {
     const r = render('sandbox-dev', 'Retention job failed (1 run)', [{ kind: 'p', text: 'body' }], 'https://console.test', '[SANDBOX]');
-    expect(r.subject).toBe('[SANDBOX] [Hana ID sandbox-dev] Retention job failed (1 run)');
-    expect(r.text.startsWith('[SANDBOX] Not production: this email is from Hana ID sandbox-dev (testnet), for testing.\n\nbody')).toBe(true);
+    expect(r.subject).toBe('[SANDBOX] [Journear Passport sandbox-dev] Retention job failed (1 run)');
+    expect(r.text.startsWith('[SANDBOX] Not production: this email is from Journear Passport sandbox-dev (testnet), for testing.\n\nbody')).toBe(true);
     expect(r.html).toContain('<p><strong>[SANDBOX] Not production:');
     const prod = render('prod', 'Retention job failed (1 run)', [{ kind: 'p', text: 'body' }], 'https://console.test');
-    expect(prod.subject).toBe('[Hana ID prod] Retention job failed (1 run)');
+    expect(prod.subject).toBe('[Journear Passport prod] Retention job failed (1 run)');
     expect(prod.text.startsWith('body')).toBe(true);
     // Partner mail too: an invitation from a sandbox says it is a test.
     const invite = inviteLink({ ...ctx, label: '[SANDBOX]' }, { id: 'inv_1', role: 'owner', newOrgName: 'Acme', expiresAt: 0 } as never, { inviteUrl: 'https://console.test/invite#t=x' });
-    expect(invite.subject.startsWith('[SANDBOX] [Hana ID sandbox-test] You')).toBe(true);
+    expect(invite.subject.startsWith('[SANDBOX] [Journear Passport sandbox-test] You')).toBe(true);
   });
 
   it('the invite: the designed layout, one button and the raw URL as text, who invited and what accepting does', () => {
     const invite = { id: 'inv_1', email: 'ada@partner.example', orgId: 'org_1', role: 'owner', createdByKind: 'member', createdBy: 'usr_secret_id', createdAt: 0, expiresAt: Date.UTC(2026, 10, 17, 9) } as never;
     const url = 'https://console.test/invite#t=abc_DEF-123';
     const r = inviteLink({ ...ctx, label: '[SANDBOX]' }, invite, { orgName: 'Sodax Labs', inviteUrl: url });
-    expect(r.subject).toBe("[SANDBOX] [Hana ID sandbox-test] You're invited to Sodax Labs on Hana ID");
+    expect(r.subject).toBe("[SANDBOX] [Journear Passport sandbox-test] You're invited to Sodax Labs on Journear Passport");
     expect(r.text).toMatchSnapshot('text');
     expect(r.html).toMatchSnapshot('html');
     expect([...r.html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1])).toEqual([url]);
@@ -605,8 +605,8 @@ describe('rendering', () => {
     expect(r.html).not.toMatch(/<img|<script|<form|src=/iu);
     // The raw URL as text, broken so clients don't link it a second time; the label banner; the heading without prefixes.
     expect(r.html).toContain('console<span>.</span><wbr>test<span>/</span><wbr>invite<span>#</span><wbr>t<span>=</span><wbr>abc_DEF-123');
-    expect(r.html).toContain('[SANDBOX] Not production: this email is from Hana ID sandbox-test (testnet), for testing.');
-    expect(r.html).toContain(">You&#39;re invited to Sodax Labs on Hana ID</h1>");
+    expect(r.html).toContain('[SANDBOX] Not production: this email is from Journear Passport sandbox-test (testnet), for testing.');
+    expect(r.html).toContain(">You&#39;re invited to Sodax Labs on Journear Passport</h1>");
     // Who invited, by role only (no member id or staff address); what accepting does.
     expect(r.text).toContain('as an owner, by an owner of the organisation.');
     expect(`${r.text}${r.html}`).not.toContain('usr_secret_id');
@@ -614,10 +614,10 @@ describe('rendering', () => {
     expect(r.text).toContain('The link works once, for this address only.');
     // The expiry as a person reads it, in the body and the preview line; never the raw ISO timestamp.
     expect(r.text).toContain('The invitation expires on 17 November 2026, 09:00 UTC.');
-    expect(r.html).toContain('Join Sodax Labs in the Hana ID partner console. The invitation expires on 17 November 2026, 09:00 UTC.');
+    expect(r.html).toContain('Join Sodax Labs in the Journear Passport partner console. The invitation expires on 17 November 2026, 09:00 UTC.');
     expect(`${r.text}${r.html}`).not.toContain('2026-11-17T09');
     const staff = inviteLink(ctx, { ...(invite as object), createdByKind: 'hana', createdBy: 'staff@hana.example', role: 'viewer' } as never, { orgName: 'Sodax Labs', inviteUrl: url });
-    expect(staff.text).toContain('as a viewer, by Hana staff.');
+    expect(staff.text).toContain('as a viewer, by Journear staff.');
     expect(staff.text).toContain('viewers see its apps and settings and change nothing');
     expect(`${staff.text}${staff.html}`).not.toContain('staff@hana.example');
     expect(staff.html).not.toContain('Not production');
@@ -647,7 +647,7 @@ describe('rendering', () => {
     const imgs = [...r.html.matchAll(/<img\b[^>]*>/gu)].map((m) => m[0]);
     expect(imgs).toHaveLength(1);
     expect(imgs[0]).toContain(`src="https://files.test${MAIL_LOGO_PATH}"`);
-    expect(imgs[0]).toContain('alt="Hana ID"');
+    expect(imgs[0]).toContain('alt="Journear Passport"');
     expect([...r.html.matchAll(/\bsrc=/gu)]).toHaveLength(1);
     expect(r.html).toContain('evil<span>.</span><wbr>example Labs');
     expect([...r.html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1])).toEqual([url]);
@@ -671,7 +671,7 @@ describe('rendering', () => {
 
   it('operational mails keep the plain HTML (no designed layout)', () => {
     const r = render('prod', 'Retention job failed (1 run)', [{ kind: 'p', text: 'body' }], 'https://console.test');
-    expect(r.html).toBe('<!doctype html><html><body><p>body</p>\n<p><small>Sent by Hana ID security. Hana never asks you to approve anything from an email. To reach Hana security, reply to this address or write to your Hana contact.</small></p></body></html>');
+    expect(r.html).toBe('<!doctype html><html><body><p>body</p>\n<p><small>Sent by Journear Passport security. Journear never asks you to approve anything from an email. To reach Journear security, reply to this address or write to your Journear contact.</small></p></body></html>');
   });
 
   it('mailLabel: ENV_LABEL only when it is a label and the network is testnet', () => {

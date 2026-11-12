@@ -1,11 +1,8 @@
-Copyright 2011 The Montserrat Project Authors (https://github.com/JulietaUla/Montserrat)
-Montserrat (Version 8.000) and Montserrat Alternates (Version 7.200), as shipped in Hana's own apps
-(Hana-Technology/hana-extension src/static/fonts), subset to Latin and converted to WOFF2 for Hana ID.
-No Reserved Font Name is declared for these fonts.
+Copyright 2019 IBM Corp. All rights reserved. IBMPlexSans-Italic[wdth,wght].ttf: Copyright 2019 IBM Corp. All rights reserved.
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
-https://openfontlicense.org
+http://scripts.sil.org/OFL
 
 
 -----------------------------------------------------------
@@ -21,7 +18,7 @@ with others.
 
 The OFL allows the licensed fonts to be used, studied, modified and
 redistributed freely as long as they are not sold by themselves. The
-fonts, including any derivative works, can be bundled, embedded, 
+fonts, including any derivative works, can be bundled, embedded,
 redistributed and/or sold with any software provided that any reserved
 names are not used by derivative works. The fonts and derivatives,
 however, cannot be released under any other type of license. The

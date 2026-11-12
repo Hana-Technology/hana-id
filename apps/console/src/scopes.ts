@@ -146,18 +146,18 @@ export function helperHtml(i: { clientId: string; scopeId: string; nonce: string
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Hana ID client proof for ${escapeHtml(i.clientId)}</title>
+<title>Journear Passport client proof for ${escapeHtml(i.clientId)}</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem}code,textarea{font-family:ui-monospace,monospace}textarea{width:100%;height:9rem}.warn{background:#fff4e5;border-left:4px solid #e69500;padding:.6rem .9rem}.bad{color:#b00020}</style>
 </head>
 <body>
 <h1>Client proof</h1>
-<p>This page proves to Hana ID that the Google client <code>${escapeHtml(i.clientId)}</code> belongs to you, so it can be added to scope <code>${escapeHtml(i.scopeId)}</code> on <code>${escapeHtml(i.signer)}</code> (action nonce ${i.actionNonce}).</p>
+<p>This page proves to Journear Passport that the Google client <code>${escapeHtml(i.clientId)}</code> belongs to you, so it can be added to scope <code>${escapeHtml(i.scopeId)}</code> on <code>${escapeHtml(i.signer)}</code> (action nonce ${i.actionNonce}).</p>
 <ol>
 <li>Host this file on one of the client's own origins and add this page's exact address to the client's <strong>Authorized redirect URIs</strong> in Google Cloud (remove it again afterwards).</li>
 <li>Open it there and press <strong>Sign in with Google</strong>.</li>
 <li>Copy the token shown and paste it into the console.</li>
 </ol>
-<p class="warn">The token becomes <strong>public on the NEAR blockchain</strong>, with the Google account id of whoever signs in here for this client. It is asked for <code>openid</code> only, so it carries no email address or name; Hana refuses one that does. Sign in with an account you are content to have recorded publicly (for example a team account).</p>
+<p class="warn">The token becomes <strong>public on the NEAR blockchain</strong>, with the Google account id of whoever signs in here for this client. It is asked for <code>openid</code> only, so it carries no email address or name; Journear refuses one that does. Sign in with an account you are content to have recorded publicly (for example a team account).</p>
 <p class="warn">This proof works only until the scope's next owner action. If the console says the proof is out of date, download a new helper.</p>
 <p><button id="go" type="button">Sign in with Google</button></p>
 <div id="out" hidden><h2>Your client proof</h2><textarea id="token" readonly></textarea><p id="claims"></p></div>
@@ -188,7 +188,7 @@ export function helperHtml(i: { clientId: string; scopeId: string; nonce: string
     var p = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
     var extra = Object.keys(p).filter(function (k) { return allowed.indexOf(k) < 0; });
     if (p.aud !== cfg.clientId || p.nonce !== cfg.nonce) throw new Error('This token is for another client or another proof.');
-    if (extra.length) throw new Error('This token carries ' + extra.join(', ') + ': Hana will refuse it. The client must not ask for more than openid.');
+    if (extra.length) throw new Error('This token carries ' + extra.join(', ') + ': Journear will refuse it. The client must not ask for more than openid.');
     document.getElementById('token').value = t;
     document.getElementById('claims').textContent = 'Claims: ' + Object.keys(p).sort().join(', ');
     document.getElementById('out').hidden = false;

@@ -35,7 +35,7 @@ describe('Email issuer', () => {
   it('asks the server for the chosen window and marks it', async () => {
     const s = await open('/api/email/issuer', emailIssuer(7), '/email/issuer?days=7');
     expect(s.api().some((c) => c.path === '/api/email/issuer?days=7')).toBe(true);
-    expect(s.main().querySelector('.hint strong')!.textContent).toBe('7 days');
+    expect(s.main().querySelector('.jp-seg [aria-pressed=true]')!.textContent).toBe('Last 7 days');
   });
 
   it('the signer policy: required signatures, the keys on chain against the pins, and the KMS note', async () => {
@@ -73,7 +73,7 @@ describe('Email issuer', () => {
     const cut = await open('/api/email/issuer', { ...d, stats: { ...d.stats, truncated: true } }, '/email/issuer');
     expect(cut.text()).toContain('The list was cut');
     expect(cut.dialogs).toEqual([]);
-    const err = boot('/email/issuer', () => ({ status: 503, body: { error: { code: 'upstream_unavailable', message: 'A Hana service did not answer; try again shortly' } } }));
+    const err = boot('/email/issuer', () => ({ status: 503, body: { error: { code: 'upstream_unavailable', message: 'A Journear service did not answer; try again shortly' } } }));
     await vi.waitFor(() => expect(err.text()).toContain('did not answer'));
   });
 });

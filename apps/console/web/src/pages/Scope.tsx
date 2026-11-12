@@ -36,7 +36,7 @@ function ownerText(o: Owner): string {
 }
 
 function changeText(c: Record<string, unknown>): string {
-  if (c.kind === 'AddClient' && c.provider === 'email') return `Add Hana’s email client ${String(c.aud)}`;
+  if (c.kind === 'AddClient' && c.provider === 'email') return `Add Journear’s email client ${String(c.aud)}`;
   if (c.kind === 'AddClient') return `Add client ${String(c.aud)}`;
   if (c.kind === 'SetAllowShared') return 'Turn shared login on';
   if (c.kind === 'SetOwners') return `Set owners: ${((c.owners as Owner[]) ?? []).map(ownerText).join('; ')}`;
@@ -56,7 +56,7 @@ function AddClient({ org, scopeId, start, busy }: { org: string; scopeId: string
       <ol className="steps">
         <li>
           <label>
-            The client id <input className="mono" value={aud} onChange={(e) => setAud(e.target.value)} placeholder="123-abc.apps.googleusercontent.com" />
+            The client id <input className="jp-input mono" value={aud} onChange={(e) => setAud(e.target.value)} placeholder="123-abc.apps.googleusercontent.com" />
           </label>
         </li>
         <li>
@@ -71,21 +71,21 @@ function AddClient({ org, scopeId, start, busy }: { org: string; scopeId: string
         </li>
         <li>
           <label>
-            Paste the token it shows <textarea className="mono" rows={4} value={proof} onChange={(e) => setProof(e.target.value.trim())} />
+            Paste the token it shows <textarea className="jp-input mono" rows={4} value={proof} onChange={(e) => setProof(e.target.value.trim())} />
           </label>
         </li>
       </ol>
-      <p className="callout callout-warn" role="note">
+      <Callout tone="warn" role="note">
         This token becomes <strong>public on the NEAR blockchain</strong> once the change is relayed. It identifies the Google account that signed in on the helper page (its account id for your client).
-        Hana accepts it only without an email address, name or Workspace domain in it, but the account id stays public for good: use an account you are content to have recorded, such as a team
+        Journear accepts it only without an email address, name or Workspace domain in it, but the account id stays public for good: use an account you are content to have recorded, such as a team
         account.
-      </p>
-      <label className="check">
+      </Callout>
+      <label className="jp-check">
         <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} /> I understand the token becomes public on chain
       </label>
       <button
         type="button"
-        className="btn btn-primary"
+        className="jp-btn jp-btn-primary"
         disabled={busy || !valid || !proof || !accepted}
         onClick={() => void start('owner_action', { scopeId, method: 'propose_change', change: { kind: 'AddClient', aud: aud.trim(), clientProof: proof, piiWarningAccepted: true } })}
       >
@@ -139,9 +139,9 @@ export function ScopePage() {
       <p className="muted small">
         Scope <code>{s.id}</code> <CopyButton value={s.id} label="scope ID" /> · read from the chain now (action nonce {s.actionNonce})
       </p>
-      {owner && !youAreOnChainOwner && <Callout tone="info">Your Google account isn’t an on-chain owner of this scope, so you can’t sign owner actions. Ask an on-chain owner to add you (Set owners), or ask Hana.</Callout>}
+      {owner && !youAreOnChainOwner && <Callout tone="info">Your Google account isn’t an on-chain owner of this scope, so you can’t sign owner actions. Ask an on-chain owner to add you (Set owners), or ask Journear.</Callout>}
       {ctx?.role !== 'owner' && <Why>You’re a viewer: only owners who are also on-chain owners can change the scope.</Why>}
-      {ctx?.role === 'owner' && ctx.frozen && <Why>Owner actions are paused while Hana has frozen the organisation.</Why>}
+      {ctx?.role === 'owner' && ctx.frozen && <Why>Owner actions are paused while Journear has frozen the organisation.</Why>}
       <div className="stack">
         <Panel title="On-chain owners" description="The Google accounts and NEAR accounts that may change this scope on chain.">
           <ul className="plain-list">
@@ -150,8 +150,7 @@ export function ScopePage() {
             ))}
           </ul>
           {drift.hasDrift && (
-            <div className="callout callout-warn">
-              <p className="callout-title">The scope’s on-chain owners differ from your organisation’s owners:</p>
+            <Callout tone="warn" title="The scope’s on-chain owners differ from your organisation’s owners:">
               <ul>
                 {drift.missingOnChain.map((m) => (
                   <li key={m.userId}>{m.email} is an owner here but not on chain</li>
@@ -162,11 +161,11 @@ export function ScopePage() {
                 {drift.unknownOnChain > 0 && <li>{drift.unknownOnChain} on-chain owner(s) aren’t members of this organisation</li>}
               </ul>
               {can && (
-                <button type="button" className="btn" disabled={step.busy} onClick={() => act({ method: 'propose_change', change: { kind: 'SetOwners' } })}>
+                <button type="button" className="jp-btn jp-btn-secondary" disabled={step.busy} onClick={() => act({ method: 'propose_change', change: { kind: 'SetOwners' } })}>
                   Propose: set the on-chain owners to your organisation’s owners (confirm with Google)
                 </button>
               )}
-            </div>
+            </Callout>
           )}
         </Panel>
         <Panel title="Google clients" description="The Google OAuth clients users of this scope sign in through.">
@@ -179,11 +178,11 @@ export function ScopePage() {
             ))}
             {s.clients.length === 0 && <li className="muted">None of its own.</li>}
           </ul>
-          <p>Shared login (Hana’s shared Google clients): {s.allowShared ? 'on' : 'off'}</p>
-          {can && s.allowShared && s.clients.length > 0 && <ConfirmButton label="Turn shared login off" confirm="Turn it off at once (confirm with Google)" detail="Users of Hana’s shared clients can’t sign in to this scope any more." busy={step.busy} onConfirm={() => act({ method: 'disable_shared_login' })} />}
+          <p>Shared login (Journear’s shared Google clients): {s.allowShared ? 'on' : 'off'}</p>
+          {can && s.allowShared && s.clients.length > 0 && <ConfirmButton label="Turn shared login off" confirm="Turn it off at once (confirm with Google)" detail="Users of Journear’s shared clients can’t sign in to this scope any more." busy={step.busy} onConfirm={() => act({ method: 'disable_shared_login' })} />}
           {can && s.allowShared && s.clients.length === 0 && <Why>Shared login can’t be turned off while the scope has no Google client of its own: users would have no way to sign in.</Why>}
           {can && !s.allowShared && (
-            <button type="button" className="btn" disabled={step.busy} onClick={() => act({ method: 'propose_change', change: { kind: 'SetAllowShared' } })}>
+            <button type="button" className="jp-btn jp-btn-secondary" disabled={step.busy} onClick={() => act({ method: 'propose_change', change: { kind: 'SetAllowShared' } })}>
               Propose turning shared login on (confirm with Google)
             </button>
           )}
@@ -193,7 +192,8 @@ export function ScopePage() {
           {s.pending.length === 0 ? (
             <p className="muted">None.</p>
           ) : (
-            <table className="table">
+            <div className="jp-table-wrap">
+            <table className="jp-table">
               <thead>
                 <tr>
                   <th scope="col">#</th>
@@ -221,7 +221,7 @@ export function ScopePage() {
                         {p.executable && (
                           <button
                             type="button"
-                            className="btn btn-primary btn-small"
+                            className="jp-btn jp-btn-primary jp-btn-sm"
                             disabled={w.busy}
                             onClick={() =>
                               void w.run(async () => {
@@ -240,10 +240,11 @@ export function ScopePage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </Panel>
         {can && <StepUpHint email={ctx?.email} />}
-        <WriteNote error={step.error ?? w.error} done={w.done} />
+        <WriteNote error={step.error ?? w.error} />
       </div>
     </>
   );

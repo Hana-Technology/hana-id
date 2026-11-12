@@ -115,7 +115,7 @@ describe('host dispatch, CSRF and the SPA', () => {
     expect(await page.text()).toContain('<script src="/app.js" defer></script>');
     const deep = await adminRequest('/orgs/org_abc/apps/app_x', { jwt: null });
     expect(deep.status).toBe(200);
-    expect(await deep.text()).toContain('Hana ID admin');
+    expect(await deep.text()).toContain('Journear Passport admin');
     const js = await adminRequest('/app.js', { jwt: null });
     expect(js.status).toBe(200);
     expect(await js.text()).toContain('textContent');
@@ -161,7 +161,7 @@ describe('response headers', () => {
   it('are on assets, JSON answers, refusals and errors; /api/* is no-store; nothing sets a cookie', async () => {
     const cases: [string, Response, boolean][] = [
       ['asset', await adminRequest('/app.css', { jwt: null }), false],
-      ['font', await adminRequest('/fonts/Montserrat-400.woff2', { jwt: null }), false],
+      ['font', await adminRequest('/fonts/ibm-plex-sans-400.woff2', { jwt: null }), false],
       ['page', await adminRequest('/', { jwt: null }), false],
       ['json', await adminRequest('/api/me'), true],
       ['401', await adminRequest('/api/me', { jwt: null }), true],
@@ -175,14 +175,21 @@ describe('response headers', () => {
     }
   });
 
-  it('serves the brand fonts from its own assets as fonts (D426), with no Access sign-in needed, like the SPA', async () => {
-    const font = await adminRequest('/fonts/Montserrat-400.woff2', { jwt: null });
-    expect(font.status).toBe(200);
-    expect(font.headers.get('content-type')).toBe('font/woff2');
-    expect(new TextDecoder().decode(new Uint8Array(await font.arrayBuffer()).slice(0, 4))).toBe('wOF2');
-    const licence = await adminRequest('/fonts/OFL.txt', { jwt: null });
-    expect(licence.status).toBe(200);
-    expect(await licence.text()).toContain('SIL OPEN FONT LICENSE Version 1.1');
+  it('serves the brand fonts from its own assets as fonts (D426, D765), with no Access sign-in needed, like the SPA', async () => {
+    for (const f of ['ibm-plex-sans-400.woff2', 'ibm-plex-mono-400.woff2', 'archivo-700.woff2']) {
+      const font = await adminRequest(`/fonts/${f}`, { jwt: null });
+      expect(font.status, f).toBe(200);
+      expect(font.headers.get('content-type'), f).toBe('font/woff2');
+      expect(new TextDecoder().decode(new Uint8Array(await font.arrayBuffer()).slice(0, 4)), f).toBe('wOF2');
+    }
+    for (const l of ['OFL-Archivo.txt', 'OFL-IBMPlexSans.txt', 'OFL-IBMPlexMono.txt']) {
+      const licence = await adminRequest(`/fonts/${l}`, { jwt: null });
+      expect(licence.status, l).toBe(200);
+      expect(await licence.text(), l).toContain('SIL OPEN FONT LICENSE Version 1.1');
+    }
+    // Montserrat is gone (D765): the old files aren't served.
+    const old = await adminRequest('/fonts/Montserrat-400.woff2', { jwt: null });
+    expect(old.headers.get('content-type')).not.toBe('font/woff2');
   });
 
   it('a thrown error is a 500 with the headers', async () => {

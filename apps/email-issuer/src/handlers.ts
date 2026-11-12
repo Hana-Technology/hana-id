@@ -5,6 +5,7 @@
 // `retry-after`, for every mailbox-level limit; the provider's send happens after the response, in waitUntil. Every
 // limit decision is one atomic Durable Object call, and the checks run so that a requester pays before a partner's
 // quota or the global budget is touched (D198).
+import { BRAND } from '@hana-id/brand';
 import { base64UrlDecode, base64UrlEncode, sha256, toHex, utf8 } from './bytes.ts';
 import { BUILD_ID_RE } from '@hana-id/env/build-id';
 import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail, sealEmail, type SealedEmailSource } from '@hana-id/email';
@@ -684,7 +685,8 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
  * logs): not an app id (`app_…`), so it can never be taken for one, and no app is read for it.
  */
 export const HOME_ISSUER_APP = 'hana-home';
-const HOME_APP_NAME = 'Hana Home';
+/** The name a Home challenge carries (its mails ignore it: they name Passport Home in their own words). */
+const HOME_APP_NAME = BRAND.home;
 /** The reserve part of Hana Home's mail (limits.ts HOME_RESERVE_SHARE): counted under its own name. */
 export const HOME_RESERVE_APP = 'hana-home-returning';
 /** A part of the daily budget, in mails: at least one, never more than the general pool. */
@@ -770,9 +772,9 @@ async function homeAudience(ctx: Ctx, purpose: HomePurpose, scopeId: string): Pr
   const { chain } = ctx.deps;
   if (purpose === 'home') {
     if (await chain.homeEmailExit()) return { ok: true, aud: HOME_AUDIENCE };
-    return { ok: false, response: fail(ctx, 409, 'home_email_unavailable', 'Email sign-in to Hana Home is not available') };
+    return { ok: false, response: fail(ctx, 409, 'home_email_unavailable', `Email sign-in to ${BRAND.home} is not available`) };
   }
-  const notCovered = () => ({ ok: false as const, response: fail(ctx, 409, 'not_covered', 'Hana Home can’t open a wallet of this scope with email') });
+  const notCovered = () => ({ ok: false as const, response: fail(ctx, 409, 'not_covered', `${BRAND.home} can’t open a wallet of this scope with email`) });
   const scope = await chain.scope(scopeId);
   if (!scope) return notCovered();
   if (scope.clients.some(([p, a]) => p === EMAIL_PROVIDER && a === emailClientAud(scopeId))) return { ok: true, aud: scopeAudience(scopeId) };
@@ -806,7 +808,7 @@ export async function handleHomeStart(request: Request, ctx: Ctx): Promise<Respo
   const c = homeCommitmentNonce(deps.env.SIGNER_ACCOUNT, b.kind, b.commitment, now);
   if (!c.ok) return fail(ctx, 400, 'bad_request', c.message);
   // Only someone signed in to Hana Home as this very address can have a "open one of your wallets" code mailed to it.
-  if (c.value.purpose === 'home_session' && !(await homeIdentityHolds(ctx, b.identity, r.email))) return fail(ctx, 401, 'home_identity_invalid', 'Sign in to Hana Home with this email first');
+  if (c.value.purpose === 'home_session' && !(await homeIdentityHolds(ctx, b.identity, r.email))) return fail(ctx, 401, 'home_identity_invalid', `Sign in to ${BRAND.home} with this email first`);
   const agg = (await aggregateLimits(ctx, request)) ?? (await homeAggregateLimits(ctx, request));
   if (agg) return agg;
   const route = await homeAudience(ctx, c.value.purpose, c.value.scopeId ?? '');

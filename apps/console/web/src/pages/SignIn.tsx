@@ -5,7 +5,7 @@ import type { SignInError } from '@hana-id/console-core';
 import { type ReactNode, useEffect, useState } from 'react';
 import { ApiError, startSignIn } from '../api.ts';
 import { SIGN_IN_MESSAGES, useFragmentToken } from '../lib.tsx';
-import { Mark } from '../ui.tsx';
+import { Callout, Lockup } from '../ui.tsx';
 
 function SignInButton({ invite, label }: { invite?: string; label: string }) {
   const [busy, setBusy] = useState(false);
@@ -24,26 +24,28 @@ function SignInButton({ invite, label }: { invite?: string; label: string }) {
   };
   return (
     <>
-      <button type="button" className="btn btn-primary btn-large btn-block" onClick={() => void go()} disabled={busy}>
+      <button type="button" className="jp-btn jp-btn-primary jp-btn-lg block" onClick={() => void go()} disabled={busy}>
+        {busy && <span className="spin" aria-hidden="true" />}
         {busy ? 'Opening Google…' : label}
       </button>
       {error && (
-        <p className="callout callout-error" role="alert">
+        <Callout tone="danger" role="alert">
           {error}
-        </p>
+        </Callout>
       )}
     </>
   );
 }
 
-/** The signed-out pages' frame: one centred card with Hana's mark. */
+/** The signed-out pages' frame: one centred card, the login modal's shape, with the lockup. */
 export function AuthCard({ title, children }: { title: string; children: ReactNode }) {
   return (
     <main id="main" className="auth">
       <div className="auth-card">
-        <p className="auth-brand">
-          <Mark /> Hana ID <span className="brand-sub">console</span>
-        </p>
+        <div className="auth-brand">
+          <Lockup />
+          <span className="brand-sub">Partner console</span>
+        </div>
         <h1>{title}</h1>
         {children}
       </div>
@@ -62,14 +64,14 @@ export function SignIn() {
   }, []);
   return (
     <AuthCard title="Sign in">
-      <p className="lede">Manage your organisation’s apps, keys and team. Sign in with the Google account your organisation invited.</p>
+      <p className="lede">Manage your organisation’s apps, keys and team. Sign in with the Google account you were invited with.</p>
       {error && (
-        <p className="callout callout-error" role="alert">
+        <Callout tone="danger" role="alert">
           {SIGN_IN_MESSAGES[error]}
-        </p>
+        </Callout>
       )}
       <SignInButton label="Sign in with Google" />
-      <p className="auth-foot">No account yet? Ask an owner of your organisation, or Hana, to invite your Google address. The invite email has the link to use.</p>
+      <p className="auth-foot">No account yet? Ask an owner of your organisation, or Journear, to invite your Google address. The invite email has the link to use.</p>
     </AuthCard>
   );
 }
@@ -80,9 +82,9 @@ export function Invite() {
   return (
     <AuthCard title="Accept your invite">
       {token === null ? (
-        <p className="callout callout-error" role="alert">
+        <Callout tone="danger" role="alert">
           This invite link is incomplete. Open the link from the invite email again.
-        </p>
+        </Callout>
       ) : (
         <>
           <p className="lede">Sign in with the Google account the invite was sent to. The invite works once, for that address only.</p>

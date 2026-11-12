@@ -1603,10 +1603,6 @@ body:has(.jp-savebar) .toast-region {
 .jp-label .opt {
   font-weight: var(--jp-weight-regular);
 }
-/* The teal badge's text is the link teal: the system's --jp-primary on --jp-primary-soft is 4.2:1 in dark, under AA. */
-.jp-badge-primary {
-  color: var(--jp-link);
-}
 /* On a phone the save bar wraps: what changed on one line, Discard and Save under it. */
 @media (max-width: 760px) {
   .jp-savebar {

@@ -183,8 +183,9 @@ describe('components', () => {
     for (const s of selectors) for (const part of s.split(',')) expect(part, s).toMatch(/\.jp-|\[class[*^]=" ?jp-"\]/u);
   });
 
-  it('the danger button reads --jp-on-danger, never a fixed light colour', () => {
+  it('the AA fixes: the danger button reads --jp-on-danger, the primary badge --jp-link (both pairs are in the tokens’ AA list)', () => {
     expect(css).toContain('.jp-btn-danger{background:var(--jp-danger);color:var(--jp-on-danger)}');
+    expect(css).toContain('.jp-badge-primary{background:var(--jp-primary-soft);color:var(--jp-link);border-color:transparent}');
   });
 });
 

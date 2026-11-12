@@ -253,8 +253,9 @@
 
 /*
  * Journear Passport's component set (packages/brand, D765): the .jp-* rules of the design system's page
- * (design-system.html, v0.5) as published, minus the page's own chrome, with one fix: the danger button's text is
- * --jp-on-danger (AA on the dark scheme). Reads only tokens.css; loads nothing. Classes: buttons (.jp-btn and
+ * (design-system.html, v0.5) as published, minus the page's own chrome, with two fixes for AA in the dark scheme: the
+ * danger button's text is --jp-on-danger, and the primary badge's text is --jp-link (--jp-primary on --jp-primary-soft
+ * is 4.2:1 in dark). Reads only tokens.css; loads nothing. Classes: buttons (.jp-btn and
  * -primary/-accent/-secondary/-ghost/-danger/-sm/-lg), forms (.jp-field, .jp-label, .jp-input, .jp-hint, .jp-error,
  * .jp-check, .jp-toggle, .jp-combo, .jp-otp), choice cards and setting rows (.jp-choice, .jp-setting), the save bar
  * (.jp-savebar), alerts (.jp-alert-*), toasts (.jp-toast-stack, .jp-toast), badges and chips (.jp-badge-*, .jp-tag),
@@ -339,7 +340,7 @@ select.jp-input{appearance:none;padding-right:34px;background-position:right 10p
 .jp-upload:hover{border-color:var(--jp-primary);background:var(--jp-primary-soft)}
 .jp-upload b{color:var(--jp-fg)}
 .jp-badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.02em;background:var(--jp-bg-subtle);color:var(--jp-fg-muted);border:1px solid var(--jp-border);white-space:nowrap}
-.jp-badge-primary{background:var(--jp-primary-soft);color:var(--jp-primary);border-color:transparent}
+.jp-badge-primary{background:var(--jp-primary-soft);color:var(--jp-link);border-color:transparent}
 .jp-badge-success{background:var(--jp-success-bg);color:var(--jp-success);border-color:transparent}
 .jp-badge-warning{background:var(--jp-warning-bg);color:var(--jp-warning);border-color:transparent}
 .jp-badge-danger{background:var(--jp-danger-bg);color:var(--jp-danger);border-color:transparent}

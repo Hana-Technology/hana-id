@@ -33,6 +33,17 @@ export function errorInfo(e: unknown): ErrorInfo {
   return { code: inner ?? own, reason, message, requestId };
 }
 
+const BASE58_HASH = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u;
+
+/**
+ * The transaction a refused relay or activation sent (the SDK's `data.transactionHash`, D788), only in its exact shape
+ * (base58), else null. A `timeout` with one may still land.
+ */
+export function relayTransaction(e: unknown): string | null {
+  const data = isObj(e) && isObj(e.data) ? e.data : null;
+  return typeof data?.transactionHash === 'string' && BASE58_HASH.test(data.transactionHash) ? data.transactionHash : null;
+}
+
 const REPORT = 'If it keeps happening, use “Copy diagnostics” and send it to the Journear team.';
 
 /** What the page says when Hana signed this device out (4900 with `data.reason` `signed_out`, D695). */
@@ -70,14 +81,13 @@ const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
 /**
  * The relayer's refusals of `POST /v1/near/relay` and `/v1/near/activate` (the SDK makes a 4xx 4100 and a 5xx
  * `api_unavailable`, with the API's code in `data.reason` and the HTTP status in `data.status`). The codes are those of
- * docs/api.md "NEAR relay" on the relayer build's branch; add a row here for a new one. Anything else falls back to
+ * docs/api.md "NEAR relay"; add a row here for a new one. Anything else falls back to
  * RELAYER_REFUSED or RELAYER_DOWN.
  */
 const RELAYER_REASONS: Readonly<Record<string, string>> = {
   // 409 until the vault has recorded the user's NEAR account in Hana's wallet directory (seconds after login); the
-  // card retries for about 20 s (near-card.ts UNRECORDED_REASONS) before it shows these.
+  // card retries for about 20 s (near-card.ts UNRECORDED_REASON) before it shows this.
   near_account_unrecorded: 'Journear is still setting up your NEAR account for this app (it takes a few seconds after you sign in). Try again in a moment.',
-  near_account_unknown: 'Journear doesn’t have your NEAR account on record for the demo app yet. Wait a few seconds and try again; if it keeps happening, log out and log in again.',
   directory_unavailable: 'Journear couldn’t check your NEAR account right now. Try again in a minute.',
   // The relayer's policy: zero-deposit calls to an allowed contract, from an implicit account, with bounded gas.
   receiver_not_allowed: 'Journear’s relayer pays only for calls to the demo guestbook, and refused this one.',

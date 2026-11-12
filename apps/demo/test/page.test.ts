@@ -121,13 +121,13 @@ let t = 0;
 let rpc: FakeNearRpc;
 let wall = Date.UTC(2026, 9, 29, 12);
 
-function boot(): void {
+function boot(config = CONFIG): void {
   copied = [];
   rpc = new FakeNearRpc();
   startDemo({
     fetch: rpc.fetch,
     sleep: async () => {},
-    config: CONFIG,
+    config,
     sdkVersion: '0.0.0',
     createClient: (c) => {
       fake = new FakeClient(c);
@@ -902,6 +902,93 @@ describe('the NEAR card', () => {
     await settle();
     expect($('near-error').textContent).toMatch(/it may still land/u);
     expect($('near-messages').textContent).toContain('slow one');
+    expect($('near-pending').hidden).toBe(true);
+  });
+
+  // D788: the SDK passes on the transaction a timed-out relay sent.
+  it('a relay that timed out with its transaction: "sent, still confirming" with the explorer link, not an error', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    fake.near.relay.mockImplementationOnce(async () => {
+      rpc.messages = [message(0, NEAR_ACCOUNT, 'slow one')];
+      throw hanaError('api_unavailable', { status: 504, reason: 'timeout', transactionHash: TX_HASH, requestId: '8d1f2c3a4b5e6f70-SIN' });
+    });
+    type('slow one');
+    click('near-write-button');
+    await settle();
+    expect($('near-pending').hidden).toBe(false);
+    expect($('near-pending-text').textContent).toBe('Sent, still confirming:');
+    const link = $('near-pending-link') as HTMLAnchorElement;
+    expect(link.hidden).toBe(false);
+    expect(link.textContent).toBe('view the transaction ↗');
+    expect(link.href).toBe(`https://testnet.nearblocks.io/txns/${TX_HASH}`);
+    expect([link.target, link.rel]).toEqual(['_blank', 'noopener noreferrer']);
+    expect($('near-error').hidden).toBe(true);
+    expect($('near-done').hidden).toBe(true);
+    expect($('near-stage').hidden).toBe(true);
+    // It looks at the list again, as for any timeout.
+    expect($('near-messages').textContent).toContain('slow one');
+    // The next write starts clean.
+    type('next one');
+    click('near-write-button');
+    await settle();
+    expect($('near-pending').hidden).toBe(true);
+    expect($('near-done').hidden).toBe(false);
+  });
+
+  it('a timed-out relay whose hash is not base58 is shown as the plain timeout, the value nowhere in the page', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    const hostile = `${TX_HASH}"><img src=x onerror="window.__xss=1">`;
+    fake.near.relay.mockRejectedValueOnce(hanaError('api_unavailable', { status: 504, reason: 'timeout', transactionHash: hostile }));
+    type('slow one');
+    click('near-write-button');
+    await settle();
+    expect($('near-pending').hidden).toBe(true);
+    expect($('near-error').textContent).toMatch(/it may still land/u);
+    expect(document.body.innerHTML).not.toContain('onerror="window.__xss');
+    expect(document.querySelector('img[src="x"]')).toBeNull();
+  });
+
+  it('a timed-out relay with its transaction and no explorer configured: the same note, without a link', async () => {
+    boot({ ...CONFIG, near: { ...CONFIG.near, explorer: null } });
+    await loginFlow();
+    await settle();
+    fake.near.relay.mockRejectedValueOnce(hanaError('api_unavailable', { status: 504, reason: 'timeout', transactionHash: TX_HASH }));
+    type('slow one');
+    click('near-write-button');
+    await settle();
+    expect($('near-pending').hidden).toBe(false);
+    expect($('near-pending-text').textContent).toBe('Sent, still confirming. The guestbook list shows it once it lands.');
+    expect($('near-pending-link').hidden).toBe(true);
+    expect($('near-pending-link').hasAttribute('href')).toBe(false);
+    expect($('near-error').hidden).toBe(true);
+  });
+
+  it('a hash on any other refusal is not "still confirming": contract_rejected stays an error', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    fake.near.relay.mockRejectedValueOnce(Object.assign(hanaError(4100, { status: 422, reason: 'contract_rejected', transactionHash: TX_HASH }), { message: 'too long' }));
+    type('hello');
+    click('near-write-button');
+    await settle();
+    expect($('near-pending').hidden).toBe(true);
+    expect($('near-error').textContent).toMatch(/The guestbook contract refused the message/u);
+  });
+
+  it('near_account_unknown, which the API never sends, is not retried (D788)', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    fake.near.relay.mockRejectedValue(hanaError(4100, { status: 409, reason: 'near_account_unknown' }));
+    type('hello');
+    click('near-write-button');
+    await settle();
+    expect(fake.near.relay).toHaveBeenCalledTimes(1);
+    expect($('near-error').textContent).toMatch(/refused this request \(near_account_unknown\)/u);
   });
 
   it('cancels the prepared window when reading NEAR fails, and says so in the card', async () => {

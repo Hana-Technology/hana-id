@@ -11,6 +11,8 @@
 // - relay({ network, signedDelegateAction }): POST {apiUrl}/v1/near/relay; Hana's relayer pays the gas.
 // - activate(): POST {apiUrl}/v1/near/activate for the user's own account, which makes sure it exists on testnet (a new
 //   implicit account exists only after a first transfer; a test app's delegate action needs it, near_key_unknown).
+// - A refusal of either is a HanaError whose `data` is a NearRelayErrorData: the API's code, status and request id, and
+//   the transaction the relay sent, NEAR's reason for a delegate_rejected and the answer's retry-after (D788).
 //
 // Each sign method sends its request synchronously in the call, so a call from a click opens the approval popup in
 // that click (client.ts, D99). Inputs are checked here only for shape; the vault decides.
@@ -79,6 +81,32 @@ export interface NearActivateResult {
   blockHeight?: number;
   /** base58 hash of the transfer that created the account, when `created`. */
   transactionHash?: string;
+}
+
+/**
+ * `HanaError.data` of a refused `relay` or `activate` (an answer from Journear Passport's API). Every field but `status`
+ * is optional, and each is copied from the answer only in its exact shape (anything else is left out).
+ */
+export interface NearRelayErrorData {
+  /** The HTTP status of the API's answer. */
+  status: number;
+  /** The API's code (`delegate_nonce_used`, `timeout`, `rate_limited`, …), at most 64 characters. */
+  reason?: string;
+  /** The API's request ID: quote it to Journear. */
+  requestId?: string;
+  /** A nonce refusal's: the nonce the relay holds the key at (decimal u64). Build the next delegate action above it. */
+  accessKeyNonce?: string;
+  /** The API's own word that asking again is worth it (`near_account_unrecorded`). */
+  retryable?: true;
+  /**
+   * base58 hash of the transaction the relay sent, when it sent one: on a `timeout` it may still run (look it up before
+   * signing again), and on `contract_rejected` or `delegate_rejected` it ran and failed.
+   */
+  transactionHash?: string;
+  /** NEAR's own reason for a `delegate_rejected` (`expired`, `invalid_nonce`, `access_key`, …). */
+  nearReason?: string;
+  /** The API's `retry-after` in whole seconds (0 to 86,400): wait at least this long before asking again. */
+  retryAfterS?: number;
 }
 
 export type NearSignTransactionResult = PortResultMap['near_signTransaction'];
@@ -228,7 +256,7 @@ export class HanaNear {
       globalThis.clearTimeout(timer);
     }
     const b = typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
-    if (!res.ok) throw relayError(res.status, b);
+    if (!res.ok) throw relayError(res.status, b, retryAfterHeader(res));
     return b;
   }
 
@@ -238,18 +266,51 @@ export class HanaNear {
   }
 }
 
+/** The longest `retry-after` passed on: a day (the relay's daily budgets reset at the next UTC midnight). */
+const MAX_RETRY_AFTER_S = 86_400;
+
+/** The answer's `retry-after` as sent (the API's CORS exposes it), or null; relayError takes only whole seconds in range. */
+function retryAfterHeader(res: Response): string | null {
+  try {
+    return typeof res.headers?.get === 'function' ? res.headers.get('retry-after') : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A NEAR code word (`expired`, `invalid_nonce`): lowercase, digits and `_`, at most 64 characters. */
+const isCodeWord = (v: unknown): v is string => typeof v === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(v);
+
+/**
+ * The transaction the API says the relay sent: `transactionHash`, which the API repeats as `nearTx`. Two different
+ * hashes, or one not in base58's shape, are not trusted.
+ */
+function sentTransaction(b: Record<string, unknown>): string | null {
+  const a = isBase58Hash(b.transactionHash) ? b.transactionHash : null;
+  const n = isBase58Hash(b.nearTx) ? b.nearTx : null;
+  if (a !== null && n !== null && a !== n) return null;
+  return a ?? n;
+}
+
 /** The HanaError of a refused relay or activation: the API's code where the SDK knows it, with its request id. */
-function relayError(status: number, b: Record<string, unknown>): HanaError {
+function relayError(status: number, b: Record<string, unknown>, retryAfter: string | null = null): HanaError {
   const code = typeof b.code === 'string' ? b.code : '';
   const message = typeof b.error === 'string' ? b.error.slice(0, 300) : `Journear’s relayer refused the request (HTTP ${status})`;
-  const data = {
+  const transactionHash = sentTransaction(b);
+  const retryAfterS = retryAfter !== null && /^(?:0|[1-9]\d{0,4})$/u.test(retryAfter) && Number(retryAfter) <= MAX_RETRY_AFTER_S ? Number(retryAfter) : null;
+  const data: NearRelayErrorData = {
     status,
     ...(code ? { reason: code.slice(0, 64) } : {}),
     ...(typeof b.requestId === 'string' ? { requestId: b.requestId.slice(0, 64) } : {}),
     // A nonce refusal (`delegate_nonce_used`, `delegate_nonce_too_large`) says the nonce the relayer holds the key at, so
     // the next delegate action can be built above it; `retryable` marks an answer worth asking again (the API's own word).
     ...(typeof b.accessKeyNonce === 'string' && /^(?:0|[1-9]\d{0,19})$/u.test(b.accessKeyNonce) ? { accessKeyNonce: b.accessKeyNonce } : {}),
-    ...(b.retryable === true ? { retryable: true } : {}),
+    ...(b.retryable === true ? { retryable: true as const } : {}),
+    // D788: the transaction the relay sent (a `timeout` may still run; a 422 ran and failed), NEAR's own reason for a
+    // `delegate_rejected`, and how long the API asks the caller to wait.
+    ...(transactionHash !== null ? { transactionHash } : {}),
+    ...(code === 'delegate_rejected' && isCodeWord(b.reason) ? { nearReason: b.reason } : {}),
+    ...(retryAfterS !== null ? { retryAfterS } : {}),
   };
   if (status === 429) return hanaError('rate_limited', message, data);
   if (code === 'origin_not_allowed' || code === 'app_suspended') return hanaError(code, message, data);

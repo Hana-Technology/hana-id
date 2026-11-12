@@ -98,6 +98,22 @@ const snapshot = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+const PK_R1 = 'ed25519:5d8UM2sUCR6jH9GwPDKTBiRAEoK7z4Z1U7y4qqH4zZpV';
+const PK_R2 = 'ed25519:8hR1jJ4tvsG5k3ZVxNw2yQe9eHPuQyD7Gq1b6T3m2dCx';
+const nearRelay = (over: Record<string, unknown> = {}) => ({
+  state: 'on',
+  offReason: null,
+  readAt: NOW - 1000,
+  account: 'near-relay.test.near',
+  lowBalanceYocto: `2${E24}`,
+  dailyBudgetYocto: `5${E24}`,
+  budgetAlertPct: 80,
+  chain: { ok: true, exists: true, availableYocto: `12${E24}`, fullAccessKeys: 3 },
+  keys: { configured: 2, missing: [] },
+  spend: { ok: true, day: new Date(NOW).toISOString().slice(0, 10), spentYocto: `4${E24.slice(1)}` },
+  ...over,
+});
+
 const apiAnswer = (over: Record<string, unknown> = {}) => ({
   ok: true,
   build: BUILD,
@@ -110,6 +126,7 @@ const apiAnswer = (over: Record<string, unknown> = {}) => ({
     { pool: 'home', publicKey: PK_H },
   ],
   governance: { ok: true, snapshot: snapshot() },
+  nearRelay: nearRelay(),
   ...over,
 });
 
@@ -446,6 +463,178 @@ describe('Relayer funds', () => {
     world.watchdog = watchdogBody({ relayer_funds: relayerFunds() });
     a = await read();
     expect(tile(a, 'home-pool')).toMatchObject({ state: 'ok', detail: '1 key on chain · lowest allowance 5 NEAR · 0 in the API' });
+  });
+
+  describe('NEAR relay (D784–D786)', () => {
+    const lines = (a: StatusAnswer) => tile(a, 'near-relay').lines!.map((l) => [l.label, l.state]);
+    const withRelay = (over: Record<string, unknown>) => {
+      world.api = apiAnswer({ nearRelay: nearRelay(over) });
+    };
+
+    it('healthy: OK, the balance, today’s spend and the keys, one line each; no issue', async () => {
+      const a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay')).toMatchObject({ group: 'funds', name: 'NEAR relay', state: 'ok', affects: 'Users’ gasless NEAR calls (the relay pays their gas)', detail: 'On · 12 NEAR available · 0.4 NEAR of 5 NEAR spent today', link: { path: '/security' } });
+      expect(tile(a, 'near-relay').lines).toEqual([
+        { label: 'Balance', state: 'ok', detail: '12 NEAR available · amber below 2 NEAR, red below 0.4 NEAR' },
+        { label: 'Today’s spend', state: 'ok', detail: `0.4 NEAR of 5 NEAR (8%) · UTC day ${new Date(NOW).toISOString().slice(0, 10)}` },
+        { label: 'Keys', state: 'ok', detail: '2 of 2 on the account as full-access keys' },
+      ]);
+      expect(issuesOf(a, 'near-relay')).toEqual([]);
+    });
+
+    it('the balance: amber below lowBalanceNear, red below a fifth of it, red when the account is missing', async () => {
+      withRelay({ chain: { ok: true, exists: true, availableYocto: `15${E24.slice(1)}`, fullAccessKeys: 3 } });
+      let a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay').state).toBe('warning');
+      expect(issuesOf(a, 'near-relay')).toEqual([expect.objectContaining({ severity: 'warning', title: 'The NEAR relay’s balance is low: 1.5 NEAR available', affects: 'Users’ gasless NEAR calls (the relay pays their gas)', playbook: expect.objectContaining({ id: 'near-relay-balance-low' }) })]);
+      expect(lines(a)[0]).toEqual(['Balance', 'warning']);
+      // Exactly at the line is not below it.
+      withRelay({ chain: { ok: true, exists: true, availableYocto: `2${E24}`, fullAccessKeys: 3 } });
+      expect(tile(await read(), 'near-relay').state).toBe('ok');
+      withRelay({ chain: { ok: true, exists: true, availableYocto: `3${E24.slice(1)}`, fullAccessKeys: 3 } });
+      a = await read();
+      expect(tile(a, 'near-relay').state).toBe('critical');
+      expect(issuesOf(a, 'near-relay')[0]).toMatchObject({ severity: 'critical', title: 'The NEAR relay’s balance is low: 0.3 NEAR available' });
+      // A missing account: one red issue (the keys aren't said again).
+      withRelay({ chain: { ok: true, exists: false, availableYocto: '0', fullAccessKeys: 0 }, keys: { configured: 2, missing: [PK_R1, PK_R2] } });
+      a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay')).toMatchObject({ state: 'critical', detail: 'On · account missing · 0.4 NEAR of 5 NEAR spent today' });
+      expect(issuesOf(a, 'near-relay').map((i) => i.title)).toEqual(['The NEAR relay account near-relay.test.near doesn’t exist on chain: every relay fails']);
+      expect(lines(a)).toEqual([['Balance', 'critical'], ['Today’s spend', 'ok'], ['Keys', 'critical']]);
+    });
+
+    it('today’s spend: amber from the API’s alert share (80%), red when the budget is used up', async () => {
+      withRelay({ spend: { ok: true, day: '2026-11-12', spentYocto: `41${E24.slice(1)}` } });
+      let a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay').state).toBe('warning');
+      expect(issuesOf(a, 'near-relay')).toEqual([expect.objectContaining({ severity: 'warning', title: 'The NEAR relay has spent 82% of today’s budget (4.1 NEAR of 5 NEAR)', playbook: expect.objectContaining({ id: 'near-relay-budget-high' }) })]);
+      expect(lines(a)[1]).toEqual(['Today’s spend', 'warning']);
+      withRelay({ spend: { ok: true, day: '2026-11-12', spentYocto: `39${E24.slice(1)}` } });
+      expect(tile(await read(), 'near-relay').state).toBe('ok');
+      withRelay({ spend: { ok: true, day: '2026-11-12', spentYocto: `5${E24}` } });
+      a = await read();
+      expect(tile(a, 'near-relay').state).toBe('critical');
+      expect(issuesOf(a, 'near-relay')[0]?.title).toBe('The NEAR relay’s daily budget is used up (5 NEAR of 5 NEAR): relays answer 503 until 00:00 UTC');
+    });
+
+    it('an API relay key that isn’t a full-access key on the account is red, named by its public key’s start', async () => {
+      withRelay({ keys: { configured: 2, missing: [PK_R2] } });
+      const a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay').state).toBe('critical');
+      expect(issuesOf(a, 'near-relay')).toEqual([expect.objectContaining({ severity: 'critical', title: `1 of the API’s 2 NEAR relay keys isn’t a full-access key on near-relay.test.near: relays through it fail (${PK_R2.slice(0, 16)}…)` })]);
+      expect(lines(a)[2]).toEqual(['Keys', 'critical']);
+      expect(tile(a, 'near-relay').lines![2]!.detail).toBe('1 of 2 on the account as full-access keys');
+    });
+
+    it('off (no near.relay, empty receivers, not testnet) is Not measured and never an issue', async () => {
+      for (const [offReason, detail] of [
+        ['none', 'Off: no `near.relay` in this env’s manifest'],
+        ['no_receivers', 'Off: its `receivers` list is empty'],
+        ['not_testnet', 'Off: the relay runs on testnet only'],
+      ] as const) {
+        world.api = apiAnswer({ nearRelay: { state: 'off', offReason, readAt: NOW, account: null, lowBalanceYocto: null, dailyBudgetYocto: null, budgetAlertPct: null, chain: null, keys: null, spend: null } });
+        const a = await read();
+        invariants(a);
+        expect(tile(a, 'near-relay')).toMatchObject({ state: 'not_measured', detail });
+        expect(issuesOf(a, 'near-relay')).toEqual([]);
+        expect(a.verdict.state).toBe('ok');
+      }
+    });
+
+    it('no keys (the off switch) is amber; unusable keys or a refused config red; the balance and spend still judged', async () => {
+      withRelay({ state: 'no_keys', keys: null });
+      let a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay')).toMatchObject({ state: 'warning', detail: 'Off: no keys · 12 NEAR available · 0.4 NEAR of 5 NEAR spent today' });
+      expect(issuesOf(a, 'near-relay').map((i) => i.title)).toEqual(['The NEAR relay has no keys (NEAR_RELAY_KEYS isn’t set): every relay answers 503 relayer_unconfigured']);
+      expect(lines(a)).toEqual([['Balance', 'ok'], ['Today’s spend', 'ok'], ['Keys', 'not_measured']]);
+      withRelay({ state: 'no_keys', keys: null, chain: { ok: true, exists: true, availableYocto: `1${E24}`, fullAccessKeys: 1 } });
+      expect(issuesOf(await read(), 'near-relay').map((i) => i.severity)).toEqual(['warning', 'warning']);
+      withRelay({ state: 'bad_keys', keys: null });
+      a = await read();
+      expect(tile(a, 'near-relay').state).toBe('critical');
+      expect(issuesOf(a, 'near-relay')[0]?.title).toMatch(/^NEAR_RELAY_KEYS is unreadable, repeats a key or shares one with a relayer pool/u);
+      world.api = apiAnswer({ nearRelay: { state: 'bad_config', offReason: null, readAt: NOW, account: null, lowBalanceYocto: null, dailyBudgetYocto: null, budgetAlertPct: null, chain: null, keys: null, spend: null } });
+      a = await read();
+      expect(tile(a, 'near-relay')).toMatchObject({ state: 'critical', detail: 'Off: the API refuses its NEAR_RELAY config' });
+    });
+
+    it('unknown: the API unreadable (said once, by the API’s tiles), an API before this release, the account or spend unreadable', async () => {
+      world.api = () => Promise.reject(new Error('Service unavailable'));
+      let a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay')).toMatchObject({ state: 'unknown', detail: 'Unknown: the API didn’t answer' });
+      expect(issuesOf(a, 'near-relay')).toEqual([]);
+
+      const { nearRelay: _n, ...old } = apiAnswer();
+      world.api = old;
+      a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay').state).toBe('unknown');
+      expect(issuesOf(a, 'near-relay')).toEqual([expect.objectContaining({ severity: 'warning', title: 'The API doesn’t report the NEAR relay (deployed before this release)' })]);
+
+      withRelay({ chain: { ok: false, code: 'near_unavailable' }, keys: null });
+      a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay').state).toBe('unknown');
+      expect(lines(a)).toEqual([['Balance', 'unknown'], ['Today’s spend', 'ok'], ['Keys', 'unknown']]);
+      expect(issuesOf(a, 'near-relay')).toEqual([expect.objectContaining({ title: 'The NEAR relay account can’t be read (near_unavailable)', playbook: expect.objectContaining({ id: 'near-rpc-outage' }) })]);
+      // With every NEAR endpoint down the NEAR RPC tile says it once.
+      world.near = { primary: 'down', fallback: 'down', backup: 'down' };
+      a = await read();
+      expect(tile(a, 'near-relay').state).toBe('unknown');
+      expect(issuesOf(a, 'near-relay')).toEqual([]);
+      world.near = healthyWorld().near;
+
+      withRelay({ spend: { ok: false, code: 'rate_limiter_unavailable' } });
+      a = await read();
+      expect(tile(a, 'near-relay')).toMatchObject({ state: 'unknown', detail: 'On · 12 NEAR available · spend unknown' });
+      expect(issuesOf(a, 'near-relay')[0]?.title).toBe('The NEAR relay’s spend today can’t be read (rate_limiter_unavailable)');
+    });
+
+    it('a missing key that isn’t a well-formed public key still counts: the Keys line red and the count right (review LOW-1)', async () => {
+      withRelay({ keys: { configured: 2, missing: ['not-a-key<b>', PK_R2] } });
+      let a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay').state).toBe('critical');
+      expect(lines(a)[2]).toEqual(['Keys', 'critical']);
+      expect(tile(a, 'near-relay').lines![2]!.detail).toBe('0 of 2 on the account as full-access keys');
+      expect(issuesOf(a, 'near-relay')[0]?.title).toBe(`2 of the API’s 2 NEAR relay keys aren’t a full-access key on near-relay.test.near: relays through them fail (${PK_R2.slice(0, 16)}…, 1 more)`);
+      withRelay({ keys: { configured: 2, missing: [42] } });
+      a = await read();
+      expect(lines(a)[2]).toEqual(['Keys', 'critical']);
+      expect(issuesOf(a, 'near-relay')[0]?.title).toBe('1 of the API’s 2 NEAR relay keys isn’t a full-access key on near-relay.test.near: relays through it fail');
+    });
+
+    it('a balance or a line that doesn’t parse is Unknown with an issue, never OK (review LOW-2)', async () => {
+      for (const over of [{ chain: { ok: true, exists: true, availableYocto: '12.5', fullAccessKeys: 3 } }, { chain: { ok: true, exists: true, fullAccessKeys: 3 } }, { lowBalanceYocto: null }, { lowBalanceYocto: 'two' }]) {
+        withRelay(over);
+        const a = await read();
+        invariants(a);
+        expect(tile(a, 'near-relay').state, JSON.stringify(over)).toBe('unknown');
+        expect(lines(a)[0]).toEqual(['Balance', 'unknown']);
+        expect(tile(a, 'near-relay').lines![0]!.detail).toBe('Unknown: the balance couldn’t be read');
+        expect(issuesOf(a, 'near-relay').map((i) => i.title)).toEqual(['The NEAR relay’s balance or its lines can’t be read from the API’s answer']);
+      }
+      withRelay({ chain: { ok: true, exists: true, availableYocto: 'NaN', fullAccessKeys: 3 } });
+      expect(tile(await read(), 'near-relay').detail).toBe('On · balance unknown · 0.4 NEAR of 5 NEAR spent today');
+    });
+
+    it('a reading older than 30 minutes is amber; hostile strings in the answer never reach the page', async () => {
+      withRelay({ readAt: NOW - 45 * MIN });
+      let a = await read();
+      expect(tile(a, 'near-relay').state).toBe('warning');
+      expect(issuesOf(a, 'near-relay')[0]?.title).toBe('The NEAR relay reading is 45 min old');
+      withRelay({ account: '<img src=x onerror=alert(1)>', keys: { configured: 2, missing: ['<script>alert(1)</script>', PK_R1] }, chain: { ok: false, code: '<b>x</b>' }, spend: { ok: true, day: '<i>', spentYocto: 'NaN' } });
+      a = await read();
+      const text = JSON.stringify(tile(a, 'near-relay')) + JSON.stringify(issuesOf(a, 'near-relay'));
+      for (const bad of ['<img', '<script', '<b>', '<i>', 'NaN']) expect(text).not.toContain(bad);
+    });
   });
 
   it('the nonce check tile: not measured while the API’s usage capture is off, with no issue raised (D596)', async () => {

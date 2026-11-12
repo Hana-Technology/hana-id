@@ -12,7 +12,7 @@
 // signs into that window; if reading fails, the ticket is cancelled.
 import type { ApprovalTicket, NearActivateResult } from '@hana-id/web';
 import type { DemoConfig } from './config.ts';
-import { type DemoAction, errorInfo } from './errors.ts';
+import { type DemoAction, errorInfo, relayTransaction } from './errors.ts';
 import {
   type AccessKeyState,
   type FetchLike,
@@ -47,10 +47,10 @@ const BACKGROUND_GAP_MS = 5_000;
 /** How long activate and relay are retried while the account isn't in Hana's wallet directory yet. */
 export const UNRECORDED_WAIT_MS = 20_000;
 /**
- * The API's answers (HTTP 409) while the vault hasn't recorded the user's NEAR account in the wallet directory yet: the
- * coordinator's `near_account_unrecorded`, and `near_account_unknown`, which the relayer build's docs mark retryable.
+ * The API's answer (HTTP 409, `retryable`) while the vault hasn't recorded the user's NEAR account in the wallet directory
+ * yet. The only one: the API never sends the `near_account_unknown` an earlier draft named (D788).
  */
-const UNRECORDED_REASONS: ReadonlySet<string> = new Set(['near_account_unrecorded', 'near_account_unknown']);
+const UNRECORDED_REASON = 'near_account_unrecorded';
 /** Refusals that mean the card's last read of the key or the height is behind (the vault's and the relayer's). */
 const STALE_READ_REASONS: ReadonlySet<string> = new Set(['near_delegate_nonce_used', 'near_delegate_nonce_stale', 'near_delegate_nonce_too_large', 'near_delegate_expiry', 'delegate_nonce_used', 'delegate_nonce_too_large', 'delegate_expired', 'block_height_too_far']);
 /** How many times activate and relay are retried while the relayer answers `relayer_busy` (503). */
@@ -184,7 +184,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
         return await call();
       } catch (e) {
         const reason = errorInfo(e).reason;
-        const retry = reason === 'relayer_busy' ? busy++ < BUSY_RETRIES : reason !== null && UNRECORDED_REASONS.has(reason) && waited + pause <= UNRECORDED_WAIT_MS;
+        const retry = reason === 'relayer_busy' ? busy++ < BUSY_RETRIES : reason === UNRECORDED_REASON && waited + pause <= UNRECORDED_WAIT_MS;
         if (!retry) throw e;
         waited += pause;
         await deps.sleep(pause);
@@ -267,6 +267,20 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     const link = el<HTMLAnchorElement>('near-tx-link');
     link.hidden = !txHash || explorer === null;
     if (txHash && explorer) link.href = `${explorer}/txns/${encodeURIComponent(txHash)}`;
+  }
+
+  /**
+   * A relay that timed out with its transaction sent (D788): not an error, it may still land. Text nodes only; the link
+   * is the explorer's, with the hash (base58, checked by relayTransaction) encoded. null hides it.
+   */
+  function sentPending(txHash: string | null): void {
+    const linked = txHash !== null && explorer !== null;
+    el('near-pending').hidden = txHash === null;
+    el('near-pending-text').textContent = txHash === null ? '' : linked ? 'Sent, still confirming:' : 'Sent, still confirming. The guestbook list shows it once it lands.';
+    const link = el<HTMLAnchorElement>('near-pending-link');
+    link.hidden = !linked;
+    if (txHash !== null && explorer !== null) link.href = `${explorer}/txns/${encodeURIComponent(txHash)}`;
+    else link.removeAttribute('href');
   }
 
   /** The message field's error (the design system's invalid field: red border, the error in place of the hint). */
@@ -377,6 +391,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
       'near',
       async () => {
         done(null);
+        sentPending(null);
         clearCardError();
         try {
           let ready = fresh(accountId);
@@ -426,9 +441,17 @@ export function startNearCard(deps: NearCardDeps): NearCard {
           await loadList({ accountId, text: check.text });
         } catch (e) {
           stage(null);
-          // The relayer gave up waiting (504 `timeout`, the transaction pending): it may still land, so look again.
+          // The relayer gave up waiting (504 `timeout`, the transaction pending): it may still land, so look again. With
+          // the transaction's hash that's no error: the card says it was sent and links to it.
           const reason = errorInfo(e).reason;
-          if (reason === 'timeout') loadList({ accountId, text: check.text }).catch(() => {});
+          if (reason === 'timeout') {
+            loadList({ accountId, text: check.text }).catch(() => {});
+            const sent = relayTransaction(e);
+            if (sent !== null) {
+              sentPending(sent);
+              return;
+            }
+          }
           // A nonce or expiry refusal: the read this page holds is behind, so the next click must not reuse it.
           if (reason !== null && STALE_READ_REASONS.has(reason)) {
             prep = null;
@@ -568,6 +591,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
           backgroundAt = -Infinity;
           stage(null);
           done(null);
+          sentPending(null);
           hint(null);
           clearCardError();
           el('near-results').replaceChildren();

@@ -104,25 +104,22 @@ export function toActivateRequest(body: unknown): ActivateRequest | null {
 
 // ---- configuration ----
 
-let keysParsed: { from: string | undefined; count: number } = { from: undefined, count: 0 };
+export type NearRelayKeys = { state: 'none' } | { state: 'bad' } | { state: 'ok'; publicKeys: readonly string[] };
+
+let keysParsed: { from: string | undefined; keys: NearRelayKeys } = { from: undefined, keys: { state: 'none' } };
 
 /**
- * The relay's config and key count, or null when the relay is off (D733): the env isn't testnet, NEAR_RELAY is missing
- * or unreadable, there are no receivers, or NEAR_RELAY_KEYS is empty, unreadable or shares a key with a pool.
+ * NEAR_RELAY_KEYS as public keys: `none` when it is absent or empty, `bad` when it doesn't parse, repeats a key or
+ * shares one with a relayer pool, else the keys' public keys in order. The secrets never leave this function.
  */
-export function nearRelayReady(env: Env): { config: NearRelayConfig; keyCount: number } | null {
-  if (env.NETWORK !== 'testnet') return null;
-  const config = parseNearRelayConfig(env.NEAR_RELAY);
-  if (!config || config.receivers.length === 0) return null;
-  // The relay account is its own: never the pools' relayer or the signer (the schema says so too; checked at runtime).
-  if (config.account === env.RELAYER_ACCOUNT || config.account === env.SIGNER_ACCOUNT) return null;
+export function nearRelayKeys(env: Env): NearRelayKeys {
   const all = `${env.NEAR_RELAY_KEYS ?? ''}\n${POOLS.map((p) => env[POOL_SECRET[p]] ?? '').join('\n')}`;
   if (keysParsed.from !== all) {
-    let count = 0;
+    let keys: NearRelayKeys;
     try {
       // Compared by public key: one key can be written in two encodings (a 32-byte seed or the 64-byte secret).
       const publicOf = (k: string) => parseKeyPair(k).getPublicKey().toString();
-      const keys = parseRelayerKeys(env.NEAR_RELAY_KEYS, 'NEAR_RELAY_KEYS').map(publicOf);
+      const own = parseRelayerKeys(env.NEAR_RELAY_KEYS, 'NEAR_RELAY_KEYS').map(publicOf);
       const poolKeys = new Set<string>();
       for (const p of POOLS) {
         try {
@@ -131,13 +128,39 @@ export function nearRelayReady(env: Env): { config: NearRelayConfig; keyCount: n
           // A pool whose secret doesn't parse is refused on its own account.
         }
       }
-      count = new Set(keys).size === keys.length && !keys.some((k) => poolKeys.has(k)) ? keys.length : 0;
+      keys = own.length === 0 ? { state: 'none' } : new Set(own).size === own.length && !own.some((k) => poolKeys.has(k)) ? { state: 'ok', publicKeys: own } : { state: 'bad' };
     } catch {
-      count = 0;
+      keys = { state: 'bad' };
     }
-    keysParsed = { from: all, count };
+    keysParsed = { from: all, keys };
   }
-  return keysParsed.count > 0 ? { config, keyCount: keysParsed.count } : null;
+  return keysParsed.keys;
+}
+
+/** The relay's config when it is on (testnet, a readable NEAR_RELAY with receivers, an account of its own), else null. */
+export function nearRelayConfig(env: Env): NearRelayConfig | null {
+  if (env.NETWORK !== 'testnet') return null;
+  const config = parseNearRelayConfig(env.NEAR_RELAY);
+  if (!config || config.receivers.length === 0) return null;
+  // The relay account is its own: never the pools' relayer or the signer (the schema says so too; checked at runtime).
+  if (config.account === env.RELAYER_ACCOUNT || config.account === env.SIGNER_ACCOUNT) return null;
+  return config;
+}
+
+/**
+ * The relay's config and key count, or null when the relay is off (D733): the env isn't testnet, NEAR_RELAY is missing
+ * or unreadable, there are no receivers, or NEAR_RELAY_KEYS is empty, unreadable or shares a key with a pool.
+ */
+export function nearRelayReady(env: Env): { config: NearRelayConfig; keyCount: number } | null {
+  const config = nearRelayConfig(env);
+  if (!config) return null;
+  const keys = nearRelayKeys(env);
+  return keys.state === 'ok' ? { config, keyCount: keys.publicKeys.length } : null;
+}
+
+/** The day's spend the relay's budget has counted (yocto, a decimal string): RateLimiter `spent`, read only (D785). */
+export async function nearRelaySpent(env: Env, now: number = Date.now()): Promise<string> {
+  return limiter(env, BUDGET_SUBJECT).spent(BUDGET_WINDOW, DAY, now);
 }
 
 // ---- shared steps ----

@@ -111,8 +111,11 @@ async function start(o: { isGesture?: boolean } = {}): Promise<Harness> {
     if (!form) throw new Error(`No form on the page: ${pageText()}`);
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
   };
+  // Time-bound, not a count of turns: under a loaded machine (pnpm verify's parallel lanes) a few hundred turns can pass
+  // before a signed request's WebCrypto settles.
   h.idle = async () => {
-    for (let i = 0; i < 200; i++) {
+    const until = Date.now() + 5_000;
+    while (Date.now() < until) {
       await new Promise((r) => setImmediate(r));
       if (running.size === 0) return;
     }
@@ -670,7 +673,8 @@ describe('refusals and the end of the sign-in', () => {
     let release: (r: Response) => void = () => {};
     h.answer = () => new Promise<Response>((r) => (release = r));
     h.submit();
-    for (let i = 0; i < 100 && posts(h).length === 0; i++) await new Promise((r) => setImmediate(r));
+    for (const until = Date.now() + 5_000; posts(h).length === 0 && Date.now() < until; ) await new Promise((r) => setImmediate(r));
+    expect(posts(h)).toHaveLength(1);
     h.section.reset();
     release(json(200, { name: { givenName: 'Typed but not saved', familyName: 'Lovelace' } }));
     await h.idle();

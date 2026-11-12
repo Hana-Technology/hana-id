@@ -35,7 +35,7 @@ import { mpcNetwork, readJson, simulateMpc } from '../../../core/test/helpers.ts
 import { maskedAddress } from '../../src/auth/dom.ts';
 import { homeApi } from '../../src/auth/home-api.ts';
 import type { HomeEmailApi, HomeIdentityCommitment, HomeSessionCommitment } from '../../src/auth/home-email.ts';
-import { HOME_EXPORT_ABOUT, HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_OPEN, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportRoute } from '../../src/auth/home-export.ts';
+import { HOME_EXPORT_ABOUT, HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_OPEN, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportNearNotes, homeExportRoute } from '../../src/auth/home-export.ts';
 import { type HomePage, coverageText, startHomePage } from '../../src/auth/home-page.ts';
 import { EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_SHOW_MS, EXPORT_WARNING } from '../../src/auth/key-reveal.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
@@ -55,6 +55,13 @@ const vector = (path: string): Vector => {
   return v as Vector;
 };
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
+/** The frozen NEAR vectors (derivation-v1-near.json, D720), found by the path vector's PRK: its account 0. */
+const NV = readJson<{ vectors: { prkHex: string; accounts: { account: number; near: { seedHex: string; accountId: string; exportBase58: string } }[] }[] }>('vectors/derivation-v1-near.json');
+const nearVector = (path: string): { seedHex: string; accountId: string; export: string } => {
+  const v = NV.vectors.find((x) => x.prkHex === vector(path).prkHex)?.accounts.find((a) => a.account === 0)?.near;
+  if (!v) throw new Error(`No NEAR vector for ${path}`);
+  return { seedHex: v.seedHex, accountId: v.accountId, export: `ed25519:${v.exportBase58}` };
+};
 /** The vectors' MPC network: its master key comes from their own preimage, so its answers are the vectors' secrets. */
 const NET = mpcNetwork(BigInt(`0x${hex(sha256(utf8(V.mpc.mskPreimage)))}`) % bls.fields.Fr.ORDER);
 
@@ -201,7 +208,7 @@ interface H {
   /** A click with no pointer movement before it. */
   still(id: string): void;
   type(text: string): void;
-  reveal(chain: 'stellar' | 'evm'): { secret: HTMLElement; toggle: HTMLButtonElement; copy: HTMLButtonElement };
+  reveal(chain: 'stellar' | 'evm' | 'near'): { secret: HTMLElement; toggle: HTMLButtonElement; copy: HTMLButtonElement };
 }
 
 let now = T0;
@@ -399,7 +406,7 @@ function start(o: Opts = {}): H {
       await page.idle();
     },
     reveal(chain) {
-      h.click(chain === 'stellar' ? 'home-export-stellar' : 'home-export-evm');
+      h.click(`home-export-${chain}`);
       h.type(EXPORT_CONFIRMATION);
       h.press('home-export-continue');
       expect(page.moving.state).toBe('reveal');
@@ -1193,6 +1200,186 @@ describe('words and source', () => {
     // The export string is made in one place, from a key zeroed in the same call, and handed only to the reveal.
     expect([...source.matchAll(/^.*exportString\(.*$/gmu)].map((m) => m[0].trim())).toEqual(['return exportString(c, key);']);
     expect(source).toMatch(/const key = chainPrivateKey\(prk, c, 0\);\s+try \{\s+return exportString\(c, key\);\s+\} finally \{\s+key\.fill\(0\);/u);
+  });
+});
+
+// ---- NEAR (D768–D771) ----
+
+describe('NEAR: the third key of the opened wallet (D768)', () => {
+  const notes = homeExportNearNotes('testnet');
+  const notesShown = (): string[] => [...document.querySelectorAll('#home-export-near-notes li')].map((li) => li.textContent ?? '');
+
+  it('for an identity’s own path: the frozen NEAR vector’s account and key, from the same one derive', async () => {
+    const h = start();
+    await h.unlock();
+    const want = nearVector(OWN);
+    expect(document.getElementById('home-export-address-near')?.textContent).toBe(want.accountId);
+    // Stellar, EVM, then NEAR, as the app's page lists them.
+    expect([...document.querySelectorAll('#home-export-addresses .home-address-label')].map((x) => x.textContent)).toEqual(['Stellar', 'EVM (Ethereum and similar networks)', 'NEAR']);
+    expect([...document.querySelectorAll('#home-export .actions button')].map((b) => [b.id, b.textContent])).toEqual([
+      ['home-export-stellar', 'Stellar key'],
+      ['home-export-evm', 'EVM key'],
+      ['home-export-near', 'NEAR key'],
+      ['home-export-lock', 'Lock now'],
+    ]);
+    expect(pageText()).toContain('the NEAR key for a NEAR wallet app');
+    const r = h.reveal('near');
+    expect(h.page.moving.chain).toBe('near');
+    expect(document.getElementById('home-export-title')?.textContent).toBe('Your NEAR key');
+    expect(document.querySelector('#home-export .account code')?.textContent).toBe(want.accountId);
+    pressEl(h, r.toggle);
+    expect(r.secret.textContent).toBe(want.export);
+    expect(addressOfExport('near', r.secret.textContent as string)).toBe(want.accountId);
+    // The NEAR seed lived only inside that Show (the 64-byte seed ‖ public key buffer too).
+    expect(zeroed.has(want.seedHex)).toBe(true);
+    expect([...zeroed].some((z) => z.startsWith(want.seedHex) && z.length === 128)).toBe(true);
+    expect(h.logins()).toHaveLength(1);
+  });
+
+  it('for a linked member: the account root’s NEAR account and key, never the member’s own', async () => {
+    const h = start({ identity: member, chainPath: ROOT, scopes: [mineScope({ addresses: [{ chain: 'stellar', address: vector(ROOT).accounts[0]!.stellar.address }] })] });
+    await h.unlock();
+    const want = nearVector(ROOT);
+    expect(want.accountId).not.toBe(nearVector(OWN).accountId);
+    expect(document.getElementById('home-export-address-near')?.textContent).toBe(want.accountId);
+    const r = h.reveal('near');
+    pressEl(h, r.toggle);
+    expect(r.secret.textContent).toBe(want.export);
+  });
+
+  it('an account Hana has no NEAR record of (an SDK before 0.4.0) still opens, with no mismatch, and the page lists it as the wallet’s', async () => {
+    const h = start();
+    await h.unlock();
+    expect(document.getElementById('home-export-mismatch')).toBeNull();
+    expect(document.getElementById('home-export-address-near')?.textContent).toBe(nearVector(OWN).accountId);
+  });
+
+  it('the NEAR screens say what is true of NEAR alone, after the shared warning; the Stellar and EVM screens don’t', async () => {
+    expect(notes).toHaveLength(3);
+    expect(notes[0]).toContain('This key is the NEAR account itself');
+    expect(notes[0]).toContain('full control of the account');
+    expect(notes[1]).toContain('Choose NEAR testnet in the other wallet app');
+    expect(notes[1]).toContain('doesn’t exist on NEAR yet');
+    expect(notes[2]).toContain('Hana pays NEAR fees only for a few calls it has approved');
+    const h = start();
+    await h.unlock();
+    for (const c of ['stellar', 'evm'] as const) {
+      h.click(`home-export-${c}`);
+      expect(document.getElementById('home-export-near-notes'), c).toBeNull();
+      expect(pageText(), c).not.toContain('NEAR account itself');
+      h.click('home-export-back');
+    }
+    h.click('home-export-near');
+    expect(h.page.moving.state).toBe('confirm');
+    expect(notesShown()).toEqual([...notes]);
+    // The warning every chain gets comes first, then NEAR's notes, then the typed word.
+    const section = document.getElementById('home-export')!;
+    const order = [...section.querySelectorAll('.warn, #home-export-near-notes, label')].map((x) => (x.id === 'home-export-near-notes' ? 'notes' : x.tagName === 'LABEL' ? 'label' : 'warn'));
+    expect(order).toEqual(['warn', 'notes', 'label']);
+    expect(section.querySelector('.warn')?.textContent).toBe(EXPORT_WARNING);
+    // And on the reveal, beside the key.
+    h.type(EXPORT_CONFIRMATION);
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+    expect(notesShown()).toEqual([...notes]);
+    // The notes are fixed words: no link, no markup, no address of anyone's.
+    expect(document.querySelectorAll('#home-export-near-notes a, #home-export-near-notes code')).toHaveLength(0);
+  });
+
+  it('Continue needs the typed word and a guarded click, as for the other chains', async () => {
+    const h = start();
+    await h.unlock();
+    h.click('home-export-near');
+    const go = document.getElementById('home-export-continue') as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+    h.type(EXPORT_CONFIRMATION);
+    h.still('home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    h.type('export');
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    h.type(EXPORT_CONFIRMATION);
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+    expect(document.querySelector('.secret')?.textContent).toBe('••••••••');
+  });
+
+  it('the key hides after 60 s and on blur; Copy writes it without putting it in the page and blanks it', async () => {
+    const h = start();
+    await h.unlock();
+    const key = nearVector(OWN).export;
+    const r = h.reveal('near');
+    pressEl(h, r.toggle);
+    expect(r.secret.textContent).toBe(key);
+    advance(EXPORT_SHOW_MS);
+    expect(r.secret.textContent).toBe('••••••••');
+    pressEl(h, r.toggle);
+    h.win.dispatch('blur');
+    expect(r.secret.textContent).toBe('••••••••');
+    h.win.dispatch('focus');
+    pressEl(h, r.copy);
+    await tick();
+    expect(h.clipboardWrites).toEqual([key]);
+    expect(pageText()).not.toContain(key);
+    advance(EXPORT_CLIPBOARD_CLEAR_MS);
+    await tick();
+    expect(h.clipboardWrites).toEqual([key, '']);
+  });
+
+  it.each([
+    ['Lock now', (h: H) => h.click('home-export-lock'), 'ended'],
+    ['going back to the list', (h: H) => h.click('home-back'), 'closed'],
+    ['the page going away (pagehide)', (h: H) => h.win.dispatch('pagehide'), 'closed'],
+  ] as const)('is erased on %s with the NEAR key shown', async (_, leave, state) => {
+    const h = start();
+    await h.unlock();
+    const r = h.reveal('near');
+    pressEl(h, r.toggle);
+    leave(h);
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(zeroed.has(vector(OWN).prkHex)).toBe(true);
+    expect(h.page.moving.state).toBe(state);
+    expect(h.page.moving.chain).toBeNull();
+    expect(r.secret.textContent).toBe('••••••••');
+    expect(pageText()).not.toContain(nearVector(OWN).export);
+  });
+
+  it('is erased 5 minutes after the derive; the NEAR button then does nothing', async () => {
+    const h = start();
+    await h.unlock();
+    const near = document.getElementById('home-export-near') as HTMLButtonElement;
+    advance(HOME_PRK_LIFETIME_MS);
+    expect(h.page.moving.state).toBe('ended');
+    near.click();
+    expect(h.page.moving.state).toBe('ended');
+    expect(document.querySelector('.secret')).toBeNull();
+  });
+
+  it('writes nothing to storage, the address or the console; no message or request carries the NEAR key or its seed', async () => {
+    const h = start();
+    await h.unlock();
+    const r = h.reveal('near');
+    pressEl(h, r.toggle);
+    pressEl(h, r.copy);
+    await tick();
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(h.win.replaced).toEqual([]);
+    expect(h.win.location.assigned).toEqual([]);
+    for (const spy of consoleSpies) expect(spy).not.toHaveBeenCalled();
+    const want = nearVector(OWN);
+    const base58 = want.export.slice('ed25519:'.length);
+    const posted = JSON.stringify(h.children.flatMap((c) => c.received), (_k, v) => (v instanceof Uint8Array ? hex(v) : v));
+    const requests = h.fetches.map((f) => `${f.url.href} ${f.header ?? ''} ${f.body ? new TextDecoder().decode(f.body) : ''}`).join('\n');
+    for (const s of [want.export, base58, want.seedHex]) {
+      expect(posted).not.toContain(s);
+      expect(requests).not.toContain(s);
+    }
+    // The Home derive is the same request whichever key is shown: no chain label is sent (its event's chain stays null).
+    const body = JSON.parse(new TextDecoder().decode(h.logins()[0]!.body as Uint8Array)) as Record<string, unknown>;
+    expect('exportChain' in body).toBe(false);
+    // The NEAR key the page derives is the vault's own function of the secret.
+    expect(hex(chainPrivateKey(Uint8Array.from(Buffer.from(vector(OWN).prkHex, 'hex')), 'near', 0))).toBe(want.seedHex);
   });
 });
 

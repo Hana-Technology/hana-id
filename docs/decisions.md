@@ -11313,6 +11313,7 @@ D728's two API items, the screens that list a user's wallets, and the lookup the
 - Date 2026-11-11 · Status: asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon); details decided while building, confirmed by the user 2026-11-12
 - Updated: the console's and admin's search hints and labels, Hana Home's address list, `docs/partner-start-here.md` (the opening line, the test networks), `docs/system-overview.md` (derivation, the NEAR halt row, export, shutdown, Q18, PRK), `docs/integration.md` (the portal's Users search, section 2's "Not yet NEAR").
 - Left: Hana Home's "Move this wallet" still offers the Stellar and EVM keys only (adding NEAR there is a change to a security-reviewed flow, H8; the export window has it); the approval popup's chain names (`render-approval.ts`, the core build's); the identity token (D760); emails (none lists wallets); the console's getting-started text (names no chain).
+- Note, 2026-11-12 (branch `feat/near-move-wallet`, to confirm): Hana Home's "Move this wallet" now offers the NEAR key (D768–D771).
 - Address impact: none.
 
 ### D762. One NEAR account per user and key index; one user per NEAR account in a scope; the lookup never picks
@@ -11373,3 +11374,44 @@ by the user 2026-11-11 (NEAR support for the NEAR hackathon); details decided wh
 - Why: a zero-balance account can't pay gas; broadcasting would only fail.
 - Rejected: `@near-js/transactions` (a second borsh implementation and more bundle for the same bytes).
 - Address impact: none.
+
+## NEAR in Hana Home's "Move this wallet" (branch `feat/near-move-wallet`), 2026-11-12
+
+Built on `feat/near-move-wallet` (from `develop` @ 6ab570b1), not merged, not deployed. Closes the gap D761 left: the
+section offered the Stellar and EVM keys only. Decided while building 2026-11-12, to confirm.
+
+### D768. Hana Home's "Move this wallet" shows the NEAR key: a third address and a third button, under the same safeguards
+- Date 2026-11-12 · Status: decided while building 2026-11-12, to confirm · Built: `packages/web/src/auth/home-export.ts` (`CHAIN_NAMES`, `HomeExportChain`, `addressRows`, the `unlocked` screen, `chainSecret`, `choose`), `home-page.ts` (`moving.chain`); tests `packages/web/test/auth/home-export.test.ts` ("NEAR: the third key of the opened wallet"), `apps/e2e/tests/home-export.spec.ts` · Amends D575, D582, D584; closes D761's first "Left" item
+- Decision: once a wallet is open the section shows its three addresses, Stellar, EVM, then NEAR (the implicit account, labelled "NEAR" as on the app's page), and three buttons, "Stellar key", "EVM key", "NEAR key". The sentence above them gains "the NEAR key for a NEAR wallet app". NEAR's screens are titled "Your NEAR key" and show the account it is for; the key is NEAR's export form (`ed25519:` + base58(seed ‖ public key), D724), made inside one Show or Copy from PRK with `chainPrivateKey(prk, 'near', 0)` and zeroed in the same call, exactly as the other two. Everything else is the shared path, unchanged: one derive opens all three keys (no new request, no new sign-in), the typed `EXPORT`, the guard on Continue, Show key and Copy key, the 60 s hide, the clipboard blank, the 5-minute erase, and nothing in the page's address can pick a chain. The Stellar and EVM screens are unchanged except the shared "Your wallet is open" screen (the third row, the third button, the sentence).
+- Why: the export window has offered NEAR since D724; Home is the exit route when an app is gone, and a NEAR user had no way out of Home.
+- Address impact: none (key index 0, the same PRK and the frozen NEAR tuple; the golden test holds Home to `derivation-v1-near.json` for an own path and a member's root).
+
+### D769. NEAR's own notes on its key screens: the key is the account, it may not exist yet, Hana pays only for its approved calls
+- Date 2026-11-12 · Status: decided while building 2026-11-12, to confirm (the wording) · Built: `home-export.ts` (`homeExportNearNotes`, `NEAR_NETWORK_NAME`, `nearNotes`), `auth.css` (`.home-export-notes`); tests "the NEAR screens say what is true of NEAR alone …"
+- Decision: under the warning every chain gets (D430's `EXPORT_WARNING`, unchanged), the NEAR confirmation and reveal screens list three fixed sentences: (1) "This key is the NEAR account itself: the account's name above is made from the key. Whoever imports it into a NEAR wallet app has full control of the account. If that app removes this key from the account, this app loses the wallet too." (2) "Choose NEAR testnet in the other wallet app. An account that was never sent any NEAR doesn't exist on NEAR yet: until it gets its first NEAR, a wallet app may show it as not found or not import it." (3) "Hana pays NEAR fees only for a few calls it has approved, such as its demo's, and only in apps that use Hana. In another wallet app, every transaction's fee is paid from this account's own NEAR." The network's name comes from the env's `network` (a table typed by it, as the NearBlocks link is), so a later network can't silently keep "testnet". The Stellar and EVM screens show none of it.
+- Why: on NEAR the key is the account (an implicit account named after its public key), so removing it elsewhere cuts off the app; an implicit account exists only after a first transfer (D731) and some wallets can't import one that doesn't; and Hana's relayer pays only for zero-deposit calls to allowlisted receivers (D732), so a user moving out must not expect free transactions.
+- Rejected: adding these to the shared warning (Stellar and EVM users would read things that aren't true of their chains); a link to a NEAR wallet (a fixed third-party link on the key screen is an endorsement Hana hasn't made).
+- Address impact: none.
+
+### D770. No API, audit or migration change: Home's derive stays one `key_exported` row with no chain, "every chain (Hana Home)"
+- Date 2026-11-12 · Status: decided while building 2026-11-12, to confirm · Built: nothing in `apps/api` but a comment (`home/login.ts`); tests "writes nothing … no message or request carries the NEAR key or its seed" (the derive body still has no `exportChain`)
+- Decision: as for Stellar and EVM, the event is written when the derive succeeds, before the user picks a key, with `chain` NULL and `app_id` NULL (D520, D98 item 6); the admin's Users page already reads it as "every chain (Hana Home)" and "one sign-in opens every chain", which now includes NEAR. `POST /v1/home/login` still refuses `exportChain` (`REFUSED_FIELDS`). No CHECK constraint is involved (NULL passes before and after migration 0019), so no migration.
+- Rejected: recording which key was shown (a second request after the derive, from a page that holds the key: a new endpoint and a new way to fail for a label the derive's row already covers).
+- Address impact: none.
+
+### D771. NEAR is offered for every opened wallet, also when Hana has no NEAR account on record for it
+- Date 2026-11-12 · Status: decided while building 2026-11-12, to confirm · Built: `home-export.ts` (the third button is always there once open); tests "an account Hana has no NEAR record of … still opens, with no mismatch"
+- Decision: the NEAR key comes from the same PRK as the other two, so every wallet has one whether or not an SDK 0.4.0 session ever recorded it (D755). The section shows and offers it in both cases; a NEAR account on record is compared with the wallet's own (D758) and a difference is said or stops the move under D582/D601's rules, while a missing NEAR record compares nothing, as for the other chains. The app's page above keeps saying "No NEAR account on record here yet" from the listing; the section's own row is the wallet's.
+- Rejected: offering NEAR only where a NEAR account is on record (it would hide a key the user owns, and a purged directory, the case Home exists for, has no record at all).
+- Address impact: none.
+
+### D772. The export window's NEAR screens stay as they are, without D769's notes (proposed follow-up)
+- Date 2026-11-12 · Status: decided while building 2026-11-12, to confirm · Built: nothing (`packages/web/src/auth/export-page.ts` unchanged)
+- Decision: this branch changes Hana Home only. The partner-opened export window (D724) shows NEAR with the shared warning alone. Adding `homeExportNearNotes` there is a small change to a separately reviewed flow, proposed as its own branch if the user wants the two to read the same.
+- Address impact: none.
+
+### D773. Reserved
+- Date 2026-11-12 · Status: reserved for this branch's follow-ups.
+
+### D774. Reserved
+- Date 2026-11-12 · Status: reserved for this branch's follow-ups.

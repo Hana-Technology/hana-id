@@ -851,6 +851,16 @@ button.home-copy {
   margin: 10px 0;
 }
 
+/* NEAR's own notes on its key screens (D769): a short list under the warning. */
+.home-export .home-export-notes {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+
+.home-export .home-export-notes li + li {
+  margin-top: 6px;
+}
+
 /* A printed page, or one saved as a PDF, never carries a key: the box is blank on paper whatever the page shows. */
 @media print {
   .secret {

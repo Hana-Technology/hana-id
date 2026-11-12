@@ -22,8 +22,10 @@ const HOME_LOGIN = `${API_URL}/v1/home/login`;
 const HIDDEN = '••••••••';
 const STELLAR_SEED = /^S[A-Z2-7]{55}$/u;
 const EVM_KEY = /^0x[0-9a-f]{64}$/u;
+/** NEAR's export form (D724): `ed25519:` + base58 of the 64-byte seed ‖ public key. */
+const NEAR_KEY = /^ed25519:[1-9A-HJ-NP-Za-km-z]{80,90}$/u;
 /** What a screenshot shows in a key's place: the same length, and plainly not a key. */
-const FAKE_KEY = { stellar: `S${'FAKEKEY'.repeat(8)}`.slice(0, 56), evm: `0x${'FAKE'.repeat(16)}` } as const;
+const FAKE_KEY = { stellar: `S${'FAKEKEY'.repeat(8)}`.slice(0, 56), evm: `0x${'FAKE'.repeat(16)}`, near: `ed25519:${'FAKEKEY'.repeat(13)}`.slice(0, 96) } as const;
 const G = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 
@@ -70,7 +72,7 @@ async function confirm(home: Page): Promise<void> {
 }
 
 /** Puts a fake key of the same length in the box (after the test read the real one), for a screenshot. */
-async function fakeKey(home: Page, chain: 'stellar' | 'evm'): Promise<void> {
+async function fakeKey(home: Page, chain: 'stellar' | 'evm' | 'near'): Promise<void> {
   await section(home).secret.evaluate((el, text) => {
     el.textContent = text;
   }, FAKE_KEY[chain]);
@@ -87,6 +89,7 @@ async function expectNoKey(home: Page, ...known: string[]): Promise<void> {
   for (const where of [text, html, fields]) {
     expect(where).not.toMatch(/\bS[A-Z2-7]{55}\b/u);
     expect(where).not.toMatch(/\b0x[0-9a-f]{64}\b/u);
+    expect(where).not.toMatch(/ed25519:[1-9A-HJ-NP-Za-km-z]{80,90}/u);
     for (const k of known) expect(where.includes(k)).toBe(false);
   }
 }
@@ -161,6 +164,8 @@ test('a wallet made by a partner login is opened in Hana Home and its Stellar ke
   // The addresses are worked out in the page from the derived key: the wallet the partner login opened.
   await expect(home.locator('#home-export-address-stellar')).toHaveText(wallet.stellar);
   await expect(home.locator('#home-export-address-evm')).toHaveText(wallet.evm);
+  // The NEAR account too (D768): the implicit account the partner login's SDK 0.4.0 session has.
+  await expect(home.locator('#home-export-address-near')).toHaveText((wallet as { near?: string }).near ?? 'no NEAR account from the login');
   await expect(home.locator('#home-export-mismatch')).toHaveCount(0);
   // One derive, relayed once, for this user.
   expect(homeLogins(requests)).toBe(1);
@@ -336,6 +341,7 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
   const app = await newApp({ name: 'Sodax', scopeId });
   await openPartner(page, app);
   const wallet = await login(page);
+  const walletNear = (wallet as { near?: string }).near ?? 'no NEAR account from the login';
   await page.goto('about:blank');
 
   // The listing is routed (so its addresses can be wrong on purpose); the derive is the API's own.
@@ -380,6 +386,7 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
   derive.release();
   await expect(s.title).toHaveText('Your wallet is open', { timeout: 20_000 });
   await expect(home.locator('#home-export-address-stellar')).toHaveText(wallet.stellar);
+  await expect(home.locator('#home-export-address-near')).toHaveText(walletNear);
   await expect(home.locator('#home-export-mismatch')).toHaveCount(0);
   await shots(home, 'h8-11-wallet-open', browserName);
 
@@ -405,6 +412,23 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
   await fakeKey(home, 'stellar');
   await shots(home, 'h8-16-key-shown-stellar', browserName);
   await expect(home.getByRole('button', { name: 'Hide key', exact: true })).toBeVisible();
+
+  // The NEAR key (D768): the same safeguards, NEAR's own notes, and the key opens the login's implicit account.
+  await home.locator('#home-export-back').click();
+  await home.locator('#home-export-near').click();
+  await expect(s.title).toHaveText('Your NEAR key');
+  await expect(home.locator('#home-export-near-notes li')).toHaveCount(3);
+  await expect(home.locator('#home-export-near-notes')).toContainText('Choose NEAR testnet in the other wallet app');
+  await expect(home.locator('#home-export-continue')).toBeDisabled();
+  await shots(home, 'h8-13b-confirm-near', browserName);
+  await confirm(home);
+  await expect(s.secret).toHaveText(HIDDEN);
+  await expectNoKey(home);
+  await guardedClick(home, 'Show key');
+  await expect(s.secret).toHaveText(NEAR_KEY);
+  expect(addressOfExport('near', (await s.secret.textContent()) ?? '')).toBe(walletNear);
+  await fakeKey(home, 'near');
+  await shots(home, 'h8-16b-key-shown-near', browserName);
 
   // Locked by the user.
   await home.locator('#home-export-lock').click();

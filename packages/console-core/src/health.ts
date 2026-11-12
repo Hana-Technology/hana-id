@@ -50,6 +50,39 @@ export interface ApiSystemStatus {
   usageCapture?: boolean;
   /** The `GET /v1/governance` snapshot (the API's 10 s cache), or why it couldn't be read. */
   governance: { ok: true; snapshot: Record<string, unknown> } | { ok: false; code: string };
+  /** The NEAR meta-transaction relay (D784). Absent from an API older than this field. */
+  nearRelay?: NearRelayStatus;
+}
+
+/**
+ * The NEAR meta-transaction relay as the API sees it (D784–D786), for the admin's "NEAR relay" tile: whether it is on,
+ * the relay account's balance and keys, and the day's spend. Amounts are yoctoNEAR (decimal strings), the account a
+ * public name from the manifest, keys public keys only (the API derives them from its secret and compares them itself).
+ */
+export interface NearRelayStatus {
+  /**
+   * `off`: no relay here (no `near.relay`, empty `receivers`, or not testnet); `bad_config`: NEAR_RELAY is set but the
+   * API refuses it; `no_keys`: NEAR_RELAY_KEYS isn't set (the relay's off switch); `bad_keys`: it is unreadable,
+   * repeats a key or shares one with a relayer pool; `on`: the relay serves. Every state but `on` answers
+   * `503 relayer_unconfigured` on the relay's routes.
+   */
+  state: 'off' | 'bad_config' | 'no_keys' | 'bad_keys' | 'on';
+  /** Why it is off (state `off` only). */
+  offReason: 'none' | 'no_receivers' | 'not_testnet' | null;
+  /** When the API read it (ms). */
+  readAt: number;
+  /** `near.relay.account`; null without a readable config. */
+  account: string | null;
+  /** `lowBalanceNear`, `dailyBudgetNear` (yocto) and the budget alert's share (%); null without a readable config. */
+  lowBalanceYocto: string | null;
+  dailyBudgetYocto: string | null;
+  budgetAlertPct: number | null;
+  /** The account on chain (`view_account`, `view_access_key_list`); null when not read (off, bad_config). */
+  chain: { ok: true; exists: boolean; availableYocto: string; fullAccessKeys: number } | { ok: false; code: string } | null;
+  /** The API's relay keys against the account's full-access keys (state `on` only): how many, and the public keys missing. */
+  keys: { configured: number; missing: string[] } | null;
+  /** The UTC day's spend (the budget's RateLimiter, read only); null when not read. */
+  spend: { ok: true; day: string; spentYocto: string } | { ok: false; code: string } | null;
 }
 
 /** `StaffRpc.health`: the console's view of itself. */

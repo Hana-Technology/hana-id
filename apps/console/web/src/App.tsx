@@ -1,6 +1,6 @@
 // The partner console's routes (docs/batch-c-spec.md "Console BFF routes"). Client-only: the Worker serves index.html
 // for every path that isn't an asset or `/api/*`. An app's sections are nested routes under `/orgs/:org/apps/:app`
-// (its overview is the app's own URL, as before).
+// (its overview is the app's own URL, as before). Every page shares one toast stack (toast.tsx).
 import { Route, Routes } from 'react-router-dom';
 import { ActionPage } from './pages/Action.tsx';
 import { AppLayout, AppsList } from './pages/Apps.tsx';
@@ -23,9 +23,11 @@ import { NotFound } from './pages/NotFound.tsx';
 import { Upgrades } from './pages/Upgrades.tsx';
 import { Usage } from './pages/Usage.tsx';
 import { Users } from './pages/Users.tsx';
+import { ToastProvider } from './toast.tsx';
 
 export function App() {
   return (
+    <ToastProvider>
     <Routes>
       <Route path="/signin" element={<SignIn />} />
       <Route path="/invite" element={<Invite />} />
@@ -58,5 +60,6 @@ export function App() {
       </Route>
       <Route path="*" element={<Home />} />
     </Routes>
+    </ToastProvider>
   );
 }

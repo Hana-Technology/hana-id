@@ -255,7 +255,7 @@ describe('EmailLogin', () => {
   it('a frozen org can’t turn it on, says why', async () => {
     signedIn({ ...base, emailOn: false, scope: owner }, 'owner', 'frozen');
     at(PAGE);
-    expect(await screen.findByText(/can’t be turned on while Hana has frozen/u)).toBeTruthy();
+    expect(await screen.findByText(/can’t be turned on while Journear has frozen/u)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Review and confirm/u })).toBeNull();
   });
 

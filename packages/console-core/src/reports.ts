@@ -127,7 +127,7 @@ export type ReportRowKind = 'app' | 'scope' | 'home';
 /** What a report row is about. A row from before migrations-usage 0008 names no kind: an app's, else a scope's owner actions. */
 export const reportRowKind = (r: Pick<ReportSqlRow, 'kind' | 'app_id'>): ReportRowKind => (r.kind === 'home' ? 'home' : r.app_id !== null ? 'app' : 'scope');
 /** The label of a scope's Hana Home line, wherever a report or a statement shows it. */
-export const HOME_LOGINS_LABEL = 'Hana Home logins';
+export const HOME_LOGINS_LABEL = 'Passport Home logins';
 
 /** A report row as the RPC's UsageRow (docs/batch-c-spec.md "Types"; the C12 additions are optional). */
 export function usageRowOf(orgId: string, r: ReportSqlRow): UsageRow {
@@ -364,7 +364,7 @@ export function statementOf(orgId: string, r: StatementSqlRow): StatementWithTot
 
 const isTestNetwork = (network: string): boolean => network !== 'mainnet';
 export const TESTNET_PRICE_NOTE = 'Testnet usage, valued at the mainnet NEAR/USD price (D93).';
-export const HOME_LOGINS_NOTE = 'Hana Home logins: users of these apps opening their wallet from Hana Home. Each is billed at its gas, like a login.';
+export const HOME_LOGINS_NOTE = 'Passport Home logins: users of these apps opening their wallet from Passport Home. Each is billed at its gas, like a login.';
 export const REJECTED_NOTE = 'Relayed-then-rejected gas is not billed by default (D91); it is shown on its own line.';
 
 /** What the on-screen statement and the PDF show, in order: the same labels and values in both (D92). */
@@ -387,7 +387,7 @@ export function statementView(s: { csvSha256: string; pdfSha256?: string; totals
   if (home) notes.push(HOME_LOGINS_NOTE);
   if (isTestNetwork(t.network)) notes.unshift(TESTNET_PRICE_NOTE);
   return {
-    title: `Hana ID usage statement ${t.month}`,
+    title: `Journear Passport usage statement ${t.month}`,
     header: [
       ['Organisation', `${t.orgName} (${t.orgId})`],
       ['Month', t.month],

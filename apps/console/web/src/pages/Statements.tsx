@@ -9,7 +9,7 @@ import type { StatementMeta, StatementTotals, StatementView } from '@hana-id/con
 import { Fragment, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useApi, utcMonth, when } from '../lib.tsx';
-import { CopyButton, Empty, ErrorNote, Loading, PageHeader, Panel } from '../ui.tsx';
+import { Callout, CopyButton, Empty, ErrorNote, Field, Loading, PageHeader, Panel } from '../ui.tsx';
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/u;
 
@@ -58,7 +58,7 @@ export function Statements() {
     <>
       <PageHeader
         title="Statements"
-        description="Hana issues each month’s statement from the 3rd of the next month, once every relayed event is settled. A statement is frozen: its CSV, PDF and on-screen view show the same totals, and its hash (the SHA-256 of the CSV) identifies it on invoices."
+        description="Journear issues each month’s statement from the 3rd of the next month, once every relayed event is settled. A statement is frozen: its CSV, PDF and on-screen view show the same totals, and its hash (the SHA-256 of the CSV) identifies it on invoices."
       />
       {list.error && <ErrorNote error={list.error} onRetry={list.reload} />}
       {!list.data && !list.error && <Loading />}
@@ -68,8 +68,8 @@ export function Statements() {
         </Empty>
       )}
       {list.data && sorted.length > 0 && (
-        <div className="table-wrap">
-          <table className="table">
+        <div className="jp-table-wrap">
+          <table className="jp-table">
             <thead>
               <tr>
                 <th>Month</th>
@@ -86,7 +86,7 @@ export function Statements() {
                     <Link to={`/orgs/${org}/statements/${s.month}`}>{s.month}</Link>
                   </td>
                   <td>{when(s.asOf)}</td>
-                  <td>{when(s.issuedAt)} by Hana</td>
+                  <td>{when(s.issuedAt)} by Journear</td>
                   <td className="mono small hash-cell">{s.csvSha256}</td>
                   <td>
                     <Downloads org={org!} s={s} />
@@ -104,10 +104,7 @@ export function Statements() {
           statement’s Tgas and NEAR; for any other month, as of now. A line starting <code>#&nbsp;incomplete</code> at the end means the file was cut short: download it again.
         </p>
         <div className="form form-inline">
-          <label className="field">
-            <span className="field-label">Month</span>
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-          </label>
+          <Field label="Month">{(c) => <input {...c} className="jp-input" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />}</Field>
           {MONTH_RE.test(month) ? (
             <a href={ledgerFile(org!, month, issued?.asOf)} download>
               Download the {month} ledger CSV{issued ? ' (as of its statement)' : ''}
@@ -131,9 +128,9 @@ export function StatementPage() {
     return (
       <>
         {back}
-        <p className="callout callout-error" role="alert">
+        <Callout tone="danger" role="alert">
           That isn’t a month (YYYY-MM). Pick a statement from the list.
-        </p>
+        </Callout>
       </>
     );
   if (r.error)
@@ -141,7 +138,7 @@ export function StatementPage() {
       <>
         {back}
         {r.error.status === 404 ? (
-          <Empty title={`No statement for ${month}: Hana hasn’t issued it yet.`}>
+          <Empty title={`No statement for ${month}: Journear hasn’t issued it yet.`}>
             <p>Statements are issued from the 3rd of the following month. Usage shows the month’s running figures.</p>
           </Empty>
         ) : (
@@ -168,15 +165,17 @@ export function StatementPage() {
           </Fragment>
         ))}
         <dt>Issued</dt>
-        <dd>{when(s.issuedAt)} by Hana</dd>
+        <dd>{when(s.issuedAt)} by Journear</dd>
       </dl>
-      <div className="table-wrap section">
-        <table className="table">
+      <div className="jp-table-wrap section">
+        <table className="jp-table">
           <thead>
             <tr>
               <th>App or scope</th>
               {view.tableColumns.map((c) => (
-                <th key={c}>{c}</th>
+                <th key={c} className="num">
+                  {c}
+                </th>
               ))}
             </tr>
           </thead>
@@ -192,7 +191,7 @@ export function StatementPage() {
                 <tr key={`${i}:${row.label}`}>
                   <td>{row.label}</td>
                   {row.cells.map((c, j) => (
-                    <td key={j} className="mono">
+                    <td key={j} className="mono num">
                       {c}
                     </td>
                   ))}

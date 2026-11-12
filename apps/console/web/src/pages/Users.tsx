@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApi, when } from '../lib.tsx';
-import { CopyButton, Empty, ErrorNote, Loading, PageHeader, Panel, ShortValue } from '../ui.tsx';
+import { CopyButton, Empty, ErrorNote, Field, Loading, PageHeader, Panel, ShortValue } from '../ui.tsx';
 
 interface PartnerUser {
   userId: string;
@@ -98,7 +98,7 @@ function UserDetail({ org, userId, onClose }: { org: string; userId: string; onC
       title="User"
       className="section"
       actions={
-        <button type="button" className="btn btn-quiet btn-small" onClick={onClose}>
+        <button type="button" className="jp-btn jp-btn-ghost jp-btn-sm" onClick={onClose}>
           Close
         </button>
       }
@@ -157,7 +157,7 @@ export function Users() {
   const r = useApi<{ users: PartnerUser[]; next?: string }>(`/api/orgs/${org}/users${qs ? `?${qs}` : ''}`);
   return (
     <>
-      <PageHeader title="Users" description="The people who have signed in to your apps. Each has a User ID (the identity token’s sub, the id your backend stores) and a short Support ID to quote to Hana. An email address appears only once the user shares it with one of your apps." />
+      <PageHeader title="Users" description="The people who have signed in to your apps. Each has a User ID (the identity token’s sub, the id your backend stores) and a short Support ID to quote to Journear. An email address appears only once the user shares it with one of your apps." />
       <form
         className="form form-inline filters"
         onSubmit={(e) => {
@@ -166,17 +166,16 @@ export function Users() {
           setQuery(search.trim());
         }}
       >
-        <label className="field field-grow">
-          <span className="field-label">Find by wallet address, User ID, Support ID or full email address</span>
-          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="0x…, G…, a NEAR account, u1_…, HANA-… or an email address" />
-        </label>
-        <button type="submit" className="btn">
+        <Field className="field-grow" label="Find by wallet address, User ID, Support ID or full email address">
+          {(c) => <input {...c} className="jp-input" type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="0x…, G…, a NEAR account, u1_…, HANA-… or an email address" />}
+        </Field>
+        <button type="submit" className="jp-btn jp-btn-secondary">
           Search
         </button>
         {query && (
           <button
             type="button"
-            className="btn btn-quiet"
+            className="jp-btn jp-btn-ghost"
             onClick={() => {
               setSearch('');
               setQuery('');
@@ -198,8 +197,8 @@ export function Users() {
               <p>{query ? 'Check the address or ID, or clear the search.' : 'Users appear here after they first sign in to one of your apps.'}</p>
             </Empty>
           ) : (
-            <div className="table-wrap">
-              <table className="table">
+            <div className="jp-table-wrap tall">
+              <table className="jp-table">
                 <thead>
                   <tr>
                     <th scope="col">User ID</th>
@@ -215,7 +214,7 @@ export function Users() {
                   {r.data.users.map((u) => (
                     <tr key={u.userId}>
                       <td>
-                        <button type="button" className="btn-link mono small nowrap" aria-label={`Open ${u.userId}`} onClick={() => setOpen(u.userId)}>
+                        <button type="button" className="link-btn mono small nowrap" aria-label={`Open ${u.userId}`} onClick={() => setOpen(u.userId)}>
                           {u.userId}
                         </button>{' '}
                         <CopyButton value={u.userId} label="User ID" />
@@ -239,7 +238,7 @@ export function Users() {
             </div>
           )}
           {r.data.next && (
-            <button type="button" className="btn load-more" onClick={() => setCursor(r.data!.next)}>
+            <button type="button" className="jp-btn jp-btn-secondary load-more" onClick={() => setCursor(r.data!.next)}>
               Next page
             </button>
           )}

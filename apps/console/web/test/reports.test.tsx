@@ -146,7 +146,7 @@ describe('usage', () => {
     // No rate yet: USD is "—", never 0.
     expect(within(owner).getAllByRole('cell')[18]!.textContent).toBe('—');
     // The scope's Hana Home logins: their own line, apart from its owner actions, with their count, gas and cost.
-    const home = within(screen.getByText('Hana Home logins, scope s1').closest('tr')!).getAllByRole('cell').map((c) => c.textContent);
+    const home = within(screen.getByText('Passport Home logins, scope s1').closest('tr')!).getAllByRole('cell').map((c) => c.textContent);
     expect([home[2], home[6], home[9], home[13], home[16], home[18]]).toEqual(['0', '0', '6', '231', '0.0231', '0.05775']);
     expect(screen.queryByRole('columnheader', { name: 'After the statement' })).toBeNull();
     expect(writeButtons()).toEqual([]);
@@ -167,7 +167,7 @@ describe('usage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show' }));
     expect(await screen.findByRole('columnheader', { name: 'After the statement' })).toBeTruthy();
     expect(calls.map((c) => c.url)).toContain('/api/orgs/org_a/usage?from=2026-01-01&to=2026-03-31&by=month&apps=app_1');
-    expect(screen.getByText(/owner actions and Hana Home logins \(which belong to a scope, not an app\) are left out/u)).toBeTruthy();
+    expect(screen.getByText(/owner actions and Passport Home logins \(which belong to a scope, not an app\) are left out/u)).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Month' })).toBeTruthy();
   });
 
@@ -196,7 +196,7 @@ describe('usage', () => {
     routes[DEFAULT_USAGE] = { body: { rows: [ROW] } };
     at('/orgs/org_a/usage');
     expect(await screen.findByText('app_1')).toBeTruthy();
-    expect(screen.getByText(/Hana has frozen this organisation/u)).toBeTruthy();
+    expect(screen.getByText(/Journear has frozen this organisation/u)).toBeTruthy();
   });
 });
 
@@ -228,8 +228,8 @@ describe('statements', () => {
     expect(downloads).not.toContain('/api/orgs/org_a/statements/2026-02.pdf');
     // Nothing was fetched for the downloads: the browser follows the links, it builds no file.
     expect(calls.map((c) => c.url).filter((u) => /\.(csv|pdf)/u.test(u))).toEqual([]);
-    // Issued "by Hana", never a staff address even if one were sent.
-    expect(screen.getAllByText(/by Hana/u).length).toBe(2);
+    // Issued "by Journear", never a staff address even if one were sent.
+    expect(screen.getAllByText(/by Journear/u).length).toBe(2);
     noPersonAddress();
     expect(writeButtons()).toEqual([]);
   });
@@ -259,7 +259,7 @@ describe('statements', () => {
   });
 
   const VIEW = {
-    title: 'Hana ID usage statement 2026-01',
+    title: 'Journear Passport usage statement 2026-01',
     header: [
       ['Organisation', 'Acme (org_a)'],
       ['Month', '2026-01'],
@@ -283,7 +283,7 @@ describe('statements', () => {
     signedIn('viewer', 'frozen');
     routes['/api/orgs/org_a/statements/2026-01'] = { body: { statement: { ...JAN, totals: {} }, view: VIEW } };
     at('/orgs/org_a/statements/2026-01');
-    expect(await screen.findByRole('heading', { name: 'Hana ID usage statement 2026-01' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Journear Passport usage statement 2026-01' })).toBeTruthy();
     expect(screen.getByText('Acme (org_a)')).toBeTruthy();
     expect(screen.getAllByText(SHA_CSV).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(SHA_PDF)).toBeTruthy();

@@ -4,21 +4,25 @@
 // The CSP is `script-src 'self'; style-src 'self'`: the build must emit no inline script or style, so the modulepreload
 // polyfill (an inline-capable helper) is off and every asset is a file (scripts/test/spa-build.test.ts builds and checks).
 // index.html gets this checkout's build id as `<meta name="hana-build">` (scripts/build-stamp.ts, D406).
-// Hana's fonts (packages/brand, D426) come in through the stylesheet's @import and are emitted as /assets/*.woff2; their
-// licence (SIL OFL 1.1) is emitted beside them as /assets/OFL.txt.
+// Journear Passport's fonts (packages/brand, D426 as amended by D765: Archivo, IBM Plex Sans, IBM Plex Mono) come in
+// through the stylesheet's @import and are emitted as /assets/*.woff2; their licences (SIL OFL 1.1, one per family,
+// `FONT_LICENCE_FILES`) are emitted beside them as /assets/OFL-*.txt.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { FONT_LICENCE_FILES } from '@hana-id/brand';
 import { type Plugin, defineConfig } from 'vite';
 import { buildStamp } from './scripts/build-stamp.ts';
 
-/** Emits the fonts' licence next to them (build only). */
+/** Emits the fonts' licences next to them (build only). */
 function fontLicence(): Plugin {
   return {
     name: 'hana-font-licence',
     apply: 'build',
     generateBundle() {
-      const source = readFileSync(fileURLToPath(new URL('../../packages/brand/fonts/OFL.txt', import.meta.url)), 'utf8');
-      this.emitFile({ type: 'asset', fileName: 'assets/OFL.txt', source });
+      for (const file of FONT_LICENCE_FILES) {
+        const source = readFileSync(fileURLToPath(new URL(`../../packages/brand/fonts/${file}`, import.meta.url)), 'utf8');
+        this.emitFile({ type: 'asset', fileName: `assets/${file}`, source });
+      }
     },
   };
 }

@@ -771,13 +771,10 @@ export interface AmountHeadline {
   readonly unit: string;
 }
 
-/** A Stellar asset code the headline may show as a unit: an asset code's own characters only. */
-const ASSET_CODE = /^[A-Za-z0-9]{1,12}$/u;
-
 /**
  * The amount to put first, or null. Only where one number says what the request sends and nothing else moves value:
- * an EVM transfer with no call data on a chain Journear names; a Stellar transaction of one payment or one account
- * creation (no operation source of its own); a NEAR transaction of transfers only. Never for a contract call, whose
+ * an EVM transfer with no call data on a chain Journear names; a Stellar transaction of one native XLM payment or one
+ * account creation (no operation source of its own); a NEAR transaction of transfers only. Never for a contract call, whose
  * native value says nothing about the tokens it moves, nor a message, typed data or an authorization. It repeats a
  * fact the rows show (the same decoded value), never replaces one.
  */
@@ -793,9 +790,10 @@ export function amountHeadline(decoded: DecodedApproval): AmountHeadline | null 
       const op = ops.length === 1 ? ops[0] : undefined;
       if (!op || op.source) return null;
       if (op.type === 'createAccount') return { value: formatUnits(op.startingBalance, 7), unit: 'XLM' };
-      if (op.type !== 'payment') return null;
-      const code = op.asset === 'native' ? 'XLM' : (op.asset.split(':')[0] ?? '');
-      return ASSET_CODE.test(code) ? { value: formatUnits(op.amount, 7), unit: code } : null;
+      // Native XLM only. A credit asset's code is chosen by its issuer, so any account can issue "USDC" or even
+      // "XLM": a bare code in the headline would vouch for an asset the popup can't verify. The rows show it in full,
+      // code and issuer, as before.
+      return op.type === 'payment' && op.asset === 'native' ? { value: formatUnits(op.amount, 7), unit: 'XLM' } : null;
     }
     case 'near_tx': {
       const actions = decoded.tx.actions;

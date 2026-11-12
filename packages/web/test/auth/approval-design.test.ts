@@ -41,7 +41,9 @@ describe('the amount first (amountHeadline)', () => {
 
   it('a Stellar transaction of one payment or one account creation; nothing for several operations, account control or another source', () => {
     expect(amountHeadline(stellar([paymentOp()]))).toEqual({ value: '1', unit: 'XLM' });
-    expect(amountHeadline(stellar([Operation.payment({ destination: OTHER, asset: new Asset('USDC', ISSUER), amount: '2.5' })]))).toEqual({ value: '2.5', unit: 'USDC' });
+    // A credit asset's code is its issuer's choice (anyone can issue "USDC", or "XLM"): no headline, the rows show code and issuer.
+    expect(amountHeadline(stellar([Operation.payment({ destination: OTHER, asset: new Asset('USDC', ISSUER), amount: '2.5' })]))).toBeNull();
+    expect(amountHeadline(stellar([Operation.payment({ destination: OTHER, asset: new Asset('XLM', ISSUER), amount: '2.5' })]))).toBeNull();
     expect(amountHeadline(stellar([Operation.createAccount({ destination: OTHER, startingBalance: '3' })]))).toEqual({ value: '3', unit: 'XLM' });
     expect(amountHeadline(stellar([paymentOp(), paymentOp()]))).toBeNull();
     expect(amountHeadline(stellar([addSignerOp()]))).toBeNull();

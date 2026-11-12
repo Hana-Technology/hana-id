@@ -256,9 +256,9 @@ NEAR). Replace all the tarballs you use together (they depend on each other at `
 - Journear Passport's relay (gasless calls, testnet) sends only zero-deposit function calls to the receivers Journear allowlists; ask
   Journear to add your contract ([section 8, NEAR](#near-relay)).
 - Not yet NEAR: auto-approve policies (every NEAR request asks the user), the identity token's `wallets` (still
-  Stellar and EVM; prove a NEAR account with `hana.near.signMessage`), Passport Home's "Move this wallet", and the React
-  hooks (use `useHana().client.near`). The partner portal's Users page and Passport Home show a user's NEAR account once
-  they sign in through SDK 0.4.0.
+  Stellar and EVM; prove a NEAR account with `hana.near.signMessage`) and the React hooks (use
+  `useHana().client.near`). The partner portal's Users page and Passport Home show a user's NEAR account once they sign
+  in through SDK 0.4.0; Passport Home's "Move this wallet" offers the NEAR key too.
 
 **Upgrading from 0.3.1 to 0.4.0:**
 
@@ -1118,8 +1118,6 @@ own reason for a `delegate_rejected`: Journear finds them from `data.requestId`.
 - **Mainnet for test apps**, and Journear Passport's relay on mainnet at all: it runs on testnet only.
 - **NEAR in the identity token.** Its `wallets` stay Stellar and EVM, so a backend that checks their shape keeps
   working; prove the NEAR account with `signMessage` (above).
-- **Passport Home's "Move this wallet"** offers the Stellar and EVM keys only; `hana.exportKey('near')` exports the NEAR key
-  from your app.
 - **React hooks.** `useWallet` and `useHana().exportKey` take `'stellar'` and `'evm'` only: read
   `useHana().addresses?.near` and call `useHana().client?.near` and `client.exportKey('near')`
   ([section 10](#10-react)).

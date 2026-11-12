@@ -97,6 +97,16 @@
   max-width: 480px;
 }
 
+/* NEAR's own notes (D780): an info alert with a short list, on NEAR's step 2 and 3 only. */
+.home-export-notes {
+  margin: var(--jp-space-1) 0 0;
+  padding-left: var(--jp-space-5);
+}
+
+.home-export-notes li + li {
+  margin-top: var(--jp-space-1);
+}
+
 .home-export .home-problem p {
   margin: 0;
 }

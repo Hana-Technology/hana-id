@@ -11,11 +11,11 @@
 //   3. the path is the identity's own, or its account root's once both NEAR providers confirm it (export-path.ts);
 //   4. one `POST /v1/home/login` (one `create_session_and_derive`); the answer is decrypted with the pinned CKD key
 //      and the pairing check, for that path. The request is never sent a second time by the page;
-//   5. the wallet's two addresses are worked out and shown; the user picks a chain, types EXPORT, and uses Show key or
-//      Copy key.
+//   5. the wallet's three addresses (Stellar, EVM, NEAR) are worked out and shown; the user picks a chain, types EXPORT,
+//      and uses Show key or Copy key. NEAR's screens add what is true of NEAR alone (homeExportNearNotes, D779, D780).
 //
 // SECURITY (what holds a secret, and for how long):
-// - PRK, the secret both chain keys come from: one Uint8Array, zeroed HOME_PRK_LIFETIME_MS (5 minutes) after the
+// - PRK, the secret every chain key comes from: one Uint8Array, zeroed HOME_PRK_LIFETIME_MS (5 minutes) after the
 //   derive, on "Lock now", when the user leaves the app's page, signs out or signs in as someone else, and when the
 //   page is hidden for good (pagehide). The CKD answer's secret is zeroed as soon as PRK is taken from it.
 // - A chain's private key: derived from PRK inside one Show or Copy and zeroed in the same call; only its export
@@ -82,7 +82,11 @@ export const HOME_EXPORT_CHECK_MS = 1_000;
 const LOGIN_CHILD = '/login?mode=home';
 const RELAY_WAIT_S = 25;
 const CHILD_WATCH_MS = 500;
-const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM' } as const;
+const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM', near: 'NEAR' } as const;
+/** The chains whose key the section shows, in the order of its buttons (D779). */
+export type HomeExportChain = keyof typeof CHAIN_NAMES;
+/** The env's NEAR network, as the other wallet app names it. */
+const NEAR_NETWORK_NAME: Readonly<Record<HanaEnv['network'], string>> = Object.freeze({ testnet: 'NEAR testnet' });
 export const HOME_EXPORT_TITLE = 'Move this wallet to another wallet app';
 /** What the collapsed section says under its heading, and its button: the same shape as "Devices and auto-approve". */
 export const HOME_EXPORT_ABOUT = `${BRAND.home} can show you the private key of your wallet in this app, so that you can import it into another wallet app.`;
@@ -113,6 +117,22 @@ export const HOME_EXPORT_OFF_TEXT: Readonly<Record<HomeExportOff, string>> = Obj
   none: `${BRAND.company} can’t open this wallet from here. If the app still runs, use the app itself.`,
   unknown: `${BRAND.company} hasn’t checked this app yet. Use “Check now” above, then come back here.`,
 });
+
+/** The heading of NEAR's notes (D780). */
+export const HOME_EXPORT_NEAR_NOTES_TITLE = 'Before you move a NEAR account';
+
+/**
+ * What is true of the NEAR key alone, on its confirmation and reveal screens (D780): the key is the account (an implicit
+ * account, named after its own public key), the account may not exist on chain yet, and Journear pays fees only for
+ * the calls its relayer allows. The warning above them (EXPORT_WARNING) is the one every chain gets.
+ */
+export function homeExportNearNotes(network: HanaEnv['network']): readonly string[] {
+  return [
+    'This key is the NEAR account itself: the account’s name above is made from the key. Whoever imports it into a NEAR wallet app has full control of the account. If that app removes this key from the account, this app loses the wallet too.',
+    `Choose ${NEAR_NETWORK_NAME[network]} in the other wallet app. An account that was never sent any NEAR doesn’t exist on NEAR yet: until it gets its first NEAR, a wallet app may show it as not found or not import it.`,
+    `${BRAND.company} pays NEAR fees only for a few calls it has approved, such as its demo’s, and only in apps that use ${BRAND.product}. In another wallet app, every transaction’s fee is paid from this account’s own NEAR.`,
+  ];
+}
 
 export const HOME_EXPORT_END_TEXT = Object.freeze({
   expired: 'Your key was erased from this page: it is kept for 5 minutes only.',
@@ -153,7 +173,7 @@ export interface HomeExportDeps {
 export interface HomeExport {
   readonly state: HomeExportState;
   /** The chain whose key is on the confirm or reveal screen. */
-  readonly chain: 'stellar' | 'evm' | null;
+  readonly chain: HomeExportChain | null;
   readonly errorCode: string | null;
   readonly childName: string | null;
   readonly awaitingChild: boolean;
@@ -251,13 +271,13 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
 
   /** The opened wallet's secret (memory only), its addresses, and when it is erased (server-corrected ms). */
   let prk: Uint8Array | null = null;
-  let addresses: { stellar: string; evm: string } | null = null;
+  let addresses: Record<HomeExportChain, string> | null = null;
   /** A recorded address that differs from the wallet's own. */
   let mismatch = false;
   let deadline = Number.POSITIVE_INFINITY;
   let prkTimer: ReturnType<typeof setTimeout> | null = null;
   let checker: ReturnType<typeof setInterval> | null = null;
-  let chain: 'stellar' | 'evm' | null = null;
+  let chain: HomeExportChain | null = null;
   let reveal: KeyReveal | null = null;
 
   // ---- view parts ----
@@ -283,13 +303,25 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
   };
   /** The chosen key's address as the system's key/value row (mono value). */
   const account = (address: string): HTMLElement => d.h('dl', { class: 'jp-kv account' }, d.h('dt', {}, 'For'), d.h('dd', {}, d.h('code', { class: 'mono' }, address)));
-  const addressRows = (a: { stellar: string; evm: string }): HTMLElement =>
+  const addressRows = (a: Record<HomeExportChain, string>): HTMLElement =>
     d.h(
       'div',
       { class: 'home-addresses', attrs: { id: 'home-export-addresses' } },
       d.h('div', { class: 'home-address' }, d.h('p', { class: 'home-address-label' }, 'Stellar'), d.h('p', { class: 'mono home-address-value', attrs: { id: 'home-export-address-stellar' } }, a.stellar)),
       d.h('div', { class: 'home-address' }, d.h('p', { class: 'home-address-label' }, 'EVM (Ethereum and similar networks)'), d.h('p', { class: 'mono home-address-value', attrs: { id: 'home-export-address-evm' } }, a.evm)),
+      d.h('div', { class: 'home-address' }, d.h('p', { class: 'home-address-label' }, 'NEAR'), d.h('p', { class: 'mono home-address-value', attrs: { id: 'home-export-address-near' } }, a.near)),
     );
+  /** NEAR's own notes (D780), an info alert on its confirmation and reveal screens only; null for the other chains. */
+  const nearNotes = (c: HomeExportChain): HTMLElement | null =>
+    c === 'near'
+      ? alert(
+          d,
+          'info',
+          { tag: 'div', class: 'home-export-near', attrs: { id: 'home-export-near-notes' } },
+          d.h('b', {}, HOME_EXPORT_NEAR_NOTES_TITLE),
+          d.h('ul', { class: 'home-export-notes' }, ...homeExportNearNotes(env.network).map((t) => d.h('li', {}, t))),
+        )
+      : null;
 
   // ---- erasing ----
   function wipePending(): void {
@@ -824,8 +856,8 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
             ? alert(d, 'warning', { class: 'warn', attrs: { id: 'home-export-mismatch' } }, `The address ${BRAND.company} had on record for you in this app is different from this wallet’s. The addresses below come from the wallet’s own key, worked out in this page.`)
             : null,
           addressRows(addresses),
-          d.h('p', {}, 'Choose the key to show: the Stellar key for a Stellar wallet app, the EVM key for an Ethereum-style wallet app.'),
-          d.h('div', { class: 'actions start' }, button('Stellar key', 'home-export-stellar', () => choose('stellar')), button('EVM key', 'home-export-evm', () => choose('evm'))),
+          d.h('p', {}, 'Choose the key to show: the Stellar key for a Stellar wallet app, the EVM key for an Ethereum-style wallet app, the NEAR key for a NEAR wallet app.'),
+          d.h('div', { class: 'actions start' }, button('Stellar key', 'home-export-stellar', () => choose('stellar')), button('EVM key', 'home-export-evm', () => choose('evm')), button('NEAR key', 'home-export-near', () => choose('near'))),
           d.h('p', { class: 'muted' }, `The wallet is locked again 5 minutes after you signed in, when you leave this app’s page, and when you close or reload ${BRAND.home}.`),
           d.h('div', { class: 'actions start' }, button('Lock now', 'home-export-lock', () => lock('locked'))),
         );
@@ -849,6 +881,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           account(addresses[picked]),
           d.h('p', {}, 'Your key is ready. Make sure nobody can see your screen.'),
           alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
+          nearNotes(picked),
           d.h('div', { class: 'jp-field' }, d.h('label', { class: 'jp-label', attrs: { for: 'home-export-confirm' } }, `Type ${EXPORT_CONFIRMATION} to continue`), input),
           d.h('div', { class: 'actions start' }, go, button('Back', 'home-export-back', back)),
         );
@@ -864,6 +897,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           title(`Your ${CHAIN_NAMES[picked]} key`),
           exportSteps(d, 3),
           account(addresses[picked]),
+          nearNotes(picked),
           r.out,
           r.ack,
           r.actions,
@@ -904,7 +938,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
    * One chain's export string, for one Show or Copy: the chain key is derived from the secret, turned into its string
    * and zeroed here, so it never outlives the call.
    */
-  function chainSecret(c: 'stellar' | 'evm'): string | null {
+  function chainSecret(c: HomeExportChain): string | null {
     if (prk === null) return null;
     const key = chainPrivateKey(prk, c, 0);
     try {
@@ -949,7 +983,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     render();
     focusTitle();
   }
-  function choose(c: 'stellar' | 'evm'): void {
+  function choose(c: HomeExportChain): void {
     if (state !== 'unlocked' || expired()) return;
     chain = c;
     state = 'confirm';

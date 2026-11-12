@@ -11576,3 +11576,13 @@ rule, protocol string or address changes: only what users read and how pages loo
   - **Fonts:** IBM Plex Sans 400 and 600 are self-hosted from Fontsource.
   - **Kept:** everything else keeps the Sodax look, with the new names in its text. Package names and symbols are unchanged.
   - Until the SDK is re-released and re-vendored, the vault iframe's title and the SDK's own messages in this sample still say Hana.
+
+### D777. Profile names (D710–D719) on the design system
+- Date 2026-11-12 · Status: asked for by the user (D765, applied to the profile names merged from `develop` the same day); the details decided while building, for the user to confirm · Built: `packages/web/src/auth/home-profile.ts`, `src/auth/css/home.css`, `apps/admin/public/app.js` (`namesUnavailable`); tests `packages/web/test/auth/home-profile.test.ts`, `home-page.test.ts`, `apps/admin/test-spa/profile-names.test.ts`
+- Decision:
+  - **Fields:** "Your name" has two fields, both marked optional, each with the hint "Up to 50 characters." They are checked on blur with the API's own rule (`normalizeProfileName`), and the error takes the hint's place.
+  - **Buttons:** Save is the one primary button. "Remove my name" is secondary; the danger button sits only in its confirmation. "Share my name with {App}" is secondary, because a page can list several apps.
+  - **Lists:** the shares and an app page's apps are setting rows in one card. The empty list uses the system's empty state.
+  - **Outcomes:** they stay inline as success alerts, not toasts, because they say when the change reaches the apps.
+  - **Unchanged:** behaviour, requests and codes.
+- Address impact: none.

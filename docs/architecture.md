@@ -947,13 +947,16 @@ computed from the session's on-chain path.
 
 Code: `packages/core/src/identity.ts` (`normalizeProfileName`), `apps/api/src/home/profile.ts`, `identity/name.ts`,
 `identity/token.ts`, `directory/read.ts`; the Home page (`packages/web/src/auth`); the SDK's `getProfile`
-(`packages/web/src/client`), React `useProfile`. A user's own first and last name, both optional, set in Hana Home and
+(`packages/web/src/client`), React `useProfile`. A user's own first and last name, both optional, set in Passport Home and
 shared per app.
 
-1. **Set.** Signed in to Hana Home, the user types a first and/or last name in "Your name"; `POST /v1/home/profile` stores
+1. **Set.** Signed in to Passport Home, the user types a first and/or last name in "Your name"; `POST /v1/home/profile` stores
    it for the sign-in identity (`home_profiles`, keyed by `(provider, sub)` as the wallet directory keys identities), so
    one Google or email login has one name in every scope. Each part is NFC, trimmed, at most 50 code points, one
-   display-safe line. "Remove my name" deletes it and every share of it.
+   display-safe line. "Remove my name" deletes it and every share of it. On the page (D777): both parts are fields
+   marked optional and checked on blur with the API's rule; Save is the one primary button; "Remove my name" is
+   secondary, and the danger button is only in its confirmation; the shares and an app's apps are setting rows;
+   outcomes are inline success alerts, refusals danger alerts; the styles are in `packages/web/src/auth/css/home.css`.
 2. **Share.** On an app's page in Home the user turns sharing on (`POST /v1/home/name-sharing`; off by default). The row
    (`name_shares`) is keyed by the app and the account's User ID in its scope (root.ts: a linked member's is its root's,
    confirmed on chain first, D661), and holds no copy of the name: it names the identity that shared it. Any identity of

@@ -69,46 +69,31 @@ body.popup {
 }
 
 .passport-badge .badge-mark {
-  width: 21px;
+  width: 23px;
   height: 20px;
   flex: none;
 }
 
-/* The mark (pageHtml): the brand teal frame and the stamp-orange chevron; on the dark scheme the white variant's frame. */
-.jp-mark .frame,
-.jp-lockup .frame {
-  fill: none;
-  stroke: var(--jp-primary);
+/* The mark and the lockup (pageHtml, D789): the teal card and the stamp-orange bracket in both schemes (the logo's own
+   colours, as its white variant keeps them); the lockup's type ink on light and white on the dark scheme. */
+.jp-mark .card,
+.jp-lockup .card {
+  fill: var(--jp-teal-500);
 }
 
-.jp-mark .chev,
-.jp-lockup .chev {
-  fill: none;
-  stroke: var(--jp-accent);
-  stroke-width: 12;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.jp-mark .bracket,
+.jp-lockup .bracket {
+  fill: var(--jp-orange-500);
 }
 
-.jp-lockup .word {
-  fill: var(--jp-primary);
-}
-
+.jp-lockup .word,
 .jp-lockup .sub {
-  fill: var(--jp-fg);
-  font-family: var(--jp-font-display);
-  font-weight: 700;
-  font-size: 22px;
-  letter-spacing: 6.5px;
+  fill: var(--jp-teal-900);
 }
 
 @media (prefers-color-scheme: dark) {
-  .jp-mark .frame,
-  .jp-lockup .frame {
-    stroke: var(--jp-gray-0);
-  }
-
-  .jp-lockup .word {
+  .jp-lockup .word,
+  .jp-lockup .sub {
     fill: var(--jp-gray-0);
   }
 }

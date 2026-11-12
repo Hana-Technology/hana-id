@@ -8,8 +8,8 @@
 //   components.css, verbatim except one declaration: the `select.jp-input` chevron, a `data:` SVG image, is left out
 //   (BRAND_CSS_DROPPED), so the stylesheet loads nothing but the fonts; public/app.css draws that chevron with gradients;
 // - public/index.html: the block between LOCKUP_START and LOCKUP_END becomes the white Journear lockup
-//   (logo/journear-lockup-white.svg, for the ink nav in both themes), inline so its "PASSPORT" is set in this page's
-//   own Archivo and no image is requested.
+//   (logo/journear-lockup-white.svg, for the ink nav in both themes: the teal card, the orange bracket and white type,
+//   all outlined, D789), inline so no image is requested.
 // scripts/test/gen-wrangler.test.ts fails when any of them has drifted from packages/brand, so run this after changing it.
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

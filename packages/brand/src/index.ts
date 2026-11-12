@@ -1,8 +1,11 @@
 // Journear Passport's brand for its own pages (D426 as amended by D765, the Journear redesign): the design system's
 // tokens (tokens.css), its component set (components.css), the self-hosted fonts (fonts.css and fonts/), and the mark,
 // wordmark and lockup (logo/). This module is what code needs of it: the product's names, the font files' manifest
-// (checked by test/brand.test.ts and by each app that ships a copy), and the mark's geometry, for pages that draw the
-// mark inline (an inline SVG needs no image request and takes its colours from the page's CSS).
+// (checked by test/brand.test.ts and by each app that ships a copy), and the logo's geometry (src/logo.ts), for pages
+// that draw the mark or the lockup inline (an inline SVG needs no image request and takes its colours from the page's
+// CSS).
+
+import { MARK_BRACKET, MARK_CARD, MARK_VIEWBOX } from './logo.ts';
 
 /** The names users read (D765). Code identifiers (packages, env names, SDK symbols) keep "hana". */
 export const BRAND = Object.freeze({
@@ -49,28 +52,23 @@ export const FONT_FILES: readonly FontFile[] = Object.freeze([
   { file: 'ibm-plex-mono-500.woff2', family: 'IBM Plex Mono', weight: 500, version: 'Version 2.3', licence: 'OFL-IBMPlexMono.txt', source: fs('ibm-plex-mono', 'ibm-plex-mono-latin-500-normal.woff2'), sha256: '01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22' },
 ]);
 
-/**
- * The Journear mark (logo/journear-mark.svg): a rounded frame in the brand colour, a chevron and its tail in the accent.
- * Inline, the frame takes `--jp-primary` and the chevron `--jp-accent`, or both `currentColor` for the mono mark. Never
- * otherwise recoloured, no gradient, no shadow; at least 20 px wide (the design system's logo rules).
- */
-export const MARK_VIEWBOX = '0 0 106 100';
-export const MARK_FRAME = Object.freeze({ x: 8, y: 8, width: 84, height: 84, rx: 18, strokeWidth: 10 });
-export const MARK_CHEVRON = Object.freeze({ paths: Object.freeze(['M38 30 L62 50 L38 70', 'M62 50 L100 50']), strokeWidth: 12 });
+export { LOCKUP, LOGO_COLOURS, LOGO_FILES, type LogoFile, logoFile, MARK_BRACKET, MARK_CARD, MARK_SQUARE_VIEWBOX, MARK_VIEWBOX, PASSPORT_PATH, WORDMARK_PATH } from './logo.ts';
 
-/** The mark as one SVG string with its colours from CSS variables (for pages that build HTML as strings). */
+/**
+ * The Journear mark (logo/journear-mark.svg, D789) as one SVG string, for pages that build HTML as strings: the card
+ * takes `--jp-teal-500` and the bracket `--jp-orange-500` in both schemes (the logo's own colours, as the dark lockup
+ * keeps them), or both `currentColor` for the mono mark. Never otherwise recoloured, no gradient, no shadow; at least
+ * 20 px tall (the design system's logo rules).
+ */
 export function markSvg(opts: { size?: number; label?: string; mono?: boolean } = {}): string {
   const size = Math.max(20, opts.size ?? 20);
-  const frame = opts.mono ? 'currentColor' : 'var(--jp-primary)';
-  const chevron = opts.mono ? 'currentColor' : 'var(--jp-accent)';
+  const card = opts.mono ? 'currentColor' : 'var(--jp-teal-500)';
+  const bracket = opts.mono ? 'currentColor' : 'var(--jp-orange-500)';
   const a11y = opts.label ? `role="img" aria-label="${opts.label.replace(/[&<>"']/gu, '')}"` : 'aria-hidden="true" focusable="false"';
-  const f = MARK_FRAME;
-  const c = MARK_CHEVRON;
+  const [, , w, h] = MARK_VIEWBOX.split(' ').map(Number) as [number, number, number, number];
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${MARK_VIEWBOX}" width="${Math.round(size * 1.06)}" height="${size}" ${a11y}>` +
-    `<rect x="${f.x}" y="${f.y}" width="${f.width}" height="${f.height}" rx="${f.rx}" fill="none" stroke="${frame}" stroke-width="${f.strokeWidth}"/>` +
-    `<path d="${c.paths[0]}" fill="none" stroke="${chevron}" stroke-width="${c.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>` +
-    `<path d="${c.paths[1]}" stroke="${chevron}" stroke-width="${c.strokeWidth}" stroke-linecap="round"/>` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${MARK_VIEWBOX}" width="${Math.round((size * w) / h)}" height="${size}" ${a11y}>` +
+    `<path fill="${card}" d="${MARK_CARD}"/><path fill="${bracket}" d="${MARK_BRACKET}"/>` +
     `</svg>`
   );
 }

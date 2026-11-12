@@ -108,8 +108,9 @@ components, light and dark by the system setting, laid out for desktop and phone
   Vite emits the Archivo and IBM Plex files into `assets/` (hashed, served immutable like the bundles) with their
   licences (`OFL-Archivo.txt`, `OFL-IBMPlexSans.txt`, `OFL-IBMPlexMono.txt`, the brand's `FONT_LICENCE_FILES`) beside
   them, so the page loads fonts from its own origin only (`font-src 'self'`, no font CDN). The Journear lockup is drawn
-  inline in the top bar (the brand file's geometry, `test/brand.test.ts`; white in the dark scheme), the icons are an
-  inline SVG sprite (no image request), and the favicon is the brand's `journear-mark.svg`.
+  inline in the top bar (`@hana-id/brand`'s `LOCKUP` geometry, outlined, D789, `test/brand.test.ts`; its type white in
+  the dark scheme), the icons are an inline SVG sprite (no image request), and the favicon is a copy of the brand's
+  `journear-mark.svg` (the test keeps them equal).
 - Every response carries the headers of `src/csp.ts`. The page's CSP:
 
   ```text

@@ -8,7 +8,7 @@ import { env } from 'cloudflare:workers';
 import { KeyPair } from '@near-js/crypto';
 import { type Action, actionCreators, buildDelegateAction, createTransaction, encodeDelegateAction, encodeSignedDelegate, encodeTransaction, Signature, SignedDelegate } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { base64Encode, hex } from '../src/bytes.ts';
 import { decodeSignedDelegate, encodeRelayTransaction, MAX_SIGNED_DELEGATE_BYTES, policyRefusal, TGAS, verifyDelegateSignature } from '../src/near/delegate.ts';
 import { checkNearRelayFunds } from '../src/near/relay-funds.ts';
@@ -17,7 +17,7 @@ import { budgetSettlement, defaultNearAccountLookup, delegateFailure, forgetHead
 import { inFlightCapPerKey, inFlightHold } from '../src/near/relay-config.ts';
 import { nearRelayKeyName, type RelayerKey, type RelayResult } from '../src/relayer-key.ts';
 import { runInDurableObject } from 'cloudflare:test';
-import { appHeaders, call, type Chain, ORIGIN, type SeededApp } from './helpers.ts';
+import { appHeaders, call, type Chain, ORIGIN, type SeededApp, startOfMinuteClock } from './helpers.ts';
 import { MOCK_RECEIPT_GAS, MOCK_TX_GAS } from './near-mock.ts';
 import { spentSession, vaultHeaders, vaultSetup } from './vault-helpers.ts';
 
@@ -66,6 +66,11 @@ const relayConfig = (extra: Record<string, unknown> = {}) => ({ NEAR_RELAY: JSON
  */
 const directory = new Map<string, string>();
 const remember = (scope: string, accountId: string, userId = `hu_${Math.random().toString(36).slice(2)}`) => directory.set(`${scope}#${accountId}`, userId);
+// The relay's and activation's windows are fixed minutes and UTC days (per IP, per app, per sender, per user, across the
+// env, the daily budgets and the funds check's one event a day): every test starts a second into a minute that isn't its
+// hour's last (helpers.ts startOfMinuteClock), before anything is counted, so no count straddles a window boundary
+// however loaded the machine. On the real clock, a run crossing a minute counted 61 of a 60 a minute window.
+beforeEach(startOfMinuteClock);
 beforeEach(() => {
   forgetHead();
   nearDirectory.lookup = async (_db, q) => {
@@ -74,6 +79,7 @@ beforeEach(() => {
   };
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   nearDirectory.lookup = defaultNearAccountLookup;
   directory.clear();
 });

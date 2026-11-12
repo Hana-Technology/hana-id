@@ -10,7 +10,7 @@
 //   const { profile, refresh, error } = useProfile();               // the name the user shared: { givenName, familyName } | null
 
 /** Package version, kept equal to package.json (test/index.test.ts). */
-export const VERSION = '0.4.0';
+export const VERSION = '0.4.1';
 
 export { HanaContext, HanaProvider, type HanaContextValue, type HanaProviderProps } from './provider.tsx';
 export { useHana, useMainnetDemo, useWallet, type EvmWallet, type HanaChain, type StellarWallet, type UseHanaResult, type UseMainnetDemoResult } from './hooks.ts';

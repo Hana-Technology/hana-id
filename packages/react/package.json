@@ -1,6 +1,6 @@
 {
   "name": "@hana-id/react",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "React bindings for Journear Passport (formerly Hana ID) over @hana-id/web: HanaProvider, useHana, useWallet.",
   "private": true,
   "license": "UNLICENSED",

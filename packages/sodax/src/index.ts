@@ -8,7 +8,7 @@
 // @sodax/types is a type-only peer: nothing of it is imported at runtime.
 
 /** Package version, kept equal to package.json (test/index.test.ts). */
-export const VERSION = '0.4.0';
+export const VERSION = '0.4.1';
 
 export {
   STELLAR_RECEIPT_POLL_MS,

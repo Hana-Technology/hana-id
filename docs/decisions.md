@@ -11703,3 +11703,16 @@ string changes.
 - Why: the user supplied the new artwork for the hackathon and said it may change again, so the change swaps the artwork only and leaves one place to change next time.
 - Rejected: shipping the supplied SVGs as they are (live text in a font no page or mail client has, a nested `<svg>`, a 650 × 190 plate of padding); re-outlining "Journear" from the supplied files' tracking (no visible difference); keeping the old names `MARK_FRAME`/`MARK_CHEVRON` for shapes that are no longer a frame and a chevron.
 - Address impact: none.
+
+## SDK 0.4.1 (branch `release/sdk-0.4.1`), 2026-11-12
+
+### D790. SDK 0.4.1: the Journear Passport names, the relay errors' data and the new mark; tarballs still sent by Journear
+- Date 2026-11-12 · Status: **asked for by the user 2026-11-12** ("Let's release new SDK and re-vendor"); the version, a patch, chosen while building as the default (no API removed) · Built: `corepack pnpm --filter @hana-id/scripts sdk-version 0.4.1` (the four `package.json` files and `VERSION` constants), the guide's release notes (`docs/integration.md` section 2: "After 0.4.0" became **0.4.1**), the tarball names in the guide and the four READMEs
+- Decision: release 0.4.1, a patch over 0.4.0 (NEAR, D720–D729). What a partner gets:
+  - **The rename (D765, D774):** the wallet-picker name is "Journear Passport" (EIP-6963 `info.name`, SWK `productName`), and so are the SDK's messages and the launcher's labels. Codes, symbols, events, `rdns` and `productId` are unchanged. A partner that picks the connector by its old name must update.
+  - **Profile names (D714):** `getProfile()`, `profile`, `profileChanged`, `useProfile()`.
+  - **Relay refusals (D788):** they carry `transactionHash`, `nearReason` and `retryAfterS`.
+  - **Icon (D789):** the wallet-picker icon is the new mark.
+- Environments: as 0.4.0, `sandbox-dev` only.
+- Distribution: unchanged (D706). `pnpm run pack:check`, then the four `pnpm pack` tarballs from the merged `develop` commit, with their `SHA256SUMS`. The sample partner app vendors them in `vendor/`. hana-id has no `main` branch or `sdk-v*` tags yet, so the release commit on `develop` identifies the tarballs.
+- Address impact: none.

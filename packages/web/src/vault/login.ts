@@ -1132,7 +1132,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       const g = await this.identityOf(google.ref);
       const known = g.status !== 'own' || g.opened || (await this.accountHasMembers(google.ref));
       if (known) return { who: google, link: null, sealedEmail: null };
-      if (problem === 'unavailable') throw fail('api_unavailable', 'Hana could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
+      if (problem === 'unavailable') throw fail('api_unavailable', 'Journear could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
       const reason = problem === 'declined' ? 'email_consent_declined' : 'google_account_mismatch';
       // `round` screens shown so far: `round - 1`; this would be screen `round`.
       if (round > EMAIL_CONSENT_ROUNDS) throw fail('login_cancelled', 'Google’s email address is needed to open a new wallet with Google here', { reason });
@@ -1157,7 +1157,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       // "Sign in with email instead": an email login (Google's token is dropped unused), with its own sealed address.
       return { who: await verify.email(a.idToken, sessionNonceValue), link: null, sealedEmail: a.sealedEmail ?? null };
     }
-    if (!match) throw fail('api_unavailable', 'Hana could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
+    if (!match) throw fail('api_unavailable', 'Journear could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
     // D438: google-match's sealed address is the Google identity's: it goes with a session that identity opens.
     const sealed = match.sealedEmail;
 
@@ -2015,7 +2015,7 @@ export class LoginChain {
     const raw = e.details.retryAfterS;
     const waitS = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.min(Math.ceil(raw), KEY_PENDING_MAX_WAIT_S) : KEY_PENDING_DEFAULT_WAIT_S;
     if (this.keyPendingRetried || !this.resendable(waitS * 1000)) {
-      throw fail('api_unavailable', 'Google just changed its signing key and Hana ID has not activated it yet; try signing in again in a few minutes', { api: `${e.status} ${e.code}` });
+      throw fail('api_unavailable', 'Google just changed its signing key and Journear Passport has not activated it yet; try signing in again in a few minutes', { api: `${e.status} ${e.code}` });
     }
     this.keyPendingRetried = true;
     this.ctx.progress('key_pending');
@@ -2076,7 +2076,7 @@ export class LoginChain {
           this.resent = true;
           return 'resend';
         }
-        throw fail('api_unavailable', 'The Hana relayer is unavailable');
+        throw fail('api_unavailable', 'The Journear relayer is unavailable');
       }
       // Refused before relaying (the API's precheck): nothing published.
       if (e.status === 409 || e.status === 422 || e.status === 400 || e.status === 401 || e.status === 403) {
@@ -2173,7 +2173,7 @@ export class LoginChain {
         this.resent = true;
         return 'resend';
       }
-      throw fail('api_unavailable', 'The Hana relayer is unavailable');
+      throw fail('api_unavailable', 'The Journear relayer is unavailable');
     }
     if (e.code === 'relayer_unavailable') {
       if (e.nearTx) return this.unknownOutcome(e.nearTx, step);
@@ -2290,7 +2290,7 @@ export class LoginChain {
           throw fail('derive_failed', 'The key derivation did not complete');
         }
         if (e.code === 'ckd_failed') throw fail('ckd_failed', 'The key derivation failed; sign in again');
-        if (NOT_EXECUTED.has(e.code)) throw fail('api_unavailable', 'The Hana relayer is unavailable');
+        if (NOT_EXECUTED.has(e.code)) throw fail('api_unavailable', 'The Journear relayer is unavailable');
         // D136: a session opened on this identity's own path before it joined an account never derives; a new sign-in
         // opens a session on the account's path.
         if (e.code === 'identity_linked') throw fail('session_consumed', 'This sign-in method now opens its account’s wallet; continue signing in', { reason: 'identity_linked' });

@@ -117,7 +117,7 @@ async function minutes(t: Tab, n: number, o: { active?: boolean } = {}): Promise
 /** An approval-popup stellar_signMessage, answered `approved`; returns the reply. */
 async function approvedMessage(t: Tab, message = 'hello'): Promise<Awaited<ReturnType<Tab['request']>>> {
   const reply = t.request('stellar_signMessage', { message });
-  await waitLauncher(t, 'Review in Hana');
+  await waitLauncher(t, 'Review in Journear Passport');
   const popup = openApproval(t);
   answer(t, popup, await popup.next('hana:approve-request'), true);
   popup.closed = true;
@@ -194,7 +194,7 @@ describe('a sign-out from Hana Home reaches an open tab within about a minute', 
     // 30 s into the next minute a raw request re-reads GET /v1/app (its own 10 s check, with the share)…
     t.browser.timers.now += 30_000;
     const reply = t.request('hana_signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(1) });
-    await waitLauncher(t, 'Review in Hana');
+    await waitLauncher(t, 'Review in Journear Passport');
     expect(appReads(t).length).toBe(app + 1);
     const popup = openApproval(t);
     answer(t, popup, await popup.next('hana:approve-request'), false);
@@ -211,7 +211,7 @@ describe('a sign-out from Hana Home reaches an open tab within about a minute', 
   it('an app with a policy: its own GET /v1/app carries the share, one request a minute, no light read', async () => {
     const t = await signedIn({ settings: { autoApprovePolicy: POLICY() } });
     const pending = t.request('hana_requestAutoApprove');
-    await waitLauncher(t, 'Review in Hana');
+    await waitLauncher(t, 'Review in Journear Passport');
     const popup = openApproval(t);
     answerConsent(t, popup, await popup.next('hana:consent-request'), true);
     expect((await pending).result).toMatchObject({ granted: true });
@@ -642,7 +642,7 @@ describe('before an approval-popup signature', () => {
     const t = await signedIn();
     t.setVisibility('hidden');
     const reply = t.request('stellar_signMessage', { message: 'slow click' });
-    await waitLauncher(t, 'Review in Hana');
+    await waitLauncher(t, 'Review in Journear Passport');
     const popup = openApproval(t);
     const m = await popup.next('hana:approve-request');
     t.browser.timers.now += SHARE_FRESH_MS + 1;
@@ -657,7 +657,7 @@ describe('before an approval-popup signature', () => {
   it('a popup still open when the minute’s read finds the device signed out: the popup ends and the request is refused, signed out', async () => {
     const t = await signedIn();
     const reply = t.request('stellar_signMessage', { message: 'still deciding' });
-    await waitLauncher(t, 'Review in Hana');
+    await waitLauncher(t, 'Review in Journear Passport');
     const popup = openApproval(t);
     await popup.next('hana:approve-request');
     signOutFromHome(t);
@@ -834,7 +834,7 @@ describe('before an approval-popup signature', () => {
   it('auto-signing is unchanged: it needs its own 10 s answer and makes no light read', async () => {
     const t = await signedIn({ settings: { autoApprovePolicy: POLICY() } });
     const pending = t.request('hana_requestAutoApprove');
-    await waitLauncher(t, 'Review in Hana');
+    await waitLauncher(t, 'Review in Journear Passport');
     const popup = openApproval(t);
     answerConsent(t, popup, await popup.next('hana:consent-request'), true);
     await pending;

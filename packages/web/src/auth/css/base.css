@@ -1,0 +1,402 @@
+/*
+ * What every auth page shares (auth.css imports it before each area's own file): the popup shell, the mark, type,
+ * alerts, who-is-asking, the key/value facts, buttons and links. Tokens only.
+ */
+:root {
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--jp-bg-subtle);
+  color: var(--jp-fg);
+  font: var(--jp-weight-regular) var(--jp-text-md) / var(--jp-leading-body) var(--jp-font-body);
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ---- the popup shell (pageHtml): one modal card holding the page's content, then the badge ---- */
+body.popup {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: var(--jp-space-6) var(--jp-space-4);
+}
+
+/* The system's modal, with the login modal pattern's 320 ms rise (components.css gives 240 ms). */
+.popup-modal {
+  gap: 0;
+  animation-duration: 320ms;
+}
+
+.popup-modal > main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* A phone, or a popup narrower than the card and its gutters: the card is the window, edge to edge. */
+@media (max-width: 431px) {
+  body.popup {
+    padding: 0;
+    background: var(--jp-surface);
+  }
+
+  .popup-modal {
+    max-width: none;
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: var(--jp-space-5) var(--jp-space-4) var(--jp-space-4);
+  }
+
+  .popup-modal > main {
+    flex: 1;
+  }
+}
+
+/* The badge: the brand's only appearance in a popup. Static (pageHtml), outside #app, after the page's content. */
+.popup-modal > footer.passport-badge {
+  margin-top: var(--jp-space-5);
+  padding-top: var(--jp-space-3);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.passport-badge .badge-mark {
+  width: 21px;
+  height: 20px;
+  flex: none;
+}
+
+/* The mark (pageHtml): the brand teal frame and the stamp-orange chevron; on the dark scheme the white variant's frame. */
+.jp-mark .frame,
+.jp-lockup .frame {
+  fill: none;
+  stroke: var(--jp-primary);
+}
+
+.jp-mark .chev,
+.jp-lockup .chev {
+  fill: none;
+  stroke: var(--jp-accent);
+  stroke-width: 12;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.jp-lockup .word {
+  fill: var(--jp-primary);
+}
+
+.jp-lockup .sub {
+  fill: var(--jp-fg);
+  font-family: var(--jp-font-display);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 6.5px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .jp-mark .frame,
+  .jp-lockup .frame {
+    stroke: var(--jp-gray-0);
+  }
+
+  .jp-lockup .word {
+    fill: var(--jp-gray-0);
+  }
+}
+
+/* ---- what every page shares ---- */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+  min-width: 0;
+}
+
+.panel > * {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--jp-font-body);
+  font-weight: var(--jp-weight-semibold);
+  letter-spacing: var(--jp-tracking-tight);
+  text-wrap: balance;
+}
+
+/* In a popup the title is the modal's (the system's modal title: Plex 600, 20 px). */
+h1 {
+  font-size: var(--jp-text-xl);
+  line-height: var(--jp-leading-snug);
+  margin: 0 0 var(--jp-space-3);
+}
+
+h2 {
+  font-size: var(--jp-text-lg);
+  line-height: var(--jp-leading-snug);
+  margin: var(--jp-space-5) 0 var(--jp-space-2);
+}
+
+h3 {
+  font-size: var(--jp-text-md);
+  line-height: var(--jp-leading-snug);
+  letter-spacing: -0.01em;
+  margin: var(--jp-space-3) 0 var(--jp-space-2);
+}
+
+p {
+  margin: 0 0 var(--jp-space-3);
+}
+
+strong,
+b,
+summary {
+  font-weight: var(--jp-weight-semibold);
+}
+
+.muted {
+  color: var(--jp-fg-muted);
+}
+
+a {
+  color: var(--jp-link);
+  text-underline-offset: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--jp-focus);
+  outline-offset: 2px;
+}
+
+/* Numbers are always tabular. */
+dl,
+.countdown,
+.amount {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Partner-chosen values (app names in <strong>, origins, addresses, decoded values) are bidi-isolated, so right-to-left
+   text in one can't reorder the text around it (sweep AUTH-2). */
+strong,
+.origin,
+.mono,
+.code {
+  unicode-bidi: isolate;
+}
+
+.origin,
+.mono,
+.code {
+  font-family: var(--jp-font-mono);
+  font-size: var(--jp-text-sm);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* A web address wraps whole, or at its own break points (dom.ts originText: after `://`, before `.`, `:` and `/`), never
+   inside a label; only a label wider than the line is ever cut. */
+.origin {
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+/* An email address as text (dom.ts addressText); not the sharing sheet's `p.address` block. */
+.mail-address {
+  unicode-bidi: isolate;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+/* An error screen (dom.ts errorView): the title in the danger colour, the code small, for support. */
+.error h1 {
+  color: var(--jp-danger);
+}
+
+.error .code {
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-xs);
+}
+
+/* The system's icons (ui.ts icon): 16 px in buttons, 20 px in providers and toasts, a 1.75 px round stroke. */
+.ic {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ic .fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* The system's alert (ui.ts alert): the icon, then the text as one paragraph in `.body`. */
+.jp-alert {
+  margin: 0;
+  line-height: var(--jp-leading-body);
+}
+
+.jp-alert > .body {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.jp-alert > .ic {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+/* ---- the facts: the system's key/value rows, with the old popup's column rule (a long key wraps before it squeezes
+   the value) and values that wrap as text (a value can be a sentence, an address or an amount with its unit) ---- */
+dl.jp-kv {
+  grid-template-columns: fit-content(42%) minmax(0, 1fr);
+  gap: var(--jp-space-2) var(--jp-space-4);
+  margin: 0;
+  padding: var(--jp-space-3) 0;
+  border-top: 1px solid var(--jp-border);
+  border-bottom: 1px solid var(--jp-border);
+}
+
+dl.jp-kv dt {
+  font-weight: var(--jp-weight-regular);
+}
+
+dl.jp-kv dd {
+  display: block;
+  font-size: var(--jp-text-sm);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+dl.jp-kv dd strong {
+  font-family: var(--jp-font-mono);
+  font-weight: var(--jp-weight-semibold);
+}
+
+dl.jp-kv code.mono {
+  font-size: inherit;
+}
+
+/* ---- who is asking: the app's logo, name and origin, in a neutral box of their own (never the brand's colours) ---- */
+.asker,
+header.app {
+  background: var(--jp-bg-subtle);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
+  padding: var(--jp-space-3);
+  margin: 0;
+  color: var(--jp-fg);
+  font-size: var(--jp-text-sm);
+  overflow-wrap: anywhere;
+}
+
+/* The box's lines (the approval's and the sharing sheet's `header.app`: the app, then its origin). */
+header.app > p {
+  margin: 0;
+}
+
+header.app > p + p {
+  margin-top: var(--jp-space-1);
+}
+
+/* Not the modal's own header row (components.css `.jp-modal header` is a flex row): the box is a paragraph block. */
+.popup-modal header.app {
+  display: block;
+}
+
+/* The origin wraps as a whole onto its own line when it fits there, and breaks inside only when it doesn't. */
+.asker .origin {
+  word-break: normal;
+}
+
+/* The app's logo beside its name (batch C11): a 256 × 256 PNG from the files origin, shown small and never stretched. */
+img.app-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  vertical-align: middle;
+  margin-right: var(--jp-space-2);
+  border-radius: var(--jp-radius-sm);
+}
+
+/* Button rows: one primary, the others secondary (the confirm pattern: side by side, equal width). */
+.actions {
+  display: flex;
+  gap: var(--jp-space-3);
+  margin: var(--jp-space-2) 0 0;
+}
+
+.actions > .jp-btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Left-aligned rows of buttons at their own width (Passport Home, the export's reveal). */
+.actions.start {
+  flex-wrap: wrap;
+}
+
+.actions.start > .jp-btn {
+  flex: 0 0 auto;
+}
+
+/* A label longer than the button wraps rather than overflowing (an app's name can be in it). */
+.jp-btn {
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* A text button inside a sentence or a links line (`button.link`): the link colour, no box (the system's ghost, inline). */
+button.link {
+  all: unset;
+  color: var(--jp-link);
+  cursor: pointer;
+  font-weight: var(--jp-weight-medium);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 3px;
+}
+
+button.link:focus-visible {
+  outline: 2px solid var(--jp-focus);
+  outline-offset: 2px;
+}
+
+button.link:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* A short line under a form: "Resend code · Use a different email". */
+p.links {
+  margin: var(--jp-space-2) 0 0;
+  text-align: center;
+  font-size: var(--jp-text-sm);
+}
+
+/* Kept rendered while empty (zero height), so screen readers announce the live region when it fills. */
+p.copy-status:empty {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .popup-modal {
+    animation: none;
+  }
+}

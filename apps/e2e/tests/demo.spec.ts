@@ -64,7 +64,7 @@ test('the demo logs in, shows addresses and timings, signs, and copies safe diag
   const approval = await approvalP;
   expect(new URL(approval.url()).searchParams.get('from')).toBe('partner');
   await approve(approval);
-  await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Hana' })).toHaveCount(0);
+  await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Journear Passport' })).toHaveCount(0);
   await expect(page.locator('#results li').first()).toContainText('EVM personal_sign: signed');
   await expect(page.locator('#results li').first().locator('code')).toHaveText(/^0x[0-9a-f]{130}$/u);
 
@@ -161,8 +161,8 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   const approvalP = page.waitForEvent('popup');
   await page.getByRole('button', { name: 'Write to the guestbook (no NEAR needed)' }).click();
   const approval = await approvalP;
-  // The click opened the approval itself: no "Review in Hana" button.
-  await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Hana' })).toHaveCount(0);
+  // The click opened the approval itself: no "Review in Journear Passport" button.
+  await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Journear Passport' })).toHaveCount(0);
   await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
   await expect(approval.getByRole('heading', { name: 'NEAR transaction, fee paid by a relayer' })).toBeVisible();
   await expect(approval.getByText('add_message').first()).toBeVisible();
@@ -204,13 +204,13 @@ test('the demo writes to the guestbook when clicked before Hana recorded the NEA
 
 test('the demo explains a blocked popup, then signs in through the Hana button', async ({ page }) => {
   await page.addInitScript((origin) => {
-    // What a popup blocker does: the SDK falls back to the vault's "Sign in with Hana" launcher.
+    // What a popup blocker does: the SDK falls back to the vault's "Sign in with Journear Passport" launcher.
     if (location.origin === origin) window.open = () => null;
   }, DEMO_ORIGIN);
   await openDemo(page);
   await page.getByRole('button', { name: 'Log in with Google' }).click();
-  await expect(page.locator('#notice')).toHaveText('Click “Sign in with Hana” on the Journear button at the bottom right of the page to continue.');
-  const popup = await clickLauncher(page, 'Sign in with Hana');
+  await expect(page.locator('#notice')).toHaveText('Click “Sign in with Journear Passport” on the Journear button at the bottom right of the page to continue.');
+  const popup = await clickLauncher(page, 'Sign in with Journear Passport');
   await chooseAccount(popup);
   await expect(page.locator('#status')).toContainText('Logged in');
   await expect(page.locator('#notice')).toBeHidden();

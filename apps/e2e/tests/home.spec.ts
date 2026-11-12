@@ -32,7 +32,7 @@ test('lists the app the user signed in to, with its addresses and Support ID, fr
   expect(csp).toContain(`connect-src ${new URL(API_URL).origin} ${new URL(NEAR_RPC).origin} ${new URL(NEAR_RPC_FALLBACK).origin} https://www.googleapis.com ${new URL(ISSUER_URL).origin}`);
   // Whoever opened Hana Home keeps no handle on it; the sign-in child Home opens itself still reaches Home (below).
   expect(response?.headers()['cross-origin-opener-policy']).toBe('same-origin-allow-popups');
-  await expect(home.getByRole('heading', { name: 'Hana Home' })).toBeVisible();
+  await expect(home.getByRole('heading', { name: 'Passport Home' })).toBeVisible();
 
   const childP = home.waitForEvent('popup');
   await home.getByRole('button', { name: 'Continue with Google' }).click();
@@ -63,7 +63,7 @@ test('lists the app the user signed in to, with its addresses and Support ID, fr
 test('the Home sign-in child stops when Hana Home didn’t open it', async ({ page }) => {
   // Opened by its address, with no Hana Home behind it, the child has nobody to ask and goes nowhere.
   await page.goto(`${AUTH_ORIGIN}/login?mode=home`);
-  await expect(page.getByText('block the Hana sign-in window')).toBeVisible();
+  await expect(page.getByText('block the Journear Passport window')).toBeVisible();
   expect(new URL(page.url()).origin).toBe(AUTH_ORIGIN);
 });
 
@@ -186,7 +186,7 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   // A refusal while the list is on screen: the list stays, the problem is said once.
   mode = 'error';
   await page.getByRole('button', { name: 'Search', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Hana Home is not reachable right now.');
+  await expect(page.getByRole('alert')).toContainText('Passport Home is not reachable right now.');
   await expect(page.getByRole('alert')).toContainText('Code: home_directory_unavailable');
   await expect(page.getByRole('alert')).toContainText('Request: req_e2e');
   await expect(page.locator('.home-card')).toHaveCount(7);
@@ -203,7 +203,7 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   await page.getByRole('button', { name: 'Sign out' }).click();
   mode = 'error';
   await signIn(page);
-  await expect(page.getByRole('alert')).toContainText('Hana Home is not reachable right now.');
+  await expect(page.getByRole('alert')).toContainText('Passport Home is not reachable right now.');
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
   await shots(page, '11-error-no-list', browserName);
   const before = requests.length;
@@ -225,9 +225,9 @@ test('a link to an app that isn’t the user’s lands on their own list, with t
   // Opened by another site: with Home's opener policy that site keeps no handle on the window.
   await page.goto(`${AUTH_ORIGIN}/home?appId=app_phish1`);
   await signIn(page);
-  await expect(page.locator('#home-linked')).toContainText('Hana has no wallet on record for this Google account in it.');
+  await expect(page.locator('#home-linked')).toContainText('Journear has no wallet on record for this Google account in it.');
   expect(requests).toEqual(['', '?appId=app_phish1']);
-  await expect(page.getByRole('heading')).toHaveText(['Hana Home', 'Your apps', 'The app from your link', 'Devices and auto-approve', 'Find an app']);
+  await expect(page.getByRole('heading')).toHaveText(['Passport Home', 'Your apps', 'The app from your link', 'Devices and auto-approve', 'Find an app']);
   await expect(page.locator('#home-linked .home-app-name strong')).toHaveText('Hana security notice: your wallet is locked, restore it at h…');
   await expect(page.getByText('hana-restore.example')).toHaveCount(0);
   await shots(page, '13-linked-app-not-yours', browserName);

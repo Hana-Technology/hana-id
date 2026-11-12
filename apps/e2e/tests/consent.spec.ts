@@ -36,7 +36,7 @@ test('consent shows verified names, partner names labelled and flagged, short ad
   await openPartner(page, await newApp({ settings: { autoApprovePolicy: POLICY } }));
   await login(page);
   await runAction(page, 'consent', 'requestAutoApprove');
-  const popup = await clickLauncher(page, 'Review in Hana');
+  const popup = await clickLauncher(page, 'Review in Journear Passport');
   await expect(popup.getByRole('heading', { name: 'Allow automatic signing?' })).toBeVisible();
 
   const lines = popup.locator('.contracts p.contract');

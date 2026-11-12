@@ -58,7 +58,8 @@ export const POPUP_WAIT_MS = 3_000;
  */
 export const LATE_CLOSE_MS = 8_000;
 const CLOSED_POLL_MS = 500;
-export const APPROVE_LABEL = 'Review in Hana';
+/** The launcher's label for a waiting approval (D765's names; a literal, so the vault bundle imports nothing of the brand's). */
+export const APPROVE_LABEL = 'Review in Journear Passport';
 export const APPROVE_FEATURES = 'popup,width=420,height=680';
 /** Requests waiting or on show at once; more are refused (a script on the page can't queue without limit). */
 export const MAX_PENDING_APPROVALS = 100;

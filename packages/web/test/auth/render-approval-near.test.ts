@@ -118,7 +118,7 @@ describe('renderApproval: NEAR transactions', () => {
   it('numbers each action once: the list has no numbers of its own, the heading has one', () => {
     const el = tx([call('{}', 0n), { type: 'transfer', deposit: 1n }], 'guestbook.testnet');
     expect([...el.querySelectorAll('ol.ops > li > h3')].map((h) => h.textContent)).toEqual(['1. Call a contract', '2. Send NEAR']);
-    const css = readFileSync(join(process.cwd(), 'src', 'auth', 'auth.css'), 'utf8');
+    const css = readFileSync(join(process.cwd(), 'src', 'auth', 'css', 'approval.css'), 'utf8');
     expect(css).toMatch(/ol\.ops \{\n  list-style: none;/u);
   });
 
@@ -150,7 +150,7 @@ describe('renderApproval: NEAR transactions', () => {
   it.each([
     ['a full-access key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } } as NearAction, `This adds a full-access key to your account. Whoever holds ${nearPublicKeyString(OTHER_KEY.bytes)} can move all its NEAR and tokens and lock you out.`],
     ['a function-call key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance: null, receiverId: 'x.testnet', methodNames: [] } } } as NearAction, 'This adds a key to your account that can call any method of x.testnet and spend NEAR on their fees.'],
-    ['removing the Hana key', { type: 'deleteKey', publicKey: { type: 'ed25519', bytes: PUB } } as NearAction, 'This removes your Hana key from your account: Hana can no longer sign for it, so you lose control of it.'],
+    ['removing the Journear Passport key', { type: 'deleteKey', publicKey: { type: 'ed25519', bytes: PUB } } as NearAction, 'This removes your Journear Passport key from your account: Journear Passport can no longer sign for it, so you lose control of it.'],
     ['deleting the account', { type: 'deleteAccount', beneficiaryId: 'bob.testnet' } as NearAction, 'This deletes your account and sends all of its NEAR to bob.testnet. It can’t be undone.'],
     ['deploying a contract', { type: 'deployContract', code: Uint8Array.of(0, 97, 115, 109) } as NearAction, 'This deploys a contract to your account. A contract runs with the account’s own authority: it can move everything in it.'],
     ['using a global contract', { type: 'useGlobalContract', contract: { type: 'accountId', accountId: 'g.testnet' } } as NearAction, 'This sets your account’s contract to a global contract. A contract runs with the account’s own authority: it can move everything in it.'],
@@ -186,12 +186,12 @@ describe('renderApproval: NEAR transactions', () => {
 });
 
 describe('renderApproval: NEAR network line (D726)', () => {
-  it('says what Hana checked, and labels everything else as the app’s claim', () => {
-    expect(nearNetworkLine('near_tx', 'testnet', TESTNET)).toBe('NEAR testnet (Hana found its block hash on testnet)');
-    expect(nearNetworkLine('near_tx', 'mainnet', TESTNET)).toBe('NEAR mainnet, as the app says: Hana can’t check this');
-    expect(nearNetworkLine('near_delegate', 'testnet', { envNetwork: 'testnet', testApp: true })).toBe('NEAR testnet (Hana checked your key, nonce and expiry on testnet)');
-    expect(nearNetworkLine('near_delegate', 'testnet', TESTNET)).toBe('NEAR testnet, as the app says: Hana can’t check this');
-    expect(nearNetworkLine('near_delegate', 'mainnet', TESTNET)).toBe('NEAR mainnet, as the app says: Hana can’t check this');
+  it('says what Journear checked, and labels everything else as the app’s claim', () => {
+    expect(nearNetworkLine('near_tx', 'testnet', TESTNET)).toBe('NEAR testnet (Journear found its block hash on testnet)');
+    expect(nearNetworkLine('near_tx', 'mainnet', TESTNET)).toBe('NEAR mainnet, as the app says: Journear can’t check this');
+    expect(nearNetworkLine('near_delegate', 'testnet', { envNetwork: 'testnet', testApp: true })).toBe('NEAR testnet (Journear checked your key, nonce and expiry on testnet)');
+    expect(nearNetworkLine('near_delegate', 'testnet', TESTNET)).toBe('NEAR testnet, as the app says: Journear can’t check this');
+    expect(nearNetworkLine('near_delegate', 'mainnet', TESTNET)).toBe('NEAR mainnet, as the app says: Journear can’t check this');
   });
 });
 
@@ -247,7 +247,7 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     expect(mismatches(msg('https://guestbook.example', 'https://guestbook.example'))).toEqual([]);
     // Every other shape gets the same line, in the same style: no pattern can soften it.
     for (const recipient of ['bank.example', 'https://bank.example/login', 'guestbook.near', 'guestbook.testnet', 'guestbook.example/login', 'Guestbook']) {
-      expect(mismatches(msg(recipient, 'https://guestbook.example'))).toEqual([['warn recipient-mismatch', nearRecipientMismatch(recipient, 'guestbook.example')]]);
+      expect(mismatches(msg(recipient, 'https://guestbook.example'))).toEqual([['warn recipient-mismatch jp-alert jp-alert-warning', nearRecipientMismatch(recipient, 'guestbook.example')]]);
     }
     expect(dangers(msg('gооgle.com', 'https://gооgle.com'.normalize()))).toContain(nearRecipientLookalike('g\\u043e\\u043egle.com'));
     expect(nearRecipientMismatch('bank.example', 'guestbook.example')).toBe('This app is at guestbook.example, but the signature is for bank.example. Sign only if you are signing in to bank.example on purpose.');

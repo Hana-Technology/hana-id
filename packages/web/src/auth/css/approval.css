@@ -1,0 +1,379 @@
+/*
+ * The approval and consent popup (approve-page.ts, render-approval.ts, render-consent.ts) on the design system's
+ * confirm and sign pattern (D765): who is asking (auth.css `header.app`), the amount first where one number says it
+ * (`.headline`), the facts as key/value rows (`.jp-kv`: muted keys, mono values), notices as the system's alerts
+ * (ui.ts alert: warning for the out-of-policy case, danger for account control), and one primary button beside a
+ * secondary one. Tokens only. What it shows, its order and the Approve guard (approve-guard.ts) are unchanged.
+ */
+
+/* ---- the screen's parts ---- */
+.approve,
+.consent {
+  gap: var(--jp-space-3);
+}
+
+.approve > *,
+.consent > *,
+.request > *,
+.consent > div > * {
+  margin: 0;
+}
+
+.request,
+div.consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+  min-width: 0;
+}
+
+/* The request's kind (the modal's title for this screen: "EVM transaction", "Sign a message"). */
+.request > h2,
+div.consent > h2,
+div.consent > h1 {
+  font-size: var(--jp-text-xl);
+  line-height: var(--jp-leading-snug);
+  letter-spacing: -0.01em;
+  margin: var(--jp-space-1) 0 0;
+}
+
+div.consent > h2 {
+  font-size: var(--jp-text-lg);
+  margin-top: var(--jp-space-3);
+}
+
+/* The account it signs with, the Support ID and the email sharing line: small print under who is asking. */
+p.account,
+p.support-id,
+p.email-shared {
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
+  overflow-wrap: anywhere;
+}
+
+p.account code,
+p.support-id code {
+  color: var(--jp-fg);
+  font-size: var(--jp-text-sm);
+}
+
+/* ---- the amount first (render-approval.ts amountHeadline): the system's `.jp-confirm .amt` ---- */
+.headline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.headline > p {
+  margin: 0;
+}
+
+.headline-label {
+  font-size: var(--jp-text-xs);
+  font-weight: var(--jp-weight-semibold);
+  letter-spacing: var(--jp-tracking-caps);
+  text-transform: uppercase;
+  color: var(--jp-fg-muted);
+}
+
+.jp-confirm .amt {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Inline danger text in a value ("Full access", "All of it", a contract that sends anywhere). */
+span.danger,
+strong.danger {
+  color: var(--jp-danger);
+  font-weight: var(--jp-weight-semibold);
+}
+
+/* ---- notices: the system's alerts; account control in the popup's strongest style (D110) ---- */
+.jp-alert.takeover {
+  border-color: var(--jp-danger);
+}
+
+.jp-alert.takeover > .body {
+  color: var(--jp-danger);
+  font-weight: var(--jp-weight-semibold);
+}
+
+.jp-alert.takeover.banner {
+  border-width: 2px;
+  font-size: var(--jp-text-md);
+}
+
+/* The mainnet demo's banner (D428): one danger alert holding its lines. */
+.jp-alert.mainnet-demo > .body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-2);
+}
+
+.mainnet-demo > .body > p {
+  margin: 0;
+}
+
+.mainnet-demo p.takeover {
+  color: var(--jp-danger);
+  font-weight: var(--jp-weight-semibold);
+  font-size: var(--jp-text-md);
+}
+
+.mainnet-demo p.danger {
+  color: var(--jp-danger);
+  font-weight: var(--jp-weight-semibold);
+}
+
+.mainnet-demo code.mono {
+  font-size: var(--jp-text-xs);
+}
+
+/* ---- operations and actions: numbered by their own headings ("1. payment"), so no second list number ---- */
+ol.ops {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+}
+
+.ops > li,
+.contracts > li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-2);
+  border-top: 1px solid var(--jp-border);
+  padding-top: var(--jp-space-3);
+}
+
+.ops > li > *,
+.contracts > li > * {
+  margin: 0;
+}
+
+.ops > li > h3 {
+  font-size: var(--jp-text-md);
+  margin: 0;
+}
+
+/* An operation that changes who controls the account: framed in the danger colour. */
+.ops > li.takeover-op {
+  border: 2px solid var(--jp-danger);
+  border-radius: var(--jp-radius-md);
+  padding: var(--jp-space-3);
+}
+
+.request ol,
+.request ul,
+div.consent ol,
+div.consent ul {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.request ol.ops,
+div.consent ul.contracts {
+  padding-left: 0;
+  list-style: none;
+}
+
+.request p,
+div.consent p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A contract call's or invocation's parts. */
+.call,
+.invocation,
+.auth,
+.args {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-1);
+  min-width: 0;
+}
+
+/* What an authorization also authorizes, and a relayed action's inner actions: indented under a rule. */
+.sub {
+  border-left: 3px solid var(--jp-border-strong);
+  margin-left: var(--jp-space-1);
+  padding-left: var(--jp-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-2);
+}
+
+ul.tree,
+ol.tree {
+  font-size: var(--jp-text-sm);
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--jp-link);
+}
+
+/* Raw bytes shown whole (a raw signature, unknown call data, contract code): a quiet box, all of it, never cut. */
+.request > code.mono,
+.request details > code.mono {
+  display: block;
+  background: var(--jp-bg-subtle);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
+  padding: var(--jp-space-3);
+  font-size: var(--jp-text-xs);
+  line-height: var(--jp-leading-body);
+}
+
+/* ---- a message or long argument: all of it, in a scrolling box (render-approval.ts markOverflowing) ---- */
+pre.message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--jp-font-mono);
+  font-size: var(--jp-text-sm);
+  line-height: var(--jp-leading-body);
+  background: var(--jp-bg-subtle);
+  color: var(--jp-fg);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
+  padding: var(--jp-space-3);
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+}
+
+/* A box that holds more than it shows: a scrollbar that never hides (overlay scrollbars show nothing until scrolled),
+   a stronger border, and the warning line above it. */
+pre.message.overflows {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  border-color: var(--jp-border-strong);
+}
+
+pre.message.overflows::-webkit-scrollbar {
+  width: 10px;
+}
+
+pre.message.overflows::-webkit-scrollbar-thumb {
+  background: var(--jp-border-strong);
+  border-radius: 5px;
+}
+
+/* ---- the consent screen (D44): the label, contract lines with Journear's verified mark, partner names, explorer links ---- */
+p.label {
+  font-weight: var(--jp-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.contract .verified {
+  color: var(--jp-success);
+  font-weight: var(--jp-weight-semibold);
+}
+
+/* The contract's short address: an inline chip that moves to the next line whole, and never covers its neighbours
+   (an inline-block's box takes part in the line's height; no vertical padding spills into other lines). */
+.contract {
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.contract .contract-address {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  word-break: normal;
+  line-height: 1.35;
+  vertical-align: baseline;
+  background: var(--jp-bg-subtle);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-sm);
+  padding: 0 6px;
+  font-size: var(--jp-text-xs);
+}
+
+.contract a.explorer {
+  white-space: nowrap;
+}
+
+/* The chain's number beside Journear's name for it. */
+h2 .chain-id {
+  font-size: var(--jp-text-sm);
+  font-weight: var(--jp-weight-regular);
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+/* ---- the decision row: Reject and Approve (or Don't allow and Allow), equal width, 48 px ---- */
+.actions.decide {
+  margin-top: var(--jp-space-2);
+}
+
+/* Auto-approving is on: the line and its Stop link, under the buttons. */
+.auto-approve {
+  border-top: 1px solid var(--jp-border);
+  padding-top: var(--jp-space-3);
+  font-size: var(--jp-text-sm);
+}
+
+.auto-approve p {
+  margin: 0 0 var(--jp-space-1);
+}
+
+/* ---- after an answer (D471): what it did, the time left, Close now ---- */
+h1.outcome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.outcome-mark {
+  flex: none;
+}
+
+.outcome-mark .bg {
+  fill: var(--jp-success-bg);
+}
+
+.outcome-mark .tick {
+  fill: none;
+  stroke: var(--jp-success);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The rest of a double-click on the previous screen's button would otherwise select a word here. */
+.answered {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* An app name can be 200 characters with no space to break at. */
+.answered p {
+  overflow-wrap: anywhere;
+  margin: 0 0 var(--jp-space-2);
+}
+
+.answered h1 {
+  margin-bottom: var(--jp-space-3);
+}
+
+.answered-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jp-space-3);
+  margin-top: var(--jp-space-3);
+  padding-top: var(--jp-space-3);
+  border-top: 1px solid var(--jp-border);
+}
+
+p.countdown {
+  margin: 0;
+  font-size: var(--jp-text-sm);
+  /* The digits don't shift the line as they change. */
+  font-variant-numeric: tabular-nums;
+}

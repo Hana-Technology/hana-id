@@ -33,13 +33,13 @@ async function session(logoUrl: unknown, env: HanaEnv = FILES_ENV) {
 /** What the vault sends the approval popup and the export window for this session. */
 async function windows(t: Tab): Promise<{ approve: Record<string, unknown>; exportContext: Record<string, unknown> }> {
   const reply = t.request('stellar_signMessage', { message: 'hi' });
-  await waitLauncher(t, 'Review in Hana');
+  await waitLauncher(t, 'Review in Journear Passport');
   const popup = openApproval(t);
   const approve = await popup.next('hana:approve-request');
   answer(t, popup, approve, false);
   await reply;
   const exporting = t.request('hana_export', { chain: 'stellar' });
-  await waitLauncher(t, 'Export key in Hana');
+  await waitLauncher(t, 'Export key in Journear Passport');
   t.launcher.click();
   const w = t.opened.at(-1)!;
   t.dispatch({ data: { v: 1, t: 'hana:export-hello' }, source: w });

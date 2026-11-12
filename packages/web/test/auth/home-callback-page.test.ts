@@ -115,8 +115,8 @@ describe('/home/callback', () => {
 
   it.each([
     ['opened by another site', () => crossOriginWindow()],
-    ['opened by another Hana page', () => remoteWindow({ location: { pathname: '/login', origin: ENV.authOrigin } as never })],
-    ['opened by Hana Home of another origin', () => remoteWindow({ location: { pathname: '/home', origin: 'https://evil.example' } as never })],
+    ['opened by another Journear page', () => remoteWindow({ location: { pathname: '/login', origin: ENV.authOrigin } as never })],
+    ['opened by Passport Home of another origin', () => remoteWindow({ location: { pathname: '/home', origin: 'https://evil.example' } as never })],
   ])('refuses a window %s, before the entry is touched', async (_, opener) => {
     const { state, win } = started((s) => `#id_token=${GOOD}&state=${s}`);
     win.opener = opener() as never;

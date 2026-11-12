@@ -137,7 +137,7 @@ describe('login (vault side)', () => {
       const t = await tab();
       const pending = t.request('hana_login', { popupBlocked: true });
       await t.waitEvent('ui');
-      expect(t.events.find((e) => e.event === 'ui')!.data).toEqual({ launcher: 'show', label: 'Sign in with Hana' });
+      expect(t.events.find((e) => e.event === 'ui')!.data).toEqual({ launcher: 'show', label: 'Sign in with Journear Passport' });
       // A popup the partner page opened is not the launcher's.
       const partnerPopup = new FakeWindow('x', 'x', '', t.parent);
       t.dispatch({ data: { v: 1, t: 'hana:auth-hello' }, origin: ENV.authOrigin, source: partnerPopup });

@@ -90,7 +90,7 @@ describe('an error from an API answer carries its request ID', () => {
     expect((await t.request('hana_identityToken')).error).toMatchObject({ code: 'identity_unavailable', data: { api: '503 identity_signer_unavailable', requestId: UUID } });
     // The share revoked (D695): the reason beside the ID.
     browser.backend.overrides.set('/v1/identity/token', () => refusal(410, 'session_ended', RAY, { reason: 'share_revoked' }));
-    expect((await t.request('hana_identityToken')).error).toEqual({ code: 'session_ended', message: 'The Hana session has ended', data: { reason: 'signed_out', requestId: RAY } });
+    expect((await t.request('hana_identityToken')).error).toEqual({ code: 'session_ended', message: 'The Journear Passport session has ended', data: { reason: 'signed_out', requestId: RAY } });
   });
 
   it('hana_revokeOtherDevices on a share the API says is gone: 4900 with the ID', async () => {

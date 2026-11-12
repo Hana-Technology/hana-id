@@ -148,6 +148,7 @@ test('an email user signs in to Hana Home with a code and sees their app and add
   await home.locator('#home-export-stellar').click();
   await home.locator('#home-export-confirm').fill('EXPORT');
   await guardedClick(home, 'Continue');
+  await home.locator('#home-export .reveal-ack input').check();
   await guardedClick(home, 'Show key');
   await expect(home.locator('#home-export .secret')).toHaveText(STELLAR_SEED);
   expect(addressOfExport('stellar', (await home.locator('#home-export .secret').textContent()) ?? '')).toBe(wallet.stellar);
@@ -204,7 +205,7 @@ test('the email screens’ refusals: a wrong code, a limit, the issuer unreachab
   await shots(home, 'h10-12-unreachable', browserName);
   answer = 'off';
   await home.locator('#home-email-retry').click();
-  await expect(home.locator('#home-sign-in-problem')).toContainText('Email sign-in to Hana Home isn’t available right now.');
+  await expect(home.locator('#home-sign-in-problem')).toContainText('Email sign-in to Passport Home isn’t available right now.');
   await shots(home, 'h10-13-email-off', browserName);
 });
 

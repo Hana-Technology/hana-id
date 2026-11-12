@@ -93,7 +93,7 @@ describe('multi-signature Sodax swap', () => {
     const swap = sdkSwap(provider, wait);
 
     // The first signature needs the launcher click; the popup then shows each request in turn.
-    await waitLabel(tab, 'Review in Hana');
+    await waitLabel(tab, 'Review in Journear Passport');
     const popup = openApproval(tab);
     const shown: string[] = [];
     for (let n = 0; n < 3; n++) {
@@ -110,7 +110,7 @@ describe('multi-signature Sodax swap', () => {
     for (const s of signed) expect(signedBy(s, user, PUBLIC)).toBe(true);
     // One popup, opened once from the launcher; the follow-ups reused it (focused, no launcher).
     expect(approvePopups(tab)).toHaveLength(1);
-    expect(tab.launcher.history.filter((l) => l === 'Review in Hana')).toHaveLength(1);
+    expect(tab.launcher.history.filter((l) => l === 'Review in Journear Passport')).toHaveLength(1);
     expect(popup.focused).toBeGreaterThanOrEqual(2);
     expect(popup.closed).toBe(false);
   });
@@ -123,7 +123,7 @@ describe('multi-signature Sodax swap', () => {
       () => null,
       (e: unknown) => e,
     );
-    await waitLabel(tab, 'Review in Hana');
+    await waitLabel(tab, 'Review in Journear Passport');
     const popup = openApproval(tab);
     answer(tab, popup, await popup.next('hana:approve-request', 0), true);
     answer(tab, popup, await popup.next('hana:approve-request', 1), false);

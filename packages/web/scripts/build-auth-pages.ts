@@ -11,14 +11,14 @@
 //                                                               and the build id (`<meta name="hana-build">`, D384)
 //   assets/*.js, assets/*.css                                   content-hashed bundles (no inline script or style),
 //                                                               served at /assets/…
-//   assets/files/*.woff2, assets/files/OFL.txt                  the brand's fonts the stylesheet names (D426),
-//                                                               content-hashed, and their licence beside them
+//   assets/files/*.woff2, assets/files/OFL-*.txt                the brand's fonts the stylesheet names (D426, D765),
+//                                                               content-hashed, and their licences beside them
 // The Worker (apps/api src/pages/host.ts) serves each page from `<path>.html` with that page's headers, which it builds
 // itself. A rebuild replaces the whole `<env>/auth` root and nothing outside it.
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MARK_PATHS, MARK_RADIUS, MARK_VIEWBOX } from '@hana-id/brand';
+import { BRAND, FONT_FILES, MARK_CHEVRON, MARK_FRAME, MARK_VIEWBOX } from '@hana-id/brand';
 import { buildMeta } from '@hana-id/env/build-id';
 import { localBuild } from '@hana-id/env/local-build';
 import { build } from 'esbuild';
@@ -35,7 +35,6 @@ export const ORIGIN_DIR = 'auth';
 export const ASSET_DIR = 'assets';
 /** Where esbuild writes the files the stylesheet names (the brand's fonts), inside ASSET_DIR, with their licence. */
 export const FILES_DIR = 'files';
-export const FONT_LICENCE = 'OFL.txt';
 
 const ENTRIES: Record<AuthPage['name'], string> = {
   login: 'src/auth/entries/login.ts',
@@ -51,24 +50,63 @@ const ENTRIES: Record<AuthPage['name'], string> = {
 const escapeAttr = (s: string) => s.replace(/&/gu, '&amp;').replace(/"/gu, '&quot;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
 
 const brandFile = (path: string): string => fileURLToPath(import.meta.resolve(`@hana-id/brand/${path}`));
-/** The wordmark's paths, from the brand's SVG (hana-extension hana-word.svg). */
-const WORDMARK_PATHS = [...readFileSync(brandFile('logo/hana-wordmark.svg'), 'utf8').matchAll(/<path d="([^"]+)"/gu)].map((m) => m[1] as string);
 const svgPath = (d: string, cls?: string): string => {
   if (!/^[MLHVCSQTAZmlhvcsqtaz0-9., -]+$/u.test(d)) throw new Error('Not an SVG path');
   return `<path${cls ? ` class="${cls}"` : ''} d="${d}"></path>`;
 };
 
 /**
- * The Hana bar above every page (D426): the mark and the wordmark, inline (no image request; colours from the
- * stylesheet), the same on every page and for every app. It names Hana only: the app is named inside the page, in its
- * own box. Static markup: no text node, nothing that runs, no URL.
+ * The Journear mark as inline SVG (no image request): the frame and the chevron take their colours from the stylesheet
+ * (`.jp-mark .frame` and `.chev`: the brand teal, white on the dark scheme, and the stamp orange), the geometry from
+ * `@hana-id/brand` (logo/journear-mark.svg). Decorative: the text beside it names the brand.
  */
-export const HANA_BAR = [
-  '<header class="hana-bar">',
-  `<svg class="hana-mark" viewBox="${MARK_VIEWBOX}" role="img" aria-label="Hana" focusable="false"><rect class="bg" width="50" height="50" rx="${MARK_RADIUS}"></rect>${MARK_PATHS.map((d) => svgPath(d, 'fg')).join('')}</svg>`,
-  `<svg class="hana-wordmark" viewBox="0 0 74 15" aria-hidden="true" focusable="false">${WORDMARK_PATHS.map((d) => svgPath(d)).join('')}</svg>`,
+const markSvg = (cls: string): string => {
+  const f = MARK_FRAME;
+  const [chevron, tail] = MARK_CHEVRON.paths;
+  return (
+    `<svg class="jp-mark ${cls}" viewBox="${MARK_VIEWBOX}" aria-hidden="true" focusable="false">` +
+    `<rect class="frame" x="${f.x}" y="${f.y}" width="${f.width}" height="${f.height}" rx="${f.rx}" stroke-width="${f.strokeWidth}"></rect>` +
+    `${svgPath(chevron as string, 'chev')}${svgPath(tail as string, 'chev')}</svg>`
+  );
+};
+
+/** The wordmark's paths ("Journear"), from the brand's lockup (logo/journear-lockup.svg), and where the lockup puts them. */
+const LOCKUP = readFileSync(brandFile('logo/journear-lockup.svg'), 'utf8');
+const LOCKUP_WORD = (() => {
+  const m = /<g transform="(translate\([\d.]+,[\d.]+\))"><path fill="[^"]+" d="([^"]+)"/u.exec(LOCKUP);
+  if (!m) throw new Error('logo/journear-lockup.svg: no wordmark path');
+  return { transform: m[1] as string, d: m[2] as string };
+})();
+
+/**
+ * Journear Passport's footer badge in every popup (D765, the login modal pattern): the mark and "Secured by Journear
+ * Passport", the brand's only appearance in a window a partner's app opened. Static markup outside `#app`, the same on
+ * every page and for every app: it names the brand only, never the app (the app is named inside the page, in its own
+ * neutral box), and a partner's name can't contain "Journear" (the API refuses it), so the two can't be mistaken for
+ * each other (D426's "Hana bar", now the badge). No URL, nothing that runs.
+ */
+export const PASSPORT_BADGE = `<footer class="passport-badge">${markSvg('badge-mark')}<span>${BRAND.badge}</span></footer>`;
+
+/**
+ * Passport Home's header: the Journear lockup (the mark, the wordmark and "PASSPORT" in its proportions), inline, its
+ * colours from the stylesheet. Passport Home is Journear's own page, so the brand leads it; the apps it lists sit
+ * inside the page in their own boxes. Static: one label, no URL, nothing that runs.
+ */
+export const HOME_HEADER = [
+  '<header class="home-top">',
+  `<svg class="jp-lockup" viewBox="0 0 561 128" role="img" aria-label="${BRAND.product}" focusable="false">`,
+  `<g transform="translate(0,17.8) scale(0.7)"><rect class="frame" x="${MARK_FRAME.x}" y="${MARK_FRAME.y}" width="${MARK_FRAME.width}" height="${MARK_FRAME.height}" rx="${MARK_FRAME.rx}" stroke-width="${MARK_FRAME.strokeWidth}"></rect>`,
+  `${MARK_CHEVRON.paths.map((d) => svgPath(d, 'chev')).join('')}</g>`,
+  `<g transform="${LOCKUP_WORD.transform}">${svgPath(LOCKUP_WORD.d, 'word')}</g>`,
+  '<text class="sub" x="94.0" y="119.8">PASSPORT</text>',
+  '</svg>',
   '</header>',
 ].join('');
+
+/** Pages that are a window of their own over a partner's app (the login modal pattern); Passport Home is a full page. */
+const isPopup = (page: AuthPage): boolean => page.name !== 'home';
+
+const NOSCRIPT = `${BRAND.product} needs JavaScript to continue.`;
 
 /**
  * One page's HTML: no inline script or style, nothing from another origin. `buildId` is the build id (D384), which
@@ -91,10 +129,23 @@ export function pageHtml(env: HanaEnv, page: AuthPage, script: string, styleshee
     `<link rel="stylesheet" href="${escapeAttr(stylesheet)}">`,
     `<script type="module" src="${escapeAttr(script)}"></script>`,
     '</head>',
-    `<body>${HANA_BAR}<main id="app"><noscript>Hana needs JavaScript to continue.</noscript></main></body>`,
+    isPopup(page)
+      ? `<body class="popup"><div class="jp-modal popup-modal"><main id="app"><noscript>${NOSCRIPT}</noscript></main>${PASSPORT_BADGE}</div></body>`
+      : `<body class="home-page">${HOME_HEADER}<main id="app"><noscript>${NOSCRIPT}</noscript></main></body>`,
     '</html>',
     '',
   ].join('\n');
+}
+
+/** The licence files of the brand's fonts esbuild emitted (by the source file each output came from). */
+function fontLicences(outputs: Record<string, { inputs: Record<string, unknown> }>): string[] {
+  const licences = new Set<string>();
+  for (const meta of Object.values(outputs))
+    for (const input of Object.keys(meta.inputs)) {
+      const font = FONT_FILES.find((f) => input.endsWith(`/fonts/${f.file}`));
+      if (font) licences.add(font.licence);
+    }
+  return [...licences].sort();
 }
 
 export interface BuiltEnv {
@@ -147,9 +198,9 @@ export async function buildAuthPages(env: HanaEnv, outRoot: string = PAGES_DIST,
   for (const [out, meta] of Object.entries(result.metafile.outputs)) if (meta.entryPoint) byEntry.set(meta.entryPoint, url(out));
   const stylesheet = byEntry.get('src/auth/auth.css');
   if (!stylesheet) throw new Error('esbuild produced no stylesheet');
-  // The fonts' licence (SIL OFL 1.1) beside them, as the licence asks of a copy.
+  // The fonts' licences (SIL OFL 1.1) beside them, as the licence asks of a copy: one per family shipped.
   mkdirSync(join(dir, ASSET_DIR, FILES_DIR), { recursive: true });
-  copyFileSync(brandFile(`fonts/${FONT_LICENCE}`), join(dir, ASSET_DIR, FILES_DIR, FONT_LICENCE));
+  for (const licence of fontLicences(result.metafile.outputs)) copyFileSync(brandFile(`fonts/${licence}`), join(dir, ASSET_DIR, FILES_DIR, licence));
 
   const pages = {} as BuiltEnv['pages'];
   for (const page of AUTH_PAGES) {

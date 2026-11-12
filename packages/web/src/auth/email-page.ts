@@ -78,6 +78,7 @@ import {
   followSlot,
   isFollowNotice,
 } from '@hana-id/core';
+import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { appLogo } from './logo.ts';
 import type { AuthApi } from './api.ts';
@@ -90,6 +91,7 @@ import { type TakenLogin, peekLogin, storeLoginEntry, takeLogin, zeroTaken } fro
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
 import { closeOrShare } from './share-handoff.ts';
 import { vaultSignals } from './vault-signal.ts';
+import { BTN, alert, icon } from './ui.ts';
 
 export interface EmailPageDeps {
   win: PageWindow;
@@ -140,6 +142,8 @@ export interface EmailPage {
 /** The longest the resend button waits, whatever the issuer said (its own minimum is 30 s). */
 export const RESEND_WAIT_MAX_MS = 60_000;
 export const CODE_RE = /^\d{6}$/u;
+/** The address check before a code is sent (the issuer makes its own): the field's blur check and the submit's. */
+export const validAddress = (address: string): boolean => address.length >= 3 && address.length <= 254 && address.includes('@') && !/\s/u.test(address);
 /** The follow-up mode reads the vault's notices for at most this long after the login's context was made. */
 export const FOLLOW_LIMIT_MS = 10 * 60_000;
 /** The relayId in the fragment. */
@@ -154,11 +158,12 @@ type EmailStepStage = (typeof EMAIL_STEP_STAGES)[number];
 
 const TEXT = {
   rateLimited: 'Too many attempts. Try again later.',
-  unreachable: 'Hana’s email service can’t be reached right now. Try again in a moment.',
+  unreachable: `${BRAND.company}’s email service can’t be reached right now. Try again in a moment.`,
   /** `start` failed without an answer: it may still have sent a mail. */
-  unreachableStart: 'Hana’s email service can’t be reached right now. A code may already be on its way: if you try again, use the newest code.',
+  unreachableStart: `${BRAND.company}’s email service can’t be reached right now. A code may already be on its way: if you try again, use the newest code.`,
   failed: (code: string) => `Something went wrong (${code}). Try again, or close this window and start again from the app.`,
   invalidEmail: 'Enter a valid email address.',
+  invalidCode: 'Enter the 6-digit code from the mail.',
   domain: 'Addresses on this domain can’t be used to sign in.',
   expired: 'This code expired or can’t be used any more. Send a new code.',
   resendLimit: 'No more codes can be sent for this attempt. Use a different email, or try again later.',
@@ -171,7 +176,7 @@ const STOP_TEXT: Record<string, string> = {
   link_refused: 'These sign-in methods can’t be linked. Sign in with the method that opened your wallet.',
   login_cancelled: 'The sign-in was cancelled.',
   login_timeout: 'This sign-in took too long. Start again from the app.',
-  api_unavailable: 'Hana couldn’t finish the sign-in. Close this window and try again from the app.',
+  api_unavailable: `${BRAND.company} couldn’t finish the sign-in. Close this window and try again from the app.`,
   token_invalid: 'The sign-in couldn’t be checked. Start again from the app.',
   derive_failed: 'The sign-in couldn’t finish. Start again from the app.',
 };
@@ -228,7 +233,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   };
 
   if (isFramed(win)) {
-    fatal('Sign-in stopped', 'The Hana sign-in window can’t run inside another page.', 'config_mismatch');
+    fatal('Sign-in stopped', `The ${BRAND.product} sign-in window can’t run inside another page.`, 'config_mismatch');
     return page;
   }
   const m = FRAGMENT_RE.exec(win.location.hash);
@@ -336,18 +341,16 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   /** A notice; `retry` (a transient failure) adds "Try again", which repeats the request that failed. */
   const message = (text: string | null, id: string, retry?: () => void) => {
     if (!text) return null;
-    const note = d.h('p', { class: 'note', attrs: { role: 'alert', id } }, text);
-    if (!retry) return note;
+    if (!retry) return alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id } }, text);
     const again = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-retry' } }, 'Try again');
     again.addEventListener('click', () => {
       again.setAttribute('disabled', '');
       retry();
     });
-    note.append(' ', again);
-    return note;
+    return alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id } }, text, ' ', again);
   };
   const cancelButton = () => {
-    const b = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
+    const b = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
     b.addEventListener('click', () => void cancel());
     return b;
   };
@@ -376,6 +379,27 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   // ---- screens ----
 
+  /**
+   * A form field on the design system's pattern (D765): the label above (6 px gap), the input, a hint below that an
+   * error replaces in place (the same line, so nothing under it moves while a pointer is on its way to a button). The
+   * check runs when the field loses focus, never on each keystroke; the submit makes its own check as before.
+   */
+  function field(id: string, label: string, input: HTMLInputElement, hint: string, check: (value: string) => string | null): HTMLElement {
+    const error = d.h('span', { class: 'jp-error', attrs: { id: `${id}-error` } });
+    const wrap = d.h('div', { class: 'jp-field' }, d.h('label', { class: 'jp-label', attrs: { for: id } }, label), input, d.h('span', { class: 'jp-hint', attrs: { id: `${id}-hint` } }, hint), error);
+    input.classList.add('jp-input');
+    input.setAttribute('aria-describedby', `${id}-hint ${id}-error`);
+    input.addEventListener('blur', () => {
+      const value = input.value.trim();
+      const problem = value ? check(value) : null;
+      error.textContent = problem ?? '';
+      wrap.classList.toggle('is-invalid', problem !== null);
+      if (problem) input.setAttribute('aria-invalid', 'true');
+      else input.removeAttribute('aria-invalid');
+    });
+    return wrap;
+  }
+
   function addressTitle(): string {
     if (startAs.kind === 'link' && startAs.purpose === 'link_new') return 'Add an email sign-in';
     if (startAs.kind === 'link') return 'Confirm it’s you';
@@ -389,8 +413,14 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       attrs: { type: 'email', id: 'email-address', name: 'email', autocomplete: 'email', inputmode: 'email', autocapitalize: 'none', spellcheck: 'false', required: '', maxlength: '254' },
     });
     input.value = address;
-    const send = d.h('button', { class: 'primary', attrs: { type: 'submit', id: 'email-send' } }, 'Send code');
-    const form = d.h('form', { class: 'email-form', attrs: { novalidate: '' } }, d.h('label', { attrs: { for: 'email-address' } }, 'Email address', input), message(problem, 'email-notice', retry), d.h('div', { class: 'actions' }, cancelButton(), send));
+    const send = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'submit', id: 'email-send' } }, 'Send code');
+    const form = d.h(
+      'form',
+      { class: 'email-form', attrs: { novalidate: '' } },
+      field('email-address', 'Email address', input, 'We’ll email you a 6-digit code.', (v) => (validAddress(v) ? null : TEXT.invalidEmail)),
+      message(problem, 'email-notice', retry),
+      d.h('div', { class: 'actions' }, cancelButton(), send),
+    );
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       address = input.value.trim();
@@ -402,7 +432,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         : startAs.kind === 'link' && startAs.purpose === 'link_new'
           ? d.h('p', {}, 'Enter the email you want to add. It can open this wallet after a waiting period.')
           : null;
-    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, addressTitle()), header(), explain, form));
+    d.show(d.h('section', { class: 'panel email-step' }, d.h('h1', {}, addressTitle()), header(), explain, form));
     try {
       input.focus();
     } catch {
@@ -422,7 +452,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       attrs: { type: 'text', id: 'email-code', name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', maxlength: '6', required: '' },
     });
     if (code) input.value = code;
-    const go = d.h('button', { class: 'primary', attrs: { type: 'submit', id: 'email-verify' } }, 'Continue');
+    input.classList.add('code-input');
+    const go = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'submit', id: 'email-verify' } }, 'Continue');
     const resend = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-resend', disabled: '' } }, 'Resend code');
     const other = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-other' } }, 'Use a different email');
     resend.addEventListener('click', () => void resendCode());
@@ -441,7 +472,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     const submitCode = () => {
       const typed = input.value.replace(/\s+/gu, '');
       if (!CODE_RE.test(typed)) {
-        showCode(resendAfterMs, 'Enter the 6-digit code from the mail.');
+        showCode(resendAfterMs, TEXT.invalidCode);
         return;
       }
       void verifyCode(typed, resendAfterMs);
@@ -449,8 +480,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     const form = d.h(
       'form',
       { class: 'email-form', attrs: { novalidate: '' } },
-      d.h('p', {}, 'We sent a 6-digit code to ', d.h('strong', {}, to), '. Type it here, in this Hana window only.'),
-      d.h('label', { attrs: { for: 'email-code' } }, 'Code', input),
+      d.h('p', {}, 'We sent a 6-digit code to ', d.h('strong', {}, to), `. Type it here, in this ${BRAND.product} window only.`),
+      field('email-code', 'Code', input, 'Find it in the mail we just sent.', (v) => (CODE_RE.test(v.replace(/\s+/gu, '')) ? null : TEXT.invalidCode)),
       message(problem, 'email-notice', retry === 'verify' ? submitCode : retry === 'resend' ? () => void resendCode() : undefined),
       d.h('div', { class: 'actions' }, cancelButton(), go),
       d.h('p', { class: 'muted links' }, resend, ' · ', other),
@@ -469,7 +500,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       e.preventDefault();
       submitCode();
     });
-    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Check your email'), header(), form));
+    d.show(d.h('section', { class: 'panel email-step' }, d.h('h1', {}, 'Check your email'), header(), form));
     try {
       input.focus();
     } catch {
@@ -506,7 +537,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   async function sendCode(): Promise<void> {
     if (pastDeadline()) return;
-    if (address.length < 3 || address.length > 254 || !address.includes('@') || /\s/u.test(address)) {
+    if (!validAddress(address)) {
       notice = 'invalid_email';
       showAddress(TEXT.invalidEmail);
       return;
@@ -698,8 +729,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     };
     const buttons: HTMLElement[] = [];
     if (link) {
-      const go = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'email-link-google' } }, 'Link and continue');
-      const plain = d.h('button', { attrs: { type: 'button', id: 'email-google' } }, 'Sign in with Google');
+      const go = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'email-link-google' } }, 'Link and continue');
+      const plain = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'email-google' } }, 'Sign in with Google');
       go.addEventListener('click', () => {
         go.setAttribute('disabled', '');
         plain.setAttribute('disabled', '');
@@ -710,9 +741,9 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         plain.setAttribute('disabled', '');
         toGoogle(false);
       });
-      buttons.push(plain, go);
+      buttons.push(go, plain);
     } else {
-      const go = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'email-google' } }, 'Continue with Google');
+      const go = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'email-google' } }, 'Continue with Google');
       go.addEventListener('click', () => {
         go.setAttribute('disabled', '');
         toGoogle(false);
@@ -725,7 +756,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         { class: 'panel' },
         d.h('h1', {}, 'Sign in with Google'),
         header(),
-        cancelled ? d.h('p', { class: 'note', attrs: { role: 'status', id: 'google-cancelled' } }, GOOGLE_CANCELLED_TEXT) : null,
+        cancelled ? alert(d, 'info', { class: 'note', attrs: { role: 'status', id: 'google-cancelled' } }, GOOGLE_CANCELLED_TEXT) : null,
         d.h('p', {}, 'This email belongs to a wallet you created by signing in with Google. Continue with Google to open it.'),
         link
           ? d.h(
@@ -734,7 +765,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
               '“Link and continue” lets this email open the same wallet afterwards. If Google doesn’t host this mailbox, the link waits 24 hours and can be cancelled.',
             )
           : null,
-        d.h('div', { class: 'actions' }, cancelButton(), ...buttons),
+        link ? d.h('div', { class: 'actions stack' }, ...buttons, cancelButton()) : d.h('div', { class: 'actions' }, cancelButton(), ...buttons),
       ),
     );
     notice = cancelled ? 'google_cancelled' : 'google_wallet';
@@ -800,7 +831,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       for (const b of buttons) b.setAttribute('disabled', '');
     };
     if (ctx.methods.includes('google') && ctx.clientId) {
-      const google = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'continue-google' } }, 'Continue with Google');
+      const google = d.h('button', { class: 'jp-provider primary', attrs: { type: 'button', id: 'continue-google' } }, icon(d, 'google'), 'Continue with Google', icon(d, 'chev-r', 'chev'));
       google.addEventListener('click', () => {
         disable();
         restartGoogle({ back: 'chooser' });
@@ -809,7 +840,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     }
     // D348: email only when the partner didn't restrict the login to Google (`hana.login({method: 'google'})`).
     if (ctx.methods.includes('email') && ctx.method !== 'google') {
-      const email = d.h('button', { attrs: { type: 'button', id: 'continue-email' } }, 'Continue with email');
+      const email = d.h('button', { class: 'jp-provider', attrs: { type: 'button', id: 'continue-email' } }, icon(d, 'mail'), 'Continue with email', icon(d, 'chev-r', 'chev'));
       email.addEventListener('click', () => {
         disable();
         chooseEmail();
@@ -822,8 +853,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         { class: 'panel' },
         d.h('h1', {}, 'Sign in'),
         header(),
-        d.h('p', { class: 'note', attrs: { role: 'status', id: 'google-cancelled' } }, GOOGLE_CANCELLED_TEXT),
-        d.h('div', { class: 'actions choose' }, ...buttons),
+        alert(d, 'info', { class: 'note', attrs: { role: 'status', id: 'google-cancelled' } }, GOOGLE_CANCELLED_TEXT),
+        d.h('div', { class: 'providers' }, ...buttons),
       ),
     );
     notice = 'google_cancelled';
@@ -892,8 +923,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       dropEmailContext(win.sessionStorage, rid);
       zeroTaken(taken);
       fatal(
-        'Sign-in could not finish',
-        used ? 'This sign-in was already completed. Close this window.' : 'Hana could not be reached to finish the sign-in. Close this window and try again from the app.',
+        'Sign-in couldn’t finish',
+        used ? 'This sign-in was already completed. Close this window.' : `${BRAND.company} couldn’t be reached to finish the sign-in. Close this window and try again from the app.`,
         err instanceof ApiError ? err.code : 'api_unavailable',
       );
       return;
@@ -935,7 +966,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       await api.writeRelay(id, await encryptRelayPayload(f.relayKey, id, payload));
     } catch (err) {
       endFollow();
-      fatal('Sign-in could not finish', 'Hana could not be reached to finish the sign-in. Close this window and try again from the app.', err instanceof ApiError ? err.code : 'api_unavailable');
+      fatal('Sign-in couldn’t finish', `${BRAND.company} couldn’t be reached to finish the sign-in. Close this window and try again from the app.`, err instanceof ApiError ? err.code : 'api_unavailable');
       return;
     }
     sink = { kind: 'first' };
@@ -1019,8 +1050,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   /** Case A, not Google-hosted: "Link and continue" (google-match's prepared code) or "Sign in with email". */
   function showLinkCode(n: Extract<FollowNotice, { t: 'link_code' }>, slot: number): void {
-    const go = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'link-continue' } }, 'Link and continue');
-    const other = d.h('button', { attrs: { type: 'button', id: 'link-use-email' } }, 'Sign in with email');
+    const go = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'link-continue' } }, 'Link and continue');
+    const other = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'link-use-email' } }, 'Sign in with email');
     go.addEventListener('click', () => {
       go.setAttribute('disabled', '');
       other.setAttribute('disabled', '');
@@ -1030,7 +1061,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       void resendCode();
     });
     other.addEventListener('click', () => toEmailLogin(slot));
-    const cancelB = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
+    const cancelB = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
     cancelB.addEventListener('click', () => {
       sink = { kind: 'answer', slot, as: 'session' };
       void cancel();
@@ -1042,7 +1073,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         d.h('h1', {}, 'This email already has a wallet'),
         header(),
         d.h('p', {}, 'Your Google account’s email, ', d.h('strong', {}, n.to), ', already opens a wallet here. To open it with Google too, confirm with a code sent to that address.'),
-        d.h('div', { class: 'actions' }, cancelB, other, go),
+        d.h('div', { class: 'actions stack' }, go, other, cancelB),
       ),
     );
     notice = 'link_code';
@@ -1051,9 +1082,9 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   /** Case A that can't link: only "Sign in with email" (never a second wallet, D122). */
   function showUseEmail(slot: number): void {
-    const other = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'link-use-email' } }, 'Sign in with email');
+    const other = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'link-use-email' } }, 'Sign in with email');
     other.addEventListener('click', () => toEmailLogin(slot));
-    const cancelB = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
+    const cancelB = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
     cancelB.addEventListener('click', () => {
       sink = { kind: 'answer', slot, as: 'session' };
       void cancel();
@@ -1079,15 +1110,15 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
    * permission screen for the signed-in account, its answer in the next slot), or Cancel.
    */
   function showEmailConsent(n: Extract<FollowNotice, { t: 'email_consent' }>, slot: number): void {
-    const viaEmail = d.h('button', { attrs: { type: 'button', id: 'consent-email' } }, 'Sign in with email instead');
-    const again = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'consent-google' } }, 'Try Google again');
+    const viaEmail = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'consent-email' } }, 'Sign in with email instead');
+    const again = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'consent-google' } }, 'Try Google again');
     viaEmail.addEventListener('click', () => toEmailLogin(slot));
     again.addEventListener('click', () => {
       viaEmail.setAttribute('disabled', '');
       again.setAttribute('disabled', '');
       googleAgain(n.loginHint, slot);
     });
-    const cancelB = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
+    const cancelB = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
     cancelB.addEventListener('click', () => {
       sink = { kind: 'answer', slot, as: 'session' };
       reason = 'email_cancelled';
@@ -1104,10 +1135,10 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
           'p',
           { attrs: { id: 'consent-text' } },
           declined
-            ? 'Hana checks whether your Google address already has a wallet. It keeps the address with your account and doesn’t share it with the app you’re signing in to. Without it you can’t open a new wallet with Google here.'
+            ? `${BRAND.company} checks whether your Google address already has a wallet. It keeps the address with your account and doesn’t share it with the app you’re signing in to. Without it you can’t open a new wallet with Google here.`
             : 'You signed in with one Google account, then picked a different one when Google asked to share your email address. Try Google again and pick the account you signed in with, or sign in with email instead.',
         ),
-        d.h('div', { class: 'actions' }, cancelB, viaEmail, again),
+        d.h('div', { class: 'actions stack' }, again, viaEmail, cancelB),
       ),
     );
     notice = declined ? 'email_consent_declined' : 'google_account_mismatch';
@@ -1215,9 +1246,9 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       const action = b.action;
       const button = action ? d.h('button', { class: 'link', attrs: { type: 'button', id: `banner-${action.kind}-${i}` } }, action.kind === 'cancel' ? 'Cancel this link' : 'Remove') : null;
       if (button && action) button.addEventListener('click', () => prove(action.prove, slot, 'Confirm it’s you'));
-      return d.h('li', { class: b.status === 'pending' ? 'banner pending' : 'banner', attrs: { 'data-provider': b.provider, 'data-status': b.status } }, what, button ? ' ' : null, button);
+      return d.h('li', { class: b.status === 'pending' ? 'banner pending' : 'banner', attrs: { 'data-provider': b.provider, 'data-status': b.status } }, icon(d, b.status === 'pending' ? 'clock' : 'check-c'), d.h('span', { class: 'banner-text' }, what, button ? ' ' : null, button));
     });
-    const done = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'banner-done' } }, 'Done');
+    const done = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'banner-done' } }, 'Done');
     done.addEventListener('click', () => {
       endFollow();
       settle('done');
@@ -1230,7 +1261,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         { class: 'panel' },
         d.h('h1', {}, title),
         header(),
-        text ? d.h('p', { attrs: { role: 'alert' } }, text) : null,
+        text ? alert(d, 'danger', { attrs: { role: 'alert' } }, text) : null,
         d.h('ul', { class: 'banners', attrs: { id: 'link-banners' } }, ...items),
         d.h('div', { class: 'actions' }, done),
       ),
@@ -1241,7 +1272,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   // ---- start ----
 
   if (!env.emailIssuerUrl) {
-    void abandon('email_unavailable', 'Sign-in stopped', 'Email sign-in is not set up here.', 'config_mismatch');
+    void abandon('email_unavailable', 'Sign-in stopped', 'Email sign-in isn’t set up here.', 'config_mismatch');
     return page;
   }
   // Follow-up mode after a Google leg (/login/callback stored the vault's next notice slot).

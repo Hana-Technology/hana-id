@@ -227,7 +227,7 @@ describe('/login', () => {
     const win = new FakeWindow('/login', `?v=${VAULT_FRAME}`);
     const page = startLoginPage({ win, env: ENV });
     expect(await page.done).toEqual({ stage: 'error', code: 'coop_blocks_popup' });
-    expect(pageText()).toContain('This site’s settings block the Hana sign-in window (COOP)');
+    expect(pageText()).toContain('This site’s settings block the Journear Passport window (COOP)');
     expect(win.listenerCount('message')).toBe(0);
   });
 
@@ -358,7 +358,7 @@ describe('/login?mode=home', () => {
     expect(Buffer.from(entry.relayKey as string, 'base64url')).toEqual(Buffer.from(relayKey));
     expect(s.win.sessionStorage.length).toBe(1);
     expect(params.relayKey.every((b) => b === 0)).toBe(true);
-    expect(pageText()).toContain('Signing in to Hana Home');
+    expect(pageText()).toContain('Signing in to Passport Home');
   });
 
   it('the exit client (D491): Google answers to /home/callback, and the entry is marked for it with the client and nonce', async () => {
@@ -591,6 +591,6 @@ describe('/login?mode=home', () => {
     const t = home();
     vi.advanceTimersByTime(HELLO_TIMEOUT_MS + 1);
     expect(await t.page.done).toEqual({ stage: 'error', code: 'login_timeout' });
-    expect(pageText()).toContain('Hana Home did not answer');
+    expect(pageText()).toContain('Passport Home didn’t answer');
   });
 });

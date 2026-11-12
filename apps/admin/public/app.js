@@ -1,4 +1,4 @@
-// The Hana admin console SPA (batch C8; reports, statements and rates in C12; retention in C13; Users in C8b; the Support ID lookup in C15): plain JavaScript, no build step and no dependency, under the admin CSP
+// The Journear Passport admin console SPA, the staff's (batch C8; reports, statements and rates in C12; retention in C13; Users in C8b; the Support ID lookup in C15): plain JavaScript, no build step and no dependency, under the admin CSP
 // (script-src 'self', style-src 'self'). Every value from the API is put in the page as text (textContent), never as
 // HTML. Writes send the admin's CSRF headers; Cloudflare Access adds the staff identity at the edge.
 //
@@ -7,6 +7,12 @@
 // every API error is said in plain words with what to do next, its code kept small for support; anything destructive
 // or guarded is confirmed in the page (never a browser dialog); a support reference is explained where it is asked.
 'use strict';
+
+/**
+ * The names staff read (D765): packages/brand's BRAND, mirrored here because this SPA has no build step
+ * (test-spa/brand.test.ts holds the two equal). Code identifiers (the `hana` actor kind, `x-hana-admin`) keep "hana".
+ */
+const BRAND = Object.freeze({ company: 'Journear', product: 'Journear Passport', home: 'Passport Home' });
 
 // ---- helpers ----
 
@@ -23,6 +29,54 @@ function h(tag, attrs, ...children) {
   for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : document.createTextNode(String(c)));
   return el;
 }
+
+/**
+ * The design system's icons (Journear Passport v0.5: a 20 px grid, 1.75 px stroke, round caps and joins, drawn by the
+ * stylesheet's `.ic`), built as SVG elements: no markup string, no sprite request. Each is [viewBox, shapes].
+ */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const ICONS = {
+  info: ['0 0 20 20', [['circle', { cx: 10, cy: 10, r: 8 }], ['path', { d: 'M10 9v5M10 6.5v.1' }]]],
+  ok: ['0 0 20 20', [['circle', { cx: 10, cy: 10, r: 8 }], ['path', { d: 'M6.5 10.5l2.3 2.3L13.5 8' }]]],
+  warn: ['0 0 20 20', [['path', { d: 'M10 3l8 14H2z' }], ['path', { d: 'M10 8v4M10 14.5v.1' }]]],
+  danger: ['0 0 20 20', [['circle', { cx: 10, cy: 10, r: 8 }], ['path', { d: 'M7.5 7.5l5 5M12.5 7.5l-5 5' }]]],
+  check: ['0 0 16 16', [['path', { d: 'M3 8.5l3 3 7-7' }]]],
+  x: ['0 0 16 16', [['path', { d: 'M4 4l8 8M12 4l-8 8' }]]],
+  chevR: ['0 0 16 16', [['path', { d: 'M6 4l4 4-4 4' }]]],
+  chevL: ['0 0 16 16', [['path', { d: 'M10 4l-4 4 4 4' }]]],
+  copy: ['0 0 16 16', [['rect', { x: 5.5, y: 5.5, width: 8, height: 8, rx: 1.5 }], ['path', { d: 'M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2' }]]],
+  search: ['0 0 16 16', [['circle', { cx: 7, cy: 7, r: 4.5 }], ['path', { d: 'M10.5 10.5L14 14' }]]],
+  bolt: ['0 0 16 16', [['path', { d: 'M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z' }]]],
+  shield: ['0 0 16 16', [['path', { d: 'M8 1.5l5.5 2v4c0 3.5-2.5 5.8-5.5 7-3-1.2-5.5-3.5-5.5-7v-4z' }]]],
+  clock: ['0 0 16 16', [['circle', { cx: 8, cy: 8, r: 6 }], ['path', { d: 'M8 4.5V8l2.5 1.5' }]]],
+  plus: ['0 0 16 16', [['path', { d: 'M8 3v10M3 8h10' }]]],
+  wallet: ['0 0 20 20', [['rect', { x: 2.5, y: 5, width: 15, height: 11, rx: 2 }], ['path', { d: 'M2.5 8h15M13 12h2' }]]],
+  mail: ['0 0 20 20', [['rect', { x: 2.5, y: 4.5, width: 15, height: 11, rx: 2 }], ['path', { d: 'M3 6l7 5 7-5' }]]],
+  key: ['0 0 20 20', [['circle', { cx: 7, cy: 12, r: 4 }], ['path', { d: 'M10 9l7-7M14 5l2 2M12 7l2 2' }]]],
+  cal: ['0 0 20 20', [['rect', { x: 3, y: 4.5, width: 14, height: 12.5, rx: 2 }], ['path', { d: 'M3 8.5h14M7 2.5v4M13 2.5v4' }]]],
+};
+/** An icon (decorative: hidden from assistive technology; the text beside it says what it means). */
+function icon(name, cls) {
+  const [viewBox, shapes] = ICONS[name];
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', cls ? `ic ${cls}` : 'ic');
+  svg.setAttribute('viewBox', viewBox);
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  for (const [tag, attrs] of shapes) {
+    const shape = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) shape.setAttribute(k, String(v));
+    svg.append(shape);
+  }
+  return svg;
+}
+
+/**
+ * A button's classes in the design system: `kind` primary (one per view), secondary (the rest), ghost (inline), danger
+ * (the confirmation of a destructive action only); `small` for the 32 px size; `dangerText` for the trigger of a
+ * destructive action, which asks its confirmation first.
+ */
+const btn = (kind, opts = {}) => ['jp-btn', `jp-btn-${kind}`, opts.small ? 'jp-btn-sm' : '', opts.dangerText ? 'danger-text' : ''].filter(Boolean).join(' ');
 
 /** A time as `2026-11-06 04:28 UTC` (staff work across time zones: always UTC, to the minute). */
 const time = (ms) => (typeof ms === 'number' ? `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '');
@@ -241,7 +295,10 @@ window.addEventListener('focus', onTabBack);
 document.addEventListener('visibilitychange', onTabBack);
 
 /** "Sign in again" / "Renew": a link that opens this console in a new tab, where Access signs the staff member in. */
-const signInLink = (label, onOpen, href = SIGNED_IN_PATH) => h('a', { href, target: '_blank', rel: 'noopener', class: 'button primary', onclick: onOpen }, label);
+const signInLink = (label, onOpen, href = SIGNED_IN_PATH) => h('a', { href, target: '_blank', rel: 'noopener', class: btn('primary', { small: true }), onclick: onOpen }, label);
+
+/** The banner's box: an inline alert of the design system (`tone` success, warning or danger), its words in `.body`. */
+const sessionBox = (cls, tone, role, ...body) => h('div', { class: `session-banner ${cls} jp-alert jp-alert-${tone}`, role }, icon(tone === 'success' ? 'ok' : tone === 'warning' ? 'clock' : 'danger'), h('div', { class: 'body' }, ...body));
 
 /** The banner above every page: the sign-in's end coming (a warning), or come (an alert). Empty otherwise. */
 function renderSession(announce) {
@@ -250,21 +307,23 @@ function renderSession(announce) {
   const now = Date.now();
   if (session.back) {
     host.replaceChildren(
-      h(
-        'div',
-        { class: 'session-banner signed-in', role: 'status' },
-        h('strong', {}, 'You’re signed in again'),
+      sessionBox(
+        'signed-in',
+        'success',
+        'status',
+        h('b', {}, 'You’re signed in again'),
         h('p', {}, 'Press Try again to send what was waiting: nothing was sent while you were signed out.'),
-        h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'primary', onclick: () => session.retry() }, 'Try again')),
+        h('div', { class: 'form-actions' }, h('button', { type: 'button', class: btn('primary', { small: true }), onclick: () => session.retry() }, 'Try again')),
       ),
     );
     return;
   }
   if (session.expired) {
-    const box = h(
-      'div',
-      { class: 'session-banner expired', role: 'alert' },
-      h('strong', {}, 'Your sign-in has expired'),
+    const box = sessionBox(
+      'expired',
+      'danger',
+      'alert',
+      h('b', {}, 'Your sign-in has expired'),
       h(
         'p',
         {},
@@ -273,7 +332,7 @@ function renderSession(announce) {
           : 'Nothing on this page is lost. Sign in again in the new tab, then come back to this tab and press Try again.',
       ),
       session.stillOut ? h('p', { class: 'still' }, 'Still signed out: finish signing in in the other tab (Sign in again opens it), then press Try again.') : '',
-      h('div', { class: 'form-actions' }, signInLink('Sign in again'), h('button', { type: 'button', onclick: () => session.retry() }, 'Try again')),
+      h('div', { class: 'form-actions' }, signInLink('Sign in again'), h('button', { type: 'button', class: btn('secondary', { small: true }), onclick: () => session.retry() }, 'Try again')),
     );
     // A new alert is announced; a changed one replaces its text in place (no second announcement for the same end).
     if (announce || !host.firstChild || !host.firstChild.classList.contains('expired')) host.replaceChildren(box);
@@ -282,10 +341,11 @@ function renderSession(announce) {
   }
   if (session.expMs !== null && session.expMs - now <= WARN_BEFORE_MS) {
     const mins = Math.max(1, Math.ceil((session.expMs - now) / 60_000));
-    const box = h(
-      'div',
-      { class: 'session-banner ending', role: 'status' },
-      h('strong', {}, `Your sign-in ends in ${mins} min`),
+    const box = sessionBox(
+      'ending',
+      'warning',
+      'status',
+      h('b', {}, `Your sign-in ends in ${mins} min`),
       h(
         'p',
         {},
@@ -326,10 +386,10 @@ const ERRORS = {
   network: ['Can’t reach the admin console', 'Check your connection and try again. If your Access session expired, reload the page to sign in again.'],
   session_expired: ['Not sent: your sign-in had expired', 'Nothing was changed. Sign in again (the banner at the top), then do it again.'],
   unauthenticated: ['Your sign-in has expired', 'Reload the page to sign in through Cloudflare Access again.'],
-  not_staff: ['This account isn’t on the Hana staff list', 'Sign in with your Hana staff account. A founder adds staff to the environment’s staff list.'],
+  not_staff: [`This account isn’t on the ${BRAND.company} staff list`, `Sign in with your ${BRAND.company} staff account. A founder adds staff to the environment’s staff list.`],
   csrf: ['The browser’s same-origin check failed', 'Reload the page and try again. If it keeps happening, turn off browser extensions that change requests.'],
   access_unavailable: ['Cloudflare Access can’t be checked right now', 'Try again in a minute.'],
-  upstream_unavailable: ['A Hana service didn’t answer', 'Nothing was changed. Try again in a minute; if it keeps failing, check the API and console Workers.'],
+  upstream_unavailable: [`A ${BRAND.company} service didn’t answer`, 'Nothing was changed. Try again in a minute; if it keeps failing, check the API and console Workers.'],
   ledger_unavailable: ['The usage ledger isn’t available', 'Reports, statements, rates and exports need the usage ledger. In an environment without usage capture this is expected.'],
   not_found: ['Not found', 'It may have been deleted, or the page is out of date. Go back and reload the list.'],
   bad_request: ['Check what you entered', 'The details say which field the server refused. Fix it and try again.'],
@@ -388,39 +448,116 @@ function errorBox(err) {
   const e = explain(err);
   return h(
     'div',
-    { class: 'alert error', role: 'alert' },
-    h('strong', {}, e.title),
-    e.detail ? h('p', { class: 'detail' }, e.detail) : '',
-    e.hint ? h('p', {}, richText(e.hint)) : '',
-    e.code ? h('p', { class: 'code' }, 'Error code ', h('code', {}, e.code), e.status ? ` (HTTP ${e.status})` : '') : '',
+    { class: 'jp-alert jp-alert-danger', role: 'alert' },
+    icon('danger'),
+    h(
+      'div',
+      { class: 'body' },
+      h('b', {}, e.title),
+      e.detail ? h('p', { class: 'detail' }, e.detail) : '',
+      e.hint ? h('p', {}, richText(e.hint)) : '',
+      e.code ? h('p', { class: 'code' }, 'Error code ', h('code', {}, e.code), e.status ? ` (HTTP ${e.status})` : '') : '',
+    ),
   );
 }
 
-/** A message box: kind is info, ok, warn or error; the first child is its title when it is a string. */
+/** The design system's tone and icon for each kind of message (info, ok, warn, error). */
+const TONES = { info: ['info', 'info'], ok: ['success', 'ok'], warn: ['warning', 'warn'], error: ['danger', 'danger'] };
+
+/** An inline alert: kind is info, ok, warn or error; `title` its bold first line, when given. Never floating. */
 function note(kind, title, ...body) {
-  return h('div', { class: `alert ${kind}`, role: kind === 'error' ? 'alert' : undefined }, title ? h('strong', {}, title) : '', ...body.map((b) => (typeof b === 'string' ? h('p', {}, richText(b)) : b)));
+  const [tone, ic] = TONES[kind] || TONES.info;
+  return h(
+    'div',
+    { class: `jp-alert jp-alert-${tone}`, role: kind === 'error' ? 'alert' : undefined },
+    icon(ic),
+    h('div', { class: 'body' }, title ? h('b', {}, title) : '', ...body.map((b) => (typeof b === 'string' ? h('p', {}, richText(b)) : b))),
+  );
 }
 
-function emptyState(title, text) {
-  return h('div', { class: 'empty-state' }, h('strong', {}, title), text ? richText(text) : '');
+/** An empty state: what is missing and what to do, with its icon (a dashed box, the design system's). */
+function emptyState(title, text, ic = 'info') {
+  return h('div', { class: 'jp-empty' }, icon(ic), h('b', {}, title), text ? h('span', {}, richText(text)) : '');
 }
 
-const loading = (text) => h('p', { class: 'loading', role: 'status' }, text || 'Loading…');
+/** A skeleton while a part of the page loads; its words are for screen readers (`role=status`). */
+const loading = (text) => h('div', { class: 'skeleton', role: 'status' }, h('span', { class: 'visually-hidden' }, text || 'Loading…'), h('div', { class: 'jp-skel' }), h('div', { class: 'jp-skel' }), h('div', { class: 'jp-skel' }));
+
+// ---- toasts: transient confirmations ----
+
+/** How long a toast stays (the design system: 5 s; a danger toast stays until it is dismissed). */
+const TOAST_MS = 5_000;
+/** At most this many at once: a new one pushes the oldest out. */
+const TOAST_MAX = 3;
+
+/**
+ * A toast in the stack (`#toasts`, bottom right; at the top on a phone): `tone` success, info, warning or danger. It
+ * goes after TOAST_MS, the countdown paused while the pointer or the focus is on it; a danger toast stays until its
+ * Dismiss. Only for what needs no action: anything staff must read or copy stays in the page.
+ */
+function toast(tone, title, text) {
+  const host = document.getElementById('toasts');
+  if (!host) return null;
+  const ic = { success: 'ok', info: 'info', warning: 'warn', danger: 'danger' }[tone] || 'info';
+  const stays = tone === 'danger';
+  let timer = null;
+  let left = TOAST_MS;
+  let started = 0;
+  const close = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    el.remove();
+  };
+  const run = () => {
+    if (stays || timer !== null) return;
+    started = Date.now();
+    timer = setTimeout(close, left);
+  };
+  const pause = () => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+    left = Math.max(1_000, left - (Date.now() - started));
+  };
+  const el = h(
+    'div',
+    { class: `jp-toast jp-toast-${tone}`, role: stays ? 'alert' : 'status', onmouseenter: pause, onmouseleave: run, onfocusin: pause, onfocusout: run },
+    icon(ic),
+    h('div', { class: 'tx' }, h('b', {}, title), text ? [' ', h('span', {}, text)] : ''),
+    h('button', { type: 'button', class: 'x', 'aria-label': 'Dismiss', onclick: close }, icon('x')),
+    stays ? '' : h('span', { class: 'bar', 'aria-hidden': 'true' }),
+  );
+  host.append(el);
+  while (host.children.length > TOAST_MAX) host.firstElementChild.remove();
+  run();
+  return el;
+}
 
 // ---- page structure ----
 
 let uid = 0;
 const nextId = (p) => `${p}-${(uid += 1)}`;
 
-/** The page's header: a back link, the title, a subtitle, small facts, and at most one primary action. */
+/**
+ * The page's header: the crumbs to its parents (`opts.crumbs`, or `opts.back` for one), the title, a subtitle, small
+ * facts, and at most one primary action.
+ */
 function pageHead(title, opts = {}) {
+  const crumbs = opts.crumbs || (opts.back ? [opts.back] : []);
   return h(
     'div',
     { class: 'page-head' },
     h(
       'div',
       { class: 'titles' },
-      opts.back ? h('a', { href: opts.back.href, 'data-link': true, class: 'back' }, `← ${opts.back.text}`) : '',
+      crumbs.length
+        ? h(
+            'nav',
+            { class: 'jp-crumbs', 'aria-label': 'Breadcrumb' },
+            crumbs.flatMap((c, i) => [i ? icon('chevR') : '', h('a', { href: c.href, 'data-link': true }, c.text)]),
+            typeof title === 'string' ? [icon('chevR'), h('b', { 'aria-current': 'page' }, title)] : '',
+          )
+        : '',
       h('h1', { tabindex: '-1' }, title),
       opts.subtitle ? h('p', { class: 'subtitle' }, richText(opts.subtitle)) : '',
       opts.meta && opts.meta.length ? h('div', { class: 'meta' }, opts.meta) : '',
@@ -429,31 +566,36 @@ function pageHead(title, opts = {}) {
   );
 }
 
-/** A section of a page: a titled panel with an optional hint and actions in its header. */
+/** A section of a page: a titled card with an optional hint and actions in its header. */
 function panel(title, opts, ...children) {
   const id = nextId('panel');
   return h(
     'section',
-    { class: `panel${opts && opts.danger ? ' danger-zone' : ''}`, 'aria-labelledby': id, id: opts && opts.anchor },
+    { class: `panel jp-card${opts && opts.danger ? ' danger-zone' : ''}`, 'aria-labelledby': id, id: opts && opts.anchor },
     h('div', { class: 'panel-head' }, h('h2', { id }, title), opts && opts.actions ? h('div', { class: 'row' }, opts.actions) : ''),
     opts && opts.hint ? h('p', { class: 'hint' }, richText(opts.hint)) : '',
     ...children,
   );
 }
 
-/** A button that shows or hides `content` below it (forms that are needed now and then, not on every visit). */
+/**
+ * A button that shows or hides `content` below it (forms that are needed now and then, not on every visit). A primary
+ * one steps down to secondary while open, so the form it opened holds the view's one primary action.
+ */
 function disclosure(label, content, opts = {}) {
   const box = h('div', { hidden: !opts.open }, content);
-  const btn = h(
+  const look = (open) => btn(opts.primary && !open ? 'primary' : 'secondary', { small: opts.small });
+  const toggle = h(
     'button',
     {
       type: 'button',
-      class: [opts.primary ? 'primary' : '', opts.small ? 'small' : ''].filter(Boolean).join(' ') || undefined,
+      class: look(opts.open),
       'aria-expanded': opts.open ? 'true' : 'false',
       onclick: () => {
         const open = box.hidden;
         box.hidden = !open;
-        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.className = look(open);
         if (open) {
           const first = box.querySelector('input, select, textarea, button');
           if (first) first.focus();
@@ -463,54 +605,64 @@ function disclosure(label, content, opts = {}) {
     },
     label,
   );
-  return { button: btn, box };
+  return { button: toggle, box };
 }
 
 // ---- confirmations, in the page ----
 
-/** The confirmation strip: what will happen, a button that does it and one that doesn't. Escape cancels. */
+/**
+ * The confirmation: an inline alert saying what will happen, a button that does it and one that doesn't. Escape
+ * cancels. A destructive action's button is the design system's danger button, shown only here.
+ */
 function confirmStrip(text, label, danger, onYes, onNo) {
-  const yes = h('button', { type: 'button', class: danger ? 'danger solid small' : 'primary small', onclick: onYes }, label);
-  const no = h('button', { type: 'button', class: 'small', onclick: onNo }, 'Cancel');
+  const yes = h('button', { type: 'button', class: btn(danger ? 'danger' : 'primary', { small: true }), onclick: onYes }, label);
+  const no = h('button', { type: 'button', class: btn('secondary', { small: true }), onclick: onNo }, 'Cancel');
   const box = h(
     'div',
     {
-      class: `confirm${danger ? ' danger' : ''}`,
+      class: `confirm jp-alert ${danger ? 'jp-alert-danger danger' : 'jp-alert-warning'}`,
       role: 'group',
       'aria-label': `Confirm: ${label}`,
       onkeydown: (ev) => {
         if (ev.key === 'Escape') onNo();
       },
     },
-    h('p', {}, richText(text)),
-    h('div', { class: 'form-actions' }, yes, no),
+    icon('warn'),
+    h('div', { class: 'body' }, h('p', {}, richText(text)), h('div', { class: 'form-actions' }, yes, no)),
   );
   return { box, yes };
 }
 
-/** A message shown once at the top of the next page render (after an action re-renders it). */
+/** A message shown once after the next page render (an action re-renders it): a success toast. */
 let flash = null;
 
-/** A button that runs `action()` (after an in-page confirmation when given) and re-renders the page. */
+/**
+ * A button that runs `action()` (after an in-page confirmation when given) and re-renders the page. A destructive one
+ * (`danger`) always asks first: without `confirmText` it isn't drawn (a page bug, said in the console).
+ */
 function actionButton(label, action, confirmText, danger, opts = {}) {
   const wrap = h('span', { class: 'inline-action' });
+  if (danger && !confirmText) {
+    console.error(`actionButton "${label}": a destructive action needs its confirmation`);
+    return wrap;
+  }
   const status = h('span');
-  const btn = h('button', { type: 'button', class: [danger ? 'danger' : opts.primary ? 'primary' : '', opts.large ? '' : 'small'].filter(Boolean).join(' ') || undefined }, label);
+  const button = h('button', { type: 'button', class: btn(opts.primary ? 'primary' : 'secondary', { small: !opts.large, dangerText: danger }) }, label);
   const run = async () => {
     status.replaceChildren();
-    btn.disabled = true;
-    btn.setAttribute('aria-busy', 'true');
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
     try {
       await action();
       if (opts.done) flash = opts.done;
       await render();
     } catch (err) {
-      btn.disabled = false;
-      btn.removeAttribute('aria-busy');
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
       status.replaceChildren(errorBox(err));
     }
   };
-  btn.addEventListener('click', () => {
+  button.addEventListener('click', () => {
     if (!confirmText) return void run();
     if (wrap.querySelector('.confirm')) return undefined;
     const c = confirmStrip(
@@ -519,51 +671,181 @@ function actionButton(label, action, confirmText, danger, opts = {}) {
       danger,
       () => {
         c.box.remove();
-        btn.hidden = false;
+        button.hidden = false;
         void run();
       },
       () => {
         c.box.remove();
-        btn.hidden = false;
-        btn.focus();
+        button.hidden = false;
+        button.focus();
       },
     );
-    btn.hidden = true;
+    button.hidden = true;
     wrap.append(c.box);
     c.yes.focus();
     return undefined;
   });
-  wrap.append(btn, status);
+  wrap.append(button, status);
   return wrap;
 }
 
 /** A disabled button with the reason next to it: an action that can't work, said plainly. */
-const unavailable = (label, why) => h('span', { class: 'inline-action' }, h('button', { type: 'button', class: 'small', disabled: true }, label), h('span', { class: 'hint' }, why));
+const unavailable = (label, why) => h('span', { class: 'inline-action' }, h('button', { type: 'button', class: btn('secondary', { small: true }), disabled: true }, label), h('span', { class: 'hint' }, why));
 
-/** One labelled input. A field: {name, label, type, options, placeholder, required, value, help, size, …}. */
-function field(f) {
-  let input;
-  const common = { name: f.name, id: nextId(`f-${f.name}`), required: f.required, placeholder: f.placeholder || undefined, pattern: f.pattern, minlength: f.minlength, maxlength: f.maxlength, min: f.min, max: f.max, autocomplete: f.autocomplete || 'off' };
-  if (f.type === 'select') input = h('select', { name: f.name, id: common.id }, f.options.map((o) => h('option', { value: o.value ?? o, selected: (o.value ?? o) === f.value || undefined }, o.label ?? o)));
-  else if (f.type === 'textarea') input = h('textarea', common, f.value ?? '');
-  else if (f.type === 'checkbox') return h('label', { class: 'check' }, h('input', { name: f.name, type: 'checkbox', checked: !!f.value }), f.label);
-  else input = h('input', { ...common, type: f.type || 'text', value: f.value ?? '' });
-  const helpId = f.help ? `${common.id}-help` : undefined;
-  if (helpId) input.setAttribute('aria-describedby', helpId);
-  return h(
-    'label',
-    { class: `field${f.size ? ` ${f.size}` : ''}`, for: common.id },
-    h('span', { class: 'label' }, f.label, f.required ? '' : f.optional === false ? '' : h('span', { class: 'req' }, f.optionalText || ' (optional)')),
-    input,
-    f.help ? h('span', { class: 'help', id: helpId }, richText(f.help)) : '',
-  );
+// ---- fields: labels above, hints below, checked when the field is left (never on each keystroke) ----
+
+/**
+ * Why an input's value can't be sent, in words (the browser's own message is in its language and often vague), or ''
+ * when it can. `f.invalid` overrides the words for a pattern.
+ */
+function fieldProblem(input, f = {}) {
+  if (input.checkValidity()) return '';
+  const v = input.validity;
+  const name = (f.labelText || 'this field').replace(/^./u, (c) => c.toLowerCase());
+  if (v.valueMissing) return input.tagName === 'SELECT' ? `Choose ${name}.` : `Enter ${name}.`;
+  if (v.typeMismatch && input.type === 'email') return 'Enter a full email address, like name@partner.example.';
+  if (v.typeMismatch) return `Check ${name}: it isn’t in the right form.`;
+  if (v.patternMismatch) return f.invalid || `Check ${name}: it isn’t in the right form. The hint says what it takes.`;
+  if (v.tooShort) return `At least ${input.getAttribute('minlength')} characters (now ${input.value.length}).`;
+  if (v.tooLong) return `At most ${input.getAttribute('maxlength')} characters.`;
+  if (v.rangeUnderflow) return `At least ${input.getAttribute('min')}.`;
+  if (v.rangeOverflow) return `At most ${input.getAttribute('max')}.`;
+  if (v.badInput || v.stepMismatch) return `Check ${name}: it isn’t a valid value.`;
+  return `Check ${name}.`;
 }
 
-/** A form whose submit runs `action(values)` (after an in-page confirmation when `opts.confirm`), then re-renders. */
+/** Marks one field valid or not (its error replaces its hint) and says whether it can be sent. */
+function checkField(wrap, opts = {}) {
+  const input = wrap.querySelector('input, select, textarea');
+  if (!input || input.type === 'checkbox') return true;
+  const problem = fieldProblem(input, wrap.fieldSpec);
+  const error = wrap.querySelector('.jp-error');
+  wrap.classList.toggle('is-invalid', !!problem);
+  if (problem) input.setAttribute('aria-invalid', 'true');
+  else input.removeAttribute('aria-invalid');
+  if (error) error.replaceChildren(icon('warn'), problem);
+  if (problem && opts.shake) {
+    wrap.classList.remove('shake');
+    void wrap.offsetWidth;
+    wrap.classList.add('shake');
+  }
+  return !problem;
+}
+
+/**
+ * Checks every field of a form (on submit): each problem is marked, the first one focused; true when all can be sent.
+ * The page's own check, so the browser's bubbles never show (`novalidate`).
+ */
+function checkForm(el) {
+  let first = null;
+  for (const wrap of el.querySelectorAll('.jp-field')) if (!wrap.closest('[hidden]') && !checkField(wrap, { shake: true }) && !first) first = wrap;
+  if (first) first.querySelector('input, select, textarea').focus();
+  return !first;
+}
+
+/**
+ * A labelled field around `input`: the label above (6 px), "optional" on the fields that are (required is the
+ * default), the hint below, and its error in place of the hint once the field is left with a problem. `spec`:
+ * {label, help, optional, optionalText, size, invalid}.
+ */
+function fieldBox(input, spec) {
+  const id = input.getAttribute('id') || nextId(`f-${input.getAttribute('name') || 'field'}`);
+  input.setAttribute('id', id);
+  input.classList.add('jp-input');
+  const helpId = `${id}-help`;
+  const errId = `${id}-error`;
+  input.setAttribute('aria-describedby', spec.help ? `${helpId} ${errId}` : errId);
+  const wrap = h(
+    'div',
+    { class: `jp-field${spec.size ? ` ${spec.size}` : ''}` },
+    h('label', { class: 'jp-label', for: id }, spec.label, spec.optional ? h('span', { class: 'opt' }, spec.optionalText || 'optional') : ''),
+    input,
+    spec.help ? h('span', { class: 'jp-hint', id: helpId }, richText(spec.help)) : '',
+    h('span', { class: 'jp-error', id: errId, 'aria-live': 'polite' }),
+  );
+  wrap.fieldSpec = { invalid: spec.invalid, labelText: typeof spec.label === 'string' ? spec.label : '' };
+  // Checked when it is left; a field already marked is cleared as soon as it is right, and never marked while typing.
+  input.addEventListener('blur', () => checkField(wrap));
+  input.addEventListener('input', () => {
+    if (wrap.classList.contains('is-invalid') && !fieldProblem(input, wrap.fieldSpec)) checkField(wrap);
+  });
+  return wrap;
+}
+
+/** One field. A field: {name, label, type, options, placeholder, required, value, help, size, optional, invalid, …}. */
+function field(f) {
+  let input;
+  const common = { name: f.name, required: f.required, placeholder: f.placeholder || undefined, pattern: f.pattern, minlength: f.minlength, maxlength: f.maxlength, min: f.min, max: f.max, autocomplete: f.autocomplete || 'off' };
+  if (f.type === 'checkbox') return h('label', { class: 'jp-check' }, h('input', { name: f.name, type: 'checkbox', checked: !!f.value }), f.label);
+  if (f.type === 'select') input = h('select', { name: f.name, required: f.required }, f.options.map((o) => h('option', { value: o.value ?? o, selected: (o.value ?? o) === f.value || undefined }, o.label ?? o)));
+  else if (f.type === 'textarea') input = h('textarea', common, f.value ?? '');
+  else input = h('input', { ...common, type: f.type || 'text', value: f.value ?? '' });
+  // Required is the default: a field is marked optional unless it is required or says it isn't (`optional: false`).
+  const optional = f.optional === undefined ? !f.required : f.optional;
+  return fieldBox(input, { label: f.label, help: f.help, optional, optionalText: f.optionalText, size: f.size, invalid: f.invalid });
+}
+
+/**
+ * A settings form's save bar (the design system's): it slides up at the first change, says how many fields changed,
+ * and offers Discard (back to the values the page was read with) and Save (the form's submit).
+ */
+function saveBar(el, fieldsList, label) {
+  const initial = new Map();
+  const count = h('b', {}, '');
+  const bar = h(
+    'div',
+    { class: 'jp-savebar fixed', role: 'region', 'aria-label': 'Unsaved changes', hidden: true },
+    icon('bolt'),
+    h('span', {}, count),
+    h('button', { type: 'button', class: btn('ghost'), onclick: () => discard() }, 'Discard'),
+    h('button', { type: 'button', class: btn('primary'), onclick: () => save() }, label),
+  );
+  const changed = () => fieldsList.filter((f) => (el.elements[f.name].type === 'checkbox' ? el.elements[f.name].checked : el.elements[f.name].value) !== initial.get(f.name));
+  const update = () => {
+    const n = changed().length;
+    count.textContent = `${n} unsaved change${n === 1 ? '' : 's'}`;
+    const show = n > 0 && !el.querySelector('.confirm');
+    if (show && bar.hidden) bar.classList.add('on');
+    bar.hidden = !show;
+  };
+  const discard = () => {
+    for (const f of fieldsList) {
+      const input = el.elements[f.name];
+      if (input.type === 'checkbox') input.checked = initial.get(f.name);
+      else input.value = initial.get(f.name);
+      const wrap = input.closest('.jp-field');
+      if (wrap) {
+        wrap.classList.remove('is-invalid');
+        input.removeAttribute('aria-invalid');
+      }
+    }
+    update();
+  };
+  const save = () => {
+    bar.hidden = true;
+    el.dispatchEvent(new Event('submit', { cancelable: true }));
+    // A problem in a field (or a cancelled confirmation) brings the bar back while the change is still unsaved.
+    update();
+  };
+  for (const f of fieldsList) {
+    const input = el.elements[f.name];
+    initial.set(f.name, input.type === 'checkbox' ? input.checked : input.value);
+    input.addEventListener('input', update);
+    input.addEventListener('change', update);
+  }
+  return { bar, update };
+}
+
+/**
+ * A form whose submit runs `action(values)` (after an in-page confirmation when `opts.confirm`), then re-renders.
+ * Its submit is secondary unless `opts.primary` (the view's one primary action) or `opts.danger`. With
+ * `opts.settings` it edits values that already exist: no submit button, the save bar instead.
+ */
 function form(fields, label, action, opts = {}) {
   const status = h('div');
-  const submit = h('button', { type: 'submit', class: opts.danger ? 'danger' : 'primary' }, label);
+  const submit = h('button', { type: 'submit', class: btn(opts.danger ? 'secondary' : opts.primary ? 'primary' : 'secondary', { dangerText: opts.danger }), hidden: !!opts.settings }, label);
   const actions = h('div', { class: 'form-actions' }, submit, opts.extra || '');
+  let bar = null;
   const run = async (values) => {
     submit.disabled = true;
     submit.setAttribute('aria-busy', 'true');
@@ -580,15 +862,18 @@ function form(fields, label, action, opts = {}) {
       submit.disabled = false;
       submit.removeAttribute('aria-busy');
       status.replaceChildren(errorBox(err));
+      if (bar) bar.update();
     }
   };
   const el = h(
     'form',
     {
       class: `form${opts.vertical ? ' vertical' : ''}`,
+      novalidate: true,
       onsubmit: (ev) => {
         ev.preventDefault();
         status.replaceChildren();
+        if (!checkForm(el)) return undefined;
         const values = {};
         for (const f of fields) {
           const input = el.elements[f.name];
@@ -597,19 +882,22 @@ function form(fields, label, action, opts = {}) {
         if (!opts.confirm) return void run(values);
         if (actions.querySelector('.confirm')) return undefined;
         const text = typeof opts.confirm === 'function' ? opts.confirm(values) : opts.confirm;
+        const close = () => {
+          c.box.remove();
+          submit.hidden = !!opts.settings;
+          if (bar) bar.update();
+        };
         const c = confirmStrip(
           text,
           opts.confirmLabel || label,
           opts.danger,
           () => {
-            c.box.remove();
-            submit.hidden = false;
+            close();
             void run(values);
           },
           () => {
-            c.box.remove();
-            submit.hidden = false;
-            submit.focus();
+            close();
+            (opts.settings ? el.querySelector('input, select, textarea') : submit).focus();
           },
         );
         submit.hidden = true;
@@ -621,6 +909,10 @@ function form(fields, label, action, opts = {}) {
     fields.map(field),
     actions,
   );
+  if (opts.settings) {
+    bar = saveBar(el, fields, label);
+    el.append(bar.bar);
+  }
   return h('div', {}, el, status);
 }
 
@@ -642,12 +934,12 @@ function userEventsBlock(u) {
       u.events.map((e) =>
         tr(
           time(e.at),
-          e.kind === 'key_exported' ? h('span', { class: 'badge warning' }, 'Key exported') : h('span', { class: 'badge' }, 'Mainnet demo signature (reported by the vault)'),
-          e.appId === null ? h('span', { class: 'sub' }, 'Hana Home') : h('code', {}, e.appId),
-          e.chain ? chainLabel(e.chain) : e.appId === null ? 'every chain (Hana Home)' : 'unknown (older export window)',
+          e.kind === 'key_exported' ? badge('Key exported', 'warning') : badge('Mainnet demo signature (reported by the vault)', 'long'),
+          e.appId === null ? h('span', { class: 'sub' }, BRAND.home) : h('code', {}, e.appId),
+          e.chain ? chainLabel(e.chain) : e.appId === null ? `every chain (${BRAND.home})` : 'unknown (older export window)',
           e.kind === 'key_exported'
             ? e.appId === null
-              ? 'Hana Home signed in again and derived the key (one sign-in opens every chain); the user may have shown or copied it.'
+              ? `${BRAND.home} signed in again and derived the key (one sign-in opens every chain); the user may have shown or copied it.`
               : 'The export window signed in again and derived the key; the user may have shown or copied it.'
             : h('span', {}, `${e.network === 'pubnet' ? 'Stellar public network' : `EVM chain ${e.network}`}, about ${usdMicros(e.usdMicros || 0)} from `, h('code', {}, e.address), h('span', { class: 'sub' }, ' reported by the vault')),
         ),
@@ -660,12 +952,19 @@ function userEventsBlock(u) {
 function table(headers, rows, opts = {}) {
   const hs = headers.map((x) => (typeof x === 'string' ? { text: x } : x));
   const body = rows.filter(Boolean);
+  // A numeric column's cells are right-aligned like its header, whoever built the row.
+  for (const row of body) {
+    hs.forEach((x, i) => {
+      const cell = row.children[i];
+      if (x.num && cell) cell.classList.add('num');
+    });
+  }
   return h(
     'div',
-    { class: `table-wrap${opts.class ? ` ${opts.class}` : ''}` },
+    { class: `jp-table-wrap${opts.class ? ` ${opts.class}` : ''}` },
     h(
       'table',
-      {},
+      { class: `jp-table${hs.length <= 3 ? ' fit' : ''}` },
       h('thead', {}, h('tr', {}, hs.map((x) => h('th', { scope: 'col', class: [x.num ? 'num' : '', x.extra ? 'extra' : ''].filter(Boolean).join(' ') || undefined }, x.text)))),
       h('tbody', {}, body.length ? body : [h('tr', {}, h('td', { colspan: hs.length, class: 'empty' }, opts.empty || 'Nothing here yet.'))]),
     ),
@@ -674,8 +973,31 @@ function table(headers, rows, opts = {}) {
 
 /** A row; a cell that is just a time (`time()`) doesn't wrap. */
 const tr = (...cells) => h('tr', {}, cells.map((c) => h('td', {}, typeof c === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$/u.test(c) ? h('span', { class: 'nw' }, c) : c)));
-/** A two-column table of facts: [label, value] rows. */
-const facts = (rows) => h('div', { class: 'table-wrap' }, h('table', { class: 'kv' }, h('tbody', {}, rows.filter(Boolean).map(([k, v]) => h('tr', {}, h('th', { scope: 'row' }, k), h('td', {}, v))))));
+/** Facts as the design system's key/value list: [label, value] rows; a value that isn't an id is set in body text. */
+const facts = (rows) =>
+  h(
+    'dl',
+    { class: 'jp-kv' },
+    rows.filter(Boolean).flatMap(([k, v]) => [h('dt', {}, k), h('dd', { class: v instanceof Node && v.tagName === 'CODE' ? undefined : 'text' }, v)]),
+  );
+/** A setting as the design system's row: its title, one line of what it means, its control on the right. */
+const settingRow = (title, text, control) => h('div', { class: 'jp-setting' }, h('span', {}, h('b', {}, title), h('small', {}, text)), control ? h('span', {}, control) : '');
+/**
+ * The design system's pager for the API's cursors: each item {href, text} a link (the page reads its query), or
+ * {onclick, text} a button; `next` items get the chevron after their words, `first` before.
+ */
+function pager(items) {
+  const list = items.filter(Boolean);
+  if (!list.length) return '';
+  return h(
+    'nav',
+    { class: 'jp-pager', 'aria-label': 'Pages' },
+    list.map((it) => {
+      const kids = [it.first ? icon('chevL') : '', it.text, it.first ? '' : icon('chevR')];
+      return it.href ? h('a', { class: 'jp-page', href: it.href, 'data-link': true }, kids) : h('button', { type: 'button', class: 'jp-page', onclick: it.onclick }, kids);
+    }),
+  );
+}
 const lines = (s) => s.split(/[\s,]+/u).map((x) => x.trim()).filter(Boolean);
 
 /** A record's details as `key: value` pairs (nested values as compact JSON), never one long JSON line. */
@@ -704,14 +1026,16 @@ const thisMonth = () => new Date().toISOString().slice(0, 7);
 const today = () => new Date().toISOString().slice(0, 10);
 
 /** A filter form that writes its fields into the page's query string (GET), then re-renders. */
-function queryForm(path, fields, label) {
+function queryForm(path, fields, label, opts = {}) {
   const params = new URLSearchParams(location.search);
   const el = h(
     'form',
     {
       class: 'form',
+      novalidate: true,
       onsubmit: (ev) => {
         ev.preventDefault();
+        if (!checkForm(el)) return;
         const q = new URLSearchParams();
         for (const f of fields) {
           const v = String(el.elements[f.name].value || '').trim();
@@ -722,7 +1046,7 @@ function queryForm(path, fields, label) {
       },
     },
     fields.map((f) => field({ ...f, value: params.get(f.name) ?? f.value ?? '', optional: f.optional ?? false })),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, label)),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn(opts.primary === false ? 'secondary' : 'primary') }, label)),
   );
   return el;
 }
@@ -738,14 +1062,22 @@ async function orgOptions(exclude = []) {
 
 // ---- labels for the system's words ----
 
-const badge = (text, kind) => h('span', { class: `badge ${kind || ''}` }, text);
+/** The system's words for a state's kind: ok, bad, critical (solid, with a dot), warning, info, who; none is neutral. */
+const BADGE_TONE = { ok: 'success', bad: 'danger', critical: 'danger', warning: 'warning', info: 'info', who: 'primary' };
+/** A state as the design system's badge; `kind` may add `long` (a phrase that wraps). */
+function badge(text, kind) {
+  const [k, ...more] = String(kind || '').split(/\s+/u).filter(Boolean);
+  const tone = BADGE_TONE[k];
+  const cls = ['jp-badge', tone ? `jp-badge-${tone}` : '', k === 'critical' ? 'solid' : '', ...more].filter(Boolean).join(' ');
+  return h('span', { class: cls, 'data-kind': k || undefined }, k === 'critical' || k === 'ok' || k === 'warning' ? h('span', { class: 'dot', 'aria-hidden': 'true' }) : '', text);
+}
 const ORG_KIND = { partner: 'Partner', internal: 'Internal' };
 const orgKind = (o) => (o.id === LEGACY_ORG ? 'Legacy' : ORG_KIND[o.kind] || o.kind);
 const orgStatus = (s) => (s === 'frozen' ? badge('Frozen', 'bad') : badge('Active', 'ok'));
 const envBadge = (e) => (e === 'live' ? badge('Live', 'info') : badge(e === 'test' ? 'Test' : e || 'unknown'));
 /** Who suspended an app: the three switches of `suspendedBy`. */
 const SUSPENDERS = [
-  [1, 'Hana'],
+  [1, BRAND.company],
   [2, 'the organisation-wide switch'],
   [4, 'the partner'],
 ];
@@ -755,7 +1087,7 @@ function appState(a) {
   if (a.suspendedBy) return h('span', {}, badge('Suspended', 'bad'), h('span', { class: 'sub' }, `by ${suspendedBy(a.suspendedBy).join(', ')}`));
   return badge('Active', 'ok');
 }
-const ACTOR = { hana: 'Hana staff', member: 'Member', system: 'System', link: 'Account link' };
+const ACTOR = { hana: `${BRAND.company} staff`, member: 'Member', system: 'System', link: 'Account link' };
 const actor = (kind, id) => h('span', {}, ACTOR[kind] || kind, id ? h('span', { class: 'sub' }, id) : '');
 const CHANGE_KIND = { origin_add: 'Add an origin', policy_set: 'Set an auto-approve policy', raw_sign_on: 'Turn raw signing on' };
 const CHANGE_STATUS = { pending: ['Pending', 'warning'], active: ['In force', 'ok'], cancelled: ['Cancelled', ''], ended: ['Ended', ''] };
@@ -851,13 +1183,13 @@ function newPartnerForm() {
         optional: false,
         options: [
           { value: 'partner', label: 'Partner' },
-          { value: 'internal', label: 'Internal (Hana’s own apps)' },
+          { value: 'internal', label: `Internal (${BRAND.company}’s own apps)` },
         ],
       },
     ],
     'Send invite',
     (v) => api('POST', '/api/invites', { email: v.email, role: 'owner', newOrgName: v.newOrgName, kind: v.kind }),
-    { done: (v) => `Invite sent to ${v.email.trim()} for the new organisation “${v.newOrgName.trim()}”. The email goes out within 5 minutes; follow it under Pending invites. The organisation is listed here once they accept.` },
+    { primary: true, done: (v) => `Invite sent to ${v.email.trim()} for the new organisation “${v.newOrgName.trim()}”. The email goes out within 5 minutes; follow it under Pending invites. The organisation is listed here once they accept.` },
   );
 }
 
@@ -933,7 +1265,7 @@ async function orgsPage(main) {
         ),
         { empty: 'No organisation yet. Use “Invite a new partner” to create the first one.' },
       ),
-      data.next ? h('p', {}, link(`/orgs?cursor=${encodeURIComponent(data.next)}`, 'Next page')) : '',
+      pager([cursor ? { href: '/orgs', text: 'First page', first: true } : null, data.next ? { href: `/orgs?cursor=${encodeURIComponent(data.next)}`, text: 'Next page' } : null]),
     ),
   );
 }
@@ -1262,15 +1594,15 @@ function scopePanel(o, d) {
       h('legend', {}, 'On-chain owners'),
       h('p', { class: 'hint' }, `This organisation’s owners who have accepted their invite. Each one ticked becomes an on-chain owner: they can add origins, set signing policies and change the scope from their console. At most ${MAX_SCOPE_OWNERS}.`),
       note('warn', '', 'An on-chain owner stays one after leaving this organisation or being disabled here: removing them takes an on-chain owner’s “set the on-chain owners” proposal and the scope’s timelock. Tick only people who should hold that.'),
-      ownerBoxes.map((b) => h('label', { class: 'check' }, b.input, h('span', {}, b.m.email, h('span', { class: 'sub' }, 'Google account ', h('code', {}, b.m.sub))))),
+      ownerBoxes.map((b) => h('label', { class: 'jp-check' }, b.input, h('span', {}, b.m.email, h('span', { class: 'sub' }, 'Google account ', h('code', {}, b.m.sub))))),
     ),
     laterList,
     h(
       'fieldset',
       { class: 'choices' },
       h('legend', {}, 'How users sign in'),
-      h('p', {}, 'Through Hana’s shared Google login (', h('code', {}, '--allow-shared'), '): it works at once, and Google’s consent screen shows Hana.'),
-      h('p', { class: 'hint' }, 'A partner who wants their own Google client adds it from their console’s scope page once the scope exists: that takes a sign-in with their client, which proves they control it, and the contract’s timelock. They can then turn shared login off there. Hana never registers a client id a partner sends, since nothing would prove it is theirs.'),
+      h('p', {}, `Through ${BRAND.company}’s shared Google login (`, h('code', {}, '--allow-shared'), '): it works at once, and Google’s consent screen shows our name, not the partner’s.'),
+      h('p', { class: 'hint' }, 'A partner who wants their own Google client adds it from their console’s scope page once the scope exists: that takes a sign-in with their client, which proves they control it, and the contract’s timelock. They can then turn shared login off there. Journear never registers a client id a partner sends, since nothing would prove it is theirs.'),
     ),
     councilProposes
       ? h(
@@ -1278,7 +1610,7 @@ function scopePanel(o, d) {
           { class: 'choices' },
           h('legend', {}, 'Who runs it'),
           h('p', { class: 'hint' }, 'The council member whose key signs the proposal (yours). The others approve with their own keys.'),
-          memberRadios.map((r) => h('label', { class: 'check' }, r, h('code', {}, r.value))),
+          h('div', { class: 'jp-cards' }, memberRadios.map((r) => h('label', { class: 'jp-choice' }, r, h('span', { class: 't' }, h('code', {}, r.value)), h('span', { class: 'd' }, 'Signs the proposal; the others approve it.')))),
         )
       : '',
     out,
@@ -1297,12 +1629,13 @@ function contactsPanel(o, d) {
   return panel(
     'Security contacts',
     { anchor: 'contacts', hint: 'They are emailed about every app change and security event of this organisation.' },
-    d.securityContacts.length ? h('p', {}, d.securityContacts.join(', ')) : emptyState('No security contact yet', 'Add at least one: the organisation can’t get apps until it has one.'),
+    d.securityContacts.length ? '' : emptyState('No security contact yet', 'Add at least one: the organisation can’t get apps until it has one.', 'mail'),
+    // A settings form: the current list in its field, the save bar at the first change, then the confirmation.
     form(
-      [{ name: 'emails', label: 'Replace with', placeholder: 'a@partner.example, b@partner.example', value: d.securityContacts.join(', '), required: true, size: 'wide', help: 'Comma or space separated. The old and the new contacts are emailed.' }],
-      'Replace contacts',
+      [{ name: 'emails', label: 'Contacts', placeholder: 'a@partner.example, b@partner.example', value: d.securityContacts.join(', '), required: true, size: 'wide', help: 'Comma or space separated. Saving replaces the whole list; the old and the new contacts are emailed.' }],
+      'Save contacts',
       (v) => api('PUT', `/api/orgs/${encodeURIComponent(o.id)}/security-contacts`, { emails: lines(v.emails) }),
-      { confirm: (v) => `Replace the security contacts with ${lines(v.emails).join(', ')}? The old and the new contacts are emailed.`, done: 'Security contacts replaced.' },
+      { settings: true, confirmLabel: 'Replace contacts', confirm: (v) => `Replace the security contacts with ${lines(v.emails).join(', ')}? The old and the new contacts are emailed.`, done: 'Security contacts replaced.' },
     ),
   );
 }
@@ -1328,7 +1661,7 @@ function dangerPanel(o, legacy) {
         'div',
         {},
         h('h3', {}, 'Suspend every app'),
-        h('p', { class: 'hint' }, 'The organisation-wide switch: logins to every app stop at once. Lifting it doesn’t lift a suspension set by Hana on one app or by the partner.'),
+        h('p', { class: 'hint' }, 'The organisation-wide switch: logins to every app stop at once. Lifting it doesn’t lift a suspension set by Journear on one app or by the partner.'),
         h(
           'div',
           { class: 'row' },
@@ -1363,16 +1696,16 @@ async function legacyPage(main, d) {
   const moveCell = (scopeId, apps) => {
     const live = apps.filter((a) => !a.deleted);
     const box = h('div', { hidden: true });
-    const btn = h(
+    const moveBtn = h(
       'button',
       {
         type: 'button',
-        class: 'small',
+        class: btn('secondary', { small: true }),
         'aria-expanded': 'false',
         onclick: async () => {
           const open = box.hidden;
           box.hidden = !open;
-          btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+          moveBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
           if (!open || box.dataset.loaded) return;
           box.dataset.loaded = '1';
           box.replaceChildren(loading('Reading organisations…'));
@@ -1401,14 +1734,14 @@ async function legacyPage(main, d) {
       },
       'Move to an organisation',
     );
-    return h('div', { class: 'inline-action' }, btn, box);
+    return h('div', { class: 'inline-action' }, moveBtn, box);
   };
   main.append(
     pageHead('Legacy apps', {
       back: { href: '/orgs', text: 'Organisations' },
       subtitle: 'The scopes from before organisations existed. Each waits to be moved to its partner’s organisation.',
       meta: [orgStatus(o.status), badge('No members'), mono(o.id)],
-      actions: [h('button', { type: 'button', class: 'primary', onclick: () => ((openInvite = true), (focusHeading = true), go('/orgs')) }, 'Invite a new partner')],
+      actions: [h('button', { type: 'button', class: btn('primary'), onclick: () => ((openInvite = true), (focusHeading = true), go('/orgs')) }, 'Invite a new partner')],
     }),
     note('info', 'Nobody can be invited to Legacy apps, and it can’t be frozen', 'To onboard a partner whose app is here: invite their first owner to a new organisation, then use “Move to an organisation” on the scope. If the scope has Google-account owners on chain, each must be an owner of that organisation first, or the move is refused (scope_conflict).'),
     panel(
@@ -1440,11 +1773,11 @@ async function orgPage(main, orgId) {
     pageHead(o.name, {
       back: { href: '/orgs', text: 'Organisations' },
       meta: [orgStatus(o.status), ORG_KIND[o.kind] || o.kind, mono(o.id), `created ${time(o.createdAt)}`],
-      actions: [h('button', { type: 'button', class: 'primary', onclick: () => main.querySelector('#members input[name=email]').focus() }, 'Invite someone')],
+      actions: [h('button', { type: 'button', class: btn('primary'), onclick: () => main.querySelector('#members input[name=email]').focus() }, 'Invite someone')],
     }),
   );
   if (o.status === 'frozen') main.append(note('error', 'This organisation is frozen', 'Its members are signed out and console writes are refused, except cancels and kill switches. Unfreeze it in the danger zone at the bottom of the page.'));
-  if (d.flags.noSecurityContacts) main.append(note('warn', 'No security contact', 'This organisation can’t get apps until it has one, and its notices go to the Hana security alias only. Add one under Security contacts.'));
+  if (d.flags.noSecurityContacts) main.append(note('warn', 'No security contact', 'This organisation can’t get apps until it has one, and its notices go to the Journear security alias only. Add one under Security contacts.'));
   if (d.flags.ownersNotContacts.length) main.append(note('warn', 'Owners who aren’t security contacts', `${d.flags.ownersNotContacts.join(', ')}: add them under Security contacts so they hear about changes to their apps.`));
   main.append(membersPanel(o, d), invitesPanel(d), grantsPanel(d), scopePanel(o, d), appsPanel(o, d), contactsPanel(o, d));
   await changesPanel(main, o.id);
@@ -1484,7 +1817,7 @@ async function appPage(main, orgId, appId) {
   const legacy = orgId === LEGACY_ORG;
   main.append(
     pageHead(app.name, {
-      back: { href: `/orgs/${encodeURIComponent(orgId)}`, text: legacy ? 'Legacy apps' : 'Organisation' },
+      crumbs: [{ href: '/orgs', text: 'Organisations' }, { href: `/orgs/${encodeURIComponent(orgId)}`, text: legacy ? 'Legacy apps' : orgId }],
       meta: [envBadge(app.environment), appState(app), mono(app.id), h('span', {}, 'scope ', mono(app.scopeId))],
     }),
   );
@@ -1495,11 +1828,11 @@ async function appPage(main, orgId, appId) {
   main.append(
     panel(
       'Suspension',
-      { hint: 'An app is suspended while any of its three switches is on: Hana’s, the organisation-wide one, or the partner’s own. Logins stop at once.' },
+      { hint: 'An app is suspended while any of its three switches is on: Journear’s, the organisation-wide one, or the partner’s own. Logins stop at once.' },
       bits.length
         ? table(
             ['Suspended by', ''],
-            bits.map((b) => tr(SUSPENDERS.find(([x]) => x === b)[1].replace(/^the /u, '').replace(/^./u, (c) => c.toUpperCase()), actionButton(b === 4 ? 'Lift the partner’s suspension' : b === 2 ? 'Lift the organisation-wide suspension' : 'Lift Hana’s suspension', () => api('POST', `${base}/resume`, { bit: b }), b === 4 ? 'Lift the partner’s own suspension? Only do this when the partner asked for it.' : null, false, { done: 'Suspension lifted.' }))),
+            bits.map((b) => tr(SUSPENDERS.find(([x]) => x === b)[1].replace(/^the /u, '').replace(/^./u, (c) => c.toUpperCase()), actionButton(b === 4 ? 'Lift the partner’s suspension' : b === 2 ? 'Lift the organisation-wide suspension' : 'Lift Journear’s suspension', () => api('POST', `${base}/resume`, { bit: b }), b === 4 ? 'Lift the partner’s own suspension? Only do this when the partner asked for it.' : null, false, { done: 'Suspension lifted.' }))),
           )
         : h('p', {}, badge('Not suspended', 'ok'), ' Logins work.'),
     ),
@@ -1589,43 +1922,47 @@ async function appPage(main, orgId, appId) {
     ),
     { small: true },
   );
-  main.append(
-    panel(
-      'Signing settings',
-      {},
-      facts([
-        ['Raw signing', app.settings.rawSign === 'off' ? 'Off' : `On (${app.settings.rawSign})`],
-        // D428: only in an env where it can be set (a dev env on testnet): the API leaves it out elsewhere.
-        ...(app.settings.mainnetDemo === undefined
-          ? []
-          : [['Mainnet demo', app.settings.mainnetDemo ? 'On: signs on Base and Stellar’s public network, up to $9.99 per transaction, every request through the approval popup' : 'Off: mainnets refused (D39)']]),
-        ['Auto-approve policy', policy ? h('span', {}, policy.label || 'Unnamed policy', h('details', { class: 'raw' }, h('summary', {}, 'Show the policy'), h('pre', {}, JSON.stringify(policy, null, 2)))) : 'None'],
-        ['Other settings', h('details', { class: 'raw' }, h('summary', {}, 'Show all settings'), h('pre', {}, JSON.stringify(app.settings, null, 2)))],
-      ]),
-      app.deleted
+  // Settings are rows: what it is and its state, one line of what it means, its control on the right. Each change is
+  // its own guarded action (a confirmation, then a proposal or an immediate off), so there is no save bar here.
+  const ro = app.deleted;
+  const rows = [
+    settingRow(
+      'Raw signing',
+      app.settings.rawSign === 'off' ? 'Off: the app can sign only the transactions the vault can read.' : `On (${app.settings.rawSign}): the app can ask for a signature over bytes the vault can’t read.`,
+      ro
         ? ''
-        : h(
-            'div',
-            { class: 'row' },
-            policy ? actionButton('Remove the policy', () => api('POST', `${base}/off`, { orgId, what: 'policy', expectedVersion: app.settingsVersion }), 'Remove the auto-approve policy? Auto-signing stops within 10 s.', true, { done: 'Policy removed.' }) : '',
-            app.settings.rawSign !== 'off' ? actionButton('Turn raw signing off', () => api('POST', `${base}/off`, { orgId, what: 'raw_sign', expectedVersion: app.settingsVersion }), 'Turn raw signing off? It stops at once.', true, { done: 'Raw signing is off.' }) : '',
-            app.environment === 'live' && app.settings.rawSign === 'off' ? actionButton('Propose raw signing on', () => api('POST', `${base}/changes`, { orgId, kind: 'raw_sign_on', expectedVersion: app.settingsVersion }), 'Propose raw signing (with approval)? The contacts are emailed; it takes effect after the delay.', false, { done: 'Raw signing proposed. It takes effect after the waiting period.' }) : '',
-            app.settings.mainnetDemo !== undefined && app.environment === 'test'
-              ? actionButton(
-                  app.settings.mainnetDemo ? 'Turn the mainnet demo off' : 'Turn the mainnet demo on',
-                  () => api('POST', `${base}/mainnet-demo`, { orgId, on: !app.settings.mainnetDemo, expectedVersion: app.settingsVersion }),
-                  app.settings.mainnetDemo
-                    ? 'Turn the mainnet demo off? Open wallets stop signing on mainnets within 10 s.'
-                    : 'Turn the mainnet demo on? This test app’s users can then sign real-funds transactions on Base and Stellar (up to $9.99 each) with testnet-MPC keys, which can be lost. It takes effect at once.',
-                  !app.settings.mainnetDemo,
-                  { done: app.settings.mainnetDemo ? 'The mainnet demo is off.' : 'The mainnet demo is on.' },
-                )
-              : '',
-            proposePolicy.button,
-          ),
-      proposePolicy.box,
+        : app.settings.rawSign !== 'off'
+          ? actionButton('Turn raw signing off', () => api('POST', `${base}/off`, { orgId, what: 'raw_sign', expectedVersion: app.settingsVersion }), 'Turn raw signing off? It stops at once.', true, { done: 'Raw signing is off.' })
+          : app.environment === 'live'
+            ? actionButton('Propose raw signing on', () => api('POST', `${base}/changes`, { orgId, kind: 'raw_sign_on', expectedVersion: app.settingsVersion }), 'Propose raw signing (with approval)? The contacts are emailed; it takes effect after the delay.', false, { done: 'Raw signing proposed. It takes effect after the waiting period.' })
+            : '',
     ),
-  );
+    // D428: only in an env where it can be set (a dev env on testnet): the API leaves it out elsewhere.
+    app.settings.mainnetDemo === undefined
+      ? null
+      : settingRow(
+          'Mainnet demo',
+          app.settings.mainnetDemo ? 'On: signs on Base and Stellar’s public network, up to $9.99 per transaction, every request through the approval popup.' : 'Off: mainnets refused (D39).',
+          !ro && app.environment === 'test'
+            ? actionButton(
+                app.settings.mainnetDemo ? 'Turn the mainnet demo off' : 'Turn the mainnet demo on',
+                () => api('POST', `${base}/mainnet-demo`, { orgId, on: !app.settings.mainnetDemo, expectedVersion: app.settingsVersion }),
+                app.settings.mainnetDemo
+                  ? 'Turn the mainnet demo off? Open wallets stop signing on mainnets within 10 s.'
+                  : 'Turn the mainnet demo on? This test app’s users can then sign real-funds transactions on Base and Stellar (up to $9.99 each) with testnet-MPC keys, which can be lost. It takes effect at once.',
+                !app.settings.mainnetDemo,
+                { done: app.settings.mainnetDemo ? 'The mainnet demo is off.' : 'The mainnet demo is on.' },
+              )
+            : '',
+        ),
+    settingRow(
+      'Auto-approve policy',
+      policy ? h('span', {}, `${policy.label || 'Unnamed policy'}: signs within its limits without asking, once each user consents.`, h('details', { class: 'raw' }, h('summary', {}, 'Show the policy'), h('pre', {}, JSON.stringify(policy, null, 2)))) : 'None: every signature asks the user.',
+      ro ? '' : h('div', { class: 'row' }, policy ? actionButton('Remove the policy', () => api('POST', `${base}/off`, { orgId, what: 'policy', expectedVersion: app.settingsVersion }), 'Remove the auto-approve policy? Auto-signing stops within 10 s.', true, { done: 'Policy removed.' }) : '', proposePolicy.button),
+    ),
+    settingRow('Other settings', h('details', { class: 'raw' }, h('summary', {}, 'Show all settings'), h('pre', {}, JSON.stringify(app.settings, null, 2))), ''),
+  ];
+  main.append(panel('Signing settings', {}, h('div', { class: 'settings' }, rows.filter(Boolean)), ro ? '' : proposePolicy.box));
 
   const now = Date.now();
   main.append(
@@ -1651,7 +1988,7 @@ async function appPage(main, orgId, appId) {
         h(
           'div',
           { class: 'stack' },
-          app.suspendedBy & 1 ? '' : h('div', {}, h('p', { class: 'hint' }, 'Hana’s own switch for this app: logins stop at once, until it is lifted above.'), actionButton('Suspend this app', () => api('POST', `${base}/suspend`, { bit: 1 }), 'Suspend this app? Logins stop at once.', true, { done: 'The app is suspended by Hana.' })),
+          app.suspendedBy & 1 ? '' : h('div', {}, h('p', { class: 'hint' }, 'Journear’s own switch for this app: logins stop at once, until it is lifted above.'), actionButton('Suspend this app', () => api('POST', `${base}/suspend`, { bit: 1 }), 'Suspend this app? Logins stop at once.', true, { done: 'The app is suspended by Journear.' })),
           h('div', {}, h('p', { class: 'hint' }, 'Deleting revokes every key. It can’t be undone.'), actionButton('Delete app', () => api('POST', `${base}/delete`), `Delete ${app.name}? Every key is revoked; this cannot be undone.`, true, { done: `${app.name} was deleted.` })),
         ),
       ),
@@ -1670,7 +2007,7 @@ function expediteControl(c) {
       { confirm: 'Put this change in force now, without the rest of the waiting period?', done: 'The change is in force.', vertical: true },
     ),
   );
-  d.button.classList.add('small');
+  d.button.classList.add('jp-btn-sm');
   return h('div', { class: 'inline-action' }, d.button, d.box);
 }
 
@@ -1701,17 +2038,17 @@ async function auditPage(main) {
     },
     keys.map((k) =>
       k === 'actorKind'
-        ? field({ name: k, type: 'select', label: labels[k], optional: false, value: params.get(k) || '', options: [{ value: '', label: 'Anyone' }, { value: 'hana', label: 'Hana staff' }, { value: 'member', label: 'Members' }, { value: 'system', label: 'System' }, { value: 'link', label: 'Account link' }] })
+        ? field({ name: k, type: 'select', label: labels[k], optional: false, value: params.get(k) || '', options: [{ value: '', label: 'Anyone' }, { value: 'hana', label: `${BRAND.company} staff` }, { value: 'member', label: 'Members' }, { value: 'system', label: 'System' }, { value: 'link', label: 'Account link' }] })
         : field({ name: k, label: labels[k], optional: false, value: params.get(k) || '', placeholder: k === 'action' ? 'e.g. invite.issue' : k === 'orgId' ? 'org_…' : '' }),
     ),
     field({ name: 'from', type: 'date', label: 'From', optional: false, size: 'narrow', value: params.get('from') ? new Date(Number(params.get('from'))).toISOString().slice(0, 10) : '' }),
     field({ name: 'to', type: 'date', label: 'To', optional: false, size: 'narrow', value: params.get('to') ? new Date(Number(params.get('to'))).toISOString().slice(0, 10) : '' }),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Filter'), [...params.keys()].length ? link('/audit', 'Clear filters') : ''),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn('primary') }, 'Filter'), [...params.keys()].length ? h('a', { href: '/audit', 'data-link': true, class: btn('ghost') }, 'Clear filters') : ''),
   );
   const csv = new URLSearchParams(params);
   csv.delete('cursor');
   main.append(
-    pageHead('Audit log', { subtitle: 'Who did what in the partner console and here, and every staff read of the user directory.', actions: [h('a', { href: `/api/audit.csv?${csv}`, download: true, class: 'back' }, 'Download CSV')] }),
+    pageHead('Audit log', { subtitle: 'Who did what in the partner console and here, and every staff read of the user directory.', actions: [h('a', { href: `/api/audit.csv?${csv}`, download: true, class: btn('secondary') }, 'Download CSV')] }),
     panel('Filter', { hint: 'The CSV has the console rows below and, with an organisation filter, its app changes too.' }, filterForm),
   );
   const data = await api('GET', `/api/audit?${params}`);
@@ -1724,7 +2061,10 @@ async function auditPage(main) {
         data.rows.map((r) => tr(h('span', {}, time(r.at), h('span', { class: 'sub' }, `#${r.seq}`)), mono(r.action), actor(r.actorKind, r.actorEmail || r.actorId), h('span', {}, mono(r.orgId || ''), r.appId ? h('span', { class: 'sub' }, r.appId) : ''), mono(r.target || ''), r.outcome === 'ok' ? badge('ok', 'ok') : badge(r.outcome, 'bad'), h('span', {}, detailPairs(r.details), h('span', { class: 'sub' }, r.requestId)))),
         { empty: 'No row matches these filters.' },
       ),
-      data.next ? h('p', {}, link(`/audit?${new URLSearchParams([...[...params].filter(([k]) => k !== 'cursor'), ['cursor', data.next]])}`, 'Older rows')) : '',
+      pager([
+        params.get('cursor') ? { href: `/audit?${new URLSearchParams([...params].filter(([k]) => k !== 'cursor'))}`, text: 'Newest rows', first: true } : null,
+        data.next ? { href: `/audit?${new URLSearchParams([...[...params].filter(([k]) => k !== 'cursor'), ['cursor', data.next]])}`, text: 'Older rows' } : null,
+      ]),
     ),
     panel('App changes', {}, data.changes ? changesTable(data.changes) : emptyState('Filter by an organisation', 'Its app changes are listed here.')),
   );
@@ -1747,7 +2087,7 @@ async function auditPage(main) {
     },
     field({ name: 'dirStaff', label: 'Staff email', optional: false, value: params.get('dirStaff') || '' }),
     field({ name: 'dirAction', type: 'select', label: 'Action', optional: false, value: params.get('dirAction') || '', options: ['', 'user_search', 'user_view', 'support_lookup', 'client_proof', 'unlock', 'unsuppress', 'revoke_tickets'].map((a) => ({ value: a, label: a ? DIR_ACTION[a] : 'Any action' })) }),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit' }, 'Filter directory reads')),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn('secondary') }, 'Filter directory reads')),
   );
   const dir = h('section', { class: 'panel' });
   directoryAuditBlock(dir, params, data.directory);
@@ -1844,7 +2184,7 @@ function commandBlock(cmd, opts = {}) {
       'button',
       {
         type: 'button',
-        class: 'small',
+        class: btn('secondary', { small: true }),
         'aria-label': opts.label,
         onclick: async () => {
           status.textContent = '';
@@ -1860,12 +2200,13 @@ function commandBlock(cmd, opts = {}) {
           }
           try {
             await navigator.clipboard.writeText(cmd);
-            status.textContent = 'Copied';
+            toast('success', 'Copied', 'The command is on the clipboard.');
           } catch {
             status.textContent = 'Copy failed: select the text instead';
           }
         },
       },
+      icon('copy'),
       'Copy',
     ),
     status,
@@ -1926,13 +2267,13 @@ async function monitoringPage(main) {
   const w = d.watchdog;
   const g = d.governance;
   main.append(pageHead('Security & monitoring', { subtitle: `The watchdog and the contract for ${d.env}, read ${time(d.now)}. The watchdog sends its own alerts; nothing on this page alerts or acts on chain.` }));
-  if (w.ok && w.silent) main.append(h('p', { class: 'banner critical', role: 'alert' }, w.sinceLastRunMs === null ? 'The watchdog has never finished a run. ' : `The watchdog has been silent for ${Math.round(w.sinceLastRunMs / 60000)} min: more than two ${Math.round(w.runIntervalMs / 60000)}-minute intervals. `, link('/security/playbooks/watchdog-down', 'Playbook: watchdog down')));
+  if (w.ok && w.silent) main.append(note('error', w.sinceLastRunMs === null ? 'The watchdog has never finished a run' : `The watchdog has been silent for ${Math.round(w.sinceLastRunMs / 60000)} min`, h('p', {}, w.sinceLastRunMs === null ? '' : `More than two ${Math.round(w.runIntervalMs / 60000)}-minute intervals. `, link('/security/playbooks/watchdog-down', 'Playbook: watchdog down'))));
 
   main.append(
     panel(
       'Needs attention',
       {},
-      d.findings.length ? h('ul', { class: 'findings' }, d.findings.map((f) => h('li', {}, sev(f.severity), h('span', {}, f.text, h('span', { class: 'muted' }, ` (${f.source})`)), f.playbook ? playbookLink(f.playbook) : ''))) : emptyState('Nothing needs attention', 'The watchdog and the contract look as expected.'),
+      d.findings.length ? h('ul', { class: 'findings' }, d.findings.map((f) => h('li', {}, sev(f.severity), h('span', {}, f.text, h('span', { class: 'muted' }, ` (${f.source})`)), f.playbook ? playbookLink(f.playbook) : ''))) : emptyState('Nothing needs attention', 'The watchdog and the contract look as expected.', 'ok'),
     ),
   );
 
@@ -1948,9 +2289,7 @@ async function monitoringPage(main) {
       panel(
         'Watchdog',
         {},
-        h(
-          'div',
-          { class: 'stat-row' },
+        stats(
           stat('Last run', w.lastRun ? `${relative(w.lastRun.finishedAt)} (#${w.lastRun.id}, ${w.lastRun.outcome || 'no outcome'})` : 'never'),
           stat('Heartbeat', hb.configured === false ? 'not configured' : hb.ok ? `ok, ${relative(hb.last_ok_at)}` : `failing since ${time(hb.last_ok_at)}`),
           stat(
@@ -1981,9 +2320,7 @@ async function monitoringPage(main) {
       panel(
         'Contract governance',
         { hint: `Read ${time(g.readAtMs)}, state version ${g.stateVersion}.` },
-        h(
-          'div',
-          { class: 'stat-row' },
+        stats(
           stat('Contract', g.pause.paused ? badge('Paused', 'critical') : badge('Not paused', 'ok')),
           g.pause.unpausedAtMs ? stat('Last unpaused', time(g.pause.unpausedAtMs)) : '',
           g.pause.lastWatchdogPause ? stat('Last watchdog pause', `${time(g.pause.lastWatchdogPause.at)} (${g.pause.lastWatchdogPause.reason || 'no reason given'})`) : '',
@@ -2016,7 +2353,7 @@ async function monitoringPage(main) {
       },
     },
     field({ name: 'severity', type: 'select', label: 'Severity', optional: false, size: 'narrow', value: params.get('severity') || '', options: [{ value: '', label: 'All' }, { value: 'critical', label: 'Critical' }, { value: 'warning', label: 'Warning' }, { value: 'info', label: 'Info' }] }),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit' }, 'Filter')),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn('secondary') }, 'Filter')),
   );
   const history_ = panel('Alert history', {}, sevForm);
   if (!alertPage.ok) history_.append(errorBox(alertPage.e));
@@ -2025,7 +2362,7 @@ async function monitoringPage(main) {
     if (alertPage.v.nextCursor) {
       const next = new URLSearchParams(params);
       next.set('cursor', String(alertPage.v.nextCursor));
-      history_.append(h('p', {}, link(`/security/monitoring?${next}`, 'Older alerts')));
+      history_.append(pager([{ href: `/security/monitoring?${next}`, text: 'Older alerts' }]));
     }
   }
   const acts = panel('What the watchdog did on chain', {});
@@ -2035,7 +2372,7 @@ async function monitoringPage(main) {
     if (actions.v.nextCursor) {
       const next = new URLSearchParams(params);
       next.set('actionsCursor', String(actions.v.nextCursor));
-      acts.append(h('p', {}, link(`/security/monitoring?${next}`, 'Older actions')));
+      acts.append(pager([{ href: `/security/monitoring?${next}`, text: 'Older actions' }]));
     }
   }
   main.append(history_, acts);
@@ -2059,7 +2396,21 @@ async function monitoringPage(main) {
   main.append(panel('Security events', {}, d.events.ok ? table(['Detected', 'Kind', 'Organisation', 'App', 'Scope', 'Emailed', 'Details'], d.events.events.map((e) => tr(when(e.detectedAt), h('span', {}, mono(e.kind), h('span', { class: 'sub' }, e.id)), mono(e.orgId || ''), mono(e.appId || ''), mono(e.scopeId || ''), e.notifiedAt ? time(e.notifiedAt) : badge('not yet', 'warning'), detailPairs(e.detail))), { empty: 'No security event.' }) : sourceError('The security events', d.events)));
 }
 
-const stat = (label, value) => h('div', { class: 'stat' }, h('span', { class: 'label' }, label), h('span', { class: 'value' }, value));
+/**
+ * One cell of the design system's stats strip (`stats(...)`): its caps label, then the value; a value that is a
+ * sentence rather than a number or a short word is set at body size.
+ */
+const stat = (label, value) => {
+  const short = typeof value === 'string' ? value.length <= 14 : typeof value === 'number';
+  return h('div', { class: 'jp-statcell' }, h('div', { class: 'jp-stat' }, h('span', { class: 'k' }, label), h('span', { class: short ? 'v' : 'v text' }, typeof value === 'number' ? value.toLocaleString('en-GB') : value)));
+};
+/** The stats strip: cells divided by hairlines. */
+const stats = (...cells) => {
+  const list = cells.filter(Boolean);
+  // One size per strip: when any value is a phrase, every value is set at body size.
+  if (list.some((c) => c.querySelector('.v.text'))) for (const c of list) c.querySelector('.v').classList.add('text');
+  return h('div', { class: 'jp-stats' }, list);
+};
 
 // ---- System status (D425): the landing page, a bird's-eye view of the whole env ----
 //
@@ -2075,6 +2426,9 @@ const TILE_STATE = {
   not_measured: { label: 'Not measured', cls: 'off' },
 };
 const tileState = (s) => TILE_STATE[s] || TILE_STATE.unknown;
+/** A tile's or a line's state as the design system's badge (`state-chip` names it for the page's own rules). */
+const CHIP_TONE = { ok: 'jp-badge-success', warning: 'jp-badge-warning', critical: 'jp-badge-danger solid', unknown: '', off: '' };
+const stateChip = (st) => h('span', { class: `state-chip ${st.cls} jp-badge ${CHIP_TONE[st.cls] || ''}`.trim() }, st.cls === 'off' || st.cls === 'unknown' ? '' : h('span', { class: 'dot', 'aria-hidden': 'true' }), st.label);
 
 /** "12 s ago" from the reader's clock; refreshed in place every few seconds while the page is open. */
 const agoText = (ms) => {
@@ -2112,7 +2466,7 @@ function verdictBanner(d) {
   return h(
     'section',
     { class: `verdict ${v.state}`, role: 'status', 'aria-live': 'polite', 'aria-labelledby': 'verdict-title' },
-    h('span', { class: 'verdict-mark', 'aria-hidden': 'true' }),
+    h('span', { class: 'verdict-mark', 'aria-hidden': 'true' }, icon(v.state === 'ok' ? 'check' : v.state === 'critical' ? 'danger' : 'warn')),
     h(
       'div',
       { class: 'verdict-text' },
@@ -2145,16 +2499,24 @@ function tileItem(t, checkedAt) {
   return h(
     'li',
     { class: `tile ${s.cls}` },
-    h('div', { class: 'tile-head' }, h('span', { class: `state-chip ${s.cls}` }, s.label), h('h3', {}, t.name)),
+    h('div', { class: 'tile-head' }, stateChip(s), h('h3', {}, t.name)),
     h('p', { class: 'tile-detail' }, t.detail),
     Array.isArray(t.lines) && t.lines.length
       ? h('ul', { class: 'tile-lines' }, t.lines.map((l) => {
           const ls = tileState(l.state);
-          return h('li', {}, h('span', { class: `state-chip ${ls.cls}` }, ls.label), h('span', { class: 'tile-line-label' }, l.label), h('span', {}, l.detail));
+          return h('li', {}, stateChip(ls), h('span', { class: 'tile-line-label' }, l.label), h('span', {}, l.detail));
         }))
       : '',
     h('p', { class: 'tile-meta' }, liveAgo(checkedAt, 'checked '), t.link ? h('span', {}, ' · ', pathLink(t.link)) : ''),
   );
+}
+
+/** The stats strip under the verdict: the checks by state, so the counts read at a glance. */
+function statusStats(d) {
+  const tiles = d.groups.flatMap((g) => g.tiles);
+  const n = (state) => tiles.filter((t) => t.state === state).length;
+  const measured = tiles.length - n('not_measured');
+  return stats(stat('Checks passed', `${n('ok')} of ${measured}`), stat('Critical', n('critical')), stat('Warnings', n('warning')), stat('Unknown', n('unknown')), stat('Not measured', n('not_measured')));
 }
 
 async function statusPage(main) {
@@ -2162,9 +2524,10 @@ async function statusPage(main) {
   main.append(
     pageHead('System status', {
       subtitle: `Every part of ${d.env}: its Workers, the contract and the watchdog, funds, data, scheduled jobs and outside services. Read only; nothing here changes anything.`,
-      actions: [h('button', { type: 'button', class: 'primary', onclick: () => render() }, 'Check again')],
+      actions: [h('button', { type: 'button', class: btn('primary'), onclick: () => render() }, 'Check again')],
     }),
     verdictBanner(d),
+    statusStats(d),
   );
   if (d.cached) main.append(h('p', { class: 'hint' }, `This is the read from ${agoText(d.checkedAt)}: the console reads every part at most every ${Math.round(d.cacheMs / 1000)} s, so a refresh costs nothing. Check again after that for a fresh read.`));
   if (d.issues.length) {
@@ -2184,8 +2547,8 @@ async function statusPage(main) {
 async function upgradesPage(main) {
   const { pendingUpgrades: p } = await api('GET', '/api/governance/pending-upgrades');
   main.append(pageHead('Pending upgrades', { subtitle: `What the contract owner has queued for ${p.signer} (${p.env}), read ${time(p.readAtMs)}. Partners see the same page. Each waits the governance delay (${span(p.governanceDelayMs)}) so partners and users can react, for example by exporting keys.` }));
-  if (p.paused) main.append(h('p', { class: 'banner critical', role: 'alert' }, 'The contract is paused.'));
-  if (!p.anyPending) main.append(panel('Nothing is pending', {}, emptyState('Nothing is pending', 'No upgrade, owner transfer, withdrawal or delay change is queued.')));
+  if (p.paused) main.append(note('error', 'The contract is paused', ''));
+  if (!p.anyPending) main.append(panel('Nothing is pending', {}, emptyState('Nothing is pending', 'No upgrade, owner transfer, withdrawal or delay change is queued.', 'ok')));
   if (p.upgrade) {
     const u = p.upgrade;
     main.append(
@@ -2232,7 +2595,7 @@ async function playbooksPage(main) {
     field({ name: 'q', type: 'search', label: 'Search', optional: false, value: params.get('q') || '', placeholder: 'e.g. relayer, paused, key' }),
     field({ name: 'kind', type: 'select', label: 'Type', optional: false, size: 'narrow', value: params.get('kind') || '', options: [{ value: '', label: 'All' }, { value: 'alert', label: 'Alerts' }, { value: 'incident', label: 'Incidents' }] }),
     field({ name: 'severity', type: 'select', label: 'Severity', optional: false, size: 'narrow', value: params.get('severity') || '', options: [{ value: '', label: 'All' }, { value: 'critical', label: 'Critical' }, { value: 'warning', label: 'Warning' }, { value: 'info', label: 'Info' }] }),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Search')),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn('primary') }, icon('search'), 'Search')),
   );
   main.append(
     pageHead('Playbooks', { subtitle: `What to do when an alert fires or an incident happens (last verified ${d.lastVerified}). Read-only: owner calls stay in scripts/ and the council’s own signing.` }),
@@ -2274,9 +2637,7 @@ function ledgerSecurity(main, l) {
       { hint: 'Billing checks: every relayed transaction is settled and explained.' },
       l.relayerAccountSet ? '' : note('warn', 'Settlement isn’t running', 'RELAYER_ACCOUNT is not set: settlement and the nonce check do not run.'),
       l.partitionsLow ? note('warn', `Only ${l.partitionsAhead} future monthly partition(s) of usage events`, 'An event outside every partition is lost. Check the API’s and the admin’s partition jobs.') : '',
-      h(
-        'div',
-        { class: 'stat-row' },
+      stats(
         stat('Future monthly partitions', String(l.partitionsAhead)),
         stat('Waiting for settlement', `${l.settlementBacklog.pending} relayed event(s)${l.settlementBacklog.oldestAt ? `, oldest ${relative(l.settlementBacklog.oldestAt)}` : ''}`),
       ),
@@ -2330,7 +2691,7 @@ async function reportsPage(main) {
   );
   const org = params.get('org');
   if (!org) {
-    main.append(emptyState('Choose an organisation', 'Its usage for the dates you pick is shown here.'));
+    main.append(emptyState('Choose an organisation', 'Its usage for the dates you pick is shown here.', 'search'));
     return;
   }
   const q = new URLSearchParams({ org, from: params.get('from') || first, to: params.get('to') || today(), by: params.get('by') || 'day' });
@@ -2343,7 +2704,7 @@ async function reportsPage(main) {
     d.rows.map((r) => {
       const cells = [
         h('span', { class: 'nw' }, r.period),
-        r.appId ? mono(r.appId) : h('span', {}, r.kind === 'home' ? 'Hana Home logins' : 'Owner actions', h('span', { class: 'sub' }, h('code', {}, r.scopeId))),
+        r.appId ? mono(r.appId) : h('span', {}, r.kind === 'home' ? `${BRAND.home} logins` : 'Owner actions', h('span', { class: 'sub' }, h('code', {}, r.scopeId))),
         String(r.logins),
         String(r.derives),
         String(r.ownerActions),
@@ -2363,13 +2724,14 @@ async function reportsPage(main) {
         r.unsettled ? h('strong', {}, String(r.unsettled)) : '0',
         r.afterStatement ? h('strong', { class: 'warn' }, `${r.afterStatement} late`) : '0',
       ];
-      const extra = new Set([4, 5, 6, 10, 11]);
-      const numeric = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18]);
+      // The same columns as the header's: extra (hidden until "Show every column") and numeric (right-aligned).
+      const extra = new Set([4, 5, 6, 7, 11, 12]);
+      const numeric = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19]);
       return h('tr', {}, cells.map((c, i) => h('td', { class: [extra.has(i) ? 'extra' : '', numeric.has(i) ? 'num' : ''].filter(Boolean).join(' ') || undefined }, c)));
     }),
     { class: 'compact', empty: 'No usage in this period.' },
   );
-  const toggle = h('label', { class: 'check' }, h('input', { type: 'checkbox', onchange: (ev) => wrap.classList.toggle('compact', !ev.target.checked) }), 'Show every column');
+  const toggle = h('label', { class: 'jp-toggle' }, h('input', { type: 'checkbox', onchange: (ev) => wrap.classList.toggle('compact', !ev.target.checked) }), h('span', { class: 't', 'aria-hidden': 'true' }), 'Show every column');
   main.append(panel(`Usage of ${(options.find((o) => o.value === org) || { label: org }).label}`, { actions: [toggle] }, wrap));
 }
 
@@ -2403,12 +2765,13 @@ async function statementsPage(main) {
           { name: 'month', label: 'Month', type: 'month', value: prev, size: 'narrow' },
         ],
         'Show',
+        { primary: false },
       ),
     ),
   );
   const org = params.get('org');
   if (!org) {
-    main.append(emptyState('Choose an organisation and a month', 'From the 3rd of each month, last month’s statement can be issued.'));
+    main.append(emptyState('Choose an organisation and a month', 'From the 3rd of each month, last month’s statement can be issued.', 'cal'));
     return;
   }
   const month = params.get('month') || prev;
@@ -2417,7 +2780,7 @@ async function statementsPage(main) {
   if (d.statement) {
     main.append(
       statementBlock(d.statement, d.view),
-      h('p', { class: 'row' }, h('a', { href: `${base}.csv`, download: true }, 'Download CSV'), h('a', { href: `${base}.pdf`, download: true }, 'Download PDF')),
+      h('p', { class: 'row' }, h('a', { href: `${base}.csv`, download: true, class: btn('secondary') }, 'Download CSV'), h('a', { href: `${base}.pdf`, download: true, class: btn('secondary') }, 'Download PDF')),
     );
   } else {
     const b = d.blockers;
@@ -2444,6 +2807,7 @@ async function statementsPage(main) {
     'button',
     {
       type: 'button',
+      class: btn('secondary'),
       onclick: async () => {
         exportBtn.disabled = true;
         exportOut.replaceChildren(loading('Exporting…'));
@@ -2572,7 +2936,7 @@ async function retentionPage(main) {
       {},
       d.due && (d.due.statements || d.due.rates || d.due.rateOverrides)
         ? note('warn', 'Past 7 years: review and delete by hand', `${d.due.statements} statement(s)${d.due.oldestStatement ? ` (oldest ${d.due.oldestStatement})` : ''}, ${d.due.rates} rate(s), ${d.due.rateOverrides} rate override(s). Statements, rates and their files are deleted by hand after review (docs/operations.md "Retention").`)
-        : emptyState('Nothing waits for review', 'No statement or rate is past 7 years.'),
+        : emptyState('Nothing waits for review', 'No statement or rate is past 7 years.', 'ok'),
       h('h3', {}, 'Every month, after the job'),
       h('p', { class: 'hint' }, 'This job doesn’t clean the email issuer’s user directory (rows of apps deleted 30 days ago) or its staff audit (60 months): this console only reads the issuer. Run this after each month’s run (docs/operations.md "Retention"):'),
       commandBlock('admin <env> retention:issuer --remote'),
@@ -2601,9 +2965,13 @@ const STATS_DAYS = [7, 14, 31];
 /** A row whose cells from `numFrom` on are numbers (right-aligned, as the column's header). */
 const numTr = (numFrom, ...cells) => h('tr', {}, cells.map((c, i) => h('td', i >= numFrom ? { class: 'num' } : {}, c)));
 
-/** The window links of the email pages (`?days=`): plain links, the page reads the query. */
+/** The window of the email pages (`?days=`): the design system's segmented control; the page reads the query. */
 function daysLinks(base, days) {
-  return h('p', { class: 'hint' }, 'Show the last ', STATS_DAYS.flatMap((d, i) => [i ? ' · ' : '', d === days ? h('strong', {}, `${d} days`) : h('a', { href: `${base}?days=${d}`, 'data-link': true }, `${d} days`)]));
+  return h(
+    'div',
+    { class: 'jp-seg', role: 'group', 'aria-label': 'Window' },
+    STATS_DAYS.map((d) => h('button', { type: 'button', 'aria-pressed': d === days ? 'true' : 'false', onclick: () => (d === days ? undefined : (history.pushState(null, '', `${base}?days=${d}`), render())) }, `Last ${d} days`)),
+  );
 }
 
 const statsDays = () => {
@@ -2643,14 +3011,25 @@ const alertLabel = (metric) => {
 async function emailIssuerPage(main) {
   const days = statsDays();
   const d = await api('GET', `/api/email/issuer?days=${days}`);
-  main.append(pageHead('Email issuer', { subtitle: 'Tokens, mail and refusals from Hana’s email issuer, per app and UTC day. Counts only: no address or sub is ever shown here.' }));
+  main.append(pageHead('Email issuer', { subtitle: 'Tokens, mail and refusals from Journear’s email issuer, per app and UTC day. Counts only: no address or sub is ever shown here.' }));
   main.append(daysLinks('/email/issuer', d.days));
   if (d.stats.unavailable) main.append(note('warn', 'Counters unavailable', d.stats.unavailable));
   else {
     if (d.stats.truncated) main.append(note('warn', 'The list was cut', 'More rows than one page can read: narrow the window.'));
     const days_ = pivotMetrics(d.stats.metrics);
     const alerts = d.stats.metrics.filter((m) => m.metric.startsWith('alert:'));
+    const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+    const sent = sum(days_, 'sent');
     main.append(
+      // The window at a glance: totals of the tables below.
+      stats(
+        stat('Tokens issued', sum(d.stats.issuance, 'count')),
+        stat('Mail sent', sent),
+        stat('Bounce rate', ratePct(sum(days_, 'bounced'), sent)),
+        stat('Complaint rate', ratePct(sum(days_, 'complained'), sent)),
+        stat('Refusals', sum(days_, 'refused')),
+        stat('Alerts', sum(alerts, 'count')),
+      ),
       panel(
         'Alerts',
         { hint: 'Each kind emails the security alias at most once a UTC day. These count every occurrence.' },
@@ -2709,6 +3088,17 @@ async function emailLinksPage(main) {
   main.append(pageHead('Account links', { subtitle: 'Sign-in-method links per app and UTC day: proposed (pending), linked at once, activated, cancelled and unlinked, and how many of the links were automatic or explicit. Counts only.' }));
   main.append(daysLinks('/email/links', d.days));
   const jumped = d.jumps.filter((j) => j.jumped);
+  const total = (k) => d.rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  main.append(
+    stats(
+      stat('Links today', d.jumps.reduce((a, j) => a + (Number(j.today) || 0), 0)),
+      stat('Apps that jumped', jumped.length),
+      stat('Proposed', total('proposed')),
+      stat('Linked at once', total('linked')),
+      stat('Activated', total('activated')),
+      stat('Unlinked', total('unlinked')),
+    ),
+  );
   if (jumped.length) main.append(note('warn', 'Link rate jump', ...jumped.flatMap((j) => [`${j.appName}: ${j.today} links today, ${j.median} on a usual day (the 7-day median). `])));
   main.append(
     panel(
@@ -2744,6 +3134,8 @@ const kindLabel = (k) => KIND[k] || k;
 const chainLabel = (c) => (c === 'stellar' ? 'Stellar' : c === 'evm' ? 'EVM' : c === 'near' ? 'NEAR' : c);
 /** The help text of every support-reference field (the same rule for the console's and the issuer's audits). */
 const TICKET_HELP = 'Your ticket or case number, e.g. ZD-4127: letters, digits and . _ # : - only. It is recorded in the audit with your name.';
+/** What a support reference that breaks its rule is told (on leaving the field, and on submit). */
+const TICKET_INVALID = 'Use letters, digits and . _ # : - only (at most 64), e.g. ZD-4127.';
 /** Opens one identity's page from memory: the fixed path, the identity never in the URL or history state. */
 function openUser(provider, sub) {
   usersState.seq += 1;
@@ -2775,7 +3167,7 @@ function walletQuery(q) {
   return /^G[A-Z2-7]{55}$/u.test(s) || /^0x[0-9a-fA-F]{40}$/u.test(s) || /^[0-9a-fA-F]{64}$/u.test(s) || /^u1_[A-Za-z0-9_-]{22}$/u.test(s) || /^hu_[0-9a-z]{26}$/iu.test(s) || supportIdQuery(s);
 }
 
-const unverifiedBadge = () => h('span', { class: 'badge warning' }, 'UNVERIFIED claim');
+const unverifiedBadge = () => badge('UNVERIFIED claim', 'warning');
 
 function directoryRows(users, warning) {
   const claims = users.filter((u) => u.unverifiedClaim).length;
@@ -2813,7 +3205,7 @@ function walletUserBlock(u) {
       ['Last seen', when(u.lastSeenAt)],
     ]),
     // The Support ID and its activity: the lookup by User ID, the ticket carried over (in memory); staff press "Look up".
-    h('p', {}, h('button', { type: 'button', onclick: () => openLookup(u.userId, usersState.ticket, false) }, 'Support ID lookup: activity, sessions, emails')),
+    h('p', {}, h('button', { type: 'button', class: btn('secondary', { small: true }), onclick: () => openLookup(u.userId, usersState.ticket, false) }, 'Support ID lookup: activity, sessions, emails')),
     h('h3', {}, 'Sign-in identities'),
     table(
       ['Account', 'Sub', 'Role', 'Status', 'Effective', 'Observed'],
@@ -2822,7 +3214,7 @@ function walletUserBlock(u) {
     h('h3', {}, 'Wallets'),
     table(
       ['Chain', 'Address', { text: 'Key index', num: true }, 'First seen', 'Last used'],
-      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, h('span', { class: 'badge warning' }, `also listed by ${w.sharedWith} other user(s): not proof of ownership`)) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
+      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, badge(`also listed by ${w.sharedWith} other user(s): not proof of ownership`, 'warning long')) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
       { empty: 'No wallet yet.' },
     ),
     // D755: NEAR is recorded only from a session of an SDK of 0.4.0 or later; say so rather than leave a gap.
@@ -2841,7 +3233,7 @@ async function usersPage(main) {
       results.replaceChildren(panel('Wallet directory', {}, r.users.length ? h('div', {}, r.users.map(walletUserBlock)) : emptyState('Nobody has this id or wallet', 'A Support ID resolves only for users who logged in since the wallet directory’s deploy.')));
       return undefined;
     }
-    results.replaceChildren(panel(`Directory: ${r.users.length}${r.next ? '+' : ''} ${r.users.length === 1 ? 'person' : 'people'}`, {}, ...directoryRows(r.users, r.unverifiedWarning), r.next ? h('p', {}, h('button', { type: 'button', onclick: () => runSearch(r.next) }, 'Next page')) : ''));
+    results.replaceChildren(panel(`Directory: ${r.users.length}${r.next ? '+' : ''} ${r.users.length === 1 ? 'person' : 'people'}`, {}, ...directoryRows(r.users, r.unverifiedWarning), r.next ? pager([{ text: 'Next page', onclick: () => runSearch(r.next) }]) : ''));
     return undefined;
   };
   const runSearch = async (cursor) => {
@@ -2886,15 +3278,17 @@ async function usersPage(main) {
     {
       class: 'form',
       role: 'search',
+      novalidate: true,
       onsubmit: async (ev) => {
         ev.preventDefault();
+        if (!checkForm(el)) return;
         for (const k of ['q', 'provider', 'appId', 'sub', 'ticket']) f[k] = el.elements[k].value;
         f.unverifiedOnly = el.elements.unverifiedOnly.checked;
         await runSearch(null);
       },
     },
     field({ name: 'q', type: 'search', label: 'Email, User ID, Support ID or wallet', optional: false, value: f.q || '', placeholder: 'farah@ or HANA-2750-G5HM', help: 'Part of an email (3+ characters) browses. A full email, User ID (u1_…), internal id (hu_…) or wallet (G…, 0x… or a 64-hex NEAR account) finds one person. A Support ID opens the Support ID lookup.' }),
-    field({ name: 'ticket', label: 'Support reference', optionalText: ' (to find one person)', value: f.ticket || '', placeholder: 'ZD-4127', help: TICKET_HELP }),
+    field({ name: 'ticket', label: 'Support reference', optionalText: 'needed to find one person', value: f.ticket || '', placeholder: 'ZD-4127', help: TICKET_HELP }),
     h(
       'details',
       { class: 'more', open: filtersOpen },
@@ -2908,11 +3302,11 @@ async function usersPage(main) {
         field({ name: 'unverifiedOnly', type: 'checkbox', label: 'Unverified Google claims only', value: !!f.unverifiedOnly }),
       ),
     ),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Search')),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn('primary') }, icon('search'), 'Search')),
   );
   main.append(
-    pageHead('Users', { subtitle: 'Find a person by email, id or wallet, then open them to see their apps, wallets and on-chain accounts. Hana staff only: partners never see addresses.' }),
-    panel('Search', { hint: 'Every search and every opened user is audited by the email issuer under your Access identity. Each staff member can read at most 500 people an hour and 2 000 a day; past that the reads stop and Hana security is emailed. There is no export: bulk reads stay with `admin <env> user:list --json`.' }, el),
+    pageHead('Users', { subtitle: 'Find a person by email, id or wallet, then open them to see their apps, wallets and on-chain accounts. Journear staff only: partners never see addresses.' }),
+    panel('Search', { hint: 'Every search and every opened user is audited by the email issuer under your Access identity. Each staff member can read at most 500 people an hour and 2 000 a day; past that the reads stop and Journear security is emailed. There is no export: bulk reads stay with `admin <env> user:list --json`.' }, el),
     results,
   );
   showResults();
@@ -2970,7 +3364,7 @@ function userDetail(main, d) {
   );
   const wallets = panel('Wallets and ids', {});
   if (d.walletUsers === null) wallets.append(note('error', 'Wallet directory unavailable', d.walletError || 'error'));
-  else if (d.walletUsers.length === 0) wallets.append(emptyState('No wallet-directory user yet', 'A user appears at their next login.'));
+  else if (d.walletUsers.length === 0) wallets.append(emptyState('No wallet-directory user yet', 'A user appears at their next login.', 'wallet'));
   else wallets.append(...d.walletUsers.map(walletUserBlock));
   main.append(wallets, panel('On chain, per scope (read live)', {}, d.chain.length ? h('div', {}, d.chain.map(standingBlock)) : emptyState('No scope to read', '')));
 }
@@ -2984,14 +3378,16 @@ async function userPage(main) {
     return;
   }
   const { provider, sub } = who;
-  main.append(pageHead([`${kindLabel(provider)} `, h('code', {}, sub)], { back: { href: '/users', text: 'Back to the search' }, subtitle: 'Nothing about this person is read until you give a support reference.' }));
+  main.append(pageHead([`${kindLabel(provider)} `, h('code', {}, sub)], { back: { href: '/users', text: 'Users' }, subtitle: 'Nothing about this person is read until you give a support reference.' }));
   const out = h('div', { 'aria-live': 'polite' });
   const el = h(
     'form',
     {
       class: 'form',
+      novalidate: true,
       onsubmit: async (ev) => {
         ev.preventDefault();
+        if (!checkForm(el)) return;
         const ticket = el.elements.ticket.value.trim();
         usersState.ticket = ticket;
         out.replaceChildren(loading('Reading…'));
@@ -3004,8 +3400,8 @@ async function userPage(main) {
         }
       },
     },
-    h('label', { class: 'field', for: 'user-ticket' }, h('span', { class: 'label' }, 'Support reference'), h('input', { name: 'ticket', required: true, maxlength: 64, pattern: '[A-Za-z0-9._#:\\-]{1,64}', value: usersState.ticket, id: 'user-ticket', placeholder: 'ZD-4127', 'aria-describedby': 'user-ticket-help' }), h('span', { class: 'help', id: 'user-ticket-help' }, `Required to open a person. ${TICKET_HELP}`)),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Open')),
+    fieldBox(h('input', { name: 'ticket', required: true, maxlength: 64, pattern: '[A-Za-z0-9._#:\\-]{1,64}', value: usersState.ticket, id: 'user-ticket', placeholder: 'ZD-4127', autocomplete: 'off' }), { label: 'Support reference', help: `Required to open a person. ${TICKET_HELP}`, invalid: TICKET_INVALID }),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn('primary') }, 'Open')),
   );
   main.append(panel('Open this person', {}, el), out);
 }
@@ -3024,7 +3420,7 @@ function directoryAuditBlock(main, params, dir) {
   if (dir.next) {
     const next = new URLSearchParams(params);
     next.set('dirBefore', String(dir.next));
-    main.append(h('p', {}, link(`/audit?${next}`, 'Older issuer rows')));
+    main.append(pager([{ href: `/audit?${next}`, text: 'Older issuer rows' }]));
   }
 }
 
@@ -3103,7 +3499,7 @@ function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
     h('h3', {}, 'Wallets'),
     table(
       ['Chain', 'Address', { text: 'Key index', num: true }, 'First seen', 'Last used'],
-      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, h('span', { class: 'badge warning' }, `also listed by ${w.sharedWith} other user(s): not proof of ownership`)) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
+      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, badge(`also listed by ${w.sharedWith} other user(s): not proof of ownership`, 'warning long')) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
       { empty: 'No wallet yet.' },
     ),
     // D755: NEAR is recorded only from a session of an SDK of 0.4.0 or later; say so rather than leave a gap.
@@ -3225,30 +3621,30 @@ async function supportPage(main) {
     }
   };
   const label = (text, input, help, opts = {}) => {
-    const id = `support-${input.getAttribute('name')}`;
-    input.setAttribute('id', id);
-    if (help) input.setAttribute('aria-describedby', `${id}-help`);
-    return h('label', { class: `field${opts.size ? ` ${opts.size}` : ''}`, for: id }, h('span', { class: 'label' }, text, opts.optional ? h('span', { class: 'req' }, ' (optional)') : ''), input, help ? h('span', { class: 'help', id: `${id}-help` }, help) : '');
+    input.setAttribute('id', `support-${input.getAttribute('name')}`);
+    return fieldBox(input, { label: text, help, size: opts.size, optional: opts.optional, invalid: opts.invalid });
   };
   el = h(
     'form',
     {
       class: 'form',
+      novalidate: true,
       onsubmit: async (ev) => {
         ev.preventDefault();
+        if (!checkForm(el)) return;
         read();
         await run();
       },
     },
     label('Support ID, User ID or internal id', h('input', { name: 'query', required: true, maxlength: 64, placeholder: 'HANA-XXXX-XXXX, u1_… or hu_…', value: f.query, autocomplete: 'off' }), 'From the partner’s escalation. For a wallet address or a sub, search Users first.'),
-    label('Support reference', h('input', { name: 'ticket', required: true, maxlength: 64, pattern: SUPPORT_TICKET_PATTERN, value: f.ticket, placeholder: 'ZD-4127', autocomplete: 'off' }), `${TICKET_HELP} The lookup is recorded before anything is read.`),
+    label('Support reference', h('input', { name: 'ticket', required: true, maxlength: 64, pattern: SUPPORT_TICKET_PATTERN, value: f.ticket, placeholder: 'ZD-4127', autocomplete: 'off' }), `${TICKET_HELP} The lookup is recorded before anything is read.`, { invalid: TICKET_INVALID }),
     label('Days back', h('input', { name: 'days', type: 'number', min: 1, max: 731, value: f.days }), '1 to 731.', { size: 'narrow' }),
     label('Request IDs from the escalation', h('textarea', { name: 'requestIds', placeholder: 'req_… one per line' }, f.requestIds), 'Up to 20, one per line. They come from the SDK’s errors and the demo’s diagnostics.', { size: 'wide', optional: true }),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Look up'), h('button', { type: 'button', onclick: walletOnly }, 'Wallet directory only'), h('span', { class: 'hint' }, 'Wallet directory only: ids and wallets, no activity. The reference is still recorded.')),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn('primary') }, icon('search'), 'Look up'), h('button', { type: 'button', class: btn('secondary'), onclick: walletOnly }, 'Wallet directory only'), h('span', { class: 'hint' }, 'Wallet directory only: ids and wallets, no activity. The reference is still recorded.')),
   );
   main.append(
     pageHead('Support ID lookup', { subtitle: 'What happened to one user: their ids, sign-ins with the directory’s emails, wallets, live sessions, the scope’s app changes, their ledger events, and the events of the request IDs a partner escalates (errors included).' }),
-    panel('Look up a user', { hint: 'Hana staff only. Every lookup is audited before anything is read; each email is read from the issuer’s directory under your Access identity and row budget. There is no export: the operator’s path is the CLI’s `admin <env> support:lookup`.' }, el),
+    panel('Look up a user', { hint: 'Journear staff only. Every lookup is audited before anything is read; each email is read from the issuer’s directory under your Access identity and row budget. There is no export: the operator’s path is the CLI’s `admin <env> support:lookup`.' }, el),
     out,
   );
   show();
@@ -3303,7 +3699,7 @@ async function render() {
       renderSession();
       document.getElementById('who').textContent = `Signed in as ${me.email}`;
       document.getElementById('env').textContent = me.env;
-      document.title = `Hana ID admin (${me.env})`;
+      document.title = `${BRAND.product} admin (${me.env})`;
     }
     let m;
     if (path === '/' || path === '/status') await statusPage(main);
@@ -3340,8 +3736,12 @@ async function render() {
   if (seq !== renderSeq) return;
   const message = flash;
   flash = null;
-  root.replaceChildren(...(message ? [note('ok', '', message)] : []), main);
-  if (message) root.firstChild.setAttribute('role', 'status');
+  root.replaceChildren(main);
+  if (message) {
+    // What the action did, as a toast: its first sentence the title, the rest under it.
+    const [first, ...rest] = String(message).split(/(?<=[.?!])\s+/u);
+    toast('success', first, rest.join(' '));
+  }
   if (focusHeading) {
     focusHeading = false;
     try {

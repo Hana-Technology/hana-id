@@ -9,8 +9,12 @@
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import { CKD_DST, base64Decode, base64Encode, ckdAppId, fromUtf8, identityKeyHex, toHex, utf8 } from '@hana-id/core';
-import { E2E_ENV, EXIT_CLIENT_ID, GOOGLE_CLIENT_ID, TEST_MPC_MSK } from '../stack.ts';
+import { E2E_ENV, E2E_GUESTBOOK, EXIT_CLIENT_ID, GOOGLE_CLIENT_ID, TEST_MPC_MSK } from '../stack.ts';
 import { type Handler, json } from './http.ts';
+
+/** The mocked testnet's height and its one known block (the users' NEAR wallets, the demo's NEAR card). */
+export const NEAR_HEIGHT = 200_000_000n;
+export const NEAR_BLOCK_HASH = base58.encode(new Uint8Array(32).fill(0x2a));
 
 const G1 = bls.G1.ProjectivePoint;
 const G2 = bls.G2.ProjectivePoint;
@@ -235,12 +239,56 @@ export class Chain {
     }
   }
 
-  /** NEAR JSON-RPC (only what the Hana pages and the API call). */
+  // ---- the users' NEAR wallets and the demo guestbook (apps/demo's NEAR card) ----
+
+  /** Users' implicit accounts that exist on the mocked testnet, by account id: their key's nonce. */
+  readonly nearAccounts = new Map<string, bigint>();
+  /** The demo guestbook's messages (contracts/hana-guestbook), oldest first. */
+  readonly guestbook: { account_id: string; text: string; block_timestamp_ms: number }[] = [];
+
+  /**
+   * The test-only JSON-RPC methods (never on NEAR): what the relayer would do, for a test that mocks
+   * POST /v1/near/activate and /v1/near/relay at the network layer. `e2e_near_activate` creates an implicit account
+   * (its key's nonce: the creation height × 10^6, as nearcore sets it); `e2e_guestbook_add` stores a message as the
+   * guestbook would under a relayed delegate action, and bumps the sender's key nonce.
+   */
+  private e2e(method: string, p: Record<string, unknown>): unknown {
+    const account = String(p.account_id);
+    if (method === 'e2e_near_activate') {
+      const created = !this.nearAccounts.has(account);
+      if (created) this.nearAccounts.set(account, (NEAR_HEIGHT - 1n) * 1_000_000n);
+      // The relayer's answer (apps/api's POST /v1/near/activate): the key's nonce and the height it was read at.
+      return { created, accountId: account, accessKeyNonce: String(this.nearAccounts.get(account)), blockHeight: Number(NEAR_HEIGHT) };
+    }
+    const text = String(p.text).trim();
+    this.guestbook.push({ account_id: account, text, block_timestamp_ms: Date.now() });
+    if (typeof p.nonce === 'string') this.nearAccounts.set(account, BigInt(p.nonce));
+    return { index: this.guestbook.length - 1 };
+  }
+
+  /** NEAR JSON-RPC (only what the Hana pages, the API and the demo page call). */
   rpc(body: unknown): Response {
     const req = body as { id?: unknown; method?: unknown; params?: Record<string, unknown> } | null;
     const id = req?.id ?? null;
     const ok = (result: unknown) => json(200, { jsonrpc: '2.0', id, result });
     const err = (name: string) => json(200, { jsonrpc: '2.0', id, error: { name, cause: { name }, code: -32000, message: name } });
+    if (req?.method === 'e2e_near_activate' || req?.method === 'e2e_guestbook_add') return ok(this.e2e(req.method, req.params ?? {}));
+    if (req?.method === 'block') {
+      // The latest final block, or one by hash (the vault checks a testnet transaction's block hash is known).
+      if (req.params?.finality === 'final' || req.params?.block_id === NEAR_BLOCK_HASH) return ok({ header: { height: Number(NEAR_HEIGHT), hash: NEAR_BLOCK_HASH } });
+      return err('UNKNOWN_BLOCK');
+    }
+    if (req?.method === 'query' && (req.params?.request_type === 'view_access_key' || req.params?.request_type === 'view_account')) {
+      const nonce = this.nearAccounts.get(String(req.params.account_id));
+      if (nonce === undefined) return err('UNKNOWN_ACCOUNT');
+      if (req.params.request_type === 'view_account') return ok({ amount: '0', locked: '0', storage_usage: 182, block_height: Number(NEAR_HEIGHT), block_hash: NEAR_BLOCK_HASH });
+      return ok({ nonce: Number(nonce), permission: 'FullAccess', block_height: Number(NEAR_HEIGHT), block_hash: NEAR_BLOCK_HASH });
+    }
+    if (req?.method === 'query' && req.params?.request_type === 'call_function' && req.params.account_id === E2E_GUESTBOOK) {
+      if (req.params.method_name !== 'get_messages') return err('MethodResolveError');
+      const list = this.guestbook.map((m, index) => ({ index, ...m })).reverse().slice(0, 50);
+      return ok({ result: Array.from(utf8(JSON.stringify(list))), logs: [], block_height: Number(NEAR_HEIGHT), block_hash: NEAR_BLOCK_HASH });
+    }
     if (req?.method === 'query' && req.params?.request_type === 'call_function') {
       if (req.params.account_id !== E2E_ENV.signer) return err('UNKNOWN_ACCOUNT');
       let args: Record<string, unknown>;

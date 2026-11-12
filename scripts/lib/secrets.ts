@@ -88,6 +88,8 @@ export const SECRET_FILES = {
   ownerRelayerKeys: 'owner-relayer-keys.json',
   /** Same format: the Home-pool function-call keys on manifest.relayer (the API's HOME_RELAYER_KEYS, POST /v1/home/login). */
   homeRelayerKeys: 'home-relayer-keys.json',
+  /** Same format: full-access keys on manifest.near.relay.account (the API's NEAR_RELAY_KEYS, the NEAR meta-transaction relay, D734). */
+  nearRelayKeys: 'near-relay-keys.json',
   /** `{account_id, public_key, private_key}`: function-call key on manifest.signer (the API's KEYS_UPDATER_KEY). */
   keysUpdater: 'keys-updater.json',
 } as const;

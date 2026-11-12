@@ -4,7 +4,7 @@
 // and the Hana windows do), but error messages are free text, so they are scrubbed of anything shaped like a secret
 // and cut short.
 
-import { isApiRequestId, isSupportId } from '@hana-id/core';
+import { isApiRequestId, isNearImplicitAccountId, isSupportId } from '@hana-id/core';
 
 export interface LoginTiming {
   at: string;
@@ -37,7 +37,8 @@ export interface DiagnosticsInput {
   persistence: string | null;
   warning: string | null;
   expiresAtMs: number | null;
-  addresses: { stellar: string; evm: string } | null;
+  /** `near`: the implicit account id (public, 64 hex), when the vault has one. */
+  addresses: { stellar: string; evm: string; near?: string | undefined } | null;
   /** The user's Support ID (`hana.supportId`, batch C15): the code Hana's staff look the user up by. Null without one. */
   supportId: string | null;
   /** createHana → ready, when the page loaded logged in (an unlock). */
@@ -120,7 +121,9 @@ export function diagnostics(input: DiagnosticsInput, nowMs: number): Record<stri
     persistence: input.persistence,
     warning: input.warning,
     sessionExpiresAt: input.expiresAtMs === null ? null : new Date(input.expiresAtMs).toISOString(),
-    addresses: input.addresses ? { stellar: input.addresses.stellar, evm: input.addresses.evm } : null,
+    addresses: input.addresses
+      ? { stellar: input.addresses.stellar, evm: input.addresses.evm, ...(isNearImplicitAccountId(input.addresses.near) ? { near: input.addresses.near } : {}) }
+      : null,
     // Only a well-formed `HANA-XXXX-XXXX`: anything else is left out of the report.
     supportId: isSupportId(input.supportId) ? input.supportId : null,
     // What Hana's staff look a failed request up by, with the Support ID (the errors below carry theirs too).

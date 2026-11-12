@@ -2,12 +2,13 @@
 // signature over the whole request), the identities kept current after /v1/login and the link relays, and the
 // AdminRpc / ConsoleRpc reads with their three ids. Migration 0011's tables.
 import { internalIdOf, uid as uidOf, supportIdOf } from '@hana-id/console-core';
-import { deriveAddresses, withChainKey } from '@hana-id/core/derivation';
+import { deriveAddresses, deriveWalletAddresses, withChainKey } from '@hana-id/core/derivation';
 import { identitySub } from '@hana-id/core/identity';
 import { type WalletRecordChain, signWalletRecord, walletRecordSessionMessage, walletRecordStatement } from '@hana-id/core/wallet-record';
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fromHex } from '../src/bytes.ts';
+import { nearAccountUser } from '../src/directory/near.ts';
 import { syncAccount, syncAfterLogin } from '../src/directory/sync.ts';
 import { linkChangeNonce, linkAccountNonce, linkNewNonce } from '../src/session-crypto.ts';
 import { emailAud, emailEnv, emailToken, ikSync, setLoginMethods, withEmail } from './email-helpers.ts';
@@ -41,24 +42,29 @@ interface RecordOpts {
   sessionSigner?: number[] | null;
   /** Applied after every signature is made (a tampered body). */
   mutate?: (b: Record<string, unknown>) => void;
+  /** Add the NEAR record (D755): signed by the NEAR key, the session signature over the v2 proofs hash. */
+  near?: boolean;
+  /** With `near`: the session signature over Stellar and EVM only (the v1 hash), as an older body's. */
+  nearUnsigned?: boolean;
 }
 
 /** A POST /v1/wallets/record body as the vault makes it: each address signed by its own key, the whole by the session key. */
 function recordBody(app: { id: string; scope: string }, spk: number[], o: RecordOpts = {}): Record<string, unknown> {
   const prk = o.prk ?? randomPrk();
-  const addresses = deriveAddresses(prk);
+  const addresses = deriveWalletAddresses(prk);
   const path = o.path ?? pathFor(app.scope);
   const issuedAtMs = o.issuedAtMs ?? Date.now();
   const ctx = { env: o.signEnv ?? env.ENV_NAME, signer: env.SIGNER_ACCOUNT, appId: o.signApp ?? app.id, scopeId: app.scope, path: o.signPath ?? path, sessionPublicKey: Uint8Array.from(o.signSpk ?? spk), issuedAtMs };
   const wallets: Record<WalletRecordChain, { address: string; signature: number[] }> = {} as never;
-  for (const c of ['stellar', 'evm'] as const) {
+  for (const c of o.near ? (['stellar', 'evm', 'near'] as const) : (['stellar', 'evm'] as const)) {
     wallets[c] = { address: addresses[c], signature: [...withChainKey(prk, c, 0, (k) => signWalletRecord(c, k, walletRecordStatement(ctx, c, addresses[c])))] };
   }
-  if (o.otherAddress) wallets[o.otherAddress].address = deriveAddresses(randomPrk())[o.otherAddress];
+  if (o.otherAddress) wallets[o.otherAddress].address = deriveWalletAddresses(randomPrk())[o.otherAddress];
   const b: Record<string, unknown> = { sessionPublicKey: spk, issuedAtMs, path, wallets };
   const signer = o.sessionSigner === undefined ? spk : o.sessionSigner;
   if (signer !== null) {
-    const proofs = { stellar: { address: wallets.stellar.address, signature: Uint8Array.from(wallets.stellar.signature) }, evm: { address: wallets.evm.address, signature: Uint8Array.from(wallets.evm.signature) } };
+    const nearProof = o.near && !o.nearUnsigned ? { near: { address: wallets.near.address, signature: Uint8Array.from(wallets.near.signature) } } : {};
+    const proofs = { stellar: { address: wallets.stellar.address, signature: Uint8Array.from(wallets.stellar.signature) }, evm: { address: wallets.evm.address, signature: Uint8Array.from(wallets.evm.signature) }, ...nearProof };
     b.sessionSignature = [...sessionKeyPair(signer).sign(walletRecordSessionMessage(ctx, proofs)).signature];
   }
   o.mutate?.(b);
@@ -407,16 +413,16 @@ describe('identities after /v1/login and the link relays', () => {
 
 // ---- reads ----
 
-async function populated(org: string) {
+async function populated(org: string, o: { near?: boolean } = {}) {
   const near = chain();
   const app = await orgApp({ org });
   const sub = `sub-${uid()}`;
   const spk = spentSession(near, app.scope, { sub });
   const prk = randomPrk();
-  expect((await record(app, spk, { prk, path: pathFor(app.scope, sub) })).status).toBe(200);
+  expect((await record(app, spk, { prk, path: pathFor(app.scope, sub), near: o.near })).status).toBe(200);
   const internalId = await expectedInternalId(app.scope, 'google', sub);
   const userId = expectedUserId(app.scope, 'google', sub);
-  return { app, sub, prk, userId, internalId, addresses: deriveAddresses(prk), near };
+  return { app, sub, prk, userId, internalId, addresses: deriveWalletAddresses(prk), near };
 }
 
 describe('AdminRpc: users for staff', () => {
@@ -587,5 +593,193 @@ describe('ConsoleRpc: users for partners', () => {
     const after = (await consoleRpc().getUser({ ...asA, requestId: rid(), userId: a.userId })) as unknown as { user: { accounts: unknown[] } };
     vi.restoreAllMocks();
     expect(after.user.accounts).toEqual([{ kind: 'google', status: 'active' }, { kind: 'email', status: 'active' }]);
+  });
+});
+
+// ---- NEAR (D755–D757): the third record, its migration fallback, the relayer's lookup and both consoles' reads ----
+
+/** env.DB, except that the NEAR wallet upsert fails as migration 0011's CHECK would (no migration 0019 yet). */
+function dbWithoutNear(): D1Database {
+  const real = env.DB;
+  return new Proxy(real, {
+    get(target, prop) {
+      if (prop !== 'prepare') return Reflect.get(target, prop, target) as unknown;
+      return (sql: string) => {
+        const stmt = target.prepare(sql);
+        return new Proxy(stmt, {
+          get(t, p) {
+            if (p !== 'bind') return Reflect.get(t, p, t) as unknown;
+            return (...args: unknown[]) => {
+              const bound = t.bind(...args);
+              if (!sql.includes('INSERT INTO end_user_wallets') || args[1] !== 'near') return bound;
+              return { run: () => Promise.reject(new Error("D1_ERROR: CHECK constraint failed: chain IN ('stellar', 'evm')")) };
+            };
+          },
+        });
+      };
+    },
+  });
+}
+
+describe('NEAR in the wallet directory', () => {
+  it('records the NEAR account beside Stellar and EVM when the body carries it, and says so', async () => {
+    const { app, spk } = await recorded();
+    const prk = randomPrk();
+    const res = await record(app, spk, { prk, near: true });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    const b = await body(res);
+    expect([b.recorded, b.near]).toEqual([true, true]);
+    const a = deriveWalletAddresses(prk);
+    const userId = await expectedInternalId(app.scope, 'google', G_SUB);
+    expect((await wallets(userId)).map((w) => [w.chain, w.address, w.key_index])).toEqual([
+      ['stellar', a.stellar, 0],
+      ['near', a.near, 0],
+      ['evm', a.evm, 0],
+    ]);
+    // The relayer's lookup: this scope's user, by the implicit account id, and nobody else's.
+    expect(await nearAccountUser(env.DB, app.scope, a.near)).toBe(userId);
+    expect(await nearAccountUser(env.DB, `${app.scope}-other`, a.near)).toBeNull();
+    expect(await nearAccountUser(env.DB, app.scope, a.near.toUpperCase())).toBeNull();
+    expect(await nearAccountUser(env.DB, app.scope, deriveWalletAddresses(randomPrk()).near)).toBeNull();
+    expect(await nearAccountUser(env.DB, app.scope, 'alice.testnet')).toBeNull();
+    // A Stellar or EVM address is never a NEAR account (the chain is part of the lookup).
+    expect(await nearAccountUser(env.DB, app.scope, a.stellar)).toBeNull();
+  });
+
+  it('a two-chain body (an older vault, an SDK before 0.4.0) still answers exactly as before', async () => {
+    const { app, spk } = await recorded();
+    const b = await body(await record(app, spk));
+    expect(Object.keys(b).sort()).toEqual(['recorded', 'requestId']);
+  });
+
+  it('refuses a NEAR record the session didn’t sign, another key’s, a non-canonical id or an unknown chain, writing nothing', async () => {
+    const { app, spk } = await recorded();
+    type W = Record<string, { address: string; signature: number[] }>;
+    const cases: [string, RecordOpts, number, string][] = [
+      // A NEAR record added to a body whose session signature covers Stellar and EVM only (v1 hash).
+      ['added after the session signed', { near: true, nearUnsigned: true }, 401, 'invalid_signature'],
+      ['another account, this key’s signature', { near: true, otherAddress: 'near' }, 400, 'bad_wallet_record'],
+      ['uppercase id', { near: true, mutate: (b) => ((b.wallets as W).near!.address = (b.wallets as W).near!.address.toUpperCase()) }, 400, 'bad_wallet_record'],
+      ['a fourth chain', { near: true, mutate: (b) => ((b.wallets as W).solana = { address: 'x', signature: [] }) }, 400, 'bad_request'],
+      ['NEAR without EVM', { near: true, mutate: (b) => delete (b.wallets as W).evm }, 400, 'bad_request'],
+      ['a 65-byte NEAR signature', { near: true, mutate: (b) => (b.wallets as W).near!.signature.push(0) }, 400, 'bad_request'],
+    ];
+    for (const [what, o, status, code] of cases) {
+      const res = await record(app, spk, o);
+      expect([res.status, (await body(res)).code], what).toEqual([status, code]);
+    }
+    expect(await users(app.scope)).toEqual([]);
+  });
+
+  it('before migration 0019 (the CHECK refuses near) still records Stellar and EVM, answers near: false, and the next login adds it', async () => {
+    const { app, spk } = await recorded();
+    const prk = randomPrk();
+    const res = await record(app, spk, { prk, near: true, env: { DB: dbWithoutNear() } });
+    expect(res.status).toBe(200);
+    expect((await body(res)).near).toBe(false);
+    const userId = await expectedInternalId(app.scope, 'google', G_SUB);
+    expect((await wallets(userId)).map((w) => w.chain)).toEqual(['stellar', 'evm']);
+    expect((await body(await record(app, spk, { prk, near: true }))).near).toBe(true);
+    expect((await wallets(userId)).map((w) => w.chain)).toEqual(['stellar', 'near', 'evm']);
+  });
+
+  it('staff find a user by the NEAR account (any case) and see it among the wallets', async () => {
+    const org = newOrg();
+    const a = await populated(org, { near: true });
+    const staff = { actor: { kind: 'hana' as const, id: 'staff-1', email: 'staff@hana.example' }, requestId: rid(), clientIp: '203.0.113.1' };
+    for (const query of [a.addresses.near, a.addresses.near.toUpperCase()]) {
+      const found = (await adminRpc().findUsers({ ...staff, query })) as unknown as { ok: true; users: { userId: string; wallets: { chain: string; address: string }[] }[] };
+      expect(found.users.map((u) => u.userId), query).toEqual([a.userId]);
+      expect(found.users[0]!.wallets.map((w) => [w.chain, w.address])).toEqual([
+        ['stellar', a.addresses.stellar],
+        ['evm', a.addresses.evm],
+        ['near', a.addresses.near],
+      ]);
+    }
+  });
+
+  it('partners see their own users’ NEAR account (the other chains’ rules), search by it, and never another org’s', async () => {
+    const orgA = newOrg();
+    const orgB = newOrg();
+    const a = await populated(orgA, { near: true });
+    const b = await populated(orgB, { near: true });
+    const old = await populated(orgA);
+    const asA = { ...member(), requestId: rid(), clientIp: '203.0.113.2', orgId: orgA };
+    const list = (await consoleRpc().listUsers(asA)) as unknown as { ok: true; users: { userId: string; wallets: { chain: string; address: string }[] }[] };
+    const byId = new Map(list.users.map((u) => [u.userId, u.wallets.map((w) => w.chain)]));
+    expect(byId.get(a.userId)).toEqual(['stellar', 'evm', 'near']);
+    // A user recorded by an older SDK or before the change has no NEAR row: just the two.
+    expect(byId.get(old.userId)).toEqual(['stellar', 'evm']);
+    expect(JSON.stringify(list)).not.toContain(b.addresses.near);
+    const search = async (q: string) => ((await consoleRpc().listUsers({ ...asA, search: q })) as unknown as { users: { userId: string }[] }).users.map((u) => u.userId);
+    expect(await search(a.addresses.near)).toEqual([a.userId]);
+    expect(await search(b.addresses.near)).toEqual([]);
+    const got = (await consoleRpc().getUser({ ...asA, userId: a.userId })) as unknown as { ok: true; user: { wallets: { chain: string; address: string }[] } };
+    expect(got.user.wallets.find((w) => w.chain === 'near')?.address).toBe(a.addresses.near);
+  });
+});
+
+// ---- NEAR's rules (D762): one NEAR account per user and key index, one user per account in a scope ----
+
+describe('NEAR accounts: what a client can list (D762)', () => {
+  it('a second, different NEAR account for the same user and key index is refused whole (409 near_account_mismatch), nothing written', async () => {
+    const { app, spk } = await recorded();
+    const first = randomPrk();
+    expect((await body(await record(app, spk, { prk: first, near: true }))).near).toBe(true);
+    const userId = await expectedInternalId(app.scope, 'google', G_SUB);
+    const before = await wallets(userId);
+    const res = await record(app, spk, { prk: randomPrk(), near: true });
+    expect([res.status, (await body(res)).code]).toEqual([409, 'near_account_mismatch']);
+    expect(await wallets(userId)).toEqual(before);
+    // The same account again is fine (an honest vault's every login).
+    expect((await body(await record(app, spk, { prk: first, near: true }))).near).toBe(true);
+    // Without NEAR in the body, another key's Stellar and EVM are still taken (unchanged behaviour, D762's note).
+    expect((await record(app, spk, { prk: randomPrk() })).status).toBe(200);
+  });
+
+  it('an account another user of the scope lists is not listed again: the user’s other rows are written, near: false, near_account_taken', async () => {
+    const chainMock = chain();
+    const app = await seedApp();
+    const prk = randomPrk();
+    const spkA = spentSession(chainMock, app.scope, { sub: 'owner-a' });
+    const spkB = spentSession(chainMock, app.scope, { sub: 'other-b' });
+    expect((await body(await record(app, spkA, { prk, path: pathFor(app.scope, 'owner-a'), near: true }))).near).toBe(true);
+    const res = await record(app, spkB, { prk, path: pathFor(app.scope, 'other-b'), near: true });
+    expect(res.status).toBe(200);
+    expect(await body(res)).toMatchObject({ recorded: true, near: false, nearCode: 'near_account_taken' });
+    const a = await expectedInternalId(app.scope, 'google', 'owner-a');
+    const b = await expectedInternalId(app.scope, 'google', 'other-b');
+    expect((await wallets(b)).map((w) => w.chain)).toEqual(['stellar', 'evm']);
+    expect(await nearAccountUser(env.DB, app.scope, deriveWalletAddresses(prk).near)).toBe(a);
+  });
+
+  it('the same account in two scopes: each scope’s lookup finds its own user (an exported key; scopes never mix)', async () => {
+    const prk = randomPrk();
+    const near = deriveWalletAddresses(prk).near;
+    const one = await recorded({ sub: 'two-scopes' });
+    expect((await body(await record(one.app, one.spk, { prk, path: pathFor(one.app.scope, 'two-scopes'), near: true }))).near).toBe(true);
+    const two = await recorded({ sub: 'two-scopes' });
+    expect((await body(await record(two.app, two.spk, { prk, path: pathFor(two.app.scope, 'two-scopes'), near: true }))).near).toBe(true);
+    expect(await nearAccountUser(env.DB, one.app.scope, near)).toBe(await expectedInternalId(one.app.scope, 'google', 'two-scopes'));
+    expect(await nearAccountUser(env.DB, two.app.scope, near)).toBe(await expectedInternalId(two.app.scope, 'google', 'two-scopes'));
+  });
+
+  it('nearAccountUser: two users of a scope listing one account is ambiguous (null), whatever their times; a failed read throws', async () => {
+    const { app } = await recorded();
+    const near = deriveWalletAddresses(randomPrk()).near;
+    const ids = [`hu_${'c'.repeat(26)}`, `hu_${'d'.repeat(26)}`];
+    for (const [i, id] of ids.entries()) {
+      await env.DB.prepare("INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, 'ABCDEFGH', ?3, 1, 1)").bind(id, `u1_${String(i).repeat(21)}A`, app.scope).run();
+    }
+    const add = (id: string, first: number, last: number) =>
+      env.DB.prepare("INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?1, 'near', ?2, 0, ?3, ?4)").bind(id, near, first, last).run();
+    await add(ids[0]!, 10, 10);
+    expect(await nearAccountUser(env.DB, app.scope, near)).toBe(ids[0]);
+    // A second user's row (a race past the write path's check, or a direct write) with a later last-used time that a
+    // client could choose: the answer is null, never the one with the newest time.
+    await add(ids[1]!, 20, Date.now() + 300_000);
+    expect(await nearAccountUser(env.DB, app.scope, near)).toBeNull();
+    const broken = { prepare: () => ({ bind: () => ({ all: () => Promise.reject(new Error('D1_ERROR: network')) }) }) } as unknown as D1Database;
+    await expect(nearAccountUser(broken, app.scope, near)).rejects.toThrow(/D1_ERROR/u);
   });
 });

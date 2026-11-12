@@ -50,6 +50,8 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [A pinned identity key isn't in Hana's identity JWKS](#identity-jwks-degraded) | warning | `identity_key_missing` |
 | [An issuer key on chain has an identity key's kid](#identity-key-on-chain) | critical | `identity_key_on_chain` |
 | [Hana Home's daily derive budget reached 80%](#home-budget-high) | warning | — |
+| [The NEAR relay's daily budget reached 80%](#near-relay-budget-high) | warning | — |
+| [The NEAR relay account is running low](#near-relay-balance-low) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -1476,6 +1478,71 @@ A `home_budget_high` security event: a day's Hana Home derives reached 80% of `h
 - If real demand keeps reaching it, raise the Home key's allowance with the ceiling.
 
 **Refs:** [`docs/operations.md#hana-home-derive-deploy`](operations.md#hana-home-derive-deploy), D541 (`docs/decisions.md`) · **See also:** [relayer-key-stolen](#relayer-key-stolen)
+
+<a id="near-relay-budget-high"></a>
+
+### The NEAR relay's daily budget reached 80%
+
+`near-relay-budget-high` · warning
+
+A `near_relay_budget_high` security event: a day's NEAR relay spend (gas and activations paid for Hana's NEAR wallets) reached 80% of `near.relay.dailyBudgetNear` (sandbox-dev 5 NEAR).
+
+**Signals**
+
+- A `near_relay_budget_high` row in the admin's Security & monitoring, emailed by the feed (one a day; amounts only).
+
+**Impact**
+
+- At the budget every relay and activation answers `503 relay_budget_exhausted` until 00:00 UTC; an app at its own day budget (`appDailyBudgetNear`) answers `429 app_budget_exhausted`. Logins, owner actions and Hana Home are on other accounts and unaffected.
+
+**Steps**
+
+1. **Tell real use from abuse** (who: a founder). In the API's request logs, count `/v1/near/relay` and `/v1/near/activate` answers per app (`appId`) for the day. One app far ahead of the others, or many activations without relays, points at a leaked publishable key or many sybil sign-ins.
+
+2. **Raise or stop it** (who: a founder). Real demand: raise `near.relay.dailyBudgetNear` (and fund the relay account to at least `inFlightNear + lowBalanceNear + dailyBudgetNear`), regenerate and redeploy the API. Abuse: lower that app's limits, set `near.relay.receivers` to `[]`, or delete the `NEAR_RELAY_KEYS` secret to stop every relay at once.
+
+**Verify**
+
+- The next day's spend stays under 80%, or relays answer again after the budget was raised.
+
+**Follow-ups**
+
+- If one app keeps causing it, suspend the app or rotate its publishable key.
+
+**Refs:** [`docs/operations.md#near-relay-meta-transactions-d730d739`](operations.md#near-relay-meta-transactions-d730d739), D736 (`docs/decisions.md`) · **See also:** [near-relay-balance-low](#near-relay-balance-low)
+
+<a id="near-relay-balance-low"></a>
+
+### The NEAR relay account is running low
+
+`near-relay-balance-low` · warning
+
+A `near_relay_balance_low` security event: the hourly check found `near.relay.account` below `near.relay.lowBalanceNear` (default 2 NEAR), or missing.
+
+**Signals**
+
+- A `near_relay_balance_low` row in the admin's Security & monitoring, emailed by the feed (one a day; the account and its balance).
+- `502 near_rejected` from `/v1/near/relay` with `near_relay_balance_short` in the API log (the relays in flight outgrew the balance).
+
+**Impact**
+
+- Relays and activations fail (`502 near_rejected`) once the account can no longer cover the relays in flight; their budget reservation is kept. Nothing else uses this account.
+
+**Steps**
+
+1. **Check the account** (who: a founder). Look at the relay account on a testnet explorer: a steady drain matching the day's relays is use; a single large transfer out means a relay key leaked (the keys are full-access): then delete it at once (docs/operations.md "NEAR relay", the runbook).
+
+2. **Top it up** (who: a founder). Send testnet NEAR from a funded testnet account (never a mainnet one): `near tokens <funded testnet account> send-near <near.relay.account> '5 NEAR' network-config testnet sign-with-legacy-keychain send`, to at least `inFlightNear + lowBalanceNear + dailyBudgetNear`.
+
+**Verify**
+
+- The next hourly check writes no event, and relays answer 200 again.
+
+**Follow-ups**
+
+- If the account was missing, re-create it and re-add the keys (`near-relay-keys`), then re-upload `NEAR_RELAY_KEYS`.
+
+**Refs:** [`docs/operations.md#near-relay-meta-transactions-d730d739`](operations.md#near-relay-meta-transactions-d730d739), D736 (`docs/decisions.md`) · **See also:** [near-relay-budget-high](#near-relay-budget-high)
 
 <a id="updater-key-stolen"></a>
 

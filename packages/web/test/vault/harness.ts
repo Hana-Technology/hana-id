@@ -257,6 +257,11 @@ export class FakeBackend {
   readonly sessions = new Map<string, ChainSession>();
   readonly shares = new Map<string, FakeShare>();
   readonly txs = new Map<string, unknown>();
+  /** NEAR block hashes (base58) the fake RPC knows (`block`); any other is UNKNOWN_BLOCK. */
+  readonly nearBlocks = new Set<string>();
+  /** NEAR access keys the fake RPC knows (`view_access_key`): `account|ed25519:…` → nonce, read at `nearHeight`. */
+  readonly nearKeys = new Map<string, number>();
+  nearHeight = 277_000_000;
   readonly relay = new Map<string, { iv: string; ct: string } | 'consumed'>();
   readonly calls: ApiCall[] = [];
   readonly rpcCalls: { method: string; params: Record<string, unknown>; endpoint: string }[] = [];
@@ -273,6 +278,8 @@ export class FakeBackend {
    * the function gives the honest answer.
    */
   readonly viewLies = new Map<string, (method: string, args: Record<string, unknown>) => unknown>();
+  /** Per endpoint: a JSON-RPC body to answer instead (a lying or different provider), or undefined to answer normally. */
+  readonly rpcLies = new Map<string, (body: { method: string; params: Record<string, unknown> }) => Record<string, unknown> | undefined>();
   /** What GET /v1/app answers. */
   app: Record<string, unknown> = { scopeId: SCOPE, signer: ENV.signer, google: { clientId: CLIENT_ID, mode: 'shared' }, name: 'Partner' };
   /** The auto-approve policy in force that GET /v1/app answers: each new tab's page sets it (the page is current). */
@@ -790,6 +797,13 @@ export class FakeBackend {
 
   private rpc(body: { method: string; params: Record<string, unknown> }, endpoint: string): Response {
     this.rpcCalls.push({ ...body, endpoint });
+    const lied = this.rpcLies.get(endpoint)?.(body);
+    if (lied !== undefined) return json(200, { jsonrpc: '2.0', id: 'x', ...lied });
+    if (body.method === 'query' && body.params.request_type === 'view_access_key') {
+      const nonce = this.nearKeys.get(`${body.params.account_id as string}|${body.params.public_key as string}`);
+      if (nonce === undefined) return json(200, { jsonrpc: '2.0', id: 'x', error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCESS_KEY', info: {} } } });
+      return json(200, { jsonrpc: '2.0', id: 'x', result: { nonce, permission: 'FullAccess', block_height: this.nearHeight, block_hash: '11111111111111111111111111111111' } });
+    }
     if (body.method === 'query') {
       const args = JSON.parse(fromUtf8(base64Decode(body.params.args_base64 as string))) as Record<string, unknown>;
       const answer = (v: unknown) => json(200, { jsonrpc: '2.0', id: 'x', result: { result: Array.from(utf8(JSON.stringify(v))) } });
@@ -803,6 +817,11 @@ export class FakeBackend {
       if (body.params.method_name === 'get_issuer_keys') return answer(args.provider === 'email' ? this.emailKeys : null);
       if (body.params.method_name === 'get_self_issued') return answer(args.provider === 'email' ? this.emailPolicy : null);
       return answer(this.sessions.get(toHex(Uint8Array.from(args.session_public_key as number[]))) ?? null);
+    }
+    if (body.method === 'block') {
+      const id = body.params.block_id as string;
+      if (!this.nearBlocks.has(id)) return json(200, { jsonrpc: '2.0', id: 'x', error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_BLOCK', info: {} } } });
+      return json(200, { jsonrpc: '2.0', id: 'x', result: { header: { hash: id, height: this.nearHeight } } });
     }
     if (body.method === 'EXPERIMENTAL_tx_status') {
       const v = this.txs.get(body.params.tx_hash as string);

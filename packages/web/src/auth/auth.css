@@ -270,6 +270,12 @@ ul {
   padding-left: 22px;
 }
 
+/* Operation and action lists number their headings themselves ("1. payment"): no second list number. */
+ol.ops {
+  list-style: none;
+  padding-left: 0;
+}
+
 .ops > li,
 .contracts > li {
   border-top: 1px solid var(--line);
@@ -331,6 +337,23 @@ pre.message {
   padding: 10px 12px;
   max-height: 320px;
   overflow: auto;
+}
+
+/* A box that holds more than it shows (render-approval.ts markOverflowing): a scrollbar that never hides (overlay
+   scrollbars show nothing until scrolled), a stronger border, and the warning line above it. */
+pre.message.overflows {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  border-color: var(--line-strong);
+}
+
+pre.message.overflows::-webkit-scrollbar {
+  width: 10px;
+}
+
+pre.message.overflows::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 5px;
 }
 
 .actions {

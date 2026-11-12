@@ -3,18 +3,30 @@
 //
 // - its own script and stylesheet (no inline code, no third-party script, no analytics);
 // - one frame: the env's vaultOrigin (docs/integration.md section 5: the SDK reports `vault_unavailable` otherwise);
-// - one connection: the EVM chain's RPC origin, where the SDK forwards read-only calls. The page calls no Hana API
-//   itself: the vault frame does, under the vault page's own CSP;
+// - connections to exactly these origins: the EVM chain's RPC, where the SDK forwards read-only calls; the env's NEAR
+//   RPC (and its fallback), where the NEAR card reads the user's access key, the latest block and the guestbook; and
+//   the env's Hana API, which the SDK's `hana.near.relay` and `hana.near.activate` call from the page. Every other
+//   Hana API call is the vault frame's, under the vault page's own CSP;
 // - nothing may frame it, and Trusted Types are required (the page writes text only, never HTML).
 //
 // The Hana login, approval and export windows are popups (window.open), which CSP doesn't restrict. COOP is
 // `same-origin-allow-popups`, which docs/integration.md allows (`same-origin` would sever the login popup).
 import { type DemoConfig, webOrigin } from './config.ts';
 
+/** The page's connect-src origins, in a fixed order, each once. */
+export function connectOrigins(c: Pick<DemoConfig, 'evm' | 'near' | 'apiUrl'>): string[] {
+  const origins = [
+    webOrigin(c.evm.rpcUrl, 'evm.rpcUrl'),
+    webOrigin(c.near.rpcUrl, 'near.rpcUrl'),
+    ...(c.near.rpcFallbackUrl !== null ? [webOrigin(c.near.rpcFallbackUrl, 'near.rpcFallbackUrl')] : []),
+    webOrigin(c.apiUrl, 'apiUrl'),
+  ];
+  return [...new Set(origins)];
+}
+
 /** The page's Content-Security-Policy. */
-export function pageCsp(c: Pick<DemoConfig, 'vaultOrigin' | 'evm'>): string {
+export function pageCsp(c: Pick<DemoConfig, 'vaultOrigin' | 'evm' | 'near' | 'apiUrl'>): string {
   const vault = webOrigin(c.vaultOrigin, 'vaultOrigin');
-  const rpc = webOrigin(c.evm.rpcUrl, 'evm.rpcUrl');
   return [
     "default-src 'none'",
     "script-src 'self'",
@@ -22,7 +34,7 @@ export function pageCsp(c: Pick<DemoConfig, 'vaultOrigin' | 'evm'>): string {
     "img-src 'self'",
     // Hana's fonts (D426), from this origin only.
     "font-src 'self'",
-    `connect-src ${rpc}`,
+    `connect-src ${connectOrigins(c).join(' ')}`,
     `frame-src ${vault}`,
     "base-uri 'none'",
     "form-action 'none'",

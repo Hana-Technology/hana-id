@@ -1,6 +1,6 @@
 // The demo page: a partner app on @hana-id/web, written the way docs/integration.md tells partners to integrate.
-// createHana once per page, login() synchronously in the click handler, signing through hana.ethereum (EIP-1193) and
-// hana.stellar, export and logout through the client. The page holds nothing secret. It sees addresses, status, expiry,
+// createHana once per page, login() synchronously in the click handler, signing through hana.ethereum (EIP-1193),
+// hana.stellar and hana.near (the NEAR card, near-card.ts), export and logout through the client. The page holds nothing secret. It sees addresses, status, expiry,
 // persistence, the signatures the user approves and, for pk_test_ apps, the login's per-stage timings.
 //
 // The client is injected (startDemo), so the tests drive the page against a fake one.
@@ -8,6 +8,8 @@ import type { HanaAddresses, HanaClient, HanaConfig, HanaStatus } from '@hana-id
 import type { DemoConfig } from './config.ts';
 import { type ErrorRecord, type LoginTiming, diagnosticsJson } from './diagnostics.ts';
 import { type DemoAction, errorInfo, isSignedOut, plainMessage } from './errors.ts';
+import { type NearCard, startNearCard } from './near-card.ts';
+import type { FetchLike } from './near.ts';
 import { TEST_MESSAGE, testEvmTransaction, utf8Hex } from './requests.ts';
 
 /** The part of the partner client the page uses. */
@@ -32,6 +34,8 @@ export type DemoClient = Pick<
   | 'on'
   | 'stellar'
   | 'ethereum'
+  | 'near'
+  | 'prepareApproval'
 >;
 
 export interface DemoDeps {
@@ -44,6 +48,10 @@ export interface DemoDeps {
   /** Wall-clock ms (Date.now). */
   clock?: () => number;
   copy?: (text: string) => Promise<void>;
+  /** The page's own fetch, for the NEAR card's reads from the env's NEAR RPC. */
+  fetch?: FetchLike;
+  random?: (n: number) => Uint8Array;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -171,6 +179,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
   const copy = deps.copy ?? ((text: string) => navigator.clipboard.writeText(text));
 
   let client: DemoClient | null = null;
+  let nearCard: NearCard | null = null;
   let progress = '';
   let pending = false;
   let unlockMs: number | null = null;
@@ -179,7 +188,8 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
 
   // ---- messages ----
 
-  function showError(action: DemoAction, e: unknown): void {
+  /** `box`: where the message goes (the page's error line, or the NEAR card's own). */
+  function showError(action: DemoAction, e: unknown, box = 'error'): void {
     const info = errorInfo(e);
     errors.push({ at: new Date(clock()).toISOString(), action, code: info.code, reason: info.reason, message: info.message, requestId: info.requestId });
     // Signed out by Hana (D695): a notice, not an error. The `disconnect` and the request it refused say the same thing,
@@ -189,14 +199,16 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
       notice(plainMessage(e, action));
       return;
     }
-    const box = el('error');
-    box.textContent = plainMessage(e, action);
-    box.hidden = false;
+    const node = el(box);
+    node.textContent = plainMessage(e, action);
+    node.hidden = false;
   }
 
   function clearError(): void {
-    el('error').hidden = true;
-    el('error').textContent = '';
+    for (const id of ['error', 'near-error']) {
+      el(id).hidden = true;
+      el(id).textContent = '';
+    }
   }
 
   function notice(text: string | null): void {
@@ -211,6 +223,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     show('wallet', a !== null);
     show('signing', a !== null);
     show('export', a !== null);
+    show('export-near', a?.near !== undefined);
     el('stellar-address').textContent = a?.stellar ?? '';
     el('evm-address').textContent = a?.evm ?? '';
     const stellarLink = el<HTMLAnchorElement>('stellar-link');
@@ -240,7 +253,8 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     renderAddresses(loggedIn ? c.addresses : null);
     show('identity', loggedIn);
     if (!loggedIn) renderIdentity(null);
-    for (const id of ['logout', 'revoke', 'sign-personal', 'sign-stellar', 'sign-evm-tx', 'export-stellar', 'export-evm', 'identity-token', 'email-share']) disable(id, pending || !loggedIn);
+    for (const id of ['logout', 'revoke', 'sign-personal', 'sign-stellar', 'sign-evm-tx', 'export-stellar', 'export-evm', 'export-near', 'identity-token', 'email-share']) disable(id, pending || !loggedIn);
+    nearCard?.render(loggedIn, pending);
   }
 
   /** The decoded token (display only) and the verify snippet, or nothing. */
@@ -293,7 +307,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
   // ---- client ----
 
   el('env-badge').textContent = `${config.environment} · testnet`;
-  el('footer-env').textContent = `Environment ${config.environment} · app ${config.publishableKey.slice(0, 12)}… · @hana-id/web ${deps.sdkVersion} · EVM: ${config.evm.name} (${config.evm.id})`;
+  el('footer-env').textContent = `Environment ${config.environment} · app ${config.publishableKey.slice(0, 12)}… · @hana-id/web ${deps.sdkVersion} · EVM: ${config.evm.name} (${config.evm.id}) · NEAR: testnet${config.near.guestbook ? `, guestbook ${config.near.guestbook}` : ''}`;
   el('evm-label').textContent = `EVM (${config.evm.name})`;
   el('sign-evm-tx').textContent = `Sign a test transaction (${config.evm.name})`;
   const evmLink = el('evm-link');
@@ -396,15 +410,18 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     );
   }
 
-  /** Runs one request at a time; its outcome goes to the error box or `done`. */
-  function run(action: DemoAction, task: () => Promise<void>): void {
+  /**
+   * Runs one request at a time; its failure goes to the error box `box`. The task is called synchronously, so a signing
+   * call it makes before its first await is still inside the click (the popup rule, docs/integration.md section 8).
+   */
+  function run(action: DemoAction, task: () => Promise<void>, box = 'error'): void {
     if (pending) return;
     pending = true;
     clearError();
     notice(null);
     render();
     task()
-      .catch((e: unknown) => showError(action, e))
+      .catch((e: unknown) => showError(action, e, box))
       .finally(() => {
         pending = false;
         render();
@@ -470,7 +487,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
       String(await c.ethereum.request({ method: 'eth_signTransaction', params: [testEvmTransaction(a.evm, config.evm.id)] })),
     ),
   );
-  for (const chain of ['stellar', 'evm'] as const) {
+  for (const chain of ['stellar', 'evm', 'near'] as const) {
     el(`export-${chain}`).addEventListener('click', () =>
       run('export', async () => {
         await c.exportKey(chain);
@@ -516,6 +533,21 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
       () => notice('Diagnostics copied. Paste them into your bug report.'),
       (e: unknown) => showError('copy', e),
     );
+  });
+
+  nearCard = startNearCard({
+    config,
+    client: c,
+    fetch: deps.fetch ?? ((url, init) => fetch(url, init)),
+    clock,
+    copy,
+    random: deps.random ?? ((n) => crypto.getRandomValues(new Uint8Array(n))),
+    recipient: location.host,
+    sleep: deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+    run,
+    notice,
+    showError,
+    plainMessage,
   });
 
   // The status line's "in N min" stays current.

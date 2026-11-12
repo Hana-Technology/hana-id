@@ -533,6 +533,33 @@ describe('your apps', () => {
     expect(document.querySelectorAll('.home-card')).toHaveLength(6);
   });
 
+  it('shows a NEAR account with its copy and explorer link; a listing without one says so plainly (D755)', async () => {
+    const NEAR = 'ab'.repeat(32);
+    const h = await ready();
+    h.answer = () =>
+      json(200, {
+        // The answer's order doesn't matter: Stellar, EVM, then NEAR. A malformed NEAR id is left out.
+        scopes: [mine('s1', { addresses: [{ chain: 'near', address: NEAR }, { chain: 'stellar', address: G }, { chain: 'evm', address: EVM }] }), mine('s2', { addresses: [{ chain: 'stellar', address: G }, { chain: 'near', address: 'alice.testnet' }] })],
+        nextCursor: null,
+      });
+    await h.signIn();
+    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    expect([...document.querySelectorAll('.home-address-label')].map((x) => x.textContent)).toEqual(['Stellar', 'EVM (Ethereum and similar networks)', 'NEAR']);
+    expect(document.getElementById('home-address-near')?.textContent).toBe(NEAR);
+    expect(document.getElementById('home-no-near')).toBeNull();
+    const links = [...document.querySelectorAll('#app a')].map((a) => a.getAttribute('href'));
+    expect(links).toEqual([`https://stellar.expert/explorer/testnet/account/${G}`, `https://testnet.nearblocks.io/address/${NEAR}`]);
+    h.click('home-copy-near');
+    await h.page.idle();
+    expect(h.clipboard.writeText).toHaveBeenCalledWith(NEAR);
+    expect(document.getElementById('home-copied')?.textContent).toBe('Copied the NEAR account.');
+    h.click('home-back');
+    (document.querySelector('.home-card[data-scope="s2"] .home-open') as HTMLElement).click();
+    expect(document.getElementById('home-address-near')).toBeNull();
+    expect(document.getElementById('home-no-near')?.textContent).toBe('No NEAR account on record here yet. It appears after you next sign in to this app, if the app uses NEAR.');
+    expect(pageText()).not.toContain('alice.testnet');
+  });
+
   it('shows no Support ID and no address where the API gave none', async () => {
     const h = await ready();
     h.answer = LIST;

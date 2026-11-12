@@ -24,6 +24,7 @@ import {
   newAppKey,
   parseWindowMessage,
   sessionNonce,
+  deriveWalletAddresses,
   sha256,
   utf8,
 } from '@hana-id/core';
@@ -525,6 +526,25 @@ describe('golden: Hana Home opens the vault’s address', () => {
     await h.unlock();
     expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from this wallet’s');
     expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(vector(OWN).accounts[0]!.stellar.address);
+  });
+
+  it('a NEAR account on record is checked against the wallet’s own NEAR account, never its EVM address (D755)', async () => {
+    const own = vector(OWN);
+    const near = deriveWalletAddresses(Uint8Array.from(Buffer.from(own.prkHex, 'hex'))).near;
+    const records = [
+      { chain: 'stellar', address: own.accounts[0]!.stellar.address },
+      { chain: 'evm', address: own.accounts[0]!.evm.address },
+    ];
+    // The record's NEAR account is the wallet's: the move goes on, no mismatch.
+    const same = start({ scopes: [mineScope({ addresses: [...records, { chain: 'near', address: near }] })] });
+    await same.unlock();
+    expect(same.page.moving.state).not.toBe('refused');
+    expect(document.getElementById('home-export-mismatch')).toBeNull();
+    // Another NEAR account on record is a difference, said as for the other chains.
+    resetDom();
+    const other = start({ scopes: [mineScope({ addresses: [...records, { chain: 'near', address: 'ab'.repeat(32) }] })] });
+    await other.unlock();
+    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from this wallet’s');
   });
 
   it('on a linked member’s path a different address on record stops the move: nothing is shown or kept', async () => {

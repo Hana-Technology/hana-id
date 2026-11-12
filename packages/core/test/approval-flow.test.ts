@@ -7,6 +7,7 @@ import { type ApprovalSubject, approvalDigest, validateApprovalSubject } from '.
 import { base64Encode, toHex } from '../src/bytes.ts';
 import { decodeApprovalRequest } from '../src/decode/index.ts';
 import { APPROVAL_KIND, type PortRequest, SIGN_METHODS, type SignMethod, approvalChain, approvalContent, newRequestId, parsePortRequest, parseWindowMessage } from '../src/protocol.ts';
+import { NEAR_PARAMS, NEAR_USER } from './near-fixtures.ts';
 import { PASSPHRASE, POOL, USER, addr, authPreimageBytes, invocation, paymentOp, txBytes } from './stellar-fixtures.ts';
 
 const EVM_USER = '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826';
@@ -25,6 +26,7 @@ const PARAMS: Record<SignMethod, unknown> = {
   personal_sign: ['0x68656c6c6f', EVM_USER],
   eth_signTypedData_v4: [EVM_USER, TYPED],
   hana_signRaw: { chain: 'evm', digest: new Uint8Array(32).fill(0xab) },
+  ...NEAR_PARAMS,
 };
 
 /** What the vault builds for a sign request: the approval subject of hana:approve-request. */
@@ -32,7 +34,7 @@ function subjectOf(method: SignMethod, params: unknown = PARAMS[method]): Approv
   const request = parsePortRequest({ v: 1, id: 'r1', method, params }) as Extract<PortRequest, { method: SignMethod }>;
   expect(request).not.toBeNull();
   const chain = approvalChain(request);
-  return { kind: APPROVAL_KIND[method], chain, address: chain === 'stellar' ? USER : EVM_USER, ...approvalContent(request) };
+  return { kind: APPROVAL_KIND[method], chain, address: chain === 'stellar' ? USER : chain === 'near' ? NEAR_USER : EVM_USER, ...approvalContent(request) };
 }
 
 describe('approval flow: port request → approve-request → decoders → digest', () => {

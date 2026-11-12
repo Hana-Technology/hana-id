@@ -296,7 +296,8 @@ describe('the plan', () => {
   });
 
   it(`sandbox e2e: ${V.SANDBOX_TEST_THREADS} tests at a time, each on its own sandbox node`, () => {
-    expect(step(plan('full', null), 'sandbox').run.map(line)).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`]);
+    expect(step(plan('full', null), 'sandbox').run.map(line)).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`, 'pnpm --filter @hana-id/api run test:sandbox']);
+    expect(step(plan('full', null), 'sandbox').run[1]!.env).toEqual({ HANA_SANDBOX_REQUIRED: '1' });
   });
 
   it('unit tests: the selected packages but the docs ones, 4 at a time, CI=true (vitest refuses a stray .only)', () => {
@@ -355,7 +356,8 @@ describe('.github/workflows/ci.yml: every job has its step, with the same comman
       expect(yml, c).toContain(`run: ${c}`);
     }
     expect(cmds('contract')).toEqual(['cargo test --locked', 'cargo near build non-reproducible-wasm', 'cargo test --locked', 'cargo near build non-reproducible-wasm']);
-    expect(cmds('sandbox')).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`]);
+    // CI's e2e job runs the first; the second (the API's meta-transaction tests on the same binary) is local only while CI is off (D387).
+    expect(cmds('sandbox')).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`, 'pnpm --filter @hana-id/api run test:sandbox']);
     expect(cmds('pack')).toEqual(['pnpm run pack:check']);
     expect(p.steps.find((s) => s.id === 'contract')!.run.map((c) => c.cwd)).toEqual(['contracts/hana-signer', 'contracts/hana-signer', 'contracts/hana-guestbook', 'contracts/hana-guestbook']);
     // CI's contract job runs both crates too (D744).

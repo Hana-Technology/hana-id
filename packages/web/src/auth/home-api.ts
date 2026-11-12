@@ -23,6 +23,7 @@ import {
   isEvmAddress,
   isLoginResponse,
   isNearAccountId,
+  isNearImplicitAccountId,
   isOrigin,
   isScopeId,
   isStellarAddress,
@@ -67,7 +68,8 @@ export interface HomeApp {
 }
 
 export interface HomeAddress {
-  chain: 'stellar' | 'evm';
+  /** `near` (D755): the NEAR implicit account, on record once the user signed in through an SDK of 0.4.0 or later. */
+  chain: 'stellar' | 'evm' | 'near';
   address: string;
 }
 
@@ -143,8 +145,11 @@ function parseAddresses(v: unknown): HomeAddress[] {
     // One address a chain, of that chain's form; anything else is left out rather than shown as an address.
     if (a.chain === 'stellar' && isStellarAddress(a.address) && !out.some((x) => x.chain === 'stellar')) out.push({ chain: 'stellar', address: a.address });
     else if (a.chain === 'evm' && isEvmAddress(a.address) && !out.some((x) => x.chain === 'evm')) out.push({ chain: 'evm', address: a.address });
+    else if (a.chain === 'near' && isNearImplicitAccountId(a.address) && !out.some((x) => x.chain === 'near')) out.push({ chain: 'near', address: a.address });
   }
-  return out;
+  // Stellar, EVM, then NEAR, whatever order the answer had.
+  const order = { stellar: 0, evm: 1, near: 2 } as const;
+  return out.sort((x, y) => order[x.chain] - order[y.chain]);
 }
 
 function parseScope(v: unknown): HomeScope | null {

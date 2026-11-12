@@ -191,6 +191,13 @@ const STATUS_TEXT: Readonly<Record<HomeApp['status'], string | null>> = Object.f
 const STELLAR_ACCOUNT_URL: Readonly<Record<HanaEnv['network'], { name: string; url: string }>> = Object.freeze({
   testnet: { name: 'StellarExpert (testnet)', url: 'https://stellar.expert/explorer/testnet/account/' },
 });
+/** Where a NEAR account can be looked up, by the env's network (D755). */
+const NEAR_ACCOUNT_URL: Readonly<Record<HanaEnv['network'], { name: string; url: string }>> = Object.freeze({
+  testnet: { name: 'NearBlocks (testnet)', url: 'https://testnet.nearblocks.io/address/' },
+});
+/** Each chain's label on an app's page, and its copy button's name. */
+const ADDRESS_LABEL = Object.freeze({ stellar: 'Stellar', evm: 'EVM (Ethereum and similar networks)', near: 'NEAR' });
+const ADDRESS_NAME = Object.freeze({ stellar: 'Stellar address', evm: 'EVM address', near: 'NEAR account' });
 
 function browserClipboard(): HomeClipboard | null {
   try {
@@ -1240,14 +1247,16 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const fromLink = linked?.scopeId === scope.scopeId || linkScope === scope.scopeId;
     const cover = coverageText(scope.coverage, scope.mine, typeof homeExportRoute(scope, config, fromLink, account?.provider ?? 'google', emailApi !== null) !== 'string');
     const stellar = STELLAR_ACCOUNT_URL[env.network];
+    const nearExplorer = NEAR_ACCOUNT_URL[env.network];
     // Addresses on record, or, where Hana has none, those of the wallet the user opened here in this page.
     const fromWallet = scope.addresses.length === 0 ? (opened.get(scope.scopeId) ?? []) : [];
-    const addressRows = (scope.addresses.length > 0 ? scope.addresses : fromWallet).map((a) => {
-      const name = a.chain === 'stellar' ? 'Stellar address' : 'EVM address';
+    const shown: readonly HomeAddress[] = scope.addresses.length > 0 ? scope.addresses : fromWallet;
+    const addressRows = shown.map((a) => {
+      const name = ADDRESS_NAME[a.chain];
       return d.h(
         'div',
         { class: 'home-address' },
-        d.h('p', { class: 'home-address-label' }, a.chain === 'stellar' ? 'Stellar' : 'EVM (Ethereum and similar networks)'),
+        d.h('p', { class: 'home-address-label' }, ADDRESS_LABEL[a.chain]),
         d.h('p', { class: 'mono home-address-value', attrs: { id: `home-address-${a.chain}` } }, a.address),
         d.h(
           'p',
@@ -1255,9 +1264,21 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           copyButton(name, a.address, `home-copy-${a.chain}`),
           // The link is built from a fixed address of Hana's choosing and an address of the chain's own form.
           a.chain === 'stellar' && stellar ? d.h('a', { class: 'explorer', attrs: { href: `${stellar.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${stellar.name}`) : null,
+          a.chain === 'near' && nearExplorer ? d.h('a', { class: 'explorer', attrs: { href: `${nearExplorer.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${nearExplorer.name}`) : null,
         ),
       );
     });
+    // D755: NEAR is on record only once the user signed in to this app through an SDK of 0.4.0 or later; say so plainly.
+    if (shown.length > 0 && !shown.some((a) => a.chain === 'near')) {
+      addressRows.push(
+        d.h(
+          'div',
+          { class: 'home-address' },
+          d.h('p', { class: 'home-address-label' }, ADDRESS_LABEL.near),
+          d.h('p', { class: 'muted', attrs: { id: 'home-no-near' } }, 'No NEAR account on record here yet. It appears after you next sign in to this app, if the app uses NEAR.'),
+        ),
+      );
+    }
     return [
       button('Back to all apps', closeApp, { class: 'link', id: 'home-back' }),
       // The heading is Hana's own words, always. An app's name is the partner's: it is a labelled value in the box below

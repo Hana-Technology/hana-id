@@ -3,7 +3,7 @@
 A private briefing for the founder: how Hana ID works, what it protects, where it is weak, and how to answer hard
 questions honestly. It states every gap plainly. Decide later what to share outside the company.
 
-Last verified: 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
+Last verified: 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
 reference docs and checked against the code where they were vague; no code changed). Where the docs lag the code or git,
 this file says so. Sandbox-dev's live state is as `docs/operations.md` "What sandbox-dev runs" records it, corrected on
 2026-11-10 by the person who ran that day's deploy and tests (Hana Home, the email co-signer, alerting, the Google
@@ -138,7 +138,8 @@ In words:
    the nonce, records the session, and asks the MPC network for the path's key, encrypted to a one-time key the vault
    made.
 8. The answer comes back through the API. The vault decrypts it, checks it against the MPC network's public key that
-   is pinned in Hana's build (so a lying server or RPC can't swap the key), and derives the Stellar and EVM keys.
+   is pinned in Hana's build (so a lying server or RPC can't swap the key), and derives the Stellar and EVM keys (and,
+   with SDK 0.4.0, NEAR's: branch `feat/near-core`, not merged).
 9. The partner page receives the addresses. It never sees a key or a token.
 
 | Party | Sees | Never sees |
@@ -509,7 +510,7 @@ is fine for testnet, but it means no claim about bounded Hana power applies to s
 | One council member | Propose and vote once; nothing executes | 2 of 3 needed; member replacement command | Watchdog governance alerts | Ledgers, mainnet DAO, backup key location |
 | The whole council (2 of 3) | After 72 h: any upgrade (so anything), owner transfer; at once: pause, unpause, remove keys and watchdogs | Delays are public and alerted to both founders; users can export meanwhile; no independent guardian can cancel | Watchdog critical alerts | Public notice to partners on an upgrade not built |
 | NEAR RPC provider | Fail or delay logins; refuse a login with a wrong view | Can't forge the user's own key (pinned MPC key check); linked-account paths checked on two providers | Failover logs; watchdog `rpc_failing` | Keyed, independent providers |
-| NEAR itself (halt) | No new logins or exports; reloads still work | Users' Stellar and EVM wallets are unaffected on their own chains | Obvious | The docs don't analyse a NEAR consensus attack |
+| NEAR itself (halt) | No new logins or exports; reloads still work; a user's NEAR account (SDK 0.4.0) can't move either | Users' Stellar and EVM wallets are unaffected on their own chains | Obvious | The docs don't analyse a NEAR consensus attack |
 | NEAR MPC network | Down: no new logins. 11+ colluding nodes: any user's key | Threshold; trusted hardware (per NEAR) | Login failures (`ckd_failed`) | Mainnet MPC key not yet pinned |
 | Cloudflare (outage) | Hana's pages, API and email issuer stop: no logins, reloads, approvals; auto-approve also stops (it re-checks with the API every 10 s) | Exported keys and users' chains are unaffected | Obvious | No second hosting provider |
 | Google (outage, rotation, compromise) | Outage: no Google logins (email still works). A forged Google: any Google user's key. A rotation mishandled: logins with the new key fail until it's active | Delayed, watchdog-checked key sync; watchdog confirms Google's real keys early | Watchdog compares Google's keys from its own fetch | Mainnet delay length; Google brand verification |
@@ -533,7 +534,8 @@ anything. After a forged key, the runbook retires older sessions before unpausin
 
 ### 4e. Recovery and exit
 
-- **Key export** is always available and partners can't remove it. It is the user's exit to any Stellar or EVM wallet.
+- **Key export** is always available and partners can't remove it. It is the user's exit to any Stellar or EVM wallet
+  (and, with SDK 0.4.0, any NEAR wallet; Hana Home's "Move this wallet" still offers Stellar and EVM only).
 - **Hana Home** lets users reach every app's wallet from one Hana page, even after a partner shuts down or switches off
   Hana's shared login, through the exit client. It runs on sandbox-dev, but nothing links to it yet, so users can't
   find it, and the exit route hasn't been tried live (section 2.7).
@@ -541,7 +543,7 @@ anything. After a forged key, the runbook retires older sessions before unpausin
   can still open them. A suspended or deleted app doesn't stop Home: Home works by scope. Exception: until Home's export
   covers the exit and email routes (H10: built and reviewed, being merged, not deployed), some users of a partner that
   removed every route could see their wallet but not move it from Home.
-- **If Hana shuts down:** funds stay on Stellar and EVM chains, untouched. But logging in needs Hana's pages (Google
+- **If Hana shuts down:** funds stay on Stellar, EVM and NEAR chains, untouched. But logging in needs Hana's pages (Google
   only returns tokens to Hana's registered page), Hana's relayer (or someone paying NEAR gas directly), the contract
   (whose Google keys are kept current by Hana's cron or the council), and NEAR's MPC network. A standalone, open-source
   recovery tool that works without Hana's servers is deferred, not built. So today the honest answer is: "export your
@@ -722,7 +724,7 @@ users' Home sign-in and the exit route are built (H10, being merged) but not dep
 
 **18. Why NEAR, when users never touch NEAR?**
 *Say:* "NEAR's MPC network offers confidential key derivation, and a NEAR contract can check the login itself. Users only
-see Stellar and EVM."
+see Stellar and EVM wallets, and, in apps on SDK 0.4.0, a NEAR account that only signs what they approve."
 
 **19. What if Cloudflare goes down?**
 *Say:* "Logins, reloads and approvals stop until it's back; funds are unaffected, and exported keys work anywhere."
@@ -925,7 +927,7 @@ confirmation on 2026-11-10 by the person who ran that day's deploy and tests;
 | Pause | An emergency stop of logins and derives, by the council or the watchdog |
 | Persistence | Keeping a login across reloads with a device record plus a server share |
 | Pin | A value fixed in Hana's build or the watchdog's config (the MPC public key, expected key ids) that live answers must match |
-| PRK | The wallet's root secret in the vault, from which the Stellar and EVM keys are derived |
+| PRK | The wallet's root secret in the vault, from which the Stellar, EVM and NEAR keys are derived |
 | Publishable key | `pk_test_…` or `pk_live_…`: public, identifies a partner app |
 | Relay slot | A one-time, 120-second mailbox on Hana's API that carries the encrypted Google token from the popup to the vault |
 | Relayer | Hana's NEAR account that submits and pays for login transactions |

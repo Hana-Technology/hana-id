@@ -39,12 +39,15 @@ import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './a
 import { type Dom, dom, errorView, originText } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
-import { renderApproval } from './render-approval.ts';
+import { renderApproval, watchOverflowing } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
 import { type DemoBridge, type DemoNetwork, type DemoSwap, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, fixedMainnetDemoPrices, formatUsd, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
 
 /** How long the popup waits for a follow-up request after an answer before it closes. */
+/** The account line's chain names. */
+const ACCOUNT_CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM', near: 'NEAR' } as const;
+
 export const KEEP_OPEN_MS = 15_000;
 /** A partner-opened popup that no request reaches within this long says bye and closes (vault approvals.ts LATE_CLOSE_MS). */
 export const ADOPT_TIMEOUT_MS = 8_000;
@@ -111,7 +114,7 @@ export const MAINNET_DEMO_BANNER = 'Real funds, test custody: these funds may be
 /** Under the headline: why (the keys come from the testnet MPC). */
 export const MAINNET_DEMO_WHY = 'This test app signs on a real network with keys from Hana’s test infrastructure, which can be reset or broken. Use small amounts only.';
 
-export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar or EVM mainnets are refused, so don’t keep real funds at this account.';
+export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar, NEAR or EVM mainnets are refused, so don’t keep real funds at this account.';
 /**
  * The same note for a test app with the mainnet demo on (D428), where the first one would be false: what the demo
  * signs, that it always asks, and that the custody is still test custody.
@@ -155,6 +158,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   const opened = approveOpenerMode(win.location.search);
   let state: ApprovePageState = 'connecting';
   let current: Current | null = null;
+  /** Stops watching the shown request's boxes for overflow (render-approval.ts watchOverflowing). */
+  let stopWatching: (() => void) | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let countdownTimer: ReturnType<typeof setTimeout> | undefined;
   let loadingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -418,19 +423,22 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         'section',
         { class: 'panel approve' },
         header(msg, `Request ${msg.position} of ${msg.queued}`),
-        d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
+        d.h('p', { class: 'account' }, `Your ${ACCOUNT_CHAIN_NAMES[msg.chain]} account `, d.h('code', { class: 'mono' }, msg.address)),
         msg.supportId ? supportIdLine(msg.supportId) : null,
         msg.emailShared ? emailSharedLine(msg.appName) : null,
         demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
         auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded
-          ? renderApproval(d, decoded, msg.appName)
+          ? renderApproval(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin })
           : d.h('div', { class: 'request' }, d.h('p', { class: 'danger' }, 'Hana can’t read this request, so it can’t be approved.'), d.h('p', { class: 'muted' }, problem)),
         buttons('Approve', decoded !== null),
         auto?.active ? stopAutoApproveButton(auto.label) : null,
       ),
     );
     guard.rendered();
+    // Boxes that hold more than they show say so, now that they are laid out, and again whenever their size changes.
+    stopWatching?.();
+    stopWatching = watchOverflowing(win.document, win as unknown as Parameters<typeof watchOverflowing>[1]);
   }
 
   function showConsent(msg: WindowMessage<'hana:consent-request'>): void {

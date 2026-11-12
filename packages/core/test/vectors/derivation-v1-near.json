@@ -1,0 +1,175 @@
+{
+  "_comment": "FROZEN derivation v1 NEAR vectors (packages/core/scripts/gen-derivation-near-vectors.mjs; D720). Test-only keys from the public test inputs of derivation-v1.json. Changing this file changes every NEAR address: see test/derivation-near.test.ts.",
+  "version": 1,
+  "extractSalt": "hana-id/chain-keys/v1/extract",
+  "expandLabel": "hana-id/chain-keys/v1/expand",
+  "tuple": [
+    "near",
+    "ed25519",
+    32
+  ],
+  "vectors": [
+    {
+      "label": "s1, key_index 0",
+      "sHex": "b87c634c70a33c5422dbb6d2bd0384004dcda96c209f2da747c79070afa83bace1da710748d27c4721ce358eacef1453",
+      "prkHex": "8779acce830c61770cc0dddf9c2630abb08d439eb4ff30a4438e8a80257b41f0",
+      "accounts": [
+        {
+          "account": 0,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313900000000",
+            "seedHex": "ba432fbb59adf1aa55a1a9f7623c2835787de4aa822cfec07d36d35a9ed414d0",
+            "publicKey": "ed25519:8RqFZBsoQbUgzt8X8U1WGhHJEy8n9SKWpzAs4wcREbVc",
+            "accountId": "6e5e4e302c98d861a8094b630e4b7d44db245c06757d0251b54d4f8cf35000ab",
+            "exportBase58": "4izUkgSvraU5N8KmjDFsjSp3463G1kRc7WSx19g7gveRWfodKLsXbr7GE6GsXy7WCNwk7NiHY4usMLT96r3k8Uqx"
+          }
+        },
+        {
+          "account": 1,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313901000000",
+            "seedHex": "2a8969c74df9d4ee9fd25101c3fd28051e081f53b2ac680e695548c0d807f814",
+            "publicKey": "ed25519:GfLUVF6kUKpuUoDZrJSTsBCpgn8J7vA5NYGg5dym2Xfg",
+            "accountId": "e8b164d44014faecc7130a6bee620caa21deca3f81dd2dca0b22c73159fb02e3",
+            "exportBase58": "rKuGwt8NLL7uZmBtM26Gy7rqXxSKHHVYWanEz6AADCW1RhFWTHgZZTghxu5xcw2X7GsErnxPFTE6jPeTkfRWvT4"
+          }
+        }
+      ]
+    },
+    {
+      "label": "s1, key_index 1",
+      "sHex": "b7839e8dddb20ea497e0e03a2daa5bbf22c7eb0ed88267a1c4eeb58e82377ff1d9edd8c38a1c920aa14448c48025c04d",
+      "prkHex": "5183cc1b2d97a3e7915ae64baaae99a8cd90f4b01779f540e0c5c608d50f149e",
+      "accounts": [
+        {
+          "account": 0,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313900000000",
+            "seedHex": "ef05127ce93e3b008aca6c63c40f221e9ef0fb085ca778c481a009b3899c921c",
+            "publicKey": "ed25519:8jDSk6xfsQPS9Ku1EhmrvxBSp6YzZRGu4yV9ckJAWQBg",
+            "accountId": "72d245d42c7bcadd19c23e13ee02e50e341d170f0b1c9cc7f6373edd12dc409f",
+            "exportBase58": "5nAnh97P5sFm4coSu8yFzLNKCGKbZR46KUnEFTcL6sBQSeJY29XPWANYCctoE3iDVCZv4dUU7b6Jjfr2M3VERzY6"
+          }
+        },
+        {
+          "account": 1,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313901000000",
+            "seedHex": "d8fa98ea7d42e6741f31eef3caad3626543689edc87a456b8b6543678783cc63",
+            "publicKey": "ed25519:5eXP6iu4PppD4giKXeGzXULnRLGkxnjk5zUNZEhtLDzY",
+            "accountId": "450b96ed6c7bdd7e40ff19b9d4fd9011553548bf1c645690ad030566a1093f21",
+            "exportBase58": "5LcNyPuaEZHoKa2dkL9PWbDqqxxuDcdi8xRGBiWkrRf2ku9Ghh8qAJQo9VswLvVPWBdG1XmWVWtLovsQXAGkZa1n"
+          }
+        }
+      ]
+    },
+    {
+      "label": "s2 (other scope), key_index 0",
+      "sHex": "88a787d2c5abcb9d0668f771b07d93c100a71ae849658a109fa74fb8db35e9a30a27c45cb2142004895b90dfb303d4d9",
+      "prkHex": "71178ecd48d098a2fcde0a04801ba76259e618f429a2cd12911a70af632e70c4",
+      "accounts": [
+        {
+          "account": 0,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313900000000",
+            "seedHex": "0ba13499f1d951698aa269ae1786763a9f438908ae48004caf320017bc38701b",
+            "publicKey": "ed25519:BM49kuMAYCttFCtcGukhhEhe2VyVoi3A2v59skcUEtr9",
+            "accountId": "99b80c5b84295be03cb12890cb479160e05a640e122bf636efdb77ad953ec8a6",
+            "exportBase58": "EVBVYFufNsgrT67w8kCqEqFmtAx5FLqDN1h8iiA6hiAVYSPC9Pz587mRks6wenUhpQh6vzbx4izAoEVsdqNpwiV"
+          }
+        },
+        {
+          "account": 1,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313901000000",
+            "seedHex": "649cd6672c0d7a5737e00cf77747da16cebbff9a9f871e08813b04d5aff370a9",
+            "publicKey": "ed25519:FXHodzjF1ct5WrGV8c7uNSDEdE3XAyut7oQTnygjS8Rq",
+            "accountId": "d7c60aacc2919412d41aec919f11fab947d12d0e99a41800e0f1ad6a58539e04",
+            "exportBase58": "31fvGFF8Vouq1CsboCSNCrVJCj7sXTFK5JhFDjNttuSu54B213q2qiEDL5zmunSLUqFBL5HBGZdzCX9rXjXrPSpT"
+          }
+        }
+      ]
+    },
+    {
+      "label": "s1, other sub, key_index 0",
+      "sHex": "941e3b4c651b893cf02517c7d00fed0a687e8e209b88b1c42fc809a0c015c03f6b210b8c5a06d5fd7f245389681d521f",
+      "prkHex": "45788dcbf6d345f1f1f94d0bdd4bcec2ad8305942afc334edcb07ffc68fff2af",
+      "accounts": [
+        {
+          "account": 0,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313900000000",
+            "seedHex": "04ef7e9c2c3eba1aa20b9a9e05f36776025f1b6d72d7a7639a62306dea0c5a14",
+            "publicKey": "ed25519:HArxDSSkEKiH7wFCj1Qu2ESG4HM9oKUNdCKzMGwvkqc2",
+            "accountId": "f041b2f05660ca0660cb9d967176c2f0b21f5d739a54da38a70da3e806f50037",
+            "exportBase58": "6ix4Vhrm4oGRiFqtwaaayw3UwN3pgwXfBvCYwaX64W4FSs5d2EWm2HvxG57JZTcLbcDeBDpruyXJHxgMW6muv3G"
+          }
+        },
+        {
+          "account": 1,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313901000000",
+            "seedHex": "e862b9647ac44919e0935135f847979c7c58843cfb8a6f2ec04100029d8b92f6",
+            "publicKey": "ed25519:F1ZVcd2gmJHZ4dAL7cTDx5MLa376KsfTTD64zQ4S3E1s",
+            "accountId": "d0285b78f0a8da0b3768b69be5e160cabae2f5e229ff2483fb208cb9f81c7206",
+            "exportBase58": "5eUbMpMB4S5f8AmNMt8M4iuKFMsEsYrs7b21cZv9buxV5KFL95TFr8TTtmLo57LwsMEMDy3NJKmuBirVcE3HSLGD"
+          }
+        }
+      ]
+    },
+    {
+      "label": "S = G1 generator (synthetic)",
+      "sHex": "97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb",
+      "prkHex": "2b4519783e3b33cf9b7ca6d255fbd7d280e21988b827e7bb94af59fc811514b5",
+      "accounts": [
+        {
+          "account": 0,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313900000000",
+            "seedHex": "70fd944aea602596d7cccde5518b5a7aaf5b00b0283b7d2d7104494388553002",
+            "publicKey": "ed25519:5rxUNh1JdSgmWpUy9A8tB3maTGMtuz4aLgGNtLhCVAmQ",
+            "accountId": "483aee00dd7ac64227f4d3c65edf4b2b8233903c34a99e1efc0a21617e45faa3",
+            "exportBase58": "3G2RNhgapTNZVwWrS15Cnje63W9wNf9mT7vruXh2mn6U1tvj364stE5Y6fBpbi6RFtPs3CxdqQ1mHGifpT5JcQdx"
+          }
+        },
+        {
+          "account": 1,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313901000000",
+            "seedHex": "333ce4354be6af3b0e85c758a8afc73a4fac94f55d0ff92b2b96c70f085a56c4",
+            "publicKey": "ed25519:B8qhH5bsAyU39hBPKt58jBhUsTc1SSSfqb9LXmFPi78z",
+            "accountId": "9696fe703edb70e709d8e51c0d23839307021b20061f1641b27145410a2b882f",
+            "exportBase58": "22R7Ty5rr6gUiGkeUuRJ3EPs9zeVtUd8NzNA3yTfryQF6ZnV1V3gK6apsY56HGbtoz6KiJhFXXMdwSoeHAYQksBU"
+          }
+        }
+      ]
+    },
+    {
+      "label": "S = 2·G1 generator (synthetic)",
+      "sHex": "a572cbea904d67468808c8eb50a9450c9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e",
+      "prkHex": "59e4db7bcb9828ec7f5280f284c0452f6a587b288b7b39088974b621a1f742f3",
+      "accounts": [
+        {
+          "account": 0,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313900000000",
+            "seedHex": "7ddb6f46db0b476b9c20f08605188221cbdc57098ab86042e2a4126a51c1a346",
+            "publicKey": "ed25519:8rvNQ6UagZFwKCMrS1SVL7eAFgypbbWB9qu4ZsVo9C7a",
+            "accountId": "74cb9cd1bcd8fa6a29a4a5645a47aa3a5bfe87e869ca7e47ae5356a4bad90d29",
+            "exportBase58": "3WwnxhbXhZU2XwoCas6j8y2Yv6SEZArzBg3d3P1CWg48yuTWpYUv3sCzPZykZWZC2QE6YHMdPxQhDufpyvDidKS8"
+          }
+        },
+        {
+          "account": 1,
+          "near": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64040000006e656172070000006564323535313901000000",
+            "seedHex": "104686980d9b41c93c49aae048851ba95d8c50a7405463c01659543ea1a9fad1",
+            "publicKey": "ed25519:HVpWCGY1anUAWwuNLY7CZo1f7Fy5JWUz8wmSwB9bGiNp",
+            "accountId": "f51cf7371608e38ab13d6328514753c860ac7dc319c9ef3df945f7735ac877ad",
+            "exportBase58": "KseHjxupsXqwgcekuJjAarNgw6LiwgkaxBNn9CCy4mFEpemaiiQUhEZsxa4BL9BdGQQcg2hjjeQrevyqhN4d1Mv"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-// Hana Home: the user's own name, and the apps it is shared with (D714, migration 0021). Both parts are optional.
+// Passport Home: the user's own name, and the apps it is shared with (D714, migration 0021). Both parts are optional.
 //
 //   GET  /v1/home/profile[?appId=app_…]  the name this identity set, the apps it shares it with (newest first, at most
 //                                        HOME_NAME_SHARES_MAX), and with `appId` whether the account shares a name with

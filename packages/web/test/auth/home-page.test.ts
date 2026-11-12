@@ -1191,7 +1191,7 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     h.click('home-name-remove-confirm-go');
     await h.page.idle();
     expect(h.nameCalls()).toHaveLength(1);
-    expect(document.getElementById('home-profile-problem-front')?.textContent).toContain('Your sign-in to Hana Home has ended.');
+    expect(document.getElementById('home-profile-problem-front')?.textContent).toContain('Your sign-in to Passport Home has ended.');
   });
 
   it('Sign out clears the name and anything typed; the next account starts with the section closed', async () => {

@@ -1,7 +1,7 @@
 // The org's end users (D310, D346; `GET /api/orgs/:org/users`): the User ID (the identity token's `sub`, `u1_…`, the
 // one id partners see, like Privy's DID) and its short form, the Support ID; when the user was first and last seen; the
 // kinds of account connected; the wallet addresses; and the email only once the user shared it with one of the org's
-// apps (D411: "Not shared" otherwise), and the name the user set in Hana Home likewise only once shared with one of
+// apps (D411: "Not shared" otherwise), and the name the user set in Passport Home likewise only once shared with one of
 // them (D714). A user's detail (`GET /api/orgs/:org/users/:userId`) lists each app's shared address. Names and
 // addresses are rendered as text only. Never an unshared address or a Google account id: the console's answer has no
 // such field (src/users.ts).
@@ -26,7 +26,7 @@ interface PartnerUser {
   email: string | null;
   /** A user's detail only: each app's shared address. */
   emails?: { appId: string; appName: string; email: string; sharedAt: number }[];
-  /** The name shared from Hana Home with one of the org's apps (each part optional, at least one set), or null. */
+  /** The name shared from Passport Home with one of the org's apps (each part optional, at least one set), or null. */
   name: { givenName: string | null; familyName: string | null } | null;
 }
 

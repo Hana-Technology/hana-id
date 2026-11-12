@@ -1,4 +1,4 @@
-// The staff Users screen's Hana Home names (D714), run as the browser runs public/app.js: the directory list's Name
+// The staff Users screen's Passport Home names (D714), run as the browser runs public/app.js: the directory list's Name
 // column (`/api/users/search` attaches each row's `name`, or `namesError` when the names couldn't be read), the opened
 // identity's Name fact (`/api/users/get`'s `name` / `nameError`, with or without a directory row), and the wallet
 // directory's account name and per-identity names (`StaffUser.name`, `StaffIdentity.name`), in the Users screen's
@@ -62,8 +62,11 @@ function column(root: Root, header: string): string[] {
   }
   throw new Error(`No table has a ${header} column`);
 }
-/** The value of the fact `label` (a `kv` table row) in `root`. */
-const fact = (root: Root, label: string): string | undefined => [...root.querySelectorAll('table.kv tr')].find((tr) => tr.querySelector('th')?.textContent === label)?.querySelector('td')?.textContent ?? undefined;
+/** The value of the fact `label` (a `dl.jp-kv` term, D765) in `root`. */
+const fact = (root: Root, label: string): string | undefined => {
+  const dt = [...root.querySelectorAll('dl.jp-kv > dt')].find((x) => x.textContent === label);
+  return dt?.nextElementSibling?.tagName === 'DD' ? (dt.nextElementSibling.textContent ?? undefined) : undefined;
+};
 
 async function search(answer: (c: Call) => Answer) {
   const s = boot('/users', answer);
@@ -92,7 +95,7 @@ describe('the directory list: a Name column', () => {
     const users = [row('google', '2001', 'ann@acme.example'), row('email', 'e1.bob', 'bob@acme.example')];
     const s = await search(() => ({ body: { users, unverifiedWarning: 'x', namesError: 'upstream_unavailable' } }));
     expect(s.text()).toContain('Names unavailable');
-    expect(s.text()).toContain('The Hana Home names couldn’t be read (upstream_unavailable)');
+    expect(s.text()).toContain('The Passport Home names couldn’t be read (upstream_unavailable)');
     expect(column(s.main(), 'Name')).toEqual(['unknown', 'unknown']);
     expect(column(s.main(), 'Email')).toEqual(['ann@acme.example', 'bob@acme.example']);
   });
@@ -132,7 +135,7 @@ describe('an opened identity: a Name fact', () => {
   it('name unavailable (`nameError`): said plainly, the rest of the page stands, the name "unknown"', async () => {
     const s = await open((c) => ({ ...base(c), nameError: 'not_read' }));
     expect(s.text()).toContain('Name unavailable');
-    expect(s.text()).toContain('The Hana Home name couldn’t be read (not_read)');
+    expect(s.text()).toContain('The Passport Home name couldn’t be read (not_read)');
     expect(fact(s.main(), 'Name')).toBe('unknown');
     expect(fact(s.main(), 'Email')).toBe('ann@acme.example');
   });

@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-12 (the Journear Passport names, not deployed), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-12 (section 8's NEAR: gasless flow, relay, refusals; the Journear Passport names), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -249,9 +249,26 @@ NEAR). Replace all the tarballs you use together (they depend on each other at `
 - A test app signs NEAR testnet only (4100 `mainnet_not_allowed`); new refusal reasons `near_block_unknown`,
   `near_network_mismatch`, `near_relayed_delegate`, `near_key_unknown`, `near_delegate_nonce_used`,
   `near_delegate_nonce_stale`, `near_delegate_nonce_too_large`, `near_delegate_expiry`, `near_delegate_test_app_action`,
-  `near_delegate_test_app_receiver` and (with `api_unavailable`) `near_rpc_unavailable` and `near_rpc_single_provider`. `nearDelegateNonce` (`@hana-id/core/near`) picks a delegate action's nonce.
-- Not yet NEAR: the identity token's `wallets` (still Stellar and EVM; prove a NEAR account with `hana.near.signMessage`).
-  The partner portal's Users page and Passport Home show a user's NEAR account once they sign in through SDK 0.4.0.
+  `near_delegate_test_app_receiver` and (with `api_unavailable`) `near_rpc_unavailable` and `near_rpc_single_provider`;
+  `relay` and `activate` pass on the API's codes in `data.reason` ([section 8, NEAR](#near-errors)).
+  `@hana-id/core/near` builds NEAR's bytes (`encodeNearDelegateAction`, `encodeNearTransaction`, …) and picks a
+  delegate action's nonce (`nearDelegateNonce`).
+- Journear Passport's relay (gasless calls, testnet) sends only zero-deposit function calls to the receivers Journear allowlists; ask
+  Journear to add your contract ([section 8, NEAR](#near-relay)).
+- Not yet NEAR: auto-approve policies (every NEAR request asks the user), the identity token's `wallets` (still
+  Stellar and EVM; prove a NEAR account with `hana.near.signMessage`) and the React hooks (use
+  `useHana().client.near`). The partner portal's Users page and Passport Home show a user's NEAR account once they sign
+  in through SDK 0.4.0; Passport Home's "Move this wallet" offers the NEAR key too.
+
+**Upgrading from 0.3.1 to 0.4.0:**
+
+1. Replace the four tarballs (or the ones you use) together, and check them against the new `SHA256SUMS`.
+2. If you use NEAR's gasless calls, add Journear Passport's API origin to your CSP `connect-src` (sandbox-dev:
+   `https://hana-id-api-sandbox-dev.tingtc.workers.dev`; [section 5](#5-your-page-origins-csp-popups)).
+3. `hana.addresses`, `login()`'s result and `accountsChanged` now carry a third key, `near`, for a user who signs in
+   through 0.4.0. Code that reads `stellar` and `evm` is unaffected; code that checks the object's keys exactly, or
+   stores it whole, should expect `near` (optional in the types: it is missing while Journear Passport's vault predates NEAR).
+4. Nothing else: the Stellar and EVM calls, the identity token and the auto-approve policies behave as in 0.3.1.
 
 **After 0.4.0** (in the next release, not yet published). **Nothing to change.** New: `hana.getProfile()`, `hana.profile`, the
 `profileChanged` event and React `useProfile()`, for the name a user chose to share with your app
@@ -345,7 +362,7 @@ const hana = createHana({
 
 await hana.ready; // the vault is up and the status is known (a reload has already been restored)
 hana.status;      // 'logged_out' | 'unlocking' | 'logging_in' | 'logged_in' | 'error'
-hana.addresses;   // { stellar: 'G…', evm: '0x…' } or null
+hana.addresses;   // { stellar: 'G…', evm: '0x…', near: '6e5e…' } or null
 hana.supportId;   // 'HANA-XXXX-XXXX' while logged in, or null (section 4, "Support ID")
 ```
 
@@ -369,7 +386,7 @@ Events:
 
 ```ts
 hana.on('statusChanged', (status) => {});
-hana.on('accountsChanged', (addresses) => {}); // { stellar, evm } or null
+hana.on('accountsChanged', (addresses) => {}); // { stellar, evm, near } or null
 hana.on('sessionExpired', () => {});            // the session reached its limit: log in again
 hana.on('disconnect', ({ code, reason }) => {}); // 4900; reason 'signed_out': Hana signed this device out (log in again), else the vault is gone
 hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'email_code' | 'token' | 'linking' | 'chain' | 'key_pending' | 'done'
@@ -549,11 +566,11 @@ button.addEventListener('click', async () => {
 - `await hana.logout()` signs this app out on this device, in every tab. It sends no transaction.
 - `await hana.revokeOtherDevices()` signs the user out of your app everywhere else. It works only within 5 min of a
   fresh login, so offer it right after one.
-- `await hana.exportKey('stellar' | 'evm')` lets the user take their key elsewhere. Journear Passport shows a button; the key
+- `await hana.exportKey('stellar' | 'evm' | 'near')` lets the user take their key elsewhere. Journear Passport shows a button; the key
   appears only in a top-level Journear Passport window, after a fresh sign-in (Google, or, in an app with email, a new code to the
   user's email) and a typed confirmation, in three steps (Verify, Understand, Export), and never reaches your page. A wallet with linked methods exports its one
   shared key, whichever method the user signs in with; a pending method exports nothing. That window keeps the key for 5 minutes at most, and erases it as soon as the user's session in your
-  app ends (`logout()`, revoke, expiry); exporting again starts over with a new sign-in. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
+  app ends (`logout()`, revoke, expiry); exporting again starts over with a new sign-in. Stellar keys export as `S…`, EVM keys as `0x…` hex, NEAR keys as `ed25519:…` (SDK 0.4.0). There is no recovery phrase. Each export is a NEAR
   transaction Journear pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
   A shown key hides again after 60 seconds. Continue, Show key and Copy key need the user's own deliberate click (the
   approval window's guard), and Show key and Copy key work only once the user has ticked a box saying no one can see
@@ -568,6 +585,7 @@ button.addEventListener('click', async () => {
 | The page's origin is one of your app's origins, exactly (scheme, host and port; pin your dev server's port, [section 3](#3-create-the-client)) | the vault doesn't load (`vault_unavailable`, `no_answer`) |
 | CSP `frame-src` (or `child-src`/`default-src`) allows `vaultOrigin` | `vault_unavailable` at once (an enforced violation is detected; report-only is fine) |
 | CSP `connect-src` allows your own EVM RPC (and Horizon / Soroban RPC for Sodax) | your RPC calls fail; the SDK calls them from your page |
+| CSP `connect-src` allows Journear Passport's API origin (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev`) if you use `hana.near.relay` or `hana.near.activate`, and the NEAR RPC you read from | `api_unavailable` ("Journear’s relayer could not be reached"); the SDK calls the API from your page |
 | Popups allowed for your site | the "Sign in with Journear Passport" button fallback (`popup_blocked` if you cancel) |
 | `Cross-Origin-Opener-Policy` is not `same-origin` (`same-origin-allow-popups` and `unsafe-none` are fine) | `coop_blocks_popup` |
 | Every page that frames yours is also one of your origins (`frame-ancestors` checks all ancestors) | `vault_unavailable` |
@@ -766,158 +784,348 @@ Journear Passport code is in `error.data.code`. Logging out emits `accountsChang
 
 ### NEAR
 
-SDK 0.4.0 or later. Each user has one NEAR account in your app's scope, next to their Stellar and EVM ones: an
-**implicit account**, whose id is the 64 lowercase hex characters of its Ed25519 key. It exists on chain once
-someone sends it NEAR (an implicit account is created by its first transfer).
+SDK 0.4.0 or later. **What the user gets:** one NEAR account per user in your app's scope, next to their Stellar and
+EVM addresses and from the same login. It is an **implicit account**: its id is the 64 lowercase hex characters of its
+Ed25519 public key. Like the other addresses it is the same on every device, different in another partner's app, and
+different between your test and live apps. It starts with no NEAR, and it exists on chain only once something creates
+it (an implicit account is created by its first transfer). The user needs no NEAR to start: Journear Passport's relay creates the
+account and pays the gas of gasless calls ([Journear Passport's relay](#near-relay)). Only an ordinary transaction needs NEAR in
+the account, for its gas.
 
 ```ts
 hana.near.accountId;   // '6e5e4e30…f35000ab' (64 hex), or null while logged out
 hana.near.publicKey;   // 'ed25519:8RqFZBso…', or null
-hana.addresses;        // { stellar, evm, near }
+hana.addresses;        // { stellar, evm, near } while logged in, else null
 ```
 
-**A transaction.** Build it before the click with `@near-js/transactions` (or near-api-js): the key's next nonce and
-a recent block hash come from any NEAR RPC. Sign it in the click, then broadcast it yourself:
+`hana.near.accountId` is `hana.addresses.near`. Both are missing (`null`, and no `near` key) only while Journear Passport's vault is
+older than the SDK, during a deployment; every `hana.near` call then rejects with `4100`.
+
+| Call | What | Popup | Resolves |
+|---|---|---|---|
+| `hana.near.signDelegateAction({ network, delegateAction })` | signs a NEP-366 delegate action (a meta transaction: someone else sends it and pays the gas) | yes | `{ signature, signedDelegateAction }` |
+| `hana.near.relay({ network: 'testnet', signedDelegateAction })` | sends a signed delegate action through Journear Passport's relay, which pays the gas | no | `{ transactionHash, status: 'executed' }` |
+| `hana.near.activate()` | creates the user's account on testnet if it doesn't exist yet | no | `{ created, accountId, accessKeyNonce?, blockHeight?, transactionHash? }` |
+| `hana.near.signTransaction({ network, transaction })` | signs an ordinary transaction, which the account pays for | yes | `{ signature, signedTransaction, hash }` |
+| `hana.near.signMessage({ message, recipient, nonce, callbackUrl? })` | signs a NEP-413 message ("sign in with NEAR") | yes | `{ accountId, publicKey, signature }` |
+
+Every signature needs the user's Approve in Journear Passport's window: **no NEAR request is ever signed automatically**, and no
+auto-approve policy covers NEAR. Call the three sign methods in your click handler before any `await`, like the other
+signing methods ([above](#8-signing)). Bytes go in as a `Uint8Array` or its standard base64, and come back as base64.
+`network` is `'testnet'` or `'mainnet'`: NEAR's bytes name no network, so you say which one and Journear Passport checks it
+(below). A test app signs for testnet only (`4100`, `data.reason: 'mainnet_not_allowed'`).
+
+**Your page's CSP.** `relay` and `activate` call Journear Passport's API from your page: allow its origin in `connect-src`
+(sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev`), with the NEAR RPC you read from
+([section 5](#5-your-page-origins-csp-popups)). Without it both reject with `api_unavailable` ("Journear’s relayer could
+not be reached").
+
+**Quick start: a gasless call.** The whole flow, writing to Journear's demo guestbook on testnet
+(`hana-id-guestbook-dev1.testnet`, a contract sandbox-dev's relay accepts; `add_message({ text })`, no deposit). The
+bytes come from `@hana-id/core/near`, which you already install, so no NEAR SDK is needed. Prepare before the click,
+sign and relay in it:
+
+```ts
+import { HanaError } from '@hana-id/web';
+import { nearImplicitPublicKey, utf8 } from '@hana-id/core';
+import { encodeNearDelegateAction, nearDelegateNonce } from '@hana-id/core/near';
+
+const GUESTBOOK = 'hana-id-guestbook-dev1.testnet'; // on sandbox-dev's relay allowlist
+const RPC = 'https://rpc.testnet.near.org';
+
+async function rpc(method: string, params: unknown) {
+  const res = await fetch(RPC, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+  const body = await res.json();
+  // A failed query answers either `error` or (older nodes) `result.error`.
+  if (body.error || typeof body.result?.error === 'string') throw new Error(JSON.stringify(body.error ?? body.result.error));
+  return body.result;
+}
+
+/** A Journear Passport refusal's `data.reason`, if it has one. */
+function reasonOf(e: unknown): string | undefined {
+  const data = e instanceof HanaError ? e.data : undefined;
+  return typeof data === 'object' && data !== null && 'reason' in data && typeof data.reason === 'string' ? data.reason : undefined;
+}
+
+/** Retries while Journear Passport hasn't recorded a new login's NEAR account yet (near_account_unrecorded), for about 20 s. */
+async function whileUnrecorded<T>(call: () => Promise<T>): Promise<T> {
+  for (let waited = 0; ; waited += 1000) {
+    try {
+      return await call();
+    } catch (e) {
+      if (reasonOf(e) !== 'near_account_unrecorded' || waited >= 20_000) throw e;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+}
+
+/** The key's nonce and a recent final height. The first time for an account, activate() creates it if it is new. */
+const activated = new Set<string>();
+async function readKey(accountId: string): Promise<{ keyNonce: bigint; blockHeight: bigint }> {
+  if (!activated.has(accountId)) {
+    const a = await whileUnrecorded(() => hana.near.activate());
+    activated.add(accountId);
+    if (typeof a.accessKeyNonce === 'string' && a.blockHeight !== undefined) return { keyNonce: BigInt(a.accessKeyNonce), blockHeight: BigInt(a.blockHeight) };
+  }
+  // A key created a moment ago can take a block or two to show here (an UNKNOWN_ACCESS_KEY error): read again.
+  const key = await rpc('query', { request_type: 'view_access_key', finality: 'final', account_id: accountId, public_key: hana.near.publicKey });
+  return { keyNonce: BigInt(key.nonce), blockHeight: BigInt(key.block_height) };
+}
+
+/** add_message({ text }) on the guestbook as a delegate action: no deposit, 10 Tgas, valid for about 6 minutes. */
+async function guestbookDelegate(text: string): Promise<Uint8Array> {
+  const accountId = hana.near.accountId!;
+  const { keyNonce, blockHeight } = await readKey(accountId);
+  return encodeNearDelegateAction({
+    senderId: accountId,
+    receiverId: GUESTBOOK,
+    actions: [{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text })), gas: 10_000_000_000_000n, deposit: 0n }],
+    nonce: nearDelegateNonce({ keyNonce, blockHeight }),
+    maxBlockHeight: blockHeight + 600n,
+    publicKey: { type: 'ed25519', bytes: nearImplicitPublicKey(accountId) },
+  });
+}
+
+// Before the click: when the user has typed the message (build it again once it is more than a minute old).
+const delegateAction = await guestbookDelegate('gm from Journear Passport');
+
+// In the click, with no await before it: Journear Passport's window opens, then Journear Passport's relay sends it and pays the gas.
+button.addEventListener('click', () => {
+  hana.near.signDelegateAction({ network: 'testnet', delegateAction })
+    .then(({ signedDelegateAction }) => hana.near.relay({ network: 'testnet', signedDelegateAction }))
+    .then(({ transactionHash }) => onSent(transactionHash), onError);
+});
+```
+
+1. **Activate.** A brand-new user's account doesn't exist on chain yet, and Journear Passport refuses to sign a test app's delegate
+   action for it (`near_key_unknown`). `hana.near.activate()` asks Journear Passport's relay to create it (a zero-value transfer
+   from Journear Passport's relay account; no popup, the user pays nothing) for the logged-in user's own account. It resolves
+   `created: true` when it created the account now and `created: false` when it already existed, so calling it again
+   is harmless; `accessKeyNonce` (a decimal string, or `null` if the account exists without this key) and
+   `blockHeight` are what the relay read, ready for `nearDelegateNonce`. Either can be missing (the relay couldn't read
+   the new key back): then read `view_access_key` yourself, as `readKey` does. Call it once per account and session,
+   before the click (when the gasless button appears or the user starts typing), not at every login: every request
+   counts against your app's per-minute activation limit, and every account created against its daily one
+   ([below](#near-relay)).
+2. **Right after a login**, Journear Passport may not have recorded the user's NEAR account yet (it does so in the background,
+   usually within a second, at most about 15 s). Until then `activate` and `relay` reject with `4100`, `data.reason:
+   'near_account_unrecorded'` and `data.retryable: true`: retry for about 20 s, as `whileUnrecorded` does.
+3. **Build** the delegate action with the key's nonce and the height from that read. `nearDelegateNonce` picks the
+   nonce (below); `maxBlockHeight` 600 blocks ahead is about 6 minutes at testnet's 1.7 blocks a second (Journear Passport's
+   relay takes at most 1,000 ahead). Build it again once the read is more than a minute old, so it can't expire
+   while the user reads Journear Passport's window.
+4. **Sign and relay** in the click. `relay` resolves once every receipt succeeded: `transactionHash` is the relay's
+   transaction (base58; open it on a testnet explorer). The contract sees the user's account as the caller
+   (`predecessor_account_id`), not Journear Passport's.
+
+Several delegate actions from one read get the same nonce, and only the first can run: pass the previous one's nonce
+as `lastUsed` (`nearDelegateNonce({ keyNonce, blockHeight, lastUsed })`), or read the key again.
+
+**What Journear Passport checks before the window opens** (so a refusal costs the user no click). The delegate action's sender and
+key must be the user's (`4100` otherwise). For a **test app**, a delegate action names no block hash, so Journear Passport ties it
+to testnet another way, reading testnet's RPC (both of the environment's providers, when it has two):
+
+- the account must exist there with this key (`near_key_unknown`: activate it first);
+- the nonce must be above the key's current one (`near_delegate_nonce_used`), above (testnet's height − 10,000) ×
+  10^6 (`near_delegate_nonce_stale`: the key's nonce + 1, as near-api-js picks, is usually too low) and below height ×
+  10^6 (`near_delegate_nonce_too_large`). `nearDelegateNonce({ keyNonce, blockHeight })` from `@hana-id/core/near`
+  picks one that passes: the key's nonce + 1, or (height − 100) × 10^6 if that is higher. The key's nonce moves up to
+  it once the action runs, and later transactions and delegate actions simply continue from there;
+- `maxBlockHeight` must be ahead of testnet's height by at most 10,000 blocks (`near_delegate_expiry`);
+- it may only call contracts or send NEAR, to a `*.testnet` account other than the user's own
+  (`near_delegate_test_app_action` for any other action: AddKey, DeleteKey, DeleteAccount, DeployContract,
+  DeployGlobalContract, UseGlobalContract, Stake, CreateAccount; `near_delegate_test_app_receiver` for another
+  receiver).
+
+Why the last rule: nearcore runs a delegate action on any network whose own height lies between its nonce / 10^6 and
+its `maxBlockHeight`, and the bounds above pin that to a window of at most 20,000 blocks around testnet's height when
+it was signed. Mainnet, about 53 million blocks behind testnet in November 2026 and growing at the same rate, passes
+through that window about a year later: whoever kept the signed action (your page can) could submit it there then, if
+the user's implicit account exists on mainnet with the same key. A `*.testnet` account doesn't exist on mainnet (only
+the `registrar` account could create `testnet` there), so such a replay calls nothing. Live apps are not restricted
+this way. **Never fund or use a test app's addresses on mainnet**, and tell your users the same: the keys come from
+Journear Passport's testnet MPC. For a test app Journear Passport asks both of the environment's NEAR providers; an environment with only one
+fails closed (`api_unavailable`, `data.reason: 'near_rpc_single_provider'`), and so does an unreachable RPC
+(`api_unavailable`, `near_rpc_unavailable`: try again).
+
+**Who pays in a delegate action** (nearcore's rules, whichever relayer sends it): the relayer's transaction pays the
+gas and prepays every deposit and transfer in the delegate action; on success those go to their receivers, and if an
+action fails its NEAR is refunded to the user's account. So the user's balance goes down only for what acts on the
+account itself: deleting it (everything), staking (locked), publishing a global contract (burnt), a call to a contract
+on the user's own account (it decides what it moves: the popup says "Unknown") and fees spent through a function-call
+key the action adds (up to its allowance). The actions run as the user's account, so a contract they call acts in the
+user's name (it can move tokens the user holds there).
+
+<a id="near-relay"></a>**Journear Passport's relay** (`hana.near.relay`, `POST /v1/near/relay`; `hana.near.activate`,
+`POST /v1/near/activate`). Testnet only, and running on sandbox-dev. Both are checked against your publishable key and
+your page's origin like every `/v1` call, need no session, and act only for a NEAR account Journear Passport has recorded for a
+user of your app (one who signed in through SDK 0.4.0 or later). The relay sends a delegate action only if:
+
+- every action in it is a **function call with no deposit** (no transfers, keys, deploys or stakes, even where Journear Passport
+  would sign them), at most 4 of them, the signed action at most 4,096 bytes;
+- it calls an **allowlisted receiver**. The allowlist is the environment's, shared by every app on it; on sandbox-dev
+  it holds only Journear's demo guestbook, `hana-id-guestbook-dev1.testnet`. **To relay calls to your own contract, ask
+  Journear to add its account** (a `*.testnet` account for a test app). Until then, the user signs the same way and any
+  NEP-366 relayer of your own can send `signedDelegateAction` (it is the standard borsh `SignedDelegateAction`), or
+  the user pays for an ordinary transaction (below);
+- its calls attach at most **10 Tgas** together on sandbox-dev (the guestbook's `add_message` burns about 1.45);
+- its nonce is above the key's (and above any this relay already sent for the account) and below (testnet's height +
+  1) × 10^6, and its `maxBlockHeight` is at least 3 and at most **1,000 blocks** ahead of testnet's height (stricter
+  than the 10,000 Journear Passport's window allows: about 10 minutes).
+
+Journear Passport's relay account pays the gas and the activations; relays and activations are not billed to your app during the
+pilot. Limits on sandbox-dev (a refusal is `rate_limited` unless the table says otherwise; the message names the
+limit):
+
+| Limit | Relays | Activations |
+|---|---|---|
+| Per NEAR account | 10 a minute, 50 a day | 5 requests a minute |
+| Per user (all their NEAR accounts) | 200 a day | 2 a day |
+| Per app | 120 a minute, 2,000 a day | 60 requests a minute, 200 a day |
+| Per IP address, across every app | 30 a minute | 10 a minute |
+| Across the environment | 200 a minute, 10,000 a day | 300 requests a minute, 1,000 a day |
+| NEAR spent per day | 1 NEAR per app (`rate_limited`, `data.reason: 'app_budget_exhausted'`), 5 NEAR across the environment (`api_unavailable`, `relay_budget_exhausted`) | (the same budgets) |
+
+Days are UTC days. A relay of one small call costs the relay about 0.0002 NEAR; an activation about 0.0071 NEAR. Every
+activation request is counted per minute, including one for an account that already exists; only a created account
+counts toward the daily activations.
+
+**An ordinary transaction.** The account pays its gas, so it needs NEAR first (a transfer to the account id; testnet
+faucets send it). Build the transaction before the click: the key's next nonce and a recent block hash come from any
+NEAR RPC. This sample uses `@near-js/transactions` (near-api-js's encoder); `encodeNearTransaction` from
+`@hana-id/core/near` makes the same bytes. Sign it in the click, then broadcast it yourself:
 
 ```ts
 import { PublicKey } from '@near-js/crypto';
 import { actionCreators, createTransaction, encodeTransaction } from '@near-js/transactions';
 import { baseDecode } from '@near-js/utils';
 
-const RPC = 'https://rpc.testnet.near.org';
-async function rpc(method: string, params: unknown) {
-  const res = await fetch(RPC, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
-  const body = await res.json();
-  if (body.error) throw new Error(JSON.stringify(body.error));
-  return body.result;
-}
-
 // Before the click: the key's nonce and a recent final block (view_access_key returns both).
-const accountId = hana.near.accountId!;
-const publicKey = PublicKey.fromString(hana.near.publicKey!);
-const key = await rpc('query', { request_type: 'view_access_key', finality: 'final', account_id: accountId, public_key: publicKey.toString() });
-const tx = createTransaction(accountId, publicKey, 'guestbook.testnet', BigInt(key.nonce) + 1n,
+const signer = hana.near.accountId!;
+const signerKey = PublicKey.fromString(hana.near.publicKey!);
+const key = await rpc('query', { request_type: 'view_access_key', finality: 'final', account_id: signer, public_key: signerKey.toString() });
+const tx = createTransaction(signer, signerKey, GUESTBOOK, BigInt(key.nonce) + 1n,
   [actionCreators.functionCall('add_message', { text: 'gm' }, 30_000_000_000_000n, 0n)], baseDecode(key.block_hash));
 
 button.addEventListener('click', () => {
   hana.near.signTransaction({ network: 'testnet', transaction: encodeTransaction(tx) })   // no await before it
-    .then(({ signedTransaction, hash }) => rpc('send_tx', { signed_tx_base64: signedTransaction, wait_until: 'FINAL' }))
+    .then(({ signedTransaction, hash }) => rpc('send_tx', { signed_tx_base64: signedTransaction, wait_until: 'FINAL' }).then(() => hash))
     .then(onSent, onError);
 });
 ```
 
-A transaction that relays someone else's delegate action (a `Delegate` action) is refused (4100
-`near_relayed_delegate`): its signer would prepay every deposit inside it. `signTransaction` returns `{ signature, signedTransaction, hash }`: base64 of the 64-byte signature, base64 of the
-borsh `SignedTransaction` (what `send_tx` takes) and the base58 transaction hash. The transaction's signer and key must
-be the user's (4100 otherwise). NEAR's bytes name no network, so you say which (`'testnet'` or `'mainnet'`) and Journear Passport
-checks it: a `testnet` transaction's block hash must be a testnet block (`near_block_unknown` otherwise; if Journear Passport can't
-reach NEAR testnet it refuses with `api_unavailable`, `data.reason: 'near_rpc_unavailable'`), and a `mainnet` one's
-must not be (`near_network_mismatch`). A test app signs for testnet only. Use a block hash under a day old (NEAR's own
-rule). Transactions with a priority fee (`TransactionV1`) and actions newer than `UseGlobalContract` are refused, and
-a request is at most 192 KiB of base64.
+`signTransaction` returns `{ signature, signedTransaction, hash }`: base64 of the 64-byte signature, base64 of the
+borsh `SignedTransaction` (what `send_tx` takes) and the base58 transaction hash. The transaction's signer and key
+must be the user's (`4100` otherwise). Journear Passport checks the network you name against the block hash: a `testnet`
+transaction's must be a testnet block (`near_block_unknown` otherwise; if Journear Passport can't reach NEAR testnet it refuses
+with `api_unavailable`, `data.reason: 'near_rpc_unavailable'`), and a `mainnet` one's must not be
+(`near_network_mismatch`). Use a block hash under a day old (NEAR's own rule). A transaction that relays someone
+else's delegate action (a `Delegate` action) is refused (`near_relayed_delegate`): its signer would prepay every
+deposit inside it. Transactions with a priority fee (`TransactionV1`) and actions newer than `UseGlobalContract` are
+refused, and a request is at most 192 KiB of base64.
 
-**Gasless (a meta transaction).** Sign a NEP-366 delegate action instead and let a relayer send it: it wraps it in
-its own transaction. `hana.near.relay` uses Journear Passport's relayer (`POST /v1/near/relay`, checked against your publishable
-key and your page's origin like every `/v1` call), available where the environment runs a relayer (sandbox-dev will);
-any NEP-366 relayer takes the same `signedDelegateAction`. **Who pays** (nearcore): the relayer's transaction pays the
-gas and prepays every deposit and transfer in the delegate action; on success those go to their receivers, and if an
-action fails its NEAR is refunded to the user's account. So the user's balance goes down only for what acts on the
-account itself: deleting it (everything), staking (locked), publishing a global contract (burnt), a call to a contract
-on the user's own account (it decides what it moves: the popup says "Unknown") and fees spent through a function-call
-key the action adds (up to its allowance). The actions run as the user's account, so a contract they call acts in
-the user's name (it can move tokens the user holds there).
+**Sign in with NEAR (NEP-413).** A signature that proves the user holds the account, for your backend. It moves
+nothing and names no network, so a test app may ask for it, and it is how your backend learns the NEAR account today:
+the identity token's `wallets` don't list it yet ([section 15](#whats-in-it)).
 
 ```ts
-import { nearDelegateNonce } from '@hana-id/core/near';
-import { buildDelegateAction, encodeDelegateAction } from '@near-js/transactions';
-
-// Before the click, with `key` from view_access_key as above.
-const delegate = buildDelegateAction({
-  senderId: accountId,
-  receiverId: 'guestbook.testnet',
-  actions: [actionCreators.functionCall('add_message', { text: 'gasless gm' }, 30_000_000_000_000n, 0n)],
-  nonce: nearDelegateNonce({ keyNonce: key.nonce, blockHeight: key.block_height }),   // tied to the current height
-  maxBlockHeight: BigInt(key.block_height) + 600n,   // expires in about 6 minutes
-  publicKey,
-});
+// From your backend, before the click: 32 random bytes (base64) it will accept once.
+const challenge = { message: 'Sign in to Guestbook', recipient: 'guestbook.example', nonce: 'qhK4GqbpzrcBGQhpVwbIqWjl8MB6uQRL9oB0LqkNWwQ=' };
 
 button.addEventListener('click', () => {
-  hana.near.signDelegateAction({ network: 'testnet', delegateAction: encodeDelegateAction(delegate) })
-    .then(({ signedDelegateAction }) => hana.near.relay({ network: 'testnet', signedDelegateAction }))
-    .then(({ transactionHash, status }) => onSent(transactionHash, status), onError);
+  hana.near.signMessage(challenge)   // resolves { accountId, publicKey, signature }
+    .then((signed) => fetch('/api/near-sign-in', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(signed) }), onError);
 });
-```
-
-`signDelegateAction` takes the borsh `DelegateAction` with or without NEP-461's prefix (`encodeDelegateAction` adds
-it) and returns `{ signature, signedDelegateAction }` (base64 borsh `SignedDelegateAction`, which any NEP-366 relayer
-takes). A delegate action has no block hash, so for a **test app** Journear Passport ties it to testnet another way, on testnet's
-RPC (both of the environment's providers, when it has two): the account must already exist there with this key
-(`near_key_unknown`: activate it first, below); the nonce must be above the key's current one
-(`near_delegate_nonce_used`), above (testnet's height − 10,000) × 10^6 (`near_delegate_nonce_stale`: the key's nonce
-+ 1, as near-api-js picks, is usually too low) and below height × 10^6 (`near_delegate_nonce_too_large`); and
-`maxBlockHeight` must be ahead of testnet's height by at most 10,000 blocks (`near_delegate_expiry`).
-`nearDelegateNonce({ keyNonce, blockHeight })` from `@hana-id/core/near` picks a nonce that passes (the key's nonce + 1,
-or (height − 100) × 10^6 if that is higher); the key's nonce moves up to it once the action runs, which later
-transactions and delegate actions simply continue from. Two delegate actions built from the same read get the same
-nonce and only the first can run: pass the previous one's as `lastUsed` (`nearDelegateNonce({ keyNonce, blockHeight,
-lastUsed })`), or read the key again.
-
-**A test app's delegate actions may only call contracts or send NEAR, to a `*.testnet` account** other than the
-user's own (4100 `near_delegate_test_app_action` for any other action: AddKey, DeleteKey, DeleteAccount,
-DeployContract, DeployGlobalContract, UseGlobalContract, Stake, CreateAccount; `near_delegate_test_app_receiver` for
-another receiver). Why: a delegate action names no network. nearcore runs it on any network whose own height lies
-between its nonce / 10^6 and its `maxBlockHeight`, and Journear Passport's bounds pin that to a window of at most 20,000 blocks
-around testnet's height when it was signed. Mainnet, about 53 million blocks behind testnet in November 2026 and
-growing at the same rate, passes through that window about a year later: whoever kept the signed action (your page
-can) could submit it there then, if the user's implicit account exists on mainnet with the same key. A `*.testnet`
-account doesn't exist on mainnet (only the `registrar` account could create `testnet` there), so such a replay calls
-nothing. Live apps are not restricted this way. **Never fund or use a test app's addresses on mainnet**, and tell
-your users the same: the keys come from Journear Passport's testnet MPC. For a test app Journear Passport asks both of the environment's NEAR
-providers; an environment with only one fails closed (`api_unavailable`, `data.reason: 'near_rpc_single_provider'`).
-
-`relay` rejects with `rate_limited` (429), `origin_not_allowed`, `app_suspended`, 4100 for
-another refusal (`data.reason` is the API's code, `data.requestId` its request ID, `data.accessKeyNonce` the key's nonce the relayer holds after a nonce refusal, `data.retryable` when the API says to ask again) or `api_unavailable` (`data.reason` too).
-
-**A new account: activate it first.** A user's implicit account doesn't exist on chain until something is sent to
-it, so a brand-new user's first delegate action is refused (`near_key_unknown`). `hana.near.activate()` asks Journear Passport's
-relayer to create it (`POST /v1/near/activate` with the user's own account, the same publishable key and origin check
-as `relay`; no popup) and resolves `{ created, accountId, accessKeyNonce, blockHeight, transactionHash? }`: `created`
-is `true` when it created the account now and `false` when it already existed, so calling it again is harmless;
-`accessKeyNonce` (a decimal string, or `null` if the account exists without this key) and `blockHeight` are what the
-relayer read, ready for `nearDelegateNonce`. It rejects like `relay`; right after a login it can answer 4100 with
-`data.reason: 'near_account_unrecorded'` for a few seconds (Journear Passport records the account just after login): retry for
-about 20 s. Do it before the click (when the gasless button appears or the user starts typing).
-
-```ts
-// Before the click: once per account and session.
-const a = await hana.near.activate();   // { created: true, ... } the first time, { created: false, ... } after
-const nonce = nearDelegateNonce({ keyNonce: BigInt(a.accessKeyNonce!), blockHeight: a.blockHeight! });
-// Signing more than a few seconds later: read view_access_key again for a fresh nonce and height.
-```
-
-**Sign in with NEAR (NEP-413).** A signature that proves the user holds the account, for your backend:
-
-```ts
-const nonce = crypto.getRandomValues(new Uint8Array(32));   // from your backend; accept each one once
-const { accountId, publicKey, signature } = await hana.near.signMessage({ message: 'Sign in to Guestbook', recipient: 'guestbook.example', nonce });
 ```
 
 Your backend rebuilds NEP-413's payload (`u32le(2^31 + 413)` ‖ borsh `{ message, nonce, recipient, callbackUrl }`),
-verifies `signature` (base64, Ed25519) over its sha256 with `publicKey`, checks that `publicKey`'s hex is `accountId`
-(an implicit account is its key), and accepts the nonce only once. `recipient` and `callbackUrl` are one line of
-visible text each; Journear Passport's window shows the recipient first, flags one that isn't your page's host, and writes out a
-recipient with characters outside plain ASCII (look-alikes). Like other messages it names no network, so a test app
-may sign it.
+verifies `signature` (base64, Ed25519) over its sha256 with the account's key, checks that `publicKey` is the
+account's (an implicit account is its key), and accepts the nonce only once. With `@hana-id/core` on Node 22:
+
+```ts
+import { base64Decode, nearImplicitPublicKey, nearPublicKeyString } from '@hana-id/core';
+import { encodeNep413Message, nep413Hash } from '@hana-id/core/near';
+
+/** Your backend: true when `signed` is the NEAR account's answer to the challenge you issued (check its nonce once). */
+export async function verifyNearSignIn(
+  signed: { accountId: string; publicKey: string; signature: string },
+  issued: { message: string; recipient: string; nonce: string; callbackUrl?: string },
+): Promise<boolean> {
+  const key = nearImplicitPublicKey(signed.accountId);   // an implicit account is its key; throws for any other id
+  if (nearPublicKeyString(key) !== signed.publicKey) return false;
+  const digest = nep413Hash(encodeNep413Message({ message: issued.message, nonce: base64Decode(issued.nonce), recipient: issued.recipient, callbackUrl: issued.callbackUrl ?? null }));
+  const publicKey = await crypto.subtle.importKey('raw', key, 'Ed25519', false, ['verify']);
+  return crypto.subtle.verify('Ed25519', publicKey, base64Decode(signed.signature), digest);
+}
+```
+
+`recipient` and `callbackUrl` are one line of visible text each (at most 1,024 bytes); Journear Passport's window shows the
+recipient first, flags one that isn't your page's host, and writes out a recipient with characters outside plain
+ASCII (look-alikes). `nonce` is 32 bytes (`-32602` otherwise).
 
 **What the approval window shows** (decoded by Journear Passport from the bytes, never from your description): the network and
 whether Journear Passport checked it, sender and receiver, every action in plain words (a call with its method, attached deposit,
 gas in Tgas and its arguments as escaped JSON, or hex when they aren't JSON, always in full), and the NEAR leaving the
 account (including what publishing a global contract burns: 0.0001 NEAR per byte of code). Adding or removing a key,
-deleting the account and deploying or setting a contract change who controls the account: they are shown under a
-red warning; so are a call to a contract on the user's own account and a global contract's burn. No NEAR request is ever signed automatically (no policy covers NEAR yet).
+deleting the account and deploying or setting a contract change who controls the account: they are shown under a red
+warning; so are a call to a contract on the user's own account and a global contract's burn.
 
-`hana.exportKey('near')` exports the key as `ed25519:<base58>` (near-cli and NEAR wallets import that form), with the
-same safeguards as the other chains.
+<a id="near-errors"></a>**Errors.** The sign methods reject like every signing call: `4001` when the user declines,
+closes the window or lets it time out, and Journear Passport's refusals before the window as below. `relay` and `activate` turn
+the API's answer into a `HanaError`: HTTP 429 is `rate_limited`, `origin_not_allowed` and `app_suspended` keep their
+code, any other 4xx is `4100` and any 5xx is `api_unavailable`; for each, `data.reason` is the API's code,
+`data.status` the HTTP status and `data.requestId` its request ID (quote it to Journear, [section 13](#13-errors)), and
+a nonce refusal adds `data.accessKeyNonce` (the nonce the relay holds the key at, a decimal string). When the SDK
+can't reach Journear Passport's API (your CSP, the network, no answer in 60 s) it rejects with `api_unavailable` and no
+`data.reason`. Retrying a relay with
+the same `signedDelegateAction` is always safe: NEAR never runs one delegate action twice (its nonce), and the relay
+answers a copy it may already have sent with `delegate_nonce_used` without counting it.
+
+| Code, `data.reason` | From | Meaning | What to do |
+|---|---|---|---|
+| `4100` (no reason) | SDK | not logged in, or Journear Passport's vault predates NEAR (`hana.near.accountId` null) | log in; after a deployment, reload |
+| `-32602` | SDK | a malformed argument (`network`, bytes that aren't base64, a nonce that isn't 32 bytes, `relay`'s `network` not `'testnet'`) | fix the call |
+| `4100` (no reason), `invalid_request` | vault | the bytes name another signer or key, or don't decode | build them for `hana.near.accountId` and `publicKey` |
+| `4100` `mainnet_not_allowed` | vault | a test app asked to sign for `mainnet` | use testnet |
+| `4100` `near_block_unknown`, `near_network_mismatch` | vault | the transaction's block hash isn't a block of the network you named | read a recent block from that network's RPC |
+| `4100` `near_relayed_delegate` | vault | the transaction carries someone else's delegate action | relay through a relayer, not the user's account |
+| `4100` `near_key_unknown` | vault | a test app's delegate action for an account that doesn't exist on testnet yet | `activate()` first |
+| `4100` `near_delegate_nonce_used`, `near_delegate_nonce_stale`, `near_delegate_nonce_too_large`, `near_delegate_expiry` | vault | the nonce or expiry doesn't fit testnet's current key and height | read the key again, build with `nearDelegateNonce` and 600 blocks |
+| `4100` `near_delegate_test_app_action`, `near_delegate_test_app_receiver` | vault | a test app's delegate action does something other than call or pay a `*.testnet` account | change the call |
+| `api_unavailable` `near_rpc_unavailable`, `near_rpc_single_provider` | vault | Journear Passport couldn't check the request on NEAR testnet | try again later; report the second |
+| `origin_not_allowed`, `app_suspended`; `4100` `missing_key`, `unknown_app`, `scope_conflict` | relay | as for every call to Journear Passport's API: your page's origin, your app's state or its publishable key | [section 13](#13-errors) |
+| `4100` `near_account_unrecorded` (`data.retryable`) | relay | Journear Passport hasn't recorded this user's NEAR account for your app yet (usually just after a login) | retry for about 20 s; if it persists, log in again |
+| `4100` `delegate_nonce_used` | relay | the relay or the chain has seen this nonce or a higher one: another tab, an earlier attempt, or a retry of one already sent | if the call must not run twice, check its effect on chain first; then build above `data.accessKeyNonce` and ask the user to approve again |
+| `4100` `delegate_nonce_too_large`, `delegate_expired`, `block_height_too_far` | relay | the nonce is above testnet's height × 10^6, or `maxBlockHeight` is under 3 or over 1,000 blocks ahead | read the key again and rebuild |
+| `4100` `action_not_allowed`, `deposit_not_allowed`, `receiver_not_allowed`, `gas_too_high` | relay | outside what the relay sends (above) | change the call, or ask Journear to allowlist your contract |
+| `4100` `bad_request`, `bad_delegate`, `bad_delegate_signature`, `sender_not_implicit` | relay | not a signed delegate action of a Journear Passport account | send `signDelegateAction`'s `signedDelegateAction` as it is |
+| `4100` `account_not_activated`, `access_key_missing` | relay | the account doesn't exist on testnet, or doesn't hold the user's key | `activate()`; with `access_key_missing`, the key was removed and the relay can't act for the account |
+| `4100` `already_relayed` | relay | the same signed action is being relayed right now | wait for the first answer |
+| `4100` `contract_rejected` | relay | the call ran and failed; the message is the contract's error | the nonce is used: fix the call and sign a new one |
+| `4100` `delegate_rejected` | relay | NEAR refused the delegate action itself (its nonce, expiry, key or signature) | read the key again, rebuild and sign a new one |
+| `rate_limited` (`rate_limited` or `app_budget_exhausted`) | relay | one of the limits above | back off; budgets reset at 00:00 UTC |
+| `api_unavailable` `timeout` | relay | the relay's transaction was sent, but its outcome didn't settle in 30 s | it may still run: check its effect on chain before signing again; after `maxBlockHeight` it can no longer run |
+| `api_unavailable` `relayer_busy`, `relayer_unavailable`, `near_unavailable`, `directory_unavailable`, `rate_limiter_unavailable` | relay | Journear Passport's relay or its NEAR RPC is busy or unreachable | retry the same `signedDelegateAction` after a second or two (a `delegate_nonce_used` then means it may have been sent, above) |
+| `api_unavailable` `near_rejected`, `near_error`, `relay_budget_exhausted`, `relayer_unconfigured` | relay | NEAR refused the relay's transaction, its outcome is unknown, the environment's daily budget is spent, or the relay is off | check on chain; report it to Journear Passport with `data.requestId` |
+
+`relay` and `activate` don't pass on the relay's transaction hash with a `timeout` or `contract_rejected`, nor NEAR's
+own reason for a `delegate_rejected`: Journear finds them from `data.requestId`.
+
+<a id="near-not-yet"></a>**Not supported yet:**
+
+- **Auto-approval.** Every NEAR request asks the user; policies have no NEAR rules.
+- **Journear Passport's relay for any contract.** Only allowlisted receivers (above): ask Journear, or use your own relayer.
+- **Mainnet for test apps**, and Journear Passport's relay on mainnet at all: it runs on testnet only.
+- **NEAR in the identity token.** Its `wallets` stay Stellar and EVM, so a backend that checks their shape keeps
+  working; prove the NEAR account with `signMessage` (above).
+- **React hooks.** `useWallet` and `useHana().exportKey` take `'stellar'` and `'evm'` only: read
+  `useHana().addresses?.near` and call `useHana().client?.near` and `client.exportKey('near')`
+  ([section 10](#10-react)).
+- **Named accounts.** Journear Passport signs only as the user's implicit account, so it can't sign for a named account
+  (`alice.testnet`) the user creates; nor `TransactionV1` (priority fees).
+
+**Key export.** `hana.exportKey('near')` exports the key as `ed25519:<base58>` (near-cli and NEAR wallets import that
+form), with the same safeguards as the other chains ([section 4](#4-log-in-log-out)).
 
 ### Raw signing
 
@@ -1136,6 +1344,9 @@ const { identityToken, refresh, error } = useIdentityToken(); // for your backen
   `login()` returns is already marked handled, so `onClick={login}` never raises an unhandled rejection; if you
   `await` or `.catch` it, you still get the rejection. `logout()` and `exportKey()` reject as usual and their
   failures aren't in `error`: handle them (`onClick={() => logout().catch(report)}`).
+- NEAR (SDK 0.4.0) has no hook yet, and `useWallet` and `useHana().exportKey` take `'stellar'` and `'evm'` only:
+  `useHana().addresses?.near` is the account, and `useHana().client` (null until the provider has mounted its client)
+  gives `client.near` and `client.exportKey('near')` ([section 8, NEAR](#near)).
 - Server rendering (Next.js): the modules are `'use client'`, and the client is created in an effect, so a server
   render shows the initial state (`status: 'unlocking'`, no addresses, `signer` / `provider` null) and never touches
   `window`.
@@ -1307,6 +1518,7 @@ window, not returned.
 | `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced (`derive_failed` with `data.reason: 'link_restart'`: a linking login was interrupted and its session revoked; `'webcrypto_unsupported'`: the browser has no Ed25519 in WebCrypto, so Journear Passport can't make the sign-in's session key: Chrome and Edge before 137, Firefox before 129, Safari before 17; `'webcrypto_failed'`: the browser refused to make the key, `data.error` the platform error's name; both in a login, `linkAccount()` and the export window's sign-in) | the user logs in again; with `webcrypto_unsupported`, ask them to update the browser or use another |
 | `session_consumed` | Someone replayed the login transaction first | the vault offers "Continue signing in" |
 | `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Journear Passport's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `mainnet_demo_unconfirmed` (Journear's sandbox mainnet demo couldn't be confirmed on, section 12), `email_match_unavailable` (Journear Passport's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Journear Passport's NEAR providers), `path_disputed` (they disagree: report it), `share_unconfirmed` (a signature or an identity token: Journear Passport's API couldn't confirm for 3 minutes that this device is still signed in, "Signed out from Journear Passport" in section 4) | back off, or contact Journear |
+| `near_*` reasons, and the codes of `hana.near.relay` and `hana.near.activate` | NEAR: refusals before Journear Passport's window, and Journear Passport's relay (`4100`, `rate_limited` or `api_unavailable` with the API's code in `data.reason`) | the table in [section 8, NEAR](#near-errors) |
 | `storage_unavailable` | The Journear Passport popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
 | `busy` | An export is already running | wait |
 | `identity_unavailable` | `getIdentityToken()`: Journear Passport's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |
@@ -1380,7 +1592,7 @@ past the Journear Passport session:
 | `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every other partner; never the Google `sub`. It is also the user's User ID on the partner portal's **Users** page, and their Support ID `HANA-XXXX-XXXX` is its short form, which you can compute yourself to show beside your own records ([Support ID from the `sub`](#support-id-from-sub)) |
 | `sid` | `s1_…`: one per Journear Passport session, shared by its tabs and reloads, new at every interactive login, never repeated |
 | `iat`, `exp`, `jti` | seconds; `exp` ≤ `iat` + 3600 and never past the session's end; `jti` is random |
-| `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Journear Passport session proved control of each address's key (a signature bound to this session and app) |
+| `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Journear Passport session proved control of each address's key (a signature bound to this session and app). Stellar and EVM only: the user's NEAR account isn't listed (SDK 0.4.0 changes nothing here); prove it with `hana.near.signMessage` ([section 8, NEAR](#near)) |
 | `login_methods` | the account's login providers, sorted (`["google"]` today) |
 | `email`, `email_verified` | only for a user who shared their address with your app on Journear Passport's sheet ("Email sharing" below): the verified address and `true`. Absent otherwise. Key users on `sub`, not on the address (it can change, and a user can stop sharing) |
 | `given_name`, `family_name` | only for a user who shared their name with your app from Passport Home ("The user's name" below), each only when set: the first and last name as the user typed them (at most 50 characters each, one line). Absent otherwise. A display name, not an identity: never key anything on it |

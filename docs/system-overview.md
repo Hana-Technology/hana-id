@@ -3,7 +3,7 @@
 A private briefing for the founder: how Hana ID works, what it protects, where it is weak, and how to answer hard
 questions honestly. It states every gap plainly. Decide later what to share outside the company.
 
-Last verified: 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the product's names users read, the user's line in section 1, the export's three steps and checkbox in 2.6, D765); 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
+Last verified: 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Passport Home's "Move this wallet" offers the NEAR key, D779); 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the product's names users read, the user's line in section 1, the export's three steps and checkbox in 2.6, D765); 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
 reference docs and checked against the code where they were vague; no code changed). Where the docs lag the code or git,
 this file says so. Sandbox-dev's live state is as `docs/operations.md` "What sandbox-dev runs" records it, corrected on
 2026-11-10 by the person who ran that day's deploy and tests (Hana Home, the email co-signer, alerting, the Google
@@ -541,7 +541,7 @@ anything. After a forged key, the runbook retires older sessions before unpausin
 ### 4e. Recovery and exit
 
 - **Key export** is always available and partners can't remove it. It is the user's exit to any Stellar or EVM wallet
-  (and, with SDK 0.4.0, any NEAR wallet; Hana Home's "Move this wallet" still offers Stellar and EVM only).
+  (and, with SDK 0.4.0, any NEAR wallet; Passport Home's "Move this wallet" offers all three keys, D779).
 - **Hana Home** lets users reach every app's wallet from one Hana page, even after a partner shuts down or switches off
   Hana's shared login, through the exit client. It runs on sandbox-dev, but nothing links to it yet, so users can't
   find it, and the exit route hasn't been tried live (section 2.7).

@@ -69,7 +69,10 @@ const { demo, known } = useMainnetDemo();                     // Journear's sand
   `login()` returns is already marked handled, so `onClick={login}` never raises an unhandled rejection. `logout()`
   and `exportKey()` reject as usual: handle them.
 - `useHana().client` is the underlying `HanaClient`, for what the hooks don't wrap (events, auto-approve,
-  `revokeOtherDevices`).
+  `revokeOtherDevices`, NEAR).
+- NEAR (0.4.0) has no hook yet: `useWallet` and `useHana().exportKey` take `'stellar'` and `'evm'` only. The account
+  is `useHana().addresses?.near`; sign and relay with `useHana().client?.near` and export with
+  `client.exportKey('near')` (the partner guide's section 8).
 - `useMainnetDemo()` returns `{ demo, known }` for Journear's own sandbox mainnet demo (not available to partner apps):
   `demo` is `hana.mainnetDemo` (its rules and the prices it values with, `demo.prices.assets.ETH.usd` …) or null, and
   `known` is false until the client is ready, so `known && !demo` means off and `!known` means not known yet.

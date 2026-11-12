@@ -1,9 +1,9 @@
 # @hana-id/core
 
 The pure TypeScript core of Journear Passport (no DOM): byte layouts, NEAR MPC confidential key derivation, derivation
-v1, the Stellar and EVM signers, the approval decoders, the auto-approve policy validator and the protocol message
-schemas. `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` depend on it, and Journear Passport's own pages are built
-from it.
+v1, the Stellar, EVM and NEAR signers, the approval decoders, the auto-approve policy validator and the protocol
+message schemas. `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` depend on it, and Journear Passport's own pages
+are built from it.
 
 > **Renamed.** Hana ID is now called **Journear Passport**. Only the names you and your users read changed (error
 > messages among them). The package names (`@hana-id/*`), the exported names, error codes and every signed or hashed
@@ -31,6 +31,7 @@ ESM only, with TypeScript declarations.
 | `@hana-id/core/signers/stellar` | the Stellar signers (pulls in `@stellar/stellar-base`, so it is a separate entry) |
 | `@hana-id/core/decode` | the transaction and message decoders the approval popup uses |
 | `@hana-id/core/policy` | the auto-approve policy validator and matcher |
+| `@hana-id/core/near` | NEAR's borsh codec (`encodeNearDelegateAction`, `encodeNearTransaction`, `encodeNep413Message`, the decoders), hashes (`nep413Hash`, …) and `nearDelegateNonce`, the nonce of a delegate action Hana will sign for a test app (also in the root entry) |
 | `@hana-id/core/support-id` | `supportIdFromSub` on its own (also in the root entry) |
 | `@hana-id/core/mainnet-demo-prices` | the price book of Journear's sandbox mainnet demo: its floor and ceiling per asset and the strict check of a book (no other imports) |
 
@@ -48,6 +49,24 @@ if (!r.ok) console.log(r.problems); // else r.policy is the normalized policy Jo
 ```
 
 The policy format is in the Journear Passport partner guide (section 9; ask Journear for the current copy).
+
+For NEAR (0.4.0), build the bytes `hana.near.signDelegateAction` signs, with no NEAR SDK. Read the key's nonce and
+the height from `hana.near.activate()` or a NEAR RPC's `view_access_key`; the receiver must be one Journear Passport's relay
+allowlists (the partner guide's section 8 has the whole flow):
+
+```ts
+import { nearImplicitPublicKey, utf8 } from '@hana-id/core';
+import { encodeNearDelegateAction, nearDelegateNonce } from '@hana-id/core/near';
+
+const delegateAction = encodeNearDelegateAction({
+  senderId: accountId, // hana.near.accountId
+  receiverId: contract,
+  actions: [{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text })), gas: 10_000_000_000_000n, deposit: 0n }],
+  nonce: nearDelegateNonce({ keyNonce, blockHeight }), // above the key's nonce and recent enough for Journear Passport's check
+  maxBlockHeight: blockHeight + 600n,                  // about 6 minutes
+  publicKey: { type: 'ed25519', bytes: nearImplicitPublicKey(accountId) },
+});
+```
 
 The other one, for partner backends: the user's Support ID (`HANA-XXXX-XXXX`, what `hana.supportId` shows) from the
 identity token's `sub`, to show beside your own records. It needs no key: the `sub`'s base64url decoded to 16 bytes,

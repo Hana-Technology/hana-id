@@ -127,7 +127,7 @@ export interface HomePage {
   /** How many Home API requests the page has sent. */
   readonly requests: number;
   /** The "Move this wallet" section of the app page that is open (home-export.ts). */
-  readonly moving: { readonly state: HomeExportState; readonly chain: 'stellar' | 'evm' | null; readonly errorCode: string | null; readonly childName: string | null; readonly awaitingChild: boolean; readonly holdsSecret: boolean };
+  readonly moving: { readonly state: HomeExportState; readonly chain: 'stellar' | 'evm' | 'near' | null; readonly errorCode: string | null; readonly childName: string | null; readonly awaitingChild: boolean; readonly holdsSecret: boolean };
   /** "Devices and auto-approve" (home-devices.ts), on the front page and each app's page. */
   readonly devices: Pick<HomeDevices, 'front' | 'app' | 'confirming' | 'errorCode' | 'requests'>;
   /** "Your name" (home-profile.ts), on the front page and each app's page. */

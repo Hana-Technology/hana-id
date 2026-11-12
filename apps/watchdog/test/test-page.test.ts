@@ -242,7 +242,7 @@ describe('the real wiring', () => {
     const res = await http('POST', e);
     expect(res.status).toBe(200);
     const label = alertLabel(e);
-    const title = `${label ? `${label} ` : ''}CRITICAL: ${TEST_PAGE_TITLE} [Hana ID ${e.ENV_NAME}]`;
+    const title = `${label ? `${label} ` : ''}CRITICAL: ${TEST_PAGE_TITLE} [Journear Passport ${e.ENV_NAME}]`;
     const ntfy = posts.find((p) => p.url === SECRETS.NTFY_TOPIC_URL)!;
     expect(ntfy.headers.get('title')).toBe(title);
     expect(ntfy.headers.get('priority')).toBe('urgent');

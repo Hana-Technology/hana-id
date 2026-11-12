@@ -142,7 +142,7 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   breaker: 'Too many destructive changes in an hour',
   owner_cap: 'On-chain owner action limit reached',
   owner_allowance_low: 'Owner action allowance running low',
-  home_budget_high: 'Hana Home daily budget running high',
+  home_budget_high: 'Passport Home daily budget running high',
   near_relay_budget_high: 'NEAR relay daily budget running high',
   near_relay_balance_low: 'NEAR relay account running low',
 };

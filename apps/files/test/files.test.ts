@@ -208,9 +208,9 @@ describe('GET the mail logo (D685)', () => {
     expect(res.status).toBe(200);
     const bytes = await res.arrayBuffer();
     expect(await sha(bytes)).toBe(MAIL_LOGO_SHA256);
-    expect(MAIL_LOGO_PATH).toBe(`/brand/hana-mail-logo-${MAIL_LOGO_SHA256.slice(0, 16)}.png`);
+    expect(MAIL_LOGO_PATH).toBe(`/brand/journear-mail-logo-${MAIL_LOGO_SHA256.slice(0, 16)}.png`);
     expect([...new Uint8Array(bytes, 0, 8)]).toEqual([...PNG_SIGNATURE]);
-    expect(Object.fromEntries(res.headers)).toEqual({ ...LOGO_HEADERS, 'content-disposition': 'inline; filename="hana.png"', 'content-length': String(bytes.byteLength) });
+    expect(Object.fromEntries(res.headers)).toEqual({ ...LOGO_HEADERS, 'content-disposition': 'inline; filename="journear-passport.png"', 'content-length': String(bytes.byteLength) });
     expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
     expect(res.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
     expect(res.headers.has('set-cookie')).toBe(false);

@@ -661,17 +661,24 @@ describe('settings', () => {
     expect(await s({ idleTtlMs: 13 * HOUR })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await s({ name: 'Bad‮name' })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await s({ name: 'x'.repeat(65) })).toMatchObject({ ok: false, code: 'bad_request' });
+    // The service's names (D686 as extended by D765): "Hana", "Journear" and look-alikes, "Passport Home".
+    for (const name of ['Hana Pay', 'Journear', 'J0urnear', 'JOURNEAR', 'journear-pay', `J${String.fromCharCode(0x043e)}urnear`, 'Passport Home']) {
+      expect(await s({ name }), name).toMatchObject({ ok: false, code: 'bad_request' });
+    }
     scopeChain([], ['web-client.apps.googleusercontent.com']);
     expect(await s({ googleWebClientId: 'other.apps.googleusercontent.com' })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await s({ googleWebClientId: 'web-client.apps.googleusercontent.com', sessionTtlMs: 2 * HOUR, idleTtlMs: HOUR, name: '  Café  ' })).toEqual({ ok: true, version: 1 });
     expect(await appRow(app.id)).toMatchObject({ google_web_client_id: 'web-client.apps.googleusercontent.com', session_ttl_ms: 2 * HOUR, idle_ttl_ms: HOUR, name: 'Café' });
     expect(await s({ persistence: 'none' }, 0)).toMatchObject({ ok: false, code: 'version_conflict' });
     expect(await s({ googleWebClientId: null }, 1)).toEqual({ ok: true, version: 2 });
+    // "Passport" on its own is a common word: allowed.
+    expect(await s({ name: 'Passport Travel' }, 2)).toEqual({ ok: true, version: 3 });
+    expect(await appRow(app.id)).toMatchObject({ name: 'Passport Travel' });
     const near = chain();
     near.views.get_scope = () => {
       throw new Error('down');
     };
-    expect(await s({ googleWebClientId: 'web-client.apps.googleusercontent.com' }, 2)).toMatchObject({ ok: false, code: 'near_unavailable' });
+    expect(await s({ googleWebClientId: 'web-client.apps.googleusercontent.com' }, 3)).toMatchObject({ ok: false, code: 'near_unavailable' });
   });
 
   it('a session TTL lowered under a stored or proposed policy’s maxConsentMs is policy_invalid', async () => {

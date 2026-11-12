@@ -124,3 +124,76 @@ export function typeCommentProblems(pkgName: string, file: string, text: string)
 export function localPathProblems(pkgName: string, file: string, text: string, localPaths: readonly string[]): string[] {
   return localPaths.filter((lp) => lp.length > 1 && text.includes(lp)).map((lp) => `${pkgName}: ${file} contains the local path ${lp}`);
 }
+
+// ---- the partner guide's code samples ----
+
+/** The `ts` code blocks of one part of a Markdown file: from the line `start` to the line `end` (exclusive). */
+export function codeBlocks(markdown: string, start: string, end: string): string[] {
+  const lines = markdown.split('\n');
+  const from = lines.indexOf(start);
+  const to = lines.indexOf(end, from + 1);
+  if (from < 0 || to < 0) throw new Error(`No part from ${JSON.stringify(start)} to ${JSON.stringify(end)}`);
+  const blocks: string[] = [];
+  let open: string[] | null = null;
+  for (const line of lines.slice(from + 1, to)) {
+    if (open === null) {
+      if (line === '```ts') open = [];
+      continue;
+    }
+    if (line === '```') {
+      blocks.push(open.join('\n'));
+      open = null;
+    } else {
+      open.push(line);
+    }
+  }
+  if (open !== null) throw new Error(`An unclosed code block after ${JSON.stringify(start)}`);
+  return blocks;
+}
+
+/** One `import { a, type B } from 'm';` line, the only import form a sample may use. */
+const NAMED_IMPORT = /^import (type )?\{([^}]*)\} from '([^']+)';$/u;
+
+/**
+ * One TypeScript module of a guide part's samples, for `tsc` in the pack check's project (type-checked against the
+ * installed tarballs, never run): the samples' imports merged per module, then `prelude`, then each sample's code in
+ * order at the top level, so a sample may use what an earlier one declared (as a reader going down the page would).
+ * `preludeImports` adds imports the prelude needs. Throws on another import form or a part with no sample.
+ */
+export function sampleModule(blocks: readonly string[], prelude: string, preludeImports: Record<string, readonly string[]> = {}): string {
+  if (blocks.length === 0) throw new Error('No code sample to check');
+  const imports = new Map<string, Set<string>>();
+  const add = (from: string, name: string) => {
+    const names = imports.get(from) ?? new Set<string>();
+    const bare = name.replace(/^type /u, '');
+    // A value import covers the type import of the same name.
+    if (name !== bare) {
+      if (!names.has(bare)) names.add(name);
+    } else {
+      names.delete(`type ${bare}`);
+      names.add(bare);
+    }
+    imports.set(from, names);
+  };
+  for (const [from, names] of Object.entries(preludeImports)) for (const n of names) add(from, n);
+  const bodies = blocks.map((block, i) => {
+    const body: string[] = [];
+    for (const line of block.split('\n')) {
+      if (!line.startsWith('import ')) {
+        body.push(line);
+        continue;
+      }
+      const m = NAMED_IMPORT.exec(line);
+      if (!m) throw new Error(`Sample ${i + 1}: only \`import { … } from '…';\` on one line is supported: ${line}`);
+      for (const raw of m[2]!.split(',')) {
+        const name = raw.trim();
+        if (name) add(m[3]!, m[1] && !name.startsWith('type ') ? `type ${name}` : name);
+      }
+    }
+    return `// ---- sample ${i + 1} ----\n${body.join('\n').trim()}`;
+  });
+  const importLines = [...imports.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([from, names]) => `import { ${[...names].sort((a, b) => a.replace(/^type /u, '').localeCompare(b.replace(/^type /u, ''))).join(', ')} } from '${from}';`);
+  return `${importLines.join('\n')}\n\n${prelude.trim()}\n\n${bodies.join('\n\n')}\n`;
+}

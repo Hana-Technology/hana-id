@@ -123,7 +123,7 @@ export const AUTH_PAGE_HEADERS: Readonly<Record<string, Record<string, string>>>
   '/home': { 'cross-origin-opener-policy': 'same-origin-allow-popups' },
 });
 
-const ERROR_HTML = '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Hana ID</title></head><body></body></html>\n';
+const ERROR_HTML = '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Journear Passport</title></head><body></body></html>\n';
 
 /** Headers of every response that isn't a page or an asset: nothing to run, frame or sniff. */
 function plainHeaders(extra: Record<string, string> = {}): Record<string, string> {

@@ -42,7 +42,7 @@ export type SodaxStellarProvider = IStellarWalletProvider & Required<Pick<IStell
 const TX_HASH = /^[0-9a-fA-F]{64}$/u;
 
 export function createSodaxStellarProvider(hana: SodaxStellarHana, config: SodaxStellarConfig): SodaxStellarProvider {
-  if (!isObject(hana) || !isObject(hana.stellar)) throw new TypeError('createSodaxStellarProvider takes the Hana client (createHana)');
+  if (!isObject(hana) || !isObject(hana.stellar)) throw new TypeError('createSodaxStellarProvider takes the Journear Passport client (createHana)');
   if (!isObject(config)) throw new TypeError('createSodaxStellarProvider takes {networkPassphrase, horizonUrl, sorobanRpcUrl}');
   const { networkPassphrase } = config;
   if (typeof networkPassphrase !== 'string' || networkPassphrase.length === 0 || networkPassphrase.length > 256) {

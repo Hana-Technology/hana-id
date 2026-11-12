@@ -41,6 +41,7 @@ describe('GET {vaultOrigin}/vault', () => {
     const res = await vaultPage(app.key);
     expect(res.status).toBe(200);
     const html = await res.text();
+    expect(html).toContain('<title>Journear Passport</title>');
     const config = inlinedConfig(html);
     expect(config).toEqual({
       v: 1,
@@ -163,6 +164,7 @@ describe('GET {vaultOrigin}/vault', () => {
       const html = await res.text();
       expect(html).not.toContain('hana-config');
       expect(html).not.toContain('<script');
+      expect(html).toContain('<title>Journear Passport</title>');
     }
   });
 

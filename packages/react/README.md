@@ -1,11 +1,15 @@
 # @hana-id/react
 
-React bindings for Hana ID (`@hana-id/web`): `HanaProvider`, `useHana`, `useWallet`, `useIdentityToken` and
+React bindings for Journear Passport (`@hana-id/web`): `HanaProvider`, `useHana`, `useWallet`, `useIdentityToken` and
 `useEmailSharing`. React 18 and 19.
+
+> **Renamed.** Hana ID is now called **Journear Passport**. Only the names you and your users read changed (error
+> messages among them). The package names (`@hana-id/*`), the API (`HanaProvider`, `useHana`, `HanaError`,
+> `createHana`, `hana.*`), error codes and event names are unchanged, so no code change is needed.
 
 ## Install
 
-The packages aren't on a registry yet. Hana sends you the tarballs with their SHA-256 checksums: check them, then
+The packages aren't on a registry yet. Journear sends you the tarballs with their SHA-256 checksums: check them, then
 install them together, next to your React:
 
 ```sh
@@ -21,8 +25,8 @@ declarations.
 import { HanaProvider, useEmailSharing, useHana, useIdentityToken, useMainnetDemo, useWallet } from '@hana-id/react';
 
 const config = {
-  publishableKey: 'pk_test_…', // your app's page in Hana's partner portal (header: Publishable key)
-  environment: 'sandbox-dev',  // a Hana deployment built into @hana-id/web (HANA_ENVIRONMENTS)
+  publishableKey: 'pk_test_…', // your app's page in the Journear Passport partner portal (header: Publishable key)
+  environment: 'sandbox-dev',  // a Journear Passport deployment built into @hana-id/web (HANA_ENVIRONMENTS)
   evm: { chains: [{ id: 84532, rpcUrl: 'https://sepolia.base.org' }], defaultChainId: 84532 }, // optional
   stellar: { networkPassphrase: 'Test SDF Network ; September 2015' },                         // optional
 };
@@ -49,8 +53,8 @@ function SignIn() {
 const { address, signer } = useWallet('stellar'); // signer is hana.stellar
 const { address, provider } = useWallet('evm');   // provider is hana.ethereum (EIP-1193)
 const { identityToken, refresh, error } = useIdentityToken(); // a JWT for your backend, kept fresh while visible
-const { request, state, error } = useEmailSharing();          // <button onClick={request}>: Hana's email sharing sheet (0.3.0)
-const { demo, known } = useMainnetDemo();                     // Hana's sandbox mainnet demo: off, not known yet, or on
+const { request, state, error } = useEmailSharing();          // <button onClick={request}>: the Journear Passport email sharing sheet (0.3.0)
+const { demo, known } = useMainnetDemo();                     // Journear's sandbox mainnet demo: off, not known yet, or on
 ```
 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to
@@ -60,12 +64,12 @@ const { demo, known } = useMainnetDemo();                     // Hana's sandbox 
   passes is ignored (SDK releases after 0.2.0; 0.2.0's `login` ignores every argument, so use
   `useHana().client.login({ method })` there).
 - A failed login (`4001`, `popup_blocked`, `login_cancelled`, …) lands in `useHana().error` (a `HanaError`; one from
-  Hana's API has `error.requestId`, to send Hana with `useHana().supportId`), and the promise
+  the Journear Passport API has `error.requestId`, to send Journear with `useHana().supportId`), and the promise
   `login()` returns is already marked handled, so `onClick={login}` never raises an unhandled rejection. `logout()`
   and `exportKey()` reject as usual: handle them.
 - `useHana().client` is the underlying `HanaClient`, for what the hooks don't wrap (events, auto-approve,
   `revokeOtherDevices`).
-- `useMainnetDemo()` returns `{ demo, known }` for Hana's own sandbox mainnet demo (not available to partner apps):
+- `useMainnetDemo()` returns `{ demo, known }` for Journear's own sandbox mainnet demo (not available to partner apps):
   `demo` is `hana.mainnetDemo` (its rules and the prices it values with, `demo.prices.assets.ETH.usd` …) or null, and
   `known` is false until the client is ready, so `known && !demo` means off and `!known` means not known yet.
 - Server rendering (Next.js): the modules are `'use client'` and the client is created in an effect, so a server
@@ -73,4 +77,4 @@ const { demo, known } = useMainnetDemo();                     // Hana's sandbox 
   `window`.
 
 Your page's requirements (origins, CSP `frame-src`, popups, COOP), test-network limits and error codes are in the
-`@hana-id/web` README. Hana's partner guide (ask Hana for the current copy) has the rest, the partner portal included.
+`@hana-id/web` README. The Journear Passport partner guide (ask Journear for the current copy) has the rest, the partner portal included.

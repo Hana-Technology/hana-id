@@ -119,7 +119,7 @@ export async function verifyEd25519(publicKey: Uint8Array, signature: Uint8Array
 
 type ShareCheck = { ok: true; share: { shareId: Uint8Array; pathHash: Uint8Array; idleUntilMs: number; absCapMs: number } | null } | { ok: false; response: Response };
 
-const sessionEnded = (ctx: Ctx, reason: string): Response => done(ctx, 410, { error: 'The Hana session has ended', code: 'session_ended', reason });
+const sessionEnded = (ctx: Ctx, reason: string): Response => done(ctx, 410, { error: 'The Journear Passport session has ended', code: 'session_ended', reason });
 
 /**
  * The share in 'session' mode, judged as unlock judges it but read-only (docs/identity-token-spec.md "Minting" step 2):
@@ -319,7 +319,7 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
 
   // Not paused (a forged-key incident stops identity tokens with logins). Fails closed: the pause is a security stop.
   try {
-    if ((await getConfig(env)).paused) return done(ctx, 503, { error: 'Hana ID is paused, try again later', code: 'paused', retryAfterS: PAUSED_RETRY_S }, { 'retry-after': String(PAUSED_RETRY_S) });
+    if ((await getConfig(env)).paused) return done(ctx, 503, { error: 'Journear Passport is paused, try again later', code: 'paused', retryAfterS: PAUSED_RETRY_S }, { 'retry-after': String(PAUSED_RETRY_S) });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the contract config');
   }
@@ -339,7 +339,7 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
 
   // Lifetime: ≤ 1 h, never past the session (and in 'session' mode its share's idle and absolute limits).
   const lifetime = identityLifetime({ nowMs: now, sessionExpiresAtMs: chain.session.expires_at_ms, ...(share.share ? { share: share.share } : {}) });
-  if (!lifetime) return reject(ctx, 410, 'session_ending', 'The Hana session ends in less than 30 seconds');
+  if (!lifetime) return reject(ctx, 410, 'session_ending', 'The Journear Passport session ends in less than 30 seconds');
 
   // Each address proven by its own key for this session and app.
   const proofCtx = { signer: env.SIGNER_ACCOUNT, appId: app.id, sessionPublicKey: req.sessionPk };

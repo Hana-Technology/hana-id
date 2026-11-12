@@ -123,7 +123,8 @@ describe('daily digest', () => {
     expect(await maybeSendDigest(store, n, nextDay, 13, 'sandbox-test')).toBe('not_due'); // 12:00 < 13:00
     expect(await maybeSendDigest(store, n, nextDay, 12, 'sandbox-test')).toBe('sent');
     expect(n.digests).toHaveLength(1);
-    expect(n.digests[0]?.subject).toBe(`[Hana ID sandbox-test] Watchdog daily digest ${iso(nextDay).slice(0, 10)}`);
+    expect(n.digests[0]?.subject).toBe(`[Journear Passport sandbox-test] Watchdog daily digest ${iso(nextDay).slice(0, 10)}`);
+    expect(n.digests[0]?.text).toMatch(/^Journear Passport watchdog, env sandbox-test: /u);
     expect(n.digests[0]?.text).toContain('[critical] Forged issuer key ghost');
     expect(n.digests[0]?.text).toContain('cancel_issuer_key_change {"id":10}: ok tx tx1');
     expect(n.digests[0]?.text).toMatch(/Unacknowledged critical alerts: 1 /u);

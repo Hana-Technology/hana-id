@@ -108,7 +108,7 @@ export function decodeApprovalRequest(s: ApprovalSubject): DecodedApproval {
       const tx = decodeNearTransaction(s.bytes);
       checkNearSigner(s.address, tx.signerId, tx.publicKey, 'transaction');
       // Its signer would prepay every deposit of the delegate it relays: never shown, never signed.
-      if (nearRelaysDelegate(tx)) fail('unsupported', 'Hana doesn’t sign a NEAR transaction that relays a delegate action: its signer pays the delegate’s deposits');
+      if (nearRelaysDelegate(tx)) fail('unsupported', 'Journear doesn’t sign a NEAR transaction that relays a delegate action: its signer pays the delegate’s deposits');
       return { kind: s.kind, network: ctx.nearNetwork as NearNetwork, tx, hash: nearTransactionHashString(s.bytes) };
     }
     case 'near_delegate': {

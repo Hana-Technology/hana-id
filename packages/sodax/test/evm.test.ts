@@ -113,7 +113,7 @@ describe('creation', () => {
 
   it('validates the client and the config', () => {
     const hana = evmHana(port, net, EVM_CONFIG);
-    expect(() => createSodaxEvmProvider({} as never, { chainId: BASE, rpcUrl: RECEIPTS })).toThrow(/Hana client/u);
+    expect(() => createSodaxEvmProvider({} as never, { chainId: BASE, rpcUrl: RECEIPTS })).toThrow(/Journear Passport client \(createHana\)/u);
     expect(() => createSodaxEvmProvider(hana, null as never)).toThrow(TypeError);
     for (const chainId of [0, -1, 1.5, '8453', Number.MAX_SAFE_INTEGER + 1]) {
       expect(() => createSodaxEvmProvider(hana, { chainId: chainId as never, rpcUrl: RECEIPTS })).toThrow(/chainId/u);

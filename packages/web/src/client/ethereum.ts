@@ -243,7 +243,7 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
         return this.#rpc(method, Array.isArray(params) ? params : [params]);
       default:
         if (READ_ONLY_METHODS.has(method)) return this.#rpc(method, Array.isArray(params) ? params : [params]);
-        throw err(ErrorCode.unsupportedMethod, `Hana ID does not support ${method}`);
+        throw err(ErrorCode.unsupportedMethod, `Journear Passport does not support ${method}`);
     }
   }
 
@@ -289,9 +289,9 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /** `address` must be the vault's (any case); returns the vault's form. */
   #own(address: unknown): string {
     const mine = this.#host.evmAddress();
-    if (mine === null) throw err(ErrorCode.unauthorized, 'Not logged in to Hana ID');
+    if (mine === null) throw err(ErrorCode.unauthorized, 'Not logged in to Journear Passport');
     if (typeof address !== 'string' || !isEvmAddress(address) || address.toLowerCase() !== mine.toLowerCase()) {
-      throw err(ErrorCode.unauthorized, 'The address is not the Hana ID account');
+      throw err(ErrorCode.unauthorized, 'The address is not the Journear Passport account');
     }
     return mine;
   }
@@ -301,7 +301,7 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
     if (!Array.isArray(params) || params.length !== 1) throw err(RpcCode.invalidParams, 'Expected [transaction]');
     const input = normalizeTxInput(params[0]);
     const from = this.#host.evmAddress();
-    if (from === null) throw err(ErrorCode.unauthorized, 'Not logged in to Hana ID');
+    if (from === null) throw err(ErrorCode.unauthorized, 'Not logged in to Journear Passport');
     const chain = this.#current();
     this.#testnetOnly(chain.id);
     return { input, from, chain };
@@ -389,7 +389,7 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /** The vault connection died. */
   disconnected(): void {
     this.accountsChanged(null);
-    this.emit('disconnect', err(ErrorCode.disconnected, 'The Hana vault is disconnected'));
+    this.emit('disconnect', err(ErrorCode.disconnected, 'The Journear Passport vault is disconnected'));
   }
 }
 

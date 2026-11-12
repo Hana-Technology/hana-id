@@ -74,7 +74,7 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
     const pii = piiRefusal(jwt, 'The owner token');
     if (pii) return pii;
     const config = await getConfig(env);
-    if (!config.console_audiences.some(([p, a]) => p === v.token.provider && a === v.token.aud)) return no(403, 'not_console_token', 'Token is not for the Hana console');
+    if (!config.console_audiences.some(([p, a]) => p === v.token.provider && a === v.token.aud)) return no(403, 'not_console_token', 'Token is not for the Journear Passport console');
     owner = { provider: v.token.provider, sub: v.token.sub };
     tokenNonce = v.token.nonce;
     authToken = { hash: await sha256Hex(jwt), expMs: v.token.exp * 1000 };
@@ -140,7 +140,7 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
         }
         if (scope.clients.some(([p, a]) => p === add.provider && a === add.aud)) return no(409, 'client_registered', 'Client is already in this scope');
         const config = await getConfig(env);
-        if (isSharedOrPending(config, add.provider, add.aud)) return no(409, 'shared_client', 'This client is one of Hana’s shared login clients');
+        if (isSharedOrPending(config, add.provider, add.aud)) return no(409, 'shared_client', 'This client is one of Journear’s shared login clients');
       }
       break;
     }

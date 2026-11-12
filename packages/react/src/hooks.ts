@@ -61,7 +61,7 @@ function useHanaState(ctx: HanaContextValue): HanaState {
 }
 
 /** Before the provider's client exists (a call from the first render, which no click can reach in practice). */
-const notMounted = (): Promise<never> => Promise.reject(new HanaError(4900, 'Hana ID is not mounted yet (HanaProvider has not run its effect)'));
+const notMounted = (): Promise<never> => Promise.reject(new HanaError(4900, 'Journear Passport is not mounted yet (HanaProvider has not run its effect)'));
 
 const ignore = (): void => {};
 

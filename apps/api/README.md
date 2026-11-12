@@ -399,3 +399,7 @@ signatures, bodies, keys, CKD responses or contract panic text. A login relay re
   `resolve.alias`).
 - `plans.per_ip_minute` (default 20) extends the spec's `plans(id, per_minute, per_day)` so the per-IP limit also comes
   from the plan row. Seeded `free` plan: 60/min, 5000/day, 20/min per IP.
+- Names in answers (D765): error `error` messages and the vault and page Workers' HTML titles say "Journear Passport"
+  (the product, was "Hana ID"), "Passport Home" (was "Hana Home") or "Journear" (the company or service, was "Hana").
+  Error codes, headers (`x-hana-*`), origins, element ids (`hana-config`) and log fields keep "hana": clients match on
+  `code`, never on the message.

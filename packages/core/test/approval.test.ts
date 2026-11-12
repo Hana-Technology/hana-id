@@ -197,7 +197,7 @@ describe('approval subject validation', () => {
 
   it('words the raw warning as the spec does', () => {
     expect(rawSigningWarning('Stellar', 'Acme')).toBe(
-      "Raw signing can authorize any transaction, authorization or message on Stellar. Hana can't tell what this is. Only approve if you trust Acme completely.",
+      "Raw signing can authorize any transaction, authorization or message on Stellar. Journear can't tell what this is. Only approve if you trust Acme completely.",
     );
   });
 });

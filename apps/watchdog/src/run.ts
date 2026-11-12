@@ -1210,7 +1210,7 @@ async function emailJwks(run: Run, s: ChainSnapshot): Promise<void> {
     await store.setMeta(META.emailJwksFailures, failures);
     run.evaluatePrefix('email_jwks_mismatch', 'email_jwks_mismatch:fetch');
     if (failures >= FAILING_RUNS && active.length) {
-      await run.condition('email_jwks_mismatch', 'email_jwks_mismatch:fetch', `Hana's email JWKS fetch failed ${failures} runs in a row while ${active.length} email key(s) are active`, { failures, active_kids: active });
+      await run.condition('email_jwks_mismatch', 'email_jwks_mismatch:fetch', `Journear's email JWKS fetch failed ${failures} runs in a row while ${active.length} email key(s) are active`, { failures, active_kids: active });
     }
     run.check('email_jwks', active.length ? 'error' : 'skipped', `fetch failed (${failures} run(s) in a row)${active.length ? '' : '; no email key active'}`);
     return;
@@ -1227,7 +1227,7 @@ async function emailJwks(run: Run, s: ChainSnapshot): Promise<void> {
   }
   for (const kid of active) if (!published.has(kid)) problems.push(`active email key ${ident(kid)} is not published`);
   if (problems.length) {
-    await run.condition('email_jwks_mismatch', 'email_jwks_mismatch:keys', `Hana's email JWKS differs from the pins: ${problems.join('; ')}`, { problems, published: [...published], active_kids: active });
+    await run.condition('email_jwks_mismatch', 'email_jwks_mismatch:keys', `Journear's email JWKS differs from the pins: ${problems.join('; ')}`, { problems, published: [...published], active_kids: active });
   }
   run.check('email_jwks', problems.length ? 'alert' : 'ok', `${keys.length} published, ${active.length} active`);
 }
@@ -1288,7 +1288,7 @@ async function readIdentityDoc(run: Run, what: 'jwks' | 'discovery', fetch: () =
   run.evaluatePrefix('identity_jwks_unreadable', sustainedKey);
   if (!res) {
     if (failures >= FAILING_RUNS) {
-      await run.condition('identity_jwks_unreadable', sustainedKey, `Hana's identity ${DOC_NAME[what]} failed ${failures} fetches in a row: the watchdog can't see what partners are served`, {
+      await run.condition('identity_jwks_unreadable', sustainedKey, `Journear's identity ${DOC_NAME[what]} failed ${failures} fetches in a row: the watchdog can't see what partners are served`, {
         document: what,
         url,
         reason: 'sustained',
@@ -1301,7 +1301,7 @@ async function readIdentityDoc(run: Run, what: 'jwks' | 'discovery', fetch: () =
   run.evaluatePrefix('identity_jwks_unreadable', answerPrefix);
   const r = readIdentityResponse(res);
   for (const f of r.findings) {
-    await run.condition('identity_jwks_unreadable', `${answerPrefix}${f.reason}`, `Hana's identity ${DOC_NAME[what]} can't be judged as published (${f.reason}: ${printable(f.detail)}). No pause: the chain isn't involved`, {
+    await run.condition('identity_jwks_unreadable', `${answerPrefix}${f.reason}`, `Journear's identity ${DOC_NAME[what]} can't be judged as published (${f.reason}: ${printable(f.detail)}). No pause: the chain isn't involved`, {
       document: what,
       url,
       reason: f.reason,
@@ -1313,7 +1313,7 @@ async function readIdentityDoc(run: Run, what: 'jwks' | 'discovery', fetch: () =
 
 /** A shape problem of a parsed document: critical at once, like the other unreadable answers. */
 async function badShape(run: Run, what: 'jwks' | 'discovery', url: string, problems: string[]): Promise<void> {
-  await run.condition('identity_jwks_unreadable', `identity_jwks_unreadable:${what}:answer:bad_shape`, `Hana's identity ${DOC_NAME[what]} has the wrong shape: ${listed(problems).map(printable).join('; ')}. No pause: the chain isn't involved`, {
+  await run.condition('identity_jwks_unreadable', `identity_jwks_unreadable:${what}:answer:bad_shape`, `Journear's identity ${DOC_NAME[what]} has the wrong shape: ${listed(problems).map(printable).join('; ')}. No pause: the chain isn't involved`, {
     document: what,
     url,
     reason: 'bad_shape',
@@ -1366,7 +1366,7 @@ async function identityJwks(run: Run): Promise<void> {
       await run.condition(
         'identity_key_unpinned',
         `identity_key_unpinned:${(await sha256b64url(refs.join(','))).slice(0, 16)}`,
-        `Hana's identity JWKS publishes ${v.unpinned.length} key(s) the watchdog doesn't accept (${why}): ${listed(v.unpinned).slice(0, 3).map(keyLabel).join(', ')}${v.unpinned.length > 3 ? ', ...' : ''}; partners trusting the JWKS URL accept tokens they sign. No pause: the chain isn't involved`,
+        `Journear's identity JWKS publishes ${v.unpinned.length} key(s) the watchdog doesn't accept (${why}): ${listed(v.unpinned).slice(0, 3).map(keyLabel).join(', ')}${v.unpinned.length > 3 ? ', ...' : ''}; partners trusting the JWKS URL accept tokens they sign. No pause: the chain isn't involved`,
         { url: jwksUrl, count: v.unpinned.length, keys: listed(v.unpinned).map(keyDetail), pinned: pins.pins, published: v.keys.length },
       );
     }
@@ -1375,14 +1375,14 @@ async function identityJwks(run: Run): Promise<void> {
       await run.condition(
         'identity_private_key_published',
         `identity_private_key_published:${(await sha256b64url(refs.join(','))).slice(0, 16)}`,
-        `Hana's identity JWKS publishes private key material for ${v.privateKeys.length} key(s): ${listed(v.privateKeys).slice(0, 3).map(keyLabel).join(', ')}${v.privateKeys.length > 3 ? ', ...' : ''}; anyone can sign identity tokens with them. No pause: the chain isn't involved`,
+        `Journear's identity JWKS publishes private key material for ${v.privateKeys.length} key(s): ${listed(v.privateKeys).slice(0, 3).map(keyLabel).join(', ')}${v.privateKeys.length > 3 ? ', ...' : ''}; anyone can sign identity tokens with them. No pause: the chain isn't involved`,
         // The members' names only: the stored alert never holds the private values.
         { url: jwksUrl, count: v.privateKeys.length, keys: listed(v.privateKeys).map(keyDetail) },
       );
     }
     for (const m of v.missing) {
       const how = m.reason === 'kid_differs' ? 'is published under another kid' : m.reason === 'not_clean' ? 'is published with members beyond the public ones' : 'is not published';
-      await run.condition('identity_key_missing', `identity_key_missing:${m.thumbprint}`, `Pinned identity key ${m.thumbprint} ${how} in Hana's identity JWKS`, { url: jwksUrl, ...m });
+      await run.condition('identity_key_missing', `identity_key_missing:${m.thumbprint}`, `Pinned identity key ${m.thumbprint} ${how} in Journear's identity JWKS`, { url: jwksUrl, ...m });
     }
     notes.push(`${v.keys.length} published, ${v.unpinned.length} unpinned, ${v.privateKeys.length} with private members, ${v.missing.length} pinned missing`);
   }
@@ -1403,7 +1403,7 @@ async function identityJwks(run: Run): Promise<void> {
       await run.condition(
         'identity_discovery_mismatch',
         `identity_discovery_mismatch:${p.field}:${(await sha256b64url(String(p.published))).slice(0, 16)}`,
-        `Hana's identity discovery document has ${p.field} ${shown}, not ${p.expected}. No pause: the chain isn't involved`,
+        `Journear's identity discovery document has ${p.field} ${shown}, not ${p.expected}. No pause: the chain isn't involved`,
         { url: discoveryUrl, ...p },
       );
     }

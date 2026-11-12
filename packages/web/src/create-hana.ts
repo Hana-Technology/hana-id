@@ -9,7 +9,7 @@ export const HANA_ENVIRONMENTS: readonly string[] = Object.freeze(Object.keys(HA
 export function createHana(config: HanaConfig): HanaClient {
   const name = (config as Partial<HanaConfig> | null)?.environment;
   const env = typeof name === 'string' && Object.hasOwn(HANA_ENVS, name) ? HANA_ENVS[name] : undefined;
-  if (!env) throw new TypeError(`Unknown Hana environment ${JSON.stringify(name)} (known: ${HANA_ENVIRONMENTS.join(', ') || 'none'})`);
+  if (!env) throw new TypeError(`Unknown Journear Passport environment ${JSON.stringify(name)} (known: ${HANA_ENVIRONMENTS.join(', ') || 'none'})`);
   if (typeof window === 'undefined') throw new Error('createHana runs in a browser page');
   warnPartnerIssues(window);
   return new HanaClient(config, {

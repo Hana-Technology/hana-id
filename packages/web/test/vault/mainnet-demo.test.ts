@@ -108,7 +108,7 @@ describe('the mainnet demo in the vault', () => {
     const reply = await s.t.request('eth_signTransaction', { tx: make() });
     expect(reply.error).toMatchObject({ code: 4100, data: { reason, chain: 'evm', chainId: 8453 } });
     expect((reply.error as { message: string }).message).not.toMatch(/0x[0-9a-f]{64}/u);
-    if (reason === 'mainnet_demo_over_cap') expect(reply.error).toMatchObject({ message: 'Hana’s mainnet demo signs at most $9.99 per transaction; this one can move about $16.01', data: { usd: '$16.01' } });
+    if (reason === 'mainnet_demo_over_cap') expect(reply.error).toMatchObject({ message: 'Journear’s mainnet demo signs at most $9.99 per transaction; this one can move about $16.01', data: { usd: '$16.01' } });
     expect(s.t.launcher.history).toContain(flash);
     await sleepReal(20);
     expect(approvePopups(s.t)).toHaveLength(0);

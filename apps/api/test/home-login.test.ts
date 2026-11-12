@@ -639,6 +639,7 @@ describe('POST /v1/home/login: the limits, all before the relay', () => {
     expect(r.status).toBe(429);
     const j = await json(r);
     expect(j.code).toBe('home_busy');
+    expect(j.error).toBe('Passport Home is busy, try again tomorrow');
     expect(Number(r.headers.get('retry-after'))).toBeGreaterThan(0);
     expect(near.sent.length).toBe(before);
     expect(await usage()).toBe(max);

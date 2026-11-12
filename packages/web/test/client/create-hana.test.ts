@@ -4,7 +4,7 @@
 import { loadEnv } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HANA_ENVIRONMENTS, createHana } from '../../src/create-hana.ts';
-import { HanaError, ProviderRpcError, toProviderRpcError, toSwkError } from '../../src/client/errors.ts';
+import { HanaError, ProviderRpcError, hanaError, toProviderRpcError, toSwkError } from '../../src/client/errors.ts';
 import { isInAppWebView, partnerPageIssues } from '../../src/client/requirements.ts';
 import * as web from '../../src/index.ts';
 import { FakeMessageChannel, PK, quietIframeLoads } from './harness.ts';
@@ -35,8 +35,8 @@ describe('createHana', () => {
   });
 
   it('refuses an unknown environment and a malformed publishable key', () => {
-    expect(() => createHana({ publishableKey: PK, environment: 'mainnet' })).toThrow(/Unknown Hana environment/u);
-    expect(() => createHana({ publishableKey: PK, environment: '__proto__' })).toThrow(/Unknown Hana environment/u);
+    expect(() => createHana({ publishableKey: PK, environment: 'mainnet' })).toThrow(/Unknown Journear Passport environment/u);
+    expect(() => createHana({ publishableKey: PK, environment: '__proto__' })).toThrow(/Unknown Journear Passport environment/u);
     expect(() => createHana({ publishableKey: 'sk_live_abc', environment: 'sandbox-dev' })).toThrow(/publishableKey/u);
     expect(() => createHana(null as never)).toThrow(TypeError);
     expect(document.querySelector('iframe')).toBeNull();
@@ -51,6 +51,7 @@ describe('createHana', () => {
     createHana({ publishableKey: PK, environment: 'sandbox-dev' }).destroy();
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]?.[0])).toContain('Google Identity Services');
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(/^\[Journear Passport\] Google Identity Services is loaded on this page. Journear Passport signs in through its own window/u);
   });
 
   it('the package root exports the client API', () => {
@@ -103,6 +104,15 @@ describe('error mapping', () => {
     expect(toProviderRpcError(new Error('boom'))).toMatchObject({ code: -32603, message: 'boom' });
     const p = new ProviderRpcError(-32000, 'node');
     expect(toProviderRpcError(p)).toBe(p);
+  });
+
+  it('the default messages name the product Journear Passport (D765)', () => {
+    expect(hanaError(4900).message).toBe('The Journear Passport vault is disconnected');
+    expect(hanaError(4100).message).toBe('Not logged in to Journear Passport');
+    expect(hanaError('vault_unavailable').message).toBe("The Journear Passport vault didn't load (check the page's CSP frame-src and the network)");
+    expect(hanaError('popup_blocked').message).toBe('The browser blocked the Journear Passport sign-in window');
+    expect(hanaError('coop_blocks_popup').message).toMatch(/^The Journear Passport sign-in window closed before it connected/u);
+    expect(hanaError('login_timeout').message).toBe("The Journear Passport sign-in window didn't connect in time");
   });
 
   it('SWK: {code, message} with the Hana string code in ext', () => {

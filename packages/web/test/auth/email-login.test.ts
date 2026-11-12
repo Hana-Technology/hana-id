@@ -595,6 +595,64 @@ describe('/login/email', () => {
     expect(s.page.notice).toBe('login_method_unavailable');
   });
 
+  it('D765: the fields check on blur, never on a keystroke, in the error line that replaces the hint; the submit still checks', async () => {
+    const s = emailSetup();
+    const input = document.getElementById('email-address') as HTMLInputElement;
+    const fieldOf = (el: HTMLElement) => el.closest('.jp-field') as HTMLElement;
+    // The system's field: the label above (for the input), the hint below, described by both lines.
+    expect(fieldOf(input).querySelector('label.jp-label')?.getAttribute('for')).toBe('email-address');
+    expect(input.getAttribute('aria-describedby')).toBe('email-address-hint email-address-error');
+    expect(document.getElementById('email-address-hint')?.textContent).toBe('We’ll email you a 6-digit code.');
+    // Typing never shows an error.
+    input.value = 'nope';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(fieldOf(input).classList.contains('is-invalid')).toBe(false);
+    expect(input.hasAttribute('aria-invalid')).toBe(false);
+    // Leaving the field does.
+    input.dispatchEvent(new Event('blur'));
+    expect(fieldOf(input).classList.contains('is-invalid')).toBe(true);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById('email-address-error')?.textContent).toBe('Enter a valid email address.');
+    // A valid address, or an empty field, clears it on the next blur; nothing was sent.
+    input.value = 'ada@example.com';
+    input.dispatchEvent(new Event('blur'));
+    expect(fieldOf(input).classList.contains('is-invalid')).toBe(false);
+    expect(input.hasAttribute('aria-invalid')).toBe(false);
+    expect(document.getElementById('email-address-error')?.textContent).toBe('');
+    input.value = '';
+    input.dispatchEvent(new Event('blur'));
+    expect(fieldOf(input).classList.contains('is-invalid')).toBe(false);
+    expect(s.f.issuer.start).not.toHaveBeenCalled();
+    // The code field the same way.
+    await toCode(s);
+    const code = document.getElementById('email-code') as HTMLInputElement;
+    expect(code.classList.contains('jp-input')).toBe(true);
+    code.value = '12';
+    code.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(fieldOf(code).classList.contains('is-invalid')).toBe(false);
+    code.dispatchEvent(new Event('blur'));
+    expect(fieldOf(code).classList.contains('is-invalid')).toBe(true);
+    expect(document.getElementById('email-code-error')?.textContent).toBe('Enter the 6-digit code from the mail.');
+    code.value = '123 456';
+    code.dispatchEvent(new Event('blur'));
+    expect(fieldOf(code).classList.contains('is-invalid')).toBe(false);
+    expect(s.f.issuer.verify).not.toHaveBeenCalled();
+  });
+
+  it('D765: one primary per screen, Cancel beside it as the secondary; the notice is an inline alert', async () => {
+    const s = emailSetup();
+    expect([...document.querySelectorAll('#app .jp-btn-primary, body > .jp-btn-primary')].map((b) => b.id)).toEqual(['email-send']);
+    expect(document.getElementById('email-cancel')?.className).toContain('jp-btn-secondary');
+    typeInto('email-address', 'nope');
+    submit('email-send');
+    await flush();
+    const notice = document.getElementById('email-notice') as HTMLElement;
+    expect(notice.classList.contains('jp-alert')).toBe(true);
+    expect(notice.querySelector(':scope > svg.ic')?.getAttribute('aria-hidden')).toBe('true');
+    expect(notice.textContent).toBe('Enter a valid email address.');
+    expect(s.f.issuer.start).not.toHaveBeenCalled();
+  });
+
   it('cancel tells the vault why (D245) and closes', async () => {
     const plain = emailSetup();
     click('email-cancel');

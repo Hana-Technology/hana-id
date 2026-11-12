@@ -1,11 +1,15 @@
 # @hana-id/sodax
 
-Optional Sodax wallet-provider adapters over `@hana-id/web`: an `IStellarWalletProvider` and an
-`IEvmWalletProvider` (one per spoke chain), typed against `@sodax/types` 2.2.0.
+Optional Sodax wallet-provider adapters over `@hana-id/web` (Journear Passport's browser SDK): an
+`IStellarWalletProvider` and an `IEvmWalletProvider` (one per spoke chain), typed against `@sodax/types` 2.2.0.
+
+> **Renamed.** Hana ID is now called **Journear Passport**. Only the names you and your users read changed (error
+> messages among them). The package names (`@hana-id/*`), the exported names, error codes and every signed or hashed
+> format are unchanged, so no code change is needed.
 
 ## Install
 
-The packages aren't on a registry yet. Hana sends you the tarballs with their SHA-256 checksums: check them, then
+The packages aren't on a registry yet. Journear sends you the tarballs with their SHA-256 checksums: check them, then
 install them together:
 
 ```sh
@@ -47,7 +51,7 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 84532, rpcUrl: 'http
   `receipt_rpc_wrong_chain` otherwise). `waitForTransactionReceipt` polls every 2 s for 180 s.
 - Call `sendTransaction` / `signTransaction` from the user's click: the approval popup opens in that click (the EVM
   provider calls `hana.prepareApproval()` before its own awaits). A swap can need several signatures
-  (`restoreFootprint`, a re-sign, a trustline); Hana's approval popup stays open 15 s after each answer, so they show
+  (`restoreFootprint`, a re-sign, a trustline); the Journear Passport approval popup stays open 15 s after each answer, so they show
   in the same window and need an Approve each. Sodax swaps can't be
   auto-approved yet.
 
@@ -65,8 +69,8 @@ accept (`4100`, `data.reason: 'mainnet_not_allowed'`), so no Sodax transaction c
 
 Build the transaction before the click (`createIntent({ raw: true })` when the user enters the amount), then call
 `evmProvider.sendTransaction(tx)` in the click: `sodax.swaps.swap()` awaits allowance and simulation first, which costs
-the click its popup. Real Sodax swaps through Hana wait for Hana's mainnet launch (live keys). Hana's own sandbox
-mainnet demo runs under a Hana-internal exception that isn't available to partner apps.
+the click its popup. Real Sodax swaps through Journear Passport wait for its mainnet launch (live keys). Journear's own
+sandbox mainnet demo runs under a Journear-internal exception that isn't available to partner apps.
 
-Page requirements and error codes: the `@hana-id/web` README. Hana's partner guide (ask Hana for the current copy) has
-the rest.
+Page requirements and error codes: the `@hana-id/web` README. The Journear Passport partner guide (ask Journear for the
+current copy) has the rest.

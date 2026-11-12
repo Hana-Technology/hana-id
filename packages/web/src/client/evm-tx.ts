@@ -119,7 +119,7 @@ const hex = (n: bigint): Hex => `0x${n.toString(16)}`;
 /** The filled port transaction (see the file comment). Only the missing fields cost RPC calls, made in parallel. */
 export async function fillTransaction(input: NormalizedTx, ctx: FillContext): Promise<EvmTxRequest> {
   if (input.from !== undefined && input.from.toLowerCase() !== ctx.from.toLowerCase()) {
-    throw new ProviderRpcError(ErrorCode.unauthorized, 'tx.from is not the Hana ID account');
+    throw new ProviderRpcError(ErrorCode.unauthorized, 'tx.from is not the Journear Passport account');
   }
   const chainId = hex(BigInt(ctx.chainId));
   if (input.chainId !== undefined && input.chainId !== chainId) {

@@ -306,7 +306,7 @@ describe('the follow-up mode', () => {
     await s.vaultSays(2, { t: 'email_consent', reason: 'declined', loginHint: SUBJECT });
     await vi.waitFor(() => expect(s.page.stage).toBe('link_choice'));
     expect(s.page.notice).toBe('email_consent_declined');
-    expect(pageText()).toContain('Hana checks whether your Google address already has a wallet. It keeps the address with your account and doesn’t share it with the app you’re signing in to.');
+    expect(pageText()).toContain('Journear checks whether your Google address already has a wallet. It keeps the address with your account and doesn’t share it with the app you’re signing in to.');
     expect(pageText()).not.toMatch(/doesn’t keep|isn’t kept/u);
     expect(pageText()).toContain('Without it you can’t open a new wallet with Google here.');
     expect(pageText()).toContain('Sign in with email instead');

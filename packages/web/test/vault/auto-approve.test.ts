@@ -124,7 +124,7 @@ const waitLabel = (t: Tab, label: string): Promise<void> => waitLauncher(t, labe
 
 /** Opens the popup from the launcher and returns the consent screen it shows. */
 async function consentScreen(s: Session): Promise<{ popup: FakeWindow; m: Record<string, unknown> }> {
-  await waitLabel(s.t, 'Review in Hana');
+  await waitLabel(s.t, 'Review in Journear Passport');
   const popup = openApproval(s.t);
   return { popup, m: await popup.next('hana:consent-request') };
 }
@@ -221,7 +221,7 @@ describe('with consent', () => {
     expect(stellarTxSignedBy(r.signedTxXdr, s.stellar)).toBe(true);
     expect(s.t.opened.length).toBe(opened);
     expect(await s.t.waitEvent('autoApproved')).toEqual({ kind: 'stellar_signTransaction', chain: 'stellar', contract: POOL, function: 'swap' });
-    expect(s.t.launcher.history).toContain('Signed by Hana under Swaps on Example');
+    expect(s.t.launcher.history).toContain('Signed by Journear Passport under Swaps on Example');
   });
 
   it('a matching request whose popup the partner page opened in the click (D99) closes that popup unseen', async () => {
@@ -246,7 +246,7 @@ describe('with consent', () => {
     const late = partnerApproval(s.t);
     expect(closes(late)).toHaveLength(1);
     expect(shown(late)).toEqual([]);
-    expect(s.t.launcher.history.slice(launcherSince)).not.toContain('Review in Hana');
+    expect(s.t.launcher.history.slice(launcherSince)).not.toContain('Review in Journear Passport');
   });
 
   it.each([
@@ -277,7 +277,7 @@ describe('with consent', () => {
     const [method, params] = (make as unknown as (s: Session) => readonly [string, unknown])(s);
     const reply = s.t.request(method, params);
     const shown = (await popup.next('hana:approve-request').catch(async () => {
-      await waitLabel(s.t, 'Review in Hana');
+      await waitLabel(s.t, 'Review in Journear Passport');
       return openApproval(s.t).next('hana:approve-request');
     })) as Record<string, unknown>;
     expect(shown.autoApprove).toEqual({ label: 'Swaps on Example', active: true, reason });
@@ -391,7 +391,7 @@ describe('the policy in force, re-read while the vault stays open', () => {
    */
   async function shownForApproval(s: Session): Promise<Record<string, unknown>> {
     const reply = s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0xa' }) });
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     const m = await popup.next('hana:approve-request');
     answer(s.t, popup, m, false);
@@ -460,7 +460,7 @@ describe('the policy in force, re-read while the vault stays open', () => {
     const kinds = since.filter((e) => e.event === 'launcherKind').map((e) => (e.data as { clickable: boolean }).clickable);
     const shows = since.filter((e) => e.event === 'ui' && (e.data as { launcher: string }).launcher === 'show').map((e) => (e.data as { label: string }).label);
     expect(shows.length).toBeGreaterThan(0);
-    expect(new Set(shows)).toEqual(new Set(['Signed by Hana under Swaps on Example']));
+    expect(new Set(shows)).toEqual(new Set(['Signed by Journear Passport under Swaps on Example']));
     expect(kinds).toHaveLength(shows.length);
     expect(kinds.every((k) => !k)).toBe(true);
     for (const [i, e] of since.entries()) if (e.event === 'ui' && (e.data as { launcher: string }).launcher === 'show') expect(since[i - 1]?.event).toBe('launcherKind');
@@ -535,7 +535,7 @@ describe('persistence and tabs', () => {
     // The consent request waits for the share and record; then it is sealed into the record.
     const reply = t.request('hana_requestAutoApprove');
     await sleepReal(20);
-    expect(t.launcher.label).not.toBe('Review in Hana');
+    expect(t.launcher.label).not.toBe('Review in Journear Passport');
     open();
     const { popup, m } = await consentScreen({ t, stellar: '', evm: '' });
     answerConsent(t, popup, m, true);
@@ -558,7 +558,7 @@ describe('persistence and tabs', () => {
     // The third is used up across both tabs: the fourth (in either tab) needs approval. Gas 21 000 keeps the four
     // maximum fees (84 000) inside the daily value limit, so the count is what runs out.
     const fourth = b.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x4', gas: '0x5208' }) });
-    await waitLabel(b.t, 'Review in Hana');
+    await waitLabel(b.t, 'Review in Journear Passport');
     const popup = openApproval(b.t);
     const m = await popup.next('hana:approve-request');
     expect((m.autoApprove as { reason: string }).reason).toBe('daily_count_reached');

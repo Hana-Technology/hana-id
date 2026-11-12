@@ -100,7 +100,7 @@ export const isTestStellarNetwork = (passphrase: string): boolean => passphrase 
 export const isTestNearNetwork = (network: string): boolean => network === 'testnet';
 
 /** The user-facing explanation (vault errors, the partner client's errors, the approval popup). */
-export const TEST_APP_NETWORK_RULE = 'Test apps (pk_test_ keys) can sign only for test networks: Hana ID refuses Stellar mainnet, NEAR mainnet and EVM chains outside its testnet list';
+export const TEST_APP_NETWORK_RULE = 'Test apps (pk_test_ keys) can sign only for test networks: Journear Passport refuses Stellar mainnet, NEAR mainnet and EVM chains outside its testnet list';
 
 /** Why a test app's raw request is refused (a raw digest names no network, so it could be a mainnet transaction). */
 export const TEST_APP_RAW_RULE = 'Test apps (pk_test_ keys) can’t use raw signing: a raw digest can be a mainnet transaction';

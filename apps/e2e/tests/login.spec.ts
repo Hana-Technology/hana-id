@@ -156,11 +156,11 @@ test('two partner tabs logging in at once each complete', async ({ context }) =>
   expect(ra).toEqual(rb);
 });
 
-test("a blocked popup falls back to the vault's \"Sign in with Hana\" launcher", async ({ page }) => {
+test("a blocked popup falls back to the vault's \"Sign in with Journear Passport\" launcher", async ({ page }) => {
   const app = await newApp();
   await openPartner(page, app, { blockPopups: true });
   await clickAction(page, 'login', 'login');
-  const popup = await clickLauncher(page, 'Sign in with Hana');
+  const popup = await clickLauncher(page, 'Sign in with Journear Passport');
   // Opened by the vault itself (vault mode), from its own click.
   expect(new URL(popup.url()).search).toBe('?from=vault');
   await chooseAccount(popup);

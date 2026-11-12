@@ -42,6 +42,7 @@ describe('iframe', () => {
     const f = s.frame;
     expect(f).not.toBeNull();
     expect(f.name).toMatch(/^hana-vault-[0-9a-f]{32}$/u);
+    expect(f.title).toBe('Journear Passport');
     expect(f.getAttribute('src')).toBe(`${ORIGINS.vaultOrigin}/vault?pk=${PK}`);
     expect(f.hidden).toBe(true);
     expect(f.style.getPropertyValue('display')).toBe('none');

@@ -1,189 +1,186 @@
-/* The demo's stylesheet: Hana's brand (packages/brand, D426), its Montserrat files bundled and served from this origin
-   (font-src 'self'), light and dark by the system setting. */
+/* The demo's stylesheet: Journear Passport's design system (packages/brand, D426 as amended by D765): its tokens, its
+   components (.jp-*) and its self-hosted Archivo and IBM Plex files, bundled and served from this origin (font-src
+   'self'), light and dark by the system setting. What follows is this page's own layout, written with --jp-* tokens
+   only (no colour of its own). */
 @import '@hana-id/brand/tokens.css';
 @import '@hana-id/brand/fonts.css';
-
-:root {
-  color-scheme: light dark;
-  --fg: var(--hana-ink);
-  --muted: var(--hana-muted);
-  --bg: var(--hana-bg);
-  --card: var(--hana-surface);
-  --line: var(--hana-line);
-  --line-strong: var(--hana-line-strong);
-  --accent: var(--hana-accent);
-  --accent-fg: var(--hana-accent-ink);
-  --warn-bg: var(--hana-warn-soft);
-  --warn-line: var(--hana-warn-line);
-  --error-bg: var(--hana-danger-soft);
-  --error-line: var(--hana-danger-line);
-  --error: var(--hana-danger);
-  --ok: var(--hana-ok);
-  font: 15px/1.55 var(--hana-font);
-}
+@import '@hana-id/brand/components.css';
 
 * { box-sizing: border-box; }
 
 [hidden] { display: none !important; }
 
-body { margin: 0; min-height: 100vh; background: var(--hana-gradient) top / 100% 3px no-repeat, var(--bg); color: var(--fg); }
+html { color-scheme: light dark; }
 
-main { max-width: 760px; margin: 0 auto; padding: 28px 16px 48px; }
-
-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-
-h1 { font-family: var(--hana-font-display); font-weight: 700; font-size: 28px; letter-spacing: -0.015em; margin: 0; }
-
-h2 { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
-
-strong, summary, th { font-weight: 600; }
-
-.badge { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: var(--hana-radius-pill); border: 1px solid var(--line-strong); color: var(--hana-ink-2); background: var(--hana-surface-2); }
-
-.banner { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: var(--hana-radius); padding: 10px 14px; margin: 16px 0 8px; }
-
-.lead { margin: 8px 0 16px; max-width: 68ch; }
-
-section { background: var(--card); border: 1px solid var(--line); border-radius: var(--hana-radius-lg); padding: 18px 20px; margin: 14px 0; box-shadow: var(--hana-shadow); }
-
-.row { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
-
-button {
-  font: inherit;
-  font-weight: 600;
-  padding: 8px 18px;
-  border-radius: var(--hana-radius-pill);
-  border: 1px solid var(--line-strong);
-  background: var(--card);
-  color: var(--fg);
-  cursor: pointer;
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--jp-bg-subtle);
+  color: var(--jp-fg);
+  font: var(--jp-weight-regular) var(--jp-text-md) / var(--jp-leading-body) var(--jp-font-body);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }
 
-button:hover:not(:disabled) { border-color: var(--accent); }
+/* ---- icons: the system's 20 px grid, 1.75 px stroke, round caps and joins; 16 px in buttons ---- */
+.ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 
-button:disabled { opacity: 0.5; cursor: default; }
+/* ---- top bar: the Journear lockup, the environment badge and, signed in, the wallet pill ---- */
+.topbar { background: var(--jp-surface); border-bottom: 1px solid var(--jp-border); position: sticky; top: 0; z-index: var(--jp-z-sticky); }
+.topbar-in { max-width: 820px; margin: 0 auto; padding: var(--jp-space-3) var(--jp-space-4); display: flex; align-items: center; gap: var(--jp-space-3); min-height: 64px; }
+.brand { display: inline-flex; align-items: center; padding: var(--jp-space-1) 0; border-radius: var(--jp-radius-sm); }
+.brand:focus-visible { outline: 2px solid var(--jp-focus); outline-offset: 2px; }
+/* The lockup drawn inline, so "PASSPORT" is set in the page's own Archivo. The logo's colours, never others: the brand
+   teal and the stamp orange, and in the dark scheme the white variant (logo/journear-lockup-white.svg). */
+.lockup { display: block; width: 158px; height: 36px; }
+.lockup .frame { stroke: var(--jp-teal-500); }
+.lockup .chevron { stroke: var(--jp-orange-500); }
+.lockup .word { fill: var(--jp-teal-500); }
+.lockup .sub { fill: var(--jp-teal-900); font-family: var(--jp-font-display); font-weight: 700; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .lockup :is(.frame) { stroke: var(--jp-gray-0); }
+  :root:not([data-theme='light']) .lockup :is(.word, .sub) { fill: var(--jp-gray-0); }
+}
+:root[data-theme='dark'] .lockup .frame { stroke: var(--jp-gray-0); }
+:root[data-theme='dark'] .lockup :is(.word, .sub) { fill: var(--jp-gray-0); }
+.topbar .spacer { flex: 1; }
+.jp-wallet-pill { text-decoration: none; color: var(--jp-fg); }
+.jp-wallet-pill:focus-visible { outline: 2px solid var(--jp-focus); outline-offset: 2px; }
+.jp-wallet-pill .jp-avatar .ic { width: 14px; height: 14px; }
 
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+/* ---- page ---- */
+main { max-width: 820px; margin: 0 auto; padding: var(--jp-space-8) var(--jp-space-4) var(--jp-space-12); }
 
-button.primary:hover:not(:disabled) { background: var(--hana-accent-hover); border-color: var(--hana-accent-hover); }
+.eyebrow { margin: 0 0 var(--jp-space-2); font-size: 11px; font-weight: var(--jp-weight-semibold); letter-spacing: var(--jp-tracking-caps); text-transform: uppercase; color: var(--jp-fg-muted); }
 
-button.small-button { padding: 2px 12px; font-size: 13px; }
+h1 { font-family: var(--jp-font-display); font-weight: var(--jp-weight-black); font-size: var(--jp-text-4xl); line-height: var(--jp-leading-tight); letter-spacing: var(--jp-tracking-tight); margin: 0; }
 
-:focus-visible { outline: 2px solid var(--hana-focus); outline-offset: 2px; }
+h2 { font-family: var(--jp-font-body); font-size: var(--jp-text-xl); font-weight: var(--jp-weight-semibold); line-height: var(--jp-leading-snug); letter-spacing: -0.01em; margin: 0; }
 
-code, pre { font-family: var(--hana-mono); font-size: 13px; }
+h3 { font-size: var(--jp-text-md); font-weight: var(--jp-weight-semibold); margin: 0; }
+
+strong, summary, th, b { font-weight: var(--jp-weight-semibold); }
+
+.lead { margin: var(--jp-space-4) 0 var(--jp-space-6); max-width: 66ch; }
+
+a { color: var(--jp-link); text-underline-offset: 2px; }
+
+code, pre { font-family: var(--jp-font-mono); font-size: var(--jp-text-sm); }
 
 code { word-break: break-all; }
 
-.status { font-weight: 600; margin: 12px 0 4px; }
+.muted { color: var(--jp-fg-muted); }
 
-.notice { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: var(--hana-radius); padding: 8px 12px; }
+.small { font-size: var(--jp-text-sm); }
 
-.error { background: var(--error-bg); border: 1px solid var(--error-line); border-radius: var(--hana-radius); padding: 8px 12px; }
+/* Page-level messages: the status line, then the inline alerts (never floating). */
+.status { font-weight: var(--jp-weight-semibold); margin: 0 0 var(--jp-space-3); display: flex; align-items: center; gap: var(--jp-space-2); }
+.status::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--jp-fg-faint); flex: none; }
+.status[data-state='logged_in']::before { background: var(--jp-success); }
+.status[data-state='error']::before { background: var(--jp-danger); }
+.alerts { display: flex; flex-direction: column; gap: var(--jp-space-2); margin: 0 0 var(--jp-space-4); }
+.alerts:not(:has(> :not([hidden]))) { margin: 0; }
+.jp-alert .ic { width: 18px; height: 18px; margin-top: 1px; }
+#testnet-banner { margin: var(--jp-space-6) 0 0; }
 
-.muted { color: var(--muted); }
+/* ---- cards ---- */
+section.jp-card { margin: 0 0 var(--jp-space-4); padding: var(--jp-space-6); gap: var(--jp-space-3); box-shadow: var(--jp-shadow-sm); }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--jp-space-3); flex-wrap: wrap; }
+.sub-block { border-top: 1px solid var(--jp-border); padding-top: var(--jp-space-4); margin-top: var(--jp-space-2); display: flex; flex-direction: column; gap: var(--jp-space-3); }
+.card-hint { margin: 0; font-size: var(--jp-text-sm); color: var(--jp-fg-muted); max-width: 70ch; }
 
-.small { font-size: 13px; }
+.row { display: flex; flex-wrap: wrap; gap: var(--jp-space-2); margin: 0; }
 
-.address { display: grid; grid-template-columns: 9.5em 1fr; gap: 4px 12px; align-items: baseline; margin: 8px 0; }
+/* Progress while signing in, and the NEAR card's stage: a spinner and the words. */
+.progress, .stage { margin: 0; font-size: var(--jp-text-sm); display: flex; align-items: center; gap: var(--jp-space-2); }
+.stage { font-weight: var(--jp-weight-semibold); }
+.progress::before, .stage::before { content: ''; flex: none; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--jp-primary); border-right-color: transparent; animation: jp-spin 0.7s linear infinite; }
 
-.address .actions { grid-column: 2; display: flex; gap: 12px; align-items: center; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .progress::before, .stage::before { animation: none; } }
 
-a { color: var(--accent); text-underline-offset: 2px; }
+/* ---- addresses: mono key/value rows with a chain badge ---- */
+.jp-kv.addresses { gap: var(--jp-space-4) var(--jp-space-5); align-items: start; }
+.jp-kv.addresses dt { padding-top: 1px; }
+.jp-kv.addresses dd { flex-direction: column; align-items: flex-start; gap: var(--jp-space-1); min-width: 0; }
+.jp-kv.addresses code { font-size: var(--jp-text-sm); line-height: var(--jp-leading-snug); }
+.addr-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--jp-space-1) var(--jp-space-3); font-family: var(--jp-font-body); font-size: var(--jp-text-sm); }
+.addr-actions .jp-btn-ghost { margin-left: -12px; }
+.jp-chain.chain-stellar i { background: var(--jp-teal-500); }
+.jp-chain.chain-evm i { background: var(--jp-info); }
+.jp-chain.chain-near i { background: var(--jp-fg); }
+.near-full { font-family: var(--jp-font-body); font-size: var(--jp-text-sm); }
+.near-full code { display: block; margin-top: var(--jp-space-1); }
 
-.results { list-style: none; padding: 0; margin: 10px 0 0; }
+/* ---- results: the confirm-and-sign pattern, read back. The outcome first, then the facts as mono rows ---- */
+.results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--jp-space-3); }
+.results:empty { display: none; }
+.result { border: 1px solid var(--jp-border); border-radius: var(--jp-radius-lg); background: var(--jp-surface); padding: var(--jp-space-4); display: flex; flex-direction: column; gap: var(--jp-space-2); animation: jp-fade var(--jp-dur-base) var(--jp-ease); }
+.result-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--jp-space-2); }
+.result-icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--jp-radius-md); flex: none; }
+.result-icon .ic { width: 18px; height: 18px; }
+.result.ok .result-icon { color: var(--jp-success); background: var(--jp-success-bg); }
+.result.fail .result-icon { color: var(--jp-danger); background: var(--jp-danger-bg); }
+.result-title { font-size: var(--jp-text-lg); font-weight: var(--jp-weight-semibold); letter-spacing: -0.01em; line-height: var(--jp-leading-snug); flex: 1 1 240px; min-width: 0; }
+.result .jp-kv { border-top: 1px solid var(--jp-border); padding-top: var(--jp-space-3); }
+.result .jp-kv dd { min-width: 0; flex-wrap: wrap; }
+.result-note { margin: 0; font-size: var(--jp-text-sm); color: var(--jp-fg-muted); }
 
-.results li { border-top: 1px solid var(--line); padding: 8px 0; }
+/* ---- the NEAR card's form ---- */
+.field-foot { display: flex; align-items: baseline; gap: var(--jp-space-3); }
+.field-foot .jp-hint { flex: 1; }
+.jp-field.is-invalid .field-foot .jp-hint { display: none; }
 
-.results .ok { color: var(--ok); font-weight: 600; }
-
-.results .fail { color: var(--error); font-weight: 600; }
-
-table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
-
-th, td { border: 1px solid var(--line); padding: 4px 7px; text-align: right; }
-
-th { background: var(--hana-surface-2); }
-
-th:first-child, td:first-child { text-align: left; }
-
-details { margin: 8px 0; }
-
-summary { cursor: pointer; }
-
-pre { max-height: 320px; overflow: auto; background: var(--hana-surface-2); border: 1px solid var(--line); border-radius: var(--hana-radius-sm); padding: 8px; white-space: pre-wrap; word-break: break-all; }
-
-footer { margin-top: 24px; }
-
-/* The NEAR card. */
-h3 { font-size: 15px; font-weight: 600; margin: 18px 0 6px; }
-
-.near .address { grid-template-columns: 11em 1fr; }
-
-.near-full { margin: 0 0 6px; font-size: 13px; }
-
-.near-full code { display: block; margin-top: 4px; }
-
-.near-write, .near-book { border-top: 1px solid var(--line); margin-top: 14px; }
-
-.field-label { display: block; font-size: 13px; font-weight: 600; margin: 8px 0 4px; }
-
-.near-input-row { display: flex; gap: 10px; align-items: center; }
-
-input[type='text'] {
-  font: inherit;
-  flex: 1;
-  min-width: 0;
-  padding: 8px 12px;
-  border-radius: var(--hana-radius);
-  border: 1px solid var(--line-strong);
-  background: var(--bg);
-  color: var(--fg);
-}
-
-input[type='text']:focus-visible { border-color: var(--accent); }
-
-.count { font-variant-numeric: tabular-nums; white-space: nowrap; }
-
-.count.over { color: var(--error); font-weight: 600; }
-
-.stage { font-weight: 600; margin: 8px 0; }
-
-.stage::before { content: ''; display: inline-block; width: 0.7em; height: 0.7em; margin-right: 8px; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; vertical-align: -0.05em; animation: spin 0.9s linear infinite; }
-
-@keyframes spin { to { transform: rotate(360deg); } }
-
-@media (prefers-reduced-motion: reduce) { .stage::before { animation: none; } }
-
-.done { margin: 8px 0; }
-
-.done .ok { color: var(--ok); font-weight: 600; }
-
-.near .error { margin: 8px 0; }
-
-.book-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-
-.book-head h3 { margin-bottom: 0; }
-
-.messages { list-style: none; padding: 0; margin: 6px 0 0; }
-
-.messages li { border-top: 1px solid var(--line); padding: 8px 0; }
-
+.book-head { display: flex; align-items: center; justify-content: space-between; gap: var(--jp-space-3); }
+.messages { list-style: none; padding: 0; margin: 0; }
+.messages li { border-top: 1px solid var(--jp-border); padding: var(--jp-space-3) 0; }
 .messages li:first-child { border-top: 0; }
+.messages .meta { font-size: var(--jp-text-sm); color: var(--jp-fg-muted); display: flex; flex-wrap: wrap; align-items: center; gap: var(--jp-space-1) var(--jp-space-3); }
+.messages .author { font-family: var(--jp-font-mono); font-size: var(--jp-text-xs); color: var(--jp-fg); }
+.messages .you { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: var(--jp-radius-full); font-size: 11px; font-weight: var(--jp-weight-semibold); background: var(--jp-primary-soft); color: var(--jp-primary); }
+.messages .text { margin: var(--jp-space-1) 0 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.messages li.mine { background: var(--jp-primary-soft); margin: 0 calc(-1 * var(--jp-space-3)); padding: var(--jp-space-3); border-radius: var(--jp-radius-md); border-top-color: transparent; }
+.messages li.mine + li { border-top-color: transparent; }
 
-.messages .meta { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+/* ---- identity token, diagnostics: code on the ink surface ---- */
+pre.jp-code { max-height: 320px; white-space: pre-wrap; word-break: break-all; }
 
-.messages .author { font-family: var(--hana-mono); color: var(--hana-ink-2); }
+details { margin: 0; }
+summary { cursor: pointer; font-size: var(--jp-text-sm); color: var(--jp-link); width: fit-content; border-radius: var(--jp-radius-sm); }
+summary:focus-visible { outline: 2px solid var(--jp-focus); outline-offset: 2px; }
+details[open] > summary { margin-bottom: var(--jp-space-2); }
+.panel { border: 1px solid var(--jp-border); border-radius: var(--jp-radius-lg); padding: var(--jp-space-3) var(--jp-space-4); }
+.panel > summary { color: var(--jp-fg); font-weight: var(--jp-weight-semibold); }
+.panel > * + * { margin-top: var(--jp-space-2); }
 
-.messages .you { font-weight: 600; color: var(--accent); }
+/* The login timings: a stats strip for the latest login, then the full table (sticky header, numbers on the right). */
+.jp-stats { margin: 0; }
+.jp-stat .v small { font-size: var(--jp-text-md); font-weight: var(--jp-weight-medium); color: var(--jp-fg-muted); margin-left: 4px; }
+.jp-statcell .muted { font-size: var(--jp-text-xs); }
+.jp-table-wrap { max-height: 360px; }
+.jp-table { min-width: 720px; }
+.jp-table td.muted { color: var(--jp-fg-muted); }
 
-.messages .text { margin: 2px 0 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
+footer { margin-top: var(--jp-space-8); padding-top: var(--jp-space-4); border-top: 1px solid var(--jp-border); font-size: var(--jp-text-sm); color: var(--jp-fg-muted); }
 
-.messages li.mine { background: var(--hana-surface-2); margin: 0 -10px; padding: 8px 10px; border-radius: var(--hana-radius-sm); }
+/* ---- toasts: bottom right on desktop, at the top on phones; 380 px at most, a stack of three ---- */
+.toasts { position: fixed; right: var(--jp-space-6); bottom: var(--jp-space-6); z-index: var(--jp-z-toast); width: calc(100% - 2 * var(--jp-space-4)); max-width: 380px; pointer-events: none; }
+.toasts > .jp-toast { pointer-events: auto; }
+.toasts:empty { display: none; }
+.jp-toast > .ic { width: 28px; height: 28px; }
 
-@media (max-width: 560px) {
-  .address, .near .address { grid-template-columns: 1fr; }
-  .address .actions { grid-column: 1; }
-  .near-input-row { flex-direction: column; align-items: stretch; }
-  .count { align-self: flex-end; }
+@media (max-width: 600px) {
+  main { padding-top: var(--jp-space-6); }
+  h1 { font-size: var(--jp-text-3xl); }
+  section.jp-card { padding: var(--jp-space-4); }
+  .jp-kv.addresses { grid-template-columns: 1fr; gap: var(--jp-space-2); }
+  .jp-kv.addresses dd + dt { margin-top: var(--jp-space-3); }
+  .result .jp-kv { grid-template-columns: 1fr; gap: 2px; }
+  .result .jp-kv dd + dt { margin-top: var(--jp-space-2); }
+  .row .jp-btn { white-space: normal; height: auto; min-height: var(--jp-control-md); padding-top: var(--jp-space-2); padding-bottom: var(--jp-space-2); flex: 1 1 100%; }
+  .topbar-in { min-height: 56px; gap: var(--jp-space-2); }
+  .jp-wallet-pill .label { display: none; }
+  /* No room for three things: the environment stays in the footer and the testnet alert. */
+  .topbar #env-badge { display: none; }
+  .toasts { top: var(--jp-space-4); bottom: auto; left: var(--jp-space-4); right: var(--jp-space-4); width: auto; margin: 0 auto; }
 }

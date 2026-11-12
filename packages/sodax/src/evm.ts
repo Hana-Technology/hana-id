@@ -60,7 +60,7 @@ const noop = () => {};
 const chainHex = (id: number): `0x${string}` => `0x${id.toString(16)}`;
 
 export function createSodaxEvmProvider(hana: SodaxEvmHana, config: SodaxEvmConfig): IEvmWalletProvider {
-  if (!isObject(hana) || !isObject(hana.ethereum)) throw new TypeError('createSodaxEvmProvider takes the Hana client (createHana)');
+  if (!isObject(hana) || !isObject(hana.ethereum)) throw new TypeError('createSodaxEvmProvider takes the Journear Passport client (createHana)');
   if (!isObject(config)) throw new TypeError('createSodaxEvmProvider takes {chainId, rpcUrl}');
   const { chainId } = config;
   if (typeof chainId !== 'number' || !Number.isSafeInteger(chainId) || chainId <= 0) throw new TypeError('chainId must be a positive integer');
@@ -187,8 +187,8 @@ function checkRawTx(raw: EvmRawTransaction, vault: string | null): { from: strin
   if (!isObject(raw)) throw invalid('sendTransaction takes {from, to, value: bigint, data}');
   const { from, to, value, data } = raw as Record<string, unknown>;
   if (typeof from !== 'string' || !isEvmAddress(from)) throw invalid('rawTx.from must be an address');
-  if (vault === null) throw new HanaError(ErrorCode.unauthorized, 'Not logged in to Hana ID');
-  if (from.toLowerCase() !== vault.toLowerCase()) throw new HanaError(ErrorCode.unauthorized, 'rawTx.from is not the Hana ID account');
+  if (vault === null) throw new HanaError(ErrorCode.unauthorized, 'Not logged in to Journear Passport');
+  if (from.toLowerCase() !== vault.toLowerCase()) throw new HanaError(ErrorCode.unauthorized, 'rawTx.from is not the Journear Passport account');
   // Sodax never creates contracts through a wallet provider: `to` is always a contract or token address.
   if (typeof to !== 'string' || !isEvmAddress(to)) throw invalid('rawTx.to must be an address');
   if (typeof value !== 'bigint' || value < 0n || value > UINT256_MAX) throw invalid('rawTx.value must be a uint256 bigint');

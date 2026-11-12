@@ -54,7 +54,7 @@ export function ChainOwnerGate({ chain, org, scopeId, what }: { chain: ChainOwne
       {canAdd ? (
         <>An on-chain owner can add you on the {scopeLink} (“set the on-chain owners to your organisation’s owners”); you can do this once that change has taken effect.</>
       ) : (
-        <>No owner of your organisation is an on-chain owner yet, so ask Hana to add you; the {scopeLink} shows who can sign.</>
+        <>No owner of your organisation is an on-chain owner yet, so ask Journear to add you; the {scopeLink} shows who can sign.</>
       )}
     </Why>
   );

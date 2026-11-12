@@ -40,6 +40,25 @@ describe('the landing page', () => {
   });
 });
 
+describe('the stats strip (the design system’s, under the verdict)', () => {
+  it('counts the checks by state, the same counts as the tiles', async () => {
+    const s = await open(answers.warnings);
+    const strip = s.main().querySelector('.verdict + .jp-stats')!;
+    expect(strip).not.toBeNull();
+    const cells = [...strip.querySelectorAll('.jp-statcell')].map((c) => [c.querySelector('.k')!.textContent, c.querySelector('.v')!.textContent]);
+    const t = tiles(s);
+    const n = (chip: string) => String(t.filter((x) => x.chip === chip).length);
+    expect(cells).toEqual([
+      ['Checks passed', `${n('OK')} of ${t.length - Number(n('Not measured'))}`],
+      ['Critical', n('Critical')],
+      ['Warnings', n('Warning')],
+      ['Unknown', n('Unknown')],
+      ['Not measured', n('Not measured')],
+    ]);
+    expect(Number(n('Warning'))).toBeGreaterThan(0);
+  });
+});
+
 describe('the verdict', () => {
   it('all green: “All systems operational” in green, no issues panel, every tile OK or not measured', async () => {
     const s = await open(answers.green);
@@ -71,7 +90,7 @@ describe('the verdict', () => {
     expect(sev).toEqual([...sev].sort((a, b) => (a === b ? 0 : a === 'critical' ? -1 : 1)));
     expect(sev[0]).toBe('critical');
     const api = items.find((i) => i.textContent!.includes('API is down'))!;
-    expect(api.querySelector('.badge')!.textContent).toBe('Critical');
+    expect(api.querySelector('.jp-badge')!.textContent).toBe('Critical');
     expect(api.textContent).toContain('AffectsEvery login, wallet and partner app');
     expect(api.textContent).toMatch(/First seen\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/u);
     expect(api.querySelector('.issue-action')!.textContent).toContain('wrangler rollback');
@@ -122,7 +141,7 @@ describe('NEAR RPC tile', () => {
     const s = await open(answers.critical);
     const tile = [...s.main().querySelectorAll('.tile')].find((t) => t.querySelector('h3')!.textContent === 'NEAR RPC')!;
     expect(tile.querySelector('.state-chip')!.textContent).toBe('Critical');
-    const rows = [...tile.querySelectorAll('.tile-lines li')].map((li) => [...li.querySelectorAll('span')].map((x) => x.textContent));
+    const rows = [...tile.querySelectorAll('.tile-lines li')].map((li) => [...li.children].map((x) => x.textContent));
     expect(rows.map((r) => r.slice(0, 2))).toEqual([['Critical', 'Primary'], ['Critical', 'Backup 1'], ['Critical', 'Backup 2']]);
     expect(rows[0]![2]).toMatch(/^Down: it /u);
   });
@@ -163,8 +182,8 @@ describe('safety', () => {
   });
 
   it('a failed read is said in plain words with its code', async () => {
-    const s = boot('/', () => ({ status: 503, body: { error: { code: 'upstream_unavailable', message: 'A Hana service did not answer' } } }));
-    await vi.waitFor(() => expect(s.text()).toContain('A Hana service didn’t answer'));
+    const s = boot('/', () => ({ status: 503, body: { error: { code: 'upstream_unavailable', message: 'A Journear service did not answer' } } }));
+    await vi.waitFor(() => expect(s.text()).toContain('A Journear service didn’t answer'));
     expect(s.text()).toContain('upstream_unavailable');
   });
 });

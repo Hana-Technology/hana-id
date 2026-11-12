@@ -1,5 +1,5 @@
-// What Hana Home says when something is refused or fails (home-page.ts, home-export.ts, home-devices.ts,
-// home-profile.ts): one sentence per code, in Hana's own words. The API's message is never shown: only its code picks
+// What Passport Home says when something is refused or fails (home-page.ts, home-export.ts, home-devices.ts,
+// home-profile.ts): one sentence per code, in Journear's own words. The API's message is never shown: only its code picks
 // the sentence, so an odd answer can't put text on the page.
 import { ApiError } from '@hana-id/core';
 
@@ -11,26 +11,26 @@ export interface HomeProblem {
   signInAgain: boolean;
 }
 
-export const UNREACHABLE = 'Hana Home is not reachable right now. Nothing on screen was lost. Try again in a moment.';
-const NOT_COVERED = 'Hana can’t open this wallet from here. If the app still runs, use the app itself.';
+export const UNREACHABLE = 'Passport Home is not reachable right now. Nothing on screen was lost. Try again in a moment.';
+const NOT_COVERED = 'Journear can’t open this wallet from here. If the app still runs, use the app itself.';
 const TOKEN_REFUSED = 'Google’s answer could not be verified. Sign in again to retry.';
 
 /** The sentence for a code: the API's refusals, and the codes the page itself gives to what it stops. */
 const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   rate_limited: 'Too many requests. Wait a minute and try again.',
-  home_busy: 'Hana Home has reached its limit for today. Try again tomorrow.',
+  home_busy: 'Passport Home has reached its limit for today. Try again tomorrow.',
   home_no_wallet: 'There is no wallet for this sign-in in that app.',
-  home_account_mismatch: 'Sign in as the same account you used in Hana Home.',
+  home_account_mismatch: 'Sign in as the same account you used in Passport Home.',
   not_covered: NOT_COVERED,
   shared_login_disabled: NOT_COVERED,
   unregistered_client: NOT_COVERED,
   scope_mismatch: NOT_COVERED,
   link_pending: 'A sign-in method is still being added to this wallet. Try again once that has finished.',
-  unknown_scope: 'Hana doesn’t know that app.',
+  unknown_scope: 'Journear doesn’t know that app.',
   counter_reused: 'That request was already sent. Try again.',
-  bad_request: 'Hana Home couldn’t read that request. Try again.',
-  origin_not_allowed: 'Hana Home can’t be used from this address.',
-  bad_response: 'Hana Home got an answer it couldn’t read. Try again in a moment.',
+  bad_request: 'Passport Home couldn’t read that request. Try again.',
+  origin_not_allowed: 'Passport Home can’t be used from this address.',
+  bad_response: 'Passport Home got an answer it couldn’t read. Try again in a moment.',
   home_directory_unavailable: UNREACHABLE,
   rate_limiter_unavailable: UNREACHABLE,
   near_unavailable: UNREACHABLE,
@@ -40,41 +40,41 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   session_consumed: 'That sign-in was already used. Nothing was shown. Sign in again to retry.',
   ckd_failed: 'The key service didn’t produce the key this time. Nothing was shown. Sign in again to retry.',
   derive_failed: 'The wallet could not be opened. Nothing was shown. Sign in again to retry.',
-  contract_rejected: 'The sign-in was refused on NEAR. Nothing was shown.',
-  address_mismatch: 'The wallet this sign-in opened is not the one Hana has on record for you in this app, so nothing is shown. Try again later.',
+  contract_rejected: 'The sign-in was refused. Nothing was shown.',
+  address_mismatch: 'The wallet this sign-in opened is not the one Journear has on record for you in this app, so nothing is shown. Try again later.',
   pairing_failed: 'The key service returned an answer that failed its check, so it was not used. Nothing was shown.',
   invalid_token: TOKEN_REFUSED,
   nonce_mismatch: TOKEN_REFUSED,
   token_expired: TOKEN_REFUSED,
   wrong_audience: TOKEN_REFUSED,
   token_invalid: TOKEN_REFUSED,
-  token_has_pii: 'Google returned more account details than Hana accepts, so the sign-in was stopped.',
+  token_has_pii: 'Google returned more account details than Journear accepts, so the sign-in was stopped.',
   google_error: 'Google did not complete the sign-in. Try again.',
   stale_sign_in: 'Google did not ask you to sign in again. Try again.',
   login_cancelled: 'The sign-in window closed before it finished. Try again.',
   login_timeout: 'The sign-in took too long. Try again.',
   popup_blocked: 'Your browser blocked the sign-in window. Allow pop-ups for this page and try again.',
-  home_signing_in: 'Finish signing in to Hana Home in the other window first, then try again.',
-  home_signed_out: 'Your sign-in to Hana Home has ended. Sign in to Hana Home again, then try once more.',
-  path_disputed: 'NEAR providers disagree about which wallet this sign-in opens, so Hana Home opened nothing. Try again later.',
-  path_unconfirmed: 'Hana Home couldn’t confirm on NEAR which wallet this sign-in opens, so it opened nothing. Try again in a moment.',
-  near_unreadable: 'Hana Home couldn’t read NEAR to check this app. Nothing was opened. Try again in a moment.',
-  root_unsupported: 'This wallet belongs to a sign-in method Hana Home can’t open yet.',
+  home_signing_in: 'Finish signing in to Passport Home in the other window first, then try again.',
+  home_signed_out: 'Your sign-in to Passport Home has ended. Sign in to Passport Home again, then try once more.',
+  path_disputed: 'Journear’s checks disagree about which wallet this sign-in opens, so Passport Home opened nothing. Try again later.',
+  path_unconfirmed: 'Passport Home couldn’t confirm which wallet this sign-in opens, so it opened nothing. Try again in a moment.',
+  near_unreadable: 'Passport Home couldn’t check this app right now. Nothing was opened. Try again in a moment.',
+  root_unsupported: 'This wallet belongs to a sign-in method Passport Home can’t open yet.',
   // Devices and the stops (home-devices.ts). A 404 is the same for "gone" and "not yours": the sentence says what is likely.
-  unknown_share: 'Hana Home couldn’t find that device among yours: it has probably signed out already. Show your devices again to see what is signed in now.',
-  unknown_consent: 'Hana Home couldn’t find that auto-approve among yours: it has probably ended already. Show your devices again to see what is on now.',
-  unknown_email_share: 'Hana Home found nothing you share with that app. Show your devices again to see what you share now.',
-  email_sharing_unavailable: 'Hana Home can’t change email sharing right now. Try again later.',
+  unknown_share: 'Passport Home couldn’t find that device among yours: it has probably signed out already. Show your devices again to see what is signed in now.',
+  unknown_consent: 'Passport Home couldn’t find that auto-approve among yours: it has probably ended already. Show your devices again to see what is on now.',
+  unknown_email_share: 'Passport Home found nothing you share with that app. Show your devices again to see what you share now.',
+  email_sharing_unavailable: 'Passport Home can’t change email sharing right now. Try again later.',
   // The user's name and who gets it (home-profile.ts).
-  bad_name: 'Hana Home couldn’t save that name. Each name can be up to 50 characters on one line, with no hidden or control characters.',
+  bad_name: 'Passport Home couldn’t save that name. Each name can be up to 50 characters on one line, with no hidden or control characters.',
   no_profile_name: 'Set your name first: go back to all apps, open “Your name”, and save a first or last name. Then share it from here.',
-  unknown_app: 'Hana Home can’t share your name with this app: Hana doesn’t list it now.',
-  name_sharing_unavailable: 'Hana Home can’t change name sharing right now. Try again later.',
-  profile_unavailable: 'Names aren’t available in Hana Home yet. Try again later.',
+  unknown_app: 'Passport Home can’t share your name with this app: Journear doesn’t list it now.',
+  name_sharing_unavailable: 'Passport Home can’t change name sharing right now. Try again later.',
+  profile_unavailable: 'Names aren’t available in Passport Home yet. Try again later.',
   // Email (home-email.ts).
-  home_email_unavailable: 'Email sign-in to Hana Home isn’t available right now. Try again later.',
+  home_email_unavailable: 'Email sign-in to Passport Home isn’t available right now. Try again later.',
   email_token_invalid: 'The email sign-in could not be checked. Nothing was shown. Try again.',
-  no_sign_in: 'Hana Home can’t sign you in right now. Try again later.',
+  no_sign_in: 'Passport Home can’t sign you in right now. Try again later.',
 });
 
 /** A code as the page may show it: the API's lowercase snake case only. */
@@ -90,7 +90,7 @@ export function homeProblem(err: unknown): HomeProblem {
   const code = shownCode(err.code);
   const requestId = shownRequestId(err.requestId);
   // Every credential refusal is a 401: the sign-in has ended, whatever the code.
-  if (err.status === 401) return { code, text: 'Your sign-in to Hana Home has ended. Sign in again to go on.', requestId, signInAgain: true };
+  if (err.status === 401) return { code, text: 'Your sign-in to Passport Home has ended. Sign in again to go on.', requestId, signInAgain: true };
   const known = Object.hasOwn(PROBLEM_TEXT, code) ? PROBLEM_TEXT[code] : undefined;
   if (known !== undefined) return { code, text: known, requestId, signInAgain: false };
   if (err.status === 429) return { code, text: PROBLEM_TEXT.rate_limited as string, requestId, signInAgain: false };

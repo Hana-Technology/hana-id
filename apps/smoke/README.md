@@ -3,6 +3,10 @@
 Local test pages (Vite + vanilla TypeScript, `http://localhost:5173`) that run the Hana ID login against a **deployed
 testnet** environment. They are test tooling, not the SDK and not an integration guide.
 
+The pages wear Journear Passport's tokens and self-hosted fonts (`packages/brand`, D765) through one stylesheet,
+`src/smoke.css` (a light restyle, `--jp-*` colours only, light and dark by the system setting); `test/style.test.ts`
+checks every page links it and names the product Journear Passport. Their behaviour is unchanged.
+
 | Page | Flow | Use it for |
 |---|---|---|
 | `/` (`index.html`, `src/vault-page.ts`) | The real partner client, `@hana-id/web`: vault iframe → Hana login popup → Google (openid only) → `POST /v1/login` (`create_session_and_derive`) → CKD decryption and derivation v1 **inside the vault** | Everything a partner gets: login, timings, persistence and unlock, logout, export, approval and the auto-approve demo |
@@ -82,7 +86,7 @@ pnpm --filter @hana-id/smoke typecheck
    Google account you will use (`personal`, `workspace`: up to 32 letters, digits, spaces, `_ . -`, never an email
    address) → *Load app*. The page mounts the vault (`createHana`) and calls `GET /v1/app` itself to show the app's
    name, scope, Google client and auto-approve policy, and to check that the API's signer is the manifest's.
-2. **Wallet**: *Log in with Hana* opens the Hana login popup from the click. *Cancel login*, *Log out*, *Remount the
+2. **Wallet**: *Log in with Journear* opens the Journear login popup from the click. *Cancel login*, *Log out*, *Remount the
    vault* (destroys the client and mounts a new one, as a reload does), *Reload the page*, *Revoke other devices*
    (only within 5 min of a fresh login), *Export Stellar key* / *Export EVM key* (the vault shows its launcher; the
    key is shown only in the Hana export window, after a fresh Google sign-in).
@@ -91,7 +95,7 @@ pnpm --filter @hana-id/smoke typecheck
    after the consent screen* (a covered request with no consent in force, or one for which the vault showed its
    launcher), *signed after approval*, *rejected (4001)* or
    *refused* with the code. One request runs at a time: the sign, auto-approve and export buttons stay disabled until
-   it settles, so each label is that request's own. The vault’s 3-second "Signed by Hana under …" notice after an auto-sign is logged as a notice and is not
+   it settles, so each label is that request's own. The vault’s 3-second "Signed by Journear Passport under …" notice after an auto-sign is logged as a notice and is not
    counted as a popup (the `launcher` event's `clickable: false`). *Auto-approve status* and *Stop auto-approving*
    show their result beside the buttons as well as in the Events log. See [Auto-approve demo](#auto-approve-demo).
 
@@ -364,7 +368,7 @@ API keep refusing any ID token with a claim outside the allow-list (`token_has_p
 
 ### Vault page
 
-- [ ] **Login through the vault**: one click on *Log in with Hana* → Google's account chooser → addresses. The run
+- [ ] **Login through the vault**: one click on *Log in with Journear* → Google's account chooser → addresses. The run
       has every login stage of [Timings](#timings) with a small `other`, and the log shows no `/v1/sessions` or
       `/v1/derive` call from this page (DevTools → Network, this page and the vault frame: one `POST /v1/login`).
 - [ ] **openid-only token**: the login succeeds (the vault and the API always apply the claim allow-list; a refused

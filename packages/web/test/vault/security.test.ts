@@ -50,7 +50,7 @@ describe('no secret crosses postMessage or the BroadcastChannel', () => {
     answer(t, popup, await popup.next('hana:approve-request'), true);
     await sign;
     const exp = t.request('hana_export', { chain: 'evm' });
-    for (let i = 0; i < 100 && t.launcher.label !== 'Export key in Hana'; i++) await sleepReal(5);
+    for (let i = 0; i < 100 && t.launcher.label !== 'Export key in Journear Passport'; i++) await sleepReal(5);
     t.launcher.click();
     const w = t.opened.at(-1)!;
     t.dispatch({ data: { v: 1, t: 'hana:export-hello' }, origin: ENV.authOrigin, source: w });

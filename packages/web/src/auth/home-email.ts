@@ -19,6 +19,7 @@ import type { Dom } from './dom.ts';
 import { issuerDetail } from './email-api.ts';
 import { CHALLENGE_ID_RE } from './email-storage.ts';
 import type { GestureCheck } from './page-window.ts';
+import { BTN, alert, icon } from './ui.ts';
 
 export type HomeEmailKind = 'identity' | 'derive';
 
@@ -109,8 +110,8 @@ export const HOME_EMAIL_TEXT = Object.freeze({
   invalidEmail: 'Enter a valid email address.',
   domain: 'Addresses on this domain can’t be used to sign in.',
   rateLimited: 'Too many attempts. Try again later.',
-  unreachable: 'Hana’s email service can’t be reached right now. Try again in a moment.',
-  unreachableStart: 'Hana’s email service can’t be reached right now. A code may already be on its way: if you try again, use the newest code.',
+  unreachable: 'Journear’s email service can’t be reached right now. Try again in a moment.',
+  unreachableStart: 'Journear’s email service can’t be reached right now. A code may already be on its way: if you try again, use the newest code.',
   expired: 'This code expired or can’t be used any more. Send a new code.',
   noTries: 'That code is wrong, and this attempt has no tries left. Send a new code.',
   wrong: (left: number | null) => (left === null ? 'That code is wrong. Check the mail and try again.' : `That code is wrong. ${left} ${left === 1 ? 'try' : 'tries'} left.`),
@@ -122,6 +123,47 @@ export const HOME_EMAIL_TEXT = Object.freeze({
 });
 
 export const CODE_RE = /^\d{6}$/u;
+
+/** Whether an address can be sent at all (the issuer checks the rest): what the field checks when it loses focus. */
+export const plausibleAddress = (address: string): boolean => address.length >= 3 && address.length <= 254 && address.includes('@') && !/\s/u.test(address);
+
+/**
+ * A field on the design system's pattern: the label above (6 px), the input, the hint below, and an error line that
+ * shows in the hint's place. It checks the value when the field loses focus, never while the user types: a value that
+ * `ok` refuses marks the field invalid (`aria-invalid`, the error read with it); typing again clears the mark until the
+ * next blur. An empty field is left alone (a submit says what is missing).
+ */
+export function checkedField(d: Dom, o: { input: HTMLInputElement; label: string; hint: string; error: string; ok: (value: string) => boolean }): HTMLElement {
+  const id = o.input.id;
+  o.input.classList.add('jp-input');
+  o.input.setAttribute('aria-describedby', `${id}-hint`);
+  const field = d.h(
+    'div',
+    { class: 'jp-field' },
+    d.h('label', { class: 'jp-label', attrs: { for: id } }, o.label),
+    o.input,
+    d.h('p', { class: 'jp-hint', attrs: { id: `${id}-hint` } }, o.hint),
+    d.h('p', { class: 'jp-error', attrs: { id: `${id}-error` } }, icon(d, 'warn'), o.error),
+  );
+  const mark = (invalid: boolean): void => {
+    field.classList.toggle('is-invalid', invalid);
+    if (invalid) {
+      o.input.setAttribute('aria-invalid', 'true');
+      o.input.setAttribute('aria-describedby', `${id}-error`);
+    } else {
+      o.input.removeAttribute('aria-invalid');
+      o.input.setAttribute('aria-describedby', `${id}-hint`);
+    }
+  };
+  o.input.addEventListener('blur', () => {
+    const v = o.input.value.trim();
+    mark(v !== '' && !o.ok(v));
+  });
+  o.input.addEventListener('input', () => {
+    if (field.classList.contains('is-invalid')) mark(false);
+  });
+  return field;
+}
 
 const RESEND_WAIT_MAX_MS = 60_000;
 
@@ -183,7 +225,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
   /** Raised by each request and by `end`: an answer to an older one is dropped. */
   let turn = 0;
 
-  // The screens' rhythm comes from the container (auth.css `.email-step`, `.email-form`), not from each element's margins.
+  // The screens' rhythm comes from the container (css/home.css and css/sign-in.css `.email-step`, `.email-form`), not from each element's margins.
   root.classList.add('email-step');
   const id = (name: string) => `${ids}-${name}`;
   const show = (...children: (HTMLElement | null)[]): void => {
@@ -191,7 +233,9 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
     for (const c of children) if (c) root.append(c);
   };
   const button = (label: string, name: string, onClick: () => void, cls?: string, type: 'button' | 'submit' = 'button'): HTMLButtonElement => {
-    const b = d.h('button', { ...(cls ? { class: cls } : {}), attrs: { type, id: id(name) } }, label);
+    // The design system's kinds: `primary` (one per screen), `link` inline in a sentence, else secondary.
+    const kind = cls === 'link' ? 'link' : cls === 'primary' ? `primary ${BTN.primary}` : BTN.secondary;
+    const b = d.h('button', { class: kind, attrs: { type, id: id(name) } }, label);
     if (type === 'button')
       b.addEventListener('click', (e) => {
         if (isGesture(e)) onClick();
@@ -200,7 +244,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
   };
   // The login popup's email step's notice (a `note` line, "Try again" in it when the service didn't answer).
   const message = (text: string | null, retry?: () => void): HTMLElement | null =>
-    text ? d.h('p', { class: 'note', attrs: { role: 'alert', id: id('notice') } }, text, ...(retry ? [' ', button('Try again', 'retry', retry, 'link')] : [])) : null;
+    text ? alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: id('notice') } }, text, ...(retry ? [' ', button('Try again', 'retry', retry, 'link')] : [])) : null;
   const heading = (text: string) => d.h('h3', { attrs: { id: id('title'), tabindex: '-1' } }, text);
   const focus = (el: HTMLElement): void => {
     try {
@@ -239,7 +283,8 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
     const input = d.h('input', { attrs: { type: 'email', id: id('address'), name: 'email', autocomplete: 'email', inputmode: 'email', autocapitalize: 'none', spellcheck: 'false', required: '', maxlength: '254' } });
     input.value = address;
     const go = button('Send code', 'send', () => {}, 'primary', 'submit');
-    const form = d.h('form', { class: 'email-form', attrs: { novalidate: '' } }, d.h('label', { attrs: { for: id('address') } }, 'Email address', input), message(problem, retry), d.h('div', { class: 'actions start' }, go, cancel()));
+    const field = checkedField(d, { input, label: 'Email address', hint: 'We’ll send a 6-digit code to it.', error: HOME_EMAIL_TEXT.invalidEmail, ok: plausibleAddress });
+    const form = d.h('form', { class: 'email-form', attrs: { novalidate: '' } }, field, message(problem, retry), d.h('div', { class: 'actions start' }, go, cancel()));
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       // A submit from the keyboard or the button, never one a script made.
@@ -253,7 +298,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
 
   function showCode(resendAfterMs: number, problem: string | null = null, retry?: 'verify' | 'resend', typed?: string): void {
     stage = 'code';
-    const input = d.h('input', { attrs: { type: 'text', id: id('code'), name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', maxlength: '6', required: '' } });
+    const input = d.h('input', { class: 'home-code-input', attrs: { type: 'text', id: id('code'), name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', maxlength: '6', required: '' } });
     if (typed) input.value = typed;
     const resend = button('Resend code', 'resend', () => void resendCode(), 'link');
     resend.setAttribute('disabled', '');
@@ -265,8 +310,8 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
     const form = d.h(
       'form',
       { class: 'email-form', attrs: { novalidate: '' } },
-      d.h('p', {}, 'We sent a 6-digit code to ', d.h('strong', { attrs: { id: id('to') } }, address), '. Type it here, on this Hana page only.'),
-      d.h('label', { attrs: { for: id('code') } }, 'Code', input),
+      d.h('p', {}, 'We sent a 6-digit code to ', d.h('strong', { attrs: { id: id('to') } }, address), '. Type it here, on this Journear page only.'),
+      checkedField(d, { input, label: 'Code', hint: 'The 6 digits from the mail.', error: HOME_EMAIL_TEXT.typeCode, ok: (v) => CODE_RE.test(v.replace(/\s+/gu, '')) }),
       message(problem, retry === 'verify' ? submit : retry === 'resend' ? () => void resendCode() : undefined),
       d.h('div', { class: 'actions start' }, button('Continue', 'verify', () => {}, 'primary', 'submit'), cancel()),
       d.h('p', { class: 'muted links' }, resend, ...(deps.address === null ? [' · ', button('Use a different email', 'other', () => {
@@ -309,7 +354,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
 
   async function send(): Promise<void> {
     if (ended) return;
-    if (address.length < 3 || address.length > 254 || !address.includes('@') || /\s/u.test(address)) {
+    if (!plausibleAddress(address)) {
       notice = 'invalid_email';
       return showAddress(HOME_EMAIL_TEXT.invalidEmail);
     }

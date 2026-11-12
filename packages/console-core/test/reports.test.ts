@@ -136,7 +136,7 @@ describe('the statement view (on-screen and PDF)', () => {
     const home = { kind: 'home', ...row, logins: 0, derives: 0, newUsers: 0, homeLogins: 4, tgas: '154', near: '0.0154', usd: '0.0385', relayedRejectedTgas: '0', relayedRejectedNear: '0', relayedRejectedUsd: '0' };
     const t = statementTotals.parse({ ...totals, rows: [...totals.rows, { kind: 'scope', ...row, logins: 0, derives: 0, ownerActions: 2 }, home], sum: { ...figures, homeLogins: 4 } });
     const v = statementView({ csvSha256: 'ab'.repeat(32), totals: t });
-    expect(v.table.map((r) => r.label)).toEqual(['Acme web (app_1)', 'Owner actions, scope s1', 'Hana Home logins, scope s1']);
+    expect(v.table.map((r) => r.label)).toEqual(['Acme web (app_1)', 'Owner actions, scope s1', 'Passport Home logins, scope s1']);
     expect(v.tableColumns).toEqual(['Logins', 'Derives', 'Owner actions', 'Home logins', 'MAU', 'New users', 'Tgas', 'NEAR', 'USD', 'Unsettled']);
     expect(v.table[2]!.cells).toEqual(['0', '0', '0', '4', '', '0', '154', '0.0154', '0.0385', '0']);
     expect(v.table[0]!.cells[3]).toBe('0');

@@ -72,7 +72,7 @@ async function rawClick(page: Page, selector: string, clickCount = 1): Promise<v
 test('a Stellar payment is shown decoded and signed after a guarded Approve', async ({ page }) => {
   const { stellar } = await loggedIn(page);
   await runAction(page, 'sig', 'stellarSignTx');
-  const popup = await clickLauncher(page, 'Review in Hana');
+  const popup = await clickLauncher(page, 'Review in Journear Passport');
   await expect(popup.getByText('Request 1 of 1', { exact: false })).toBeVisible();
   await expect(popup.getByText(stellar).first()).toBeVisible();
   await expect(popup.getByText('E2E Partner').first()).toBeVisible();
@@ -83,7 +83,7 @@ test('a Stellar payment is shown decoded and signed after a guarded Approve', as
 test('Reject returns 4001, and so does closing the popup', async ({ page }) => {
   await loggedIn(page);
   await runAction(page, 'rejected', 'personalSign', 'hello');
-  const popup = await clickLauncher(page, 'Review in Hana');
+  const popup = await clickLauncher(page, 'Review in Journear Passport');
   await expect(popup.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
   await reject(popup);
   expect(await errorCode(page, 'rejected')).toBe(4001);
@@ -99,7 +99,7 @@ test('Reject returns 4001, and so does closing the popup', async ({ page }) => {
 test('after an answer the popup says what happened, counts down, and Close now ends it (D471)', async ({ page, browserName }) => {
   await loggedIn(page);
   await runAction(page, 'first', 'personalSign', 'one');
-  const popup = await clickLauncher(page, 'Review in Hana');
+  const popup = await clickLauncher(page, 'Review in Journear Passport');
   await popup.setViewportSize({ width: 420, height: 680 }); // APPROVE_FEATURES
   const approveBox = await popup.getByRole('button', { name: 'Approve', exact: true }).boundingBox();
   const rejectBox = await popup.getByRole('button', { name: 'Reject', exact: true }).boundingBox();
@@ -138,7 +138,7 @@ test('after an answer the popup says what happened, counts down, and Close now e
   await popup.waitForTimeout(1_100);
   await clickClosing(popup, '#approve-close');
   await runAction(page, 'third', 'personalSign', 'three');
-  const next = await clickLauncher(page, 'Review in Hana');
+  const next = await clickLauncher(page, 'Review in Journear Passport');
   await expect(next.getByText('Request 1 of 1', { exact: false })).toBeVisible();
   await reject(next);
   expect(await errorCode(page, 'third')).toBe(4001);
@@ -147,7 +147,7 @@ test('after an answer the popup says what happened, counts down, and Close now e
 test('a follow-up request appears in the same open popup and needs its own guarded Approve', async ({ page }) => {
   const { evm } = await loggedIn(page);
   await runAction(page, 'first', 'personalSign', 'one');
-  const popup = await clickLauncher(page, 'Review in Hana');
+  const popup = await clickLauncher(page, 'Review in Journear Passport');
   await approve(popup);
   expect(await okValue(page, 'first')).toMatchObject({ valid: true });
   await expect(popup.getByRole('heading', { name: 'Approved', exact: true })).toBeVisible();
@@ -172,7 +172,7 @@ test('a follow-up request appears in the same open popup and needs its own guard
 test('a scripted double-click across the launcher→popup opening produces no signature', async ({ page }) => {
   await loggedIn(page);
   await runAction(page, 'sig', 'stellarSignMessage', 'double');
-  const button = page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Hana' });
+  const button = page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Journear Passport' });
   await expect(button).toBeVisible();
   const box = await page.locator(VAULT_FRAME).boundingBox();
   if (!box) throw new Error('no launcher box');
@@ -192,7 +192,7 @@ test('an opacity-0 launcher: the click only opens the popup, and an immediate cl
   await loggedIn(page);
   await page.evaluate(() => (window as any).e2e.hideLauncher());
   await runAction(page, 'sig', 'stellarSignMessage', 'invisible');
-  await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Hana' })).toBeAttached();
+  await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Journear Passport' })).toBeAttached();
   const box = await page.locator(VAULT_FRAME).boundingBox();
   if (!box) throw new Error('no launcher box');
   const popupP = page.waitForEvent('popup');
@@ -209,7 +209,7 @@ test('an opacity-0 overlay over the launcher takes the click: no popup, no signa
   await loggedIn(page);
   await page.evaluate(() => (window as any).e2e.coverLauncher());
   await runAction(page, 'sig', 'stellarSignMessage', 'covered');
-  await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Hana' })).toBeVisible();
+  await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Journear Passport' })).toBeVisible();
   const box = await page.locator(VAULT_FRAME).boundingBox();
   if (!box) throw new Error('no launcher box');
   let opened = false;
@@ -241,7 +241,7 @@ test.describe('the digest binds the answer to the whole request', () => {
   test('a digest over a different context is refused (4001, no signature)', async ({ page }) => {
     await loggedIn(page);
     await runAction(page, 'sig', 'stellarSignTx');
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     await forgeFromPopup(popup, (i) => ({ ...i, context: { networkPassphrase: 'Public Global Stellar Network ; September 2015' } }));
     expect(await errorCode(page, 'sig')).toBe(4001);
   });
@@ -249,7 +249,7 @@ test.describe('the digest binds the answer to the whole request', () => {
   test('a digest over other bytes is refused (4001, no signature)', async ({ page }) => {
     await loggedIn(page);
     await runAction(page, 'sig', 'personalSign', 'what you see');
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     await forgeFromPopup(popup, (i) => ({ ...i, bytes: new TextEncoder().encode('what you sign') }));
     expect(await errorCode(page, 'sig')).toBe(4001);
   });
@@ -257,7 +257,7 @@ test.describe('the digest binds the answer to the whole request', () => {
   test('a digest over another kind is refused (4001, no signature)', async ({ page }) => {
     await loggedIn(page);
     await runAction(page, 'sig', 'personalSign', 'a message');
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     // Same chain, same (empty) context and bytes: only the kind differs.
     await forgeFromPopup(popup, (i) => ({ ...i, kind: i.kind === 'personal_sign' ? 'eip712' : 'personal_sign' }));
     expect(await errorCode(page, 'sig')).toBe(4001);
@@ -267,7 +267,7 @@ test.describe('the digest binds the answer to the whole request', () => {
     // Raw requests are a live app's (D39). One of 32 bytes fits both chains, so only the chain differs.
     await loggedInLive(page, await newLiveApp({ settings: { rawSign: 'approval' } }));
     await runSignRaw(page, 'sig', 'stellar', 32, 3);
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     await forgeFromPopup(popup, (i) => ({ ...i, chain: i.chain === 'stellar' ? 'evm' : 'stellar' }));
     expect(await errorCode(page, 'sig')).toBe(4001);
   });
@@ -275,7 +275,7 @@ test.describe('the digest binds the answer to the whole request', () => {
   test('a digest over another address is refused (4001, no signature)', async ({ page }) => {
     await loggedIn(page);
     await runAction(page, 'sig', 'personalSign', 'whose key');
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     await forgeFromPopup(popup, (i) => ({ ...i, address: '0x000000000000000000000000000000000000dEaD' }));
     expect(await errorCode(page, 'sig')).toBe(4001);
   });
@@ -283,7 +283,7 @@ test.describe('the digest binds the answer to the whole request', () => {
   test('a digest over another parent origin is refused (4001, no signature)', async ({ page }) => {
     await loggedIn(page);
     await runAction(page, 'sig', 'stellarSignMessage', 'for which site');
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     await forgeFromPopup(popup, (i) => ({ ...i, parentOrigin: SITE_B_ORIGIN }));
     expect(await errorCode(page, 'sig')).toBe(4001);
   });
@@ -291,7 +291,7 @@ test.describe('the digest binds the answer to the whole request', () => {
   test('a digest for another request id is refused (4001, no signature)', async ({ page }) => {
     await loggedIn(page);
     await runAction(page, 'sig', 'personalSign', 'which request');
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     // The result names the request on show; only the id inside the digest differs.
     await forgeFromPopup(popup, (i) => ({ ...i, id: `${i.id}-other` }));
     expect(await errorCode(page, 'sig')).toBe(4001);
@@ -300,7 +300,7 @@ test.describe('the digest binds the answer to the whole request', () => {
   test('the right digest, posted the same way, is accepted (the control for the cases above)', async ({ page }) => {
     await loggedIn(page);
     await runAction(page, 'sig', 'personalSign', 'exact');
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     await forgeFromPopup(popup, (i) => i);
     expect(await okValue(page, 'sig')).toMatchObject({ valid: true });
   });
@@ -312,7 +312,7 @@ test.describe('raw signing', () => {
   test('a live app needs a guarded Approve under the raw warning when raw_sign is approval', async ({ page }) => {
     const { stellar } = await loggedInLive(page, await newLiveApp({ settings: { rawSign: 'approval' } }));
     const bytes = await runSignRaw(page, 'raw', 'stellar', 64, 2);
-    const popup = await clickLauncher(page, 'Review in Hana');
+    const popup = await clickLauncher(page, 'Review in Journear Passport');
     await expect(popup.getByText('Raw signing can authorize any transaction', { exact: false })).toBeVisible();
     await expect(popup.getByText('This signature isn’t tied to one network.', { exact: false })).toBeVisible();
     await expect(popup.getByText(stellar).first()).toBeVisible();
@@ -332,21 +332,21 @@ test.describe('raw signing', () => {
     await loggedInLive(page, await newLiveApp());
     await runSignRaw(page, 'raw', 'evm', 32, 1);
     expect(await errorOf(page, 'raw')).toEqual({ code: 4100, reason: 'raw_sign_off' });
-    await expect(launcher(page).getByRole('button', { name: 'Review in Hana' })).toHaveCount(0);
+    await expect(launcher(page).getByRole('button', { name: 'Review in Journear Passport' })).toHaveCount(0);
   });
 
   test('is refused with 4100 for a test app even when raw_sign is approval, with no popup', async ({ page }) => {
     await loggedIn(page, await newApp({ settings: { rawSign: 'approval' } }));
     await runSignRaw(page, 'raw', 'stellar', 64, 2);
     expect(await errorOf(page, 'raw')).toEqual({ code: 4100, reason: 'raw_not_allowed_for_test_apps' });
-    await expect(launcher(page).getByRole('button', { name: 'Review in Hana' })).toHaveCount(0);
+    await expect(launcher(page).getByRole('button', { name: 'Review in Journear Passport' })).toHaveCount(0);
   });
 });
 
 test('the approval popup is on authOrigin and was opened by the vault', async ({ page }) => {
   await loggedIn(page);
   await runAction(page, 'sig', 'stellarSignMessage', 'where');
-  const popup = await clickLauncher(page, 'Review in Hana');
+  const popup = await clickLauncher(page, 'Review in Journear Passport');
   expect(new URL(popup.url()).origin).toBe(AUTH_ORIGIN);
   expect(new URL(popup.url()).pathname).toBe('/approve');
   await reject(popup);

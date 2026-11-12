@@ -36,7 +36,7 @@ export function partnerPageIssues(win: Window): PartnerIssue[] {
   if (g?.accounts?.id !== undefined || gsiScript) {
     issues.push({
       code: 'google_identity_services',
-      message: 'Google Identity Services is loaded on this page. Hana ID signs in through its own window; GIS on the partner page is unsupported.',
+      message: 'Google Identity Services is loaded on this page. Journear Passport signs in through its own window; GIS on the partner page is unsupported.',
     });
   }
   const ua = win.navigator?.userAgent ?? '';

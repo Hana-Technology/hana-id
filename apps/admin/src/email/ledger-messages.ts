@@ -62,9 +62,9 @@ export function statementIssued(c: MailContext, s: { orgId: string; orgName: str
     c.env,
     `Usage statement ${s.month} for ${oneLine(s.orgName, 60)}`,
     [
-      { kind: 'p', text: `Hana ID issued the usage statement for ${s.month}. It is frozen: the CSV, the PDF and the on-screen statement show the same totals and this hash.` },
+      { kind: 'p', text: `Journear Passport issued the usage statement for ${s.month}. It is frozen: the CSV, the PDF and the on-screen statement show the same totals and this hash.` },
       { kind: 'kv', rows },
-      { kind: 'p', text: 'Owners and viewers can download it from the partner console. Tax invoices come from Hana’s accounting software and quote this hash.' },
+      { kind: 'p', text: 'Owners and viewers can download it from the partner console. Tax invoices come from Journear’s accounting software and quote this hash.' },
     ],
     c.consoleOrigin,
     c.label,

@@ -469,7 +469,7 @@ function fundsTiles(r: Report, s: Sources): void {
     { id: 'relayer-balance', name: 'Relayer balance', affects: 'Every relayed call: logins and owner actions (it pays their gas)' },
     { id: 'session-pool', name: 'Session pool keys', affects: 'Logins (each session-pool key pays a login’s gas within its allowance)' },
     { id: 'owner-pool', name: 'Owner pool keys', affects: 'Owner actions from the partner console' },
-    { id: 'home-pool', name: 'Home pool keys', affects: 'Hana Home: a user opening their wallet without the partner’s app' },
+    { id: 'home-pool', name: 'Home pool keys', affects: 'Passport Home: a user opening their wallet without the partner’s app' },
   ] as const;
   const add = (i: 0 | 1 | 2 | 3, detail: string, problems: Problem[]) => r.add({ ...tiles[i], group: 'funds', detail, link: L.monitoring }, problems);
   const w = s.watchdog;
@@ -510,7 +510,7 @@ function fundsTiles(r: Report, s: Sources): void {
     // An env with no Home key anywhere (none in the API, none on chain) doesn't run Home derives: nothing to judge. With
     // none on chain and the API unreadable it can't be told apart from that, and the API's own tile already says so.
     if (pool === 'home' && mine.length === 0 && !apiKeys?.some((k) => k.pool === 'home')) {
-      r.add({ ...tiles[i], group: 'funds', detail: apiKeys ? 'No Home key in this env: Hana Home derives are off' : 'No Home key on chain; the API’s pool can’t be read', notMeasured: true, link: L.monitoring });
+      r.add({ ...tiles[i], group: 'funds', detail: apiKeys ? 'No Home key in this env: Passport Home derives are off' : 'No Home key on chain; the API’s pool can’t be read', notMeasured: true, link: L.monitoring });
       continue;
     }
     const problems: Problem[] = [...stale.map((p) => ({ ...p, issue: false }))];

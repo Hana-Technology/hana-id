@@ -208,7 +208,7 @@ function fakeEnv(w: World): Env {
     ACCESS_TEAM_DOMAIN: 'preview.cloudflareaccess.invalid',
     ACCESS_AUD: 'ab'.repeat(32),
     STAFF_EMAILS: '["tze@hana.example"]',
-    EMAIL_FROM: 'Hana ID <team@hana.example>',
+    EMAIL_FROM: 'Journear Passport <team@hana.example>',
     SECURITY_ALIAS: 'security@hana.example',
     APP_CHANGE_DELAY_MS: '60000',
     OWNER_GRANT_DELAY_MS: '60000',

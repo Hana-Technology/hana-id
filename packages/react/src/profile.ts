@@ -1,12 +1,12 @@
 'use client';
-// useProfile: the name the user set in Hana Home and shared with this app, as React state (`hana.profile`).
+// useProfile: the name the user set in Passport Home and shared with this app, as React state (`hana.profile`).
 //
 // It re-renders on the client's profileChanged, which fires only when a new identity token (or none) carries a
 // different name. Like useIdentityToken, while logged in, mounted and visible it gets a token lazily on first use and
 // again at exp − 5 min (the vault answers from its cache when it can), so the name follows the tokens without any
 // call from the page. A failed refresh lands in `error` and is retried after a minute.
 //
-// For display only: the page doesn't verify the token. A change in Hana Home reaches the page with the next token
+// For display only: the page doesn't verify the token. A change in Passport Home reaches the page with the next token
 // minted for this app, up to about 55 min later; `refresh({ maxAgeMs })` asks for a fresher one.
 import type { HanaClient, HanaError, HanaProfile } from '@hana-id/web';
 import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react';

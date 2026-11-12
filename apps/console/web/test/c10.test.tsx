@@ -91,21 +91,23 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     await waitFor(() => expect(assign).toHaveBeenCalledWith('https://console-auth.test/start?f=xyz'));
   });
 
-  it('email sharing (D411): shown as off when the API omits it; the select sends identityEmail in the settings action, and only when changed', async () => {
+  it('email sharing (D411): shown as off when the API omits it; the choice cards send identityEmail in the settings action, and only when changed', async () => {
     signedIn();
     vi.spyOn(nav, 'assign').mockImplementation(() => {});
     routes['/api/orgs/org_a/actions'] = { body: { id: 'act_5', kind: 'app.settings', decoded: {}, expiresAt: Date.now() + 300_000 } };
     at('/orgs/org_a/apps/app_1/sessions');
-    const select = (await screen.findByLabelText(/^Email sharing/u)) as HTMLSelectElement;
-    expect(select.value).toBe('off');
-    expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
-      ['off', 'Off: never asked (default)'],
-      ['on_request', 'When the app asks: requestEmailSharing()'],
-      ['at_login', 'At first login'],
+    const group = await screen.findByRole('group', { name: 'Email sharing' });
+    const radios = within(group).getAllByRole('radio') as HTMLInputElement[];
+    expect(radios.map((r) => [r.value, r.checked])).toEqual([
+      ['off', true],
+      ['on_request', false],
+      ['at_login', false],
     ]);
-    const submit = screen.getAllByRole('button', { name: 'Review and confirm with Google' }).at(-1)! as HTMLButtonElement;
-    expect(submit.disabled).toBe(true); // nothing changed yet
-    fireEvent.change(select, { target: { value: 'at_login' } });
+    // Each choice says what it does.
+    expect(within(group).getByText(/when your app calls requestEmailSharing\(\)/u)).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Unsaved changes' })).toBeNull(); // nothing changed yet
+    fireEvent.click(within(group).getByRole('radio', { name: /^At first login/u }));
+    const submit = within(screen.getByRole('region', { name: 'Unsaved changes' })).getByRole('button', { name: 'Review and confirm with Google' });
     fireEvent.click(submit);
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_5'));
     expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'app.settings', params: { appId: 'app_1', identityEmail: 'at_login' }, returnTo: { page: 'sessions', appId: 'app_1' } });
@@ -115,8 +117,8 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     signedIn();
     routes['/api/orgs/org_a/apps/app_1'] = { body: { app: { ...APP, settings: { ...APP.settings, identityEmail: 'on_request' } } } };
     at('/orgs/org_a/apps/app_1/sessions');
-    expect(((await screen.findByLabelText(/^Email sharing/u)) as HTMLSelectElement).value).toBe('on_request');
-    expect(screen.getByText('When the app asks')).toBeTruthy();
+    const group = await screen.findByRole('group', { name: 'Email sharing' });
+    expect((within(group).getByRole('radio', { name: /^When the app asks/u }) as HTMLInputElement).checked).toBe(true);
     cleanup();
     routes['/api/actions/act_6'] = { body: { id: 'act_6', kind: 'app.settings', status: 'pending', decoded: { appId: 'app_1', appName: 'Wallet', from: { identityEmail: 'on_request' }, changes: { identityEmail: 'off' } }, expiresAt: Date.now() + 300_000 } };
     at('/actions/act_6');
@@ -247,13 +249,13 @@ describe('changes that need an on-chain owner of the scope (Origins, Signing)', 
     expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
   });
 
-  it('a scope owned only by accounts outside the organisation: ask Hana', async () => {
+  it('a scope owned only by accounts outside the organisation: ask Journear', async () => {
     signedIn('owner', 'active', false);
     routes['/api/orgs/org_a/scopes/s1'] = { body: scopeAnswer(false, [{ kind: 'near', accountId: 'hana-smoke.testnet' }, { kind: 'other_google' }]) };
     await sections('/origins');
     const why = await screen.findByText(/Adding origins needs an on-chain owner/u);
     expect(why.textContent).toContain('its on-chain owners are the NEAR account hana-smoke.testnet, a Google account outside your organisation');
-    expect(why.textContent).toContain('ask Hana to add you');
+    expect(why.textContent).toContain('ask Journear to add you');
   });
 
   it('a viewer reads no scope and gets the viewer line; NEAR down shows the error with a retry, never the form', async () => {
@@ -426,7 +428,7 @@ describe('the Users screen (D310, D346)', () => {
     routes['/api/orgs/org_a/users/u1_AbCdEfGhIjKlMnOpQrStUv'] = { body: { user: { ...USER, emails: [] } } };
     at('/orgs/org_a/users');
     const table = (await screen.findByRole('columnheader', { name: 'Wallets' })).closest('table')!;
-    expect(table.parentElement!.classList.contains('table-wrap')).toBe(true);
+    expect(table.parentElement!.classList.contains('jp-table-wrap')).toBe(true);
     const short = within(table).getByText('0x5290…9EE7');
     expect(short.getAttribute('aria-hidden')).toBe('true');
     const whole = within(table).getByText(address);

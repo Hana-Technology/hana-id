@@ -1,9 +1,10 @@
 # @hana-id/demo
 
-A small hosted demo so colleagues can try Hana ID on **testnet** from a URL, with no local setup: internal testing
+A small hosted demo so colleagues can try Journear Passport (code name Hana ID) on **testnet** from a URL, with no local setup: internal testing
 and review. It is a partner-style app (one Vite page, plain TypeScript) built on `@hana-id/web` exactly as
 [`docs/integration.md`](../../docs/integration.md) tells partners to integrate, served by a Cloudflare Worker with
-static assets. It is not a Hana page and holds nothing secret.
+static assets. It is not one of Journear's own pages (no key or token ever reaches it) and holds nothing secret, but
+it is Journear Passport's showcase of the SDK, so it wears the full design system (below).
 
 | Env | URL | App |
 |---|---|---|
@@ -14,7 +15,7 @@ static assets. It is not a Hana page and holds nothing secret.
 One page: a testnet banner (Stellar, EVM and NEAR test networks) and a short explainer that leads with *Log in with
 email* (most reviewers use it: Google sign-in is limited to the Google client's listed testers), then
 
-- **Log in with email** (`hana.login({ method: 'email' })`, batch 8a): the Hana popup's email step (address, mailed
+- **Log in with email** (`hana.login({ method: 'email' })`, batch 8a): the Journear popup's email step (address, mailed
   code). It works once the demo app's `login_methods` include email and its scope holds its email client
   (`docs/operations.md` "Email login demo on sandbox-dev (batch 8a)"); until then it says email isn't turned on.
 - **Log in with Google** (`hana.login({ method: 'google' })` in the click handler, so the popup skips its chooser once
@@ -28,12 +29,14 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
   once the vault reports a NEAR account (after a Google or an email login alike):
   - the user's implicit account, short with *Copy*, in full on demand, a NearBlocks testnet link and its balance;
   - **Write to the guestbook (no NEAR needed)**: a message of 1 to 200 characters, counted as the contract counts
-    them (Rust's `trim`, Unicode scalar values), written to `near.demoGuestbook` through Hana's relayer: `hana.near.
+    them (Rust's `trim`, Unicode scalar values), written to `near.demoGuestbook` through Journear's relayer: `hana.near.
     activate()` for a new account (once per account and session; retried for about 20 s while the API says the
     account isn't in the wallet directory yet), a `DelegateAction` calling `add_message({ text })` with 10 Tgas and
     no deposit, expiring 600 blocks after the latest final block, `hana.near.signDelegateAction` and
-    `hana.near.relay`. Each stage is shown ("Preparing your NEAR account…", "Waiting for your approval in the Hana
-    window…", "Sending it through Hana’s relayer, which pays the fee…"), then the result with the transaction's link;
+    `hana.near.relay`. Each stage is shown ("Preparing your NEAR account…", "Waiting for your approval in the Journear
+    window…", "Sending it through Journear’s relayer, which pays the fee…"), then the result with the transaction's
+    link. The message box is validated on blur (too long, or a broken character: the field turns invalid with the
+    reason) and again on the click, never on each key; the count updates as you type;
   - **the popup rule** (docs/integration.md section 8): the key's nonce and the latest block are read from the env's
     NEAR RPC when the card appears, when the message box is focused or typed in (which also activates a new account)
     and every 30 s while the user is active, so a click signs at once and the approval opens in the click. Without a
@@ -47,13 +50,13 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
     shows the signed transaction and its hash and says it wasn't sent for lack of NEAR for the fee (D754);
   - the borsh bytes come from `@hana-id/core/near`'s codec, the one the vault decodes with (no NEAR SDK in the page);
 - **Sign**: an EVM `personal_sign` message, a Stellar (SEP-53) message, and a Base Sepolia test transaction (a 0-value
-  transfer to yourself, fully filled, `eth_signTransaction`). Each needs the user's Approve in the Hana popup, and
+  transfer to yourself, fully filled, `eth_signTransaction`). Each needs the user's Approve in the Journear popup, and
   nothing is ever broadcast, so no funds are needed;
-- **Export key** (Stellar, EVM or NEAR) through Hana's export window: the key is shown only there;
+- **Export key** (Stellar, EVM or NEAR) through Journear's export window: the key is shown only there;
 - **Identity token**: *Get identity token* (`hana.getIdentityToken()`, no popup) shows the token's decoded header and
   claims (display only: the page never trusts them) and a "verify it yourself" `jose` snippet with the token's own
   `iss` and `aud` (`docs/integration.md` section 15);
-- **Share email…** (`hana.requestEmailSharing()`, D411): Hana's email sharing sheet in a popup, when the demo app's
+- **Share email…** (`hana.requestEmailSharing()`, D411): Journear's email sharing sheet in a popup, when the demo app's
   `identity_email` setting is `on_request` or `at_login` (`admin <env> app:settings <app> --identity-email …`); then
   the token shows `email` and `email_verified`. With the setting off it says how to turn it on;
 - **Login timings** (collapsible): per login, its method and the vault's per-stage times (`app`, `popup`, sign-in,
@@ -67,20 +70,45 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
   signature or relay id removed), plus `requestIds`, the latest five distinct request IDs, for Hana's Support ID lookup. It never holds tokens, keys, signatures or relay ids: the page never sees the
   first, and `src/diagnostics.ts` builds the report field by field and scrubs the free text.
 
-Errors are shown in plain words (`src/errors.ts`), the NEAR card's in the card: every NEAR refusal of the vault
+Errors are shown in plain words (`src/errors.ts`), as inline alerts (the page's under the status line, the NEAR
+card's in the card): every NEAR refusal of the vault
 (`near_key_unknown`, `near_block_unknown`, `near_network_mismatch`, `near_delegate_nonce_used`,
 `near_delegate_nonce_too_large`, `near_delegate_expiry`, `near_rpc_unavailable`), the relayer's refusals by
-`data.reason` (a table to extend, with a default for codes it doesn't know), and the page's own NEAR reads; also a blocked popup (and the "Click *Sign in with Hana*" hint when
+`data.reason` (a table to extend, with a default for codes it doesn't know), and the page's own NEAR reads; also a blocked popup (and the "Click “Sign in with Journear Passport” on the Journear button…" hint when
 the SDK falls back to the vault's button), a cancelled or declined sign-in, a rejected request, an unreachable vault
 or API, rate limits, "log out other devices" after its 5 minutes, network failures.
+
+## Design
+
+The page follows the Journear Passport design system (`packages/brand`, D765): tokens, type and the `.jp-*`
+components, light and dark by the system setting, laid out for desktop and phone (`src/style.css`, tokens only):
+
+- a top bar with the Journear lockup, the environment badge and, signed in, the **wallet pill** (the EVM address
+  short; it links to the addresses);
+- one primary button per view (*Log in with email* signed out; *Write to the guestbook* signed in), secondary for the
+  others, ghost for inline ones (*Copy*, *Refresh*, *Cancel sign-in*);
+- addresses as mono key/value rows with a **chain badge** (Stellar testnet, the EVM chain, NEAR testnet);
+- signing results in the **confirm-and-sign** style read back (`src/result.ts`): the outcome first, then the facts
+  (signature, transaction hash, recipient, explorer link) as mono rows, then a note;
+- **inline alerts** for errors and for what lasts while its state does (the launcher's "Click … to continue", a
+  session that ended, a sign-out), and **toasts** (`src/toast.ts`) for transient results (an address copied, logged
+  out, other devices signed out, the export window opened, email shared, diagnostics copied): bottom right on desktop,
+  at the top on phones, 380 px at most, a stack of three, gone after 5 s (paused on hover), a danger toast never;
+- the login timings as a **stats strip** (the latest login's total, sign-in step and wallet-key stage, and a restored
+  session's time) over the full table (sticky header, numbers on the right); diagnostics and the identity token on the
+  ink code surface.
 
 ## Security
 
 - No analytics, no third-party script, no inline script or style (the build sets no preload polyfill and inlines no
-  asset).
-- Hana's brand (D426): the stylesheet imports `@hana-id/brand`'s tokens and fonts; Vite emits the Montserrat files
-  into `assets/` (hashed, served immutable like the bundles) with the fonts' `OFL.txt` beside them, so the page loads
-  fonts from its own origin only (`font-src 'self'`, no font CDN). The favicon is the Hana mark.
+  asset; `test/brand.test.ts` checks the page has no `style` attribute or `<style>`). Toasts and results are built with
+  DOM calls and text nodes only (Trusted Types: no HTML strings).
+- Journear Passport's brand (D426, D765): the stylesheet imports `@hana-id/brand`'s tokens, fonts and components;
+  Vite emits the Archivo and IBM Plex files into `assets/` (hashed, served immutable like the bundles) with their
+  licences (`OFL-Archivo.txt`, `OFL-IBMPlexSans.txt`, `OFL-IBMPlexMono.txt`, the brand's `FONT_LICENCE_FILES`) beside
+  them, so the page loads fonts from its own origin only (`font-src 'self'`, no font CDN). The Journear lockup is drawn
+  inline in the top bar (the brand file's geometry, `test/brand.test.ts`; white in the dark scheme), the icons are an
+  inline SVG sprite (no image request), and the favicon is the brand's `journear-mark.svg`.
 - Every response carries the headers of `src/csp.ts`. The page's CSP:
 
   ```text
@@ -169,7 +197,7 @@ Both need `http://localhost:5174` on the app's origins (`app:origins:add … --o
 ## Tests
 
 ```sh
-corepack pnpm --filter @hana-id/demo test        # config, CSP, Worker headers, gen-wrangler, diagnostics redaction, errors, the page (happy-dom)
+corepack pnpm --filter @hana-id/demo test        # config, CSP, Worker headers, gen-wrangler, diagnostics redaction, errors, the page and its patterns (happy-dom), toasts, the brand
 corepack pnpm --filter @hana-id/demo typecheck
 ```
 

@@ -105,8 +105,8 @@ function timingCells(kind: VaultRunRecord['kind'], stages: Record<string, number
 }
 /** The buttons that send a request which may need a Hana popup: one such request at a time. */
 const REQUEST_BUTTONS = ['export-stellar', 'export-evm', 'aa-request', 'aa-status', 'aa-revoke', 'sign-stellar-self', 'sign-stellar-other', 'sign-evm-self', 'sign-evm-other', 'sign-personal', 'sign-raw'] as const;
-const TEST_MESSAGE_HEX = `0x${[...new TextEncoder().encode('Hana ID smoke test: personal_sign')].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
-const RAW_TEST_BYTES = new TextEncoder().encode('Hana ID smoke test: raw bytes, not a transaction');
+const TEST_MESSAGE_HEX = `0x${[...new TextEncoder().encode('Journear Passport smoke test: personal_sign')].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+const RAW_TEST_BYTES = new TextEncoder().encode('Journear Passport smoke test: raw bytes, not a transaction');
 
 function describeError(err: unknown): string {
   if (err instanceof ApiError) return `${err.message}${err.requestId ? ` [request ${err.requestId}]` : ''}`;
@@ -396,7 +396,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
       const button = visible && clickable;
       launcher = !visible ? '' : button ? `shown: "${label}" (click it)` : `notice: "${label}"`;
       if (button) launcherShownCount += 1;
-      if (visible) logEvent(button ? `Hana launcher: "${label}"` : `Hana notice: "${label}"`);
+      if (visible) logEvent(button ? `Journear launcher: "${label}"` : `Journear notice: "${label}"`);
       render();
     });
     c.on('autoApproved', (d) => {
@@ -560,7 +560,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
   async function exportKey(chain: 'stellar' | 'evm'): Promise<void> {
     const c = client;
     if (!c) return;
-    logEvent(`Export ${chain}: click the Hana launcher; the key is shown only in the Hana export window`);
+    logEvent(`Export ${chain}: click the Journear launcher; the key is shown only in the Journear export window`);
     await c.exportKey(chain);
     logEvent(`Export ${chain}: done`);
   }
@@ -619,7 +619,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
     c.prepareApproval();
     exclusive(async () => {
       signs += 1;
-      const outcome = h('td', {}, 'waiting (approve or reject in the Hana popup)…');
+      const outcome = h('td', {}, 'waiting (approve or reject in the Journear popup)…');
       const took = h('td', { class: 'num' }, '…');
       $('signs').prepend(h('tr', {}, h('td', {}, String(signs)), h('td', {}, label), outcome, took));
       // Whether consent was in force before: a covered request without it opens the consent screen first, which may

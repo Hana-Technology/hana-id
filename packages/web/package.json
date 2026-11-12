@@ -1,7 +1,7 @@
 {
   "name": "@hana-id/web",
   "version": "0.4.0",
-  "description": "Hana ID browser SDK: the createHana partner client (EIP-1193 provider, Stellar signer, Stellar Wallets Kit module). In the workspace it also builds the Hana pages (vault, login, callback, approval, export) per env; those are never packed.",
+  "description": "Journear Passport (formerly Hana ID) browser SDK: the createHana partner client (EIP-1193 provider, Stellar signer, Stellar Wallets Kit module). In the workspace it also builds the Journear Passport pages (vault, login, callback, approval, export) per env; those are never packed.",
   "private": true,
   "license": "UNLICENSED",
   "repository": {

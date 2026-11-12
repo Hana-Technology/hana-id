@@ -9,7 +9,7 @@ import { Link, NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
 import { postJson } from '../api.ts';
 import { type OrgContext, useApi } from '../lib.tsx';
 import { SessionBanner } from '../session.tsx';
-import { Badge, Callout, Empty, ErrorNote, Loading, Mark } from '../ui.tsx';
+import { Badge, Callout, Empty, ErrorNote, Loading, Lockup } from '../ui.tsx';
 
 function SkipLink() {
   return (
@@ -34,20 +34,19 @@ function Account({ me }: { me: MeAnswer | undefined }) {
       <span className="account-email" title={me.user.email}>
         {me.user.email}
       </span>
-      <button type="button" className="btn btn-quiet btn-small" onClick={() => void signOut()}>
+      <button type="button" className="jp-btn jp-btn-ghost jp-btn-sm" onClick={() => void signOut()}>
         Sign out
       </button>
     </div>
   );
 }
 
+/** The lockup and the console's name: the brand's one place on these pages. */
 function Brand() {
   return (
     <Link to="/" className="brand">
-      <Mark />
-      <span>
-        Hana ID <span className="brand-sub">console</span>
-      </span>
+      <Lockup />
+      <span className="brand-sub">Partner console</span>
     </Link>
   );
 }
@@ -59,7 +58,7 @@ function OrgSwitcher({ me, org, name }: { me: MeAnswer | undefined; org: string;
   if (!many) return <p className="org-name">{name ?? ' '}</p>;
   return (
     <div className="org-switch">
-      <select aria-label="Organisation" value={org} onChange={(e) => navigate(`/orgs/${e.target.value}`)}>
+      <select className="jp-input" aria-label="Organisation" value={org} onChange={(e) => navigate(`/orgs/${e.target.value}`)}>
         {me!.memberships.map((m) => (
           <option key={m.orgId} value={m.orgId}>
             {m.orgName}
@@ -172,7 +171,7 @@ export function OrgShell() {
         <>
           {o.data.org.status === 'frozen' && (
             <Callout tone="danger" title="This organisation is frozen" className="frozen-note">
-              <p>Hana has frozen this organisation: only cancels and kill switches (removing an origin, turning the policy or raw signing off, suspending, revoking a key) work until it is unfrozen. Everything stays readable. Contact Hana to find out why.</p>
+              <p>Journear has frozen this organisation. Until it is unfrozen, only cancels and kill switches work: removing an origin, turning the policy or raw signing off, suspending, revoking a key. Everything stays readable. Contact Journear to find out why.</p>
             </Callout>
           )}
           <Outlet context={{ org: org!, role: o.data.role, frozen: o.data.org.status === 'frozen', email: me.data?.user.email, envName: me.data?.envName } satisfies OrgContext} />

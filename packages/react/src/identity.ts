@@ -26,7 +26,7 @@ export interface UseIdentityTokenResult {
 }
 
 const noop = (): void => {};
-export const notMounted = (): Promise<never> => Promise.reject(new HanaErrorClass(4900, 'Hana ID is not mounted yet (HanaProvider has not run its effect)'));
+export const notMounted = (): Promise<never> => Promise.reject(new HanaErrorClass(4900, 'Journear Passport is not mounted yet (HanaProvider has not run its effect)'));
 
 export function asError(e: unknown): HanaError {
   return e instanceof HanaErrorClass ? e : new HanaErrorClass(-32603, e instanceof Error ? e.message : 'Internal error');

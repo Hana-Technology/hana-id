@@ -38,7 +38,7 @@ export function Upgrades() {
   const { org } = useOrg();
   const r = useApi<{ pendingUpgrades: PendingUpgradesView }>(`/api/orgs/${org}/governance/pending-upgrades`);
   const now = useNow(30_000);
-  const head = <PageHeader title="Pending upgrades" description="Changes Hana has queued on the Hana ID contract that every app depends on. Each one waits a public delay first, so you and your users can react before it applies." />;
+  const head = <PageHeader title="Pending upgrades" description="Changes Journear has queued on the Journear Passport contract that every app depends on. Each one waits a public delay first, so you and your users can react before it applies." />;
   if (r.error)
     return (
       <>
@@ -58,22 +58,21 @@ export function Upgrades() {
     <>
       {head}
       <p className="muted">
-        What the owner of the Hana ID contract <span className="mono">{p.signer}</span> ({p.env}) has queued, read from the chain {when(p.readAtMs)}. Each change waits the governance delay ({duration(p.governanceDelayMs)}
+        What the owner of the Journear Passport contract <span className="mono">{p.signer}</span> ({p.env}) has queued, read from the chain {when(p.readAtMs)}. Each change waits the governance delay ({duration(p.governanceDelayMs)}
         ) before it can take effect, so you and your users can react, for example by exporting keys. Countdowns run on your clock;{' '}
-        <button type="button" className="btn-link" onClick={r.reload}>
+        <button type="button" className="link-btn" onClick={r.reload}>
           read the chain again
         </button>
         .
       </p>
       {p.paused && (
-        <p className="callout callout-error" role="alert">
-          The contract is paused: logins, new sessions and key derivation are stopped until Hana unpauses it.
-        </p>
+        <Callout tone="danger" role="alert">
+          The contract is paused: logins, new sessions and key derivation are stopped until Journear unpauses it.
+        </Callout>
       )}
       {!p.anyPending && (
-        <Callout tone="ok">
-          <p className="callout-title">Nothing is pending.</p>
-          <p>No upgrade, owner transfer, withdrawal or shorter delay is queued. Anything Hana queues shows here for the whole delay before it can apply.</p>
+        <Callout tone="ok" title="Nothing is pending.">
+          <p>No upgrade, owner transfer, withdrawal or shorter delay is queued. Anything Journear queues shows here for the whole delay before it can apply.</p>
         </Callout>
       )}
       {p.upgrade && (
@@ -105,10 +104,10 @@ export function Upgrades() {
               )}
             </>
           ) : (
-            <p className="callout callout-warn" role="alert">
-              <strong>Not a published release.</strong> No source commit or reproducible-build command is on record for this code hash. Treat the upgrade as unexplained until Hana publishes it, and ask Hana before it takes
+            <Callout tone="warn" role="alert">
+              <strong>Not a published release.</strong> No source commit or reproducible-build command is on record for this code hash. Treat the upgrade as unexplained until Journear publishes it, and ask Journear before it takes
               effect.
-            </p>
+            </Callout>
           )}
         </Panel>
       )}
@@ -145,7 +144,8 @@ export function Upgrades() {
       {p.delayDecreases.length > 0 && (
         <Panel>
           <h2>Shorter delays</h2>
-          <table className="table">
+          <div className="jp-table-wrap">
+          <table className="jp-table">
             <thead>
               <tr>
                 <th>Delay</th>
@@ -167,13 +167,15 @@ export function Upgrades() {
               ))}
             </tbody>
           </table>
+          </div>
         </Panel>
       )}
       {p.consoleAudienceAdditions.length > 0 && (
         <Panel>
           <h2>New console sign-in clients</h2>
           <p className="muted">Once in force, Google tokens for these clients can authorise on-chain owner actions.</p>
-          <table className="table">
+          <div className="jp-table-wrap">
+          <table className="jp-table">
             <thead>
               <tr>
                 <th>Provider</th>
@@ -193,6 +195,7 @@ export function Upgrades() {
               ))}
             </tbody>
           </table>
+          </div>
         </Panel>
       )}
     </>

@@ -127,7 +127,7 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/gu, (c) => `&#${c.charCodeA
  */
 export function staticPage(consoleOrigin: string, status: 400 | 429 | 503, setCookie?: string): Response {
   const text = status === 429 ? 'Too many sign-in attempts from your network. Wait a minute, then start again.' : status === 503 ? 'Sign-in is unavailable right now. Try again in a few minutes.' : 'This sign-in link didn’t work. Start again from the console.';
-  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hana ID console sign-in</title></head><body><h1>Sign-in didn’t work</h1><p>${escapeHtml(text)}</p><p><a href="${escapeHtml(consoleOrigin)}/signin#">Back to sign-in</a></p></body></html>`;
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Journear Passport console sign-in</title></head><body><h1>Sign-in didn’t work</h1><p>${escapeHtml(text)}</p><p><a href="${escapeHtml(consoleOrigin)}/signin#">Back to sign-in</a></p></body></html>`;
   const headers = new Headers({ 'content-type': 'text/html; charset=utf-8', ...authOriginHeaders() });
   if (status === 429) headers.set('retry-after', String(CONSOLE_LIMIT_PERIOD_S));
   if (setCookie) headers.append('set-cookie', setCookie);

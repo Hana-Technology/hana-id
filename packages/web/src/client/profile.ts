@@ -5,8 +5,8 @@
 import { base64UrlDecode, normalizeProfileName } from '@hana-id/core';
 
 /**
- * The name the user set in Hana Home and shared with this app. Each part is null when it isn't set, isn't shared, or
- * the token carries a value that isn't a name Hana would sign (`normalizeProfileName` must return it unchanged).
+ * The name the user set in Passport Home and shared with this app. Each part is null when it isn't set, isn't shared, or
+ * the token carries a value that isn't a name Journear would sign (`normalizeProfileName` must return it unchanged).
  */
 export interface HanaProfile {
   readonly givenName: string | null;

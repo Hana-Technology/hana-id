@@ -451,7 +451,7 @@ export const FRESH_LOGIN_MS = 5 * 60_000;
 /** An export must start (launcher click) within this long; the export window counts as running up to EXPORT_MAX_MS. */
 export const EXPORT_START_MS = 5 * 60_000;
 export const EXPORT_MAX_MS = 15 * 60_000;
-/** "Signed by Hana under {label}" shows this long. */
+/** "Signed by Journear Passport under {label}" shows this long. */
 export const AUTO_APPROVED_FLASH_MS = 3_000;
 /** How long the launcher says why the mainnet demo refused a request (D428). */
 export const DEMO_REFUSAL_FLASH_MS = 6_000;
@@ -1099,7 +1099,7 @@ export class Vault {
     if (!this.holderCurrent(h)) return false;
     // Fresh now, or (no answer) still within the grace.
     if (this.shareLiveWithin(this.holderLive(h), SHARE_GRACE_MS)) return true;
-    throw new VaultError('api_unavailable', 'Could not confirm with Hana that this device is still signed in', { reason: 'share_unconfirmed' });
+    throw new VaultError('api_unavailable', 'Could not confirm with Journear that this device is still signed in', { reason: 'share_unconfirmed' });
   }
 
   /**
@@ -1660,7 +1660,7 @@ export class Vault {
     this.pendingLink = task;
     let intent: LauncherHandle | null = null;
     if (popupBlocked) {
-      intent = this.launcher.push('Add a sign-in method in Hana', () => {
+      intent = this.launcher.push('Add a sign-in method in Journear Passport', () => {
         if (task.aborted) return;
         const popup = this.host.open(`${this.env.authOrigin}/login?from=vault`, `hana-login-${randomHex128()}`, LOGIN_FEATURES);
         if (!popup) return;
@@ -1693,7 +1693,7 @@ export class Vault {
     const pending = this.newPending(popupBlocked ? 'vault' : 'partner', popupBlocked, request);
     let intent: LauncherHandle | null = null;
     if (popupBlocked) {
-      intent = this.launcher.push('Sign in with Hana', () => {
+      intent = this.launcher.push('Sign in with Journear Passport', () => {
         if (this.openLoginPopup(pending)) {
           intent?.remove();
           intent = null;
@@ -1942,7 +1942,7 @@ export class Vault {
       if (job.cancelled) return;
       const reason = e instanceof PersistFailure ? e.reason : 'internal';
       // A reason code only: never a key, a share id, a body or a token.
-      console.warn(`[Hana ID vault] This sign-in will not survive a reload (${reason}); the next page load needs a full sign-in.`);
+      console.warn(`[Journear Passport vault] This sign-in will not survive a reload (${reason}); the next page load needs a full sign-in.`);
       if (this.session === s) {
         s.persistence = 'none';
         this.emit('persistenceChanged', { persistence: 'none' });
@@ -2660,7 +2660,7 @@ export class Vault {
     try {
       return makeWalletProofs(prk, { signer: this.env.signer, appId: this.config.appId, sessionPublicKey: sessionPk }, addresses);
     } catch {
-      console.warn('[Hana ID vault] Could not make the identity wallet proofs (wallet_proofs); identity tokens are unavailable for this session.');
+      console.warn('[Journear Passport vault] Could not make the identity wallet proofs (wallet_proofs); identity tokens are unavailable for this session.');
       return null;
     }
   }
@@ -2719,7 +2719,7 @@ export class Vault {
       state = 'declined';
     } else {
       const sealedEmail = held.sealedEmail;
-      if (!sealedEmail) throw new VaultError('email_sharing_unavailable', 'Hana has no address for this session', { reason: 'no_address' });
+      if (!sealedEmail) throw new VaultError('email_sharing_unavailable', 'Journear has no address for this session', { reason: 'no_address' });
       state = await this.consentCall(signer, answer, sealedEmail, (proof) => this.api!.emailConsentDecide({ ...proof, sealedEmail, decision: answer }));
     }
     held.emailState = state;
@@ -2827,14 +2827,14 @@ export class Vault {
         st = await this.consentState(t.signer, blob);
       } catch (e) {
         throw e instanceof ApiError && (e.code === 'session_ended' || e.status === 410)
-          ? new VaultError('session_ended', 'The Hana session has ended')
+          ? new VaultError('session_ended', 'The Journear Passport session has ended')
           : new VaultError('email_sharing_unavailable', 'Email sharing is unavailable, try again later', { reason: 'unavailable' });
       }
       t.held.emailState = st.state === 'unavailable' ? null : st.state;
       if (st.setting === 'off') throw new VaultError('email_sharing_unavailable', 'Email sharing is off for this app', { reason: 'off' });
-      if (!blob || st.state === 'unavailable') throw new VaultError('email_sharing_unavailable', 'Hana has no address for this session; sign in again', { reason: 'no_address' });
+      if (!blob || st.state === 'unavailable') throw new VaultError('email_sharing_unavailable', 'Journear has no address for this session; sign in again', { reason: 'no_address' });
       if (popupBlocked) {
-        intent = this.launcher.push('Share your email in Hana', () => {
+        intent = this.launcher.push('Share your email in Journear Passport', () => {
           const w = this.host.open(`${this.env.authOrigin}/share-email?from=vault`, `hana-share-${randomHex128()}`, LOGIN_FEATURES);
           if (!w) return;
           sheet.adopt(w);
@@ -2844,7 +2844,7 @@ export class Vault {
       }
       const app = await this.appConfig().catch(() => null);
       const outcome: SheetOutcome = await sheet.run(this.shareRequest(blob, st.state, t.signer, app?.google.mode === 'own'), popupBlocked ? SHARE_LAUNCHER_HELLO_MS : undefined);
-      if (outcome === 'failed') throw new VaultError('email_sharing_unavailable', 'Hana could not record the answer, try again', { reason: 'unavailable' });
+      if (outcome === 'failed') throw new VaultError('email_sharing_unavailable', 'Journear could not record the answer, try again', { reason: 'unavailable' });
       return { state: outcome === 'kept' ? 'granted' : outcome };
     } catch (e) {
       sheet.dismiss();
@@ -2929,7 +2929,7 @@ export class Vault {
   private async mintIdentity(t: IdentityTarget): Promise<PortResultMap['hana_identityToken']> {
     // An app that keeps logins checks the session's share: a session this browser couldn't persist has none (D79).
     if (this.config.settings.persistence === 'session' && !t.hasShare) {
-      throw new VaultError('identity_unavailable', 'This browser could not keep the Hana session, so it has no identity token', { reason: 'no_share' });
+      throw new VaultError('identity_unavailable', 'This browser could not keep the Journear Passport session, so it has no identity token', { reason: 'no_share' });
     }
     const proofs = t.proofs;
     if (!proofs) throw new VaultError('identity_unavailable', 'Identity tokens are unavailable for this session', { reason: 'no_wallet_proofs' });
@@ -2986,9 +2986,9 @@ export class Vault {
       // The share revoked (D695): `data.reason` says signed out; the event stays `sessionExpired`, as before.
       const signedOut = shareRevokedRefusal(e);
       this.endIdentitySession(t, signedOut);
-      return new VaultError('session_ended', 'The Hana session has ended', signedOut ? { reason: 'signed_out' satisfies DisconnectReason } : undefined);
+      return new VaultError('session_ended', 'The Journear Passport session has ended', signedOut ? { reason: 'signed_out' satisfies DisconnectReason } : undefined);
     }
-    if (e.code === 'session_ending') return new VaultError('session_ended', 'The Hana session ends in less than 30 seconds', { reason: 'session_ending' });
+    if (e.code === 'session_ending') return new VaultError('session_ended', 'The Journear Passport session ends in less than 30 seconds', { reason: 'session_ending' });
     if (e.status === 429) return new VaultError('rate_limited', 'Too many identity token requests, try again later');
     if (e.code === 'app_suspended' || e.code === 'origin_not_allowed' || e.code === 'scope_conflict') return apiErrorToVault(e);
     return new VaultError('identity_unavailable', 'Identity tokens are unavailable, try again later', { api: `${e.status} ${e.code}`.slice(0, 80) });
@@ -3118,7 +3118,7 @@ export class Vault {
       either = answers.some(Boolean);
     } catch {
       if (claimed !== here) return;
-      throw new VaultError('api_unavailable', `Hana couldn’t check this transaction’s block on NEAR ${here}, try again`, { reason: 'near_rpc_unavailable' });
+      throw new VaultError('api_unavailable', `Journear couldn’t check this transaction’s block on NEAR ${here}, try again`, { reason: 'near_rpc_unavailable' });
     }
     if (claimed === here && !known) {
       throw new VaultError(ErrorCode.unauthorized, `This transaction’s block hash is not a NEAR ${here} block: use a recent one from a ${here} RPC${this.testApp ? `. ${TEST_APP_NETWORK_RULE}` : ''}`, {
@@ -3139,7 +3139,7 @@ export class Vault {
    */
   private requireIndependentNear(): void {
     if (nearLocalEnv(this.env) || this.near!.independentProviders()) return;
-    throw new VaultError('api_unavailable', 'This Hana environment has one NEAR provider, so it can’t check a test app’s NEAR request', { reason: 'near_rpc_single_provider' });
+    throw new VaultError('api_unavailable', 'This Journear Passport environment has one NEAR provider, so it can’t check a test app’s NEAR request', { reason: 'near_rpc_single_provider' });
   }
 
   /**
@@ -3170,7 +3170,7 @@ export class Vault {
     try {
       keys = await this.near!.accessKey(da.senderId, nearKeyString(da.publicKey), true);
     } catch {
-      throw new VaultError('api_unavailable', `Hana couldn’t check this delegate action on NEAR ${this.env.network}, try again`, { reason: 'near_rpc_unavailable' });
+      throw new VaultError('api_unavailable', `Journear couldn’t check this delegate action on NEAR ${this.env.network}, try again`, { reason: 'near_rpc_unavailable' });
     }
     const refuse = (reason: string, message: string) => new VaultError(ErrorCode.unauthorized, `${message}. ${TEST_APP_NETWORK_RULE}`, { reason, chain: 'near' });
     for (const key of keys) {
@@ -3238,7 +3238,7 @@ export class Vault {
     });
     if (outcome.kind === 'signed') {
       this.emit('autoApproved', { kind: request.method, chain: outcome.match.chain, contract: outcome.match.contract.slice(0, 128), function: outcome.match.function.slice(0, 128) });
-      this.launcher.flash(`Signed by Hana under ${policy.policy.label}`, AUTO_APPROVED_FLASH_MS);
+      this.launcher.flash(`Signed by Journear Passport under ${policy.policy.label}`, AUTO_APPROVED_FLASH_MS);
       return { kind: 'signed', result: outcome.result };
     }
     return outcome;
@@ -3475,7 +3475,7 @@ export class Vault {
     const standing = await this.confirmConsent(s, policy);
     if (this.live() !== s) throw sessionEnded(s);
     const active = await this.withConsent(s, async (c) => ({ value: consentActive(c, policy, this.clock.now(), s.expiresAtMs) ? c : null }));
-    if (active && standing === 'hold') throw new VaultError('api_unavailable', 'Hana could not confirm auto-approve right now', { granted: false, reason: 'consent_unconfirmed' });
+    if (active && standing === 'hold') throw new VaultError('api_unavailable', 'Journear could not confirm auto-approve right now', { granted: false, reason: 'consent_unconfirmed' });
     if (active) return { granted: true, policyId: policy.policyId, expiresAtMs: active.expiresAtMs };
     // Only a consent screen actually shown counts as activity (D112).
     this.noteActivity();
@@ -3564,7 +3564,7 @@ export class Vault {
         reject,
       };
       this.exportJob = job;
-      job.intent = this.launcher.push('Export key in Hana', () => this.openExportWindow(job));
+      job.intent = this.launcher.push('Export key in Journear Passport', () => this.openExportWindow(job));
       job.timer = this.timers.setTimeout(() => {
         if (!job.contextSent) this.finishExport(job, userRejected('The export was not started'));
       }, EXPORT_START_MS);

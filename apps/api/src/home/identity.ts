@@ -133,7 +133,7 @@ export async function homeGate(request: Request, env: Env, ctx: Ctx, opts: HomeG
     return fail(502, 'near_unavailable', 'Could not read the Home clients');
   }
   const route = homeAudienceRoute(config, token.provider, token.aud, now);
-  if (!route) return fail(401, 'not_a_home_client', 'The token is not for a client Hana Home accepts');
+  if (!route) return fail(401, 'not_a_home_client', 'The token is not for a client Passport Home accepts');
 
   // 6. Nonce = homeNonce(key, expiresAtMs, salt): the token commits to this Home key.
   const nonce = homeNonce({ signer: env.SIGNER_ACCOUNT, homePublicKey: header.key, expiresAtMs: header.expiresAtMs, salt: header.salt });

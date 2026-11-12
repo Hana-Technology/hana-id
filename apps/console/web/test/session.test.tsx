@@ -58,7 +58,7 @@ async function typeInvite() {
   at('/orgs/org_a/members');
   const input = await screen.findByPlaceholderText('name@company.com');
   fireEvent.change(input, { target: { value: 'new@partner.example' } });
-  fireEvent.change(within(input.closest('form')!).getByRole('combobox'), { target: { value: 'owner' } });
+  fireEvent.click(within(input.closest('form')!).getByRole('radio', { name: /^Owner/u }));
   return input as HTMLInputElement;
 }
 
@@ -73,7 +73,7 @@ describe('the session ends mid-task', () => {
     expect(alert.textContent).toContain('Nothing was sent, and what you typed is still here.');
     expect(window.location.pathname).toBe('/orgs/org_a/members');
     expect(input.value).toBe('new@partner.example');
-    expect((within(input.closest('form')!).getByRole('combobox') as HTMLSelectElement).value).toBe('owner');
+    expect((within(input.closest('form')!).getByRole('radio', { name: /^Owner/u }) as HTMLInputElement).checked).toBe(true);
     const link = screen.getByRole('link', { name: 'Sign in again' });
     expect([link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel')]).toEqual(['/signin', '_blank', 'noopener']);
     expect(document.body.textContent).not.toContain('couldn’t be reached');

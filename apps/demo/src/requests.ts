@@ -1,7 +1,7 @@
 // The demo's test requests. Each is signed only and never broadcast, so no funds are needed, and each would be
 // harmless if someone broadcast it anyway: a message, or a 0-value transfer to yourself.
 
-export const TEST_MESSAGE = 'Hana ID testnet demo: this signature proves nothing and moves nothing.';
+export const TEST_MESSAGE = 'Journear Passport testnet demo: this signature proves nothing and moves nothing.';
 
 /** EIP-1559 fields as eth_signTransaction takes them, fully filled, so the SDK makes no RPC call to fill them. */
 export interface TestEvmTx {

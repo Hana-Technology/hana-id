@@ -1,25 +1,32 @@
-# Integrating Hana ID (partner guide)
+# Integrating Journear Passport (partner guide)
 
-Hana ID gives your users a Stellar, an EVM and a NEAR wallet from a Google login, with no extension or seed phrase.
+Journear Passport gives your users a Stellar, an EVM and a NEAR wallet from a Google login, with no extension or seed phrase.
 You add the SDK to your web app, users click your "Sign in" button, and you sign through standard interfaces: an
 EIP-1193 provider, a Stellar signer and a Stellar Wallets Kit module, a NEAR signer (`hana.near`, SDK 0.4.0), with an
 optional Sodax adapter. Keys and Google tokens
-never reach your page. They live in a hidden Hana iframe, and every signature needs the user's Approve in a Hana
+never reach your page. They live in a hidden Journear Passport iframe, and every signature needs the user's Approve in a Journear Passport
 popup, unless it falls under an auto-approve policy you set and the user accepted.
 
-New to Hana ID? Read the short `partner-start-here.md` first (sent with the SDK files): what to send Hana, sign-in for
+New to Journear Passport? Read the short `partner-start-here.md` first (sent with the SDK files): what to send Journear, sign-in for
 your testers, and your first sign-in in four steps. This guide has the detail.
+
+> **Renamed.** Hana ID is now called **Journear Passport** (the company, Journear; the users' own page, Passport Home).
+> Only the names you and your users read changed: the popups, emails, error messages, the vault iframe's title, and
+> the wallet-picker name and icon ("Journear Passport" and the Journear mark). The package names (`@hana-id/*`), the
+> API (`createHana`, `HanaError`, `ProviderRpcError`, `hana.*`, `HanaIdModule`, `HanaProvider`), error codes, event
+> names, the `HANA_*` settings, the EIP-6963 `rdns`, SWK's `productId` (`hana-id`), the identity token's format and the
+> origins are unchanged, so no code change is needed. Match on error codes, never on messages.
 
 > **Testnet pilot.** Keys come from the NEAR **testnet** MPC and stay disposable until the address freeze (final
 > accounts, audit, mainnet). Don't keep real funds in pilot wallets, on any chain. A test app (`pk_test_…`) can't sign
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)).
 
-> **NEAR is Hana's chain, and since SDK 0.4.0 your users' too.** Hana derives every key through NEAR's MPC network and
+> **NEAR is Journear Passport's chain, and since SDK 0.4.0 your users' too.** Journear Passport derives every key through NEAR's MPC network and
 > records each login on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
-> from Hana's NEAR accounts.
+> from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-11 (SDK 0.4.0: NEAR in section 8; the user’s name after 0.4.0), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-12 (the Journear Passport names, not deployed), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -31,16 +38,16 @@ your page ──iframe──▶ vaultOrigin/vault      holds the key (in memory;
                       authOrigin/export      key export window
 ```
 
-1. `createHana()` inserts a hidden iframe from Hana's `vaultOrigin`. It answers only your allowed origins.
-2. `hana.login()`, called in your click handler, opens Hana's sign-in popup. The user picks a Google account
+1. `createHana()` inserts a hidden iframe from Journear Passport's `vaultOrigin`. It answers only your allowed origins.
+2. `hana.login()`, called in your click handler, opens Journear Passport's sign-in popup. The user picks a Google account
    (Google asks only for `openid`: no email, name or picture is requested or stored). The vault gets the token over
    an end-to-end encrypted relay, sends one NEAR transaction and decrypts the user's key.
 3. A reload or a new tab within the session's limits restores the wallet with one API call and no transaction.
-4. A signing call made in your click handler opens the Hana approval popup in that click, as `login()` does. It shows
+4. A signing call made in your click handler opens the Journear Passport approval popup in that click, as `login()` does. It shows
    the decoded request and the user approves it there. If the browser doesn't allow the popup (no click, or Safari
-   after an `await`), the vault shows a small "Review in Hana" button instead, which opens the same popup.
+   after an `await`), the vault shows a small "Review in Journear Passport" button instead, which opens the same popup.
 5. `hana.getIdentityToken()` gives your backend a short-lived signed token saying who the user is in your app, which
-   wallets they hold and which session this is, verified against Hana's published keys
+   wallets they hold and which session this is, verified against Journear Passport's published keys
    ([section 15](#15-identity-token-your-backend)).
 
 The address depends on your app's **scope** and the user's Google account, never on the browser. The same user
@@ -48,27 +55,29 @@ gets the same addresses on every device, and different addresses in another part
 
 ## 1. Your app and the partner portal
 
-During the pilot Hana creates your organisation and your apps, and you manage them in Hana's **partner portal**
+During the pilot Journear creates your organisation and your apps, and you manage them in Journear Passport's **partner portal**
 (sandbox-dev: `https://hana-id-console-sandbox-dev.tingtc.workers.dev`).
 
-**What Hana needs from you**, for a test app:
+**What Journear needs from you**, for a test app:
 
 - the Google address of each person who will manage it as an **owner** (up to 5), and at least one **security
   contact**: an address that gets the announcement of every change to your apps' origins and signing settings;
 - the app name your users will see ("Signing in to {name} at {origin}"), and the origins your app runs on to start with
   (more can be added in the portal; [Allowed origins](#allowed-origins));
-- nothing about Google clients: your scope starts on Hana's shared Google client. If you want your own
+- nothing about Google clients: your scope starts on Journear's shared Google client. If you want your own
   ([section 6](#6-google-client-shared-or-your-own)), an on-chain owner adds it in the portal once the scope exists,
   with a sign-in on your client that proves it is yours; Hana never registers a client ID you send.
 
-**App names.** The name is shown in Hana's popups and sign-in emails next to Hana's own words, so a few names are
-refused (when an app is created or renamed, by Hana staff or on **Branding**):
+**App names.** The name is shown in Journear Passport's popups and sign-in emails next to Journear Passport's own words, so a few names are
+refused (when an app is created or renamed, by Journear staff or on **Branding**):
 
 - anything that looks like a web address: a name containing `://`, a word starting with `www.`, or a dot between a
   letter or digit and a letter (`example.com`, "Sign in at app.example"). "Dr. Wallet" and "v2.0" are fine;
-- a word starting with "Hana", in any case or spelling: accents, full-width letters, look-alike letters from other
-  alphabets (a Cyrillic "Н" for H, for example), or letters split by spaces or dots ("H a n a"). "Hana" inside a word
-  ("Johana") is fine;
+- a name holding "Journear" (anywhere, even inside a word: "MyJournear"), "Passport Home" as words, or a word starting
+  with "Hana" (the product's former name), in any case or spelling: accents, full-width letters, look-alike letters
+  from other alphabets (a Cyrillic "Н" for H, for example), digits or symbols for letters ("H4na", "J0urnear"), or
+  letters split by spaces or dots ("H a n a", "J.o.u.r.n.e.a.r"). "Hana" inside a word ("Johana") and "Passport" on its
+  own are fine;
 - as before, control, bidi, zero-width and other invisible characters, and names over 64 characters.
 
 An app whose name was set before this rule keeps working, but its sign-in emails say "an app" instead of the name
@@ -76,10 +85,10 @@ until it is renamed.
 
 **In this order:**
 
-1. Hana invites your first owner. They open the invite email and **Sign in with Google to accept** (below). This comes
-   first: Hana can set up your scope only once your owners have accepted, because their Google accounts become the
+1. Journear invites your first owner. They open the invite email and **Sign in with Google to accept** (below). This comes
+   first: Journear can set up your scope only once your owners have accepted, because their Google accounts become the
    scope's **on-chain owners** ([below](#on-chain-owners)).
-2. Hana registers your scope on Hana's contract with the owners you name (shared login), then creates your test app
+2. Hana registers your scope on Journear Passport's contract with the owners you name (shared login), then creates your test app
    in it. An on-chain owner stays one even after leaving your organisation in the portal: removing them takes another
    on-chain owner's proposal and the contract's timelock ([below](#on-chain-owners)), so name only people who should
    hold that.
@@ -101,7 +110,7 @@ either, but your page never sees it (the SDK takes only the publishable key), so
 backend's configuration; never take it from a token you are about to verify. A scope is test or live for good, so
 test and live apps never share addresses.
 
-<a id="on-chain-owners"></a>**On-chain owners.** Your scope lives on Hana's contract, and its owners there are the
+<a id="on-chain-owners"></a>**On-chain owners.** Your scope lives on Journear Passport's contract, and its owners there are the
 Google accounts that may change it: add origins to its apps, propose an auto-approve policy, turn raw signing on, add
 a Google client, change its owners. The portal checks this with your **Confirm with Google** sign-in, so an owner in
 the portal who isn't an on-chain owner sees, instead of those forms, one line naming the on-chain owners. Removing an
@@ -110,12 +119,12 @@ after your scope was set up becomes an on-chain owner like this: an on-chain own
 clients and on-chain owners", linked from that line and from **Login & sessions**), which lists the owners missing on
 chain, and clicks **Propose: set the on-chain owners to your organisation's owners** (confirmed with Google). The
 change waits the contract's timelock, then any owner clicks **Execute** on the same page. A scope has at most 5
-on-chain owners. If none of your owners is an on-chain owner, ask Hana.
+on-chain owners. If none of your owners is an on-chain owner, ask Journear.
 
 ### Signing in to the portal
 
-There is no self sign-up. An owner of your organisation (or Hana, for the first one) invites your Google address as
-an **Owner** or a **Viewer**. The invite email ("You're invited to {org} on Hana ID") holds the link: open it and click
+There is no self sign-up. An owner of your organisation (or Journear, for the first one) invites your Google address as
+an **Owner** or a **Viewer**. The invite email ("You're invited to {org} on Journear Passport") holds the link: open it and click
 **Sign in with Google to accept**, with the Google account of the address it was sent to. A link works once, for that
 address only, and expires after 7 days. After that, sign in at `{portal}/signin` with **Sign in with Google**.
 
@@ -140,8 +149,13 @@ changes are waiting. An app's page shows the **App ID** and the **Publishable ke
 | **Keys** | **Create a key** (at most 5 active), **Rotate** (you get a new key now; the old one keeps working 24 hours), **Revoke** (at once; a page already open notices within 30 s) |
 | **Login & sessions** | persistence, the session and idle limits and the Google web client ([section 7](#7-app-settings)), confirmed with Google and in force at once; a link to your scope's page ("Google clients and on-chain owners") for your own Google client ([section 6](#6-google-client-shared-or-your-own)) |
 | **Signing** | the auto-approve policy ([section 9](#9-auto-approve-policies)) and raw signing ([Raw signing](#raw-signing)) |
-| **Branding** | the name users see in Hana's popups and sign-in emails (up to 64 characters; see "App names" below), and your logo: PNG, JPEG or WebP, at most 512 KiB, 128 to 2048 px a side, nearly square, not animated; Hana re-encodes it to a 256 × 256 PNG and shows it next to the name in its popups |
-| **Suspend** | **Suspend the app** stops logins at once; **Resume** (confirmed with Google). A suspension by Hana only Hana can lift |
+| **Branding** | the name users see in Journear Passport's popups and sign-in emails (up to 64 characters; see "App names" below), and your logo: PNG, JPEG or WebP, at most 512 KiB, 128 to 2048 px a side, nearly square, not animated; Journear Passport re-encodes it to a 256 × 256 PNG and shows it next to the name in its popups |
+| **Suspend** | **Suspend the app** stops logins at once; **Resume** (confirmed with Google). A suspension by Journear only Journear can lift |
+
+**Saving.** On **Login & sessions**, **Branding** and the Members page's Workspace domain, a bar appears at the first
+change, counts the unsaved changes and offers **Discard** and **Save changes** (**Review and confirm with Google** where
+the change needs a fresh Google sign-in). A field is checked when you leave it. A finished change is confirmed by a
+short notice; a failed one is explained where you made it.
 
 **Email login**: an owner turns it on from the app's **Email login** page in two steps, each confirmed with Google: first for the
 app, then an on-chain owner of the scope adds the scope's email client, which waits the scope's timelock and is then
@@ -153,39 +167,40 @@ compared exactly: scheme, host and port, no path (`http://localhost:5173` and `h
 and so are `http://localhost:5173` and `http://127.0.0.1:5173`). At most 20 per app. On the **Origins** tab:
 
 - **Add**: on-chain owners ([above](#on-chain-owners)) type one origin per line, then **Review and confirm with Google**, review the change and
-  **Confirm with Google**. Hana then announces the change by email to your security contacts and to Hana (the notices
+  **Confirm with Google**. Journear Passport then announces the change by email to your security contacts and to Journear (the notices
   go out within about 5 minutes), and the origin takes effect a fixed delay after that announcement: 60 s on
   sandbox-dev, 24 hours on a production network. The page shows each step ("Requested", "Announced by email", "Takes
   effect"). Two kinds of addition take effect as soon as they are announced, without the delay: a loopback origin
   (`http://localhost:<port>`, `http://127.0.0.1:<port>`, or the `http://localhost:*` wildcard, which allows every
   port) on a test app in a sandbox environment, and any origin while nobody has yet signed in to your app's scope.
 - **Cancel** a waiting addition from **Origins waiting to take effect** (or the Overview), or with the cancel link in
-  the announcement email (no sign-in needed). Cancelling is immediate, and Hana and your owners keep a record of it.
+  the announcement email (no sign-in needed). Cancelling is immediate, and Journear and your owners keep a record of it.
 - **Remove** takes effect at once and signs out the users who signed in on that origin; a tab of theirs already open
   there can't sign after a minute or two and then shows signed out.
 - Live apps must use `https://` and can't use loopback origins. Wildcard hosts, IP addresses (other than loopback for
-  test apps) and Hana's own origins are refused.
+  test apps) and Journear Passport's own origins are refused ("A Journear origin can't be an app's origin").
 
 **Members.** On **Members**, owners **Invite** an address as viewer or owner (**Review and confirm with Google**); the
-invite email goes out after Hana has notified every owner and your security contacts, and a new owner in an
+invite email goes out after Journear Passport has notified every owner and your security contacts, and a new owner in an
 organisation that has one already stays a viewer for a delay first (60 s on sandbox-dev, 24 hours on a production
 network; **Cancel** under "Pending owners" keeps them a viewer). There is no link to copy: invites travel by email
 only. At most 10 open invites; **Revoke** stops one at once. **Make owner**, **Make viewer** and **Remove** need a
 Google confirmation, and the last owner can't be removed. An owner can also require every member to sign in with an
-address of your Google Workspace domain. Your security contacts are set by Hana: ask Hana to change them.
+address of your Google Workspace domain. Your security contacts are set by Journear: ask Journear to change them.
 
 **Reports.** **Usage** shows logins, unlocks, identity tokens, active and new users, failures by code and costs, by
-day or month. **Statements** are monthly (from the 3rd of the next month), as CSV, PDF and the ledger CSV, with their
-SHA-256. **Users** (where Hana has turned it on) finds a user by wallet address (Stellar, EVM or a NEAR account), User
+day or month. **Statements** ("Journear Passport usage statement {month}") are monthly (from the 3rd of the next
+month), as CSV, PDF and the ledger CSV, with their SHA-256; a row "Passport Home logins" counts your users opening
+their wallet from Passport Home, each billed at its gas like a login. **Users** (where Journear has turned it on) finds a user by wallet address (Stellar, EVM or a NEAR account), User
 ID (`u1_…`) or Support ID (`HANA-…`); it shows a user's email address or name only once the user shared it with one of your apps. **Audit** lists everything done in your organisation, with a request ID to
-quote to Hana. **Pending upgrades** shows changes queued on Hana's contract that affect you.
+quote to Journear. **Pending upgrades** shows changes queued on Journear Passport's contract that affect you.
 
-If Hana freezes your organisation (a security response), only cancels and kill switches still work: removing an
+If Journear freezes your organisation (a security response), only cancels and kill switches still work: removing an
 origin, removing the policy, turning raw signing off, suspending, revoking a key or an invite.
 
 ## 2. Install
 
-The packages are not on a registry yet (`@hana-id/*` is the reserved scope). Hana sends you the four tarballs of one
+The packages are not on a registry yet (`@hana-id/*` is the reserved scope). Journear sends you the four tarballs of one
 release with their SHA-256 checksums: check them (`shasum -a 256 *.tgz`), then install them together with npm, pnpm
 or yarn. Install every package you use, `@hana-id/core` included, from its tarball, never from a registry:
 
@@ -209,26 +224,26 @@ They are ESM with TypeScript declarations and source maps. Use a bundler (Vite, 
 TypeScript `moduleResolution` `bundler`, `node16` or `nodenext`. The `@hana-id/core/signers/stellar` and
 `/decode` declarations reference Node's `Buffer` through `@stellar/stellar-base`: if you import those, add
 `@types/node` or keep `skipLibCheck`. Each package carries a README with these steps. Each release is checked by
-installing the tarballs into a fresh project outside Hana's repository, type-checking and importing them there.
+installing the tarballs into a fresh project outside Journear's repository, type-checking and importing them there.
 
-**Environments are built in.** `@hana-id/web` contains the configuration of every Hana deployment it was released
-for (Hana origins, NEAR accounts, RPC, pinned MPC key; all public values), and you pick one by name with
+**Environments are built in.** `@hana-id/web` contains the configuration of every Journear Passport deployment it was released
+for (Journear Passport origins, NEAR accounts, RPC, pinned MPC key; all public values), and you pick one by name with
 `createHana({ environment })`. `HANA_ENVIRONMENTS` lists the names. A release ships exactly the deployed envs; this
-pilot ships `sandbox-dev`, whose Hana side runs on NEAR testnet (your users' wallets are Stellar, EVM and NEAR; see the note
+pilot ships `sandbox-dev`, whose Journear Passport side runs on NEAR testnet (your users' wallets are Stellar, EVM and NEAR; see the note
 at the top). A new environment means a new release.
 
 ### Release notes
 
 **0.4.0** (after 0.3.1; same environments: `sandbox-dev`). **Nothing to change** for Stellar and EVM: code written for
-0.3.x builds and runs as it is, and an app still on 0.3.x keeps working with Hana's current vault (it just doesn't see
+0.3.x builds and runs as it is, and an app still on 0.3.x keeps working with Journear Passport's current vault (it just doesn't see
 NEAR). Replace all the tarballs you use together (they depend on each other at `^0.4.0`).
 
 - **A NEAR wallet.** `hana.near`: `accountId` and `publicKey` (the user's implicit account), `signTransaction`,
   `signDelegateAction` (NEP-366, gasless with `relay`), `signMessage` (NEP-413), `relay` and `activate` (creates a new
   account on testnet for its first gasless call); `hana.addresses.near`.
-  Every NEAR request shows Hana's approval window, none is signed automatically ([section 8, NEAR](#near)).
+  Every NEAR request shows Journear Passport's approval window, none is signed automatically ([section 8, NEAR](#near)).
 - `hana.exportKey('near')` exports the NEAR key as `ed25519:…`.
-- `HanaAddresses.near` is optional in the types: it is missing only while Hana's vault is older than this SDK (during a
+- `HanaAddresses.near` is optional in the types: it is missing only while Journear Passport's vault is older than this SDK (during a
   deployment), and `hana.near` then refuses requests with 4100. New types: `NearSignTransactionParams`,
   `NearSignDelegateActionParams`, `NearSignMessageParams`, `NearRelayParams` and their results, `NearNetwork`.
 - A test app signs NEAR testnet only (4100 `mainnet_not_allowed`); new refusal reasons `near_block_unknown`,
@@ -236,42 +251,42 @@ NEAR). Replace all the tarballs you use together (they depend on each other at `
   `near_delegate_nonce_stale`, `near_delegate_nonce_too_large`, `near_delegate_expiry`, `near_delegate_test_app_action`,
   `near_delegate_test_app_receiver` and (with `api_unavailable`) `near_rpc_unavailable` and `near_rpc_single_provider`. `nearDelegateNonce` (`@hana-id/core/near`) picks a delegate action's nonce.
 - Not yet NEAR: the identity token's `wallets` (still Stellar and EVM; prove a NEAR account with `hana.near.signMessage`).
-  The partner portal's Users page and Hana Home show a user's NEAR account once they sign in through SDK 0.4.0.
+  The partner portal's Users page and Passport Home show a user's NEAR account once they sign in through SDK 0.4.0.
 
 **After 0.4.0** (in the next release, not yet published). **Nothing to change.** New: `hana.getProfile()`, `hana.profile`, the
 `profileChanged` event and React `useProfile()`, for the name a user chose to share with your app
 ([section 15](#15-identity-token-your-backend), "The user's name"). The identity token's `given_name` and `family_name`
-claims arrive from Hana's side, so they reach any SDK version.
+claims arrive from Journear's side, so they reach any SDK version.
 
 **0.3.1** (after 0.3.0; same environments: `sandbox-dev`). **Nothing to change**: code written for 0.3.0 builds and
 runs as it is. Replace all the tarballs you use together (they depend on each other at `^0.3.1`).
 
-- `disconnect` now says when Hana signed this device out: `{ code: 4900, reason: 'signed_out' }` (the user signed the
-  device out from Hana's own page, used `revokeOtherDevices()` on another device, signed in to your app again in
+- `disconnect` now says when Journear Passport signed this device out: `{ code: 4900, reason: 'signed_out' }` (the user signed the
+  device out from Journear Passport's own page, used `revokeOtherDevices()` on another device, signed in to your app again in
   another tab of this device, or your app's settings ended the session). The vault is fine: you may want to show
   "You were signed out, log in again" for it rather than a reload message ([section 3](#3-create-the-client)).
   Without `reason`, `disconnect` means what it did before. New types: `HanaDisconnect` (the event) and
   `DisconnectReason`.
-- `launcher` now has `clickable`: `true` for Hana's button the user must click ("Review in Hana", "Sign in with
-  Hana", an export), `false` for the short "Signed by Hana under …" notice after an auto-signed request and whenever
+- `launcher` now has `clickable`: `true` for Journear Passport's button the user must click ("Review in Journear Passport", "Sign in with
+  Journear Passport", an export), `false` for the short "Signed by Journear Passport under …" notice after an auto-signed request and whenever
   it is hidden. If you point users at the button, do it only when `visible && clickable`
   ([section 5](#5-your-page-origins-csp-popups)).
 - The mainnet demo's refusal reasons include `mainnet_demo_wrong_destination` in the types (a Sodax deposit, bridge or
   swap that would send funds anywhere but the user's own wallets, [section 12](#12-test-and-live-keys)).
-- `@hana-id/core` also exports what Hana's own pages use (`evmChainInfo`, `KNOWN_EVM_MAINNETS`, the
+- `@hana-id/core` also exports what Journear Passport's own pages use (`evmChainInfo`, `KNOWN_EVM_MAINNETS`, the
   `@hana-id/core/home` layouts); your app needs none of them.
 
-Arrived from Hana's side with every SDK release, no upgrade needed: an open tab of your app that was signed out from
-Hana's own page ends its session within about a minute while it is in use, and the vault checks again before each
+Arrived from Journear Passport's side with every SDK release, no upgrade needed: an open tab of your app that was signed out from
+Journear Passport's own page ends its session within about a minute while it is in use, and the vault checks again before each
 signature you ask the user to approve and each cached identity token ([section 4](#4-log-in-log-out), "Signed out
-from Hana"); a request refused for that rejects with 4900 and `data.reason: 'signed_out'` (show the same signed-out
+from Journear Passport"); a request refused for that rejects with 4900 and `data.reason: 'signed_out'` (show the same signed-out
 notice for it).
 
 ### Testnet quick start (Sodax)
 
 **Sodax has no testnet.** Its hub is Sonic mainnet and every Sodax chain is a mainnet, while a test app signs for test
 networks only. So with a test key you can integrate everything around the swap, but no Sodax swap, deposit or bridge
-completes until Hana's mainnet launch (live keys). What works today:
+completes until Journear Passport's mainnet launch (live keys). What works today:
 
 | | With a test key (`pk_test_…`) |
 |---|---|
@@ -279,7 +294,7 @@ completes until Hana's mainnet launch (live keys). What works today:
 | The adapters' signing, sending and receipts | yes, with ordinary testnet transactions (Base Sepolia, Stellar testnet, …) |
 | Signing a Sodax transaction (any mainnet chain) | no: `4100` `mainnet_not_allowed` ([section 12](#12-test-and-live-keys)) |
 
-(Hana runs a mainnet demo of its own on sandbox under an internal exception; it is Hana-internal demo only, not
+(Journear runs a mainnet demo of its own on sandbox under an internal exception; it is Journear-internal demo only, not
 available to partner apps.)
 
 1. Get a **test app** on `sandbox-dev` ([section 1](#1-your-app-and-the-partner-portal)), with the **shared Google
@@ -310,7 +325,7 @@ available to partner apps.)
    A test app may list mainnet chains in `evm.chains` too (`createHana` accepts them, and reads such as `eth_call`
    work there); only signing and switching to them are refused ([section 11](#11-sodax-adapter)).
 5. Call `hana.login()` from a click; quote and build intents with Sodax; send testnet transactions through the
-   adapters. Sodax's own mainnet swaps through Hana wait for live keys.
+   adapters. Sodax's own mainnet swaps through Journear Passport wait for live keys.
 
 ## 3. Create the client
 
@@ -342,7 +357,7 @@ Sodax adapters' `rpcUrl`, `horizonUrl`, `sorobanRpcUrl`) must be `https://` for 
 is accepted only on `localhost` and other loopback hosts (a local node), and for `pk_test_` keys anywhere. URLs with
 credentials (`https://user:key@…`) are refused for every key. `hana.testApp` says which rule applies.
 
-`environment` names the Hana deployment. The client takes the Hana origins from its own build, so no configuration
+`environment` names the Journear Passport deployment. The client takes the Journear Passport origins from its own build, so no configuration
 can point it at another vault. `sandbox-dev` (testnet) uses:
 
 | | Origin |
@@ -358,26 +373,26 @@ hana.on('accountsChanged', (addresses) => {}); // { stellar, evm } or null
 hana.on('sessionExpired', () => {});            // the session reached its limit: log in again
 hana.on('disconnect', ({ code, reason }) => {}); // 4900; reason 'signed_out': Hana signed this device out (log in again), else the vault is gone
 hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'email_code' | 'token' | 'linking' | 'chain' | 'key_pending' | 'done'
-hana.on('launcher', ({ visible, label, clickable }) => {}); // Hana's button or notice is shown or hidden; clickable: the user must click it ("Review in Hana", …)
+hana.on('launcher', ({ visible, label, clickable }) => {}); // Hana's button or notice is shown or hidden; clickable: the user must click it ("Review in Journear Passport", …)
 hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
 hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't survive a reload (see "Sessions")
 hana.on('linkChanged', ({ provider, status, effectiveAtMs }) => {}); // a sign-in method added, activated or removed (section 4)
 hana.on('supportIdChanged', (supportId) => {}); // 'HANA-XXXX-XXXX' or null (section 4, "Support ID")
 ```
 
-`disconnect` is always code 4900. With `reason: 'signed_out'` (SDK 0.3.1 or later) Hana ended this device's
-session: the user signed the device out from Hana's own page, or used "log out other devices"
+`disconnect` is always code 4900. With `reason: 'signed_out'` (SDK 0.3.1 or later) Journear Passport ended this device's
+session: the user signed the device out from Journear Passport's own page, or used "log out other devices"
 (`revokeOtherDevices()`) on another device, or signed in to your app again in another tab of this device, or your
 app's settings ended it (persistence turned off, the origin removed). The vault is fine: show "You were signed out,
 log in again", not "reload". Without `reason` the vault doesn't say why: the vault connection may be gone (then
 `hana.status` is `'error'`: reload, or create the client again), or the session ended another way (another tab of your
-app logged out, the session expired on Hana's side, a stored session that couldn't be opened, a tab of an older Hana
+app logged out, the session expired on Journear Passport's side, a stored session that couldn't be opened, a tab of an older Journear Passport
 build ended it). When `hana.status` is `'logged_out'`, the vault is fine and a new login is all that's needed. The
 request that was waiting when it happened (a signature, an export) rejects with 4900 and the same `data.reason:
 'signed_out'`, so show one message for both. Your own `logout()` sends no `disconnect` (only `accountsChanged` with
 null).
 
-`loginProgress: key_pending` means Google has just started signing with a new key that Hana ID hasn't activated yet
+`loginProgress: key_pending` means Google has just started signing with a new key that Journear Passport hasn't activated yet
 (it goes live within minutes): the vault waits up to 30 s and tries once more, then reports `chain` again. Show
 something like "Google just rotated its signing key; finishing in a few seconds". If the retry is refused too, the
 login rejects with `api_unavailable`; ask the user to sign in again in a few minutes.
@@ -385,21 +400,21 @@ login rejects with `api_unavailable`; ask the user to sign in again in a few min
 `hana.ready` rejects with `vault_unavailable` when the vault doesn't load. The SDK gives the vault frame 5 s to answer
 (the vault says `connected` as soon as it has checked your page). A frame still loading at 5 s gets 5 s more; a frame
 that loaded but didn't answer within 1.5 s of loading is replaced once (SDK releases after 0.2.0; 0.2.0 waits the full
-5 s). A vault that answered then has 20 s to finish starting (restoring a session waits on one Hana API call). On any
+5 s). A vault that answered then has 20 s to finish starting (restoring a session waits on one Journear Passport API call). On any
 failure the SDK removes the frame. `error.data.reason` says which part failed:
 
 | `data.reason` | What happened | Usually |
 |---|---|---|
 | `csp_frame_src` | your page's CSP blocked the frame (detected at once, no retry) | `frame-src` ([section 5](#5-your-page-origins-csp-popups)) |
 | `no_answer` | the frame loaded but the vault never answered, in either of two frames; `data.origin` and the message name the page origin that was checked (SDK releases after 0.2.0) | your page's origin (or a page framing it) isn't exactly one of your app's allowed origins (often a dev server that moved to another port), or the key is unknown or suspended: the vault page refuses to be framed and says nothing, by design |
-| `frame_timeout` | the frame didn't load within 10 s | the network, or Hana's page Workers slow to answer |
-| `ready_timeout` | the vault answered but didn't finish starting within 20 s | the Hana API slow or unreachable |
+| `frame_timeout` | the frame didn't load within 10 s | the network, or Journear Passport's page Workers slow to answer |
+| `ready_timeout` | the vault answered but didn't finish starting within 20 s | the Journear Passport API slow or unreachable |
 | `frame_replaced` | something navigated the vault frame before it was ready | another script on your page |
 
 `data.attempts` is how many frames were tried. `hana.readyTimings` (test apps) has a `retry` stage when the second
 frame was used. A page whose origin isn't one of your app's origins, or an unknown or suspended key, fails with
 `no_answer` about 3 s after the client is created (two frames, each given 1.5 s after it loads; about 10 s with SDK
-0.2.0). Hana can't tell your page which of these it was (the vault refuses without saying why, so that a framing page
+0.2.0). Journear Passport can't tell your page which of these it was (the vault refuses without saying why, so that a framing page
 learns nothing about a key or an origin), so check the origin first: `data.origin` against the app's **Origins** tab.
 
 **Dev servers that change port.** Vite (and most dev servers) moves to the next free port when its own is taken, and
@@ -428,18 +443,18 @@ button.addEventListener('click', async () => {
 ```
 
 - **Call `login()` synchronously in a user click.** It opens the popup before anything else, while the browser
-  still allows popups. If the browser blocks it anyway, the vault shows a "Sign in with Hana" button (bottom right)
+  still allows popups. If the browser blocks it anyway, the vault shows a "Sign in with Journear Passport" button (bottom right)
   and the call resolves once the user clicks it and signs in. That costs the user one more click.
 - Already logged in: `login()` resolves at once. A second `login()` while one is pending replaces it (the first
   rejects with `login_cancelled`). `hana.cancelLogin()` ends a pending one.
-- **A closed popup**. A user who closes the Hana popup while it waits for them (the method chooser, Google's
+- **A closed popup**. A user who closes the Journear Passport popup while it waits for them (the method chooser, Google's
   page, the email step, a linking screen) ends the sign-in: within about 2 seconds `login()` rejects with
   `login_cancelled` and `data.reason: 'popup_closed'`, and the status is `logged_out` again. Going to Google and back
   is never a close, and a slow popup is never cancelled. One exception to "within about 2 seconds": a popup closed
-  within a few seconds of reaching Google's page. Hana can't tell that close from an identity provider's
+  within a few seconds of reaching Google's page. Journear Passport can't tell that close from an identity provider's
   Cross-Origin-Opener-Policy switching the window, so it waits up to about 90 seconds for the sign-in to finish
   there; if it doesn't, `login()` rejects with the same `login_cancelled` and `data.reason: 'popup_closed'`. A popup
-  closed while Hana finishes on its own (the NEAR transaction after Google) doesn't stop the sign-in: `login()`
+  closed while Journear Passport finishes on its own (the NEAR transaction after Google) doesn't stop the sign-in: `login()`
   resolves as usual. A popup closed before it connected
   is `coop_blocks_popup` at once; one that never connects is `login_timeout` with `data.stage: 'connect'` after 15 s.
 - **An unfinished login.** A user who leaves the popup open without finishing leaves `login()` pending. Keep the page
@@ -454,27 +469,27 @@ button.addEventListener('click', async () => {
   the vault no request that uses the key (a signature, an export, revoking other devices, an auto-approve consent
   request) for the idle limit drops its key from memory; polling status or addresses doesn't count. Your page sees
   nothing (status, addresses and auto-approve status keep answering), and the next request that uses the key restores
-  it with one API call, as a reload does, while the session is still alive on Hana's side. With `'none'`, every page
+  it with one API call, as a reload does, while the session is still alive on Journear Passport's side. With `'none'`, every page
   load is a new login. If the browser blocks storage (some private modes), the vault falls back to `'none'` and
   `hana.warning` is `storage_unavailable`. `login()` resolves as soon as the wallet is ready; the vault then saves
   the session for reloads in the background (one API call). If that fails, the wallet keeps working in this tab,
   `hana.persistence` becomes `'none'` (with a `persistenceChanged` event; `useHana()` re-renders), and the next page
   load needs a new login; a reload within that moment after `login()` resolved is a new login too.
-- **Signed out from Hana.** A user can sign a device out of your app from Hana's own page (for a lost or stolen
+- **Signed out from Journear Passport.** A user can sign a device out of your app from Journear Passport's own page (for a lost or stolen
   device). A tab of your app already open there can't sign after about a minute, and ends its session within about a
   minute while it is shown and in use (a few minutes in a tab nobody is using, at once when a hidden tab is shown
   again, or at its next signature or identity-token request): your page gets `accountsChanged` with no addresses and
   `disconnect` (code 4900, `reason: 'signed_out'` in SDK 0.3.1 or later), then shows signed out; tell the user
   to log in again, no reload is needed. A signature waiting for approval in that moment rejects with 4900 and
-  `data.reason: 'signed_out'` (with every SDK release: it comes from the vault). To do this the vault asks Hana's
+  `data.reason: 'signed_out'` (with every SDK release: it comes from the vault). To do this the vault asks Journear Passport's
   API about once a minute while a wallet is open in a shown tab in use, every 5 minutes when nothing happens there, and
-  before each signature you ask the user to approve and each cached identity token. If Hana's API can't be reached for
+  before each signature you ask the user to approve and each cached identity token. If Journear Passport's API can't be reached for
   more than 3 minutes, such a request fails with `api_unavailable` and `data.reason: 'share_unconfirmed'` before any
   popup; the user stays signed in, and the same request works again once the API answers. With `'none'` there is no
   device to sign out (each page load is its own login).
 - **Email login** (off until an owner turns it on for your app in the portal, [section 1](#1-your-app-and-the-partner-portal)). With email on,
-  `hana.login()` shows a chooser in the Hana popup: "Continue with Google" or "Continue with email". The email path
-  asks for the address, mails a 6-digit code, and the user types it into the same Hana popup (never into your page).
+  `hana.login()` shows a chooser in the Journear Passport popup: "Continue with Google" or "Continue with email". The email path
+  asks for the address, mails a 6-digit code, and the user types it into the same Journear Passport popup (never into your page).
   To skip the chooser, pass the method; to prefill the address you already know, pass `emailHint`:
 
   ```ts
@@ -490,7 +505,7 @@ button.addEventListener('click', async () => {
   and "Use a different email" itself; if the user then cancels, `login()` rejects with `code_invalid`,
   `challenge_expired`, `rate_limited` or `login_cancelled`. Your page never sees the address unless you passed it.
 - <a id="sign-in-methods-and-links"></a>**Sign-in methods and links** (an app with email). What the user sees, by
-  case (Hana decides every case; your page only sees the result):
+  case (Journear Passport decides every case; your page only sees the result):
 
   | The user… | They see | Result |
   |---|---|---|
@@ -498,13 +513,13 @@ button.addEventListener('click', async () => {
   | signs in with Google, and an email wallet exists for an address Google doesn't host | "This email already has a wallet": **Link and continue** (a code to `a…@domain`) or **Sign in with email** | the email wallet either way; linked only after the code |
   | signs in with email, and a Google wallet exists for that address | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet's addresses; the email joins it at once (Google-hosted) or after 24 h (other addresses: a pending banner with **Cancel this link**) |
   | has neither wallet | the usual sign-in | a new wallet for that method |
-  | signs in with Google for the first time with this Google client | Google's one sign-in screen, which also lists "Email address" (Hana asks for it there); a returning user sees only Google's account chooser | as above |
-  | cancels that Google screen | the Hana popup goes back to its chooser: "Google sign-in was cancelled.", with **Continue with Google** and **Continue with email** (only **Continue with Google** when you called `hana.login({ method: 'google' })`; or, if the Google step started from "This email belongs to a wallet you created by signing in with Google", that screen's choices again) | `login()` keeps waiting: Google again or email signs in as usual; closing the popup there rejects with `login_cancelled`, never `google_error` |
+  | signs in with Google for the first time with this Google client | Google's one sign-in screen, which also lists "Email address" (Journear Passport asks for it there); a returning user sees only Google's account chooser | as above |
+  | cancels that Google screen | the Journear Passport popup goes back to its chooser: "Google sign-in was cancelled.", with **Continue with Google** and **Continue with email** (only **Continue with Google** when you called `hana.login({ method: 'google' })`; or, if the Google step started from "This email belongs to a wallet you created by signing in with Google", that screen's choices again) | `login()` keeps waiting: Google again or email signs in as usual; closing the popup there rejects with `login_cancelled`, never `google_error` |
   | signs in with Google, has no wallet yet, and Google's answers name two different Google accounts | **Sign in with email instead** or **Try Google again** (Google's "share your email address" for the account they signed in with) | an email wallet, or Google again; Cancel rejects with `login_cancelled` (`data.reason: 'google_account_mismatch'`, or `'email_consent_declined'` after declining that screen) |
 
   Nobody ever gets a second wallet for the same verified address. While a link is pending, signing in with the
   pending method fails with `link_pending` (`data.effectiveAtMs`: when it opens the wallet). The user can cancel it
-  from the Hana popup's banner at their next sign-in.
+  from the Journear Passport popup's banner at their next sign-in.
   - `await hana.account()` → `{methods: [{provider: 'google' | 'email', status: 'active' | 'pending', effectiveAtMs,
     root}]}`: the wallet's own method (`root: true`) and the ones linked to it. No identifiers, no addresses. Calls
     within 5 s of a read share it (the vault reads afresh after a login, a link or a banner's action). **Show
@@ -514,7 +529,7 @@ button.addEventListener('click', async () => {
     became active, or was `removed`. It fires after a login that linked, at the first `account()` call of a session
     for each pending method, and whenever `account()` sees a change.
   - `await hana.linkAccount({ method: 'google' | 'email' })`, in a click like `login()`: adds a sign-in method with
-    another address (a second Google account, a work email). The Hana popup signs in the new method, then the
+    another address (a second Google account, a work email). The Journear Passport popup signs in the new method, then the
     wallet's own; the link opens the wallet after 24 h (`{provider, status: 'pending', effectiveAtMs}`). It rejects
     with `link_refused` (`data.reason`: `provider_taken`, `account_full`, `already_linked`, `has_wallet` when that
     method already opened a wallet of its own, `links_unavailable`) before any transaction.
@@ -522,28 +537,29 @@ button.addEventListener('click', async () => {
   `hana.supportId` is their Support ID, `HANA-XXXX-XXXX` (`useHana().supportId` in React; `supportIdChanged` when it
   changes; null when logged out). It is the short form of the identity token's `sub` (section 15), so it is the same
   in every app of your scope and for every sign-in method of the user's account, and your backend can compute it from
-  the `sub` it stores (`supportIdFromSub`, [section 15](#15-identity-token-your-backend)). It carries no address, email or Google account, and it isn't a credential: Hana's staff change
-  nothing on a code alone. Show it where your users look for help, put it in your diagnostics, and give it to Hana
+  the `sub` it stores (`supportIdFromSub`, [section 15](#15-identity-token-your-backend)). It carries no address, email or Google account, and it isn't a credential: Journear's staff change
+  nothing on a code alone. Show it where your users look for help, put it in your diagnostics, and give it to Journear
   when you escalate, with the error `code`, its request ID (`error.requestId`, section 13), when it happened and the
-  app; Hana's support finds the user, their logins and sessions by it, and a failed request by its request ID (Hana
-  keeps no user id on failed requests). The Hana
-  approval popup also shows it under the account line, so a user can read it out. It comes from Hana's API with the
+  app; Journear's support finds the user, their logins and sessions by it, and a failed request by its request ID (Journear Passport
+  keeps no user id on failed requests). The Journear Passport
+  approval popup also shows it under the account line, so a user can read it out. It comes from Journear Passport's API with the
   session: `null` for a session saved before this release (until the user's next login) and on an environment that
   can't compute it. An SDK older than 0.2.0 never receives it (the vault gives older SDKs exactly the answers they
   know).
 - `await hana.logout()` signs this app out on this device, in every tab. It sends no transaction.
 - `await hana.revokeOtherDevices()` signs the user out of your app everywhere else. It works only within 5 min of a
   fresh login, so offer it right after one.
-- `await hana.exportKey('stellar' | 'evm')` lets the user take their key elsewhere. Hana shows a button; the key
-  appears only in a top-level Hana window, after a fresh sign-in (Google, or, in an app with email, a new code to the
-  user's email) and a typed confirmation, and never reaches your page. A wallet with linked methods exports its one
+- `await hana.exportKey('stellar' | 'evm')` lets the user take their key elsewhere. Journear Passport shows a button; the key
+  appears only in a top-level Journear Passport window, after a fresh sign-in (Google, or, in an app with email, a new code to the
+  user's email) and a typed confirmation, in three steps (Verify, Understand, Export), and never reaches your page. A wallet with linked methods exports its one
   shared key, whichever method the user signs in with; a pending method exports nothing. That window keeps the key for 5 minutes at most, and erases it as soon as the user's session in your
   app ends (`logout()`, revoke, expiry); exporting again starts over with a new sign-in. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
-  transaction Hana pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
-  A shown key hides again after 60 seconds, and Continue and Show key need the user's own deliberate click (the
-  approval window's guard). Hana records each export (user, app, chain, time; never the key) for its support staff.
+  transaction Journear pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
+  A shown key hides again after 60 seconds. Continue, Show key and Copy key need the user's own deliberate click (the
+  approval window's guard), and Show key and Copy key work only once the user has ticked a box saying no one can see
+  their screen. Journear Passport records each export (user, app, chain, time; never the key) for its support staff.
   Offer an "Export private key" entry in your account screen that calls `exportKey`: export is how users keep their
-  funds if Hana's key service ever can't derive their key, so don't hide it. No SDK method returns a key.
+  funds if Journear Passport's key service ever can't derive their key, so don't hide it. No SDK method returns a key.
 
 ## 5. Your page: origins, CSP, popups
 
@@ -552,22 +568,22 @@ button.addEventListener('click', async () => {
 | The page's origin is one of your app's origins, exactly (scheme, host and port; pin your dev server's port, [section 3](#3-create-the-client)) | the vault doesn't load (`vault_unavailable`, `no_answer`) |
 | CSP `frame-src` (or `child-src`/`default-src`) allows `vaultOrigin` | `vault_unavailable` at once (an enforced violation is detected; report-only is fine) |
 | CSP `connect-src` allows your own EVM RPC (and Horizon / Soroban RPC for Sodax) | your RPC calls fail; the SDK calls them from your page |
-| Popups allowed for your site | the "Sign in with Hana" button fallback (`popup_blocked` if you cancel) |
+| Popups allowed for your site | the "Sign in with Journear Passport" button fallback (`popup_blocked` if you cancel) |
 | `Cross-Origin-Opener-Policy` is not `same-origin` (`same-origin-allow-popups` and `unsafe-none` are fine) | `coop_blocks_popup` |
 | Every page that frames yours is also one of your origins (`frame-ancestors` checks all ancestors) | `vault_unavailable` |
 | `login()` and `eth_requestAccounts` run in a click | one extra click (the fallback button) |
-| Signing calls run in a click, before any `await` (or after `hana.prepareApproval()`) | one extra click per signature (the "Review in Hana" button) |
+| Signing calls run in a click, before any `await` (or after `hana.prepareApproval()`) | one extra click per signature (the "Review in Journear Passport" button) |
 
 Not supported: Google Identity Services (the "Sign in with Google" button or One Tap) on the same page, which the
 SDK warns about in the console; in-app browsers (Instagram, TikTok, … webviews), where Google refuses to sign in
 (`disallowed_useragent`); pages with COOP `same-origin`. A page with `Cross-Origin-Embedder-Policy: require-corp` is
 untested: the vault frame sends no COEP header, so such a page may refuse to embed it.
 
-The vault's button (sign-in fallback, "Review in Hana", export) is a fixed 320×72 px Hana frame at the bottom right
-of the viewport. Don't cover it: whenever the popup couldn't open in the click (and for every export), users can't
+The vault's button (sign-in fallback, "Review in Journear Passport", export) is a fixed 320×72 px Journear Passport frame at the bottom right
+of the viewport, dark in both colour schemes. Don't cover it: whenever the popup couldn't open in the click (and for every export), users can't
 continue without it. The `launcher` event tells you when it
 shows, if you want to point at it: prompt the user to click only when `visible && clickable`. The same frame also
-shows short notices that need no click ("Signed by Hana under {label}" for about 3 seconds after each auto-signed
+shows short notices that need no click ("Signed by Journear Passport under {label}" for about 3 seconds after each auto-signed
 request, section 9): those arrive with `clickable: false`. `clickable` is in SDK 0.3.1 or later; with 0.3.0 or
 earlier the field is absent, and a notice can't be told from a button.
 
@@ -579,7 +595,7 @@ Removing an origin from your app signs out the users who signed in there.
 |---|---|---|
 | Setup on your side | none | a Web OAuth client in **your** Google Cloud project |
 | Google's consent screen shows | Hana | your app |
-| Who can obtain tokens that open your users' wallets | only Hana's pages, for your origins | also anyone your client trusts (see below) |
+| Who can obtain tokens that open your users' wallets | only Journear Passport's pages, for your origins | also anyone your client trusts (see below) |
 | Addresses | the same in both modes, for the same scope and Google account | |
 
 Both modes put users in your app's own scope, so another app never gets your users' keys. The path holds no client
@@ -593,19 +609,19 @@ application":
 - **Authorized redirect URIs**: exactly `{authOrigin}/login/callback`, and nothing else. For sandbox-dev that is
   `https://hana-id-auth-sandbox-dev.tingtc.workers.dev/login/callback`.
 - **Authorized JavaScript origins**: none.
-- On the OAuth consent screen, add Hana's domain as an authorized domain.
+- On the OAuth consent screen, add Journear Passport's domain as an authorized domain.
 
 Then add it to your scope: in the portal, an app's **Login & sessions** tab links to your scope's page ("Google
 clients and on-chain owners"), whose **Add your own Google client** steps take a client proof: a helper page you
 download, host on one of the client's origins and sign in on once, whose token becomes public on chain (use a team
-account). The addition is timelocked by Hana's contract. Return the client to the settings above (remove the helper's
+account). The addition is timelocked by Journear Passport's contract. Return the client to the settings above (remove the helper's
 redirect URI and origin) once the change is proposed. Only an on-chain owner can propose it
-([section 1](#on-chain-owners)), and this is the only way to add one: Hana doesn't register a client ID you send,
-because nothing would prove it is yours. Once your own client is in, an on-chain owner can turn Hana's shared login off
-on the same page. The token's audience then picks your scope. If your scope also holds iOS or Android clients, which can't run Hana's web flow, set the web one as the
+([section 1](#on-chain-owners)), and this is the only way to add one: Journear doesn't register a client ID you send,
+because nothing would prove it is yours. Once your own client is in, an on-chain owner can turn Journear's shared login off
+on the same page. The token's audience then picks your scope. If your scope also holds iOS or Android clients, which can't run Journear Passport's web flow, set the web one as the
 app's **Google web client** on **Login & sessions**. A scope with a client of its own always signs in through it.
 
-Hana can't see your Google client's settings. Any JavaScript origin, extra redirect URI or native app on your client
+Journear can't see your Google client's settings. Any JavaScript origin, extra redirect URI or native app on your client
 can obtain tokens for it with any nonce, and so derive your users' keys, so an XSS on one of those origins puts your
 users' wallets at risk. Keep the client exactly as above, or use the shared client.
 
@@ -631,8 +647,10 @@ and raw signing `'off'` refuses raw requests within 10 s too (the vault re-reads
 
 ## 8. Signing
 
-Every signing request goes through the user. The Hana popup decodes the request bytes itself, so your page can't
-misdescribe them. The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
+Every signing request goes through the user. The Journear Passport popup decodes the request bytes itself, so your page can't
+misdescribe them. It lists what the request does as labelled rows, with **Reject** and **Approve** below; a plain
+transfer (EVM value with no call data on a chain it names, one native XLM payment or account creation, NEAR
+transfers only) also leads with the amount ("Sends 0.001 ETH"), never a contract call or a token. The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
 re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Declined" and counts down,
 with a Close now button. Each follow-up still needs its own Approve. Reject, closing the
 popup, or 5 min without an answer gives `4001`.
@@ -672,7 +690,7 @@ signButton.addEventListener('click', () => {
 - **Auto-approved requests.** Under a policy the user accepted, the popup opens in the click and closes at once
   without showing anything, then the signature returns.
 - **Without a click** (a call from a timer, or after the browser dropped the gesture), nothing opens: the vault shows
-  its "Review in Hana" button (bottom right) and the call resolves after the user clicks it and approves. The same
+  its "Review in Journear Passport" button (bottom right) and the call resolves after the user clicks it and approves. The same
   happens when a popup blocker refuses the window.
 
 The Approve button arms only after the request has been on screen for 1 s and the window has had focus for 1 s, then
@@ -680,8 +698,8 @@ a mouse move, a tap, or Tab or an arrow key. The gesture that arms it doesn't ap
 clicking in place without moving the mouse, Enter and Space never arm it. That stops clickjacking and double-click
 tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) carry a line that the signature
 isn't tied to one network: they are valid wherever the key is. For a test app every request and consent screen also
-says that Hana signs only for test networks (for a test app with Hana's mainnet demo on, it says what the demo signs
-instead). The consent screen names the EVM chains Hana knows ("Sepolia (testnet)", with the chain ID beside it) and
+says that Journear Passport signs only for test networks (for a test app with Journear's mainnet demo on, it says what the demo signs
+instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (testnet)", with the chain ID beside it) and
 gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
 
 ### Stellar
@@ -697,7 +715,7 @@ const { signedMessage, signerAddress } = await hana.stellar.signMessage('hello')
 await hana.stellar.getNetwork();                                          // from createHana({ stellar })
 ```
 
-You build, simulate and submit transactions yourself. Hana only signs. Fee-bump envelopes are signed as given.
+You build, simulate and submit transactions yourself. Journear Passport only signs. Fee-bump envelopes are signed as given.
 
 **Stellar Wallets Kit** (1.9.x, which Sodax's `wallet-sdk-react` uses, and 2.x):
 
@@ -707,23 +725,23 @@ import { HanaIdModule } from '@hana-id/web/stellar-wallets-kit';
 const kit = new StellarWalletsKit({ network, modules: [new HanaIdModule(hana), ...otherModules] });
 ```
 
-The module's `productId` is `'hana-id'`. `isAvailable()` is true once the vault is up, `getAddress()` logs in when
+The module's `productId` is `'hana-id'`; the picker shows its `productName`, "Journear Passport", and the Journear mark. `isAvailable()` is true once the vault is up, `getAddress()` logs in when
 needed (with the button fallback when SWK's own awaits cost the popup), the sign methods open the approval popup in
 your click the same way, `disconnect()` is `hana.logout()`. Errors are
-SWK's `{code, message, ext}`, with `4001` for a rejection and the Hana code in `ext`. Hana only signs, so
+SWK's `{code, message, ext}`, with `4001` for a rejection and the Journear Passport code in `ext`. Journear Passport only signs, so
 `submit: true` is refused.
 
 ### EVM (EIP-1193)
 
-`hana.ethereum` is an EIP-1193 provider, announced through EIP-6963 as "Hana ID" when you pass `evm` to
-`createHana`:
+`hana.ethereum` is an EIP-1193 provider, announced through EIP-6963 as "Journear Passport" (`info.name`, with the
+Journear mark as `info.icon`; `info.rdns` is unchanged) when you pass `evm` to `createHana`:
 
 ```ts
 // viem
 const wallet = createWalletClient({ chain: baseSepolia, transport: custom(hana.ethereum) });
 // ethers
 const provider = new BrowserProvider(hana.ethereum);
-// wagmi: the injected connector discovers it through EIP-6963 (name "Hana ID")
+// wagmi: the injected connector discovers it through EIP-6963 (name "Journear Passport")
 ```
 
 | Method | Behaviour |
@@ -736,7 +754,7 @@ const provider = new BrowserProvider(hana.ethereum);
 | `personal_sign`, `eth_signTypedData_v4` | approval |
 | `eth_sign` and other signing or wallet methods | `4200` |
 | read-only methods (`eth_call`, `eth_getBalance`, …) | forwarded to the current chain's `rpcUrl` |
-| `eth_sendRawTransaction` | forwarded to the current chain's `rpcUrl` (it broadcasts a transaction you already hold signed; Hana signs nothing) |
+| `eth_sendRawTransaction` | forwarded to the current chain's `rpcUrl` (it broadcasts a transaction you already hold signed; Journear Passport signs nothing) |
 
 The RPC you configure is trusted for liveness and ordering: it fills fees and nonces, answers reads and broadcasts,
 so use a provider you trust, over https (required for `pk_live_` keys). The hash `eth_sendTransaction` returns is the
@@ -744,7 +762,7 @@ one your RPC reports.
 
 One key covers every EVM chain. Contract creation (an empty `to`) works with approval, but no policy ever
 auto-approves it. Errors are `ProviderRpcError` with numeric codes. A sign-in that didn't complete is `4001`, and the
-Hana code is in `error.data.code`. Logging out emits `accountsChanged []`, as wallets do.
+Journear Passport code is in `error.data.code`. Logging out emits `accountsChanged []`, as wallets do.
 
 ### NEAR
 
@@ -791,15 +809,15 @@ button.addEventListener('click', () => {
 A transaction that relays someone else's delegate action (a `Delegate` action) is refused (4100
 `near_relayed_delegate`): its signer would prepay every deposit inside it. `signTransaction` returns `{ signature, signedTransaction, hash }`: base64 of the 64-byte signature, base64 of the
 borsh `SignedTransaction` (what `send_tx` takes) and the base58 transaction hash. The transaction's signer and key must
-be the user's (4100 otherwise). NEAR's bytes name no network, so you say which (`'testnet'` or `'mainnet'`) and Hana
-checks it: a `testnet` transaction's block hash must be a testnet block (`near_block_unknown` otherwise; if Hana can't
+be the user's (4100 otherwise). NEAR's bytes name no network, so you say which (`'testnet'` or `'mainnet'`) and Journear Passport
+checks it: a `testnet` transaction's block hash must be a testnet block (`near_block_unknown` otherwise; if Journear Passport can't
 reach NEAR testnet it refuses with `api_unavailable`, `data.reason: 'near_rpc_unavailable'`), and a `mainnet` one's
 must not be (`near_network_mismatch`). A test app signs for testnet only. Use a block hash under a day old (NEAR's own
 rule). Transactions with a priority fee (`TransactionV1`) and actions newer than `UseGlobalContract` are refused, and
 a request is at most 192 KiB of base64.
 
 **Gasless (a meta transaction).** Sign a NEP-366 delegate action instead and let a relayer send it: it wraps it in
-its own transaction. `hana.near.relay` uses Hana's relayer (`POST /v1/near/relay`, checked against your publishable
+its own transaction. `hana.near.relay` uses Journear Passport's relayer (`POST /v1/near/relay`, checked against your publishable
 key and your page's origin like every `/v1` call), available where the environment runs a relayer (sandbox-dev will);
 any NEP-366 relayer takes the same `signedDelegateAction`. **Who pays** (nearcore): the relayer's transaction pays the
 gas and prepays every deposit and transfer in the delegate action; on success those go to their receivers, and if an
@@ -832,7 +850,7 @@ button.addEventListener('click', () => {
 
 `signDelegateAction` takes the borsh `DelegateAction` with or without NEP-461's prefix (`encodeDelegateAction` adds
 it) and returns `{ signature, signedDelegateAction }` (base64 borsh `SignedDelegateAction`, which any NEP-366 relayer
-takes). A delegate action has no block hash, so for a **test app** Hana ties it to testnet another way, on testnet's
+takes). A delegate action has no block hash, so for a **test app** Journear Passport ties it to testnet another way, on testnet's
 RPC (both of the environment's providers, when it has two): the account must already exist there with this key
 (`near_key_unknown`: activate it first, below); the nonce must be above the key's current one
 (`near_delegate_nonce_used`), above (testnet's height − 10,000) × 10^6 (`near_delegate_nonce_stale`: the key's nonce
@@ -848,26 +866,26 @@ lastUsed })`), or read the key again.
 user's own (4100 `near_delegate_test_app_action` for any other action: AddKey, DeleteKey, DeleteAccount,
 DeployContract, DeployGlobalContract, UseGlobalContract, Stake, CreateAccount; `near_delegate_test_app_receiver` for
 another receiver). Why: a delegate action names no network. nearcore runs it on any network whose own height lies
-between its nonce / 10^6 and its `maxBlockHeight`, and Hana's bounds pin that to a window of at most 20,000 blocks
+between its nonce / 10^6 and its `maxBlockHeight`, and Journear Passport's bounds pin that to a window of at most 20,000 blocks
 around testnet's height when it was signed. Mainnet, about 53 million blocks behind testnet in November 2026 and
 growing at the same rate, passes through that window about a year later: whoever kept the signed action (your page
 can) could submit it there then, if the user's implicit account exists on mainnet with the same key. A `*.testnet`
 account doesn't exist on mainnet (only the `registrar` account could create `testnet` there), so such a replay calls
 nothing. Live apps are not restricted this way. **Never fund or use a test app's addresses on mainnet**, and tell
-your users the same: the keys come from Hana's testnet MPC. For a test app Hana asks both of the environment's NEAR
+your users the same: the keys come from Journear Passport's testnet MPC. For a test app Journear Passport asks both of the environment's NEAR
 providers; an environment with only one fails closed (`api_unavailable`, `data.reason: 'near_rpc_single_provider'`).
 
 `relay` rejects with `rate_limited` (429), `origin_not_allowed`, `app_suspended`, 4100 for
 another refusal (`data.reason` is the API's code, `data.requestId` its request ID, `data.accessKeyNonce` the key's nonce the relayer holds after a nonce refusal, `data.retryable` when the API says to ask again) or `api_unavailable` (`data.reason` too).
 
 **A new account: activate it first.** A user's implicit account doesn't exist on chain until something is sent to
-it, so a brand-new user's first delegate action is refused (`near_key_unknown`). `hana.near.activate()` asks Hana's
+it, so a brand-new user's first delegate action is refused (`near_key_unknown`). `hana.near.activate()` asks Journear Passport's
 relayer to create it (`POST /v1/near/activate` with the user's own account, the same publishable key and origin check
 as `relay`; no popup) and resolves `{ created, accountId, accessKeyNonce, blockHeight, transactionHash? }`: `created`
 is `true` when it created the account now and `false` when it already existed, so calling it again is harmless;
 `accessKeyNonce` (a decimal string, or `null` if the account exists without this key) and `blockHeight` are what the
 relayer read, ready for `nearDelegateNonce`. It rejects like `relay`; right after a login it can answer 4100 with
-`data.reason: 'near_account_unrecorded'` for a few seconds (Hana records the account just after login): retry for
+`data.reason: 'near_account_unrecorded'` for a few seconds (Journear Passport records the account just after login): retry for
 about 20 s. Do it before the click (when the gasless button appears or the user starts typing).
 
 ```ts
@@ -887,12 +905,12 @@ const { accountId, publicKey, signature } = await hana.near.signMessage({ messag
 Your backend rebuilds NEP-413's payload (`u32le(2^31 + 413)` ‖ borsh `{ message, nonce, recipient, callbackUrl }`),
 verifies `signature` (base64, Ed25519) over its sha256 with `publicKey`, checks that `publicKey`'s hex is `accountId`
 (an implicit account is its key), and accepts the nonce only once. `recipient` and `callbackUrl` are one line of
-visible text each; Hana's window shows the recipient first, flags one that isn't your page's host, and writes out a
+visible text each; Journear Passport's window shows the recipient first, flags one that isn't your page's host, and writes out a
 recipient with characters outside plain ASCII (look-alikes). Like other messages it names no network, so a test app
 may sign it.
 
-**What the approval window shows** (decoded by Hana from the bytes, never from your description): the network and
-whether Hana checked it, sender and receiver, every action in plain words (a call with its method, attached deposit,
+**What the approval window shows** (decoded by Journear Passport from the bytes, never from your description): the network and
+whether Journear Passport checked it, sender and receiver, every action in plain words (a call with its method, attached deposit,
 gas in Tgas and its arguments as escaped JSON, or hex when they aren't JSON, always in full), and the NEAR leaving the
 account (including what publishing a global contract burns: 0.0001 NEAR per byte of code). Adding or removing a key,
 deleting the account and deploying or setting a contract change who controls the account: they are shown under a
@@ -915,10 +933,10 @@ await hana.signRaw({ chain: 'evm', digest });      // secp256k1 over 32 bytes �
 An on-chain owner of your scope turns it on, on the **Signing** tab ([section 1](#on-chain-owners)); any owner turns
 it off. The user always approves raw requests, under a red warning that raw signing can authorize any transaction on that
 chain. No policy ever covers them. Ask for it only if a standard method can't do the job. With raw signing off,
-`signRaw` is `4100` (`data.reason: 'raw_sign_off'`), also in a tab opened before it was turned off. Bytes in Hana's
+`signRaw` is `4100` (`data.reason: 'raw_sign_off'`), also in a tab opened before it was turned off. Bytes in Journear Passport's
 own signing domains are never raw-signed: Stellar bytes starting with `hana-id`, and the session's identity
 wallet-proof digest on EVM, are `4100` (`data.reason: 'raw_reserved_domain'`) before any popup. If the vault can't
-confirm the setting with Hana's API (it re-reads it at most every 10 s), the request fails with `api_unavailable`
+confirm the setting with Journear Passport's API (it re-reads it at most every 10 s), the request fails with `api_unavailable`
 rather than going ahead.
 
 ## 9. Auto-approve policies
@@ -927,7 +945,7 @@ By default every signature needs the popup. An auto-approve policy lets matching
 example repeated deposits into your contract. It needs two opt-ins:
 
 1. **You** set a policy for your app. It takes effect after the delay (24 h; 60 s on sandbox-dev).
-2. **Each user** accepts that exact policy once, in a Hana popup that shows your app, your verified origin, the
+2. **Each user** accepts that exact policy once, in a Journear Passport popup that shows your app, your verified origin, the
    policy's label, every contract (its name, short address and explorer link: see "Contract names" below), the
    functions, the address rule and the limits. A changed policy asks every user again.
 
@@ -1040,21 +1058,21 @@ a protocol decoder for them ships. Token amounts other than native value are not
 `perDayCount` small.
 
 **Contract names on the consent screen.** The `name` you give a contract is shown as yours: "{name} · named by
-{your app name}". A contract on Hana's verified list shows "✓ {verified name}" instead, and your name for it isn't
+{your app name}". A contract on Journear Passport's verified list shows "✓ {verified name}" instead, and your name for it isn't
 shown. If your name for any other contract reads like a verified name or mentions a verified protocol (say "Sodax
 Router" on an address that isn't one of Sodax's verified contracts), the screen flags it ("— not the verified Sodax
 Asset Manager", "— not a verified Sodax contract") and warns the user at the top. Check marks are removed from your
 names. Every contract also shows its short address (`0x348B…7Bc3`) and a "View on {explorer}" link for its chain
-(Etherscan, Basescan, SonicScan, StellarExpert and others, test networks included; a chain Hana has no explorer for
+(Etherscan, Basescan, SonicScan, StellarExpert and others, test networks included; a chain Journear Passport has no explorer for
 shows the address alone). The verified list starts with Sodax's mainnet contracts (its Sonic hub contracts; asset
 managers and bnUSD on the EVM spokes and Stellar; Connection contracts on Hedera, Kaia and Robinhood Chain), each
 confirmed by two Sodax sources that agree.
 
-**Getting a contract verified.** Ask Hana, with the chain, the address and the protocol's own official sources for
+**Getting a contract verified.** Ask Journear, with the chain, the address and the protocol's own official sources for
 it: a page of the protocol's documentation that lists the address, and/or a published, version-pinned package of the
-protocol (its SDK config) that contains it. Hana adds the entry only after confirming the address from those sources
-(two that agree, where they exist), records them with the entry, and ships it in a Hana release: the list is built
-into Hana's popup, not read from the API, so it can't be changed for one app. Your own contracts can be verified the
+protocol (its SDK config) that contains it. Journear adds the entry only after confirming the address from those sources
+(two that agree, where they exist), records them with the entry, and ships it in a Journear Passport release: the list is built
+into Journear Passport's popup, not read from the API, so it can't be changed for one app. Your own contracts can be verified the
 same way, under your protocol's name.
 
 Your page can use:
@@ -1067,18 +1085,18 @@ await hana.revokeAutoApprove();    // the user can also stop it from any Hana po
 
 Without `requestAutoApprove()`, the first matching request shows the consent screen. A request that doesn't match
 gets the normal popup, which tells the user why it wasn't auto-approved. After each auto-signed request the vault
-emits `autoApproved` and its button briefly shows "Signed by Hana under {label}": a notice, not a prompt, so the
+emits `autoApproved` and its button briefly shows "Signed by Journear Passport under {label}": a notice, not a prompt, so the
 `launcher` event for it has `clickable: false` (SDK 0.3.1 or later) and there is nothing for the user to click.
 
-Hana records each consent on its API, so auto-approve can't be turned on while the API can't record it. After the
+Journear Passport records each consent on its API, so auto-approve can't be turned on while the API can't record it. After the
 user presses Allow, `requestAutoApprove()` rejects with `api_unavailable` (`data.reason` is `consent_not_recorded`,
-`data.granted` is `false`) rather than granting; it rejects the same way, with `consent_unconfirmed`, when Hana can't
+`data.granted` is `false`) rather than granting; it rejects the same way, with `consent_unconfirmed`, when Journear Passport can't
 confirm a consent the user already gave. A matching request in the same situation just goes to the normal popup. Treat the rejection like any other failure: offer it again later; the user's Allow isn't remembered. If the user
-stops auto-approve from Hana on another device, an open tab stops auto-signing within about 10 seconds, and a Hana popup
-appears for the next matching request. Requests go to the popup the same way while Hana's API can't be reached; your
+stops auto-approve in Journear Passport on another device, an open tab stops auto-signing within about 10 seconds, and a Journear Passport popup
+appears for the next matching request. Requests go to the popup the same way while Journear Passport's API can't be reached; your
 page needs no code for this.
 
-Auto-signed requests don't extend the session's idle limit: only a signature the user approved in a Hana popup does. A
+Auto-signed requests don't extend the session's idle limit: only a signature the user approved in a Journear Passport popup does. A
 session that only auto-signs ends at your app's idle limit, and the user has to sign in again. If your app can run for
 longer than that on auto-approve alone, plan for that sign-in.
 
@@ -1161,8 +1179,8 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
   (`data.reason: 'mainnet_not_allowed'`, [section 12](#12-test-and-live-keys)). Through the EVM adapter the approval
   popup opens in the click and closes again at once when the refusal comes (the adapter opens it before switching
   chains). You can test Sodax quotes and intent building (`createIntent({ raw: true })`, read-only against mainnet), and
-  the adapters with ordinary testnet transactions. Real Sodax swaps through Hana wait for Hana's mainnet launch (live
-  keys); Hana's own sandbox mainnet demo runs under a Hana-internal exception that partner apps can't use. The adapter
+  the adapters with ordinary testnet transactions. Real Sodax swaps through Journear Passport wait for Journear Passport's mainnet launch (live
+  keys); Journear's own sandbox mainnet demo runs under a Journear-internal exception that partner apps can't use. The adapter
   is tested against mocks of `@sodax/sdk`'s call patterns, not end to end.
 - **Build before the click.** `sodax.swaps.swap()` awaits allowance checks and a simulation before it signs, which
   costs the click its popup. Build the intent's transaction when the user enters the amount (`createIntent({ raw: true
@@ -1175,7 +1193,7 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 | Where | sandbox envs (testnet), the pilot | the production MVP (mainnet), after the audit; not issued yet |
 | Loopback origins (`http://localhost:…`) | allowed, in `local*`/`sandbox*` envs only | never |
 | Login result | carries per-stage `timings` (`hana.lastLogin.timings`, below); the handshake and unlock's are `hana.readyTimings` | no timings (`hana.readyTimings` is null) |
-| Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for Hana's test tooling | never |
+| Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for Journear's test tooling | never |
 | Networks | test networks only: any Stellar network but the public one, and the EVM chains below | any |
 
 A test app's keys come from the testnet MPC, which can lose or leak them, so its vault refuses anything a mainnet would
@@ -1189,11 +1207,11 @@ them to move mainnet funds from a test app either.
 EVM chains a test app may use: Sepolia (11155111), Holesky (17000), Hoodi (560048), Base Sepolia (84532), Arbitrum
 Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze testnet (57054), BNB Smart Chain testnet
 (97), Polygon Amoy (80002), Avalanche Fuji (43113), and local chains 31337 and 1337 (`TEST_EVM_CHAINS` in
-`@hana-id/core`). Ask Hana to add another testnet.
+`@hana-id/core`). Ask Journear to add another testnet.
 
-**Hana's sandbox mainnet demo (not for partner apps).** Hana runs its own Sodax demo on sandbox under an internal
-exception: one Hana test app may sign on Base (8453) and Stellar's public network, at most $9.99 per transaction (fee
-included), every request through Hana's window with a red "Real funds, test custody" banner, the request's value and
+**Journear's sandbox mainnet demo (not for partner apps).** Journear runs its own Sodax demo on sandbox under an internal
+exception: one Journear Passport test app may sign on Base (8453) and Stellar's public network, at most $9.99 per transaction (fee
+included), every request through Journear Passport's window with a red "Real funds, test custody" banner, the request's value and
 the wallet's balance. Partner apps can't get it, and in production it doesn't exist. What the SDK shows of it (SDK
 0.2.1; the `prices` field and `mainnetDemoKnown` need a current vault), so a page built on it knows where it stands:
 
@@ -1207,7 +1225,7 @@ the wallet's balance. Partner apps can't get it, and in production it doesn't ex
 - **Prices:** `hana.mainnetDemo.prices` is `{ source, atMs, assets: { ETH, XLM, USDC, EURC } }`, each asset `{ usd:
   '2251.7985', usdMicros: '2251798500', source }`. `source` (`live` or `fixed`) is per asset, and the top-level one is
   `live` only when all four are. Live prices are CoinGecko's market price plus 5%, rounded up, within a floor and a
-  ceiling per asset; `fixed` is Hana's reviewed table, used per asset when no live price is available. `atMs` is the
+  ceiling per asset; `fixed` is Journear's reviewed table, used per asset when no live price is available. `atMs` is the
   oldest live price's time, or null when none is live. `prices` is null with a vault older than this SDK. Value what
   you're about to send, plus the transaction's maximum fee in the native asset, at these prices and compare with
   `txCapUsd` to know before the click what the vault will accept: they are the same numbers the vault uses.
@@ -1216,7 +1234,7 @@ the wallet's balance. Partner apps can't get it, and in production it doesn't ex
   anywhere but the user's own wallets: another hub wallet, recipient or destination chain),
   `mainnet_demo_prices_stale` (only once the fixed prices a request depends on are past their date); any other mainnet
   stays `mainnet_not_allowed`. `data.usd` and `data.capUsd` are strings such as `"$12.40"`,
-  always rounded up to the cent; compare numbers with `usdMicros`, not these. If Hana can't confirm the demo is
+  always rounded up to the cent; compare numbers with `usdMicros`, not these. If Journear Passport can't confirm the demo is
   still on, the request fails with `api_unavailable` and `data.reason: 'mainnet_demo_unconfirmed'` (try again).
 - What the demo can value (everything else is `mainnet_demo_unknown_call`, or `mainnet_demo_unpriced` for an
   unlisted asset):
@@ -1254,9 +1272,9 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 ## 13. Errors
 
 `hana.*` methods reject with a `HanaError {code, message, data?}`. The EIP-1193 provider maps string codes to numbers
-(the Hana code stays in `data.code`), and the SWK module maps them to SWK's shape.
+(the Journear Passport code stays in `data.code`), and the SWK module maps them to SWK's shape.
 
-An error that came from an answer of Hana's API (a refusal, or a sign-in that gave up after one: `rate_limited`,
+An error that came from an answer of Journear Passport's API (a refusal, or a sign-in that gave up after one: `rate_limited`,
 `api_unavailable`, `token_invalid`, `link_refused`, `identity_unavailable`, `session_ended`, `4900` from
 `revokeOtherDevices()`, …) carries that request's ID in `data.requestId` (SDK 0.2.0 or later):
 `error.requestId` on a `HanaError` (null without one), `data.requestId` on the EIP-1193 provider's errors too, and
@@ -1271,34 +1289,34 @@ window, not returned.
 | `4001` | The user rejected, closed the popup, or let it time out | nothing; let them retry |
 | `4100` | Not logged in, wrong address, or not allowed for this app (raw signing off, no policy, a mainnet for a test app: `data.reason`) | log in, or check the call |
 | `4200` | Unsupported method (`eth_sign`, …) | use a supported method |
-| `4900` | The session or the vault is gone. `data.reason: 'signed_out'`: Hana signed this device out (Hana's own page, `revokeOtherDevices()` on another device, a newer sign-in in another tab of this device, or your app's settings), and the vault is fine. Without it: the vault connection is gone (frame replaced, `hana.status` `'error'`), or the session ended another way (a logout in another tab, its end on Hana's side, a stored session that couldn't be opened), where the vault is fine (`hana.status` `'logged_out'`) | with `signed_out`, or with `hana.status` `'logged_out'`, ask the user to log in again (no reload); with `'error'`, create the client again or reload |
+| `4900` | The session or the vault is gone. `data.reason: 'signed_out'`: Journear Passport signed this device out (Journear Passport's own page, `revokeOtherDevices()` on another device, a newer sign-in in another tab of this device, or your app's settings), and the vault is fine. Without it: the vault connection is gone (frame replaced, `hana.status` `'error'`), or the session ended another way (a logout in another tab, its end on Journear Passport's side, a stored session that couldn't be opened), where the vault is fine (`hana.status` `'logged_out'`) | with `signed_out`, or with `hana.status` `'logged_out'`, ask the user to log in again (no reload); with `'error'`, create the client again or reload |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
 | `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins (`no_answer`'s `data.origin` against the portal's **Origins** tab), the network. A wrong origin or key takes about 3 s to report (`no_answer`; about 10 s with SDK 0.2.0) |
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s, `data.stage: 'connect'`), or the sign-in was left unfinished for 5 min (`data.stage: 'pending'`: the popup left open, or closed within a few seconds of reaching Google's page) | retry |
-| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Hana popup (`data.reason: 'popup_closed'`: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Hana popup on the screen it went back to; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Hana's explanation | offer email sign-in |
+| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Journear Passport popup (`data.reason: 'popup_closed'`: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Journear Passport popup on the screen it went back to; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Journear Passport's explanation | offer email sign-in |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
 | `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; sign in with the wallet's other method meanwhile |
 | `link_refused` | The sign-in methods can't be linked (`data.reason`); `login()` with the wallet's own method still works | offer the other method |
-| `google_error` | Google returned an error (`data.error`), or Hana couldn't check Google's answer (`tokeninfo_unavailable`, `tokeninfo_client_mismatch`, `tokeninfo_invalid`, `google_account_mismatch`, `invalid_response`). The user cancelling Google's sign-in screen is not one: the popup goes back to its chooser, and closing it there is `login_cancelled`. `access_denied` remains only where Hana has no screen to go back to (a login in an environment without Hana's email service, or the fallback Google request a Google-only app makes when Google's tokeninfo can't be reached) | retry; with `access_denied`, the user declined |
-| `no_google_client` | Your scope has no usable Google client | ask Hana |
-| `token_invalid`, `token_has_pii` | The Google token failed Hana's checks | retry; report it if it persists |
-| `config_mismatch` | Hana's pages disagree about the signer, scope or client, or the scope doesn't match the on-chain registry (`data.reason: 'scope_mismatch'`) | report it to Hana; never retry around it |
-| `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced (`derive_failed` with `data.reason: 'link_restart'`: a linking login was interrupted and its session revoked; `'webcrypto_unsupported'`: the browser has no Ed25519 in WebCrypto, so Hana can't make the sign-in's session key: Chrome and Edge before 137, Firefox before 129, Safari before 17; `'webcrypto_failed'`: the browser refused to make the key, `data.error` the platform error's name; both in a login, `linkAccount()` and the export window's sign-in) | the user logs in again; with `webcrypto_unsupported`, ask them to update the browser or use another |
+| `google_error` | Google returned an error (`data.error`), or Journear Passport couldn't check Google's answer (`tokeninfo_unavailable`, `tokeninfo_client_mismatch`, `tokeninfo_invalid`, `google_account_mismatch`, `invalid_response`). The user cancelling Google's sign-in screen is not one: the popup goes back to its chooser, and closing it there is `login_cancelled`. `access_denied` remains only where Journear Passport has no screen to go back to (a login in an environment without Journear Passport's email service, or the fallback Google request a Google-only app makes when Google's tokeninfo can't be reached) | retry; with `access_denied`, the user declined |
+| `no_google_client` | Your scope has no usable Google client | ask Journear |
+| `token_invalid`, `token_has_pii` | The Google token failed Journear Passport's checks | retry; report it if it persists |
+| `config_mismatch` | Journear Passport's pages disagree about the signer, scope or client, or the scope doesn't match the on-chain registry (`data.reason: 'scope_mismatch'`) | report it to Journear; never retry around it |
+| `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced (`derive_failed` with `data.reason: 'link_restart'`: a linking login was interrupted and its session revoked; `'webcrypto_unsupported'`: the browser has no Ed25519 in WebCrypto, so Journear Passport can't make the sign-in's session key: Chrome and Edge before 137, Firefox before 129, Safari before 17; `'webcrypto_failed'`: the browser refused to make the key, `data.error` the platform error's name; both in a login, `linkAccount()` and the export window's sign-in) | the user logs in again; with `webcrypto_unsupported`, ask them to update the browser or use another |
 | `session_consumed` | Someone replayed the login transaction first | the vault offers "Continue signing in" |
-| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `mainnet_demo_unconfirmed` (Hana's sandbox mainnet demo couldn't be confirmed on, section 12), `email_match_unavailable` (Hana's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Hana's NEAR providers), `path_disputed` (they disagree: report it), `share_unconfirmed` (a signature or an identity token: Hana's API couldn't confirm for 3 minutes that this device is still signed in, "Signed out from Hana" in section 4) | back off, or contact Hana |
-| `storage_unavailable` | The Hana popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
+| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Journear Passport's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `mainnet_demo_unconfirmed` (Journear's sandbox mainnet demo couldn't be confirmed on, section 12), `email_match_unavailable` (Journear Passport's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Journear Passport's NEAR providers), `path_disputed` (they disagree: report it), `share_unconfirmed` (a signature or an identity token: Journear Passport's API couldn't confirm for 3 minutes that this device is still signed in, "Signed out from Journear Passport" in section 4) | back off, or contact Journear |
+| `storage_unavailable` | The Journear Passport popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
 | `busy` | An export is already running | wait |
-| `identity_unavailable` | `getIdentityToken()`: Hana's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |
-| `session_ended` | `getIdentityToken()`: the Hana session is over (`sessionExpired` fires too; `data.reason: 'signed_out'` when Hana signed this device out), or ends within 30 s (`data.reason: 'session_ending'`) | treat as logged out |
+| `identity_unavailable` | `getIdentityToken()`: Journear Passport's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |
+| `session_ended` | `getIdentityToken()`: the Journear Passport session is over (`sessionExpired` fires too; `data.reason: 'signed_out'` when Journear Passport signed this device out), or ends within 30 s (`data.reason: 'session_ending'`) | treat as logged out |
 
-<a id="getting-help"></a>**Getting help.** When a user reports a problem, send Hana the user's Support ID
+<a id="getting-help"></a>**Getting help.** When a user reports a problem, send Journear the user's Support ID
 (`hana.supportId`, section 4) and the failed call's request ID (`error.requestId`; keep the last few in your
 diagnostics, as the hosted demo's "Copy diagnostics" does), with the error `code`, when it happened (with the time
 zone) and the app. The Support ID finds the user, their logins and sessions; the request ID finds the failed request
-itself, which Hana can't find from the user alone. Neither is a credential: no one can act on the user's wallet with
+itself, which Journear can't find from the user alone. Neither is a credential: no one can act on the user's wallet with
 them.
 
 ## 14. Security notes for integrators
@@ -1308,24 +1326,24 @@ them.
 - An XSS on your page can start a login, read addresses and queue signature requests. It can't sign anything without
   the user's Approve, except requests inside a policy the user accepted, up to its limits. Keep policies tight.
 - Your page holds a handle to the approval popup it opens, as it does for any popup: it could navigate or close it,
-  but the popup takes nothing from your page, and users should trust only a window whose address bar shows Hana's
+  but the popup takes nothing from your page, and users should trust only a window whose address bar shows Journear Passport's
   `authOrigin`.
 - Sandbox third-party iframes (ads, widgets, embeds): give them `sandbox` without `allow-top-navigation` and, unless
   they need it, without `allow-scripts` and `allow-same-origin` together. An unsandboxed frame can navigate its
-  sibling frames, the Hana vault frame included, and put its own page where the "Review in Hana" launcher was. The
+  sibling frames, the Journear Passport vault frame included, and put its own page where the "Review in Journear Passport" launcher was. The
   SDK hides the vault frame and emits `launcher {visible: false}` as soon as its document is replaced (status
   `error`, 4900), but a frame that can do this can also overlay your page, so don't give third parties that power.
 - A malicious browser extension can do anything the user can, including reading an exported key. No web wallet
   design prevents that.
 - With your own Google client, your client's settings are part of your users' security ([section 6](#6-google-client-shared-or-your-own)).
-- Testnet pilot keys are disposable. Until the address freeze, Hana may still change what a key derives from, and
+- Testnet pilot keys are disposable. Until the address freeze, Journear may still change what a key derives from, and
   each such change gives every user new addresses.
 
 ## 15. Identity token (your backend)
 
-Your backend can learn **who** the user is in your app, **which wallets** they hold and **which Hana session** a
-request belongs to, without calling Hana and without a wallet signature: ask the page for an identity token and verify
-it on your server against Hana's published keys. It is the Hana
+Your backend can learn **who** the user is in your app, **which wallets** they hold and **which Journear Passport session** a
+request belongs to, without calling Journear Passport and without a wallet signature: ask the page for an identity token and verify
+it on your server against Journear Passport's published keys. It is the Journear Passport
 counterpart of Privy's identity token (see "Migrating from Privy" below).
 
 ```ts
@@ -1340,10 +1358,10 @@ await fetch('/api/session', { method: 'POST', headers: { authorization: `Bearer 
   (30 s minimum, 1 h maximum): use it before a sensitive action, with `maxAgeSec` on your server.
 - **Events.** `hana.on('identityTokenChanged', (token) => …)` fires after every mint (in this tab or another tab of the
   session) and with `null` at logout, expiry, revocation or a newer login. `hana.identityToken` is the last one.
-- **Errors.** `getIdentityToken()` resolves `null` while logged out; it rejects with `identity_unavailable` (Hana's API
+- **Errors.** `getIdentityToken()` resolves `null` while logged out; it rejects with `identity_unavailable` (Journear Passport's API
   or signer is down, or this browser couldn't keep the session in an app that keeps logins: `data.reason: 'no_share'`;
   retry later), `session_ended` (the session is over: `sessionExpired` fires too; `data.reason: 'signed_out'` when
-  Hana signed this device out, `'session_ending'` when less than 30 s remain) or `rate_limited` (more than 10 mints a minute for one session or 30 for one user, or your
+  Journear Passport signed this device out, `'session_ending'` when less than 30 s remain) or `rate_limited` (more than 10 mints a minute for one session or 30 for one user, or your
   app's own identity-token quota: 10 × your plan's per-minute rate a minute and your plan's daily rate an hour, apart
   from the quota your logins and unlocks use).
 - **React.** `const { identityToken, refresh, error } = useIdentityToken();` mints on first use while logged in, keeps
@@ -1353,27 +1371,27 @@ await fetch('/api/session', { method: 'POST', headers: { authorization: `Bearer 
 ### What's in it
 
 An ES256 JWT (`typ: hana-identity+jwt`, `kid` = the key's RFC 7638 thumbprint), valid for at most 1 hour and never
-past the Hana session:
+past the Journear Passport session:
 
 | Claim | Value |
 |---|---|
-| `iss` | `{Hana API}/v1/identity` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity`; a stable Hana hostname replaces it before any partner goes live) |
+| `iss` | `{Hana API}/v1/identity` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity`; a stable Journear Passport hostname replaces it before any partner goes live) |
 | `aud` | your app id (`app_…`), not your publishable key |
 | `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every other partner; never the Google `sub`. It is also the user's User ID on the partner portal's **Users** page, and their Support ID `HANA-XXXX-XXXX` is its short form, which you can compute yourself to show beside your own records ([Support ID from the `sub`](#support-id-from-sub)) |
-| `sid` | `s1_…`: one per Hana session, shared by its tabs and reloads, new at every interactive login, never repeated |
+| `sid` | `s1_…`: one per Journear Passport session, shared by its tabs and reloads, new at every interactive login, never repeated |
 | `iat`, `exp`, `jti` | seconds; `exp` ≤ `iat` + 3600 and never past the session's end; `jti` is random |
-| `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Hana session proved control of each address's key (a signature bound to this session and app) |
+| `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Journear Passport session proved control of each address's key (a signature bound to this session and app) |
 | `login_methods` | the account's login providers, sorted (`["google"]` today) |
-| `email`, `email_verified` | only for a user who shared their address with your app on Hana's sheet ("Email sharing" below): the verified address and `true`. Absent otherwise. Key users on `sub`, not on the address (it can change, and a user can stop sharing) |
-| `given_name`, `family_name` | only for a user who shared their name with your app from Hana's own page ("The user's name" below), each only when set: the first and last name as the user typed them (at most 50 characters each, one line). Absent otherwise. A display name, not an identity: never key anything on it |
+| `email`, `email_verified` | only for a user who shared their address with your app on Journear Passport's sheet ("Email sharing" below): the verified address and `true`. Absent otherwise. Key users on `sub`, not on the address (it can change, and a user can stop sharing) |
+| `given_name`, `family_name` | only for a user who shared their name with your app from Passport Home ("The user's name" below), each only when set: the first and last name as the user typed them (at most 50 characters each, one line). Absent otherwise. A display name, not an identity: never key anything on it |
 
 ### Email sharing
 
-You see a user's email only after they share it with your app, on Hana's sheet: your app's name and the exact address,
+You see a user's email only after they share it with your app, on Journear Passport's sheet: your app's name and the exact address,
 **Share email** / **Not now**. Nothing is mandatory: "Not now" always continues. Your app's **email sharing** setting
-(in the partner portal, on the app's **Login & sessions** page) decides when Hana asks:
+(in the partner portal, on the app's **Login & sessions** page) decides when Journear Passport asks:
 
-| Setting | Hana asks |
+| Setting | Journear Passport asks |
 |---|---|
 | Off (default) | never; tokens never carry an email |
 | When the app asks (`on_request`) | only when you call `hana.requestEmailSharing()` (e.g. from your own "Use my email" button) |
@@ -1385,7 +1403,7 @@ const state = await hana.requestEmailSharing(); // 'granted' | 'declined' | 'dis
 const token = await hana.getIdentityToken(); // with `email` when granted
 ```
 
-- Once shared, every new identity token carries `email` and `email_verified: true`; `emailStatus` on Hana's side says
+- Once shared, every new identity token carries `email` and `email_verified: true`; `emailStatus` on Journear Passport's side says
   why a token has none. The **Users** screen of the partner portal shows the address (an Email column, "Not shared"
   otherwise) and finds a user by the full address, only among addresses shared with your org's apps.
 - The consent is per app and per account (a linked account has one), for one address: a user who later signs in with
@@ -1393,13 +1411,13 @@ const token = await hana.getIdentityToken(); // with `email` when granted
 - **Stopping.** The user can stop sharing on the sheet (`requestEmailSharing()` when it is already shared shows "Stop
   sharing") or from the approval window's account line. New tokens and your console then lose the address at once;
   tokens you already received keep it until they expire (≤ 1 h), and the address you stored is yours to delete (your
-  terms with Hana require deleting it on request).
+  terms with Journear require deleting it on request).
 - **Required if you use auto-approve.** Users of an app with an auto-approve policy may never see the approval window,
   so if email sharing is on you must give them a visible control (for example "Manage email sharing") that calls
   `requestEmailSharing()`, or they have no way to stop sharing.
 - `hana.on('emailSharingChanged', (state) => …)` fires (`'granted'` or `'declined'`) when the user changes it on this
   device; call `getIdentityToken()` again. Errors: `email_sharing_unavailable` (`data.reason`: `off` when your setting
-  is off, `no_address` when Hana has no address for this session: ask the user to sign in again, `unavailable`), 4100
+  is off, `no_address` when Journear Passport has no address for this session: ask the user to sign in again, `unavailable`), 4100
   when logged out, `busy` during a sign-in. React: `const { request, state, error } = useEmailSharing();` with
   `<button onClick={request}>`.
 - An app on its **own Google client** can read the address from Google whatever the user chooses here; the sheet
@@ -1408,7 +1426,7 @@ const token = await hana.getIdentityToken(); // with `email` when granted
 
 ### The user's name
 
-Users can set their own first and last name on Hana's own page (Hana Home), both optional, and choose app by app whether
+Users can set their own first and last name on Passport Home, Journear's own page, both optional, and choose app by app whether
 to share it. Nothing is shared until they turn it on for your app, and they can stop or change it there at any time.
 There is no setting on your side and nothing you can ask for: you get the name when the user shared it.
 
@@ -1432,7 +1450,7 @@ hana.on('profileChanged', (profile) => render(profile)); // only when the name c
 - React: `const { profile, refresh, error } = useProfile();`. Errors are `getIdentityToken()`'s.
 
 What `wallets` proves, and what it doesn't: the session's holder controls each key. It is **not** proof that the
-address is the Hana-derived wallet of that `sub`: a user who tampers with their own vault can attach another key they
+address is the Journear Passport-derived wallet of that `sub`: a user who tampers with their own vault can attach another key they
 control (never someone else's address), and one address can appear under several `sub`s (a key the user exported and
 reuses elsewhere, an old key after a rotation). So never treat wallet → `sub` as unique, for example for per-wallet
 credits or sign-up bonuses: key those on `sub`, and dedupe wallets yourself. If a request must come from one exact
@@ -1442,11 +1460,11 @@ wallet, keep checking that the wallet that authenticated it is in `wallets` (`as
 
 The JWKS is at `{iss}/jwks.json` (cached 10 minutes; `jose` refetches on an unknown `kid`), the discovery document at
 `{iss}/.well-known/openid-configuration`. **For anything of value, pin the key thumbprints** (`HANA_IDENTITY_PINS`
-below: each key's thumbprint is also its `kid` in the JWKS): the JWKS is served by Hana's infrastructure, and a pinned
-verifier refuses a key whoever controls it publishes, where a verifier that only trusts the URL accepts it until Hana
+below: each key's thumbprint is also its `kid` in the JWKS): the JWKS is served by Journear Passport's infrastructure, and a pinned
+verifier refuses a key whoever controls it publishes, where a verifier that only trusts the URL accepts it until Journear
 notices and removes it.
 
-The verifier's three settings, per environment. None is a secret; take the pins from this guide (or from Hana, out of
+The verifier's three settings, per environment. None is a secret; take the pins from this guide (or from Journear, out of
 band), never from the JWKS itself:
 
 | Setting | sandbox-dev |
@@ -1456,11 +1474,11 @@ band), never from the JWKS itself:
 | `HANA_IDENTITY_PINS` | `17xAVaTfgwnOkdwq1uOmwHR31pPKB90xw5oGN5HcBgY,_MjNZC3lmy9Xk6LI1mbGVbvtoIfDN557VBZG7DXVQ-g` (the active key and its standby) |
 
 **The verifier refuses to start without all three.** If `audience` were `undefined` (an unset `HANA_APP_ID` on a new
-deploy, a typo), `jose` would skip the audience check entirely and accept a valid Hana token minted for any other
+deploy, a typo), `jose` would skip the audience check entirely and accept a valid Journear Passport token minted for any other
 partner's app. The code below checks every setting when it loads and throws with the setting's name: an app id that
 isn't `app_…` (a publishable key pasted by mistake), a non-`https` issuer, and pins that aren't thumbprints. Pinning is
 required the same way: set `HANA_IDENTITY_PINS=jwks-only` to trust the JWKS URL alone, so that a missing variable
-never silently drops it. Hana tests this exact code against a local issuer on every change:
+never silently drops it. Journear tests this exact code against a local issuer on every change:
 
 ```ts
 import { calculateJwkThumbprint, createRemoteJWKSet, errors, exportJWK, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
@@ -1559,7 +1577,7 @@ Rules:
    `sid`; a new interactive login always brings a new `sid`. Unlinking a login method later gives a different wallet
    and so a different `sub`: to you that is a different user.
 3. The token is evidence of identity at `iat`, not your session: run your own session and end it when your page
-   reports a Hana logout (`statusChanged`, `identityTokenChanged(null)`). For sensitive actions require a fresh token
+   reports a Journear Passport logout (`statusChanged`, `identityTokenChanged(null)`). For sensitive actions require a fresh token
    (`maxAgeSec` here, `maxAgeMs` on the page).
 4. Never log tokens; treat them like any bearer credential (≤ 1 h, your app only).
 5. On `expired`, answer 401 with a distinct code: the page calls `getIdentityToken()` again and retries once (`null`
@@ -1579,38 +1597,38 @@ by `kid`, `typ` `hana-identity+jwt`, `iss`, `aud`, `exp` (and `iat` for freshnes
 
 Test vector: the `sub` `u1_ASNFZ4mrze8BI0VniavN7w` encodes the bytes `0123456789abcdef0123456789abcdef`; its first 5
 bytes `01 23 45 67 89` give `04HMASW9`, so its Support ID is `HANA-04HM-ASW9`. In JavaScript, `@hana-id/core` exports
-the same function the SDK and Hana use (SDK releases after 0.2.0):
+the same function the SDK and Journear Passport use (SDK releases after 0.2.0):
 
 ```ts
 import { supportIdFromSub } from '@hana-id/core'; // or '@hana-id/core/support-id', which pulls in nothing else
 supportIdFromSub('u1_ASNFZ4mrze8BI0VniavN7w'); // 'HANA-04HM-ASW9'; a TypeError for anything that isn't a sub
 ```
 
-**Key rotation.** Hana publishes a standby key next to the active one, and both are pinned from the start: an
+**Key rotation.** Journear publishes a standby key next to the active one, and both are pinned from the start: an
 emergency switch to the standby needs nothing from you either way. A scheduled rotation adds a key 14 days ahead of
 using it (24 h on testnet), announced to your security contact: add its thumbprint to your pins in that window. A
-compromise that exposes both keys means a fresh key you must pin at once (Hana tells you); until you do, a pinned
+compromise that exposes both keys means a fresh key you must pin at once (Journear tells you); until you do, a pinned
 verifier refuses the new tokens (fail closed) rather than accepting an attacker's.
 
-**Who watches the JWKS.** Hana's independent watchdog, on its own Cloudflare account (sandbox-dev excepted), reads the
-JWKS every 5 minutes, and a probe outside Cloudflare reads it every 3 hours (paused while Hana runs on testnet only); either alerts Hana if it ever lists a key
-whose thumbprint Hana didn't pin, private key material, or a discovery document with another `issuer` or `jwks_uri`.
+**Who watches the JWKS.** Journear's independent watchdog, on its own Cloudflare account (sandbox-dev excepted), reads the
+JWKS every 5 minutes, and a probe outside Cloudflare reads it every 3 hours (paused while Journear Passport runs on testnet only); either alerts Journear if it ever lists a key
+whose thumbprint Journear didn't pin, private key material, or a discovery document with another `issuer` or `jwks_uri`.
 That is detection, not prevention, and only of an attacker who serves the same JWKS to everyone: someone who controls
-Hana's servers can show the watchdog and the probe a clean JWKS and your verifier another, or publish a key between
-two reads. A verifier that only trusts the JWKS URL accepts such a key until Hana notices and removes it (and its
-cache expires, ≤ 10 min). Pinned thumbprints are the only defence that doesn't depend on Hana noticing.
+Journear Passport's servers can show the watchdog and the probe a clean JWKS and your verifier another, or publish a key between
+two reads. A verifier that only trusts the JWKS URL accepts such a key until Journear notices and removes it (and its
+cache expires, ≤ 10 min). Pinned thumbprints are the only defence that doesn't depend on Journear noticing.
 
 ### Migrating from Privy
 
-| Privy | Hana |
+| Privy | Journear Passport |
 |---|---|
-| access token `sid` | `sid` (same semantics; a Hana session lasts ≤ 12 h by default, 2 h idle) |
-| `sub` (`did:privy:…`) | `sub` (`u1_…`, per scope). Users get new wallets with Hana; map existing users to new `sub`s yourself |
+| access token `sid` | `sid` (same semantics; a Journear Passport session lasts ≤ 12 h by default, 2 h idle) |
+| `sub` (`did:privy:…`) | `sub` (`u1_…`, per scope). Users get new wallets with Journear Passport; map existing users to new `sub`s yourself |
 | `iss: "privy.io"` | `iss: "{Hana API}/v1/identity"` |
 | `aud: <Privy app id>` | `aud: app_…` |
 | access + identity token, one key pasted from Privy's dashboard | one identity token, keys from the JWKS URL (and thumbprints pinned from this guide) |
 | `linked_accounts` (stringified JSON) | `wallets` (a JSON array), `login_methods` |
 | `linked_accounts[type=wallet, chain_type=stellar / ethereum].address` | `wallets[chain=stellar / evm].address` |
 | `getAccessToken()`, `getIdentityToken()`, `useIdentityToken()` | `hana.getIdentityToken()`, `useIdentityToken()` |
-| `privy-id-token` cookie | a header you send (`Authorization: Bearer`); Hana sets no cookie |
-| refresh token | none: the live Hana session refreshes |
+| `privy-id-token` cookie | a header you send (`Authorization: Bearer`); Journear Passport sets no cookie |
+| refresh token | none: the live Journear Passport session refreshes |

@@ -11,7 +11,7 @@
 // - the answer carries exactly the spec's headers: `image/png`, `nosniff`, a `sandbox` CSP, cross-origin CORP (the
 //   auth pages and the console show it), inline disposition, a year's immutable caching and `no-referrer`. No cookie.
 // - the mail logo (D685): `GET`/`HEAD` of `@hana-id/brand/mail-logo` MAIL_LOGO_PATH, bytes built into the Worker (no
-//   R2), with the logo headers. It is the one image Hana's designed mails load: its URL is the same for every recipient
+//   R2), with the logo headers. It is the one image the designed mails load: its URL is the same for every recipient
 //   and mail (no query, no token), a query string is ignored, and the Worker logs nothing for it (no line at all; the
 //   platform's invocation logs are off for this Worker, so no IP, user agent or URL is kept);
 // - one more path, `GET`/`HEAD /.well-known/hana-build`: the build id this Worker was deployed with (`{"build": <id> |

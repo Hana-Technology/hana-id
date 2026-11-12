@@ -55,7 +55,7 @@ const forgedKeyChange: Playbook = {
       title: 'An email key that should have been pinned',
       who: 'a founder',
       detail:
-        "If the council meant to post a new email key (a rotation, or the first keys of batch 6), the pins were not updated first: the watchdog's pins come from its own manifest, never from chain or Hana's JWKS. Check the thumbprint against the key the issuer was given (`details.thumbprint`), add it under its signer in `watchdog.pinnedIssuerKeys.email`, regenerate and redeploy the watchdog, then the council posts the key again (it waits `governance_delay_ms`). Never pin a thumbprint you can't trace to Hana's own key.",
+        "If the council meant to post a new email key (a rotation, or the first keys of batch 6), the pins were not updated first: the watchdog's pins come from its own manifest, never from chain or Journear's JWKS. Check the thumbprint against the key the issuer was given (`details.thumbprint`), add it under its signer in `watchdog.pinnedIssuerKeys.email`, regenerate and redeploy the watchdog, then the council posts the key again (it waits `governance_delay_ms`). Never pin a thumbprint you can't trace to Journear's own key.",
       commands: [c.watchdogGen, c.watchdogDeploy],
     },
     {
@@ -144,13 +144,13 @@ const forgedActiveKey: Playbook = {
       title: 'Review scope changes made with forged tokens',
       who: 'scope owners',
       detail:
-        "Hana lists every `change_proposed` event since the forged key's `issuer_key_set` and tells each scope's owners; they cancel the ones they didn't make (`cancel_change`, through `POST /v1/owner-actions` or directly on chain). Hana can't cancel scope changes. Changes that already executed, and immediate actions by forged owner tokens (`remove_client`, `disable_shared_login`), are reverted by the scope's owners.",
+        "Journear lists every `change_proposed` event since the forged key's `issuer_key_set` and tells each scope's owners; they cancel the ones they didn't make (`cancel_change`, through `POST /v1/owner-actions` or directly on chain). Journear can't cancel scope changes. Changes that already executed, and immediate actions by forged owner tokens (`remove_client`, `disable_shared_login`), are reverted by the scope's owners.",
     },
     {
       title: 'Find how the key got there',
       who: 'a founder',
       detail:
-        "A delay that ran out while the watchdog was down (watchdog-down), an owner post (unexpected-owner-action), or an upgrade. An email key: the council posted it and the pins didn't list it, or an upgrade's migrate installed it; if it is Hana's own key that was never pinned, fix the pins (`watchdog.pinnedIssuerKeys.email`, then redeploy the watchdog) before the unpause, or the next run pauses again. Fix that path before closing.",
+        "A delay that ran out while the watchdog was down (watchdog-down), an owner post (unexpected-owner-action), or an upgrade. An email key: the council posted it and the pins didn't list it, or an upgrade's migrate installed it; if it is Journear's own key that was never pinned, fix the pins (`watchdog.pinnedIssuerKeys.email`, then redeploy the watchdog) before the unpause, or the next run pauses again. Fix that path before closing.",
     },
   ],
   verify: [
@@ -448,7 +448,7 @@ const watchdogCannotAct: Playbook = {
       title: '`pins_invalid`: regenerate the pins',
       who: 'a founder',
       detail:
-        "`EMAIL_PINS` doesn't parse, so no email key counts as pinned: pending email keys are cancelled and an active one pauses (D190). `gen` writes it from `watchdog.pinnedIssuerKeys.email`, which the schema validates: a broken value was set by hand or by a broken deploy. Regenerate and redeploy; if the watchdog paused on Hana's own keys meanwhile, the council unpauses once the next run is clean, and re-posts any email key it cancelled.",
+        "`EMAIL_PINS` doesn't parse, so no email key counts as pinned: pending email keys are cancelled and an active one pauses (D190). `gen` writes it from `watchdog.pinnedIssuerKeys.email`, which the schema validates: a broken value was set by hand or by a broken deploy. Regenerate and redeploy; if the watchdog paused on Journear's own keys meanwhile, the council unpauses once the next run is clean, and re-posts any email key it cancelled.",
       commands: [c.watchdogGen, c.watchdogDeploy, c.watchdogStatus],
     },
   ],
@@ -872,7 +872,7 @@ const signerPolicyMismatch: Playbook = {
       title: 'Nobody planned it: stay paused',
       who: 'council (2 of 3)',
       detail:
-        "A weaker policy can only come from an executed upgrade: follow unexpected-owner-action. Remove every email key that isn't Hana's own pinned key at once (`remove_issuer_key`, immediate), then raise the session floor past the pause before any unpause, as for a forged active key (follow forged-active-key).",
+        "A weaker policy can only come from an executed upgrade: follow unexpected-owner-action. Remove every email key that isn't Journear's own pinned key at once (`remove_issuer_key`, immediate), then raise the session floor past the pause before any unpause, as for a forged active key (follow forged-active-key).",
       commands: [c.ownerCall('remove_issuer_key', '{"provider":"email","kid":"<kid>"}'), c.ownerCall('set_sessions_valid_from_ms', '{"sessions_valid_from_ms":<pause block time ms + 1>}')],
     },
   ],
@@ -923,13 +923,13 @@ const unrecordedWallets: Playbook = {
 
 const emailJwksMismatch: Playbook = {
   id: 'email-jwks-mismatch',
-  title: "Hana's email JWKS differs from the pins",
+  title: "Journear's email JWKS differs from the pins",
   kind: 'alert',
   alertKinds: ['email_jwks_mismatch'],
   severity: 'warning',
   status: 'live',
   summary:
-    "Hana's published email JWKS (`{emailIssuer.url}/v1/email/jwks.json`, the watchdog's `jwksUrl`) lists a key that isn't pinned, or lacks an active email key, or can't be fetched while email keys are active. Informational: the contract never reads it and the watchdog doesn't trust it.",
+    "Journear's published email JWKS (`{emailIssuer.url}/v1/email/jwks.json`, the watchdog's `jwksUrl`) lists a key that isn't pinned, or lacks an active email key, or can't be fetched while email keys are active. Informational: the contract never reads it and the watchdog doesn't trust it.",
   signals: ['Warning `email_jwks_mismatch` (Slack, email): `details.problems` lists each key; `email_jwks_mismatch:fetch` after 3 failed fetches.'],
   impact: [
     "No direct risk: logins check the keys on chain. A published key that isn't pinned means the issuer Worker holds (or advertises) a key the watchdog would cancel or pause on if the council posted it; a missing active key means the issuer and the chain disagree about which keys sign.",
@@ -944,7 +944,7 @@ const emailJwksMismatch: Playbook = {
     {
       title: 'An unknown published key',
       who: 'a founder',
-      detail: "Nobody on the team added it: the issuer Worker or Hana's Cloudflare account may be compromised. Follow email-issuer-key-compromised and api-or-cloudflare-compromised.",
+      detail: "Nobody on the team added it: the issuer Worker or Journear's Cloudflare account may be compromised. Follow email-issuer-key-compromised and api-or-cloudflare-compromised.",
     },
     {
       title: 'Fetch failing',
@@ -1072,7 +1072,7 @@ const selfIssuedKeyChange: Playbook = {
   status: 'live',
   summary: "A pending email key pinned for its signer, or a pending email key removal. Self-issued keys can't be confirmed early (D121): it waits its `governance_delay_ms` (72 h on mainnet), then anyone executes it.",
   signals: ['Info `self_issued_key_change` in `/status`, the portal and the daily digest: the change id, kid (its thumbprint), signer and `executable_at_ms`.'],
-  impact: ['None when the council meant it: the key is Hana\'s own (pinned). A removal stops email logins signed with that key once it executes (DoS only).'],
+  impact: ['None when the council meant it: the key is Journear\'s own (pinned). A removal stops email logins signed with that key once it executes (DoS only).'],
   steps: [
     {
       title: 'Match it with a council proposal',
@@ -1095,7 +1095,7 @@ const selfIssuedKeyChange: Playbook = {
 
 const identityJwksForged: Playbook = {
   id: 'identity-jwks-forged',
-  title: "Hana's identity JWKS publishes a key the watchdog didn't pin, or can't be judged",
+  title: "Journear's identity JWKS publishes a key the watchdog didn't pin, or can't be judged",
   kind: 'alert',
   alertKinds: ['identity_key_unpinned', 'identity_private_key_published', 'identity_discovery_mismatch', 'identity_jwks_unreadable'],
   severity: 'critical',
@@ -1109,9 +1109,9 @@ const identityJwksForged: Playbook = {
     "`/status` `identity`: the pins in force and the last good reads, each key judged. The outside probe (GitHub Actions workflow `identity-probe`, every 3 hours, from outside Cloudflare; turned off while only testnet runs, D387) failing on the same env is a second view: the watchdog's own fetch comes from Cloudflare's network and can be told apart.",
   ],
   impact: [
-    "An unpinned key in the JWKS means whoever published it can sign identity tokens partners accept as any user of any app (identity at partners: credits, referrals, their accounts) until it is gone from the JWKS and the partners' caches (≤ 10 min). No wallet, key, Hana API or contract call accepts an identity token.",
+    "An unpinned key in the JWKS means whoever published it can sign identity tokens partners accept as any user of any app (identity at partners: credits, referrals, their accounts) until it is gone from the JWKS and the partners' caches (≤ 10 min). No wallet, key, Journear Passport API or contract call accepts an identity token.",
     "A private member published: anyone who fetched the JWKS holds that signing key. A wrong `issuer` or `jwks_uri`: partners that use discovery check tokens against another issuer or fetch keys the watchdog doesn't see. An unreadable answer: the watchdog can't tell what partners are served.",
-    'Detection, not prevention: someone who controls Hana\'s Cloudflare account can serve the watchdog a clean JWKS and partners another, or publish a key between two runs. Only partners that pin thumbprints are safe from that.',
+    'Detection, not prevention: someone who controls Journear\'s Cloudflare account can serve the watchdog a clean JWKS and partners another, or publish a key between two runs. Only partners that pin thumbprints are safe from that.',
   ],
   steps: [
     {
@@ -1155,7 +1155,7 @@ const identityJwksForged: Playbook = {
 
 const identityJwksDegraded: Playbook = {
   id: 'identity-jwks-degraded',
-  title: "A pinned identity key isn't in Hana's identity JWKS",
+  title: "A pinned identity key isn't in Journear's identity JWKS",
   kind: 'alert',
   alertKinds: ['identity_key_missing'],
   severity: 'warning',
@@ -1216,7 +1216,7 @@ const identityKeyOnChain: Playbook = {
       title: 'Find who posted it',
       who: 'a founder',
       detail:
-        "The change's proposer (`details` of the issuer-key alert): the updater account means its key is stolen (updater-key-stolen); the owner means a council action nobody explained (unexpected-owner-action). Using an identity kid suggests someone with access to Hana's identity configuration: check it with identity-signing-key-compromised in mind.",
+        "The change's proposer (`details` of the issuer-key alert): the updater account means its key is stolen (updater-key-stolen); the owner means a council action nobody explained (unexpected-owner-action). Using an identity kid suggests someone with access to Journear's identity configuration: check it with identity-signing-key-compromised in mind.",
       commands: [c.apiGovernance],
     },
   ],

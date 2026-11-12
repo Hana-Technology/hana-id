@@ -39,6 +39,7 @@
 // leg.
 import { ApiError, RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
+import { BRAND } from '@hana-id/brand';
 import { dom, errorView } from './dom.ts';
 import { readEmailContext } from './email-storage.ts';
 import {
@@ -54,6 +55,7 @@ import {
   unverifiedSub,
 } from './google.ts';
 import { type TakenLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
+import { BTN } from './ui.ts';
 import { type PageWindow, isFramed } from './page-window.ts';
 import { closeOrShare } from './share-handoff.ts';
 import { type SignalTimers, type VaultSignals, vaultSignals } from './vault-signal.ts';
@@ -160,13 +162,13 @@ export async function runCallbackPage(pageDeps: CallbackPageDeps): Promise<Callb
   }
 
   if (isFramed(win)) {
-    d.show(errorView(d, 'Sign-in stopped', 'The Hana sign-in window can’t run inside another page.'));
+    d.show(errorView(d, 'Sign-in stopped', `The ${BRAND.product} sign-in window can’t run inside another page.`));
     return 'refused';
   }
   // D347: back from Google with the opener (no COOP switch on the way): the vault's close watch may trust its handle.
   deps.signals.post('back');
   if (fragment.kind === 'no_state') {
-    d.show(errorView(d, 'Sign-in stopped', 'Google’s answer did not belong to a sign-in started here. Start again from the app.'));
+    d.show(errorView(d, 'Sign-in stopped', 'Google’s answer didn’t belong to a sign-in started here. Start again from the app.'));
     return 'refused';
   }
   const taken = takeLogin(win.sessionStorage, fragment.state, now());
@@ -258,11 +260,11 @@ function goBack(deps: CallbackRun, taken: TakenLogin, slot: string, loginHint: s
 
 /** Why token_first's checks, or the claim allow-list, ended a login here: the relayed code and what this window says. */
 const STOPS = {
-  tokeninfo_unavailable: 'Hana couldn’t check your Google sign-in with Google. Close this window and try again from the app.',
+  tokeninfo_unavailable: `${BRAND.company} couldn’t check your Google sign-in with Google. Close this window and try again from the app.`,
   tokeninfo_client_mismatch: 'Google’s answer was for another app, so the sign-in was stopped. Close this window and try again from the app.',
-  tokeninfo_invalid: 'Google’s answer could not be used. Close this window and try again from the app.',
-  google_account_mismatch: 'Google signed in another account than the one you picked. Close this window and try again from the app.',
-  token_has_pii: 'Google returned more account details than Hana accepts, so the sign-in was stopped.',
+  tokeninfo_invalid: 'Google’s answer couldn’t be used. Close this window and try again from the app.',
+  google_account_mismatch: 'Google signed in a different account from the one you picked. Close this window and try again from the app.',
+  token_has_pii: `Google sent more account details than ${BRAND.company} accepts, so the sign-in was stopped.`,
 } as const;
 export type CallbackStopCode = keyof typeof STOPS;
 
@@ -332,8 +334,8 @@ async function tokenFirstAccess(deps: CallbackRun, fragment: Exclude<CallbackFra
     d.show(
       errorView(
         d,
-        'Sign-in could not finish',
-        used ? 'This sign-in was already completed. Close this window.' : 'Hana could not be reached to finish the sign-in. Close this window and try again from the app.',
+        'Sign-in couldn’t finish',
+        used ? 'This sign-in was already completed. Close this window.' : `${BRAND.company} couldn’t be reached to finish the sign-in. Close this window and try again from the app.`,
         err instanceof ApiError ? err.code : 'api_unavailable',
       ),
     );
@@ -424,11 +426,11 @@ async function tokenFirstId(deps: CallbackRun, fragment: Exclude<CallbackFragmen
 
 /** What the explainer before Google's email prompt says (D264, G-M2). */
 export const EMAIL_PROMPT_TEXT =
-  'Google will now ask to share your email address with Hana. Hana uses it to find a wallet you may already have with that address and keeps it with your account. It doesn’t share it with the app you’re signing in to.';
+  `Google will now ask to share your email address with ${BRAND.company}. ${BRAND.company} uses it to find a wallet you may already have with that address and keeps it with your account. It doesn’t share it with the app you’re signing in to.`;
 
 function explainEmailPrompt(d: ReturnType<typeof dom>, on: { onContinue: () => void; onSkip: () => void }): void {
-  const go = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'email-prompt-continue' } }, 'Continue');
-  const skip = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-prompt-skip' } }, 'Not now');
+  const go = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'email-prompt-continue' } }, 'Continue');
+  const skip = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'email-prompt-skip' } }, 'Not now');
   go.addEventListener('click', () => {
     go.setAttribute('disabled', '');
     skip.setAttribute('disabled', '');
@@ -484,8 +486,8 @@ async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, {
     d.show(
       errorView(
         d,
-        'Sign-in could not finish',
-        used ? 'This sign-in was already completed. Close this window.' : 'Hana could not be reached to finish the sign-in. Close this window and try again from the app.',
+        'Sign-in couldn’t finish',
+        used ? 'This sign-in was already completed. Close this window.' : `${BRAND.company} couldn’t be reached to finish the sign-in. Close this window and try again from the app.`,
         err instanceof ApiError ? err.code : 'api_unavailable',
       ),
     );

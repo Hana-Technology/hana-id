@@ -223,7 +223,7 @@ describe('start', () => {
     expect(h.calls.map((c) => c.url.pathname)).toEqual(['/v1/home/config']);
     expect(h.calls[0]?.header).toBeNull();
     expect(document.getElementById('home-sign-in')?.textContent).toBe('Continue with Google');
-    expect(document.getElementById('home-title')?.textContent).toBe('Hana Home');
+    expect(document.getElementById('home-title')?.textContent).toBe('Passport Home');
   });
 
   it('refuses to run framed, and fetches nothing', async () => {
@@ -465,7 +465,7 @@ describe('your apps', () => {
     h.answer = LIST;
     await h.signIn();
     const sections = [...document.querySelectorAll('#home-content h2')].map((x) => x.textContent);
-    expect(sections).toEqual(['Your apps', 'Devices and auto-approve', 'Your name', 'Find an app', 'Other apps that use Hana']);
+    expect(sections).toEqual(['Your apps', 'Devices and auto-approve', 'Your name', 'Find an app', 'Other apps that use Journear']);
     const cards = [...document.querySelectorAll('.home-card')];
     expect(cards.map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
     const badgeOf = (id: string) => document.querySelector(`.home-card[data-scope="${id}"] .home-card-foot .badge`)?.textContent;
@@ -530,7 +530,10 @@ describe('your apps', () => {
     h.click('home-copy-stellar');
     await h.page.idle();
     expect(h.clipboard.writeText).toHaveBeenCalledWith(G);
-    expect(document.getElementById('home-copied')?.textContent).toBe('Copied the Stellar address.');
+    // A copy that worked is a toast (D765), outside the page's content; the inline status line stays empty.
+    expect([...document.querySelectorAll('.home-toasts .jp-toast')].map((t) => t.textContent)).toEqual(['Copied the Stellar address.']);
+    expect(document.querySelector('.home-toasts .jp-toast')?.getAttribute('role')).toBe('status');
+    expect(document.getElementById('home-copied')?.textContent).toBe('');
     h.click('home-copy-support');
     await h.page.idle();
     expect(h.clipboard.writeText).toHaveBeenLastCalledWith('HANA-AB12-CD34');
@@ -538,6 +541,35 @@ describe('your apps', () => {
     h.click('home-back');
     expect(h.page.openScope).toBeNull();
     expect(document.querySelectorAll('.home-card')).toHaveLength(6);
+  });
+
+  it('D765: a copy the browser refuses stays on the page (the user must copy by hand), never as a toast; sign-out clears the toasts', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    h.clipboard.writeText.mockRejectedValueOnce(new Error('denied'));
+    h.click('home-copy-stellar');
+    await h.page.idle();
+    expect(document.getElementById('home-copied')?.textContent).toBe('This browser didn’t allow the copy. Select the Stellar address and copy it yourself.');
+    expect(document.querySelectorAll('.home-toasts .jp-toast')).toHaveLength(0);
+    h.click('home-copy-stellar');
+    await h.page.idle();
+    // A copy that works clears the hand-copy line and says so in a toast instead.
+    expect(document.getElementById('home-copied')?.textContent).toBe('');
+    expect(document.querySelectorAll('.home-toasts .jp-toast')).toHaveLength(1);
+    h.click('home-sign-out');
+    expect(document.querySelectorAll('.home-toasts .jp-toast')).toHaveLength(0);
+    // The stack is outside the page's content, so a redraw of #app never drops it.
+    expect(document.querySelector('.home-toasts')?.closest('#app')).toBeNull();
+  });
+
+  it('D765: the empty list is the system’s empty state; the signed-out screen offers Google as the one primary provider', async () => {
+    const h = await ready();
+    expect(document.getElementById('home-sign-in')?.className).toBe('jp-provider primary');
+    expect(document.getElementById('home-title')?.textContent).toBe('Passport Home');
+    await h.signIn();
+    expect(document.getElementById('home-empty')?.classList.contains('jp-empty')).toBe(true);
   });
 
   it('shows a NEAR account with its copy and explorer link; a listing without one says so plainly (D755)', async () => {
@@ -559,7 +591,7 @@ describe('your apps', () => {
     h.click('home-copy-near');
     await h.page.idle();
     expect(h.clipboard.writeText).toHaveBeenCalledWith(NEAR);
-    expect(document.getElementById('home-copied')?.textContent).toBe('Copied the NEAR account.');
+    expect([...document.querySelectorAll('.home-toasts .jp-toast')].at(-1)?.textContent).toBe('Copied the NEAR account.');
     h.click('home-back');
     (document.querySelector('.home-card[data-scope="s2"] .home-open') as HTMLElement).click();
     expect(document.getElementById('home-address-near')).toBeNull();
@@ -577,10 +609,10 @@ describe('your apps', () => {
     expect(document.querySelector('.home-app-all')?.textContent).toBe('Old ExchangeClosed');
     expect(document.getElementById('home-support-id')).toBeNull();
     expect(pageText()).not.toContain('Support ID');
-    expect(document.getElementById('home-no-address')?.textContent).toBe('Hana has no address on record for you in this app yet.');
+    expect(document.getElementById('home-no-address')?.textContent).toBe('Journear has no address on record for you in this app yet.');
     h.click('home-back');
     (document.querySelector('.home-card[data-scope="s4"] .home-open') as HTMLElement).click();
-    expect(document.getElementById('home-no-address')?.textContent).toBe('Hana has no wallet on record for this Google account in this app.');
+    expect(document.getElementById('home-no-address')?.textContent).toBe('Journear has no wallet on record for this Google account in this app.');
     expect(pageText()).toContain('If the app still runs, use the app itself.');
   });
 
@@ -654,7 +686,7 @@ describe('your apps', () => {
     // The partner's words are never the landing screen: the user's own apps come first, nothing is opened.
     expect(h.page.openScope).toBeNull();
     expect([...document.querySelectorAll('#home-content h2')].map((x) => x.textContent)).toEqual(['Your apps', 'The app from your link', 'Devices and auto-approve', 'Your name', 'Find an app']);
-    expect(document.querySelector('#home-linked .note')?.textContent).toContain('Hana has no wallet on record for this Google account in it.');
+    expect(document.querySelector('#home-linked .note')?.textContent).toContain('Journear has no wallet on record for this Google account in it.');
     expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's8']);
     expect(document.querySelector('#home-linked .home-card-foot .badge')?.textContent).toBe('Supported');
     // The link's parameter is an app id, never anything of the user's; the page changed no URL.
@@ -777,7 +809,7 @@ describe('partner strings are text only', () => {
     const open = document.querySelector('.home-open') as HTMLElement;
     expect(open.getAttribute('aria-label')).toBe(`View ${XSS}`);
     open.click();
-    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Hana Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses', 'Devices and auto-approve', 'Your name', 'Move this wallet to another wallet app']);
+    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Passport Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses', 'Devices and auto-approve', 'Your name', 'Move this wallet to another wallet app']);
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe(XSS);
     expect(document.querySelector('#app script')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
@@ -1035,15 +1067,15 @@ describe('the sign-in’s end', () => {
 describe('API refusals', () => {
   it.each([
     [404, 'home_no_wallet', 'There is no wallet for this sign-in in that app.'],
-    [429, 'home_busy', 'Hana Home has reached its limit for today. Try again tomorrow.'],
+    [429, 'home_busy', 'Passport Home has reached its limit for today. Try again tomorrow.'],
     [429, 'rate_limited', 'Too many requests. Wait a minute and try again.'],
-    [403, 'home_account_mismatch', 'Sign in as the same account you used in Hana Home.'],
+    [403, 'home_account_mismatch', 'Sign in as the same account you used in Passport Home.'],
     [409, 'link_pending', 'A sign-in method is still being added to this wallet. Try again once that has finished.'],
     [409, 'counter_reused', 'That request was already sent. Try again.'],
-    [503, 'home_directory_unavailable', 'Hana Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
-    [503, 'rate_limiter_unavailable', 'Hana Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
-    [502, 'near_unavailable', 'Hana Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
-    [500, 'something_new', 'Hana Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
+    [503, 'home_directory_unavailable', 'Passport Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
+    [503, 'rate_limiter_unavailable', 'Passport Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
+    [502, 'near_unavailable', 'Passport Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
+    [500, 'something_new', 'Passport Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
     [429, 'something_new', 'Too many requests. Wait a minute and try again.'],
     [400, 'something_new', 'Something went wrong. Try again.'],
   ])('%i %s reads as a plain sentence, never the API’s own words', (status, code, text) => {
@@ -1066,7 +1098,7 @@ describe('API refusals', () => {
     expect(h.page.errorCode).toBe('home_directory_unavailable');
     const alert = document.getElementById('home-problem');
     expect(alert?.getAttribute('role')).toBe('alert');
-    expect(alert?.textContent).toContain('Hana Home is not reachable right now.');
+    expect(alert?.textContent).toContain('Passport Home is not reachable right now.');
     expect([...(alert?.querySelectorAll('.code') ?? [])].map((x) => x.textContent)).toEqual(['Code: home_directory_unavailable', 'Request: req_9']);
     expect(pageText()).not.toContain('D1 is down');
     advance(5 * MIN);
@@ -1159,7 +1191,7 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     h.click('home-name-remove-confirm-go');
     await h.page.idle();
     expect(h.nameCalls()).toHaveLength(1);
-    expect(document.getElementById('home-profile-problem-front')?.textContent).toContain('Your sign-in to Hana Home has ended.');
+    expect(document.getElementById('home-profile-problem-front')?.textContent).toContain('Your sign-in to Passport Home has ended.');
   });
 
   it('Sign out clears the name and anything typed; the next account starts with the section closed', async () => {

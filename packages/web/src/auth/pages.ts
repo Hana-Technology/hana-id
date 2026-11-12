@@ -2,6 +2,7 @@
 // writes for it, and its CSP. The build puts the policy in a <meta> CSP, so the built files are locked down whoever
 // serves them; the Worker (apps/api src/pages/host.ts) sends the full policy and the other headers itself
 // (frame-ancestors only works as a header).
+import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core/demo-config';
 import { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
@@ -18,17 +19,17 @@ export interface AuthPage {
 }
 
 export const AUTH_PAGES: readonly AuthPage[] = Object.freeze([
-  { name: 'login', path: '/login', file: 'login.html', title: 'Sign in with Hana' },
+  { name: 'login', path: '/login', file: 'login.html', title: `Sign in with ${BRAND.product}` },
   { name: 'email', path: '/login/email', file: 'login/email.html', title: 'Sign in with email' },
-  { name: 'callback', path: '/login/callback', file: 'login/callback.html', title: 'Signing in to Hana' },
-  { name: 'approve', path: '/approve', file: 'approve.html', title: 'Review in Hana' },
+  { name: 'callback', path: '/login/callback', file: 'login/callback.html', title: `Signing in to ${BRAND.product}` },
+  { name: 'approve', path: '/approve', file: 'approve.html', title: `Review in ${BRAND.product}` },
   { name: 'export', path: '/export', file: 'export.html', title: 'Export your key' },
   // D411: the email sharing sheet (share-page.ts).
   { name: 'share', path: '/share-email', file: 'share-email.html', title: 'Share your email' },
-  // Hana Home (home-page.ts): linked from nowhere yet, reached only by its address.
-  { name: 'home', path: '/home', file: 'home.html', title: 'Hana Home' },
+  // Passport Home (was Hana Home; home-page.ts): linked from nowhere yet, reached only by its address.
+  { name: 'home', path: '/home', file: 'home.html', title: BRAND.home },
   // D491: the exit Google client's only redirect URI (home-callback-page.ts).
-  { name: 'home-callback', path: '/home/callback', file: 'home/callback.html', title: 'Signing in to Hana Home' },
+  { name: 'home-callback', path: '/home/callback', file: 'home/callback.html', title: `Signing in to ${BRAND.home}` },
 ]);
 
 /** Google's JWKS host, which the export window reads (as the vault does). */

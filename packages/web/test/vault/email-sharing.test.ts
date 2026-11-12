@@ -252,7 +252,7 @@ describe('the approval popup’s account line (D442)', () => {
   it('carries emailShared while the session’s address is shared, and its Stop sharing revokes every address', async () => {
     const t = await loggedIn();
     const plain = t.request('stellar_signMessage', { message: 'one' });
-    await waitLauncher(t, 'Review in Hana');
+    await waitLauncher(t, 'Review in Journear Passport');
     t.launcher.click();
     const popup = t.opened.at(-1)!;
     t.dispatch({ data: { v: 1, t: 'hana:approve-hello' }, origin: ENV.authOrigin, source: popup });
@@ -262,7 +262,7 @@ describe('the approval popup’s account line (D442)', () => {
     void plain;
     session(t).emailState = 'granted';
     void t.request('stellar_signMessage', { message: 'two' });
-    await waitLauncher(t, 'Review in Hana');
+    await waitLauncher(t, 'Review in Journear Passport');
     t.launcher.click();
     const again = t.opened.at(-1)!;
     t.dispatch({ data: { v: 1, t: 'hana:approve-hello' }, origin: ENV.authOrigin, source: again });

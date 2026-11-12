@@ -63,7 +63,7 @@ describe('a consent stored before registering existed', () => {
     const { t } = await loggedIn(browser);
     // Stored by a vault at the new code, then read back as a pre-H5 record would be (no id).
     const pending = t.request('hana_requestAutoApprove');
-    await waitLauncher(t, 'Review in Hana');
+    await waitLauncher(t, 'Review in Journear Passport');
     const popup = openApproval(t);
     answerConsent(t, popup, await popup.next('hana:consent-request'), true);
     expect((await pending).result).toMatchObject({ granted: true });
@@ -82,7 +82,7 @@ describe('a consent stored before registering existed', () => {
     const before = browser.backend.count('/v1/vault/consents');
     const tx = evmTx();
     const reply = reloaded.t.request('eth_signTransaction', { tx });
-    await waitLauncher(reloaded.t, 'Review in Hana');
+    await waitLauncher(reloaded.t, 'Review in Journear Passport');
     const p2 = openApproval(reloaded.t);
     answerConsent(reloaded.t, p2, await p2.next('hana:consent-request'), true);
     expect(evmTxSigner((await reply).result as string, tx)).toBe(reloaded.evm);

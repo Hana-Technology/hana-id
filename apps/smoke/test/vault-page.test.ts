@@ -511,7 +511,7 @@ describe('vault smoke page: auto-approve demo', () => {
     // The page says it is a notice, and doesn't ask for a click.
     expect(document.body.textContent).toContain('notice: "Signed by Hana under Demo"');
     expect(document.body.textContent).not.toContain('"Signed by Hana under Demo" (click it)');
-    expect(document.body.textContent).toContain('Hana notice: "Signed by Hana under Demo"');
+    expect(document.body.textContent).toContain('Journear notice: "Signed by Hana under Demo"');
   });
 
   it('shows the auto-approve status and the stop beside their buttons, as well as in the log', async () => {

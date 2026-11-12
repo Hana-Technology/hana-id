@@ -40,7 +40,7 @@ function pagerNote(provider: string): string[] {
 
 export function testPageText(envName: string, at: number, provider: string): string {
   return [
-    'TEST PAGE. NO ACTION NEEDED. Nothing is wrong with Hana ID.',
+    'TEST PAGE. NO ACTION NEEDED. Nothing is wrong with Journear Passport.',
     'Someone is checking that critical pages reach both founders: a drill, not an incident (docs/operations.md "Test page").',
     'It is not an alert: nothing to acknowledge in the admin portal, and the watchdog does not re-send it.',
     ...pagerNote(provider),

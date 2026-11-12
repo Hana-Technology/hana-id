@@ -71,7 +71,7 @@ async function homeEmailSignIn(home: Page, to: string, browserName: string, shot
   await expect(home.locator('#home-email-code')).toBeVisible();
   await expect(home.locator('#home-email-code')).toHaveAttribute('autocomplete', 'one-time-code');
   const { code, subject } = await codeFor(to, before);
-  expect(subject).toBe('Your sign-in code for Hana Home');
+  expect(subject).toBe('Your sign-in code for Passport Home');
   if (shotsAs) await shots(home, `${shotsAs}-code-entry`, browserName);
   await home.fill('#home-email-code', code);
   await home.locator('#home-email-verify').click();
@@ -136,7 +136,7 @@ test('an email user signs in to Hana Home with a code and sees their app and add
   await home.locator('#home-export-email-send').click();
   await expect(home.locator('#home-export-email-code')).toBeVisible();
   const { code, subject } = await codeFor(to, before);
-  expect(subject).toBe('Your code to open a wallet in Hana Home');
+  expect(subject).toBe('Your code to open a wallet in Passport Home');
   await shots(home, 'h10-07-move-code-entry', browserName);
   await home.fill('#home-export-email-code', code);
   await home.locator('#home-export-email-verify').click();
@@ -148,6 +148,7 @@ test('an email user signs in to Hana Home with a code and sees their app and add
   await home.locator('#home-export-stellar').click();
   await home.locator('#home-export-confirm').fill('EXPORT');
   await guardedClick(home, 'Continue');
+  await home.locator('#home-export .reveal-ack input').check();
   await guardedClick(home, 'Show key');
   await expect(home.locator('#home-export .secret')).toHaveText(STELLAR_SEED);
   expect(addressOfExport('stellar', (await home.locator('#home-export .secret').textContent()) ?? '')).toBe(wallet.stellar);
@@ -204,7 +205,7 @@ test('the email screens’ refusals: a wrong code, a limit, the issuer unreachab
   await shots(home, 'h10-12-unreachable', browserName);
   answer = 'off';
   await home.locator('#home-email-retry').click();
-  await expect(home.locator('#home-sign-in-problem')).toContainText('Email sign-in to Hana Home isn’t available right now.');
+  await expect(home.locator('#home-sign-in-problem')).toContainText('Email sign-in to Passport Home isn’t available right now.');
   await shots(home, 'h10-13-email-off', browserName);
 });
 

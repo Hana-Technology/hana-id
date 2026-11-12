@@ -131,7 +131,7 @@ describe('signed in', () => {
     const writes = () =>
       screen
         .getAllByRole('button')
-        .filter((b) => !b.classList.contains('btn-copy'))
+        .filter((b) => !b.classList.contains('copy-btn'))
         .map((b) => b.textContent);
     expect(writes()).toEqual(['Sign out']);
     fireEvent.click(screen.getByRole('link', { name: /^Origins/u }));
@@ -139,7 +139,7 @@ describe('signed in', () => {
     expect(screen.getAllByText('IDN').length).toBeGreaterThan(0);
     expect(screen.getByText('Only owners can add or remove origins.')).toBeTruthy();
     expect(writes()).toEqual(['Sign out']);
-    for (const [name, heading] of [['Keys', 'Publishable keys'], ['Login & sessions', 'Change these settings'], ['Signing', 'Raw signing'], ['Branding', 'Logo'], ['Suspend', 'Suspend the app']] as const) {
+    for (const [name, heading] of [['Keys', 'Publishable keys'], ['Login & sessions', 'Login & sessions'], ['Signing', 'Raw signing'], ['Branding', 'Logo'], ['Suspend', 'Suspend the app']] as const) {
       fireEvent.click(screen.getByRole('link', { name: new RegExp(`^${name}`, 'u') }));
       await screen.findByRole('heading', { name: heading });
       expect(writes(), name).toEqual(['Sign out']);

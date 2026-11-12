@@ -53,7 +53,7 @@ describe('"Create an app" on the organisation page', () => {
     await createApp(s);
     await vi.waitFor(() => expect(appsPanel(s).querySelector('tbody')!.textContent).toContain('Lumen checkout'));
     expect(appsPanel(s).querySelector('tbody')!.textContent).not.toContain('No app yet.');
-    const ok = appsPanel(s).querySelector('.alert.ok')!;
+    const ok = appsPanel(s).querySelector('.jp-alert-success')!;
     expect(ok.textContent).toContain('Created app_new1');
     expect(ok.querySelector('code')!.textContent).toBe('pk_test_fakePreviewKeyAbc12345');
     // The table came from a second read of the organisation; the page itself wasn't re-rendered.
@@ -71,7 +71,7 @@ describe('"Create an app" on the organisation page', () => {
     );
     await createApp(s);
     await vi.waitFor(() => expect(appsPanel(s).textContent).toContain('The app list above couldn’t be refreshed: reload the page to see the new app in it.'));
-    expect(appsPanel(s).querySelector('.alert.ok code')!.textContent).toBe('pk_test_fakePreviewKeyAbc12345');
+    expect(appsPanel(s).querySelector('.jp-alert-success code')!.textContent).toBe('pk_test_fakePreviewKeyAbc12345');
   });
 });
 
@@ -107,9 +107,9 @@ describe('passkeys_required (D242: one partner organisation until passkeys ship)
     s.field('newOrgName').value = 'Second Partner';
     s.field('email').value = 'owner@second.example';
     s.submit();
-    await vi.waitFor(() => expect(s.main().querySelector('.alert.error')).toBeTruthy());
-    const box = s.main().querySelector('.alert.error')!;
-    expect(box.querySelector('strong')!.textContent).toBe('Only one partner organisation for now');
+    await vi.waitFor(() => expect(s.main().querySelector('.jp-alert-danger')).toBeTruthy());
+    const box = s.main().querySelector('.jp-alert-danger')!;
+    expect(box.querySelector('b')!.textContent).toBe('Only one partner organisation for now');
     expect(box.textContent).toContain('Until partner passkeys ship, only one partner organisation can exist on this network (testnet has no such limit), and another partner organisation, or an open invite to create one, already exists. Revoke that invite under Pending invites if it was a mistake, or choose type Internal.');
     expect(box.textContent).not.toMatch(/add a passkey/iu);
     expect(box.textContent).toContain('Error code passkeys_required (HTTP 403)');

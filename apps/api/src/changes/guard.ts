@@ -61,7 +61,7 @@ export async function admitMemberCall(env: Env, a: MemberAdmission, now = Date.n
   if (r.ok) return { reserveUsed: r.reserveUsed };
   if (r.notify) await breakerEvent(env.DB, r.limit === 'breaker_org' ? a.org : null, now);
   const breaker = r.limit === 'breaker_org' || r.limit === 'breaker_global';
-  throw new RpcRefusal('rate_limited', breaker ? 'Too many destructive changes this hour: ask Hana security' : 'Too many console calls: try again shortly');
+  throw new RpcRefusal('rate_limited', breaker ? 'Too many destructive changes this hour: ask Journear security' : 'Too many console calls: try again shortly');
 }
 
 /**

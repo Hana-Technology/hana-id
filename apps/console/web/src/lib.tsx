@@ -1,9 +1,11 @@
 // Small shared pieces of the SPA: the data hook (a 401 sends the browser to sign-in), the write and fresh-sign-in
-// hooks, the fragment reader, formatting, and the messages for sign-in's error codes. The UI components are ui.tsx.
+// hooks (a write's success is a toast, toast.tsx), the touched-fields hook (validate on blur), the fragment reader,
+// formatting, and the messages for sign-in's error codes. The UI components are ui.tsx.
 import type { SignInError } from '@hana-id/console-core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { ApiError, type ReturnTo, createAction, getJson } from './api.ts';
+import { useToast } from './toast.tsx';
 
 export interface Loaded<T> {
   data: T | undefined;
@@ -116,11 +118,11 @@ export const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0
 export const utcMonth = (ms: number): string => new Date(ms).toISOString().slice(0, 7);
 
 export const SIGN_IN_MESSAGES: Record<SignInError, string> = {
-  not_invited: 'This Google account isn’t a member of any organisation on the console. Ask an owner of your organisation, or Hana, for an invite.',
+  not_invited: 'This Google account isn’t a member of any organisation on the console. Ask an owner of your organisation, or Journear, for an invite.',
   invite_invalid: 'This invite can’t be used: it was used, revoked or has expired, or it was sent to another address or Workspace domain. Ask for a new one.',
   already_member: 'You’re already a member of that organisation. Sign in without the invite.',
-  user_disabled: 'This account is disabled. Contact Hana.',
-  passkeys_required: 'This invite would create a second partner organisation, which Hana can’t allow here until passkeys are available. Contact Hana.',
+  user_disabled: 'This account is disabled. Contact Journear.',
+  passkeys_required: 'This invite would create a second partner organisation, which Journear can’t allow here until passkeys are available. Contact Journear.',
   expired: 'That sign-in took too long or was finished in another browser. Start again.',
   rate_limited: 'Too many sign-in attempts from your network. Wait a minute, then start again.',
   internal: 'Something went wrong. Try again in a few minutes.',
@@ -133,35 +135,60 @@ export interface OrgContext {
   frozen: boolean;
   /** The signed-in member's address (a fresh sign-in must use the same Google account). */
   email?: string | undefined;
-  /** This console's Hana environment (`GET /api/me` `envName`), for the client snippet; undefined when not answered. */
+  /** This console's environment (`GET /api/me` `envName`), for the client snippet; undefined when not answered. */
   envName?: string | undefined;
 }
 
 export const useOrg = (): OrgContext => useOutletContext<OrgContext>();
 
-/** A write in progress: `run` keeps the button busy and the error to show; `done` is the last success message. */
+/**
+ * A write in progress: `run` keeps the button busy and the error to show inline; the success message `fn` returns is
+ * a toast (the design system's transient confirmation), and `done` keeps the last one.
+ */
 export function useWrite(): { busy: boolean; error: ApiError | undefined; done: string | undefined; run: (fn: () => Promise<string | void>) => Promise<void>; clear: () => void } {
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | undefined>();
   const [done, setDone] = useState<string | undefined>();
-  const run = useCallback(async (fn: () => Promise<string | void>) => {
-    setBusy(true);
-    setError(undefined);
-    setDone(undefined);
-    try {
-      const msg = await fn();
-      if (msg) setDone(msg);
-    } catch (err) {
-      setError(err instanceof ApiError ? err : unreachable());
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const run = useCallback(
+    async (fn: () => Promise<string | void>) => {
+      setBusy(true);
+      setError(undefined);
+      setDone(undefined);
+      try {
+        const msg = await fn();
+        if (msg) {
+          setDone(msg);
+          toast(msg);
+        }
+      } catch (err) {
+        setError(err instanceof ApiError ? err : unreachable());
+      } finally {
+        setBusy(false);
+      }
+    },
+    [toast],
+  );
   const clear = useCallback(() => {
     setError(undefined);
     setDone(undefined);
   }, []);
   return { busy, error, done, run, clear };
+}
+
+/**
+ * Which fields the member has left (validate on blur, not on each keystroke): a field's error shows once it was
+ * blurred, and from then on follows what is typed, so it clears as soon as the value is right. `all` marks every
+ * field (a submit), so nothing invalid is sent unflagged; `reset` forgets them (Discard).
+ */
+export function useTouched<K extends string>(): { seen: (k: K) => boolean; blur: (k: K) => () => void; all: () => void; reset: () => void } {
+  const [touched, setTouched] = useState<Partial<Record<K | '*', true>>>({});
+  return {
+    seen: (k) => touched[k] === true || touched['*'] === true,
+    blur: (k) => () => setTouched((t) => (t[k] ? t : { ...t, [k]: true })),
+    all: () => setTouched({ '*': true } as Partial<Record<K | '*', true>>),
+    reset: () => setTouched({}),
+  };
 }
 
 /**

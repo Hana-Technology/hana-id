@@ -78,7 +78,8 @@ export function assertAppName(s: string): string {
   const name = s.normalize('NFC').trim();
   if (name.length < 1 || name.length > 100) throw new Error('App name must be 1..100 characters');
   if (UNSAFE_NAME_RE.test(name)) throw new Error('App name must not contain control, format (bidi, zero-width), separator or unassigned characters');
-  // D686: not like a web address, no "Hana" (the API's rule, console-core appNameProblem).
+  // D686 (as extended by D765): not like a web address, no "Hana", "Journear" or "Passport Home" (the API's rule,
+  // console-core appNameProblem).
   const problem = appNameProblem(name);
   if (problem) throw new Error(`App name: ${problem}`);
   return name;

@@ -68,22 +68,22 @@ export async function runHomeCallbackPage(deps: HomeCallbackDeps): Promise<HomeC
     // Nothing else to do; the page continues and never shows the URL.
   }
   if (isFramed(win)) {
-    d.show(errorView(d, STOP, 'The Hana sign-in window can’t run inside another page.'));
+    d.show(errorView(d, STOP, 'The Journear Passport sign-in window can’t run inside another page.'));
     return 'refused';
   }
   if (!openerOk(win, deps.authOrigin)) {
-    d.show(errorView(d, STOP, 'This sign-in window wasn’t opened by Hana Home. Close it and sign in again from Hana Home.'));
+    d.show(errorView(d, STOP, 'This sign-in window wasn’t opened by Passport Home. Close it and sign in again from Passport Home.'));
     return 'refused';
   }
   if (fragment.kind === 'no_state') {
-    d.show(errorView(d, STOP, 'Google’s answer did not belong to a sign-in started in Hana Home. Close this window and sign in again from Hana Home.'));
+    d.show(errorView(d, STOP, 'Google’s answer did not belong to a sign-in started in Passport Home. Close this window and sign in again from Passport Home.'));
     return 'refused';
   }
   const taken = takeLogin(win.sessionStorage, fragment.state, now());
   // Only the exit client's entry, with its client and nonce: a plain login's (or a parked one's) is never relayed here.
   if (!taken || !taken.exit || !taken.clientId || !taken.nonce || taken.cancelled || taken.followKey) {
     if (taken) zeroTaken(taken);
-    d.show(errorView(d, STOP, 'This sign-in has expired or was already used. Close this window and sign in again from Hana Home.'));
+    d.show(errorView(d, STOP, 'This sign-in has expired or was already used. Close this window and sign in again from Passport Home.'));
     return 'refused';
   }
 
@@ -102,7 +102,7 @@ export async function runHomeCallbackPage(deps: HomeCallbackDeps): Promise<HomeC
     await deps.api.writeRelay(fragment.state, value);
   } catch (err) {
     const code = typeof (err as { code?: unknown })?.code === 'string' ? ((err as { code: string }).code) : 'api_unavailable';
-    d.show(errorView(d, 'Sign-in could not finish', code === 'relay_used' ? 'This sign-in was already completed. Close this window.' : 'Hana could not be reached to finish the sign-in. Close this window and sign in again from Hana Home.', code));
+    d.show(errorView(d, 'Sign-in could not finish', code === 'relay_used' ? 'This sign-in was already completed. Close this window.' : 'Journear could not be reached to finish the sign-in. Close this window and sign in again from Passport Home.', code));
     return 'relay_failed';
   } finally {
     zeroTaken(taken);

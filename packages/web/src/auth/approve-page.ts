@@ -34,6 +34,7 @@ import {
 } from '@hana-id/core';
 import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
+import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { type Dom, dom, errorView, originText } from './dom.ts';
@@ -41,6 +42,7 @@ import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
 import { renderApproval, watchOverflowing } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
+import { alert } from './ui.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
 import { type DemoBridge, type DemoNetwork, type DemoSwap, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, fixedMainnetDemoPrices, formatUsd, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
 
@@ -70,7 +72,7 @@ export function approveOpenerMode(search: string): ApproveOpenerMode | null {
 export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string>> = Object.freeze({
   never_covered: 'this kind of request is never signed automatically',
   no_policy_section: 'the rules don’t cover this chain',
-  decode_failed: 'Hana couldn’t fully read the request',
+  decode_failed: `${BRAND.company} couldn’t fully read the request`,
   network_not_listed: 'the network isn’t listed in the rules',
   chain_not_listed: 'the chain isn’t listed in the rules',
   fee_bump: 'fee-bump transactions are never signed automatically',
@@ -86,9 +88,9 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
   selector_not_listed: 'the function isn’t listed in the rules',
   calldata_mismatch: 'the call doesn’t match the listed function',
   address_not_allowed: 'it involves an address the rules don’t allow',
-  opaque_bytes: 'it carries data Hana can’t check',
-  unsupported_argument: 'it has an argument Hana can’t check',
-  decoder_unavailable: 'Hana can’t decode this protocol yet',
+  opaque_bytes: `it carries data ${BRAND.company} can’t check`,
+  unsupported_argument: `it has an argument ${BRAND.company} can’t check`,
+  decoder_unavailable: `${BRAND.company} can’t decode this protocol yet`,
   decoder_refused: 'the protocol check refused it',
   typed_data_not_listed: 'this kind of signature isn’t listed in the rules',
   value_too_high: 'the amount is over the per-transaction limit',
@@ -106,20 +108,20 @@ export const SUPPORT_ID_HINT = 'Give this code to the app’s support if they as
 /** The account line's email sharing note (D442). */
 export const EMAIL_SHARED_TEXT = {
   line: (app: string) => `Your email is shared with ${app}.`,
-  stopped: (app: string) => `Stopped. ${app} no longer gets your email from Hana; it may keep the address it already received, so ask ${app} to delete it.`,
-  failed: 'Hana couldn’t stop sharing. Try again.',
+  stopped: (app: string) => `Stopped. ${app} no longer gets your email from ${BRAND.company}; it may keep the address it already received, so ask ${app} to delete it.`,
+  failed: `${BRAND.company} couldn’t stop sharing. Try again.`,
 };
 /** The mainnet demo's banner headline (D428): every approval of a request for Base or Stellar's public network. */
 export const MAINNET_DEMO_BANNER = 'Real funds, test custody: these funds may be lost';
 /** Under the headline: why (the keys come from the testnet MPC). */
-export const MAINNET_DEMO_WHY = 'This test app signs on a real network with keys from Hana’s test infrastructure, which can be reset or broken. Use small amounts only.';
+export const MAINNET_DEMO_WHY = `This test app signs on a real network with keys from ${BRAND.company}’s test setup, which can be reset or broken. Use small amounts only.`;
 
-export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar, NEAR or EVM mainnets are refused, so don’t keep real funds at this account.';
+export const TEST_APP_NOTE = `Test app: ${BRAND.product} signs only for test networks here. Requests for Stellar, NEAR or EVM mainnets are refused, so don’t keep real funds at this account.`;
 /**
  * The same note for a test app with the mainnet demo on (D428), where the first one would be false: what the demo
  * signs, that it always asks, and that the custody is still test custody.
  */
-export const TEST_APP_DEMO_NOTE = `Test app with Hana’s mainnet demo on: besides test networks, Hana ID signs real transactions on Base and Stellar’s public network here, up to ${formatUsd(MAINNET_DEMO.txCapUsdMicros)} each. Those always ask you first and are never signed automatically. Other mainnets are refused. The keys are test keys that can be reset or lost, so keep only small amounts at this account.`;
+export const TEST_APP_DEMO_NOTE = `Test app with ${BRAND.company}’s mainnet demo on: besides test networks, ${BRAND.product} signs real transactions on Base and Stellar’s public network here, up to ${formatUsd(MAINNET_DEMO.txCapUsdMicros)} each. Those always ask you first and are never signed automatically. Other mainnets are refused. The keys are test keys that can be reset or lost, so keep only small amounts at this account.`;
 
 /** The text for a reason code (an unknown code, from a newer vault, is shown generically). */
 export function autoApproveReasonText(reason: string): string {
@@ -256,7 +258,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   function testAppNote(msg: { testApp?: true; mainnetDemo?: true }): HTMLElement | null {
     if (!msg.testApp) return null;
     const demoOn = msg.mainnetDemo === true && env.devEnv && env.network === 'testnet';
-    return d.h('p', { class: 'note test-app' }, demoOn ? TEST_APP_DEMO_NOTE : TEST_APP_NOTE);
+    return alert(d, 'info', { class: 'note test-app' }, demoOn ? TEST_APP_DEMO_NOTE : TEST_APP_NOTE);
   }
 
   function header(msg: { appName: string; parentOrigin: string; logoUrl?: string }, extra?: string): HTMLElement {
@@ -270,11 +272,12 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   }
 
   function buttons(primaryLabel: string, enabled: boolean): HTMLElement {
-    const reject = d.h('button', { class: 'secondary', attrs: { type: 'button' } }, primaryLabel === 'Allow' ? 'Don’t allow' : 'Reject');
+    // The confirm pattern's decision row (D765): the one primary, the other secondary, side by side at 48 px.
+    const reject = d.h('button', { class: 'secondary jp-btn jp-btn-secondary jp-btn-lg', attrs: { type: 'button' } }, primaryLabel === 'Allow' ? 'Don’t allow' : 'Reject');
     reject.addEventListener('click', (e) => {
       if (isGesture(e)) answer(false);
     });
-    const ok = d.h('button', { class: 'primary', attrs: { type: 'button' } }, primaryLabel);
+    const ok = d.h('button', { class: 'primary jp-btn jp-btn-primary jp-btn-lg', attrs: { type: 'button' } }, primaryLabel);
     ok.disabled = true;
     // A keyboard click acts only once Approve has held focus for a moment (D113).
     ok.addEventListener('focus', () => guard.primaryFocused());
@@ -285,7 +288,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       if (isGesture(e) && enabled && guard.mayActivate((e as MouseEvent).detail === 0)) answer(true);
     });
     primary = enabled ? ok : null;
-    return d.h('div', { class: 'actions' }, reject, enabled ? ok : null);
+    return d.h('div', { class: 'actions decide' }, reject, enabled ? ok : null);
   }
 
   /** The user's Support ID (batch C15), as the vault sent it: the code an app's support may ask for. Text only. */
@@ -350,8 +353,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     // a swap's other fields against that address itself, so a recipient appears only once they are verified.
     const assessed = assessMainnetDemo(input, now(), prices, 'shown');
     const value = assessed.ok
-      ? `This request can move about ${formatUsd(assessed.usdMicros)}, fee included. Hana’s limit is ${cap} per transaction.`
-      : `Hana’s limit is ${cap} per transaction.`;
+      ? `This request can move about ${formatUsd(assessed.usdMicros)}, fee included. ${BRAND.company}’s limit is ${cap} per transaction.`
+      : `${BRAND.company}’s limit is ${cap} per transaction.`;
     const balance = d.h('p', { class: 'muted demo-balance', attrs: { role: 'status' } }, 'Reading this wallet’s balance…');
     void readDemoBalance(network, input.address, balanceFetch, prices).then((b) => {
       if (current?.kind !== 'request' || current.msg.id !== id) return;
@@ -365,9 +368,11 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         balance.textContent = `This wallet holds about ${held}: keep test funds under ${formatUsd(MAINNET_DEMO.balanceWarnUsdMicros)} — move the rest out.`;
       } else balance.textContent = `This wallet holds about ${held}.`;
     });
-    return d.h(
-      'div',
-      { class: 'mainnet-demo', attrs: { role: 'alert' } },
+    // One danger alert (the system's `.jp-alert-danger`): its icon, then the banner's lines.
+    return alert(
+      d,
+      'danger',
+      { tag: 'div', class: 'mainnet-demo', attrs: { role: 'alert' } },
       d.h('p', { class: 'danger takeover' }, MAINNET_DEMO_BANNER),
       d.h('p', { class: 'danger' }, value),
       assessed.ok && assessed.bridge ? bridgeLine(assessed.bridge) : null,
@@ -427,10 +432,11 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         msg.supportId ? supportIdLine(msg.supportId) : null,
         msg.emailShared ? emailSharedLine(msg.appName) : null,
         demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
-        auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
+        // The out-of-policy case (the confirm pattern's warning alert): why the app's rules didn't sign this one.
+        auto?.reason ? alert(d, 'warning', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded
           ? renderApproval(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin })
-          : d.h('div', { class: 'request' }, d.h('p', { class: 'danger' }, 'Hana can’t read this request, so it can’t be approved.'), d.h('p', { class: 'muted' }, problem)),
+          : d.h('div', { class: 'request' }, alert(d, 'danger', { class: 'danger' }, `${BRAND.company} can’t read this request, so it can’t be approved.`), d.h('p', { class: 'muted' }, problem)),
         buttons('Approve', decoded !== null),
         auto?.active ? stopAutoApproveButton(auto.label) : null,
       ),
@@ -464,7 +470,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         testAppNote(msg),
         policy
           ? renderConsent(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, expiresAtMs: msg.expiresAtMs, nowMs: now() })
-          : d.h('div', {}, d.h('h1', {}, 'Automatic signing'), d.h('p', { class: 'danger' }, 'This app’s automatic-signing rules could not be checked, so they can’t be allowed.')),
+          : d.h('div', { class: 'consent' }, d.h('h1', {}, 'Automatic signing'), alert(d, 'danger', { class: 'danger' }, 'This app’s automatic-signing rules couldn’t be checked, so they can’t be allowed.')),
         buttons('Allow', policy !== null),
       ),
     );
@@ -497,7 +503,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     tick();
   }
 
-  const loadingView = () => d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Review in Hana'), d.h('p', { class: 'muted' }, 'Loading the request…')));
+  const loadingView = () => d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Review request'), d.h('p', { class: 'muted' }, 'Loading the request…')));
 
   /** Whether `c` can be approved at all: a request the popup decoded, a policy it validated. */
   const answerable = (c: Current): boolean => (c.kind === 'request' ? c.decodable : c.valid);
@@ -509,7 +515,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     return { t: 'hana:consent-result', id, allowed: approved && answerable(c), digest: consentDigest({ id, policyId: pid, parentOrigin, expiresAtMs }) };
   }
 
-  /** A check mark in the brand's ok colours (auth.css), for an answer that went ahead. Decorative: the heading says it. */
+  /** A check mark in the system's success colours (css/approval.css), for an answer that went ahead. Decorative: the heading says it. */
   function checkMark(): SVGSVGElement {
     const SVG = 'http://www.w3.org/2000/svg';
     const el = (tag: string, attrs: Record<string, string>) => {
@@ -533,7 +539,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     const lines = accepted
       ? [d.h('p', {}, 'You can go back to ', d.h('strong', {}, c.msg.appName), '.'), d.h('p', { class: 'muted' }, 'If it needs another approval, it’ll appear here.')]
       : [d.h('p', {}, consent ? 'Automatic signing wasn’t turned on.' : 'Nothing was signed.')];
-    const closeNow = d.h('button', { class: 'secondary', attrs: { type: 'button', id: 'approve-close' } }, 'Close now');
+    const closeNow = d.h('button', { class: 'secondary jp-btn jp-btn-secondary', attrs: { type: 'button', id: 'approve-close' } }, 'Close now');
     const shownAt = now();
     closeNow.addEventListener('click', (e) => {
       // The rest of a double-click on Approve or Reject, or taps carried over from that screen, must not close the
@@ -569,13 +575,13 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
 
   if (isFramed(win)) {
     state = 'error';
-    d.show(errorView(d, 'Hana', 'The Hana approval window can’t run inside another page.'));
+    d.show(errorView(d, 'Approval stopped', `The ${BRAND.product} approval window can’t run inside another page.`));
   } else if (!opened) {
     state = 'error';
     d.show(errorView(d, 'Nothing to review', 'This approval link is not valid. Start again from the app.'));
   } else if (!opener) {
     state = 'error';
-    d.show(errorView(d, 'Nothing to review', 'Open this window from the Hana prompt in the app.'));
+    d.show(errorView(d, 'Nothing to review', `Open this window from the ${BRAND.product} button in the app.`));
   } else {
     for (const [t, l] of listeners) win.addEventListener(t, l);
     win.document.addEventListener('visibilitychange', onVisibility);

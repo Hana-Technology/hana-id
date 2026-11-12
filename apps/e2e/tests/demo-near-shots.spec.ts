@@ -100,7 +100,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await page.bringToFront();
   await shots(page, '03-stage-preparing');
   activation.open();
-  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Hana window…');
+  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
   await shots(page, '04-stage-approving');
   await expect(approval.getByRole('heading', { name: 'NEAR transaction, fee paid by a relayer' })).toBeVisible();
   for (const scheme of ['light', 'dark'] as const) {
@@ -108,7 +108,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
     await approval.screenshot({ path: `${SHOTS}/04-approval-window-${scheme}.png`, fullPage: true, animations: 'disabled' });
   }
   await approve(approval);
-  await expect(page.locator('#near-stage')).toHaveText('Sending it through Hana’s relayer, which pays the fee…');
+  await expect(page.locator('#near-stage')).toHaveText('Sending it through Journear’s relayer, which pays the fee…');
   await shots(page, '05-stage-relaying');
   relaying.open();
   await expect(page.locator('#near-done')).toBeVisible();

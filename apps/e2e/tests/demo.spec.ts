@@ -163,7 +163,7 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   const approval = await approvalP;
   // The click opened the approval itself: no "Review in Hana" button.
   await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Hana' })).toHaveCount(0);
-  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Hana window…');
+  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
   await expect(approval.getByRole('heading', { name: 'NEAR transaction, fee paid by a relayer' })).toBeVisible();
   await expect(approval.getByText('add_message').first()).toBeVisible();
   await expect(approval.getByText(E2E_GUESTBOOK).first()).toBeVisible();
@@ -209,7 +209,7 @@ test('the demo explains a blocked popup, then signs in through the Hana button',
   }, DEMO_ORIGIN);
   await openDemo(page);
   await page.getByRole('button', { name: 'Log in with Google' }).click();
-  await expect(page.locator('#notice')).toHaveText('Click “Sign in with Hana” on the Hana button at the bottom right of the page to continue.');
+  await expect(page.locator('#notice')).toHaveText('Click “Sign in with Hana” on the Journear button at the bottom right of the page to continue.');
   const popup = await clickLauncher(page, 'Sign in with Hana');
   await chooseAccount(popup);
   await expect(page.locator('#status')).toContainText('Logged in');

@@ -28,19 +28,19 @@ describe('errorInfo', () => {
 
 describe('plainMessage', () => {
   it('explains the login failures a user can hit', () => {
-    expect(plainMessage(new HanaError('popup_blocked', 'x'), 'login')).toMatch(/blocked the Hana sign-in window.*Allow pop-ups/u);
+    expect(plainMessage(new HanaError('popup_blocked', 'x'), 'login')).toMatch(/blocked the Journear sign-in window.*Allow pop-ups/u);
     expect(plainMessage(new HanaError('login_cancelled', 'x'), 'login')).toBe('Sign-in cancelled.');
     expect(plainMessage(new HanaError('login_method_unavailable', 'x'), 'login')).toMatch(/Email login isn’t turned on/u);
     expect(plainMessage(new HanaError('code_invalid', 'x'), 'login')).toMatch(/wrong code/u);
     expect(plainMessage(new HanaError('challenge_expired', 'x'), 'login')).toMatch(/expired/u);
     // login_timeout: the window never connected, or the sign-in was left unfinished past the vault's 5 minutes.
-    expect(plainMessage(new HanaError('login_timeout', 'x', { stage: 'connect' }), 'login')).toBe('The Hana sign-in window did not respond in time. Try again.');
+    expect(plainMessage(new HanaError('login_timeout', 'x', { stage: 'connect' }), 'login')).toBe('The Journear sign-in window did not respond in time. Try again.');
     expect(plainMessage(new HanaError('login_timeout', 'x', { stage: 'pending' }), 'login')).toMatch(/wasn’t finished within 5 minutes/u);
     expect(plainMessage(new HanaError(4001, 'x'), 'login')).toMatch(/did not complete/u);
     expect(plainMessage(new HanaError('google_error', 'x', { error: 'access_denied' }), 'login')).toBe('You declined the Google sign-in.');
-    expect(plainMessage(new HanaError('vault_unavailable', 'x'), 'load')).toMatch(/Could not load the Hana vault/u);
+    expect(plainMessage(new HanaError('vault_unavailable', 'x'), 'load')).toMatch(/Could not load the Journear vault/u);
     // The SDK's reason after its one retry: a timeout, a frame that didn't answer, a slow start, a blocked frame.
-    expect(plainMessage(new HanaError('vault_unavailable', 'x', { reason: 'frame_timeout', attempts: 2 }), 'load')).toMatch(/Could not load the Hana vault in time/u);
+    expect(plainMessage(new HanaError('vault_unavailable', 'x', { reason: 'frame_timeout', attempts: 2 }), 'load')).toMatch(/Could not load the Journear vault in time/u);
     expect(plainMessage(new HanaError('vault_unavailable', 'x', { reason: 'no_answer', attempts: 2 }), 'load')).toMatch(/didn’t answer.*allowed origins/u);
     expect(plainMessage(new HanaError('vault_unavailable', 'x', { reason: 'ready_timeout', attempts: 1 }), 'load')).toMatch(/too slow to restore/u);
     expect(plainMessage(new HanaError('vault_unavailable', 'x', { reason: 'csp_frame_src', attempts: 1 }), 'load')).toMatch(/security policy blocks/u);
@@ -57,13 +57,13 @@ describe('plainMessage', () => {
   });
 
   it('explains signing and device outcomes', () => {
-    expect(plainMessage(new ProviderRpcError(4001, 'x'), 'sign')).toBe('Rejected in the Hana window: nothing was signed.');
+    expect(plainMessage(new ProviderRpcError(4001, 'x'), 'sign')).toBe('Rejected in the Journear window: nothing was signed.');
     expect(plainMessage(new HanaError(4100, 'x', { reason: 'share_not_fresh' }), 'revoke')).toMatch(/within 5 minutes/u);
     expect(plainMessage(new HanaError('rate_limited', 'x'), 'export')).toMatch(/exports/u);
   });
 
   it('D695: a 4900 with reason signed_out is a sign-out (log in again, no reload); a 4900 without it is a lost vault', () => {
-    const signedOut = 'You were signed out on this device (from Hana Home, another tab or another device). Log in again.';
+    const signedOut = 'You were signed out on this device (from Passport Home, another tab or another device). Log in again.';
     expect(SIGNED_OUT_MESSAGE).toBe(signedOut);
     // The refused signature (either error shape) and the disconnect event the page turns into one.
     for (const e of [new HanaError(4900, 'x', { reason: 'signed_out' }), new ProviderRpcError(4900, 'x', { reason: 'signed_out' }), { code: 4900, data: { reason: 'signed_out' } }]) {
@@ -71,8 +71,8 @@ describe('plainMessage', () => {
       for (const action of ['load', 'sign', 'export', 'identity'] as const) expect(plainMessage(e, action)).toBe(signedOut);
     }
     for (const e of [new HanaError(4900, 'x'), { code: 4900 }, new HanaError(4900, 'x', { reason: 'other' }), new HanaError(4100, 'x', { reason: 'signed_out' })]) expect(isSignedOut(e)).toBe(false);
-    expect(plainMessage({ code: 4900 }, 'load')).toBe('The connection to the Hana vault was lost. Reload the page.');
-    expect(plainMessage(new ProviderRpcError(4900, 'x'), 'sign')).toBe('The connection to the Hana vault was lost. Reload the page.');
+    expect(plainMessage({ code: 4900 }, 'load')).toBe('The connection to the Journear vault was lost. Reload the page.');
+    expect(plainMessage(new ProviderRpcError(4900, 'x'), 'sign')).toBe('The connection to the Journear vault was lost. Reload the page.');
     // Plain words: no em or en dash.
     expect(signedOut).not.toMatch(/[\u2013\u2014]/u);
   });
@@ -89,7 +89,7 @@ describe('plainMessage', () => {
     }
     expect(seen.size).toBe(reasons.length);
     expect(plainMessage(new HanaError(4100, 'x', { reason: 'near_key_unknown' }), 'near')).toMatch(/doesn’t exist on testnet yet.*creates the account first/u);
-    expect(plainMessage(new HanaError('api_unavailable', 'x', { reason: 'near_rpc_unavailable' }), 'sign')).toBe('Hana couldn’t reach NEAR testnet to check this request. Try again in a minute.');
+    expect(plainMessage(new HanaError('api_unavailable', 'x', { reason: 'near_rpc_unavailable' }), 'sign')).toBe('Journear couldn’t reach NEAR testnet to check this request. Try again in a minute.');
     // The page's own reads.
     expect(plainMessage({ code: 'near_page_rpc_failed', message: 'x' }, 'near')).toMatch(/couldn’t read NEAR testnet/u);
     expect(plainMessage({ code: 'near_account_pending', message: 'x' }, 'near')).toMatch(/still creating your NEAR account/u);
@@ -107,14 +107,14 @@ describe('plainMessage', () => {
     expect(plainMessage(relayer('api_unavailable', 504, 'timeout'), 'near')).toMatch(/may still land/u);
     expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'near')).toMatch(/only for calls to the demo guestbook/u);
     expect(plainMessage(relayer('api_unavailable', 503, 'relay_budget_exhausted'), 'near')).toBe('The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).');
-    expect(plainMessage(relayer(4100, 400, 'something_new'), 'near')).toMatch(/^Hana’s relayer refused this request \(something_new\)\. /u);
-    expect(plainMessage(relayer(4100, 400), 'near')).toMatch(/^Hana’s relayer refused this request\. /u);
-    expect(plainMessage(relayer('api_unavailable', 502, 'whatever'), 'near')).toBe('Hana’s relayer is unavailable right now. Try again in a minute. (whatever)');
+    expect(plainMessage(relayer(4100, 400, 'something_new'), 'near')).toMatch(/^Journear’s relayer refused this request \(something_new\)\. /u);
+    expect(plainMessage(relayer(4100, 400), 'near')).toMatch(/^Journear’s relayer refused this request\. /u);
+    expect(plainMessage(relayer('api_unavailable', 502, 'whatever'), 'near')).toBe('Journear’s relayer is unavailable right now. Try again in a minute. (whatever)');
     expect(plainMessage(relayer('rate_limited', 429, 'rate_limited'), 'near')).toMatch(/Too many guestbook writes/u);
     // Not from the relayer (no HTTP status): the usual texts.
     expect(plainMessage(new HanaError(4100, 'x'), 'near')).toBe('Not allowed: you may have been logged out. Log in and try again.');
-    expect(plainMessage(new HanaError('api_unavailable', 'x'), 'near')).toBe('Could not reach Hana’s service. Check your connection and try again.');
-    expect(plainMessage(new HanaError(4001, 'x'), 'near')).toBe('Rejected in the Hana window: nothing was signed.');
+    expect(plainMessage(new HanaError('api_unavailable', 'x'), 'near')).toBe('Could not reach Journear’s service. Check your connection and try again.');
+    expect(plainMessage(new HanaError(4001, 'x'), 'near')).toBe('Rejected in the Journear window: nothing was signed.');
     // The same reason outside the card is not the relayer's.
     expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'sign')).toBe('Not allowed: you may have been logged out. Log in and try again.');
   });

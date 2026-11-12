@@ -4,45 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
-    <title>Hana ID smoke test (vault)</title>
-    <style>
-      :root { color-scheme: light dark; font: 14px/1.45 system-ui, sans-serif; }
-      body { max-width: 1100px; margin: 0 auto; padding: 16px; }
-      h1 { font-size: 20px; margin: 0 0 4px; }
-      h2 { font-size: 16px; margin: 24px 0 8px; }
-      section { border-top: 1px solid #8884; }
-      code, .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; }
-      label { display: inline-flex; gap: 6px; align-items: center; margin: 4px 12px 4px 0; }
-      input[type='text'] { font: inherit; padding: 3px 6px; }
-      input#pk { width: 28em; }
-      input#account { width: 12em; }
-      button { font: inherit; padding: 4px 10px; margin: 4px 6px 4px 0; cursor: pointer; }
-      button:disabled { cursor: default; }
-      table { border-collapse: collapse; width: 100%; margin: 6px 0; }
-      th, td { border: 1px solid #8884; padding: 3px 6px; text-align: left; vertical-align: top; }
-      th { font-weight: 600; }
-      td.num { text-align: right; white-space: nowrap; }
-      dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0; }
-      dt { font-weight: 600; }
-      dd { margin: 0; }
-      pre { max-height: 220px; overflow: auto; background: #8881; padding: 6px; margin: 6px 0; }
-      .banner { padding: 8px 10px; border-radius: 4px; margin: 8px 0; }
-      .error { background: #d0303022; border: 1px solid #d03030; }
-      .warn { background: #d0a03022; border: 1px solid #d0a030; }
-      .ok { color: #1a8a3a; font-weight: 600; }
-      .fail { color: #d03030; font-weight: 600; }
-      .info { color: #8888; }
-      .derivation { font-weight: 600; color: #b06000; }
-      #log { max-height: 240px; overflow: auto; background: #8881; padding: 6px; white-space: pre-wrap; }
-      .table-wrap { overflow-x: auto; }
-    </style>
+    <title>Journear Passport smoke test (vault)</title>
+    <link rel="stylesheet" href="/src/smoke.css" />
   </head>
   <body>
-    <h1>Hana ID smoke test</h1>
+    <h1>Journear Passport smoke test</h1>
     <p>
-      Local test tooling (not a partner integration guide) that logs in through the Hana vault (<code>@hana-id/web</code>):
-      the vault iframe, the Hana login popup, Google and <code>POST /v1/login</code>. Keys and Google tokens stay in the
-      Hana pages; this page only sees addresses, status and (pk_test_ apps) per-stage timings.
+      Local test tooling (not a partner integration guide) that logs in through the Journear vault (<code>@hana-id/web</code>):
+      the vault iframe, the Journear login popup, Google and <code>POST /v1/login</code>. Keys and Google tokens stay in the
+      Journear pages; this page only sees addresses, status and (pk_test_ apps) per-stage timings.
       The <a href="./direct.html">direct page</a> runs the old in-page flow (Google, openid only → <code>/v1/sessions</code> →
       <code>/v1/derive</code>) for the split-flow baseline and the replay tests.
     </p>
@@ -65,7 +35,7 @@
         are disposable until the address freeze.
       </p>
       <dl id="wallet"></dl>
-      <button id="login" disabled>Log in with Hana</button>
+      <button id="login" disabled>Log in with Journear</button>
       <button id="cancel-login" disabled>Cancel login</button>
       <button id="logout" disabled>Log out</button>
       <button id="remount" disabled>Remount the vault (unlock)</button>

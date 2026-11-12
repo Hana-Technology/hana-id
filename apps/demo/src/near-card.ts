@@ -35,6 +35,8 @@ import {
 } from './near.ts';
 import type { DemoClient } from './page.ts';
 import { shorten } from './requests.ts';
+import { type ResultFact, resultItem } from './result.ts';
+import type { ToastTone } from './toast.ts';
 
 /** How old a read of the key and block may be for a click to sign at once. */
 export const PREP_MAX_AGE_MS = 60_000;
@@ -64,9 +66,9 @@ export const DEFAULT_TX_TEXT = 'Hello from Hana ID (a signed NEAR transaction)';
 export const STAGES = {
   reading: 'Reading your NEAR account on testnet…',
   activating: 'Preparing your NEAR account…',
-  approving: 'Waiting for your approval in the Hana window…',
-  relaying: 'Sending it through Hana’s relayer, which pays the fee…',
-  retrying: 'That request’s number was already used. Building a fresh one: approve it once more in the Hana window…',
+  approving: 'Waiting for your approval in the Journear window…',
+  relaying: 'Sending it through Journear’s relayer, which pays the fee…',
+  retrying: 'That request’s number was already used. Building a fresh one: approve it once more in the Journear window…',
 } as const;
 
 export interface NearCardDeps {
@@ -82,7 +84,8 @@ export interface NearCardDeps {
   sleep: (ms: number) => Promise<void>;
   /** The page's one-request-at-a-time runner (synchronous up to the task's first await); errors go to `box`. */
   run: (action: DemoAction, task: () => Promise<void>, box?: string) => void;
-  notice: (text: string | null) => void;
+  /** A transient result (the page's toasts). */
+  toast: (tone: ToastTone, title: string, body?: string) => void;
   showError: (action: DemoAction, e: unknown, box?: string) => void;
   plainMessage: (e: unknown, action: DemoAction) => string;
 }
@@ -266,14 +269,29 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     if (txHash && explorer) link.href = `${explorer}/txns/${encodeURIComponent(txHash)}`;
   }
 
+  /** The message field's error (the design system's invalid field: red border, the error in place of the hint). */
   function hint(text: string | null): void {
     el('near-hint').textContent = text ?? '';
     el('near-hint').hidden = text === null;
+    el('near-field').classList.toggle('is-invalid', text !== null);
+    if (text === null) input.removeAttribute('aria-invalid');
+    else input.setAttribute('aria-invalid', 'true');
+  }
+
+  /** What's wrong with the message box's text, in words, or null when the guestbook takes it. */
+  function textProblem(): string | null {
+    const check = checkGuestbookText(input.value);
+    if (check.ok) return null;
+    return check.reason === 'empty'
+      ? 'Write a message first (1 to 200 characters).'
+      : check.reason === 'too_long'
+        ? `That is ${check.chars} characters: the guestbook takes at most 200.`
+        : 'That text has a broken character the guestbook can’t store. Retype it.';
   }
 
   function clearCardError(): void {
     el('near-error').hidden = true;
-    el('near-error').textContent = '';
+    el('near-error-text').textContent = '';
   }
 
   function renderCount(): void {
@@ -293,15 +311,14 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     b.hidden = false;
     b.textContent = p.key
       ? `Balance: ${formatNear(p.balance)} NEAR${p.balance < TX_FEE_RESERVE ? '. The guestbook write needs none.' : '.'}`
-      : 'Not on NEAR testnet yet: your first guestbook write creates it (Hana’s relayer sends it a zero-value transfer), for free.';
+      : 'Not on NEAR testnet yet: your first guestbook write creates it (Journear’s relayer sends it a zero-value transfer), for free.';
   }
 
-  function result(label: string, value: string | null, note: string | null, ok: boolean, txHash?: string): void {
-    const item = h('li', {}, h('div', {}, h('span', { class: ok ? 'ok' : 'fail' }, ok ? '✓ ' : '✗ '), label));
-    if (value) item.append(h('code', {}, value));
-    if (note) item.append(h('div', { class: 'muted small' }, note));
-    if (txHash && explorer) item.append(h('div', { class: 'small' }, h('a', { href: `${explorer}/txns/${encodeURIComponent(txHash)}`, target: '_blank', rel: 'noopener noreferrer' }, 'View the transaction ↗')));
-    el('near-results').prepend(item);
+  /** A signing result, newest first (result.ts): the facts as mono rows, then the explorer link when it was sent. */
+  function result(label: string, facts: ResultFact[], note: string | null, ok: boolean, txHash?: string): void {
+    const rows = [...facts];
+    if (txHash && explorer) rows.push({ label: 'Explorer', value: 'View the transaction ↗', href: `${explorer}/txns/${encodeURIComponent(txHash)}` });
+    el('near-results').prepend(resultItem({ title: label, ok, chain: { kind: 'near', name: 'NEAR testnet' }, facts: rows, note }));
   }
 
   function renderMessages(list: ReturnType<typeof parseMessages>): void {
@@ -351,7 +368,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     if (accountId === null || guestbook === null) return;
     const check = checkGuestbookText(input.value);
     if (!check.ok) {
-      hint(check.reason === 'empty' ? 'Write a message first (1 to 200 characters).' : check.reason === 'too_long' ? `That is ${check.chars} characters: the guestbook takes at most 200.` : 'That text has a broken character the guestbook can’t store. Retype it.');
+      hint(textProblem());
       input.focus();
       return;
     }
@@ -364,7 +381,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
         try {
           let ready = fresh(accountId);
           if (ready === null || ready.key === null) {
-            // Not prepared: Hana's window opens now, in the click, and the next signing call uses it.
+            // Not prepared: Journear's window opens now, in the click, and the next signing call uses it.
             const ticket: ApprovalTicket = c.prepareApproval();
             try {
               stage(STAGES.reading);
@@ -449,19 +466,22 @@ export function startNearCard(deps: NearCardDeps): NearCard {
         if (ready.key !== null && ready.balance >= TX_FEE_RESERVE) {
           await rpc.sendTx(r.signedTransaction);
           lastNonce.set(accountId, nonce);
-          result(`${label}: signed and sent`, r.hash, 'Your account paid the fee.', true, r.hash);
+          result(`${label}: signed and sent`, [{ label: 'Transaction hash', value: r.hash }], 'Your account paid the fee.', true, r.hash);
           refresh(accountId).catch(() => {});
           await loadList();
           return;
         }
         result(
           `${label}: signed, not sent`,
-          shorten(r.signedTransaction, 24, 16),
-          `Not sent: your NEAR account has no NEAR to pay the network fee. Use “Write to the guestbook (no NEAR needed)” above, where Hana’s relayer pays. Transaction hash ${r.hash}.`,
+          [
+            { label: 'Signed transaction', value: shorten(r.signedTransaction, 24, 16) },
+            { label: 'Transaction hash', value: r.hash },
+          ],
+          'Not sent: your NEAR account has no NEAR to pay the network fee. Use “Write to the guestbook (no NEAR needed)” above, where Journear’s relayer pays.',
           true,
         );
       } catch (e) {
-        result(`${label}: not signed`, null, deps.plainMessage(e, 'sign'), false);
+        result(`${label}: not signed`, [], deps.plainMessage(e, 'sign'), false);
         throw e;
       }
     });
@@ -473,9 +493,19 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     deps.run('sign', async () => {
       try {
         const r = await c.near.signMessage({ message: NEAR_TEST_MESSAGE, recipient: deps.recipient, nonce: deps.random(32) });
-        result(`${label}: signed`, r.signature, `For ${deps.recipient}, by ${shortAccount(r.accountId)} with ${shorten(r.publicKey, 16, 6)}.`, true);
+        result(
+          `${label}: signed`,
+          [
+            { label: 'Signature', value: r.signature },
+            { label: 'Recipient', value: deps.recipient },
+            { label: 'Account', value: shortAccount(r.accountId) },
+            { label: 'Public key', value: shorten(r.publicKey, 16, 6) },
+          ],
+          null,
+          true,
+        );
       } catch (e) {
-        result(`${label}: not signed`, null, deps.plainMessage(e, 'sign'), false);
+        result(`${label}: not signed`, [], deps.plainMessage(e, 'sign'), false);
         throw e;
       }
     });
@@ -493,7 +523,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     const id = c.near.accountId;
     if (!id) return;
     deps.copy(id).then(
-      () => deps.notice('NEAR account copied.'),
+      () => deps.toast('success', 'NEAR account copied'),
       (e: unknown) => deps.showError('copy', e),
     );
   });
@@ -505,9 +535,15 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     if (accountId !== null && (first || fresh(accountId) === null || !activated.has(accountId))) prepareInBackground(true);
   };
   input.addEventListener('focus', interested);
+  // Validated on blur, not on each key (the design system's forms): leaving the box with text the guestbook won't take
+  // says so; an empty box left alone says nothing until a write is tried. While it shows, typing that fixes the text
+  // clears it.
+  input.addEventListener('blur', () => {
+    if (input.value !== '') hint(textProblem());
+  });
   input.addEventListener('input', () => {
     renderCount();
-    hint(null);
+    if (!el('near-hint').hidden && textProblem() === null) hint(null);
     interested();
   });
   input.addEventListener('keydown', (e) => {

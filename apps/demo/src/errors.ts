@@ -33,10 +33,10 @@ export function errorInfo(e: unknown): ErrorInfo {
   return { code: inner ?? own, reason, message, requestId };
 }
 
-const REPORT = 'If it keeps happening, use “Copy diagnostics” and send it to the Hana team.';
+const REPORT = 'If it keeps happening, use “Copy diagnostics” and send it to the Journear team.';
 
 /** What the page says when Hana signed this device out (4900 with `data.reason` `signed_out`, D695). */
-export const SIGNED_OUT_MESSAGE = 'You were signed out on this device (from Hana Home, another tab or another device). Log in again.';
+export const SIGNED_OUT_MESSAGE = 'You were signed out on this device (from Passport Home, another tab or another device). Log in again.';
 
 /**
  * Hana signed this device out: the `disconnect` event or a refused request with code 4900 and `data.reason`
@@ -54,14 +54,14 @@ const GASLESS = '“Write to the guestbook (no NEAR needed)”';
  * request the page built, so the advice is to try again: the card reads a fresh nonce and block for every attempt.
  */
 const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
-  near_key_unknown: `Your NEAR account doesn’t exist on testnet yet, so Hana can’t check this request. Click ${GASLESS} again: the demo creates the account first.`,
-  near_block_unknown: 'Hana couldn’t find this transaction’s block on NEAR testnet. Try again: the demo reads a fresh block.',
+  near_key_unknown: `Your NEAR account doesn’t exist on testnet yet, so Journear can’t check this request. Click ${GASLESS} again: the demo creates the account first.`,
+  near_block_unknown: 'Journear couldn’t find this transaction’s block on NEAR testnet. Try again: the demo reads a fresh block.',
   near_network_mismatch: 'Refused: this transaction names a block of another NEAR network than the one it claims.',
   near_delegate_nonce_used: 'That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one.',
-  near_delegate_nonce_too_large: 'Hana refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
+  near_delegate_nonce_too_large: 'Journear refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
   near_delegate_expiry: 'The NEAR request expired before it was approved, or expires too far ahead. Try again.',
   near_delegate_nonce_stale: 'That NEAR request was prepared too long ago (its nonce is behind testnet’s current block). Try again: the demo reads a fresh one.',
-  near_relayed_delegate: 'Refused: Hana doesn’t sign a transaction that relays someone else’s delegate action.',
+  near_relayed_delegate: 'Refused: Journear doesn’t sign a transaction that relays someone else’s delegate action.',
   // A test app's delegate actions: only calls and transfers (…_action), to a .testnet account other than the user's (…_receiver).
   near_delegate_test_app_action: 'Refused: a test app’s gasless request may only call a contract or send NEAR, never change your account.',
   near_delegate_test_app_receiver: 'Refused: a test app’s gasless request may only go to a testnet account other than your own.',
@@ -76,55 +76,55 @@ const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
 const RELAYER_REASONS: Readonly<Record<string, string>> = {
   // 409 until the vault has recorded the user's NEAR account in Hana's wallet directory (seconds after login); the
   // card retries for about 20 s (near-card.ts UNRECORDED_REASONS) before it shows these.
-  near_account_unrecorded: 'Hana is still setting up your NEAR account for this app (it takes a few seconds after you sign in). Try again in a moment.',
-  near_account_unknown: 'Hana doesn’t have your NEAR account on record for the demo app yet. Wait a few seconds and try again; if it keeps happening, log out and log in again.',
-  directory_unavailable: 'Hana couldn’t check your NEAR account right now. Try again in a minute.',
+  near_account_unrecorded: 'Journear is still setting up your NEAR account for this app (it takes a few seconds after you sign in). Try again in a moment.',
+  near_account_unknown: 'Journear doesn’t have your NEAR account on record for the demo app yet. Wait a few seconds and try again; if it keeps happening, log out and log in again.',
+  directory_unavailable: 'Journear couldn’t check your NEAR account right now. Try again in a minute.',
   // The relayer's policy: zero-deposit calls to an allowed contract, from an implicit account, with bounded gas.
-  receiver_not_allowed: 'Hana’s relayer pays only for calls to the demo guestbook, and refused this one.',
-  action_not_allowed: 'Hana’s relayer pays only for function calls, and refused this request.',
-  deposit_not_allowed: 'Hana’s relayer refused a request that attaches NEAR: the guestbook needs none.',
-  gas_too_high: 'Hana’s relayer refused the request’s gas: it pays for at most what the guestbook needs.',
-  sender_not_implicit: 'Hana’s relayer acts only for Hana’s own NEAR accounts, and refused this one.',
-  bad_delegate: 'Hana’s relayer could not read the signed request. Try again.',
-  bad_delegate_signature: 'Hana’s relayer found the request’s signature invalid. Try again.',
-  bad_request: 'Hana’s relayer could not read the request. Try again.',
-  mainnet_not_allowed: 'Hana’s relayer works on NEAR testnet only.',
+  receiver_not_allowed: 'Journear’s relayer pays only for calls to the demo guestbook, and refused this one.',
+  action_not_allowed: 'Journear’s relayer pays only for function calls, and refused this request.',
+  deposit_not_allowed: 'Journear’s relayer refused a request that attaches NEAR: the guestbook needs none.',
+  gas_too_high: 'Journear’s relayer refused the request’s gas: it pays for at most what the guestbook needs.',
+  sender_not_implicit: 'Journear’s relayer acts only for Journear’s own NEAR accounts, and refused this one.',
+  bad_delegate: 'Journear’s relayer could not read the signed request. Try again.',
+  bad_delegate_signature: 'Journear’s relayer found the request’s signature invalid. Try again.',
+  bad_request: 'Journear’s relayer could not read the request. Try again.',
+  mainnet_not_allowed: 'Journear’s relayer works on NEAR testnet only.',
   // Checked on chain before relaying.
   account_not_activated: 'Your NEAR account doesn’t exist on testnet yet. Try again: the demo creates it first.',
-  access_key_missing: 'Your NEAR account has no Hana key on testnet any more (was it changed elsewhere?), so the relayer can’t act for it.',
+  access_key_missing: 'Your NEAR account has no Journear key on testnet any more (was it changed elsewhere?), so the relayer can’t act for it.',
   delegate_nonce_used: 'That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one.',
-  delegate_nonce_too_large: 'Hana’s relayer refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
+  delegate_nonce_too_large: 'Journear’s relayer refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
   delegate_expired: 'The signed request expired before the relayer sent it. Try again.',
-  block_height_too_far: 'The signed request expires too far ahead for Hana’s relayer. Try again.',
-  already_relayed: 'Hana’s relayer sent this exact request a moment ago. Check the guestbook list.',
+  block_height_too_far: 'The signed request expires too far ahead for Journear’s relayer. Try again.',
+  already_relayed: 'Journear’s relayer sent this exact request a moment ago. Check the guestbook list.',
   // After relaying.
   contract_rejected: 'The guestbook contract refused the message (is it 1 to 200 characters?). Nothing was stored.',
   delegate_rejected: 'NEAR testnet refused the signed request. Try again: the demo reads a fresh nonce and block.',
   timeout: 'NEAR testnet hasn’t confirmed the transaction yet: it may still land. Click Refresh on the guestbook list in a moment to see.',
   near_rejected: 'NEAR testnet refused the relayed transaction. Try again; the guestbook list shows whether it landed.',
   near_error: 'NEAR testnet returned an error for the relayed transaction. Try again; the guestbook list shows whether it landed.',
-  near_unavailable: 'Hana’s relayer couldn’t reach NEAR testnet. Try again in a minute.',
+  near_unavailable: 'Journear’s relayer couldn’t reach NEAR testnet. Try again in a minute.',
   // Capacity and limits.
   app_budget_exhausted: 'The demo app has used up today’s free NEAR relays. Try again tomorrow (UTC).',
   relay_budget_exhausted: 'The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).',
-  relayer_busy: 'Hana’s relayer is busy. Try again in a moment.',
-  not_enough_balance: 'Hana’s relayer is low on testnet NEAR right now. Tell the Hana team.',
-  relayer_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
-  relayer_unconfigured: 'Hana’s relayer isn’t set up on this environment yet. Tell the Hana team.',
-  rate_limiter_unavailable: 'Hana’s relayer is unavailable right now. Try again in a minute.',
+  relayer_busy: 'Journear’s relayer is busy. Try again in a moment.',
+  not_enough_balance: 'Journear’s relayer is low on testnet NEAR right now. Tell the Journear team.',
+  relayer_unavailable: 'Journear’s relayer is unavailable right now. Try again in a minute.',
+  relayer_unconfigured: 'Journear’s relayer isn’t set up on this environment yet. Tell the Journear team.',
+  rate_limiter_unavailable: 'Journear’s relayer is unavailable right now. Try again in a minute.',
 };
-const RELAYER_REFUSED = 'Hana’s relayer refused this request';
-const RELAYER_DOWN = 'Hana’s relayer is unavailable right now. Try again in a minute.';
+const RELAYER_REFUSED = 'Journear’s relayer refused this request';
+const RELAYER_DOWN = 'Journear’s relayer is unavailable right now. Try again in a minute.';
 
 /** The NEAR card's own failures (src/near.ts), and the NEAR answers of every action; null for any other error. */
 function nearMessage(e: unknown, code: string | number | null, reason: string | null, action: DemoAction): string | null {
   if (code === 'near_page_rpc_failed') return 'This page couldn’t read NEAR testnet (its RPC didn’t answer). Check your connection and try again.';
-  if (code === 'near_account_pending') return 'Hana’s relayer is still creating your NEAR account. Wait a few seconds and try again.';
+  if (code === 'near_account_pending') return 'Journear’s relayer is still creating your NEAR account. Wait a few seconds and try again.';
   if (code === 'near_nonce_wait') return 'NEAR testnet needs a new block before this request. Wait a few seconds and try again.';
   if (code === 'near_send_failed') return 'NEAR testnet refused or failed the transaction. Use the gasless write instead.';
   if (code === 4100 && reason !== null && Object.hasOwn(NEAR_VAULT_REASONS, reason)) return NEAR_VAULT_REASONS[reason]!;
-  if (code === 'api_unavailable' && reason === 'near_rpc_unavailable') return 'Hana couldn’t reach NEAR testnet to check this request. Try again in a minute.';
-  if (code === 'api_unavailable' && reason === 'near_rpc_single_provider') return `This Hana environment has only one NEAR provider, so Hana can’t check a test app’s NEAR request. ${REPORT}`;
+  if (code === 'api_unavailable' && reason === 'near_rpc_unavailable') return 'Journear couldn’t reach NEAR testnet to check this request. Try again in a minute.';
+  if (code === 'api_unavailable' && reason === 'near_rpc_single_provider') return `This Journear environment has only one NEAR provider, so Journear can’t check a test app’s NEAR request. ${REPORT}`;
   // The relayer's answers carry their HTTP status in data.status (the SDK's relay and activate); the vault's don't.
   const fromRelayer = isObj(e) && isObj(e.data) && typeof e.data.status === 'number';
   if (action !== 'near' || !fromRelayer) return null;
@@ -135,7 +135,7 @@ function nearMessage(e: unknown, code: string | number | null, reason: string | 
   }
   if (reason !== null && Object.hasOwn(RELAYER_REASONS, reason) && (code === 4100 || code === 'api_unavailable' || code === 'rate_limited')) return RELAYER_REASONS[reason]!;
   if (code === 4100) return `${RELAYER_REFUSED}${reason ? ` (${reason})` : ''}. ${REPORT}`;
-  if (code === 'api_unavailable') return reason ? `${RELAYER_DOWN} (${reason})` : 'Could not reach Hana’s relayer. Check your connection and try again.';
+  if (code === 'api_unavailable') return reason ? `${RELAYER_DOWN} (${reason})` : 'Could not reach Journear’s relayer. Check your connection and try again.';
   if (code === 'rate_limited') return 'Too many guestbook writes from this app in a short time. Wait a minute and try again.';
   return null;
 }
@@ -147,59 +147,59 @@ export function plainMessage(e: unknown, action: DemoAction): string {
   if (near !== null) return near;
   switch (code) {
     case 'popup_blocked':
-      return 'Your browser blocked the Hana sign-in window. Allow pop-ups for this site and click “Log in with Google” again.';
+      return 'Your browser blocked the Journear sign-in window. Allow pop-ups for this site and click “Log in with Google” again.';
     case 'login_cancelled':
       return 'Sign-in cancelled.';
     case 'login_method_unavailable':
-      return 'Email login isn’t turned on for the demo app yet. Use “Log in with Google”, or ask the Hana team to turn email on.';
+      return 'Email login isn’t turned on for the demo app yet. Use “Log in with Google”, or ask the Journear team to turn email on.';
     case 'code_invalid':
       return 'Sign-in stopped after a wrong code. Click “Log in with email” to get a new one.';
     case 'challenge_expired':
       return 'The sign-in code expired. Click “Log in with email” to get a new one.';
     case 'coop_blocks_popup':
-      return 'The Hana sign-in window closed before it finished loading. Try again and keep the window open.';
+      return 'The Journear sign-in window closed before it finished loading. Try again and keep the window open.';
     case 'login_timeout':
       // data.stage (docs/integration.md section 13): 'connect', the window never connected (15 s); 'pending', the
       // sign-in was left unfinished for 5 minutes (the window left open; a closed one is login_cancelled, D347, D398).
       return isObj(e) && isObj(e.data) && e.data.stage === 'pending'
         ? 'The sign-in wasn’t finished within 5 minutes, so it stopped. Log in again when you’re ready.'
-        : 'The Hana sign-in window did not respond in time. Try again.';
+        : 'The Journear sign-in window did not respond in time. Try again.';
     case 'google_error':
       return isObj(e) && isObj(e.data) && e.data.error === 'access_denied' ? 'You declined the Google sign-in.' : `Google returned an error. Try again. ${REPORT}`;
     case 'vault_unavailable':
       // data.reason (the SDK's vault-connection.ts): which part of the vault's load failed, after its one retry.
-      if (reason === 'csp_frame_src') return `This page’s security policy blocks the Hana vault frame. ${REPORT}`;
-      if (reason === 'no_answer') return `The Hana vault loaded but didn’t answer (is this site on the demo app’s allowed origins?). Reload the page. ${REPORT}`;
-      if (reason === 'ready_timeout') return 'Hana’s service was too slow to restore your session. Check your connection, then reload the page.';
-      if (reason === 'frame_replaced') return 'Something replaced the Hana vault frame (an extension?). Reload the page.';
-      return 'Could not load the Hana vault in time. Check your connection and any content blocker, then reload the page.';
+      if (reason === 'csp_frame_src') return `This page’s security policy blocks the Journear vault frame. ${REPORT}`;
+      if (reason === 'no_answer') return `The Journear vault loaded but didn’t answer (is this site on the demo app’s allowed origins?). Reload the page. ${REPORT}`;
+      if (reason === 'ready_timeout') return 'Journear’s service was too slow to restore your session. Check your connection, then reload the page.';
+      if (reason === 'frame_replaced') return 'Something replaced the Journear vault frame (an extension?). Reload the page.';
+      return 'Could not load the Journear vault in time. Check your connection and any content blocker, then reload the page.';
     case 'api_unavailable':
-      return 'Could not reach Hana’s service. Check your connection and try again.';
+      return 'Could not reach Journear’s service. Check your connection and try again.';
     case 'rate_limited':
       return action === 'export' ? 'Too many key exports in the last hour. Try again later.' : 'Too many attempts. Wait a minute and try again.';
     case 'origin_not_allowed':
-      return 'This site is not on the demo app’s allowed origins yet: ask the Hana team to add it.';
+      return 'This site is not on the demo app’s allowed origins yet: ask the Journear team to add it.';
     case 'app_suspended':
       return 'The demo app is suspended.';
     case 'no_google_client':
-      return 'The demo app has no Google sign-in configured. Tell the Hana team.';
+      return 'The demo app has no Google sign-in configured. Tell the Journear team.';
     case 'busy':
       return 'A key export is already open. Finish or close it first.';
     case 'email_sharing_unavailable':
       // D411: data.reason off (the app's identity_email setting), no_address (none for this session), unavailable.
-      if (reason === 'off') return 'Email sharing is off for the demo app. The Hana team turns it on with app:settings --identity-email on_request.';
-      if (reason === 'no_address') return 'Hana has no email address for this session. Log out and log in again, then try again.';
-      return 'Hana couldn’t open email sharing right now. Try again in a minute.';
+      if (reason === 'off') return 'Email sharing is off for the demo app. The Journear team turns it on with app:settings --identity-email on_request.';
+      if (reason === 'no_address') return 'Journear has no email address for this session. Log out and log in again, then try again.';
+      return 'Journear couldn’t open email sharing right now. Try again in a minute.';
     case 'identity_unavailable':
-      return 'Hana could not issue an identity token right now. Try again in a minute.';
+      return 'Journear could not issue an identity token right now. Try again in a minute.';
     case 'session_ended':
-      return 'Your Hana session has ended. Log in again.';
+      return 'Your Journear session has ended. Log in again.';
     case 'session_consumed':
-      return 'Click “Continue signing in” on the Hana button at the bottom right to finish signing in.';
+      return 'Click “Continue signing in” on the Journear button at the bottom right to finish signing in.';
     case 'derive_failed':
       // D385: the browser couldn't make the sign-in's session key (Ed25519 in WebCrypto).
-      if (reason === 'webcrypto_unsupported') return 'This browser can’t create the key Hana’s sign-in needs (no Ed25519 in WebCrypto). Update it, or use another browser.';
-      if (reason === 'webcrypto_failed') return `This browser failed to create the key Hana’s sign-in needs. Try again. ${REPORT}`;
+      if (reason === 'webcrypto_unsupported') return 'This browser can’t create the key Journear’s sign-in needs (no Ed25519 in WebCrypto). Update it, or use another browser.';
+      if (reason === 'webcrypto_failed') return `This browser failed to create the key Journear’s sign-in needs. Try again. ${REPORT}`;
       return `Sign-in failed (${code}). Try again. ${REPORT}`;
     case 'token_invalid':
     case 'token_has_pii':
@@ -211,14 +211,14 @@ export function plainMessage(e: unknown, action: DemoAction): string {
     case 4001:
       if (action === 'login') return 'Sign-in did not complete (the window was closed or timed out).';
       if (action === 'export') return 'Export cancelled.';
-      return 'Rejected in the Hana window: nothing was signed.';
+      return 'Rejected in the Journear window: nothing was signed.';
     case 4100:
       if (reason === 'share_not_fresh') return '“Log out other devices” works only within 5 minutes of signing in. Log out, sign in again, then try it.';
       if (reason === 'mainnet_not_allowed') return 'Refused: this demo app signs for test networks only.';
       return 'Not allowed: you may have been logged out. Log in and try again.';
     case 4900:
       if (reason === 'signed_out') return SIGNED_OUT_MESSAGE;
-      return 'The connection to the Hana vault was lost. Reload the page.';
+      return 'The connection to the Journear vault was lost. Reload the page.';
     case 4902:
       return 'This EVM chain is not configured on the demo.';
     default:

@@ -45,7 +45,7 @@ describe('pure verdicts (the shared JWKS rules: packages/jwks/test/identity.test
   });
 });
 
-describe("Hana's identity JWKS and discovery document (advisory, no pause)", () => {
+describe("Journear's identity JWKS and discovery document (advisory, no pause)", () => {
   it('pinned keys published and the right discovery document: ok, nothing raised, nothing sent to the chain', async () => {
     const { w } = await live();
     const r = await w.run();

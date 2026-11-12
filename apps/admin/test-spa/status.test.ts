@@ -182,7 +182,7 @@ describe('safety', () => {
   });
 
   it('a failed read is said in plain words with its code', async () => {
-    const s = boot('/', () => ({ status: 503, body: { error: { code: 'upstream_unavailable', message: 'A Hana service did not answer' } } }));
+    const s = boot('/', () => ({ status: 503, body: { error: { code: 'upstream_unavailable', message: 'A Journear service did not answer' } } }));
     await vi.waitFor(() => expect(s.text()).toContain('A Journear service didn’t answer'));
     expect(s.text()).toContain('upstream_unavailable');
   });

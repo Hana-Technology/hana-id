@@ -81,7 +81,7 @@ async function directoryFailure(c: RouteCtx, route: string, f: DirectoryFail): P
       if (f.budget) await budgetAlert(c, f.budget);
       const retry = f.budget ? Math.max(1, Math.ceil(f.budget.retryAfterMs / 1000)) : 60;
       const msg = f.budget
-        ? `Directory row budget reached (${f.budget.limit} identities ${f.budget.window === '1h' ? 'an hour' : 'a day'} per staff member); Hana security has been emailed. Reads open again in ${Math.ceil(retry / 60)} min.`
+        ? `Directory row budget reached (${f.budget.limit} identities ${f.budget.window === '1h' ? 'an hour' : 'a day'} per staff member); Journear security has been emailed. Reads open again in ${Math.ceil(retry / 60)} min.`
         : f.error;
       return errorResponse('rate_limited', msg, { 'retry-after': String(retry) });
     }

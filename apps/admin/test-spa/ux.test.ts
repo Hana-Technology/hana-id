@@ -143,7 +143,7 @@ describe('errors in plain words', () => {
   it.each([
     [409, 'version_conflict', 'expectedVersion is 6', 'Someone changed this first', 'Reload the page'],
     [409, 'no_security_contact', 'The org has no security contact: set them first', 'This organisation has no security contact', 'Add at least one security contact'],
-    [503, 'upstream_unavailable', 'A Hana service did not answer; try again shortly', 'A Journear service didn’t answer', 'Nothing was changed'],
+    [503, 'upstream_unavailable', 'A Journear service did not answer; try again shortly', 'A Journear service didn’t answer', 'Nothing was changed'],
     [418, 'teapot', 'short and stout', 'The server refused the request (HTTP 418)', 'Read the details'],
   ])('HTTP %i %s: a title, the detail, what to do and the code', async (status, code, message, title, next) => {
     const s = boot('/orgs/org_lumen', orgsApi(refuse(status, code, message)));

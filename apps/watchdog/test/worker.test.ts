@@ -34,7 +34,7 @@ class Net {
   changes: Record<string, unknown>[] = [];
   active = new Map<string, { n: string; e: string }>([['k1', { n: jwk('k1', 1).n, e: 'AQAB' }]]);
   jwks = [jwk('k1', 1)];
-  /** Hana's identity JWKS and discovery document (null: not served). */
+  /** Journear's identity JWKS and discovery document (null: not served). */
   identityJwks: unknown = null;
   discovery: unknown = null;
   identityFetches: string[] = [];

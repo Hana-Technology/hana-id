@@ -411,7 +411,7 @@ describe('Hana Home logins on a statement (D461, D585–D588)', () => {
     const rows = { dayRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'day', null, AT), monthRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'month', null, AT) };
     const base = { orgId: HANA, orgName: 'Not internal', month: FEB, asOf: AT, network: 'testnet' };
     expect(() => buildStatement({ ...base, apps: new Map([['app_h1', { name: 'Wallet app', environment: 'live', scopeId: 'sh1' }]]), ...rows })).toThrow(StatementRefused);
-    expect(() => buildStatement({ ...base, apps: new Map(), ...rows })).toThrow(/Hana Home logins of scope sgone are recorded for org_hanainternal, which has no app in that scope/u);
+    expect(() => buildStatement({ ...base, apps: new Map(), ...rows })).toThrow(/Passport Home logins of scope sgone are recorded for org_hanainternal, which has no app in that scope/u);
     // With an app in each scope, or as an internal org, it is built.
     const own = new Map([['a1', { name: 'A', environment: 'live', scopeId: 'sgone' }], ['a2', { name: 'B', environment: 'live', scopeId: 'ssusp' }]]);
     expect(buildStatement({ ...base, apps: own, ...rows }).totals.sum.homeLogins).toBe(2);
@@ -421,7 +421,7 @@ describe('Hana Home logins on a statement (D461, D585–D588)', () => {
     const files = new FakeBucket();
     const asPartner = fakeRpcs({ orgName: 'Not internal', apps: [] });
     const refused = await issueStatement({ store, api: asPartner.api, console: asPartner.console, bucket: files, network: 'testnet', staff: STAFF, now: AT }, HANA, FEB);
-    expect(refused).toMatchObject({ ok: false, code: 'conflict', error: expect.stringMatching(/Hana Home logins of scope sgone/u) });
+    expect(refused).toMatchObject({ ok: false, code: 'conflict', error: expect.stringMatching(/Passport Home logins of scope sgone/u) });
     expect(files.objects.size).toBe(0);
     expect(await store.statements(HANA)).toEqual([]);
     const asInternal = fakeRpcs({ orgName: 'Hana (internal)', apps: [], kind: 'internal' });

@@ -136,7 +136,7 @@ export interface RunDeps {
   /** Hana's published email JWKS (usable RS256 keys; may be empty), or null when no URL is configured. Throws on failure. */
   fetchEmailJwks: (() => Promise<Jwk[]>) | null;
   /**
-   * Hana's identity JWKS and discovery document (no cache, `redirect: 'manual'`, body capped), or null when the env has
+   * Journear's identity JWKS and discovery document (no cache, `redirect: 'manual'`, body capped), or null when the env has
    * no identity issuer. Each answers a 200 body, a redirect or an oversized body; any other status or a network error
    * throws.
    */
@@ -651,7 +651,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
   log({ event: 'run', runId, outcome: outcome === 'error' ? 'error' : 'ok', code: outcome, checks: checks.length, actions: run.actions.length, alerts: run.alerts.length, latencyMs: d.now() - startedAt });
 
   // ---- step 9: the advisory checks, after the run is recorded and the lock released ----
-  // Their third-party reads (Hana's email JWKS, Hana's identity JWKS and discovery document: Hana's API is a party the
+  // Their third-party reads (Hana's email JWKS, Journear's identity JWKS and discovery document: Hana's API is a party the
   // watchdog must survive, D86) can't hold back a cancel, a pause, the snapshot, an alert, the heartbeat, the run record
   // or the lock: a CPU kill or a hang here costs only these checks. Each runs guarded and resolves only its own kinds;
   // then the run's record is updated, and what they raised goes out in a second delivery. The identity check needs no
@@ -1322,7 +1322,7 @@ async function badShape(run: Run, what: 'jwks' | 'discovery', url: string, probl
 }
 
 /**
- * Hana's identity JWKS and discovery document against the pins and the configured issuer (D210, D211, D213, D214).
+ * Journear's identity JWKS and discovery document against the pins and the configured issuer (D210, D211, D213, D214).
  * Critical for an unpinned or private key, a wrong issuer or jwks_uri, and an answer that can't be judged; never a
  * pause: the chain is not involved (partners verify identity tokens; the contract never does). Each set of findings
  * is one condition keyed by what it found, so a different finding is a new page, and the list in one alert is

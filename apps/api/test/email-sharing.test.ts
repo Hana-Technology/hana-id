@@ -373,7 +373,7 @@ describe('ConsoleRpc: the Email column and the email search (D411, D315)', () =>
     const byId = new Map(list.users.map((u) => [u.userId, u]));
     expect(byId.get(a.userSub)!.email).toBe('Ada@Example.com');
     expect(byId.get(b.userSub)!.email).toBeNull();
-    expect(Object.keys(byId.get(a.userSub)!).sort()).toEqual(['accounts', 'createdAt', 'email', 'lastSeenAt', 'scopeId', 'supportId', 'userId', 'wallets']);
+    expect(Object.keys(byId.get(a.userSub)!).sort()).toEqual(['accounts', 'createdAt', 'email', 'lastSeenAt', 'name', 'scopeId', 'supportId', 'userId', 'wallets']);
     const got = (await consoleRpc().getUser({ ...asOrg, userId: a.userSub })) as unknown as { ok: true; user: Body };
     expect(got.user.emails).toEqual([{ appId: a.app.id, appName: `Test ${a.app.id}`, email: 'Ada@Example.com', sharedAt: expect.any(Number) }]);
     expect(((await consoleRpc().getUser({ ...asOrg, userId: b.userSub })) as unknown as { user: Body }).user.emails).toEqual([]);

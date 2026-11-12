@@ -439,9 +439,9 @@ const dirRow = (provider: string, sub: string, email: string, extra: Record<stri
 
 export const userSearch = {
   users: [
-    dirRow('google', '115829304712230984411', 'farah.aziz@gmail.example', { appCount: 2 }),
-    dirRow('email', 'e1.k3m9q2', 'farah.aziz@lumenpay.example'),
-    dirRow('google', '109227410063392001857', 'farah.a@workmail.example', { emailVerified: false, unverifiedClaim: true, lastSeenMs: ago(9 * DAY) }),
+    dirRow('google', '115829304712230984411', 'farah.aziz@gmail.example', { appCount: 2, name: { givenName: 'Farah', familyName: 'Aziz' } }),
+    dirRow('email', 'e1.k3m9q2', 'farah.aziz@lumenpay.example', { name: { givenName: 'Farah', familyName: null } }),
+    dirRow('google', '109227410063392001857', 'farah.a@workmail.example', { emailVerified: false, unverifiedClaim: true, lastSeenMs: ago(9 * DAY), name: null }),
   ],
   unverifiedWarning: 'UNVERIFIED: this Google account claims the address but Google hasn’t verified it; don’t treat it as the owner',
 };
@@ -455,9 +455,10 @@ export const walletUser = {
   createdAt: ago(18 * DAY),
   lastSeenAt: ago(3 * HOUR),
   identities: [
-    { provider: 'google', sub: '115829304712230984411', identityKey: 'ab'.repeat(32), role: 'root', status: 'active', effectiveAt: null, firstSeenAt: ago(18 * DAY), observedAt: ago(3 * HOUR), directoryKey: { provider: 'google', sub: '115829304712230984411' } },
-    { provider: 'email', sub: 'e1.k3m9q2', identityKey: 'cd'.repeat(32), role: 'member', status: 'active', effectiveAt: ago(10 * DAY), firstSeenAt: ago(11 * DAY), observedAt: ago(DAY), directoryKey: { provider: 'email', sub: 'e1.k3m9q2' } },
+    { provider: 'google', sub: '115829304712230984411', identityKey: 'ab'.repeat(32), role: 'root', status: 'active', effectiveAt: null, firstSeenAt: ago(18 * DAY), observedAt: ago(3 * HOUR), directoryKey: { provider: 'google', sub: '115829304712230984411' }, name: { givenName: 'Farah', familyName: 'Aziz' } },
+    { provider: 'email', sub: 'e1.k3m9q2', identityKey: 'cd'.repeat(32), role: 'member', status: 'active', effectiveAt: ago(10 * DAY), firstSeenAt: ago(11 * DAY), observedAt: ago(DAY), directoryKey: { provider: 'email', sub: 'e1.k3m9q2' }, name: { givenName: 'Farah', familyName: null } },
   ],
+  name: { givenName: 'Farah', familyName: 'Aziz' },
   wallets: [
     { chain: 'stellar', address: 'GCFX7TQ2M4LJZ5W3R6N8K1B9H0V2D4S6A8E3Y5U7I9O1P3Q5R7T9V2X4', keyIndex: 0, firstSeenAt: ago(18 * DAY), lastUsedAt: ago(3 * HOUR), sharedWith: 0 },
     { chain: 'evm', address: '0x5aE3c1B9f2D47a6E08c1d3B5f7A9e2C4d6F8b0A1', keyIndex: 0, firstSeenAt: ago(12 * DAY), lastUsedAt: ago(2 * DAY), sharedWith: 1 },
@@ -469,6 +470,7 @@ export const userGet = (provider: string, sub: string) => ({
   provider,
   sub,
   user: userSearch.users.find((u) => u.sub === sub) ?? null,
+  name: (userSearch.users.find((u) => u.sub === sub) as { name?: unknown } | undefined)?.name ?? null,
   apps: [
     { appId: 'app_01jcblumen', name: 'Lumen Pay checkout', deletedAt: null, orgId: 'org_01jc8lumenpay', environment: 'live', scopeId: 's5d1e8a0c2f6b9', firstSeenMs: ago(18 * DAY), lastSeenMs: ago(3 * HOUR) },
     { appId: 'app_01h7wend', name: 'Wend widget demo', deletedAt: null, orgId: 'org_legacy', environment: 'test', scopeId: 's8f2c1a9e4b7d3', firstSeenMs: ago(40 * DAY), lastSeenMs: ago(30 * DAY) },

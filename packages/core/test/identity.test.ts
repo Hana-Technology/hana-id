@@ -11,6 +11,8 @@ import {
   IDENTITY_TOKEN_MAX_LIFETIME_S,
   type WalletProofs,
   buildIdentityClaims,
+  normalizeProfileName,
+  PROFILE_NAME_MAX,
   canonicalWalletAddress,
   identityJwksEntry,
   identityLifetime,
@@ -278,6 +280,31 @@ describe('claims', () => {
       expect('email_verified' in none).toBe(false);
     }
     expect(() => buildIdentityClaims({ ...input(), email: 'not-an-address' })).toThrow('email');
+  });
+
+  it('given_name and family_name only when shared, each alone, after email; malformed parts refused', () => {
+    const both = buildIdentityClaims({ ...input(), email: 'ada@example.com', givenName: 'Ada', familyName: 'Lovelace King' });
+    expect(Object.keys(both).slice(-4)).toEqual(['email', 'email_verified', 'given_name', 'family_name']);
+    expect([both.given_name, both.family_name]).toEqual(['Ada', 'Lovelace King']);
+    const given = buildIdentityClaims({ ...input(), givenName: 'Ada', familyName: null });
+    expect(given.given_name).toBe('Ada');
+    expect('family_name' in given).toBe(false);
+    const none = buildIdentityClaims({ ...input(), givenName: null, familyName: undefined });
+    expect('given_name' in none || 'family_name' in none).toBe(false);
+    // Only a value normalizeProfileName returns as is: never untrimmed, never unsafe, never too long.
+    for (const bad of [' Ada', 'A\u202Eda', 'x'.repeat(PROFILE_NAME_MAX + 1), '', 'Ada\nB'])
+      expect(() => buildIdentityClaims({ ...input(), givenName: bad })).toThrow('given_name');
+    expect(() => buildIdentityClaims({ ...input(), familyName: 'a\u200Bb' })).toThrow('family_name');
+  });
+
+  it('normalizeProfileName: NFC, trimmed, spaces folded, 1-50 code points, display-safe', () => {
+    expect(normalizeProfileName('  Ada   Byron ')).toBe('Ada Byron');
+    expect(normalizeProfileName('Jose\u0301')).toBe('Jos\u00e9');
+    expect(normalizeProfileName('李')).toBe('李');
+    expect(normalizeProfileName('🙂'.repeat(PROFILE_NAME_MAX))).toBe('🙂'.repeat(PROFILE_NAME_MAX));
+    for (const empty of [null, undefined, '', '   ']) expect(normalizeProfileName(empty)).toBeNull();
+    for (const bad of [42, {}, 'x'.repeat(PROFILE_NAME_MAX + 1), 'a\u202Eb', 'a\u200Bb', 'a\u0000b', 'a\uE000b', 'a\u2028b', 'a\uFE0Fb', 'a\nb', 'a\uFEFFb'])
+      expect(normalizeProfileName(bad)).toBeUndefined();
   });
 
   it('never carries a path, scope, Google sub or session key', () => {

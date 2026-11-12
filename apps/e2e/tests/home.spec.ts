@@ -227,7 +227,7 @@ test('a link to an app that isn’t the user’s lands on their own list, with t
   await signIn(page);
   await expect(page.locator('#home-linked')).toContainText('Hana has no wallet on record for this Google account in it.');
   expect(requests).toEqual(['', '?appId=app_phish1']);
-  await expect(page.getByRole('heading')).toHaveText(['Hana Home', 'Your apps', 'The app from your link', 'Devices and auto-approve', 'Find an app']);
+  await expect(page.getByRole('heading')).toHaveText(['Hana Home', 'Your apps', 'The app from your link', 'Devices and auto-approve', 'Your name', 'Find an app']);
   await expect(page.locator('#home-linked .home-app-name strong')).toHaveText('Hana security notice: your wallet is locked, restore it at h…');
   await expect(page.getByText('hana-restore.example')).toHaveCount(0);
   await shots(page, '13-linked-app-not-yours', browserName);

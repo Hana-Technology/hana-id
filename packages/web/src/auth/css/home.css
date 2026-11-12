@@ -644,3 +644,126 @@ p.copy-status:not(:empty) {
     transform: translateX(-50%);
   }
 }
+
+/* ---- Passport Home: "Your name" (home-profile.ts), on the front page and on an app's page, after the devices ---- */
+.home-profile {
+  margin-top: var(--jp-space-8);
+  padding-top: var(--jp-space-2);
+  border-top: 1px solid var(--jp-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+}
+
+.home-profile > * {
+  margin: 0;
+}
+
+.home-profile h2,
+.home-profile h3 {
+  margin-top: var(--jp-space-5);
+}
+
+.home-profile h3#home-name-shares-title {
+  margin-top: var(--jp-space-4);
+}
+
+/* The form: the two parts side by side where there is room, one above the other on a phone; then the help, the
+   buttons, the removal's confirmation. */
+.home-name-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+  max-width: 560px;
+}
+
+.home-name-form > * {
+  margin: 0;
+}
+
+.home-name-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: var(--jp-space-3) var(--jp-space-4);
+}
+
+/* The hint and the error that replaces it take the same line, so nothing below moves when a part is checked on blur. */
+.home-name-field .jp-hint,
+.home-name-field .jp-error {
+  min-height: 18px;
+  line-height: 18px;
+  margin: 0;
+}
+
+.home-name-field .jp-error .ic {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  margin-right: var(--jp-space-1);
+}
+
+.home-name-form .actions.start {
+  margin: 0;
+}
+
+.home-name-form .home-confirm {
+  margin: 0;
+}
+
+/* The user's name and the apps' names are typed by people: kept apart from the sentence around them, wrapped anywhere. */
+.home-name-value,
+.home-name-share strong,
+.home-name-app strong {
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
+
+/* The apps it is shared with (front page) and this page's apps: one card of setting rows. */
+.home-name-shares.jp-card,
+.home-name-apps.jp-card {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  min-width: 0;
+}
+
+.home-setting-item {
+  border-bottom: 1px solid var(--jp-border);
+  min-width: 0;
+}
+
+.home-setting-item:last-child {
+  border-bottom: 0;
+}
+
+.home-setting-item > .home-setting.jp-setting {
+  border-bottom: 0;
+}
+
+.home-setting-title {
+  font-weight: var(--jp-weight-semibold);
+  font-size: var(--jp-text-md);
+  overflow-wrap: anywhere;
+}
+
+.home-setting-title .jp-badge {
+  margin-left: var(--jp-space-1);
+  vertical-align: 1px;
+}
+
+/* An outcome under its row. */
+.home-setting-item > .home-devices-note.jp-alert {
+  margin: 0 var(--jp-space-4) var(--jp-space-4);
+  width: auto;
+}
+
+/* "Share my name with {App}": an app's name can be one long word; the button wraps it rather than overflow. */
+.home-name-app .home-setting-control .jp-btn {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--jp-control-sm);
+  padding-top: var(--jp-space-1);
+  padding-bottom: var(--jp-space-1);
+  overflow-wrap: anywhere;
+}

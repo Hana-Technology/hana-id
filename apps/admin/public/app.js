@@ -3171,7 +3171,7 @@ function walletQuery(q) {
 const unverifiedBadge = () => badge('UNVERIFIED claim', 'warning');
 
 /**
- * A Hana Home name (D714) as text: the first name, then the last; a one-part name says which part it is. Staff see it
+ * A Passport Home name (D714) as text: the first name, then the last; a one-part name says which part it is. Staff see it
  * whatever the user shared. `null`: the identity set none; `undefined`: not read (the answer says why, or an older API).
  */
 function nameView(n) {
@@ -3184,7 +3184,7 @@ function nameView(n) {
   return h('span', {}, [given, family].filter((p) => p !== null).join(' '), hint ? h('span', { class: 'sub' }, hint) : '');
 }
 /** The note a page shows when its names couldn't be read (`namesError` / `nameError`); the rest of it stands. */
-const namesUnavailable = (code, plural) => note('warn', plural ? 'Names unavailable' : 'Name unavailable', `The Hana Home ${plural ? 'names' : 'name'} couldn’t be read (${code}); everything else here is complete. ${plural ? 'Search' : 'Open the person'} again to retry.`);
+const namesUnavailable = (code, plural) => note('warn', plural ? 'Names unavailable' : 'Name unavailable', `The Passport Home ${plural ? 'names' : 'name'} couldn’t be read (${code}); everything else here is complete. ${plural ? 'Search' : 'Open the person'} again to retry.`);
 
 function directoryRows(users, warning, namesError) {
   const claims = users.filter((u) => u.unverifiedClaim).length;
@@ -3357,7 +3357,7 @@ function userDetail(main, d) {
   const u = d.user;
   if (d.warning) main.append(note('warn', '', d.warning));
   if (d.nameError) main.append(namesUnavailable(d.nameError, false));
-  // The identity's Hana Home name (D714) is the API's, not the directory's: shown with or without a directory row.
+  // The identity's Passport Home name (D714) is the API's, not the directory's: shown with or without a directory row.
   const name = d.nameError ? undefined : d.name;
   main.append(
     panel(

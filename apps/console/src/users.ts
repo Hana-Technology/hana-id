@@ -2,7 +2,7 @@
 // end users across its own scopes, with the user id, the Support ID, when the user was first and last seen, the kinds of
 // account connected ("google", "email"), the wallet addresses, and an email only once the user shared it with one of
 // the org's apps (D411: the API's own copy of a granted consent, never the issuer's directory), and the user's name
-// only once they shared it from Hana Home with one of the org's live apps (D714). Never an unshared address, a Google
+// only once they shared it from Passport Home with one of the org's live apps (D714). Never an unshared address, a Google
 // `sub`, an identity key or any other identity detail: the API's ConsoleRpc answers partner views only (the wallet
 // directory, D315), and the console re-shapes every row through the allowlist below before it answers, so a field the
 // API adds later (or a bug there) can't reach a partner's screen. The shape is the data contract the tests pin, not
@@ -54,7 +54,7 @@ export interface PartnerUserOut {
   email: string | null;
   /** A user's detail only: every address shared with the org's apps, per app. */
   emails?: { appId: string; appName: string; email: string; sharedAt: number }[];
-  /** The name shared from Hana Home with one of the org's live apps (D714), or null ("Not shared"). */
+  /** The name shared from Passport Home with one of the org's live apps (D714), or null ("Not shared"). */
   name: { givenName: string | null; familyName: string | null } | null;
 }
 

@@ -58,7 +58,9 @@ how often) is the relayer's job.
 - **The account's key.** After `deploy-guestbook … --yes` the account keeps the full-access key `near` CLI created
   (in `~/.near-credentials/testnet/`). Whoever holds it can deploy other code and rewrite every message. Once the demo
   works, `deploy-guestbook <env> --lock --yes` deletes every key on the account: the code and the messages are then
-  final, and the account can never be deleted (its few NEAR stay locked; testnet only).
+  final, and the account can never be deleted (its few NEAR stay locked; testnet only). sandbox-dev's guestbook was
+  locked this way on 2026-11-12 (code hash `2cGY7mcQevAjB5nssu8VNYkkSiqSiSdimB98QYXbKJxb`, no access key left;
+  `docs/operations.md` "Hackathon demo guestbook (NEAR)").
 
 ## Meta transactions (the demo's path)
 

@@ -164,7 +164,7 @@ describe('an email login', () => {
     const t = await tab(emailBrowser());
     await emailLogin(t);
     void t.request('hana_export', { chain: 'stellar' });
-    await waitLauncher(t, 'Export key in Hana');
+    await waitLauncher(t, 'Export key in Journear Passport');
     t.launcher.click();
     expect(t.opened.at(-1)?.url).toBe(`${ENV.authOrigin}/export`);
   });

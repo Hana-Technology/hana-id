@@ -440,7 +440,7 @@ describe('/login/callback, token_first’s ID leg', () => {
     expect(await run(s.win, a)).toBe('stopped');
     expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: 'google_account_mismatch' });
     expect(JSON.stringify(a.writeRelay.mock.calls)).not.toContain(other);
-    expect(pageText()).toContain('another account');
+    expect(pageText()).toContain('a different account');
   });
 
   it('D273: a silent failure is asked once more interactively (openid only, the same account); a second failure is relayed', async () => {

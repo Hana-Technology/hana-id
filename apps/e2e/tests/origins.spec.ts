@@ -70,7 +70,7 @@ test('a forged auth-hello from a foreign site gets no auth-params', async ({ pag
   const evil = await openEvil(page);
   // A pending login waiting on the launcher: the next auth-hello the vault accepts would get the parameters.
   await clickAction(page, 'login', 'login');
-  await expect(page.frameLocator('iframe[name^="hana-vault-"]').getByRole('button', { name: 'Sign in with Hana' })).toBeVisible();
+  await expect(page.frameLocator('iframe[name^="hana-vault-"]').getByRole('button', { name: 'Sign in with Journear Passport' })).toBeVisible();
   await evil.evaluate(async () => {
     for (let i = 0; i < 15; i++) {
       for (let f = 0; f < window.opener.frames.length; f++) window.opener.frames[f].postMessage({ v: 1, t: 'hana:auth-hello' }, '*');
@@ -81,7 +81,7 @@ test('a forged auth-hello from a foreign site gets no auth-params', async ({ pag
   expect((await received(evil)).filter((m) => m.t === 'hana:auth-params')).toEqual([]);
 
   // The pending login is intact: the launcher still finishes it.
-  const popup = await clickLauncher(page, 'Sign in with Hana');
+  const popup = await clickLauncher(page, 'Sign in with Journear Passport');
   expect(new URL(popup.url()).search).toBe('?from=vault');
   await chooseAccount(popup);
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
@@ -150,7 +150,7 @@ test("a login popup opened by a foreign page can't reach the partner's vault", a
   const frameName = await page.evaluate(() => (window as any).e2e.vaultFrameName() as string);
   const evil = await openEvil(page);
   await clickAction(page, 'login', 'login');
-  await expect(page.frameLocator('iframe[name^="hana-vault-"]').getByRole('button', { name: 'Sign in with Hana' })).toBeVisible();
+  await expect(page.frameLocator('iframe[name^="hana-vault-"]').getByRole('button', { name: 'Sign in with Journear Passport' })).toBeVisible();
 
   // The foreign page opens Hana's login popup naming the partner's vault frame: the popup looks for it among its own
   // opener's (the foreign page's) frames, finds nothing, and never gets parameters.
@@ -163,7 +163,7 @@ test("a login popup opened by a foreign page can't reach the partner's vault", a
   expect(await peek(page, 'login')).toEqual({ state: 'pending' });
   await popup.close();
 
-  const legit = await clickLauncher(page, 'Sign in with Hana');
+  const legit = await clickLauncher(page, 'Sign in with Journear Passport');
   await chooseAccount(legit);
   expect((await okValue<{ stellar: string }>(page, 'login')).stellar).toMatch(/^G/u);
 });
@@ -175,7 +175,7 @@ test('a forged approval from a foreign site produces no signature, even with the
   await login(page);
   const evil = await openEvil(page);
   await runAction(page, 'sig', 'personalSign', 'forged?');
-  const popup = await clickLauncher(page, 'Review in Hana');
+  const popup = await clickLauncher(page, 'Review in Journear Passport');
   // The answer the real popup would send, sent by the foreign page to the vault frame.
   const req = await popup.waitForFunction(() => (window as any).__approveRequests?.at(-1)).then((h) =>
     h.evaluate((m: any) => ({ id: m.id, kind: m.kind, chain: m.chain, address: m.address, parentOrigin: m.parentOrigin, context: m.context, bytes: Array.from(m.bytes as Uint8Array) })),

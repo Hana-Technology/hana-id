@@ -33,7 +33,7 @@ describe('export (vault side)', () => {
   it('shows the launcher; its click opens a top-level /export window with a random name; the hello gets public values only', async () => {
     const { t, addresses } = await session();
     const reply = t.request('hana_export', { chain: 'stellar' });
-    await waitLabel(t, 'Export key in Hana');
+    await waitLabel(t, 'Export key in Journear Passport');
     t.launcher.click();
     const w = t.opened.at(-1)!;
     expect(w.url).toBe(`${ENV.authOrigin}/export`);
@@ -63,7 +63,7 @@ describe('export (vault side)', () => {
     w.closed = true;
     await sleepReal(30);
     const again = t.request('hana_export', { chain: 'evm' });
-    await waitLabel(t, 'Export key in Hana');
+    await waitLabel(t, 'Export key in Journear Passport');
     t.launcher.click();
     const w2 = t.opened.at(-1)!;
     expect(w2.name).not.toBe(w.name);
@@ -75,7 +75,7 @@ describe('export (vault side)', () => {
   it('a hello after the session ended (expiry timer not yet run) gets no context; the export fails 4900', async () => {
     const { t } = await session();
     const reply = t.request('hana_export', { chain: 'evm' });
-    await waitLabel(t, 'Export key in Hana');
+    await waitLabel(t, 'Export key in Journear Passport');
     t.launcher.click();
     const w = t.opened.at(-1)!;
     // The session's end passes while the export window loads; no timer runs (a throttled tab or a sleeping device).
@@ -90,7 +90,7 @@ describe('export (vault side)', () => {
   it('answers only the window it opened, from authOrigin, once', async () => {
     const { t } = await session();
     const reply = t.request('hana_export', { chain: 'evm' });
-    await waitLabel(t, 'Export key in Hana');
+    await waitLabel(t, 'Export key in Journear Passport');
     t.launcher.click();
     const w = t.opened.at(-1)!;
     const foreign = new FakeWindow();
@@ -110,12 +110,12 @@ describe('export (vault side)', () => {
   it('a window closed before its hello gives 4001; no click within 5 min gives 4001', async () => {
     const { t } = await session();
     const a = t.request('hana_export', { chain: 'evm' });
-    await waitLabel(t, 'Export key in Hana');
+    await waitLabel(t, 'Export key in Journear Passport');
     t.launcher.click();
     t.opened.at(-1)!.closed = true;
     expect((await a).error?.code).toBe(4001);
     const b = t.request('hana_export', { chain: 'evm' });
-    await waitLabel(t, 'Export key in Hana');
+    await waitLabel(t, 'Export key in Journear Passport');
     t.browser.timers.advance(5 * 60_000);
     expect((await b).error?.code).toBe(4001);
     await waitLabel(t, null);
@@ -125,7 +125,7 @@ describe('export (vault side)', () => {
     async function running() {
       const s = await session();
       const reply = s.t.request('hana_export', { chain: 'stellar' });
-      await waitLabel(s.t, 'Export key in Hana');
+      await waitLabel(s.t, 'Export key in Journear Passport');
       s.t.launcher.click();
       const w = s.t.opened.at(-1)!;
       s.t.dispatch({ data: { v: 1, t: 'hana:export-hello' }, origin: ENV.authOrigin, source: w });
@@ -158,7 +158,7 @@ describe('export (vault side)', () => {
       t.browser.timers.advance(15 * 60_000 + 2_000);
       await w.next('hana:export-end');
       const again = t.request('hana_export', { chain: 'evm' });
-      await waitLabel(t, 'Export key in Hana');
+      await waitLabel(t, 'Export key in Journear Passport');
       t.launcher.click();
       expect(t.opened.at(-1)).not.toBe(w);
       t.dispatch({ data: { v: 1, t: 'hana:export-hello' }, origin: ENV.authOrigin, source: t.opened.at(-1)! });
@@ -188,7 +188,7 @@ describe('touch (idle slide)', () => {
 
   async function approveOne(t: Tab, nonce: string): Promise<void> {
     const reply = t.request('eth_signTransaction', { tx: evmTx({ nonce }) });
-    await waitLabel(t, 'Review in Hana');
+    await waitLabel(t, 'Review in Journear Passport');
     const popup = openApproval(t);
     answer(t, popup, await popup.next('hana:approve-request'), true);
     expect((await reply).result).toMatch(/^0x02/u);
@@ -229,7 +229,7 @@ describe('touch (idle slide)', () => {
     };
     const s2 = await session({ config: makeConfig({ settings: { autoApprovePolicy: policy } }) });
     const grant = s2.t.request('hana_requestAutoApprove');
-    await waitLabel(s2.t, 'Review in Hana');
+    await waitLabel(s2.t, 'Review in Journear Passport');
     const popup = openApproval(s2.t);
     const m = await popup.next('hana:consent-request');
     s2.t.dispatch({ data: { v: 1, t: 'hana:consent-result', id: m.id, allowed: true, digest: consentDigest({ id: m.id as string, policyId: m.policyId as string, parentOrigin: PARTNER, expiresAtMs: m.expiresAtMs as number }) }, origin: ENV.authOrigin, source: popup });

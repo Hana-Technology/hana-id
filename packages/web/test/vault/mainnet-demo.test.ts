@@ -61,7 +61,7 @@ describe('the mainnet demo in the vault', () => {
     const s = await session();
     const tx = send();
     const reply = s.t.request('eth_signTransaction', { tx });
-    await waitLauncher(s.t, 'Review in Hana');
+    await waitLauncher(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     const m = await popup.next('hana:approve-request');
     expect(m).toMatchObject({ context: { chainId: 8453 }, testApp: true, mainnetDemo: true });
@@ -89,7 +89,7 @@ describe('the mainnet demo in the vault', () => {
     const s = await session();
     const xdr = stellarTx(s.stellar, [Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '2' })]);
     const reply = s.t.request('stellar_signTransaction', { xdr, networkPassphrase: STELLAR_MAINNET_PASSPHRASE });
-    await waitLauncher(s.t, 'Review in Hana');
+    await waitLauncher(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     const m = await popup.next('hana:approve-request');
     expect(m).toMatchObject({ context: { networkPassphrase: STELLAR_MAINNET_PASSPHRASE }, testApp: true });
@@ -100,9 +100,9 @@ describe('the mainnet demo in the vault', () => {
   });
 
   it.each([
-    ['over the cap', () => send({ value: `0x${(2n * 10n ** 15n).toString(16)}` }), 'mainnet_demo_over_cap', 'Refused: over Hana’s $9.99 mainnet demo limit per transaction'],
-    ['a token with no price', () => send({ to: '0x4200000000000000000000000000000000000006', value: '0x0', data: usdcTransfer(EVM_VAULT, 1n) }), 'mainnet_demo_unpriced', 'Refused: Hana has no price for an asset this moves (mainnet demo)'],
-    ['calldata Hana can’t value', () => send({ value: '0x0', data: '0xdeadbeef' }), 'mainnet_demo_unknown_call', 'Refused: Hana can’t tell how much this mainnet request moves'],
+    ['over the cap', () => send({ value: `0x${(2n * 10n ** 15n).toString(16)}` }), 'mainnet_demo_over_cap', 'Refused: over Journear’s $9.99 mainnet demo limit per transaction'],
+    ['a token with no price', () => send({ to: '0x4200000000000000000000000000000000000006', value: '0x0', data: usdcTransfer(EVM_VAULT, 1n) }), 'mainnet_demo_unpriced', 'Refused: Journear has no price for an asset this moves (mainnet demo)'],
+    ['calldata Hana can’t value', () => send({ value: '0x0', data: '0xdeadbeef' }), 'mainnet_demo_unknown_call', 'Refused: Journear can’t tell how much this mainnet request moves'],
   ] as const)('on: refuses %s before any popup, and says so in the launcher', async (_, make, reason, flash) => {
     const s = await session();
     const reply = await s.t.request('eth_signTransaction', { tx: make() });
@@ -121,7 +121,7 @@ describe('the mainnet demo in the vault', () => {
     it('to the user’s own Stellar wallet: through the popup, reported at the deposit’s value', async () => {
       const s = await session();
       const reply = s.t.request('eth_signTransaction', { tx: bridge(s.stellar, s.evm) });
-      await waitLauncher(s.t, 'Review in Hana');
+      await waitLauncher(s.t, 'Review in Journear Passport');
       const popup = openApproval(s.t);
       answer(s.t, popup, await popup.next('hana:approve-request'), true);
       expect((await reply).error).toBeUndefined();
@@ -160,7 +160,7 @@ describe('the mainnet demo in the vault', () => {
     ] as const)('%s to the signing address’s own hub wallet: through the popup', async (_name, make) => {
       const s = await session();
       const reply = s.t.request('eth_signTransaction', { tx: make(s) });
-      await waitLauncher(s.t, 'Review in Hana');
+      await waitLauncher(s.t, 'Review in Journear Passport');
       const popup = openApproval(s.t);
       answer(s.t, popup, await popup.next('hana:approve-request'), true);
       expect((await reply).error).toBeUndefined();
@@ -205,7 +205,7 @@ describe('the mainnet demo in the vault', () => {
   it('on: a USDC transfer under the cap is allowed; other mainnets and typed data stay refused', async () => {
     const s = await session();
     const usdc = s.t.request('eth_signTransaction', { tx: send({ to: USDC_BASE, value: '0x0', data: usdcTransfer(EVM_VAULT, 5_000_000n) }) });
-    await waitLauncher(s.t, 'Review in Hana');
+    await waitLauncher(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     answer(s.t, popup, await popup.next('hana:approve-request'), true);
     expect((await usdc).error).toBeUndefined();
@@ -283,7 +283,7 @@ describe('the mainnet demo in the vault', () => {
       const s = await withPrices(LIVE);
       const tx = big();
       const reply = s.t.request('eth_signTransaction', { tx });
-      await waitLauncher(s.t, 'Review in Hana');
+      await waitLauncher(s.t, 'Review in Journear Passport');
       const popup = openApproval(s.t);
       const m = await popup.next('hana:approve-request');
       expect(m).toMatchObject({ demoPrices: LIVE });

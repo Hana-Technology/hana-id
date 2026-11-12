@@ -98,9 +98,9 @@ export function row(d: Dom, label: string, ...value: Child[]): HTMLElement[] {
   return [d.h('dt', {}, label), d.h('dd', {}, ...value)];
 }
 
-/** A `<dl>` of rows. */
-export function rows(d: Dom, entries: (HTMLElement[] | null | undefined | false)[]): HTMLDListElement {
-  const dl = d.h('dl');
+/** A `<dl>` of rows; `cls` adds classes (the design system's `jp-kv`: muted keys, mono values). */
+export function rows(d: Dom, entries: (HTMLElement[] | null | undefined | false)[], cls?: string): HTMLDListElement {
+  const dl = d.h('dl', cls ? { class: cls } : {});
   for (const e of entries) if (e) dl.append(...e);
   return dl;
 }

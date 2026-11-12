@@ -265,7 +265,7 @@ test('an email wallet’s key export: the export window’s child popup takes an
   const wallet = await emailLogin(page, to, 'email');
 
   await runAction(page, 'export', 'exportKey', 'evm');
-  const exportWindow = await clickLauncher(page, 'Export key in Hana');
+  const exportWindow = await clickLauncher(page, 'Export key in Journear Passport');
   expect(await okValue(page, 'export')).toBeNull();
   const childP = exportWindow.waitForEvent('popup');
   await exportWindow.getByRole('button', { name: 'Sign in again to continue' }).click();
@@ -279,6 +279,7 @@ test('an email wallet’s key export: the export window’s child popup takes an
   await exportWindow.getByRole('textbox').fill('EXPORT');
   await guardedClick(exportWindow, 'Continue');
   const secret = exportWindow.locator('code.secret');
+  await exportWindow.locator('.reveal-ack input').check();
   await guardedClick(exportWindow, 'Show key');
   await expect(secret).toHaveText(/^0x[0-9a-f]{64}$/u);
   const shown = (await secret.textContent()) ?? '';
@@ -321,7 +322,7 @@ test('a linked identity’s key export: Google, a member of an email wallet, exp
   await waitPersisted(page, wallet.evm);
 
   await runAction(page, 'export', 'exportKey', 'evm');
-  const exportWindow = await clickLauncher(page, 'Export key in Hana');
+  const exportWindow = await clickLauncher(page, 'Export key in Journear Passport');
   const views = nearViews(exportWindow);
   expect(await okValue(page, 'export')).toBeNull();
   await expect(exportWindow.getByText(wallet.evm)).toBeVisible();
@@ -335,6 +336,7 @@ test('a linked identity’s key export: Google, a member of an email wallet, exp
   await exportWindow.getByRole('textbox').fill('EXPORT');
   await guardedClick(exportWindow, 'Continue');
   const secret = exportWindow.locator('code.secret');
+  await exportWindow.locator('.reveal-ack input').check();
   await guardedClick(exportWindow, 'Show key');
   await expect(secret).toHaveText(/^0x[0-9a-f]{64}$/u);
   // The key is the email wallet's: the root's path, not Google's own.

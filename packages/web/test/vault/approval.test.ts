@@ -55,7 +55,7 @@ async function session(o: Parameters<typeof readyTab>[1] = {}): Promise<Session>
 /** Sends a sign request, opens the approval popup from the launcher and returns the request it shows. */
 async function shown(s: Session, method: string, params: unknown) {
   const reply = s.t.request(method, params);
-  await waitLabel(s.t, 'Review in Hana');
+  await waitLabel(s.t, 'Review in Journear Passport');
   const popup = openApproval(s.t);
   const m = await popup.next('hana:approve-request');
   return { reply, popup, m };
@@ -69,8 +69,8 @@ describe('approval flow', () => {
     const s = await session();
     const message = 'Sign in to Partner';
     const reply = s.t.request('stellar_signMessage', { message });
-    await waitLabel(s.t, 'Review in Hana');
-    expect(s.t.events.filter((e) => e.event === 'ui').at(-1)!.data).toEqual({ launcher: 'show', label: 'Review in Hana' });
+    await waitLabel(s.t, 'Review in Journear Passport');
+    expect(s.t.events.filter((e) => e.event === 'ui').at(-1)!.data).toEqual({ launcher: 'show', label: 'Review in Journear Passport' });
     s.t.launcher.click();
     const popup = s.t.opened.at(-1)!;
     expect(popup.url).toBe(`${ENV.authOrigin}/approve`);
@@ -139,7 +139,7 @@ describe('approval flow', () => {
     const second = s.t.request('stellar_signMessage', { message: 'two' });
     popup.closed = true;
     expect((await reply).error?.code).toBe(4001);
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     const popup2 = openApproval(s.t);
     const m2 = await popup2.next('hana:approve-request');
     expect(toHex(m2.bytes as Uint8Array)).toBe(toHex(utf8('two')));
@@ -151,7 +151,7 @@ describe('approval flow', () => {
     const s = await session();
     const first = s.t.request('stellar_signMessage', { message: 'one' });
     const second = s.t.request('stellar_signMessage', { message: 'two' });
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     const m1 = await popup.next('hana:approve-request');
     expect(m1).toMatchObject({ position: 1, queued: 2 });
@@ -182,7 +182,7 @@ describe('approval flow', () => {
     await reply;
     s.t.browser.timers.advance(16_000);
     const next = s.t.request('stellar_signMessage', { message: 'two' });
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     expect(popup.closed).toBe(true);
     const popup2 = openApproval(s.t);
     expect(popup2).not.toBe(popup);
@@ -199,7 +199,7 @@ describe('approval flow', () => {
     await reply;
     s.t.dispatch({ data: { v: 1, t: 'hana:approve-bye' }, origin: ENV.authOrigin, source: popup });
     const next = s.t.request('stellar_signMessage', { message: 'two' });
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     const popup2 = openApproval(s.t);
     answer(s.t, popup2, await popup2.next('hana:approve-request'), true);
     await next;
@@ -208,7 +208,7 @@ describe('approval flow', () => {
   it('a hello from a window the vault did not open is ignored', async () => {
     const s = await session();
     const reply = s.t.request('stellar_signMessage', { message: 'x' });
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     const foreign = new FakeWindow();
     s.t.dispatch({ data: { v: 1, t: 'hana:approve-hello' }, origin: ENV.authOrigin, source: foreign });
     await sleepReal(30);
@@ -241,7 +241,7 @@ describe('approval popup opened by the partner page in the click (D99)', () => {
     answer(s.t, popup, m, true);
     const r = (await reply).result as { signedMessage: string };
     expect(stellarMessageSignedBy(message, r.signedMessage, s.stellar)).toBe(true);
-    expect(s.t.launcher.history.filter((l) => l === 'Review in Hana')).toHaveLength(0);
+    expect(s.t.launcher.history.filter((l) => l === 'Review in Journear Passport')).toHaveLength(0);
     expect(s.t.opened.filter((w) => w.url.includes('/approve'))).toHaveLength(0);
     expect(await s.t.waitEvent('approvalWindow')).toEqual({ open: true });
     // Answered, not closed: the window waits for a follow-up, which it gets without another popup or launcher.
@@ -259,7 +259,7 @@ describe('approval popup opened by the partner page in the click (D99)', () => {
     const forged = partnerApproval(s.t, new FakeWindow('https://evil.test'));
     const orphan = partnerApproval(s.t, null);
     // The launcher is the fallback once the wait for the real popup is over.
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     expect(forged.posted).toHaveLength(0);
     expect(orphan.posted).toHaveLength(0);
     const id = 'ab'.repeat(16);
@@ -342,7 +342,7 @@ describe('what gets signed', () => {
     const message = new Uint8Array(SIGN_MESSAGE_MAX_BYTES - 128).fill(0x61);
     expect(parsePortRequest({ v: 1, id: 'r-big', method: 'stellar_signMessage', params: { message } })).not.toBeNull();
     const reply = s.t.request('stellar_signMessage', { message });
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     const m = await popup.next('hana:approve-request');
     expect((m.bytes as Uint8Array).length).toBe(message.length);
@@ -358,7 +358,7 @@ describe('what gets signed', () => {
     expect(approvals.pending).toBe(100);
     expect((await s.t.request('personal_sign', ['0x6869', s.evm])).error).toMatchObject({ code: 4100, data: { reason: 'too_many_pending' } });
     // The popup shows "1 of 100".
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     expect(await popup.next('hana:approve-request')).toMatchObject({ position: 1, queued: 100 });
     await s.t.request('hana_logout');
@@ -513,7 +513,7 @@ describe('raw signing', () => {
     // Once the API answers again, raw requests go through.
     s.t.browser.backend.overrides.delete('/v1/app');
     const again = s.t.request('hana_signRaw', raw);
-    await waitLabel(s.t, 'Review in Hana');
+    await waitLabel(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     answer(s.t, popup, await popup.next('hana:approve-request'), true);
     expect((await again).result).toBeDefined();

@@ -69,7 +69,7 @@ describe('renderApproval: Stellar account-control operations', () => {
     expect(w[0]).toBe(ACCOUNT_CONTROL_BANNER);
     expect(w).toContain(`This removes signer ${ATTACKER} from the account.`);
     expect(w.some((t) => t?.startsWith('This changes the account’s signing thresholds'))).toBe(true);
-    expect(w.some((t) => t?.includes('your Hana key) to 0: it can no longer sign'))).toBe(true);
+    expect(w.some((t) => t?.includes('your Journear Passport key) to 0: it can no longer sign'))).toBe(true);
     expect(el.textContent).toContain('Removes signer');
     expect(el.textContent).toContain('Low threshold0');
     expect(el.textContent).toContain('Medium threshold2');

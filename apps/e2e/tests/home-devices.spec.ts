@@ -170,7 +170,7 @@ test('stopping auto-approve in Hana Home stops auto-signing in the open partner 
   await home.locator('.home-confirm summary').focus();
   await home.keyboard.press('Enter');
   await expect(home.locator('.home-confirm details')).toHaveAttribute('open', '');
-  await expect(home.locator('.home-confirm details')).toContainText('for up to about a minute, or for up to about 3 minutes while that device can’t reach Hana');
+  await expect(home.locator('.home-confirm details')).toContainText('for up to about a minute, or for up to about 3 minutes while that device can’t reach Journear');
   const signedOut = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/shares/revoke` && r.request().method() === 'POST');
   await home.locator('.home-confirm').getByRole('button', { name: 'Sign out', exact: true }).click();
   expect((await signedOut).status()).toBe(200);
@@ -390,7 +390,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   stopAnswer = { status: 404, body: { error: 'Unknown device', code: 'unknown_share', requestId: 'req_e2e' } };
   await section.locator(`#home-stop-share-front-${ID(2)}`).click();
   await section.locator(`#home-stop-share-front-${ID(2)}-confirm-go`).click();
-  await expect(section.locator('#home-devices-problem-front')).toContainText('Hana Home couldn’t find that device among yours');
+  await expect(section.locator('#home-devices-problem-front')).toContainText('Passport Home couldn’t find that device among yours');
   await expect(section.locator('#home-devices-problem-front')).toContainText('Code: unknown_share');
   await shots(page, 'h9-08-stop-refused', browserName);
   stopAnswer = null;
@@ -418,7 +418,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   // Nothing signed in anywhere.
   mode = 'empty';
   await page.locator('#home-devices-refresh').click();
-  await expect(page.locator('#home-devices-empty')).toContainText('No device is signed in to your apps with Hana right now');
+  await expect(page.locator('#home-devices-empty')).toContainText('No device is signed in to your apps with Journear right now');
   await shots(page, 'h9-11-front-empty', browserName);
   await page.getByRole('button', { name: 'View Lumen Pay', exact: true }).click();
   await page.locator('#home-app-devices-show').click();
@@ -429,14 +429,14 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   // A linked account Hana couldn't confirm on NEAR: the devices, no stop, no addresses, and why.
   mode = 'unconfirmed';
   await page.locator('#home-devices-refresh').click();
-  await expect(page.locator('#home-devices-unconfirmed-front-s1')).toContainText('couldn’t check on NEAR');
+  await expect(page.locator('#home-devices-unconfirmed-front-s1')).toContainText('couldn’t confirm that this sign-in');
   await expect(page.locator('#home-devices button[id^="home-stop-"]')).toHaveCount(0);
   await shots(page, 'h9-15-account-unconfirmed', browserName);
 
   // The list can't be read.
   mode = 'error';
   await page.locator('#home-devices-refresh').click();
-  await expect(page.locator('#home-devices-problem-front')).toContainText('Hana Home is not reachable right now.');
+  await expect(page.locator('#home-devices-problem-front')).toContainText('Passport Home is not reachable right now.');
   await shots(page, 'h9-13-list-error', browserName);
 
   // The sign-in's end: what is on screen stays, a stop sends nothing.
@@ -445,7 +445,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await expect(page.locator('#home-ended')).toBeVisible();
   const before = stops.length;
   await page.locator('#home-devices-refresh').click();
-  await expect(page.locator('#home-devices-problem-front')).toContainText('Your sign-in to Hana Home has ended.');
+  await expect(page.locator('#home-devices-problem-front')).toContainText('Your sign-in to Passport Home has ended.');
   expect(stops.length).toBe(before);
   await shots(page, 'h9-14-signed-out-click', browserName);
 });

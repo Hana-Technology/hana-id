@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-12 (the wallet-picker icon is the new mark, "After 0.4.0"), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-12 (SDK 0.4.1: the Journear Passport names, the relay errors' data, the new mark), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -205,13 +205,13 @@ release with their SHA-256 checksums: check them (`shasum -a 256 *.tgz`), then i
 or yarn. Install every package you use, `@hana-id/core` included, from its tarball, never from a registry:
 
 ```sh
-npm install ./hana-id-core-0.4.0.tgz ./hana-id-web-0.4.0.tgz              # always
-npm install ./hana-id-react-0.4.0.tgz                                      # React apps
-npm install ./hana-id-sodax-0.4.0.tgz @sodax/types@2.2.0                   # Sodax adapters
+npm install ./hana-id-core-0.4.1.tgz ./hana-id-web-0.4.1.tgz              # always
+npm install ./hana-id-react-0.4.1.tgz                                      # React apps
+npm install ./hana-id-sodax-0.4.1.tgz @sodax/types@2.2.0                   # Sodax adapters
 ```
 
 Commit the tarballs to your repository (or a private artifact store) and depend on them by path
-(`"@hana-id/web": "file:vendor/hana-id-web-0.4.0.tgz"`), so every install gets the same bytes.
+(`"@hana-id/web": "file:vendor/hana-id-web-0.4.1.tgz"`), so every install gets the same bytes.
 
 | Package | What | Peer dependencies (tested) |
 |---|---|---|
@@ -233,6 +233,25 @@ pilot ships `sandbox-dev`, whose Journear Passport side runs on NEAR testnet (yo
 at the top). A new environment means a new release.
 
 ### Release notes
+
+**0.4.1** (after 0.4.0; same environments: `sandbox-dev`). **Nothing to change** unless you find Journear Passport's
+wallet by its display name: code written for 0.4.0 builds and runs as it is. Replace all the tarballs you use together
+(they depend on each other at `^0.4.1`).
+
+- The product is now called Journear Passport. The wallet pickers' name (EIP-6963 `info.name`, the Stellar Wallets
+  Kit's `productName`) is "Journear Passport" (was "Hana ID"), and the SDK's error messages and the launcher's labels
+  say Journear Passport. Package names, the API (`createHana`, `HanaError`, `hana.*`), error codes, events, `rdns` and
+  `productId` are unchanged: if you pick the connector by name, match the new name, or better its `rdns`; match errors
+  on `code`, never on the message.
+- New: `hana.getProfile()`, `hana.profile`, the
+  `profileChanged` event and React `useProfile()`, for the name a user chose to share with your app
+  ([section 15](#15-identity-token-your-backend), "The user's name"). The identity token's `given_name` and `family_name`
+  claims arrive from Journear's side, so they reach any SDK version.
+- A refused `hana.near.relay` or `activate` also passes on the transaction the relay sent (`data.transactionHash`, so a
+  `timeout` can be looked up), NEAR's own reason for a `delegate_rejected` (`data.nearReason`) and the API's
+  `retry-after` (`data.retryAfterS`); new type `NearRelayErrorData` ([section 8, NEAR](#near-errors)).
+- The wallet-picker icon (`HANA_ID_ICON`: EIP-6963's `info.icon`, the Stellar Wallets Kit's `productIcon`) is Journear's
+  new mark; still a 96 × 96 SVG `data:` URI, the same name and format.
 
 **0.4.0** (after 0.3.1; same environments: `sandbox-dev`). **Nothing to change** for Stellar and EVM: code written for
 0.3.x builds and runs as it is, and an app still on 0.3.x keeps working with Journear Passport's current vault (it just doesn't see
@@ -270,15 +289,6 @@ NEAR). Replace all the tarballs you use together (they depend on each other at `
    stores it whole, should expect `near` (optional in the types: it is missing while Journear Passport's vault predates NEAR).
 4. Nothing else: the Stellar and EVM calls, the identity token and the auto-approve policies behave as in 0.3.1.
 
-**After 0.4.0** (in the next release, not yet published). **Nothing to change.** New: `hana.getProfile()`, `hana.profile`, the
-`profileChanged` event and React `useProfile()`, for the name a user chose to share with your app
-([section 15](#15-identity-token-your-backend), "The user's name"). The identity token's `given_name` and `family_name`
-claims arrive from Journear's side, so they reach any SDK version.
-A refused `hana.near.relay` or `activate` also passes on the transaction the relay sent (`data.transactionHash`, so a
-`timeout` can be looked up), NEAR's own reason for a `delegate_rejected` (`data.nearReason`) and the API's
-`retry-after` (`data.retryAfterS`); new type `NearRelayErrorData` ([section 8, NEAR](#near-errors)).
-The wallet-picker icon (`HANA_ID_ICON`: EIP-6963's `info.icon`, the Stellar Wallets Kit's `productIcon`) is Journear's
-new mark; still a 96 × 96 SVG `data:` URI, the same name and format.
 
 **0.3.1** (after 0.3.0; same environments: `sandbox-dev`). **Nothing to change**: code written for 0.3.0 builds and
 runs as it is. Replace all the tarballs you use together (they depend on each other at `^0.3.1`).

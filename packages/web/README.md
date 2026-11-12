@@ -26,7 +26,7 @@ The packages aren't on a registry yet. Journear sends you the tarballs with thei
 install them together (`@hana-id/core` too, from its tarball, never from a registry):
 
 ```sh
-npm install ./hana-id-core-0.4.0.tgz ./hana-id-web-0.4.0.tgz
+npm install ./hana-id-core-0.4.1.tgz ./hana-id-web-0.4.1.tgz
 ```
 
 ESM only, with TypeScript declarations. Use a bundler (Vite, webpack, esbuild, Next.js) or TypeScript with

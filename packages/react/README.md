@@ -13,7 +13,7 @@ The packages aren't on a registry yet. Journear sends you the tarballs with thei
 install them together, next to your React:
 
 ```sh
-npm install ./hana-id-core-0.4.0.tgz ./hana-id-web-0.4.0.tgz ./hana-id-react-0.4.0.tgz
+npm install ./hana-id-core-0.4.1.tgz ./hana-id-web-0.4.1.tgz ./hana-id-react-0.4.1.tgz
 ```
 
 Peer dependency: `react` `^18.0.0 || ^19.0.0` (tested with 18.3.1 and 19.3.1). ESM only, with TypeScript

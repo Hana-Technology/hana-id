@@ -8,13 +8,13 @@ import { type Answer, type Call, boot, closeWindow } from './boot.ts';
 
 afterEach(closeWindow);
 
-type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down';
+type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down' | 'relay-low' | 'relay-budget' | 'relay-key-missing' | 'relay-off' | 'relay-stale';
 // Loaded by a specifier TypeScript doesn't follow (its module needs the Workers types; test-ops/ typechecks it).
 const MODULE = './preview-status.ts';
 const answers = {} as Record<Scenario, Record<string, unknown>>;
 beforeAll(async () => {
   const { previewStatus } = (await import(MODULE)) as { previewStatus: (s: Scenario) => Promise<Record<string, unknown>> };
-  for (const s of ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down'] as const) answers[s] = await previewStatus(s);
+  for (const s of ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale'] as const) answers[s] = await previewStatus(s);
 });
 
 const statusApi = (body: unknown) => (c: Call): Answer => (c.path === '/api/status' ? { body } : { status: 404, body: { error: { code: 'not_found', message: 'Not found' } } });
@@ -66,7 +66,7 @@ describe('the verdict', () => {
     expect(v.className).toBe('verdict ok');
     expect(v.getAttribute('role')).toBe('status');
     expect(v.querySelector('h2')!.textContent).toBe('All systems operational');
-    expect(v.textContent).toMatch(/Checked \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · \d+ s ago · 36 of 36 checks passed/u);
+    expect(v.textContent).toMatch(/Checked \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · \d+ s ago · 37 of 37 checks passed/u);
     expect(s.text()).not.toContain('Issues');
     for (const t of tiles(s)) expect(['OK', 'Not measured'], t.name!).toContain(t.chip);
     expect(s.text()).toContain('Not measured yet');
@@ -146,11 +146,92 @@ describe('NEAR RPC tile', () => {
     expect(rows[0]![2]).toMatch(/^Down: it /u);
   });
 
-  it('a tile without lines renders none (every other tile)', async () => {
+  it('a tile without lines renders none (every tile but NEAR RPC and NEAR relay)', async () => {
     const s = await open(answers.green);
     const lists = [...s.main().querySelectorAll('.tile-lines')];
-    expect(lists).toHaveLength(1);
-    expect(lists[0]!.closest('.tile')!.querySelector('h3')!.textContent).toBe('NEAR RPC');
+    expect(lists.map((l) => l.closest('.tile')!.querySelector('h3')!.textContent)).toEqual(['NEAR relay', 'NEAR RPC']);
+  });
+});
+
+describe('NEAR relay tile (D784–D786)', () => {
+  type S = Awaited<ReturnType<typeof open>>;
+  const relayTile = (s: S) => [...s.main().querySelectorAll('.tile')].find((t) => t.querySelector('h3')!.textContent === 'NEAR relay')!;
+  const rows = (s: S) => [...relayTile(s).querySelectorAll('.tile-lines li')].map((li) => [...li.children].map((x) => x.textContent));
+  const relayIssues = (s: S) => [...s.main().querySelectorAll('.issue')].filter((i) => i.querySelector('.issue-facts')!.textContent!.includes('WhereNEAR relay'));
+
+  it('healthy: OK in Relayer funds, the balance, today’s spend and the keys on their own lines, no issue', async () => {
+    const s = await open(answers.green);
+    const t = relayTile(s);
+    expect(t.closest('section')!.querySelector('h2')!.textContent).toBe('Relayer funds');
+    expect(t.className).toBe('tile ok');
+    expect(t.querySelector('.state-chip')!.textContent).toBe('OK');
+    expect(t.querySelector('.tile-detail')!.textContent).toBe('On · 11.7 NEAR available · 0.62 NEAR of 5 NEAR spent today');
+    expect(rows(s).map((r) => r.slice(0, 2))).toEqual([['OK', 'Balance'], ['OK', 'Today’s spend'], ['OK', 'Keys']]);
+    expect(rows(s)[0]![2]).toBe('11.7 NEAR available · amber below 2 NEAR, red below 0.4 NEAR');
+    expect(rows(s)[2]![2]).toBe('2 of 2 on the account as full-access keys');
+    expect([...t.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/security']);
+    expect(relayIssues(s)).toEqual([]);
+  });
+
+  it('low balance: amber, its line amber, one issue with the playbook', async () => {
+    const s = await open(answers['relay-low']);
+    expect(relayTile(s).className).toBe('tile warning');
+    expect(rows(s).map((r) => r[0])).toEqual(['Warning', 'OK', 'OK']);
+    const [i] = relayIssues(s);
+    expect(i!.querySelector('strong')!.textContent).toBe('The NEAR relay’s balance is low: 1.4 NEAR available');
+    expect(i!.textContent).toContain('AffectsUsers’ gasless NEAR calls (the relay pays their gas)');
+    expect(i!.querySelector('.issue-links')!.textContent).toBe('Feed and notices · Playbook: The NEAR relay account is running low');
+  });
+
+  it('budget high: amber on today’s spend, with the share', async () => {
+    const s = await open(answers['relay-budget']);
+    expect(relayTile(s).className).toBe('tile warning');
+    expect(rows(s).map((r) => r[0])).toEqual(['OK', 'Warning', 'OK']);
+    expect(rows(s)[1]![2]).toMatch(/^4\.3 NEAR of 5 NEAR \(86%\)/u);
+    expect(relayIssues(s).map((i) => i.querySelector('strong')!.textContent)).toEqual(['The NEAR relay has spent 86% of today’s budget (4.3 NEAR of 5 NEAR)']);
+  });
+
+  it('a key missing: red, the keys line red, the key named by its start', async () => {
+    const s = await open(answers['relay-key-missing']);
+    expect(relayTile(s).className).toBe('tile critical');
+    expect(rows(s).map((r) => r[0])).toEqual(['OK', 'OK', 'Critical']);
+    expect(rows(s)[2]![2]).toBe('1 of 2 on the account as full-access keys');
+    expect(relayIssues(s)[0]!.querySelector('strong')!.textContent).toMatch(/^1 of the API’s 2 NEAR relay keys isn’t a full-access key on hana-id-near-relay-preview\.testnet: relays through it fail \(ed25519:8hR1jJ4t…\)$/u);
+    expect(s.main().querySelector('.verdict')!.className).toBe('verdict critical');
+  });
+
+  it('off: Not measured (outlined), no lines, no issue, the verdict still green', async () => {
+    const s = await open(answers['relay-off']);
+    const t = relayTile(s);
+    expect(t.className).toBe('tile off');
+    expect(t.querySelector('.state-chip')!.textContent).toBe('Not measured');
+    expect(t.querySelector('.tile-detail')!.textContent).toBe('Off: no `near.relay` in this env’s manifest');
+    expect(t.querySelector('.tile-lines')).toBeNull();
+    expect(s.main().querySelector('.verdict')!.className).toBe('verdict ok');
+  });
+
+  it('unknown: the API down (the critical scenario) is grey, never green, with no issue of its own', async () => {
+    const s = await open(answers.critical);
+    const t = relayTile(s);
+    expect(t.className).toBe('tile unknown');
+    expect(t.querySelector('.tile-detail')!.textContent).toBe('Unknown: the API didn’t answer');
+    expect(relayIssues(s)).toEqual([]);
+  });
+
+  it('stale: a reading 40 minutes old is amber with its age', async () => {
+    const s = await open(answers['relay-stale']);
+    expect(relayTile(s).className).toBe('tile warning');
+    expect(relayIssues(s).map((i) => i.querySelector('strong')!.textContent)).toEqual(['The NEAR relay reading is 40 min old']);
+  });
+
+  it('a hostile line or detail stays text', async () => {
+    const a = structuredClone(answers.green) as { groups: { tiles: { id: string; detail: string; lines?: { label: string; state: string; detail: string }[] }[] }[] };
+    const t = a.groups.flatMap((g) => g.tiles).find((x) => x.id === 'near-relay')!;
+    t.detail = '<img src=x onerror=alert(1)>';
+    t.lines![0]!.detail = '<script>alert(1)</script>';
+    const s = await open(a);
+    expect(relayTile(s).querySelector('img, script')).toBeNull();
+    expect(relayTile(s).textContent).toContain('<script>alert(1)</script>');
   });
 });
 

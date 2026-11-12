@@ -299,6 +299,11 @@ export class RateLimiter extends DurableObject<Env> {
     return { ok: true, spent: next.toString() };
   }
 
+  /** The total `spend` has counted in the window of `now` ('0' when none). Read only (the admin's NEAR relay tile, D785). */
+  spent(name: string, windowMs: number, now: number = Date.now()): string {
+    return this.ctx.storage.kv.get<string>(`budget:${name}@${Math.floor(now / windowMs) * windowMs}`) ?? '0';
+  }
+
   /**
    * Adds `amount` to the window of `at` whatever its total (what a relay burnt beyond its reservation): the next
    * `spend` sees it. An ended window is left alone.

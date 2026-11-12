@@ -10,13 +10,18 @@
 //                  an unacknowledged critical watchdog alert
 //   mixed-build    a half-done deploy: the page Workers and their bundles on the previous build
 //   watchdog-down  the watchdog unreachable: one red issue, what it reports unknown
+//   relay-low      the NEAR relay account under `lowBalanceNear` (amber)
+//   relay-budget   the NEAR relay at 86% of its daily budget (amber)
+//   relay-key-missing  one of the API's two NEAR relay keys not on the relay account (red)
+//   relay-off      no NEAR relay in this env (Not measured, no issue)
+//   relay-stale    the NEAR relay's reading 40 minutes old (amber; the API reads it live, so only a test shows it)
 import { CRON_LAST_RUN } from '../src/cron.ts';
 import type { Env } from '../src/env.ts';
 import { LEDGER_LAST_RUN } from '../src/ledger-cron.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
 import { type StatusAnswer, buildStatus, resetStatusCache } from '../src/status.ts';
 
-export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down'] as const;
+export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 const BUILD = '8a797fe1c2d3';
@@ -26,6 +31,7 @@ const E24 = '000000000000000000000000';
 const PK_S = 'ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp';
 const PK_S2 = 'ed25519:9kWv2yFJq7Bf3mPnZcLx4T8uDhR5sGaQ1eNoYiKjVbXw';
 const PK_O = 'ed25519:3eNPkjVtn4cHy2BUUgnK3E2q4pCs3LMC5eEFrBsPpnnr';
+const PK_R2 = 'ed25519:8hR1jJ4tvsG5k3ZVxNw2yQe9eHPuQyD7Gq1b6T3m2dCx';
 const WATCHDOG = 'https://hana-id-watchdog-preview.preview.invalid';
 const TOKEN = 'preview-only-watchdog-status-token-not-a-secret';
 const RPC = 'https://rpc.preview.invalid';
@@ -94,6 +100,18 @@ function world(now: number, s: Scenario): World {
         { pool: 'session', publicKey: PK_S2 },
         { pool: 'owner', publicKey: PK_O },
       ],
+      nearRelay: {
+        state: 'on',
+        offReason: null,
+        readAt: now - 1_000,
+        account: 'hana-id-near-relay-preview.testnet',
+        lowBalanceYocto: `2${E24}`,
+        dailyBudgetYocto: `5${E24}`,
+        budgetAlertPct: 80,
+        chain: { ok: true, exists: true, availableYocto: `117${E24.slice(1)}`, fullAccessKeys: 3 },
+        keys: { configured: 2, missing: [] },
+        spend: { ok: true, day: new Date(now).toISOString().slice(0, 10), spentYocto: `62${E24.slice(2)}` },
+      },
       governance: {
         ok: true,
         snapshot: {
@@ -138,6 +156,13 @@ function world(now: number, s: Scenario): World {
     for (const k of ['vault', 'vault-bundle', 'auth', 'auth-pages']) w.builds[k] = PREVIOUS;
   }
   if (s === 'watchdog-down') w.watchdog = null;
+  const relay = ((w.api ?? {}) as { nearRelay?: Record<string, unknown> }).nearRelay ?? {};
+  // 1.4 NEAR: under the 2 NEAR line, above the 0.4 NEAR critical one.
+  if (s === 'relay-low') relay.chain = { ok: true, exists: true, availableYocto: `14${E24.slice(1)}`, fullAccessKeys: 3 };
+  if (s === 'relay-budget') relay.spend = { ok: true, day: new Date(now).toISOString().slice(0, 10), spentYocto: `43${E24.slice(1)}` };
+  if (s === 'relay-key-missing') relay.keys = { configured: 2, missing: [PK_R2] };
+  if (s === 'relay-stale') relay.readAt = now - 40 * MIN;
+  if (s === 'relay-off') (w.api as Record<string, unknown>).nearRelay = { state: 'off', offReason: 'none', readAt: now, account: null, lowBalanceYocto: null, dailyBudgetYocto: null, budgetAlertPct: null, chain: null, keys: null, spend: null };
   return w;
 }
 

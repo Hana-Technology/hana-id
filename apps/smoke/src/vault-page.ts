@@ -105,8 +105,8 @@ function timingCells(kind: VaultRunRecord['kind'], stages: Record<string, number
 }
 /** The buttons that send a request which may need a Hana popup: one such request at a time. */
 const REQUEST_BUTTONS = ['export-stellar', 'export-evm', 'aa-request', 'aa-status', 'aa-revoke', 'sign-stellar-self', 'sign-stellar-other', 'sign-evm-self', 'sign-evm-other', 'sign-personal', 'sign-raw'] as const;
-const TEST_MESSAGE_HEX = `0x${[...new TextEncoder().encode('Hana ID smoke test: personal_sign')].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
-const RAW_TEST_BYTES = new TextEncoder().encode('Hana ID smoke test: raw bytes, not a transaction');
+const TEST_MESSAGE_HEX = `0x${[...new TextEncoder().encode('Journear Passport smoke test: personal_sign')].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+const RAW_TEST_BYTES = new TextEncoder().encode('Journear Passport smoke test: raw bytes, not a transaction');
 
 function describeError(err: unknown): string {
   if (err instanceof ApiError) return `${err.message}${err.requestId ? ` [request ${err.requestId}]` : ''}`;

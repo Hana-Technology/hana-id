@@ -62,14 +62,14 @@ const homeBudgetHigh: Playbook = {
   kind: 'incident',
   severity: 'warning',
   status: 'live',
-  summary: "A `home_budget_high` security event: a day's Hana Home derives reached 80% of `homeDerivesPerDay` (default 500).",
+  summary: "A `home_budget_high` security event: a day's Passport Home derives reached 80% of `homeDerivesPerDay` (default 500).",
   signals: ['A `home_budget_high` row in the admin\'s Security & monitoring, emailed by the feed (one a day; counts only).'],
-  impact: ["At the ceiling Hana Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Where links aren't open, identities not otherwise known can use only 20% of it."],
+  impact: ["At the ceiling Passport Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Where links aren't open, identities not otherwise known can use only 20% of it."],
   steps: [
     { title: 'Tell real use from abuse', who: 'a founder', detail: 'Read the day\'s `home_usage` row in the API\'s D1: `derives` and `unrecorded` (derives held to the 20% share). Compare with the partner shutdowns you know of.' },
     { title: 'Raise or stop it', who: 'a founder', detail: 'Real demand: raise `homeDerivesPerDay` in the manifest, regenerate and redeploy the API, and check the Home key\'s allowance. Abuse or a compromise: set it to `0`, which stops every Home derive until it is raised again.' },
   ],
-  verify: ['The next day\'s `home_usage` row stays under the ceiling, or Hana Home derives answer again after the ceiling was raised.'],
+  verify: ['The next day\'s `home_usage` row stays under the ceiling, or Passport Home derives answer again after the ceiling was raised.'],
   followUps: ['If real demand keeps reaching it, raise the Home key\'s allowance with the ceiling.'],
   refs: ['docs/operations.md#hana-home-derive-deploy', 'D541'],
   related: ['relayer-key-stolen'],
@@ -81,9 +81,9 @@ const nearRelayBudgetHigh: Playbook = {
   kind: 'incident',
   severity: 'warning',
   status: 'live',
-  summary: "A `near_relay_budget_high` security event: a day's NEAR relay spend (gas and activations paid for Hana's NEAR wallets) reached 80% of `near.relay.dailyBudgetNear` (sandbox-dev 5 NEAR).",
+  summary: "A `near_relay_budget_high` security event: a day's NEAR relay spend (gas and activations paid for Journear's NEAR wallets) reached 80% of `near.relay.dailyBudgetNear` (sandbox-dev 5 NEAR).",
   signals: ["A `near_relay_budget_high` row in the admin's Security & monitoring, emailed by the feed (one a day; amounts only)."],
-  impact: ["At the budget every relay and activation answers `503 relay_budget_exhausted` until 00:00 UTC; an app at its own day budget (`appDailyBudgetNear`) answers `429 app_budget_exhausted`. Logins, owner actions and Hana Home are on other accounts and unaffected."],
+  impact: ["At the budget every relay and activation answers `503 relay_budget_exhausted` until 00:00 UTC; an app at its own day budget (`appDailyBudgetNear`) answers `429 app_budget_exhausted`. Logins, owner actions and Passport Home are on other accounts and unaffected."],
   steps: [
     { title: 'Tell real use from abuse', who: 'a founder', detail: "In the API's request logs, count `/v1/near/relay` and `/v1/near/activate` answers per app (`appId`) for the day. One app far ahead of the others, or many activations without relays, points at a leaked publishable key or many sybil sign-ins." },
     { title: 'Raise or stop it', who: 'a founder', detail: "Real demand: raise `near.relay.dailyBudgetNear` (and fund the relay account to at least `inFlightNear + lowBalanceNear + dailyBudgetNear`), regenerate and redeploy the API. Abuse: lower that app's limits, set `near.relay.receivers` to `[]`, or delete the `NEAR_RELAY_KEYS` secret to stop every relay at once." },
@@ -203,7 +203,7 @@ const apiCompromised: Playbook = {
   kind: 'incident',
   severity: 'critical',
   status: 'live',
-  summary: "Someone changed what the API or page Workers run, or controls Hana's main Cloudflare account: the page-serving trust root, the updater key, the relayer pools, D1 and `VAULT_KEK`.",
+  summary: "Someone changed what the API or page Workers run, or controls Journear's main Cloudflare account: the page-serving trust root, the updater key, the relayer pools, D1 and `VAULT_KEK`.",
   signals: [
     "Deploys nobody made (Cloudflare's deployment history), unknown API tokens or logins, changed Worker secrets or D1 rows (origins, settings).",
     'A `forged_key_change` from the signer account (the updater key is a Worker secret).',
@@ -564,7 +564,7 @@ const googleJwksOutage: Playbook = {
     {
       title: 'Restore what blocks it',
       who: 'a founder',
-      detail: 'A deleted updater key: install a fresh one (updater-key-stolen\'s Rotate step). A watchdog that can\'t confirm: confirm-failed / watchdog-cannot-act. A JWKS outage on Google\'s side: wait; nothing on Hana\'s side fixes it.',
+      detail: 'A deleted updater key: install a fresh one (updater-key-stolen\'s Rotate step). A watchdog that can\'t confirm: confirm-failed / watchdog-cannot-act. A JWKS outage on Google\'s side: wait; nothing on Journear\'s side fixes it.',
     },
   ],
   verify: ['The kid is in `issuers`; logins with it succeed.'],
@@ -580,7 +580,7 @@ const googleEnforcesCoop: Playbook = {
   severity: 'warning',
   status: 'live',
   summary:
-    "A page of the login popup's trip (Google's sign-in pages, or Hana's callback) sends an enforcing Cross-Origin-Opener-Policy: the vault's popup-close watch (D347) can read a popup that is still at Google as closed and cancel the login.",
+    "A page of the login popup's trip (Google's sign-in pages, or Journear's callback) sends an enforcing Cross-Origin-Opener-Policy: the vault's popup-close watch (D347) can read a popup that is still at Google as closed and cancel the login.",
   signals: [
     '`coop-canary <env>` exits 1 with `enforces Cross-Origin-Opener-Policy` (or `-Embedder-Policy`) on a page other than Google\'s error page, or its browser check reads `popup.closed` true while the popup is open (D386).',
     "Partners or users report `login_cancelled` with `data.reason: 'popup_closed'` while the user was still signing in at Google.",
@@ -588,14 +588,14 @@ const googleEnforcesCoop: Playbook = {
   impact: [
     "Enforcement on Google's first page: D347's 8 s rule takes the close for a COOP switch and stops the watch, so logins still finish through the relay; a user who really closes the popup waits for the 5-minute `login_timeout` instead of `login_cancelled`.",
     'Enforcement on a later page (one the user reaches after 8 s: the password, a second factor, consent): the login is cancelled while the user is still at Google. Those users cannot sign in with Google until the watch is changed.',
-    "An enforcing policy on Hana's own callback or auth pages is a Hana regression: those pages must send none (docs/api.md), and the callback's `back` signal to the vault needs its opener.",
+    "An enforcing policy on Journear's own callback or auth pages is a Journear regression: those pages must send none (docs/api.md), and the callback's `back` signal to the vault needs its opener.",
   ],
   steps: [
     {
       title: 'Confirm and find the page',
       who: 'a founder',
       detail:
-        "Run the canary again: the header check names each enforcing hop (status, host and path) under each User-Agent; the browser check says in which browsers `.closed` flips, and at what time. A Google change that comes and goes (an experiment) still counts. A finding on Hana's host: revert the change that added the header and redeploy the page Workers.",
+        "Run the canary again: the header check names each enforcing hop (status, host and path) under each User-Agent; the browser check says in which browsers `.closed` flips, and at what time. A Google change that comes and goes (an experiment) still counts. A finding on Journear's host: revert the change that added the header and redeploy the page Workers.",
       commands: ['corepack pnpm --filter @hana-id/scripts run coop-canary <env>'],
     },
     {
@@ -613,7 +613,7 @@ const googleEnforcesCoop: Playbook = {
   ],
   verify: [
     "`coop-canary <env>` passes, or its remaining finding is on a page the changed watch tolerates and the decision says so (then update the canary's rules with it).",
-    'A Google login that waits longer than 8 s on the enforcing page is not cancelled; closing the popup on a Hana page still ends the login within seconds.',
+    'A Google login that waits longer than 8 s on the enforcing page is not cancelled; closing the popup on a Journear page still ends the login within seconds.',
   ],
   followUps: ['Update D347 and the partner guide\'s "A closed popup" (docs/integration.md) with what the watch now does.'],
   refs: ['docs/operations.md#before-each-release-the-coop-canary', 'D347', 'D386'],
@@ -665,7 +665,7 @@ const mpcOutage: Playbook = {
   kind: 'incident',
   severity: 'critical',
   status: 'live',
-  summary: "The NEAR MPC network doesn't answer `request_app_private_key`: new logins can't derive keys. The MPC is NEAR's, not Hana's.",
+  summary: "The NEAR MPC network doesn't answer `request_app_private_key`: new logins can't derive keys. The MPC is NEAR's, not Journear's.",
   signals: ['`422 ckd_failed` on `/v1/login` and `/v1/derive` (the session is committed with its one use spent).', 'Derive latency far above the ~4.5 s MPC share.'],
   impact: [
     "New logins and derivations fail; users with an unlocked or persisted vault keep signing (their PRK is already on the device).",
@@ -673,7 +673,7 @@ const mpcOutage: Playbook = {
   ],
   steps: [
     { title: 'Confirm it is the MPC', who: 'a founder', detail: 'Request logs: `ckd_failed` and `relayOutcome` timings; NEAR\'s MPC status channels.', commands: [c.apiTailErrors] },
-    { title: 'Tell partners', who: 'a founder', detail: 'Logins fail until the MPC recovers; persisted sessions keep working. Nothing on Hana\'s side restarts it.' },
+    { title: 'Tell partners', who: 'a founder', detail: 'Logins fail until the MPC recovers; persisted sessions keep working. Nothing on Journear\'s side restarts it.' },
     {
       title: 'If the MPC public key changed',
       who: 'a founder',
@@ -732,10 +732,10 @@ const partnerClientCompromised: Playbook = {
   severity: 'critical',
   status: 'live',
   summary: "Someone controls a partner's own Google OAuth client (e.g. added a redirect URI): they can get tokens with chosen nonces for that scope's users who sign in through them.",
-  signals: ["The partner reports changes in their Google Cloud project, or logins in their scope Hana's vault didn't start."],
+  signals: ["The partner reports changes in their Google Cloud project, or logins in their scope Journear's vault didn't start."],
   impact: [
     "That scope's users who sign in through the attacker's flow: their keys in that scope are exposed (can't be undone: they move funds). Other scopes are unaffected.",
-    "Hana can't remove a scope's client: only the scope's owners can.",
+    "Journear can't remove a scope's client: only the scope's owners can.",
   ],
   steps: [
     {
@@ -748,7 +748,7 @@ const partnerClientCompromised: Playbook = {
     {
       title: 'Stop the app meanwhile if needed',
       who: 'a founder',
-      detail: "Suspending the app (D1 only) stops logins through Hana's API and vault for it; it doesn't stop direct contract calls with the client's tokens. A system-wide pause is the last resort (every app).",
+      detail: "Suspending the app (D1 only) stops logins through Journear's API and vault for it; it doesn't stop direct contract calls with the client's tokens. A system-wide pause is the last resort (every app).",
       commands: [c.appSuspend, c.appResume],
     },
   ],
@@ -764,8 +764,8 @@ const sharedClientCompromised: Playbook = {
   kind: 'incident',
   severity: 'critical',
   status: 'live',
-  summary: "Someone controls Hana's shared login client: isolation of every `allow_shared` scope is broken.",
-  signals: ['Changes in Hana\'s Google Cloud project nobody made (redirect URIs, credentials, members).'],
+  summary: "Someone controls Journear's shared login client: isolation of every `allow_shared` scope is broken.",
+  signals: ['Changes in Journear\'s Google Cloud project nobody made (redirect URIs, credentials, members).'],
   impact: [
     "Tokens with chosen nonces for every shared-login scope's users who sign in through the attacker's flow: their keys exposed (can't be undone). Own-client-only scopes are unaffected.",
     "Removing the shared client stops every shared-only scope's logins until a new shared client is in force (`change_delay_ms` later).",
@@ -818,7 +818,7 @@ const emailIssuerKey: Playbook = {
   kind: 'incident',
   severity: 'critical',
   status: 'planned',
-  summary: "Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can make Hana's email issuer key sign can mint email tokens for any `sub` and derive the wallet of any email user (and of accounts linked to one).",
+  summary: "Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can make Journear's email issuer key sign can mint email tokens for any `sub` and derive the wallet of any email user (and of accounts linked to one).",
   signals: [
     "The contract's hourly link counter and the watchdog's `link_threshold_reached` page (link-volume, D200; links that take over Google wallets; email-rooted wallets and Google wallets that already have an email member are entered without a link, so only custody protects them, D121) and its pins (a swapped key is cancelled, forged-key-change; an active one pauses, forged-active-key). Planned: the hourly CloudTrail reconciliation finds a `Sign` the issuer didn't log (critical); an IAM or KMS policy change alert. On testnet (Worker-secret key) there is no signing log: you notice only a leak of the Worker's secrets or a link burst.",
   ],
@@ -854,10 +854,10 @@ const identitySigningKey: Playbook = {
     "Whoever holds an identity signing key can forge any user's identity token for any app, until the key is out of the JWKS. Switch to a key the incident didn't touch, unpublish the exposed ones, tell partners.",
   signals: [
     "The API Worker's secrets, `.secrets/<env>/identity-signing-key*.json` or the operator's machine were exposed; a partner reports a token they didn't expect (a valid signature for a session that never existed).",
-    "No watchdog alert: a stolen key signs under its own, pinned kid, so the JWKS doesn't change and the watchdog's pin check (D210) sees nothing. It pages only when a key of the attacker's own, or private key material, is published (identity-jwks-forged). Not built yet (planned with step 7's KMS signer): the `Sign` reconciliation against `identity_issuance_hourly`, which would show signatures Hana didn't count.",
+    "No watchdog alert: a stolen key signs under its own, pinned kid, so the JWKS doesn't change and the watchdog's pin check (D210) sees nothing. It pages only when a key of the attacker's own, or private key material, is published (identity-jwks-forged). Not built yet (planned with step 7's KMS signer): the `Sign` reconciliation against `identity_issuance_hourly`, which would show signatures Journear didn't count.",
   ],
   impact: [
-    'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app (identity at partners: credits, referrals, their own accounts), until the key is removed and their JWKS caches refresh (≤ 10 min). No wallet, key or Hana API is reachable with a token.',
+    'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app (identity at partners: credits, referrals, their own accounts), until the key is removed and their JWKS caches refresh (≤ 10 min). No wallet, key or Journear Passport API is reachable with a token.',
     "Tokens already accepted can't be recalled: partners must re-check what they granted in the window.",
   ],
   steps: [
@@ -920,7 +920,7 @@ const identityKmsSigner: Playbook = {
     "Planned: the hourly reconciliation of CloudTrail `Sign` events per key against `identity_issuance_hourly` finds more signatures than the API counted (critical); an EventBridge alert on `GetSessionToken` by the signer user, on `Sign` by another principal or with session credentials, or on an IAM or key-policy change. A leak of the API Worker's secrets or the Cloudflare account; a partner reports a token they didn't expect.",
   ],
   impact: [
-    'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app, until the access key is revoked and the key is out of partners\' JWKS caches (≤ 10 min after the deploy). Every forged signature is in CloudTrail, so the window and the count are known. No wallet, key or Hana API is reachable with a token.',
+    'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app, until the access key is revoked and the key is out of partners\' JWKS caches (≤ 10 min after the deploy). Every forged signature is in CloudTrail, so the window and the count are known. No wallet, key or Journear Passport API is reachable with a token.',
   ],
   steps: [
     {

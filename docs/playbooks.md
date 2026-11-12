@@ -132,9 +132,9 @@ A key Google doesn't publish, or an email key that isn't pinned, is active on ch
    corepack pnpm --filter @hana-id/scripts run admin <env> owner:call unpause --yes
    ```
 
-6. **Review scope changes made with forged tokens** (who: scope owners). Hana lists every `change_proposed` event since the forged key's `issuer_key_set` and tells each scope's owners; they cancel the ones they didn't make (`cancel_change`, through `POST /v1/owner-actions` or directly on chain). Hana can't cancel scope changes. Changes that already executed, and immediate actions by forged owner tokens (`remove_client`, `disable_shared_login`), are reverted by the scope's owners.
+6. **Review scope changes made with forged tokens** (who: scope owners). Journear lists every `change_proposed` event since the forged key's `issuer_key_set` and tells each scope's owners; they cancel the ones they didn't make (`cancel_change`, through `POST /v1/owner-actions` or directly on chain). Journear can't cancel scope changes. Changes that already executed, and immediate actions by forged owner tokens (`remove_client`, `disable_shared_login`), are reverted by the scope's owners.
 
-7. **Find how the key got there** (who: a founder). A delay that ran out while the watchdog was down ([watchdog-down](#watchdog-down)), an owner post ([unexpected-owner-action](#unexpected-owner-action)), or an upgrade. An email key: the council posted it and the pins didn't list it, or an upgrade's migrate installed it; if it is Hana's own key that was never pinned, fix the pins (`watchdog.pinnedIssuerKeys.email`, then redeploy the watchdog) before the unpause, or the next run pauses again. Fix that path before closing.
+7. **Find how the key got there** (who: a founder). A delay that ran out while the watchdog was down ([watchdog-down](#watchdog-down)), an owner post ([unexpected-owner-action](#unexpected-owner-action)), or an upgrade. An email key: the council posted it and the pins didn't list it, or an upgrade's migrate installed it; if it is Journear's own key that was never pinned, fix the pins (`watchdog.pinnedIssuerKeys.email`, then redeploy the watchdog) before the unpause, or the next run pauses again. Fix that path before closing.
 
 **Verify**
 
@@ -196,7 +196,7 @@ A pending issuer key Google doesn't publish (or with other key material), an ema
 
 4. **Find the leak** (who: a founder). Signer account as proposer: `KEYS_UPDATER_KEY` is stolen. It lives in the API Worker's secrets and `.secrets/<env>/keys-updater.json`: follow [updater-key-stolen](#updater-key-stolen) (and [api-or-cloudflare-compromised](#api-or-cloudflare-compromised) if the Worker or the Cloudflare account is how it leaked). Owner as proposer: the proposal needed two council votes: follow [unexpected-owner-action](#unexpected-owner-action).
 
-5. **An email key that should have been pinned** (who: a founder). If the council meant to post a new email key (a rotation, or the first keys of batch 6), the pins were not updated first: the watchdog's pins come from its own manifest, never from chain or Hana's JWKS. Check the thumbprint against the key the issuer was given (`details.thumbprint`), add it under its signer in `watchdog.pinnedIssuerKeys.email`, regenerate and redeploy the watchdog, then the council posts the key again (it waits `governance_delay_ms`). Never pin a thumbprint you can't trace to Hana's own key.
+5. **An email key that should have been pinned** (who: a founder). If the council meant to post a new email key (a rotation, or the first keys of batch 6), the pins were not updated first: the watchdog's pins come from its own manifest, never from chain or Journear's JWKS. Check the thumbprint against the key the issuer was given (`details.thumbprint`), add it under its signer in `watchdog.pinnedIssuerKeys.email`, regenerate and redeploy the watchdog, then the council posts the key again (it waits `governance_delay_ms`). Never pin a thumbprint you can't trace to Journear's own key.
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
@@ -546,7 +546,7 @@ Its account isn't a contract watchdog, its key is missing or malformed, or its R
    corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
-5. **`pins_invalid`: regenerate the pins** (who: a founder). `EMAIL_PINS` doesn't parse, so no email key counts as pinned: pending email keys are cancelled and an active one pauses (D190). `gen` writes it from `watchdog.pinnedIssuerKeys.email`, which the schema validates: a broken value was set by hand or by a broken deploy. Regenerate and redeploy; if the watchdog paused on Hana's own keys meanwhile, the council unpauses once the next run is clean, and re-posts any email key it cancelled.
+5. **`pins_invalid`: regenerate the pins** (who: a founder). `EMAIL_PINS` doesn't parse, so no email key counts as pinned: pending email keys are cancelled and an active one pauses (D190). `gen` writes it from `watchdog.pinnedIssuerKeys.email`, which the schema validates: a broken value was set by hand or by a broken deploy. Regenerate and redeploy; if the watchdog paused on Journear's own keys meanwhile, the council unpauses once the next run is clean, and re-posts any email key it cancelled.
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
@@ -1046,7 +1046,7 @@ The email issuer on chain (`get_issuer("email")`, `get_self_issued("email")`) do
    corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
-3. **Nobody planned it: stay paused** (who: council (2 of 3)). A weaker policy can only come from an executed upgrade: follow [unexpected-owner-action](#unexpected-owner-action). Remove every email key that isn't Hana's own pinned key at once (`remove_issuer_key`, immediate), then raise the session floor past the pause before any unpause, as for a forged active key (follow [forged-active-key](#forged-active-key)).
+3. **Nobody planned it: stay paused** (who: council (2 of 3)). A weaker policy can only come from an executed upgrade: follow [unexpected-owner-action](#unexpected-owner-action). Remove every email key that isn't Journear's own pinned key at once (`remove_issuer_key`, immediate), then raise the session floor past the pause before any unpause, as for a forged active key (follow [forged-active-key](#forged-active-key)).
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run admin <env> owner:call remove_issuer_key --args '{"provider":"email","kid":"<kid>"}' --yes
@@ -1115,7 +1115,7 @@ The email issuer on chain (`get_issuer("email")`, `get_self_issued("email")`) do
 
 `email-jwks-mismatch` · warning · alert kinds: `email_jwks_mismatch`
 
-Hana's published email JWKS (`{emailIssuer.url}/v1/email/jwks.json`, the watchdog's `jwksUrl`) lists a key that isn't pinned, or lacks an active email key, or can't be fetched while email keys are active. Informational: the contract never reads it and the watchdog doesn't trust it.
+Journear's published email JWKS (`{emailIssuer.url}/v1/email/jwks.json`, the watchdog's `jwksUrl`) lists a key that isn't pinned, or lacks an active email key, or can't be fetched while email keys are active. Informational: the contract never reads it and the watchdog doesn't trust it.
 
 **Signals**
 
@@ -1133,7 +1133,7 @@ Hana's published email JWKS (`{emailIssuer.url}/v1/email/jwks.json`, the watchdo
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
    ```
 
-2. **An unknown published key** (who: a founder). Nobody on the team added it: the issuer Worker or Hana's Cloudflare account may be compromised. Follow [email-issuer-key-compromised](#email-issuer-key-compromised) and [api-or-cloudflare-compromised](#api-or-cloudflare-compromised).
+2. **An unknown published key** (who: a founder). Nobody on the team added it: the issuer Worker or Journear's Cloudflare account may be compromised. Follow [email-issuer-key-compromised](#email-issuer-key-compromised) and [api-or-cloudflare-compromised](#api-or-cloudflare-compromised).
 
 3. **Fetch failing** (who: a founder). The issuer Worker is down or its route moved (email logins then fail too). Check the issuer's deployment; if the URL changed on purpose, set `jwksUrl` in the pins and redeploy the watchdog.
 
@@ -1270,7 +1270,7 @@ A pending email key pinned for its signer, or a pending email key removal. Self-
 
 **Impact**
 
-- None when the council meant it: the key is Hana's own (pinned). A removal stops email logins signed with that key once it executes (DoS only).
+- None when the council meant it: the key is Journear's own (pinned). A removal stops email logins signed with that key once it executes (DoS only).
 
 **Steps**
 
@@ -1310,9 +1310,9 @@ The partner identity token's JWKS (`{iss}/jwks.json`) lists a key whose RFC 7638
 
 **Impact**
 
-- An unpinned key in the JWKS means whoever published it can sign identity tokens partners accept as any user of any app (identity at partners: credits, referrals, their accounts) until it is gone from the JWKS and the partners' caches (≤ 10 min). No wallet, key, Hana API or contract call accepts an identity token.
+- An unpinned key in the JWKS means whoever published it can sign identity tokens partners accept as any user of any app (identity at partners: credits, referrals, their accounts) until it is gone from the JWKS and the partners' caches (≤ 10 min). No wallet, key, Journear Passport API or contract call accepts an identity token.
 - A private member published: anyone who fetched the JWKS holds that signing key. A wrong `issuer` or `jwks_uri`: partners that use discovery check tokens against another issuer or fetch keys the watchdog doesn't see. An unreadable answer: the watchdog can't tell what partners are served.
-- Detection, not prevention: someone who controls Hana's Cloudflare account can serve the watchdog a clean JWKS and partners another, or publish a key between two runs. Only partners that pin thumbprints are safe from that.
+- Detection, not prevention: someone who controls Journear's Cloudflare account can serve the watchdog a clean JWKS and partners another, or publish a key between two runs. Only partners that pin thumbprints are safe from that.
 
 **Steps**
 
@@ -1429,7 +1429,7 @@ An active Google or email issuer key, or a pending key addition of any provider,
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" 'https://<workerName>.<subdomain>.workers.dev/alerts?severity=critical'
    ```
 
-2. **Find who posted it** (who: a founder). The change's proposer (`details` of the issuer-key alert): the updater account means its key is stolen ([updater-key-stolen](#updater-key-stolen)); the owner means a council action nobody explained ([unexpected-owner-action](#unexpected-owner-action)). Using an identity kid suggests someone with access to Hana's identity configuration: check it with [identity-signing-key-compromised](#identity-signing-key-compromised) in mind.
+2. **Find who posted it** (who: a founder). The change's proposer (`details` of the issuer-key alert): the updater account means its key is stolen ([updater-key-stolen](#updater-key-stolen)); the owner means a council action nobody explained ([unexpected-owner-action](#unexpected-owner-action)). Using an identity kid suggests someone with access to Journear's identity configuration: check it with [identity-signing-key-compromised](#identity-signing-key-compromised) in mind.
 
    ```sh
    curl -s <apiUrl>/v1/governance | jq '{paused, keyChanges, issuers, updater}'
@@ -1453,7 +1453,7 @@ An active Google or email issuer key, or a pending key addition of any provider,
 
 `home-budget-high` · warning
 
-A `home_budget_high` security event: a day's Hana Home derives reached 80% of `homeDerivesPerDay` (default 500).
+A `home_budget_high` security event: a day's Passport Home derives reached 80% of `homeDerivesPerDay` (default 500).
 
 **Signals**
 
@@ -1461,7 +1461,7 @@ A `home_budget_high` security event: a day's Hana Home derives reached 80% of `h
 
 **Impact**
 
-- At the ceiling Hana Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Where links aren't open, identities not otherwise known can use only 20% of it.
+- At the ceiling Passport Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Where links aren't open, identities not otherwise known can use only 20% of it.
 
 **Steps**
 
@@ -1471,7 +1471,7 @@ A `home_budget_high` security event: a day's Hana Home derives reached 80% of `h
 
 **Verify**
 
-- The next day's `home_usage` row stays under the ceiling, or Hana Home derives answer again after the ceiling was raised.
+- The next day's `home_usage` row stays under the ceiling, or Passport Home derives answer again after the ceiling was raised.
 
 **Follow-ups**
 
@@ -1485,7 +1485,7 @@ A `home_budget_high` security event: a day's Hana Home derives reached 80% of `h
 
 `near-relay-budget-high` · warning
 
-A `near_relay_budget_high` security event: a day's NEAR relay spend (gas and activations paid for Hana's NEAR wallets) reached 80% of `near.relay.dailyBudgetNear` (sandbox-dev 5 NEAR).
+A `near_relay_budget_high` security event: a day's NEAR relay spend (gas and activations paid for Journear's NEAR wallets) reached 80% of `near.relay.dailyBudgetNear` (sandbox-dev 5 NEAR).
 
 **Signals**
 
@@ -1493,7 +1493,7 @@ A `near_relay_budget_high` security event: a day's NEAR relay spend (gas and act
 
 **Impact**
 
-- At the budget every relay and activation answers `503 relay_budget_exhausted` until 00:00 UTC; an app at its own day budget (`appDailyBudgetNear`) answers `429 app_budget_exhausted`. Logins, owner actions and Hana Home are on other accounts and unaffected.
+- At the budget every relay and activation answers `503 relay_budget_exhausted` until 00:00 UTC; an app at its own day budget (`appDailyBudgetNear`) answers `429 app_budget_exhausted`. Logins, owner actions and Passport Home are on other accounts and unaffected.
 
 **Steps**
 
@@ -1713,7 +1713,7 @@ The key that wraps every vault share `K_s` in D1 leaked. Revoke every share firs
 
 `api-or-cloudflare-compromised` · critical
 
-Someone changed what the API or page Workers run, or controls Hana's main Cloudflare account: the page-serving trust root, the updater key, the relayer pools, D1 and `VAULT_KEK`.
+Someone changed what the API or page Workers run, or controls Journear's main Cloudflare account: the page-serving trust root, the updater key, the relayer pools, D1 and `VAULT_KEK`.
 
 **Signals**
 
@@ -2164,7 +2164,7 @@ Google's signing keys can't be fetched, or Google's new kid isn't active on chai
    near contract call-function as-transaction <signer> execute_issuer_key_change json-args '{"id":<id>}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as <any funded account> network-config testnet sign-with-legacy-keychain send
    ```
 
-3. **Restore what blocks it** (who: a founder). A deleted updater key: install a fresh one ([updater-key-stolen](#updater-key-stolen)'s Rotate step). A watchdog that can't confirm: [confirm-failed](#confirm-failed) / [watchdog-cannot-act](#watchdog-cannot-act). A JWKS outage on Google's side: wait; nothing on Hana's side fixes it.
+3. **Restore what blocks it** (who: a founder). A deleted updater key: install a fresh one ([updater-key-stolen](#updater-key-stolen)'s Rotate step). A watchdog that can't confirm: [confirm-failed](#confirm-failed) / [watchdog-cannot-act](#watchdog-cannot-act). A JWKS outage on Google's side: wait; nothing on Journear's side fixes it.
 
 **Verify**
 
@@ -2182,7 +2182,7 @@ Google's signing keys can't be fetched, or Google's new kid isn't active on chai
 
 `google-enforces-coop` · warning
 
-A page of the login popup's trip (Google's sign-in pages, or Hana's callback) sends an enforcing Cross-Origin-Opener-Policy: the vault's popup-close watch (D347) can read a popup that is still at Google as closed and cancel the login.
+A page of the login popup's trip (Google's sign-in pages, or Journear's callback) sends an enforcing Cross-Origin-Opener-Policy: the vault's popup-close watch (D347) can read a popup that is still at Google as closed and cancel the login.
 
 **Signals**
 
@@ -2193,11 +2193,11 @@ A page of the login popup's trip (Google's sign-in pages, or Hana's callback) se
 
 - Enforcement on Google's first page: D347's 8 s rule takes the close for a COOP switch and stops the watch, so logins still finish through the relay; a user who really closes the popup waits for the 5-minute `login_timeout` instead of `login_cancelled`.
 - Enforcement on a later page (one the user reaches after 8 s: the password, a second factor, consent): the login is cancelled while the user is still at Google. Those users cannot sign in with Google until the watch is changed.
-- An enforcing policy on Hana's own callback or auth pages is a Hana regression: those pages must send none (docs/api.md), and the callback's `back` signal to the vault needs its opener.
+- An enforcing policy on Journear's own callback or auth pages is a Journear regression: those pages must send none (docs/api.md), and the callback's `back` signal to the vault needs its opener.
 
 **Steps**
 
-1. **Confirm and find the page** (who: a founder). Run the canary again: the header check names each enforcing hop (status, host and path) under each User-Agent; the browser check says in which browsers `.closed` flips, and at what time. A Google change that comes and goes (an experiment) still counts. A finding on Hana's host: revert the change that added the header and redeploy the page Workers.
+1. **Confirm and find the page** (who: a founder). Run the canary again: the header check names each enforcing hop (status, host and path) under each User-Agent; the browser check says in which browsers `.closed` flips, and at what time. A Google change that comes and goes (an experiment) still counts. A finding on Journear's host: revert the change that added the header and redeploy the page Workers.
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run coop-canary <env>
@@ -2210,7 +2210,7 @@ A page of the login popup's trip (Google's sign-in pages, or Hana's callback) se
 **Verify**
 
 - `coop-canary <env>` passes, or its remaining finding is on a page the changed watch tolerates and the decision says so (then update the canary's rules with it).
-- A Google login that waits longer than 8 s on the enforcing page is not cancelled; closing the popup on a Hana page still ends the login within seconds.
+- A Google login that waits longer than 8 s on the enforcing page is not cancelled; closing the popup on a Journear page still ends the login within seconds.
 
 **Follow-ups**
 
@@ -2275,7 +2275,7 @@ The manifest's `rpc` provider is down or wrong. The API fails over to its `apiRp
 
 `mpc-ckd-outage` · critical
 
-The NEAR MPC network doesn't answer `request_app_private_key`: new logins can't derive keys. The MPC is NEAR's, not Hana's.
+The NEAR MPC network doesn't answer `request_app_private_key`: new logins can't derive keys. The MPC is NEAR's, not Journear's.
 
 **Signals**
 
@@ -2295,7 +2295,7 @@ The NEAR MPC network doesn't answer `request_app_private_key`: new logins can't 
    corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status error
    ```
 
-2. **Tell partners** (who: a founder). Logins fail until the MPC recovers; persisted sessions keep working. Nothing on Hana's side restarts it.
+2. **Tell partners** (who: a founder). Logins fail until the MPC recovers; persisted sessions keep working. Nothing on Journear's side restarts it.
 
 3. **If the MPC public key changed** (who: a founder). Derives fail the pairing check against the pinned key. Read the key from ≥ 3 providers without writing (`--dry-run`); never re-pin without a recorded decision: it changes every address.
 
@@ -2377,12 +2377,12 @@ Someone controls a partner's own Google OAuth client (e.g. added a redirect URI)
 
 **Signals**
 
-- The partner reports changes in their Google Cloud project, or logins in their scope Hana's vault didn't start.
+- The partner reports changes in their Google Cloud project, or logins in their scope Journear's vault didn't start.
 
 **Impact**
 
 - That scope's users who sign in through the attacker's flow: their keys in that scope are exposed (can't be undone: they move funds). Other scopes are unaffected.
-- Hana can't remove a scope's client: only the scope's owners can.
+- Journear can't remove a scope's client: only the scope's owners can.
 
 **Steps**
 
@@ -2390,7 +2390,7 @@ Someone controls a partner's own Google OAuth client (e.g. added a redirect URI)
 
 2. **Fix the Google Cloud project** (who: scope owners). Credentials, redirect URIs, JavaScript origins, project members.
 
-3. **Stop the app meanwhile if needed** (who: a founder). Suspending the app (D1 only) stops logins through Hana's API and vault for it; it doesn't stop direct contract calls with the client's tokens. A system-wide pause is the last resort (every app).
+3. **Stop the app meanwhile if needed** (who: a founder). Suspending the app (D1 only) stops logins through Journear's API and vault for it; it doesn't stop direct contract calls with the client's tokens. A system-wide pause is the last resort (every app).
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run admin <env> app:suspend --app <app id | publishable key> --remote
@@ -2413,11 +2413,11 @@ Someone controls a partner's own Google OAuth client (e.g. added a redirect URI)
 
 `shared-google-client-compromised` · critical
 
-Someone controls Hana's shared login client: isolation of every `allow_shared` scope is broken.
+Someone controls Journear's shared login client: isolation of every `allow_shared` scope is broken.
 
 **Signals**
 
-- Changes in Hana's Google Cloud project nobody made (redirect URIs, credentials, members).
+- Changes in Journear's Google Cloud project nobody made (redirect URIs, credentials, members).
 
 **Impact**
 
@@ -2486,7 +2486,7 @@ A user's derived key (PRK or a chain key) was exposed: it can't be revoked; the 
 
 `email-issuer-key-compromised` · critical · **planned: not built yet**
 
-Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can make Hana's email issuer key sign can mint email tokens for any `sub` and derive the wallet of any email user (and of accounts linked to one).
+Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can make Journear's email issuer key sign can mint email tokens for any `sub` and derive the wallet of any email user (and of accounts linked to one).
 
 **Signals**
 
@@ -2525,11 +2525,11 @@ Whoever holds an identity signing key can forge any user's identity token for an
 **Signals**
 
 - The API Worker's secrets, `.secrets/<env>/identity-signing-key*.json` or the operator's machine were exposed; a partner reports a token they didn't expect (a valid signature for a session that never existed).
-- No watchdog alert: a stolen key signs under its own, pinned kid, so the JWKS doesn't change and the watchdog's pin check (D210) sees nothing. It pages only when a key of the attacker's own, or private key material, is published ([identity-jwks-forged](#identity-jwks-forged)). Not built yet (planned with step 7's KMS signer): the `Sign` reconciliation against `identity_issuance_hourly`, which would show signatures Hana didn't count.
+- No watchdog alert: a stolen key signs under its own, pinned kid, so the JWKS doesn't change and the watchdog's pin check (D210) sees nothing. It pages only when a key of the attacker's own, or private key material, is published ([identity-jwks-forged](#identity-jwks-forged)). Not built yet (planned with step 7's KMS signer): the `Sign` reconciliation against `identity_issuance_hourly`, which would show signatures Journear didn't count.
 
 **Impact**
 
-- Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app (identity at partners: credits, referrals, their own accounts), until the key is removed and their JWKS caches refresh (≤ 10 min). No wallet, key or Hana API is reachable with a token.
+- Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app (identity at partners: credits, referrals, their own accounts), until the key is removed and their JWKS caches refresh (≤ 10 min). No wallet, key or Journear Passport API is reachable with a token.
 - Tokens already accepted can't be recalled: partners must re-check what they granted in the window.
 
 **Steps**
@@ -2609,7 +2609,7 @@ No env signs with AWS KMS yet (the adapter is built, the AWS account isn't: docs
 
 **Impact**
 
-- Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app, until the access key is revoked and the key is out of partners' JWKS caches (≤ 10 min after the deploy). Every forged signature is in CloudTrail, so the window and the count are known. No wallet, key or Hana API is reachable with a token.
+- Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app, until the access key is revoked and the key is out of partners' JWKS caches (≤ 10 min after the deploy). Every forged signature is in CloudTrail, so the window and the count are known. No wallet, key or Journear Passport API is reachable with a token.
 
 **Steps**
 

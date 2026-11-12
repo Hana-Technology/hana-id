@@ -55,20 +55,14 @@ describe('the page', () => {
   });
 
   it('the strings the page shows say Journear, Journear Passport or Passport Home, not Hana', () => {
-    // The signed test texts stay as they are (what a user signs is not reworded here), and the identity token's type
-    // is a protocol value.
-    const kept = new Set([
-      "'Hana ID testnet demo: this signature proves nothing and moves nothing.'",
-      "'Hana ID testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.'",
-      "'Hello from Hana ID (a signed NEAR transaction)'",
-    ]);
+    // The signed test texts were renamed too (D766): only identifiers and package names may still say hana.
     for (const file of ['src/errors.ts', 'src/page.ts', 'src/near-card.ts', 'src/requests.ts', 'src/near.ts']) {
       const code = read(file)
         .split('\n')
         .filter((l) => !/^\s*(\/\/|\*|\/\*\*)/u.test(l))
         .join('\n');
       const strings = [...code.matchAll(/'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/gu)].map((m) => m[0]);
-      for (const s of strings) if (/\bHana\b(?![A-Z])/u.test(s)) expect(kept.has(s), `${file}: ${s}`).toBe(true);
+      for (const s of strings) expect(/\bHana\b(?![A-Z])/u.test(s), `${file}: ${s}`).toBe(false);
     }
   });
 });

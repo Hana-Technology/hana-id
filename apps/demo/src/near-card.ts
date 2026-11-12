@@ -59,9 +59,9 @@ const BUSY_RETRIES = 2;
 const ACTIVATION_TRIES = 10;
 
 /** NEP-413's demo message: harmless to sign, proves the account only to whoever checks the nonce. */
-export const NEAR_TEST_MESSAGE = 'Hana ID testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.';
+export const NEAR_TEST_MESSAGE = 'Journear Passport testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.';
 /** The text "Sign a transaction" uses when the message box holds no valid message. */
-export const DEFAULT_TX_TEXT = 'Hello from Hana ID (a signed NEAR transaction)';
+export const DEFAULT_TX_TEXT = 'Hello from Journear Passport (a signed NEAR transaction)';
 
 export const STAGES = {
   reading: 'Reading your NEAR account on testnet…',

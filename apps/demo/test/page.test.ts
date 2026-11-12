@@ -1005,7 +1005,7 @@ describe('the NEAR card', () => {
     await settle();
     expect(rpc.sent).toEqual(['U0lHTkVEVFJBTlNBQ1RJT05TSUdORURUUkFOU0FDVElPTg==']);
     const tx = decodeNearTransaction(fake.near.signTransaction.mock.calls[0]![0].transaction as Uint8Array);
-    expect(JSON.parse(new TextDecoder().decode((tx.actions[0] as { args: Uint8Array }).args))).toEqual({ text: 'Hello from Hana ID (a signed NEAR transaction)' });
+    expect(JSON.parse(new TextDecoder().decode((tx.actions[0] as { args: Uint8Array }).args))).toEqual({ text: 'Hello from Journear Passport (a signed NEAR transaction)' });
     const item = $('near-results').querySelector('li')!;
     expect(item.textContent).toContain('signed and sent');
     expect(item.querySelector('a')!.getAttribute('href')).toBe(`https://testnet.nearblocks.io/txns/${TX_HASH}`);
@@ -1018,7 +1018,7 @@ describe('the NEAR card', () => {
     click('sign-near-message');
     expect(fake.near.signMessage).toHaveBeenCalledTimes(1);
     const p = fake.near.signMessage.mock.calls[0]![0];
-    expect(p.message).toBe('Hana ID testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.');
+    expect(p.message).toBe('Journear Passport testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.');
     expect(p.recipient).toBe('hana-id-demo-sandbox-dev.tingtc.workers.dev');
     expect((p.nonce as Uint8Array).length).toBe(32);
     await settle();

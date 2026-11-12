@@ -181,9 +181,67 @@ describe('docs/integration.md: NEAR (section 8)', () => {
     expect(NEP413_TAG).toBe(2 ** 31 + 413);
     expect(s8).toContain('`u32le(2^31 + 413)`');
     expect(NEAR_DELEGATE_MAX_BLOCKS).toBe(10_000);
-    expect(s8).toContain("import { nearDelegateNonce } from '@hana-id/core/near';");
-    expect(s8).toContain('nearDelegateNonce({ keyNonce: key.nonce, blockHeight: key.block_height })');
+    expect(s8).toMatch(/^import \{ [^}]*\bnearDelegateNonce\b[^}]* \} from '@hana-id\/core\/near';$/mu);
+    expect(s8).toContain('nonce: nearDelegateNonce({ keyNonce, blockHeight }),');
     expect(vault).toContain('near_delegate_nonce_stale');
     expect(s8).toContain('by at most 10,000 blocks');
+  });
+
+  // Hana's relay as sandbox-dev runs it: the manifest's `near.relay` and the API's fixed limits.
+  const manifest = JSON.parse(readText('../../../envs/sandbox-dev.json')) as {
+    apiUrl: string;
+    near: { demoGuestbook: string; relay: { receivers: string[]; maxGasTgas: number; perSenderPerDay: number; perAppPerDay: number; relaysPerDay: number; relaysPerMinute: number; activationsPerAppPerDay: number; activationsPerDay: number; appDailyBudgetNear: number; dailyBudgetNear: number } };
+  };
+  const relayConfig = readText('../../../apps/api/src/near/relay-config.ts');
+  /** A fixed limit of the API's NEAR_RELAY_LIMITS. */
+  const fixed = (name: string): number => {
+    const m = new RegExp(`\\n  ${name}: ([\\d_]+),`, 'u').exec(relayConfig.slice(relayConfig.indexOf('NEAR_RELAY_LIMITS = {')));
+    if (!m?.[1]) throw new Error(`NEAR_RELAY_LIMITS.${name} not found`);
+    return Number(m[1].replaceAll('_', ''));
+  };
+  const n = (v: number): string => v.toLocaleString('en-US');
+
+  it("the quick start's guestbook is sandbox-dev's demo guestbook, on its relay's allowlist, within its gas cap", () => {
+    const { demoGuestbook, relay } = manifest.near;
+    expect(relay.receivers).toEqual([demoGuestbook]);
+    expect(s8).toContain(`const GUESTBOOK = '${demoGuestbook}';`);
+    expect(s8).toContain(`it holds only Hana's demo guestbook, \`${demoGuestbook}\``);
+    expect(s8).toContain(`its calls attach at most **${relay.maxGasTgas} Tgas** together on sandbox-dev`);
+    expect(s8).toContain(`gas: ${n(relay.maxGasTgas * 1e12).replaceAll(',', '_')}n, deposit: 0n }`);
+    // The quick start's expiry fits the relay's (and so the vault's) bound.
+    expect(s8).toContain('maxBlockHeight: blockHeight + 600n,');
+    expect(600).toBeLessThanOrEqual(fixed('maxBlocksAhead'));
+    expect(s8).toContain(`at most **${n(fixed('maxBlocksAhead'))} blocks** ahead`);
+  });
+
+  it("the limits table is sandbox-dev's", () => {
+    const r = manifest.near.relay;
+    for (const row of [
+      `| Per NEAR account | ${fixed('perSenderPerMinute')} a minute, ${n(r.perSenderPerDay)} a day | ${fixed('activateReadsPerAccountPerMinute')} requests a minute |`,
+      `| Per user (all their NEAR accounts) | ${n(fixed('perUserPerDay'))} a day | ${fixed('activationsPerUserPerDay')} a day |`,
+      `| Per app | ${fixed('perAppPerMinute')} a minute, ${n(r.perAppPerDay)} a day | ${fixed('activateReadsPerAppPerMinute')} requests a minute, ${n(r.activationsPerAppPerDay)} a day |`,
+      `| Per IP address, across every app | ${fixed('perIpPerMinute')} a minute | ${fixed('activationsPerIpPerMinute')} a minute |`,
+      `| Across the environment | ${n(r.relaysPerMinute)} a minute, ${n(r.relaysPerDay)} a day | ${fixed('activateReadsPerMinute')} requests a minute, ${n(r.activationsPerDay)} a day |`,
+      `| NEAR spent per day | ${r.appDailyBudgetNear} NEAR per app (\`rate_limited\`, \`data.reason: 'app_budget_exhausted'\`), ${r.dailyBudgetNear} NEAR across the environment`,
+    ]) {
+      expect(s8).toContain(row);
+    }
+  });
+
+  it("every code Hana's relay answers has a row in the NEAR error table", () => {
+    const table = s8.slice(s8.indexOf('<a id="near-errors"></a>'), s8.indexOf('<a id="near-not-yet"></a>'));
+    const relay = readText('../../../apps/api/src/near/relay.ts');
+    // Codes that are logged, never answered.
+    const logOnly = new Set(['near_relay_budget_high', 'not_enough_balance']);
+    const answered = [...relay.matchAll(/(?:reject\(ctx, [\w.]+, |code: )'([a-z_]+)'/gu)].map((m) => m[1]!).filter((c) => !logOnly.has(c));
+    expect(answered.length).toBeGreaterThan(20);
+    // The relayer key object's answers on the NEAR path, the app gate's, and the copy refusal.
+    const others = ['relayer_busy', 'relayer_unavailable', 'relayer_unconfigured', 'near_unavailable', 'near_rejected', 'near_error', 'timeout', 'contract_rejected', 'already_relayed', 'missing_key', 'unknown_app', 'scope_conflict', 'origin_not_allowed', 'app_suspended'];
+    for (const code of new Set([...answered, ...others])) expect(table, code).toContain(`\`${code}\``);
+  });
+
+  it("names sandbox-dev's API origin for the CSP that relay and activate need", () => {
+    const s5 = guide.slice(guide.indexOf('## 5. Your page'), guide.indexOf('## 6. Google client'));
+    for (const part of [s5, s8]) expect(part).toContain(`\`${manifest.apiUrl}\``);
   });
 });

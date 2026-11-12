@@ -1,15 +1,16 @@
 # @hana-id/web
 
-Hana ID's browser SDK. Your users sign in with Google and get a Stellar and an EVM wallet, with no extension or seed
-phrase. You sign through standard interfaces: an EIP-1193 provider, a Stellar signer and a Stellar Wallets Kit module.
+Hana ID's browser SDK. Your users sign in with Google and get a Stellar and an EVM wallet and a NEAR account, with no
+extension or seed phrase. You sign through standard interfaces: an EIP-1193 provider, a Stellar signer and a Stellar
+Wallets Kit module, and a NEAR signer (`hana.near`) with gasless calls through Hana's relay.
 Keys and Google tokens never reach your page. They stay in a hidden Hana iframe, and every signature needs the user's
 Approve in a Hana popup, unless it falls under an auto-approve policy you set and the user accepted.
 
 > **Testnet pilot.** Keys come from the NEAR testnet MPC and are disposable until Hana's address freeze. A test app
 > (`pk_test_…`) signs for test networks only. Don't keep real funds in pilot wallets.
 >
-> NEAR is Hana's own chain (it derives the keys and records the logins): your users get Stellar and EVM wallets, and
-> your app never talks to NEAR.
+> NEAR is also Hana's own chain (it derives the keys and records the logins). Since 0.4.0 your users get a NEAR
+> account of their own as well (testnet for a test app), separate from Hana's.
 
 ## Install
 
@@ -57,7 +58,7 @@ const hana = createHana({
 
 await hana.ready;  // the vault is up; a reload has already been restored
 hana.status;       // 'logged_out' | 'unlocking' | 'logging_in' | 'logged_in' | 'error'
-hana.addresses;    // { stellar: 'G…', evm: '0x…' } or null
+hana.addresses;    // { stellar: 'G…', evm: '0x…', near: '6e5e…' (64 hex) } or null
 
 button.addEventListener('click', async () => {
   const { stellar, evm } = await hana.login(); // call it directly in the click handler, before any await
@@ -75,7 +76,7 @@ knows. This release ships:
 
 | `environment` | Hana runs on | Vault origin | Auth origin |
 |---|---|---|---|
-| `sandbox-dev` | NEAR testnet (Hana's side only: your users' wallets are Stellar and EVM) | `https://hana-id-vault-sandbox-dev.tingtc.workers.dev` | `https://hana-id-auth-sandbox-dev.tingtc.workers.dev` |
+| `sandbox-dev` | NEAR testnet (Hana's side, and your users' NEAR accounts) | `https://hana-id-vault-sandbox-dev.tingtc.workers.dev` | `https://hana-id-auth-sandbox-dev.tingtc.workers.dev` |
 
 ### Signing
 
@@ -91,7 +92,20 @@ const { signedTxXdr } = await hana.stellar.signTransaction(xdr, { networkPassphr
 // Stellar Wallets Kit (1.9.x and 2.x)
 import { HanaIdModule } from '@hana-id/web/stellar-wallets-kit';
 const kit = new StellarWalletsKit({ network, modules: [new HanaIdModule(hana), ...otherModules] });
+
+// NEAR (0.4.0): the user's implicit account; a gasless call through Hana's relay (testnet)
+hana.near.accountId;                                     // 64 hex, or null
+await hana.near.activate();                              // before the click: creates a new user's account
+const { signedDelegateAction } = await hana.near.signDelegateAction({ network: 'testnet', delegateAction }); // borsh DelegateAction
+const { transactionHash } = await hana.near.relay({ network: 'testnet', signedDelegateAction });             // Hana pays the gas
+await hana.near.signTransaction({ network: 'testnet', transaction });                    // an ordinary transaction
+await hana.near.signMessage({ message, recipient, nonce });                              // NEP-413 sign-in
 ```
+
+NEAR requests always show Hana's window (no auto-approval). `@hana-id/core/near` builds the bytes
+(`encodeNearDelegateAction`, `nearDelegateNonce`). Hana's relay sends only function calls with no deposit to contracts
+Hana allowlists for the environment (ask Hana to add yours), for users who signed in to your app with 0.4.0. The
+partner guide's section 8 has the full flow, the relay's limits and every NEAR error code.
 
 Call the signing methods directly in your click handler, before any `await`: the Hana approval popup opens in that
 click, as `login()` does, and the user approves there; the popup decodes the request itself. Without a click (or
@@ -120,7 +134,8 @@ hana.on('identityTokenChanged', (t) => { /* a fresh token, or null after logout 
 
 Your backend verifies it against Hana's JWKS (`{iss}/jwks.json`) with any JOSE library, pinned to ES256, checking
 `iss`, `aud` (your app id) and `typ: hana-identity+jwt`. It says who the user is in your app (`sub`), which session
-this is (`sid`) and which wallets they hold (`wallets`, each proven by its key). Lifetime ≤ 1 h; the SDK caches it
+this is (`sid`) and which wallets they hold (`wallets`, each proven by its key; Stellar and EVM only, so prove a NEAR
+account with `hana.near.signMessage`). Lifetime ≤ 1 h; the SDK caches it
 across tabs and refreshes it 5 min before `exp` (`{ maxAgeMs }` for a fresher one). Hana's partner guide has the
 verification code.
 
@@ -145,6 +160,7 @@ sharing on the same sheet or in the approval window; new tokens then have no ema
 | Run on one of your app's origins, exactly (pin your dev server's port: Vite `server: { strictPort: true }`) | `vault_unavailable` (`no_answer`, naming the page's origin) |
 | Allow the vault origin in CSP `frame-src` | `vault_unavailable` |
 | Allow your own EVM / Stellar RPCs in CSP `connect-src` | your RPC calls fail |
+| Allow Hana's API origin in CSP `connect-src` if you use `hana.near.relay` or `activate` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev`) | `api_unavailable` |
 | Call `login()` and `eth_requestAccounts` from a click | one extra click (Hana's fallback button) |
 | Not send `Cross-Origin-Opener-Policy: same-origin` | `coop_blocks_popup` |
 | Leave Hana's 320×72 px button (bottom right) uncovered | users can't approve |
@@ -156,7 +172,7 @@ browsers (Instagram, TikTok webviews), where Google refuses to sign in.
 
 A `pk_test_…` app signs only for test networks: any Stellar network but the public one, and the EVM testnets in
 `TEST_EVM_CHAINS` (Sepolia, Base Sepolia, Arbitrum Sepolia, OP Sepolia, Sonic testnets, BNB testnet, Amoy, Fuji,
-Holesky, Hoodi, local 31337/1337). Anything a mainnet would accept is refused with `4100`
+Holesky, Hoodi, local 31337/1337), and NEAR testnet. Anything a mainnet would accept is refused with `4100`
 (`data.reason: 'mainnet_not_allowed'`) before any popup. Raw signing is never available to test apps.
 
 Hana's own sandbox mainnet demo (not available to partner apps) shows on the client as `hana.mainnetDemo` (its rules
@@ -172,10 +188,12 @@ codes (the Hana code in `data.code`). An error from Hana's API carries its reque
 logged in or not allowed (`data.reason`); `4900` the vault is gone, or with `data.reason: 'signed_out'` Hana signed this
 device out (the `disconnect` event then has `reason: 'signed_out'` too): ask the user to log in again, no reload; `4902` chain not in `evm.chains`;
 `vault_unavailable` (`data.reason`; `no_answer` when the page's origin isn't one of your app's origins), `popup_blocked`,
-`login_timeout`, `rate_limited`.
+`login_timeout`, `rate_limited`. NEAR refusals carry `data.reason` (`near_key_unknown`: call `activate()` first;
+`near_account_unrecorded` from the relay just after a login: retry for about 20 s).
 
 ## More
 
 Hana's partner guide (ask Hana for the current copy) covers the partner portal, events, sessions, key export,
-auto-approve policies, your own Google client, the identity token's verification and every error code. React bindings:
+auto-approve policies, your own Google client, NEAR and Hana's relay, the identity token's verification and every
+error code. React bindings:
 `@hana-id/react`. Sodax wallet providers: `@hana-id/sodax`.

@@ -11373,3 +11373,24 @@ by the user 2026-11-11 (NEAR support for the NEAR hackathon); details decided wh
 - Why: a zero-balance account can't pay gas; broadcasting would only fail.
 - Rejected: `@near-js/transactions` (a second borsh implementation and more bundle for the same bytes).
 - Address impact: none.
+
+## The Journear Passport rebrand and redesign (branch `feat/journear-design`), 2026-11-12
+
+Built on `feat/journear-design` (from `develop` 6ab570b1) and its area branches, not merged, not deployed. No path, key
+rule, protocol string or address changes: only what users read and how pages look.
+
+### D765. Every Hana ID frontend follows the Journear Passport design system; the product is renamed for users
+- Date 2026-11-12 · Status: **asked for by the user 2026-11-12** ("can we update so that all our frontends follow this design system?", the Journear Passport design system v0.5, https://claude.ai/artifact/Ub6zWLCFWbyB4R6Z6Rukco); the scope, names, depth and fonts **decided by the user 2026-11-12** in answers; the token fixes below decided while building, for the user to confirm · Built: `packages/brand` (`tokens.css`, `components.css` (new), `fonts.css`, `fonts/`, `logo/`, `src/index.ts` (`BRAND`, `FONT_FILES`, `markSvg`), `src/check.ts`, `test/brand.test.ts`) · Amends D426 (its token set, typefaces and mark are replaced; its rules stand: one token set, fonts self-hosted on each origin, `font-src 'self'`, AA tested in both schemes)
+- Decision (the user's):
+  - **Full rebrand.** What users, partners and staff read: "Hana ID" → **Journear Passport**, "Hana" on its own (the company or service) → **Journear**, "Hana Home" → **Passport Home**. Code identifiers don't change: package names (`@hana-id/*`), SDK symbols (`createHana`, `HanaError`, `hana.*`), env and account names, origins, storage keys, message types, error codes, and every signed, hashed or domain-separation string.
+  - **Scope:** everything in hana-id (both consoles, the sign-in, approval, export, email and share popups, Passport Home, the vault launcher, the demo and the smoke pages, the designed emails, and SDK and API messages), and in the sample partner repo only the elements that show Journear Passport itself. The sample keeps its Sodax styling.
+  - **Depth:** the restyle, plus the system's behavioural patterns (the save bar, toasts, setting rows, choice cards, validate on blur, the confirm-and-sign layout, the 3-step export with its checkbox), plus its voice (plain and short, no crypto jargon for users).
+  - **Fonts self-hosted:** Archivo 500/700/900, IBM Plex Sans 400/500/600 and IBM Plex Mono 400/500, all OFL 1.1, from Fontsource's npm builds (`@fontsource/*@5.3.0`), Latin subset, each licence beside them. Never Google Fonts, so no font request leaves our origins.
+  - **App-name guard:** partner app names are also refused when they contain "Journear" or a look-alike; "Hana" stays refused; "Passport" alone is allowed (amends D686).
+- Decided while building:
+  - The system's `tokens.css` is taken as published (`--jp-*`), with three WCAG AA fixes: the light warning text is #935F12 (the system's #B7791F is 3.3:1 on its own warning background); the dark pressed primary is #2A9488 (#248578 gave its label 3.8:1); and `--jp-on-danger` is new (light text on the dark scheme's danger fill was 2.7:1). `--hana-*` is gone, with no aliases.
+  - `components.css` is the system page's `.jp-*` rules as published, minus the page's own chrome. Its danger button reads `--jp-on-danger`, and a reduced-motion rule is scoped to `.jp-*`.
+  - The mark in code has a 106 × 100 viewBox, so the chevron's round tail isn't clipped.
+  - Fontsource's Latin subset (U+0000–00FF and the usual punctuation) replaces Montserrat's wider U+0000–017F. Latin Extended-A characters (such as "Ł" or "ő") are drawn by the system fallback.
+- Why: the user is moving the product to the Journear Passport brand. One token set and one component file keep every page consistent and make the next change a one-place change.
+- Address impact: none.

@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SDK_PACKAGES, fileListProblems, localPathProblems, manifestProblems, sourceMapProblems, typeCommentProblems } from '../lib/pack-check.ts';
+import { SDK_PACKAGES, codeBlocks, fileListProblems, localPathProblems, manifestProblems, sampleModule, sourceMapProblems, typeCommentProblems } from '../lib/pack-check.ts';
 import { buildPackage, outDirOf, rewriteDtsSpecifiers } from '../lib/sdk-build.ts';
 import { checkVersion, setSdkVersion, withPackageVersion, withVersionConstant } from '../lib/sdk-version.ts';
 
@@ -302,3 +302,39 @@ describe('sdk-version', () => {
   });
 });
 
+
+describe("the partner guide's samples (pack check)", () => {
+  const md = ['# Guide', '```ts', 'outside();', '```', '### Part', 'text', '```ts', "import { a } from 'm';", 'a();', '```', '```sh', 'npm i', '```', '```tsx', '<X />', '```', '```ts', "import type { T } from 'm';", "import { b, type U } from 'n';", 'const t: T = b();', '```', '### Next', '```ts', 'after();', '```'].join('\n');
+
+  it('codeBlocks takes only the ts blocks between the two headings', () => {
+    expect(codeBlocks(md, '### Part', '### Next')).toEqual(["import { a } from 'm';\na();", "import type { T } from 'm';\nimport { b, type U } from 'n';\nconst t: T = b();"]);
+    expect(() => codeBlocks(md, '### Missing', '### Next')).toThrow(/No part/u);
+    expect(() => codeBlocks('### A\n```ts\nx\n### B', '### A', '### B')).toThrow(/unclosed/u);
+  });
+
+  it('sampleModule merges the imports per module, a value import covering its type, then the prelude and the code in order', () => {
+    const out = sampleModule(codeBlocks(md, '### Part', '### Next'), 'declare const p: number;', { m: ['T', 'c'] });
+    expect(out).toBe(
+      [
+        "import { a, c, T } from 'm';",
+        "import { b, type U } from 'n';",
+        '',
+        'declare const p: number;',
+        '',
+        '// ---- sample 1 ----',
+        'a();',
+        '',
+        '// ---- sample 2 ----',
+        'const t: T = b();',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it("sampleModule keeps a type-only import as one, and refuses import forms it can't merge or no samples", () => {
+    expect(sampleModule(["import type { T } from 'm';\nlet t: T;"], '')).toContain("import { type T } from 'm';");
+    expect(() => sampleModule(["import * as m from 'm';"], '')).toThrow(/only/u);
+    expect(() => sampleModule(["import x from 'm';"], '')).toThrow(/only/u);
+    expect(() => sampleModule([], '')).toThrow(/No code sample/u);
+  });
+});

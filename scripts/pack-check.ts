@@ -8,9 +8,11 @@
 //      and @hana-id ranges.
 //   3. Installs the tarballs with plain npm into a fresh project in the system temp dir (outside the workspace), with
 //      the peer versions this repo tests (react, react-dom, @types/react*, @sodax/types).
-//   4. Type-checks pack-smoke/types.ts and app.tsx there (NodeNext and Bundler resolution, skipLibCheck off) and runs
-//      pack-smoke/run.mjs in Node: every exported subpath imports, createHana knows exactly the envs/*.json that set
-//      both Hana origins, HanaProvider server-renders.
+//   4. Type-checks pack-smoke/types.ts and app.tsx there (NodeNext and Bundler resolution, skipLibCheck off), and
+//      guide-near.ts: the partner guide's NEAR samples (docs/integration.md section 8, "NEAR", every `ts` block) in one
+//      module, with the @near-js packages one of them uses; then runs pack-smoke/run.mjs in Node: every exported
+//      subpath imports, createHana knows exactly the envs/*.json that set both Hana origins, HanaProvider
+//      server-renders.
 //
 //   pnpm run pack:check [--keep]      (--keep leaves the temp dir for inspection)
 //
@@ -22,7 +24,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnv } from '@hana-id/env';
-import { SDK_PACKAGES, fileListProblems, localPathProblems, manifestProblems, sourceMapProblems, typeCommentProblems } from './lib/pack-check.ts';
+import { SDK_PACKAGES, codeBlocks, fileListProblems, localPathProblems, manifestProblems, sampleModule, sourceMapProblems, typeCommentProblems } from './lib/pack-check.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -62,6 +64,30 @@ const expectedEnvs = readdirSync(join(repoRoot, 'envs'))
   .filter((m) => m.vaultOrigin !== undefined && m.authOrigin !== undefined)
   .map((m) => m.name)
   .sort();
+
+/** The files tsc checks in the project. */
+const CHECKED = ['types.ts', 'app.tsx', 'guide-near.ts'];
+/** The registry packages the guide's NEAR samples import, besides Hana's. */
+const GUIDE_NEAR_JS = ['@near-js/crypto', '@near-js/transactions', '@near-js/utils'] as const;
+
+/**
+ * docs/integration.md's NEAR samples as one module. The prelude declares what the guide's earlier sections set up:
+ * the client (`hana`, section 3), a button and the page's result handlers.
+ */
+function guideNearModule(): string {
+  const guide = readFileSync(join(repoRoot, 'docs/integration.md'), 'utf8');
+  const prelude = [
+    '// docs/integration.md section 8, "NEAR": its `ts` samples, in order (scripts/pack-check.ts writes this file).',
+    "const hana = createHana({ publishableKey: 'pk_test_example', environment: 'sandbox-dev' });",
+    'declare const button: HTMLButtonElement;',
+    'declare function onSent(transactionHash: string): void;',
+    'declare function onError(error: unknown): void;',
+  ].join('\n');
+  return sampleModule(codeBlocks(guide, '### NEAR', '### Raw signing'), prelude, { '@hana-id/web': ['createHana'] });
+}
+
+// Read first, so a guide whose samples can't be extracted fails before anything is packed.
+const guideNear = guideNearModule();
 
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'hana-pack-check-')));
 if (tmp === repoRoot || tmp.startsWith(repoRoot + sep)) throw new Error(`The temp dir ${tmp} is inside the workspace; set TMPDIR elsewhere`);
@@ -109,6 +135,8 @@ try {
   const reactDev = readJson(join(repoRoot, 'packages/react/package.json')).devDependencies as Record<string, string>;
   const sodaxDev = readJson(join(repoRoot, 'packages/sodax/package.json')).devDependencies as Record<string, string>;
   const coreDev = readJson(join(repoRoot, 'packages/core/package.json')).devDependencies as Record<string, string>;
+  // The NEAR SDK the guide's transaction sample builds with, at the version Hana's own scripts use.
+  const scriptsDeps = readJson(join(repoRoot, 'scripts/package.json')).dependencies as Record<string, string>;
   const pin = (deps: Record<string, string>, name: string): string => {
     const v = deps[name];
     if (!v || !/^\d+\.\d+\.\d+$/u.test(v)) throw new Error(`${name} must be an exact devDependency (is ${String(v)})`);
@@ -126,6 +154,7 @@ try {
           '@sodax/types': pin(sodaxDev, '@sodax/types'),
           react: pin(reactDev, 'react'),
           'react-dom': pin(reactDev, 'react-dom'),
+          ...Object.fromEntries(GUIDE_NEAR_JS.map((name) => [name, pin(scriptsDeps, name)])),
         },
         // @types/node: @stellar/stellar-base's declarations (behind @hana-id/core/signers/stellar and /decode)
         // reference Node's Buffer without depending on it.
@@ -140,6 +169,7 @@ try {
     )}\n`,
   );
   for (const f of ['types.ts', 'app.tsx', 'run.mjs']) copyFileSync(join(here, 'pack-smoke', f), join(project, f));
+  writeFileSync(join(project, 'guide-near.ts'), guideNear);
   const compilerOptions = {
     target: 'ES2022',
     lib: ['ES2023', 'DOM', 'DOM.Iterable'],
@@ -149,8 +179,8 @@ try {
     skipLibCheck: false,
     types: [],
   };
-  writeFileSync(join(project, 'tsconfig.json'), JSON.stringify({ compilerOptions: { ...compilerOptions, module: 'NodeNext', moduleResolution: 'NodeNext' }, include: ['types.ts', 'app.tsx'] }));
-  writeFileSync(join(project, 'tsconfig.bundler.json'), JSON.stringify({ compilerOptions: { ...compilerOptions, module: 'ESNext', moduleResolution: 'Bundler' }, include: ['types.ts', 'app.tsx'] }));
+  writeFileSync(join(project, 'tsconfig.json'), JSON.stringify({ compilerOptions: { ...compilerOptions, module: 'NodeNext', moduleResolution: 'NodeNext' }, include: CHECKED }));
+  writeFileSync(join(project, 'tsconfig.bundler.json'), JSON.stringify({ compilerOptions: { ...compilerOptions, module: 'ESNext', moduleResolution: 'Bundler' }, include: CHECKED }));
   // Registry packages at least 7 days old, as pnpm-workspace.yaml's minimumReleaseAge; no install scripts.
   const before = new Date(Date.now() - 7 * 24 * 3600_000).toISOString();
   process.stdout.write('npm install … ');

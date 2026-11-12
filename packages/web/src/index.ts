@@ -22,6 +22,8 @@ export {
   type IdentityTokenOptions,
   type SignRawParams,
 } from './client/client.ts';
+// `hana.getProfile()`, `hana.profile` and `profileChanged`: the name the user shared, read from the identity token.
+export type { HanaProfile } from './client/profile.ts';
 export { type ApprovalTicket } from './client/approval-window.ts';
 export type { LoginOptions } from './client/login.ts';
 // The wallet's sign-in methods (`hana.account()`, `linkChanged`, `hana.linkAccount()`; build plan batches 7 and 8b).

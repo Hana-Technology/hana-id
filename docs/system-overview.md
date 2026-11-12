@@ -3,7 +3,7 @@
 A private briefing for the founder: how Hana ID works, what it protects, where it is weak, and how to answer hard
 questions honestly. It states every gap plainly. Decide later what to share outside the company.
 
-Last verified: 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Hana Home's "Move this wallet" offers the NEAR key, D768); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
+Last verified: 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Hana Home's "Move this wallet" offers the NEAR key, D768); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
 reference docs and checked against the code where they were vague; no code changed). Where the docs lag the code or git,
 this file says so. Sandbox-dev's live state is as `docs/operations.md` "What sandbox-dev runs" records it, corrected on
 2026-11-10 by the person who ran that day's deploy and tests (Hana Home, the email co-signer, alerting, the Google
@@ -139,7 +139,7 @@ In words:
    made.
 8. The answer comes back through the API. The vault decrypts it, checks it against the MPC network's public key that
    is pinned in Hana's build (so a lying server or RPC can't swap the key), and derives the Stellar and EVM keys (and,
-   with SDK 0.4.0, NEAR's: branch `feat/near-core`, not merged).
+   with SDK 0.4.0, NEAR's: merged in PR 41, on sandbox-dev since 2026-11-12).
 9. The partner page receives the addresses. It never sees a key or a token.
 
 | Party | Sees | Never sees |

@@ -171,6 +171,29 @@ export interface AppNameView {
   deletedAt: number | null;
 }
 
+/**
+ * A user's own name as they set it in Hana Home (D714): each part optional, at least one set. Partners see it only once
+ * the user shared it with one of their apps; staff see it whatever the user shared.
+ */
+export interface ProfileNameView {
+  givenName: string | null;
+  familyName: string | null;
+}
+
+/**
+ * The staff Users screen's names (D714): the directory lists sign-in identities (the issuer's rows), whose Hana Home
+ * names live in the API's D1, so AdminRpc.profileNames reads the names of up to PROFILE_NAMES_MAX `(provider, sub)` at
+ * once. Identities with no name are left out. Staff only.
+ */
+export const PROFILE_NAMES_MAX = 50;
+export const adminProfileNamesInput = ctx
+  .extend({ identities: z.array(z.object({ provider: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/u), sub: z.string().min(1).max(255) }).strict()).min(1).max(PROFILE_NAMES_MAX) })
+  .strict();
+export interface ProfileNameRow extends ProfileNameView {
+  provider: string;
+  sub: string;
+}
+
 export type AdminListUsersInput = z.infer<typeof adminListUsersInput>;
 export type AdminGetUserInput = z.infer<typeof adminGetUserInput>;
 export type AdminFindUsersInput = z.infer<typeof adminFindUsersInput>;
@@ -221,6 +244,8 @@ export interface StaffIdentity {
    * `{provider, sub}`. Null without a sub. The API never reads the directory.
    */
   directoryKey: { provider: string; sub: string } | null;
+  /** The name this identity set in Hana Home (D714), or null. */
+  name: ProfileNameView | null;
 }
 
 export interface StaffUser {
@@ -236,6 +261,8 @@ export interface StaffUser {
   createdAt: number;
   lastSeenAt: number;
   identities: StaffIdentity[];
+  /** The account's name (D714): its root identity's Hana Home name, else the first identity's that has one; or null. */
+  name: ProfileNameView | null;
   wallets: StaffWallet[];
   /**
    * What happened to the user's keys (D428, D430; `user_events`, newest first, at most STAFF_USER_EVENTS_MAX of each
@@ -292,4 +319,6 @@ export interface PartnerUser {
   email: string | null;
   /** getUser only: every address shared with the org's apps, per app, newest first. */
   emails?: PartnerEmailShare[];
+  /** The name the user shared from Hana Home with one of the org's live apps in this scope (D714), or null ("Not shared"). */
+  name: ProfileNameView | null;
 }

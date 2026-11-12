@@ -531,6 +531,100 @@ function fundsTiles(r: Report, s: Sources): void {
   }
 }
 
+/** The NEAR relay's balance: amber below `lowBalanceNear`, red below a fifth of it (the watchdog's pairs: 5 / 1 NEAR, D786). */
+export const NEAR_RELAY_CRITICAL_DIVISOR = 5n;
+
+const pct = (part: bigint, whole: bigint): number => (whole > 0n ? Number((part * 1000n) / whole) / 10 : 0);
+const NEAR_ACCOUNT = /^[a-z0-9._-]{2,64}$/u;
+const PUBLIC_KEY = /^ed25519:[1-9A-HJ-NP-Za-km-z]{32,50}$/u;
+/** A code from the API's answer, shown only when it looks like one. */
+const codeOf = (v: unknown): string => (typeof v === 'string' && /^[a-z_]{1,40}$/u.test(v) ? v : 'no answer');
+
+/**
+ * The NEAR meta-transaction relay (D784–D786): `AdminRpc.systemStatus`'s `nearRelay`, read live by the API at each cold
+ * read (no stored reading: the page's 30 s cache is its only age). Off (no `near.relay`, empty receivers, not testnet)
+ * is Not measured, never an issue. Otherwise one line each for the balance, today's spend and the keys.
+ */
+function nearRelayTile(r: Report, s: Sources): void {
+  const base: TileInput = { id: 'near-relay', group: 'funds', name: 'NEAR relay', affects: 'Users’ gasless NEAR calls (the relay pays their gas)', detail: '', link: L.feed };
+  if (!s.api.ok) return r.add({ ...base, detail: 'Unknown: the API didn’t answer' }, [{ ...apiRpcProblem(s.api.code), issue: false }]);
+  const n = obj(s.api.value.nearRelay);
+  if (!n) return r.add({ ...base, detail: 'Unknown: the API doesn’t report the NEAR relay' }, [{ severity: 'unknown', title: 'The API doesn’t report the NEAR relay (deployed before this release)', action: 'Deploy the API (`corepack pnpm --filter @hana-id/api run deploy`), then check again.', key: 'unreported' }]);
+  const state = str(n.state);
+  if (state === 'off') {
+    const why = n.offReason === 'no_receivers' ? 'its `receivers` list is empty' : n.offReason === 'not_testnet' ? 'the relay runs on testnet only' : 'no `near.relay` in this env’s manifest';
+    return r.add({ ...base, detail: `Off: ${why}`, notMeasured: true });
+  }
+  const problems: Problem[] = [];
+  const lines: TileLine[] = [];
+  const line = (label: string, own: Problem[], floor: TileState, detail: string) => {
+    lines.push({ label, state: own.reduce<TileState>((a, p) => (RANK[p.severity] > RANK[a] ? p.severity : a), floor), detail });
+    problems.push(...own);
+  };
+  const OFF_SWITCH = 'every relay answers 503 relayer_unconfigured';
+  if (state === 'bad_config') {
+    return r.add({ ...base, detail: 'Off: the API refuses its NEAR_RELAY config' }, [{ severity: 'critical', title: `The API refuses this env’s NEAR relay config: ${OFF_SWITCH}`, action: 'Run `corepack pnpm --filter @hana-id/api gen <env>` and deploy the API; the manifest’s rules are in docs/operations.md "NEAR relay" (Settings).', key: 'config' }]);
+  }
+  if (state === 'no_keys') problems.push({ severity: 'warning', title: `The NEAR relay has no keys (NEAR_RELAY_KEYS isn’t set): ${OFF_SWITCH}`, action: 'Deleting that secret is the relay’s off switch. If nobody meant to turn it off, upload it again (docs/operations.md "NEAR relay", step 4).', key: 'no-keys' });
+  else if (state === 'bad_keys') problems.push({ severity: 'critical', title: `NEAR_RELAY_KEYS is unreadable, repeats a key or shares one with a relayer pool: ${OFF_SWITCH}`, action: 'Upload it again from `.secrets/<env>/near-relay-keys.json` (docs/operations.md "NEAR relay", step 4).', key: 'bad-keys' });
+  else if (state !== 'on') return r.add({ ...base, detail: 'Unknown: the API’s answer isn’t one this console knows' }, [{ severity: 'unknown', title: 'The API reports a NEAR relay state this console doesn’t know', action: 'Deploy the API and this console from the same checkout.', key: 'state' }]);
+
+  const account = str(n.account) !== null && NEAR_ACCOUNT.test(str(n.account)!) ? str(n.account)! : 'the relay account';
+  const readAt = num(n.readAt);
+  const stale: Problem[] = readAt !== null && r.now - readAt > FUNDS_STALE_MS ? [{ severity: 'warning', title: `The NEAR relay reading is ${ago(r.now - readAt)} old`, action: 'The API reads it at each check: check again.', since: readAt, key: 'stale' }] : [];
+  problems.push(...stale);
+
+  // Balance: the manifest's lowBalanceNear and a fifth of it.
+  const chain = obj(n.chain);
+  const low = yocto(n.lowBalanceYocto);
+  const critical = low === null ? null : low / NEAR_RELAY_CRITICAL_DIVISOR;
+  const available = yocto(chain?.availableYocto);
+  const rpcDown = !s.near.some((e) => e.endpoint.api && e.read.ok);
+  let exists = true;
+  if (!chain || chain.ok !== true) {
+    line('Balance', [{ severity: 'unknown', title: `The NEAR relay account can’t be read (${codeOf(chain?.code)})`, action: 'Usually NEAR RPC: see External services. The playbook covers an RPC outage.', playbook: 'near-rpc-outage', key: 'unreadable', issue: !rpcDown }], 'unknown', 'Unknown: the account couldn’t be read');
+  } else if (chain.exists === false) {
+    exists = false;
+    line('Balance', [{ severity: 'critical', title: `The NEAR relay account ${account} doesn’t exist on chain: every relay fails`, action: 'Re-create and fund it, then re-add its keys (the playbook).', playbook: 'near-relay-balance-low', key: 'missing' }], 'ok', 'The account doesn’t exist');
+  } else {
+    const own: Problem[] = [];
+    const sev = available === null ? null : critical !== null && available < critical ? 'critical' : low !== null && available < low ? 'warning' : null;
+    if (sev) own.push({ severity: sev, title: `The NEAR relay’s balance is low: ${nearAmount(chain.availableYocto)} available`, action: 'Top up the relay account (the playbook says how much and from where).', playbook: 'near-relay-balance-low', key: 'low' });
+    line('Balance', own, 'ok', `${nearAmount(chain.availableYocto) ?? 'unknown'} available${low !== null ? ` · amber below ${nearAmount(low.toString())}, red below ${nearAmount(critical!.toString())}` : ''}`);
+  }
+
+  // Today's spend against the budget (UTC day).
+  const spend = obj(n.spend);
+  const cap = yocto(n.dailyBudgetYocto);
+  const alertPct = num(n.budgetAlertPct) ?? 80;
+  const spent = yocto(spend?.spentYocto);
+  if (!spend || spend.ok !== true || spent === null || cap === null) {
+    line('Today’s spend', [{ severity: 'unknown', title: `The NEAR relay’s spend today can’t be read (${codeOf(spend?.code)})`, action: 'Check the API’s logs; it usually passes.', key: 'spend' }], 'unknown', 'Unknown');
+  } else {
+    const share = pct(spent, cap);
+    const own: Problem[] = [];
+    if (spent >= cap) own.push({ severity: 'critical', title: `The NEAR relay’s daily budget is used up (${nearAmount(spent.toString())} of ${nearAmount(cap.toString())}): relays answer 503 until 00:00 UTC`, action: 'Real use: raise `dailyBudgetNear`. Unexplained: follow the playbook.', playbook: 'near-relay-budget-high', key: 'budget' });
+    else if (share >= alertPct) own.push({ severity: 'warning', title: `The NEAR relay has spent ${share}% of today’s budget (${nearAmount(spent.toString())} of ${nearAmount(cap.toString())})`, action: 'At 100% relays are refused until 00:00 UTC. Real use: raise `dailyBudgetNear`. Unexplained: follow the playbook.', playbook: 'near-relay-budget-high', key: 'budget' });
+    line('Today’s spend', own, 'ok', `${nearAmount(spent.toString())} of ${nearAmount(cap.toString())} (${share}%)${typeof spend.day === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(spend.day) ? ` · UTC day ${spend.day}` : ''}`);
+  }
+
+  // The API's keys on the account as full-access keys.
+  const k = obj(n.keys);
+  if (state !== 'on') line('Keys', [], 'not_measured', state === 'no_keys' ? 'None in the API' : 'The API’s keys are unusable');
+  else if (!k || !exists) line('Keys', [], exists ? 'unknown' : 'critical', exists ? 'Unknown: the account couldn’t be read' : 'The account doesn’t exist');
+  else {
+    const configured = num(k.configured) ?? 0;
+    const missing = arr(k.missing).map((x) => (typeof x === 'string' && PUBLIC_KEY.test(x) ? x : null)).filter((x): x is string => x !== null);
+    const own: Problem[] = missing.length ? [{ severity: 'critical', title: `${missing.length} of the API’s ${configured} NEAR relay keys ${missing.length === 1 ? 'isn’t' : 'aren’t'} a full-access key on ${account}: relays through ${missing.length === 1 ? 'it' : 'them'} fail (${missing.map((x) => `${x.slice(0, 16)}…`).join(', ')})`, action: 'Add the key on chain as a full-access key (docs/operations.md "NEAR relay", step 2) or upload the keys again (step 4).', key: 'absent' }] : [];
+    line('Keys', own, 'ok', `${configured - missing.length} of ${configured} on the account as full-access keys`);
+  }
+
+  const head = state === 'on' ? 'On' : state === 'no_keys' ? 'Off: no keys' : 'Off: keys unusable';
+  const bal = chain?.ok === true && chain.exists !== false ? `${nearAmount(chain.availableYocto) ?? 'unknown'} available` : chain?.exists === false ? 'account missing' : 'balance unknown';
+  const today = spent !== null && cap !== null ? `${nearAmount(spent.toString())} of ${nearAmount(cap.toString())} spent today` : 'spend unknown';
+  r.add({ ...base, detail: `${head} · ${bal} · ${today}`, lines }, problems);
+}
+
 /** The daily nonce check: it measures only while the API writes usage events (D596). */
 function nonceTile(r: Report, s: Sources): void {
   const base: TileInput = { id: 'nonce-check', group: 'funds', name: 'Relayer nonce check', affects: 'Seeing a relayer key (session, owner or Home) used outside the API', detail: '', link: L.feed };
@@ -814,6 +908,7 @@ export async function buildStatus(env: Env, staff: StaffRequest, accessJwt: stri
   contractTiles(r, env, s);
   fundsTiles(r, s);
   nonceTile(r, s);
+  nearRelayTile(r, s);
   dataTiles(r, s);
   jobTiles(r, s);
   externalTiles(r, env, s);

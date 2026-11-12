@@ -1,6 +1,6 @@
 import { HanaError, ProviderRpcError } from '@hana-id/web';
 import { describe, expect, it } from 'vitest';
-import { SIGNED_OUT_MESSAGE, errorInfo, isSignedOut, plainMessage } from '../src/errors.ts';
+import { SIGNED_OUT_MESSAGE, errorInfo, isSignedOut, plainMessage, relayTransaction } from '../src/errors.ts';
 
 describe('errorInfo', () => {
   it('prefers the Hana code an EIP-1193 error carries in data.code', () => {
@@ -101,7 +101,8 @@ describe('plainMessage', () => {
   it("maps the relayer's refusals (relay, activate) by data.reason, with a default for codes it doesn't know", () => {
     const relayer = (code: string | number, status: number, reason?: string) => new HanaError(code as never, 'x', { status, ...(reason ? { reason } : {}) });
     expect(plainMessage(relayer(4100, 409, 'near_account_unrecorded'), 'near')).toMatch(/still setting up your NEAR account/u);
-    expect(plainMessage(relayer(4100, 409, 'near_account_unknown'), 'near')).toMatch(/log out and log in again/u);
+    // D788: the API never sends `near_account_unknown` (an early draft's code): no text of its own, the default's.
+    expect(plainMessage(relayer(4100, 409, 'near_account_unknown'), 'near')).toMatch(/^Journear’s relayer refused this request \(near_account_unknown\)\. /u);
     expect(plainMessage(relayer('rate_limited', 429, 'app_budget_exhausted'), 'near')).toMatch(/used up today’s free NEAR relays/u);
     expect(plainMessage(new HanaError(4100, 'Guestbook: text is longer than 200 characters after trimming\u202E', { status: 422, reason: 'contract_rejected' }), 'near')).toBe('The guestbook contract refused the message: Guestbook: text is longer than 200 characters after trimming\uFFFD. Nothing was stored.');
     expect(plainMessage(relayer('api_unavailable', 504, 'timeout'), 'near')).toMatch(/may still land/u);
@@ -117,6 +118,18 @@ describe('plainMessage', () => {
     expect(plainMessage(new HanaError(4001, 'x'), 'near')).toBe('Rejected in the Journear window: nothing was signed.');
     // The same reason outside the card is not the relayer's.
     expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'sign')).toBe('Not allowed: you may have been logged out. Log in and try again.');
+  });
+
+  it('D788: relayTransaction is the SDK’s data.transactionHash, only in base58’s shape', () => {
+    const TX = '4uQeVj5tqViQh7yWWV8TMVXnHuqKF1s5Dw7HPfRQRZtx';
+    expect(relayTransaction(new HanaError('api_unavailable', 'x', { status: 504, reason: 'timeout', transactionHash: TX }))).toBe(TX);
+    expect(relayTransaction(new HanaError('api_unavailable', 'x', { status: 504, reason: 'timeout' }))).toBeNull();
+    for (const bad of ['', 'x', '0'.repeat(44), '1'.repeat(45), `${TX}"><img src=x>`, `javascript:${TX}`, `${TX}/../../evil`, { hash: TX }, [TX], 44]) {
+      expect(relayTransaction(new HanaError('api_unavailable', 'x', { transactionHash: bad })), JSON.stringify(bad)).toBeNull();
+    }
+    expect(relayTransaction(null)).toBeNull();
+    expect(relayTransaction('timeout')).toBeNull();
+    expect(relayTransaction({ data: null })).toBeNull();
   });
 
   it('turns a network failure into a network message, and anything else into a report hint with its code', () => {

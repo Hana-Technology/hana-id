@@ -35,7 +35,8 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
     no deposit, expiring 600 blocks after the latest final block, `hana.near.signDelegateAction` and
     `hana.near.relay`. Each stage is shown ("Preparing your NEAR account…", "Waiting for your approval in the Journear
     window…", "Sending it through Journear’s relayer, which pays the fee…"), then the result with the transaction's
-    link. The message box is validated on blur (too long, or a broken character: the field turns invalid with the
+    link. A relay that timed out with its transaction sent (the SDK's `data.transactionHash`) is no error: "Sent, still
+    confirming: view the transaction ↗" with the NearBlocks link, and the list is read again (D788). The message box is validated on blur (too long, or a broken character: the field turns invalid with the
     reason) and again on the click, never on each key; the count updates as you type;
   - **the popup rule** (docs/integration.md section 8): the key's nonce and the latest block are read from the env's
     NEAR RPC when the card appears, when the message box is focused or typed in (which also activates a new account)

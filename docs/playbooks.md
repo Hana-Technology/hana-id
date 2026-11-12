@@ -42,20 +42,20 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Relayer running out of funds (balance or a pool key's allowance)](#relayer-out-of-funds) | critical | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`, `relayer_balance_low`, `relayer_allowance_low` |
 | [Email signer policy differs from the pins](#signer-policy-mismatch) | critical | `signer_policy_mismatch`, `signer_policy_transition` |
 | [unrecorded_wallets is set outside a dev env](#unrecorded-wallets) | critical | `unrecorded_wallets` |
-| [Hana's email JWKS differs from the pins](#email-jwks-mismatch) | warning | `email_jwks_mismatch` |
+| [Journear's email JWKS differs from the pins](#email-jwks-mismatch) | warning | `email_jwks_mismatch` |
 | [Link volume past its alarm threshold](#link-volume) | critical | `link_threshold_reached`, `link_volume_high`, `link_stats_unavailable` |
 | [Exit client not pinned, or exit volume high](#exit-client-unpinned) | critical | `exit_client_unpinned`, `exit_client_missing`, `exit_volume_high` |
 | [Pending email key change (info)](#self-issued-key-change) | info | `self_issued_key_change` |
-| [Hana's identity JWKS publishes a key the watchdog didn't pin, or can't be judged](#identity-jwks-forged) | critical | `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable` |
-| [A pinned identity key isn't in Hana's identity JWKS](#identity-jwks-degraded) | warning | `identity_key_missing` |
+| [Journear's identity JWKS publishes a key the watchdog didn't pin, or can't be judged](#identity-jwks-forged) | critical | `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable` |
+| [A pinned identity key isn't in Journear's identity JWKS](#identity-jwks-degraded) | warning | `identity_key_missing` |
 | [An issuer key on chain has an identity key's kid](#identity-key-on-chain) | critical | `identity_key_on_chain` |
-| [Hana Home's daily derive budget reached 80%](#home-budget-high) | warning | — |
+| [Passport Home's daily derive budget reached 80%](#home-budget-high) | warning | — |
 | [The NEAR relay's daily budget reached 80%](#near-relay-budget-high) | warning | — |
 | [The NEAR relay account is running low](#near-relay-balance-low) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
-| [API Worker code or Hana's Cloudflare account compromised](#api-or-cloudflare-compromised) | critical | — |
+| [API Worker code or Journear's Cloudflare account compromised](#api-or-cloudflare-compromised) | critical | — |
 | [Vault or auth origin compromised (domain or DNS)](#hana-origin-compromised) | critical | — |
 | [Watchdog down (silent, heartbeat missing)](#watchdog-down) | critical | — |
 | [Watchdog compromised (its Cloudflare account, `WATCHDOG_KEY` or status token)](#watchdog-compromised) | critical | — |
@@ -68,7 +68,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [NEAR MPC / CKD outage](#mpc-ckd-outage) | critical | — |
 | [The API's D1 lost or corrupted](#d1-data-loss) | critical | — |
 | [A partner's own Google client compromised](#partner-google-client-compromised) | critical | — |
-| [Hana's shared Google client or its Cloud project compromised](#shared-google-client-compromised) | critical | — |
+| [Journear's shared Google client or its Cloud project compromised](#shared-google-client-compromised) | critical | — |
 | [A user's key leaked or exposed](#user-key-leaked) | warning | — |
 | [Email-login issuer key compromised (planned)](#email-issuer-key-compromised) | critical (planned) | — |
 | [Identity token signing key compromised (testnet Worker-secret key)](#identity-signing-key-compromised) | critical | — |
@@ -1111,7 +1111,7 @@ The email issuer on chain (`get_issuer("email")`, `get_self_issued("email")`) do
 
 <a id="email-jwks-mismatch"></a>
 
-### Hana's email JWKS differs from the pins
+### Journear's email JWKS differs from the pins
 
 `email-jwks-mismatch` · warning · alert kinds: `email_jwks_mismatch`
 
@@ -1295,7 +1295,7 @@ A pending email key pinned for its signer, or a pending email key removal. Self-
 
 <a id="identity-jwks-forged"></a>
 
-### Hana's identity JWKS publishes a key the watchdog didn't pin, or can't be judged
+### Journear's identity JWKS publishes a key the watchdog didn't pin, or can't be judged
 
 `identity-jwks-forged` · critical · alert kinds: `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable`
 
@@ -1364,7 +1364,7 @@ The partner identity token's JWKS (`{iss}/jwks.json`) lists a key whose RFC 7638
 
 <a id="identity-jwks-degraded"></a>
 
-### A pinned identity key isn't in Hana's identity JWKS
+### A pinned identity key isn't in Journear's identity JWKS
 
 `identity-jwks-degraded` · warning · alert kinds: `identity_key_missing`
 
@@ -1449,7 +1449,7 @@ An active Google or email issuer key, or a pending key addition of any provider,
 
 <a id="home-budget-high"></a>
 
-### Hana Home's daily derive budget reached 80%
+### Passport Home's daily derive budget reached 80%
 
 `home-budget-high` · warning
 
@@ -1709,7 +1709,7 @@ The key that wraps every vault share `K_s` in D1 leaked. Revoke every share firs
 
 <a id="api-or-cloudflare-compromised"></a>
 
-### API Worker code or Hana's Cloudflare account compromised
+### API Worker code or Journear's Cloudflare account compromised
 
 `api-or-cloudflare-compromised` · critical
 
@@ -2409,7 +2409,7 @@ Someone controls a partner's own Google OAuth client (e.g. added a redirect URI)
 
 <a id="shared-google-client-compromised"></a>
 
-### Hana's shared Google client or its Cloud project compromised
+### Journear's shared Google client or its Cloud project compromised
 
 `shared-google-client-compromised` · critical
 

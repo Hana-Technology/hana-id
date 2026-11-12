@@ -8,7 +8,7 @@
 // |---|---|
 // | moduleType | HOT_WALLET |
 // | productId | 'hana-id' ('hana' is already Hana Wallet's module) |
-// | productName, productUrl, productIcon | 'Hana ID', the env's authOrigin, the Hana ID mark (data: URI) |
+// | productName, productUrl, productIcon | 'Journear Passport', the env's authOrigin, the Journear mark (data: URI) |
 // | isAvailable() | true within 1000 ms when the handshake is done, false otherwise |
 // | getAddress() | {address}; logs in if needed, with the launcher fallback when the popup is blocked |
 // | signTransaction, signAuthEntry, signMessage | through hana.stellar (approval; synchronous up to it, so the approval popup opens in SWK's click where SWK itself doesn't await first, D99) |
@@ -89,7 +89,7 @@ export class HanaIdModule {
 
   signTransaction(xdr: string, opts: SwkSignOptions = {}): Promise<{ signedTxXdr: string; signerAddress: string }> {
     return swk(async () => {
-      if (opts.submit === true) throw new HanaError(RpcCode.invalidParams, 'Hana ID only signs; submit the signed transaction yourself');
+      if (opts.submit === true) throw new HanaError(RpcCode.invalidParams, 'Journear Passport only signs; submit the signed transaction yourself');
       return this.#hana.stellar.signTransaction(xdr, pick(opts));
     });
   }

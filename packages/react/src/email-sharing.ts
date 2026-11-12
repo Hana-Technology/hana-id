@@ -21,7 +21,7 @@ export interface UseEmailSharingResult {
   error: HanaError | null;
 }
 
-const notMounted = (): Promise<never> => Promise.reject(new HanaError(4900, 'Hana ID is not mounted yet (HanaProvider has not run its effect)'));
+const notMounted = (): Promise<never> => Promise.reject(new HanaError(4900, 'Journear Passport is not mounted yet (HanaProvider has not run its effect)'));
 
 export function useEmailSharing(): UseEmailSharingResult {
   const ctx = useContext(HanaContext);

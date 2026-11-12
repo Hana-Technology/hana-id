@@ -923,7 +923,7 @@ const unrecordedWallets: Playbook = {
 
 const emailJwksMismatch: Playbook = {
   id: 'email-jwks-mismatch',
-  title: "Hana's email JWKS differs from the pins",
+  title: "Journear's email JWKS differs from the pins",
   kind: 'alert',
   alertKinds: ['email_jwks_mismatch'],
   severity: 'warning',
@@ -1095,7 +1095,7 @@ const selfIssuedKeyChange: Playbook = {
 
 const identityJwksForged: Playbook = {
   id: 'identity-jwks-forged',
-  title: "Hana's identity JWKS publishes a key the watchdog didn't pin, or can't be judged",
+  title: "Journear's identity JWKS publishes a key the watchdog didn't pin, or can't be judged",
   kind: 'alert',
   alertKinds: ['identity_key_unpinned', 'identity_private_key_published', 'identity_discovery_mismatch', 'identity_jwks_unreadable'],
   severity: 'critical',
@@ -1155,7 +1155,7 @@ const identityJwksForged: Playbook = {
 
 const identityJwksDegraded: Playbook = {
   id: 'identity-jwks-degraded',
-  title: "A pinned identity key isn't in Hana's identity JWKS",
+  title: "A pinned identity key isn't in Journear's identity JWKS",
   kind: 'alert',
   alertKinds: ['identity_key_missing'],
   severity: 'warning',

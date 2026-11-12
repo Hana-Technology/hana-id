@@ -169,7 +169,7 @@ export class HanaNear {
     if (typeof p !== 'object' || p === null || p.network !== 'testnet') throw invalid("relay takes { network: 'testnet', signedDelegateAction }");
     const signedDelegateAction = toBase64(p.signedDelegateAction, 'signedDelegateAction');
     const b = await this.#post('relay', { network: 'testnet', signedDelegateAction });
-    if (!isBase58Hash(b.transactionHash) || typeof b.status !== 'string' || b.status.length === 0 || b.status.length > 64) throw hanaError('api_unavailable', 'Hana’s relayer gave an answer the SDK can’t read');
+    if (!isBase58Hash(b.transactionHash) || typeof b.status !== 'string' || b.status.length === 0 || b.status.length > 64) throw hanaError('api_unavailable', 'Journear’s relayer gave an answer the SDK can’t read');
     return { transactionHash: b.transactionHash, status: b.status };
   }
 
@@ -180,9 +180,9 @@ export class HanaNear {
    */
   async activate(): Promise<NearActivateResult> {
     const accountId = this.#host.nearAccountId();
-    if (accountId === null) throw hanaError(4100, 'Not logged in, or this Hana vault has no NEAR account yet');
+    if (accountId === null) throw hanaError(4100, 'Not logged in, or this Journear Passport vault has no NEAR account yet');
     const b = await this.#post('activate', { accountId });
-    if (typeof b.created !== 'boolean' || (b.accountId !== undefined && b.accountId !== accountId)) throw hanaError('api_unavailable', 'Hana’s relayer gave an answer the SDK can’t read');
+    if (typeof b.created !== 'boolean' || (b.accountId !== undefined && b.accountId !== accountId)) throw hanaError('api_unavailable', 'Journear’s relayer gave an answer the SDK can’t read');
     // The optional fields only in their exact shapes (anything else is left out, not trusted).
     const nonce = b.accessKeyNonce === null || (typeof b.accessKeyNonce === 'string' && /^(?:0|[1-9]\d{0,19})$/u.test(b.accessKeyNonce)) ? b.accessKeyNonce : undefined;
     return {
@@ -197,7 +197,7 @@ export class HanaNear {
   /** POST {apiUrl}/v1/near/{path} with the publishable key: the answer's JSON object, or the HanaError of a refusal. */
   async #post(path: 'relay' | 'activate', payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const apiUrl = this.#host.apiUrl;
-    if (!apiUrl) throw hanaError('api_unavailable', 'This build of the Hana SDK has no API URL for its environment');
+    if (!apiUrl) throw hanaError('api_unavailable', 'This build of the Journear Passport SDK has no API URL for its environment');
     // One deadline for the whole exchange: the abort stays armed until the body has been read, so a server that sends
     // its headers and then stalls can't hold the call open.
     const ctl = new AbortController();
@@ -216,12 +216,12 @@ export class HanaNear {
           signal: ctl.signal,
         });
       } catch {
-        throw hanaError('api_unavailable', 'Hana’s relayer could not be reached');
+        throw hanaError('api_unavailable', 'Journear’s relayer could not be reached');
       }
       try {
         body = await res.json();
       } catch {
-        if (ctl.signal.aborted) throw hanaError('api_unavailable', 'Hana’s relayer did not answer in time');
+        if (ctl.signal.aborted) throw hanaError('api_unavailable', 'Journear’s relayer did not answer in time');
         body = null;
       }
     } finally {
@@ -234,14 +234,14 @@ export class HanaNear {
 
   /** NEAR requests need a vault that reported a NEAR account: an older vault would drop them unanswered. */
   #ready(): void {
-    if (this.#host.nearAccountId() === null) throw hanaError(4100, 'Not logged in, or this Hana vault has no NEAR account yet');
+    if (this.#host.nearAccountId() === null) throw hanaError(4100, 'Not logged in, or this Journear Passport vault has no NEAR account yet');
   }
 }
 
 /** The HanaError of a refused relay or activation: the API's code where the SDK knows it, with its request id. */
 function relayError(status: number, b: Record<string, unknown>): HanaError {
   const code = typeof b.code === 'string' ? b.code : '';
-  const message = typeof b.error === 'string' ? b.error.slice(0, 300) : `Hana’s relayer refused the request (HTTP ${status})`;
+  const message = typeof b.error === 'string' ? b.error.slice(0, 300) : `Journear’s relayer refused the request (HTTP ${status})`;
   const data = {
     status,
     ...(code ? { reason: code.slice(0, 64) } : {}),

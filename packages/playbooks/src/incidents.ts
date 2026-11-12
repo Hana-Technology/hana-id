@@ -58,7 +58,7 @@ const updaterKeyStolen: Playbook = {
 
 const homeBudgetHigh: Playbook = {
   id: 'home-budget-high',
-  title: "Hana Home's daily derive budget reached 80%",
+  title: "Passport Home's daily derive budget reached 80%",
   kind: 'incident',
   severity: 'warning',
   status: 'live',
@@ -199,7 +199,7 @@ const vaultKekLeaked: Playbook = {
 
 const apiCompromised: Playbook = {
   id: 'api-or-cloudflare-compromised',
-  title: "API Worker code or Hana's Cloudflare account compromised",
+  title: "API Worker code or Journear's Cloudflare account compromised",
   kind: 'incident',
   severity: 'critical',
   status: 'live',
@@ -760,7 +760,7 @@ const partnerClientCompromised: Playbook = {
 
 const sharedClientCompromised: Playbook = {
   id: 'shared-google-client-compromised',
-  title: "Hana's shared Google client or its Cloud project compromised",
+  title: "Journear's shared Google client or its Cloud project compromised",
   kind: 'incident',
   severity: 'critical',
   status: 'live',

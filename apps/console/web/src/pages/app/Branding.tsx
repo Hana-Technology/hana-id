@@ -1,11 +1,12 @@
-// An app's name and logo, as users see them in Hana's sign-in and approval popups. Both are immediate owner writes
-// (not in a frozen org). The logo goes as the raw image (`application/octet-stream`) at the settings version; the page
+// An app's name and logo, as users see them in the Journear Passport sign-in and approval popups. Both are immediate
+// owner writes (not in a frozen org). The name is a setting row: the save bar slides up at the first change (Discard,
+// Save); an empty name is flagged once the field is left. The logo goes as the raw image (`application/octet-stream`) at the settings version; the page
 // checks the type and size the console checks before sending, and previews the chosen file from a data: URL (the
-// CSP's img-src allows data:, never blob:). Hana re-encodes it to a 256 × 256 PNG.
+// CSP's img-src allows data:, never blob:). Journear re-encodes it to a 256 × 256 PNG.
 import { useEffect, useState } from 'react';
 import { postBytes, postJson } from '../../api.ts';
-import { useWrite } from '../../lib.tsx';
-import { ConfirmButton, Panel, Why, WriteNote } from '../../ui.tsx';
+import { useTouched, useWrite } from '../../lib.tsx';
+import { ConfirmButton, Field, Panel, SaveBar, SettingRow, Why, WriteNote } from '../../ui.tsx';
 import { AppTile, useApp } from '../Apps.tsx';
 
 const TYPES = ['image/png', 'image/jpeg', 'image/webp'];
@@ -45,7 +46,11 @@ export function Branding() {
   const ctl = useApp();
   const { app, owner, frozen, org } = ctl;
   const w = useWrite();
+  const named = useWrite();
+  const touched = useTouched<'name'>();
   const [name, setName] = useState(app.name);
+  const nameBad = !name.trim();
+  const renamed = name.trim() !== app.name;
   const [file, setFile] = useState<File | null>(null);
   const base = `/api/orgs/${org}/apps/${app.id}`;
   const problem = file ? logoProblem(file) : null;
@@ -53,36 +58,44 @@ export function Branding() {
   const can = owner && !frozen;
   return (
     <div className="stack">
-      <Panel title="Name" description="Shown to users in Hana’s popups: “Signing in to {name} at {origin}”.">
+      <Panel title="Name" description="Shown to users in the popups: “Signing in to {name} at {origin}”.">
         {!can ? (
           <>
             <p className="strong">{app.name}</p>
-            <Why>{owner ? 'The name can’t be changed while Hana has frozen the organisation.' : 'Only owners can rename the app.'}</Why>
+            <Why>{owner ? 'The name can’t be changed while Journear has frozen the organisation.' : 'Only owners can rename the app.'}</Why>
           </>
         ) : (
           <form
-            className="form form-inline"
             onSubmit={(e) => {
               e.preventDefault();
-              void w.run(async () => {
+              touched.all();
+              if (nameBad || !renamed) return;
+              void named.run(async () => {
                 await postJson(`${base}/profile`, { name, expectedVersion: app.settingsVersion });
                 ctl.reload();
                 return 'Renamed.';
               });
             }}
           >
-            <label className="field">
-              <span className="field-label">Name</span>
-              <input value={name} maxLength={64} onChange={(e) => setName(e.target.value)} />
-              <span className="field-hint">Up to 64 characters.</span>
-            </label>
-            <button type="submit" className="btn" disabled={w.busy || name.trim() === app.name || !name.trim()}>
-              Save the name
-            </button>
+            <div className="setting-list inset">
+              <SettingRow title="App name" description="Up to 64 characters. Users see it when they sign in and approve." error={touched.seen('name') && nameBad ? 'Enter a name.' : undefined}>
+                {(c) => <input {...c} className="jp-input wide" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} onBlur={touched.blur('name')} />}
+              </SettingRow>
+            </div>
+            <WriteNote error={named.error} />
+            <SaveBar
+              count={renamed || nameBad ? 1 : 0}
+              busy={named.busy}
+              invalid={nameBad}
+              onDiscard={() => {
+                setName(app.name);
+                touched.reset();
+              }}
+            />
           </form>
         )}
       </Panel>
-      <Panel title="Logo" description="Shown next to the name in Hana’s popups and on the apps list. A PNG, JPEG or WebP, at most 512 KiB, 128 to 2048 px a side and nearly square. Hana stores it as a 256 × 256 PNG.">
+      <Panel title="Logo" description="Shown next to the name in the popups and on the apps list. A PNG, JPEG or WebP, at most 512 KiB, 128 to 2048 px a side and nearly square. Journear stores it as a 256 × 256 PNG.">
         <div className="logo-row">
           <figure className="logo-figure">
             <AppTile name={app.name} logoUrl={app.logoUrl} size="lg" />
@@ -96,18 +109,16 @@ export function Branding() {
           )}
         </div>
         {!can ? (
-          <Why>{owner ? 'The logo can’t be changed while Hana has frozen the organisation.' : 'Only owners can change the logo.'}</Why>
+          <Why>{owner ? 'The logo can’t be changed while Journear has frozen the organisation.' : 'Only owners can change the logo.'}</Why>
         ) : (
           <div className="form">
-            <label className="field">
-              <span className="field-label">Logo file</span>
-              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            </label>
-            {problem && <p className="field-error">{problem}</p>}
+            <Field label="Logo file" error={problem}>
+              {(c) => <input {...c} className="file-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />}
+            </Field>
             <div className="form-actions">
               <button
                 type="button"
-                className="btn btn-primary"
+                className="jp-btn jp-btn-primary"
                 disabled={w.busy || !file || problem !== null}
                 onClick={() =>
                   void w.run(async () => {
@@ -139,7 +150,7 @@ export function Branding() {
             </div>
           </div>
         )}
-        <WriteNote error={w.error} done={w.done} />
+        <WriteNote error={w.error} />
       </Panel>
     </div>
   );

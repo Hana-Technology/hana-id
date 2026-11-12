@@ -14,7 +14,7 @@ import { Badge, CopyField, Empty, ErrorNote, Loading, PageHeader, Why } from '..
 import { isWaiting } from './app/Changes.tsx';
 
 const SUSPENDED = [
-  [1, 'by Hana'],
+  [1, 'by Journear'],
   [2, 'with the organisation'],
   [4, 'by your organisation'],
 ] as const;
@@ -42,11 +42,11 @@ function Status({ a }: { a: AppSummary }) {
   return s ? <Badge tone="danger">{s}</Badge> : <Badge tone="ok">Active</Badge>;
 }
 
-/** What a new organisation does first: Hana creates apps during the pilot, so the steps say what to send. */
+/** What a new organisation does first: Journear creates apps during the pilot, so the steps say what to send. */
 function FirstApp() {
   return (
     <Empty title="No apps yet">
-      <p>During the pilot, Hana creates your apps. Send Hana these three things and your app appears here with its publishable key:</p>
+      <p>During the pilot, Journear creates your apps. Send Journear these three things and your app appears here with its publishable key:</p>
       <ol className="steps">
         <li>
           <strong>The app’s name</strong>, as your users will see it when they sign in.
@@ -55,10 +55,10 @@ function FirstApp() {
           <strong>Every origin your app runs on</strong>, exactly (<code>https://app.example.com</code>, no path). For development on a test app, add <code>http://localhost:5173</code> (your port).
         </li>
         <li>
-          <strong>Who owns it and who hears about changes</strong>: the Google account of each person who will own the organisation (up to 5; invite them under Members first), and a security contact’s email address for Hana’s security notices.
+          <strong>Who owns it and who hears about changes</strong>: the Google account of each person who will own the organisation (up to 5; invite them under Members first), and a security contact’s email address for Journear’s security notices.
         </li>
       </ol>
-      <p>Your testers should sign in with email for now: Hana’s Google sign-in only lets in the accounts Hana adds. Your own Google client can come later (partner guide, section 6).</p>
+      <p>Your testers should sign in with email for now: Journear’s Google sign-in only lets in the accounts Journear adds. Your own Google client can come later (partner guide, section 6).</p>
       <p className="muted">Then you install the SDK, create the client with your key and add a sign-in button. The app’s page walks you through it.</p>
     </Empty>
   );
@@ -229,9 +229,9 @@ export function AppLayout() {
       </PageHeader>
       {a.deleted && <Why>This app was deleted. Its setup stays readable; nothing can be changed.</Why>}
       {!a.deleted && ctx?.role !== 'owner' && <Why>You’re a viewer: you can see this app’s setup, and only owners can change it.</Why>}
-      <nav className="tabs" aria-label="App sections">
+      <nav className="tabs jp-tabs" aria-label="App sections">
         {SECTIONS.map(([path, label]) => (
-          <NavLink key={path} to={path ? `${base}/${path}` : base} end={!path}>
+          <NavLink key={path} className="jp-tab" to={path ? `${base}/${path}` : base} end={!path}>
             {label}
             {path === 'origins' && waiting.some((c) => c.kind === 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}
             {path === 'signing' && waiting.some((c) => c.kind !== 'origin_add') && <span className="tab-dot" aria-label="(changes waiting)" />}

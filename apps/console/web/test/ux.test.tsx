@@ -75,7 +75,7 @@ describe('errors in plain words', () => {
   it('maps a code to what happened and what to do; keeps a detail the code doesn’t say; drops one that only repeats it', () => {
     expect(explain('version_conflict', 'version_conflict', 409)).toEqual({ text: expect.stringContaining('Reload the page'), detail: undefined });
     expect(explain('rate_limited', 'Too many requests; try again in a minute', 429).detail).toBeUndefined();
-    expect(explain('origin_refused', 'http://localhost:5173: loopback is refused for live apps', 400)).toEqual({ text: 'Hana can’t accept that origin.', detail: 'http://localhost:5173: loopback is refused for live apps' });
+    expect(explain('origin_refused', 'http://localhost:5173: loopback is refused for live apps', 400)).toEqual({ text: 'Journear can’t accept that origin.', detail: 'http://localhost:5173: loopback is refused for live apps' });
     expect(explain('key_limit', 'At most 5 unrevoked keys per app: revoke one first').text).toContain('at most 5 active keys');
     // A code the SPA doesn't know: the console's own message is the text.
     expect(explain('some_new_code', 'The console’s own words').text).toBe('The console’s own words');
@@ -98,7 +98,7 @@ describe('errors in plain words', () => {
     fireEvent.change(await screen.findByLabelText(/Origins to add/u), { target: { value: 'https://localhost.partner.example' } });
     fireEvent.click(screen.getByRole('button', { name: 'Review and confirm with Google' }));
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('Hana can’t accept that origin.');
+    expect(alert.textContent).toContain('Journear can’t accept that origin.');
     expect(alert.textContent).toContain('loopback names are refused');
     expect(alert.textContent).toContain('origin_refused');
     expect(window.location.pathname).toBe('/orgs/org_a/apps/app_1/origins');
@@ -212,24 +212,35 @@ describe('no control that can’t work: one line says why', () => {
     expect(within(me).getByText(/The last owner/u)).toBeTruthy();
     const off = screen.getByText('off@partner.example').closest('tr')!;
     expect(within(off).queryByRole('button', { name: 'Make owner' })).toBeNull();
-    expect(within(off).getByText('Disabled by Hana')).toBeTruthy();
+    expect(within(off).getByText('Disabled by Journear')).toBeTruthy();
     expect(screen.queryByPlaceholderText('name@company.com')).toBeNull();
     expect(screen.getByText(/10 open invites, the most it can have/u)).toBeTruthy();
   });
 
-  it('session settings: values outside the limits are flagged and not sent; a valid change sends only what changed', async () => {
+  it('session settings: values outside the limits are flagged on blur and not sent; a valid change sends only what changed', async () => {
     signedIn();
     routes['/api/orgs/org_a/actions'] = { body: { id: 'act_s', kind: 'app.settings', decoded: {}, expiresAt: Date.now() + 300_000 } };
     at('/orgs/org_a/apps/app_1/sessions');
-    const button = await screen.findByRole('button', { name: 'Review and confirm with Google' });
+    const length = await screen.findByLabelText(/^Session length/u);
+    // Nothing changed: no save bar, so nothing to send.
+    expect(screen.queryByRole('region', { name: 'Unsaved changes' })).toBeNull();
+    fireEvent.change(length, { target: { value: '30' } });
+    const bar = screen.getByRole('region', { name: 'Unsaved changes' });
+    const button = within(bar).getByRole('button', { name: 'Review and confirm with Google' });
     expect(button).toHaveProperty('disabled', true);
-    fireEvent.change(screen.getByLabelText(/Session length \(hours\)/u), { target: { value: '30' } });
-    expect(screen.getByLabelText(/Session length \(hours\)/u).getAttribute('aria-invalid')).toBe('true');
+    expect(length.getAttribute('aria-invalid')).toBeNull();
+    fireEvent.blur(length);
+    expect(length.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText('Enter 1 to 23.83 hours.')).toBeTruthy();
+    fireEvent.change(length, { target: { value: '8' } });
+    expect(length.getAttribute('aria-invalid')).toBeNull();
+    const idle = screen.getByLabelText(/^Idle timeout/u);
+    fireEvent.change(idle, { target: { value: '600' } });
+    fireEvent.blur(idle);
+    expect(idle.getAttribute('aria-invalid')).toBe('true');
     expect(button).toHaveProperty('disabled', true);
-    fireEvent.change(screen.getByLabelText(/Session length \(hours\)/u), { target: { value: '8' } });
-    fireEvent.change(screen.getByLabelText(/Idle timeout \(minutes\)/u), { target: { value: '600' } });
-    expect(button).toHaveProperty('disabled', true);
-    fireEvent.change(screen.getByLabelText(/Idle timeout \(minutes\)/u), { target: { value: '45' } });
+    fireEvent.change(idle, { target: { value: '45' } });
+    expect(within(bar).getByText('2 unsaved changes')).toBeTruthy();
     fireEvent.click(button);
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_s'));
     expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'app.settings', params: { appId: 'app_1', sessionTtlMs: 8 * H, idleTtlMs: 45 * 60_000 }, returnTo: { page: 'sessions', appId: 'app_1' } });
@@ -253,19 +264,31 @@ describe('no control that can’t work: one line says why', () => {
     expect(screen.queryByRole('button', { name: /Turn raw signing on/u })).toBeNull();
   });
 
-  it('too many origins at once are flagged before the fresh sign-in', async () => {
+  it('too many origins at once are flagged once the field is left (validate on blur), and never sent', async () => {
     signedIn();
     at('/orgs/org_a/apps/app_1/origins');
     const many = Array.from({ length: 21 }, (_, i) => `https://a${i}.partner.example`).join('\n');
-    fireEvent.change(await screen.findByLabelText(/Origins to add/u), { target: { value: many } });
-    expect(screen.getByText(/more than 20/u)).toBeTruthy();
+    const box = await screen.findByLabelText(/Origins to add/u);
+    fireEvent.change(box, { target: { value: many } });
+    // Not while typing: the button is off, the field isn't flagged yet.
+    expect(screen.queryByText(/more than 20/u)).toBeNull();
+    expect(box.getAttribute('aria-invalid')).toBeNull();
     expect(screen.getByRole('button', { name: 'Review and confirm with Google' })).toHaveProperty('disabled', true);
+    fireEvent.blur(box);
+    expect(screen.getByText(/more than 20/u)).toBeTruthy();
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+    // The error is the field's description, so a screen reader reads it with the field.
+    expect(box.getAttribute('aria-describedby')).toContain(screen.getByText(/more than 20/u).closest('.jp-error')!.id);
+    // Fixed: the error clears as it is typed (the field was already left once).
+    fireEvent.change(box, { target: { value: 'https://a.partner.example' } });
+    expect(screen.queryByText(/more than 20/u)).toBeNull();
+    expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
   });
 
   it('a frozen org says why adding is paused, and keeps Remove', async () => {
     signedIn({}, 'owner', 'frozen');
     at('/orgs/org_a/apps/app_1/origins');
-    expect(await screen.findByText(/Adding origins is paused while Hana has frozen the organisation/u)).toBeTruthy();
+    expect(await screen.findByText(/Adding origins is paused while Journear has frozen the organisation/u)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy();
   });
 });
@@ -301,7 +324,7 @@ describe('empty states and the app overview', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     at('/orgs/org_a/apps/app_1');
     expect(await screen.findByText(/environment: 'sandbox-dev',/u)).toBeTruthy();
-    expect(screen.queryByText(/the environment name Hana gave you/u)).toBeNull();
+    expect(screen.queryByText(/the environment name Journear gave you/u)).toBeNull();
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Copy client code' })));
     expect(writeText).toHaveBeenCalledWith(clientSnippet('pk_live_k9', 'sandbox-dev'));
     expect(String((writeText.mock.calls[0] as unknown[])[0])).toContain("environment: 'sandbox-dev',");
@@ -312,10 +335,10 @@ describe('empty states and the app overview', () => {
   it('without a usable environment name, the snippet keeps the placeholder and says where the name comes from', async () => {
     signedIn({ keys: [key('k9')] });
     at('/orgs/org_a/apps/app_1');
-    expect(await screen.findByText(/environment: '…', \/\/ the environment name Hana gave you with the SDK/u)).toBeTruthy();
+    expect(await screen.findByText(/environment: '…', \/\/ the environment name Journear gave you with the SDK/u)).toBeTruthy();
     for (const bad of [undefined, '', 'Sandbox Dev', "x', evil: '1"]) {
       const code = clientSnippet('pk_test_x', bad);
-      expect(code, String(bad)).toContain("environment: '…', // the environment name Hana gave you with the SDK");
+      expect(code, String(bad)).toContain("environment: '…', // the environment name Journear gave you with the SDK");
     }
     expect(clientSnippet(undefined, 'sandbox-dev')).toContain("publishableKey: 'pk_…',");
   });

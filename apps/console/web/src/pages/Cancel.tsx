@@ -7,12 +7,13 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError, postJson } from '../api.ts';
 import { useFragmentToken } from '../lib.tsx';
+import { Callout } from '../ui.tsx';
 import { AuthCard } from './SignIn.tsx';
 
 const MESSAGES: Record<string, string> = {
-  not_pending: 'Nothing to cancel any more: it was already cancelled, or it has already taken effect. If it is in force and shouldn’t be, contact Hana security at once.',
-  forbidden: 'This link isn’t valid. Use the exact link from the email, or contact Hana security.',
-  rate_limited: 'Too many attempts from your network. Wait a minute and try again, or contact Hana security.',
+  not_pending: 'Nothing to cancel any more: it was already cancelled, or it has already taken effect. If it is in force and shouldn’t be, contact Journear security at once.',
+  forbidden: 'This link isn’t valid. Use the exact link from the email, or contact Journear security.',
+  rate_limited: 'Too many attempts from your network. Wait a minute and try again, or contact Journear security.',
 };
 
 function CancelPage({ what, explain, idOk, post }: { what: string; explain: string; idOk: boolean; post: (token: string) => Promise<unknown> }) {
@@ -22,24 +23,24 @@ function CancelPage({ what, explain, idOk, post }: { what: string; explain: stri
   if (!token || !idOk)
     return (
       <AuthCard title={`Cancel ${what}`}>
-        <p className="callout callout-error" role="alert">
-          This link is incomplete. Open the whole link from the email, or contact Hana security.
-        </p>
+        <Callout tone="danger" role="alert">
+          This link is incomplete. Open the whole link from the email, or contact Journear security.
+        </Callout>
       </AuthCard>
     );
   return (
     <AuthCard title={`Cancel ${what}`}>
       {state === 'done' ? (
-        <p className="callout callout-ok" role="status">
-          Cancelled. Hana and the organisation’s owners have a record of it.
-        </p>
+        <Callout tone="ok" role="status" title="Cancelled.">
+          Journear and the organisation’s owners have a record of it.
+        </Callout>
       ) : (
         <>
           <p className="lede">{explain}</p>
           <p>Press the button to cancel it. Nothing happens until you do.</p>
           <button
             type="button"
-            className="btn btn-danger btn-large btn-block"
+            className="jp-btn jp-btn-primary jp-btn-lg block"
             disabled={state === 'busy'}
             onClick={() => {
               setState('busy');
@@ -49,7 +50,7 @@ function CancelPage({ what, explain, idOk, post }: { what: string; explain: stri
                   setState(
                     err instanceof ApiError
                       ? { error: MESSAGES[err.code] ?? err.message, code: err.code }
-                      : { error: 'The console could not be reached. Try again, or contact Hana security.', code: 'network' },
+                      : { error: 'The console could not be reached. Try again, or contact Journear security.', code: 'network' },
                   ),
               );
             }}
@@ -57,12 +58,11 @@ function CancelPage({ what, explain, idOk, post }: { what: string; explain: stri
             Cancel {what}
           </button>
           {typeof state === 'object' && (
-            <div className="callout callout-error" role="alert">
-              <p className="callout-title">{state.error}</p>
+            <Callout tone="danger" role="alert" title={state.error}>
               <p className="support-code">
                 Error code <code>{state.code}</code>
               </p>
-            </div>
+            </Callout>
           )}
         </>
       )}

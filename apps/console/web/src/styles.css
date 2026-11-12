@@ -1,47 +1,18 @@
-/* The partner console's one stylesheet (served from 'self': the CSP allows no inline style or remote font). Hana's
-   brand (packages/brand, D426): its tokens (light, and dark through prefers-color-scheme) and its self-hosted fonts,
-   Montserrat for text and Montserrat Alternates for titles, bundled by Vite as /assets/*.woff2. The console's own
-   names below map onto the --hana-* tokens. One accent (Hana indigo), status colours for state only; the Hana gradient
-   is a thin rule under the brand, never behind text. Then the frame, components and pages. */
+/* The partner console's one stylesheet (served from 'self': the CSP allows no inline style or remote font). The
+   Journear Passport design system (packages/brand, D765): its self-hosted fonts (Archivo for the wordmark, IBM Plex Sans
+   for text, IBM Plex Mono for ids and code; bundled by Vite as /assets/*.woff2), its tokens (light, and dark through
+   prefers-color-scheme), and its component classes (.jp-*), which the pages use as they are. Below: only the console's
+   own layout and the few pieces the system has no class for, written with --jp-* tokens only (no colour of its own). */
 @import '@hana-id/brand/fonts.css';
 @import '@hana-id/brand/tokens.css';
+@import '@hana-id/brand/components.css';
 
 :root {
-  --ink: var(--hana-ink);
-  --ink-2: var(--hana-ink-2);
-  --muted: var(--hana-muted);
-  --canvas: var(--hana-bg);
-  --surface: var(--hana-surface);
-  --sunken: var(--hana-surface-2);
-  --line: var(--hana-line);
-  --line-strong: var(--hana-line-strong);
-  --accent: var(--hana-accent);
-  --accent-hover: var(--hana-accent-hover);
-  --accent-ink: var(--hana-accent-ink);
-  --accent-soft: var(--hana-accent-soft);
-  --accent-line: color-mix(in srgb, var(--hana-accent) 32%, var(--hana-surface));
-  --ok: var(--hana-ok);
-  --ok-soft: var(--hana-ok-soft);
-  --ok-line: var(--hana-ok-line);
-  --warn: var(--hana-warn);
-  --warn-soft: var(--hana-warn-soft);
-  --warn-line: var(--hana-warn-line);
-  --danger: var(--hana-danger);
-  --danger-soft: var(--hana-danger-soft);
-  --danger-line: var(--hana-danger-line);
-  --on-danger: var(--hana-on-danger);
-  /* A pending step's dot: amber, a state (never a brand colour). */
-  --pending: #d89a00;
-  --shadow: var(--hana-shadow);
-  /* A solid two-ring focus (a surface gap, then Hana's focus violet): 3:1 on every surface, light and dark. */
-  --focus: 0 0 0 2px var(--hana-surface), 0 0 0 4px var(--hana-focus);
-  --r-s: 8px;
-  --r: var(--hana-radius-lg);
-  --pill: var(--hana-radius-pill);
-  --font: var(--hana-font);
-  --display: var(--hana-font-display);
-  --mono: var(--hana-mono);
-  color-scheme: light dark;
+  color-scheme: light;
+  /* The console's layout measures. */
+  --side-w: 248px;
+  --gutter: 40px;
+  --top: 32px;
 }
 
 * {
@@ -52,42 +23,43 @@ html {
 }
 body {
   margin: 0;
-  font: 14.5px/1.6 var(--font);
-  font-feature-settings: "kern", "tnum";
-  color: var(--ink);
-  background: var(--canvas);
+  font-family: var(--jp-font-body);
+  font-size: var(--jp-text-md);
+  line-height: var(--jp-leading-body);
+  color: var(--jp-fg);
+  background: var(--jp-bg-subtle);
   font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }
 a {
-  color: var(--accent);
+  color: var(--jp-link);
   text-underline-offset: 2px;
 }
 a:hover {
-  color: var(--accent-hover);
+  color: var(--jp-primary-hover);
 }
 h1,
 h2,
 h3 {
-  line-height: 1.25;
+  margin: 0;
+  letter-spacing: var(--jp-tracking-tight);
+  line-height: var(--jp-leading-snug);
   text-wrap: balance;
 }
 h1 {
-  font-family: var(--display);
-  font-size: 1.65rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0;
+  font-size: var(--jp-text-3xl);
+  font-weight: var(--jp-weight-semibold);
+  line-height: var(--jp-leading-tight);
 }
 h2 {
-  font-size: 1.04rem;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-  margin: 0;
+  font-size: var(--jp-text-lg);
+  font-weight: var(--jp-weight-semibold);
 }
 h3 {
-  font-size: 0.95rem;
-  font-weight: 600;
+  font-size: var(--jp-text-md);
+  font-weight: var(--jp-weight-semibold);
   margin: 0 0 8px;
+  letter-spacing: 0;
 }
 p {
   margin: 0 0 10px;
@@ -95,14 +67,20 @@ p {
 }
 code,
 .mono {
-  font-family: var(--mono);
+  font-family: var(--jp-font-mono);
   font-size: 0.9em;
   overflow-wrap: anywhere;
 }
 :focus-visible {
-  outline: none;
-  box-shadow: var(--focus);
-  border-radius: var(--r-s);
+  outline: 2px solid var(--jp-focus);
+  outline-offset: 2px;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
 }
 .visually-hidden {
   position: absolute;
@@ -116,23 +94,23 @@ code,
   position: absolute;
   left: 12px;
   top: -48px;
-  z-index: 10;
+  z-index: var(--jp-z-modal);
   padding: 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-s);
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border-strong);
+  border-radius: var(--jp-radius-md);
 }
 .skip:focus {
   top: 12px;
 }
 .muted {
-  color: var(--muted);
+  color: var(--jp-fg-muted);
 }
 .small {
-  font-size: 0.84rem;
+  font-size: var(--jp-text-sm);
 }
 .strong {
-  font-weight: 600;
+  font-weight: var(--jp-weight-semibold);
 }
 /* An id kept whole on one line (a table scrolls instead): a Support ID, a User ID, a shortened address with its copy. */
 .nowrap {
@@ -148,12 +126,48 @@ code,
   vertical-align: -3px;
 }
 
+/* ---- the lockup (packages/brand logo/journear-lockup.svg): teal and orange on light, the white variant on dark ---- */
+.lockup {
+  display: block;
+  flex: none;
+  height: auto;
+}
+.lockup .lk-frame {
+  stroke: var(--jp-teal-500);
+}
+.lockup .lk-chev {
+  stroke: var(--jp-orange-500);
+}
+.lockup .lk-word {
+  fill: var(--jp-teal-500);
+}
+.lockup .lk-sub {
+  fill: var(--jp-gray-900);
+  font-family: var(--jp-font-display);
+  font-weight: 700;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lockup .lk-frame {
+    stroke: var(--jp-gray-0);
+  }
+  :root:not([data-theme="light"]) .lockup .lk-word,
+  :root:not([data-theme="light"]) .lockup .lk-sub {
+    fill: var(--jp-gray-0);
+  }
+}
+:root[data-theme="dark"] .lockup .lk-frame {
+  stroke: var(--jp-gray-0);
+}
+:root[data-theme="dark"] .lockup .lk-word,
+:root[data-theme="dark"] .lockup .lk-sub {
+  fill: var(--jp-gray-0);
+}
+
 /* ---- the frame: sidebar + content ---- */
 .frame {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: var(--side-w) minmax(0, 1fr);
   min-height: 100dvh;
-  background: linear-gradient(90deg, var(--surface) 0 231px, var(--line) 231px 232px, var(--canvas) 232px);
 }
 .sidebar {
   position: sticky;
@@ -162,146 +176,143 @@ code,
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 18px 12px 14px;
-  background: var(--surface);
-  border-right: 1px solid var(--line);
+  padding: 20px 12px 16px;
+  background: var(--jp-surface);
+  border-right: 1px solid var(--jp-border);
   overflow-y: auto;
 }
 .brand {
-  position: relative;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-  padding: 2px 8px 16px;
-  font-family: var(--display);
-  font-size: 1.02rem;
-  font-weight: 700;
-  color: var(--ink);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  /* Clear space around the lockup: the chevron's height. */
+  margin: 0 0 16px;
+  padding: 4px 10px 16px;
+  border-bottom: 1px solid var(--jp-border);
+  color: var(--jp-fg);
   text-decoration: none;
-  letter-spacing: -0.01em;
-}
-/* Hana's gradient: a thin rule under the brand, the one decorative use of it. */
-.brand::after {
-  content: "";
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 0;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--hana-gradient);
 }
 .brand:hover {
-  color: var(--ink);
+  color: var(--jp-fg);
 }
 .brand-sub {
-  font-family: var(--font);
-  font-weight: 500;
-  color: var(--muted);
-}
-/* Hana's mark (packages/brand logo/hana-mark.svg), drawn inline: ink square, light-purple glyph (inverted in dark). */
-.mark {
-  flex: none;
-}
-.mark .mark-bg {
-  fill: var(--hana-mark-bg);
-}
-.mark .mark-fg {
-  fill: var(--hana-mark-fg);
+  font-size: var(--jp-text-xs);
+  font-weight: var(--jp-weight-semibold);
+  letter-spacing: var(--jp-tracking-caps);
+  text-transform: uppercase;
+  color: var(--jp-fg-muted);
 }
 .org-name {
   margin: 0;
-  padding: 4px 8px 0;
-  font-weight: 600;
+  padding: 4px 10px 0;
+  font-weight: var(--jp-weight-semibold);
 }
-.org-switch select {
-  width: 100%;
-  font-weight: 600;
+.org-switch {
+  padding: 0 2px;
+}
+.org-switch .jp-input {
+  font-weight: var(--jp-weight-semibold);
 }
 .org-role {
-  margin: 0 0 10px;
-  padding: 0 8px;
-  font-size: 0.8rem;
-  color: var(--muted);
+  margin: 2px 0 12px;
+  padding: 0 10px;
+  font-size: var(--jp-text-xs);
+  color: var(--jp-fg-muted);
 }
 .side-nav {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 .side-nav a {
-  display: block;
-  padding: 7px 12px;
-  border-radius: var(--pill);
-  color: var(--ink-2);
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: var(--jp-radius-md);
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
+  font-weight: var(--jp-weight-medium);
   text-decoration: none;
-  transition: background-color 120ms ease;
+  transition: background-color var(--jp-dur-fast) var(--jp-ease), color var(--jp-dur-fast);
 }
 .side-nav a:hover {
-  background: var(--sunken);
-  color: var(--ink);
+  background: var(--jp-bg-subtle);
+  color: var(--jp-fg);
 }
 .side-nav a.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
+  background: var(--jp-primary-soft);
+  color: var(--jp-fg);
+  font-weight: var(--jp-weight-semibold);
+  box-shadow: inset 3px 0 0 var(--jp-primary);
 }
 .side-nav-group {
-  margin: 16px 12px 4px;
-  font-size: 0.76rem;
-  font-weight: 600;
-  color: var(--muted);
+  margin: 18px 10px 4px;
+  font-size: 11px;
+  font-weight: var(--jp-weight-semibold);
+  letter-spacing: var(--jp-tracking-caps);
+  text-transform: uppercase;
+  color: var(--jp-fg-muted);
 }
 .account {
   margin-top: auto;
-  padding: 12px 8px 0;
-  border-top: 1px solid var(--line);
+  padding: 12px 10px 0;
+  border-top: 1px solid var(--jp-border);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
 }
 .account-email {
-  font-size: 0.82rem;
-  color: var(--muted);
+  font-size: var(--jp-text-xs);
+  color: var(--jp-fg-muted);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.account .jp-btn {
+  margin-left: -12px;
+}
 .content {
   min-width: 0;
-  max-width: 1080px;
+  max-width: 1120px;
   width: 100%;
-  padding: 28px 40px 64px;
+  padding: var(--top) var(--gutter) 96px;
 }
 .content:focus {
-  box-shadow: none;
+  outline: none;
+}
+/* Room under the last card for the save bar. */
+.content:has(.jp-savebar) {
+  padding-bottom: 140px;
 }
 
-/* ---- the session banner: its end coming (amber), come (red), or signed in again with requests waiting (green) ---- */
+/* ---- the session banner: its end coming (warning), come (danger), or signed in again with requests waiting ---- */
 .session-banner {
   position: sticky;
   top: 0;
-  z-index: 5;
+  z-index: var(--jp-z-sticky);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 20px;
-  margin: -28px -40px 24px;
-  padding: 14px 40px;
-  border-bottom: 1px solid var(--line);
-  box-shadow: 0 1px 2px rgb(22 7 58 / 0.06);
+  margin: calc(-1 * var(--top)) calc(-1 * var(--gutter)) 24px;
+  padding: 14px var(--gutter);
+  border-bottom: 1px solid var(--jp-border);
+  box-shadow: var(--jp-shadow-sm);
+  font-size: var(--jp-text-sm);
 }
 .session-banner > p {
   margin: 0;
   flex: 1 1 26rem;
+  color: var(--jp-fg);
 }
 .session-banner > .session-title {
   flex: 0 1 auto;
-  font-weight: 700;
-  font-size: 1rem;
+  font-weight: var(--jp-weight-semibold);
+  font-size: var(--jp-text-md);
 }
 .session-banner > .form-actions {
   margin: 0;
@@ -309,40 +320,38 @@ code,
 .session-banner > .session-still {
   order: 3;
   flex-basis: 100%;
-  font-weight: 600;
+  font-weight: var(--jp-weight-semibold);
 }
 .session-ended {
-  background: var(--danger-soft);
-  border-color: var(--danger-line);
+  background: var(--jp-danger-bg);
 }
 .session-ended > .session-title {
-  color: var(--danger);
+  color: var(--jp-danger);
 }
 .session-ending {
-  background: var(--warn-soft);
-  border-color: var(--warn-line);
+  background: var(--jp-warning-bg);
 }
 .session-ending > .session-title {
-  color: var(--warn);
+  color: var(--jp-warning);
 }
 .session-back {
-  background: var(--ok-soft);
-  border-color: var(--ok-line);
+  background: var(--jp-success-bg);
 }
 .session-back > .session-title {
-  color: var(--ok);
+  color: var(--jp-success);
 }
 
-/* ---- page header and tabs ---- */
+/* ---- page header and the app's section tabs ---- */
 .page-head {
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 .back {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  margin-bottom: 8px;
-  font-size: 0.88rem;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: var(--jp-text-sm);
+  font-weight: var(--jp-weight-medium);
   text-decoration: none;
 }
 .page-head-row {
@@ -357,9 +366,9 @@ code,
   flex: 1 1 420px;
 }
 .lede {
-  margin: 6px 0 0;
-  max-width: 70ch;
-  color: var(--muted);
+  margin: 8px 0 0;
+  max-width: 72ch;
+  color: var(--jp-fg-muted);
 }
 .page-head-actions,
 .badges {
@@ -368,218 +377,120 @@ code,
   align-items: center;
   flex-wrap: wrap;
 }
+.badges .jp-badge + .jp-badge {
+  margin-left: 0;
+}
 .app-title {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
 }
 .id-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 28px;
-  margin-top: 16px;
+  gap: 12px 32px;
+  margin-top: 18px;
 }
 .tabs {
-  display: flex;
-  gap: 2px;
-  margin: 4px 0 22px;
-  border-bottom: 1px solid var(--line);
+  margin: 4px 0 24px;
   overflow-x: auto;
   scrollbar-width: thin;
 }
-.tabs a {
-  position: relative;
-  padding: 9px 12px;
+.tabs .jp-tab {
   white-space: nowrap;
-  color: var(--muted);
-  text-decoration: none;
-  border-bottom: 3px solid transparent;
-  margin-bottom: -1px;
 }
-.tabs a:hover {
-  color: var(--ink);
-}
-.tabs a.active {
-  color: var(--accent);
-  font-weight: 600;
-  border-bottom-color: var(--accent);
+/* The section links are links, so the current one is aria-current (the system styles aria-selected tabs). */
+.tabs .jp-tab.active {
+  color: var(--jp-fg);
+  border-color: var(--jp-primary);
+  font-weight: var(--jp-weight-semibold);
 }
 .tab-dot {
   display: inline-block;
   width: 7px;
   height: 7px;
-  margin-left: 6px;
   border-radius: 50%;
-  background: var(--pending);
-  vertical-align: 2px;
+  background: var(--jp-warning);
 }
 
-/* ---- panels ---- */
+/* ---- cards ---- */
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
 }
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  gap: 20px;
 }
 .panel {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  padding: 20px 22px 22px;
-  box-shadow: var(--shadow);
+  padding: 20px 24px 22px;
+  gap: 14px;
+  box-shadow: var(--jp-shadow-sm);
 }
-.panel + .panel {
+.panel > * {
   margin-top: 0;
+  margin-bottom: 0;
 }
 .panel-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
 }
 .panel-desc {
   margin: 4px 0 0;
   max-width: 72ch;
-  color: var(--muted);
-  font-size: 0.9rem;
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
 }
 .panel-actions {
   flex: none;
 }
 .section {
-  margin: 18px 0;
+  margin: 20px 0;
 }
 .current {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
-  margin-bottom: 12px;
+  gap: 6px;
 }
 .current p {
   margin: 0;
 }
 
-/* ---- buttons ---- */
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  color: inherit;
-}
-.btn,
-button:not([class]) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 36px;
-  padding: 6px 16px;
-  border-radius: var(--pill);
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--ink);
-  font-weight: 600;
-  cursor: pointer;
+/* ---- buttons the system has no class for ---- */
+a.jp-btn {
   text-decoration: none;
-  transition: background-color 120ms ease, border-color 120ms ease, transform 60ms ease;
 }
-.btn:hover:not(:disabled) {
-  background: var(--sunken);
-  border-color: var(--accent-line);
-  color: var(--ink);
+a.jp-btn-primary:hover {
+  color: var(--jp-on-primary);
 }
-.btn:active:not(:disabled) {
-  transform: translateY(1px);
-}
-.btn:disabled {
-  cursor: not-allowed;
-  color: var(--muted);
-  background: var(--sunken);
-  border-color: var(--line);
-}
-.btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
-}
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-  color: var(--accent-ink);
-}
-.btn-danger {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: var(--on-danger);
-}
-.btn-danger:hover:not(:disabled) {
-  background: var(--hana-danger-hover);
-  border-color: var(--hana-danger-hover);
-  color: var(--on-danger);
-}
-.btn-danger-quiet {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 6px 16px;
-  border-radius: var(--pill);
-  border: 1px solid var(--danger-line);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-weight: 500;
-  cursor: pointer;
-}
-.btn-quiet {
-  border-color: transparent;
-  background: transparent;
-  color: var(--ink-2);
-}
-.btn-small {
-  min-height: 30px;
-  padding: 3px 12px;
-  font-size: 0.86rem;
-}
-.btn-large {
-  min-height: 46px;
-  padding: 10px 22px;
-}
-.btn-block {
+.block {
   width: 100%;
 }
-.btn-link {
+/* An action inside a sentence: looks like a link, is a button. */
+.link-btn {
   padding: 0;
   border: none;
   background: none;
-  color: var(--accent);
+  color: var(--jp-link);
+  font: inherit;
+  font-weight: var(--jp-weight-semibold);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
 }
-.btn-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  min-height: 26px;
-  border-radius: var(--pill);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink-2);
-  font-size: 0.8rem;
-  font-weight: 500;
-  cursor: pointer;
-  vertical-align: middle;
+.link-btn:hover {
+  color: var(--jp-primary-hover);
 }
-.btn-copy:hover {
-  border-color: var(--line-strong);
-  background: var(--sunken);
+.copy-btn {
+  height: 28px;
+  padding: 0 8px;
+  gap: 4px;
+  vertical-align: middle;
 }
 .cell-actions {
   white-space: nowrap;
@@ -589,26 +500,30 @@ button:not([class]) {
   margin-left: 6px;
 }
 .load-more {
-  margin-top: 12px;
+  margin-top: 16px;
 }
 
-/* ---- the in-page confirm ---- */
+/* ---- the in-page confirm: what the action does, then the danger button ---- */
 .confirm {
   display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid var(--danger-line);
-  background: var(--danger-soft);
-  border-radius: var(--r-s);
+  background: var(--jp-danger-bg);
+  border: 1px solid color-mix(in srgb, var(--jp-danger) 30%, transparent);
+  border-radius: var(--jp-radius-md);
   max-width: 420px;
   text-align: left;
   white-space: normal;
 }
+.confirm-primary {
+  background: var(--jp-primary-soft);
+  border-color: color-mix(in srgb, var(--jp-primary) 30%, transparent);
+}
 .confirm-detail {
-  font-size: 0.86rem;
-  color: var(--ink);
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg);
 }
 .confirm-buttons {
   display: inline-flex;
@@ -617,91 +532,54 @@ button:not([class]) {
 }
 
 /* ---- forms ---- */
-input,
-select,
-textarea {
-  min-height: 36px;
-  padding: 6px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-s);
-  background: var(--surface);
-  max-width: 100%;
-}
-input:hover,
-select:hover,
-textarea:hover {
-  border-color: var(--muted);
-}
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  border-color: var(--accent);
-}
-input[aria-invalid="true"] {
-  border-color: var(--danger);
-}
-input[type="file"] {
-  padding: 5px;
-}
-input[type="checkbox"] {
-  min-height: 0;
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-}
-textarea {
-  width: 100%;
-  resize: vertical;
+.jp-input.mono {
+  font-family: var(--jp-font-mono);
 }
 .code-input {
-  font-size: 0.82rem;
-  line-height: 1.5;
-  background: var(--sunken);
+  font-family: var(--jp-font-mono);
+  font-size: var(--jp-text-xs);
+  line-height: 1.55;
+  background: var(--jp-bg-subtle);
+}
+textarea.jp-input.code-input {
+  min-height: 240px;
+  overflow: auto;
+}
+.file-input {
+  font-size: var(--jp-text-sm);
+  max-width: 100%;
+}
+.file-input::file-selector-button {
+  height: var(--jp-control-sm);
+  margin-right: 12px;
+  padding: 0 12px;
+  border: 1px solid var(--jp-border-strong);
+  border-radius: var(--jp-radius-sm);
+  background: var(--jp-surface);
+  color: var(--jp-fg);
+  font: inherit;
+  font-weight: var(--jp-weight-semibold);
+  cursor: pointer;
 }
 .form {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 12px;
+  gap: 18px;
   max-width: 640px;
 }
 .form-inline {
   flex-direction: row;
   flex-wrap: wrap;
   align-items: flex-end;
+  gap: 12px 16px;
   max-width: none;
 }
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px 18px;
-  max-width: none;
+.form-inline > .jp-field {
+  flex: 0 1 auto;
 }
-.field-wide {
-  grid-column: 1 / -1;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.field-grow {
+.form-inline > .field-grow {
   flex: 1 1 360px;
-}
-.field-label {
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: var(--ink-2);
-}
-.field-hint {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-.field-error {
-  margin: 0;
-  font-size: 0.84rem;
-  color: var(--danger);
 }
 .form-actions {
   display: flex;
@@ -711,184 +589,174 @@ textarea {
 }
 .filters {
   margin: 0 0 16px;
-  padding: 14px 16px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-}
-.check {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+  padding: 16px 18px;
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-lg);
 }
 .apps-filter {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-s);
-  padding: 6px 12px 8px;
-  margin: 0;
+  gap: 6px 16px;
 }
-.apps-filter legend {
-  font-size: 0.84rem;
-  font-weight: 600;
-  padding: 0 4px;
-  color: var(--ink-2);
+.choice-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.choice-group legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+/* A setting list: rows flush with their card's edges. */
+.setting-list {
+  margin: 0 -24px;
+  border-top: 1px solid var(--jp-border);
+}
+.panel > .setting-list:last-child {
+  margin-bottom: -22px;
+}
+.panel:has(> .setting-list:last-child) {
+  overflow: hidden;
+}
+.setting-row {
+  cursor: default;
+}
+label.setting-row {
+  cursor: pointer;
+}
+.setting-row > span:first-child {
+  gap: 3px;
+}
+.setting-title {
+  font-weight: var(--jp-weight-semibold);
+  font-size: var(--jp-text-sm);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.setting-title .opt {
+  color: var(--jp-fg-muted);
+  font-weight: var(--jp-weight-regular);
+}
+.setting-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.setting-control .jp-input {
+  width: 120px;
+}
+.setting-control .jp-input.wide {
+  width: min(360px, 52vw);
+}
+.setting-row.is-invalid .jp-input {
+  border-color: var(--jp-danger);
+  box-shadow: 0 0 0 3px var(--jp-danger-bg);
+}
+.unit {
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
+}
+.setting-block {
+  padding: 16px 24px 18px;
+  border-bottom: 1px solid var(--jp-border);
+}
+.setting-block:last-child {
+  border-bottom: 0;
+}
+.savebar-note {
+  display: block;
+  color: var(--jp-ink-muted);
+  font-size: var(--jp-text-xs);
 }
 .editor {
   display: grid;
-  gap: 12px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.editor h3 {
-  margin: 0;
+  gap: 14px;
+  padding-top: 16px;
+  border-top: 1px solid var(--jp-border);
 }
 .checked {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
 }
 
-/* ---- notes, callouts, badges ---- */
-.callout {
-  margin: 0 0 12px;
-  padding: 11px 14px;
-  border-radius: var(--r-s);
-  border: 1px solid var(--accent-line);
-  background: var(--accent-soft);
-  color: var(--ink);
-  max-width: 80ch;
+/* ---- alerts and lines ---- */
+.jp-alert {
+  max-width: 82ch;
 }
-.callout > :last-child {
-  margin-bottom: 0;
+.jp-alert .ic {
+  flex: none;
 }
-.callout-title {
-  font-weight: 600;
-  margin: 0 0 4px;
+.jp-alert .body p {
+  margin: 4px 0 0;
 }
-.callout-title:last-child {
-  margin: 0;
+.jp-alert .body > :first-child {
+  margin-top: 0;
 }
-.callout-detail {
-  margin: 0 0 4px;
-}
-.callout-ok {
-  border-color: var(--ok-line);
-  background: var(--ok-soft);
-}
-.callout-ok .icon {
-  color: var(--ok);
-}
-.callout-warn {
-  border-color: var(--warn-line);
-  background: var(--warn-soft);
-}
-.callout-error,
-.callout-danger {
-  border-color: var(--danger-line);
-  background: var(--danger-soft);
-}
-.callout-error .callout-title {
-  color: var(--danger);
+.jp-alert .body ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
 }
 .frozen-note {
   max-width: none;
   margin-bottom: 20px;
 }
 .support-code {
-  margin: 6px 0 0;
-  font-size: 0.78rem;
-  color: var(--muted);
+  font-size: var(--jp-text-xs);
+  color: var(--jp-fg-muted);
 }
 .problems {
-  margin: 4px 0;
-  padding-left: 18px;
-  font-size: 0.86rem;
+  font-size: var(--jp-text-sm);
 }
 .why,
 .stepup-hint {
   display: flex;
-  gap: 7px;
+  gap: 8px;
   align-items: flex-start;
-  margin: 0 0 12px;
-  font-size: 0.88rem;
-  color: var(--muted);
-  max-width: 80ch;
+  margin: 0;
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
+  max-width: 82ch;
 }
 .why .icon,
 .stepup-hint .icon {
-  margin-top: 3px;
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
 }
 .stepup-hint {
-  margin: 0;
-  font-size: 0.82rem;
+  font-size: var(--jp-text-xs);
 }
-.badge {
-  display: inline-flex;
-  align-items: center;
+.jp-badge + .jp-badge {
   margin-left: 6px;
-  padding: 1px 9px;
-  border-radius: var(--pill);
-  border: 1px solid var(--line);
-  background: var(--sunken);
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.6;
-  color: var(--ink-2);
-  white-space: nowrap;
-  vertical-align: 1px;
-}
-.badges .badge,
-.current .badge,
-td > .badge:first-child,
-.key-meta .badge:first-child,
-p > .badge:first-child {
-  margin-left: 0;
-}
-.badge-accent {
-  background: var(--accent-soft);
-  border-color: var(--accent-line);
-  color: var(--accent);
-}
-.badge-ok {
-  background: var(--ok-soft);
-  border-color: var(--ok-line);
-  color: var(--ok);
-}
-.badge-warn {
-  background: var(--warn-soft);
-  border-color: var(--warn-line);
-  color: var(--warn);
-}
-.badge-danger {
-  background: var(--danger-soft);
-  border-color: var(--danger-line);
-  color: var(--danger);
 }
 
 /* ---- empty and loading ---- */
-.empty {
-  padding: 28px 28px 24px;
-  background: var(--surface);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--r);
-  max-width: 760px;
+.jp-empty {
+  background: var(--jp-surface);
 }
-.panel .empty {
-  border-style: dashed;
-  background: var(--sunken);
-  padding: 20px;
+.panel .jp-empty {
+  background: var(--jp-bg-subtle);
 }
 .empty-title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  margin: 0 0 8px;
+  margin: 0;
+  font-size: var(--jp-text-md);
+  font-weight: var(--jp-weight-semibold);
+  color: var(--jp-fg);
 }
-.empty > :last-child {
+.empty-body {
+  max-width: 64ch;
+  font-size: var(--jp-text-sm);
+}
+.empty-body > :last-child {
   margin-bottom: 0;
 }
 .steps {
@@ -896,6 +764,7 @@ p > .badge:first-child {
   padding-left: 22px;
   display: grid;
   gap: 8px;
+  text-align: left;
 }
 .steps li {
   padding-left: 4px;
@@ -906,117 +775,54 @@ p > .badge:first-child {
   padding: 8px 0;
   max-width: 620px;
 }
-.skeleton {
+.loading .jp-skel {
   display: block;
-  height: 14px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, var(--line) 0%, var(--sunken) 50%, var(--line) 100%);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
 }
-.skeleton.short {
+.loading .jp-skel.short {
   width: 60%;
-}
-@keyframes shimmer {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: -100% 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .skeleton {
-    animation: none;
-  }
-  * {
-    transition: none !important;
-  }
 }
 
 /* ---- tables and facts ---- */
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.89rem;
+/* A long list scrolls inside its card, so its header stays in view (the system's sticky header). */
+.jp-table-wrap.tall {
+  max-height: min(72vh, 760px);
 }
-.table th,
-.table td {
-  text-align: left;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
+.jp-table td {
   vertical-align: top;
 }
-.table th {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--muted);
-  background: var(--sunken);
+.jp-table.compact {
+  min-width: 0;
 }
-.table tbody tr:last-child td {
-  border-bottom: none;
-}
-.panel > .table,
-.panel > .table-wrap > .table {
-  border: 1px solid var(--line);
-  border-radius: var(--r-s);
-  border-collapse: separate;
-  border-spacing: 0;
-  overflow: hidden;
-}
-.content > .table-wrap > .table,
-.content > .table-wrap.section > .table {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  border-collapse: separate;
-  border-spacing: 0;
-}
-/* The header band follows the card's rounded corners (no overflow: hidden here, which would break a report's sticky
-   first column). */
-.content > .table-wrap > .table > thead > tr:first-child > :first-child {
-  border-top-left-radius: calc(var(--r) - 1px);
-}
-.content > .table-wrap > .table > thead > tr:first-child > :last-child {
-  border-top-right-radius: calc(var(--r) - 1px);
-}
-.table-compact th,
-.table-compact td {
-  padding: 6px 10px;
+.jp-table .num {
+  text-align: right;
 }
 tr.failed td {
-  background: var(--danger-soft);
+  background: var(--jp-danger-bg);
 }
-.table-wrap {
-  overflow-x: auto;
-  max-width: 100%;
-}
-table.report th,
-table.report td {
+.report th,
+.report td {
   white-space: nowrap;
 }
-table.report td.small {
+.report td.small {
   white-space: normal;
   min-width: 10rem;
 }
-table.report .num,
-.table .num {
-  text-align: right;
-}
-table.report tr.group-row th {
-  background: var(--surface);
-  color: var(--ink-2);
-  border-bottom: 1px solid var(--line-strong);
+.report tr.group-row th {
+  position: static;
   text-align: center;
+  background: var(--jp-surface);
+  border-bottom: 1px solid var(--jp-border);
 }
-table.report th:first-child,
-table.report td:first-child {
+.report td:first-child,
+.report th:first-child {
   position: sticky;
   left: 0;
-  background: var(--surface);
+  z-index: 1;
+  background: var(--jp-surface);
 }
-table.report thead th:first-child {
-  background: var(--sunken);
+.report thead tr:not(.group-row) th:first-child {
+  z-index: 2;
+  background: var(--jp-bg-subtle);
 }
 .hash-cell {
   max-width: 18rem;
@@ -1024,24 +830,31 @@ table.report thead th:first-child {
 .facts {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 8px 20px;
-  margin: 0 0 12px;
+  gap: 8px 24px;
+  margin: 0;
+  font-size: var(--jp-text-sm);
 }
 .facts dt {
-  color: var(--muted);
+  color: var(--jp-fg-muted);
 }
 .facts dd {
   margin: 0;
   min-width: 0;
 }
 .facts-panel {
-  padding: 16px 20px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
+  padding: 18px 20px;
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-lg);
+}
+.jp-kv {
+  margin: 0;
+}
+.jp-kv dd {
+  overflow-wrap: anywhere;
 }
 .plain-list {
-  margin: 0 0 12px;
+  margin: 0;
   padding: 0;
   list-style: none;
   display: grid;
@@ -1062,72 +875,77 @@ table.report thead th:first-child {
 }
 .explain {
   margin: -8px 0 16px;
-  max-width: 80ch;
-  font-size: 0.88rem;
-  color: var(--muted);
+  max-width: 82ch;
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
 }
 .explain summary {
   cursor: pointer;
-  color: var(--accent);
+  color: var(--jp-link);
+  font-weight: var(--jp-weight-semibold);
 }
 .explain p {
   margin: 6px 0 0;
 }
 .verify {
-  margin: 10px 0 18px;
+  margin: 12px 0 20px;
+}
+.jp-stats {
+  margin: 0;
+}
+.stat-note {
+  font-size: var(--jp-text-xs);
+  color: var(--jp-fg-muted);
 }
 
-/* ---- copy fields and snippets ---- */
+/* ---- copy fields and code ---- */
 .copy-field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 .copy-label {
-  font-size: 0.76rem;
-  font-weight: 600;
-  color: var(--muted);
+  font-size: 11px;
+  font-weight: var(--jp-weight-semibold);
+  letter-spacing: var(--jp-tracking-caps);
+  text-transform: uppercase;
+  color: var(--jp-fg-muted);
 }
 .copy-row {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 .copy-value {
-  padding: 3px 8px;
-  border-radius: 4px;
-  background: var(--sunken);
-  border: 1px solid var(--line);
-  font-size: 0.84rem;
-}
-.copy-hint {
-  font-size: 0.78rem;
-  color: var(--muted);
+  padding: 4px 8px;
+  border-radius: var(--jp-radius-sm);
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border);
+  font-size: var(--jp-text-xs);
 }
 .snippet {
   position: relative;
   margin: 6px 0 4px;
 }
-.snippet pre {
-  margin: 0;
-  padding: 12px 84px 12px 14px;
-  background: var(--sunken);
-  border: 1px solid var(--line);
-  border-radius: var(--r-s);
-  font-size: 0.82rem;
-  line-height: 1.55;
+.snippet .jp-code {
+  padding-right: 104px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.snippet .btn-copy {
+.snippet .copy-btn {
   position: absolute;
   top: 8px;
   right: 8px;
+  color: var(--jp-ink-tint);
+}
+.snippet .copy-btn:hover {
+  background: var(--jp-ink-raised);
+  color: var(--jp-ink-fg);
 }
 
-/* ---- apps list ---- */
+/* ---- the apps list ---- */
 .org-list,
 .app-list {
   list-style: none;
@@ -1140,15 +958,15 @@ table.report thead th:first-child {
 .app-row {
   display: grid;
   align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  color: var(--ink);
+  gap: 16px;
+  padding: 14px 18px;
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-lg);
+  color: var(--jp-fg);
   text-decoration: none;
-  box-shadow: var(--shadow);
-  transition: border-color 120ms ease;
+  box-shadow: var(--jp-shadow-sm);
+  transition: border-color var(--jp-dur-fast), box-shadow var(--jp-dur-base) var(--jp-ease);
 }
 .org-card {
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1158,12 +976,13 @@ table.report thead th:first-child {
 }
 .org-card:hover,
 .app-row:hover {
-  border-color: var(--accent-line);
-  color: var(--ink);
+  border-color: var(--jp-border-strong);
+  box-shadow: var(--jp-shadow-md);
+  color: var(--jp-fg);
 }
 .org-card-name,
 .app-row-name {
-  font-weight: 600;
+  font-weight: var(--jp-weight-semibold);
 }
 .app-row-main {
   display: flex;
@@ -1171,33 +990,30 @@ table.report thead th:first-child {
   min-width: 0;
 }
 .app-row-id {
-  font-size: 0.78rem;
-  color: var(--muted);
+  font-size: var(--jp-text-xs);
+  color: var(--jp-fg-muted);
 }
 .app-row-meta {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
 }
-.app-row-meta .badge {
-  margin: 0;
+.app-row-meta .jp-badge + .jp-badge {
+  margin-left: 0;
 }
 .app-row-num {
-  font-size: 0.86rem;
-  color: var(--ink-2);
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
   text-align: right;
-}
-.app-row-num .badge {
-  margin: 0;
 }
 .app-tile {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  border-radius: 9px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border-radius: var(--jp-radius-md);
+  border: 1px solid var(--jp-border);
+  background: var(--jp-surface);
   object-fit: cover;
 }
 .app-tile-md {
@@ -1207,34 +1023,33 @@ table.report thead th:first-child {
 .app-tile-lg {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: var(--jp-radius-lg);
 }
-/* A partner app without a logo: a neutral tile (never Hana's purples or the mark's square), so the partner's
-   identity never reads as Hana chrome. */
+/* A partner app without a logo: a neutral tile (never Journear's teal or the mark), so the partner's identity never
+   reads as Journear chrome. */
 .app-tile-initial {
-  background: var(--sunken);
-  border-color: var(--line-strong);
-  color: var(--ink-2);
-  font-weight: 600;
+  background: var(--jp-bg-subtle);
+  border-color: var(--jp-border-strong);
+  color: var(--jp-fg-muted);
+  font-weight: var(--jp-weight-semibold);
 }
 .app-tile-lg.app-tile-initial {
-  font-size: 1.3rem;
+  font-size: var(--jp-text-xl);
 }
 
 /* ---- the getting-started checklist ---- */
 .checklist {
   list-style: none;
-  margin: 0 0 12px;
+  margin: 0;
   padding: 0;
   display: grid;
-  gap: 0;
 }
 .checklist .step-item {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
-  gap: 12px;
-  padding: 12px 0;
-  border-top: 1px solid var(--line);
+  gap: 14px;
+  padding: 14px 0;
+  border-top: 1px solid var(--jp-border);
 }
 .checklist .step-item:first-child {
   border-top: none;
@@ -1247,45 +1062,36 @@ table.report thead th:first-child {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  border: 1.5px solid var(--line-strong);
-  font-size: 0.8rem;
-  font-weight: 700;
-  color: var(--muted);
+  border: 1.5px solid var(--jp-border-strong);
+  font-size: var(--jp-text-xs);
+  font-weight: var(--jp-weight-semibold);
+  color: var(--jp-fg-muted);
 }
 .step-done .check-n {
-  background: var(--ok);
-  border-color: var(--ok);
-  color: var(--surface);
+  background: var(--jp-primary);
+  border-color: var(--jp-primary);
+  color: var(--jp-on-primary);
 }
 .step-partly .check-n {
-  border-color: var(--pending);
-  color: var(--warn);
+  border-color: var(--jp-warning);
+  color: var(--jp-warning);
 }
 .check-body p {
   margin: 0 0 6px;
 }
+.check-body > .jp-btn {
+  margin: 4px 0 6px;
+}
 .check-title {
-  font-weight: 600;
+  font-weight: var(--jp-weight-semibold);
 }
 .check-state {
   margin-left: 8px;
-  font-size: 0.74rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-.check-state-done {
-  color: var(--ok);
-}
-.check-state-partly {
-  color: var(--warn);
 }
 
 /* ---- guarded changes: the timeline ---- */
-.pending {
-  margin-top: 16px;
-}
-.panel > .pending:first-child {
-  margin-top: 0;
+.pending > h3 {
+  margin-bottom: 10px;
 }
 .pending-list {
   list-style: none;
@@ -1295,10 +1101,10 @@ table.report thead th:first-child {
   gap: 10px;
 }
 .pending-item {
-  padding: 12px 14px 14px;
-  border: 1px solid var(--warn-line);
-  background: var(--warn-soft);
-  border-radius: var(--r-s);
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--jp-warning) 28%, transparent);
+  background: var(--jp-warning-bg);
+  border-radius: var(--jp-radius-md);
 }
 .pending-head {
   display: flex;
@@ -1308,11 +1114,11 @@ table.report thead th:first-child {
   flex-wrap: wrap;
 }
 .pending-what {
-  font-weight: 600;
+  font-weight: var(--jp-weight-semibold);
   overflow-wrap: anywhere;
 }
 .pending-by {
-  margin: 2px 0 10px;
+  margin: 2px 0 12px;
 }
 .track {
   list-style: none;
@@ -1320,11 +1126,10 @@ table.report thead th:first-child {
   padding: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  counter-reset: none;
 }
 .track li {
   position: relative;
-  padding: 18px 10px 0 0;
+  padding: 20px 10px 0 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -1337,13 +1142,13 @@ table.report thead th:first-child {
   left: 6px;
   right: 0;
   height: 2px;
-  background: var(--warn-line);
+  background: var(--jp-border-strong);
 }
 .track li:last-child::before {
   display: none;
 }
 .track li.done::before {
-  background: var(--ok);
+  background: var(--jp-primary);
 }
 .track-dot {
   position: absolute;
@@ -1352,28 +1157,28 @@ table.report thead th:first-child {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 2px solid var(--warn-line);
-  background: var(--surface);
+  border: 2px solid var(--jp-border-strong);
+  background: var(--jp-surface);
   z-index: 1;
 }
 .track li.done .track-dot {
-  background: var(--ok);
-  border-color: var(--ok);
+  background: var(--jp-primary);
+  border-color: var(--jp-primary);
 }
 .track li.current .track-dot {
-  border-color: var(--pending);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pending) 22%, transparent);
+  border-color: var(--jp-warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--jp-warning) 22%, transparent);
 }
 .track-label {
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: var(--jp-text-xs);
+  font-weight: var(--jp-weight-semibold);
 }
 .track-when {
-  font-size: 0.78rem;
-  color: var(--ink-2);
+  font-size: var(--jp-text-xs);
+  color: var(--jp-fg-muted);
 }
 .track-rel {
-  font-weight: 600;
+  font-weight: var(--jp-weight-semibold);
 }
 .track-line {
   margin: 0;
@@ -1382,7 +1187,7 @@ table.report thead th:first-child {
 /* ---- keys ---- */
 .key-list {
   list-style: none;
-  margin: 0 0 12px;
+  margin: 0;
   padding: 0;
   display: grid;
   gap: 8px;
@@ -1390,10 +1195,10 @@ table.report thead th:first-child {
 .key {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 12px;
+  gap: 6px 12px;
   padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-s);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
 }
 .key-main {
   display: flex;
@@ -1402,11 +1207,15 @@ table.report thead th:first-child {
   min-width: 0;
 }
 .key-value {
-  font-size: 0.86rem;
+  font-size: var(--jp-text-sm);
   overflow-wrap: anywhere;
 }
 .key-meta {
   grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .key-actions {
   grid-column: 2;
@@ -1418,17 +1227,17 @@ table.report thead th:first-child {
   justify-content: flex-end;
 }
 .key-retiring {
-  background: var(--warn-soft);
-  border-color: var(--warn-line);
+  background: var(--jp-warning-bg);
+  border-color: color-mix(in srgb, var(--jp-warning) 28%, transparent);
 }
 .key-revoked {
   grid-template-columns: 1fr;
-  color: var(--muted);
+  color: var(--jp-fg-muted);
 }
 .revoked summary {
   cursor: pointer;
-  color: var(--muted);
-  font-size: 0.88rem;
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
 }
 .revoked[open] summary {
   margin-bottom: 8px;
@@ -1438,7 +1247,6 @@ table.report thead th:first-child {
 .logo-row {
   display: flex;
   gap: 24px;
-  margin-bottom: 12px;
 }
 .logo-figure {
   margin: 0;
@@ -1448,7 +1256,7 @@ table.report thead th:first-child {
   gap: 6px;
 }
 
-/* ---- the fresh sign-in page ---- */
+/* ---- the fresh sign-in page: what will be applied, then one primary ---- */
 .action {
   max-width: 760px;
   display: flex;
@@ -1459,87 +1267,85 @@ table.report thead th:first-child {
   margin-bottom: 0;
 }
 .confirm-panel {
-  border-color: var(--accent-line);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--jp-primary);
+  box-shadow: 0 0 0 3px var(--jp-primary-soft);
 }
 
-/* ---- signed-out pages ---- */
+/* ---- signed-out pages: one card, the modal's shape ---- */
 .auth {
   min-height: 100dvh;
   display: grid;
   place-items: start center;
   padding: 12vh 16px 48px;
+  background: var(--jp-bg-subtle);
 }
 .auth-card {
   width: 100%;
   max-width: 440px;
-  padding: 28px 28px 24px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  box-shadow: var(--shadow);
+  padding: 28px;
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-xl);
+  box-shadow: var(--jp-shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: jp-modal-in 320ms var(--jp-ease);
 }
 .auth-card h1 {
-  margin-bottom: 4px;
+  font-size: var(--jp-text-2xl);
 }
 .auth-card .lede {
-  margin-bottom: 18px;
+  margin: 0 0 6px;
 }
-.auth-card .callout {
-  margin-top: 12px;
+.auth-card > p {
+  margin: 0;
 }
 .auth-brand {
-  position: relative;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 24px;
-  padding-bottom: 16px;
-  font-family: var(--display);
-  font-size: 1.05rem;
-  font-weight: 700;
-}
-.auth-brand::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  width: 56px;
-  bottom: 0;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--hana-gradient);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--jp-border);
 }
 .auth-foot {
-  margin: 16px 0 0;
-  font-size: 0.84rem;
-  color: var(--muted);
+  margin: 4px 0 0;
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
 }
 
 /* The consent preview: packages/web's renderConsent markup (its classes), framed as the popup frames it. */
 .consent-preview {
   margin: 4px 0;
 }
+.consent-preview figcaption {
+  margin-bottom: 8px;
+  font-size: var(--jp-text-sm);
+}
 .consent-preview > div {
-  max-width: 480px;
-  padding: 16px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
+  max-width: 400px;
+  padding: 20px;
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border-strong);
+  border-radius: var(--jp-radius-xl);
+  box-shadow: var(--jp-shadow-md);
 }
 .consent h1 {
-  font-size: 1.2rem;
+  font-size: var(--jp-text-xl);
 }
 .consent .warn {
-  background: var(--warn-soft);
-  color: var(--warn);
+  background: var(--jp-warning-bg);
+  color: var(--jp-warning);
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--jp-radius-sm);
 }
 .consent .danger {
-  color: var(--danger);
+  color: var(--jp-danger);
 }
 .consent .verified {
-  color: var(--ok);
+  color: var(--jp-success);
 }
 .consent .label {
   font-style: italic;
@@ -1552,7 +1358,7 @@ table.report thead th:first-child {
 .downloads {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 4px 14px;
 }
 .hash {
   margin: 4px 0;
@@ -1562,26 +1368,40 @@ table.report thead th:first-child {
   gap: 6px;
 }
 .audit-what {
-  font-weight: 600;
+  font-weight: var(--jp-weight-semibold);
+}
+
+/* ---- toasts: bottom-right on a desktop, at the top on a phone (the design system's placement) ---- */
+.toast-region {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: var(--jp-z-toast);
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast-region .jp-toast {
+  pointer-events: auto;
+}
+.toast-region .jp-toast > .ic {
+  flex: none;
+}
+/* Above the save bar when both are up. */
+body:has(.jp-savebar) .toast-region {
+  bottom: 96px;
 }
 
 /* ---- narrower screens ---- */
 @media (max-width: 1180px) {
-  .content {
-    padding: 24px 28px 56px;
-  }
-  .session-banner {
-    margin: -24px -28px 20px;
-    padding: 12px 28px;
+  :root {
+    --gutter: 28px;
+    --top: 28px;
   }
   .app-row {
     grid-template-columns: auto minmax(0, 1fr) auto 9rem;
   }
   .app-row > .app-row-num:nth-of-type(4) {
     display: none;
-  }
-  .form-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 860px) {
@@ -1590,42 +1410,54 @@ table.report thead th:first-child {
   }
 }
 @media (max-width: 760px) {
+  :root {
+    --gutter: 16px;
+    --top: 20px;
+  }
   .frame {
     /* minmax(0, …): a wide child (a table, a key) can't widen the column past the screen; it scrolls in place. */
     grid-template-columns: minmax(0, 1fr);
-    background: var(--canvas);
   }
   .content,
   .sidebar {
     min-width: 0;
   }
-  /* One header block: Hana's gradient as a rule across its whole top edge (not under the brand text, which ended
-     mid-row here), then the brand and Sign out on one row, the organisation on its own row, then the nav. */
+  /* One header block: the lockup and Sign out on one row, the organisation on its own row, then the nav. */
   .sidebar {
     position: static;
     height: auto;
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px 12px;
-    padding: 13px 16px 8px;
+    gap: 8px 12px;
+    padding: 14px 16px 8px;
     border-right: none;
-    border-bottom: 1px solid var(--line);
-    background: var(--hana-gradient) top / 100% 3px no-repeat, var(--surface);
+    border-bottom: 1px solid var(--jp-border);
   }
   .brand {
     order: 1;
     margin: 0;
     padding: 0;
+    border: none;
   }
-  .brand::after {
-    display: none;
+  .brand .lockup {
+    width: 140px;
   }
   .account {
     order: 2;
+    margin: 0 0 0 auto;
+    padding: 0;
+    border: none;
+    flex-direction: row;
+    align-items: center;
   }
+  .account .jp-btn {
+    margin-left: 0;
+  }
+  .account-email,
   .org-role,
-  .side-nav-group {
+  .side-nav-group,
+  .brand-sub {
     display: none;
   }
   .org-name,
@@ -1651,34 +1483,19 @@ table.report thead th:first-child {
   .side-nav a {
     white-space: nowrap;
   }
-  .account {
-    margin: 0 0 0 auto;
-    padding: 0;
-    border: none;
-    flex-direction: row;
-    align-items: center;
+  .side-nav a.active {
+    box-shadow: inset 0 -2px 0 var(--jp-primary);
   }
-  .account-email {
-    display: none;
-  }
-  /* A wide table scrolls inside its panel instead of widening the page (and the header with it). */
-  .table {
-    position: relative; /* its visually hidden headers stay inside the scroller */
-    display: block;
-    overflow-x: auto;
+  h1 {
+    font-size: var(--jp-text-2xl);
   }
   .app-row-meta {
     min-width: 0;
   }
-  .app-row-meta .badge {
+  .app-row-meta .jp-badge {
     white-space: normal;
-  }
-  .content {
-    padding: 20px 16px 48px;
-  }
-  .session-banner {
-    margin: -20px -16px 16px;
-    padding: 12px 16px;
+    height: auto;
+    min-height: 22px;
   }
   .app-row {
     grid-template-columns: auto minmax(0, 1fr);
@@ -1691,7 +1508,6 @@ table.report thead th:first-child {
   .app-row > .app-row-num:nth-of-type(4) {
     display: block;
   }
-  .form-grid,
   .track {
     grid-template-columns: 1fr;
   }
@@ -1717,21 +1533,94 @@ table.report thead th:first-child {
   .panel {
     padding: 16px;
   }
-  .table th,
-  .table td {
-    padding: 8px;
+  .setting-list {
+    margin: 0 -16px;
+  }
+  .panel > .setting-list:last-child {
+    margin-bottom: -16px;
+  }
+  .setting-block {
+    padding: 14px 16px 16px;
+  }
+  /* A setting row stacks: the line, then its control. */
+  div.setting-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+  .setting-control .jp-input.wide {
+    width: 100%;
   }
   .cell-actions {
     white-space: normal;
   }
+  .toast-region {
+    top: 12px;
+    bottom: auto;
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+  body:has(.jp-savebar) .toast-region {
+    bottom: auto;
+  }
 }
 
 /* Figures in tables never break mid-number (the table scrolls instead); hashes and ids still wrap. */
-.table td.mono:not(.small),
-.table td.num {
+.jp-table td.mono:not(.small),
+.jp-table td.num {
   white-space: nowrap;
   overflow-wrap: normal;
 }
 .steps input {
   width: min(28rem, 100%);
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+/* A setting list on its own (not flush with a card's edges). */
+.setting-list.inset {
+  margin: 0;
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-lg);
+  overflow: hidden;
+}
+/* The add-client steps: each label above its field. */
+.steps label:not(.jp-check) {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--jp-text-sm);
+  font-weight: var(--jp-weight-semibold);
+}
+.steps .jp-input {
+  font-weight: var(--jp-weight-regular);
+}
+.jp-label .opt {
+  font-weight: var(--jp-weight-regular);
+}
+/* The teal badge's text is the link teal: the system's --jp-primary on --jp-primary-soft is 4.2:1 in dark, under AA. */
+.jp-badge-primary {
+  color: var(--jp-link);
+}
+/* On a phone the save bar wraps: what changed on one line, Discard and Save under it. */
+@media (max-width: 760px) {
+  .jp-savebar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .jp-savebar > span:first-child {
+    flex: 1 0 100%;
+  }
+  .jp-savebar > .jp-btn-primary {
+    flex: 1 1 auto;
+    white-space: normal;
+    height: auto;
+    min-height: var(--jp-control-md);
+    text-align: center;
+  }
 }

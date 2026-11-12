@@ -301,7 +301,7 @@ export function statements(now: number): StatementMeta[] {
 
 export function statementView(s: StatementMeta): StatementView {
   return {
-    title: `Hana ID usage statement ${s.month}`,
+    title: `Journear Passport usage statement ${s.month}`,
     header: [
       ['Organisation', `Sora Labs (${ORG_ID})`],
       ['Month', s.month],

@@ -8,7 +8,7 @@ import type { AppSummary, UsageRow } from '@hana-id/console-core';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApi, utcDay } from '../lib.tsx';
-import { Empty, ErrorNote, Loading, PageHeader } from '../ui.tsx';
+import { Empty, ErrorNote, Field, Loading, PageHeader } from '../ui.tsx';
 import { near, usd } from '../units.ts';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/u;
@@ -48,11 +48,11 @@ export function Usage() {
 
   return (
     <>
-      <PageHeader title="Usage" description="What your apps did, by UTC day or month: logins, signatures, users, and the NEAR gas Hana paid for them. The monthly statement is the billing record." />
+      <PageHeader title="Usage" description="What your apps did, by UTC day or month: logins, signatures, users, and the NEAR gas Journear paid for them. The monthly statement is the billing record." />
       <details className="explain">
         <summary>How usage is counted</summary>
         <p>
-          At most 400 days and 100 apps at a time. Gas is what Hana’s relayer paid, settled at FINAL; unsettled events are never billed, and relayed-then-rejected gas is not billed by default (it is part of the Tgas,
+          At most 400 days and 100 apps at a time. Gas is what Journear’s relayer paid, settled at FINAL; unsettled events are never billed, and relayed-then-rejected gas is not billed by default (it is part of the Tgas,
           NEAR and USD columns and shown on its own). USD is at each day’s NEAR/USD rate (testnet usage at the mainnet price); “—” until the day has a rate.
         </p>
       </details>
@@ -63,26 +63,22 @@ export function Usage() {
           if (valid) setQuery({ ...form, apps: [...form.apps] });
         }}
       >
-        <label className="field">
-          <span className="field-label">From</span>
-          <input type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} />
-        </label>
-        <label className="field">
-          <span className="field-label">To</span>
-          <input type="date" value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })} />
-        </label>
-        <label className="field">
-          <span className="field-label">By</span>
-          <select value={form.by} onChange={(e) => setForm({ ...form, by: e.target.value === 'month' ? 'month' : 'day' })}>
+        <Field label="From">{(c) => <input {...c} className="jp-input" type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} />}</Field>
+        <Field label="To">{(c) => <input {...c} className="jp-input" type="date" value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })} />}</Field>
+        <Field label="By">
+          {(c) => (
+          <select {...c} className="jp-input" value={form.by} onChange={(e) => setForm({ ...form, by: e.target.value === 'month' ? 'month' : 'day' })}>
             <option value="day">day</option>
             <option value="month">month</option>
           </select>
-        </label>
+          )}
+        </Field>
         {(apps.data?.apps.length ?? 0) > 0 && (
-          <fieldset className="apps-filter">
-            <legend>Apps (none ticked: all apps and the owner actions)</legend>
+          <fieldset className="choice-group">
+            <legend className="jp-label">Apps <span className="opt">none ticked: all apps and the owner actions</span></legend>
+            <div className="apps-filter">
             {apps.data!.apps.map((a) => (
-              <label key={a.id} className="check">
+              <label key={a.id} className="jp-check">
                 <input
                   type="checkbox"
                   checked={form.apps.includes(a.id)}
@@ -91,14 +87,15 @@ export function Usage() {
                 {a.name}
               </label>
             ))}
+            </div>
           </fieldset>
         )}
-        <button type="submit" className="btn btn-primary" disabled={!valid}>
+        <button type="submit" className="jp-btn jp-btn-primary" disabled={!valid}>
           Show
         </button>
       </form>
-      {!valid && <p className="field-error">Pick a start day on or before the end day.</p>}
-      {query.apps.length > 0 && <p className="muted">Filtered by app: owner actions and Hana Home logins (which belong to a scope, not an app) are left out.</p>}
+      {!valid && <p className="jp-error">Pick a start day on or before the end day.</p>}
+      {query.apps.length > 0 && <p className="muted">Filtered by app: owner actions and Passport Home logins (which belong to a scope, not an app) are left out.</p>}
       {r.error && <ErrorNote error={r.error} onRetry={r.reload} />}
       {!r.data && !r.error && <Loading />}
       {r.data && rows.length === 0 && (
@@ -107,8 +104,8 @@ export function Usage() {
         </Empty>
       )}
       {r.data && rows.length > 0 && (
-        <div className="table-wrap">
-          <table className="table report">
+        <div className="jp-table-wrap tall">
+          <table className="jp-table report">
             <thead>
               <tr className="group-row">
                 <th scope="colgroup" colSpan={2} />
@@ -131,34 +128,34 @@ export function Usage() {
               <tr>
                 <th>{query.by === 'month' ? 'Month' : 'Day'}</th>
                 <th>App or scope</th>
-                <th>Logins</th>
-                <th>Derives</th>
-                <th>Revokes</th>
-                <th>Unlocks</th>
-                <th>Owner actions</th>
-                <th>Link actions</th>
-                <th>Identity tokens</th>
-                <th>Home logins</th>
-                <th>Active users</th>
-                <th>New users</th>
+                <th className="num">Logins</th>
+                <th className="num">Derives</th>
+                <th className="num">Revokes</th>
+                <th className="num">Unlocks</th>
+                <th className="num">Owner actions</th>
+                <th className="num">Link actions</th>
+                <th className="num">Identity tokens</th>
+                <th className="num">Home logins</th>
+                <th className="num">Active users</th>
+                <th className="num">New users</th>
                 <th>Failures by code</th>
-                <th>Tgas</th>
-                <th>Relayed-then-rejected Tgas</th>
-                <th>Error Tgas</th>
-                <th>NEAR</th>
-                <th>Relayed-then-rejected NEAR</th>
-                <th>USD</th>
-                <th>Relayed-then-rejected USD</th>
-                <th>Login p50 / p95 ms</th>
-                <th>Derive p50 / p95 ms</th>
-                <th>Unsettled</th>
-                {late && <th>After the statement</th>}
+                <th className="num">Tgas</th>
+                <th className="num">Relayed-then-rejected Tgas</th>
+                <th className="num">Error Tgas</th>
+                <th className="num">NEAR</th>
+                <th className="num">Relayed-then-rejected NEAR</th>
+                <th className="num">USD</th>
+                <th className="num">Relayed-then-rejected USD</th>
+                <th className="num">Login p50 / p95 ms</th>
+                <th className="num">Derive p50 / p95 ms</th>
+                <th className="num">Unsettled</th>
+                {late && <th className="num">After the statement</th>}
               </tr>
             </thead>
             <tbody>
               {rows.map((x) => (
                 <tr key={`${x.period}:${x.appId ?? `${x.kind === 'home' ? 'home' : 'scope'}:${x.scopeId ?? ''}`}`}>
-                  <td className="mono num">{x.period}</td>
+                  <td className="mono">{x.period}</td>
                   <td>
                     {x.appId ? (
                       <>
@@ -166,7 +163,7 @@ export function Usage() {
                         {names.has(x.appId) && <div className="muted mono small">{x.appId}</div>}
                       </>
                     ) : x.kind === 'home' ? (
-                      `Hana Home logins, scope ${x.scopeId ?? '—'}`
+                      `Passport Home logins, scope ${x.scopeId ?? '—'}`
                     ) : (
                       `Owner actions, scope ${x.scopeId ?? '—'}`
                     )}
@@ -189,21 +186,21 @@ export function Usage() {
                   <td className="mono num">{near(x.relayedRejectedBurntYocto)}</td>
                   <td className="mono num">{usd(x.usdMicros)}</td>
                   <td className="mono num">{usd(x.relayedRejectedUsdMicros)}</td>
-                  <td>
+                  <td className="num">
                     {ms(x.p50.login)} / {ms(x.p95.login)}
                   </td>
-                  <td>
+                  <td className="num">
                     {ms(x.p50.derive)} / {ms(x.p95.derive)}
                   </td>
-                  <td>{x.unsettled ? <strong>{x.unsettled}</strong> : 0}</td>
-                  {late && <td>{x.afterStatement ? <strong>{x.afterStatement}</strong> : 0}</td>}
+                  <td className="num">{x.unsettled ? <strong>{x.unsettled}</strong> : 0}</td>
+                  {late && <td className="num">{x.afterStatement ? <strong>{x.afterStatement}</strong> : 0}</td>}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      {late && <p className="muted">“After the statement”: events of an issued month that reached the ledger after its statement was frozen. They are not in the statement; Hana handles them under the service contract.</p>}
+      {late && <p className="muted">“After the statement”: events of an issued month that reached the ledger after its statement was frozen. They are not in the statement; Journear handles them under the service contract.</p>}
     </>
   );
 }

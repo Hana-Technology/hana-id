@@ -1,48 +1,75 @@
-// The SPA's UI kit: notes and errors, panels, empty states, badges, copy buttons, the in-page confirm, the fresh
-// sign-in hint and the guarded-change timeline. Styles are classes in styles.css only (the CSP has no
+// The SPA's UI kit, on the Journear Passport design system's component classes (`.jp-*`, packages/brand
+// components.css): the lockup, inline alerts and errors, cards, empty and loading states, badges, copy buttons, the
+// in-page confirm (danger behind a second click), fields that validate on blur, setting rows, choice cards, the save
+// bar, the stats strip, the fresh sign-in hint and the guarded-change timeline. Styles are classes only (the CSP has no
 // 'unsafe-inline': no style prop anywhere), and text is always text (no HTML is ever injected).
-import { MARK_PATHS, MARK_RADIUS, MARK_VIEWBOX } from '@hana-id/brand';
+import { BRAND, MARK_CHEVRON, MARK_FRAME } from '@hana-id/brand';
+import wordmarkSvg from '@hana-id/brand/logo/journear-wordmark.svg?raw';
 import type { GuardedChange } from '@hana-id/console-core';
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ApiError } from './api.ts';
+import { IconAlert, IconBack, IconCheck, IconCheckCircle, IconCopy, IconInfo, IconShield } from './icons.tsx';
 import { relative, when } from './lib.tsx';
 import { explain } from './messages.ts';
 
-// ---- icons (inline SVG, one 1.75 stroke, decorative: aria-hidden) ----
+export * from './icons.tsx';
 
-const svg = (d: ReactNode) => (
-  <svg className="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-    {d}
-  </svg>
-);
-export const IconCopy = () => svg(<><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></>);
-export const IconCheck = () => svg(<path d="m5 12.5 4.5 4.5L19 7.5" />);
-export const IconLock = () => svg(<><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>);
-export const IconBack = () => svg(<path d="M15 18 9 12l6-6" />);
-export const IconInfo = () => svg(<><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" /></>);
-export const IconClock = () => svg(<><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>);
+// ---- the lockup ----
 
-/** Hana's mark (packages/brand, from Hana's own apps), drawn inline; its colours are the stylesheet's (.mark-bg, .mark-fg). */
-export function Mark() {
+/** The wordmark's outline (Archivo 900 drawn as one path), read from the brand's own file at build time. */
+export const WORDMARK_PATH = /\sd="([^"]+)"/u.exec(wordmarkSvg)?.[1] ?? '';
+
+/**
+ * The Journear Passport lockup (packages/brand logo/journear-lockup.svg), drawn inline so it needs no image request:
+ * the mark, the outlined wordmark and "PASSPORT" in letterspaced caps, as the file lays them out. Its colours are the
+ * stylesheet's: the brand teal and the stamp orange on light, the white variant on dark (never otherwise recoloured).
+ */
+export function Lockup({ className }: { className?: string }) {
+  const f = MARK_FRAME;
+  const c = MARK_CHEVRON;
   return (
-    <svg className="mark" viewBox={MARK_VIEWBOX} width="28" height="28" aria-hidden="true" focusable="false">
-      <rect className="mark-bg" width="50" height="50" rx={MARK_RADIUS} />
-      {MARK_PATHS.map((d) => (
-        <path key={d} className="mark-fg" d={d} />
-      ))}
+    <svg className={`lockup${className ? ` ${className}` : ''}`} viewBox="0 0 561 128" width="176" height="40" role="img" aria-label={BRAND.product} focusable="false">
+      <g transform="translate(0,17.8) scale(0.7)">
+        <rect className="lk-frame" x={f.x} y={f.y} width={f.width} height={f.height} rx={f.rx} fill="none" strokeWidth={f.strokeWidth} />
+        <path className="lk-chev" d={c.paths[0]} fill="none" strokeWidth={c.strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+        <path className="lk-chev" d={c.paths[1]} strokeWidth={c.strokeWidth} strokeLinecap="round" />
+      </g>
+      <g transform="translate(92,87.8)">
+        <path className="lk-word" d={WORDMARK_PATH} />
+      </g>
+      <text className="lk-sub" x="94" y="119.8" fontSize="22" letterSpacing="6.5">
+        PASSPORT
+      </text>
     </svg>
   );
 }
 
-// ---- notes ----
+// ---- alerts ----
+
+type Tone = 'info' | 'warn' | 'danger' | 'ok';
+const ALERT: Record<Tone, string> = { info: 'jp-alert-info', warn: 'jp-alert-warning', danger: 'jp-alert-danger', ok: 'jp-alert-success' };
+const ALERT_ICON: Record<Tone, typeof IconInfo> = { info: IconInfo, warn: IconAlert, danger: IconAlert, ok: IconCheckCircle };
+
+/** An inline alert (never floating): a tone, an optional bold title, the body. */
+export function Callout({ tone = 'info', title, children, className, role }: { tone?: Tone; title?: ReactNode; children?: ReactNode; className?: string; role?: 'alert' | 'status' | 'note' }) {
+  const Icon = ALERT_ICON[tone];
+  return (
+    <div className={`jp-alert ${ALERT[tone]}${className ? ` ${className}` : ''}`} role={role}>
+      <Icon className="ic" />
+      <div className="body">
+        {title && <b className="alert-title">{title}</b>}
+        {children}
+      </div>
+    </div>
+  );
+}
 
 /** An API error in plain language, with the server's detail when it adds something and the code for support. */
 export function ErrorNote({ error, onRetry }: { error: ApiError; onRetry?: (() => void) | undefined }) {
   const { text, detail } = explain(error.code, error.message, error.status);
   return (
-    <div className="callout callout-error" role="alert">
-      <p className="callout-title">{text}</p>
+    <Callout tone="danger" role="alert" title={text}>
       {error.problems.length > 0 ? (
         <ul className="problems">
           {error.problems.map((p) => (
@@ -52,7 +79,7 @@ export function ErrorNote({ error, onRetry }: { error: ApiError; onRetry?: (() =
           ))}
         </ul>
       ) : (
-        detail && <p className="callout-detail">{detail}</p>
+        detail && <p className="alert-detail">{detail}</p>
       )}
       <p className="support-code">
         Error code <code>{error.code}</code>
@@ -60,34 +87,19 @@ export function ErrorNote({ error, onRetry }: { error: ApiError; onRetry?: (() =
         {onRetry && (
           <>
             {' '}
-            <button type="button" className="btn-link" onClick={onRetry}>
+            <button type="button" className="link-btn" onClick={onRetry}>
               Try again
             </button>
           </>
         )}
       </p>
-    </div>
+    </Callout>
   );
 }
 
-export function WriteNote({ error, done }: { error?: ApiError | undefined; done?: string | undefined }) {
-  if (error) return <ErrorNote error={error} />;
-  if (done)
-    return (
-      <p className="callout callout-ok" role="status">
-        <IconCheck /> {done}
-      </p>
-    );
-  return null;
-}
-
-export function Callout({ tone = 'info', title, children, className }: { tone?: 'info' | 'warn' | 'danger' | 'ok'; title?: string; children?: ReactNode; className?: string }) {
-  return (
-    <div className={`callout callout-${tone}${className ? ` ${className}` : ''}`}>
-      {title && <p className="callout-title">{title}</p>}
-      {children}
-    </div>
-  );
+/** A write's error, inline where the write was started (its success is a toast: lib.tsx `useWrite`). */
+export function WriteNote({ error }: { error?: ApiError | undefined }) {
+  return error ? <ErrorNote error={error} /> : null;
 }
 
 /** Why an action isn't offered here, in one line (instead of a control that can't work). */
@@ -103,7 +115,7 @@ export function Why({ children }: { children: ReactNode }) {
 export function StepUpHint({ email }: { email?: string | undefined }) {
   return (
     <p className="stepup-hint">
-      <IconLock /> <span>Next you review the change, then confirm it with a fresh Google sign-in{email ? ` as ${email}` : ''}.</span>
+      <IconShield /> <span>Next you review the change, then confirm it with a fresh Google sign-in{email ? ` as ${email}` : ''}.</span>
     </p>
   );
 }
@@ -130,10 +142,11 @@ export function PageHeader({ title, description, back, actions, children }: { ti
   );
 }
 
+/** A card: a title, one line of what it is, actions on the right, then its content. */
 export function Panel({ title, description, actions, children, className }: { title?: string; description?: ReactNode; actions?: ReactNode; children?: ReactNode; className?: string }) {
   const id = useId();
   return (
-    <section className={`panel${className ? ` ${className}` : ''}`} aria-labelledby={title ? id : undefined}>
+    <section className={`jp-card panel${className ? ` ${className}` : ''}`} aria-labelledby={title ? id : undefined}>
       {(title || actions) && (
         <div className="panel-head">
           <div>
@@ -148,29 +161,35 @@ export function Panel({ title, description, actions, children, className }: { ti
   );
 }
 
-export function Empty({ title, children }: { title: string; children?: ReactNode }) {
+export function Empty({ title, children, icon }: { title: string; children?: ReactNode; icon?: ReactNode }) {
   return (
-    <div className="empty">
+    <div className="jp-empty">
+      {icon ?? <IconInfo className="ic" />}
       <p className="empty-title">{title}</p>
-      {children}
+      {children && <div className="empty-body">{children}</div>}
     </div>
   );
 }
 
+/** The skeleton while a read is on its way (the label is for screen readers). */
 export function Loading({ label = 'Loading…' }: { label?: string }) {
   return (
     <div className="loading" aria-busy="true">
       <span className="visually-hidden">{label}</span>
-      <span className="skeleton" />
-      <span className="skeleton short" />
-      <span className="skeleton" />
+      <span className="jp-skel" aria-hidden="true" />
+      <span className="jp-skel short" aria-hidden="true" />
+      <span className="jp-skel" aria-hidden="true" />
     </div>
   );
 }
 
-export function Badge({ tone = 'neutral', children, title }: { tone?: 'neutral' | 'accent' | 'ok' | 'warn' | 'danger'; children: ReactNode; title?: string }) {
+type BadgeTone = 'neutral' | 'accent' | 'ok' | 'warn' | 'danger' | 'info';
+const BADGE: Record<BadgeTone, string> = { neutral: 'jp-badge', accent: 'jp-badge jp-badge-primary', ok: 'jp-badge jp-badge-success', warn: 'jp-badge jp-badge-warning', danger: 'jp-badge jp-badge-danger', info: 'jp-badge jp-badge-info' };
+
+/** A state or a label. `accent` is the brand teal (the stamp orange is kept for the logo: one accent per screen). */
+export function Badge({ tone = 'neutral', children, title }: { tone?: BadgeTone; children: ReactNode; title?: string }) {
   return (
-    <span className={`badge badge-${tone}`} title={title}>
+    <span className={BADGE[tone]} title={title}>
       {children}
     </span>
   );
@@ -182,12 +201,164 @@ export function OriginText({ origin, display, idn }: { origin: string; display: 
     <>
       <span className="origin">{display}</span>
       {idn && (
-        <span className="badge badge-warn" title={origin}>
-          IDN
-        </span>
+        <>
+          {' '}
+          <Badge tone="warn" title={origin}>
+            IDN
+          </Badge>
+        </>
       )}
       {display !== origin && <div className="muted mono small">{origin}</div>}
     </>
+  );
+}
+
+// ---- forms ----
+
+export interface FieldControl {
+  id: string;
+  'aria-describedby'?: string | undefined;
+  'aria-invalid'?: true | undefined;
+}
+
+/**
+ * A labelled control: the label above (6 px), the hint below, "Optional" on the optional ones (required is the
+ * default). `error` shows in place of the hint; pages pass it only once the field was left (validate on blur).
+ */
+export function Field({ label, optional, hint, error, className, children }: { label: ReactNode; optional?: boolean; hint?: ReactNode; error?: ReactNode; className?: string; children: (c: FieldControl) => ReactNode }) {
+  const id = useId();
+  const described = [hint ? `${id}-hint` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined;
+  return (
+    <div className={`jp-field${error ? ' is-invalid' : ''}${className ? ` ${className}` : ''}`}>
+      <label className="jp-label" htmlFor={id}>
+        {label}
+        {optional && <span className="opt">Optional</span>}
+      </label>
+      {children({ id, 'aria-describedby': described, 'aria-invalid': error ? true : undefined })}
+      {hint && (
+        <span className="jp-hint" id={`${id}-hint`}>
+          {hint}
+        </span>
+      )}
+      {error && (
+        <span className="jp-error" id={`${id}-error`}>
+          <IconAlert className="ic" />
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A setting as a row: its title, one line of what it does, the control on the right (the design system's setting
+ * row). The title labels the control (`children` gets its id); an error shows under the line once the field was left.
+ */
+export function SettingRow({ title, description, error, optional, children }: { title: ReactNode; description?: ReactNode; error?: ReactNode; optional?: boolean; children: (c: FieldControl) => ReactNode }) {
+  const id = useId();
+  const described = [description ? `${id}-desc` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined;
+  return (
+    <div className={`jp-setting setting-row${error ? ' is-invalid' : ''}`}>
+      <span>
+        <label htmlFor={id} className="setting-title">
+          {title}
+          {optional && <span className="opt">Optional</span>}
+        </label>
+        {description && <small id={`${id}-desc`}>{description}</small>}
+        {error && (
+          <span className="jp-error" id={`${id}-error`}>
+            <IconAlert className="ic" />
+            {error}
+          </span>
+        )}
+      </span>
+      <span className="setting-control">{children({ id, 'aria-describedby': described, 'aria-invalid': error ? true : undefined })}</span>
+    </div>
+  );
+}
+
+/** A switch row: the whole row is the label, as the design system's setting rows are. */
+export function ToggleRow({ title, description, checked, onChange, disabled }: { title: ReactNode; description?: ReactNode; checked: boolean; onChange: (on: boolean) => void; disabled?: boolean }) {
+  const id = useId();
+  return (
+    <label className="jp-setting setting-row">
+      <span>
+        <b>{title}</b>
+        {description && <small id={`${id}-desc`}>{description}</small>}
+      </span>
+      <span className="jp-toggle">
+        <input type="checkbox" role="switch" checked={checked} disabled={disabled} aria-describedby={description ? `${id}-desc` : undefined} onChange={(e) => onChange(e.target.checked)} />
+        <span className="t" />
+      </span>
+    </label>
+  );
+}
+
+export interface Choice<T extends string> {
+  value: T;
+  title: ReactNode;
+  detail: ReactNode;
+  badge?: ReactNode;
+}
+
+/** Choice cards, in place of radios where an option has consequences: each says what it does. */
+export function ChoiceCards<T extends string>({ legend, name, value, options, onChange, hint }: { legend: ReactNode; name: string; value: T; options: readonly Choice<T>[]; onChange: (v: T) => void; hint?: ReactNode }) {
+  return (
+    <fieldset className="choice-group">
+      <legend className="jp-label">{legend}</legend>
+      <div className="jp-cards">
+        {options.map((o) => (
+          <label key={o.value} className="jp-choice">
+            <input type="radio" name={name} value={o.value} checked={value === o.value} onChange={() => onChange(o.value)} />
+            <span className="t">
+              {o.title}
+              {o.badge}
+            </span>
+            <span className="d">{o.detail}</span>
+          </label>
+        ))}
+      </div>
+      {hint && <p className="jp-hint">{hint}</p>}
+    </fieldset>
+  );
+}
+
+/**
+ * The save bar: slides up at the first change to saved settings, counts them, and offers Discard and Save. Render it
+ * inside the form: Save submits it. `note` says what Save does when it isn't immediate (a fresh sign-in).
+ */
+export function SaveBar({ count, onDiscard, saveLabel = 'Save changes', busy, invalid, note }: { count: number; onDiscard: () => void; saveLabel?: string; busy?: boolean; invalid?: boolean; note?: ReactNode }) {
+  if (count === 0) return null;
+  return (
+    <div className="jp-savebar fixed on" role="region" aria-label="Unsaved changes">
+      <span>
+        <b>{count === 1 ? '1 unsaved change' : `${count} unsaved changes`}</b>
+        {invalid ? <small className="savebar-note">Fix the highlighted field to save.</small> : note && <small className="savebar-note">{note}</small>}
+      </span>
+      <button type="button" className="jp-btn jp-btn-ghost" disabled={busy} onClick={onDiscard}>
+        Discard
+      </button>
+      <button type="submit" className="jp-btn jp-btn-primary" disabled={busy || invalid}>
+        {saveLabel}
+      </button>
+    </div>
+  );
+}
+
+/** The stats strip: a few figures side by side in one divided band. */
+export function Stats({ items, label }: { items: { label: string; value: ReactNode; note?: ReactNode }[]; label?: string }) {
+  return (
+    <div className="jp-stats" role="group" aria-label={label}>
+      {items.map((s) => (
+        <div key={s.label} className="jp-statcell">
+          <div className="jp-stat">
+            <span className="k">{s.label}</span>
+            <span className="v">{s.value}</span>
+          </div>
+          {s.note && <span className="stat-note">{s.note}</span>}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -210,7 +381,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
     }
   };
   return (
-    <button type="button" className="btn-copy" onClick={() => void copy()} aria-label={`Copy ${label}`}>
+    <button type="button" className="jp-btn jp-btn-ghost jp-btn-sm copy-btn" onClick={() => void copy()} aria-label={`Copy ${label}`}>
       {state === 'copied' ? <IconCheck /> : <IconCopy />}
       <span aria-live="polite">{state === 'copied' ? 'Copied' : state === 'manual' ? 'Select and copy' : 'Copy'}</span>
     </button>
@@ -244,15 +415,16 @@ export function CopyField({ label, value, hint }: { label: string; value: string
         <code className="copy-value">{value}</code>
         <CopyButton value={value} label={label} />
       </span>
-      {hint && <span className="copy-hint">{hint}</span>}
+      {hint && <span className="jp-hint">{hint}</span>}
     </div>
   );
 }
 
+/** A code block (the design system's ink surface) with its copy button. */
 export function Snippet({ code, label }: { code: string; label: string }) {
   return (
     <div className="snippet">
-      <pre className="mono">{code}</pre>
+      <pre className="jp-code">{code}</pre>
       <CopyButton value={code} label={label} />
     </div>
   );
@@ -262,9 +434,10 @@ export function Snippet({ code, label }: { code: string; label: string }) {
 
 /**
  * A destructive, immediate write: a first click shows what it does and asks, a second one does it (no browser dialog).
- * The confirm button takes the focus; Escape or "Keep" goes back.
+ * The confirm button takes the focus; Escape or "Keep" goes back. The second button is the danger one, unless the
+ * action undoes nothing (`tone="primary"`, a rotation).
  */
-export function ConfirmButton({ label, confirm, detail, busy, onConfirm, className }: { label: string; confirm: string; detail?: string; busy?: boolean; onConfirm: () => void; className?: string }) {
+export function ConfirmButton({ label, confirm, detail, busy, onConfirm, tone = 'danger' }: { label: string; confirm: string; detail?: string; busy?: boolean; onConfirm: () => void; tone?: 'danger' | 'primary' }) {
   const [asking, setAsking] = useState(false);
   const yes = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -272,18 +445,18 @@ export function ConfirmButton({ label, confirm, detail, busy, onConfirm, classNa
   }, [asking]);
   if (!asking)
     return (
-      <button type="button" className={className ?? 'btn btn-small'} disabled={busy} onClick={() => setAsking(true)}>
+      <button type="button" className="jp-btn jp-btn-secondary jp-btn-sm" disabled={busy} onClick={() => setAsking(true)}>
         {label}
       </button>
     );
   return (
-    <span className="confirm" onKeyDown={(e) => e.key === 'Escape' && setAsking(false)}>
+    <span className={`confirm confirm-${tone}`} onKeyDown={(e) => e.key === 'Escape' && setAsking(false)}>
       {detail && <span className="confirm-detail">{detail}</span>}
       <span className="confirm-buttons">
         <button
           ref={yes}
           type="button"
-          className="btn btn-danger btn-small"
+          className={`jp-btn jp-btn-sm ${tone === 'danger' ? 'jp-btn-danger' : 'jp-btn-primary'}`}
           disabled={busy}
           onClick={() => {
             setAsking(false);
@@ -292,7 +465,7 @@ export function ConfirmButton({ label, confirm, detail, busy, onConfirm, classNa
         >
           {confirm}
         </button>
-        <button type="button" className="btn btn-quiet btn-small" onClick={() => setAsking(false)}>
+        <button type="button" className="jp-btn jp-btn-ghost jp-btn-sm" onClick={() => setAsking(false)}>
           Keep
         </button>
       </span>
@@ -340,4 +513,4 @@ export function ChangeTrack({ change, now }: { change: GuardedChange; now: numbe
 }
 
 /** Who asked for a change, as a partner may see it. */
-export const proposer = (c: GuardedChange): string => (c.proposedByKind === 'hana' ? 'Hana' : c.proposedByKind === 'system' ? 'the system' : 'a member') + (c.requestCountry ? ` (from ${c.requestCountry})` : '');
+export const proposer = (c: GuardedChange): string => (c.proposedByKind === 'hana' ? BRAND.company : c.proposedByKind === 'system' ? 'the system' : 'a member') + (c.requestCountry ? ` (from ${c.requestCountry})` : '');

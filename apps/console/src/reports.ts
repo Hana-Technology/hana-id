@@ -100,12 +100,12 @@ export async function statementFileRoute(env: Env, info: RequestInfo, c: ReportC
   const obj = await env.STATEMENTS?.get(key);
   if (!obj) {
     log({ event: 'report', method: 'statement_file', requestId: info.requestId, orgId: c.orgId, outcome: 'error', code: 'statement_file_missing' }, 'error');
-    return errorResponse('internal', 'The statement file is unavailable; tell Hana');
+    return errorResponse('internal', 'The statement file is unavailable; tell Journear');
   }
   const bytes = new Uint8Array(await obj.arrayBuffer());
   if ((await sha256Hex(bytes)) !== want) {
     log({ event: 'report', method: 'statement_file', requestId: info.requestId, orgId: c.orgId, outcome: 'error', code: 'statement_hash_mismatch' }, 'error');
-    return errorResponse('internal', 'The stored file does not match its statement hash; tell Hana');
+    return errorResponse('internal', 'The stored file does not match its statement hash; tell Journear');
   }
   return new Response(bytes, {
     status: 200,
@@ -152,7 +152,7 @@ export async function ledgerCsvRoute(env: Env, info: RequestInfo, c: ReportCalle
       page = null;
       if (!current.next) return ctl.close();
       if (pages >= LEDGER_CSV_MAX_PAGES) {
-        ctl.enqueue(enc.encode(`# incomplete: more than ${LEDGER_CSV_MAX_PAGES * 1000} rows; ask Hana for the full export\n`));
+        ctl.enqueue(enc.encode(`# incomplete: more than ${LEDGER_CSV_MAX_PAGES * 1000} rows; ask Journear for the full export\n`));
         return ctl.close();
       }
       try {

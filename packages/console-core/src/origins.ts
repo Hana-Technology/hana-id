@@ -227,7 +227,7 @@ export function originProblem(origin: string, rules: OriginRules): { reason: Ori
   if (origin === LOCALHOST_WILDCARD) {
     return loopbackOk ? null : { reason: 'wildcard', message: 'The localhost wildcard is only for test scopes in dev envs' };
   }
-  if (rules.refusedOrigins.includes(origin)) return { reason: 'refused', message: "A Hana origin can't be an app's origin" };
+  if (rules.refusedOrigins.includes(origin)) return { reason: 'refused', message: "A Journear origin can't be an app's origin" };
   const url = new URL(origin);
   if (url.hostname.includes('*')) return { reason: 'wildcard', message: 'Wildcard hosts are refused' };
   if (isLoopbackHost(url.hostname)) {

@@ -377,15 +377,15 @@ describe('Hana Home logins on a statement (D461, D585–D588)', () => {
     expect(csv.filter((c) => c[col('row_kind')] === 'home').map((c) => c[col('day')])).toEqual(['2025-02-03', '2025-02-20', '2025-02-21', 'total']);
 
     const view = statementView(issued.statement);
-    expect(view.table.map((r) => r.label)).toEqual(['Wallet app (app_h1)', 'Owner actions, scope sh1', 'Hana Home logins, scope sh1']);
+    expect(view.table.map((r) => r.label)).toEqual(['Wallet app (app_h1)', 'Owner actions, scope sh1', 'Passport Home logins, scope sh1']);
     expect(view.tableColumns).toContain('Home logins');
     expect(view.table[2]!.cells[view.tableColumns.indexOf('Home logins')]).toBe('2');
-    expect(view.summary).toContainEqual(['Hana Home logins', '2']);
+    expect(view.summary).toContainEqual(['Passport Home logins', '2']);
     const text = pdfText(bucket.objects.get(issued.statement.pdfKey!)!.bytes);
-    expect(text).toContain('Hana Home logins, scope sh1');
+    expect(text).toContain('Passport Home logins, scope sh1');
     expect(text).toContain('Home logins: 2');
-    expect(text).toContain('Hana Home logins:\n2');
-    expect(text).toContain('users of these apps opening their wallet from Hana Home');
+    expect(text).toContain('Passport Home logins:\n2');
+    expect(text).toContain('users of these apps opening their wallet from Passport Home');
     // The ledger CSV for the same as_of reconciles, Home rows included.
     const ledger = (await ledgerCsv(store, PARTNER, FEB, AT))!;
     expect(formatTgas(ledger.finalGas)).toBe(t.sum.tgas);
@@ -400,7 +400,7 @@ describe('Hana Home logins on a statement (D461, D585–D588)', () => {
     ]);
     const built = buildStatement({ orgId: HANA, orgName: 'Hana (internal)', month: FEB, asOf: AT, network: 'testnet', apps: new Map(), internal: true, dayRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'day', null, AT), monthRows: await store.report(HANA, '2025-02-01', '2025-02-28', 'month', null, AT) });
     expect(built.totals.sum).toMatchObject({ homeLogins: 2, logins: 0, tgas: '77', usd: '0.01925' });
-    expect(statementView({ csvSha256: 'ab'.repeat(32), totals: built.totals }).table.map((r) => r.label)).toEqual(['Hana Home logins, scope sgone', 'Hana Home logins, scope ssusp']);
+    expect(statementView({ csvSha256: 'ab'.repeat(32), totals: built.totals }).table.map((r) => r.label)).toEqual(['Passport Home logins, scope sgone', 'Passport Home logins, scope ssusp']);
     // The partner's report for the same month names neither scope.
     expect((await store.report(PARTNER, '2025-02-01', '2025-02-28', 'month', null, null)).map((r) => r.scope_id)).toEqual(['sh1', 'sh1', 'sh1']);
   });
@@ -452,7 +452,7 @@ describe('Hana Home logins on a statement (D461, D585–D588)', () => {
     const plain = buildStatement({ orgId: 'org_plain', orgName: 'Plain', month: FEB, asOf: AT, network: 'mainnet', apps: new Map(), dayRows: [], monthRows: [] });
     const view = statementView({ csvSha256: 'ab'.repeat(32), totals: plain.totals });
     expect(view.tableColumns).toEqual(['Logins', 'Derives', 'Owner actions', 'MAU', 'New users', 'Tgas', 'NEAR', 'USD', 'Unsettled']);
-    expect(view.summary.map(([k]) => k)).not.toContain('Hana Home logins');
+    expect(view.summary.map(([k]) => k)).not.toContain('Passport Home logins');
     expect(view.notes.join(' ')).not.toMatch(/Hana Home/u);
     // And its stored totals carry no Home field at all: the shape a reader from before this change expects.
     const withApp = buildStatement({ orgId: 'org_plain', orgName: 'Plain', month: FEB, asOf: AT, network: 'mainnet', apps: new Map(), dayRows: [], monthRows: await store.report('org_acme', '2025-01-01', '2025-01-31', 'month', null, null) });

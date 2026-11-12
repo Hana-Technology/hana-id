@@ -4,7 +4,7 @@
 import type { GuardedChange } from '@hana-id/console-core';
 import { postJson } from '../../api.ts';
 import { useNow, useWrite } from '../../lib.tsx';
-import { ChangeTrack, ConfirmButton, WriteNote, proposer } from '../../ui.tsx';
+import { Badge, ChangeTrack, ConfirmButton, WriteNote, proposer } from '../../ui.tsx';
 import type { AppCtl } from '../Apps.tsx';
 
 const TITLE: Record<GuardedChange['kind'], string> = { origin_add: 'Add origin', policy_set: 'Set the auto-approve policy', raw_sign_on: 'Turn raw signing on' };
@@ -47,7 +47,12 @@ export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }:
             <div className="pending-head">
               <span className="pending-what">
                 {changeTitle(c)}
-                {c.idn && <span className="badge badge-warn">IDN</span>}
+                {c.idn && (
+                  <>
+                    {' '}
+                    <Badge tone="warn">IDN</Badge>
+                  </>
+                )}
               </span>
               {ctl.owner && (
                 <ConfirmButton
@@ -74,7 +79,7 @@ export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }:
         ))}
       </ul>
       <p className="muted small">Each change is announced by email to your organisation’s security contacts, then takes effect after the security delay. Until then any owner can cancel it here, or anyone with the email can use its cancel link.</p>
-      <WriteNote error={w.error} done={w.done} />
+      <WriteNote error={w.error} />
     </div>
   );
 }

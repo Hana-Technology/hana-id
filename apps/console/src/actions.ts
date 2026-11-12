@@ -350,7 +350,7 @@ async function buildOwnerAction(env: Env, c: OrgCaller, ctx: RpcCtx, p: z.infer<
   if (!(await scopeOfOrg(env, ctx, c.orgId, p.scopeId))) return no('not_found', 'No such scope in this organisation');
   const scope = await scopeNow(env, p.scopeId);
   if (!oidcOwners(scope).some((o) => o.provider === 'google' && o.sub === c.session.sub)) {
-    no('not_owner', 'Your Google account isn’t an on-chain owner of this scope: ask Hana for a staff proposal, or have an on-chain owner add you (SetOwners)');
+    no('not_owner', 'Your Google account isn’t an on-chain owner of this scope: ask Journear for a staff proposal, or have an on-chain owner add you (SetOwners)');
   }
   const owners: OwnerSet = await orgOwnerSet(env, c.orgId, now);
   const args: Record<string, unknown> = { scope_id: p.scopeId };
@@ -381,7 +381,7 @@ async function buildOwnerAction(env: Env, c: OrgCaller, ctx: RpcCtx, p: z.infer<
         if (!answer.ok) {
           if (answer.code === 'email_not_enabled') no('conflict', 'Turn email login on for an app of this scope first');
           if (answer.code === 'rate_limited') no('rate_limited', 'Too many email client proofs today for this scope: try again tomorrow');
-          no('near_unavailable', 'Hana’s email issuer could not make the client proof: try again');
+          no('near_unavailable', 'Journear’s email issuer could not make the client proof: try again');
         }
         args.change = { AddClient: { provider: 'email', aud } };
         args.client_proof = (answer as { token: string }).token;

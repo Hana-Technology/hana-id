@@ -2,14 +2,19 @@
 // or keys unusable, on), the relay account's available balance and full-access keys against the API's relay keys
 // (public keys only), the UTC day's spend as the budget's RateLimiter counts it (read only), each failing on its own,
 // and the NEAR and RateLimiter reads it makes (two and one, none when off). The fake NEAR RPC: test/near-mock.ts.
+import { createHash } from 'node:crypto';
 import { env } from 'cloudflare:workers';
 import { KeyPair } from '@near-js/crypto';
+import { actionCreators, buildDelegateAction, encodeDelegateAction, encodeSignedDelegate, Signature, SignedDelegate } from '@near-js/transactions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { base64Encode, hex } from '../src/bytes.ts';
+import { TGAS } from '../src/near/delegate.ts';
 import { rpcHealth } from '../src/near/rpc.ts';
-import { nearRelayStatus } from '../src/near/relay-status.ts';
-import { nearRelayKeys, nearRelayReady } from '../src/near/relay.ts';
-import { chain } from './helpers.ts';
+import { nearRelayStatus, relaySpendTiming } from '../src/near/relay-status.ts';
+import { defaultNearAccountLookup, forgetHead, nearDirectory, nearRelayKeys, nearRelayReady } from '../src/near/relay.ts';
+import { appHeaders, call, chain } from './helpers.ts';
 import { adminRpc, governanceViews, hana, ownerChain } from './rpc-helpers.ts';
+import { vaultSetup } from './vault-helpers.ts';
 
 const RELAY_ACCOUNT = 'near-relay.test.near';
 const DAY = 86_400_000;
@@ -26,7 +31,12 @@ const budget = () => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName('near-rela
 afterEach(() => {
   vi.restoreAllMocks();
   rpcHealth.clear();
+  relaySpendTiming.timeoutMs = 2_500;
+  nearDirectory.lookup = defaultNearAccountLookup;
 });
+
+/** Every relay secret, whole and as a prefix of its base58 part (what a log line or an answer must never hold). */
+const secretFragments = (): string[] => (JSON.parse(env.NEAR_RELAY_KEYS!) as string[]).flatMap((k) => [k, k.slice('ed25519:'.length, 'ed25519:'.length + 16)]);
 
 describe('nearRelayStatus', () => {
   it('on: the balance less what storage locks, every API key a full-access key on chain, the day’s spend', async () => {
@@ -130,6 +140,77 @@ describe('nearRelayStatus', () => {
     expect((await nearRelayStatus(env, now)).spend).toMatchObject({ spentYocto: '7' });
     // The next UTC day starts at 0.
     expect((await nearRelayStatus(env, now + DAY)).spend).toMatchObject({ spentYocto: '0' });
+  });
+});
+
+describe('after the security review (2026-11-12)', () => {
+  it('a budget object that never answers: the spend is rate_limiter_unavailable within the deadline, the rest stands', async () => {
+    chain();
+    relaySpendTiming.timeoutMs = 30;
+    const stalled = { ...env, RATE_LIMITER: { idFromName: () => ({}), get: () => ({ spent: () => new Promise<string>(() => {}) }) } as unknown as typeof env.RATE_LIMITER };
+    const started = Date.now();
+    const s = await nearRelayStatus(stalled, nextDay());
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(s).toMatchObject({ state: 'on', chain: { ok: true }, spend: { ok: false, code: 'rate_limiter_unavailable' } });
+  });
+
+  it('a budget object that fails after the deadline: dropped, no unhandled rejection', async () => {
+    chain();
+    relaySpendTiming.timeoutMs = 10;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: PromiseRejectionEvent) => unhandled.push(e.reason);
+    globalThis.addEventListener('unhandledrejection', onUnhandled);
+    try {
+      const late = { ...env, RATE_LIMITER: { idFromName: () => ({}), get: () => ({ spent: () => new Promise<string>((_, reject) => setTimeout(() => reject(new Error('late')), 60)) }) } as unknown as typeof env.RATE_LIMITER };
+      const s = await nearRelayStatus(late, nextDay());
+      expect(s.spend).toEqual({ ok: false, code: 'rate_limiter_unavailable' });
+      await new Promise((r) => setTimeout(r, 120));
+      expect(unhandled).toEqual([]);
+    } finally {
+      globalThis.removeEventListener('unhandledrejection', onUnhandled);
+    }
+  });
+
+  it('no relay secret, whole or as a prefix, reaches a log line on any path of the status build', async () => {
+    const lines: string[] = [];
+    for (const m of ['log', 'warn', 'error'] as const) vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    const near = governanceViews(ownerChain());
+    near.accessKeyList = relayPublicKeys().map(fullAccess);
+    const own = (JSON.parse(env.NEAR_RELAY_KEYS!) as string[])[0]!;
+    const broken = { idFromName: () => ({}), get: () => ({ spent: () => Promise.reject(new Error('down')) }) } as unknown as typeof env.RATE_LIMITER;
+    // On, no keys, bad keys (repeated, junk), bad config, off, the account missing, NEAR down, the budget down.
+    for (const e of [env, { ...env, NEAR_RELAY_KEYS: undefined }, { ...env, NEAR_RELAY_KEYS: JSON.stringify([own, own]) }, { ...env, NEAR_RELAY_KEYS: 'not json' }, { ...env, NEAR_RELAY: '{' }, { ...env, NEAR_RELAY: undefined }, { ...env, RATE_LIMITER: broken }]) await nearRelayStatus(e, nextDay());
+    near.missingAccounts.add(RELAY_ACCOUNT);
+    await nearRelayStatus(env, nextDay());
+    near.missingAccounts.delete(RELAY_ACCOUNT);
+    await adminRpc().systemStatus(hana());
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    fetchSpy.mockImplementation(async () => new Response('bad gateway', { status: 502 }));
+    await nearRelayStatus(env, nextDay());
+    await adminRpc().systemStatus(hana());
+    expect(lines.some((l) => l.includes('near_relay_unreadable'))).toBe(true);
+    const text = lines.join('\n');
+    for (const f of secretFragments()) expect(text).not.toContain(f);
+  });
+
+  it('a real relay through the relay’s own route shows up in the status answer’s spend', async () => {
+    forgetHead();
+    const { app } = await vaultSetup();
+    const keyPair = KeyPair.fromRandom('ed25519');
+    const sender = hex(keyPair.getPublicKey().data);
+    nearDirectory.lookup = async (_db, q) => (q.accountId === sender && q.scopeId === app.scope ? { userId: `hu_${sender.slice(0, 12)}` } : null);
+    const da = buildDelegateAction({ senderId: sender, receiverId: 'guestbook.test.near', actions: [actionCreators.functionCall('add_message', { text: 'hello' }, 30n * TGAS, 0n)], nonce: 101n, maxBlockHeight: 1100n, publicKey: keyPair.getPublicKey() });
+    const hash = new Uint8Array(createHash('sha256').update(encodeDelegateAction(da)).digest());
+    const signed = encodeSignedDelegate(new SignedDelegate({ delegateAction: da, signature: new Signature({ keyType: 0, data: keyPair.sign(hash).signature }) }));
+    const before = await nearRelayStatus(env);
+    expect(before.spend).toMatchObject({ ok: true });
+    const res = await call('/v1/near/relay', { headers: appHeaders(app), body: { network: 'testnet', signedDelegateAction: base64Encode(signed) } });
+    expect(res.status).toBe(200);
+    const after = await nearRelayStatus(env);
+    if (!before.spend?.ok || !after.spend?.ok) throw new Error('no spend');
+    // What the relay burnt (settled from its worst-case reservation), as the budget counted it.
+    expect(BigInt(after.spend.spentYocto)).toBeGreaterThan(BigInt(before.spend.spentYocto));
+    expect(after.spend.spentYocto).toBe(await budget().spent('near-relay:day', DAY));
   });
 });
 

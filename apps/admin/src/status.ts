@@ -586,11 +586,14 @@ function nearRelayTile(r: Report, s: Sources): void {
   } else if (chain.exists === false) {
     exists = false;
     line('Balance', [{ severity: 'critical', title: `The NEAR relay account ${account} doesn’t exist on chain: every relay fails`, action: 'Re-create and fund it, then re-add its keys (the playbook).', playbook: 'near-relay-balance-low', key: 'missing' }], 'ok', 'The account doesn’t exist');
+  } else if (available === null || low === null || critical === null) {
+    // A balance or a line that doesn't parse is never OK.
+    line('Balance', [{ severity: 'unknown', title: 'The NEAR relay’s balance or its lines can’t be read from the API’s answer', action: 'Deploy the API and this console from the same checkout; else check the API’s `system_status` log lines.', key: 'unparsed' }], 'unknown', 'Unknown: the balance couldn’t be read');
   } else {
     const own: Problem[] = [];
-    const sev = available === null ? null : critical !== null && available < critical ? 'critical' : low !== null && available < low ? 'warning' : null;
+    const sev = available < critical ? 'critical' : available < low ? 'warning' : null;
     if (sev) own.push({ severity: sev, title: `The NEAR relay’s balance is low: ${nearAmount(chain.availableYocto)} available`, action: 'Top up the relay account (the playbook says how much and from where).', playbook: 'near-relay-balance-low', key: 'low' });
-    line('Balance', own, 'ok', `${nearAmount(chain.availableYocto) ?? 'unknown'} available${low !== null ? ` · amber below ${nearAmount(low.toString())}, red below ${nearAmount(critical!.toString())}` : ''}`);
+    line('Balance', own, 'ok', `${nearAmount(chain.availableYocto)} available · amber below ${nearAmount(low.toString())}, red below ${nearAmount(critical.toString())}`);
   }
 
   // Today's spend against the budget (UTC day).
@@ -614,13 +617,18 @@ function nearRelayTile(r: Report, s: Sources): void {
   else if (!k || !exists) line('Keys', [], exists ? 'unknown' : 'critical', exists ? 'Unknown: the account couldn’t be read' : 'The account doesn’t exist');
   else {
     const configured = num(k.configured) ?? 0;
-    const missing = arr(k.missing).map((x) => (typeof x === 'string' && PUBLIC_KEY.test(x) ? x : null)).filter((x): x is string => x !== null);
-    const own: Problem[] = missing.length ? [{ severity: 'critical', title: `${missing.length} of the API’s ${configured} NEAR relay keys ${missing.length === 1 ? 'isn’t' : 'aren’t'} a full-access key on ${account}: relays through ${missing.length === 1 ? 'it' : 'them'} fail (${missing.map((x) => `${x.slice(0, 16)}…`).join(', ')})`, action: 'Add the key on chain as a full-access key (docs/operations.md "NEAR relay", step 2) or upload the keys again (step 4).', key: 'absent' }] : [];
-    line('Keys', own, 'ok', `${configured - missing.length} of ${configured} on the account as full-access keys`);
+    // The count and the severity from the answer's list as it is; only what is shown is filtered (a malformed entry
+    // still counts as missing).
+    const raw = arr(k.missing);
+    const absent = raw.length;
+    const shown = raw.filter((x): x is string => typeof x === 'string' && PUBLIC_KEY.test(x)).map((x) => `${x.slice(0, 16)}…`);
+    const names = shown.length ? ` (${shown.join(', ')}${shown.length < absent ? `, ${absent - shown.length} more` : ''})` : '';
+    const own: Problem[] = absent ? [{ severity: 'critical', title: `${absent} of the API’s ${configured} NEAR relay keys ${absent === 1 ? 'isn’t' : 'aren’t'} a full-access key on ${account}: relays through ${absent === 1 ? 'it' : 'them'} fail${names}`, action: 'Add the key on chain as a full-access key (docs/operations.md "NEAR relay", step 2) or upload the keys again (step 4).', key: 'absent' }] : [];
+    line('Keys', own, 'ok', `${Math.max(0, configured - absent)} of ${configured} on the account as full-access keys`);
   }
 
   const head = state === 'on' ? 'On' : state === 'no_keys' ? 'Off: no keys' : 'Off: keys unusable';
-  const bal = chain?.ok === true && chain.exists !== false ? `${nearAmount(chain.availableYocto) ?? 'unknown'} available` : chain?.exists === false ? 'account missing' : 'balance unknown';
+  const bal = chain?.ok === true && chain.exists === false ? 'account missing' : chain?.ok === true && available !== null ? `${nearAmount(chain.availableYocto)} available` : 'balance unknown';
   const today = spent !== null && cap !== null ? `${nearAmount(spent.toString())} of ${nearAmount(cap.toString())} spent today` : 'spend unknown';
   r.add({ ...base, detail: `${head} · ${bal} · ${today}`, lines }, problems);
 }

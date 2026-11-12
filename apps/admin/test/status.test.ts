@@ -597,6 +597,34 @@ describe('Relayer funds', () => {
       expect(issuesOf(a, 'near-relay')[0]?.title).toBe('The NEAR relay’s spend today can’t be read (rate_limiter_unavailable)');
     });
 
+    it('a missing key that isn’t a well-formed public key still counts: the Keys line red and the count right (review LOW-1)', async () => {
+      withRelay({ keys: { configured: 2, missing: ['not-a-key<b>', PK_R2] } });
+      let a = await read();
+      invariants(a);
+      expect(tile(a, 'near-relay').state).toBe('critical');
+      expect(lines(a)[2]).toEqual(['Keys', 'critical']);
+      expect(tile(a, 'near-relay').lines![2]!.detail).toBe('0 of 2 on the account as full-access keys');
+      expect(issuesOf(a, 'near-relay')[0]?.title).toBe(`2 of the API’s 2 NEAR relay keys aren’t a full-access key on near-relay.test.near: relays through them fail (${PK_R2.slice(0, 16)}…, 1 more)`);
+      withRelay({ keys: { configured: 2, missing: [42] } });
+      a = await read();
+      expect(lines(a)[2]).toEqual(['Keys', 'critical']);
+      expect(issuesOf(a, 'near-relay')[0]?.title).toBe('1 of the API’s 2 NEAR relay keys isn’t a full-access key on near-relay.test.near: relays through it fail');
+    });
+
+    it('a balance or a line that doesn’t parse is Unknown with an issue, never OK (review LOW-2)', async () => {
+      for (const over of [{ chain: { ok: true, exists: true, availableYocto: '12.5', fullAccessKeys: 3 } }, { chain: { ok: true, exists: true, fullAccessKeys: 3 } }, { lowBalanceYocto: null }, { lowBalanceYocto: 'two' }]) {
+        withRelay(over);
+        const a = await read();
+        invariants(a);
+        expect(tile(a, 'near-relay').state, JSON.stringify(over)).toBe('unknown');
+        expect(lines(a)[0]).toEqual(['Balance', 'unknown']);
+        expect(tile(a, 'near-relay').lines![0]!.detail).toBe('Unknown: the balance couldn’t be read');
+        expect(issuesOf(a, 'near-relay').map((i) => i.title)).toEqual(['The NEAR relay’s balance or its lines can’t be read from the API’s answer']);
+      }
+      withRelay({ chain: { ok: true, exists: true, availableYocto: 'NaN', fullAccessKeys: 3 } });
+      expect(tile(await read(), 'near-relay').detail).toBe('On · balance unknown · 0.4 NEAR of 5 NEAR spent today');
+    });
+
     it('a reading older than 30 minutes is amber; hostile strings in the answer never reach the page', async () => {
       withRelay({ readAt: NOW - 45 * MIN });
       let a = await read();

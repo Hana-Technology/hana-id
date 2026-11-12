@@ -3,9 +3,10 @@
 // UTC day's spend against `dailyBudgetNear`. The admin judges it; this only reads.
 //
 // Reads, per status call and only when a config is readable: `view_account` and `view_access_key_list` of the relay
-// account in parallel (the API's RPC failover, 5 s per endpoint), and one RateLimiter `spent` (read only). None when the
-// relay is off. The keys are compared here, by public key derived from NEAR_RELAY_KEYS as `nearRelayReady` does: no
-// secret leaves `nearRelayKeys`, and the answer holds counts and the public keys missing on chain only. Never throws.
+// account in parallel (the API's RPC failover, 5 s per endpoint), and one RateLimiter `spent` (read only, a 2.5 s
+// deadline). None when the relay is off. The keys are compared here, by public key derived from NEAR_RELAY_KEYS as
+// `nearRelayReady` does: no secret leaves `nearRelayKeys`, and the answer holds counts and the public keys missing on
+// chain only. Never throws.
 import type { NearRelayStatus } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
@@ -42,13 +43,25 @@ async function readChain(env: Env, account: string): Promise<{ chain: Chain; ful
   return { chain: { ok: true, exists: true, availableYocto: (amount > locks ? amount - locks : 0n).toString(), fullAccessKeys: fullAccess.size }, fullAccess };
 }
 
+/** The spend read's deadline: a stalled budget object must not hold the whole status answer. Mutable for the tests. */
+export const relaySpendTiming = { timeoutMs: 2_500 };
+
 async function readSpend(env: Env, now: number): Promise<NonNullable<NearRelayStatus['spend']>> {
+  const unavailable = { ok: false, code: 'rate_limiter_unavailable' } as const;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), relaySpendTiming.timeoutMs);
+  });
+  // A late answer or failure after the deadline is dropped here (caught), never left unhandled.
+  const read = nearRelaySpent(env, now).catch(() => null);
   try {
-    const spent = await nearRelaySpent(env, now);
-    if (!DIGITS.test(spent)) return { ok: false, code: 'rate_limiter_unavailable' };
+    const spent = await Promise.race([read, deadline]);
+    if (typeof spent !== 'string' || !DIGITS.test(spent)) return unavailable;
     return { ok: true, day: new Date(Math.floor(now / DAY_MS) * DAY_MS).toISOString().slice(0, 10), spentYocto: spent };
   } catch {
-    return { ok: false, code: 'rate_limiter_unavailable' };
+    return unavailable;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

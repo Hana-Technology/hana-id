@@ -311,3 +311,101 @@ describe('hana.near.activate', () => {
     expect((await rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: 'AAAA' }))).data).toEqual({ status: 409, reason: 'delegate_nonce_used' });
   });
 });
+
+// D788: what the API's refusals carry beyond the code, each copied only in its exact shape.
+describe('hana.near relay and activate refusals: the sent transaction, NEAR’s reason, retry-after', () => {
+  const TX = '4uQeVj5tqViQh7yWWV8TMVXnHuqKF1s5Dw7HPfRQRZtx';
+  const OTHER_TX = '11111111111111111111111111111111';
+  const answer = (body: unknown, status: number, headers: Record<string, string> = {}) => async () => new Response(JSON.stringify(body), { status, headers });
+  const relay = () => rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: 'AAAA' }));
+  const activate = () => rejection(s.client.near.activate());
+
+  async function refusedWith(call: () => Promise<HanaError>, body: unknown, status: number, headers: Record<string, string> = {}): Promise<HanaError> {
+    s?.client.destroy();
+    s = setup({ apiUrl: API, fetch: answer(body, status, headers) });
+    await s.vault.connect(NEAR_IN);
+    return call();
+  }
+
+  it('a 504 timeout passes on the transaction the relay sent (it may still run), from relay and from activate', async () => {
+    const body = { error: 'Timed out waiting for the transaction outcome; poll the transaction', code: 'timeout', status: 'pending', transactionHash: TX, nearTx: TX, requestId: 'rq1' };
+    for (const call of [relay, activate]) {
+      const e = await refusedWith(call, body, 504);
+      expect(e.code).toBe('api_unavailable');
+      expect(e.data).toEqual({ status: 504, reason: 'timeout', requestId: 'rq1', transactionHash: TX });
+    }
+    // Only one of the API's two names for it is enough.
+    expect((await refusedWith(relay, { code: 'timeout', nearTx: TX }, 504)).data).toEqual({ status: 504, reason: 'timeout', transactionHash: TX });
+    expect((await refusedWith(relay, { code: 'timeout', transactionHash: TX }, 504)).data).toEqual({ status: 504, reason: 'timeout', transactionHash: TX });
+  });
+
+  it('a 422 passes on the transaction that ran, and delegate_rejected NEAR’s own reason', async () => {
+    const rejected = await refusedWith(relay, { error: 'NEAR refused the delegate action', code: 'delegate_rejected', reason: 'invalid_nonce', status: 'failed', transactionHash: TX, nearTx: TX }, 422);
+    expect(rejected.code).toBe(4100);
+    expect(rejected.data).toEqual({ status: 422, reason: 'delegate_rejected', transactionHash: TX, nearReason: 'invalid_nonce' });
+    const failed = await refusedWith(relay, { error: 'Smart contract panicked: too long', code: 'contract_rejected', status: 'failed', executor: 'guestbook.testnet', transactionHash: TX, nearTx: TX }, 422);
+    expect(failed.code).toBe(4100);
+    expect(failed.message).toBe('Smart contract panicked: too long');
+    // The contract's executor and the body's `status` word are not passed on; data.status stays the HTTP status.
+    expect(failed.data).toEqual({ status: 422, reason: 'contract_rejected', transactionHash: TX });
+  });
+
+  it('an answer without them carries none (absent stays absent)', async () => {
+    expect((await refusedWith(relay, { code: 'timeout', status: 'pending' }, 504)).data).toEqual({ status: 504, reason: 'timeout' });
+    expect((await refusedWith(relay, { code: 'delegate_rejected', status: 'failed' }, 422)).data).toEqual({ status: 422, reason: 'delegate_rejected' });
+    expect((await refusedWith(activate, { code: 'relayer_unavailable', error: 'down' }, 503)).data).toEqual({ status: 503, reason: 'relayer_unavailable' });
+  });
+
+  it('a malformed or hostile hash, reason or object is left out', async () => {
+    const hostile = [
+      { transactionHash: 'x', nearTx: '<img src=x onerror=alert(1)>' },
+      { transactionHash: { toString: TX }, nearTx: [TX] },
+      { transactionHash: `${TX}\n`, nearTx: 12 },
+      { transactionHash: '0OIl'.repeat(10) },
+      { transactionHash: '1'.repeat(45) },
+      // Two different hashes: neither is trusted.
+      { transactionHash: TX, nearTx: OTHER_TX },
+    ];
+    for (const extra of hostile) {
+      const e = await refusedWith(relay, { code: 'timeout', ...extra }, 504);
+      expect(e.data, JSON.stringify(extra)).toEqual({ status: 504, reason: 'timeout' });
+    }
+    for (const reason of ['Expired', 'expired; DROP TABLE', 'a'.repeat(65), '', { code: 'expired' }, ['expired'], 7, '<b>x</b>', 'expir‮ed']) {
+      const e = await refusedWith(relay, { code: 'delegate_rejected', reason }, 422);
+      expect(e.data, JSON.stringify(reason)).toEqual({ status: 422, reason: 'delegate_rejected' });
+    }
+    // NEAR's reason only on delegate_rejected: another code's `reason` (bad_delegate's decode error) isn't passed on.
+    expect((await refusedWith(relay, { code: 'bad_delegate', reason: 'trailing_bytes' }, 400)).data).toEqual({ status: 400, reason: 'bad_delegate' });
+    // Nothing else of the body reaches data, whatever it holds.
+    const e = await refusedWith(relay, { code: 'timeout', transactionHash: TX, nested: { transactionHash: TX }, retryAfterS: 5, nearReason: 'expired' }, 504);
+    expect(e.data).toEqual({ status: 504, reason: 'timeout', transactionHash: TX });
+  });
+
+  it('passes on retry-after in whole seconds, on rate limits and busy answers alike', async () => {
+    const limited = await refusedWith(relay, { code: 'rate_limited', error: 'Rate limit exceeded (per account per minute)' }, 429, { 'retry-after': '42' });
+    expect(limited.code).toBe('rate_limited');
+    expect(limited.data).toEqual({ status: 429, reason: 'rate_limited', retryAfterS: 42 });
+    const busy = await refusedWith(activate, { code: 'relayer_busy', error: 'busy' }, 503, { 'retry-after': '1' });
+    expect(busy.code).toBe('api_unavailable');
+    expect(busy.data).toEqual({ status: 503, reason: 'relayer_busy', retryAfterS: 1 });
+    const unrecorded = await refusedWith(activate, { code: 'near_account_unrecorded', error: 'not yet', retryable: true }, 409, { 'retry-after': '2' });
+    expect(unrecorded.data).toEqual({ status: 409, reason: 'near_account_unrecorded', retryable: true, retryAfterS: 2 });
+    // The longest the API sends: to the next UTC day.
+    expect((await refusedWith(relay, { code: 'app_budget_exhausted' }, 429, { 'retry-after': '86400' })).data).toEqual({ status: 429, reason: 'app_budget_exhausted', retryAfterS: 86_400 });
+    expect((await refusedWith(relay, { code: 'rate_limited' }, 429, { 'retry-after': '0' })).data).toEqual({ status: 429, reason: 'rate_limited', retryAfterS: 0 });
+  });
+
+  it('a retry-after that is not whole seconds in range is left out', async () => {
+    for (const v of ['-1', '1.5', '86401', '99999999999', '1e3', 'Wed, 21 Oct 2026 07:28:00 GMT', '0x10', '01', '', 'soon']) {
+      const e = await refusedWith(relay, { code: 'rate_limited' }, 429, { 'retry-after': v });
+      expect(e.data, v).toEqual({ status: 429, reason: 'rate_limited' });
+    }
+  });
+
+  it('a fetch whose answer has no headers object still gives the refusal', async () => {
+    s?.client.destroy();
+    s = setup({ apiUrl: API, fetch: async () => ({ ok: false, status: 504, headers: undefined, json: async () => ({ code: 'timeout', transactionHash: TX }) }) as unknown as Response });
+    await s.vault.connect(NEAR_IN);
+    expect((await relay()).data).toEqual({ status: 504, reason: 'timeout', transactionHash: TX });
+  });
+});

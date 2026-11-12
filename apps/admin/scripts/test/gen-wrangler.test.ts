@@ -503,7 +503,9 @@ describe('source checks', () => {
     expect(html.split(LOCKUP_START)).toHaveLength(2);
     const svg = html.slice(html.indexOf(LOCKUP_START), html.indexOf(LOCKUP_END));
     expect(svg).toContain('role="img" aria-label="Journear Passport"');
-    expect(svg).toContain('>PASSPORT</text>');
+    // D789: the lockup is outlined (no live text), one root <svg>, nothing nested.
+    expect(svg).not.toMatch(/<text\b/u);
+    expect(svg.match(/<svg\b/gu)).toHaveLength(1);
     expect(svg).not.toMatch(/href|style|<script|<image|on\w+=|url\(/u);
     expect(html).not.toMatch(/<img\b/u);
     expect(html).toContain('<title>Journear Passport admin</title>');

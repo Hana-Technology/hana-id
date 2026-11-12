@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-12 (section 8's NEAR refusals: the sent transaction, NEAR's reason, retry-after), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-12 (the wallet-picker icon is the new mark, "After 0.4.0"), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -277,6 +277,8 @@ claims arrive from Journear's side, so they reach any SDK version.
 A refused `hana.near.relay` or `activate` also passes on the transaction the relay sent (`data.transactionHash`, so a
 `timeout` can be looked up), NEAR's own reason for a `delegate_rejected` (`data.nearReason`) and the API's
 `retry-after` (`data.retryAfterS`); new type `NearRelayErrorData` ([section 8, NEAR](#near-errors)).
+The wallet-picker icon (`HANA_ID_ICON`: EIP-6963's `info.icon`, the Stellar Wallets Kit's `productIcon`) is Journear's
+new mark; still a 96 × 96 SVG `data:` URI, the same name and format.
 
 **0.3.1** (after 0.3.0; same environments: `sandbox-dev`). **Nothing to change**: code written for 0.3.0 builds and
 runs as it is. Replace all the tarballs you use together (they depend on each other at `^0.3.1`).

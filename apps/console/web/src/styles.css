@@ -126,37 +126,28 @@ textarea {
   vertical-align: -3px;
 }
 
-/* ---- the lockup (packages/brand logo/journear-lockup.svg): teal and orange on light, the white variant on dark ---- */
+/* ---- the lockup (packages/brand logo/journear-lockup.svg, D789): the teal card and orange bracket in both schemes,
+   the type ink on light and white on dark (the white variant) ---- */
 .lockup {
   display: block;
   flex: none;
   height: auto;
 }
-.lockup .lk-frame {
-  stroke: var(--jp-teal-500);
-}
-.lockup .lk-chev {
-  stroke: var(--jp-orange-500);
-}
-.lockup .lk-word {
+.lockup .lk-card {
   fill: var(--jp-teal-500);
 }
+.lockup .lk-bracket {
+  fill: var(--jp-orange-500);
+}
+.lockup .lk-word,
 .lockup .lk-sub {
   fill: var(--jp-gray-900);
-  font-family: var(--jp-font-display);
-  font-weight: 700;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .lockup .lk-frame {
-    stroke: var(--jp-gray-0);
-  }
   :root:not([data-theme="light"]) .lockup .lk-word,
   :root:not([data-theme="light"]) .lockup .lk-sub {
     fill: var(--jp-gray-0);
   }
-}
-:root[data-theme="dark"] .lockup .lk-frame {
-  stroke: var(--jp-gray-0);
 }
 :root[data-theme="dark"] .lockup .lk-word,
 :root[data-theme="dark"] .lockup .lk-sub {
@@ -186,7 +177,7 @@ textarea {
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  /* Clear space around the lockup: the chevron's height. */
+  /* Clear space around the lockup: about the height of its "PASSPORT". */
   margin: 0 0 16px;
   padding: 4px 10px 16px;
   border-bottom: 1px solid var(--jp-border);

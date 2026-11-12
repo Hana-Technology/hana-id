@@ -18,6 +18,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "logo": "tsx scripts/logo.ts",
     "mail-logo": "tsx scripts/mail-logo.ts"
   },
   "devDependencies": {

@@ -71,7 +71,7 @@ async function homeEmailSignIn(home: Page, to: string, browserName: string, shot
   await expect(home.locator('#home-email-code')).toBeVisible();
   await expect(home.locator('#home-email-code')).toHaveAttribute('autocomplete', 'one-time-code');
   const { code, subject } = await codeFor(to, before);
-  expect(subject).toBe('Your sign-in code for Hana Home');
+  expect(subject).toBe('Your sign-in code for Passport Home');
   if (shotsAs) await shots(home, `${shotsAs}-code-entry`, browserName);
   await home.fill('#home-email-code', code);
   await home.locator('#home-email-verify').click();
@@ -136,7 +136,7 @@ test('an email user signs in to Hana Home with a code and sees their app and add
   await home.locator('#home-export-email-send').click();
   await expect(home.locator('#home-export-email-code')).toBeVisible();
   const { code, subject } = await codeFor(to, before);
-  expect(subject).toBe('Your code to open a wallet in Hana Home');
+  expect(subject).toBe('Your code to open a wallet in Passport Home');
   await shots(home, 'h10-07-move-code-entry', browserName);
   await home.fill('#home-export-email-code', code);
   await home.locator('#home-export-email-verify').click();

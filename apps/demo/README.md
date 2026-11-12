@@ -74,7 +74,7 @@ Errors are shown in plain words (`src/errors.ts`), as inline alerts (the page's 
 card's in the card): every NEAR refusal of the vault
 (`near_key_unknown`, `near_block_unknown`, `near_network_mismatch`, `near_delegate_nonce_used`,
 `near_delegate_nonce_too_large`, `near_delegate_expiry`, `near_rpc_unavailable`), the relayer's refusals by
-`data.reason` (a table to extend, with a default for codes it doesn't know), and the page's own NEAR reads; also a blocked popup (and the "Click *Sign in with Hana*" hint when
+`data.reason` (a table to extend, with a default for codes it doesn't know), and the page's own NEAR reads; also a blocked popup (and the "Click “Sign in with Journear Passport” on the Journear button…" hint when
 the SDK falls back to the vault's button), a cancelled or declined sign-in, a rejected request, an unreachable vault
 or API, rate limits, "log out other devices" after its 5 minutes, network failures.
 

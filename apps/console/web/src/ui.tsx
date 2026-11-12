@@ -3,8 +3,7 @@
 // in-page confirm (danger behind a second click), fields that validate on blur, setting rows, choice cards, the save
 // bar, the stats strip, the fresh sign-in hint and the guarded-change timeline. Styles are classes only (the CSP has no
 // 'unsafe-inline': no style prop anywhere), and text is always text (no HTML is ever injected).
-import { BRAND, MARK_CHEVRON, MARK_FRAME } from '@hana-id/brand';
-import wordmarkSvg from '@hana-id/brand/logo/journear-wordmark.svg?raw';
+import { BRAND, LOCKUP, MARK_BRACKET, MARK_CARD } from '@hana-id/brand';
 import type { GuardedChange } from '@hana-id/console-core';
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -17,30 +16,24 @@ export * from './icons.tsx';
 
 // ---- the lockup ----
 
-/** The wordmark's outline (Archivo 900 drawn as one path), read from the brand's own file at build time. */
-export const WORDMARK_PATH = /\sd="([^"]+)"/u.exec(wordmarkSvg)?.[1] ?? '';
+/** The lockup's height at a given width, in its own proportions (LOCKUP's viewBox). */
+const lockupHeight = (width: number): number => Math.round((width * LOCKUP.height) / LOCKUP.width);
 
 /**
- * The Journear Passport lockup (packages/brand logo/journear-lockup.svg), drawn inline so it needs no image request:
- * the mark, the outlined wordmark and "PASSPORT" in letterspaced caps, as the file lays them out. Its colours are the
- * stylesheet's: the brand teal and the stamp orange on light, the white variant on dark (never otherwise recoloured).
+ * The Journear Passport lockup (packages/brand logo/journear-lockup.svg, D789), drawn inline from `LOCKUP` so it needs
+ * no image request: the mark, the outlined "Journear" and the outlined "PASSPORT" beneath it, as the file lays them out.
+ * Its colours are the stylesheet's: the teal card and the orange bracket in both schemes, the type ink on light and
+ * white on dark, as the brand's white variant has it (never otherwise recoloured).
  */
 export function Lockup({ className }: { className?: string }) {
-  const f = MARK_FRAME;
-  const c = MARK_CHEVRON;
   return (
-    <svg className={`lockup${className ? ` ${className}` : ''}`} viewBox="0 0 561 128" width="176" height="40" role="img" aria-label={BRAND.product} focusable="false">
-      <g transform="translate(0,17.8) scale(0.7)">
-        <rect className="lk-frame" x={f.x} y={f.y} width={f.width} height={f.height} rx={f.rx} fill="none" strokeWidth={f.strokeWidth} />
-        <path className="lk-chev" d={c.paths[0]} fill="none" strokeWidth={c.strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-        <path className="lk-chev" d={c.paths[1]} strokeWidth={c.strokeWidth} strokeLinecap="round" />
+    <svg className={`lockup${className ? ` ${className}` : ''}`} viewBox={LOCKUP.viewBox} width="176" height={lockupHeight(176)} role="img" aria-label={BRAND.product} focusable="false">
+      <g transform={LOCKUP.mark}>
+        <path className="lk-card" d={MARK_CARD} />
+        <path className="lk-bracket" d={MARK_BRACKET} />
       </g>
-      <g transform="translate(92,87.8)">
-        <path className="lk-word" d={WORDMARK_PATH} />
-      </g>
-      <text className="lk-sub" x="94" y="119.8" fontSize="22" letterSpacing="6.5">
-        PASSPORT
-      </text>
+      <path className="lk-word" transform={LOCKUP.word.transform} d={LOCKUP.word.d} />
+      <path className="lk-sub" transform={LOCKUP.sub.transform} d={LOCKUP.sub.d} />
     </svg>
   );
 }

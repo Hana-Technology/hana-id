@@ -4,7 +4,8 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-12 (branch `feat/journear-design-console`, not merged, not deployed: the SPA on the Journear
+Last verified: 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
+from `@hana-id/brand`'s `LOCKUP`, outlined, D789); 2026-11-12 (branch `feat/journear-design-console`, not merged, not deployed: the SPA on the Journear
 Passport design system, "Brand" and "Patterns" below, D765: its tokens, component classes, self-hosted Archivo and IBM
 Plex and the Journear lockup; toasts, the save bar, setting rows, choice cards, validate on blur, the stats strip; the
 names users read); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: a fresh sign-in returns to the page that started it, D711; the Email login tab's live state, its plain wording and **Ready to execute**, the scope page's re-read at an unlock, D713; the preview's `unlocking` email state; after review: Execute's line when this app's email login is off, "any owner can execute it" on the scope page, no re-read loop on an inconsistent answer); 2026-11-11 (branch `docs/partner-start-here`, not merged, not deployed: the "No apps yet" page asks for the owners' Google accounts and a security contact instead of a Google client, and points testers at email sign-in, D707; "An app's page" describes the Email login page as built, correcting the 2026-11-10 note below); 2026-11-11 (branch `fix/console-users-table`, not merged, not deployed: the Users list in a card like every console table, its ids kept whole, its wallets shortened with a copy each, the header band's rounded corners, the preview's user detail); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: "Audit": the titles and details' words from `@hana-id/console-core/audit-words`, shared with the feed digests, every code titled, a null field as "none", D704); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: "An app's page": changes in force never shown as waiting, the re-read at the next effective time, the snippet's environment, the install line's version, the Audit's details; the Users screen from the manifest; D701–D703; after review: "waiting" on the server's clock, "Unnamed app"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the phone-width header and tables; Origins and Signing for an owner who isn't an on-chain owner, the preview's `not-chain-owner` scenario, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the app's Email login page no longer has a "Scope" row in its facts; corrected 2026-11-11: step 2 still names the scope's email client, `email:<scope id>`, and links the scope's page, see "An app's page"); 2026-11-09 (branch `feat/email-login-9`, not merged: the app's Email login page, D444, D447); 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
@@ -134,15 +135,17 @@ checklist, the change timeline, keys, the consent preview) and reads only `--jp-
 colour of its own, no Montserrat (`scripts/test/brand.test.ts`).
 
 - **Colours**: the system's, light and dark through `prefers-color-scheme` (`<meta name="color-scheme" content="light
-  dark">`). Brand teal for the primary and the current section; the stamp orange appears only in the lockup's chevron
+  dark">`). Brand teal for the primary and the current section; the stamp orange appears only in the lockup's bracket
   (one accent per screen); state keeps its own colours (success, warning, danger, info). The teal badge (Owner, Live)
   takes the link teal: the system's `--jp-primary` on `--jp-primary-soft` is 4.2:1 in dark. `scripts/test/brand.test.ts`
   checks every text pair the console adds is WCAG AA in both schemes; `packages/brand`'s test checks the system's own.
 - **Type**: IBM Plex Sans for text (page titles 32 px semibold, card titles 17 px), IBM Plex Mono for ids, keys, hashes
-  and code, Archivo only in the lockup's "PASSPORT"; tabular figures for every number.
-- **Lockup**: `ui.tsx` `Lockup`, drawn inline (no image request): the mark from `MARK_FRAME`/`MARK_CHEVRON`, the
-  outlined wordmark read from `logo/journear-wordmark.svg` at build time, and "PASSPORT" as text; 176 px wide (140 on a
-  phone), teal and orange on light, the white variant on dark. In the sidebar and on the signed-out card, with
+  and code; no Archivo in the page's own text (the lockup's "Journear" and "PASSPORT" are outlined); tabular figures
+  for every number.
+- **Lockup**: `ui.tsx` `Lockup`, drawn inline (no image request) from `@hana-id/brand`'s `LOCKUP`, `MARK_CARD` and
+  `MARK_BRACKET` (D789): the mark, the outlined "Journear" and the outlined "PASSPORT" beneath it, as
+  `logo/journear-lockup.svg` lays them out; 176 px wide (140 on a phone). The teal card and the orange bracket in both
+  schemes, the type ink on light and white on dark (the white variant). In the sidebar and on the signed-out card, with
   "Partner console" under it. A partner app without a logo gets a neutral initial tile, never the brand's colours.
 - **The select chevron** is the one image the system's `components.css` carries, a `data:` SVG: the CSP's `img-src`
   allows `data:` already, so nothing was loosened.

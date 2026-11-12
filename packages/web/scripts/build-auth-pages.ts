@@ -18,7 +18,7 @@
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BRAND, FONT_FILES, MARK_CHEVRON, MARK_FRAME, MARK_VIEWBOX } from '@hana-id/brand';
+import { BRAND, FONT_FILES, LOCKUP, MARK_BRACKET, MARK_CARD, MARK_VIEWBOX } from '@hana-id/brand';
 import { buildMeta } from '@hana-id/env/build-id';
 import { localBuild } from '@hana-id/env/local-build';
 import { build } from 'esbuild';
@@ -50,33 +50,23 @@ const ENTRIES: Record<AuthPage['name'], string> = {
 const escapeAttr = (s: string) => s.replace(/&/gu, '&amp;').replace(/"/gu, '&quot;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
 
 const brandFile = (path: string): string => fileURLToPath(import.meta.resolve(`@hana-id/brand/${path}`));
-const svgPath = (d: string, cls?: string): string => {
+/** One path: its data checked to be path data, and an optional translate-and-scale (the lockup's parts). */
+const svgPath = (d: string, cls?: string, transform?: string): string => {
   if (!/^[MLHVCSQTAZmlhvcsqtaz0-9., -]+$/u.test(d)) throw new Error('Not an SVG path');
-  return `<path${cls ? ` class="${cls}"` : ''} d="${d}"></path>`;
+  if (transform !== undefined && !/^translate\([\d. -]+\) scale\([\d.]+\)$/u.test(transform)) throw new Error('Not a translate-and-scale transform');
+  return `<path${cls ? ` class="${cls}"` : ''}${transform ? ` transform="${transform}"` : ''} d="${d}"></path>`;
 };
+
+/** The mark's two shapes (`@hana-id/brand`, logo/journear-mark.svg, D789): the teal card and the orange bracket. */
+const markShapes = (): string => `${svgPath(MARK_CARD, 'card')}${svgPath(MARK_BRACKET, 'bracket')}`;
 
 /**
- * The Journear mark as inline SVG (no image request): the frame and the chevron take their colours from the stylesheet
- * (`.jp-mark .frame` and `.chev`: the brand teal, white on the dark scheme, and the stamp orange), the geometry from
+ * The Journear mark as inline SVG (no image request): the card and the bracket take their colours from the stylesheet
+ * (`.jp-mark .card` and `.bracket`: the brand teal and the stamp orange, in both schemes), the geometry from
  * `@hana-id/brand` (logo/journear-mark.svg). Decorative: the text beside it names the brand.
  */
-const markSvg = (cls: string): string => {
-  const f = MARK_FRAME;
-  const [chevron, tail] = MARK_CHEVRON.paths;
-  return (
-    `<svg class="jp-mark ${cls}" viewBox="${MARK_VIEWBOX}" aria-hidden="true" focusable="false">` +
-    `<rect class="frame" x="${f.x}" y="${f.y}" width="${f.width}" height="${f.height}" rx="${f.rx}" stroke-width="${f.strokeWidth}"></rect>` +
-    `${svgPath(chevron as string, 'chev')}${svgPath(tail as string, 'chev')}</svg>`
-  );
-};
-
-/** The wordmark's paths ("Journear"), from the brand's lockup (logo/journear-lockup.svg), and where the lockup puts them. */
-const LOCKUP = readFileSync(brandFile('logo/journear-lockup.svg'), 'utf8');
-const LOCKUP_WORD = (() => {
-  const m = /<g transform="(translate\([\d.]+,[\d.]+\))"><path fill="[^"]+" d="([^"]+)"/u.exec(LOCKUP);
-  if (!m) throw new Error('logo/journear-lockup.svg: no wordmark path');
-  return { transform: m[1] as string, d: m[2] as string };
-})();
+const markSvg = (cls: string): string =>
+  `<svg class="jp-mark ${cls}" viewBox="${MARK_VIEWBOX}" aria-hidden="true" focusable="false">${markShapes()}</svg>`;
 
 /**
  * Journear Passport's footer badge in every popup (D765, the login modal pattern): the mark and "Secured by Journear
@@ -88,17 +78,17 @@ const LOCKUP_WORD = (() => {
 export const PASSPORT_BADGE = `<footer class="passport-badge">${markSvg('badge-mark')}<span>${BRAND.badge}</span></footer>`;
 
 /**
- * Passport Home's header: the Journear lockup (the mark, the wordmark and "PASSPORT" in its proportions), inline, its
- * colours from the stylesheet. Passport Home is Journear's own page, so the brand leads it; the apps it lists sit
- * inside the page in their own boxes. Static: one label, no URL, nothing that runs.
+ * Passport Home's header: the Journear lockup (`@hana-id/brand` LOCKUP, logo/journear-lockup.svg: the mark, the
+ * outlined wordmark and the outlined "PASSPORT" in its proportions), inline, its colours from the stylesheet. Passport
+ * Home is Journear's own page, so the brand leads it; the apps it lists sit inside the page in their own boxes. Static:
+ * one label, no URL, nothing that runs.
  */
 export const HOME_HEADER = [
   '<header class="home-top">',
-  `<svg class="jp-lockup" viewBox="0 0 561 128" role="img" aria-label="${BRAND.product}" focusable="false">`,
-  `<g transform="translate(0,17.8) scale(0.7)"><rect class="frame" x="${MARK_FRAME.x}" y="${MARK_FRAME.y}" width="${MARK_FRAME.width}" height="${MARK_FRAME.height}" rx="${MARK_FRAME.rx}" stroke-width="${MARK_FRAME.strokeWidth}"></rect>`,
-  `${MARK_CHEVRON.paths.map((d) => svgPath(d, 'chev')).join('')}</g>`,
-  `<g transform="${LOCKUP_WORD.transform}">${svgPath(LOCKUP_WORD.d, 'word')}</g>`,
-  '<text class="sub" x="94.0" y="119.8">PASSPORT</text>',
+  `<svg class="jp-lockup" viewBox="${LOCKUP.viewBox}" role="img" aria-label="${BRAND.product}" focusable="false">`,
+  `<g transform="${LOCKUP.mark}">${markShapes()}</g>`,
+  svgPath(LOCKUP.word.d, 'word', LOCKUP.word.transform),
+  svgPath(LOCKUP.sub.d, 'sub', LOCKUP.sub.transform),
   '</svg>',
   '</header>',
 ].join('');

@@ -35,7 +35,8 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
     no deposit, expiring 600 blocks after the latest final block, `hana.near.signDelegateAction` and
     `hana.near.relay`. Each stage is shown ("Preparing your NEAR account…", "Waiting for your approval in the Journear
     window…", "Sending it through Journear’s relayer, which pays the fee…"), then the result with the transaction's
-    link. The message box is validated on blur (too long, or a broken character: the field turns invalid with the
+    link. A relay that timed out with its transaction sent (the SDK's `data.transactionHash`) is no error: "Sent, still
+    confirming: view the transaction ↗" with the NearBlocks link, and the list is read again (D788). The message box is validated on blur (too long, or a broken character: the field turns invalid with the
     reason) and again on the click, never on each key; the count updates as you type;
   - **the popup rule** (docs/integration.md section 8): the key's nonce and the latest block are read from the env's
     NEAR RPC when the card appears, when the message box is focused or typed in (which also activates a new account)
@@ -107,8 +108,9 @@ components, light and dark by the system setting, laid out for desktop and phone
   Vite emits the Archivo and IBM Plex files into `assets/` (hashed, served immutable like the bundles) with their
   licences (`OFL-Archivo.txt`, `OFL-IBMPlexSans.txt`, `OFL-IBMPlexMono.txt`, the brand's `FONT_LICENCE_FILES`) beside
   them, so the page loads fonts from its own origin only (`font-src 'self'`, no font CDN). The Journear lockup is drawn
-  inline in the top bar (the brand file's geometry, `test/brand.test.ts`; white in the dark scheme), the icons are an
-  inline SVG sprite (no image request), and the favicon is the brand's `journear-mark.svg`.
+  inline in the top bar (`@hana-id/brand`'s `LOCKUP` geometry, outlined, D789, `test/brand.test.ts`; its type white in
+  the dark scheme), the icons are an inline SVG sprite (no image request), and the favicon is a copy of the brand's
+  `journear-mark.svg` (the test keeps them equal).
 - Every response carries the headers of `src/csp.ts`. The page's CSP:
 
   ```text

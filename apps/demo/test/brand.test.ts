@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BRAND, MARK_CHEVRON, MARK_FRAME } from '@hana-id/brand';
+import { BRAND, LOCKUP, MARK_BRACKET, MARK_CARD } from '@hana-id/brand';
 import { describe, expect, it } from 'vitest';
 
 const root = join(import.meta.dirname, '..');
@@ -30,15 +30,16 @@ describe('the stylesheet', () => {
 });
 
 describe('the page', () => {
-  it('draws the Journear lockup with the brand file’s geometry, and the favicon is the brand’s mark', () => {
-    const lockup = brandFile('logo/journear-lockup.svg');
-    const word = (s: string) => /<path [^>]*d="(M30\.8[^"]+)"/u.exec(s)![1];
-    expect(word(html)).toBe(word(lockup));
-    const f = MARK_FRAME;
-    expect(html).toContain(`<rect class="frame" x="${f.x}" y="${f.y}" width="${f.width}" height="${f.height}" rx="${f.rx}" fill="none" stroke-width="${f.strokeWidth}"/>`);
-    for (const d of MARK_CHEVRON.paths) expect(html).toContain(`d="${d}"`);
-    expect(html).toContain('>PASSPORT</text>');
-    expect(html).toContain('viewBox="0 0 561 128"');
+  it('draws the Journear lockup with the brand’s geometry (D789), outlined, and the favicon is the brand’s mark', () => {
+    const lockup = /<svg class="lockup"[\s\S]*?<\/svg>/u.exec(html)![0];
+    expect(lockup).toContain(`viewBox="${LOCKUP.viewBox}"`);
+    expect(lockup).toContain(`<g transform="${LOCKUP.mark}">`);
+    expect(lockup).toContain(`<path class="card" d="${MARK_CARD}"/>`);
+    expect(lockup).toContain(`<path class="bracket" d="${MARK_BRACKET}"/>`);
+    expect(lockup).toContain(`<path class="word" transform="${LOCKUP.word.transform}" d="${LOCKUP.word.d}"/>`);
+    expect(lockup).toContain(`<path class="sub" transform="${LOCKUP.sub.transform}" d="${LOCKUP.sub.d}"/>`);
+    // Outlined: no live text, so it never falls back to another face.
+    expect(lockup).not.toMatch(/<text\b/u);
     expect(read('public/favicon.svg')).toBe(brandFile('logo/journear-mark.svg'));
   });
 

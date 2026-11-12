@@ -19,7 +19,7 @@ body.home-page {
   border-bottom: 1px solid var(--jp-border);
 }
 
-/* The lockup at 168 px (the system's minimum is 120), with the clear space of its chevron around it. */
+/* The lockup at 168 px (the system's minimum is 120), with clear space around it. */
 .home-top .jp-lockup {
   display: block;
   width: 168px;

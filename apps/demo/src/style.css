@@ -31,18 +31,16 @@ body {
 .topbar-in { max-width: 820px; margin: 0 auto; padding: var(--jp-space-3) var(--jp-space-4); display: flex; align-items: center; gap: var(--jp-space-3); min-height: 64px; }
 .brand { display: inline-flex; align-items: center; padding: var(--jp-space-1) 0; border-radius: var(--jp-radius-sm); }
 .brand:focus-visible { outline: 2px solid var(--jp-focus); outline-offset: 2px; }
-/* The lockup drawn inline, so "PASSPORT" is set in the page's own Archivo. The logo's colours, never others: the brand
-   teal and the stamp orange, and in the dark scheme the white variant (logo/journear-lockup-white.svg). */
-.lockup { display: block; width: 158px; height: 36px; }
-.lockup .frame { stroke: var(--jp-teal-500); }
-.lockup .chevron { stroke: var(--jp-orange-500); }
-.lockup .word { fill: var(--jp-teal-500); }
-.lockup .sub { fill: var(--jp-teal-900); font-family: var(--jp-font-display); font-weight: 700; }
+/* The lockup drawn inline (D789: @hana-id/brand's LOCKUP, outlined, so no face to wait for). The logo's colours, never
+   others: the teal card and the stamp-orange bracket in both schemes, the type ink, and white in the dark scheme (the
+   white variant, logo/journear-lockup-white.svg). */
+.lockup { display: block; width: 158px; height: auto; }
+.lockup .card { fill: var(--jp-teal-500); }
+.lockup .bracket { fill: var(--jp-orange-500); }
+.lockup :is(.word, .sub) { fill: var(--jp-teal-900); }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .lockup :is(.frame) { stroke: var(--jp-gray-0); }
   :root:not([data-theme='light']) .lockup :is(.word, .sub) { fill: var(--jp-gray-0); }
 }
-:root[data-theme='dark'] .lockup .frame { stroke: var(--jp-gray-0); }
 :root[data-theme='dark'] .lockup :is(.word, .sub) { fill: var(--jp-gray-0); }
 .topbar .spacer { flex: 1; }
 .jp-wallet-pill { text-decoration: none; color: var(--jp-fg); }

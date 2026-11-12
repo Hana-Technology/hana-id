@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-12 (section 8's NEAR: gasless flow, relay, refusals; the Journear Passport names), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-12 (the wallet-picker icon is the new mark, "After 0.4.0"), SDK 0.4.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -274,6 +274,11 @@ NEAR). Replace all the tarballs you use together (they depend on each other at `
 `profileChanged` event and React `useProfile()`, for the name a user chose to share with your app
 ([section 15](#15-identity-token-your-backend), "The user's name"). The identity token's `given_name` and `family_name`
 claims arrive from Journear's side, so they reach any SDK version.
+A refused `hana.near.relay` or `activate` also passes on the transaction the relay sent (`data.transactionHash`, so a
+`timeout` can be looked up), NEAR's own reason for a `delegate_rejected` (`data.nearReason`) and the API's
+`retry-after` (`data.retryAfterS`); new type `NearRelayErrorData` ([section 8, NEAR](#near-errors)).
+The wallet-picker icon (`HANA_ID_ICON`: EIP-6963's `info.icon`, the Stellar Wallets Kit's `productIcon`) is Journear's
+new mark; still a 96 × 96 SVG `data:` URI, the same name and format.
 
 **0.3.1** (after 0.3.0; same environments: `sandbox-dev`). **Nothing to change**: code written for 0.3.0 builds and
 runs as it is. Replace all the tarballs you use together (they depend on each other at `^0.3.1`).
@@ -1075,9 +1080,21 @@ closes the window or lets it time out, and Journear Passport's refusals before t
 the API's answer into a `HanaError`: HTTP 429 is `rate_limited`, `origin_not_allowed` and `app_suspended` keep their
 code, any other 4xx is `4100` and any 5xx is `api_unavailable`; for each, `data.reason` is the API's code,
 `data.status` the HTTP status and `data.requestId` its request ID (quote it to Journear, [section 13](#13-errors)), and
-a nonce refusal adds `data.accessKeyNonce` (the nonce the relay holds the key at, a decimal string). When the SDK
-can't reach Journear Passport's API (your CSP, the network, no answer in 60 s) it rejects with `api_unavailable` and no
-`data.reason`. Retrying a relay with
+a nonce refusal adds `data.accessKeyNonce` (the nonce the relay holds the key at, a decimal string).
+
+From the release after 0.4.0, `data` (type `NearRelayErrorData`) also carries, when the API sent them:
+
+- `data.transactionHash`: the base58 hash of the transaction the relay sent, on a refusal that came after the send
+  (`timeout`, `contract_rejected`, `delegate_rejected`, `near_rejected`, `near_error`, and a `relayer_busy` whose
+  transaction was dropped);
+- `data.nearReason`: NEAR's own reason for a `delegate_rejected` (`expired`, `invalid_nonce`, `nonce_too_large`,
+  `access_key`, `invalid_signature`, `sender_mismatch` or `account_missing`);
+- `data.retryAfterS`: the API's `retry-after` in whole seconds (rate limits, budgets, `near_account_unrecorded`,
+  `relayer_busy`, `relayer_unavailable`).
+
+Each is passed on only in its exact shape; anything else in the answer is left out. When the SDK can't reach Journear
+Passport's API (your CSP, the network, no answer in 60 s) it rejects with `api_unavailable` and no `data.reason`.
+Retrying a relay with
 the same `signedDelegateAction` is always safe: NEAR never runs one delegate action twice (its nonce), and the relay
 answers a copy it may already have sent with `delegate_nonce_used` without counting it.
 
@@ -1101,15 +1118,25 @@ answers a copy it may already have sent with `delegate_nonce_used` without count
 | `4100` `bad_request`, `bad_delegate`, `bad_delegate_signature`, `sender_not_implicit` | relay | not a signed delegate action of a Journear Passport account | send `signDelegateAction`'s `signedDelegateAction` as it is |
 | `4100` `account_not_activated`, `access_key_missing` | relay | the account doesn't exist on testnet, or doesn't hold the user's key | `activate()`; with `access_key_missing`, the key was removed and the relay can't act for the account |
 | `4100` `already_relayed` | relay | the same signed action is being relayed right now | wait for the first answer |
-| `4100` `contract_rejected` | relay | the call ran and failed; the message is the contract's error | the nonce is used: fix the call and sign a new one |
-| `4100` `delegate_rejected` | relay | NEAR refused the delegate action itself (its nonce, expiry, key or signature) | read the key again, rebuild and sign a new one |
-| `rate_limited` (`rate_limited` or `app_budget_exhausted`) | relay | one of the limits above | back off; budgets reset at 00:00 UTC |
-| `api_unavailable` `timeout` | relay | the relay's transaction was sent, but its outcome didn't settle in 30 s | it may still run: check its effect on chain before signing again; after `maxBlockHeight` it can no longer run |
-| `api_unavailable` `relayer_busy`, `relayer_unavailable`, `near_unavailable`, `directory_unavailable`, `rate_limiter_unavailable` | relay | Journear Passport's relay or its NEAR RPC is busy or unreachable | retry the same `signedDelegateAction` after a second or two (a `delegate_nonce_used` then means it may have been sent, above) |
-| `api_unavailable` `near_rejected`, `near_error`, `relay_budget_exhausted`, `relayer_unconfigured` | relay | NEAR refused the relay's transaction, its outcome is unknown, the environment's daily budget is spent, or the relay is off | check on chain; report it to Journear Passport with `data.requestId` |
+| `4100` `contract_rejected` | relay | the call ran and failed; the message is the contract's error (`data.transactionHash`: the transaction) | the nonce is used: fix the call and sign a new one |
+| `4100` `delegate_rejected` | relay | NEAR refused the delegate action itself (its nonce, expiry, key or signature; `data.nearReason` says which) | read the key again, rebuild and sign a new one |
+| `rate_limited` (`rate_limited` or `app_budget_exhausted`) | relay | one of the limits above | back off for `data.retryAfterS` seconds; budgets reset at 00:00 UTC |
+| `api_unavailable` `timeout` | relay | the relay's transaction was sent, but its outcome didn't settle in 30 s | it may still run: look up `data.transactionHash` (below) or check its effect on chain before signing again; after `maxBlockHeight` it can no longer run |
+| `api_unavailable` `relayer_busy`, `relayer_unavailable`, `near_unavailable`, `directory_unavailable`, `rate_limiter_unavailable` | relay | Journear Passport's relay or its NEAR RPC is busy or unreachable | retry the same `signedDelegateAction` after `data.retryAfterS` or a second or two (a `delegate_nonce_used` then means it may have been sent, above) |
+| `api_unavailable` `near_rejected`, `near_error`, `relay_budget_exhausted`, `relayer_unconfigured` | relay | NEAR refused the relay's transaction, its outcome is unknown, the environment's daily budget is spent, or the relay is off | check on chain (`data.transactionHash`, when there is one); report it to Journear Passport with `data.requestId` |
 
-`relay` and `activate` don't pass on the relay's transaction hash with a `timeout` or `contract_rejected`, nor NEAR's
-own reason for a `delegate_rejected`: Journear finds them from `data.requestId`.
+A relay that timed out may still land: show the user it was sent, with a link to its transaction, rather than an
+error (SDK after 0.4.0; with 0.4.0 `data.transactionHash` is missing, and Journear finds it from `data.requestId`):
+
+```ts
+import { HanaError, type NearRelayErrorData } from '@hana-id/web';
+
+/** A relay refusal's transaction that may still land (a `timeout`), as an explorer link; null for any other error. */
+function stillConfirming(e: unknown): string | null {
+  const data = e instanceof HanaError && typeof e.data === 'object' && e.data !== null ? (e.data as NearRelayErrorData) : null;
+  return data?.reason === 'timeout' && data.transactionHash !== undefined ? `https://testnet.nearblocks.io/txns/${data.transactionHash}` : null;
+}
+```
 
 <a id="near-not-yet"></a>**Not supported yet:**
 

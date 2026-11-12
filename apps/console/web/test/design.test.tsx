@@ -2,13 +2,14 @@
 // after 5 s unless hovered, a danger one stays), the save bar on saved settings (up at the first change, counts,
 // Discard, Save), fields checked once they are left (validate on blur), the optional fields marked, choice cards, the
 // stats strip, the lockup drawn from the brand's own files, and the new names.
+import { LOCKUP, MARK_BRACKET, MARK_CARD } from '@hana-id/brand';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 import { TOAST_MAX, TOAST_MS, ToastProvider, useToast } from '../src/toast.tsx';
-import { Lockup, WORDMARK_PATH } from '../src/ui.tsx';
+import { Lockup } from '../src/ui.tsx';
 
 type Answer = { status?: number; body: unknown };
 let routes: Record<string, Answer>;
@@ -215,16 +216,22 @@ describe('forms', () => {
 });
 
 describe('the look', () => {
-  it('the lockup is the brand’s: the mark, the outlined wordmark from its file, and PASSPORT, named Journear Passport', () => {
-    expect(WORDMARK_PATH).toMatch(/^M[\d.]+ [\d.]+Q/u);
+  it('the lockup is the brand’s (D789): the mark, the outlined wordmark and PASSPORT, laid out as the file, named Journear Passport', () => {
     render(<Lockup />);
     const svg = screen.getByRole('img', { name: 'Journear Passport' });
-    expect(svg.querySelector('.lk-word')!.getAttribute('d')).toBe(WORDMARK_PATH);
-    expect(svg.querySelector('.lk-frame')).not.toBeNull();
-    expect(svg.querySelectorAll('.lk-chev')).toHaveLength(2);
-    expect(svg.querySelector('text')!.textContent).toBe('PASSPORT');
-    // Never below the 120 px minimum.
+    expect(svg.getAttribute('viewBox')).toBe(LOCKUP.viewBox);
+    expect(svg.querySelector('g')!.getAttribute('transform')).toBe(LOCKUP.mark);
+    expect(svg.querySelector('.lk-card')!.getAttribute('d')).toBe(MARK_CARD);
+    expect(svg.querySelector('.lk-bracket')!.getAttribute('d')).toBe(MARK_BRACKET);
+    for (const [cls, part] of [['.lk-word', LOCKUP.word], ['.lk-sub', LOCKUP.sub]] as const) {
+      expect(svg.querySelector(cls)!.getAttribute('d')).toBe(part.d);
+      expect(svg.querySelector(cls)!.getAttribute('transform')).toBe(part.transform);
+    }
+    // Outlined: no live text to fall back to another face.
+    expect(svg.querySelector('text')).toBeNull();
+    // Never below the 120 px minimum, in the lockup's own proportions.
     expect(Number(svg.getAttribute('width'))).toBeGreaterThanOrEqual(120);
+    expect(Number(svg.getAttribute('height'))).toBe(Math.round((176 * LOCKUP.height) / LOCKUP.width));
   });
 
   it('the sidebar names the product and the console; the overview opens on the stats strip', async () => {

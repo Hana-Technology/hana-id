@@ -12,7 +12,8 @@
 // `PREVIEW_SESSION_MIN=4` shows the warning at once and the expired banner 4 minutes later; `0.2` after 12 s.
 //
 // The System status page (D425): `/api/status` is the real `buildStatus` over the fake sources of one scenario
-// (test-spa/preview-status.ts: green, warnings, critical, mixed-build, watchdog-down). `PREVIEW_STATUS=<scenario>` picks
+// (test-spa/preview-status.ts: green, warnings, critical, mixed-build, watchdog-down, and the NEAR relay's relay-low,
+// relay-budget, relay-key-missing, relay-off and relay-stale). `PREVIEW_STATUS=<scenario>` picks
 // it at start (green by default); opening /preview/status/<scenario> switches it and goes to the page.
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -23,7 +24,7 @@ import * as data from './preview-data.ts';
 // The status scenarios run the Worker's own src/status.ts (Workers types): loaded by a specifier TypeScript doesn't follow
 // here, typechecked with test-ops/ instead (its tsconfig has the Workers types; this one has the DOM's).
 const STATUS_MODULE = './preview-status.ts';
-type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down';
+type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down' | 'relay-low' | 'relay-budget' | 'relay-key-missing' | 'relay-off' | 'relay-stale';
 const { SCENARIOS, previewStatus } = (await import(STATUS_MODULE)) as { SCENARIOS: readonly Scenario[]; previewStatus: (s: Scenario) => Promise<unknown> };
 
 const PUBLIC = new URL('../public/', import.meta.url);

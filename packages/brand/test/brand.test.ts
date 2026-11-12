@@ -1,12 +1,28 @@
 // The brand package (D426 as amended by D765): the fonts are the design system's three OFL families and nothing else,
 // each with its licence beside it; fonts.css loads only those files, from beside itself; the tokens are the design
 // system's and meet WCAG AA in light and dark, with state colours kept apart from the brand; components.css loads
-// nothing and reads only the tokens; the logo files are plain SVG and match the mark's geometry in code.
+// nothing and reads only the tokens; the logo files are plain SVG written from the logo's geometry in code (D789).
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { contrast, tokenSchemes, woff2Names } from '../src/check.ts';
-import { BRAND, FONT_FILES, FONT_LICENCE_FILES, FONT_UNICODE_RANGE, MARK_CHEVRON, MARK_FRAME, markSvg } from '../src/index.ts';
+import {
+  BRAND,
+  FONT_FILES,
+  FONT_LICENCE_FILES,
+  FONT_UNICODE_RANGE,
+  LOCKUP,
+  LOGO_COLOURS,
+  LOGO_FILES,
+  logoFile,
+  MARK_BRACKET,
+  MARK_CARD,
+  MARK_SQUARE_VIEWBOX,
+  MARK_VIEWBOX,
+  markSvg,
+  PASSPORT_PATH,
+  WORDMARK_PATH,
+} from '../src/index.ts';
 
 const here = (p: string) => new URL(`../${p}`, import.meta.url);
 const read = (p: string) => readFileSync(here(p));
@@ -189,25 +205,137 @@ describe('components', () => {
   });
 });
 
+/** The exact bounds of an absolute SVG path of M, L, H, V, Q and Z commands (what the logo's paths use). */
+function bounds(d: string, transform = { x: 0, y: 0, s: 1 }): [number, number, number, number] {
+  const tokens = d.match(/[MLHVQZ]|-?\d*\.?\d+/gu)!;
+  expect(d.replace(/[MLHVQZ]|-?\d*\.?\d+|[\s,]/gu, ''), 'only absolute M, L, H, V, Q, Z').toBe('');
+  const b = [Infinity, Infinity, -Infinity, -Infinity] as [number, number, number, number];
+  const add = (x: number, y: number) => {
+    b[0] = Math.min(b[0], x);
+    b[1] = Math.min(b[1], y);
+    b[2] = Math.max(b[2], x);
+    b[3] = Math.max(b[3], y);
+  };
+  let [x, y, cmd, i] = [0, 0, '', 0];
+  const num = () => Number(tokens[i++]);
+  while (i < tokens.length) {
+    if (/[A-Z]/u.test(tokens[i]!)) cmd = tokens[i++]!;
+    if (cmd === 'Z') continue;
+    if (cmd === 'H') x = num();
+    else if (cmd === 'V') y = num();
+    else if (cmd === 'Q') {
+      const [cx, cy, ex, ey] = [num(), num(), num(), num()];
+      // A quadratic's extreme on an axis is at t = (p0 - p1) / (p0 - 2 p1 + p2), when that is inside (0, 1).
+      for (const t of [(x - cx) / (x - 2 * cx + ex), (y - cy) / (y - 2 * cy + ey)]) {
+        if (t > 0 && t < 1) add((1 - t) ** 2 * x + 2 * (1 - t) * t * cx + t * t * ex, (1 - t) ** 2 * y + 2 * (1 - t) * t * cy + t * t * ey);
+      }
+      [x, y] = [ex, ey];
+    } else [x, y] = [num(), num()];
+    add(x, y);
+  }
+  const { x: tx, y: ty, s } = transform;
+  return [tx + b[0] * s, ty + b[1] * s, tx + b[2] * s, ty + b[3] * s];
+}
+const union = (...bs: [number, number, number, number][]) =>
+  bs.reduce((a, c) => [Math.min(a[0], c[0]), Math.min(a[1], c[1]), Math.max(a[2], c[2]), Math.max(a[3], c[3])]);
+const box = (viewBox: string) => {
+  const [x, y, w, h] = viewBox.split(' ').map(Number) as [number, number, number, number];
+  return [x, y, x + w, y + h] as const;
+};
+const transformOf = (t: string) => {
+  const m = /^translate\(([\d.-]+) ([\d.-]+)\) scale\(([\d.]+)\)$/u.exec(t)!;
+  return { x: Number(m[1]), y: Number(m[2]), s: Number(m[3]) };
+};
+
 describe('logo', () => {
-  it('the files are plain SVG, and the mark’s geometry in code is the files’', () => {
+  it('logo/ holds the mark and lockup files src/logo.ts writes (pnpm --filter @hana-id/brand logo) and the wordmarks', () => {
+    const wordmarks = ['journear-wordmark.svg', 'journear-wordmark-ink.svg', 'journear-wordmark-white.svg'];
+    expect(readdirSync(here('logo/')).sort()).toEqual([...LOGO_FILES, ...wordmarks].sort());
+    for (const f of LOGO_FILES) expect(text(`logo/${f}`), `${f}: run pnpm --filter @hana-id/brand logo`).toBe(logoFile(f));
+    // The wordmark files are the same outline as the lockup's "Journear".
+    for (const f of wordmarks) expect(/\sd="([^"]+)"/u.exec(text(`logo/${f}`))![1], f).toBe(WORDMARK_PATH);
+  });
+
+  it('the files are plain SVG: one <svg>, no live text, nothing that loads, runs or styles', () => {
     for (const f of readdirSync(here('logo/'))) {
       const svg = text(`logo/${f}`);
       expect(svg, f).toMatch(/^<svg [^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"/u);
-      expect(svg, f).not.toMatch(/<script|on\w+=|href=|<image|<foreignObject|style=/iu);
+      expect(svg, f).not.toMatch(/<script|on\w+=|href=|<image|<foreignObject|style=|<text|<use|font-/iu);
+      // No nested <svg> (a sanitiser or an inlining page may drop or mis-size it): one root, flattened with transforms.
+      expect(svg.match(/<svg\b/gu), f).toHaveLength(1);
       expect(svg, f).toContain('aria-label="Journear Passport"');
     }
-    const mark = text('logo/journear-mark.svg');
-    const fr = MARK_FRAME;
-    expect(mark).toContain(`<rect x="${fr.x}" y="${fr.y}" width="${fr.width}" height="${fr.height}" rx="${fr.rx}" fill="none" stroke="#0F766E" stroke-width="${fr.strokeWidth}"/>`);
-    for (const d of MARK_CHEVRON.paths) expect(mark).toContain(`d="${d}"`);
   });
 
-  it('markSvg draws the mark from the tokens, at least 20 px, with a clean label or hidden', () => {
-    expect(markSvg()).toContain('stroke="var(--jp-primary)"');
-    expect(markSvg()).toContain('stroke="var(--jp-accent)"');
+  it('the mark is the supplied artwork’s two shapes, as they are (D789)', () => {
+    expect(MARK_CARD).toBe('M19 83 Q12 83 15 74 L26 38 Q28 31 35 28 L92 8 Q101 5 98 15 L89 55 Q87 64 79 67 L23 83 Q21 84 19 83 Z');
+    expect(MARK_BRACKET).toBe('M31 94 Q24 96 23 90 Q22 85 29 83 L87 67 Q94 65 96 57 L105 24 Q107 18 112 20 Q117 22 115 29 L106 69 Q104 78 96 81 L34 94 Z');
+    const mark = text('logo/journear-mark.svg');
+    expect(mark).toContain(`<path fill="${LOGO_COLOURS.teal}" d="${MARK_CARD}"/>`);
+    expect(mark).toContain(`<path fill="${LOGO_COLOURS.orange}" d="${MARK_BRACKET}"/>`);
+  });
+
+  it('the viewBoxes hold the ink uncropped: the tight one within a unit, the square one centred, the lockup within 3', () => {
+    const ink = union(bounds(MARK_CARD), bounds(MARK_BRACKET));
+    const tight = box(MARK_VIEWBOX);
+    for (const k of [0, 1] as const) expect(tight[k]).toBeLessThanOrEqual(ink[k]);
+    for (const k of [2, 3] as const) expect(tight[k]).toBeGreaterThanOrEqual(ink[k]);
+    for (const k of [0, 1, 2, 3] as const) expect(Math.abs(tight[k] - ink[k])).toBeLessThan(1);
+    const [, , sw, sh] = MARK_SQUARE_VIEWBOX.split(' ').map(Number);
+    expect(sw).toBe(sh);
+    const sq = box(MARK_SQUARE_VIEWBOX);
+    expect(Math.abs(ink[0] - sq[0] - (sq[2] - ink[2]))).toBeLessThan(0.05);
+    expect(Math.abs(ink[1] - sq[1] - (sq[3] - ink[3]))).toBeLessThan(0.05);
+    expect(ink[0] - sq[0]).toBeGreaterThanOrEqual(0);
+    expect(sw! - (ink[2] - ink[0])).toBeLessThan(1);
+
+    const m = transformOf(LOCKUP.mark);
+    const lockupInk = union(
+      bounds(MARK_CARD, m),
+      bounds(MARK_BRACKET, m),
+      bounds(LOCKUP.word.d, transformOf(LOCKUP.word.transform)),
+      bounds(LOCKUP.sub.d, transformOf(LOCKUP.sub.transform)),
+    );
+    const lb = box(LOCKUP.viewBox);
+    expect(LOCKUP.viewBox.split(' ').slice(2).map(Number)).toEqual([LOCKUP.width, LOCKUP.height]);
+    for (const k of [0, 1] as const) expect(lockupInk[k] - lb[k]).toBeGreaterThanOrEqual(1);
+    for (const k of [2, 3] as const) expect(lb[k] - lockupInk[k]).toBeGreaterThanOrEqual(1);
+    for (const k of [0, 1] as const) expect(lockupInk[k] - lb[k]).toBeLessThan(3);
+    for (const k of [2, 3] as const) expect(lb[k] - lockupInk[k]).toBeLessThan(3);
+    // "PASSPORT" sits under "Journear", smaller (the logo rules: never as big as the wordmark).
+    const word = bounds(LOCKUP.word.d, transformOf(LOCKUP.word.transform));
+    const sub = bounds(LOCKUP.sub.d, transformOf(LOCKUP.sub.transform));
+    expect(sub[1]).toBeGreaterThan(word[3]);
+    expect(sub[3] - sub[1]).toBeLessThan((word[3] - word[1]) / 2);
+    expect(PASSPORT_PATH.length).toBeGreaterThan(0);
+  });
+
+  it('the logo’s colours are the tokens’ (teal, stamp orange, ink), and the dark lockup reads on the ink ground', () => {
+    const css = text('tokens.css');
+    const { light } = tokenSchemes(css);
+    expect(LOGO_COLOURS.teal.toLowerCase()).toBe(light.get('--jp-teal-500'));
+    expect(LOGO_COLOURS.orange.toLowerCase()).toBe(light.get('--jp-orange-500'));
+    expect(LOGO_COLOURS.ink.toLowerCase()).toBe(light.get('--jp-teal-900'));
+    const lockup = text('logo/journear-lockup.svg');
+    expect(lockup.match(/fill="#[0-9A-F]{6}"/gu)).toEqual([`fill="${LOGO_COLOURS.teal}"`, `fill="${LOGO_COLOURS.orange}"`, `fill="${LOGO_COLOURS.ink}"`, `fill="${LOGO_COLOURS.ink}"`]);
+    const white = text('logo/journear-lockup-white.svg');
+    expect(white.match(/fill="#[0-9A-F]{6}"/gu)).toEqual([`fill="${LOGO_COLOURS.teal}"`, `fill="${LOGO_COLOURS.orange}"`, `fill="${LOGO_COLOURS.white}"`, `fill="${LOGO_COLOURS.white}"`]);
+    expect(new Set(text('logo/journear-lockup-mono.svg').match(/fill="#[0-9A-F]{6}"/gu))).toEqual(new Set([`fill="${LOGO_COLOURS.ink}"`]));
+    expect(new Set(text('logo/journear-mark-mono.svg').match(/fill="#[0-9A-F]{6}"/gu))).toEqual(new Set([`fill="${LOGO_COLOURS.ink}"`]));
+    expect(new Set(text('logo/journear-mark-white.svg').match(/fill="#[0-9A-F]{6}"/gu))).toEqual(new Set([`fill="${LOGO_COLOURS.white}"`]));
+    // On the ink ground (journear_passport_dark.svg's): the teal card at 3:1 or more (a graphic), white type at AA.
+    expect(contrast(LOGO_COLOURS.teal, LOGO_COLOURS.ink)).toBeGreaterThanOrEqual(3);
+    expect(contrast(LOGO_COLOURS.orange, LOGO_COLOURS.ink)).toBeGreaterThanOrEqual(3);
+    expect(contrast(LOGO_COLOURS.white, LOGO_COLOURS.ink)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('markSvg draws the mark in the logo’s colours, at least 20 px, with a clean label or hidden', () => {
+    expect(markSvg()).toContain(`<path fill="var(--jp-teal-500)" d="${MARK_CARD}"/>`);
+    expect(markSvg()).toContain(`<path fill="var(--jp-orange-500)" d="${MARK_BRACKET}"/>`);
+    expect(markSvg()).toContain(`viewBox="${MARK_VIEWBOX}"`);
     expect(markSvg()).toContain('aria-hidden="true"');
     expect(markSvg({ size: 8 })).toContain('height="20"');
+    expect(markSvg({ size: 44 })).toContain('width="51" height="44"');
     expect(markSvg({ mono: true })).not.toContain('var(--jp-');
     expect(markSvg({ label: 'Journear "x" <b>' })).toContain('aria-label="Journear x b"');
   });

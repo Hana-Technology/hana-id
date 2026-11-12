@@ -9,7 +9,7 @@ import { localBuild } from '@hana-id/env/local-build';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { BRAND, FONT_FILES } from '@hana-id/brand';
+import { BRAND, FONT_FILES, LOCKUP, MARK_BRACKET, MARK_CARD, MARK_VIEWBOX } from '@hana-id/brand';
 import { ASSET_DIR, type BuiltEnv, FILES_DIR, HOME_HEADER, ORIGIN_DIR, PASSPORT_BADGE, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
 import { GOOGLE_TOKENINFO_ORIGIN, GOOGLE_TOKENINFO_URL } from '../../src/auth/google.ts';
@@ -208,8 +208,8 @@ describe('per-env build', () => {
     }
   });
 
-  /** The faces src/auth/fonts.css declares (D765): Plex Sans for text, Plex Mono for codes, Archivo for Home's lockup. */
-  const FACES = ['archivo-700', 'ibm-plex-mono-400', 'ibm-plex-mono-500', 'ibm-plex-sans-400', 'ibm-plex-sans-500', 'ibm-plex-sans-600'];
+  /** The faces src/auth/fonts.css declares (D765, D789): Plex Sans for text, Plex Mono for codes (Home's lockup is outlined). */
+  const FACES = ['ibm-plex-mono-400', 'ibm-plex-mono-500', 'ibm-plex-sans-400', 'ibm-plex-sans-500', 'ibm-plex-sans-600'];
 
   it('D426, D765: the brand’s fonts are files on this origin, under /assets/files/, with their OFL licences beside them', () => {
     const filesDir = join(built.dir, ASSET_DIR, FILES_DIR);
@@ -218,7 +218,7 @@ describe('per-env build', () => {
     const fonts = shipped.filter((f) => f.endsWith('.woff2'));
     expect(fonts.map((f) => f.replace(/-[A-Z0-9]+\.woff2$/u, '')).sort()).toEqual(FACES);
     const licences = shipped.filter((f) => !f.endsWith('.woff2'));
-    expect(licences).toEqual(['OFL-Archivo.txt', 'OFL-IBMPlexMono.txt', 'OFL-IBMPlexSans.txt']);
+    expect(licences).toEqual(['OFL-IBMPlexMono.txt', 'OFL-IBMPlexSans.txt']);
     for (const l of licences) {
       const brandOfl = readFileSync(fileURLToPath(import.meta.resolve(`@hana-id/brand/fonts/${l}`)));
       expect(readFileSync(join(filesDir, l)).equals(brandOfl), l).toBe(true);
@@ -287,8 +287,10 @@ describe('per-env build', () => {
     // Its only text is the badge's: nothing a reader could take for the app's name, nothing a partner controls.
     expect(PASSPORT_BADGE.replace(/<[^>]+>/gu, '')).toBe(BRAND.badge);
     expect(BRAND.badge).toBe('Secured by Journear Passport');
-    // The mark is decorative (the words beside it name the brand).
+    // The mark is decorative (the words beside it name the brand), the brand's two shapes (D789).
     expect(PASSPORT_BADGE).toContain('aria-hidden="true"');
+    expect(PASSPORT_BADGE).toContain(`viewBox="${MARK_VIEWBOX}"`);
+    expect(PASSPORT_BADGE).toContain(`<path class="card" d="${MARK_CARD}"></path><path class="bracket" d="${MARK_BRACKET}"></path>`);
   });
 
   it('D765: Passport Home has the Journear lockup above its content, and no popup badge', () => {
@@ -297,8 +299,13 @@ describe('per-env build', () => {
     expect(html).not.toContain('passport-badge');
     expect(HOME_HEADER).toContain(`role="img" aria-label="${BRAND.product}"`);
     expect(HOME_HEADER).not.toMatch(/https?:\/\/(?!www\.w3\.org)|href|<image|<use|<img|style=|\son[a-z]+=|<script/iu);
-    // Only the lockup's own "PASSPORT", never as big as the wordmark (the logo rules).
-    expect(HOME_HEADER.replace(/<[^>]+>/gu, '')).toBe('PASSPORT');
+    // D789: the brand's lockup, drawn from @hana-id/brand's LOCKUP: the mark, then "Journear" and "PASSPORT" outlined
+    // (no live text, so no face to wait for), laid out as logo/journear-lockup.svg.
+    expect(HOME_HEADER.replace(/<[^>]+>/gu, '')).toBe('');
+    expect(HOME_HEADER).toContain(`viewBox="${LOCKUP.viewBox}"`);
+    expect(HOME_HEADER).toContain(`<g transform="${LOCKUP.mark}"><path class="card" d="${MARK_CARD}"></path><path class="bracket" d="${MARK_BRACKET}"></path></g>`);
+    expect(HOME_HEADER).toContain(`<path class="word" transform="${LOCKUP.word.transform}" d="${LOCKUP.word.d}"></path>`);
+    expect(HOME_HEADER).toContain(`<path class="sub" transform="${LOCKUP.sub.transform}" d="${LOCKUP.sub.d}"></path>`);
   });
 
   it('batch C11: an env with a files origin builds it into the logo pages’ meta img-src, and not the callback’s', () => {

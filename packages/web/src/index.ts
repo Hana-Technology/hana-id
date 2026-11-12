@@ -47,6 +47,7 @@ export {
   NEAR_RELAY_TIMEOUT_MS,
   type NearActivateResult,
   type NearBytes,
+  type NearRelayErrorData,
   type NearRelayParams,
   type NearRelayResult,
   type NearSignDelegateActionParams,

@@ -35,7 +35,7 @@ describe('Email issuer', () => {
   it('asks the server for the chosen window and marks it', async () => {
     const s = await open('/api/email/issuer', emailIssuer(7), '/email/issuer?days=7');
     expect(s.api().some((c) => c.path === '/api/email/issuer?days=7')).toBe(true);
-    expect(s.main().querySelector('.hint strong')!.textContent).toBe('7 days');
+    expect(s.main().querySelector('.jp-seg [aria-pressed=true]')!.textContent).toBe('Last 7 days');
   });
 
   it('the signer policy: required signatures, the keys on chain against the pins, and the KMS note', async () => {

@@ -28,7 +28,7 @@ export const orgs = [
   { id: 'org_01jc8lumenpay', name: 'Lumen Pay', kind: 'partner', status: 'active', createdAt: ago(21 * DAY) },
   { id: 'org_01jd2kestrel', name: 'Kestrel Wallet', kind: 'partner', status: 'active', createdAt: ago(9 * DAY) },
   { id: 'org_01jd9saltmarsh', name: 'Saltmarsh Games', kind: 'partner', status: 'frozen', createdAt: ago(5 * DAY) },
-  { id: 'org_01jb0hanaint', name: 'Hana internal', kind: 'internal', status: 'active', createdAt: ago(60 * DAY) },
+  { id: 'org_01jb0hanaint', name: 'Journear internal', kind: 'internal', status: 'active', createdAt: ago(60 * DAY) },
   // Onboarding (the "Register a scope" panel's states): invited, not accepted yet; and owners in, no scope yet.
   { id: 'org_01jdorbit', name: 'Orbit Labs', kind: 'partner', status: 'active', createdAt: ago(2 * HOUR) },
   { id: 'org_01jdcorvid', name: 'Corvid Pay', kind: 'partner', status: 'active', createdAt: ago(DAY) },
@@ -53,7 +53,7 @@ const newOrgInvite = (id: string, newOrgName: string, newOrgKind: 'partner' | 'i
 export const newOrgInvites = {
   invites: [
     newOrgInvite('inv_01jdtidepool', 'Tidepool Finance', 'partner', 'mira.okafor@tidepool.example', 3 * MIN),
-    newOrgInvite('inv_01jdhanaqa', 'Hana QA', 'internal', 'qa-lead@hana.example', 3 * HOUR, { notifiedAt: ago(3 * HOUR - 4 * MIN) }),
+    newOrgInvite('inv_01jdhanaqa', 'Journear QA', 'internal', 'qa-lead@hana.example', 3 * HOUR, { notifiedAt: ago(3 * HOUR - 4 * MIN) }),
     newOrgInvite('inv_01jdcorvid', 'Corvid Pay', 'partner', 'kai.berg@corvidpay.example', 2 * DAY, { notifiedAt: ago(2 * DAY - 5 * MIN), acceptedAt: ago(DAY), acceptedUserId: 'usr_01jdcorvkai' }),
     newOrgInvite('inv_01jdheron', 'Heron Labs', 'partner', 'sam.lee@heron.example', 6 * DAY, { notifiedAt: ago(6 * DAY - 3 * MIN), revokedAt: ago(5 * DAY) }),
     newOrgInvite('inv_01jcquill', 'Quill Wallet', 'partner', 'ana.silva@quill.example', 12 * DAY, { notifiedAt: ago(12 * DAY - 4 * MIN) }),
@@ -125,7 +125,7 @@ export const orgDetail: Record<string, unknown> = {
     invites: [],
     grants: [],
     securityContacts: ['security@hana.example'],
-    apps: [{ id: 'app_01jb0demo', name: 'Hana demo', scopeId: 's9e4a1c7b3d2f0', environment: 'test', deleted: false, suspendedBy: 0, activeOrigins: 2, pendingChanges: 0 }],
+    apps: [{ id: 'app_01jb0demo', name: 'Journear demo', scopeId: 's9e4a1c7b3d2f0', environment: 'test', deleted: false, suspendedBy: 0, activeOrigins: 2, pendingChanges: 0 }],
     flags: { noSecurityContacts: false, ownersNotContacts: [] },
   },
 };

@@ -1,6 +1,6 @@
 # @hana-id/admin
 
-The Hana staff console (`hana-id-admin-<env>`, `docs/batch-c-spec.md` "Hana admin console"): a Cloudflare Worker on
+The Journear Passport staff console ("Hana" in code: `hana-id-admin-<env>`, `docs/batch-c-spec.md` "Hana admin console"): a Cloudflare Worker on
 `admin.origin` behind Cloudflare Access, serving a plain-JavaScript SPA (`public/`) and its `/api/*` backend. Every
 `/api/*` request needs a valid Access JWT of an email on `admin.staffEmails` (checked in the Worker too, D88), then the
 CSRF checks. It holds no D1 and no NEAR key: it calls the API's `AdminRpc` (`API`), the console's `StaffRpc`
@@ -23,7 +23,7 @@ The left nav groups the screens by task (D420):
 | Partners | **Organisations**: the list, "Invite a new partner" (a new organisation's first owner) and **Pending invites** (below); an organisation's members, invites, owner grants, "Register a scope for this organisation" (below), apps ("Create an app", "Move a legacy scope here"), security contacts, recent app changes and its danger zone (freeze, suspend every app); an app's suspension switches, allowed origins, guarded changes, signing settings, publishable keys and danger zone. **Legacy apps** (`org_legacy`) has its own page: its scopes, each with "Move to an organisation" |
 | Support | **Users** (C8b), **Support ID lookup** (C15) |
 | Security | **Security & monitoring**, **Feed and notices**, **Pending upgrades**, **Playbooks** (C14), **Audit log** (the console's rows, an org's app changes, the issuer's directory reads) |
-| Email login | **Email issuer**: tokens, mail with bounce and complaint rates, refusals by limit, alert occurrences per app and day, and the signer policy against the pins (batch 10's KMS figures say so). **Account links**: links per app and day, today against the 7-day median (build plan batch 9, D446, D448) |
+| Email login | **Email issuer**: the window's totals in a stats strip, then tokens, mail with bounce and complaint rates, refusals by limit, alert occurrences per app and day, and the signer policy against the pins (batch 10's KMS figures say so). **Account links**: the totals in a stats strip, links per app and day, today against the 7-day median (build plan batch 9, D446, D448). Both pick their window (7, 14 or 31 days) with a segmented control (D765) |
 | Money | **Reports**, **Statements**, **Rates** (C12) |
 | System | **Retention** (C13) |
 
@@ -83,7 +83,7 @@ owners of the organisation, and registering one is a council action, so the pane
 lists the organisation's owners who have accepted (each with their Google account, the digits-only `sub` the
 contract stores) as checkboxes, none ticked (an on-chain owner stays one after leaving the organisation, and the panel
 says so, D657; at most 5), and everyone who can't be one yet with why (an owner invite not accepted, an owner in the
-grant period, a disabled owner). A new scope always gets Hana's shared login: there is no client-id field, and the
+grant period, a disabled owner). A new scope always gets Journear's shared login: there is no client-id field, and the
 partner adds their own client with its proof from their console (D656). It checks the choices as the contract and
 "Create an app" would and shows two commands for the env, the dry run and the one with `--yes` (`GET /api/me`
 `scopeRegistration`, from the `SCOPE_REGISTRATION` var): both council votes in one run on a dev env on testnet
@@ -132,7 +132,8 @@ reads again; everything else is a link.
 
 **What it shows.** A verdict banner: **All systems operational** (green) only when every check answered and passed;
 otherwise **N issues** (amber with warnings only, red with a critical one), with when it was checked ("N s ago",
-refreshed in place) and how many checks passed. Then the **issues**, critical first: what is wrong in plain words,
+refreshed in place) and how many checks passed, and under it the design system's stats strip: checks passed, critical,
+warnings, unknown and not measured (D765). Then the **issues**, critical first: what is wrong in plain words,
 what it affects (logins, the partner console, alerts, billing…), since when (from the source when it has a time: an
 alert's, a proposal's, a cron's last run plus one interval, the oldest waiting notice; else **first seen** by this
 isolate), which component, what to do, and the screen or playbook that resolves it. Then one **tile** per component,
@@ -208,20 +209,40 @@ screen (D420; tests `test-spa/ux.test.ts`).
 - **Confirm in the page.** A destructive or guarded action shows a strip under its button: what will happen (with
   the names and values involved), the action's own label, Cancel; Escape cancels, and nothing is sent before the
   confirm. No browser `alert`/`confirm`/`prompt` (a source check).
-- **One header per page** with a back link where there is a parent, the title, one line of what the page is for,
-  and at most one primary action. Sections are panels with a heading and, where needed, one line of help.
+- **One header per page** with crumbs to its parents where there are any, the title, one line of what the page is for,
+  and at most one primary action in the whole view (a form's submit is secondary unless it is the page's main task; a
+  disclosure that opens one steps down to secondary while open). Sections are cards with a heading and, where needed,
+  one line of help.
 - **Names first, ids small.** Organisations, apps and people are shown by name with their id underneath in
   monospace; times as `2026-11-06 04:28 UTC` with "3 h ago" under them; system words (suspension bits, change kinds,
   feed sources) in words, the raw kind kept small where staff search for it.
-- **Empty states say what to do**, loading says "Loading…", a success re-renders the page with one line of what
-  happened (`role=status`).
+- **Empty states say what to do** (the brand's dashed box with an icon), a part still loading is a skeleton (its
+  words for screen readers, `role=status`), and a success re-renders the page and says what it did in a toast
+  (`role=status`, bottom right; at the top on a phone): at most three, each gone after 5 s unless the pointer or the
+  focus is on it; a danger toast stays until dismissed. What staff must read or copy (a new app's publishable key, an
+  export's hash) stays in the page as an inline alert. Alerts are inline, never floating.
 - **Support references are explained where they are asked**: what to type, its rule, and that it is recorded.
+- **Fields**: the label above (6 px), the hint below, "optional" on the fields that are (required is the default).
+  A field is checked when it is left, never while typing; its problem replaces its hint in plain words ("Enter a full
+  email address, like name@partner.example.") and clears as soon as it is right; a submit with a problem sends nothing,
+  marks every field and focuses the first (`novalidate`: the page's words, not the browser's bubbles).
+- **Settings are rows** (a title, one line of what it means, the control on the right: an app's signing settings).
+  A settings form that edits a value the page read (an organisation's security contacts) has no submit of its own:
+  the brand's save bar slides up at the first change, counts the changed fields, and offers Discard and Save; Save
+  still goes through the in-page confirmation. An app's signing settings are each their own guarded action, so they
+  have no save bar.
+- **Danger only behind a confirm**: a destructive trigger is a secondary button in the danger colour; the red danger
+  button exists only inside its confirmation (an `actionButton` marked destructive without one isn't drawn).
+- **Tables** are the brand's: caps headers that stay in view while the table scrolls in its box, numbers
+  right-aligned under a right-aligned header and tabular, and the pager (Next page, First page; Older rows) for the
+  API's cursors. Dashboards (System status, Email issuer, Account links) open with the brand's stats strip.
 - **Accessible by default**: landmarks (nav, main), a skip link, a label and help text on every input, focus moved to
   the new page's heading after a navigation, a visible focus ring, keyboard-only flows, AA contrast in the light and
   the dark theme (`prefers-color-scheme`), layouts that hold at 1024 px (wide tables scroll inside their panel).
-- **Security unchanged**: same routes, bodies, CSRF headers and Access flow; text-only DOM (no HTML sink), no inline
-  script or style, no external font or file (the brand fonts are this Worker's own assets, D426); the Users detail and
-  the Support ID lookup stay in memory; nothing in `localStorage`.
+- **Security unchanged**: same routes, bodies, CSRF headers, Access flow and CSP; text-only DOM (no HTML sink; icons
+  are SVG elements built with `createElementNS`), no inline script or style, no external font or file (the brand fonts
+  are this Worker's own assets, D426, D765); the Users detail and the Support ID lookup stay in memory; nothing in
+  `localStorage`.
 - **Sign-in expiry is said, never a network error** (D424; tests `test-spa/session.test.ts`). The Access session lasts
   1 h (D409; up to 8 h in a dev env on testnet, `admin.accessSessionDuration`, D437: sandbox-dev is 8 h; the banner reads
   the token's own `exp`, so nothing here assumes a length) and ends silently: Access then answers every `/api/*` request with a redirect to its login page on the
@@ -254,41 +275,42 @@ dialogs → in-page confirmations; "bits 2", "Clear bit 4", "Seen kids", D-numbe
 `key: value` pairs; empty tables reading "None" → what is missing or what to do; unlabeled placeholder-only inputs →
 labels with help; a 19-column report → the main columns with "Show every column".
 
-## Brand (D426)
+## Design (D426, D765)
 
-The SPA wears Hana's brand, shared with the partner console and the sign-in pages through `packages/brand` (asked for
-by the user 2026-11-06). The staff console's own cue: the left nav is Hana ink in both themes (the partner console's
-is light), so the two consoles never look alike; the env badge is solid amber on it, in both themes.
+The SPA follows the Journear Passport design system (v0.5), shared with the partner console and the sign-in pages
+through `packages/brand` (D765, asked for by the user 2026-11-12): its tokens (`tokens.css`, `--jp-*`, light and dark
+with `prefers-color-scheme`), its components (`components.css`, the `.jp-*` classes: buttons, fields, setting rows,
+the save bar, alerts, toasts, badges, cards, tables, the key/value list, the stats strip, crumbs, the pager, the
+segmented control, choice cards, empty and skeleton states) and its self-hosted fonts. `public/app.css` adds only the
+console's layout, written with the tokens (no colour of its own: a source check forbids hex, `rgb()` and `hsl()` after
+the brand block).
 
-| Token | Light | Dark | Source |
-|---|---|---|---|
-| Page, cards, card grey | `#faf9fe`, `#ffffff`, `#f4f2f9` | `#0d0229`, `#170b36`, `#1f133f` | hanawallet.io `bg-[#FAF9FE]`; hana-app `palette.gray.cards`, `paletteDark.blacker`, `paletteDark.cards` |
-| Ink, purple text, meta | `#16073a`, `#4c3d7f`, `#665d80` | `#f1edfc`, `#d4c5f9`, `#a99cc9` | hana-app `palette.black`, `newColors.lightPurple`; hanawallet.io `hana-purple`; `palette.gray.meta` darkened for AA |
-| Lines | `#e6e0f7`, `#c9bfe6` | `#2c1b57`, `#4a3683` | hana-app `newColors.whitePurple`, `paletteDark.divider` |
-| Accent (one) | `#3308a8` | `#bba8f6` | hana-app `palette.primary`, `paletteDark.offPurple` lifted |
-| Focus | `#6256e9` | `#c9a3f0` | hana-app `gradientColors[0]` |
-| Gradient (decoration only) | `#6256e9 → #7e5deb → #d772d3` | same | hana-app `gradientColors`, hanawallet.io `bg-custom-gradient` |
-| Left nav | `#16073a`, text `#d4c5f9`, active `#d4c5f9` on ink | `#150931` | hana-app `logo-hana-new.svg` |
-| State | ok `#146c3d`, warn `#7a4f00`, danger `#b3261e` | `#7dd3a3`, `#f0c565`, `#f4908a` | not Hana purples, on purpose (a test checks their hue) |
+- **Chrome.** The left nav is Journear ink (`--jp-ink-surface`) in both themes, a `.jp-dark` subtree so its text,
+  badges and focus ring read the brand's dark tokens, with the white Journear lockup at 196 px (inline, from
+  `logo/journear-lockup-white.svg`, so its "PASSPORT" is set in this page's Archivo and no image is requested), "Staff
+  admin" in caps, and the env as an amber badge; the current page is marked in teal. The partner console's nav is
+  light, so the two consoles never look alike. The source check holds the nav's pairs at AA (ink text 7:1, muted
+  4.5:1, the env badge, the focus ring 3:1).
+- **Type.** IBM Plex Sans for everything people read (page titles at 24 px semibold, section titles at 17, body 15,
+  hints 13, caps labels 11 with wide tracking), IBM Plex Mono for ids, keys, hashes and commands, tabular figures
+  everywhere. Archivo only in the lockup: the design system keeps it for the wordmark and marketing headings.
+- **Colour.** Teal is the brand colour (the one primary button, links, the current nav item); orange appears only in
+  the logo and the save bar's mark; red, amber, green and blue only for state (badges, alerts, the verdict, tiles).
+- **Shape.** 8 px buttons and inputs, 12 px cards and tables, pill badges with a dot for live states; icons on the
+  system's 20 px grid with a 1.75 px stroke, built as SVG elements (`ICONS` in `public/app.js`).
+- **Names.** "Journear Passport", "Journear" (the company: "Journear staff", "Journear's suspension") and "Passport
+  Home", from `BRAND`, mirrored from `packages/brand` (no build step; `test-spa/design.test.ts` holds the two equal
+  and finds no "Hana" in what staff read). Code keeps "hana": the `hana` actor kind, `x-hana-admin`, package names,
+  and the Support ID format `HANA-XXXX-XXXX` (a protocol string).
 
-**Type.** Montserrat (400, 500, 600, 700) for text and Montserrat Alternates (700) for page titles, the verdict and the
-brand: the faces hanawallet.io and Hana's apps use (`font-montserrat`, `font-montserratalt`). Hana's own files
-(hana-extension `src/static/fonts`, Montserrat v8.000, Montserrat Alternates v7.200), SIL Open Font License 1.1,
-subset to Latin and WOFF2 (16.8–17.4 KB each), served from this Worker's own assets (`public/fonts/`, beside their
-`OFL.txt`) through same-origin `@font-face` (CSP `font-src 'self'`, unchanged); a character outside Latin falls back to
-the system font. Ids and keys stay in the system monospace with tabular figures. Hana's apps also use Proxima Nova and
-PP Agrandir: both are commercial licences that don't cover this use, so neither is shipped.
-
-**Shape.** Pill buttons and nav items (hanawallet.io `rounded-full`), 16 px panels with a purple-tinted shadow, 10 px
-inputs and tables, square-cornered state badges (so a badge never reads as a button), Hana's gradient as a 3 px rule
-on top of the nav only. The mark is drawn inline in `index.html` from `packages/brand` (`MARK_PATHS`; hana-extension's
-`hana.svg`): no image request.
-
-**Keeping it in step.** The SPA has no build: `public/fonts/` and the block at the top of `public/app.css` are copies of
-`packages/brand` (`fonts.css`, `tokens.css`), made by `corepack pnpm --filter @hana-id/admin sync-brand`. A source
-check fails when either drifts, when `public/fonts/` holds anything else, when the stylesheet loads anything but those
-fonts, and when the nav's own colours miss AA (`scripts/test/gen-wrangler.test.ts`); `packages/brand`'s tests check the
-fonts' own licence strings and every token pair in both themes.
+**Keeping it in step.** The SPA has no build: `public/fonts/` (the eight WOFF2 files and their three OFL licences),
+the block at the top of `public/app.css` (`fonts.css`, `tokens.css`, `components.css`) and the lockup block in
+`public/index.html` are copies of `packages/brand`, made by `corepack pnpm --filter @hana-id/admin sync-brand`. One
+declaration is left out of the copy: `components.css` draws the select's chevron with a `data:` image, and the
+stylesheet loads nothing but the fonts, so `app.css` draws that chevron with two gradients. A source check fails when
+any copy drifts, when `public/fonts/` holds anything else, when the stylesheet loads anything but those fonts, or when
+the nav's pairs miss AA (`scripts/test/gen-wrangler.test.ts`); `packages/brand`'s tests check the fonts and every token
+pair in both themes.
 
 ## Local preview (design work and screenshots only)
 
@@ -326,8 +348,8 @@ fonts, D426).
 | `src/status.ts`, `src/status-probes.ts` | the System status page (D425): the sources, every check, the verdict, the 30 s cache; the counted build and NEAR reads |
 | `src/retention*.ts` | C13's monthly job and screen |
 | `src/email/` | the `EmailSender` (SendGrid, `sendgridSender`) and every message; `src/mail.ts` `sendToAll` skips a message this isolate saw accepted (SendGrid has no idempotency key, D401). `render.ts` writes a text part and plain HTML; a message that passes `design` (today only the partner invite, `inviteLink`, D672) gets the shared designed layout from `@hana-id/brand/email` instead, built from the same blocks, its link a button with the URL again as text, its paragraphs written so clients don't link a name, and the logo from `FILES_ORIGIN` (D685, D687). The operational mails stay plain (D674) |
-| `public/` | the SPA (no build, text only: a source check forbids HTML sinks and browser dialogs) and `fonts/`, the brand's fonts (copied from `packages/brand`, D426) |
-| `scripts/sync-brand.ts` | copies `packages/brand`'s fonts and tokens into `public/` (`sync-brand`) |
+| `public/` | the SPA (no build, text only: a source check forbids HTML sinks and browser dialogs) and `fonts/`, the brand's fonts and licences (copied from `packages/brand`, D426, D765) |
+| `scripts/sync-brand.ts` | copies `packages/brand`'s fonts, tokens, components and white lockup into `public/` (`sync-brand`) |
 | `test-spa/` | the SPA's DOM tests (`boot.ts` runs `public/app.js` in happy-dom) and the local preview (`preview.ts`, `preview-data.ts`, `preview-status.ts`: the status page's scenarios over the real `buildStatus`, typechecked with `test-ops/`) |
 | `scripts/gen-wrangler.ts` | `wrangler.jsonc` from the manifest's dashboard blocks (`ISSUER` when the env has an email issuer) |
 
@@ -337,7 +359,7 @@ fonts, D426).
 corepack pnpm --filter @hana-id/admin test        # Worker tests over the real API, console and email issuer Workers, the config and source checks, the ops store on PGlite, the SPA in happy-dom
 corepack pnpm --filter @hana-id/admin typecheck
 corepack pnpm --filter @hana-id/admin preview     # the SPA on 127.0.0.1:8788 with fake data (above)
-corepack pnpm --filter @hana-id/admin sync-brand  # after a change to packages/brand: its fonts and tokens into public/ (D426)
+corepack pnpm --filter @hana-id/admin sync-brand  # after a change to packages/brand: its fonts, tokens, components and lockup into public/ (D426, D765)
 corepack pnpm --filter @hana-id/admin gen <env> [--admin-hyperdrive-id <id>|off]
 corepack pnpm --filter @hana-id/admin run deploy     # after the API, the console and (for Users) the email issuer; stamped with the build id (D406)
 ```
@@ -347,10 +369,12 @@ and the email issuer (an auxiliary Worker, so `DirectoryRpc` runs for real) gets
 team (`test/fake-access.js`). The SPA's tests (`test-spa/`, `vitest.spa.config.ts`) run `public/app.js` as the browser
 does, in a fresh happy-dom window per test with the API answered at `fetch` (`test-spa/boot.ts`): the Support ID
 lookup screen and the Users screen's ways into it (`support.test.ts`), the UI principles above (`ux.test.ts`), and
-the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`), and the System status page over each
-preview scenario's real answer (`status.test.ts`); the status route's checks, call count and cache are `test/status.test.ts`.
+the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`), the System status page over each
+preview scenario's real answer (`status.test.ts`), and the design system's patterns: the names, one primary per view,
+danger only in a confirmation, toasts, fields checked when left, the save bar, setting rows, tables, the pager and
+crumbs (`design.test.ts`); the status route's checks, call count and cache are `test/status.test.ts`.
 
-Last verified: 2026-11-12 (branch `feat/journear-design-email`, not merged, not deployed: the mails' names and the subject prefix, the Journear look from `@hana-id/brand/email`, D765); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: the feed's digests designed, the `rows` block and `rowTime`, D704; after review: the row count, the HTML budget, `cut`, the error-level log; the rows in plain words); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: the Organisations page's "Pending invites" panel, `GET /api/invites/new-orgs`, `test-spa/pending-invites.test.ts`, D696; after the dry run: "Create an app" refreshes the Apps table in place, the Invites panel's Revoke on open invites only, `passkeys_required`'s words, readable times in email sentences, `test-spa/onboarding.test.ts`, D697; the gate's words for a network that keeps it, D698; the designed partner security notices, D699, D700); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's logo and unlinked paragraphs, D685, D687); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's designed HTML part, D672, D674); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: "Register a scope for this organisation", the staff "Propose origins" help, `ux.test.ts`'s `scope:register` rule changed, D651, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: an alert's "Details and deliveries" shows the latest result per channel above the last 20 rows, D570); 2026-11-09 (branch `feat/email-login-9`, not merged: the Email login screens, D446, D448); 2026-11-09 (branch `chore/status-access-followups`: System status's NEAR RPC tile, one line per endpoint the API can use, the calls per load and the preview's `critical`, D435's note; the Access session's length, D437); 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
+Last verified: 2026-11-12 (branch `feat/journear-design-admin`, not merged, not deployed: the SPA on the Journear Passport design system and names, "Design", `sync-brand` with `components.css` and the lockup, `test-spa/design.test.ts`, the usage report's columns lined up with their headers, D765); 2026-11-12 (branch `feat/journear-design-email`, not merged, not deployed: the mails' names and the subject prefix, the Journear look from `@hana-id/brand/email`, D765); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: the feed's digests designed, the `rows` block and `rowTime`, D704; after review: the row count, the HTML budget, `cut`, the error-level log; the rows in plain words); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: the Organisations page's "Pending invites" panel, `GET /api/invites/new-orgs`, `test-spa/pending-invites.test.ts`, D696; after the dry run: "Create an app" refreshes the Apps table in place, the Invites panel's Revoke on open invites only, `passkeys_required`'s words, readable times in email sentences, `test-spa/onboarding.test.ts`, D697; the gate's words for a network that keeps it, D698; the designed partner security notices, D699, D700); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's logo and unlinked paragraphs, D685, D687); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's designed HTML part, D672, D674); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: "Register a scope for this organisation", the staff "Propose origins" help, `ux.test.ts`'s `scope:register` rule changed, D651, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: an alert's "Details and deliveries" shows the latest result per channel above the last 20 rows, D570); 2026-11-09 (branch `feat/email-login-9`, not merged: the Email login screens, D446, D448); 2026-11-09 (branch `chore/status-access-followups`: System status's NEAR RPC tile, one line per endpoint the API can use, the calls per load and the preview's `critical`, D435's note; the Access session's length, D437); 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
 before `exp`, `GET /api/me` `accessExp`, `/signed-in`, the preview's `PREVIEW_SESSION_MIN`, `session.test.ts`, D424);
 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

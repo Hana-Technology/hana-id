@@ -11444,7 +11444,7 @@ by the user 2026-11-11 (NEAR support for the NEAR hackathon); details decided wh
 
 ## The Journear Passport rebrand and redesign (branch `feat/journear-design`), 2026-11-12
 
-Built on `feat/journear-design` (from `develop` 6ab570b1) and its area branches, not merged, not deployed. No path, key
+Built on `feat/journear-design` (from `develop` 6ab570b1) and its area branches; merged as PR 46 (`develop` b37ebb51) and deployed to sandbox-dev on 2026-11-12 by the user (checked by hand). No path, key
 rule, protocol string or address changes: only what users read and how pages look.
 
 ### D765. Every Hana ID frontend follows the Journear Passport design system; the product is renamed for users

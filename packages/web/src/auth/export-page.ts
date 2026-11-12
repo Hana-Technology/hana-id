@@ -61,6 +61,7 @@ import {
   signDerive,
   verifyGoogleIdToken,
 } from '@hana-id/core';
+import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ChainLoginError, loginOnChain } from './chain-login.ts';
@@ -71,7 +72,8 @@ import { appLogo } from './logo.ts';
 import type { NearReader } from './near-rpc.ts';
 import { exportPath } from './export-path.ts';
 import { googleKeys } from './google-keys.ts';
-import { EXPORT_CLIPBOARD_NOTE, EXPORT_CONFIRMATION, EXPORT_WARNING, type ExportClipboard, type KeyReveal, browserClipboard, exportString, keyReveal, screenGuard } from './key-reveal.ts';
+import { EXPORT_CLIPBOARD_NOTE, EXPORT_CONFIRMATION, EXPORT_WARNING, type ExportClipboard, type KeyReveal, browserClipboard, exportSteps, exportString, keyReveal, screenGuard } from './key-reveal.ts';
+import { BTN, alert } from './ui.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
 
 /** The export session's lifetime: it is used once, within minutes. */
@@ -81,7 +83,7 @@ export const EXPORT_LOGIN_LIMIT_MS = 5 * 60_000;
 /** How long the derived key stays in this window (user decision 2026-10-29, D111); never past the session's end. */
 export const EXPORT_KEY_LIFETIME_MS = 5 * 60_000;
 // The reveal's own constants and its clipboard type live with the reveal (key-reveal.ts), which Hana Home shares.
-export { EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_COPIED_MS, EXPORT_COPY_UNAVAILABLE, EXPORT_SHOW_MS, EXPORT_WARNING, type ExportClipboard } from './key-reveal.ts';
+export { EXPORT_ACK, EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_COPIED_MS, EXPORT_COPY_UNAVAILABLE, EXPORT_SHOW_MS, EXPORT_WARNING, type ExportClipboard } from './key-reveal.ts';
 /** How often the window checks its deadlines and that the vault frame is still there. */
 export const EXPORT_CHECK_MS = 1_000;
 const RELAY_WAIT_S = 25;
@@ -95,7 +97,7 @@ export type ExportEndReason = 'expired' | 'session_ended' | 'vault_gone';
 export const EXPORT_END_TEXT: Readonly<Record<ExportEndReason, string>> = Object.freeze({
   expired: 'Your key was erased from this window: it is kept for 5 minutes only.',
   session_ended: 'Your key was erased from this window because your session in the app ended (you signed out, or it expired).',
-  vault_gone: 'Your key was erased from this window because the app’s Hana wallet closed.',
+  vault_gone: 'Your key was erased from this window because the app closed.',
 });
 
 export interface ExportPageDeps {
@@ -265,8 +267,8 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         'section',
         { class: 'panel export', attrs: { role: 'status' } },
         d.h('h1', {}, 'Export ended'),
-        d.h('p', {}, EXPORT_END_TEXT[reason]),
-        d.h('p', { class: 'muted' }, 'To export again, start again from the app; you will sign in with Google again. You can close this window.'),
+        alert(d, 'info', {}, EXPORT_END_TEXT[reason]),
+        d.h('p', { class: 'muted' }, 'To export again, start again from the app; you’ll need to sign in again. You can close this window.'),
       ),
     );
     settle(state);
@@ -360,11 +362,15 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
     return logoUrlOn(env.filesOrigin, app && app.logoUrl !== undefined ? app.logoUrl : ctx.logoUrl);
   }
 
+  /** The wallet's address as the system's key/value row (mono value). */
+  const account = (label: string, address: string): HTMLElement =>
+    d.h('dl', { class: 'jp-kv account' }, d.h('dt', {}, label), d.h('dd', {}, d.h('code', { class: 'mono' }, address)));
+
   function showReady(): void {
     const ctx = context as WindowMessage<'hana:export-context'>;
     state = 'ready';
     const both = app !== null && emailOffered(app, ctx.scopeId);
-    const start = d.h('button', { class: 'primary', attrs: { type: 'button' } }, both ? 'Sign in again to continue' : 'Sign in with Google to continue');
+    const start = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button' } }, both ? 'Sign in again to continue' : 'Sign in with Google to continue');
     start.addEventListener('click', (e) => {
       if (!isGesture(e) || state !== 'ready') return;
       begin();
@@ -374,11 +380,12 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         'section',
         { class: 'panel export' },
         d.h('h1', {}, `Export your ${CHAIN_NAMES[ctx.chain]} key`),
+        exportSteps(d, 1),
         d.h('p', { class: 'asker' }, appLogo(d, env, logoUrl()), 'For your wallet in ', d.h('strong', {}, app?.name ?? ctx.appName), ' at ', originText(d, ctx.parentOrigin)),
-        d.h('p', { class: 'account' }, 'Address ', d.h('code', { class: 'mono' }, ctx.address)),
-        d.h('p', { class: 'warn' }, EXPORT_WARNING),
+        account('Address', ctx.address),
+        alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
         d.h('p', { class: 'muted' }, both ? 'To be sure it’s you, sign in again first, with Google or with a code sent to your email.' : 'To be sure it’s you, sign in with Google again first.'),
-        start,
+        d.h('div', { class: 'actions' }, start),
       ),
     );
   }
@@ -398,7 +405,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       showRetry();
       return;
     }
-    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), d.h('p', { class: 'muted' }, 'Finish signing in with Google in the other window.')));
+    d.show(d.h('section', { class: 'panel export' }, d.h('h1', {}, 'Signing in'), exportSteps(d, 1), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Complete the sign-in in the other window.')));
     const opened = child;
     // A child closed before it connected (the user closed it): offer a new attempt. After the hello the handle is not
     // watched, because Google's pages may make it report `closed` (COOP).
@@ -478,11 +485,11 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   }
 
   function showRetry(): void {
-    const again = d.h('button', { class: 'primary', attrs: { type: 'button' } }, 'Try again');
+    const again = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button' } }, 'Try again');
     again.addEventListener('click', (e) => {
       if (isGesture(e) && state === 'ready') begin();
     });
-    (win.document.getElementById('app') ?? win.document.body).append(again);
+    (win.document.getElementById('app') ?? win.document.body).append(d.h('div', { class: 'actions' }, again));
   }
 
   /** Long-polls the relay with the read key, then checks the token and runs the login. */
@@ -632,8 +639,8 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
 
   function showConfirm(): void {
     state = 'confirm';
-    const input = d.h('input', { attrs: { type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Type ${EXPORT_CONFIRMATION}` } });
-    const go = d.h('button', { class: 'primary', attrs: { type: 'button' } }, 'Continue');
+    const input = d.h('input', { class: 'jp-input confirm-word', attrs: { id: 'export-confirm', type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Type ${EXPORT_CONFIRMATION}` } });
+    const go = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button' } }, 'Continue');
     guard.newScreen();
     guard.button(go, () => input.value === EXPORT_CONFIRMATION);
     input.addEventListener('input', guard.sync);
@@ -645,10 +652,11 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         'section',
         { class: 'panel export' },
         d.h('h1', {}, 'Signed in'),
+        exportSteps(d, 2),
         d.h('p', {}, 'Your key is ready. Make sure nobody can see your screen.'),
-        d.h('p', { class: 'warn' }, EXPORT_WARNING),
-        d.h('label', {}, `Type ${EXPORT_CONFIRMATION} to continue`, input),
-        go,
+        alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
+        d.h('div', { class: 'jp-field' }, d.h('label', { class: 'jp-label', attrs: { for: 'export-confirm' } }, `Type ${EXPORT_CONFIRMATION} to continue`), input),
+        d.h('div', { class: 'actions' }, go),
       ),
     );
     guard.rendered();
@@ -667,8 +675,10 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         'section',
         { class: 'panel export' },
         d.h('h1', {}, `Your ${CHAIN_NAMES[ctx.chain]} key`),
-        d.h('p', { class: 'account' }, 'For ', d.h('code', { class: 'mono' }, ctx.address)),
+        exportSteps(d, 3),
+        account('For', ctx.address),
         r.out,
+        r.ack,
         r.actions,
         r.status,
         d.h('p', { class: 'muted' }, 'A shown key hides again after 60 seconds. Close this window when you are done: the key is erased when it closes, 5 minutes after you signed in, or when your session in the app ends.'),
@@ -698,16 +708,16 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   });
 
   if (isFramed(win)) {
-    fail('config_mismatch', 'The Hana export window can’t run inside another page.');
+    fail('config_mismatch', `The ${BRAND.product} export window can’t run inside another page.`);
   } else if (!opener) {
-    fail('config_mismatch', 'Open the export from the Hana prompt in the app.');
+    fail('config_mismatch', `Open the export from the ${BRAND.product} button in the app.`);
   } else {
     win.addEventListener('message', onMessage);
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Export your key'), d.h('p', { class: 'muted' }, 'Connecting to your wallet…')));
     try {
       opener.postMessage({ v: 1, t: 'hana:export-hello' }, env.vaultOrigin);
     } catch {
-      fail('vault_unavailable', 'The app’s Hana vault is gone. Close this window and start again from the app.');
+      fail('vault_unavailable', 'The app is gone. Close this window and start again from the app.');
     }
   }
 

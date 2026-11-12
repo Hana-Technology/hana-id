@@ -49,7 +49,7 @@ describe('Slack', () => {
     const res = await slackSender('https://hooks.slack.com/services/T/B/secret1', 'sandbox-test').send(msg());
     expect(res).toEqual({ ok: true });
     expect(calls[0]?.url).toBe('https://hooks.slack.com/services/T/B/secret1');
-    expect(JSON.parse(calls[0]!.body).text).toBe('*CRITICAL: Forged key k9 [Hana ID sandbox-test]*\nkid: k9');
+    expect(JSON.parse(calls[0]!.body).text).toBe('*CRITICAL: Forged key k9 [Journear Passport sandbox-test]*\nkid: k9');
   });
 
   it('reports the HTTP status, never the URL', async () => {
@@ -77,15 +77,15 @@ describe('Email (SendGrid, D401)', () => {
 
   it('sends with the watchdog’s own key, one copy per founder, tracking off; counts it only on a 202', async () => {
     const calls = stubFetch(() => new Response(null, { status: 202, headers: { 'x-message-id': 'msg_1' } }));
-    const email = emailSender(sendgridEmail(KEY, 'Hana ID watchdog <alerts@notify.example.com>'), ['a@example.com', 'b@example.com'], 'sandbox-test');
+    const email = emailSender(sendgridEmail(KEY, 'Journear Passport watchdog <alerts@notify.example.com>'), ['a@example.com', 'b@example.com'], 'sandbox-test');
     expect(await email.send(msg({ resend: true }))).toEqual({ ok: true, ref: 'msg_1' });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(SENDGRID_URL);
     expect(calls[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
     const body = JSON.parse(calls[0]!.body) as Record<string, any>;
     expect(body.personalizations).toEqual([{ to: [{ email: 'a@example.com' }] }, { to: [{ email: 'b@example.com' }] }]);
-    expect(body.from).toEqual({ email: 'alerts@notify.example.com', name: 'Hana ID watchdog' });
-    expect(body.subject).toBe('CRITICAL (re-sent): Forged key k9 [Hana ID sandbox-test]');
+    expect(body.from).toEqual({ email: 'alerts@notify.example.com', name: 'Journear Passport watchdog' });
+    expect(body.subject).toBe('CRITICAL (re-sent): Forged key k9 [Journear Passport sandbox-test]');
     expect(body.content).toEqual([{ type: 'text/plain', value: 'kid: k9' }]);
     expect(body.categories).toEqual([WATCHDOG_CATEGORY]);
     expect(body.tracking_settings.click_tracking).toEqual({ enable: false, enable_text: false });
@@ -123,7 +123,7 @@ describe('paging apps', () => {
     const calls = stubFetch();
     expect(await ntfyPager('https://ntfy.example.com/topic-abcdefghijklmnop', 'tk_throwaway', 'e').send(msg())).toEqual({ ok: true });
     expect(calls[0]).toMatchObject({ url: 'https://ntfy.example.com/topic-abcdefghijklmnop', method: 'POST', body: 'kid: k9' });
-    expect(calls[0]?.headers).toMatchObject({ priority: 'urgent', authorization: 'Bearer tk_throwaway', title: 'CRITICAL: Forged key k9 [Hana ID e]' });
+    expect(calls[0]?.headers).toMatchObject({ priority: 'urgent', authorization: 'Bearer tk_throwaway', title: 'CRITICAL: Forged key k9 [Journear Passport e]' });
   });
 
   it('Pushover: emergency priority with retry and expire, and the receipt as reference', async () => {
@@ -132,7 +132,7 @@ describe('paging apps', () => {
     expect(await p.send(msg())).toEqual({ ok: true, ref: 'rcpt123' });
     expect(calls[0]?.url).toBe(PUSHOVER_MESSAGES_URL);
     const form = new URLSearchParams(calls[0]!.body);
-    expect(Object.fromEntries(form)).toMatchObject({ priority: '2', retry: String(PUSHOVER_RETRY_S), expire: String(PUSHOVER_EXPIRE_S), user: 'u'.repeat(30), title: 'CRITICAL: Forged key k9 [Hana ID e]' });
+    expect(Object.fromEntries(form)).toMatchObject({ priority: '2', retry: String(PUSHOVER_RETRY_S), expire: String(PUSHOVER_EXPIRE_S), user: 'u'.repeat(30), title: 'CRITICAL: Forged key k9 [Journear Passport e]' });
   });
 
   it('Pushover: reads acknowledgements from the receipt', async () => {
@@ -206,35 +206,35 @@ describe('the env label in every title (D419)', () => {
     const calls = stubFetch(() => new Response(null, { status: 202 }));
     expect(await notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy' }).email.send(msg({ resend: true }))).toEqual({ ok: true });
     const body = JSON.parse(calls[0]!.body) as Record<string, any>;
-    expect(body.subject).toBe('[SANDBOX] CRITICAL (re-sent): Forged key k9 [Hana ID sandbox-dev]');
-    expect(body.content[0].value).toBe('[SANDBOX] Not production: Hana ID sandbox-dev (testnet).\n\nkid: k9');
+    expect(body.subject).toBe('[SANDBOX] CRITICAL (re-sent): Forged key k9 [Journear Passport sandbox-dev]');
+    expect(body.content[0].value).toBe('[SANDBOX] Not production: Journear Passport sandbox-dev (testnet).\n\nkid: k9');
   });
 
   it('the digest: the label first in its subject and body', async () => {
     const calls = stubFetch(() => new Response(null, { status: 202 }));
-    await notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy' }).digest.send('[Hana ID sandbox-dev] Watchdog daily digest 2026-11-06', 'Runs: 1');
+    await notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy' }).digest.send('[Journear Passport sandbox-dev] Watchdog daily digest 2026-11-06', 'Runs: 1');
     const body = JSON.parse(calls[0]!.body) as Record<string, any>;
-    expect(body.subject).toBe('[SANDBOX] [Hana ID sandbox-dev] Watchdog daily digest 2026-11-06');
+    expect(body.subject).toBe('[SANDBOX] [Journear Passport sandbox-dev] Watchdog daily digest 2026-11-06');
     expect(body.content[0].value.startsWith('[SANDBOX] Not production:')).toBe(true);
   });
 
   it('ntfy, Pushover, PagerDuty and Slack: the label first in the title', async () => {
     const calls = stubFetch((c) => (c.url === PUSHOVER_MESSAGES_URL ? Response.json({ status: 1 }) : new Response('ok')));
     await notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy', NTFY_TOPIC_URL: 'https://ntfy.example.com/topic-abcdefghijklmnop' }).pager.send(msg());
-    expect(calls.at(-1)?.headers.title).toBe('[SANDBOX] CRITICAL: Forged key k9 [Hana ID sandbox-dev]');
+    expect(calls.at(-1)?.headers.title).toBe('[SANDBOX] CRITICAL: Forged key k9 [Journear Passport sandbox-dev]');
     await notifierFromEnv({ ...base, PAGER_PROVIDER: 'pushover', PUSHOVER_TOKEN: 'x', PUSHOVER_USER: 'y' }).pager.send(msg());
-    expect(new URLSearchParams(calls.at(-1)!.body).get('title')).toBe('[SANDBOX] CRITICAL: Forged key k9 [Hana ID sandbox-dev]');
+    expect(new URLSearchParams(calls.at(-1)!.body).get('title')).toBe('[SANDBOX] CRITICAL: Forged key k9 [Journear Passport sandbox-dev]');
     await notifierFromEnv({ ...base, PAGER_PROVIDER: 'pagerduty', PAGERDUTY_ROUTING_KEY: 'rk' }).pager.send(msg());
-    expect(JSON.parse(calls.at(-1)!.body).payload.summary).toBe('[SANDBOX] CRITICAL: Forged key k9 [Hana ID sandbox-dev]');
+    expect(JSON.parse(calls.at(-1)!.body).payload.summary).toBe('[SANDBOX] CRITICAL: Forged key k9 [Journear Passport sandbox-dev]');
     await notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy', SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/T/B/secret1' }).slack.send(msg());
-    expect(JSON.parse(calls.at(-1)!.body).text).toBe('*[SANDBOX] CRITICAL: Forged key k9 [Hana ID sandbox-dev]*\nkid: k9');
+    expect(JSON.parse(calls.at(-1)!.body).text).toBe('*[SANDBOX] CRITICAL: Forged key k9 [Journear Passport sandbox-dev]*\nkid: k9');
   });
 
   it('no label on a production network: titles and bodies as before', async () => {
     const calls = stubFetch(() => new Response(null, { status: 202 }));
     await notifierFromEnv({ ...base, ENV_NAME: 'prod', NEAR_NETWORK: 'mainnet', ENV_LABEL: '[SANDBOX]', PAGER_PROVIDER: 'ntfy' }).email.send(msg());
     const body = JSON.parse(calls[0]!.body) as Record<string, any>;
-    expect(body.subject).toBe('CRITICAL: Forged key k9 [Hana ID prod]');
+    expect(body.subject).toBe('CRITICAL: Forged key k9 [Journear Passport prod]');
     expect(body.content[0].value).toBe('kid: k9');
   });
 });

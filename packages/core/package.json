@@ -1,7 +1,7 @@
 {
   "name": "@hana-id/core",
   "version": "0.4.0",
-  "description": "Pure TypeScript core of Hana ID (no DOM): byte layouts, CKD, derivation v1, signers, decoders, token checks and protocol message schemas.",
+  "description": "Pure TypeScript core of Journear Passport (formerly Hana ID; no DOM): byte layouts, CKD, derivation v1, signers, decoders, token checks and protocol message schemas.",
   "private": true,
   "license": "UNLICENSED",
   "repository": {

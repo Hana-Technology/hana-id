@@ -161,6 +161,24 @@ afterEach(() => {
 });
 
 describe('/approve', () => {
+  it('D765: one primary button in the decision row, beside one secondary, both the confirm pattern’s 48 px', () => {
+    send(evmRequest());
+    const row = document.querySelector('.actions.decide');
+    expect(row?.querySelectorAll('.jp-btn-primary')).toHaveLength(1);
+    expect(document.querySelectorAll('#app .jp-btn-primary')).toHaveLength(1);
+    expect(primary()?.className).toBe('primary jp-btn jp-btn-primary jp-btn-lg');
+    expect(secondary()?.className).toBe('secondary jp-btn jp-btn-secondary jp-btn-lg');
+    // Approve is still the guard's: disabled until armed.
+    expect(primary()?.disabled).toBe(true);
+  });
+
+  it('D765: a request the app’s rules didn’t cover is the out-of-policy case: a warning alert', () => {
+    send(evmRequest({ autoApprove: { label: 'Swaps', active: true, reason: 'daily_count_reached' } }));
+    const note = document.querySelector('p.note.jp-alert');
+    expect(note?.classList.contains('jp-alert-warning')).toBe(true);
+    expect(note?.textContent).toBe('Not signed automatically under “Swaps”: today’s limit of automatic signatures is reached.');
+  });
+
   it('says hello to its opener on vaultOrigin', () => {
     expect(vault.postMessage).toHaveBeenCalledWith({ v: 1, t: 'hana:approve-hello' }, ENV.vaultOrigin);
   });
@@ -718,7 +736,7 @@ describe('/approve', () => {
   it('a test app with the mainnet demo on gets a note that is true for it, on requests and the consent screen (D428)', () => {
     const note = () => document.querySelector('p.note.test-app')?.textContent;
     expect(TEST_APP_DEMO_NOTE).toBe(
-      'Test app with Hana’s mainnet demo on: besides test networks, Hana ID signs real transactions on Base and Stellar’s public network here, up to $9.99 each. Those always ask you first and are never signed automatically. Other mainnets are refused. The keys are test keys that can be reset or lost, so keep only small amounts at this account.',
+      'Test app with Journear’s mainnet demo on: besides test networks, Journear Passport signs real transactions on Base and Stellar’s public network here, up to $9.99 each. Those always ask you first and are never signed automatically. Other mainnets are refused. The keys are test keys that can be reset or lost, so keep only small amounts at this account.',
     );
     // A test-network request and the consent screen: the demo's note, never "mainnets are refused".
     for (const m of [evmRequest({ testApp: true, mainnetDemo: true }), consentRequest({ testApp: true, mainnetDemo: true })]) {
@@ -1232,7 +1250,7 @@ describe('/approve consent screen', () => {
   ])('refuses %s: no Allow button', (_, over) => {
     send(consentRequest(over));
     expect(primary()).toBeNull();
-    expect(pageText()).toContain('could not be checked');
+    expect(pageText()).toContain('couldn’t be checked');
     click(secondary());
     expect(results()[0]).toMatchObject({ allowed: false });
   });
@@ -1552,7 +1570,7 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(OTHER, EVM) })) }));
     expect(document.querySelector('.demo-bridge')?.textContent).toBe(`Bridge 1 USDC from Base to Stellar, 1:1. Recipient on Stellar: ${OTHER}`);
     expect(pageText()).toContain('This request can move about');
-    expect(pageText()).not.toContain('Hana can’t read this request');
+    expect(pageText()).not.toContain('Journear can’t read this request');
   });
 
   it('names no recipient when the spoke `to` isn’t the signing address’s own hub wallet (D476)', () => {
@@ -1687,7 +1705,7 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     });
     send(baseRequest());
     expect(pageText()).toContain(MAINNET_DEMO_BANNER);
-    expect(pageText()).toContain('This request can move about $8.01, fee included. Hana’s limit is $9.99 per transaction.');
+    expect(pageText()).toContain('This request can move about $8.01, fee included. Journear’s limit is $9.99 per transaction.');
     expect(pageText()).not.toContain(TEST_APP_NOTE);
     expect(document.querySelector('.mainnet-demo')?.getAttribute('role')).toBe('alert');
     await settle();
@@ -1755,7 +1773,7 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
       startDemo(balances);
       send(baseRequest({ demoPrices: LIVE_PRICES }));
       // 0.001 ETH at $2,251.7985, plus the 100,000 wei fee: $2.2517985…
-      expect(pageText()).toContain('This request can move about $2.26, fee included. Hana’s limit is $9.99 per transaction.');
+      expect(pageText()).toContain('This request can move about $2.26, fee included. Journear’s limit is $9.99 per transaction.');
       await settle();
       expect(pageText()).toContain('This wallet holds about $4.28.');
     });

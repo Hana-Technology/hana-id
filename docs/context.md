@@ -4,7 +4,7 @@ Carried over from the design conversation in wend-widget-demo (Oct 2026). Plan d
 https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi · Login journey diagrams: https://claude.ai/artifact/73xpB7AZknWd9s38xw4Fjo ·
 SDK security page: https://claude.ai/artifact/AwzpW8xZ7pAuMoTYgBfcvo
 
-Last verified: 2026-11-05 for "Next steps" 7 and "Before mainnet" (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker and the watchdog email through SendGrid too, D401); 2026-11-04 for "Google email scope spike" (branch `feat/token-first-on`: the user's spike results, the D270 gate met); 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
+Last verified: 2026-11-12 for the product's name and the launcher's label (branch `feat/journear-design`, not merged, not deployed, D765); 2026-11-05 for "Next steps" 7 and "Before mainnet" (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker and the watchdog email through SendGrid too, D401); 2026-11-04 for "Google email scope spike" (branch `feat/token-first-on`: the user's spike results, the D270 gate met); 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
 steps" and "Before mainnet", the user-mail provider, the batch B status note). The dated sections below are records
 of their day; "Next steps" is the current list.
 
@@ -42,7 +42,8 @@ with a key share the API holds (`POST /v1/vault/unlock`): no chain call. Partner
 
 ## Decisions
 
-- Name: repo `hana-id`, product **Hana ID**. npm `@hana` is taken; `@hana-id` looked free (claim it).
+- Name: repo `hana-id`, product **Hana ID** (shown to users as **Journear Passport** since D765, built on
+  `feat/journear-design`; code, package and env names keep "hana"). npm `@hana` is taken; `@hana-id` looked free (claim it).
 - CKD only (no per-transaction MPC signing). Key index in the path for rotation after a leak.
 - Per-partner **scope** chosen by the token's `(provider, aud)` via an on-chain registry inside `hana-signer`, so one
   app can't derive another app's users' keys. One scope can hold several client IDs (web/iOS/Android).
@@ -137,7 +138,7 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
   touch or pen `pointerdown`, or Tab/arrow keys (never Enter or Space), and the arming gesture itself never approves.
 - A signing call from a user's click opens the approval popup in that click, like login (user decision 2026-10-29,
   D99: `/approve?from=partner&v=<vault frame>`, found and authenticated like the login popup); the vault's "Review in
-  Hana" launcher is only the fallback (no user activation, or Safari blocking `window.open` after an await). An
+  Journear Passport" launcher ("Review in Hana" until D765) is only the fallback (no user activation, or Safari blocking `window.open` after an await). An
   auto-approved or refused request closes that popup before it shows anything. `hana.prepareApproval()` opens it
   early for a handler that awaits first.
 - Auto-approve policies gain a required per-chain `maxFeeWei` (gas × fee cap), because the SDK fills EVM fees on the

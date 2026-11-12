@@ -691,7 +691,7 @@ export type ChainGateRejection = ScopeRejection & { retryAfterS: number };
 export async function chainGate(env: Env, token: { provider: string; kid: string } | null, requestId?: string): Promise<ChainGateRejection | null> {
   const [config, active] = await Promise.all([settle(getConfig(env)), token ? settle(isIssuerKeyActive(env, token.provider, token.kid)) : Promise.resolve(null)]);
   if (!config.ok || (active && !active.ok)) log({ event: 'chain_gate_unavailable', requestId, code: !config.ok ? 'get_config_failed' : 'get_issuer_failed' }, 'warn');
-  if (config.ok && config.value.paused) return { status: 503, code: 'paused', error: 'Hana ID is paused, try again later', retryAfterS: PAUSED_RETRY_S };
+  if (config.ok && config.value.paused) return { status: 503, code: 'paused', error: 'Journear Passport is paused, try again later', retryAfterS: PAUSED_RETRY_S };
   if (active?.ok && !active.value) {
     return { status: 503, code: 'issuer_key_pending', error: 'The token’s signing key is not active on chain yet, try again shortly', retryAfterS: ISSUER_KEY_PENDING_RETRY_S };
   }

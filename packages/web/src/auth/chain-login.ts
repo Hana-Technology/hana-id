@@ -184,7 +184,7 @@ export async function loginOnChain(body: LoginBody, ctx: ChainLoginContext): Pro
           resent = true;
           continue;
         }
-        return fail('api_unavailable', 'Hana could not send the sign-in transaction');
+        return fail('api_unavailable', 'Journear couldn’t send the sign-in transaction');
       }
       if ((code === 'timeout' || code === 'near_error') && err.nearTx) return unknown(err.nearTx);
       if (code === 'relayer_unavailable') {

@@ -74,7 +74,7 @@ const internals = (s: S) => s.t.vault as unknown as Internals;
 const shareOf = (s: S) => [...s.t.browser.backend.shares.values()].at(-1)!;
 
 async function consentScreen(s: S): Promise<{ popup: FakeWindow; m: Record<string, unknown> }> {
-  await waitLauncher(s.t, 'Review in Hana');
+  await waitLauncher(s.t, 'Review in Journear Passport');
   const popup = openApproval(s.t);
   return { popup, m: await popup.next('hana:consent-request') };
 }
@@ -727,7 +727,7 @@ describe('two tabs and another account', () => {
     await a.t.request('hana_revokeAutoApprove');
     await eventually(() => browser.backend.consents.get(consentId(a))!.revoked, 'the revoke was applied');
     const reply = b.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x8' }) });
-    await waitLauncher(b.t, 'Review in Hana');
+    await waitLauncher(b.t, 'Review in Journear Passport');
     const popup = openApproval(b.t);
     answerConsent(b.t, popup, await popup.next('hana:consent-request'), false);
     answer(b.t, popup, await popup.next('hana:approve-request'), false);
@@ -749,7 +749,7 @@ describe('two tabs and another account', () => {
     const before = browser.backend.calls.length;
     s.t.browser.timers.now += POLICY_FRESH_MS;
     const reply = s.t.request('eth_signTransaction', { tx: evmTx() });
-    await waitLauncher(s.t, 'Review in Hana');
+    await waitLauncher(s.t, 'Review in Journear Passport');
     const popup = openApproval(s.t);
     answerConsent(s.t, popup, await popup.next('hana:consent-request'), false);
     answer(s.t, popup, await popup.next('hana:approve-request'), false);

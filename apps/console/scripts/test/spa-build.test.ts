@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FONT_FILES } from '@hana-id/brand';
+import { FONT_FILES, FONT_LICENCE_FILES } from '@hana-id/brand';
 import { buildMeta, parseBuildMeta } from '@hana-id/env/build-id';
 import { localBuild } from '@hana-id/env/local-build';
 import { build } from 'vite';
@@ -44,9 +44,9 @@ describe('the SPA build', () => {
     for (const f of readdirSync(join(out, 'assets'))) expect(readFileSync(join(out, 'assets', f), 'utf8'), f).not.toContain(localBuild().commit);
   });
 
-  it('every asset is a file under /assets: scripts, styles, Hana’s fonts and their licence; no source map, no data: script', () => {
+  it('every asset is a file under /assets: scripts, styles, the fonts and their licences; no source map, no data: script', () => {
     const files = readdirSync(join(out, 'assets'));
-    expect(files.filter((f) => !/^[\w-]+\.(js|css|woff2)$/u.test(f))).toEqual(['OFL.txt']);
+    expect(files.filter((f) => !/^[\w-]+\.(js|css|woff2)$/u.test(f)).sort()).toEqual([...FONT_LICENCE_FILES].sort());
     for (const f of files.filter((x) => /\.(js|css)$/u.test(x))) {
       const text = readFileSync(join(out, 'assets', f), 'utf8');
       expect(text, f).not.toMatch(/sourceMappingURL/u);
@@ -54,22 +54,27 @@ describe('the SPA build', () => {
     }
   });
 
-  it('ships Hana’s fonts (D426) as the brand package’s exact files, with the OFL beside them, loaded only from /assets', () => {
+  it('ships the Journear Passport fonts (D426, D765) as the brand package’s exact files, with their OFLs beside them, loaded only from /assets', () => {
     const files = readdirSync(join(out, 'assets'));
     const fonts = files.filter((f) => f.endsWith('.woff2'));
     const known = new Map(FONT_FILES.map((f) => [f.sha256, f.file]));
     // Every face fonts.css declares, each byte-identical to packages/brand's file (no other font, no re-encoding).
     const shipped = fonts.map((f) => known.get(createHash('sha256').update(readFileSync(join(out, 'assets', f))).digest('hex')));
     expect(shipped.sort()).toEqual(FONT_FILES.map((f) => f.file).sort());
-    for (const f of fonts) expect(f).toMatch(/^(?:Montserrat|MontserratAlternates)-[4-7]00-[\w-]+\.woff2$/u);
-    expect(readFileSync(join(out, 'assets', 'OFL.txt'), 'utf8')).toBe(readFileSync(new URL('../../../../packages/brand/fonts/OFL.txt', import.meta.url), 'utf8'));
-    // The stylesheet's only URLs are those fonts, same-origin under /assets: no data: URL, no other host.
+    for (const f of fonts) expect(f).toMatch(/^(?:archivo|ibm-plex-sans|ibm-plex-mono)-[4-9]00-[\w-]+\.woff2$/u);
+    for (const l of FONT_LICENCE_FILES) expect(readFileSync(join(out, 'assets', l), 'utf8'), l).toBe(readFileSync(new URL(`../../../../packages/brand/fonts/${l}`, import.meta.url), 'utf8'));
+    // The stylesheet's only URLs are those fonts, same-origin under /assets, and the design system's one image: the
+    // select's chevron, a data: SVG (the CSP's img-src allows data:; never a data: font, script or style). No other host.
     const css = files.filter((f) => f.endsWith('.css')).map((f) => readFileSync(join(out, 'assets', f), 'utf8')).join('\n');
     expect(css).toContain('@font-face');
-    const urls = [...css.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gu)].map((m) => m[1]!);
-    expect(urls.length).toBe(FONT_FILES.length);
-    for (const u of urls) expect(u, u).toMatch(/^(?:\/assets\/|\.\/)?[\w-]+\.woff2$/u);
-    expect(css).not.toMatch(/@import|https?:\/\/|data:/u);
+    const urls = [...css.matchAll(/url\(\s*(?:"([^"]+)"|'([^']+)'|([^)\s]+))\s*\)/gu)].map((m) => m[1] ?? m[2] ?? m[3]!);
+    const images = urls.filter((u) => u.startsWith('data:'));
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatch(/^data:image\/svg\+xml,/u);
+    expect(urls.length).toBe(FONT_FILES.length + 1);
+    for (const u of urls.filter((x) => !x.startsWith('data:'))) expect(u, u).toMatch(/^(?:\/assets\/|\.\/)?[\w-]+\.woff2$/u);
+    const rest = css.replace(images[0]!, '');
+    expect(rest).not.toMatch(/@import|https?:\/\/|data:/u);
   });
 
   it('bundles no server code (zod schemas, console-core layouts)', () => {

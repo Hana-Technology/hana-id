@@ -117,7 +117,7 @@ export function validateDemoConfig(c: DemoConfig): DemoConfig {
   check(() => {
     if (webOrigin(c.vaultOrigin, 'vaultOrigin') !== c.vaultOrigin) throw new Error(`vaultOrigin must be an origin (no path): ${c.vaultOrigin}`);
   });
-  if (!isTestEvmChain(c.evm.id)) problems.push(`EVM chain ${c.evm.id} is not a test chain Hana signs for (${Object.values(TEST_EVM_CHAINS).join(', ')})`);
+  if (!isTestEvmChain(c.evm.id)) problems.push(`EVM chain ${c.evm.id} is not a test chain Journear Passport signs for (${Object.values(TEST_EVM_CHAINS).join(', ')})`);
   if (!c.evm.name.trim()) problems.push('evm.name is empty');
   check(() => webOrigin(c.evm.rpcUrl, 'evm.rpcUrl'));
   if (c.evm.explorer !== null) check(() => webOrigin(c.evm.explorer!, 'evm.explorer'));

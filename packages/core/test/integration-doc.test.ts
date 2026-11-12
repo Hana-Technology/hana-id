@@ -205,7 +205,7 @@ describe('docs/integration.md: NEAR (section 8)', () => {
     const { demoGuestbook, relay } = manifest.near;
     expect(relay.receivers).toEqual([demoGuestbook]);
     expect(s8).toContain(`const GUESTBOOK = '${demoGuestbook}';`);
-    expect(s8).toContain(`it holds only Hana's demo guestbook, \`${demoGuestbook}\``);
+    expect(s8).toContain(`it holds only Journear's demo guestbook, \`${demoGuestbook}\``);
     expect(s8).toContain(`its calls attach at most **${relay.maxGasTgas} Tgas** together on sandbox-dev`);
     expect(s8).toContain(`gas: ${n(relay.maxGasTgas * 1e12).replaceAll(',', '_')}n, deposit: 0n }`);
     // The quick start's expiry fits the relay's (and so the vault's) bound.

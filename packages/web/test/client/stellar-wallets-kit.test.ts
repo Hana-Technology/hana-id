@@ -38,7 +38,7 @@ describe('HanaIdModule', () => {
     expect(m.moduleType).toBe(HOT_WALLET);
     expect(m.moduleType).toBe('HOT_WALLET');
     expect(m.productId).toBe('hana-id');
-    expect(m.productName).toBe('Hana ID');
+    expect(m.productName).toBe('Journear Passport');
     expect(m.productUrl).toBe(ORIGINS.authOrigin);
     expect(m.productIcon).toBe(HANA_ID_ICON);
     for (const f of ['isAvailable', 'getAddress', 'signTransaction', 'signAuthEntry', 'signMessage', 'getNetwork', 'disconnect'] as const) expect(typeof m[f]).toBe('function');

@@ -47,7 +47,7 @@ const CONSENT_NOT_RECORDED = 'consent_not_recorded';
 
 /** Allow was pressed but the API couldn't record the consent: nothing is stored (`e`, the failure, marks the request ID). */
 export const consentNotRecorded = (e: unknown): VaultError =>
-  new VaultError('api_unavailable', 'Auto-approve could not be turned on: Hana could not record it', { granted: false, reason: CONSENT_NOT_RECORDED }).fromRequest(e instanceof ApiError ? e : null);
+  new VaultError('api_unavailable', 'Auto-approve could not be turned on: Journear could not record it', { granted: false, reason: CONSENT_NOT_RECORDED }).fromRequest(e instanceof ApiError ? e : null);
 
 export const isConsentNotRecorded = (e: unknown): boolean => e instanceof VaultError && e.data?.reason === CONSENT_NOT_RECORDED;
 
@@ -122,6 +122,6 @@ function apiErrorAsVault(e: ApiError): VaultError {
     default:
       if (e.status === 401) return new VaultError('token_invalid', 'The Google token was refused', { api: status });
       if (e.status === 429) return new VaultError('rate_limited', 'Too many requests, try again later');
-      return new VaultError('api_unavailable', 'The Hana API could not complete the request', { api: status });
+      return new VaultError('api_unavailable', 'The Journear API could not complete the request', { api: status });
   }
 }

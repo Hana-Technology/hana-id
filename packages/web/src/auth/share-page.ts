@@ -23,11 +23,13 @@
 // SECURITY: the address is shown through text nodes only and dropped once the user answered; nothing is logged or
 // stored. Messages count only from the authenticated vault; this page posts only to it (targetOrigin vaultOrigin).
 import { type WindowMessage, parseWindowMessage } from '@hana-id/core';
+import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { type Dom, dom, errorView, originText } from './dom.ts';
 import { appLogo } from './logo.ts';
+import { BTN, alert } from './ui.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
 
 /** How often the hello is sent again until the vault answers. */
@@ -74,12 +76,12 @@ export const SHARE_TEXT = {
   ask: (app: string) => `Share your email with ${app}?`,
   wants: (app: string) => `${app} would like your email address:`,
   use: (app: string) => `${app} can then email you and recognise your account. You can stop sharing later; ${app} may keep the address it already received.`,
-  ownGoogle: (app: string) => `${app} signs you in with its own Google client, so Google may give ${app} your address whatever you choose here.`,
+  ownGoogle: (app: string) => `${app} uses its own Google sign-in, so Google may give ${app} your address whatever you choose here.`,
   shared: (app: string) => `Email shared with ${app}`,
-  sharedText: (app: string) => `${app} gets this address from Hana when you sign in:`,
+  sharedText: (app: string) => `${app} gets this address from ${BRAND.company} when you sign in:`,
   stopNote: (app: string) => `If you stop sharing, ${app} may keep the address it already received; ask ${app} to delete it.`,
   savedShared: (app: string) => `${app} now gets your email address.`,
-  savedNotShared: (app: string) => `${app} doesn’t get your email address from Hana.`,
+  savedNotShared: (app: string) => `${app} doesn’t get your email address from ${BRAND.company}.`,
 };
 
 export function startSharePage(deps: SharePageDeps): SharePage {
@@ -170,7 +172,7 @@ export function startSharePage(deps: SharePageDeps): SharePage {
     current = null;
     primary = null;
     state = 'error';
-    const btn = d.h('button', { class: 'secondary', attrs: { type: 'button', id: 'share-close' } }, 'Close');
+    const btn = d.h('button', { class: `secondary ${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'share-close' } }, 'Close');
     btn.addEventListener('click', () => win.close());
     d.show(errorView(d, title, text, code), d.h('div', { class: 'actions' }, btn));
   }
@@ -196,11 +198,11 @@ export function startSharePage(deps: SharePageDeps): SharePage {
 
   function showAsk(m: WindowMessage<'hana:email-share-request'>, email: string): void {
     state = 'ask';
-    const no = d.h('button', { class: 'secondary', attrs: { type: 'button', id: 'share-not-now' } }, 'Not now');
+    const no = d.h('button', { class: `secondary ${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'share-not-now' } }, 'Not now');
     no.addEventListener('click', (e) => {
       if (isGesture(e)) answer('declined');
     });
-    const yes = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'share-email' } }, 'Share email');
+    const yes = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'share-email' } }, 'Share email');
     yes.disabled = true;
     yes.addEventListener('focus', () => guard.primaryFocused());
     yes.addEventListener('blur', () => guard.primaryBlurred());
@@ -218,7 +220,7 @@ export function startSharePage(deps: SharePageDeps): SharePage {
         d.h('p', {}, SHARE_TEXT.wants(m.appName)),
         d.h('p', { class: 'address' }, d.h('strong', { class: 'mono', attrs: { id: 'share-address' } }, email)),
         d.h('p', { class: 'muted' }, SHARE_TEXT.use(m.appName)),
-        m.ownGoogleClient ? d.h('p', { class: 'note' }, SHARE_TEXT.ownGoogle(m.appName)) : null,
+        m.ownGoogleClient ? alert(d, 'info', { class: 'note' }, SHARE_TEXT.ownGoogle(m.appName)) : null,
         d.h('div', { class: 'actions' }, no, yes),
       ),
     );
@@ -228,11 +230,11 @@ export function startSharePage(deps: SharePageDeps): SharePage {
   function showShared(m: WindowMessage<'hana:email-share-request'>, email: string): void {
     state = 'shared';
     primary = null;
-    const stopBtn = d.h('button', { class: 'secondary', attrs: { type: 'button', id: 'share-stop' } }, 'Stop sharing');
+    const stopBtn = d.h('button', { class: `secondary ${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'share-stop' } }, 'Stop sharing');
     stopBtn.addEventListener('click', (e) => {
       if (isGesture(e)) answer('revoke');
     });
-    const done = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'share-done' } }, 'Done');
+    const done = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'share-done' } }, 'Done');
     done.addEventListener('click', (e) => {
       if (isGesture(e)) answer('keep');
     });
@@ -245,7 +247,7 @@ export function startSharePage(deps: SharePageDeps): SharePage {
         d.h('p', {}, SHARE_TEXT.sharedText(m.appName)),
         d.h('p', { class: 'address' }, d.h('strong', { class: 'mono', attrs: { id: 'share-address' } }, email)),
         d.h('p', { class: 'muted' }, SHARE_TEXT.stopNote(m.appName)),
-        m.ownGoogleClient ? d.h('p', { class: 'note' }, SHARE_TEXT.ownGoogle(m.appName)) : null,
+        m.ownGoogleClient ? alert(d, 'info', { class: 'note' }, SHARE_TEXT.ownGoogle(m.appName)) : null,
         d.h('div', { class: 'actions' }, stopBtn, done),
       ),
     );
@@ -272,7 +274,7 @@ export function startSharePage(deps: SharePageDeps): SharePage {
       });
     } catch {
       if (stopped) return;
-      fail('Couldn’t load your email address', 'Hana couldn’t read the address to show it. Close this window; you can share it later from the app.');
+      fail('Couldn’t load your email address', `${BRAND.company} couldn’t read the address to show it. Close this window; you can share it later from the app.`);
       return;
     }
     if (stopped || current !== m) return;
@@ -284,7 +286,7 @@ export function startSharePage(deps: SharePageDeps): SharePage {
     if (!current) return;
     const app = current.appName;
     if (s === 'failed') {
-      fail('Couldn’t save your choice', 'Hana couldn’t save it. Close this window and try again from the app.');
+      fail('Couldn’t save your choice', `${BRAND.company} couldn’t save it. Close this window and try again from the app.`);
       return;
     }
     stop();
@@ -314,11 +316,11 @@ export function startSharePage(deps: SharePageDeps): SharePage {
   }
 
   if (isFramed(win)) {
-    fail('Stopped', 'This Hana window can’t run inside another page.');
+    fail('Stopped', `This ${BRAND.product} window can’t run inside another page.`);
     return { get state() { return state; }, guard, stop };
   }
   if (!opener || !opened) {
-    fail('Nothing to show', 'This window wasn’t opened by Hana. Close it and use the app.');
+    fail('Nothing to show', `This window wasn’t opened by ${BRAND.product}. Close it and use the app.`);
     return { get state() { return state; }, guard, stop };
   }
   for (const [t, l] of listeners) win.addEventListener(t, l);

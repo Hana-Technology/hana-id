@@ -54,6 +54,7 @@ import {
   signDerive,
   verifyGoogleIdToken,
 } from '@hana-id/core';
+import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ChainLoginError, loginOnChain } from './chain-login.ts';
@@ -64,7 +65,8 @@ import { ExportPathError, exportPath } from './export-path.ts';
 import type { HomeAddress, HomeApi, HomeConfig, HomeIdentity, HomeLoginBody, HomeScope } from './home-api.ts';
 import { type HomeEmailApi, type HomeEmailStep, emailTokenClaims, homeEmailStep } from './home-email.ts';
 import { type HomeProblem, deriveRateLimited, homeProblem, plainProblem } from './home-problems.ts';
-import { EXPORT_CLIPBOARD_NOTE, EXPORT_CONFIRMATION, EXPORT_WARNING, type ExportClipboard, type KeyReveal, type ScreenGuard, exportString, keyReveal } from './key-reveal.ts';
+import { EXPORT_CLIPBOARD_NOTE, EXPORT_CONFIRMATION, EXPORT_WARNING, type ExportClipboard, type KeyReveal, type ScreenGuard, exportSteps, exportString, keyReveal } from './key-reveal.ts';
+import { BTN, alert } from './ui.ts';
 import type { NearReader } from './near-rpc.ts';
 import { type GestureCheck, type PageWindow, randomName } from './page-window.ts';
 
@@ -83,7 +85,7 @@ const CHILD_WATCH_MS = 500;
 const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM' } as const;
 export const HOME_EXPORT_TITLE = 'Move this wallet to another wallet app';
 /** What the collapsed section says under its heading, and its button: the same shape as "Devices and auto-approve". */
-export const HOME_EXPORT_ABOUT = 'Hana Home can show you the private key of your wallet in this app, so that you can import it into another wallet app.';
+export const HOME_EXPORT_ABOUT = `${BRAND.home} can show you the private key of your wallet in this app, so that you can import it into another wallet app.`;
 export const HOME_EXPORT_OPEN = 'Show how to move it';
 
 export type HomeExportState =
@@ -107,9 +109,9 @@ export type HomeExportState =
 export type HomeExportOff = 'link' | 'none' | 'unknown';
 
 export const HOME_EXPORT_OFF_TEXT: Readonly<Record<HomeExportOff, string>> = Object.freeze({
-  link: 'You came to this app through a link. Hana Home never moves a wallet out from a link, because a link can come from anyone. If you want to move this wallet, open Hana Home yourself, without the link, and find the app in your list or by its name.',
-  none: 'Hana can’t open this wallet from here. If the app still runs, use the app itself.',
-  unknown: 'Hana hasn’t checked this app yet. Use “Check now” above, then come back here.',
+  link: `You came to this app through a link. ${BRAND.home} never moves a wallet out from a link, because a link can come from anyone. If you want to move this wallet, open ${BRAND.home} yourself, without the link, and find the app in your list or by its name.`,
+  none: `${BRAND.company} can’t open this wallet from here. If the app still runs, use the app itself.`,
+  unknown: `${BRAND.company} hasn’t checked this app yet. Use “Check now” above, then come back here.`,
 });
 
 export const HOME_EXPORT_END_TEXT = Object.freeze({
@@ -260,7 +262,8 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
 
   // ---- view parts ----
   const button = (label: string, id: string, onClick: (e: Event) => void, cls?: string): HTMLButtonElement => {
-    const b = d.h('button', { ...(cls ? { class: cls } : {}), attrs: { type: 'button', id } }, label);
+    // One primary per screen (the system's buttons); every other button is secondary.
+    const b = d.h('button', { class: cls === 'primary' ? `primary ${BTN.primary}` : BTN.secondary, attrs: { type: 'button', id } }, label);
     b.addEventListener('click', (e) => {
       if (isGesture(e)) onClick(e);
     });
@@ -278,6 +281,8 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       // Focus is a convenience.
     }
   };
+  /** The chosen key's address as the system's key/value row (mono value). */
+  const account = (address: string): HTMLElement => d.h('dl', { class: 'jp-kv account' }, d.h('dt', {}, 'For'), d.h('dd', {}, d.h('code', { class: 'mono' }, address)));
   const addressRows = (a: { stellar: string; evm: string }): HTMLElement =>
     d.h(
       'div',
@@ -494,7 +499,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       isGesture,
       now: () => clock.now(),
       title: 'Get a code to open this wallet',
-      intro: 'Hana Home sends a code to the email you signed in with. The key then stays ready in this page for 5 minutes.',
+      intro: `${BRAND.home} sends a code to the email you signed in with. The key then stays ready in this page for 5 minutes.`,
       address,
       // The issuer mails this code only to the address Hana Home is signed in as, shown by the sign-in's own token.
       start: (to) => api.start(to, 'derive', { scopeId: p.scopeId, sessionPublicKey: p.sessionPublicKey, expiresAtMs: p.expiresAtMs, salt: p.salt }, live.identity.token ?? ''),
@@ -778,20 +783,21 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
         const byEmail = route.kind === 'email';
         return show(
           title(HOME_EXPORT_TITLE),
+          exportSteps(d, 1),
           d.h(
             'p',
             {},
             s.mine
-              ? 'Hana Home can show you this wallet’s private key, so that you can import it into another wallet app. The wallet keeps working in the app as before.'
-              : `Hana has no wallet on record for you in this app. If you had one, ${byEmail ? 'confirm with a code' : 'sign in again'} and Hana Home will look for it. If it finds one, it can show you its private key, so that you can import it into another wallet app.`,
+              ? `${BRAND.home} can show you this wallet’s private key, so that you can import it into another wallet app. The wallet keeps working in the app as before.`
+              : `${BRAND.company} has no wallet on record for you in this app. If you had one, ${byEmail ? 'confirm with a code' : 'sign in again'} and ${BRAND.home} will look for it. If it finds one, it can show you its private key, so that you can import it into another wallet app.`,
           ),
-          d.h('p', { class: 'warn' }, EXPORT_WARNING),
+          alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
           d.h(
             'p',
             { class: 'muted' },
             byEmail
-              ? 'First Hana Home sends a new code to the email you signed in with. The key then stays ready in this page for 5 minutes.'
-              : 'First you choose your Google account again; it must be the account you used for Hana Home. Google may not ask for your password again. The key then stays ready in this page for 5 minutes.',
+              ? `First ${BRAND.home} sends a new code to the email you signed in with. The key then stays ready in this page for 5 minutes.`
+              : `First you choose your Google account again; it must be the account you used for ${BRAND.home}. Google may not ask for your password again. The key then stays ready in this page for 5 minutes.`,
           ),
           d.h('div', { class: 'actions start' }, button(byEmail ? 'Continue with a code' : 'Sign in again to continue', 'home-export-start', begin, 'primary'), close),
         );
@@ -799,34 +805,36 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       case 'signing_in':
         if (pending?.route.kind === 'email' || routeKind() === 'email') {
           // The email route's code screens (home-email.ts), once the route is checked on NEAR.
-          return show(...(emailBox ? [emailBox] : [title('Get a code to open this wallet'), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Checking this app on NEAR…'), d.h('div', { class: 'actions start' }, button('Cancel', 'home-export-cancel', cancel))]));
+          return show(...(emailBox ? [emailBox] : [title('Get a code to open this wallet'), exportSteps(d, 1), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Checking this app…'), d.h('div', { class: 'actions start' }, button('Cancel', 'home-export-cancel', cancel))]));
         }
         return show(
           title('Choose your Google account again'),
+          exportSteps(d, 1),
           d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Finish signing in with Google in the other window.'),
           d.h('div', { class: 'actions start' }, button('Cancel', 'home-export-cancel', cancel)),
         );
       case 'opening':
-        return show(title('Opening your wallet'), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'This can take about 10 seconds. Keep this page open.'));
+        return show(title('Opening your wallet'), exportSteps(d, 1), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'This can take about 10 seconds. Keep this page open.'));
       case 'unlocked': {
         if (!addresses) return show();
         return show(
           title('Your wallet is open'),
+          exportSteps(d, 2),
           mismatch
-            ? d.h('p', { class: 'warn', attrs: { id: 'home-export-mismatch' } }, 'The address Hana had on record for you in this app is different from this wallet’s. The addresses below come from the wallet’s own key, worked out in this page.')
+            ? alert(d, 'warning', { class: 'warn', attrs: { id: 'home-export-mismatch' } }, `The address ${BRAND.company} had on record for you in this app is different from this wallet’s. The addresses below come from the wallet’s own key, worked out in this page.`)
             : null,
           addressRows(addresses),
           d.h('p', {}, 'Choose the key to show: the Stellar key for a Stellar wallet app, the EVM key for an Ethereum-style wallet app.'),
           d.h('div', { class: 'actions start' }, button('Stellar key', 'home-export-stellar', () => choose('stellar')), button('EVM key', 'home-export-evm', () => choose('evm'))),
-          d.h('p', { class: 'muted' }, 'The wallet is locked again 5 minutes after you signed in, when you leave this app’s page, and when you close or reload Hana Home.'),
+          d.h('p', { class: 'muted' }, `The wallet is locked again 5 minutes after you signed in, when you leave this app’s page, and when you close or reload ${BRAND.home}.`),
           d.h('div', { class: 'actions start' }, button('Lock now', 'home-export-lock', () => lock('locked'))),
         );
       }
       case 'confirm': {
         if (!addresses || !chain) return show();
         const picked = chain;
-        const input = d.h('input', { attrs: { id: 'home-export-confirm', type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Type ${EXPORT_CONFIRMATION}` } });
-        const go = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'home-export-continue' } }, 'Continue');
+        const input = d.h('input', { class: 'jp-input confirm-word', attrs: { id: 'home-export-confirm', type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Type ${EXPORT_CONFIRMATION}` } });
+        const go = d.h('button', { class: `primary ${BTN.primary}`, attrs: { type: 'button', id: 'home-export-continue' } }, 'Continue');
         guard.button(go, () => input.value === EXPORT_CONFIRMATION);
         input.addEventListener('input', guard.sync);
         go.addEventListener('click', (e) => {
@@ -837,10 +845,11 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
         });
         show(
           title(`Your ${CHAIN_NAMES[picked]} key`),
-          d.h('p', { class: 'account' }, 'For ', d.h('code', { class: 'mono' }, addresses[picked])),
+          exportSteps(d, 2),
+          account(addresses[picked]),
           d.h('p', {}, 'Your key is ready. Make sure nobody can see your screen.'),
-          d.h('p', { class: 'warn' }, EXPORT_WARNING),
-          d.h('label', {}, `Type ${EXPORT_CONFIRMATION} to continue`, input),
+          alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
+          d.h('div', { class: 'jp-field' }, d.h('label', { class: 'jp-label', attrs: { for: 'home-export-confirm' } }, `Type ${EXPORT_CONFIRMATION} to continue`), input),
           d.h('div', { class: 'actions start' }, go, button('Back', 'home-export-back', back)),
         );
         guard.rendered();
@@ -853,11 +862,13 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
         reveal = r;
         show(
           title(`Your ${CHAIN_NAMES[picked]} key`),
-          d.h('p', { class: 'account' }, 'For ', d.h('code', { class: 'mono' }, addresses[picked])),
+          exportSteps(d, 3),
+          account(addresses[picked]),
           r.out,
+          r.ack,
           r.actions,
           r.status,
-          d.h('p', { class: 'muted' }, 'A shown key hides again after 60 seconds. It is erased from this page 5 minutes after you signed in, when you leave this app’s page, and when you close or reload Hana Home.'),
+          d.h('p', { class: 'muted' }, `A shown key hides again after 60 seconds. It is erased from this page 5 minutes after you signed in, when you leave this app’s page, and when you close or reload ${BRAND.home}.`),
           d.h('p', { class: 'muted' }, EXPORT_CLIPBOARD_NOTE),
           d.h('div', { class: 'actions start' }, button('Choose another key', 'home-export-back', back), button('Lock now', 'home-export-lock', () => lock('locked'))),
         );
@@ -868,16 +879,17 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
         return show(
           title('Wallet locked'),
           d.h('p', { attrs: { role: 'status', id: 'home-export-ended' } }, HOME_EXPORT_END_TEXT[endReason]),
-          d.h('p', { class: 'muted' }, 'To open it again, sign in with Google again.'),
+          d.h('p', { class: 'muted' }, 'To open it again, sign in again.'),
           d.h('div', { class: 'actions start' }, button('Start again', 'home-export-again', expand, 'primary'), button('Close', 'home-export-close', collapse)),
         );
       case 'refused': {
         const p = problem ?? plainProblem('derive_failed');
         return show(
           title(HOME_EXPORT_TITLE),
-          d.h(
-            'div',
-            { class: 'home-problem', attrs: { role: 'alert', id: 'home-export-problem' } },
+          alert(
+            d,
+            'danger',
+            { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id: 'home-export-problem' } },
             d.h('p', {}, p.text),
             d.h('p', { class: 'code muted' }, `Code: ${p.code}`),
             p.requestId ? d.h('p', { class: 'code muted' }, `Request: ${p.requestId}`) : null,

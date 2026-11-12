@@ -19,7 +19,7 @@ export function Keys() {
   const retiring = app.keys.filter((k) => k.revokedAt !== undefined && k.revokedAt > now);
   const revoked = app.keys.filter((k) => k.revokedAt !== undefined && k.revokedAt <= now);
   const full = unrevoked.length >= MAX_UNREVOKED;
-  const created = (k: KeyView) => `Created ${when(k.createdAt)}${k.createdBy === 'hana' ? ' by Hana' : ctl.nameOf(k.createdBy) ? ` by ${ctl.nameOf(k.createdBy)}` : ''}`;
+  const created = (k: KeyView) => `Created ${when(k.createdAt)}${k.createdBy === 'hana' ? ' by Journear' : ctl.nameOf(k.createdBy) ? ` by ${ctl.nameOf(k.createdBy)}` : ''}`;
   const revoke = (k: KeyView, last: boolean) => (
     <ConfirmButton
       label="Revoke"
@@ -44,7 +44,7 @@ export function Keys() {
           owner && !frozen ? (
             <button
               type="button"
-              className="btn"
+              className="jp-btn jp-btn-primary"
               disabled={w.busy || full}
               onClick={() =>
                 void w.run(async () => {
@@ -60,7 +60,7 @@ export function Keys() {
         }
       >
         {owner && !frozen && full && <Why>An app can have at most {MAX_UNREVOKED} active keys. Revoke one you no longer ship to create another.</Why>}
-        {owner && frozen && <Why>Creating and rotating keys is paused while Hana has frozen the organisation. Revoking still works.</Why>}
+        {owner && frozen && <Why>Creating and rotating keys is paused while Journear has frozen the organisation. Revoking still works.</Why>}
         {!owner && <Why>Only owners can create, rotate or revoke keys.</Why>}
         <ul className="key-list">
           {unrevoked.length === 0 && <li className="muted">No active key: the app can’t load the wallet until it has one.</li>}
@@ -71,12 +71,14 @@ export function Keys() {
                 <CopyButton value={k.key} label="publishable key" />
               </div>
               <div className="key-meta">
-                <Badge tone="ok">Active</Badge> <span className="muted small">{created(k)}</span>
+                <Badge tone="ok">Active</Badge>
+                <span className="muted small">{created(k)}</span>
               </div>
               {owner && (
                 <div className="key-actions">
                   {!frozen && (
                     <ConfirmButton
+                      tone="primary"
                       label="Rotate"
                       confirm="Rotate (the old key works 24 h more)"
                       detail="You get a new key now. This one keeps working for 24 hours, so you can ship the new one first."
@@ -102,7 +104,7 @@ export function Keys() {
                 <CopyButton value={k.key} label="retiring key" />
               </div>
               <div className="key-meta">
-                <Badge tone="warn">Retiring</Badge>{' '}
+                <Badge tone="warn">Retiring</Badge>
                 <span className="muted small">
                   Stops working {when(k.revokedAt)} ({relative(k.revokedAt!, now)}). {created(k)}
                 </span>
@@ -111,7 +113,7 @@ export function Keys() {
             </li>
           ))}
         </ul>
-        <WriteNote error={w.error} done={w.done} />
+        <WriteNote error={w.error} />
         {revoked.length > 0 && (
           <details className="revoked">
             <summary>

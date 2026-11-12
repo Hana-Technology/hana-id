@@ -1,10 +1,10 @@
 // The vault's launcher (docs/batch-b-spec.md "Approval flow" step 1, "Login" step 1, "Key export" step 1): one button
 // inside the vault iframe, which the SDK shows as a fixed 320×72 px element when the vault emits `ui {launcher:
-// 'show'}`. A click on it only opens a Hana window (login, approval, export) from the vault's own browsing context, so
+// 'show'}`. A click on it only opens a Journear Passport window (login, approval, export) from the vault's own browsing context, so
 // clickjacking it can't produce a signature: every signature still needs a guarded Approve in that window.
 //
 // Several things may want the launcher at once (a blocked login popup, queued approvals, an export); they queue as
-// intents and the oldest one is shown. A flash ("Signed by Hana under {label}") shows for a few seconds over them.
+// intents and the oldest one is shown. A flash ("Signed by Journear Passport under {label}") shows for a few seconds over them.
 import type { Timers } from './runtime.ts';
 
 export interface LauncherView {
@@ -123,10 +123,13 @@ export function domLauncherView(doc: Document): LauncherView {
   s.margin = '0';
   s.border = '0';
   s.borderRadius = '12px';
-  // Hana's ink with its gradient as a 3 px line along the bottom (packages/brand tokens.css, D426). The system font on
-  // purpose: the vault loads no font file (its bundle and its one request stay as they are).
-  s.background = 'linear-gradient(90deg, #6256e9, #7e5deb 45%, #d772d3) bottom / 100% 3px no-repeat, #16073a';
-  s.color = '#ffffff';
+  // Journear's ink surface, the design system's "Secured by" badge and banner colours (packages/brand tokens.css
+  // --jp-ink-surface, --jp-ink-border and --jp-gray-0, D765): the same in a light or a dark host page, so the button
+  // reads as Journear Passport's, not the app's. The system font on purpose: the vault loads no font file (its bundle
+  // and its one request stay as they are).
+  s.background = '#0b1f1e';
+  s.boxShadow = 'inset 0 0 0 1px #223634';
+  s.color = '#fcfdfd';
   s.font = '600 16px system-ui, -apple-system, "Segoe UI", sans-serif';
   s.cursor = 'pointer';
   s.display = 'none';

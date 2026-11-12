@@ -7,7 +7,7 @@ import { Link, useParams } from 'react-router-dom';
 import { confirmWithGoogle } from '../api.ts';
 import { duration, relative, useApi, useNow, useWrite, when } from '../lib.tsx';
 import { explain } from '../messages.ts';
-import { Callout, ErrorNote, IconLock, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
+import { Callout, ErrorNote, IconShield, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
 import { identityEmailLabel } from './app/Sessions.tsx';
 import { ConsentPreview } from './Consent.tsx';
 
@@ -41,9 +41,9 @@ type O = { origin: string; display: string; idn: boolean };
 const str = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v));
 
 function OwnerChange({ change }: { change: Record<string, unknown> }) {
-  if (change.kind === 'AddClient' && change.provider === 'email') return <p>Add Hana’s email client <span className="mono">{str(change.aud)}</span> to the scope (timelocked): users of this scope can then sign in with email.</p>;
+  if (change.kind === 'AddClient' && change.provider === 'email') return <p>Add Journear’s email client <span className="mono">{str(change.aud)}</span> to the scope (timelocked): users of this scope can then sign in with email.</p>;
   if (change.kind === 'AddClient') return <p>Add the Google client <span className="mono">{str(change.aud)}</span> to the scope (timelocked).</p>;
-  if (change.kind === 'SetAllowShared') return <p>Turn on shared login: users may sign in through Hana’s shared Google clients (timelocked).</p>;
+  if (change.kind === 'SetAllowShared') return <p>Turn on shared login: users may sign in through Journear’s shared Google clients (timelocked).</p>;
   if (change.kind === 'SetOwners') {
     const owners = (change.owners as Record<string, unknown>[]) ?? [];
     return (
@@ -63,7 +63,7 @@ function OwnerChange({ change }: { change: Record<string, unknown> }) {
 function settingText(k: string, v: unknown): string {
   if (k === 'persistence') return v === 'session' ? 'kept across reloads' : 'none';
   if (k === 'sessionTtlMs' || k === 'idleTtlMs') return duration(Number(v));
-  if (k === 'googleWebClientId') return v === null || v === undefined ? 'Hana’s shared client' : str(v);
+  if (k === 'googleWebClientId') return v === null || v === undefined ? 'Journear’s shared client' : str(v);
   if (k === 'identityEmail') return identityEmailLabel(v).toLowerCase();
   if (k === 'loginMethods') return v === 'google,email' ? 'on (Google and email)' : 'off (Google only)';
   return str(v);
@@ -108,13 +108,13 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
     case 'raw_sign.on':
       return (
         <Callout tone="warn">
-          App <strong>{str(d.appName)}</strong>: users will be asked to approve raw signatures (messages Hana can’t decode). Announced, then active after the delay.
+          App <strong>{str(d.appName)}</strong>: users will be asked to approve raw signatures (messages Journear can’t decode). Announced, then active after the delay.
         </Callout>
       );
     case 'app.resume':
       return (
         <p>
-          Resume <strong>{str(d.appName)}</strong> (clears your organisation’s suspension).{d.otherSuspensions === true && ' Hana’s suspension stays: the app stays suspended until Hana lifts it.'}
+          Resume <strong>{str(d.appName)}</strong> (clears your organisation’s suspension).{d.otherSuspensions === true && ' Journear’s suspension stays: the app stays suspended until Journear lifts it.'}
         </p>
       );
     case 'app.settings': {
@@ -125,7 +125,8 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
           <p>
             App <strong>{str(d.appName)}</strong>:
           </p>
-          <table className="table table-compact">
+          <div className="jp-table-wrap">
+          <table className="jp-table compact">
             <thead>
               <tr>
                 <th scope="col">Setting</th>
@@ -145,6 +146,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
                 ))}
             </tbody>
           </table>
+          </div>
         </>
       );
     }
@@ -152,7 +154,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
       return (
         <>
           <p>
-            Scope <span className="mono">{str(d.scopeId)}</span>, method <span className="mono">{str(d.method)}</span>. Hana relays it to the hana-signer contract; the confirmation token becomes public on chain (it carries no
+            Scope <span className="mono">{str(d.scopeId)}</span>, method <span className="mono">{str(d.method)}</span>. Journear relays it to the hana-signer contract; the confirmation token becomes public on chain (it carries no
             email address).
           </p>
           {d.change !== undefined && d.method === 'propose_change' && <OwnerChange change={d.change as Record<string, unknown>} />}
@@ -162,8 +164,8 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
               <OwnerChange change={d.change as Record<string, unknown>} />
             </>
           )}
-          {d.method === 'remove_client' && <Callout tone="warn">{d.provider === 'email' ? 'Remove Hana’s email client from the scope, at once: users of this scope stop being able to sign in with email.' : `Remove the Google client ${str(d.aud)} from the scope, at once.`}</Callout>}
-          {d.method === 'disable_shared_login' && <Callout tone="warn">Turn shared login off, at once: users of Hana’s shared clients can’t sign in to this scope any more.</Callout>}
+          {d.method === 'remove_client' && <Callout tone="warn">{d.provider === 'email' ? 'Remove Journear’s email client from the scope, at once: users of this scope stop being able to sign in with email.' : `Remove the Google client ${str(d.aud)} from the scope, at once.`}</Callout>}
+          {d.method === 'disable_shared_login' && <Callout tone="warn">Turn shared login off, at once: users of Journear’s shared clients can’t sign in to this scope any more.</Callout>}
         </>
       );
     case 'member.invite':
@@ -288,10 +290,10 @@ export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
                   </Callout>
                 )}
                 <div className="form-actions">
-                  <button type="button" className="btn btn-primary btn-large" disabled={w.busy} onClick={() => void w.run(() => confirmWithGoogle(a.id))}>
-                    <IconLock /> Confirm with Google
+                  <button type="button" className="jp-btn jp-btn-primary jp-btn-lg" disabled={w.busy} onClick={() => void w.run(() => confirmWithGoogle(a.id))}>
+                    <IconShield /> Confirm with Google
                   </button>
-                  <Link to={back.to} className="btn btn-quiet">
+                  <Link to={back.to} className="jp-btn jp-btn-ghost jp-btn-lg">
                     Not now
                   </Link>
                 </div>
@@ -303,23 +305,28 @@ export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
       )}
       {a.status === 'expired' && <Callout tone="warn">This confirmation expired. Nothing was changed: start again.</Callout>}
       {a.status === 'ok' && (
-        <p className="callout callout-ok" role="status">
+        <Callout tone="ok" role="status">
           Done.{a.outcome?.nearTx ? ` NEAR transaction ${a.outcome.nearTx}.` : ''}
           {a.outcome?.noChange === true ? ' It was already so: nothing changed.' : ''}
           {GUARDED.has(a.kind) && a.outcome?.noChange !== true ? ' It is now announced and takes effect after the security delay; you can follow it, or cancel it, on the app’s page.' : ''}
-        </p>
+        </Callout>
       )}
       {a.status === 'failed' && (
-        <div className="callout callout-error" role="alert">
-          <p className="callout-title">
-            {OUTCOME_TEXT[failedCode] ?? `${explain(failedCode, a.outcome?.message ?? '').text} Nothing was changed.`}
-            {a.outcome?.message && !OUTCOME_TEXT[failedCode] && explain(failedCode, a.outcome.message).detail ? ` ${a.outcome.message}` : ''}
-            {a.outcome?.code === 'rate_limited' && a.kind === 'owner_action' ? ' If this is urgent, send Hana security the action from this page.' : ''}
-          </p>
+        <Callout
+          tone="danger"
+          role="alert"
+          title={
+            <>
+              {OUTCOME_TEXT[failedCode] ?? `${explain(failedCode, a.outcome?.message ?? '').text} Nothing was changed.`}
+              {a.outcome?.message && !OUTCOME_TEXT[failedCode] && explain(failedCode, a.outcome.message).detail ? ` ${a.outcome.message}` : ''}
+              {a.outcome?.code === 'rate_limited' && a.kind === 'owner_action' ? ' If this is urgent, send Journear security the action from this page.' : ''}
+            </>
+          }
+        >
           <p className="support-code">
             Error code <code>{failedCode}</code> · action <code>{a.id}</code>
           </p>
-        </div>
+        </Callout>
       )}
       {a.status !== 'pending' && (
         <p>

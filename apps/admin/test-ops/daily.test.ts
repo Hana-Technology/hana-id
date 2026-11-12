@@ -203,7 +203,7 @@ describe('the rejection-rate check (D91)', () => {
     expect((await runRejectionCheck({ store, now: NOW })).alerts).toBe(0);
     const email = new FakeEmail();
     expect((await runAlerts(env, store, email, new Budget(), NOW)).rejection).toBe(1);
-    expect(email.sent.map((m) => [m.to, m.subject])).toEqual([[ALIAS, '[Hana ID sandbox-test] Rejection rate over 5% (1)']]);
+    expect(email.sent.map((m) => [m.to, m.subject])).toEqual([[ALIAS, '[Journear Passport sandbox-test] Rejection rate over 5% (1)']]);
     expect((await runAlerts(env, store, email, new Budget(), NOW)).rejection).toBe(0);
   });
 });

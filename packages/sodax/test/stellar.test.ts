@@ -19,7 +19,7 @@ beforeEach(() => {
     stellar_getAddress: () => ({ address: STELLAR }),
     stellar_signTransaction: (p) => {
       const { xdr, networkPassphrase, address } = p as { xdr: string; networkPassphrase: string; address?: string };
-      if (address !== undefined && address !== STELLAR) throw new HanaError(4100, 'The address is not the Hana ID account');
+      if (address !== undefined && address !== STELLAR) throw new HanaError(4100, 'The address is not the Journear Passport account');
       return { signedTxXdr: signWith(STELLAR_KEY, xdr, networkPassphrase), signerAddress: STELLAR };
     },
   });
@@ -43,7 +43,7 @@ describe('creation', () => {
 
   it('validates the client and the config', () => {
     const hana = stellarHana(port);
-    expect(() => createSodaxStellarProvider(null as never, CONFIG)).toThrow(/Hana client/u);
+    expect(() => createSodaxStellarProvider(null as never, CONFIG)).toThrow(/Journear Passport client \(createHana\)/u);
     expect(() => createSodaxStellarProvider(hana, null as never)).toThrow(TypeError);
     expect(() => createSodaxStellarProvider(hana, { ...CONFIG, networkPassphrase: '' })).toThrow(/networkPassphrase/u);
     expect(() => createSodaxStellarProvider(hana, { ...CONFIG, networkPassphrase: 'x'.repeat(257) })).toThrow(/networkPassphrase/u);

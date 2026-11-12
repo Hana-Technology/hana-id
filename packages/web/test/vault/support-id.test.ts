@@ -143,7 +143,7 @@ describe('an SDK before the field', () => {
 describe('the approval popup', () => {
   async function approvalRequest(t: Tab): Promise<Record<string, unknown>> {
     const reply = t.request('stellar_signMessage', { message: 'hello' });
-    await t.waitUntil(() => t.launcher.label === 'Review in Hana', 'the launcher');
+    await t.waitUntil(() => t.launcher.label === 'Review in Journear Passport', 'the launcher');
     const popup = openApproval(t);
     const m = await popup.next('hana:approve-request');
     answer(t, popup, m, true);

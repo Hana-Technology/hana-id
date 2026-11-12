@@ -60,7 +60,7 @@
         "alg": "RS256"
       }
     ],
-    "from": "Hana ID (testnet) <team@hanawallet.io>",
+    "from": "Journear Passport (testnet) <team@hanawallet.io>",
     "sender": "sendgrid",
     "dailySendBudget": 200
   },
@@ -129,7 +129,7 @@
     "writerHyperdrive": "hana-id-usage-writer-sandbox-dev",
     "adminHyperdrive": "hana-id-usage-admin-sandbox-dev"
   },
-  "email": { "from": "Hana ID <team@hanawallet.io>", "securityAlias": "hello@ting.rocks" },
+  "email": { "from": "Journear Passport <team@hanawallet.io>", "securityAlias": "hello@ting.rocks" },
   "ownerGrantDelayMs": 60000,
   "near": {
     "demoGuestbook": "hana-id-guestbook-dev1.testnet",

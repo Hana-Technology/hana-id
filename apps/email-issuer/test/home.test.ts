@@ -77,8 +77,8 @@ describe('Hana Home: the identity', () => {
     const started = (await s.json()) as { challengeId: string };
     expect(Object.keys(started).sort()).toEqual(['challengeId', 'expiresAtMs', 'resendAfterMs']);
     const mail = h.sender.sent.at(-1)!;
-    expect(mail.subject).toBe('Your sign-in code for Hana Home');
-    expect(mail.text).toContain('Your code to sign in to Hana Home:');
+    expect(mail.subject).toBe('Your sign-in code for Passport Home');
+    expect(mail.text).toContain('Your code to sign in to Passport Home:');
     expect(mail.text).not.toMatch(/https?:\/\//u);
     expect(mail.appId).toBe(HOME_ISSUER_APP);
 
@@ -210,7 +210,7 @@ describe('Hana Home: opening one app’s wallet', () => {
     const st = await h.call(HOME_START, { email, kind: 'derive', commitment: s.json, identity: await idFor(h, email) });
     expect(st.status).toBe(202);
     const mail = h.sender.sent.at(-1)!;
-    expect(mail.subject).toBe('Your code to open a wallet in Hana Home');
+    expect(mail.subject).toBe('Your code to open a wallet in Passport Home');
     expect(mail.text).not.toContain(app.name);
     const { challengeId } = (await st.json()) as { challengeId: string };
     const v = await h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor(email) });
@@ -304,7 +304,7 @@ describe('Hana Home: the mailbox limits', () => {
     h.clock.now += 31_000;
     const r = await h.call('/v1/email/resend', { challengeId });
     expect(r.status).toBe(202);
-    expect(h.sender.sent.filter((m) => m.to === email).map((m) => m.subject)).toEqual(['Your sign-in code for Hana Home', 'Your sign-in code for Hana Home']);
+    expect(h.sender.sent.filter((m) => m.to === email).map((m) => m.subject)).toEqual(['Your sign-in code for Passport Home', 'Your sign-in code for Passport Home']);
     expect((await h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor(email) })).status).toBe(200);
   });
 
@@ -389,7 +389,7 @@ describe('Hana Home: its mail share can’t be used up by fresh addresses', () =
     expect(((await stopped.json()) as { code: string }).code).toBe('rate_limited');
     // The returning mailbox draws on the reserve.
     expect((await h.call(HOME_START, { email: returning, kind: 'identity', commitment: identity(h).json })).status).toBe(202);
-    expect(h.sender.to(returning).at(-1)?.subject).toBe('Your sign-in code for Hana Home');
+    expect(h.sender.to(returning).at(-1)?.subject).toBe('Your sign-in code for Passport Home');
     // The alert: half of Home's open share reached, once (counts only, the app named `hana-home`).
     const alerts = (await env.DB.prepare("SELECT metric, count FROM email_daily WHERE app_id = ?1 AND metric LIKE 'alert:email_budget%'").bind(HOME_ISSUER_APP).all<{ metric: string; count: number }>()).results;
     expect(alerts).toContainEqual({ metric: 'alert:email_budget:app_50', count: 1 });

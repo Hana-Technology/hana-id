@@ -29,6 +29,7 @@
 // - The page drops its opener at load, refuses to run framed, takes messages only from its own child window, and acts
 //   only on real clicks in its own page.
 import { ApiError, HOME_EMAIL_AUDIENCE, type Jwk, RELAY_KEY_BYTES, type RelayReadResponse, type WindowMessage, base64UrlEncode, decryptRelayPayload, isJsonFormToken, isRelayToken, parseWindowMessage, randomBytes, relayIdFor, sessionKeyFailure, verifyGoogleIdToken } from '@hana-id/core';
+import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ServerClock } from './clock.ts';
@@ -45,6 +46,8 @@ import { type ExportClipboard, browserClipboard as exportClipboard, screenGuard 
 import type { NearReader } from './near-rpc.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
+import { type Toaster, toaster } from './toast.ts';
+import { BTN, alert, icon } from './ui.ts';
 
 /** How long before the sign-in's end the page warns. */
 export const HOME_EXPIRY_WARN_MS = 2 * 60_000;
@@ -157,16 +160,16 @@ const OTHER_QUESTION = 'Would a wallet here depend on the app?';
  */
 const COVERAGE_WORDS: Readonly<Record<'mine' | 'other', Readonly<Record<CoverageKind, CoverageText>>>> = Object.freeze({
   mine: {
-    yes: { badge: 'Stays reachable', tone: 'ok', question: MINE_QUESTION, detail: 'No. Signing in to this wallet doesn’t depend on the app: it would still work through Hana if the app stopped running.' },
+    yes: { badge: 'Stays reachable', tone: 'ok', question: MINE_QUESTION, detail: 'No. Signing in to this wallet doesn’t depend on the app: it would still work through Journear if the app stopped running.' },
     maybe: { badge: 'Depends on the app', tone: 'warn', question: MINE_QUESTION, detail: 'Yes. This app uses its own Google sign-in, so signing in to this wallet works only while the app keeps that sign-in running.' },
-    no: { badge: 'Out of reach', tone: 'off', question: MINE_QUESTION, detail: 'Signing in to this wallet through Hana no longer works: the sign-in this app used is gone. If the app still runs, use the app itself.' },
-    unknown: { badge: 'Not checked yet', tone: 'muted', question: MINE_QUESTION, detail: 'Hana hasn’t checked this app yet.' },
+    no: { badge: 'Out of reach', tone: 'off', question: MINE_QUESTION, detail: 'Signing in to this wallet through Journear no longer works: the sign-in this app used is gone. If the app still runs, use the app itself.' },
+    unknown: { badge: 'Not checked yet', tone: 'muted', question: MINE_QUESTION, detail: 'Journear hasn’t checked this app yet.' },
   },
   other: {
-    yes: { badge: 'Supported', tone: 'ok', question: OTHER_QUESTION, detail: 'No. If you had a wallet in this app, signing in to it would still work through Hana if the app stopped running. Hana has no wallet on record for you here.' },
-    maybe: { badge: 'Depends on the app', tone: 'warn', question: OTHER_QUESTION, detail: 'Yes. This app uses its own Google sign-in, so signing in to a wallet here works only while the app keeps that sign-in running. Hana has no wallet on record for you here.' },
-    no: { badge: 'Out of reach', tone: 'off', question: OTHER_QUESTION, detail: 'Signing in to wallets in this app through Hana no longer works: the sign-in it used is gone. If the app still runs, use the app itself.' },
-    unknown: { badge: 'Not checked yet', tone: 'muted', question: OTHER_QUESTION, detail: 'Hana hasn’t checked this app yet.' },
+    yes: { badge: 'Supported', tone: 'ok', question: OTHER_QUESTION, detail: 'No. If you had a wallet in this app, signing in to it would still work through Journear if the app stopped running. Journear has no wallet on record for you here.' },
+    maybe: { badge: 'Depends on the app', tone: 'warn', question: OTHER_QUESTION, detail: 'Yes. This app uses its own Google sign-in, so signing in to a wallet here works only while the app keeps that sign-in running. Journear has no wallet on record for you here.' },
+    no: { badge: 'Out of reach', tone: 'off', question: OTHER_QUESTION, detail: 'Signing in to wallets in this app through Journear no longer works: the sign-in it used is gone. If the app still runs, use the app itself.' },
+    unknown: { badge: 'Not checked yet', tone: 'muted', question: OTHER_QUESTION, detail: 'Journear hasn’t checked this app yet.' },
   },
 });
 
@@ -188,6 +191,9 @@ export function coverageText(coverage: HomeCoverage, mine: boolean, canMove = fa
 }
 
 export { type HomeProblem, homeProblem } from './home-problems.ts';
+
+/** Each tone's badge in the design system (the words say it too: never colour alone). */
+const BADGE_CLASS: Readonly<Record<CoverageTone | 'plain', string>> = Object.freeze({ ok: 'jp-badge jp-badge-success', warn: 'jp-badge jp-badge-warning', off: 'jp-badge jp-badge-danger', muted: 'jp-badge', plain: 'jp-badge' });
 
 const STATUS_TEXT: Readonly<Record<HomeApp['status'], string | null>> = Object.freeze({ active: null, suspended: 'Paused', deleted: 'Closed' });
 
@@ -302,6 +308,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   let warnTimer: ReturnType<typeof setTimeout> | undefined;
   let endTimer: ReturnType<typeof setTimeout> | undefined;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Short outcomes (a copy that worked): the stack lives outside `#app`, which is redrawn. */
+  const toasts: Toaster = toaster(d);
 
   // ---- idle tracking (tests) ----
   let running = 0;
@@ -391,9 +399,16 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     el.replaceChildren();
     for (const c of children) if (c !== null && c !== undefined && c !== false) el.append(typeof c === 'string' ? win.document.createTextNode(c) : c);
   };
-  /** A button that acts only on a real click. */
-  const button = (label: string, onClick: (e: Event) => void, props: { class?: string; id?: string; ariaLabel?: string; disabled?: boolean } = {}): HTMLButtonElement => {
-    const b = d.h('button', { ...(props.class ? { class: props.class } : {}), attrs: { type: 'button', ...(props.id ? { id: props.id } : {}), ...(props.ariaLabel ? { 'aria-label': props.ariaLabel } : {}) } }, label);
+  /**
+   * A button that acts only on a real click. The design system's kinds: `primary` (one per view), else secondary;
+   * `ghost` for an inline action; `sm` for a row's own control.
+   */
+  const button = (label: string, onClick: (e: Event) => void, props: { class?: string; id?: string; ariaLabel?: string; disabled?: boolean; kind?: 'primary' | 'secondary' | 'ghost'; sm?: boolean; icon?: Parameters<typeof icon>[1] } = {}): HTMLButtonElement => {
+    const kind = props.kind ?? (props.class?.split(' ').includes('primary') ? 'primary' : 'secondary');
+    // `link`: a text button inside a sentence or an alert (auth.css `button.link`), not a box.
+    const link = props.class?.split(' ').includes('link') === true;
+    const cls = [props.class, link ? null : BTN[kind], !link && props.sm ? 'jp-btn-sm' : null].filter(Boolean).join(' ');
+    const b = d.h('button', { class: cls, attrs: { type: 'button', ...(props.id ? { id: props.id } : {}), ...(props.ariaLabel ? { 'aria-label': props.ariaLabel } : {}) } }, props.icon ? icon(d, props.icon) : null, label);
     if (props.disabled) b.setAttribute('disabled', '');
     b.addEventListener('click', (e) => {
       if (isGesture(e)) onClick(e);
@@ -407,17 +422,23 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       // Focus is a convenience.
     }
   };
-  const badge = (text: string, tone: CoverageTone | 'plain'): HTMLElement => d.h('span', { class: `badge badge-${tone}` }, text);
+  const badge = (text: string, tone: CoverageTone | 'plain'): HTMLElement => d.h('span', { class: `badge badge-${tone} ${BADGE_CLASS[tone]}` }, text);
 
+  /** A refusal, inline (the system's danger alert): the sentence, then the code and request for support. */
   const problemView = (p: HomeProblem, id: string, onDismiss?: () => void): HTMLElement =>
-    d.h(
-      'div',
-      { class: 'home-problem', attrs: { role: 'alert', id } },
+    alert(
+      d,
+      'danger',
+      { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id } },
       d.h('p', {}, p.text),
       d.h('p', { class: 'code muted' }, `Code: ${p.code}`),
       p.requestId ? d.h('p', { class: 'code muted' }, `Request: ${p.requestId}`) : null,
       onDismiss ? button('Dismiss', onDismiss, { class: 'link' }) : null,
     );
+
+  /** The system's empty state: an icon, what is missing, and what makes something appear. */
+  const empty = (id: string, title: string, text: string): HTMLElement =>
+    d.h('div', { class: 'jp-empty home-empty', attrs: { id } }, icon(d, 'wallet'), d.h('b', {}, title), d.h('span', {}, text));
 
   // ---- the sign-in's life ----
   const clearSessionTimers = (): void => {
@@ -546,7 +567,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         linked = found;
         renderContent();
       } else {
-        if (one) problem = { code: 'app_not_found', text: 'Hana Home couldn’t find the app this link is for.', requestId: null, signInAgain: false };
+        if (one) problem = { code: 'app_not_found', text: 'Passport Home couldn’t find the app this link is for.', requestId: null, signInAgain: false };
         renderContent();
       }
     }
@@ -705,8 +726,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       d.show(
         d.h(
           'section',
-          { class: 'panel home' },
-          d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Signing in to Hana Home'),
+          { class: 'panel home home-gate' },
+          d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, `Signing in to ${BRAND.home}`),
           d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Finish signing in with Google in the other window.'),
           d.h('div', { class: 'actions' }, button('Cancel', () => signInFailed(null), { id: 'home-cancel' })),
         ),
@@ -738,7 +759,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   async function prepare(opened: Window, cfg: HomeConfig): Promise<void> {
     const route = homeGoogleRoute(cfg);
-    if (!route) return signInFailed(plain('no_google_client', 'Hana Home can’t sign you in with Google right now.'));
+    if (!route) return signInFailed(plain('no_google_client', 'Passport Home can’t sign you in with Google right now.'));
     const clientId = route.clientId;
     let made: HomeIdentity;
     try {
@@ -792,7 +813,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       isGesture,
       now: () => clock.now(),
       title: renew ? 'Sign in again' : 'Sign in with email',
-      intro: renew ? 'Hana Home sends a new code to the email you signed in with.' : 'Use the email you sign in to your apps with. Hana sends a 6-digit code to it.',
+      intro: renew ? 'Passport Home sends a new code to the email you signed in with.' : 'Use the email you sign in to your apps with. Journear sends a 6-digit code to it.',
       address: fixed,
       start: async (address) => {
         emailIdentity?.end();
@@ -808,7 +829,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       api,
       ids: 'home-email',
       onToken: (token, address) => emailSignedIn(token, address),
-      onStop: ({ code }) => signInFailed(plain(code === 'home_email_unavailable' ? code : 'email_token_invalid', code === 'home_email_unavailable' ? 'Email sign-in to Hana Home isn’t available right now. Try again later.' : 'The email sign-in could not be finished. Try again.')),
+      onStop: ({ code }) => signInFailed(plain(code === 'home_email_unavailable' ? code : 'email_token_invalid', code === 'home_email_unavailable' ? 'Email sign-in to Passport Home isn’t available right now. Try again later.' : 'The email sign-in could not be finished. Try again.')),
       onCancel: () => signInFailed(null),
     });
     if (renew) {
@@ -816,7 +837,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       return;
     }
     stage = 'signing_in';
-    d.show(d.h('section', { class: 'panel home' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'), box));
+    d.show(d.h('section', { class: 'panel home home-gate' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home), box));
   }
 
   /** The code was right: the token must be the issuer's Home identity for this sign-in's key. */
@@ -905,7 +926,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       } else {
         const checked = await verifyGoogleIdToken(payload.idToken, { clientId: p.clientId, nonce: p.identity.nonce, nowMs: clock.now(), jwks }).catch(() => null);
         if (checked === null) failure = plain('api_unavailable', 'Google’s keys could not be read. Try again.');
-        else if (!checked.ok) failure = checked.code === 'token_has_pii' ? plain('token_has_pii', 'Google returned more account details than Hana accepts, so the sign-in was stopped.') : plain('token_invalid', 'Google’s answer could not be verified. Try again.');
+        else if (!checked.ok) failure = checked.code === 'token_has_pii' ? plain('token_has_pii', 'Google returned more account details than Journear accepts, so the sign-in was stopped.') : plain('token_invalid', 'Google’s answer could not be verified. Try again.');
         else {
           token = payload.idToken;
           who = checked.token.sub;
@@ -988,6 +1009,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     emailAddress = null;
     session = 'none';
     clearScreen();
+    toasts.clear();
     stage = 'signed_out';
     signInError = null;
     renderSignedOut();
@@ -997,20 +1019,28 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function renderSignedOut(): void {
     const google = homeGoogleRoute(config) !== null;
     const email = emailOpen();
+    // The login modal pattern: one primary provider (Google when it is offered), email second; there is no passkey.
+    const provider = (label: string, run: () => void, id: string, primary: boolean, ic: 'google' | 'mail'): HTMLButtonElement => {
+      const b = d.h('button', { class: primary ? 'jp-provider primary' : 'jp-provider', attrs: { type: 'button', id } }, icon(d, ic), label, icon(d, 'chev-r', 'chev'));
+      b.addEventListener('click', (e) => {
+        if (isGesture(e)) run();
+      });
+      return b;
+    };
     const buttons = [
-      google ? button('Continue with Google', beginSignIn, { class: 'primary', id: 'home-sign-in' }) : null,
-      email ? button('Continue with email', beginEmailSignIn, { class: google ? undefined : 'primary', id: 'home-sign-in-email' }) : null,
+      google ? provider('Continue with Google', beginSignIn, 'home-sign-in', true, 'google') : null,
+      email ? provider('Continue with email', beginEmailSignIn, 'home-sign-in-email', !google, 'mail') : null,
     ].filter((b): b is HTMLButtonElement => b !== null);
     const how = google && email ? 'the Google account or the email' : email ? 'the email' : 'the Google account';
     d.show(
       d.h(
         'section',
-        { class: 'panel home' },
-        d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'),
-        d.h('p', {}, 'See the apps you use with Hana and your wallet addresses in each of them, in one place.'),
+        { class: 'panel home home-gate' },
+        d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home),
+        d.h('p', {}, `See the apps you use with ${BRAND.company} and your wallet addresses in each of them, in one place.`),
         d.h('p', { class: 'muted' }, `Sign in with ${how} you use in those apps. You stay signed in for a short time, and not after you close or reload this page.`),
         signInError ? problemView(signInError, 'home-sign-in-problem') : null,
-        d.h('div', { class: 'actions choose' }, ...buttons),
+        d.h('div', { class: 'providers' }, ...buttons),
       ),
     );
   }
@@ -1024,8 +1054,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     d.show(
       d.h(
         'section',
-        { class: 'panel home' },
-        d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'),
+        { class: 'panel home home-gate' },
+        d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home),
         problemView(p, 'home-sign-in-problem'),
         d.h('div', { class: 'actions' }, button('Try again', () => track(loadConfig()), { class: 'primary', id: 'home-retry' })),
       ),
@@ -1054,8 +1084,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         d.h(
           'header',
           { class: 'home-head' },
-          d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'),
-          d.h('p', { class: account?.provider === 'email' && emailAddress ? 'home-who home-who-email' : 'home-who' }, whoText(), button('Sign out', signOut, { id: 'home-sign-out' })),
+          d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home),
+          d.h('p', { class: account?.provider === 'email' && emailAddress ? 'home-who home-who-email' : 'home-who' }, whoText(), button('Sign out', signOut, { id: 'home-sign-out', sm: true })),
         ),
         d.h('div', { attrs: { id: 'home-banner', 'aria-live': 'polite' } }),
         d.h('div', { attrs: { id: 'home-notice' } }),
@@ -1070,30 +1100,31 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     if (stage !== 'signed_in') return;
     if (signingIn && emailBox) {
       // Signing in again with email: the code screens, kept as they are while the banner is drawn again.
-      fill('home-banner', d.h('div', { class: 'home-banner note' }, emailBox));
+      fill('home-banner', d.h('div', { class: 'home-banner home-banner-email jp-card' }, emailBox));
       return;
     }
     if (signingIn) {
-      fill('home-banner', d.h('div', { class: 'home-banner note' }, d.h('p', {}, 'Finish signing in with Google in the other window.'), button('Cancel', () => signInFailed(null), { id: 'home-cancel' })));
+      fill('home-banner', alert(d, 'info', { tag: 'div', class: 'home-banner note' }, d.h('p', {}, 'Finish signing in with Google in the other window.'), button('Cancel', () => signInFailed(null), { id: 'home-cancel', sm: true })));
       return;
     }
     // Sign in again with the method this account uses.
-    const again = () => button('Sign in again', account?.provider === 'email' ? beginEmailSignIn : beginSignIn, { class: 'primary', id: 'home-sign-in-again' });
+    const again = () => button('Sign in again', account?.provider === 'email' ? beginEmailSignIn : beginSignIn, { class: 'primary', id: 'home-sign-in-again', sm: true });
     if (session === 'ending' && identity) {
       const minutes = Math.max(1, Math.ceil((identity.endsAtMs - clock.now()) / 60_000));
       fill(
         'home-banner',
-        d.h(
-          'div',
-          { class: 'home-banner note', attrs: { id: 'home-ending' } },
-          d.h('p', {}, `Your sign-in to Hana Home ends in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}. Everything on screen stays. To load anything new after that, sign in again.`),
+        alert(
+          d,
+          'warning',
+          { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ending' } },
+          d.h('p', {}, `Your sign-in to ${BRAND.home} ends in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}. Everything on screen stays. To load anything new after that, sign in again.`),
           again(),
         ),
       );
     } else if (session === 'ended') {
       fill(
         'home-banner',
-        d.h('div', { class: 'home-banner note', attrs: { id: 'home-ended' } }, d.h('p', {}, 'Your sign-in to Hana Home has ended. Everything on screen stays. To load anything new, sign in again.'), again()),
+        alert(d, 'warning', { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ended' } }, d.h('p', {}, `Your sign-in to ${BRAND.home} has ended. Everything on screen stays. To load anything new, sign in again.`), again()),
       );
     } else {
       fill('home-banner');
@@ -1143,9 +1174,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const cover = coverageText(scope.coverage, scope.mine);
     return d.h(
       'li',
-      { class: 'home-card', attrs: { 'data-scope': scope.scopeId } },
+      { class: 'home-card jp-card', attrs: { 'data-scope': scope.scopeId } },
       scope.apps.length > 0 ? d.h('div', { class: 'home-card-apps' }, ...scope.apps.map((a) => appLine(a, 1))) : d.h('p', { class: 'muted' }, scopeTitle(scope)),
-      d.h('div', { class: 'home-card-foot' }, badge(cover.badge, cover.tone), button('View', () => openApp(scope.scopeId), { class: 'home-open', ariaLabel: `View ${scopeTitle(scope)}` })),
+      d.h('div', { class: 'home-card-foot' }, badge(cover.badge, cover.tone), button('View', () => openApp(scope.scopeId), { class: 'home-open', ariaLabel: `View ${scopeTitle(scope)}`, sm: true })),
     );
   }
 
@@ -1161,7 +1192,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   function frontPage(): Child[] {
     const loading = list === 'loading' || list === 'idle';
-    const input = d.h('input', { attrs: { id: 'home-search', type: 'search', maxlength: String(HOME_SEARCH_MAX), autocomplete: 'off', spellcheck: 'false', 'aria-describedby': 'home-search-help' } });
+    const input = d.h('input', { class: 'jp-input', attrs: { id: 'home-search', type: 'search', maxlength: String(HOME_SEARCH_MAX), autocomplete: 'off', spellcheck: 'false', 'aria-describedby': 'home-search-help' } });
     input.value = searchDraft;
     input.addEventListener('input', () => {
       searchDraft = input.value;
@@ -1178,13 +1209,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           ? d.h('div', { class: 'actions start' }, button('Try again', () => track(loadFirst()), { class: 'primary', id: 'home-reload' }))
           : mine.length > 0
             ? cards(mine)
-            : d.h('p', { class: 'muted', attrs: { id: 'home-empty' } }, `No apps yet for this ${accountName()}. An app appears here once you have signed in to it with Hana.`),
+            : empty('home-empty', 'Nothing here yet', `No apps yet for this ${accountName()}. An app appears here once you have signed in to it with ${BRAND.company}.`),
       list === 'ready' && linked && !mine.some((s) => s.scopeId === linked?.scopeId)
         ? d.h(
             'section',
             { attrs: { id: 'home-linked', 'aria-labelledby': 'home-linked-title' } },
             d.h('h2', { attrs: { id: 'home-linked-title' } }, 'The app from your link'),
-            d.h('p', { class: 'note' }, `The link you opened is for the app below. Hana has no wallet on record for this ${accountName()} in it. Its name and address are the app’s own, not Hana’s.`),
+            alert(d, 'info', { class: 'note' }, `The link you opened is for the app below. ${BRAND.company} has no wallet on record for this ${accountName()} in it. Its name and address are the app’s own, not ${BRAND.company}’s.`),
             cards([linked]),
           )
         : null,
@@ -1195,8 +1226,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
             'section',
             { class: 'home-find', attrs: { role: 'search', 'aria-labelledby': 'home-find-title' } },
             d.h('h2', { attrs: { id: 'home-find-title' } }, 'Find an app'),
-            d.h('label', { attrs: { for: 'home-search' } }, 'App name', input),
-            d.h('p', { class: 'muted', attrs: { id: 'home-search-help' } }, 'Some apps appear only when you type their whole name.'),
+            d.h(
+              'div',
+              { class: 'jp-field home-search-field' },
+              d.h('label', { class: 'jp-label', attrs: { for: 'home-search' } }, 'App name'),
+              input,
+              d.h('p', { class: 'jp-hint', attrs: { id: 'home-search-help' } }, 'Some apps appear only when you type their whole name.'),
+            ),
             d.h(
               'div',
               { class: 'actions start' },
@@ -1219,7 +1255,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
                   'div',
                   { attrs: { id: 'home-results' } },
                   d.h('h3', { attrs: { id: 'home-results-title', tabindex: '-1' } }, 'Results for ', d.h('strong', {}, search.term)),
-                  search.results.length > 0 ? cards(search.results) : d.h('p', { class: 'muted' }, 'No app found with that name.'),
+                  search.results.length > 0 ? cards(search.results) : d.h('p', { class: 'muted', attrs: { id: 'home-no-results' } }, 'No app found with that name.'),
                 )
               : null,
           )
@@ -1228,7 +1264,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         ? d.h(
             'section',
             { attrs: { 'aria-labelledby': 'home-others-title' } },
-            d.h('h2', { attrs: { id: 'home-others-title' } }, 'Other apps that use Hana'),
+            d.h('h2', { attrs: { id: 'home-others-title' } }, `Other apps that use ${BRAND.company}`),
             cards(others),
             nextCursor ? d.h('div', { class: 'actions start' }, button(busy === 'more' ? 'Loading…' : 'Show more', () => track(loadMore()), { id: 'home-more', disabled: busy !== null })) : null,
           )
@@ -1242,7 +1278,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       'Copy',
       () => {
         const c = clipboard();
-        const done = (text: string) => {
+        // A copy that worked is a toast (nothing to do about it); one that didn't stays on the page, under the
+        // addresses, because the user has to copy by hand.
+        const failed = (text: string) => {
           copied = text;
           fill('home-copied', text);
           clearTimeout(copiedTimer);
@@ -1251,15 +1289,20 @@ export function startHomePage(deps: HomePageDeps): HomePage {
             fill('home-copied');
           }, COPIED_MS);
         };
-        if (!c) return done(`This browser can’t copy for you. Select the ${what} and copy it yourself.`);
+        if (!c) return failed(`This browser can’t copy for you. Select the ${what} and copy it yourself.`);
         track(
           c.writeText(value).then(
-            () => done(`Copied the ${what}.`),
-            () => done(`This browser didn’t allow the copy. Select the ${what} and copy it yourself.`),
+            () => {
+              clearTimeout(copiedTimer);
+              copied = null;
+              fill('home-copied');
+              toasts.show({ tone: 'success', title: `Copied the ${what}.` });
+            },
+            () => failed(`This browser didn’t allow the copy. Select the ${what} and copy it yourself.`),
           ),
         );
       },
-      { class: 'home-copy', id, ariaLabel: `Copy the ${what}` },
+      { class: 'home-copy', id, ariaLabel: `Copy the ${what}`, sm: true, icon: 'copy' },
     );
   }
 
@@ -1286,8 +1329,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           { class: 'home-address-actions' },
           copyButton(name, a.address, `home-copy-${a.chain}`),
           // The link is built from a fixed address of Hana's choosing and an address of the chain's own form.
-          a.chain === 'stellar' && stellar ? d.h('a', { class: 'explorer', attrs: { href: `${stellar.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${stellar.name}`) : null,
-          a.chain === 'near' && nearExplorer ? d.h('a', { class: 'explorer', attrs: { href: `${nearExplorer.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${nearExplorer.name}`) : null,
+          a.chain === 'stellar' && stellar ? d.h('a', { class: 'explorer', attrs: { href: `${stellar.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${stellar.name}`, icon(d, 'ext')) : null,
+          a.chain === 'near' && nearExplorer ? d.h('a', { class: 'explorer', attrs: { href: `${nearExplorer.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${nearExplorer.name}`, icon(d, 'ext')) : null,
         ),
       );
     });
@@ -1303,7 +1346,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       );
     }
     return [
-      button('Back to all apps', closeApp, { class: 'link', id: 'home-back' }),
+      button('Back to all apps', closeApp, { class: 'home-back', id: 'home-back', kind: 'ghost', sm: true }),
       // The heading is Hana's own words, always. An app's name is the partner's: it is a labelled value in the box below
       // ("App"), never the heading of a page on Hana's origin.
       d.h('h2', { attrs: { id: 'home-app-title', tabindex: '-1' } }, 'App details'),
@@ -1314,8 +1357,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
       d.h('h3', {}, 'Your addresses'),
       addressRows.length > 0
-        ? d.h('div', { class: 'home-addresses' }, fromWallet.length > 0 ? d.h('p', { class: 'muted', attrs: { id: 'home-opened-note' } }, 'From the wallet you opened on this page. Hana had no address on record for you here.') : null, ...addressRows)
-        : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? 'Hana has no address on record for you in this app yet.' : `Hana has no wallet on record for this ${accountName()} in this app.`),
+        ? d.h('div', { class: 'home-addresses' }, fromWallet.length > 0 ? d.h('p', { class: 'muted', attrs: { id: 'home-opened-note' } }, 'From the wallet you opened on this page. Journear had no address on record for you here.') : null, ...addressRows)
+        : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? 'Journear has no address on record for you in this app yet.' : `Journear has no wallet on record for this ${accountName()} in this app.`),
       scope.supportId
         ? d.h(
             'div',
@@ -1335,7 +1378,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   // ---- start ----
   async function loadConfig(): Promise<void> {
     stage = 'loading';
-    d.show(d.h('section', { class: 'panel home' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Loading…')));
+    d.show(d.h('section', { class: 'panel home home-gate' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Loading…')));
     try {
       config = await api.config();
     } catch (err) {
@@ -1343,10 +1386,10 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       return;
     }
     clock.sync(config.serverTimeMs);
-    if (config.signer !== env.signer) return renderUnavailable(plain('config_mismatch', 'Hana Home’s settings don’t match this page, so sign-in is off. Try again later.'));
+    if (config.signer !== env.signer) return renderUnavailable(plain('config_mismatch', 'Passport Home’s settings don’t match this page, so sign-in is off. Try again later.'));
     // D550's open point, settled: with no shared Google client in force, Google sign-in uses the exit client; only with
     // neither, and no email sign-in, is there nothing to offer.
-    if (!homeGoogleRoute(config) && !emailOpen()) return renderUnavailable(plain('no_google_client', 'Hana Home can’t sign you in right now. Try again later.'));
+    if (!homeGoogleRoute(config) && !emailOpen()) return renderUnavailable(plain('no_google_client', 'Passport Home can’t sign you in right now. Try again later.'));
     stage = 'signed_out';
     signInError = null;
     renderSignedOut();
@@ -1354,8 +1397,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   if (isFramed(win)) {
     stage = 'stopped';
-    signInError = plain('config_mismatch', 'Hana Home can’t run inside another page.');
-    d.show(d.h('section', { class: 'panel error', attrs: { role: 'alert' } }, d.h('h1', {}, 'Hana Home stopped'), d.h('p', {}, signInError.text)));
+    signInError = plain('config_mismatch', `${BRAND.home} can’t run inside another page.`);
+    d.show(d.h('section', { class: 'panel error', attrs: { role: 'alert' } }, d.h('h1', {}, `${BRAND.home} stopped`), d.h('p', {}, signInError.text)));
   } else {
     // Whoever opened this window gets no handle on it from here on.
     try {
@@ -1364,6 +1407,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       // A browser that refuses the write still gives the opener nothing: the page takes no message from it.
     }
     win.addEventListener('message', onMessage);
+    win.document.body?.append(toasts.root);
     // A timer can fire late after the device slept: look again whenever the page is shown or focused.
     for (const type of ['focus', 'pageshow', 'visibilitychange']) win.addEventListener(type, () => checkSession());
     track(loadConfig());

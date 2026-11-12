@@ -214,10 +214,10 @@ describe('Launcher', () => {
     expect(m.ui).toHaveLength(1);
     m.timers.dispose();
     const n = make();
-    n.launcher.push('Review in Hana', () => undefined);
+    n.launcher.push('Review in Journear Passport', () => undefined);
     n.launcher.flash('Signed by Hana under Swaps', 3000);
     expect(n.ui.map((u) => [u.label, u.clickable])).toEqual([
-      ['Review in Hana', true],
+      ['Review in Journear Passport', true],
       ['Signed by Hana under Swaps', false],
     ]);
     h.remove();
@@ -383,7 +383,7 @@ describe('Approvals', () => {
       for (const w of [stranger, noOpener, wrongOrigin, vaultOrigin]) expect(w.posted).toEqual([]);
       // The launcher is the fallback once the wait is over.
       (timers as ManualTimers).advance(POPUP_WAIT_MS);
-      expect(view.label).toBe('Review in Hana');
+      expect(view.label).toBe('Review in Journear Passport');
       claim.release();
       approvals.cancelAll();
     });
@@ -395,7 +395,7 @@ describe('Approvals', () => {
       (timers as ManualTimers).advance(POPUP_WAIT_MS - 1);
       expect(view.label).toBeNull();
       (timers as ManualTimers).advance(1);
-      expect(view.label).toBe('Review in Hana');
+      expect(view.label).toBe('Review in Journear Passport');
       const popup = partnerPopup();
       expect(requests(popup)).toHaveLength(1);
       expect(view.label).toBeNull();
@@ -416,7 +416,7 @@ describe('Approvals', () => {
       expect(windowEvents).toEqual([true, false]);
       // An answer from that window, even a well-formed one for a request queued since, is never taken.
       const next = approvals.requestApproval(subject());
-      expect(view.label).toBe('Review in Hana');
+      expect(view.label).toBe('Review in Journear Passport');
       const id = 'ab'.repeat(16);
       send(popup, { t: 'hana:approve-result', id, approved: true, digest: approveDigest({ id, kind: 'personal_sign', chain: 'evm', address: ADDRESS, context: {}, bytes: utf8('hi'), parentOrigin: PARTNER }) });
       send(popup, { t: 'hana:approve-hello' });

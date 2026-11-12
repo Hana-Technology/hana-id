@@ -2,7 +2,7 @@
 // with one ed25519 key only, and the real package is a CommonJS/native module that doesn't load in workerd.
 // Wired up with `alias` in the generated wrangler config (scripts/gen-wrangler.ts) and vitest.config.ts.
 const unsupported = (): never => {
-  throw new Error('secp256k1 is not available in the Hana ID watchdog (ed25519 keys only)');
+  throw new Error('secp256k1 is not available in the Journear Passport watchdog (ed25519 keys only)');
 };
 
 export default {

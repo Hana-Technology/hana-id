@@ -1,0 +1,106 @@
+/*
+ * The export: the popup's export window (export-page.ts) and Passport Home's "Move this wallet to another wallet app"
+ * (home-export.ts), on the design system's recovery and export pattern (D765): the step bar (`.jp-steps`), the warning
+ * as a danger alert, the typed EXPORT in a system field, then the key's box, the checkbox (`.jp-check`) and the danger
+ * button (Show key). Tokens only.
+ */
+
+/* The key's box (key-reveal.ts): dots until "Show key", the key in mono while shown, never selectable while hidden. */
+.secret {
+  display: block;
+  min-height: 3.25em;
+  padding: var(--jp-space-3) var(--jp-space-4);
+  border-radius: var(--jp-radius-md);
+  border: 1px solid var(--jp-border-strong);
+  background: var(--jp-bg-subtle);
+  color: var(--jp-fg);
+  font-family: var(--jp-font-mono);
+  font-size: var(--jp-text-sm);
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Selectable only while "Show key" is on (D268), so the user can copy it by hand; the box takes the danger's edge. */
+.secret[data-shown] {
+  -webkit-user-select: text;
+  user-select: text;
+  border-color: var(--jp-danger);
+}
+
+/* A printed page, or one saved as a PDF, never carries a key: the box is blank on paper whatever the page shows. */
+@media print {
+  .secret {
+    visibility: hidden !important;
+  }
+}
+
+/* The checkbox right above the buttons it unlocks. */
+.reveal-ack {
+  margin: 0;
+}
+
+/* Show key / Hide key and Copy key: side by side in the popup, at their own width on Passport Home. */
+.actions.reveal {
+  margin-top: 0;
+}
+
+/* The wallet's address, as one key/value row (the system's `.jp-kv`: a muted key, a mono value). */
+.jp-kv.account {
+  margin: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.jp-kv.account dd,
+.jp-kv.account .mono {
+  font-size: var(--jp-text-xs);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* The typed confirmation: a short mono field, so the word reads as typed. */
+.confirm-word {
+  font-family: var(--jp-font-mono);
+  letter-spacing: 0.08em;
+}
+
+/* The step bar's labels never shrink below their words. */
+.export-steps span {
+  white-space: nowrap;
+}
+
+/* ---- Passport Home: "Move this wallet to another wallet app", last on an app's page ---- */
+.home-export {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+  margin-top: var(--jp-space-6);
+  padding-top: var(--jp-space-5);
+  border-top: 1px solid var(--jp-border);
+}
+
+.home-export:empty {
+  display: none;
+}
+
+.home-export > * {
+  margin: 0;
+}
+
+.home-export h3 {
+  margin: 0;
+}
+
+.home-export .jp-field,
+.home-export .actions.reveal {
+  max-width: 480px;
+}
+
+.home-export .home-problem p {
+  margin: 0;
+}
+
+.home-export .home-problem p + p {
+  margin-top: var(--jp-space-1);
+}

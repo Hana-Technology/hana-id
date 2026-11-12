@@ -1,7 +1,7 @@
 // Read-only status for batch C's admin portal (D83), plus acknowledgements:
 //   GET  /status               last run and its checks, heartbeat, silence, seen kids, relayer funds, the email pins
 //                              and the chain's email issuer, the link stats (D200), the identity token's pins and
-//                              Hana's identity JWKS and discovery document (D210), recent actions, open alerts
+//                              Journear's identity JWKS and discovery document (D210), recent actions, open alerts
 //   GET  /alerts?cursor&limit&severity   alert history, newest first, with deliveries
 //   GET  /actions?cursor&limit actions log, newest first (transaction hashes)
 //   POST /alerts/:id/ack {by}  records who acknowledged (via "portal"); stops only the 15-minute re-sends

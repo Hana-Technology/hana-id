@@ -307,7 +307,7 @@ async function authApp(request: Request, env: Env, ctx: Ctx): Promise<Gate> {
 export const emailSessionKey = (envName: string, appId: string, sessionPkHex: string): string => `${envName}:email-consent:${appId}:${sessionPkHex}`;
 
 const unavailable = (ctx: Ctx): Response => reject(ctx, 503, 'email_sharing_unavailable', 'Email sharing is unavailable in this environment');
-const noAddress = (ctx: Ctx, reason: string): Response => done(ctx, 400, { error: 'The session has no address Hana can read', code: 'email_unavailable', reason });
+const noAddress = (ctx: Ctx, reason: string): Response => done(ctx, 400, { error: 'The session has no address Journear can read', code: 'email_unavailable', reason });
 
 export async function handleEmailConsent(request: Request, env: Env, endpoint: EmailConsentEndpoint, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, endpoint, request);
@@ -347,7 +347,7 @@ export async function handleEmailConsent(request: Request, env: Env, endpoint: E
   // A revoke works through a pause: stopping sharing must never wait on an incident.
   if (action !== 'revoke') {
     try {
-      if ((await getConfig(env)).paused) return done(ctx, 503, { error: 'Hana ID is paused, try again later', code: 'paused', retryAfterS: PAUSED_RETRY_S }, { 'retry-after': String(PAUSED_RETRY_S) });
+      if ((await getConfig(env)).paused) return done(ctx, 503, { error: 'Journear Passport is paused, try again later', code: 'paused', retryAfterS: PAUSED_RETRY_S }, { 'retry-after': String(PAUSED_RETRY_S) });
     } catch {
       return reject(ctx, 502, 'near_unavailable', 'Could not read the contract config');
     }

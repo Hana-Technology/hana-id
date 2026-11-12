@@ -78,10 +78,10 @@ const notConfigured: SendResult = { ok: false, error: NOT_CONFIGURED };
  * and the env last.
  */
 export const subjectLine = (env: string, severity: Severity, title: string, resend = false, label = '') =>
-  `${label ? `${label} ` : ''}${severity.toUpperCase()}${resend ? ' (re-sent)' : ''}: ${title} [Hana ID ${env}]`;
+  `${label ? `${label} ` : ''}${severity.toUpperCase()}${resend ? ' (re-sent)' : ''}: ${title} [Journear Passport ${env}]`;
 
 /** An email body's first line on a labelled env (D419): says plainly that it isn't production. */
-export const labelLine = (label: string, env: string) => (label ? `${label} Not production: Hana ID ${env} (testnet).\n\n` : '');
+export const labelLine = (label: string, env: string) => (label ? `${label} Not production: Journear Passport ${env} (testnet).\n\n` : '');
 
 // ---- Slack ----
 

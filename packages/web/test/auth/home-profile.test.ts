@@ -307,9 +307,15 @@ describe('the front page', () => {
       expect(input(id).getAttribute('autocomplete')).toBe(auto);
       expect(input(id).hasAttribute('required')).toBe(false);
     }
-    expect(document.querySelector('label[for="home-name-given"]')?.textContent).toBe('First name');
-    expect(document.querySelector('label[for="home-name-family"]')?.textContent).toBe('Last name');
-    expect(text('home-name-help')).toContain('Both are optional');
+    // D765: the system's fields: the label above, each part marked optional (both are), a hint under each.
+    expect(document.querySelector('label[for="home-name-given"]')?.firstChild?.textContent).toBe('First name');
+    expect(document.querySelector('label[for="home-name-family"]')?.firstChild?.textContent).toBe('Last name');
+    for (const id of ['home-name-given', 'home-name-family']) {
+      expect(document.querySelector(`label.jp-label[for="${id}"] .opt`)?.textContent).toBe('optional');
+      expect(input(id).closest('.jp-field')).not.toBeNull();
+      expect(text(`${id}-hint`)).toBe(`Up to ${PROFILE_NAME_MAX} characters.`);
+      expect(input(id).getAttribute('aria-describedby')).toBe(`${id}-hint home-name-help`);
+    }
     expect(text('home-name-help')).toContain('Nothing is shared until you turn it on for an app');
     expect([...document.querySelectorAll('.home-name-share strong')].map((x) => x.textContent)).toEqual(['Sodax', 'Earn']);
     expect(document.getElementById('home-name-remove')).not.toBeNull();
@@ -368,6 +374,47 @@ describe('the front page', () => {
     await h.idle();
     expect(posts(h)).toHaveLength(1);
     expect(document.getElementById('home-name-family-error')).toBeNull();
+  });
+
+  it('D765: a part is checked when it loses focus, never while typing, in place of its hint; typing again clears it', async () => {
+    const h = await front();
+    const family = input('home-name-family');
+    const fieldOf = (el: HTMLElement) => el.closest('.jp-field') as HTMLElement;
+    h.type('home-name-family', `Love‮lace`);
+    // Typing alone marks nothing.
+    expect(fieldOf(family).classList.contains('is-invalid')).toBe(false);
+    expect(document.getElementById('home-name-family-error')).toBeNull();
+    family.dispatchEvent(new Event('blur'));
+    expect(fieldOf(family).classList.contains('is-invalid')).toBe(true);
+    expect(family.getAttribute('aria-invalid')).toBe('true');
+    expect(family.getAttribute('aria-describedby')).toBe('home-name-family-error home-name-help');
+    expect(text('home-name-family-error')).toBe(HOME_NAME_TEXT.invalid);
+    // The section wasn't drawn again: the same field, still focused where the user left it.
+    expect(input('home-name-family')).toBe(family);
+    h.type('home-name-family', 'Lovelace');
+    expect(fieldOf(family).classList.contains('is-invalid')).toBe(false);
+    expect(document.getElementById('home-name-family-error')).toBeNull();
+    expect(family.getAttribute('aria-describedby')).toBe('home-name-family-hint home-name-help');
+    // An empty part is fine (both are optional), and nothing was sent.
+    h.type('home-name-given', '');
+    input('home-name-given').dispatchEvent(new Event('blur'));
+    expect(fieldOf(input('home-name-given')).classList.contains('is-invalid')).toBe(false);
+    expect(posts(h)).toEqual([]);
+  });
+
+  it('D765: one primary (Save); "Remove my name" is secondary and the only danger button is inside its confirmation', async () => {
+    const h = await front(profile({ shares: [share('app_sodax1', 'Sodax')] }));
+    const root = document.getElementById('home-profile')!;
+    expect([...root.querySelectorAll('.jp-btn-primary')].map((b) => b.id)).toEqual(['home-name-save']);
+    expect(root.querySelector('.jp-btn-danger')).toBeNull();
+    expect(document.getElementById('home-name-remove')?.className).toContain('jp-btn-secondary');
+    // Each app shared with is a setting row: its name on the left, its one control on the right.
+    const row = root.querySelector('.home-name-share[data-app="app_sodax1"] .jp-setting')!;
+    expect(row.querySelector('.home-setting-text strong')?.textContent).toBe('Sodax');
+    expect(row.querySelector('.home-setting-control button')?.id).toBe('home-name-stop-app_sodax1');
+    h.click('home-name-remove');
+    expect([...root.querySelectorAll('.jp-btn-danger')].map((b) => b.id)).toEqual(['home-name-remove-confirm-go']);
+    expect(document.getElementById('home-name-remove-confirm-go')?.closest('#home-name-remove-confirm')).not.toBeNull();
   });
 
   it('nothing to save sends nothing: both empty with no name, or the same name again', async () => {
@@ -519,7 +566,7 @@ describe('sharing per app', () => {
     expect(document.querySelector('.home-name-app button')).toBeNull();
   });
 
-  it('an app Hana can’t share a name with (the answer’s app is null) says so, with no control', async () => {
+  it('an app Journear can’t share a name with (the answer’s app is null) says so, with no control', async () => {
     const h = await start();
     h.mountApp();
     h.answer = () => json(200, profile());
@@ -593,10 +640,10 @@ describe('sharing per app', () => {
 describe('refusals and the end of the sign-in', () => {
   it.each([
     [400, 'bad_name', 'Each name can be up to 50 characters'],
-    [503, 'profile_unavailable', 'Names aren’t available in Hana Home yet.'],
-    [503, 'home_directory_unavailable', 'Hana Home is not reachable right now.'],
+    [503, 'profile_unavailable', 'Names aren’t available in Passport Home yet.'],
+    [503, 'home_directory_unavailable', 'Passport Home is not reachable right now.'],
     [429, 'rate_limited', 'Too many requests.'],
-  ])('Save refused with %i %s reads as Hana’s sentence, keeps what was typed, and is not sent again', async (status, code, sentence) => {
+  ])('Save refused with %i %s reads as Journear’s sentence, keeps what was typed, and is not sent again', async (status, code, sentence) => {
     const h = await front();
     h.type('home-name-given', 'Augusta');
     h.answer = () => refusal(status, code);
@@ -613,11 +660,11 @@ describe('refusals and the end of the sign-in', () => {
   });
 
   it.each([
-    [404, 'unknown_app', 'Hana doesn’t list it now.'],
-    [503, 'near_unavailable', 'Hana Home is not reachable right now.'],
-    [503, 'name_sharing_unavailable', 'Hana Home can’t change name sharing right now.'],
-    [503, 'profile_unavailable', 'Names aren’t available in Hana Home yet.'],
-  ])('a share refused with %i %s reads as Hana’s sentence, and the app stays as it was', async (status, code, sentence) => {
+    [404, 'unknown_app', 'Journear doesn’t list it now.'],
+    [503, 'near_unavailable', 'Passport Home is not reachable right now.'],
+    [503, 'name_sharing_unavailable', 'Passport Home can’t change name sharing right now.'],
+    [503, 'profile_unavailable', 'Names aren’t available in Passport Home yet.'],
+  ])('a share refused with %i %s reads as Journear’s sentence, and the app stays as it was', async (status, code, sentence) => {
     const h = await appPage();
     h.answer = () => refusal(status, code);
     h.click('home-app-name-share-app_sodax1');
@@ -635,7 +682,7 @@ describe('refusals and the end of the sign-in', () => {
     h.click('home-profile-show');
     await h.idle();
     expect(h.section.front).toBe('closed');
-    expect(text('home-profile-problem-front')).toContain('Names aren’t available in Hana Home yet.');
+    expect(text('home-profile-problem-front')).toContain('Names aren’t available in Passport Home yet.');
     await h.idle();
     expect(h.calls).toHaveLength(1);
   });
@@ -646,7 +693,7 @@ describe('refusals and the end of the sign-in', () => {
     h.click('home-name-stop-app_sodax1');
     await h.idle();
     expect(h.signedOut).toBe(1);
-    expect(text('home-profile-problem-front')).toContain('Your sign-in to Hana Home has ended.');
+    expect(text('home-profile-problem-front')).toContain('Your sign-in to Passport Home has ended.');
     expect(document.querySelector('.home-name-share')).not.toBeNull();
     const sent = h.calls.length;
     h.click('home-name-stop-app_sodax1');
@@ -664,7 +711,7 @@ describe('refusals and the end of the sign-in', () => {
     h.click('home-profile-show');
     await h.idle();
     expect(h.calls).toEqual([]);
-    expect(text('home-profile-problem-front')).toContain('Your sign-in to Hana Home has ended.');
+    expect(text('home-profile-problem-front')).toContain('Your sign-in to Passport Home has ended.');
   });
 
   it('reset (sign-out, another account) drops the name, the drafts and both views; an answer on its way shows nothing', async () => {
@@ -693,6 +740,16 @@ describe('refusals and the end of the sign-in', () => {
 });
 
 describe('names are text only', () => {
+  it('D765: an app’s page lists its apps as setting rows, each Share a secondary button (several apps, no primary)', async () => {
+    await appPage();
+    const root = document.getElementById('home-app-profile')!;
+    expect(root.querySelector('.jp-btn-primary')).toBeNull();
+    const share = document.getElementById('home-app-name-share-app_sodax1')!;
+    expect(share.className).toContain('jp-btn-secondary');
+    expect(share.closest('.home-setting-control')).not.toBeNull();
+    expect(share.closest('.home-name-app')?.querySelector('.home-setting-text .jp-badge')?.textContent).toBe('Not shared');
+  });
+
   it('the user’s name and the apps’ names never become markup, on either page or in a button', async () => {
     const name = { givenName: XSS_NAME, familyName: '<b>Lovelace</b>' };
     const h = await front(profile({ name, shares: [share('app_sodax1', XSS_APP)] }));

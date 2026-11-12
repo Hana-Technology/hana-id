@@ -311,7 +311,7 @@ export function writeRoutesFor(pathname: string, env: Env): { orgId: string; res
 /** Runs the matched route for a resolved caller, applying the role and frozen rules. */
 export async function runOrgRoute(def: OrgRouteDef, rest: string, request: Request, env: Env, info: RequestInfo, caller: OrgCaller): Promise<Response> {
   if (def.role === 'owner' && caller.role !== 'owner') return errorResponse('forbidden', 'Only an owner of the organisation can do this');
-  if (!def.frozenOk && caller.orgStatus !== 'active') return errorResponse('org_frozen', 'Hana has frozen this organisation: only cancels and kill switches work until it is unfrozen');
+  if (!def.frozenOk && caller.orgStatus !== 'active') return errorResponse('org_frozen', 'Journear has frozen this organisation: only cancels and kill switches work until it is unfrozen');
   const m = def.re.exec(rest)!;
   try {
     return await def.run({ request, url: new URL(request.url), env, info, caller, m });

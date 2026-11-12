@@ -104,7 +104,7 @@ describe('channels with hostile titles', () => {
     // The title stays on its line: the first line is the bold title, the rest is the text.
     await slackSender('https://hooks.slack.com/services/T/B/x', 'e').send(hostileMsg(HOSTILE.newline));
     const lines = (JSON.parse(calls[1]!.body).text as string).split('\n');
-    expect(lines[0]).toMatch(/^\*CRITICAL: Forged issuer key k1 X-Injected: yes fake body \(change 3\) \[Hana ID e\]\*$/u);
+    expect(lines[0]).toMatch(/^\*CRITICAL: Forged issuer key k1 X-Injected: yes fake body \(change 3\) \[Journear Passport e\]\*$/u);
   });
 
   it('email: the subject is one printable line', async () => {

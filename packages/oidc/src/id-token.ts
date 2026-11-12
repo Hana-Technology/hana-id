@@ -143,7 +143,7 @@ export async function verifyIdToken(jwt: string, now: number = Date.now(), opts:
   const header = decodeSegment(parts[0]);
   const claims = decodeSegment(parts[1]);
   if (!header || !claims) return fail('invalid_token', 'Malformed token');
-  if (header.typ === IDENTITY_TOKEN_TYP || (!!opts.identityIssuer && claims.iss === opts.identityIssuer)) return fail('bad_token', 'A Hana identity token is not accepted here');
+  if (header.typ === IDENTITY_TOKEN_TYP || (!!opts.identityIssuer && claims.iss === opts.identityIssuer)) return fail('bad_token', 'A Journear Passport identity token is not accepted here');
   if (header.alg !== 'RS256' || typeof header.kid !== 'string') return fail('invalid_token', 'Unsupported token algorithm');
   const { iss, aud, sub, exp, nonce } = claims;
   if (typeof iss !== 'string' || typeof aud !== 'string' || typeof sub !== 'string' || typeof exp !== 'number' || !Number.isFinite(exp)) return fail('invalid_token', 'Malformed token claims');

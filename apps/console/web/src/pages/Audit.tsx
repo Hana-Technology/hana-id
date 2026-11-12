@@ -10,7 +10,7 @@ import { when } from '../lib.tsx';
 import { Badge, Empty, ErrorNote, Loading, PageHeader } from '../ui.tsx';
 
 function who(e: PartnerAuditEntry): string {
-  if (e.actorKind === 'hana') return 'Hana';
+  if (e.actorKind === 'hana') return 'Journear';
   if (e.actorKind === 'system') return 'system';
   if (e.actorKind === 'link') return 'emailed link';
   return e.source === 'console' && e.actorEmail ? e.actorEmail : 'a member';
@@ -65,7 +65,7 @@ export function Audit() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org]);
 
-  const head = <PageHeader title="Audit" description="Everything done in this organisation, newest first: sign-ins, member changes, and every change to your apps, by whom. Quote the request ID to Hana about any row." />;
+  const head = <PageHeader title="Audit" description="Everything done in this organisation, newest first: sign-ins, member changes, and every change to your apps, by whom. Quote the request ID to Journear about any row." />;
   if (error)
     return (
       <>
@@ -83,8 +83,8 @@ export function Audit() {
     <>
       {head}
       {loading && entries.length === 0 && <Loading />}
-      <div className="table-wrap">
-      <table className="table audit">
+      <div className="jp-table-wrap tall">
+      <table className="jp-table audit">
         <thead>
           <tr>
             <th scope="col">When</th>
@@ -115,7 +115,7 @@ export function Audit() {
       </div>
       {!loading && entries.length === 0 && <Empty title="Nothing yet">Actions in this organisation show here as they happen.</Empty>}
       {next && (
-        <button type="button" className="btn load-more" onClick={() => void load(next)} disabled={loading}>
+        <button type="button" className="jp-btn jp-btn-secondary load-more" onClick={() => void load(next)} disabled={loading}>
           {loading ? 'Loading…' : 'Load more'}
         </button>
       )}

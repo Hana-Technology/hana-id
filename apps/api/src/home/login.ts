@@ -244,7 +244,7 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     }
     if (count === null) {
       await takeBack();
-      return reject(ctx, 429, 'home_busy', 'Hana Home is busy, try again tomorrow', { 'retry-after': String(secondsToNextUtcDay(hitAt)) });
+      return reject(ctx, 429, 'home_busy', 'Passport Home is busy, try again tomorrow', { 'retry-after': String(secondsToNextUtcDay(hitAt)) });
     }
     const alertAt = Math.ceil((max * HOME_USAGE_ALERT_PCT) / 100);
     if (count >= alertAt && count < alertAt + HOME_USAGE_ALERT_TRIES) await inBackground(exec, () => noteBudgetHigh(env, day, count as number, max, requestId));

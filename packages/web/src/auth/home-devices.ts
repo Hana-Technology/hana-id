@@ -17,6 +17,7 @@ import { type Child, type Dom, originText } from './dom.ts';
 import { type HomeConsent, type HomeDevice, type HomeDeviceScope, type HomeDevicesApi, type HomeDevicesQuery, type HomeIdentity, type HomeScope, type HomeStop, type HomeStopResult, type HomeTabConsent, HOME_DEVICES_MAX } from './home-api.ts';
 import { type HomeProblem, homeProblem, plainProblem } from './home-problems.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
+import { BTN, alert, icon } from './ui.ts';
 
 export const HOME_DEVICES_TITLE = 'Devices and auto-approve';
 /** The one query `/home` takes for this section (exactly it): open it after sign-in. */
@@ -40,7 +41,7 @@ export const HOME_STOP_CONFIRM: Readonly<Record<HomeStop['kind'], { title: strin
     more: [
       'Automatic signing stops on that device within about 10 seconds.',
       'The next time the app is opened or reloaded there, it asks to sign in again.',
-      'Whoever has that device can still approve and sign in a tab of the app that is already open there for up to about a minute, or for up to about 3 minutes while that device can’t reach Hana.',
+      'Whoever has that device can still approve and sign in a tab of the app that is already open there for up to about a minute, or for up to about 3 minutes while that device can’t reach Journear.',
       'A tab nobody is using may still look signed in for a few minutes, but it can’t sign anything.',
       'Signatures and transactions already made stay valid. Signing out doesn’t move your funds: if someone else may have your wallet’s key, move your funds to a new wallet.',
     ],
@@ -62,7 +63,7 @@ export const HOME_STOP_CONFIRM: Readonly<Record<HomeStop['kind'], { title: strin
     points: [
       'The app’s new sign-ins and its dashboard lose your address at once.',
       'Sign-in tokens the app already received keep it for up to an hour.',
-      'A copy the app already stored is the app’s own: Hana can’t delete it. Ask the app if you want it deleted.',
+      'A copy the app already stored is the app’s own: Journear can’t delete it. Ask the app if you want it deleted.',
     ],
     go: 'Stop sharing',
     going: 'Stopping…',
@@ -152,15 +153,22 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
   const frontRoot = d.h('section', { class: 'home-devices', attrs: { id: 'home-devices', 'aria-labelledby': 'home-devices-title' } });
   const appRoot = d.h('section', { class: 'home-devices home-devices-app', attrs: { id: 'home-app-devices', 'aria-labelledby': 'home-app-devices-title' } });
 
-  const button = (label: string, id: string, onClick: () => void, o: { cls?: string; disabled?: boolean; describedBy?: string } = {}): HTMLButtonElement => {
-    const b = d.h('button', { ...(o.cls ? { class: o.cls } : {}), attrs: { type: 'button', id, ...(o.describedBy ? { 'aria-describedby': o.describedBy } : {}) } }, label);
+  /** A button that acts only on a real click: secondary unless `kind` says otherwise (danger only inside a confirmation). */
+  const button = (label: string, id: string, onClick: () => void, o: { cls?: string; disabled?: boolean; describedBy?: string; kind?: keyof typeof BTN; sm?: boolean } = {}): HTMLButtonElement => {
+    const cls = [o.cls, BTN[o.kind ?? 'secondary'], o.sm ? 'jp-btn-sm' : null].filter(Boolean).join(' ');
+    const b = d.h('button', { class: cls, attrs: { type: 'button', id, ...(o.describedBy ? { 'aria-describedby': o.describedBy } : {}) } }, label);
     if (o.disabled) b.setAttribute('disabled', '');
     b.addEventListener('click', (e) => {
       if (isGesture(e)) onClick();
     });
     return b;
   };
-  const badge = (text: string, tone: 'ok' | 'plain'): HTMLElement => d.h('span', { class: `badge badge-${tone}` }, text);
+  const badge = (text: string, tone: 'ok' | 'plain'): HTMLElement => d.h('span', { class: `badge badge-${tone} ${tone === 'ok' ? 'jp-badge jp-badge-success' : 'jp-badge'}` }, text);
+  /** A setting row (the system's `.jp-setting`): what it is and a line about it on the left, its one control on the right. */
+  const settingRow = (cls: string, text: Child[], control: Child): HTMLElement =>
+    d.h('div', { class: `jp-setting home-setting ${cls}` }, d.h('span', { class: 'home-setting-text' }, ...text), control ? d.h('span', { class: 'home-setting-control' }, control) : null);
+  /** The system's empty state. */
+  const empty = (id: string, title: string, text: string): HTMLElement => d.h('div', { class: 'jp-empty home-empty', attrs: { id } }, icon(d, 'wallet'), d.h('b', {}, title), d.h('span', {}, text));
   const focus = (id: string): void => {
     try {
       deps.win.document.getElementById(id)?.focus();
@@ -283,6 +291,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     return d.h(
       'div',
       { class: 'home-confirm', attrs: { role: 'group', 'aria-labelledby': `${id}-title`, id } },
+      icon(d, 'warn', 'home-confirm-ic'),
       d.h('p', { class: 'home-confirm-title', attrs: { id: `${id}-title`, tabindex: '-1' } }, words.title),
       d.h('ul', {}, ...words.points.map((p) => d.h('li', {}, p))),
       // The full detail, one native disclosure (keyboard and screen reader friendly), closed by default.
@@ -290,52 +299,73 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       d.h(
         'div',
         { class: 'actions start' },
-        button(busy ? words.going : words.go, `${id}-go`, () => deps.track(runStop(where, stop, scopeId)), { cls: 'stop', disabled: stopping !== null }),
-        button('Cancel', `${id}-cancel`, () => cancel(where), { disabled: stopping !== null }),
+        button(busy ? words.going : words.go, `${id}-go`, () => deps.track(runStop(where, stop, scopeId)), { cls: 'stop', kind: 'danger', sm: true, disabled: stopping !== null }),
+        button('Cancel', `${id}-cancel`, () => cancel(where), { sm: true, disabled: stopping !== null }),
       ),
     );
   }
 
-  /** The stop's button, or its confirmation when the user asked for it. */
-  function stopControl(where: Where, stop: HomeStop, scopeId: string, label: string, idBase: string, describedBy: string): HTMLElement {
-    const key = stopKey(stop, scopeId);
-    const panelId = `${idBase}-confirm`;
-    if (confirm?.where === where && confirm.key === key) return confirmPanel(where, stop, scopeId, panelId);
-    return d.h('div', { class: 'actions start' }, button(label, idBase, () => ask(where, key, `${panelId}-title`), { describedBy, disabled: stopping !== null }));
+  const confirming = (where: Where, stop: HomeStop, scopeId: string): boolean => confirm?.where === where && confirm.key === stopKey(stop, scopeId);
+
+  /** The stop's button, for the right of its row; none while its confirmation is open (below the row, `stopPanel`). */
+  function stopButton(where: Where, stop: HomeStop, scopeId: string, label: string, idBase: string, describedBy: string): HTMLElement | null {
+    if (confirming(where, stop, scopeId)) return null;
+    return button(label, idBase, () => ask(where, stopKey(stop, scopeId), `${idBase}-confirm-title`), { describedBy, sm: true, disabled: stopping !== null });
   }
 
-  const nameOf = (s: HomeDeviceScope, appId: string): string => s.apps.find((a) => a.appId === appId)?.name ?? deps.appName?.(appId) ?? 'An app Hana no longer lists';
+  /** The stop's confirmation, when the user asked for it: what it does and doesn't, then the stop itself (danger). */
+  function stopPanel(where: Where, stop: HomeStop, scopeId: string, idBase: string): HTMLElement | null {
+    return confirming(where, stop, scopeId) ? confirmPanel(where, stop, scopeId, `${idBase}-confirm`) : null;
+  }
+
+  const nameOf = (s: HomeDeviceScope, appId: string): string => s.apps.find((a) => a.appId === appId)?.name ?? deps.appName?.(appId) ?? 'An app Journear no longer lists';
 
   function consentLines(c: HomeConsent): Child[] {
     return [
-      d.h('p', {}, badge('Auto-approve on', 'ok'), ` until ${when(c.expiresAtMs)}`),
-      // The app's own words, in quotes and labelled as the app's: never Hana's description.
+      d.h('p', { class: 'home-consent-state' }, badge('Auto-approve on', 'ok'), ` until ${when(c.expiresAtMs)}`),
+      // The app's own words, in quotes and labelled as the app's: never Journear's description.
       d.h('p', { class: 'home-policy' }, 'The app describes what it may sign without asking as: ', d.h('q', { class: 'home-policy-label' }, c.label)),
     ];
+  }
+
+  /** The auto-approve row of a device or a tab: its state and the app's words, "Stop auto-approving" on the right. */
+  function consentRow(where: Where, s: HomeDeviceScope, c: HomeConsent, nameId: string): HTMLElement[] {
+    const stop: HomeStop = { kind: 'consent', consentId: c.consentId };
+    const idBase = `home-stop-consent-${where}-${c.consentId}`;
+    const row = settingRow('home-device-consent', consentLines(c), s.canStop ? stopButton(where, stop, s.scopeId, 'Stop auto-approving', idBase, nameId) : null);
+    const panel = s.canStop ? stopPanel(where, stop, s.scopeId, idBase) : null;
+    return panel ? [row, panel] : [row];
   }
 
   function deviceItem(where: Where, s: HomeDeviceScope, x: HomeDevice, showApp: boolean): HTMLElement {
     const nameId = `home-device-${where}-${x.shareId}`;
     const ends = x.idleUntilMs < x.expiresAtMs ? `${when(x.idleUntilMs)} if it isn’t used before then, ${when(x.expiresAtMs)} at the latest` : when(x.expiresAtMs);
+    const share: HomeStop = { kind: 'share', shareId: x.shareId };
+    const shareId = `home-stop-share-${where}-${x.shareId}`;
+    // A card of setting rows: the device (where, when, "Sign out this device"), then its auto-approve.
     return d.h(
       'li',
-      { class: 'home-device', attrs: { 'data-share': x.shareId } },
-      d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, x.label ?? UNNAMED_DEVICE), ' on ', originText(d, x.partnerOrigin)),
-      showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, x.appId))) : null,
-      d.h(
-        'dl',
-        { class: 'home-device-facts' },
-        d.h('dt', {}, 'Signed in'),
-        d.h('dd', {}, when(x.signedInAtMs)),
-        x.lastUsedAtMs !== null ? d.h('dt', {}, 'Last opened or approved here') : null,
-        x.lastUsedAtMs !== null ? d.h('dd', {}, when(x.lastUsedAtMs)) : null,
-        d.h('dt', {}, 'Signs out by itself'),
-        d.h('dd', {}, ends),
+      { class: 'home-device jp-card', attrs: { 'data-share': x.shareId } },
+      settingRow(
+        'home-device-row',
+        [
+          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, x.label ?? UNNAMED_DEVICE), ' on ', originText(d, x.partnerOrigin)),
+          showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, x.appId))) : null,
+          d.h(
+            'dl',
+            { class: 'home-device-facts jp-kv' },
+            d.h('dt', {}, 'Signed in'),
+            d.h('dd', {}, when(x.signedInAtMs)),
+            x.lastUsedAtMs !== null ? d.h('dt', {}, 'Last opened or approved here') : null,
+            x.lastUsedAtMs !== null ? d.h('dd', {}, when(x.lastUsedAtMs)) : null,
+            d.h('dt', {}, 'Signs out by itself'),
+            d.h('dd', {}, ends),
+          ),
+        ],
+        s.canStop ? stopButton(where, share, s.scopeId, 'Sign out this device', shareId, nameId) : null,
       ),
-      x.consent
-        ? d.h('div', { class: 'home-device-consent' }, ...consentLines(x.consent), s.canStop ? stopControl(where, { kind: 'consent', consentId: x.consent.consentId }, s.scopeId, 'Stop auto-approving', `home-stop-consent-${where}-${x.consent.consentId}`, nameId) : null)
-        : d.h('p', { class: 'muted' }, 'Auto-approve is off: this device asks you to approve every request.'),
-      s.canStop ? stopControl(where, { kind: 'share', shareId: x.shareId }, s.scopeId, 'Sign out this device', `home-stop-share-${where}-${x.shareId}`, nameId) : null,
+      s.canStop ? stopPanel(where, share, s.scopeId, shareId) : null,
+      ...(x.consent ? consentRow(where, s, x.consent, nameId) : [settingRow('home-device-consent-off', [d.h('p', { class: 'muted' }, 'Auto-approve is off: this device asks you to approve every request.')], null)]),
     );
   }
 
@@ -344,32 +374,46 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     const nameId = `home-tab-consent-${where}-${c.consentId}`;
     return d.h(
       'li',
-      { class: 'home-device', attrs: { 'data-consent': c.consentId } },
-      d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'A tab (may be closed)'), ' on ', originText(d, c.partnerOrigin)),
-      showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, c.appId))) : null,
-      d.h('p', { class: 'muted' }, 'This app keeps no sign-in on the device: the tab is signed out when it closes, and Hana can’t tell whether it still is open.'),
-      d.h('div', { class: 'home-device-consent' }, ...consentLines(c), s.canStop ? stopControl(where, { kind: 'consent', consentId: c.consentId }, s.scopeId, 'Stop auto-approving', `home-stop-consent-${where}-${c.consentId}`, nameId) : null),
+      { class: 'home-device jp-card', attrs: { 'data-consent': c.consentId } },
+      settingRow(
+        'home-device-row',
+        [
+          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'A tab (may be closed)'), ' on ', originText(d, c.partnerOrigin)),
+          showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, c.appId))) : null,
+          d.h('p', { class: 'muted' }, 'This app keeps no sign-in on the device: the tab is signed out when it closes, and Journear can’t tell whether it still is open.'),
+        ],
+        null,
+      ),
+      ...consentRow(where, s, c, nameId),
     );
   }
 
   function emailBlock(where: Where, s: HomeDeviceScope, showApp: boolean): Child[] {
     // Unknown here: the app's page says so; the front page says it once for all (body).
-    if (s.email === null) return where === 'app' ? [d.h('p', { class: 'muted', attrs: { id: 'home-email-unknown-app' } }, 'Hana Home can’t tell right now whether you share your email with this app.')] : [];
+    if (s.email === null) return where === 'app' ? [d.h('p', { class: 'muted', attrs: { id: 'home-email-unknown-app' } }, 'Passport Home can’t tell right now whether you share your email with this app.')] : [];
     if (s.email.length === 0) return where === 'app' ? [d.h('p', { class: 'muted', attrs: { id: 'home-email-none' } }, 'You aren’t sharing your email address with this app.')] : [];
     return s.email.map((e) => {
       const lineId = `home-email-${where}-${s.scopeId}-${e.appId}`;
+      const stop: HomeStop = { kind: 'email', appId: e.appId };
+      const idBase = `home-stop-email-${where}-${s.scopeId}-${e.appId}`;
       return d.h(
         'div',
-        { class: 'home-email', attrs: { 'data-app': e.appId } },
-        d.h(
-          'p',
-          { attrs: { id: lineId } },
-          'Your email is shared with ',
-          showApp ? d.h('strong', {}, nameOf(s, e.appId)) : 'this app',
-          ': ',
-          ...e.addresses.flatMap((a, i) => [i > 0 ? ', ' : null, d.h('span', { class: 'mono' }, a)]),
+        { class: 'home-email jp-card', attrs: { 'data-app': e.appId } },
+        settingRow(
+          'home-email-row',
+          [
+            d.h(
+              'p',
+              { attrs: { id: lineId } },
+              'Your email is shared with ',
+              showApp ? d.h('strong', {}, nameOf(s, e.appId)) : 'this app',
+              ': ',
+              ...e.addresses.flatMap((a, i) => [i > 0 ? ', ' : null, d.h('span', { class: 'mono' }, a)]),
+            ),
+          ],
+          s.canStop ? stopButton(where, stop, s.scopeId, 'Stop sharing email', idBase, lineId) : null,
         ),
-        s.canStop ? stopControl(where, { kind: 'email', appId: e.appId }, s.scopeId, 'Stop sharing email', `home-stop-email-${where}-${s.scopeId}-${e.appId}`, lineId) : null,
+        s.canStop ? stopPanel(where, stop, s.scopeId, idBase) : null,
       );
     });
   }
@@ -385,29 +429,32 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       { class: 'home-devices-group', attrs: { 'data-scope': s.scopeId } },
       // Which app: the partner's names, in the neutral box, never a heading.
       where === 'front' ? d.h('div', { class: 'home-devices-apps' }, d.h('p', {}, 'In ', ...s.apps.flatMap((a, i) => [i > 0 ? ' · ' : null, d.h('strong', {}, a.name)]))) : null,
-      d.h('p', { class: 'home-devices-note', attrs: { role: 'status', id: `home-devices-note-${where}-${s.scopeId}`, tabindex: '-1' } }, note ?? null),
+      // A stop's outcome stays beside the app it changed (it says when the change reaches the device), not in a toast.
+      d.h('p', { class: note ? 'home-devices-note jp-alert jp-alert-success' : 'home-devices-note', attrs: { role: 'status', id: `home-devices-note-${where}-${s.scopeId}`, tabindex: '-1' } }, ...(note ? [icon(d, 'check-c'), d.h('span', { class: 'body' }, note)] : [])),
       s.canStop
         ? null
-        : d.h(
-            'p',
+        : alert(
+            d,
+            'warning',
             { class: 'note', attrs: { id: `home-devices-unconfirmed-${where}-${s.scopeId}` } },
-            'Hana Home couldn’t check on NEAR that this sign-in is still part of this account, so it offers no stop and shows no email sharing here for now. Show your devices again in a moment.',
+            'Passport Home couldn’t confirm that this sign-in is still part of your account, so it offers no stop and shows no email sharing here for now. Show your devices again in a moment.',
           ),
       items.length > 0
         ? d.h('ul', { class: 'home-device-list' }, ...items)
         : where === 'app'
-          ? d.h('p', { class: 'muted', attrs: { id: 'home-app-devices-empty' } }, 'No device is signed in to this app with Hana right now.')
+          ? empty('home-app-devices-empty', 'Nothing signed in', 'No device is signed in to this app with Journear right now.')
           : null,
-      s.more ? d.h('p', { class: 'muted' }, `Hana Home shows the ${HOME_DEVICES_MAX} most recent here; others are signed in too. Sign out the ones you don’t use, then show your devices again.`) : null,
+      s.more ? d.h('p', { class: 'muted' }, `Passport Home shows the ${HOME_DEVICES_MAX} most recent here; others are signed in too. Sign out the ones you don’t use, then show your devices again.`) : null,
       s.devices.some((x) => x.lastUsedAtMs !== null) ? d.h('p', { class: 'muted home-last-used-note' }, '“Last opened or approved here” doesn’t count requests the app signed by itself.') : null,
       ...emailBlock(where, s, showApp),
     );
   }
 
   const problemView = (where: Where, p: HomeProblem): HTMLElement =>
-    d.h(
-      'div',
-      { class: 'home-problem', attrs: { role: 'alert', id: `home-devices-problem-${where}`, tabindex: '-1' } },
+    alert(
+      d,
+      'danger',
+      { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id: `home-devices-problem-${where}`, tabindex: '-1' } },
       d.h('p', {}, p.text),
       d.h('p', { class: 'code muted' }, `Code: ${p.code}`),
       p.requestId ? d.h('p', { class: 'code muted' }, `Request: ${p.requestId}`) : null,
@@ -428,12 +475,12 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     // On the front page an app with nothing left is left out, unless a stop just emptied it (its sentence stays).
     const shown = where === 'front' ? view.scopes.filter((s) => !isEmpty(s) || view.notes.has(s.scopeId)) : view.scopes;
     if (where === 'front' && shown.length === 0) {
-      out.push(d.h('p', { class: 'muted', attrs: { id: 'home-devices-empty' } }, 'No device is signed in to your apps with Hana right now, and you aren’t sharing your email with any of them.'));
+      out.push(empty('home-devices-empty', 'Nothing signed in', 'No device is signed in to your apps with Journear right now, and you aren’t sharing your email with any of them.'));
     } else {
       out.push(...shown.map((s) => scopeGroup(where, s)));
     }
-    if (where === 'front' && view.scopes.some((s) => s.email === null)) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-email-unknown-front' } }, 'Hana Home can’t tell right now which apps you share your email with.'));
-    if (where === 'front') out.push(d.h('p', { class: 'muted' }, 'Only apps Hana has on record for you are listed here. For any other app, find it and open its page.'));
+    if (where === 'front' && view.scopes.some((s) => s.email === null)) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-email-unknown-front' } }, 'Passport Home can’t tell right now which apps you share your email with.'));
+    if (where === 'front') out.push(d.h('p', { class: 'muted' }, 'Only apps Journear has on record for you are listed here. For any other app, find it and open its page.'));
     out.push(
       d.h(
         'div',
@@ -449,8 +496,8 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     const root = where === 'front' ? frontRoot : appRoot;
     const intro =
       where === 'front'
-        ? 'Where you’re signed in to your apps with Hana, which of those devices may sign for you without asking, and the apps you share your email with.'
-        : 'Where you’re signed in to this app with Hana, what those devices may sign without asking, and whether you share your email with it.';
+        ? 'Where you’re signed in to your apps with Journear, which of those devices may sign for you without asking, and the apps you share your email with.'
+        : 'Where you’re signed in to this app with Journear, what those devices may sign without asking, and whether you share your email with it.';
     const heading = where === 'front' ? d.h('h2', { attrs: { id: 'home-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE) : d.h('h3', { attrs: { id: 'home-app-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE);
     root.replaceChildren();
     for (const c of [heading, d.h('p', {}, intro), ...body(where)]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);

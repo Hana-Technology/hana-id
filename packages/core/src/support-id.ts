@@ -39,7 +39,7 @@ export function crockford32(bytes: Uint8Array): string {
 
 /** The 16 bytes an identity `sub` encodes (its base64url decoded); a TypeError for anything that isn't one. */
 export function decodeIdentitySub(sub: string): Uint8Array {
-  if (typeof sub !== 'string' || !IDENTITY_SUB_RE.test(sub)) throw new TypeError('Not a Hana identity sub (u1_...)');
+  if (typeof sub !== 'string' || !IDENTITY_SUB_RE.test(sub)) throw new TypeError('Not a Journear Passport identity sub (u1_...)');
   const out = new Uint8Array(16);
   let acc = 0;
   let bits = 0;

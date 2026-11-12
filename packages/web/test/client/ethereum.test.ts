@@ -62,7 +62,7 @@ describe('EIP-6963', () => {
     const detail = announced[0]!.detail as { info: { uuid: string; name: string; icon: string; rdns: string }; provider: unknown };
     expect(detail.provider).toBe(s.client.ethereum);
     expect(detail.info.uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
-    expect(detail.info.name).toBe('Hana ID');
+    expect(detail.info.name).toBe('Journear Passport');
     expect(detail.info.icon).toBe(HANA_ID_ICON);
     expect(detail.info.icon.startsWith('data:image/svg+xml,')).toBe(true);
     expect(detail.info.rdns).toBe('test.hana.auth');

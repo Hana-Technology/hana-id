@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { MAIL_COLOURS, type MailBlock, isMailLoopbackHost, mailHtml, mailLogoUrl, mailText, mailUrlProblem } from '../src/email.ts';
+import { MAIL_COLOURS, MAIL_FONT, MAIL_LOGO_ALT, MAIL_MONO, type MailBlock, isMailLoopbackHost, mailHtml, mailLogoUrl, mailText, mailUrlProblem } from '../src/email.ts';
 import { MAIL_LOGO_HEIGHT, MAIL_LOGO_PATH, MAIL_LOGO_PNG_BASE64, MAIL_LOGO_SHA256, MAIL_LOGO_WIDTH } from '../src/mail-logo.ts';
 
 const BIDI = String.fromCharCode(0x202e);
@@ -69,7 +69,7 @@ describe('mailHtml', () => {
 
   it('shows a code as one selectable token: one text node, no space or cell between its characters', () => {
     const html = base([{ kind: 'code', code: '550046', caption: 'It expires in 10 minutes.' }]);
-    expect(html).toMatch(/user-select:all"><strong style="font-weight:700">550046<\/strong><\/div>/u);
+    expect(html).toMatch(/user-select:all"><strong style="font-weight:600">550046<\/strong><\/div>/u);
     expect(html).toContain('It expires in 10 minutes.');
   });
 
@@ -115,11 +115,11 @@ describe('mailHtml', () => {
         },
       ]),
     );
-    expect(html).toContain('<div style="font-weight:700">origin<span>.</span><wbr>added on app_1</div><div class="hm-muted" style="font-size:12px;color:#665d80">origin<span>.</span><wbr>added</div>');
+    expect(html).toContain('<div style="font-weight:600">origin<span>.</span><wbr>added on app_1</div><div class="hm-muted" style="font-size:12px;color:#5f6f6a">origin<span>.</span><wbr>added</div>');
     // No code line without a code.
-    expect(html.match(/font-size:12px;color:#665d80"/gu)).toHaveLength(1);
-    expect(html).toContain('<span class="hm-muted" style="color:#665d80">When</span> 2026-11-11T05:01:36<span>.</span><wbr>861Z');
-    expect(html).toContain('<span class="hm-muted" style="color:#665d80">By</span> a.b</div>');
+    expect(html.match(/font-size:12px;color:#5f6f6a"/gu)).toHaveLength(1);
+    expect(html).toContain('<span class="hm-muted" style="color:#5f6f6a">When</span> 2026-11-11T05:01:36<span>.</span><wbr>861Z');
+    expect(html).toContain('<span class="hm-muted" style="color:#5f6f6a">By</span> a.b</div>');
     expect(html).toContain('https:<span>/</span><wbr><span>/</span><wbr>evil<span>.</span><wbr>example<span>/</span><wbr>x<span>?</span><wbr>y<span>=</span><wbr>1<span>#</span><wbr>z');
     for (const node of html.replace(/a\.b/u, '').split(/<[^>]+>/u)) expect(node).not.toMatch(/evil\.example|https:\/\/|origin\.added/u);
     // One row per entry, the rule and text colours carried by classes the dark sheet overrides; no detail line without one.
@@ -143,11 +143,11 @@ describe('mailHtml', () => {
 
   it('stays small: a full mail is far under Gmail’s 102 KB clip', () => {
     const html = base([
-      { kind: 'heading', text: 'Your sign-in code for Hana Home' },
-      { kind: 'p', text: 'Your code to sign in to Hana Home:' },
+      { kind: 'heading', text: 'Your sign-in code for Passport Home' },
+      { kind: 'p', text: 'Your code to sign in to Passport Home:' },
       { kind: 'code', code: '550046', caption: 'It expires in 10 minutes.' },
-      { kind: 'callout', tone: 'info', text: ['Type this code only in the Hana window you opened (', { host: 'auth.example' }, ').'] },
-      { kind: 'p', text: 'If you didn’t try to sign in to Hana Home, ignore this mail.' },
+      { kind: 'callout', tone: 'info', text: ['Type this code only in the Journear window you opened (', { host: 'auth.example' }, ').'] },
+      { kind: 'p', text: 'If you didn’t try to sign in to Passport Home, ignore this mail.' },
     ]);
     expect(new TextEncoder().encode(html).length).toBeLessThan(12_000);
   });
@@ -167,15 +167,40 @@ describe('mailHtml', () => {
         [s.ink2, s.card],
         [s.muted, s.card],
         [s.muted, s.page],
+        [s.ink, s.page],
         [s.ink, s.codeBg],
         [s.ink2, s.codeBg],
+        [s.ink, s.preBg],
         [s.ink, s.infoBg],
-        [s.warnInk, s.warnBg],
+        [s.ink, s.warnBg],
         [s.onAccent, s.accent],
         [s.accent, s.page],
       ];
       for (const [fg, bg] of pairs) expect(ratio(fg, bg), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it('the design system (D765): its colours from tokens.css in both schemes, its font stacks, 8 px buttons, 12 px cards', () => {
+    const css = readFileSync(new URL('../tokens.css', import.meta.url), 'utf8');
+    const darkAt = css.indexOf('@media (prefers-color-scheme: dark)');
+    const lightCss = css.slice(0, darkAt).toLowerCase();
+    const darkCss = css.slice(darkAt, css.indexOf(':root[data-theme="dark"]')).toLowerCase();
+    // Every mail colour is one of the system's: light ones from the light tokens, dark ones from the dark block or the
+    // light scale (a dark mail's secondary ink is the scale's gray-200).
+    for (const v of Object.values(MAIL_COLOURS.light)) expect(lightCss, v).toContain(v);
+    for (const v of Object.values(MAIL_COLOURS.dark)) expect(`${darkCss}${lightCss}`, v).toContain(v);
+    expect(MAIL_COLOURS.light.accent).toBe('#0f766e');
+    expect(MAIL_COLOURS.light.ink).toBe('#0b1f1e');
+    // The system font where installed, then the platform's: never a web font.
+    expect(MAIL_FONT.startsWith("'IBM Plex Sans',")).toBe(true);
+    expect(MAIL_MONO.startsWith("'IBM Plex Mono',")).toBe(true);
+    const html = base([{ kind: 'heading', text: 'H' }, { kind: 'code', code: '550046' }, { kind: 'button', label: 'Go', url: 'https://console.example/x' }]);
+    expect(html).not.toMatch(/@font-face|fonts\.googleapis|\.woff/u);
+    expect(html).toMatch(/class="hm-btn" [^>]*style="border-radius:8px;/u);
+    expect(html).toMatch(/class="hm-card" [^>]*border-radius:12px;/u);
+    expect(html).toMatch(/class="hm-codebox" [^>]*border-radius:12px/u);
+    // No decoration from the old brand: no gradient, no violet.
+    expect(html).not.toMatch(/gradient|#6256e9|#3308a8|#16073a/iu);
   });
 
   it('mailText escapes the five HTML characters', () => {
@@ -206,22 +231,28 @@ describe('what text may hold: the display-safety rule, by class', () => {
 });
 
 describe('the hosted logo (D685)', () => {
-  it('replaces the text wordmark with one <img>: the URL as given, fixed size, alt "Hana ID" styled as the wordmark', () => {
+  it('replaces the text wordmark with one <img>: the URL as given, fixed size, alt "Journear Passport" styled as the wordmark', () => {
     const url = `https://files.example${MAIL_LOGO_PATH}`;
     const html = base([], { logoUrl: url });
     const img = [...html.matchAll(/<img\b[^>]*>/gu)].map((m) => m[0]);
     expect(img).toHaveLength(1);
     expect(img[0]).toContain(`src="${url}"`);
     expect(img[0]).toContain(`width="${MAIL_LOGO_WIDTH}" height="${MAIL_LOGO_HEIGHT}"`);
-    expect(img[0]).toContain('alt="Hana ID"');
-    expect(img[0]).toMatch(/font-size:20px;[^"]*font-weight:800;[^"]*color:#16073a/u);
-    expect(html).not.toContain('>Hana</span> <span');
-    // Without a URL, or with one that isn't https (or loopback http): the text wordmark, no image.
+    expect(MAIL_LOGO_ALT).toBe('Journear Passport');
+    expect(img[0]).toContain('alt="Journear Passport"');
+    // The alt is styled as the wordmark: heavy, in the brand's teal (and its dark teal through the class).
+    expect(img[0]).toContain('class="hm-brand"');
+    expect(img[0]).toMatch(/font-size:20px;[^"]*font-weight:800;[^"]*color:#0f766e/u);
+    expect(html).not.toContain('>Journear</span> <span');
+    // Without a URL, or with one that isn't https (or loopback http): the text wordmark, no image; "PASSPORT" smaller
+    // than "Journear" (the logo rules).
     for (const logoUrl of [undefined, 'http://files.example/x.png', 'javascript:alert(1)', 'not a url']) {
       const h = base([], logoUrl === undefined ? {} : { logoUrl });
       expect(h, String(logoUrl)).not.toContain('<img');
-      expect(h).toContain('>Hana</span> <span');
+      expect(h).toContain('<span class="hm-brand" style="color:#0f766e">Journear</span> <span class="hm-ink" style="font-size:11px;');
+      expect(h).toContain('>PASSPORT</span>');
     }
+    expect(body(base([]))).not.toMatch(/Hana/u);
   });
 
   it('mailLogoUrl: the files origin and the hashed path, nothing per recipient', () => {
@@ -231,15 +262,19 @@ describe('the hosted logo (D685)', () => {
     expect(mailLogoUrl('')).toBeUndefined();
   });
 
-  it('the logo bytes: a PNG of the declared size, whose sha256 the path names, the same as mail/hana-mail-logo.png', () => {
+  it('the logo bytes: a PNG of the declared size, whose sha256 the path names, the same as mail/journear-mail-logo.png', () => {
     const bytes = Buffer.from(MAIL_LOGO_PNG_BASE64, 'base64');
     expect([...bytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     // IHDR: width and height at 2x.
     expect(bytes.readUInt32BE(16)).toBe(MAIL_LOGO_WIDTH * 2);
     expect(bytes.readUInt32BE(20)).toBe(MAIL_LOGO_HEIGHT * 2);
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(MAIL_LOGO_SHA256);
-    expect(MAIL_LOGO_PATH).toBe(`/brand/hana-mail-logo-${MAIL_LOGO_SHA256.slice(0, 16)}.png`);
-    expect(readFileSync(new URL('../mail/hana-mail-logo.png', import.meta.url)).equals(bytes)).toBe(true);
+    expect(MAIL_LOGO_PATH).toBe(`/brand/journear-mail-logo-${MAIL_LOGO_SHA256.slice(0, 16)}.png`);
+    expect(readFileSync(new URL('../mail/journear-mail-logo.png', import.meta.url)).equals(bytes)).toBe(true);
+    // The lockup is at least 120 px wide (the logo rules), on a plate no larger than the header needs.
+    expect(MAIL_LOGO_WIDTH).toBeGreaterThanOrEqual(120);
+    expect(MAIL_LOGO_WIDTH).toBeLessThanOrEqual(160);
+    expect(MAIL_LOGO_HEIGHT).toBeLessThanOrEqual(48);
     expect(bytes.length).toBeLessThan(8 * 1024);
   });
 });

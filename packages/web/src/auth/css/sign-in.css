@@ -1,0 +1,117 @@
+/*
+ * The sign-in popup (login-page.ts), its callback (callback-page.ts, home-callback-page.ts), the email step
+ * (email-page.ts) and the email sharing sheet (share-page.ts), on the design system's login modal pattern (D765).
+ */
+
+/* The method chooser: the system's providers, one primary (Google), email second. */
+.providers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-2);
+  margin-top: var(--jp-space-1);
+}
+
+.jp-provider .ic:not(.chev) {
+  width: 20px;
+  height: 20px;
+}
+
+.jp-provider.primary .chev {
+  color: inherit;
+  opacity: 0.6;
+}
+
+/* Three choices stack, the primary first (an app's name or a long label never squeezes three across 400 px). */
+.actions.stack {
+  flex-direction: column;
+}
+
+.actions.stack > .jp-btn {
+  flex: 0 0 auto;
+}
+
+/* ---- the email step (email-page.ts): the form's own rhythm, set by the containers' gaps ---- */
+form.email-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-4);
+}
+
+form.email-form > * {
+  margin: 0;
+}
+
+/* The hint and the error that replaces it take the same line, so nothing below moves when a check runs on blur. */
+.email-step .jp-field .jp-hint,
+.email-step .jp-field .jp-error {
+  min-height: 18px;
+  line-height: 18px;
+}
+
+.email-step .jp-input {
+  height: var(--jp-control-lg);
+  font-size: var(--jp-text-md);
+}
+
+/* The code: one field (the browser's one-time-code autofill and a paste both fill it), in mono, spaced like the
+   system's OTP boxes. */
+.email-step .jp-input.code-input {
+  font-family: var(--jp-font-mono);
+  font-weight: var(--jp-weight-medium);
+  font-size: 22px;
+  letter-spacing: 0.3em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A retry inside a notice reads as a link in the notice's colour. */
+.jp-alert button.link {
+  color: inherit;
+  font-weight: var(--jp-weight-semibold);
+}
+
+/* The link banners after a sign-in (each method, its state, its Cancel or Remove). */
+ul.banners {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-2);
+}
+
+ul.banners > li.banner {
+  display: flex;
+  gap: var(--jp-space-3);
+  align-items: flex-start;
+  padding: var(--jp-space-3);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
+  font-size: var(--jp-text-sm);
+}
+
+ul.banners > li.banner > .ic {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--jp-success);
+}
+
+ul.banners > li.banner.pending > .ic {
+  color: var(--jp-warning);
+}
+
+/* ---- the email sharing sheet (share-page.ts): the address the app would get, the one thing the user must read
+   (D411). A block, on a paragraph only: the same box on inline text would overlap the lines around it. ---- */
+p.address {
+  background: var(--jp-bg-subtle);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
+  padding: var(--jp-space-3);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+p.address .mono {
+  font-size: var(--jp-text-md);
+}

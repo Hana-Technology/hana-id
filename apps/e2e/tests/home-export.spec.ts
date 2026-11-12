@@ -93,7 +93,7 @@ async function expectNoKey(home: Page, ...known: string[]): Promise<void> {
 
 const homeLogins = (requests: RequestLog, since = 0): number => requests.count(HOME_LOGIN, since);
 
-test('a wallet made by a partner login is opened in Hana Home and its Stellar key is the address’s own, from the real API', async ({ page, context, google, requests, browserName }) => {
+test('a wallet made by a partner login is opened in Passport Home and its Stellar key is the address’s own, from the real API', async ({ page, context, google, requests, browserName }) => {
   test.setTimeout(120_000);
   const { sub } = freshAccounts(google);
   const scopeId = newScope(browserName);
@@ -133,7 +133,7 @@ test('a wallet made by a partner login is opened in Hana Home and its Stellar ke
   // A link can come from anyone, so the wallet of the app it named isn't moved out in that page load, the user's own
   // included: the section says to come back without the link, and offers no sign-in.
   await s.open.click();
-  await expect(home.locator('#home-export-off')).toContainText('open Hana Home yourself, without the link');
+  await expect(home.locator('#home-export-off')).toContainText('open Passport Home yourself, without the link');
   await expect(s.start).toHaveCount(0);
   await shots(home, 'h8-06b-not-offered-own-app-from-link', browserName);
   expect(popups).toBe(1);
@@ -174,6 +174,8 @@ test('a wallet made by a partner login is opened in Hana Home and its Stellar ke
   await expect(s.secret).toHaveText(HIDDEN);
   await expectNoKey(home);
   await expect(home.getByRole('button', { name: 'Show key', exact: true })).toBeDisabled();
+  // The export pattern (D765): Show key (the danger button) and Copy key wait for the user's tick.
+  await home.locator('#home-export .reveal-ack input').check();
   await guardedClick(home, 'Show key');
   await expect(s.secret).toHaveText(STELLAR_SEED);
   const seed = (await s.secret.textContent()) ?? '';
@@ -225,7 +227,7 @@ async function emailLogin(page: Page, to: string): Promise<{ stellar: string; ev
   return w;
 }
 
-test('a linked sign-in method: Google, a member of an email wallet, opens that wallet in Hana Home, confirmed on both NEAR providers', async ({ page, context, google, requests }, info: TestInfo) => {
+test('a linked sign-in method: Google, a member of an email wallet, opens that wallet in Passport Home, confirmed on both NEAR providers', async ({ page, context, google, requests }, info: TestInfo) => {
   test.setTimeout(120_000);
   // Case A, Google-hosted (tests/linking.spec.ts): the email wallet first, then Google with that Gmail joins it as a
   // member. Google's path is then the email root's, which Hana Home confirms on `rpc` and `rpcFallback`, each alone.
@@ -269,7 +271,7 @@ test('a linked sign-in method: Google, a member of an email wallet, opens that w
   await expect(home.locator('#home-no-address')).toBeVisible();
   const s = section(home);
   await s.open.click();
-  await expect(s.root).toContainText('Hana has no wallet on record for you in this app. If you had one, sign in again and Hana Home will look for it.');
+  await expect(s.root).toContainText('Journear has no wallet on record for you in this app. If you had one, sign in again and Passport Home will look for it.');
   await signInAgain(home);
   expect(google.requests.at(-1)).toMatchObject({ ok: true, request: { kind: 'login', maxAge: '0' } });
   await expect(s.title).toHaveText('Your wallet is open', { timeout: 20_000 });
@@ -288,6 +290,7 @@ test('a linked sign-in method: Google, a member of an email wallet, opens that w
 
   await home.locator('#home-export-evm').click();
   await confirm(home);
+  await home.locator('#home-export .reveal-ack input').check();
   await guardedClick(home, 'Show key');
   await expect(s.secret).toHaveText(EVM_KEY);
   const key = (await s.secret.textContent()) ?? '';
@@ -399,6 +402,7 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
   // The reveal: dots, then the key (a fake one in its place for the picture).
   await expect(s.secret).toHaveText(HIDDEN);
   await shots(home, 'h8-15-key-hidden', browserName);
+  await home.locator('#home-export .reveal-ack input').check();
   await guardedClick(home, 'Show key');
   await expect(s.secret).toHaveText(STELLAR_SEED);
   expect(addressOfExport('stellar', (await s.secret.textContent()) ?? '')).toBe(wallet.stellar);
@@ -423,6 +427,7 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
   // The EVM key, then the two timers: a shown key hides after 60 seconds, and the wallet locks 5 minutes after the derive.
   await home.locator('#home-export-evm').click();
   await confirm(home);
+  await home.locator('#home-export .reveal-ack input').check();
   await guardedClick(home, 'Show key');
   await expect(s.secret).toHaveText(EVM_KEY);
   expect(addressOfExport('evm', (await s.secret.textContent()) ?? '')).toBe(wallet.evm);
@@ -443,12 +448,12 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
 /** The API's refusals of a Home derive that the page words on its own (home-problems.ts). */
 const REFUSALS: readonly { status: number; code: string; says: string }[] = [
   { status: 404, code: 'home_no_wallet', says: 'There is no wallet for this sign-in in that app.' },
-  { status: 429, code: 'home_busy', says: 'Hana Home has reached its limit for today.' },
+  { status: 429, code: 'home_busy', says: 'Passport Home has reached its limit for today.' },
   { status: 429, code: 'rate_limited', says: 'This wallet was opened too many times.' },
-  { status: 403, code: 'home_account_mismatch', says: 'Sign in as the same account you used in Hana Home.' },
+  { status: 403, code: 'home_account_mismatch', says: 'Sign in as the same account you used in Passport Home.' },
   { status: 409, code: 'link_pending', says: 'A sign-in method is still being added to this wallet.' },
-  { status: 403, code: 'shared_login_disabled', says: 'Hana can’t open this wallet from here.' },
-  { status: 502, code: 'near_unavailable', says: 'Hana Home is not reachable right now.' },
+  { status: 403, code: 'shared_login_disabled', says: 'Journear can’t open this wallet from here.' },
+  { status: 502, code: 'near_unavailable', says: 'Passport Home is not reachable right now.' },
   { status: 422, code: 'ckd_failed', says: 'The key service didn’t produce the key this time.' },
 ];
 
@@ -493,9 +498,9 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
   // Where the move can't be offered: one sentence, and no way to start it.
   const off: readonly [string, string, string][] = [
     // Coverage `exit` naming a client that isn't Hana Home's exit client in force (H10 offers the move through that one).
-    ['Lumen Pay', 'h8-03-not-offered-exit-login', 'Hana can’t open this wallet from here.'],
-    ['Atlas Markets', 'h8-04-not-offered-out-of-reach', 'Hana can’t open this wallet from here.'],
-    ['Nova Earn', 'h8-05-not-offered-not-checked', 'Hana hasn’t checked this app yet.'],
+    ['Lumen Pay', 'h8-03-not-offered-exit-login', 'Journear can’t open this wallet from here.'],
+    ['Atlas Markets', 'h8-04-not-offered-out-of-reach', 'Journear can’t open this wallet from here.'],
+    ['Nova Earn', 'h8-05-not-offered-not-checked', 'Journear hasn’t checked this app yet.'],
     ['Orbit Swap', 'h8-06-not-offered-app-from-link', 'You came to this app through a link'],
   ];
   for (const [name, shot, says] of off) {
@@ -549,7 +554,7 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
   const sent = homeLogins(requests);
   await signInAgain(home, 1);
   await expect(s.problem).toContainText('Code: home_account_mismatch');
-  await expect(s.problem).toContainText('Sign in as the same account you used in Hana Home.');
+  await expect(s.problem).toContainText('Sign in as the same account you used in Passport Home.');
   await expect(s.problem).not.toContainText('Request:');
   await shots(home, 'h8-22-refused-other-google-account', browserName);
   await home.locator('#home-export-again').click();
@@ -572,7 +577,7 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
   await home.route((url) => url.origin === new URL(NEAR_RPC_FALLBACK).origin, async (route) => (second === 'unreachable' && isIdentityRead(route) ? route.abort('connectionrefused') : route.fallback()));
   await signInAgain(home);
   await expect(s.problem).toContainText('Code: path_disputed');
-  await expect(s.problem).toContainText('NEAR providers disagree about which wallet this sign-in opens');
+  await expect(s.problem).toContainText('checks disagree about which wallet this sign-in opens');
   await shots(home, 'h8-23-refused-near-providers-disagree', browserName);
   await home.locator('#home-export-again').click();
   second = 'unreachable';

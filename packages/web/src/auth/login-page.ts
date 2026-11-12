@@ -29,6 +29,7 @@
 // the authenticated sender, kept only in sessionStorage, and the in-memory copy is zeroed.
 import { type LoginMethod, type WindowMessage, homeNonce, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
+import { BRAND } from '@hana-id/brand';
 import { type Dom, dom, errorView, originText } from './dom.ts';
 import { PageError } from './errors.ts';
 import { type EmailContext, storeEmailContext } from './email-storage.ts';
@@ -37,6 +38,7 @@ import { type FollowEntry, addLoginTimings, storeLoginEntry } from './login-stor
 import { appLogo } from './logo.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 import { markEmailShare } from './share-handoff.ts';
+import { icon } from './ui.ts';
 import { vaultSignals } from './vault-signal.ts';
 
 export type OpenerMode = 'partner' | 'vault' | 'export' | 'home';
@@ -178,7 +180,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   function checkHome(msg: WindowMessage<'hana:home-params'>): void {
     state = { stage: 'checking', mode: 'home' };
     try {
-      if (msg.signer !== env.signer) throw new PageError('config_mismatch', 'Hana Home named another signer.');
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', `${BRAND.home} named another signer.`);
       const nonce = homeNonce({ signer: env.signer, homePublicKey: msg.homePublicKey, expiresAtMs: msg.expiresAtMs, salt: msg.salt });
       if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its Home key.');
       try {
@@ -187,7 +189,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
       }
       const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: false, exit: msg.exit === true });
-      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in to Hana Home'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, `Signing in to ${BRAND.home}`), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
       state = { stage: 'redirecting', mode: 'home', url };
       finish(state);
       win.location.assign(url);
@@ -209,7 +211,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   function checkHomeDerive(msg: WindowMessage<'hana:home-derive-params'>): void {
     state = { stage: 'checking', mode: 'home' };
     try {
-      if (msg.signer !== env.signer) throw new PageError('config_mismatch', 'Hana Home named another signer.');
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', `${BRAND.home} named another signer.`);
       const nonce = sessionNonce({ signer: env.signer, scopeId: msg.scopeId, sessionPublicKey: msg.sessionPublicKey, expiresAtMs: msg.expiresAtMs, keyIndex: 0, maxUses: 1, salt: msg.salt });
       if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its session.');
       try {
@@ -383,8 +385,9 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       // app's entry gets `choose` (chooser shown → click) added on the click.
       const chooserAt = perfNow();
       const chosen = () => addLoginTimings(win.sessionStorage, msg.relayId, { choose: Math.max(0, perfNow() - chooserAt) });
-      const google = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'continue-google' } }, 'Continue with Google');
-      const email = d.h('button', { attrs: { type: 'button', id: 'continue-email' } }, 'Continue with email');
+      // The login modal pattern (D765): one primary provider (Google), email second; no passkey method exists.
+      const google = d.h('button', { class: 'jp-provider primary', attrs: { type: 'button', id: 'continue-google' } }, icon(d, 'google'), 'Continue with Google', icon(d, 'chev-r', 'chev'));
+      const email = d.h('button', { class: 'jp-provider', attrs: { type: 'button', id: 'continue-email' } }, icon(d, 'mail'), 'Continue with email', icon(d, 'chev-r', 'chev'));
       google.addEventListener('click', () => {
         google.setAttribute('disabled', '');
         email.setAttribute('disabled', '');
@@ -397,7 +400,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         chosen();
         toEmail();
       });
-      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), intro(), d.h('div', { class: 'actions choose' }, google, email)));
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), intro(), d.h('div', { class: 'providers' }, google, email)));
       state = { stage: 'choosing', mode };
       finish(state);
     } catch (err) {
@@ -408,14 +411,14 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   }
 
   if (isFramed(win)) {
-    fail('config_mismatch', 'Sign-in stopped', 'The Hana sign-in window can’t run inside another page.');
+    fail('config_mismatch', 'Sign-in stopped', `The ${BRAND.product} sign-in window can’t run inside another page.`);
   } else if (!parsed) {
     fail('config_mismatch', 'Sign-in stopped', 'This sign-in link is not valid. Start again from the app.');
   } else if (opener === null) {
     fail(
       'coop_blocks_popup',
-      'This site’s settings block the Hana sign-in window (COOP)',
-      'The site you came from cut this window off from it, so the sign-in can’t finish here. Close this window and tell the site’s developers.',
+      `This site’s settings block the ${BRAND.product} window (COOP)`,
+      'The site you came from cut this window off from it, so the sign-in can’t finish here. Close this window and let the site’s developers know.',
     );
   } else {
     state = { stage: 'connecting', mode: parsed.mode };
@@ -434,8 +437,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
     helloTimer = setInterval(hello, HELLO_INTERVAL_MS);
     helloDeadline = setTimeout(() => {
       if (accepted) return;
-      if (parsed.mode === 'home') fail('login_timeout', 'Sign-in stopped', 'Hana Home did not answer. Close this window and sign in again from Hana Home.');
-      else fail('login_timeout', 'Sign-in stopped', 'The app’s Hana vault did not answer. Close this window and start again from the app.');
+      if (parsed.mode === 'home') fail('login_timeout', 'Sign-in stopped', `${BRAND.home} didn’t answer. Close this window and sign in again from ${BRAND.home}.`);
+      else fail('login_timeout', 'Sign-in stopped', 'The app didn’t answer. Close this window and start again from the app.');
     }, HELLO_TIMEOUT_MS);
   }
 

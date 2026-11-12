@@ -417,7 +417,7 @@ export async function identityKey(): Promise<{ kty: 'EC'; crv: 'P-256'; x: strin
 export const IDENTITY_ISS = 'https://api.test/v1/identity';
 
 /**
- * Hana's identity JWKS and discovery document as the watchdog fetches them: `jwks` / `discovery` bodies (null: the
+ * Journear's identity JWKS and discovery document as the watchdog fetches them: `jwks` / `discovery` bodies (null: the
  * honest answer for `keys` and `IDENTITY_ISS`), or a failure while `failJwks` / `failDiscovery`.
  */
 export class StubIdentity {

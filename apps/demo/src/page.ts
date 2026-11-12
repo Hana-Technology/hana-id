@@ -10,7 +10,9 @@ import { type ErrorRecord, type LoginTiming, diagnosticsJson } from './diagnosti
 import { type DemoAction, errorInfo, isSignedOut, plainMessage } from './errors.ts';
 import { type NearCard, startNearCard } from './near-card.ts';
 import type { FetchLike } from './near.ts';
-import { TEST_MESSAGE, testEvmTransaction, utf8Hex } from './requests.ts';
+import { TEST_MESSAGE, shorten, testEvmTransaction, utf8Hex } from './requests.ts';
+import { type ResultFact, resultItem } from './result.ts';
+import { type Timers, type ToastTone, createToaster } from './toast.ts';
 
 /** The part of the partner client the page uses. */
 export type DemoClient = Pick<
@@ -52,6 +54,8 @@ export interface DemoDeps {
   fetch?: FetchLike;
   random?: (n: number) => Uint8Array;
   sleep?: (ms: number) => Promise<void>;
+  /** The toasts' timers (setTimeout and performance.now by default). */
+  timers?: Timers;
 }
 
 /**
@@ -75,11 +79,11 @@ export function signInMs(stages: Readonly<Record<string, number>>): number | und
 }
 
 const PROGRESS: Record<string, string> = {
-  popup_connected: 'The Hana sign-in window is open.',
+  popup_connected: 'The Journear sign-in window is open.',
   google: 'Choose your Google account in the sign-in window…',
   token: 'Google sign-in done. Checking it…',
   chain: 'Creating your wallet key on NEAR testnet (a few seconds)…',
-  key_pending: 'Google just rotated its signing key; Hana ID is activating it. Retrying in up to 30 seconds…',
+  key_pending: 'Google just rotated its signing key; Journear Passport is activating it. Retrying in up to 30 seconds…',
   done: 'Done.',
 };
 
@@ -131,6 +135,35 @@ export function verifySnippet(iss: string, aud: string): string {
   ].join('\n');
 }
 
+/** A duration for the stats strip: "7.0" "s" from 1 s, "180" "ms" under it. */
+export function durationParts(ms: number): { value: string; unit: string } {
+  return ms >= 1000 ? { value: (ms / 1000).toFixed(1), unit: 's' } : { value: String(Math.round(ms)), unit: 'ms' };
+}
+
+export interface StatCell {
+  label: string;
+  value: string;
+  unit: string;
+  note: string;
+}
+
+/**
+ * The stats strip's cells (the design system's divided strip): the latest login's total, its sign-in step and its
+ * wallet-key stage (the vault's `chain` stage, pk_test_ apps only), and the session restore of this page load.
+ */
+export function loginStats(last: LoginTiming | null, unlockMs: number | null): StatCell[] {
+  const cells: StatCell[] = [];
+  if (last) {
+    cells.push({ label: 'Last login', ...durationParts(last.totalMs), note: `${last.method === 'email' ? 'Email' : 'Google'}, from the click` });
+    const signIn = last.stages ? signInMs(last.stages) : undefined;
+    if (signIn !== undefined) cells.push({ label: 'Sign-in step', ...durationParts(signIn), note: 'Your part, typing included' });
+    const chain = last.stages?.chain;
+    if (chain !== undefined) cells.push({ label: 'Wallet key', ...durationParts(chain), note: 'Released on NEAR testnet' });
+  }
+  if (unlockMs !== null) cells.push({ label: 'Session restore', ...durationParts(unlockMs), note: 'This page load' });
+  return cells;
+}
+
 /** "in 11 h 58 min" / "in 4 min" / "now". */
 export function untilText(ms: number): string {
   if (ms <= 30_000) return 'now';
@@ -146,17 +179,17 @@ const PERSISTENCE: Record<string, string> = {
 
 /** The one-line status under the explainer. */
 export function statusText(c: Pick<DemoClient, 'status' | 'expiresAtMs' | 'persistence' | 'warning'> | null, nowMs: number): string {
-  if (!c) return 'The Hana client could not start.';
+  if (!c) return 'The Journear client could not start.';
   const s: HanaStatus = c.status;
   switch (s) {
     case 'unlocking':
-      return 'Connecting to the Hana vault…';
+      return 'Connecting to the Journear vault…';
     case 'logging_in':
       return 'Signing in…';
     case 'logged_out':
       return 'Logged out.';
     case 'error':
-      return 'The Hana vault reported an error. Reload the page.';
+      return 'The Journear vault reported an error. Reload the page.';
     case 'logged_in': {
       const parts = ['Logged in'];
       if (c.expiresAtMs !== null) {
@@ -186,35 +219,43 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
   const logins: LoginTiming[] = [];
   const errors: ErrorRecord[] = [];
 
-  // ---- messages ----
+  // ---- messages: inline alerts (errors, and notices that last while their state does), toasts (transient results) ----
 
-  /** `box`: where the message goes (the page's error line, or the NEAR card's own). */
+  const toaster = createToaster(
+    el('toasts'),
+    deps.timers ?? { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>), now: () => performance.now() },
+  );
+  function toast(tone: ToastTone, title: string, body?: string): void {
+    toaster.show(tone, title, body);
+  }
+
+  /** An inline alert's text (its `.body`, `<id>-text`), shown, or hidden with null. */
+  function alertText(id: string, text: string | null): void {
+    el(`${id}-text`).textContent = text ?? '';
+    el(id).hidden = text === null;
+  }
+
+  /** `box`: where the message goes (the page's error alert, or the NEAR card's own). */
   function showError(action: DemoAction, e: unknown, box = 'error'): void {
     const info = errorInfo(e);
     errors.push({ at: new Date(clock()).toISOString(), action, code: info.code, reason: info.reason, message: info.message, requestId: info.requestId });
-    // Signed out by Hana (D695): a notice, not an error. The `disconnect` and the request it refused say the same thing,
-    // so whichever comes second leaves the one notice in place.
+    // Signed out by Journear (D695): a notice, not an error. The `disconnect` and the request it refused say the same
+    // thing, so whichever comes second leaves the one notice in place.
     if (isSignedOut(e)) {
       clearError();
       notice(plainMessage(e, action));
       return;
     }
-    const node = el(box);
-    node.textContent = plainMessage(e, action);
-    node.hidden = false;
+    alertText(box, plainMessage(e, action));
   }
 
   function clearError(): void {
-    for (const id of ['error', 'near-error']) {
-      el(id).hidden = true;
-      el(id).textContent = '';
-    }
+    for (const id of ['error', 'near-error']) alertText(id, null);
   }
 
+  /** The page's info alert: what lasts while its state does (the launcher's hint, a session that ended). */
   function notice(text: string | null): void {
-    const n = el('notice');
-    n.textContent = text ?? '';
-    n.hidden = text === null;
+    alertText('notice', text);
   }
 
   // ---- rendering ----
@@ -232,6 +273,10 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     evmLink.hidden = !a || config.evm.explorer === null;
     if (a && config.stellar.explorer) stellarLink.href = `${config.stellar.explorer}/account/${encodeURIComponent(a.stellar)}`;
     if (a && config.evm.explorer) evmLink.href = `${config.evm.explorer}/address/${encodeURIComponent(a.evm)}`;
+    // The wallet pill in the top bar: signed in, with the EVM address short; it links to the addresses.
+    show('wallet-pill', a !== null);
+    el('wallet-pill-address').textContent = a ? shorten(a.evm, 6, 4) : '';
+    if (a) el('wallet-pill').setAttribute('aria-label', `Signed in as ${shorten(a.evm, 6, 4)}: show your addresses`);
   }
 
   function render(): void {
@@ -239,6 +284,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     const status = c?.status ?? 'error';
     const loggedIn = c !== null && c.addresses !== null && status === 'logged_in';
     el('status').textContent = statusText(c, clock());
+    el('status').dataset.state = status;
     show('login', !loggedIn);
     disable('login', c === null || status === 'unlocking' || status === 'logging_in' || status === 'error');
     show('login-email', !loggedIn);
@@ -278,7 +324,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     if (logins.length === 0) return;
     const shown: readonly string[] = [...STAGES, 'google', ...EMAIL_SIGN_IN_STAGES];
     const extra = [...new Set(logins.flatMap((l) => Object.keys(l.stages ?? {})))].filter((k) => !shown.includes(k));
-    const cell = (ms: number | undefined) => h('td', {}, ms === undefined ? '—' : String(Math.round(ms)));
+    const cell = (ms: number | undefined) => h('td', { class: 'num' }, ms === undefined ? '—' : String(Math.round(ms)));
     body.replaceChildren(
       ...logins.map((l) =>
         h(
@@ -287,7 +333,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
           h('td', {}, new Date(l.at).toLocaleTimeString()),
           h('td', {}, l.method),
           ...STAGES.map((s) => cell(!l.stages ? undefined : s === 'signIn' ? signInMs(l.stages) : l.stages[s])),
-          h('td', {}, String(Math.round(l.totalMs))),
+          h('td', { class: 'num' }, String(Math.round(l.totalMs))),
         ),
       ),
     );
@@ -298,10 +344,26 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     }
     if (extra.length) body.append(h('tr', {}, h('td', { colspan: '9', class: 'muted' }, `Other stages: ${logins.map((l) => extra.map((k) => `${k} ${l.stages?.[k] ?? '—'}`).join(', ')).join(' | ')}`)));
     if (logins.some((l) => l.stages === null)) body.append(h('tr', {}, h('td', { colspan: '9', class: 'muted' }, 'No per-stage times: the vault returns them for test apps (pk_test_) only.')));
+    renderStats();
   }
 
   function renderUnlock(): void {
     el('unlock').textContent = unlockMs === null ? '' : `This page load restored your session in ${Math.round(unlockMs)} ms (vault frame, page and one API call).`;
+    renderStats();
+  }
+
+  /** The stats strip over the timings: the latest login's total, sign-in and key stages, and this load's restore. */
+  function renderStats(): void {
+    const last = logins.at(-1);
+    const cells = loginStats(last ?? null, unlockMs);
+    const strip = el('login-stats');
+    strip.hidden = cells.length === 0;
+    strip.replaceChildren(
+      ...cells.map((s) => {
+        const v = h('span', { class: 'v' }, s.value, h('small', {}, s.unit));
+        return h('div', { class: 'jp-statcell' }, h('div', { class: 'jp-stat' }, h('span', { class: 'k' }, s.label), v), h('span', { class: 'muted' }, s.note));
+      }),
+    );
   }
 
   // ---- client ----
@@ -343,13 +405,13 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
   });
   let launcherNotice: string | null = null;
   c.on('launcher', ({ visible, label, clickable }) => {
-    // A notice ("Signed by Hana under …") needs no click: only a button is pointed at.
+    // A notice ("Signed by Journear under …") needs no click: only a button is pointed at.
     if (visible && clickable) {
-      launcherNotice = `Click “${label}” on the Hana button at the bottom right of the page to continue.`;
+      launcherNotice = `Click “${label}” on the Journear button at the bottom right of the page to continue.`;
       notice(launcherNotice);
     } else {
-      // Only the launcher's own hint goes away with it (an outcome shown meanwhile stays).
-      if (launcherNotice !== null && el('notice').textContent === launcherNotice) notice(null);
+      // Only the launcher's own hint goes away with it (a notice shown meanwhile stays).
+      if (launcherNotice !== null && el('notice-text').textContent === launcherNotice) notice(null);
       launcherNotice = null;
     }
   });
@@ -358,8 +420,8 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     render();
   });
   c.on('disconnect', ({ code, reason }) => {
-    // `reason: 'signed_out'`: Hana signed this device out (Hana Home, another tab or another device); without it, the
-    // demo keeps its lost-vault text.
+    // `reason: 'signed_out'`: Journear signed this device out (Passport Home, another tab or another device); without it,
+    // the demo keeps its lost-vault text.
     showError('load', reason === undefined ? { code } : { code, data: { reason } });
     render();
   });
@@ -428,21 +490,22 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
       });
   }
 
-  function result(label: string, value: string | null, failure: string | null): void {
-    const item = h('li', {}, h('div', {}, h('span', { class: failure ? 'fail' : 'ok' }, failure ? '✗ ' : '✓ '), label));
-    if (value) item.append(h('code', {}, value));
-    if (failure) item.append(h('div', { class: 'muted small' }, failure));
-    el('results').prepend(item);
+  type SignChain = 'stellar' | 'evm';
+  const CHAIN_NAME: Record<SignChain, string> = { stellar: 'Stellar testnet', evm: config.evm.name };
+
+  /** A signing result, newest first: what was signed and the signature, or why not (result.ts). */
+  function result(chain: SignChain, label: string, fact: ResultFact | null, failure: string | null): void {
+    el('results').prepend(resultItem({ title: label, ok: failure === null, chain: { kind: chain, name: CHAIN_NAME[chain] }, facts: fact ? [fact] : [], note: failure }));
   }
 
-  function sign(label: string, send: (a: HanaAddresses) => Promise<string>): void {
+  function sign(chain: SignChain, label: string, valueLabel: string, send: (a: HanaAddresses) => Promise<string>): void {
     const a = c.addresses;
     if (!a) return;
     run('sign', async () => {
       try {
-        result(`${label}: signed`, await send(a), null);
+        result(chain, `${label}: signed`, { label: valueLabel, value: await send(a) }, null);
       } catch (e) {
-        result(`${label}: not signed`, null, plainMessage(e, 'sign'));
+        result(chain, `${label}: not signed`, null, plainMessage(e, 'sign'));
         throw e;
       }
     });
@@ -455,13 +518,14 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     run('logout', async () => {
       await c.logout();
       el('results').replaceChildren();
-      notice('Logged out on this device, in every tab of this site.');
+      toast('success', 'Logged out', 'On this device, in every tab of this site.');
     }),
   );
   el('revoke').addEventListener('click', () =>
     run('revoke', async () => {
       const { revoked } = await c.revokeOtherDevices();
-      notice(revoked === 0 ? 'No other device was signed in.' : `Signed out ${revoked} other device${revoked === 1 ? '' : 's'}.`);
+      if (revoked === 0) toast('info', 'No other device was signed in');
+      else toast('success', `Signed out ${revoked} other device${revoked === 1 ? '' : 's'}`, 'This app, everywhere else. This device stays signed in.');
     }),
   );
   el('identity-token').addEventListener('click', () =>
@@ -469,21 +533,23 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
       renderIdentity(await c.getIdentityToken());
     }),
   );
-  // D411: Hana's email sharing sheet (the app's `identity_email` must be on_request or at_login); synchronous in the
+  // D411: Journear's email sharing sheet (the app's `identity_email` must be on_request or at_login); synchronous in the
   // click, as login: `run` calls the task at once, and requestEmailSharing opens its popup before any await.
   el('email-share').addEventListener('click', () =>
     run('identity', async () => {
       const state = await c.requestEmailSharing();
-      notice(state === 'granted' ? 'Email shared: the next identity token carries it.' : state === 'declined' ? 'Email not shared.' : 'The sheet was closed; nothing changed.');
+      if (state === 'granted') toast('success', 'Email shared', 'The next identity token carries it.');
+      else if (state === 'declined') toast('info', 'Email not shared');
+      else toast('info', 'Nothing changed', 'The sheet was closed.');
       renderIdentity(await c.getIdentityToken());
     }),
   );
   el('sign-personal').addEventListener('click', () =>
-    sign('EVM personal_sign', async (a) => String(await c.ethereum.request({ method: 'personal_sign', params: [utf8Hex(TEST_MESSAGE), a.evm] }))),
+    sign('evm', 'EVM personal_sign', 'Signature', async (a) => String(await c.ethereum.request({ method: 'personal_sign', params: [utf8Hex(TEST_MESSAGE), a.evm] }))),
   );
-  el('sign-stellar').addEventListener('click', () => sign('Stellar message', async (a) => (await c.stellar.signMessage(TEST_MESSAGE, { address: a.stellar })).signedMessage));
+  el('sign-stellar').addEventListener('click', () => sign('stellar', 'Stellar message', 'Signature', async (a) => (await c.stellar.signMessage(TEST_MESSAGE, { address: a.stellar })).signedMessage));
   el('sign-evm-tx').addEventListener('click', () =>
-    sign(`${config.evm.name} transaction (0 to yourself, not broadcast)`, async (a) =>
+    sign('evm', `${config.evm.name} transaction (0 to yourself, not broadcast)`, 'Signed transaction', async (a) =>
       String(await c.ethereum.request({ method: 'eth_signTransaction', params: [testEvmTransaction(a.evm, config.evm.id)] })),
     ),
   );
@@ -491,7 +557,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     el(`export-${chain}`).addEventListener('click', () =>
       run('export', async () => {
         await c.exportKey(chain);
-        notice('The Hana export window is open: the key is shown only there.');
+        toast('info', 'Export window open', 'Your key is shown only in the Journear window, never on this page.');
       }),
     );
   }
@@ -500,7 +566,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
       const a = c.addresses;
       if (!a) return;
       copy(a[chain]).then(
-        () => notice(`${chain === 'stellar' ? 'Stellar' : 'EVM'} address copied.`),
+        () => toast('success', `${chain === 'stellar' ? 'Stellar' : 'EVM'} address copied`),
         (e: unknown) => showError('copy', e),
       );
     });
@@ -530,7 +596,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     el('diagnostics').textContent = text;
     el<HTMLDetailsElement>('diagnostics-panel').open = true;
     copy(text).then(
-      () => notice('Diagnostics copied. Paste them into your bug report.'),
+      () => toast('success', 'Diagnostics copied', 'Paste them into your bug report.'),
       (e: unknown) => showError('copy', e),
     );
   });
@@ -545,7 +611,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     recipient: location.host,
     sleep: deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
     run,
-    notice,
+    toast,
     showError,
     plainMessage,
   });

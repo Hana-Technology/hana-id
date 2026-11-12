@@ -83,7 +83,7 @@ function delegateBytes(s: NearSession, over: { nonce?: bigint; maxBlockHeight?: 
 /** Sends a sign request and answers the approval popup; returns the request the popup was shown. */
 async function approved(s: NearSession, method: string, params: unknown, approve = true) {
   const reply = s.t.request(method, params);
-  await waitLauncher(s.t, 'Review in Hana');
+  await waitLauncher(s.t, 'Review in Journear Passport');
   const popup = openApproval(s.t);
   const m = await popup.next('hana:approve-request');
   answer(s.t, popup, m, approve);
@@ -332,7 +332,7 @@ describe('NEAR key export (vault side)', () => {
   it('hana_export {chain: near} hands the export window the NEAR account', async () => {
     const s = await session();
     const reply = s.t.request('hana_export', { chain: 'near' });
-    await waitLauncher(s.t, 'Export key in Hana');
+    await waitLauncher(s.t, 'Export key in Journear Passport');
     s.t.launcher.click();
     const w = s.t.opened.at(-1)!;
     s.t.dispatch({ data: { v: 1, t: 'hana:export-hello' }, origin: ENV.authOrigin, source: w });

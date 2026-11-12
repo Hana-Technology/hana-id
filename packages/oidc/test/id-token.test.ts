@@ -109,7 +109,7 @@ describe('verifyIdToken: issuer, expiry and identity tokens', () => {
   it('refuses a partner identity token (typ, or iss the identity issuer) as bad_token before anything else', async () => {
     const identityIss = 'https://api.test/v1/identity';
     const typed = await google.sign(claims(), { typ: IDENTITY_TOKEN_TYP, alg: 'ES256' });
-    expect(await verifyIdToken(typed, T0)).toMatchObject({ ok: false, code: 'bad_token' });
+    expect(await verifyIdToken(typed, T0)).toMatchObject({ ok: false, code: 'bad_token', error: 'A Journear Passport identity token is not accepted here' });
     const forged = await token({ iss: identityIss });
     expect(await verifyIdToken(forged, T0, { identityIssuer: identityIss })).toMatchObject({ ok: false, code: 'bad_token' });
     expect(await verifyIdToken(forged, T0)).toMatchObject({ ok: false, code: 'unsupported_issuer' });

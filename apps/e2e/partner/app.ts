@@ -163,8 +163,8 @@ const wagmi = createConfig({ chains: [chain], transports: { [EVM_CHAIN_ID]: http
 
 /** The connector wagmi discovered through EIP-6963. */
 function hanaConnector() {
-  const c = getConnectors(wagmi).find((x) => x.name === 'Hana ID');
-  if (!c) throw new Error('wagmi did not discover Hana ID (EIP-6963)');
+  const c = getConnectors(wagmi).find((x) => x.name === 'Journear Passport');
+  if (!c) throw new Error('wagmi did not discover Journear Passport (EIP-6963)');
   return c;
 }
 

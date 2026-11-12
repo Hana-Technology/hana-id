@@ -439,7 +439,7 @@ describe('Relayer funds', () => {
     world.api = apiAnswer({ relayerKeys: [{ pool: 'session', publicKey: PK_S }, { pool: 'owner', publicKey: PK_O }] });
     a = await read();
     invariants(a);
-    expect(tile(a, 'home-pool')).toMatchObject({ state: 'not_measured', detail: 'No Home key in this env: Hana Home derives are off' });
+    expect(tile(a, 'home-pool')).toMatchObject({ state: 'not_measured', detail: 'No Home key in this env: Passport Home derives are off' });
     expect(a.issues.filter((i) => /Home/u.test(i.title))).toEqual([]);
 
     // A Home key on chain that the API doesn't hold is still shown and judged.

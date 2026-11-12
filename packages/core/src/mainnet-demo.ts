@@ -230,7 +230,7 @@ export function formatUsd(micros: UsdMicros): string {
   return `$${(cents / 100n).toString()}.${(cents % 100n).toString().padStart(2, '0')}`;
 }
 
-export const MAINNET_DEMO_RULE = `Hana’s mainnet demo signs at most ${formatUsd(MAINNET_DEMO.txCapUsdMicros)} per transaction, on Base and Stellar only`;
+export const MAINNET_DEMO_RULE = `Journear’s mainnet demo signs at most ${formatUsd(MAINNET_DEMO.txCapUsdMicros)} per transaction, on Base and Stellar only`;
 
 class Refusal extends Error {
   constructor(
@@ -241,13 +241,13 @@ class Refusal extends Error {
   }
 }
 const unknownCall = (why: string): never => {
-  throw new Refusal('mainnet_demo_unknown_call', `Hana can’t tell how much this moves (${why}), so the mainnet demo won’t sign it`);
+  throw new Refusal('mainnet_demo_unknown_call', `Journear can’t tell how much this moves (${why}), so the mainnet demo won’t sign it`);
 };
 const wrongDestination = (why: string): never => {
   throw new Refusal('mainnet_demo_wrong_destination', `This sends funds somewhere other than your own wallet (${why}), so the mainnet demo won’t sign it`);
 };
 const unpriced = (what: string): never => {
-  throw new Refusal('mainnet_demo_unpriced', `Hana has no price for ${what}, so the mainnet demo won’t sign it`);
+  throw new Refusal('mainnet_demo_unpriced', `Journear has no price for ${what}, so the mainnet demo won’t sign it`);
 };
 
 const eq = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
@@ -534,7 +534,7 @@ function assessEvm(tx: DecodedEvmTx, chain: DemoEvmChain, value: Valuer, ctx: Br
   }
   // ERC-20 transfers and approvals of a priced token.
   const erc20 = [ERC20_TRANSFER, ERC20_TRANSFER_FROM, ERC20_APPROVE].find((f) => f.selector === selector);
-  if (!erc20) return unknownCall('a contract call Hana can’t read');
+  if (!erc20) return unknownCall('a contract call Journear can’t read');
   const asset = tokenOf(chain, to);
   const args = decodeOr(erc20, data, 'a token call that doesn’t decode');
   const amount = uintOf(args[args.length - 1]);
@@ -642,7 +642,7 @@ function assessStellar(tx: StellarTransaction, signer: string, value: Valuer, ct
         break;
       case 'invokeHostFunction': {
         const hf = op.hostFunction;
-        if (hf.type !== 'invokeContract' || hf.contract !== s.sodaxAssetManager) unknownCall('a Soroban call Hana can’t read');
+        if (hf.type !== 'invokeContract' || hf.contract !== s.sodaxAssetManager) unknownCall('a Soroban call Journear can’t read');
         out.push(assessSodaxStellar(hf as StellarContractCall, op.auth, signer, value, ctx));
         break;
       }
@@ -677,7 +677,7 @@ export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number, price
   try {
     decoded = decodeApprovalRequest(subject);
   } catch (e) {
-    return { ok: false, reason: 'mainnet_demo_unknown_call', network: null, message: `Hana can’t read this request (${e instanceof DecodeError ? e.message : 'malformed'})` };
+    return { ok: false, reason: 'mainnet_demo_unknown_call', network: null, message: `Journear can’t read this request (${e instanceof DecodeError ? e.message : 'malformed'})` };
   }
   const network = demoNetworkOf(decoded);
   if (!network) return { ok: false, reason: 'mainnet_not_allowed', network: null, message: MAINNET_DEMO_RULE };
@@ -686,7 +686,7 @@ export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number, price
     ok: false,
     reason: 'mainnet_demo_prices_stale',
     network,
-    message: `Hana’s mainnet demo prices were last reviewed on ${MAINNET_DEMO.reviewedAt} and have expired: nothing is signed until they are reviewed`,
+    message: `Journear’s mainnet demo prices were last reviewed on ${MAINNET_DEMO.reviewedAt} and have expired: nothing is signed until they are reviewed`,
   };
   // With the whole table in use nothing is asked of the request first, as before live prices.
   if (expired && MAINNET_DEMO_ASSETS.every((a) => prices.assets[a].source === 'fixed')) return stale;
@@ -702,7 +702,7 @@ export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number, price
     else movements = unknownCall('a Soroban authorization');
   } catch (e) {
     if (e instanceof Refusal) return { ok: false, reason: e.reason, network, message: e.message };
-    return { ok: false, reason: 'mainnet_demo_unknown_call', network, message: 'Hana can’t tell how much this moves, so the mainnet demo won’t sign it' };
+    return { ok: false, reason: 'mainnet_demo_unknown_call', network, message: 'Journear can’t tell how much this moves, so the mainnet demo won’t sign it' };
   }
   // A mixed book after the table's expiry: refused only if this request leans on a fixed price.
   if (expired && movements.some((m) => isDemoSymbol(m.symbol) && prices.assets[m.symbol].source === 'fixed')) return stale;
@@ -714,7 +714,7 @@ export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number, price
       reason: 'mainnet_demo_over_cap',
       network,
       usdMicros,
-      message: `Hana’s mainnet demo signs at most ${formatUsd(cap)} per transaction; this one can move about ${formatUsd(usdMicros)}`,
+      message: `Journear’s mainnet demo signs at most ${formatUsd(cap)} per transaction; this one can move about ${formatUsd(usdMicros)}`,
     };
   }
   return { ok: true, network, usdMicros, capUsdMicros: cap, movements, ...ctx.found };

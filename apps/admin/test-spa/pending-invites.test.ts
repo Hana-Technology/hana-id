@@ -75,7 +75,7 @@ describe('Pending invites on the Organisations page', () => {
       ['Heron Labsinv_heron', 'Partner', 'sam@heron.example'],
       ['Quill Walletinv_quill', 'Partner', 'ana@quill.example'],
     ]);
-    const states = [...panelOf(s)!.querySelectorAll('tbody tr')].map((tr) => tr.querySelectorAll('td')[3]!.querySelector('.badge')!.textContent);
+    const states = [...panelOf(s)!.querySelectorAll('tbody tr')].map((tr) => tr.querySelectorAll('td')[3]!.querySelector('.jp-badge')!.textContent);
     expect(states).toEqual(['Waiting for the email to go out', 'Email sent, waiting for them to accept', 'Accepted', 'Revoked', 'Expired']);
     // An ended invite says when it ended, under its state.
     const time = (ms: number) => `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
@@ -125,7 +125,7 @@ describe('Pending invites on the Organisations page', () => {
     expect(writes(s)).toEqual([]);
     revoke().click();
     ([...row().querySelector('.confirm')!.querySelectorAll('button')].find((b) => b.textContent === 'Revoke') as unknown as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(s.text()).toContain('The invite for qa@hana.example was revoked.'));
+    await vi.waitFor(() => expect(s.toasts()).toContain('The invite for qa@hana.example was revoked.'));
     expect(writes(s)).toEqual([{ method: 'POST', path: '/api/invites/inv_qa/revoke', headers: expect.objectContaining({ 'x-hana-admin': '1' }), body: {} }]);
     await vi.waitFor(() => expect(rows(s)[1]![3]).toContain('Revoked'));
     expect(s.api().filter((c) => c.path === '/api/invites/new-orgs')).toHaveLength(2);
@@ -138,8 +138,8 @@ describe('Pending invites on the Organisations page', () => {
     await vi.waitFor(() => expect(panelOf(s)).toBeTruthy());
     s.button('Revoke').click();
     ([...panelOf(s)!.querySelectorAll('.confirm button')].find((b) => b.textContent === 'Revoke') as unknown as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(panelOf(s)!.querySelector('.alert.error')).toBeTruthy());
-    expect(panelOf(s)!.querySelector('.alert.error')!.textContent).toContain('not_pending');
+    await vi.waitFor(() => expect(panelOf(s)!.querySelector('.jp-alert-danger')).toBeTruthy());
+    expect(panelOf(s)!.querySelector('.jp-alert-danger')!.textContent).toContain('not_pending');
   });
 
   it('appears right after "Invite a new partner" sends one, without a reload, with the email not gone out yet', async () => {
@@ -161,7 +161,7 @@ describe('Pending invites on the Organisations page', () => {
     s.field('email').value = 'owner@tidepool.example';
     s.submit();
     await vi.waitFor(() => expect(panelOf(s)).toBeTruthy());
-    expect(s.text()).toContain('Invite sent to owner@tidepool.example for the new organisation “Tidepool”. The email goes out within 5 minutes; follow it under Pending invites. The organisation is listed here once they accept.');
+    expect(s.toasts()).toContain('Invite sent to owner@tidepool.example for the new organisation “Tidepool”. The email goes out within 5 minutes; follow it under Pending invites. The organisation is listed here once they accept.');
     expect(rows(s)).toHaveLength(1);
     expect(rows(s)[0]![3]).toBe('Waiting for the email to go out');
     expect(s.w.location.pathname).toBe('/orgs');
@@ -170,7 +170,7 @@ describe('Pending invites on the Organisations page', () => {
   it('a failed read is said in its panel; the organisations are still listed', async () => {
     const s = boot('/orgs', pageApi(() => ({ status: 503, body: { error: { code: 'upstream_unavailable', message: 'The console did not answer' } } })));
     await vi.waitFor(() => expect(panelOf(s)).toBeTruthy());
-    expect(panelOf(s)!.querySelector('.alert.error')!.textContent).toContain('upstream_unavailable');
+    expect(panelOf(s)!.querySelector('.jp-alert-danger')!.textContent).toContain('upstream_unavailable');
     expect(s.text()).toContain('1 organisation');
     expect(s.text()).toContain('Lumen Pay');
   });

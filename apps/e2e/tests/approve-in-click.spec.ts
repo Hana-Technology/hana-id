@@ -70,7 +70,7 @@ test('a blocked approval popup (Safari after an await) falls back to the vaultâ€
     opened += 1;
   });
   await clickAction(page, 'sig', 'stellarSignMessage', 'blocked');
-  const popup = await clickLauncher(page, 'Review in Hana');
+  const popup = await clickLauncher(page, 'Review in Journear Passport');
   expect(new URL(popup.url()).search).toBe('');
   await expect(popup.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
   await approve(popup);
@@ -169,7 +169,7 @@ test('an auto-approved request opens the popup in the click and closes it withou
   // Closed by the vault, not by its own 8 s timeout, and it never showed a request or a button.
   expect(openFor).toBeLessThan(5_000);
   expect(ui.filter((t) => /Request|Approve|Reject|buttons:/u.test(t))).toEqual([]);
-  expect((await eventsSince(page, 'launcher', mark)).filter((e) => (e as { visible: boolean; label: string }).visible && (e as { label: string }).label === 'Review in Hana')).toEqual([]);
+  expect((await eventsSince(page, 'launcher', mark)).filter((e) => (e as { visible: boolean; label: string }).visible && (e as { label: string }).label === 'Review in Journear Passport')).toEqual([]);
 });
 
 test('the partner page posting fake requests to an approval window it holds gets nothing shown or approved', async ({ page }) => {

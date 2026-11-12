@@ -2,7 +2,7 @@
 // keys; the real package is a CommonJS/native module that doesn't load in workerd (and pulls in elliptic).
 // Wired up with `alias` in wrangler.jsonc (scripts/gen-wrangler.ts) and vitest.config.ts.
 const unsupported = (): never => {
-  throw new Error('secp256k1 is not available in the Hana ID API (ed25519 keys only)');
+  throw new Error('secp256k1 is not available in the Journear Passport API (ed25519 keys only)');
 };
 
 export default {

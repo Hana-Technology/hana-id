@@ -1,6 +1,6 @@
 // Checks of the brand's files for tests (Node only: node:zlib): what a WOFF2 file says about itself (its name table:
 // family, version, licence), the tokens' colours, and WCAG contrast. Used by this package's tests and by the apps that
-// ship a copy of the fonts (the admin's public/fonts) or the tokens.
+// ship a copy of the fonts (the admin's public/fonts) or the tokens (D426, D765).
 import { brotliDecompressSync } from 'node:zlib';
 
 // ---- WOFF2 (https://www.w3.org/TR/WOFF2/): the header, the table directory, one Brotli stream of every table ----
@@ -80,13 +80,17 @@ export function hexVars(css: string): Map<string, string> {
   return out;
 }
 
-/** The light and dark colours of tokens.css: the first :root block, and the one inside prefers-color-scheme: dark. */
+/**
+ * The light and dark colours of tokens.css: the first :root block, and the one inside prefers-color-scheme: dark (up to
+ * the forced-scheme blocks after it, which the brand's test compares with it).
+ */
 export function tokenSchemes(css: string): { light: Map<string, string>; dark: Map<string, string> } {
   const darkAt = css.indexOf('@media (prefers-color-scheme: dark)');
   if (darkAt < 0) throw new Error('no dark block');
   const light = hexVars(css.slice(0, darkAt));
+  const forcedAt = css.indexOf(':root[data-theme="dark"]', darkAt);
   // Dark inherits what it doesn't redefine.
-  const dark = new Map([...light, ...hexVars(css.slice(darkAt))]);
+  const dark = new Map([...light, ...hexVars(css.slice(darkAt, forcedAt < 0 ? undefined : forcedAt))]);
   return { light, dark };
 }
 

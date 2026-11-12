@@ -168,7 +168,8 @@ describe('the list', () => {
     h.click('home-app-devices-show');
     await h.idle();
     expect(h.calls[0]!.url.search).toBe('?scopeId=s7');
-    expect(text('home-app-devices-empty')).toBe('No device is signed in to this app with Hana right now.');
+    expect(text('home-app-devices-empty')).toContain('No device is signed in to this app with Journear right now.');
+    expect(document.getElementById('home-app-devices-empty')?.classList.contains('jp-empty')).toBe(true);
     expect(text('home-email-none')).toBe('You aren’t sharing your email address with this app.');
     // Another app's page starts closed again, and asks nothing on its own.
     h.mountApp('s8');
@@ -182,8 +183,8 @@ describe('the list', () => {
     h.answer = () => json(200, { scopes: [scopeOf('s1'), scopeOf('s2')], nextCursor: null });
     h.click('home-devices-show');
     await h.idle();
-    expect(text('home-devices-empty')).toContain('No device is signed in to your apps with Hana right now');
-    expect(pageText()).toContain('Only apps Hana has on record for you are listed here.');
+    expect(text('home-devices-empty')).toContain('No device is signed in to your apps with Journear right now');
+    expect(pageText()).toContain('Only apps Journear has on record for you are listed here.');
   });
 
   it('pages with Show more; the next page is added, never repeated', async () => {
@@ -208,7 +209,7 @@ describe('the list', () => {
     h.answer = () => json(200, { scopes: [scopeOf('s1', { devices: [device(1)], more: true })], nextCursor: null });
     h.click('home-devices-show');
     await h.idle();
-    expect(pageText()).toContain('Hana Home shows the 25 most recent here; others are signed in too.');
+    expect(pageText()).toContain('Passport Home shows the 25 most recent here; others are signed in too.');
   });
 
   it('a consent of an app that keeps no sign-in reads as an open tab', async () => {
@@ -269,6 +270,42 @@ describe('the stops', () => {
     expect(text('home-devices-note-front-s1')).toBe(stopDoneText(kind, true));
   });
 
+  it('D765: each thing is a setting row with its control on the right; the danger button appears only inside the confirmation', async () => {
+    const h = await listed();
+    const item = document.querySelector('#home-devices .home-device') as HTMLElement;
+    expect(item.classList.contains('jp-card')).toBe(true);
+    // The device row, then its auto-approve row; each has its one control at the right.
+    const rows = [...item.querySelectorAll(':scope > .jp-setting')];
+    expect(rows.map((r) => r.querySelector('.home-setting-control button')?.textContent)).toEqual(['Sign out this device', 'Stop auto-approving']);
+    expect(document.querySelector('#home-devices .home-email > .jp-setting .home-setting-control button')?.textContent).toBe('Stop sharing email');
+    // No danger button until a stop is asked for; the asking buttons are secondary.
+    expect(document.querySelectorAll('#home-devices .jp-btn-danger')).toHaveLength(0);
+    for (const b of item.querySelectorAll('.home-setting-control button')) expect(b.classList.contains('jp-btn-secondary')).toBe(true);
+    const button = `home-stop-share-front-${ID(1)}`;
+    h.click(button);
+    // The confirmation sits under the row, in place of the row's button; its stop is the only danger button.
+    expect(document.getElementById(button)).toBeNull();
+    const danger = [...document.querySelectorAll('#home-devices .jp-btn-danger')];
+    expect(danger.map((b) => b.id)).toEqual([`${button}-confirm-go`]);
+    expect(document.getElementById(`${button}-confirm`)?.previousElementSibling?.classList.contains('jp-setting')).toBe(true);
+    h.click(`${button}-confirm-cancel`);
+    expect(document.querySelectorAll('#home-devices .jp-btn-danger')).toHaveLength(0);
+    expect(document.getElementById(button)).not.toBeNull();
+  });
+
+  it('D765: a stop’s outcome stays inline as a success alert beside the app it changed (not a toast)', async () => {
+    const h = await listed();
+    const button = `home-stop-consent-front-${ID(9)}`;
+    h.click(button);
+    h.answer = () => json(200, { revoked: true });
+    h.click(`${button}-confirm-go`);
+    await h.idle();
+    const note = document.getElementById('home-devices-note-front-s1')!;
+    expect(note.classList.contains('jp-alert-success')).toBe(true);
+    expect(note.getAttribute('role')).toBe('status');
+    expect(note.textContent).toBe(stopDoneText('consent', true));
+  });
+
   it('after Sign out the device is gone; after Stop auto-approving it stays, with auto-approve off; after Stop sharing the line is gone', async () => {
     const h = await listed();
     h.answer = () => json(200, { revoked: true });
@@ -300,13 +337,13 @@ describe('the stops', () => {
   });
 
   it.each([
-    [404, 'unknown_share', 'Hana Home couldn’t find that device among yours'],
-    [404, 'unknown_consent', 'Hana Home couldn’t find that auto-approve among yours'],
-    [404, 'unknown_email_share', 'Hana Home found nothing you share with that app.'],
-    [503, 'email_sharing_unavailable', 'Hana Home can’t change email sharing right now.'],
+    [404, 'unknown_share', 'Passport Home couldn’t find that device among yours'],
+    [404, 'unknown_consent', 'Passport Home couldn’t find that auto-approve among yours'],
+    [404, 'unknown_email_share', 'Passport Home found nothing you share with that app.'],
+    [503, 'email_sharing_unavailable', 'Passport Home can’t change email sharing right now.'],
     [429, 'rate_limited', 'Too many requests. Wait a minute and try again.'],
-    [503, 'home_directory_unavailable', 'Hana Home is not reachable right now.'],
-    [400, 'bad_request', 'Hana Home couldn’t read that request.'],
+    [503, 'home_directory_unavailable', 'Passport Home is not reachable right now.'],
+    [400, 'bad_request', 'Passport Home couldn’t read that request.'],
   ])('a %i %s reads as Hana’s sentence, never the API’s words, and nothing is retried', async (status, code, sentence) => {
     const h = await listed();
     h.answer = () => refusal(status, code);
@@ -331,7 +368,7 @@ describe('the stops', () => {
     h.click(`home-stop-share-front-${ID(1)}-confirm-go`);
     await h.idle();
     expect(h.signedOut).toBe(1);
-    expect(text('home-devices-problem-front')).toContain('Your sign-in to Hana Home has ended.');
+    expect(text('home-devices-problem-front')).toContain('Your sign-in to Passport Home has ended.');
     expect(document.querySelectorAll('#home-devices .home-device')).toHaveLength(1);
     const sent = h.calls.length;
     h.click(`home-stop-share-front-${ID(1)}`);
@@ -376,7 +413,7 @@ describe('an account Hana couldn’t confirm (D661)', () => {
       await h.idle();
       expect(document.querySelectorAll('#home-devices .home-device')).toHaveLength(1);
       expect(document.querySelector('#home-devices button[id^="home-stop-"]')).toBeNull();
-      expect(text('home-devices-unconfirmed-front-s1')).toContain('couldn’t check on NEAR that this sign-in is still part of this account');
+      expect(text('home-devices-unconfirmed-front-s1')).toContain('couldn’t confirm that this sign-in is still part of your account');
     }
   });
 });
@@ -455,7 +492,7 @@ describe('the sign-in’s end and the link', () => {
     h.click('home-devices-show');
     await h.idle();
     expect(h.calls).toEqual([]);
-    expect(text('home-devices-problem-front')).toContain('Your sign-in to Hana Home has ended.');
+    expect(text('home-devices-problem-front')).toContain('Your sign-in to Passport Home has ended.');
   });
 
   it('`?view=devices` loads the list once after sign-in; any other query doesn’t', async () => {
@@ -478,7 +515,7 @@ describe('what "Sign out this device" says about a tab already open there', () =
   it('up to about a minute in every app (the vault checks its share before each signature), 3 minutes only when the device can’t reach Hana', () => {
     const c = HOME_STOP_CONFIRM.share;
     expect(c.points).toContain('A tab already open there can keep signing for up to about a minute.');
-    expect(c.more?.join(' ')).toContain('for up to about a minute, or for up to about 3 minutes while that device can’t reach Hana');
+    expect(c.more?.join(' ')).toContain('for up to about a minute, or for up to about 3 minutes while that device can’t reach Journear');
     expect(stopDoneText('share', true)).toContain('a tab already open there can’t sign after about a minute');
     expect(c.more?.join(' ')).toContain('may still look signed in for a few minutes, but it can’t sign anything');
     // No app is left with the old 10-minute bound.

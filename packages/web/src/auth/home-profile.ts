@@ -1,4 +1,4 @@
-// Hana Home's "Your name" (home-page.ts mounts it on the front page and on each app's page, D714): the first and last
+// Passport Home's "Your name" (was Hana Home's) (home-page.ts mounts it on the front page and on each app's page, D714): the first and last
 // name the user may set for their apps, both optional, and per app whether that app gets it. Nothing is shared until
 // the user turns it on for an app, on that app's page.
 //
@@ -21,19 +21,23 @@ import type { Child, Dom } from './dom.ts';
 import { type HomeIdentity, type HomeNameShare, type HomeProfileApi, type HomeProfileName, type HomeScope, HOME_MAX_APPS, HOME_NAME_SHARES_MAX } from './home-api.ts';
 import { type HomeProblem, homeProblem, plainProblem } from './home-problems.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
+import { BTN, alert, icon } from './ui.ts';
 
 export const HOME_NAME_TITLE = 'Your name';
 
-/** Everything the section says in Hana's own words (an app's name, where one goes, is passed in and set as text). */
+/** Everything the section says in Journear's own words (an app's name, where one goes, is passed in and set as text). */
 export const HOME_NAME_TEXT = Object.freeze({
   frontAbout: 'Add a first and last name for your apps if you like: no app gets it until you turn on sharing for that app.',
   frontShow: 'Show my name',
-  appAbout: 'Choose whether this app gets the name you set in Hana Home: it doesn’t unless you share it.',
+  appAbout: 'Choose whether this app gets the name you set in Passport Home: it doesn’t unless you share it.',
   appShow: 'Show name sharing',
   loading: 'Loading your name…',
   given: 'First name',
   family: 'Last name',
-  help: `Both are optional, up to ${PROFILE_NAME_MAX} characters each. Nothing is shared until you turn it on for an app, on that app’s page.`,
+  help: 'Nothing is shared until you turn it on for an app, on that app’s page.',
+  /** Each field's own hint, under it (an error takes its place). */
+  hint: `Up to ${PROFILE_NAME_MAX} characters.`,
+  optional: 'optional',
   invalid: `Use up to ${PROFILE_NAME_MAX} characters on one line, with no hidden or control characters.`,
   empty: 'Type a first name, a last name or both, then save.',
   unchanged: 'Nothing to save: that is already your name.',
@@ -45,28 +49,28 @@ export const HOME_NAME_TEXT = Object.freeze({
   removed: 'Your name is removed. No app gets it any more.',
   sharesTitle: 'Apps you share your name with',
   noShares: 'You aren’t sharing your name with any app.',
-  more: `Hana Home lists the ${HOME_NAME_SHARES_MAX} apps you shared it with most recently; there are others. To stop sharing with one of those, open its page.`,
+  more: `Passport Home lists the ${HOME_NAME_SHARES_MAX} apps you shared it with most recently; there are others. To stop sharing with one of those, open its page.`,
   howToShare: 'To share your name with an app, open the app’s page from “Your apps” and choose “Share my name”.',
   stop: 'Stop sharing',
   stopApp: 'Stop sharing my name',
   stopping: 'Stopping…',
   sharing: 'Sharing…',
   again: 'Show again',
-  current: 'Your name in Hana Home: ',
-  noName: 'You haven’t set a name in Hana Home. To share one, go back to all apps, open “Your name” and save it first.',
+  current: 'Your name in Passport Home: ',
+  noName: 'You haven’t set a name in Passport Home. To share one, go back to all apps, open “Your name” and save it first.',
   shared: 'Shared',
   notShared: 'Not shared',
-  cantShare: 'Hana Home can’t share your name with this app.',
-  deleted: 'This app has been deleted, so Hana shares no name with it.',
+  cantShare: 'Passport Home can’t share your name with this app.',
+  deleted: 'This app has been deleted, so Journear shares no name with it.',
 });
 
 /** What "Remove my name" (and saving both parts empty) says before it is sent. */
 export const HOME_NAME_REMOVE_CONFIRM = Object.freeze({
   title: 'Remove your name?',
   points: Object.freeze([
-    'Hana Home deletes your first and last name, and stops sharing your name with every app.',
+    'Passport Home deletes your first and last name, and stops sharing your name with every app.',
     'The apps’ new sign-ins don’t include it. Sign-in tokens they already received keep it for up to an hour.',
-    'A copy an app already stored is the app’s own: Hana can’t delete it. Ask the app if you want it deleted.',
+    'A copy an app already stored is the app’s own: Journear can’t delete it. Ask the app if you want it deleted.',
   ]),
   go: 'Remove my name',
   going: 'Removing…',
@@ -190,8 +194,10 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
   const frontRoot = d.h('section', { class: 'home-profile', attrs: { id: 'home-profile', 'aria-labelledby': 'home-profile-title' } });
   const appRoot = d.h('section', { class: 'home-profile home-profile-app', attrs: { id: 'home-app-profile', 'aria-labelledby': 'home-app-profile-title' } });
 
-  const button = (label: string, id: string, onClick: () => void, o: { cls?: string; disabled?: boolean; describedBy?: string; type?: 'button' | 'submit' } = {}): HTMLButtonElement => {
-    const b = d.h('button', { ...(o.cls ? { class: o.cls } : {}), attrs: { type: o.type ?? 'button', id, ...(o.describedBy ? { 'aria-describedby': o.describedBy } : {}) } }, label);
+  /** A button: secondary unless `kind` says otherwise (one primary per view; danger only inside the confirmation). */
+  const button = (label: string, id: string, onClick: () => void, o: { cls?: string; disabled?: boolean; describedBy?: string; type?: 'button' | 'submit'; kind?: keyof typeof BTN; sm?: boolean } = {}): HTMLButtonElement => {
+    const cls = [o.cls, BTN[o.kind ?? 'secondary'], o.sm ? 'jp-btn-sm' : null].filter(Boolean).join(' ');
+    const b = d.h('button', { class: cls, attrs: { type: o.type ?? 'button', id, ...(o.describedBy ? { 'aria-describedby': o.describedBy } : {}) } }, label);
     if (o.disabled) b.setAttribute('disabled', '');
     // A submit button acts through its form's submit, which checks the gesture itself.
     if (o.type !== 'submit')
@@ -200,10 +206,23 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
       });
     return b;
   };
-  const badge = (text: string, tone: 'ok' | 'plain'): HTMLElement => d.h('span', { class: `badge badge-${tone}` }, text);
+  const badge = (text: string, tone: 'ok' | 'plain'): HTMLElement => d.h('span', { class: `badge badge-${tone} ${tone === 'ok' ? 'jp-badge jp-badge-success' : 'jp-badge'}` }, text);
+  /** A setting row (the system's `.jp-setting`, as in home-devices.ts): the app and a line about it, its one control on the right. */
+  const settingRow = (cls: string, attrs: Record<string, string>, text: Child[], control: Child, after: Child[] = []): HTMLElement =>
+    d.h(
+      'li',
+      { class: `${cls} home-setting-item`, attrs },
+      d.h('div', { class: 'jp-setting home-setting' }, d.h('span', { class: 'home-setting-text' }, ...text), control ? d.h('span', { class: 'home-setting-control' }, control) : null),
+      ...after,
+    );
   const nameText = (n: HomeProfileName): HTMLElement => d.h('strong', { class: 'home-name-value' }, fullName(n));
+  /** An outcome, inline beside what it changed (it says when the change reaches the apps): the system's success alert. */
   const noteView = (n: Note | null | undefined, id: string): HTMLElement =>
-    d.h('p', { class: 'home-devices-note', attrs: { role: 'status', id, tabindex: '-1' } }, ...(n ? ('text' in n ? [n.text] : [n.before, d.h('strong', {}, n.app), n.after]) : []));
+    d.h(
+      'p',
+      { class: n ? 'home-devices-note jp-alert jp-alert-success' : 'home-devices-note', attrs: { role: 'status', id, tabindex: '-1' } },
+      ...(n ? [icon(d, 'check-c'), d.h('span', { class: 'body' }, ...('text' in n ? [n.text] : [n.before, d.h('strong', {}, n.app), n.after]))] : []),
+    );
   const focus = (id: string): void => {
     try {
       deps.win.document.getElementById(id)?.focus();
@@ -214,7 +233,7 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
 
   // ---- requests: one at a time, never repeated by the page ----
 
-  /** Runs one call with Hana Home's sign-in; null when not sent or failed (the problem is then on `where`'s view). */
+  /** Runs one call with Passport Home's sign-in; null when not sent or failed (the problem is then on `where`'s view). */
   async function send<T>(where: Where, run: (id: HomeIdentity) => Promise<T>): Promise<T | null> {
     const view = where === 'front' ? front : app;
     const id = deps.session();
@@ -449,18 +468,24 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
   // ---- what it shows ----
 
   const problemView = (where: Where, p: HomeProblem): HTMLElement =>
-    d.h(
-      'div',
-      { class: 'home-problem', attrs: { role: 'alert', id: `home-profile-problem-${where}`, tabindex: '-1' } },
+    alert(
+      d,
+      'danger',
+      { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id: `home-profile-problem-${where}`, tabindex: '-1' } },
       d.h('p', {}, p.text),
       d.h('p', { class: 'code muted' }, `Code: ${p.code}`),
       p.requestId ? d.h('p', { class: 'code muted' }, `Request: ${p.requestId}`) : null,
     );
 
+  /**
+   * One part of the name on the system's field (D765): the label above, marked optional (both parts are), the field, and
+   * a hint under it that an error replaces on the same line. The part is checked with the API's rule when the field
+   * loses focus, never while the user types (typing again clears the mark); Save checks both again.
+   */
   function field(part: 'given' | 'family'): HTMLElement {
     const id = `home-name-${part}`;
-    const invalid = front.bad.includes(part);
     const input = d.h('input', {
+      class: 'jp-input',
       attrs: {
         id,
         type: 'text',
@@ -468,22 +493,39 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
         autocomplete: part === 'given' ? 'given-name' : 'family-name',
         maxlength: String(PROFILE_NAME_MAX),
         spellcheck: 'false',
-        'aria-describedby': invalid ? `${id}-error home-name-help` : 'home-name-help',
-        ...(invalid ? { 'aria-invalid': 'true' } : {}),
       },
     });
     input.value = part === 'given' ? front.given : front.family;
+    const wrap = d.h(
+      'div',
+      { class: 'jp-field home-name-field' },
+      d.h('label', { class: 'jp-label', attrs: { for: id } }, part === 'given' ? HOME_NAME_TEXT.given : HOME_NAME_TEXT.family, d.h('span', { class: 'opt' }, HOME_NAME_TEXT.optional)),
+      input,
+      d.h('p', { class: 'jp-hint', attrs: { id: `${id}-hint` } }, HOME_NAME_TEXT.hint),
+    );
+    /** Marks the part (in place: the section isn't drawn again, so a click on its way to a button still lands). */
+    const mark = (invalid: boolean): void => {
+      front.bad = invalid ? [...new Set([...front.bad, part])] : front.bad.filter((b) => b !== part);
+      wrap.classList.toggle('is-invalid', invalid);
+      wrap.querySelector(`#${id}-error`)?.remove();
+      if (invalid) {
+        input.setAttribute('aria-invalid', 'true');
+        input.setAttribute('aria-describedby', `${id}-error home-name-help`);
+        wrap.append(d.h('p', { class: 'jp-error field-error', attrs: { id: `${id}-error` } }, icon(d, 'warn'), HOME_NAME_TEXT.invalid));
+      } else {
+        input.removeAttribute('aria-invalid');
+        input.setAttribute('aria-describedby', `${id}-hint home-name-help`);
+      }
+    };
+    mark(front.bad.includes(part));
     // Typing is kept as it goes (memory only), so drawing the section again never loses it.
     input.addEventListener('input', () => {
       if (part === 'given') front.given = input.value;
       else front.family = input.value;
+      if (wrap.classList.contains('is-invalid')) mark(false);
     });
-    return d.h(
-      'div',
-      { class: 'home-name-field' },
-      d.h('label', { attrs: { for: id } }, part === 'given' ? HOME_NAME_TEXT.given : HOME_NAME_TEXT.family, input),
-      invalid ? d.h('p', { class: 'field-error', attrs: { id: `${id}-error` } }, HOME_NAME_TEXT.invalid) : null,
-    );
+    input.addEventListener('blur', () => mark(normalizeProfileName(input.value) === undefined));
+    return wrap;
   }
 
   function removeControl(): HTMLElement | null {
@@ -493,13 +535,14 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
       return d.h(
         'div',
         { class: 'home-confirm', attrs: { role: 'group', 'aria-labelledby': `${id}-title`, id } },
+        icon(d, 'warn', 'home-confirm-ic'),
         d.h('p', { class: 'home-confirm-title', attrs: { id: `${id}-title`, tabindex: '-1' } }, HOME_NAME_REMOVE_CONFIRM.title),
         d.h('ul', {}, ...HOME_NAME_REMOVE_CONFIRM.points.map((p) => d.h('li', {}, p))),
         d.h(
           'div',
           { class: 'actions start' },
-          button(going ? HOME_NAME_REMOVE_CONFIRM.going : HOME_NAME_REMOVE_CONFIRM.go, `${id}-go`, () => deps.track(remove()), { cls: 'stop', disabled: busy !== null }),
-          button('Cancel', `${id}-cancel`, cancelRemove, { disabled: busy !== null }),
+          button(going ? HOME_NAME_REMOVE_CONFIRM.going : HOME_NAME_REMOVE_CONFIRM.go, `${id}-go`, () => deps.track(remove()), { cls: 'stop', kind: 'danger', sm: true, disabled: busy !== null }),
+          button('Cancel', `${id}-cancel`, cancelRemove, { sm: true, disabled: busy !== null }),
         ),
       );
     }
@@ -521,12 +564,13 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
       { class: 'home-name-form', attrs: { id: 'home-name-form', novalidate: '', 'aria-labelledby': 'home-profile-title' } },
       d.h('div', { class: 'home-name-fields' }, field('given'), field('family')),
       d.h('p', { class: 'muted', attrs: { id: 'home-name-help' } }, HOME_NAME_TEXT.help),
-      front.formNote ? d.h('p', { class: 'note', attrs: { role: 'status', id: 'home-name-form-note' } }, front.formNote) : null,
+      front.formNote ? alert(d, 'info', { class: 'note', attrs: { role: 'status', id: 'home-name-form-note' } }, front.formNote) : null,
       d.h(
         'div',
         { class: 'actions start' },
-        button(busy === 'save' ? HOME_NAME_TEXT.saving : HOME_NAME_TEXT.save, 'home-name-save', () => {}, { cls: 'primary', type: 'submit', disabled: busy !== null || confirmRemove }),
-        name !== null && !confirmRemove ? button(HOME_NAME_TEXT.remove, 'home-name-remove', askRemove, { cls: 'stop', disabled: busy !== null }) : null,
+        button(busy === 'save' ? HOME_NAME_TEXT.saving : HOME_NAME_TEXT.save, 'home-name-save', () => {}, { cls: 'primary', kind: 'primary', type: 'submit', disabled: busy !== null || confirmRemove }),
+        // Not the danger button itself: that one is in the confirmation it opens.
+        name !== null && !confirmRemove ? button(HOME_NAME_TEXT.remove, 'home-name-remove', askRemove, { disabled: busy !== null }) : null,
       ),
       removeControl(),
     );
@@ -538,23 +582,20 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
     });
     out.push(form, noteView(front.note, 'home-profile-note'));
     out.push(d.h('h3', { attrs: { id: 'home-name-shares-title' } }, HOME_NAME_TEXT.sharesTitle));
-    if (front.shares.length === 0) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-name-shares-none' } }, HOME_NAME_TEXT.noShares));
+    if (front.shares.length === 0)
+      out.push(d.h('div', { class: 'jp-empty home-empty', attrs: { id: 'home-name-shares-none' } }, icon(d, 'shield'), d.h('span', {}, HOME_NAME_TEXT.noShares)));
     else
       out.push(
         d.h(
           'ul',
-          { class: 'home-name-shares', attrs: { 'aria-labelledby': 'home-name-shares-title' } },
+          { class: 'home-name-shares jp-card', attrs: { 'aria-labelledby': 'home-name-shares-title' } },
           ...front.shares.map((s) => {
             const lineId = `home-name-share-${s.appId}`;
-            return d.h(
-              'li',
-              { class: 'home-name-share', attrs: { 'data-app': s.appId } },
-              d.h('p', { attrs: { id: lineId } }, d.h('strong', {}, s.name), d.h('span', { class: 'muted' }, ` · since ${when(s.sharedAtMs)}`)),
-              d.h(
-                'div',
-                { class: 'actions start' },
-                button(busy === `stop:${s.appId}` ? HOME_NAME_TEXT.stopping : HOME_NAME_TEXT.stop, `home-name-stop-${s.appId}`, () => deps.track(toggle('front', s.appId, s.name, false, null)), { describedBy: lineId, disabled: busy !== null }),
-              ),
+            return settingRow(
+              'home-name-share',
+              { 'data-app': s.appId },
+              [d.h('span', { class: 'home-setting-title', attrs: { id: lineId } }, d.h('strong', {}, s.name)), d.h('small', {}, `Shared since ${when(s.sharedAtMs)}`)],
+              button(busy === `stop:${s.appId}` ? HOME_NAME_TEXT.stopping : HOME_NAME_TEXT.stop, `home-name-stop-${s.appId}`, () => deps.track(toggle('front', s.appId, s.name, false, null)), { describedBy: lineId, sm: true, disabled: busy !== null }),
             );
           }),
         ),
@@ -569,22 +610,24 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
     const lineId = `home-app-name-line-${a.appId}`;
     const going = busy === `share:${a.appId}` || busy === `stop:${a.appId}`;
     let control: Child = null;
-    if (a.deleted) control = d.h('p', { class: 'muted' }, HOME_NAME_TEXT.deleted);
-    else if (a.shared === null) control = d.h('p', { class: 'muted' }, HOME_NAME_TEXT.cantShare);
+    const why = a.deleted ? HOME_NAME_TEXT.deleted : a.shared === null ? HOME_NAME_TEXT.cantShare : null;
+    if (a.deleted || a.shared === null) control = null;
     else if (a.shared)
-      control = d.h('div', { class: 'actions start' }, button(going ? HOME_NAME_TEXT.stopping : HOME_NAME_TEXT.stopApp, `home-app-name-stop-${a.appId}`, () => deps.track(toggle('app', a.appId, a.name, false, appScope?.scopeId ?? null)), { describedBy: lineId, disabled: busy !== null }));
+      control = button(going ? HOME_NAME_TEXT.stopping : HOME_NAME_TEXT.stopApp, `home-app-name-stop-${a.appId}`, () => deps.track(toggle('app', a.appId, a.name, false, appScope?.scopeId ?? null)), { describedBy: lineId, sm: true, disabled: busy !== null });
     else if (name !== null)
-      control = d.h(
-        'div',
-        { class: 'actions start' },
-        button(going ? HOME_NAME_TEXT.sharing : shareLabel(a.name), `home-app-name-share-${a.appId}`, () => deps.track(toggle('app', a.appId, a.name, true, appScope?.scopeId ?? null)), { cls: 'primary', describedBy: lineId, disabled: busy !== null }),
-      );
-    return d.h(
-      'div',
-      { class: 'home-name-app', attrs: { 'data-app': a.appId } },
-      d.h('p', { attrs: { id: lineId } }, d.h('strong', {}, a.name), ': ', a.shared === null ? null : badge(a.shared ? HOME_NAME_TEXT.shared : HOME_NAME_TEXT.notShared, a.shared ? 'ok' : 'plain')),
+      control = button(going ? HOME_NAME_TEXT.sharing : shareLabel(a.name), `home-app-name-share-${a.appId}`, () => deps.track(toggle('app', a.appId, a.name, true, appScope?.scopeId ?? null)), {
+        // Secondary: an app's page can list several apps, and a view has one primary at most.
+        cls: 'share',
+        sm: true,
+        describedBy: lineId,
+        disabled: busy !== null,
+      });
+    return settingRow(
+      'home-name-app',
+      { 'data-app': a.appId },
+      [d.h('span', { class: 'home-setting-title', attrs: { id: lineId } }, d.h('strong', {}, a.name), a.shared === null ? null : ' ', a.shared === null ? null : badge(a.shared ? HOME_NAME_TEXT.shared : HOME_NAME_TEXT.notShared, a.shared ? 'ok' : 'plain')), why ? d.h('small', {}, why) : null],
       control,
-      noteView(app.notes.get(a.appId), `home-app-profile-note-${a.appId}`),
+      [noteView(app.notes.get(a.appId), `home-app-profile-note-${a.appId}`)],
     );
   }
 
@@ -601,7 +644,7 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
     // The name, once a read has said what it is (a listing of deleted apps alone reads nothing).
     if (name !== null) out.push(d.h('p', { attrs: { id: 'home-app-name-current' } }, HOME_NAME_TEXT.current, nameText(name)));
     else if (known) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-app-name-none' } }, HOME_NAME_TEXT.noName));
-    out.push(...app.apps.map(appEntry));
+    if (app.apps.length > 0) out.push(d.h('ul', { class: 'home-name-apps jp-card' }, ...app.apps.map(appEntry)));
     out.push(d.h('div', { class: 'actions start' }, button(busy === 'load-app' ? 'Loading…' : HOME_NAME_TEXT.again, 'home-app-profile-refresh', () => deps.track(loadApp()), { disabled: busy !== null })));
     return out;
   }

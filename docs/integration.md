@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-13 (SDK licences, "After 0.4.1"; the stamps contract on the relay allowlist), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-13 (judging-week relay limits; SDK licences, "After 0.4.1"; the stamps contract relayed), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -1004,10 +1004,10 @@ limit):
 |---|---|---|
 | Per NEAR account | 10 a minute, 50 a day | 5 requests a minute |
 | Per user (all their NEAR accounts) | 200 a day | 2 a day |
-| Per app | 120 a minute, 2,000 a day | 60 requests a minute, 200 a day |
+| Per app | 120 a minute, 2,000 a day | 60 requests a minute, 300 a day |
 | Per IP address, across every app | 30 a minute | 10 a minute |
 | Across the environment | 200 a minute, 10,000 a day | 300 requests a minute, 1,000 a day |
-| NEAR spent per day | 1 NEAR per app (`rate_limited`, `data.reason: 'app_budget_exhausted'`), 5 NEAR across the environment (`api_unavailable`, `relay_budget_exhausted`) | (the same budgets) |
+| NEAR spent per day | 3 NEAR per app (`rate_limited`, `data.reason: 'app_budget_exhausted'`), 6 NEAR across the environment (`api_unavailable`, `relay_budget_exhausted`) | (the same budgets) |
 
 Days are UTC days. A relay of one small call costs the relay about 0.0002 NEAR; an activation about 0.0071 NEAR. Every
 activation request is counted per minute, including one for an account that already exists; only a created account

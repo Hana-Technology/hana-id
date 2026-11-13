@@ -81,7 +81,7 @@ const nearRelayBudgetHigh: Playbook = {
   kind: 'incident',
   severity: 'warning',
   status: 'live',
-  summary: "A `near_relay_budget_high` security event: a day's NEAR relay spend (gas and activations paid for Journear's NEAR wallets) reached 80% of `near.relay.dailyBudgetNear` (sandbox-dev 5 NEAR).",
+  summary: "A `near_relay_budget_high` security event: a day's NEAR relay spend (gas and activations paid for Journear's NEAR wallets) reached 80% of `near.relay.dailyBudgetNear` (sandbox-dev 6 NEAR).",
   signals: ["A `near_relay_budget_high` row in the admin's Security & monitoring, emailed by the feed (one a day; amounts only)."],
   impact: ["At the budget every relay and activation answers `503 relay_budget_exhausted` until 00:00 UTC; an app at its own day budget (`appDailyBudgetNear`) answers `429 app_budget_exhausted`. Logins, owner actions and Passport Home are on other accounts and unaffected."],
   steps: [
@@ -100,7 +100,7 @@ const nearRelayBalanceLow: Playbook = {
   kind: 'incident',
   severity: 'warning',
   status: 'live',
-  summary: "A `near_relay_balance_low` security event: the hourly check found `near.relay.account` below `near.relay.lowBalanceNear` (default 2 NEAR), or missing.",
+  summary: "A `near_relay_balance_low` security event: the hourly check found `near.relay.account` below `near.relay.lowBalanceNear` (default 2 NEAR; sandbox-dev 9), or missing.",
   signals: ["A `near_relay_balance_low` row in the admin's Security & monitoring, emailed by the feed (one a day; the account and its balance).", "`502 near_rejected` from `/v1/near/relay` with `near_relay_balance_short` in the API log (the relays in flight outgrew the balance)."],
   impact: ['Relays and activations fail (`502 near_rejected`) once the account can no longer cover the relays in flight; their budget reservation is kept. Nothing else uses this account.'],
   steps: [

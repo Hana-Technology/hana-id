@@ -125,6 +125,36 @@ describe('manifestSchema: emailIssuer', () => {
     expect(problems.join()).toContain('testnet only');
   });
 
+  it('appShares (D793): optional; app ids to whole mails, each at most the budget, at most 8 apps; testnet only', () => {
+    expect(issues(block({ appShares: undefined }))).toEqual([]);
+    expect(issues(block({ appShares: { app_abc123: 250, 'app_x-y_z': 1000 } }))).toEqual([]);
+    expect(issues(block({ appShares: { app_abc: 1001 } })).join()).toContain('at most emailIssuer.dailySendBudget');
+    for (const bad of [{ abc: 10 }, { 'app_': 10 }, { 'app_a b': 10 }, { app_a: 0 }, { app_a: 1.5 }, { app_a: '10' }]) {
+      expect(issues(block({ appShares: bad })).length, JSON.stringify(bad)).toBeGreaterThan(0);
+    }
+    const nine = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`app_${i}`, 10]));
+    expect(issues(block({ appShares: nine })).join()).toContain('at most 8 apps');
+    const problems: string[] = [];
+    const ctx = { addIssue: (i: { message?: string }) => problems.push(i.message ?? '') } as unknown as z.RefinementCtx;
+    const m = { ...raw(), network: 'mainnet' } as unknown as Parameters<typeof emailIssuerRules>[0];
+    emailIssuerRules(m, emailIssuer({ appShares: { app_a: 10 }, tighterLimits: { ipStart: { perDay: 5 } } }) as never, ctx);
+    expect(problems).toContain('emailIssuer.appShares is testnet only (D793)');
+    expect(problems).toContain('emailIssuer.tighterLimits is testnet only (D793)');
+  });
+
+  it('tighterLimits (D793): optional; only its windows, whole numbers 1 to 10,000', () => {
+    expect(issues(block({ tighterLimits: { ipStart: { per10m: 10, perDay: 30 }, ipResend: { per10m: 10 }, mailboxIpCodes: { per15m: 5, perDay: 15 }, aggStart: { perDay: 100 } } }))).toEqual([]);
+    expect(issues(block({ tighterLimits: {} }))).toEqual([]);
+    for (const bad of [{ ipVerify: { per10m: 5 } }, { ipStart: { per1h: 5 } }, { ipStart: { perDay: 0 } }, { ipResend: { per10m: 10_001 } }, { mailboxIpCodes: { perDay: 2.5 } }, { aggStart: { perDay: 0 } }, { aggStart: { per10m: 5 } }]) {
+      expect(issues(block({ tighterLimits: bad })).length, JSON.stringify(bad)).toBeGreaterThan(0);
+    }
+  });
+
+  it("sandbox-dev's judging-week block parses (D793)", () => {
+    const parsed = manifestSchema.parse(raw());
+    expect(parsed.emailIssuer?.tighterLimits).toEqual({ ipStart: { per10m: 10, perDay: 30 }, ipResend: { per10m: 10 }, mailboxIpCodes: { per15m: 5, perDay: 15 }, aggStart: { perDay: 100 } });
+  });
+
   it('needs rpcFallback outside local* envs: linking makes members, whose paths are confirmed on two providers (D263)', () => {
     const m = block();
     expect(issues(m)).toEqual([]);

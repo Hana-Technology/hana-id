@@ -335,12 +335,12 @@ Rust through `rustup` (`contracts/hana-signer/rust-toolchain.toml` pins 1.85.1 w
 
 - The window (rule Q-001): code from the announcement on 2026-10-19 to 2026-11-14 counts; earlier commits are baseline.
 - This repository's first commit, `e0c831fc`, is dated 2026-10-26 13:43 +08:00. No commit on any branch has an
-  earlier date. On 2026-11-13, `develop` (83ac508c) has 1,215 commits and the 240 branches on GitHub together 1,221,
+  earlier date. On 2026-11-13, `develop` (2cd30973) has 1,217 commits and the 241 branches on GitHub together 1,223,
   every one dated 2026-10-26 to 2026-11-13. Check: `git log --reverse --format='%h %ad %s' --date=iso | head -3`,
   `git rev-list --count develop`, `git log --format=%ad --date=short develop | sort | uniq -c`.
 - The first commit, `e0c831fc` (2026-10-26), started this repository from our earlier proof of concept,
   wend-widget-demo: a first version of the `hana-signer` contract and the reference code in `legacy/`, with three docs
-  and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,214
+  and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,216
   further commits, was built in the window: the per-app scope registry, the API, the SDK, email login, the consoles,
   Passport Home and all of the NEAR wallet work. Of today's 4,337 lines of `hana-signer` contract code (tests and
   fixtures excluded), 124 still date from that first commit by `git blame` ([`docs/hackathon.md`](docs/hackathon.md)
@@ -380,7 +380,7 @@ are not NEAR integrations. The stamps site shows none of them.
 
 - **AI.** This repository is built with AI coding agents. Its code, tests and docs were written by Claude Code
   (Anthropic's coding agent) sessions, directed and reviewed by the developer; `CLAUDE.md` holds the agents' project
-  rules. 120 of the 1,215 commits on `develop` carry a `Co-Authored-By: Claude` trailer
+  rules. 120 of the 1,217 commits on `develop` carry a `Co-Authored-By: Claude` trailer
   (`git log -i --grep='Co-Authored-By: Claude' --oneline develop | wc -l`); the others were made the same way without
   one. Treat all of it as AI-written.
 - **Third-party code that matters** (the full list with versions: [`docs/hackathon.md`](docs/hackathon.md)):
@@ -406,7 +406,7 @@ are not NEAR integrations. The stamps site shows none of them.
 
 ### Tracks
 
-`TODO(submit)`: the team picks the tracks for the form. The case for each, against its example prompt
+`TODO(submit)`: the colleague who submits picks the tracks for the form. The case for each, against its example prompt
 ([`docs/hackathon.md`](docs/hackathon.md) has the prompts' wording):
 
 | Track | What the demos show | Where | What they do not meet |

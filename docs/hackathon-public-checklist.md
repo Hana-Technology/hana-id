@@ -1,13 +1,17 @@
 # Before the repository goes public: a checklist
 
 For the person who flips `Hana-Technology/hana-id` to public for the NEAR HACKATHON (deadline 2026-11-14T23:59:00Z).
-The founder's plan (2026-11-13): public "towards the end, but not now" (D749). Nothing here was changed by the branch
-that wrote it: each item is something to check, or a decision for the founder. Making the repository public and pushing
+The founder's plan (2026-11-13): public "towards the end, but not now" (D749); that evening the founder chose to run
+the final steps the same day (step 11, the runbook). Each item is something to check, or a decision for the founder;
+step 3 says what was already changed on `develop`. Making the repository public and pushing
 tags are the founder's calls (the event's own agent rules say the same: never make a repository
-public, push or post without the human's confirmation). Step 11 has the order of the last steps.
+public, push or post without the human's confirmation). Step 11 is the runbook for the last steps, with who does each.
 
-Last verified against code: 2026-11-13 (branch `docs/hackathon-stamps`, docs only, against `develop` @ 83ac508c:
-the stamps demo added to steps 8 and 9, the secrets audit's outcome in step 1, the branch counts and the clean-up
+Last verified against code: 2026-11-13 (branch `docs/hackathon-stamps`, docs only, after merging `develop` @ 2cd30973
+(PR 62): step 3 rechecked against the tree, its done items marked, the founder's answers of that day recorded (no
+second project, `legacy/` public with its owners' agreement, the admin accounts' strong sign-in, the tracks and the
+form by the colleague who submits, the Layover wait kept at 120 s), step 11 rewritten as the runbook; earlier the
+same day, against `develop` @ 83ac508c: the stamps demo added to steps 8 and 9, the secrets audit's outcome in step 1, the branch counts and the clean-up
 command in step 2, the personal-data lines rechecked by `git grep` in step 3, the GitHub settings re-read with `gh`
 read-only in step 5, the balances read from a public RPC in step 9, the judging-week limits (D793), and the new step 11,
 the order of the final steps); 2026-11-13 (branch `docs/hackathon-submission`, docs only: the first version at
@@ -28,12 +32,12 @@ history found **no live secret**. `.gitleaks.toml` adds Journear's own key shape
 `scripts/secret-scan-selftest.mjs` checks those rules catch a fake of each (`corepack pnpm verify` runs it).
 
 - [ ] `TODO(submit)`: rerun the two commands above on the day, after the last push and before the flip (branches
-      pushed since the audit, 240 on 2026-11-13 evening, are not covered by it).
+      pushed since the audit, 241 on 2026-11-13 evening, are not covered by it).
 
 ## 2. Branches, pull requests and CI logs become public too
 
-- `git ls-remote --heads origin | wc -l` printed 240 on 2026-11-13 evening (231 that morning, 214 on 2026-11-11);
-  `docs/hackathon-stamps` makes 241. Every one becomes public, merged or not. 237 are merged into `develop` (all but
+- `git ls-remote --heads origin | wc -l` printed 241 on 2026-11-13 evening (231 that morning, 214 on 2026-11-11);
+  `docs/hackathon-stamps` makes 242. Every one becomes public, merged or not. 238 are merged into `develop` (all but
   `develop`, `docs/near-hackathon` and `feat/email-login-1`); there is no `main` on GitHub. All their commits are
   dated inside the window (2026-10-26 to 2026-11-13), so none has to go for the rules.
 - To delete the merged branches before the flip (the founder's call; the ruleset protects `develop` from deletion,
@@ -42,7 +46,7 @@ history found **no live secret**. `.gitleaks.toml` adds Journear's own key shape
   ```sh
   git fetch origin --prune
   git branch -r --merged origin/develop | grep -v -- '->' | sed 's|^ *origin/||' | grep -vxE 'develop|main' > merged-branches.txt
-  wc -l < merged-branches.txt                                  # 237 on 2026-11-13 (more once this branch is merged)
+  wc -l < merged-branches.txt                                  # 238 on 2026-11-13 evening (more once this branch is merged)
   xargs -n 20 git push origin --delete < merged-branches.txt
   git fetch origin --prune && git ls-remote --heads origin    # develop and the unmerged ones are left
   rm merged-branches.txt
@@ -54,30 +58,45 @@ history found **no live secret**. `.gitleaks.toml` adds Journear's own key shape
   the repository. CI never had repository secrets (`gh secret list` is empty) or environments; skim a few run logs
   anyway.
 
-## 3. Personal data found (listed, not changed)
+## 3. Personal data and private links (listed; what was changed says so)
 
-Found by `git grep` on `develop` @ 83ac508c for email addresses, names, handles and local paths on 2026-11-13. Each is
-a decision for the founder: keep, replace with a role address, or move out before going public. Git history keeps the
-old text even after a change.
+Checked by `git grep` on this branch (`develop` @ 2cd30973 merged) for email addresses, names, handles, local paths and
+private links on 2026-11-13. What is left is a decision for the founder: keep, replace with a role address, or move
+out before going public. Git history keeps the old text even after a change: everything marked done below is still in
+older commits.
+
+**Done on `develop` on 2026-11-13** (each checked against the tree again by this branch):
+
+- [x] The personal Gmail address used as an email test vector's input replaced by a made-up one (D792): `git grep
+      amdcopper` finds it only in this page.
+- [x] The local path with the home folder name and the private repository name `wend-api` removed from the docs (the
+      pre-public tidy): `git grep -E "Users/tingtzechuen|wend-api"` finds nothing else.
+- [x] Every private claude.ai link replaced by a plain description (PR 62, `chore/pre-public-wording`): `git grep -E
+      "claude\.ai/(artifact|public|code)"` finds nothing else.
+- [x] The console preview's sample organisation renamed from a possibly real company's to "Example Labs" / "Example
+      Wallet" / `examplelabs.example` (PR 62): `git grep -i soralabs` finds nothing else.
+- [x] Billing lines name "the first partner" instead of a company (PR 62); D708 reworded (the pre-public tidy 2).
+- [x] `security-sweep-*.md` reports ignored (`.gitignore`) and the third-party licence notices added beside the code
+      (D791, `LICENSING.md`).
+
+**Still there** (the founder's call):
 
 | Where | What |
 |---|---|
-| Every commit's author and committer (`git log --remotes=origin --format='%ae'`) | `amdcopper@gmail.com` (author of 1,217 of the 1,221 commits on GitHub's branches), `hello@ting.rocks` (author of 4), the name "Ting Tze Chuen" on all of them; committer `noreply@github.com` on 60 merges made on GitHub |
-| History only (replaced on `develop` on 2026-11-13, D792 and the pre-public tidy) | `amdcopper+1@gmail.com` as an email test vector; a local path with the home folder name and the private repository name `wend-api` in `docs/identity-token-spec.md` |
+| Every commit's author and committer (`git log --remotes=origin --format='%ae'`) | `amdcopper@gmail.com` (author of 1,219 of the 1,223 commits on GitHub's branches), `hello@ting.rocks` (author of 4), the name "Ting Tze Chuen" on all of them; committer `noreply@github.com` on 61 merges made on GitHub |
 | `envs/sandbox-dev.json:19` | `hello@ting.rocks` as the watchdog's alert address |
-| `envs/sandbox-dev.json:131` | `hello@ting.rocks` and `mark@hanawallet.io` as the admin's staff emails |
+| `envs/sandbox-dev.json:131` | `hello@ting.rocks` and `mark@hanawallet.io` as the admin's staff emails: the two admin Google accounts, which the founder confirmed on 2026-11-13 are secured with strong sign-in |
 | `envs/sandbox-dev.json:139` | `hello@ting.rocks` as the security alias |
 | `docs/operations.md:275`, `:1736` | `hello@ting.rocks`; `hello@ting.rocks` and `mark@hanawallet.io` |
-| `docs/context.md:427` | the personal domain `ting.rocks` (a deferred Cloudflare test) |
-| `.github/CODEOWNERS`, `docs/decisions.md` (lines 619, 1123, 9639), `docs/mainnet-readiness.md:202`, `:290`, `docs/security.md:2398` | the GitHub handles `@tzechuen` and `@mj-hana` |
-| 46 files, 154 lines (`git grep -c tingtc`) | the Cloudflare workers.dev subdomain `tingtc` in every sandbox-dev URL, both demo sites' included (the personal Cloudflare account; the move is planned, `docs/operations.md` "Moving an env to another Cloudflare account") |
+| `docs/context.md:426` | the personal domain `ting.rocks` (a deferred Cloudflare test) |
+| `.github/CODEOWNERS`, `docs/decisions.md` (lines 620, 1124, 9640), `docs/mainnet-readiness.md:202`, `:290`, `docs/security.md:2398` | the GitHub handles `@tzechuen` and `@mj-hana` |
+| 47 files, 159 lines (`git grep -c tingtc`) | the Cloudflare workers.dev subdomain `tingtc` in every sandbox-dev URL, both demo sites' included (the personal Cloudflare account; the move is planned, `docs/operations.md` "Moving an env to another Cloudflare account") |
 | `envs/sandbox-dev.json` (`watchdog.cloudflare.accountId`, `admin.accessTeamDomain`, `admin.accessAud`); `docs/operations.md` "What sandbox-dev runs" | the Cloudflare account id and the Access team and audience: identifiers, not secrets |
-| `CLAUDE.md:8`, `docs/context.md:4`, `:5`, `:402`, `docs/batch-a-spec.md:4`, `docs/batch-b-spec.md:7`, `docs/batch-c-spec.md:17`, `docs/decisions.md:11574` | links to private claude.ai artifacts (the plan doc and others); they don't open for others |
-| `apps/console/preview/fixtures.ts`, `apps/console/preview/mock-api.ts`, `apps/console/scripts/test/preview.test.ts` | made-up people at `soralabs.io`, which may be a real company's domain; the other fixtures use `.example` |
+| `legacy/` | the earlier proof of concept's client and relayer: its owners agreed on 2026-11-13 to it being public (the founder) |
 | Many tests | made-up `@gmail.com` addresses (`alice@gmail.com` and similar) as email-normalisation cases; generic, listed for completeness |
 
 `team@hanawallet.io` (the sender of Journear's mail) and the `id-dev.hanawallet.io` names in tests and docs are the
-company's, not personal. The commit email is the hardest to change: rewriting 1,221 commits changes every hash, breaks
+company's, not personal. The commit email is the hardest to change: rewriting 1,223 commits changes every hash, breaks
 every open branch and the links in the docs. GitHub can hide it for future commits ("Keep my email addresses
 private"); it cannot hide it in existing ones.
 
@@ -147,15 +166,16 @@ Apache License 2.0 as the Change License. [`LICENSING.md`](../LICENSING.md) list
 
 | Where | What it needs |
 |---|---|
-| `README.md` "Tracks"; `docs/hackathon.md` "Tracks, against their prompts" | the tracks for the form |
-| `docs/hackathon.md` rules table (Q-003, Q-012, Q-015, Procedures 1 and 2) and its tags section | the tags, the public repository, the video and the post, the check that nobody enters a second project |
+| `README.md` "Tracks"; `docs/hackathon.md` "Tracks, against their prompts" | the tracks for the form, chosen by the colleague who submits |
+| `docs/hackathon.md` rules table (Q-003, Q-012, Procedures 1 and 2) and its tags section | the tags, the public repository, the video and the post (Q-015 is met: nobody on the team enters a second project, the founder, 2026-11-13) |
 | this page, step 1 | the secrets scan rerun after the last push |
 | this page, steps 5 and 6 | the visibility flip, the tags |
-| this page, step 11 | the final steps, in order: the deploy, the tags, the flip, the video, the post, the submission |
+| this page, step 11 | the final steps, in order, with who does each |
 | `docs/hackathon-demo-script.md` | the recording, the X post (its repository link), the form's fields |
 
 Also for the form, never written here: the project name, team lead, contact email, team size, the mainnet NEAR payout
-account, the repository and post links, consent (HACKATHON.md "What the human decides").
+account, the repository and post links, consent (HACKATHON.md "What the human decides"). The rules say the submission
+payload holds personal data, so none of its values go in this repository; the team's lead submits it.
 
 ## 9. The hosted demos through judging
 
@@ -166,8 +186,8 @@ account, the repository and post links, consent (HACKATHON.md "What the human de
   daily limits apply.
 - **The stamps contract** `hana-id-stamps-dev1.testnet` (`near.demoStamps`) is deployed and **locked** (2026-11-13:
   zero access keys, code hash `9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA`, lock transaction
-  `wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU`). A redeploy, for example with a shorter Layover wait, needs a new
-  account (`near.demoStamps` and `near.relay.receivers` in `envs/sandbox-dev.json`, then the API's `gen` and deploy and
+  `wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU`). The founder decided on 2026-11-13 to keep it as it is,
+  with its 120-second Layover wait. A redeploy would need a new account (`near.demoStamps` and `near.relay.receivers` in `envs/sandbox-dev.json`, then the API's `gen` and deploy and
   the stamps site's deploy, `docs/operations.md` "Hosted stamps demo"), and the README, `docs/hackathon.md`, this page
   and the demo script name the account and the 120-second wait.
 - **Balances to watch** (read from a public RPC, 2026-11-13 evening; `near account view-account-summary <account>
@@ -215,19 +235,42 @@ account, the repository and post links, consent (HACKATHON.md "What the human de
 - [ ] Clone it fresh and run the README's "Reproduce it" part C, steps 1 and 2.
 - [ ] Never commit the submission payload: it holds personal data (the event's rules say the same).
 
-## 11. The order of the final steps
+## 11. The final steps: the runbook
 
-Each is the founder's or the team's act (`TODO(submit)`), before 2026-11-14T23:59:00Z, in this order:
+The founder runs steps 1 to 7 on 2026-11-13; the colleague who submits runs steps 8 to 10. All of it before
+2026-11-14T23:59:00Z, top to bottom; each step is `TODO(submit)` until done.
 
-1. Merge everything into `develop`; that commit is the submission commit.
-2. The final full deploy from it, from the main checkout: `corepack pnpm verify --full` (D413), then every sandbox-dev
-   piece whose code or manifest changed since its last deploy (`docs/operations.md` "What sandbox-dev runs"), both demo
-   sites (`corepack pnpm --filter @hana-id/demo run deploy`; `HANA_STAMPS_PUBLISHABLE_KEY=pk_test_… corepack pnpm
-   --filter @hana-id/stamps run deploy`) and `corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev
-   --d1`. A docs-only submission commit needs no deploy.
-3. The tags (step 6): `pre-hackathon`, then `hackathon-submission` on the submission commit.
-4. Step 1's secrets rerun, step 2's branch clean-up if wanted, step 5's settings, then the public flip.
-5. The video ([`hackathon-demo-script.md`](hackathon-demo-script.md)), on the deployed sites.
-6. The X post with the video attached and the public repository's link.
-7. The one submission (`https://nearhackathon.com/#apply` or `POST https://nearhackathon.com/api/applications`): "One
-   submission per project"; fixes after it go through `https://nearhackathon.com/request-changes`.
+**The founder**
+
+1. **Merge** everything into `develop` (by pull request, the ruleset). That merge commit is the submission commit:
+   `git fetch origin && git log -1 --format='%H %ad %s' origin/develop`.
+2. **Final full deploy from it**, from the main checkout at that commit: `corepack pnpm install --frozen-lockfile`,
+   `corepack pnpm verify --full` (D413), then every sandbox-dev piece whose code or manifest changed since its last
+   deploy (`docs/operations.md` "What sandbox-dev runs"), both demo sites
+   (`corepack pnpm --filter @hana-id/demo run deploy`; `HANA_STAMPS_PUBLISHABLE_KEY=pk_test_… corepack pnpm --filter
+   @hana-id/stamps run deploy`, Stamp Trail's public key in `docs/operations.md` "Hosted stamps demo"), and
+   `corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --d1`. Then open both sites once (a hard
+   reload) and check the balances in step 9. A docs-only change since the last deploy needs no deploy.
+3. **Secrets rerun** (step 1's two commands) after the last push: no leak.
+4. **Delete the merged branches** (step 2's commands), then `git ls-remote --heads origin`: `develop` and the
+   unmerged ones the founder keeps.
+5. **Push the two tags** (step 6; the commands in [`hackathon.md`](hackathon.md) "Git tags the rules name"):
+   `pre-hackathon` on `e0c831fc`, `hackathon-submission` on the submission commit; `git ls-remote --tags origin`
+   shows both.
+6. **Flip the repository public** (Settings, General, Danger Zone), then at once Settings, Code security: **secret
+   scanning and push protection on**, and the rest of step 5's list (wiki, projects, description).
+7. **Check it logged out** (step 10): the README renders, its links open, the compare link
+   `https://github.com/Hana-Technology/hana-id/compare/pre-hackathon...hackathon-submission` works. Tell the
+   colleague it is done.
+
+**The colleague who submits**
+
+8. **Record the video** on the deployed stamps site ([`hackathon-demo-script.md`](hackathon-demo-script.md): a fresh
+   email, a hard reload, the shot order that uses the Layover wait).
+9. **Post on X** with the video attached: one of the script's two texts, with the public repository's link in place of
+   its `TODO(submit)`; it must say it was built at NEAR HACKATHON and tag @NEARProtocol and #NEARHackathon.
+10. **Submit once** (`https://nearhackathon.com/#apply` or `POST https://nearhackathon.com/api/applications`): the
+    tracks, the public repository link, the X post link and the other fields the lead fills in. "One submission per
+    project"; fixes after it go through `https://nearhackathon.com/request-changes`. Never commit the payload.
+
+After it: keep both demo sites up and funded until 2026-11-18, ideally 2026-11-25 (step 9).

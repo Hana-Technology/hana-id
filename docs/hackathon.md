@@ -6,7 +6,7 @@ rules name and their commands, the baseline as the README states it and why (D74
 third-party code, the AI use, the tracks against their prompts, and what the submission cannot meet yet.
 `TODO(submit)` marks what the team does before submitting; `hackathon-public-checklist.md` step 8 lists them all.
 
-Last verified against code: 2026-11-13 (branch `docs/hackathon-stamps`, docs only, against `develop` @ 83ac508c: the
+Last verified against code: 2026-11-13 (branch `docs/hackathon-stamps`, docs only, against `develop` @ 2cd30973 (83ac508c, merged with PR 62): the
 write-up now leads with the NEAR-only stamps demo (the new "The hosted demos" section, the rules table's Q-011 and
 Q-012 rows, the risks, the counts and the baseline's commit count, the stamps contract in "What is judged", the
 libraries, the tracks and what can't be met; the stamps contract's views, keys and transactions read from public
@@ -55,7 +55,7 @@ answered on 2026-11-13. The page `https://nearhackathon.com/request-changes` is 
 | Q-012 | "Local-only demo OK? Yes: public repo, reproducible README, X post with a video; screenshots are not enough when judges cannot open the demo. Hosted demo is a plus; keep it up to 2026-11-18, ideally 2026-11-25." | README "Reproduce it" (A the stamps site with its view calls, B the hosted demo with its view calls, C local); [The hosted demos](#the-hosted-demos) below; [`hackathon-demo-script.md`](hackathon-demo-script.md) | Reproducible README: in. Public repo: `TODO(submit)` (flipped near the end, D749). Video and X post: `TODO(submit)` (a colleague records it, on the stamps site). Demo uptime: checklist step 9 |
 | Q-013 | "Team keeps all rights; organizers get non-exclusive promo rights to name, screenshots, video, repo link." | `LICENSE`, `LICENSING.md` | Information: the Business Source License keeps the licensor's rights and grants no trademark right |
 | Q-014 | "License? Any. MIT is fine. Repo stays public through judging; add a LICENSE file." | `LICENSE` (Business Source License 1.1), `LICENSING.md` (the SDK packages under Apache-2.0, third-party material), README "AI tools and third-party code" | Met: decided by the founder 2026-11-13 (D747) |
-| Q-015 | "Allowed if projects are independent and disclosed: each README names the other project. Not the same project twice. One person, at most 2 different projects." | not applicable unless someone on the team enters another project | `TODO(submit)`: confirm no other entry |
+| Q-015 | "Allowed if projects are independent and disclosed: each README names the other project. Not the same project twice. One person, at most 2 different projects." | not applicable: nobody on the team enters another project (the founder, 2026-11-13) | Met |
 | Q-017 | as in the table above | README "For judges and screening agents" | The README is written for it: claims with files and checks, "do X, see Y" steps |
 | Procedure 1 | "it must be public by 2026-11-14T23:59:00Z. Judges cannot open a private one." | | `TODO(submit)`: the repository is private (checked 2026-11-13 with `gh repo view`) |
 | Procedure 2 | the X post's four tips: lead with the user problem, "Show one complete moment", "Explain NEAR’s role concretely … Avoid a vague "powered by NEAR"", "Link the demo and public repo, and ask a genuine question" | [`hackathon-demo-script.md`](hackathon-demo-script.md) | Drafts in; posting `TODO(submit)` |
@@ -91,7 +91,7 @@ Q-016 (payout) don't change anything here.
 1. The repository is still private, and the deadline is 2026-11-14T23:59:00Z ("Judges cannot open a private one").
 2. No X post or video yet; the home page says both links are required.
 3. The tags are not pushed yet, so the README's diff link opens only once both exist.
-4. Once public, the history, the 240 branches (2026-11-13 evening; 237 merged, checklist step 2), the 61 pull
+4. Once public, the history, the 241 branches (2026-11-13 evening; 238 merged, checklist step 2), the 61 pull
    requests and the 376 Actions runs are public, with the personal data and internal security notes listed in
    [`hackathon-public-checklist.md`](hackathon-public-checklist.md).
 5. Both demo sites run on a personal Cloudflare account on free plans (D417). The judging week's limits (D793): 333
@@ -118,8 +118,8 @@ Q-012: "Hosted demo is a plus; keep it up to 2026-11-18, ideally 2026-11-25." Bo
 | What a judge does | sign in by email, six stamps: five relayed with zero NEAR (Arrival, Fare paid, Signature with a NEP-413 message verified on chain, Postcard, Layover after 120 s of block time), one paid with testnet NEAR from NEAR's docs faucet (Own fare); a public passport page and a recent-stamps feed read from chain | sign in by email; a gasless guestbook write; a NEP-413 signature; a signed transaction; the Stellar and EVM addresses; the key export from Passport Home |
 | Checked on testnet | the founder's hand-checked run of all six stamps, 2026-11-13 (the account `cceaf5d3…` and its transactions, README "Reproduce it" A) | the founder's run of 2026-11-12 (README "Reproduce it" B) |
 
-If the stamps contract is redeployed (for example with a shorter Layover wait), it goes to a new account, since the
-locked one can't change: `near.demoStamps` and `near.relay.receivers` in `envs/sandbox-dev.json`, the API's `gen` and
+The founder decided on 2026-11-13 to keep the locked contract as it is, with its 120-second Layover wait. A redeploy
+would have to go to a new account, since the locked one can't change: `near.demoStamps` and `near.relay.receivers` in `envs/sandbox-dev.json`, the API's `gen` and
 deploy, the site's deploy (`docs/operations.md` "Hosted stamps demo"), and the account and the wait as the README, this
 page, the checklist and the demo script state them.
 
@@ -169,7 +169,7 @@ hackathon window":
 
 > The first commit, `e0c831fc` (2026-10-26), started this repository from our earlier proof of concept,
 > wend-widget-demo: a first version of the `hana-signer` contract and the reference code in `legacy/`, with three docs
-> and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,214
+> and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,216
 > further commits, was built in the window: the per-app scope registry, the API, the SDK, email login, the consoles,
 > Passport Home and all of the NEAR wallet work. Of today's 4,337 lines of `hana-signer` contract code (tests and
 > fixtures excluded), 124 still date from that first commit by `git blame`.
@@ -178,7 +178,7 @@ Why: every commit is dated inside the window, but the first one brings in code w
 counts "own old libs" as baseline and asks to list them, so the README says what it is, how much of it is left, and
 how to check.
 
-The facts behind it (from `git`, on `develop` @ 83ac508c unless a line says 35bc103e; `contracts/hana-signer/src`
+The facts behind it (from `git`, on `develop` @ 2cd30973 unless a line says 35bc103e; `contracts/hana-signer/src`
 and `legacy/` are the same at both):
 
 - The first commit is `e0c831fc` (2026-10-26 13:43:21 +08:00): "chore: scaffold hana-id from wend-widget-demo PoC
@@ -194,7 +194,7 @@ and `legacy/` are the same at both):
     of its 754 removed. The contract's other modules are new.
   - The three docs are `docs/batch-a-spec.md`, `docs/context.md` and `docs/hana-embed-ckd-results.md`.
 - How much of the first commit survives, by `git blame` (a line counts for the commit that last changed it; the
-  `hana-signer` rows hold on 83ac508c, whose `contracts/hana-signer/src` is unchanged since 35bc103e; the whole-tree
+  `hana-signer` rows hold on 2cd30973, whose `contracts/hana-signer/src` is unchanged since 35bc103e; the whole-tree
   rows were measured on 35bc103e and grow with every new file):
 
   | Scope on `develop` | Lines from `e0c831fc` | Of | Share |
@@ -216,12 +216,12 @@ and `legacy/` are the same at both):
 - Later code that started as a port of the baseline says so in its first lines: `packages/core/src/ckd.ts` (from
   `legacy/client/ckd.ts`, itself a port of `near/mpc` at `a7ae426`), `apps/api/src/near/rpc.ts` and
   `apps/api/src/near/tx.ts` (from `legacy/relayer/embed-relayer.ts`).
-- Everything after `e0c831fc`: 1,214 commits on `develop` (1,220 on all the branches on GitHub), dated 2026-10-26 to
-  2026-11-13. `git diff --shortstat e0c831fc develop` prints "1680 files changed, 401866 insertions(+), 892
+- Everything after `e0c831fc`: 1,216 commits on `develop` (1,222 on all the branches on GitHub), dated 2026-10-26 to
+  2026-11-13. `git diff --shortstat e0c831fc develop` prints "1681 files changed, 401871 insertions(+), 897
   deletions(-)" (the lockfile and generated test vectors included).
 - Commits per day on `develop` (`git log --format=%ad --date=short develop | sort | uniq -c`): 10-26 11, 10-27 19,
   10-28 136, 10-29 107, 10-30 76, 11-02 116, 11-03 24, 11-04 133, 11-05 84, 11-06 88, 11-09 99, 11-10 92, 11-11 116,
-  11-12 80, 11-13 34 (by the commits' own +08:00 dates).
+  11-12 80, 11-13 36 (by the commits' own +08:00 dates).
 
 ## Other chains
 
@@ -302,7 +302,7 @@ Versions as pinned on 2026-11-13 (the `package.json` and `Cargo.toml` files; the
 
 This repository is built with AI coding agents. The developer directed Claude Code (Anthropic's coding agent)
 sessions in conversation and reviewed their work; the agents wrote the code, the tests and the docs, and `CLAUDE.md`
-holds their project rules. On 2026-11-13, 120 of the 1,215 commits on `develop` carried a `Co-Authored-By: Claude …`
+holds their project rules. On 2026-11-13, 120 of the 1,217 commits on `develop` carried a `Co-Authored-By: Claude …`
 trailer (`git log -i --grep='Co-Authored-By: Claude' --oneline develop | wc -l`); the others were made the same way
 without one. Treat the code as AI-written throughout. This write-up was drafted the same way.
 
@@ -310,7 +310,7 @@ without one. Treat the code as AI-written throughout. This write-up was drafted 
 
 The prompts are in `github.com/nearai/near-hackathon-prompt-examples` (read 2026-11-13). HACKATHON.md: the hints
 "are hints and wishes, not requirements" (Q-011), and a project lists "every track the project fits". Which tracks go
-in the form is the team's call, `TODO(submit)`.
+in the form is chosen by the colleague who submits, `TODO(submit)`.
 
 ### Real-World Money (`realworld`)
 
@@ -371,8 +371,10 @@ and anyone can read them" and for "a README section on failure cases".
 ## What the submission cannot meet yet
 
 - **A public repository** by 2026-11-14T23:59:00Z: private on 2026-11-13 (`gh repo view`); the founder flips it
-  "towards the end, but not now" (D749), after [`hackathon-public-checklist.md`](hackathon-public-checklist.md).
-- **The video and the X post**: a colleague records the video ([`hackathon-demo-script.md`](hackathon-demo-script.md)).
+  on 2026-11-13 after the final deploy, the branch clean-up and the tags ([`hackathon-public-checklist.md`](hackathon-public-checklist.md)
+  step 11, the runbook; D749).
+- **The video, the X post and the submission**: the colleague who submits records, posts and submits, after the flip
+  ([`hackathon-demo-script.md`](hackathon-demo-script.md)).
 - **The tags** (Q-003): decided, pushed by the founder (D746).
 - **Google sign-in for judges**: Journear's Google client is in Google's testing mode, so only listed testers can use
   it. Judges use email sign-in, which works for any address.

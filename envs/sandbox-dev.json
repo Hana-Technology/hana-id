@@ -62,7 +62,7 @@
     ],
     "from": "Journear Passport (testnet) <team@hanawallet.io>",
     "sender": "sendgrid",
-    "dailySendBudget": 200
+    "dailySendBudget": 70
   },
   "identityToken": {
     "iss": "https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity",
@@ -137,16 +137,16 @@
       "account": "hana-id-near-relay-dev1.testnet",
       "receivers": ["hana-id-guestbook-dev1.testnet"],
       "maxGasTgas": 10,
-      "dailyBudgetNear": 5,
+      "dailyBudgetNear": 6,
       "perSenderPerDay": 50,
       "perAppPerDay": 2000,
       "relaysPerDay": 10000,
       "relaysPerMinute": 200,
       "inFlightNear": 3,
-      "activationsPerAppPerDay": 200,
+      "activationsPerAppPerDay": 300,
       "activationsPerDay": 1000,
-      "appDailyBudgetNear": 1,
-      "lowBalanceNear": 2,
+      "appDailyBudgetNear": 3,
+      "lowBalanceNear": 9,
       "requireKnownAccount": true
     }
   }

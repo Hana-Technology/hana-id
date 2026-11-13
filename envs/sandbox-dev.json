@@ -62,7 +62,12 @@
     ],
     "from": "Journear Passport (testnet) <team@hanawallet.io>",
     "sender": "sendgrid",
-    "dailySendBudget": 70
+    "dailySendBudget": 333,
+    "tighterLimits": {
+      "ipStart": { "per10m": 10, "perDay": 30 },
+      "ipResend": { "per10m": 10 },
+      "mailboxIpCodes": { "per15m": 5, "perDay": 15 }
+    }
   },
   "identityToken": {
     "iss": "https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity",

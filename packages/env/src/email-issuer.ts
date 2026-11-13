@@ -37,6 +37,12 @@ export const EMAIL_KEY_MIN_BITS = 2048;
 export const EMAIL_KEY_MAX_BITS = 4096;
 /** Keys the JWKS may list (the contract's `key_signer` holds ≤ 8 per self-issued issuer). */
 export const MAX_EMAIL_PUBLIC_KEYS = 8;
+/** An app id as the API mints it (`app_…`): the keys of `emailIssuer.appShares`. */
+export const EMAIL_APP_ID_RE = /^app_[A-Za-z0-9_-]{1,64}$/u;
+/** At most this many apps get their own share (D793). */
+export const MAX_EMAIL_APP_SHARES = 8;
+/** One window's max in `emailIssuer.tighterLimits`. */
+const limitMax = z.number().int().min(1).max(10_000);
 
 /** A public RSA key as the issuer's JWKS serves it. `.strict()`: a private member or anything else is refused. */
 export const emailPublicKeySchema = z
@@ -93,6 +99,25 @@ export const emailIssuerSchema = z
      * `local*` envs (no silent default; abuse review H1); a `local*` env without one gets 1000.
      */
     dailySendBudget: z.number().int().min(1).max(10_000_000).optional(),
+    /**
+     * Testnet only (D793): named apps' daily share of the general pool, in mails, in place of the plan-sized one (2% of
+     * the plan's `per_day`). Each at most `dailySendBudget`; the issuer still caps it at the general pool, and the 20%
+     * reserve still applies. Absent: every app's share comes from its plan.
+     */
+    appShares: z.record(z.string().regex(EMAIL_APP_ID_RE, 'appShares keys are app ids (app_…)'), z.number().int().min(1).max(10_000_000)).optional(),
+    /**
+     * Testnet only (D793): lower maxes for the per-IP `start` and `resend` windows and the per-mailbox-and-requester
+     * code windows. The issuer applies each only below the env's own limit (it can tighten, never loosen); absent, the
+     * env's set (D340) as it is.
+     */
+    tighterLimits: z
+      .object({
+        ipStart: z.object({ per10m: limitMax.optional(), perDay: limitMax.optional() }).strict().optional(),
+        ipResend: z.object({ per10m: limitMax.optional() }).strict().optional(),
+        mailboxIpCodes: z.object({ per15m: limitMax.optional(), perDay: limitMax.optional() }).strict().optional(),
+      })
+      .strict()
+      .optional(),
     /**
      * `POST /v1/email/admin/client-proof` (staff only): the Cloudflare Access application in front of that path and the
      * issuer's own staff allowlist behind it (D88). Absent: the endpoint answers 404.
@@ -215,6 +240,13 @@ export function emailIssuerRules(
   if (t.signer.kind === 'worker-secret' && m.network !== 'testnet') issue(['signer', 'kind'], 'A Worker-secret email signing key is testnet only: mainnet uses AWS KMS (D121)');
   if (t.sender === 'outbox' && !isLocalEnv(m.name)) issue(['sender'], 'The outbox sender is a test stub, for local* envs only');
   if (t.dailySendBudget === undefined && !isLocalEnv(m.name)) issue(['dailySendBudget'], 'emailIssuer.dailySendBudget is required outside local* envs (the daily user-mail budget; no default)');
+  if (t.appShares !== undefined) {
+    if (m.network !== 'testnet') issue(['appShares'], 'emailIssuer.appShares is testnet only (D793)');
+    const entries = Object.entries(t.appShares);
+    if (entries.length > MAX_EMAIL_APP_SHARES) issue(['appShares'], `emailIssuer.appShares names at most ${MAX_EMAIL_APP_SHARES} apps`);
+    for (const [app, n] of entries) if (t.dailySendBudget !== undefined && n > t.dailySendBudget) issue(['appShares', app], 'An app share must be at most emailIssuer.dailySendBudget');
+  }
+  if (t.tighterLimits !== undefined && m.network !== 'testnet') issue(['tighterLimits'], 'emailIssuer.tighterLimits is testnet only (D793)');
   const fromProblem = emailFromProblem(t.from);
   if (fromProblem) issue(['from'], `emailIssuer.from ${fromProblem}`);
   if (t.cloudflare.workerName === m.cloudflare.workerName) issue(['cloudflare', 'workerName'], "emailIssuer.cloudflare.workerName must differ from the API's Worker (Q1: a separate Worker)");

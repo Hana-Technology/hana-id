@@ -3,7 +3,7 @@
 A private briefing for the founder: how Hana ID works, what it protects, where it is weak, and how to answer hard
 questions honestly. It states every gap plainly. Decide later what to share outside the company.
 
-Last verified: 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: section 6's email budget, 70 a day, D793); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Passport Home's "Move this wallet" offers the NEAR key, D779); 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the product's names users read, the user's line in section 1, the export's three steps and checkbox in 2.6, D765); 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
+Last verified: 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: section 6's email budget, 333 a day within 30% of a shared SendGrid plan, D793); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Passport Home's "Move this wallet" offers the NEAR key, D779); 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the product's names users read, the user's line in section 1, the export's three steps and checkbox in 2.6, D765); 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
 reference docs and checked against the code where they were vague; no code changed). Where the docs lag the code or git,
 this file says so. Sandbox-dev's live state is as `docs/operations.md` "What sandbox-dev runs" records it, corrected on
 2026-11-10 by the person who ran that day's deploy and tests (Hana Home, the email co-signer, alerting, the Google
@@ -888,7 +888,7 @@ accounts, so only listed test accounts can sign in with Google until it is publi
 accounts; email login is unaffected); partners can't self-onboard yet: a partner's scope is registered on chain by a
 council action prepared in the admin portal and run from the command line (fixes built 10 November, being merged); the
 SDK ships as tarballs, not on npm; sandbox-dev runs on a personal account on free tiers (5 of 5 cron triggers used, an
-email budget of 70 a day, under SendGrid's daily quota); the console's Google sign-in spike hasn't been run; email sharing hasn't been tried by a
+email budget of 333 a day, sized to 30% of a SendGrid plan shared with other apps); the console's Google sign-in spike hasn't been run; email sharing hasn't been tried by a
 person; Home is reachable only by typing its address; paging isn't proven; and partners must not rely on identity
 tokens for anything of value.
 

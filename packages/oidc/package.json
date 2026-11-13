@@ -2,6 +2,7 @@
   "name": "@hana-id/oidc",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "RS256 ID-token verification (Google's JWKS cache, the claim checks) for the API and the console, and the Cloudflare Access JWT check for the admin Worker. Runs in Workers (Web Crypto only).",
   "type": "module",
   "sideEffects": false,

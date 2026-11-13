@@ -2,6 +2,7 @@
   "name": "@hana-id/env",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "exports": { ".": "./src/index.ts", "./origins": "./src/origins.ts", "./build-id": "./src/build-id.ts", "./local-build": "./src/local-build.ts", "./zod": "./src/zod.ts" },
   "scripts": {

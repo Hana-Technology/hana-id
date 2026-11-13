@@ -2,6 +2,7 @@
   "name": "@hana-id/brand",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "Journear Passport's brand for its own pages (D426, D765): the design system's tokens (tokens.css) and component set (components.css), the self-hosted OFL fonts Archivo, IBM Plex Sans and IBM Plex Mono with their licences (fonts.css, fonts/), and the Journear mark, wordmark and lockup (logo/), from the Journear Passport design system v0.5.",
   "type": "module",
   "exports": {

@@ -2,6 +2,7 @@
   "name": "@hana-id/jwks",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "Issuer JWKS parsing and RSA key comparison shared by the API (key sync) and the watchdog (forgery checks); the identity JWKS rules shared by the watchdog and the outside probe.",
   "type": "module",
   "exports": {

@@ -5,6 +5,9 @@
 // target runtime. Changing the cutoff or the source changes which addresses are accepted: frozen at the address freeze
 // (test/vectors.test.ts pins the table's hash).
 //
+// DerivedAge.txt is Unicode, Inc.'s data under the Unicode License v3: its notice is in ../LICENSE-Unicode.txt and the
+// README's "Unicode data licence", not in the generated file, whose bytes the freeze guard pins (D791).
+//
 //   curl -sSfLo DerivedAge.txt https://www.unicode.org/Public/18.0.0/ucd/DerivedAge.txt
 //   node packages/email/scripts/update-unicode-age.mjs DerivedAge.txt 18.0.0 15.0
 //

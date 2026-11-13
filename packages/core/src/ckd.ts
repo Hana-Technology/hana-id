@@ -1,7 +1,9 @@
 // NEAR Confidential Key Derivation (CKD), client side. Moved from apps/smoke/src/ckd.ts (ported from
-// legacy/client/ckd.ts, itself ported from near/mpc @ a7ae426: crates/ckd-example-cli/src/ckd.rs,
-// crates/near-mpc-crypto-types/src/kdf.rs, crates/contract/src/primitives/ckd.rs). The pinned-key checks
-// (`isValidNetworkKey`, `ckdKeyProblem`) moved here from apps/smoke/src/config.ts.
+// legacy/client/ckd.ts, itself ported from near/mpc, https://github.com/near/mpc, at commit
+// a7ae426ec6708969797c5ea9e5d4e5e84c3068f4: crates/ckd-example-cli/src/ckd.rs, crates/near-mpc-crypto-types/src/kdf.rs,
+// crates/contract/src/primitives/ckd.rs). near/mpc is MIT licensed, Copyright (c) 2025 NEAR One Limited; its licence
+// notice is in packages/core/LICENSE-near-mpc.txt. The pinned-key checks (`isValidNetworkKey`, `ckdKeyProblem`) moved
+// here from apps/smoke/src/config.ts.
 //
 // - app key: random scalar a; publicly verifiable form (a·G1, a·G2), checked on-chain by a pairing.
 // - response (big_y, big_c) = (y·G1, msk·H + y·a·G1), so the secret sig = big_c − a·big_y = msk·H.

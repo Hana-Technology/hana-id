@@ -2,6 +2,7 @@
   "name": "@hana-id/files",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "The files Worker (docs/batch-c-spec.md, batch C11): serves only GET /logos/<app_id>/<sha256>.png from the LOGOS R2 bucket, re-checked and sandboxed. No secret, D1 or Hyperdrive.",
   "type": "module",
   "scripts": {

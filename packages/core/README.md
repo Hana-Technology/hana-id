@@ -77,3 +77,34 @@ import { supportIdFromSub } from '@hana-id/core/support-id';
 
 supportIdFromSub('u1_ASNFZ4mrze8BI0VniavN7w'); // 'HANA-04HM-ASW9'; a TypeError for anything that isn't a sub
 ```
+
+## Third-party code
+
+The CKD client (the app key, `decryptCkd`, `ckdAppId` and the pairing check) is ported from
+[near/mpc](https://github.com/near/mpc) at commit `a7ae426ec6708969797c5ea9e5d4e5e84c3068f4`
+(`crates/ckd-example-cli/src/ckd.rs`, `crates/near-mpc-crypto-types/src/kdf.rs`,
+`crates/contract/src/primitives/ckd.rs`). near/mpc is under the MIT License:
+
+```text
+MIT License
+
+Copyright (c) 2025 NEAR One Limited.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

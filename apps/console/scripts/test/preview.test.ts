@@ -36,7 +36,7 @@ describe('the scenarios', () => {
     expect((get('not-chain-owner', `/api/orgs/${F.ORG_ID}`).body as { role: string }).role).toBe('owner');
     const sc = get('not-chain-owner', `/api/orgs/${F.ORG_ID}/scopes/s_lumen_live`).body as { youAreOnChainOwner: boolean; drift: { missingOnChain: { email: string }[] } };
     expect(sc.youAreOnChainOwner).toBe(false);
-    expect(sc.drift.missingOnChain.map((m) => m.email)).toEqual(['aiko.tanaka@soralabs.io']);
+    expect(sc.drift.missingOnChain.map((m) => m.email)).toEqual(['aiko.tanaka@soralabs.example']);
     expect((get('owner', `/api/orgs/${F.ORG_ID}/scopes/s_lumen_live`).body as { youAreOnChainOwner: boolean }).youAreOnChainOwner).toBe(true);
   });
 

@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "The partner verification guide's code (docs/integration.md \"Identity token\"): verify a Hana identity token in Node with jose, tested against a local issuer.",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "scripts": {
     "test": "vitest run",

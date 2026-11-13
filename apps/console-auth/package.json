@@ -2,6 +2,7 @@
   "name": "@hana-id/console-auth",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "The thin Worker of the partner console's auth origin (docs/batch-c-spec.md \"Topology\"): forwards GET /start and GET /callback to the console's AuthHandler and serves nothing else. No secret, D1 or Hyperdrive.",
   "type": "module",
   "scripts": {

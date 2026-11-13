@@ -3,6 +3,7 @@ name = "hana-guestbook"
 description = "Hana ID hackathon demo: a public guestbook a Hana user's NEAR wallet writes to through a gasless meta transaction"
 version = "0.1.0"
 edition = "2021"
+license = "BUSL-1.1"
 rust-version = "1.85"
 publish = false
 

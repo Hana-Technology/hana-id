@@ -106,8 +106,8 @@ export const emailIssuerSchema = z
      */
     appShares: z.record(z.string().regex(EMAIL_APP_ID_RE, 'appShares keys are app ids (app_…)'), z.number().int().min(1).max(10_000_000)).optional(),
     /**
-     * Testnet only (D793): lower maxes for the per-IP `start` and `resend` windows and the per-mailbox-and-requester
-     * code windows. The issuer applies each only below the env's own limit (it can tighten, never loosen); absent, the
+     * Testnet only (D793): lower maxes for the per-IP `start` and `resend` windows, the per-mailbox-and-requester code
+     * windows and the per-prefix (IPv4 /24, IPv6 /56 and /48) `start` day. The issuer applies each only below the env's own limit (it can tighten, never loosen); absent, the
      * env's set (D340) as it is.
      */
     tighterLimits: z
@@ -115,6 +115,7 @@ export const emailIssuerSchema = z
         ipStart: z.object({ per10m: limitMax.optional(), perDay: limitMax.optional() }).strict().optional(),
         ipResend: z.object({ per10m: limitMax.optional() }).strict().optional(),
         mailboxIpCodes: z.object({ per15m: limitMax.optional(), perDay: limitMax.optional() }).strict().optional(),
+        aggStart: z.object({ perDay: limitMax.optional() }).strict().optional(),
       })
       .strict()
       .optional(),

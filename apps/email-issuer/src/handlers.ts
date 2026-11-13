@@ -35,7 +35,6 @@ import {
   HINT_PRUNE_BATCH,
   OWNER_AGED_TICKET_MS,
   NON_HOSTED_HINT_TTL_MS,
-  IP_AGGREGATE_START_LIMITS,
   IP_MATCH_LIMITS,
   IP_RECORD_LIMITS,
   IP_RESEND_LIMITS,
@@ -55,6 +54,7 @@ import {
   generalPool,
   limitsFor,
   type Limits,
+  type TighterLimits,
 } from './limits.ts';
 import { log } from './log.ts';
 import { codeMail, confirmMail, linkNoticeMail, mailLook, unlockMail } from './mail.ts';
@@ -153,7 +153,7 @@ async function homeAggregateLimits(ctx: Ctx, request: Request): Promise<Response
 /** `start`'s aggregate prefix limits (IPv4 /24, IPv6 /56 and /48); skipped for a valid ticket or grant (abuse review M2). */
 async function aggregateLimits(ctx: Ctx, request: Request): Promise<Response | null> {
   for (const agg of ipAggregates(rawIp(request))) {
-    const r = await limiter(ctx.deps, `ip:${agg}`).hit(IP_AGGREGATE_START_LIMITS, ctx.deps.now());
+    const r = await limiter(ctx.deps, `ip:${agg}`).hit(ctx.limits.ipAggStart, ctx.deps.now());
     if (!r.ok) {
       log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, limit: `${agg.split(':')[0]}:${r.limit}` });
       countRefusal(ctx.deps, null, `${agg.split(':')[0]}:${r.limit}`);
@@ -244,10 +244,37 @@ async function reserveBudget(ctx: Ctx, appId: string | null, share: number, kind
 const ownerBudgetKind = (owner: OwnerRef | null, now: number): BudgetKind =>
   !owner ? 'user' : owner.kind === 'grant' || now - owner.issuedAtMs >= OWNER_AGED_TICKET_MS ? 'owner_aged' : 'owner';
 
+/** Testnet-only overrides (D793) set but not used: logged once per isolate and reason, the var's name only, never its value. */
+const ignoredConfig = new Set<string>();
+function configIgnored(name: 'EMAIL_APP_SHARES' | 'EMAIL_TIGHTER_LIMITS', reason: 'malformed' | 'not_testnet'): void {
+  const code = `${name}:${reason}`;
+  if (ignoredConfig.has(code)) return;
+  ignoredConfig.add(code);
+  log({ event: 'config_ignored', code }, 'warn');
+}
+const NO_SHARES: ReadonlyMap<string, number> = new Map();
+/** EMAIL_APP_SHARES, only on testnet (`NEAR_NETWORK`, which gen always writes): it can raise one app's share. */
+function appSharesOf(env: Deps['env']): ReadonlyMap<string, number> {
+  if (!env.EMAIL_APP_SHARES) return NO_SHARES;
+  if (env.NEAR_NETWORK !== 'testnet') {
+    configIgnored('EMAIL_APP_SHARES', 'not_testnet');
+    return NO_SHARES;
+  }
+  const shares = parseAppShares(env.EMAIL_APP_SHARES);
+  if (!shares) configIgnored('EMAIL_APP_SHARES', 'malformed');
+  return shares ?? NO_SHARES;
+}
+/** EMAIL_TIGHTER_LIMITS on any network: it can only lower a limit (`tighten`), so no network gate is needed. */
+function tighterLimitsOf(env: Deps['env']): TighterLimits | null {
+  const t = parseTighterLimits(env.EMAIL_TIGHTER_LIMITS);
+  if (env.EMAIL_TIGHTER_LIMITS && !t) configIgnored('EMAIL_TIGHTER_LIMITS', 'malformed');
+  return t;
+}
+
 /** The app's share of the general pool: its own from `appShares` (testnet, D793) if named there, else its plan's (D198). */
 const shareOf = (ctx: Ctx, app: { id: string; perDay: number }): number => {
   const budget = dailySendBudget(ctx.deps.env);
-  const named = parseAppShares(ctx.deps.env.EMAIL_APP_SHARES).get(app.id);
+  const named = appSharesOf(ctx.deps.env).get(app.id);
   return named === undefined ? appBudgetShare(app.perDay, budget) : namedAppShare(named, budget);
 };
 
@@ -1186,7 +1213,7 @@ const audit = (deps: Deps, row: { staff: string; action: string; ticket: string;
  * by the console Worker).
  */
 export async function mintPartnerClientProof(deps: Deps, requestId: string, i: { scopeId: string; actionNonce: number; orgId: string; actorId: string }): Promise<PartnerClientProof> {
-  const ctx: Ctx = { deps, requestId, endpoint: 'ConsoleIssuerRpc.clientProof', cors: {}, limits: limitsFor(deps.env.ENV_NAME, parseTighterLimits(deps.env.EMAIL_TIGHTER_LIMITS)) };
+  const ctx: Ctx = { deps, requestId, endpoint: 'ConsoleIssuerRpc.clientProof', cors: {}, limits: limitsFor(deps.env.ENV_NAME, tighterLimitsOf(deps.env)) };
   if (!isScopeId(i.scopeId)) return { ok: false, code: 'bad_request', error: 'Malformed scope id' };
   let scope;
   try {
@@ -1434,7 +1461,7 @@ export async function route(request: Request, deps: Deps): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   const requestId = randomId(12);
-  const base: Ctx = { deps, requestId, endpoint: path, cors: {}, limits: limitsFor(deps.env.ENV_NAME, parseTighterLimits(deps.env.EMAIL_TIGHTER_LIMITS)) };
+  const base: Ctx = { deps, requestId, endpoint: path, cors: {}, limits: limitsFor(deps.env.ENV_NAME, tighterLimitsOf(deps.env)) };
   try {
     if (path === ROUTES.jwks || path === ROUTES.openid || path === ROUTES.health) {
       const ctx = { ...base, cors: corsHeaders('*') };

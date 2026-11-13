@@ -66,7 +66,8 @@
     "tighterLimits": {
       "ipStart": { "per10m": 10, "perDay": 30 },
       "ipResend": { "per10m": 10 },
-      "mailboxIpCodes": { "per15m": 5, "perDay": 15 }
+      "mailboxIpCodes": { "per15m": 5, "perDay": 15 },
+      "aggStart": { "perDay": 100 }
     }
   },
   "identityToken": {

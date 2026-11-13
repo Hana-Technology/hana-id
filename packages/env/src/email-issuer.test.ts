@@ -143,16 +143,16 @@ describe('manifestSchema: emailIssuer', () => {
   });
 
   it('tighterLimits (D793): optional; only its windows, whole numbers 1 to 10,000', () => {
-    expect(issues(block({ tighterLimits: { ipStart: { per10m: 10, perDay: 30 }, ipResend: { per10m: 10 }, mailboxIpCodes: { per15m: 5, perDay: 15 } } }))).toEqual([]);
+    expect(issues(block({ tighterLimits: { ipStart: { per10m: 10, perDay: 30 }, ipResend: { per10m: 10 }, mailboxIpCodes: { per15m: 5, perDay: 15 }, aggStart: { perDay: 100 } } }))).toEqual([]);
     expect(issues(block({ tighterLimits: {} }))).toEqual([]);
-    for (const bad of [{ ipVerify: { per10m: 5 } }, { ipStart: { per1h: 5 } }, { ipStart: { perDay: 0 } }, { ipResend: { per10m: 10_001 } }, { mailboxIpCodes: { perDay: 2.5 } }]) {
+    for (const bad of [{ ipVerify: { per10m: 5 } }, { ipStart: { per1h: 5 } }, { ipStart: { perDay: 0 } }, { ipResend: { per10m: 10_001 } }, { mailboxIpCodes: { perDay: 2.5 } }, { aggStart: { perDay: 0 } }, { aggStart: { per10m: 5 } }]) {
       expect(issues(block({ tighterLimits: bad })).length, JSON.stringify(bad)).toBeGreaterThan(0);
     }
   });
 
   it("sandbox-dev's judging-week block parses (D793)", () => {
     const parsed = manifestSchema.parse(raw());
-    expect(parsed.emailIssuer?.tighterLimits).toEqual({ ipStart: { per10m: 10, perDay: 30 }, ipResend: { per10m: 10 }, mailboxIpCodes: { per15m: 5, perDay: 15 } });
+    expect(parsed.emailIssuer?.tighterLimits).toEqual({ ipStart: { per10m: 10, perDay: 30 }, ipResend: { per10m: 10 }, mailboxIpCodes: { per15m: 5, perDay: 15 }, aggStart: { perDay: 100 } });
   });
 
   it('needs rpcFallback outside local* envs: linking makes members, whose paths are confirmed on two providers (D263)', () => {

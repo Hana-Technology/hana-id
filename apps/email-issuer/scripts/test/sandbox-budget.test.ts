@@ -23,17 +23,24 @@ interface BudgetLimits {
 // `cloudflare:workers` import this Node-side project can't resolve (the import is a type only, erased at run time).
 const LIMITS_MODULE = '../../src/limits.ts';
 const { BUDGET_RESERVE, HOME_BUDGET_SHARE, HOME_RESERVE_SHARE, appBudgetShare, generalPool, ownerPool, staffPool } = (await import(/* @vite-ignore */ LIMITS_MODULE)) as BudgetLimits;
+// src/daily.ts likewise (its limiter type import): the issuer's own alert mail caps.
+const DAILY_MODULE = '../../src/daily.ts';
+const { ALERT_KINDS, ALERT_MAILS_PER_KIND_PER_DAY } = (await import(/* @vite-ignore */ DAILY_MODULE)) as { ALERT_KINDS: readonly string[]; ALERT_MAILS_PER_KIND_PER_DAY: number };
 
 /** SendGrid Essentials 50K: mails a month (the user, 2026-11-13). */
 const PLAN_PER_MONTH = 50_000;
 /** This env's share of it: 30%, the user's choice "to be safe" (2026-11-13), though the other apps send far less (D793). */
 const ENV_SHARE = 0.3;
-/**
- * The other mail on the same account a day: the issuer's own alerts (at most 20, limits in code), the admin Worker's
- * notices and the watchdog's alerts and digest. An unacknowledged critical watchdog alert re-sends every 15 minutes
- * (96 a day) and is not covered: acknowledge them.
- */
-const OTHER_MAIL_PER_DAY = 50;
+/** The issuer's own alert mails a day at most, from the code's caps (5 kinds × 5 = 25 when written). */
+const ISSUER_ALERTS_PER_DAY = ALERT_KINDS.length * ALERT_MAILS_PER_KIND_PER_DAY;
+/** The admin Worker's notices and the watchdog's warnings and digest a day (an estimate). */
+const ADMIN_AND_WATCHDOG_PER_DAY = 25;
+/** All the other mail on the same account a day; an open critical watchdog alert is counted apart below. */
+const OTHER_MAIL_PER_DAY = ISSUER_ALERTS_PER_DAY + ADMIN_AND_WATCHDOG_PER_DAY;
+/** One unacknowledged critical watchdog alert: re-sent every 15 minutes to sandbox-dev's one alert address. */
+const OPEN_CRITICAL_PER_DAY = 96;
+/** The other apps' recent peak month on the account (the user's screenshot of 2026-11-13: about 6,300). */
+const OTHER_APPS_PEAK_MONTH = 6_300;
 const DAYS = 31;
 /** The `free` plan's `per_day` (apps/api/migrations/0001_init.sql). */
 const FREE_PLAN_PER_DAY = 5000;
@@ -43,6 +50,21 @@ const worstMonth = (budget: number): number => (budget + ownerPool(budget) + OTH
 
 describe("sandbox-dev's daily send budget (D793)", () => {
   const budget = loadEnv('sandbox-dev').emailIssuer?.dailySendBudget;
+
+  it("counts the issuer's alert mail from the code's caps", () => {
+    expect(ISSUER_ALERTS_PER_DAY).toBe(25);
+    expect(OTHER_MAIL_PER_DAY).toBe(50);
+  });
+
+  it('with one critical alert left open all month, the plan still holds beside the other apps\' recent peak', () => {
+    const open = (budget! + ownerPool(budget!) + OTHER_MAIL_PER_DAY + OPEN_CRITICAL_PER_DAY) * DAYS;
+    expect(open).toBe(17_918);
+    expect(open + OTHER_APPS_PEAK_MONTH).toBeLessThanOrEqual(PLAN_PER_MONTH);
+    // About ten open at once would be needed to reach the plan.
+    const withOpen = (n: number) => (budget! + ownerPool(budget!) + OTHER_MAIL_PER_DAY + n * OPEN_CRITICAL_PER_DAY) * DAYS + OTHER_APPS_PEAK_MONTH;
+    expect(withOpen(9)).toBeLessThanOrEqual(PLAN_PER_MONTH);
+    expect(withOpen(10)).toBeGreaterThan(PLAN_PER_MONTH);
+  });
 
   it("keeps the worst-case month within the env's share of the plan", () => {
     expect(budget).toBeDefined();

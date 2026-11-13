@@ -210,12 +210,14 @@ export interface Limits {
   ipVerify: readonly Limit[];
   /** Hana Home's `home/start` per IP subject, on top of `ipStart` (H10's review). */
   ipHomeStart: readonly Limit[];
+  /** `start` per aggregate prefix (IPv4 /24, IPv6 /56 and /48): the same in every env unless `tighterLimits` lowers it. */
+  ipAggStart: readonly Limit[];
 }
 
 const freeze = (l: Limits): Limits => {
   for (const v of Object.values(l.mailbox)) Object.freeze(v);
   Object.freeze(l.mailbox);
-  for (const v of [l.ipStart, l.ipResend, l.ipVerify, l.ipHomeStart]) for (const x of v) Object.freeze(x);
+  for (const v of [l.ipStart, l.ipResend, l.ipVerify, l.ipHomeStart, l.ipAggStart]) for (const x of v) Object.freeze(x);
   return Object.freeze(l);
 };
 
@@ -238,6 +240,7 @@ export const PRODUCTION_LIMITS: Limits = freeze({
   ipResend: IP_RESEND_LIMITS.map((l) => ({ ...l })),
   ipVerify: IP_VERIFY_LIMITS.map((l) => ({ ...l })),
   ipHomeStart: IP_HOME_START_LIMITS.map((l) => ({ ...l })),
+  ipAggStart: IP_AGGREGATE_START_LIMITS.map((l) => ({ ...l })),
 });
 
 /**
@@ -279,6 +282,7 @@ export const DEV_LIMITS: Limits = freeze({
     { name: 'ip:home:10m', windowMs: 10 * MIN, max: 10 },
     { name: 'ip:home:1d', windowMs: DAY, max: 60 },
   ],
+  ipAggStart: IP_AGGREGATE_START_LIMITS.map((l) => ({ ...l })),
 });
 
 /**
@@ -289,9 +293,10 @@ export interface TighterLimits {
   ipStart?: { per10m?: number; perDay?: number };
   ipResend?: { per10m?: number };
   mailboxIpCodes?: { per15m?: number; perDay?: number };
+  aggStart?: { perDay?: number };
 }
 
-const TIGHTER_FIELDS: Record<keyof TighterLimits, readonly string[]> = { ipStart: ['per10m', 'perDay'], ipResend: ['per10m'], mailboxIpCodes: ['per15m', 'perDay'] };
+const TIGHTER_FIELDS: Record<keyof TighterLimits, readonly string[]> = { ipStart: ['per10m', 'perDay'], ipResend: ['per10m'], mailboxIpCodes: ['per15m', 'perDay'], aggStart: ['perDay'] };
 const isMax = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 1;
 
 /** Parses EMAIL_TIGHTER_LIMITS: null when absent or malformed (an unknown field, a value that isn't a whole number ≥ 1). */
@@ -327,6 +332,7 @@ export function tighten(base: Limits, t: TighterLimits): Limits {
     mailbox: { ...base.mailbox, ipCodes: lower(base.mailbox.ipCodes, { 'codes:15m': t.mailboxIpCodes?.per15m, 'codes:1d': t.mailboxIpCodes?.perDay }) },
     ipStart: lower(base.ipStart, { 'ip:start:10m': t.ipStart?.per10m, 'ip:start:1d': t.ipStart?.perDay }),
     ipResend: lower(base.ipResend, { 'ip:resend:10m': t.ipResend?.per10m }),
+    ipAggStart: lower(base.ipAggStart, { 'agg:start:1d': t.aggStart?.perDay }),
   });
 }
 
@@ -341,20 +347,20 @@ export function limitsFor(envName: string, tighter: TighterLimits | null = null)
 
 /**
  * Parses EMAIL_APP_SHARES (manifest `emailIssuer.appShares`, testnet only, D793): app id → mails a day. Empty when
- * absent or malformed (every app's share then comes from its plan).
+ * absent, null when malformed (either way every app's share comes from its plan).
  */
-export function parseAppShares(raw: string | undefined): ReadonlyMap<string, number> {
+export function parseAppShares(raw: string | undefined): ReadonlyMap<string, number> | null {
   const out = new Map<string, number>();
   if (!raw) return out;
   let v: unknown;
   try {
     v = JSON.parse(raw);
   } catch {
-    return out;
+    return null;
   }
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) return out;
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
   const entries = Object.entries(v);
-  if (!entries.every(([id, n]) => /^app_[A-Za-z0-9_-]{1,64}$/u.test(id) && isMax(n))) return out;
+  if (!entries.every(([id, n]) => /^app_[A-Za-z0-9_-]{1,64}$/u.test(id) && isMax(n))) return null;
   for (const [id, n] of entries) out.set(id, n as number);
   return out;
 }

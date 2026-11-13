@@ -1,15 +1,292 @@
-# Hana ID
+# Journear Passport (code name Hana ID)
 
-Embedded wallets from social login. A partner app integrates the Hana ID SDK; its users sign in with Google; the
-NEAR contract `hana-signer` checks the Google ID token on-chain and asks the NEAR MPC network for the user's key via
-Confidential Key Derivation (CKD), encrypted so only the user's browser can read it. Signing then happens locally.
+Journear Passport gives each user of a partner app a wallet when they sign in with Google or with a code sent to their
+email, with no seed phrase and no browser extension. The NEAR contract `hana-signer` checks the sign-in token on chain
+and asks NEAR's MPC network for that user's key through Confidential Key Derivation (CKD); the MPC's answer is
+encrypted to a one-time key that only the user's browser holds. The browser turns that secret into the user's NEAR,
+Stellar and EVM keys, and NEAR transactions can go through a Journear relayer that pays the gas (NEP-366 meta
+transactions), so a new user's first NEAR transaction needs no NEAR.
+
+**Testnet only.** Every account is a throwaway, and wallets derived on them are disposable. Package and identifier
+names are still `hana-*` (the code name); the product, its pages and its emails say "Journear Passport".
+
+## For judges and screening agents (NEAR HACKATHON)
+
+Written to be checked: every claim below names a file and a way to check it. `TODO(submit)` marks what the team fills
+in before submitting. The detail (each event rule and where it is met, the full library list, the tracks against their
+prompts) is in [`docs/hackathon.md`](docs/hackathon.md). The developer reference starts at
+[Developer reference](#developer-reference).
+
+### What NEAR does here, and where to check it
+
+| Claim | Code | How to check |
+|---|---|---|
+| The contract verifies Google's RS256 ID token on chain | `contracts/hana-signer/src/issuers.rs` `verify_token` → `src/oidc.rs` `verify_signature` → `verify_rs256` (RSASSA-PKCS1-v1_5, SHA-256, modular exponentiation with `num-bigint`), reached from `create_session` and `create_session_and_derive` in `src/sessions.rs` | `cd contracts/hana-signer && cargo test --locked rejects_non_rs256`; the `get_issuer` view below lists the issuers it trusts |
+| It verifies the email issuer's token on chain too | `contracts/hana-signer/src/self_issued.rs` `verify_self_issued_signatures` (JWS JSON, RS256 per signature, a signer policy), through the same `verify_token` | `get_issuer` with `{"provider":"email"}` below; `contracts/integration-tests/tests/email.rs` |
+| Each partner app has its own scope; the user's path is `{scope_id}#{provider}#{sub}#{key_index}` | `contracts/hana-signer/src/registry.rs` (`scope_for_client`, `get_scope`), `src/sessions.rs` | `get_scope` with `{"scope_id":"s2"}` below (the hosted demo's app) |
+| It asks NEAR's MPC for the user's key (CKD) | `contracts/hana-signer/src/sessions.rs` `derive_with` → `request_app_private_key` (declared with `#[ext_contract(mpc_contract)]` in the same file) on `v1.signer-prod.testnet`, CKD domain 2 (`mpc`, `ckdDomainId` in `envs/sandbox-dev.json`) | the receipts of a login transaction below show `request_app_private_key` on `v1.signer-prod.testnet`; `cargo test --locked derive_key_calls_the_mpc_with_the_session_path` |
+| The MPC's answer is encrypted to a key only the browser holds | `packages/core/src/ckd.ts` `newAppKey` (a random BLS12-381 scalar made in the browser) and `decryptCkd` (decrypts and checks a pairing against the pinned MPC key, `ckdNetworkKey` in `envs/sandbox-dev.json`); used by the vault, a hidden iframe on Journear's own origin, in `packages/web/src/vault/login.ts` | `corepack pnpm --filter @hana-id/core exec vitest run test/ckd.test.ts` |
+| One CKD secret gives a key per chain; NEAR's is an Ed25519 key and the account is its implicit account (64 hex) | `packages/core/src/derivation.ts` (HKDF-SHA256; `nearSeed`, the tuple `("near", "ed25519", account)`), golden vectors `packages/core/test/vectors/derivation-v1-near.json` | `corepack pnpm --filter @hana-id/core exec vitest run test/derivation-near.test.ts` |
+| NEAR transactions, NEP-366 delegate actions and NEP-413 messages are decoded and shown in Journear's approval window, then signed in the vault | `packages/core/src/near/` (`codec.ts`, `sign.ts`), `packages/web/src/vault/near.ts`, `packages/web/src/auth/render-approval.ts`; the SDK's `hana.near.*` in `packages/web/src/client/near.ts` | `corepack pnpm --filter @hana-id/core exec vitest run test/near-codec.test.ts test/near-approval.test.ts` |
+| A relayer pays for the user's NEAR calls, only for allowlisted contracts | `apps/api/src/near/relay.ts` (`POST /v1/near/activate`, `POST /v1/near/relay`), `apps/api/src/near/delegate.ts` `policyRefusal` (the sender is the key's own implicit account, FunctionCall actions only, zero deposit, the receiver in `near.relay.receivers`, a gas cap); sandbox-dev's only receiver is the guestbook | `corepack pnpm --filter @hana-id/api exec vitest run test/near-relay.test.ts`; on a real local NEAR node: `apps/api/test-sandbox/meta-tx.test.ts`; on testnet: the two transactions below |
+| A demo contract the user writes to without holding NEAR | `contracts/hana-guestbook/src/lib.rs` (`add_message`, `get_messages`, `total_messages`; no owner, no upgrade path), at `near.demoGuestbook` in `envs/sandbox-dev.json`, its keys deleted on 2026-11-12 | the view calls below; `cd contracts/hana-guestbook && cargo test --locked`; `contracts/integration-tests/tests/guestbook.rs` |
+| The contract's owner is a Sputnik DAO council with public delays | `contracts/hana-signer/src/governance.rs`; the DAO's code pinned in `contracts/sputnik/pin.json` | `get_config` below: `owner` is `hana-id-council-dev1.sputnikv2.testnet` |
+| Logins are paid for by Journear's relayer account | `apps/api` signs `create_session_and_derive` with the relayer's function-call keys (manifest `relayer`) | the transaction list below: signer `hana-id-relayer-dev1.testnet` |
+
+### Reproduce it
+
+**A. On the hosted testnet demo** (no setup): <https://hana-id-demo-sandbox-dev.tingtc.workers.dev> (`apps/demo`; NEAR
+testnet, Stellar testnet, Base Sepolia). Use email sign-in: **Log in with Google** works only for Google accounts on
+Journear's tester list, because the Google client is still in Google's testing mode; other accounts see Google's
+"Access blocked".
+
+1. Do: open the page. See: "Journear Passport demo" and the testnet banner.
+2. Do: click **Log in with email**. In the Journear window ("Sign in with email"), type an address you can read and
+   click **Send code**; type the 6-digit code from the email (from "Journear Passport (testnet)", subject starting
+   `[SANDBOX]`) and click **Continue**. See: "Your addresses" with a Stellar testnet and an EVM address, and a card
+   headed **NEAR** with your implicit account (64 hex characters; **Show the full account ID**, **View on NearBlocks
+   ↗**). A new account reads "Not on NEAR testnet yet: your first guestbook write creates it (Journear’s relayer
+   sends it a zero-value transfer), for free."
+3. Do: under **Write to the guestbook**, type a message in **Your message** (1 to 200 characters) and click **Write to
+   the guestbook (no NEAR needed)**. See: "Preparing your NEAR account…", then "Waiting for your approval in the
+   Journear window…" and a Journear window headed "NEAR transaction, fee paid by a relayer", with **From** (your
+   account), **To** (`hana-id-guestbook-dev1.testnet`), "Valid until block", "Nonce", and the call: **Calls**
+   `add_message` on the guestbook, its arguments (your text), deposit 0, gas 10 Tgas. Move the mouse (Approve ignores
+   clicks until then and for its first second), click **Approve**. See: "Sending it through Journear’s relayer, which
+   pays the fee…", then "Written to the guestbook on NEAR testnet. … You paid no gas." with **View the transaction
+   ↗**, and your message under **Latest messages**, marked "you".
+4. Do: click **View the transaction ↗** (NearBlocks testnet). See: the signer is the relay account
+   `hana-id-near-relay-dev1.testnet`, the action is `Delegate`, and the `add_message` receipt's predecessor is your
+   account. Your account's balance stays 0.
+5. Do: click **Sign a message (NEP-413)**, then **Approve** in the window headed "Sign in with your NEAR account". See:
+   "NEAR message (NEP-413): signed" with Signature, Recipient (the demo's host), Account and Public key. Nothing is
+   sent.
+6. Do: click **Sign a transaction**, then **Approve** in the window headed "NEAR transaction". See: with 0 NEAR,
+   "NEAR transaction (add_message on the guestbook): signed, not sent" with the signed transaction and its hash; it is
+   sent (and linked) only when the account holds at least 0.01 NEAR for the fee.
+7. Optional, the user's exit: open Passport Home, <https://hana-id-auth-sandbox-dev.tingtc.workers.dev/home>, click
+   **Continue with email** and sign in with the same address. Under **Your apps**, click **View** on "Smoke B (shared
+   only)" (the demo's app). See: "Your addresses" with the NEAR account. Under **Move this wallet to another wallet
+   app**, click **Show how to move it**, then **Continue with a code**; after the code, the steps Verify, Understand,
+   Export: "Your wallet is open", click **NEAR key**, read "Before you move a NEAR account", type `EXPORT`, click
+   **Continue**, tick the box and click **Show key**. **Lock now** erases it. It is a testnet key: never fund it on
+   mainnet.
+
+The first run of steps 2 to 4 on testnet, 2026-11-12 (`docs/operations.md` "NEAR relay"), by a new email user: the
+activation `H9kjLPrVbxfjFAvzRJh7mHxs5EetiBv9urLkbbhF8cHa` (a 0-yocto Transfer from the relay account creates the
+user's implicit account `cceaf5d33b7b0fff98c15d9c3669dcfb2e0b2d1d20282382dcbfd3ad93d770c4`) and the write
+`DjJAzarJpH3JsNQirQf97T1Jh2qAouebvKTfZm4u3UgX` (one `Delegate` action signed by the relay account; its `add_message`
+receipt runs as the user's account). Check them, read-only:
+
+```sh
+for tx in H9kjLPrVbxfjFAvzRJh7mHxs5EetiBv9urLkbbhF8cHa DjJAzarJpH3JsNQirQf97T1Jh2qAouebvKTfZm4u3UgX; do
+  curl -s https://archival-rpc.testnet.near.org -H 'content-type: application/json' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"EXPERIMENTAL_tx_status\",\"params\":{\"tx_hash\":\"$tx\",\"sender_account_id\":\"hana-id-near-relay-dev1.testnet\",\"wait_until\":\"FINAL\"}}" \
+    | jq -c '{signer: .result.transaction.signer_id, receipts: [.result.receipts[] | {to: .receiver_id, by: .predecessor_id, call: (.receipt.Action.actions[0].FunctionCall.method_name // (.receipt.Action.actions[0] | if type == "object" then keys[0] else . end))}]}'
+done
+```
+
+See: `{"signer":"hana-id-near-relay-dev1.testnet","receipts":[{"to":"cceaf5d3…","by":"hana-id-near-relay-dev1.testnet","call":"Transfer"},…]}`
+and, for the write, `{"to":"cceaf5d3…","by":"hana-id-near-relay-dev1.testnet","call":"Delegate"},{"to":"hana-id-guestbook-dev1.testnet","by":"cceaf5d3…","call":"add_message"},…`
+(account ids shortened here).
+
+**B. View calls anyone can run** (read-only, public RPC; needs `curl` and `jq`, or [near CLI](https://github.com/near/near-cli-rs)).
+
+```sh
+RPC=https://rpc.testnet.near.org
+view() { curl -s $RPC -H 'content-type: application/json' -d "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"query\",\"params\":{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$1\",\"method_name\":\"$2\",\"args_base64\":\"$(printf '%s' "$3" | base64)\"}}" | jq -r '.result.result | implode'; }
+
+# The guestbook: how many messages, and the latest (newest first)
+view hana-id-guestbook-dev1.testnet total_messages '{}'
+view hana-id-guestbook-dev1.testnet get_messages '{"limit":5}' | jq -c '.[]'
+# It has no access key left, so nobody can change its code or its messages
+curl -s $RPC -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":"1","method":"query","params":{"request_type":"view_access_key_list","finality":"final","account_id":"hana-id-guestbook-dev1.testnet"}}' | jq -c '.result.keys'
+
+# The signer contract: owner, MPC account, CKD domain, the account allowed to pay for logins
+view hana-id-signer-dev1.testnet get_config '{}' | jq -c '{owner, mpc, ckd_domain_id, sponsors, paused}'
+# The issuers it checks tokens against, and the demo app's scope
+view hana-id-signer-dev1.testnet get_issuer '{"provider":"google"}' | jq -c '{provider, iss_values, kids}'
+view hana-id-signer-dev1.testnet get_issuer '{"provider":"email"}' | jq -c '{provider, iss_values, kids}'
+view hana-id-signer-dev1.testnet get_scope '{"scope_id":"s2"}' | jq -c '{id, clients, allow_shared}'
+
+# The same with near CLI
+near contract call-function as-read-only hana-id-guestbook-dev1.testnet get_messages json-args '{"limit": 5}' network-config testnet now
+```
+
+See (2026-11-13): `2`; two messages by `cceaf5d3…` ("gm gm", "testing guestbook"; more once others write); `[]`;
+`{"owner":"hana-id-council-dev1.sputnikv2.testnet","mpc":"v1.signer-prod.testnet","ckd_domain_id":2,"sponsors":["hana-id-relayer-dev1.testnet"],"paused":false}`;
+`{"provider":"google","iss_values":["https://accounts.google.com","accounts.google.com"],"kids":[…]}` (Google's
+current key ids, which rotate); `{"provider":"email","iss_values":["https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev/v1/email"],"kids":["v_H0YgrYDKczje-jsOa1eEdEWy9BECqRRCSp98pztsw","ziQVLEH8Qhqfq_d0XHUkC4GMIxvGoc0TlN0c7H4In_w"]}`
+(the email issuer's two keys, as in `envs/sandbox-dev.json` `emailIssuer.publicKeys`);
+`{"id":"s2","clients":[["email","email:s2"]],"allow_shared":true}`.
+
+A login's transaction and its call to the MPC:
+
+```sh
+# The latest transactions to the signer contract (NearBlocks' public API)
+curl -s 'https://api-testnet.nearblocks.io/v3/accounts/hana-id-signer-dev1.testnet/txns' \
+  | jq -r '.data[] | "\(.transaction_hash) \(.signer_account_id) \(.actions[0].method)"' | head -5
+# One of them by hash: its receipts (the archival RPC keeps old ones)
+curl -s https://archival-rpc.testnet.near.org -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"1","method":"EXPERIMENTAL_tx_status","params":{"tx_hash":"<hash>","sender_account_id":"hana-id-relayer-dev1.testnet","wait_until":"FINAL"}}' \
+  | jq -c '[.result.receipts[] | {to: .receiver_id, method: .receipt.Action.actions[0].FunctionCall.method_name}]'
+```
+
+See: lines like `<hash> hana-id-relayer-dev1.testnet create_session_and_derive`, then
+`[{"to":"hana-id-signer-dev1.testnet","method":"create_session_and_derive"},{"to":"v1.signer-prod.testnet","method":"request_app_private_key"},{"to":"v1.signer-prod.testnet","method":"return_ck_and_clean_state_on_success"},…]`.
+The filter prints receivers and method names only: the arguments hold the user's sign-in token, public on chain by
+design but with no reason to be on your screen. In a browser: <https://testnet.nearblocks.io/address/hana-id-signer-dev1.testnet>
+and <https://testnet.nearblocks.io/address/hana-id-guestbook-dev1.testnet>.
+
+**C. Locally** (no secrets, no testnet). Needs macOS or Linux, Node 22+ (24 tested), Git, `jq`; for the Rust steps
+Rust through `rustup` (`contracts/hana-signer/rust-toolchain.toml` pins 1.85.1 with `wasm32-unknown-unknown`),
+`cargo-near` 0.22.0 (`cargo install cargo-near --version 0.22.0 --locked`) and
+[gitleaks](https://github.com/gitleaks/gitleaks) (`brew install gitleaks`). pnpm comes from Node's corepack.
+
+1. Do:
+   ```sh
+   git clone https://github.com/Hana-Technology/hana-id.git && cd hana-id
+   corepack enable                                    # pnpm 11.3.0, from package.json "packageManager"
+   corepack pnpm install --frozen-lockfile
+   corepack pnpm --filter @hana-id/e2e e2e:install    # once: Playwright's Chromium, Firefox and WebKit
+   ```
+   See: `Done in …s using pnpm v11.3.0`. The install also points `core.hooksPath` at `.githooks` (the gitleaks
+   pre-commit hook).
+2. Do: `corepack pnpm verify --all`. It runs, in phases: the lockfile check; gitleaks over the history; the typecheck
+   of every package; `cargo test --locked` and the wasm build of `contracts/hana-signer` and `contracts/hana-guestbook`;
+   every package's unit tests and the docs checks; the contracts on a local NEAR node (`contracts/integration-tests`,
+   then the API's meta-transaction tests in `apps/api/test-sandbox`); the SDK pack check; Playwright on Chromium.
+   `corepack pnpm verify --full` adds Firefox, WebKit and the dependency advisories (needs `cargo install cargo-audit
+   --locked`). Leave `HANA_E2E_PORT_BASE` unset. See: a table with every step `pass`, then `total (wall clock) pass`,
+   exit code 0. Measured 2026-11-13 on a
+   16-core Apple M4 Max with Cargo's crates, `near-sandbox` and Playwright's browsers already downloaded:
+   `total (wall clock) pass 11m25s` (the local NEAR node's tests 7m48s of it; Playwright on Chromium 142 passed, 1
+   skipped). Allow longer on a machine that has to download them.
+3. What the local runs simulate, and what is real:
+   - `contracts/integration-tests` (`cargo test --locked -- --test-threads=8` there): the real `hana-signer` and
+     guestbook wasm on a local NEAR node (near-workspaces starts `near-sandbox`, downloaded on first use), RSA test
+     keys standing in for Google and the email issuer, and `contracts/mock-mpc` standing in for the MPC (it records each
+     `request_app_private_key` and answers with fixed bytes; it does not run CKD). Real: the contracts, NEAR's runtime,
+     gas, keys, receipts, delegate actions.
+   - `corepack pnpm --filter @hana-id/e2e e2e`: Journear's real browser bundles (vault, sign-in, approval, export,
+     Passport Home) and the real API and email issuer Worker code in Node, in three browsers. NEAR is a mocked
+     JSON-RPC (`apps/e2e/src/server/chain.ts`), not a node; the MPC is a test key in the same file, real BLS12-381, so
+     the browser's CKD decryption and pairing check run for real; Google is an OIDC stub inside each browser context
+     (`apps/e2e/src/google-stub.ts`); email codes go to a local outbox. The demo's gasless guestbook write runs in
+     `tests/demo.spec.ts` against a relayer the test routes (2026-11-13, Chromium: `6 passed`). Details:
+     [`apps/e2e/README.md`](apps/e2e/README.md).
+4. To click through the demo on that stack yourself (email sign-in; the Google stub exists only inside Playwright):
+   ```sh
+   corepack pnpm --filter @hana-id/e2e serve     # builds, then serves; wait for "[e2e] stack ready"
+   curl -s -X POST http://127.0.0.1:4440/__e2e/apps -H 'content-type: application/json' \
+     -d '{"name":"Journear Passport demo","origins":["http://localhost:4412"],"publishableKey":"pk_test_DemoE2eDemoE2eDemoE2e","loginMethods":"google,email"}'
+   # open http://localhost:4412, click "Log in with email", type any address, then read the code:
+   curl -s 'http://127.0.0.1:4442/__e2e/outbox?to=<the address, lowercased>'
+   ```
+   See: `{"appId":"app_e2e_…","pk":"pk_test_DemoE2eDemoE2eDemoE2e"}`; on the page, the Journear window, and after the
+   code the Stellar and EVM addresses and the NEAR card with the account. The stack runs no NEAR relay, so by hand the
+   gasless write answers "Journear’s relayer isn’t set up on this environment yet." (`503 relayer_unconfigured`);
+   step 3's spec routes a relayer instead. Ports are 4410 to 4460 in a plain clone (a linked git worktree gets its own
+   base, `apps/e2e/src/checkout-port.ts`); stop it with Ctrl-C.
+
+### What was built in the hackathon window
+
+- The window (rule Q-001): code from the announcement on 2026-10-19 to 2026-11-14 counts; earlier commits are baseline.
+- This repository's first commit, `e0c831fc`, is dated 2026-10-26 13:43 +08:00. No commit on any branch has an
+  earlier date. On 2026-11-13, `develop` (35bc103e) has 1,181 commits and the 231 branches on GitHub together 1,187, every
+  one dated 2026-10-26 to 2026-11-12. Check: `git log --reverse --format='%h %ad %s' --date=iso | head -3`,
+  `git rev-list --count develop`, `git log --format=%ad --date=short develop | sort | uniq -c`.
+- `TODO(submit): baseline statement, pending the rule check`
+- What was built when (dates from `git log`; each line's decisions in [`docs/decisions.md`](docs/decisions.md)):
+  - 2026-10-26 to 10-30: the per-app scope registry in `hana-signer`, the API Worker, deploy and admin scripts, the
+    sandbox tests; the browser SDK packages (10-28) and the vault with one-transaction login (deployed on sandbox-dev
+    2026-10-29); the Sputnik DAO governance (on sandbox-dev since 10-30).
+  - 2026-11-02 to 11-06: email login (the email issuer Worker 11-02, live on sandbox-dev 11-03; the contract's
+    self-issued token check); the partner console and the staff admin (batch C).
+  - 2026-11-09 to 11-10: Passport Home (the user's own page: key export, devices, consents, an exit sign-in path).
+  - 2026-11-11 to 11-12: NEAR as a wallet chain (derivation, signing, the approval window's NEAR screens), the wallet
+    directory's NEAR rows, the meta-transaction relay, the guestbook contract and the demo's NEAR card; merged and
+    deployed to sandbox-dev on 2026-11-12 with the Journear Passport rename, "Move this wallet" for the NEAR key, the
+    admin's NEAR relay tile and SDK 0.4.1.
+- The diff for the window: <https://github.com/Hana-Technology/hana-id/compare/e0c831fc...develop>. With the tags the
+  rules name (Q-003), `TODO(submit)`: <https://github.com/Hana-Technology/hana-id/compare/pre-hackathon...hackathon-submission>.
+
+### What is judged, and the other chains (rule Q-002)
+
+The whole repository is submitted; the NEAR integration is what is judged: the `hana-signer` contract (on-chain checks
+of Google's and the email issuer's tokens, the scope registry, sessions, the CKD request to NEAR's MPC, governance by a
+Sputnik DAO council), the browser's CKD decryption, the NEAR wallet (derivation, the implicit account, transaction,
+delegate-action and NEP-413 signing behind the approval window), the gasless relay, the guestbook and the demo's NEAR
+card. **Other chains, disclosed:** the same CKD secret also gives each user a Stellar and an EVM wallet (Stellar
+testnet, Base Sepolia and other EVM testnets), and `packages/sodax` adapts Sodax's cross-chain SDK to those wallets.
+They are part of the product and of this repository, built in the same window, and are not NEAR integrations.
+
+### AI tools and third-party code (rule Q-005)
+
+- **AI.** This repository is built with AI coding agents. Its code, tests and docs were written by Claude Code
+  (Anthropic's coding agent) sessions, directed and reviewed by the developer; `CLAUDE.md` holds the agents' project
+  rules. 120 of the 1,181 commits on `develop` carry a `Co-Authored-By: Claude` trailer
+  (`git log -i --grep='Co-Authored-By: Claude' --oneline develop | wc -l`); the others were made the same way without
+  one. Treat all of it as AI-written.
+- **Third-party code that matters** (the full list with versions: [`docs/hackathon.md`](docs/hackathon.md)):
+  `near-sdk` 5.9, `num-bigint`, `borsh`, `serde` in the contracts; `near-workspaces` 0.23 (with `near-sandbox`),
+  `rsa`, `ed25519-dalek` in the sandbox tests; `@near-js/crypto`, `@near-js/transactions`, `@near-js/utils` in the API,
+  the watchdog and the scripts (and as the reference the NEAR codec is tested against); `@noble/curves` (BLS12-381,
+  Ed25519, secp256k1) and `@noble/hashes`; `@scure/base`; `@stellar/stellar-base`; `viem`; `@sodax/types`; Cloudflare
+  Workers, Durable Objects and D1 through `wrangler`; Neon Postgres (`pg`, `@electric-sql/pglite` in tests); `zod`;
+  `jose`; React and Vite; Playwright and Vitest; the Archivo and IBM Plex fonts (SIL Open Font License). Services: NEAR
+  testnet and its MPC network (`v1.signer-prod.testnet`), the Sputnik DAO v2 factory (`sputnikv2.testnet`, code pinned in
+  `contracts/sputnik/pin.json`), public NEAR RPCs, Google OAuth, SendGrid for email codes.
+- `packages/core/src/ckd.ts` started as a port of `legacy/client/ckd.ts`, itself ported from `near/mpc` at `a7ae426`
+  (its first lines say so).
+- **Licence:** `TODO(submit)`: the rules ask for a LICENSE file (Q-014); none is chosen yet. The options:
+  [`docs/hackathon-license-draft.md`](docs/hackathon-license-draft.md).
+
+### Tracks
+
+`TODO(submit)`: the team picks the tracks for the form. The case for each, against its example prompt
+([`docs/hackathon.md`](docs/hackathon.md) has the prompts' wording):
+
+| Track | What the demo shows | Where | What it does not meet |
+|---|---|---|---|
+| Real-World Money (`realworld`) | A user who never held NEAR writes to a NEAR contract through an NEP-366 meta transaction that Journear's relayer pays for, and the relayer pays only for calls to an allowlisted contract (the prompt's "a meta transaction relayer that only pays for calls to our own contract"); each write links to its transaction | `apps/api/src/near/relay.ts`, `delegate.ts`; `apps/demo/src/near-card.ts` | No stablecoin, invoice, payroll or NEAR Intents on NEAR; testnet only. Test USDC can sit in the Stellar and EVM wallets, which are not NEAR |
+| Games With Real Economies (`games`) | Sign-in with an email code or Google gives a player a wallet with no seed phrase and no extension; the first NEAR action needs no NEAR and no gas prompt | `packages/web/src/auth/`, `packages/web/src/vault/login.ts`; the contract's token check above | Journear Passport is a login and wallet layer, not a game: no game loop, NPCs or NEP-245 items. Every NEAR signature opens Journear's approval window (auto-approve rules exist for Stellar and EVM only), so the prompt's "no wallet popups" is not met |
+| Open Innovation (`open`) | The decision "this person may have this key" is made by a public NEAR contract that checks Google's or the email issuer's signature itself; the key comes from NEAR's MPC encrypted to the browser; one sign-in gives wallets on NEAR, Stellar and EVM; failure cases are written down (`docs/system-overview.md` sections 4b to 4g and 5, `docs/security.md` "Known open issues") | `contracts/hana-signer`, `packages/core/src/ckd.ts`, `packages/core/src/derivation.ts` | Testnet MPC; Journear serves the pages that run the key code, so a malicious deploy of them could take keys (below) |
+
+### Security and limits
+
+1. Testnet only: the manifest schema accepts only `testnet` (`packages/env/src/schema.ts`), and the hosted demo signs
+   only for NEAR testnet, Stellar testnet and Base Sepolia (`apps/demo/src/config.ts` refuses mainnet settings).
+2. The relayer pays only for FunctionCalls with zero deposit to the contracts in `near.relay.receivers` (sandbox-dev:
+   the guestbook only), within budgets: 5 NEAR a day for the env, 1 NEAR a day per app, 50 relays a day per sender,
+   200 activations a day per app (`envs/sandbox-dev.json` `near.relay`). Past them it answers 503 until 00:00 UTC.
+3. Every NEAR signature opens Journear's approval window and needs Approve; nothing NEAR is signed automatically. The
+   window decodes the exact bytes; Approve ignores clicks for its first second and until a pointer move or a focus key
+   (`packages/web/src/auth/approve-guard.ts`). It shows what is called with what; it cannot say what an unknown
+   contract will do.
+4. A user's NEAR account is an implicit account: it exists on chain only after a first transfer (the relayer's
+   activation sends 0 NEAR), and the exported NEAR key is the account itself.
+5. Journear serves the vault and approval pages; a malicious deploy of them could read keys of users who load it. This
+   is open (`docs/security.md` "Known open issues").
+6. Email login trusts Journear's email issuer: one signer, whose key on testnet is a Worker secret, and that key could
+   open any email wallet.
+7. On testnet the signer account still has a full-access key (`allowSignerFullAccessKey`), and the council's three
+   member keys are held by one person, with 60-second delays (`envs/sandbox-dev.json`).
+8. Email codes for the demo's app are limited to about 100 a day (its plan's share of the env's 200-mail daily
+   budget); Google sign-in is limited to listed testers.
+9. One exception to testnet exists elsewhere: Journear staff can let a test app sign real Base and Stellar transactions
+   of up to $9.99 each for a Sodax demo (`docs/decisions.md` D428); the demo's app has it on, the demo page never asks
+   for it.
+10. Not done for mainnet: key custody in KMS, a second email co-signer, CI turned back on, independent reviews
+    ([`docs/mainnet-readiness.md`](docs/mainnet-readiness.md)). Addresses may still change before Journear's address
+    freeze: never send real funds to a testnet wallet.
+
+## Developer reference
 
 Each partner app has its own **scope** in a registry inside the contract, so one app can never derive another app's
 users' keys. The user's key path is `{scope_id}#{provider}#{sub}#{key_index}`. An app logs users in either through its
 own Google OAuth client (the token's `aud` picks the scope) or through Hana's shared client (the token's nonce commits
 to the scope); see [Shared vs own Google client](#shared-vs-own-google-client).
-
-**Testnet only.** Every account is a throwaway, and wallets derived on them are disposable.
 
 More: [`docs/README.md`](docs/README.md) (index). Current state: [`docs/context.md`](docs/context.md) (background,
 status, next steps), [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md),

@@ -1,6 +1,7 @@
 // CKD client: ported from apps/smoke/test/ckd.test.ts (itself from legacy/client/ckd.test.ts), plus the batch B checks:
 // a substituted path, CKD or signer fails the pairing check against ckdAppId(SIGNER, path); the identity point is
 // refused; parseNetworkKey refuses an invalid G2; ckdKeyProblem and isValidNetworkKey as moved from smoke.
+import { readFileSync } from 'node:fs';
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import { describe, expect, it } from 'vitest';
@@ -132,5 +133,25 @@ describe('pinned network key', () => {
     const net = mpcNetwork();
     expect(toHex(ckdKeyHash(net.networkKey))).toBe(toHex(sha256(net.pkBytes)));
     expect(() => ckdKeyHash('bls12381g2:abc')).toThrow();
+  });
+});
+
+describe('near/mpc attribution', () => {
+  const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+  const NEAR_MPC_COMMIT = 'a7ae426ec6708969797c5ea9e5d4e5e84c3068f4';
+
+  it('keeps near/mpc\'s MIT notice beside the port, names the upstream and commit, and repeats the notice in the README', () => {
+    const notice = read('../LICENSE-near-mpc.txt');
+    expect(notice.startsWith('MIT License\n\nCopyright (c) 2025 NEAR One Limited.\n')).toBe(true);
+    expect(notice).toContain('The above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.');
+    const header = read('../src/ckd.ts').split('\nimport ')[0]!;
+    expect(header).toContain('https://github.com/near/mpc');
+    expect(header).toContain(NEAR_MPC_COMMIT);
+    expect(header).toContain('MIT licensed');
+    expect(header).toContain('packages/core/LICENSE-near-mpc.txt');
+    const readme = read('../README.md');
+    expect(readme).toContain('## Third-party code');
+    expect(readme).toContain(NEAR_MPC_COMMIT);
+    expect(readme).toContain(notice);
   });
 });

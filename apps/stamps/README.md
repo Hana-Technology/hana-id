@@ -1,6 +1,7 @@
 # @hana-id/stamps
 
-**Journear Passport stamps**: a NEAR-only testnet demo site for the NEAR hackathon (D798–D802). A passport booklet:
+**Journear Passport stamps**: a NEAR-only testnet demo site for the NEAR hackathon (D798–D802), whose app is named
+**Stamp Trail** (the name the Journear Passport window shows: the founder's choice, 2026-11-13). A passport booklet:
 sign in with email (or Google) through Journear Passport, get a NEAR account with no seed phrase and zero NEAR, and
 collect stamps, each one a real NEAR testnet transaction to the stamps contract (`contracts/hana-stamps`,
 `near.demoStamps` in the manifest) approved in the Journear Passport window, most of them paid by Journear's relayer.
@@ -20,7 +21,8 @@ the page.
 - **Routes** (`src/routes.ts`): `/` is the signed-in user's passport, or the cover with *Sign in* when signed out;
   `/p/<account_id>` is anyone's passport, read-only, no sign-in. The id is validated strictly (a 64-hex implicit
   account, or a named `.testnet` account for viewing): anything else is a 404 from the Worker. Both show *Recent
-  stamps* (the contract's `recent`, newest first, each linking to that traveller's passport) and the totals.
+  stamps* (the contract's `recent`, newest first, implicit accounts only, each linking to that traveller's passport)
+  and the totals.
 - **Sign in**: `hana.login()` in the click, with no method, so Journear Passport's window offers email and Google.
   Signing in from a public passport goes to your own.
 - **The stamps** (`src/collector.ts`, one collector per stamp, D800), each `collect({ stamp, note?, proof? })` on the
@@ -65,9 +67,12 @@ hooks the site uses: [`UI-CONTRACT.md`](UI-CONTRACT.md)). The rest (`src/app.ts`
   stay in Journear Passport's vault and windows.
 - Everything read from NEAR is untrusted (D753, D800): `get_passport`, `recent` and `totals` are parsed field by field
   (known stamp ids, valid account ids, u64 times, bounded counts and sizes, each stamp once), notes go into text nodes
-  only with control, bidi and zero-width characters replaced and cut to 140 characters, and accounts a public passport
-  can't show (or a `0x…` NEAR account that would read as another chain's) are left out of the recent list. Only an
-  `ERR_*` code is ever matched from a contract's or NEAR's error text, never shown raw.
+  only with control, bidi and zero-width characters replaced and cut to 140 characters (a note with nothing visible
+  left reads "(blank note)"), and the recent list shows implicit (64-hex) accounts only: every Journear Passport user
+  has one, while anyone can make named accounts and flood the list with names of their choosing (a named passport is
+  still viewable at `/p/<id>`), and an `0x…` NEAR account would read as another chain's. Only an `ERR_*` code is ever
+  matched from a contract's or NEAR's error text, never shown raw; the contract's storage running out
+  (`LackBalanceForState`) is one fixed notice ("The stamps contract is out of storage balance …").
 - Every response carries the demo's headers (`src/csp.ts`). The page's CSP:
 
   ```text
@@ -100,10 +105,13 @@ explorer is NearBlocks testnet; the faucet link is `https://near-faucet.io/` (`s
 
 ## Deploy
 
-1. **The contract** (the contract build): `contracts/hana-stamps` deployed and locked, its account in
-   `near.demoStamps` and in `near.relay.receivers`, the API redeployed with the receivers (`docs/operations.md`).
-2. **The app** (staff, once): an app of its own on a test scope that has email login (sandbox-dev's demo scope `s2`),
-   with the site's origin and `http://localhost:5175`, and email login on: `docs/operations.md` "Hosted stamps demo".
+The founder's steps, in order, with every command: `docs/operations.md` "Hosted stamps demo" ("Setting it up"). In
+short:
+
+1. **The contract**: `contracts/hana-stamps` deployed on `near.demoStamps` (funded to about 20 NEAR), the API
+   regenerated and redeployed so the relay pays for calls to it (`near.relay.receivers`).
+2. **The app** (staff, once): **Stamp Trail**, in Legacy apps on sandbox-dev's demo scope `s2` (which already holds its
+   email client), with the site's origin and `http://localhost:5175`, and email login on for it.
 3. **Build and deploy** (`wrangler login` first):
 
    ```sh
@@ -136,6 +144,16 @@ corepack pnpm --filter @hana-id/stamps typecheck
 `apps/e2e` builds the site for its local stack and serves it with this Worker handler and its real CSP
 (`http://localhost:<base + 3>`): `tests/stamps.spec.ts` signs in by email, collects Arrival, Sponsored, Postcard and
 Signature and sees them on the public passport, with no CSP violation and nothing of another chain on the page, in
-Chromium, Firefox and WebKit. The stack's mocked NEAR RPC serves the stamps contract (`src/server/stamps-contract.ts`:
-its views and rules, the signature's NEP-413 proof verified with ed25519 as on chain); `POST /v1/near/activate` and
-`/relay` are mocked at the network layer as in the demo's spec.
+Chromium, Firefox and WebKit. The stack's mocked NEAR RPC serves a model of the stamps contract
+(`src/server/stamps-contract.ts`: its views, its checks in the contract's order with its panics, the signature's
+NEP-413 proof verified with ed25519 as on chain); `POST /v1/near/activate` and `/relay` are mocked at the network layer
+with the API's answers.
+
+**Against the real contract** (`apps/api/test-sandbox/stamps-site.test.ts`, the sandbox lane of `pnpm verify`):
+this site's collector (`src/collector.ts`, with its `NearRpc` reads, nonces, delegate actions, NEP-413 proof and
+own-fare transaction), the SDK's own `HanaNear` and the API's relay code collect all six stamps on near-sandbox with
+the deployed wasm (Layover after fast-forwarding the node's clock, Own fare after funding the account); the relay's
+`422 contract_rejected` and NEAR's own failure of an own-fare transaction come back in this site's words; the site's
+parsers read the real `get_passport`, `recent` and `totals`. Only the vault's approval (signed with the vault's own
+signers after its request check) and the HTTP hop to the API are stood in for. The same file runs the e2e model and
+the wasm side by side on 29 calls (relayed and direct, implicit and named) and requires the same panics and passports.

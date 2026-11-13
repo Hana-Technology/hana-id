@@ -142,8 +142,9 @@ any balance; nothing more is at stake.
 
 **When the balance runs out**: a `collect` that needs new storage fails (NEAR refuses state the account's balance
 can't cover; nothing is stored); every passport stays readable; anyone can top the account up with a plain transfer, also after
-the lock (transfers need no key on the receiving account). **Hold 10 NEAR**: the code's 1.5, the ring's 0.12 and about
-8 NEAR for passports (over 1 000 of the largest, about 4 000 typical ones), and check the balance during the judging
+the lock (transfers need no key on the receiving account). **Hold about 20 NEAR** (testnet NEAR is free; anyone can
+fill the storage at about what it costs them): the code's 1.5, the ring's 0.12 and about 18 NEAR for passports (over
+2 000 of the largest, about 9 000 typical ones), and check the balance during the judging
 (`near account view-account-summary hana-id-stamps-dev1.testnet network-config testnet now`). `deploy-stamps` refuses
 to deploy with less than the code, 200 000 bytes of state and 0.1 NEAR of gas (about 3.6 NEAR).
 

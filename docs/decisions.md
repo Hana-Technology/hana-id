@@ -12011,6 +12011,7 @@ The three builds merged (contract, site, art) and reconciled. Current state: `ap
   approval needed the SDK's launcher; the faucet link was nowhere to be seen; the faucet refused the account), details
   decided while building, to confirm · Built: `apps/stamps/src/{collector,app,view,config}.ts`, `src/ui/`, `src/ui.css`,
   `apps/e2e/tests/stamps.spec.ts`.
+- Confirmed by the user 2026-11-13.
 - Cause (Signature): the second request (`signDelegateAction` with the proof) is made after awaits (the vault signs the
   NEP-413 message; the page then read NEAR when its read was older than 60 s; the vault checks the delegate's key on
   both RPC providers before it queues it, about 3.3 s on `rpc.testnet.near.org` today). It can only land in the window

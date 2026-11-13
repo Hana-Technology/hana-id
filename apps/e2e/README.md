@@ -17,6 +17,12 @@ The hosted demo's NEAR card (D750–D754): `tests/demo.spec.ts` writes to the gu
 `e2e_near_activate` / `e2e_guestbook_add` the test's mocked relayer routes call); `tests/demo-near-shots.spec.ts` saves
 its screens with `HANA_SHOTS_DIR=<dir>` (Chromium only, skipped otherwise).
 
+The stamps site (`apps/stamps`, D798–D802): `tests/stamps.spec.ts` signs in by email, collects Arrival, Sponsored,
+Postcard and Signature through the mocked relayer routes and sees them on the public passport, with no CSP violation
+and nothing of another chain on the page. The mocked chain serves the stamps contract (`src/server/stamps-contract.ts`:
+`get_passport`, `recent`, `totals`, `catalog`, every `collect` rule, the signature's NEP-413 proof checked with ed25519
+as on chain) and the test-only `e2e_stamps_collect` the relayer routes call.
+
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown
 key is masked). Buttons behind the guard (Approve, the export's Continue and Show key) take `approve()` or
@@ -49,6 +55,7 @@ below: the table shows 4410.
 | `http://localhost:4410` | the partner test app (`partner/app.ts`): `createHana`, viem, wagmi, Stellar Wallets Kit 1.9.5 and 2.7.1 |
 | `http://site-b.localhost:4411` | the same app on a second partner site (the storage-partitioning case) |
 | `http://localhost:4412` | the hosted demo (`apps/demo`), built for the e2e env and served by its own Worker handler with its real CSP (`tests/demo.spec.ts`) |
+| `http://localhost:4413` | the stamps site (`apps/stamps`), built the same way with its Worker handler and CSP (`tests/stamps.spec.ts`) |
 | `http://127.0.0.1:4420` | `vaultOrigin`: apps/api's vault host, and the vault page rendered by apps/api's `handleVaultPage` from D1 |
 | `http://127.0.0.1:4430` | `authOrigin`: apps/api's auth host over the built auth pages |
 | `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login`, `/v1/derive`, `/v1/sessions/revoke` and `/v1/link*` mocked; plus `/__e2e/*` control endpoints (`/__e2e/google-key`: the stack's Google signing key; `/__e2e/chain`: what the relayer sent to the mocked chain) |
@@ -92,6 +99,7 @@ The demo (`apps/demo`) is bundled by esbuild from its own `index.html` and `src/
 stack (`DEMO_CONFIG` in `src/build.ts`: the e2e env, the mocked EVM chain). It bakes its key in at build time, as the
 deployed demo does, so its app has a fixed key (`DEMO_PK`): `POST /__e2e/apps` with `publishableKey` creates it once
 and returns it after that, and every demo test and browser shares it (each test still has its own browser context).
+The stamps site is built the same way (`STAMPS_CONFIG`, its fixed key `STAMPS_PK`, the contract `e2e-stamps.testnet`).
 
 The bundles are built by `@hana-id/web`'s own per-env build scripts for `local-e2e`, an env defined in `src/stack.ts`
 (not in `envs/`, so the published client never lists a loopback env). Its CKD key belongs to a test MPC

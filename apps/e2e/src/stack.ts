@@ -25,6 +25,8 @@ export const PORTS = portsFrom(portBase());
 export const PARTNER_ORIGIN = `http://localhost:${PORTS.partner}`;
 export const SITE_B_ORIGIN = `http://site-b.localhost:${PORTS.siteB}`;
 export const DEMO_ORIGIN = `http://localhost:${PORTS.demo}`;
+/** The stamps site (apps/stamps). */
+export const STAMPS_ORIGIN = `http://localhost:${PORTS.stamps}`;
 export const VAULT_ORIGIN = `http://127.0.0.1:${PORTS.vault}`;
 export const AUTH_ORIGIN = `http://127.0.0.1:${PORTS.auth}`;
 export const API_URL = `http://127.0.0.1:${PORTS.api}`;
@@ -140,6 +142,12 @@ export const DEMO_PK = 'pk_test_DemoE2eDemoE2eDemoE2e';
 
 /** The demo guestbook's account on the mocked testnet (the demo's `near.guestbook`, src/server/chain.ts). */
 export const E2E_GUESTBOOK = 'e2e-guestbook.testnet';
+
+/** The stamps site's app key, baked in at build time as the deployed site's is (POST /__e2e/apps creates it once). */
+export const STAMPS_PK = 'pk_test_StampsE2eStampsE2eStamps';
+
+/** The stamps contract's account on the mocked testnet (the site's `near.stamps`, src/server/stamps-contract.ts). */
+export const E2E_STAMPS = 'e2e-stamps.testnet';
 
 /** Where src/build.ts writes the bundles, and the servers read them. */
 export const BUILD_DIR = new URL('../.build/', import.meta.url);

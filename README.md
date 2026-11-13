@@ -348,6 +348,7 @@ apps/api/                Cloudflare Worker + Durable Objects + D1: the relayer p
 apps/smoke/              Local smoke-test pages (Vite, http://localhost:5173): login through the vault, plus the direct flow
 apps/e2e/                Playwright suite (Chromium, WebKit, Firefox) against a local stack: no testnet, no secrets
 apps/demo/               Hosted testnet demo for colleagues (Vite page + Worker): https://hana-id-demo-sandbox-dev.tingtc.workers.dev
+apps/stamps/             Journear Passport stamps: the NEAR-only hackathon site (Vite page + Worker), not deployed yet
 packages/env/            Environment manifest schema (zod) + loadEnv()
 packages/core/           SDK core (batch B, pure TS): layouts, CKD, derivation v1, signers, decoders, token checks
 packages/web/            Partner client (createHana) and the Hana pages (vault, login, approve, export), built per env
@@ -406,6 +407,7 @@ deploy. `pnpm verify:install-hook` (optional) makes a push to `develop` or `main
 | SDK tarballs: build, check, install outside the repo | `pnpm run pack:check` · version: `pnpm --filter @hana-id/scripts run sdk-version <x.y.z>` (`docs/operations.md` "Releasing the SDK packages") |
 | Browser tests | `pnpm --filter @hana-id/e2e e2e` (ports from 4410; a linked worktree gets its own base, `HANA_E2E_PORT_BASE` overrides; `apps/e2e/README.md`) |
 | Hosted demo | `pnpm --filter @hana-id/demo run deploy` (`apps/demo/README.md`; its origin must be on the app first) |
+| Stamps site | `HANA_STAMPS_PUBLISHABLE_KEY=pk_test_… pnpm --filter @hana-id/stamps run deploy` (`apps/stamps/README.md`; the contract and the app first, `docs/operations.md` "Hosted stamps demo") |
 
 The `@hana-id/scripts` commands take the environment name (`envs/<env>.json`) first and print `--help`.
 

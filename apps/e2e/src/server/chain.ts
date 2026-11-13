@@ -9,8 +9,9 @@
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import { CKD_DST, base64Decode, base64Encode, ckdAppId, fromUtf8, identityKeyHex, toHex, utf8 } from '@hana-id/core';
-import { E2E_ENV, E2E_GUESTBOOK, EXIT_CLIENT_ID, GOOGLE_CLIENT_ID, TEST_MPC_MSK } from '../stack.ts';
+import { E2E_ENV, E2E_GUESTBOOK, E2E_STAMPS, EXIT_CLIENT_ID, GOOGLE_CLIENT_ID, TEST_MPC_MSK } from '../stack.ts';
 import { type Handler, json } from './http.ts';
+import { StampsContract } from './stamps-contract.ts';
 
 /** The mocked testnet's height and its one known block (the users' NEAR wallets, the demo's NEAR card). */
 export const NEAR_HEIGHT = 200_000_000n;
@@ -245,15 +246,30 @@ export class Chain {
   readonly nearAccounts = new Map<string, bigint>();
   /** The demo guestbook's messages (contracts/hana-guestbook), oldest first. */
   readonly guestbook: { account_id: string; text: string; block_timestamp_ms: number }[] = [];
+  /** The stamps site's contract (contracts/hana-stamps). */
+  readonly stamps = new StampsContract(E2E_STAMPS);
 
   /**
    * The test-only JSON-RPC methods (never on NEAR): what the relayer would do, for a test that mocks
    * POST /v1/near/activate and /v1/near/relay at the network layer. `e2e_near_activate` creates an implicit account
    * (its key's nonce: the creation height × 10^6, as nearcore sets it); `e2e_guestbook_add` stores a message as the
-   * guestbook would under a relayed delegate action, and bumps the sender's key nonce.
+   * guestbook would under a relayed delegate action, and bumps the sender's key nonce. `e2e_stamps_collect` applies
+   * `collect(args)` from the sender as the stamps contract would (`sponsored`: in a relayed delegate action), bumps
+   * the key nonce and answers the panic (`ERR_*`) or null.
    */
   private e2e(method: string, p: Record<string, unknown>): unknown {
     const account = String(p.account_id);
+    if (method === 'e2e_stamps_collect') {
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(String(p.args)) as Record<string, unknown>;
+      } catch {
+        return { panic: 'Failed to deserialize input from JSON.' };
+      }
+      const panic = this.stamps.collect(account, p.sponsored === true, args);
+      if (typeof p.nonce === 'string' && this.nearAccounts.has(account)) this.nearAccounts.set(account, BigInt(p.nonce));
+      return { panic };
+    }
     if (method === 'e2e_near_activate') {
       const created = !this.nearAccounts.has(account);
       if (created) this.nearAccounts.set(account, (NEAR_HEIGHT - 1n) * 1_000_000n);
@@ -272,7 +288,7 @@ export class Chain {
     const id = req?.id ?? null;
     const ok = (result: unknown) => json(200, { jsonrpc: '2.0', id, result });
     const err = (name: string) => json(200, { jsonrpc: '2.0', id, error: { name, cause: { name }, code: -32000, message: name } });
-    if (req?.method === 'e2e_near_activate' || req?.method === 'e2e_guestbook_add') return ok(this.e2e(req.method, req.params ?? {}));
+    if (req?.method === 'e2e_near_activate' || req?.method === 'e2e_guestbook_add' || req?.method === 'e2e_stamps_collect') return ok(this.e2e(req.method, req.params ?? {}));
     if (req?.method === 'block') {
       // The latest final block, or one by hash (the vault checks a testnet transaction's block hash is known).
       if (req.params?.finality === 'final' || req.params?.block_id === NEAR_BLOCK_HASH) return ok({ header: { height: Number(NEAR_HEIGHT), hash: NEAR_BLOCK_HASH } });
@@ -288,6 +304,17 @@ export class Chain {
       if (req.params.method_name !== 'get_messages') return err('MethodResolveError');
       const list = this.guestbook.map((m, index) => ({ index, ...m })).reverse().slice(0, 50);
       return ok({ result: Array.from(utf8(JSON.stringify(list))), logs: [], block_height: Number(NEAR_HEIGHT), block_hash: NEAR_BLOCK_HASH });
+    }
+    if (req?.method === 'query' && req.params?.request_type === 'call_function' && req.params.account_id === E2E_STAMPS) {
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(fromUtf8(base64Decode(String(req.params.args_base64))) || '{}') as Record<string, unknown>;
+      } catch {
+        return err('PARSE_ERROR');
+      }
+      const value = this.stamps.view(String(req.params.method_name), args ?? {});
+      if (value === undefined) return err('MethodResolveError');
+      return ok({ result: Array.from(utf8(JSON.stringify(value))), logs: [], block_height: Number(NEAR_HEIGHT), block_hash: NEAR_BLOCK_HASH });
     }
     if (req?.method === 'query' && req.params?.request_type === 'call_function') {
       if (req.params.account_id !== E2E_ENV.signer) return err('UNKNOWN_ACCOUNT');

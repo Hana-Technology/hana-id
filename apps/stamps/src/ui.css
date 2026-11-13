@@ -1,0 +1,371 @@
+/* The passport's look (src/ui, the art build): the cover, the open booklet, the six stamps, the recent list. It reads
+   only Journear Passport's tokens (packages/brand tokens.css, D765) and uses its components (.jp-btn, .jp-input,
+   .jp-alert from components.css) and fonts (fonts.css), which the page imports first; it loads nothing and defines no
+   colour of its own: every colour is a --jp-* token, or a mix of two. light-dark() picks a token per scheme: .pp sets
+   its own color-scheme from the page's (the system's, or data-theme on <html>), so a forced theme is followed. */
+
+.pp {
+  color-scheme: light;
+  color: var(--jp-fg);
+  font-family: var(--jp-font-body);
+  font-size: var(--jp-text-md);
+  line-height: var(--jp-leading-body);
+  font-variant-numeric: tabular-nums;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: var(--jp-space-6) var(--jp-space-4) var(--jp-space-12);
+  box-sizing: border-box;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .pp { color-scheme: dark; }
+  :root:not([data-theme='light']) .pp :is(.pp-stamp, .pp-chop) { mix-blend-mode: screen; }
+}
+:root[data-theme='dark'] .pp { color-scheme: dark; }
+:root[data-theme='dark'] .pp :is(.pp-stamp, .pp-chop) { mix-blend-mode: screen; }
+
+.pp *, .pp *::before, .pp *::after { box-sizing: border-box; }
+.pp [hidden] { display: none !important; }
+.pp-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+.pp-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+.pp a { color: var(--jp-link); text-underline-offset: 2px; }
+.pp a:focus-visible { outline: 2px solid var(--jp-focus); outline-offset: 2px; border-radius: var(--jp-radius-sm); }
+.pp .pp-btn { min-height: 44px; }
+.pp .pp-ic, .pp .jp-btn .ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.pp-link { display: inline-flex; align-items: center; min-height: 44px; font-size: var(--jp-text-sm); font-weight: var(--jp-weight-medium); }
+
+/* ---- notice ---- */
+.pp-notice { margin: 0 0 var(--jp-space-5); }
+.pp-notice .ic { width: 18px; height: 18px; margin-top: 1px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; }
+.pp-notice .body { overflow-wrap: anywhere; }
+.pp-notice-link { margin-left: var(--jp-space-2); white-space: nowrap; }
+
+/* ---- the artwork's strokes and type (inline SVG; the ink is the element's colour) ---- */
+.pp-line { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+.pp-fill { fill: currentColor; stroke: none; }
+.pp-soft { opacity: 0.32; }
+.pp-t { fill: currentColor; font-family: var(--jp-font-display); font-weight: var(--jp-weight-black); }
+.pp-t-arc { font-size: 19px; letter-spacing: 4px; }
+.pp-t-arc-sm { font-size: 13.5px; letter-spacing: 2.4px; }
+.pp-t-small { font-size: 10.5px; font-weight: 700; letter-spacing: 2.6px; }
+.pp-t-tiny { font-size: 8.5px; font-weight: 700; letter-spacing: 2px; }
+.pp-t-band { font-size: 19px; letter-spacing: 1.6px; }
+.pp-t-ticket { font-size: 13.5px; letter-spacing: 0.5px; }
+.pp-t-wide { font-size: 20px; letter-spacing: 3.5px; }
+.pp-t-knock { fill: black; font-size: 14px; letter-spacing: 2.2px; }
+.pp-t-date { font-family: var(--jp-font-mono); font-weight: var(--jp-weight-medium); font-size: 14px; letter-spacing: 0.4px; }
+.pp-t-date-sm { font-size: 12px; }
+.pp-t-chop { font-size: 15px; letter-spacing: 1.6px; }
+.pp-t-chop-sm { font-size: 6.4px; font-weight: 700; letter-spacing: 1.5px; }
+
+/* The inks: one per stamp, from the brand's tokens, lighter on the dark page. */
+.pp :is([data-stamp='arrival'] .pp-art, [data-ink='arrival']) { color: light-dark(var(--jp-teal-600), var(--jp-teal-300)); }
+.pp :is([data-stamp='sponsored'] .pp-art, [data-ink='sponsored']) { color: light-dark(var(--jp-orange-600), var(--jp-orange-300)); }
+.pp :is([data-stamp='own_fare'] .pp-art, [data-ink='own_fare']) { color: var(--jp-info); }
+.pp :is([data-stamp='signature'] .pp-art, [data-ink='signature']) { color: light-dark(var(--jp-teal-800), var(--jp-ink-tint)); }
+.pp :is([data-stamp='postcard'] .pp-art, [data-ink='postcard']) { color: var(--jp-danger); }
+.pp :is([data-stamp='layover'] .pp-art, [data-ink='layover']) { color: var(--jp-warning); }
+.pp .pp-chop { color: light-dark(var(--jp-orange-600), var(--jp-orange-300)); }
+
+/* ---- cover (signed out) ---- */
+.pp-cover { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--jp-space-12); padding: var(--jp-space-8) 0 var(--jp-space-6); }
+.pp-coverbook {
+  width: 300px;
+  aspect-ratio: 88 / 125;
+  border-radius: 10px 20px 20px 10px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--jp-teal-900) 55%, transparent) 0, transparent 7%, color-mix(in srgb, var(--jp-gray-0) 6%, transparent) 9%, transparent 14%),
+    radial-gradient(120% 80% at 30% 20%, var(--jp-teal-700), var(--jp-teal-800) 70%);
+  box-shadow: var(--jp-shadow-lg), inset 0 0 0 1px color-mix(in srgb, var(--jp-teal-900) 60%, transparent);
+  color: color-mix(in srgb, var(--jp-orange-300) 70%, var(--jp-gray-0));
+  padding: 22px;
+  rotate: -2deg;
+}
+.pp-cover-foil {
+  height: 100%;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 6px 12px 12px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--jp-space-2);
+  text-align: center;
+  padding: var(--jp-space-6) var(--jp-space-3);
+}
+.pp-cover-foil p { margin: 0; }
+.pp-crest { width: 92px; height: auto; margin-bottom: var(--jp-space-4); }
+.pp-crest :is(.pp-mark-card, .pp-mark-bracket) { fill: currentColor; }
+.pp-crest .pp-mark-card { opacity: 0.85; }
+.pp-cover-name { font-family: var(--jp-font-display); font-weight: var(--jp-weight-black); font-size: 30px; letter-spacing: 0.16em; line-height: 1; padding-left: 0.16em; }
+.pp-cover-kind { font-family: var(--jp-font-display); font-weight: 700; font-size: 15px; letter-spacing: 0.62em; padding-left: 0.62em; }
+.pp-chip { width: 44px; height: auto; margin-top: var(--jp-space-8); }
+.pp-cover-net { font-size: 10px; font-weight: var(--jp-weight-semibold); letter-spacing: 0.32em; padding-left: 0.32em; opacity: 0.8; }
+
+.pp-coverside { max-width: 560px; }
+.pp-eyebrow { margin: 0 0 var(--jp-space-2); font-size: 11px; font-weight: var(--jp-weight-semibold); letter-spacing: var(--jp-tracking-caps); text-transform: uppercase; color: var(--jp-fg-muted); }
+.pp-h1 { margin: 0; font-family: var(--jp-font-display); font-weight: var(--jp-weight-black); font-size: var(--jp-text-5xl); line-height: var(--jp-leading-tight); letter-spacing: var(--jp-tracking-tight); }
+.pp-lead { margin: var(--jp-space-4) 0 var(--jp-space-6); font-size: var(--jp-text-lg); max-width: 46ch; color: var(--jp-fg); }
+.pp-row { display: flex; flex-wrap: wrap; gap: var(--jp-space-2); align-items: center; }
+.pp-fine { margin: var(--jp-space-3) 0 0; font-size: var(--jp-text-sm); color: var(--jp-fg-muted); }
+
+/* ---- the open booklet: two pages on the cover's board, a fold between them ---- */
+.pp-book {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  padding: 10px;
+  border-radius: 24px;
+  background: light-dark(var(--jp-teal-800), var(--jp-teal-700));
+  box-shadow: var(--jp-shadow-lg);
+}
+.pp-page {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  container-type: inline-size;
+  min-width: 0;
+  padding: var(--jp-space-6) var(--jp-space-8) var(--jp-space-10);
+  background: light-dark(color-mix(in srgb, var(--jp-orange-50) 55%, var(--jp-gray-0)), color-mix(in srgb, var(--jp-teal-800) 35%, var(--jp-surface)));
+  display: flex;
+  flex-direction: column;
+}
+.pp-page-id { border-radius: 16px 4px 4px 16px; box-shadow: inset -26px 0 30px -26px color-mix(in srgb, var(--jp-teal-900) 45%, transparent); }
+.pp-page-stamps { border-radius: 4px 16px 16px 4px; box-shadow: inset 26px 0 30px -26px color-mix(in srgb, var(--jp-teal-900) 45%, transparent); }
+/* The stitching down the fold. */
+.pp-page-stamps::before { content: ''; position: absolute; left: 0; top: 28px; bottom: 28px; border-left: 2px dotted color-mix(in srgb, var(--jp-teal-900) 22%, transparent); }
+.pp-guilloche { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
+.pp-guil-line { fill: none; stroke: light-dark(color-mix(in srgb, var(--jp-teal-200) 38%, transparent), color-mix(in srgb, var(--jp-teal-600) 20%, transparent)); stroke-width: 0.7; }
+
+.pp-pagehead {
+  display: flex;
+  align-items: center;
+  gap: var(--jp-space-2);
+  padding-bottom: var(--jp-space-3);
+  border-bottom: 1px solid color-mix(in srgb, var(--jp-fg) 14%, transparent);
+  font-family: var(--jp-font-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: var(--jp-tracking-caps);
+  color: var(--jp-fg-muted);
+}
+.pp-pagehead .pp-headname { margin: 0; font: inherit; letter-spacing: inherit; color: var(--jp-fg); }
+.pp-headcode, .pp-pagecount { margin-left: auto; }
+.pp-pagecount { font-family: var(--jp-font-mono); font-weight: var(--jp-weight-medium); letter-spacing: 0.04em; }
+.pp-headmark { width: 24px; height: auto; }
+.pp-mark-card { fill: var(--jp-teal-500); }
+.pp-mark-bracket { fill: var(--jp-orange-500); }
+.pp-pageno { position: absolute; bottom: var(--jp-space-3); font-family: var(--jp-font-mono); font-size: 11px; color: var(--jp-fg-faint); }
+.pp-page-id .pp-pageno { left: var(--jp-space-5); }
+.pp-page-stamps .pp-pageno { right: var(--jp-space-5); }
+
+/* ---- the identity page ---- */
+.pp-pagetitle { margin: var(--jp-space-5) 0 var(--jp-space-4); font-family: var(--jp-font-display); font-weight: var(--jp-weight-black); font-size: var(--jp-text-3xl); line-height: var(--jp-leading-tight); letter-spacing: var(--jp-tracking-tight); }
+.pp-idgrid { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: var(--jp-space-5); align-items: start; }
+.pp-photo {
+  aspect-ratio: 4 / 5;
+  border-radius: var(--jp-radius-sm);
+  border: 1px solid color-mix(in srgb, var(--jp-fg) 16%, transparent);
+  background: light-dark(color-mix(in srgb, var(--jp-teal-50) 70%, transparent), color-mix(in srgb, var(--jp-teal-900) 60%, transparent));
+  padding: 10px;
+  display: grid;
+  place-items: center;
+}
+.pp-portrait { width: 100%; height: 100%; }
+.pp-portrait-cells { fill: light-dark(var(--jp-teal-600), var(--jp-teal-300)); opacity: 0.9; }
+.pp-fields { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.pp-fields dt { font-size: 10.5px; font-weight: var(--jp-weight-semibold); letter-spacing: var(--jp-tracking-caps); text-transform: uppercase; color: var(--jp-fg-muted); margin-top: var(--jp-space-2); }
+.pp-fields dt:first-child { margin-top: 0; }
+.pp-fields dd { margin: 0; font-weight: var(--jp-weight-medium); min-width: 0; }
+.pp-accountrow { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--jp-space-1); }
+.pp-account { font-family: var(--jp-font-mono); font-size: var(--jp-text-md); font-weight: var(--jp-weight-medium); margin-right: var(--jp-space-1); }
+.pp-acts { display: inline-flex; flex-wrap: wrap; }
+.pp-acts .jp-btn { padding: 0 var(--jp-space-2); }
+.pp-fullrow { margin-top: var(--jp-space-1) !important; }
+.pp-account-full { display: block; font-family: var(--jp-font-mono); font-size: var(--jp-text-xs); line-height: var(--jp-leading-snug); word-break: break-all; padding: var(--jp-space-2); border-radius: var(--jp-radius-sm); background: color-mix(in srgb, var(--jp-fg) 6%, transparent); }
+.pp-publicnote { margin: var(--jp-space-4) 0 0; font-size: var(--jp-text-sm); color: var(--jp-fg-muted); }
+.pp-links { display: flex; flex-direction: column; align-items: flex-start; margin-top: var(--jp-space-3); }
+.pp-share { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--jp-space-2); min-width: 0; max-width: 100%; }
+.pp-share-label { font-size: 10.5px; font-weight: var(--jp-weight-semibold); letter-spacing: var(--jp-tracking-caps); text-transform: uppercase; color: var(--jp-fg-muted); }
+.pp-share-url { font-family: var(--jp-font-mono); font-size: var(--jp-text-xs); overflow-wrap: anywhere; min-width: 0; }
+.pp-idactions { margin-top: var(--jp-space-3); }
+/* The legend: what each stamp shows NEAR doing. */
+.pp-proofs { margin-top: var(--jp-space-8); padding-top: var(--jp-space-4); border-top: 1px solid color-mix(in srgb, var(--jp-fg) 14%, transparent); }
+.pp-proofs-h { margin: 0 0 var(--jp-space-3); font-size: 10.5px; font-weight: var(--jp-weight-semibold); letter-spacing: var(--jp-tracking-caps); text-transform: uppercase; color: var(--jp-fg-muted); }
+.pp-prooflist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--jp-space-3); font-size: var(--jp-text-sm); line-height: var(--jp-leading-snug); color: var(--jp-fg-muted); }
+.pp-prooflist li { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: var(--jp-space-3); align-items: center; }
+.pp-prooflist b { color: var(--jp-fg); font-weight: var(--jp-weight-semibold); }
+.pp-prooflist .pp-r-icon { width: 32px; height: 32px; }
+.pp-prooflist .pp-mini { width: 28px; height: 28px; }
+/* The machine-readable zone, sized to fit two lines of 44 characters across the page. */
+.pp-mrz {
+  margin: auto 0 0;
+  padding-top: var(--jp-space-8);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--jp-font-mono);
+  font-size: min(14px, calc(100cqi / 29.5));
+  letter-spacing: 0.06em;
+  line-height: 1.55;
+  color: var(--jp-fg-muted);
+  white-space: pre;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ---- the stamps page ---- */
+.pp-slots { list-style: none; margin: var(--jp-space-4) 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--jp-space-4) var(--jp-space-5); }
+.pp-slot { position: relative; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: var(--jp-space-2); padding: var(--jp-space-2) var(--jp-space-1) var(--jp-space-3); text-align: center; }
+.pp-art { position: relative; width: min(100%, 188px); aspect-ratio: 1; flex: none; }
+.pp-art > svg { position: absolute; }
+.pp-stamp, .pp-outline { inset: 0; width: 100%; height: 100%; overflow: visible; }
+.pp-stamp { mix-blend-mode: multiply; transform-origin: 50% 50%; }
+/* A hand-stamped page: each stamp a little off its slot's centre. */
+.pp [data-stamp='arrival'] .pp-stamp { translate: -3% 2%; }
+.pp [data-stamp='sponsored'] .pp-stamp { translate: 3% -2%; }
+.pp [data-stamp='own_fare'] .pp-stamp { translate: 2% 3%; }
+.pp [data-stamp='signature'] .pp-stamp { translate: -2% -1%; }
+.pp [data-stamp='postcard'] .pp-stamp { translate: 3% 1%; }
+.pp [data-stamp='layover'] .pp-stamp { translate: -2% 2%; }
+.pp-chop { right: -16%; bottom: 0; width: 46%; height: auto; overflow: visible; mix-blend-mode: multiply; }
+
+/* Empty slots: the stamp's silhouette, faint; dashed in its ink when it can be collected. */
+.pp-outline { color: var(--jp-fg-faint); }
+.pp-sil { fill: none; stroke: currentColor; stroke-width: 2; opacity: 0.55; }
+.pp-ghost { opacity: 0.22; }
+.pp-lock { display: none; }
+.pp-slot[data-status='locked'] .pp-lock { display: inline; opacity: 0.5; }
+.pp-slot[data-status='locked'] .pp-ghost { opacity: 0.12; }
+.pp-page-stamps[data-public] .pp-lock { display: none; }
+.pp-slot:is([data-status='available'], [data-status='working'], [data-status='failed']) .pp-outline { color: inherit; }
+.pp-slot:is([data-status='available'], [data-status='working']) .pp-sil { stroke-dasharray: 9 7; stroke-width: 2.6; opacity: 0.75; }
+.pp-slot:is([data-status='available'], [data-status='working']) .pp-ghost { opacity: 0.4; }
+.pp-slot[data-status='working'] .pp-sil { animation: pp-march 1.1s linear infinite; }
+.pp-slot[data-status='failed'] .pp-sil { stroke: var(--jp-danger); stroke-dasharray: 3 6; stroke-width: 2.6; opacity: 0.8; }
+
+.pp-cap { display: flex; flex-direction: column; align-items: center; gap: var(--jp-space-1); width: 100%; min-width: 0; }
+.pp-slottitle { margin: 0; font-family: var(--jp-font-display); font-weight: 700; font-size: var(--jp-text-lg); line-height: var(--jp-leading-snug); letter-spacing: -0.01em; }
+.pp-slot[data-status='locked'] .pp-slottitle { color: var(--jp-fg-muted); }
+.pp-meta { margin: 0; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: var(--jp-space-1) var(--jp-space-2); font-size: var(--jp-text-xs); color: var(--jp-fg-muted); font-family: var(--jp-font-mono); }
+.pp-nogas { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: var(--jp-radius-full); font-family: var(--jp-font-body); font-size: 11px; font-weight: var(--jp-weight-semibold); letter-spacing: 0.02em; color: var(--jp-on-accent); background: var(--jp-accent); }
+.pp-text { margin: 0; font-size: var(--jp-text-sm); color: var(--jp-fg-muted); max-width: 30ch; overflow-wrap: anywhere; }
+.pp-slot[data-status='failed'] .pp-text { color: var(--jp-danger); font-weight: var(--jp-weight-medium); }
+.pp-slot[data-status='working'] .pp-text { color: var(--jp-fg); font-weight: var(--jp-weight-medium); display: inline-flex; align-items: center; gap: var(--jp-space-2); }
+.pp-slot[data-status='working'] .pp-text::before { content: ''; flex: none; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--jp-primary); border-right-color: transparent; animation: jp-spin 0.8s linear infinite; }
+.pp-collect { margin-top: var(--jp-space-1); min-width: 136px; }
+.pp-collect .spin { display: none; }
+.pp-slot[data-status='working'] .pp-collect .spin { display: inline-block; }
+.pp-tx { min-height: 32px; }
+
+/* The postcard: its field while it can be sent, its note once it's stamped (the view's text, shown as text). */
+.pp-notefield { width: 100%; max-width: 280px; text-align: left; margin-top: var(--jp-space-1); }
+.pp .pp-noteinput { height: 44px; font-size: var(--jp-text-md); }
+.pp-fieldfoot { display: flex; align-items: baseline; gap: var(--jp-space-2); }
+.pp-fieldfoot .jp-hint { flex: 1; }
+.pp-count { font-family: var(--jp-font-mono); font-size: var(--jp-text-xs); color: var(--jp-fg-muted); }
+.pp-note {
+  margin: var(--jp-space-1) 0 0;
+  max-width: 100%;
+  padding: var(--jp-space-2) var(--jp-space-3);
+  border-left: 3px solid var(--jp-danger);
+  border-radius: 2px var(--jp-radius-sm) var(--jp-radius-sm) 2px;
+  background: color-mix(in srgb, var(--jp-surface) 70%, transparent);
+  font-size: var(--jp-text-sm);
+  font-style: italic;
+  text-align: start;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+  white-space: normal;
+}
+
+/* The inked press: once, when a stamp has just been collected (index.ts adds .is-inking and takes it off after). */
+.pp-art.is-inking .pp-stamp { animation: pp-press 620ms cubic-bezier(0.2, 0.9, 0.25, 1.15) both; }
+.pp-art.is-inking .pp-chop { animation: pp-press 520ms 380ms cubic-bezier(0.2, 0.9, 0.25, 1.15) both; }
+.pp-art.is-inking::after {
+  content: '';
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in srgb, currentColor 24%, transparent), transparent);
+  animation: pp-spread 760ms 180ms ease-out both;
+}
+@keyframes pp-press {
+  0% { transform: scale(1.55); opacity: 0; filter: blur(5px); }
+  42% { transform: scale(0.95); opacity: 1; filter: blur(0); }
+  68% { transform: scale(1.02); }
+  100% { transform: scale(1); opacity: 1; filter: none; }
+}
+@keyframes pp-spread {
+  0% { transform: scale(0.55); opacity: 0.9; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+@keyframes pp-march { to { stroke-dashoffset: -32; } }
+
+/* ---- recent stamps ---- */
+.pp-recent { margin-top: var(--jp-space-10); }
+.pp-recenthead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--jp-space-1) var(--jp-space-4); margin-bottom: var(--jp-space-3); }
+.pp-h2 { margin: 0; font-family: var(--jp-font-display); font-weight: 700; font-size: var(--jp-text-xl); letter-spacing: -0.01em; }
+.pp-totals { margin: 0; font-size: var(--jp-text-sm); color: var(--jp-fg-muted); font-family: var(--jp-font-mono); }
+.pp-recenthead [data-action='refresh'] { margin-left: auto; }
+.pp-recentlist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: var(--jp-space-2); }
+.pp-recentitem {
+  display: grid;
+  grid-template-columns: 36px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--jp-space-3);
+  min-height: 56px;
+  padding: var(--jp-space-2) var(--jp-space-3);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-lg);
+  background: var(--jp-surface);
+  font-size: var(--jp-text-sm);
+}
+.pp-r-icon { display: grid; place-items: center; width: 36px; height: 36px; }
+.pp-mini { width: 32px; height: 32px; overflow: visible; }
+.pp-mini .pp-line { stroke-width: 7; }
+.pp-mini .pp-mini-sil { stroke-width: 11; }
+.pp-r-title { font-weight: var(--jp-weight-semibold); white-space: nowrap; }
+.pp-r-acct { font-family: var(--jp-font-mono); font-size: var(--jp-text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+a.pp-r-acct { display: inline-flex; align-items: center; min-height: 44px; }
+.pp-r-time { color: var(--jp-fg-muted); font-size: var(--jp-text-xs); white-space: nowrap; }
+.pp-empty { margin: 0; padding: var(--jp-space-5); border: 1px dashed var(--jp-border-strong); border-radius: var(--jp-radius-lg); color: var(--jp-fg-muted); font-size: var(--jp-text-sm); text-align: center; }
+
+/* ---- narrower screens: the booklet's pages one above the other, then each slot a row ---- */
+@media (max-width: 900px) {
+  .pp-cover { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; gap: var(--jp-space-8); padding-top: var(--jp-space-4); }
+  .pp-coverbook { width: 216px; padding: 16px; }
+  .pp-crest { width: 72px; }
+  .pp-cover-name { font-size: 24px; }
+  .pp-cover-kind { font-size: 12px; }
+  .pp-chip { margin-top: var(--jp-space-6); }
+  .pp-coverside .pp-row { justify-content: center; }
+  .pp-lead { margin-left: auto; margin-right: auto; }
+  .pp-book { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px; border-radius: 20px; }
+  .pp-page-id, .pp-page-stamps { border-radius: 14px; box-shadow: none; }
+  .pp-page-stamps::before { display: none; }
+}
+@media (max-width: 600px) {
+  .pp { padding: var(--jp-space-4) var(--jp-space-3) var(--jp-space-10); }
+  .pp-h1 { font-size: var(--jp-text-4xl); }
+  .pp-page { padding: var(--jp-space-5) var(--jp-space-4) var(--jp-space-10); }
+  .pp-pagetitle { font-size: var(--jp-text-2xl); }
+  .pp-idgrid { grid-template-columns: 84px minmax(0, 1fr); gap: var(--jp-space-4); }
+  .pp-proofs { display: none; }
+  .pp-slots { grid-template-columns: minmax(0, 1fr); gap: var(--jp-space-2); }
+  .pp-slot { flex-direction: row; align-items: flex-start; text-align: left; gap: var(--jp-space-4); padding: var(--jp-space-3) 0; border-top: 1px solid color-mix(in srgb, var(--jp-fg) 10%, transparent); }
+  .pp-slot:first-child { border-top: 0; }
+  .pp-art { width: 112px; }
+  .pp-cap { align-items: flex-start; padding-top: var(--jp-space-2); }
+  .pp-meta { justify-content: flex-start; }
+  .pp-chop { right: -2%; bottom: -4%; width: 48%; }
+  .pp-recentitem { grid-template-columns: 32px minmax(0, 1fr) auto; grid-template-areas: 'i t m' 'i a a'; row-gap: 0; }
+  .pp-r-icon { grid-area: i; }
+  .pp-r-title { grid-area: t; }
+  .pp-r-acct { grid-area: a; }
+  a.pp-r-acct { min-height: 32px; }
+  .pp-r-time { grid-area: m; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pp *, .pp *::before, .pp *::after { animation: none !important; transition: none !important; }
+}

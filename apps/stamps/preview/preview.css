@@ -1,0 +1,21 @@
+/* The preview harness's own chrome (dev only): the page ground and the control bar. Tokens only, like the UI. */
+@import '@hana-id/brand/tokens.css';
+@import '@hana-id/brand/fonts.css';
+@import '@hana-id/brand/components.css';
+@import '../src/ui.css';
+
+html { color-scheme: light dark; }
+:root[data-theme='light'] { color-scheme: light; }
+body { margin: 0; min-height: 100vh; background: var(--jp-bg-subtle); color: var(--jp-fg); font-family: var(--jp-font-body); -webkit-font-smoothing: antialiased; }
+.pv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px; background: var(--jp-surface); border-bottom: 1px solid var(--jp-border); font-size: var(--jp-text-sm); }
+.pv-bar select { font: inherit; min-height: 32px; }
+.pv-log { color: var(--jp-fg-muted); font-family: var(--jp-font-mono); font-size: var(--jp-text-xs); }
+.pv-shot .pv-bar { display: none; }
+
+/* The enlarged sheet of the six stamps. */
+.pv-sheet { max-width: 1100px; margin: 24px auto; padding: 32px; border-radius: 20px; background: light-dark(color-mix(in srgb, var(--jp-orange-50) 55%, var(--jp-gray-0)), color-mix(in srgb, var(--jp-teal-800) 35%, var(--jp-surface))); display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; color-scheme: light; }
+:root[data-theme='dark'] .pv-sheet { color-scheme: dark; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .pv-sheet { color-scheme: dark; } }
+.pv-sheet .pp-art { width: 100%; }
+.pv-sheet figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.pv-sheet figcaption { font-family: var(--jp-font-mono); font-size: var(--jp-text-xs); color: var(--jp-fg-muted); }

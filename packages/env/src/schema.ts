@@ -262,17 +262,19 @@ export const nearRelaySchema = z
   })
   .strict();
 
-/** NEAR wallet settings (D733, D740): the demo guestbook contract and the meta-transaction relay. */
+/** NEAR wallet settings (D733, D740, D797): the demo contracts and the meta-transaction relay. */
 export const nearSchema = z
   .object({
     /** The demo guestbook contract (contracts/hana-guestbook). */
     demoGuestbook: nearAccount.optional(),
+    /** The Journear Passport stamps demo contract (contracts/hana-stamps); must be one of `relay.receivers`. */
+    demoStamps: nearAccount.optional(),
     relay: nearRelaySchema.optional(),
   })
   .strict();
 
 /**
- * The relay account is its own (never the signer, relayer, owner, MPC, a watchdog or the guestbook: its keys are
+ * The relay account is its own (never the signer, relayer, owner, MPC, a watchdog or a demo contract: its keys are
  * full-access and pay any deposit a delegate attaches, which the API refuses); receivers are distinct, never the relay
  * account, the signer or the relayer (a relayed call into hana-signer would act as the user's implicit account there).
  */
@@ -281,6 +283,7 @@ function nearRelayRules(m: { network: string; signer: string; relayer: string; o
   if (!relay) return;
   const taken: [string, string][] = [['signer', m.signer], ['relayer', m.relayer], ['owner', m.owner], ['mpc', m.mpc], ...(m.watchdogs ?? []).map((w): [string, string] => ['watchdog', w])];
   if (m.near?.demoGuestbook) taken.push(['near.demoGuestbook', m.near.demoGuestbook]);
+  if (m.near?.demoStamps) taken.push(['near.demoStamps', m.near.demoStamps]);
   for (const [what, account] of taken) {
     if (relay.account === account) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'relay', 'account'], message: `near.relay.account must be its own account, not the ${what}` });
   }
@@ -477,10 +480,11 @@ export const manifestSchema = z
      */
     emailIssuer: emailIssuerSchema.optional(),
     /**
-     * NEAR as a wallet chain (D740, D733). Optional, additive. `demoGuestbook`: the account of the hackathon demo contract
-     * (`contracts/hana-guestbook`) a user's NEAR wallet writes to through a relayed meta transaction;
-     * `deploy-guestbook` deploys it. A named `.testnet` account of its own (`nearRules`). `relay`: the meta-transaction
-     * relay (`nearRelaySchema`, `nearRelayRules`).
+     * NEAR as a wallet chain (D740, D733, D797). Optional, additive. `demoGuestbook`: the account of the hackathon demo
+     * contract (`contracts/hana-guestbook`) a user's NEAR wallet writes to through a relayed meta transaction;
+     * `deploy-guestbook` deploys it. `demoStamps`: the Journear Passport stamps contract (`contracts/hana-stamps`),
+     * `deploy-stamps` deploys it, and it is one of `relay.receivers`. Each a named `.testnet` account of its own
+     * (`nearRules`). `relay`: the meta-transaction relay (`nearRelaySchema`, `nearRelayRules`).
      */
     near: nearSchema.optional(),
   })
@@ -638,34 +642,45 @@ function governance(m: GovernanceFields, ctx: z.RefinementCtx): void {
 }
 
 /**
- * `near.demoGuestbook` (D740): on testnet a named account ending in `.testnet` (a top-level account or a sub-account,
- * never an implicit or `.near` account), and an account of its own: deploy-guestbook deploys code to it, so it must
- * never be the signer, the relayer, the owner, the MPC or a governance account.
+ * The demo contracts' accounts, `near.demoGuestbook` (D740) and `near.demoStamps` (D797): on testnet each a named
+ * account ending in `.testnet` (a top-level account or a sub-account, never an implicit or `.near` account), and an
+ * account of its own: deploy-guestbook and deploy-stamps deploy code to them, so neither may be the signer, the
+ * relayer, the owner, the MPC, a governance account or the other demo contract. `demoStamps` is relayed (most of its
+ * stamps are meta transactions), so it must be one of `near.relay.receivers`.
  */
 function nearRules(
   m: GovernanceFields & { mpc: string; watchdog?: { account: string } | undefined },
-  near: { demoGuestbook?: string | undefined },
+  near: { demoGuestbook?: string | undefined; demoStamps?: string | undefined; relay?: { receivers: string[] } | undefined },
   ctx: z.RefinementCtx,
 ): void {
-  const book = near.demoGuestbook;
-  if (book === undefined) return;
-  const path = ['near', 'demoGuestbook'];
-  if (m.network === 'testnet' && !book.endsWith('.testnet')) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.demoGuestbook ${book} must be a .testnet account on testnet` });
+  const demos = [
+    ['demoGuestbook', 'deploy-guestbook', near.demoGuestbook],
+    ['demoStamps', 'deploy-stamps', near.demoStamps],
+  ] as const;
+  for (const [field, tool, demo] of demos) {
+    if (demo === undefined) continue;
+    const path = ['near', field];
+    if (m.network === 'testnet' && !demo.endsWith('.testnet')) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.${field} ${demo} must be a .testnet account on testnet` });
+    }
+    const taken: [string, string | undefined][] = [
+      ['signer', m.signer],
+      ['relayer', m.relayer],
+      ['owner', m.owner],
+      ['mpc', m.mpc],
+      ['council.factory', m.council?.factory],
+      ['council.dao', m.council?.dao],
+      ...(m.council?.members ?? []).map((a): [string, string] => ['a council member', a]),
+      ...(m.watchdogs ?? []).map((a): [string, string] => ['a watchdog', a]),
+      ['watchdog.account', m.watchdog?.account],
+      ...(field === 'demoStamps' ? [['near.demoGuestbook', near.demoGuestbook] as [string, string | undefined]] : []),
+    ];
+    for (const [role, account] of taken) {
+      if (account === demo) ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.${field} must be its own account, not ${role} (${demo}): ${tool} deploys code to it` });
+    }
   }
-  const taken: [string, string | undefined][] = [
-    ['signer', m.signer],
-    ['relayer', m.relayer],
-    ['owner', m.owner],
-    ['mpc', m.mpc],
-    ['council.factory', m.council?.factory],
-    ['council.dao', m.council?.dao],
-    ...(m.council?.members ?? []).map((a): [string, string] => ['a council member', a]),
-    ...(m.watchdogs ?? []).map((a): [string, string] => ['a watchdog', a]),
-    ['watchdog.account', m.watchdog?.account],
-  ];
-  for (const [role, account] of taken) {
-    if (account === book) ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: `near.demoGuestbook must be its own account, not ${role} (${book}): deploy-guestbook deploys code to it` });
+  if (near.demoStamps !== undefined && !(near.relay?.receivers ?? []).includes(near.demoStamps)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['near', 'demoStamps'], message: `near.demoStamps ${near.demoStamps} must be one of near.relay.receivers: its stamps are relayed meta transactions` });
   }
 }
 

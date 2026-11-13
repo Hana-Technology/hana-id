@@ -1,0 +1,41 @@
+{
+  "about": "Cross-language test vector (D795): NEP-413 signatures made by @hana-id/core's signer (packages/core/test/near-stamps-vector.test.ts writes and pins this file) that the hana-stamps contract's unit tests must accept or refuse. Throwaway TEST keys, derived from public labels, never funded.",
+  "contract": "stamps.testnet",
+  "nep413Tag": 2147484061,
+  "a": {
+    "account_id": "a354a412c8c8238dbd73c7ff9ba3b22a1aad2e0397815d1e7849dcbca36b7430",
+    "proof": {
+      "message": "Stamp my passport: a354a412c8c8238dbd73c7ff9ba3b22a1aad2e0397815d1e7849dcbca36b7430",
+      "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "recipient": "stamps.testnet",
+      "signature": "DJnvagCZNg4Tm+qxGczCGwABq9UyjUh49lSPL0WnJHeo8oo/EiKqq+twmVNwhNsoE4xsGRIa2xYJY6LCJ/HiAA=="
+    }
+  },
+  "b": {
+    "account_id": "1a85f9b13c2c3677a317d408d9401606a977b8cb923520cb32c91772fd3bb9d6",
+    "proof": {
+      "message": "Stamp my passport: 1a85f9b13c2c3677a317d408d9401606a977b8cb923520cb32c91772fd3bb9d6",
+      "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "recipient": "stamps.testnet",
+      "signature": "+n17qJhAYqgMtdvP14FdG2iQ7tZtegU1mNcxQss3+yTsqROwdZIQM35UIwlWN1tvlpNnVUesQaQ8wr4O427zCQ=="
+    }
+  },
+  "a_message_signed_by_b": {
+    "message": "Stamp my passport: a354a412c8c8238dbd73c7ff9ba3b22a1aad2e0397815d1e7849dcbca36b7430",
+    "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "recipient": "stamps.testnet",
+    "signature": "T6L+/P4KppXtk06dhQ+eHpkQGrmVMq5Fn+ZVdnUbX87Y5dptEkGFWMN0yMNNPZnt3THBJbVG7fQSKBQVeHdTAw=="
+  },
+  "a_for_other_recipient": {
+    "message": "Stamp my passport: a354a412c8c8238dbd73c7ff9ba3b22a1aad2e0397815d1e7849dcbca36b7430",
+    "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "recipient": "other.testnet",
+    "signature": "jX4mqawPqgOPAQ6rqTA/tHLyZKgBqHRlKPILQXLanD+O57Pv6FKqSnwfpRoED1eGiZC0Ng4IuplZXI+OQT7FDw=="
+  },
+  "a_with_callback_url": {
+    "message": "Stamp my passport: a354a412c8c8238dbd73c7ff9ba3b22a1aad2e0397815d1e7849dcbca36b7430",
+    "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "recipient": "stamps.testnet",
+    "signature": "H8OBt0ueM19IflpOQTCumWQMW2P2X1zd11fBLtpSAS3YGP0JqvFlnMfBK5wjkyfKtfMHjzZ6GB7U1twAI7/dBw=="
+  }
+}

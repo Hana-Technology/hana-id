@@ -243,6 +243,8 @@ describe('the plan', () => {
     // The demo guestbook is a contract too (D744): its change runs the contract and sandbox lanes.
     const guestbook = plan('default', ['contracts/hana-guestbook/src/lib.rs']);
     expect(ran(guestbook)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'unit', 'docs', 'sandbox']);
+    // And the stamps contract (D796).
+    expect(ran(plan('default', ['contracts/hana-stamps/src/lib.rs']))).toEqual(['install', 'secrets', 'typecheck', 'contract', 'unit', 'docs', 'sandbox']);
 
     const both = plan('default', ['apps/api/src/gas.ts']);
     expect(ran(both)).toContain('contract');
@@ -355,13 +357,14 @@ describe('.github/workflows/ci.yml: every job has its step, with the same comman
     for (const c of ['cargo test --locked', 'cargo near build non-reproducible-wasm', `cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`, 'pnpm run pack:check', 'pnpm -r typecheck', 'pnpm -r test', 'pnpm install --frozen-lockfile']) {
       expect(yml, c).toContain(`run: ${c}`);
     }
-    expect(cmds('contract')).toEqual(['cargo test --locked', 'cargo near build non-reproducible-wasm', 'cargo test --locked', 'cargo near build non-reproducible-wasm']);
+    expect(cmds('contract')).toEqual(['cargo test --locked', 'cargo near build non-reproducible-wasm', 'cargo test --locked', 'cargo near build non-reproducible-wasm', 'cargo test --locked', 'cargo near build non-reproducible-wasm']);
     // CI's e2e job runs the first; the second (the API's meta-transaction tests on the same binary) is local only while CI is off (D387).
     expect(cmds('sandbox')).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`, 'pnpm --filter @hana-id/api run test:sandbox']);
     expect(cmds('pack')).toEqual(['pnpm run pack:check']);
-    expect(p.steps.find((s) => s.id === 'contract')!.run.map((c) => c.cwd)).toEqual(['contracts/hana-signer', 'contracts/hana-signer', 'contracts/hana-guestbook', 'contracts/hana-guestbook']);
-    // CI's contract job runs both crates too (D744).
+    expect(p.steps.find((s) => s.id === 'contract')!.run.map((c) => c.cwd)).toEqual(['contracts/hana-signer', 'contracts/hana-signer', 'contracts/hana-guestbook', 'contracts/hana-guestbook', 'contracts/hana-stamps', 'contracts/hana-stamps']);
+    // CI's contract job runs every crate too (D744, D796).
     expect(yml).toContain('working-directory: contracts/hana-guestbook');
+    expect(yml).toContain('working-directory: contracts/hana-stamps');
     expect(p.steps.find((s) => s.id === 'sandbox')!.run[0]!.cwd).toBe('contracts/integration-tests');
   });
 });

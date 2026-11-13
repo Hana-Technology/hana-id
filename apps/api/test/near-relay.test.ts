@@ -22,6 +22,8 @@ import { MOCK_RECEIPT_GAS, MOCK_TX_GAS } from './near-mock.ts';
 import { spentSession, vaultHeaders, vaultSetup } from './vault-helpers.ts';
 
 const GUESTBOOK = 'guestbook.test.near';
+/** The second demo contract, Journear Passport stamps (near.demoStamps, D797): a receiver beside the guestbook. */
+const STAMPS = 'stamps.test.near';
 const RELAY_ACCOUNT = 'near-relay.test.near';
 const body = async (res: Response): Promise<Record<string, unknown>> => (await res.json()) as Record<string, unknown>;
 
@@ -349,6 +351,27 @@ describe('POST /v1/near/relay', () => {
       expect([res.status, (await body(res)).code], JSON.stringify(bindings)).toEqual([503, 'relayer_unconfigured']);
     }
     expect(s.near.nearSent.length).toBe(0);
+  });
+
+  it('relays to a second receiver (the stamps contract, D797) with no code change; any other receiver is still refused', async () => {
+    const bindings = relayConfig({ receivers: [GUESTBOOK, STAMPS], maxGasTgas: 10 });
+    const collect = actionCreators.functionCall('collect', { stamp: 'arrival' }, 10n * TGAS, 0n);
+    const res = await relay(s.app, plainRelay(delegate(s.user, { receiverId: STAMPS, actions: [collect], nonce: 101n })), bindings);
+    expect([res.status, (await body(res)).status]).toEqual([200, 'executed']);
+    expect(s.near.nearSent).toHaveLength(1);
+    // The guestbook still passes beside it.
+    expect((await relay(s.app, plainRelay(delegate(s.user, { actions: [call_('add_message', 10n)], nonce: 102n })), bindings)).status).toBe(200);
+    for (const receiverId of ['other.test.near', 'stamps2.test.near', 'test.near', `x.${STAMPS}`]) {
+      const b = await body(await relay(s.app, plainRelay(delegate(s.user, { receiverId, actions: [collect], nonce: 103n })), bindings));
+      expect([b.code, b.receiverId], receiverId).toEqual(['receiver_not_allowed', receiverId]);
+    }
+    // Over the cap (10 Tgas on sandbox-dev) to the stamps contract: refused as for the guestbook.
+    const over = await body(await relay(s.app, plainRelay(delegate(s.user, { receiverId: STAMPS, actions: [actionCreators.functionCall('collect', { stamp: 'arrival' }, 11n * TGAS, 0n)], nonce: 103n })), bindings));
+    expect(over.code).toBe('gas_too_high');
+    // Without the stamps contract in receivers (the manifest before D797): refused.
+    const before = await body(await relay(s.app, plainRelay(delegate(s.user, { receiverId: STAMPS, actions: [collect], nonce: 103n }))));
+    expect([before.code, before.receiverId]).toEqual(['receiver_not_allowed', STAMPS]);
+    expect(s.near.nearSent).toHaveLength(2);
   });
 
   it('refuses mainnet, another network, a malformed body', async () => {

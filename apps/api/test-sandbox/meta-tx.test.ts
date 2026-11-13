@@ -5,10 +5,9 @@
 //
 // Needs the near-sandbox binary (sandbox.ts sandboxBinary). Skipped without it, unless HANA_SANDBOX_REQUIRED=1 (the
 // verify lane sets it, after the contract lane's build has downloaded the binary).
-import { createHash } from 'node:crypto';
-import { type Action, actionCreators, buildDelegateAction, encodeDelegateAction, encodeSignedDelegate, Signature, SignedDelegate } from '@near-js/transactions';
+import { type Action, actionCreators, buildDelegateAction, Signature, SignedDelegate } from '@near-js/transactions';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ACTIVATE_GAS, decodeSignedDelegate, encodeRelayTransaction, encodeSignedTransaction, innerGas, nearPublicKeyString, policyRefusal, RELAY_OVERHEAD_GAS, type RelayAction, verifyDelegateSignature } from '../src/near/delegate.ts';
+import { ACTIVATE_GAS, decodeSignedDelegate, innerGas, nearPublicKeyString, policyRefusal, RELAY_OVERHEAD_GAS, verifyDelegateSignature } from '../src/near/delegate.ts';
 import { burntGas, failedExecutor, failureText } from '../src/near/tx.ts';
 import { accessKeyState, headBlock, implicitAccountKey } from '../src/near/relay-chain.ts';
 import type { FinalOutcome } from '../src/near/rpc.ts';
@@ -21,39 +20,21 @@ import {
   implicitAccount,
   NEAR,
   noteContractWasm,
+  relayTx,
   type Sandbox,
   sandboxBinary,
   send,
+  signDelegate,
   type Signer,
   startSandbox,
   TGAS,
+  type User,
   viewAccount,
   viewState,
 } from './sandbox.ts';
 
 const bin = sandboxBinary();
 if (!bin && process.env.HANA_SANDBOX_REQUIRED === '1') throw new Error('near-sandbox binary not found (build contracts/integration-tests first, or set NEAR_SANDBOX_BIN_PATH)');
-
-type User = Signer & { publicKey: ReturnType<typeof implicitAccount>['publicKey'] };
-
-/** A delegate signed as a wallet would: @near-js's encoder, NEP-461 prefix, the user's own key. */
-function signDelegate(user: User, receiverId: string, actions: Action[], nonce: bigint, maxBlockHeight: bigint): Uint8Array {
-  const da = buildDelegateAction({ senderId: user.accountId, receiverId, actions, nonce, maxBlockHeight, publicKey: user.publicKey });
-  const hash = createHash('sha256').update(encodeDelegateAction(da)).digest();
-  const signed = new SignedDelegate({ delegateAction: da, signature: new Signature({ keyType: 0, data: user.keyPair.sign(new Uint8Array(hash)).signature }) });
-  return encodeSignedDelegate(signed);
-}
-
-/** The relay's own transaction (near/delegate.ts encoder), signed by the relay account's key and sent. */
-async function relayTx(sb: Sandbox, relayer: Signer, receiverId: string, action: RelayAction): Promise<FinalOutcome & { hash: string }> {
-  const pk = relayer.keyPair.getPublicKey();
-  const [nonce, block] = await Promise.all([accessKeyNonce(sb.rpc, relayer.accountId, pk.toString()), finalBlock(sb.rpc)]);
-  const tx = encodeRelayTransaction({ signerId: relayer.accountId, publicKey: pk.data, nonce: nonce + 1n, receiverId, blockHash: block.hash, action });
-  const hash = createHash('sha256').update(tx).digest();
-  const bytes = encodeSignedTransaction(tx, relayer.keyPair.sign(new Uint8Array(hash)).signature);
-  const out = await sb.rpc.sendTx(bytes, 'EXECUTED');
-  return out as FinalOutcome & { hash: string };
-}
 
 /** Polls the balance until it stops moving (refund receipts land a few blocks after EXECUTED). */
 async function settledBalance(sb: Sandbox, accountId: string): Promise<bigint> {

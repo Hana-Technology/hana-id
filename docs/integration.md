@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-12 (SDK 0.4.1: the Journear Passport names, the relay errors' data, the new mark), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-13 (the relay's allowlist adds the passport stamps contract), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -979,10 +979,11 @@ user of your app (one who signed in through SDK 0.4.0 or later). The relay sends
 - every action in it is a **function call with no deposit** (no transfers, keys, deploys or stakes, even where Journear Passport
   would sign them), at most 4 of them, the signed action at most 4,096 bytes;
 - it calls an **allowlisted receiver**. The allowlist is the environment's, shared by every app on it; on sandbox-dev
-  it holds only Journear's demo guestbook, `hana-id-guestbook-dev1.testnet`. **To relay calls to your own contract, ask
-  Journear to add its account** (a `*.testnet` account for a test app). Until then, the user signs the same way and any
-  NEP-366 relayer of your own can send `signedDelegateAction` (it is the standard borsh `SignedDelegateAction`), or
-  the user pays for an ordinary transaction (below);
+  it holds only Journear's two demo contracts, the guestbook `hana-id-guestbook-dev1.testnet` and the passport stamps
+  `hana-id-stamps-dev1.testnet`. **To relay calls to your own contract, ask Journear to add its account** (a
+  `*.testnet` account for a test app). Until then, the user signs the same way and any NEP-366 relayer of your own
+  can send `signedDelegateAction` (it is the standard borsh `SignedDelegateAction`), or the user pays for an ordinary
+  transaction (below);
 - its calls attach at most **10 Tgas** together on sandbox-dev (the guestbook's `add_message` burns about 1.45);
 - its nonce is above the key's (and above any this relay already sent for the account) and below (testnet's height +
   1) × 10^6, and its `maxBlockHeight` is at least 3 and at most **1,000 blocks** ahead of testnet's height (stricter

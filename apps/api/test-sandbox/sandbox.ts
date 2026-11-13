@@ -10,8 +10,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KeyPair, type KeyPairString, PublicKey } from '@near-js/crypto';
-import { type Action, actionCreators, createTransaction, encodeTransaction, Signature, SignedTransaction } from '@near-js/transactions';
+import { type Action, actionCreators, buildDelegateAction, createTransaction, encodeDelegateAction, encodeSignedDelegate, encodeTransaction, Signature, SignedDelegate, SignedTransaction } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
+import { encodeRelayTransaction, encodeSignedTransaction, type RelayAction } from '../src/near/delegate.ts';
 import { type FinalOutcome, Rpc, RpcHealth } from '../src/near/rpc.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -29,6 +30,19 @@ export function sandboxBinary(): string | null {
       const bin = join(near, v, 'near-sandbox');
       if (existsSync(bin)) return bin;
     }
+  }
+  return null;
+}
+
+/**
+ * The stamps contract's wasm (contracts/hana-stamps, D796): the build the Rust sandbox tests make as deploy-stamps
+ * does (`--no-abi`, run just before this lane in `pnpm verify`'s sandbox step), else the contract lane's build. Null
+ * when neither exists.
+ */
+export function stampsWasm(): Uint8Array | null {
+  for (const p of ['contracts/integration-tests/target/wasm-stamps/near/hana_stamps.wasm', 'contracts/hana-stamps/target/near/hana_stamps.wasm']) {
+    const path = join(ROOT, p);
+    if (existsSync(path)) return new Uint8Array(readFileSync(path));
   }
   return null;
 }
@@ -185,6 +199,26 @@ export function implicitAccount(): Signer & { publicKey: PublicKey } {
   const keyPair = KeyPair.fromRandom('ed25519');
   const publicKey = keyPair.getPublicKey();
   return { accountId: Buffer.from(publicKey.data).toString('hex'), keyPair, publicKey };
+}
+
+export type User = Signer & { publicKey: PublicKey };
+
+/** A delegate signed as a wallet would: @near-js's encoder, NEP-461 prefix, the user's own key. */
+export function signDelegate(user: User, receiverId: string, actions: Action[], nonce: bigint, maxBlockHeight: bigint): Uint8Array {
+  const da = buildDelegateAction({ senderId: user.accountId, receiverId, actions, nonce, maxBlockHeight, publicKey: user.publicKey });
+  const hash = sha256(encodeDelegateAction(da));
+  const signed = new SignedDelegate({ delegateAction: da, signature: new Signature({ keyType: 0, data: user.keyPair.sign(new Uint8Array(hash)).signature }) });
+  return encodeSignedDelegate(signed);
+}
+
+/** The relay's own transaction (near/delegate.ts encoder), signed by the relay account's key and sent. */
+export async function relayTx(sb: Sandbox, relayer: Signer, receiverId: string, action: RelayAction): Promise<FinalOutcome & { hash: string }> {
+  const pk = relayer.keyPair.getPublicKey();
+  const [nonce, block] = await Promise.all([accessKeyNonce(sb.rpc, relayer.accountId, pk.toString()), finalBlock(sb.rpc)]);
+  const tx = encodeRelayTransaction({ signerId: relayer.accountId, publicKey: pk.data, nonce: nonce + 1n, receiverId, blockHash: block.hash, action });
+  const bytes = encodeSignedTransaction(tx, relayer.keyPair.sign(new Uint8Array(sha256(tx))).signature);
+  const out = await sb.rpc.sendTx(bytes, 'EXECUTED');
+  return out as FinalOutcome & { hash: string };
 }
 
 // ---- a tiny test contract, assembled by hand (no toolchain needed) ----

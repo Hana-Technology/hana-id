@@ -317,7 +317,7 @@ describe('manifestSchema: near (D733)', () => {
     const { near: _, ...rest } = raw();
     expect(manifestSchema.safeParse(rest).success).toBe(true);
     const sandbox = loadEnv('sandbox-dev');
-    expect(sandbox.near?.relay?.receivers).toEqual([sandbox.near?.demoGuestbook]);
+    expect(sandbox.near?.relay?.receivers).toEqual([sandbox.near?.demoGuestbook, sandbox.near?.demoStamps]);
     expect(issues(withRelay(ok))).toEqual([]);
     expect(manifestSchema.safeParse(withRelay({ ...ok, keys: ['ed25519:x'] })).success).toBe(false);
     expect(manifestSchema.safeParse({ ...raw(), near: { other: 1 } }).success).toBe(false);

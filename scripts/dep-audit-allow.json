@@ -24,7 +24,8 @@
     "where": [
       "contracts/hana-signer/Cargo.lock",
       "contracts/mock-mpc/Cargo.lock",
-      "contracts/hana-guestbook/Cargo.lock"
+      "contracts/hana-guestbook/Cargo.lock",
+      "contracts/hana-stamps/Cargo.lock"
     ],
     "reviewBy": "2026-12-31",
     "reason": "time 0.3.45, a host-only dependency of near-sdk's unit-testing stack: cargo tree --target wasm32-unknown-unknown -e normal -i time prints nothing, so it is not in the contract wasm."

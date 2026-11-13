@@ -42,6 +42,8 @@ export function portsFrom(base: number) {
     siteB: base + 1,
     /** The hosted demo (apps/demo), served by its own Worker handler over its e2e build. */
     demo: base + 2,
+    /** The stamps site (apps/stamps), served by its own Worker handler over its e2e build. */
+    stamps: base + 3,
     vault: base + 10,
     /** Live mode's vault, auth and API hosts (LIVE_ENV): reached only through the test's routes from https origins. */
     liveVault: base + 11,

@@ -12,7 +12,7 @@
     "cf-typegen": "wrangler types --env-interface Env src/worker-configuration.d.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.usage.config.ts",
     "test:sandbox": "vitest run -c vitest.sandbox.config.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test-usage && tsc --noEmit -p test-sandbox"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test-usage && tsc --noEmit -p test-sandbox && tsx ../smoke/scripts/ensure-web-envs.ts && tsc --noEmit -p test-sandbox/tsconfig.site.json"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",

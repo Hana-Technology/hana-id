@@ -5,6 +5,7 @@
 //   http://localhost:4410                  the partner test app
 //   http://site-b.localhost:4411           the partner test app on a second partner site
 //   http://localhost:4412                  the hosted demo (apps/demo's Worker handler over its e2e build)
+//   http://localhost:4413                  the stamps site (apps/stamps' Worker handler over its e2e build)
 //   http://127.0.0.1:4420                  vaultOrigin (apps/api's vault host and vault page)
 //   http://127.0.0.1:4430                  authOrigin (apps/api's auth host)
 //   http://127.0.0.1:4440                  the Hana API: apps/api's Worker, /v1/login and /v1/derive mocked (and the
@@ -32,6 +33,7 @@ import { loadApiModules } from './api-modules.ts';
 import { Chain } from './chain.ts';
 import { D1Shim } from './d1.ts';
 import { demoHost } from './demo.ts';
+import { stampsHost } from './stamps.ts';
 import { authHost, type PagesEnv, vaultHost } from './hosts.ts';
 import { serve, servedAt } from './http.ts';
 import { MockEvm, partnerHost } from './partner.ts';
@@ -57,6 +59,7 @@ export async function startStack(fingerprint: string): Promise<void> {
   await serve(PORTS.partner, partnerHosts, partnerHost());
   await serve(PORTS.siteB, partnerHosts, partnerHost());
   await serve(PORTS.demo, partnerHosts, demoHost());
+  await serve(PORTS.stamps, partnerHosts, stampsHost());
   await serve(PORTS.vault, loopback, vaultHost(modules, d1));
   await serve(PORTS.auth, loopback, authHost(modules));
   await serve(PORTS.api, loopback, (req) => api.handle(req));

@@ -34,6 +34,10 @@ import { type AccountKey, headBlock, implicitAccountKey } from './relay-chain.ts
 import { nearRpc } from './rpc.ts';
 import { parseKeyPair } from './tx.ts';
 import { nearAccountUser } from '../directory/near.ts';
+import { delegateFailure, relayAnswerBody } from './relay-answer.ts';
+
+export { delegateFailure, relayAnswerBody };
+export type { RelayAnswer } from './relay-answer.ts';
 
 export const NEAR_RELAY_ENDPOINT = '/v1/near/relay';
 export const NEAR_ACTIVATE_ENDPOINT = '/v1/near/activate';
@@ -370,29 +374,10 @@ async function relayThrough(env: Env, ctx: Ctx, keyCount: number, job: NearRelay
   }
 }
 
-/** Why NEAR refused the delegate action itself (in the sender's receipt), from the failure's text; null for a call's own failure. */
-export function delegateFailure(error: string): string | null {
-  if (/DelegateActionExpired/u.test(error)) return 'expired';
-  if (/DelegateActionInvalidNonce/u.test(error)) return 'invalid_nonce';
-  if (/DelegateActionNonceTooLarge/u.test(error)) return 'nonce_too_large';
-  if (/DelegateActionAccessKeyError/u.test(error)) return 'access_key';
-  if (/DelegateActionInvalidSignature/u.test(error)) return 'invalid_signature';
-  if (/DelegateActionSenderDoesNotMatchTxReceiver/u.test(error)) return 'sender_mismatch';
-  if (/AccountDoesNotExist/u.test(error)) return 'account_missing';
-  return null;
-}
-
-/** The relay's answer: `{transactionHash, status}` (D737), with the API's error fields on a failure. */
+/** relayAnswerBody, sent. */
 function relayAnswer(ctx: Ctx, result: RelayResult, sender: string, extra: Obj = {}): Response {
-  if (result.ok) return done(ctx, 200, { transactionHash: result.nearTx, status: 'executed', nearTx: result.nearTx, ...extra });
-  const tx = result.nearTx ? { transactionHash: result.nearTx, nearTx: result.nearTx } : {};
-  if (result.code === 'timeout') return done(ctx, 504, { error: 'Timed out waiting for the transaction outcome; poll the transaction', code: 'timeout', status: 'pending', ...tx });
-  if (result.code === 'contract_rejected') {
-    const reason = result.executor === sender || result.executor === null ? delegateFailure(result.error) : null;
-    if (reason) return done(ctx, 422, { error: 'NEAR refused the delegate action', code: 'delegate_rejected', reason, status: 'failed', ...tx });
-    return done(ctx, 422, { error: result.error, code: 'contract_rejected', status: 'failed', executor: result.executor ?? null, ...tx });
-  }
-  return done(ctx, result.status, { error: result.error, code: result.code, ...tx }, result.code === 'relayer_busy' || result.code === 'relayer_unavailable' ? { 'retry-after': '1' } : {});
+  const a = relayAnswerBody(result, sender, extra);
+  return done(ctx, a.status, a.body, a.headers);
 }
 
 // ---- POST /v1/near/relay ----

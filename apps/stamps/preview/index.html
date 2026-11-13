@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Journear Passport stamps: UI preview</title>
+    <script type="module" src="./main.ts"></script>
+  </head>
+  <body>
+    <div class="pv-bar" id="pv-bar">
+      <strong>UI preview</strong>
+      <label>Fixture <select id="pv-fixture"></select></label>
+      <button type="button" id="pv-prev" class="jp-btn jp-btn-secondary jp-btn-sm">Previous</button>
+      <button type="button" id="pv-next" class="jp-btn jp-btn-secondary jp-btn-sm">Next</button>
+      <button type="button" id="pv-ink" class="jp-btn jp-btn-secondary jp-btn-sm">Replay ink</button>
+      <button type="button" id="pv-theme" class="jp-btn jp-btn-secondary jp-btn-sm">Theme: system</button>
+      <a href="?sheet=1" id="pv-sheet">Stamp sheet</a>
+      <span id="pv-log" class="pv-log" aria-live="polite"></span>
+    </div>
+    <div id="app"></div>
+  </body>
+</html>

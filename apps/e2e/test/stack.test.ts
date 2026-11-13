@@ -3,6 +3,7 @@
 // from the real services, the Playwright suite proves nothing, so each is checked against @hana-id/core (the same code
 // the vault runs) or against apps/api's own rules.
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
+import { ed25519 } from '@noble/curves/ed25519';
 import { base58 } from '@scure/base';
 import {
   ckdAppId,
@@ -16,6 +17,9 @@ import {
   randomBytes,
   relayIdFor,
   base64UrlEncode,
+  base64Encode,
+  encodeNep413Message,
+  nep413Hash,
   sessionNonce,
   signDerive,
   signVaultMessage,
@@ -41,6 +45,7 @@ import {
   DEMO_ORIGIN,
   E2E_ENV,
   E2E_GUESTBOOK,
+  E2E_STAMPS,
   GOOGLE_CLIENT_ID,
   ISSUER_URL,
   LIVE_API_URL,
@@ -58,6 +63,7 @@ import {
   PARTNER_ORIGIN,
   PORTS,
   SITE_B_ORIGIN,
+  STAMPS_ORIGIN,
   TEST_CKD_NETWORK_KEY,
   VAULT_ORIGIN,
   portBase,
@@ -109,7 +115,7 @@ describe('the e2e env', () => {
     }
     expect(portBase('')).toBe(DEFAULT_PORT_BASE);
     expect(portBase('4510')).toBe(4510);
-    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, issuer: 4542, near: 4550, nearFallback: 4551, evm: 4560 });
+    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, stamps: 4513, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, issuer: 4542, near: 4550, nearFallback: 4551, evm: 4560 });
     for (const bad of ['80', '65500', '45.5', '4510x', '-1', ' 0x1000']) expect(() => portBase(bad)).toThrow(/HANA_E2E_PORT_BASE/u);
     // A base that puts a port on one browsers refuse (5010 + 50 = 5060, SIP) fails at once, not in the tests.
     expect(() => portBase('5010')).toThrow(/port 5060, which browsers refuse/u);
@@ -119,7 +125,8 @@ describe('the e2e env', () => {
     const base = portBase();
     expect([PARTNER_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN, AUTH_ORIGIN, API_URL].map((o) => Number(new URL(o).port))).toEqual([base, base + 1, base + 10, base + 20, base + 30]);
     expect(Number(new URL(DEMO_ORIGIN).port)).toBe(base + 2);
-    expect(new Set(Object.values(PORTS)).size).toBe(13);
+    expect(Number(new URL(STAMPS_ORIGIN).port)).toBe(base + 3);
+    expect(new Set(Object.values(PORTS)).size).toBe(14);
   });
 
   it('gives live mode an env of its own whose every origin is https, not loopback, and routed to the stack', () => {
@@ -213,6 +220,43 @@ describe('the mocked NEAR testnet for the demo’s NEAR card', () => {
       [0, USER, 'first'],
     ]);
     expect(chain.nearAccounts.get(USER)).toBe(5n);
+  });
+
+  it('the stamps contract: its rules, its views, and the signature stamp’s proof verified with ed25519 as on chain', async () => {
+    const chain = new Chain();
+    const secret = ed25519.utils.randomPrivateKey();
+    const me = toHex(ed25519.getPublicKey(secret));
+    const view = async (method: string, args: Record<string, unknown> = {}) => {
+      const r = (await call(chain, 'query', { request_type: 'call_function', finality: 'optimistic', account_id: E2E_STAMPS, method_name: method, args_base64: base64Encode(new TextEncoder().encode(JSON.stringify(args))) })).result!;
+      return JSON.parse(new TextDecoder().decode(Uint8Array.from(r.result as number[]))) as unknown;
+    };
+    const collect = async (args: Record<string, unknown>, sponsored = true, account = me) => ((await call(chain, 'e2e_stamps_collect', { account_id: account, args: JSON.stringify(args), sponsored })).result as { panic: string | null }).panic;
+    expect(await view('get_passport', { account_id: me })).toBeNull();
+    expect(await collect({ stamp: 'sponsored' })).toBe('ERR_NO_ARRIVAL');
+    expect(await collect({ stamp: 'arrival' })).toBeNull();
+    expect(await collect({ stamp: 'arrival' })).toBe('ERR_ALREADY');
+    expect(await collect({ stamp: 'sponsored' }, false)).toBe('ERR_NOT_SPONSORED');
+    expect(await collect({ stamp: 'own_fare' }, true)).toBe('ERR_NOT_OWN_FARE');
+    expect(await collect({ stamp: 'postcard', note: '   ' })).toBe('ERR_BAD_NOTE');
+    expect(await collect({ stamp: 'postcard', note: ' hi ' })).toBeNull();
+    expect(await collect({ stamp: 'layover' })).toBe('ERR_TOO_SOON');
+    const message = `Stamp my passport: ${me}`;
+    const nonce = new Uint8Array(32).fill(3);
+    const sign = (m: string, recipient: string) => base64Encode(ed25519.sign(nep413Hash(encodeNep413Message({ message: m, nonce, recipient, callbackUrl: null })), secret));
+    const proof = { message, nonce: base64Encode(nonce), recipient: E2E_STAMPS, signature: sign(message, E2E_STAMPS) };
+    expect(await collect({ stamp: 'signature', proof: { ...proof, recipient: 'other.testnet' } })).toBe('ERR_BAD_PROOF');
+    expect(await collect({ stamp: 'signature', proof: { ...proof, signature: sign(message, 'other.testnet') } })).toBe('ERR_BAD_PROOF');
+    expect(await collect({ stamp: 'signature', proof: { ...proof, message: 'Stamp my passport: someone' } })).toBe('ERR_BAD_PROOF');
+    expect(await collect({ stamp: 'signature', proof })).toBeNull();
+    expect(await collect({ stamp: 'arrival' }, true, 'alice.testnet')).toBeNull();
+    expect(await collect({ stamp: 'signature', proof }, true, 'alice.testnet')).toBe('ERR_NOT_IMPLICIT');
+    expect(await collect({ stamp: 'teleport' })).toBe('ERR_UNKNOWN_STAMP');
+    const passport = (await view('get_passport', { account_id: me })) as { stamps: { stamp: string; note?: string }[] };
+    expect(passport.stamps.map((s) => s.stamp)).toEqual(['arrival', 'postcard', 'signature']);
+    expect(passport.stamps[1]!.note).toBe('hi');
+    expect(((await view('recent', { limit: 2 })) as { stamp: string }[]).map((r) => r.stamp)).toEqual(['arrival', 'signature']);
+    expect(await view('totals')).toEqual({ passports: 2, stamps: 4 });
+    expect(Number(new URL(STAMPS_ORIGIN).port)).toBe(portBase() + 3);
   });
 });
 

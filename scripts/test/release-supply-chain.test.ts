@@ -168,6 +168,6 @@ describe('dep-audit (OPER-9)', () => {
   });
 
   it('covers every Cargo.lock of the contracts', () => {
-    expect(CARGO_LOCKS).toEqual(['contracts/hana-signer/Cargo.lock', 'contracts/integration-tests/Cargo.lock', 'contracts/mock-mpc/Cargo.lock', 'contracts/hana-guestbook/Cargo.lock']);
+    expect(CARGO_LOCKS).toEqual(['contracts/hana-signer/Cargo.lock', 'contracts/integration-tests/Cargo.lock', 'contracts/mock-mpc/Cargo.lock', 'contracts/hana-guestbook/Cargo.lock', 'contracts/hana-stamps/Cargo.lock']);
   });
 });

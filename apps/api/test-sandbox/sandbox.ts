@@ -10,8 +10,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KeyPair, type KeyPairString, PublicKey } from '@near-js/crypto';
-import { type Action, actionCreators, createTransaction, encodeTransaction, Signature, SignedTransaction } from '@near-js/transactions';
+import { type Action, actionCreators, buildDelegateAction, createTransaction, encodeDelegateAction, encodeSignedDelegate, encodeTransaction, Signature, SignedDelegate, SignedTransaction } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
+import { encodeRelayTransaction, encodeSignedTransaction, type RelayAction } from '../src/near/delegate.ts';
 import { type FinalOutcome, Rpc, RpcHealth } from '../src/near/rpc.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -29,6 +30,19 @@ export function sandboxBinary(): string | null {
       const bin = join(near, v, 'near-sandbox');
       if (existsSync(bin)) return bin;
     }
+  }
+  return null;
+}
+
+/**
+ * The stamps contract's wasm (contracts/hana-stamps, D796): the build the Rust sandbox tests make as deploy-stamps
+ * does (`--no-abi`, run just before this lane in `pnpm verify`'s sandbox step), else the contract lane's build. Null
+ * when neither exists.
+ */
+export function stampsWasm(): Uint8Array | null {
+  for (const p of ['contracts/integration-tests/target/wasm-stamps/near/hana_stamps.wasm', 'contracts/hana-stamps/target/near/hana_stamps.wasm']) {
+    const path = join(ROOT, p);
+    if (existsSync(path)) return new Uint8Array(readFileSync(path));
   }
   return null;
 }
@@ -187,6 +201,26 @@ export function implicitAccount(): Signer & { publicKey: PublicKey } {
   return { accountId: Buffer.from(publicKey.data).toString('hex'), keyPair, publicKey };
 }
 
+export type User = Signer & { publicKey: PublicKey };
+
+/** A delegate signed as a wallet would: @near-js's encoder, NEP-461 prefix, the user's own key. */
+export function signDelegate(user: User, receiverId: string, actions: Action[], nonce: bigint, maxBlockHeight: bigint): Uint8Array {
+  const da = buildDelegateAction({ senderId: user.accountId, receiverId, actions, nonce, maxBlockHeight, publicKey: user.publicKey });
+  const hash = sha256(encodeDelegateAction(da));
+  const signed = new SignedDelegate({ delegateAction: da, signature: new Signature({ keyType: 0, data: user.keyPair.sign(new Uint8Array(hash)).signature }) });
+  return encodeSignedDelegate(signed);
+}
+
+/** The relay's own transaction (near/delegate.ts encoder), signed by the relay account's key and sent. */
+export async function relayTx(sb: Sandbox, relayer: Signer, receiverId: string, action: RelayAction): Promise<FinalOutcome & { hash: string }> {
+  const pk = relayer.keyPair.getPublicKey();
+  const [nonce, block] = await Promise.all([accessKeyNonce(sb.rpc, relayer.accountId, pk.toString()), finalBlock(sb.rpc)]);
+  const tx = encodeRelayTransaction({ signerId: relayer.accountId, publicKey: pk.data, nonce: nonce + 1n, receiverId, blockHash: block.hash, action });
+  const bytes = encodeSignedTransaction(tx, relayer.keyPair.sign(new Uint8Array(sha256(tx))).signature);
+  const out = await sb.rpc.sendTx(bytes, 'EXECUTED');
+  return out as FinalOutcome & { hash: string };
+}
+
 // ---- a tiny test contract, assembled by hand (no toolchain needed) ----
 
 const uleb = (n: number): number[] => {
@@ -240,6 +274,82 @@ export function noteContractWasm(): Uint8Array {
   const body = [0x00, ...c(0), ...call(0), ...c(0), ...c(16), ...call(1), ...c(1), ...c(0), ...c(0), ...call(2), ...c(16), ...c(1), ...call(3), 0x1a, 0x0b];
   const code = vec([[...uleb(body.length), ...body]]);
   const data = vec([[0x00, 0x41, 0x00, 0x0b, ...vec([[0x70]])]]);
+  return Uint8Array.from([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    ...section(1, types),
+    ...section(2, imports),
+    ...section(3, funcs),
+    ...section(5, memory),
+    ...section(7, exports),
+    ...section(10, code),
+    ...section(11, data),
+  ]);
+}
+
+/** Signed LEB128 (wasm's i32.const / i64.const immediates). */
+const sleb = (v: bigint): number[] => {
+  const out: number[] = [];
+  for (;;) {
+    const b = Number(v & 0x7fn);
+    v >>= 7n;
+    if ((v === 0n && (b & 0x40) === 0) || (v === -1n && (b & 0x40) !== 0)) {
+      out.push(b);
+      return out;
+    }
+    out.push(b | 0x80);
+  }
+};
+
+/**
+ * A contract with one method, `go()`, that calls `method` on `target` with go's own input as the arguments, zero
+ * deposit and `gasTgas`, without waiting for the answer: a cross-contract caller (the stamps contract then sees this
+ * contract as the predecessor and the human who called `go` as the signer).
+ *
+ *   (import "env" "input" (func (param i64)))
+ *   (import "env" "read_register" (func (param i64 i64)))
+ *   (import "env" "register_len" (func (param i64) (result i64)))
+ *   (import "env" "promise_create" (func (param i64 i64 i64 i64 i64 i64 i64 i64) (result i64)))
+ *   (memory 1) (data (i32.const 0) target) (data (i32.const 64) method)   ;; 16 zero bytes at 128: the deposit
+ *   (func (export "go") input(0); read_register(0, 256);
+ *     drop(promise_create(len(target), 0, len(method), 64, register_len(0), 256, 128, gas)))
+ */
+export function callerContractWasm(target: string, method: string, gasTgas: bigint): Uint8Array {
+  const t = Buffer.from(target, 'utf8');
+  const m = Buffer.from(method, 'utf8');
+  if (t.length > 64 || m.length > 64) throw new Error('target and method must fit 64 bytes');
+  const types = vec([
+    [0x60, ...vec([[I64]]), ...vec([])],
+    [0x60, ...vec([[I64], [I64]]), ...vec([])],
+    [0x60, ...vec([[I64]]), ...vec([[I64]])],
+    [0x60, ...vec(Array.from({ length: 8 }, () => [I64])), ...vec([[I64]])],
+    [0x60, ...vec([]), ...vec([])],
+  ]);
+  const imports = vec([
+    [...name('env'), ...name('input'), 0x00, 0],
+    [...name('env'), ...name('read_register'), 0x00, 1],
+    [...name('env'), ...name('register_len'), 0x00, 2],
+    [...name('env'), ...name('promise_create'), 0x00, 3],
+  ]);
+  const funcs = vec([[4]]);
+  const memory = vec([[0x00, 0x01]]);
+  const exports = vec([
+    [...name('memory'), 0x02, 0],
+    [...name('go'), 0x00, 4],
+  ]);
+  const c = (n: bigint) => [0x42, ...sleb(n)];
+  const call = (f: number) => [0x10, f];
+  const body = [
+    0x00,
+    ...c(0n), ...call(0),
+    ...c(0n), ...c(256n), ...call(1),
+    ...c(BigInt(t.length)), ...c(0n), ...c(BigInt(m.length)), ...c(64n), ...c(0n), ...call(2), ...c(256n), ...c(128n), ...c(gasTgas * TGAS), ...call(3),
+    0x1a, 0x0b,
+  ];
+  const code = vec([[...uleb(body.length), ...body]]);
+  const data = vec([
+    [0x00, 0x41, ...sleb(0n), 0x0b, ...vec([...t].map((b) => [b]))],
+    [0x00, 0x41, ...sleb(64n), 0x0b, ...vec([...m].map((b) => [b]))],
+  ]);
   return Uint8Array.from([
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     ...section(1, types),

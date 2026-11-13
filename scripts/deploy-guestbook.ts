@@ -4,7 +4,8 @@
 // code and new() in one transaction. Prints the plan first and changes nothing without --yes; re-running plans only
 // what is missing. The account must exist and be funded; its full-access key is read from the near CLI legacy
 // keychain (~/.near-credentials/testnet/<account>.json). --lock deletes every access key on the account afterwards.
-// The logic lives in lib/guestbook-deploy.ts (run against a stub chain in test/guestbook-deploy.test.ts).
+// The logic is shared with deploy-stamps (lib/demo-deploy.ts); this contract's settings are in lib/guestbook-deploy.ts
+// (run against a stub chain in test/guestbook-deploy.test.ts).
 import { run } from './lib/cli.ts';
 import { GUESTBOOK_USAGE, guestbookMain } from './lib/guestbook-deploy.ts';
 

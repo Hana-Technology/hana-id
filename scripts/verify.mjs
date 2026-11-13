@@ -263,8 +263,8 @@ const GITLEAKS = ['--no-banner', '--redact', '--config', '.gitleaks.toml', '--ex
 export const BROWSERS = ['chromium', 'firefox', 'webkit'];
 
 /** The deployable contracts the contract step tests and builds, in order: hana-signer, then the hackathon demo
- * guestbook (D744). The test-only mock-mpc is built by the sandbox tests. */
-export const CONTRACT_CRATES = ['contracts/hana-signer', 'contracts/hana-guestbook'];
+ * guestbook (D744) and stamps contract (D796). The test-only mock-mpc is built by the sandbox tests. */
+export const CONTRACT_CRATES = ['contracts/hana-signer', 'contracts/hana-guestbook', 'contracts/hana-stamps'];
 
 /** Sandbox tests run this many at a time, each with its own sandbox node (D423; CI's e2e job runs the same). */
 export const SANDBOX_TEST_THREADS = 8;

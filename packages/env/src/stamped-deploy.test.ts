@@ -12,7 +12,7 @@ import { localBuild } from './local-build.ts';
 
 const WRAPPER = join(repoRoot, 'packages', 'env', 'src', 'stamped-deploy.ts');
 const RUN = 'tsx ../../packages/env/src/stamped-deploy.ts';
-/** The apps whose Worker is part of an env (the manifest names each); the hosted demo deploys on its own (apps/demo). */
+/** The apps whose Worker is part of an env (the manifest names each); the hosted demo and the stamps site deploy on their own (apps/demo, apps/stamps). */
 const WORKER_APPS = ['admin', 'api', 'console', 'console-auth', 'email-issuer', 'files', 'watchdog'];
 
 const scriptsOf = (app: string): Record<string, string> => (JSON.parse(readFileSync(join(repoRoot, 'apps', app, 'package.json'), 'utf8')) as { scripts?: Record<string, string> }).scripts ?? {};
@@ -52,7 +52,7 @@ describe('the shared deploy wrapper', () => {
   });
 
   it('is what every env Worker’s deploy runs; no script deploys unstamped; no app keeps a copy', () => {
-    const apps = readdirSync(join(repoRoot, 'apps')).filter((a) => existsSync(join(repoRoot, 'apps', a, 'package.json')) && 'deploy' in scriptsOf(a) && a !== 'demo');
+    const apps = readdirSync(join(repoRoot, 'apps')).filter((a) => existsSync(join(repoRoot, 'apps', a, 'package.json')) && 'deploy' in scriptsOf(a) && a !== 'demo' && a !== 'stamps');
     expect(apps.sort()).toEqual(WORKER_APPS);
     for (const app of WORKER_APPS) {
       const scripts = scriptsOf(app);

@@ -142,14 +142,14 @@ describe('deploy-guestbook', () => {
     expect(r.out).toContain(`code_hash ${codeHashOf(Buffer.alloc(WASM_BYTES, 7))}`);
   });
 
-  it('--lock with the deploy deletes the key in the same transaction', async () => {
+  it('--lock is refused with the first deploy: nothing is sent, the keys stay', async () => {
     const chain = fresh();
     const r = await run(['sandbox-dev', '--skip-build', '--lock', '--yes'], chain);
-    expect(r.code).toBe(0);
-    expect(r.sent).toHaveLength(1);
-    expect(r.sent[0]!.actions.map((a) => Object.keys(a).find((k) => (a as unknown as Record<string, unknown>)[k] !== undefined))).toEqual(['deployContract', 'functionCall', 'deleteKey']);
-    expect(chain.keys).toEqual([]);
-    expect(r.out).toContain('has no access keys: its code and messages are final');
+    expect(r.code).not.toBe(0);
+    expect(r.sent).toEqual([]);
+    expect(chain.keys).not.toEqual([]);
+    expect(r.out).toContain('--lock locks only an account that already runs the');
+    expect(r.out).toContain('deploy-guestbook sandbox-dev --lock --yes');
   });
 
   it('once deployed: nothing to do; --lock deletes every key on its own', async () => {

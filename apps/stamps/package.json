@@ -1,0 +1,37 @@
+{
+  "name": "@hana-id/stamps",
+  "version": "0.0.0",
+  "description": "Journear Passport stamps: a NEAR-only testnet demo site for the NEAR hackathon, a partner-style page on @hana-id/web served by a Cloudflare Worker with static assets.",
+  "private": true,
+  "license": "BUSL-1.1",
+  "type": "module",
+  "scripts": {
+    "gen:envs": "tsx ../../packages/web/scripts/gen-envs.ts",
+    "dev": "tsx ../../packages/web/scripts/gen-envs.ts && vite",
+    "build": "tsx ../../packages/web/scripts/gen-envs.ts && vite build",
+    "preview": "vite preview",
+    "gen": "tsx scripts/gen-wrangler.ts",
+    "deploy": "tsx ../../packages/web/scripts/gen-envs.ts && vite build && tsx scripts/gen-wrangler.ts && wrangler deploy",
+    "test": "tsx ../smoke/scripts/ensure-web-envs.ts && vitest run",
+    "typecheck": "tsx ../smoke/scripts/ensure-web-envs.ts && tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "preview:ui": "vite --config preview/vite.config.ts",
+    "shots": "tsx preview/shots.ts"
+  },
+  "dependencies": {
+    "@hana-id/core": "workspace:*",
+    "@hana-id/web": "workspace:*",
+    "@scure/base": "1.2.6"
+  },
+  "devDependencies": {
+    "@hana-id/brand": "workspace:*",
+    "@hana-id/env": "workspace:*",
+    "@playwright/test": "1.64.1",
+    "@types/node": "22.20.5",
+    "happy-dom": "21.0.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.12",
+    "wrangler": "4.151.1"
+  }
+}

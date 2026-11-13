@@ -176,6 +176,13 @@ must be an account of its own: never the signer, relayer, owner, MPC, a council 
 code on it). sandbox-dev: `hana-id-guestbook-dev1.testnet`, named like its other accounts. Changing it means a new,
 empty guestbook (the contract has no upgrade path).
 
+`near.demoStamps` (optional, D797) is the account of the Journear Passport stamps demo contract `contracts/hana-stamps`,
+which `deploy-stamps <env>` deploys (`docs/operations.md` "Hackathon demo stamps (NEAR)"). The same rules as
+`demoGuestbook` (a `.testnet` account of its own, never the guestbook's either), and it must be one of
+`near.relay.receivers`: most of its stamps are relayed meta transactions. sandbox-dev: `hana-id-stamps-dev1.testnet`.
+Changing it means new, empty passports (no upgrade path); the relay needs the API's `gen` and a redeploy to take a new
+receiver.
+
 `vaultOrigin` and `authOrigin` (optional in the schema until every deployed env has them; `gen` refuses an env
 without them and the page build skips it): the origins of Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin
 (`https://host[:port]`, no path or trailing slash); `https` is required, and loopback (`localhost`, `*.localhost`,

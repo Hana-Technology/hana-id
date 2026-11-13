@@ -190,7 +190,7 @@ describe('docs/integration.md: NEAR (section 8)', () => {
   // Hana's relay as sandbox-dev runs it: the manifest's `near.relay` and the API's fixed limits.
   const manifest = JSON.parse(readText('../../../envs/sandbox-dev.json')) as {
     apiUrl: string;
-    near: { demoGuestbook: string; relay: { receivers: string[]; maxGasTgas: number; perSenderPerDay: number; perAppPerDay: number; relaysPerDay: number; relaysPerMinute: number; activationsPerAppPerDay: number; activationsPerDay: number; appDailyBudgetNear: number; dailyBudgetNear: number } };
+    near: { demoGuestbook: string; demoStamps: string; relay: { receivers: string[]; maxGasTgas: number; perSenderPerDay: number; perAppPerDay: number; relaysPerDay: number; relaysPerMinute: number; activationsPerAppPerDay: number; activationsPerDay: number; appDailyBudgetNear: number; dailyBudgetNear: number } };
   };
   const relayConfig = readText('../../../apps/api/src/near/relay-config.ts');
   /** A fixed limit of the API's NEAR_RELAY_LIMITS. */
@@ -202,10 +202,10 @@ describe('docs/integration.md: NEAR (section 8)', () => {
   const n = (v: number): string => v.toLocaleString('en-US');
 
   it("the quick start's guestbook is sandbox-dev's demo guestbook, on its relay's allowlist, within its gas cap", () => {
-    const { demoGuestbook, relay } = manifest.near;
-    expect(relay.receivers).toEqual([demoGuestbook]);
+    const { demoGuestbook, demoStamps, relay } = manifest.near;
+    expect(relay.receivers).toEqual([demoGuestbook, demoStamps]);
     expect(s8).toContain(`const GUESTBOOK = '${demoGuestbook}';`);
-    expect(s8).toContain(`it holds only Journear's demo guestbook, \`${demoGuestbook}\``);
+    expect(s8).toContain(`it holds only Journear's two demo contracts, the guestbook \`${demoGuestbook}\` and the passport stamps\n  \`${demoStamps}\``);
     expect(s8).toContain(`its calls attach at most **${relay.maxGasTgas} Tgas** together on sandbox-dev`);
     expect(s8).toContain(`gas: ${n(relay.maxGasTgas * 1e12).replaceAll(',', '_')}n, deposit: 0n }`);
     // The quick start's expiry fits the relay's (and so the vault's) bound.

@@ -18,28 +18,155 @@ in before submitting. The detail (each event rule and where it is met, the full 
 prompts) is in [`docs/hackathon.md`](docs/hackathon.md). The developer reference starts at
 [Developer reference](#developer-reference).
 
+The quickest check is the NEAR-only stamps site ("Reproduce it" A below): about five minutes with only an email
+address, six real NEAR testnet transactions whose rules the stamps contract checks itself, and view calls anyone can
+run without a browser. The older hosted demo (B) shows the rest: the Stellar and EVM wallets, the guestbook and the
+key export.
+
 ### What NEAR does here, and where to check it
 
 | Claim | Code | How to check |
 |---|---|---|
 | The contract verifies Google's RS256 ID token on chain | `contracts/hana-signer/src/issuers.rs` `verify_token` → `src/oidc.rs` `verify_signature` → `verify_rs256` (RSASSA-PKCS1-v1_5, SHA-256, modular exponentiation with `num-bigint`), reached from `create_session` and `create_session_and_derive` in `src/sessions.rs` | `cd contracts/hana-signer && cargo test --locked rejects_non_rs256`; the `get_issuer` view below lists the issuers it trusts |
 | It verifies the email issuer's token on chain too | `contracts/hana-signer/src/self_issued.rs` `verify_self_issued_signatures` (JWS JSON, RS256 per signature, a signer policy), through the same `verify_token` | `get_issuer` with `{"provider":"email"}` below; `contracts/integration-tests/tests/email.rs` |
-| Each partner app has its own scope; the user's path is `{scope_id}#{provider}#{sub}#{key_index}` | `contracts/hana-signer/src/registry.rs` (`scope_for_client`, `get_scope`), `src/sessions.rs` | `get_scope` with `{"scope_id":"s2"}` below (the hosted demo's app) |
+| Each partner app has its own scope; the user's path is `{scope_id}#{provider}#{sub}#{key_index}` | `contracts/hana-signer/src/registry.rs` (`scope_for_client`, `get_scope`), `src/sessions.rs` | `get_scope` with `{"scope_id":"s2"}` below (the scope of both demos' apps) |
 | It asks NEAR's MPC for the user's key (CKD) | `contracts/hana-signer/src/sessions.rs` `derive_with` → `request_app_private_key` (declared with `#[ext_contract(mpc_contract)]` in the same file) on `v1.signer-prod.testnet`, CKD domain 2 (`mpc`, `ckdDomainId` in `envs/sandbox-dev.json`) | the receipts of a login transaction below show `request_app_private_key` on `v1.signer-prod.testnet`; `cargo test --locked derive_key_calls_the_mpc_with_the_session_path` |
 | The MPC's answer is encrypted to a key only the browser holds | `packages/core/src/ckd.ts` `newAppKey` (a random BLS12-381 scalar made in the browser) and `decryptCkd` (decrypts and checks a pairing against the pinned MPC key, `ckdNetworkKey` in `envs/sandbox-dev.json`); used by the vault, a hidden iframe on Journear's own origin, in `packages/web/src/vault/login.ts` | `corepack pnpm --filter @hana-id/core exec vitest run test/ckd.test.ts` |
 | One CKD secret gives a key per chain; NEAR's is an Ed25519 key and the account is its implicit account (64 hex) | `packages/core/src/derivation.ts` (HKDF-SHA256; `nearSeed`, the tuple `("near", "ed25519", account)`), golden vectors `packages/core/test/vectors/derivation-v1-near.json` | `corepack pnpm --filter @hana-id/core exec vitest run test/derivation-near.test.ts` |
 | NEAR transactions, NEP-366 delegate actions and NEP-413 messages are decoded and shown in Journear's approval window, then signed in the vault | `packages/core/src/near/` (`codec.ts`, `sign.ts`), `packages/web/src/vault/near.ts`, `packages/web/src/auth/render-approval.ts`; the SDK's `hana.near.*` in `packages/web/src/client/near.ts` | `corepack pnpm --filter @hana-id/core exec vitest run test/near-codec.test.ts test/near-approval.test.ts` |
-| A relayer pays for the user's NEAR calls, only for allowlisted contracts | `apps/api/src/near/relay.ts` (`POST /v1/near/activate`, `POST /v1/near/relay`), `apps/api/src/near/delegate.ts` `policyRefusal` (the sender is the key's own implicit account, FunctionCall actions only, zero deposit, the receiver in `near.relay.receivers`, a gas cap); sandbox-dev's only receiver is the guestbook | `corepack pnpm --filter @hana-id/api exec vitest run test/near-relay.test.ts`; on a real local NEAR node: `apps/api/test-sandbox/meta-tx.test.ts`; on testnet: the two transactions below |
-| A demo contract the user writes to without holding NEAR | `contracts/hana-guestbook/src/lib.rs` (`add_message`, `get_messages`, `total_messages`; no owner, no upgrade path), at `near.demoGuestbook` in `envs/sandbox-dev.json`, its keys deleted on 2026-11-12 | the view calls below; `cd contracts/hana-guestbook && cargo test --locked`; `contracts/integration-tests/tests/guestbook.rs` |
-| The contract's owner is a Sputnik DAO council with public delays | `contracts/hana-signer/src/governance.rs`; the DAO's code pinned in `contracts/sputnik/pin.json` | `get_config` below: `owner` is `hana-id-council-dev1.sputnikv2.testnet` |
-| Logins are paid for by Journear's relayer account | `apps/api` signs `create_session_and_derive` with the relayer's function-call keys (manifest `relayer`) | the transaction list below: signer `hana-id-relayer-dev1.testnet` |
+| A relayer pays for the user's NEAR calls, only for allowlisted contracts | `apps/api/src/near/relay.ts` (`POST /v1/near/activate`, `POST /v1/near/relay`), `apps/api/src/near/delegate.ts` `policyRefusal` (the sender is the key's own implicit account, FunctionCall actions only, zero deposit, the receiver in `near.relay.receivers`, a gas cap); sandbox-dev's receivers are the guestbook and the stamps contract (`envs/sandbox-dev.json` `near.relay.receivers`) | `corepack pnpm --filter @hana-id/api exec vitest run test/near-relay.test.ts`; on a real local NEAR node: `apps/api/test-sandbox/meta-tx.test.ts`; on testnet: the transactions below |
+| A demo contract whose six stamps' rules the contract checks itself: Arrival first, each stamp once; Fare paid (`sponsored`) only when the transaction's signer is not the caller (a NEP-366 delegate action someone else sent); Own fare only when the caller signed and paid; Postcard a note of 1 to 140 characters; Layover at least 120 000 ms of block time after Arrival. No owner, not payable, no upgrade path | `contracts/hana-stamps/src/lib.rs` `collect` (`LAYOVER_MS`, `MAX_NOTE_CHARS`, the `ERR_*` panics), at `near.demoStamps` in `envs/sandbox-dev.json`; rules and check order in `contracts/hana-stamps/README.md`; sandbox tests `contracts/integration-tests/tests/stamps.rs` | `cd contracts/hana-stamps && cargo test --locked` (among them `sponsored_only_when_someone_else_signed`, `own_fare_only_when_the_traveller_signed`, `layover_needs_120_seconds_after_arrival`, `checks_run_in_the_documented_order`); the view calls in A |
+| The Signature stamp's NEP-413 message is verified on chain with `env::ed25519_verify` against the caller's own key (the implicit account id is the public key); the message must be `Stamp my passport: <caller>` for the stamps contract's account | `contracts/hana-stamps/src/lib.rs` `proof_is_valid`, `nep413_bytes`, `implicit_public_key`; the cross-language vector `contracts/hana-stamps/tests/nep413-vector.json`, written and pinned by `packages/core/test/near-stamps-vector.test.ts` with the vault's own signer | `cd contracts/hana-stamps && cargo test --locked signature` (the good proofs pass; every altered field, another recipient or account, a named account, bad encodings fail); `corepack pnpm --filter @hana-id/core exec vitest run test/near-stamps-vector.test.ts`; on testnet: the Signature transaction in A |
+| The relay pays for delegate actions to the stamps contract, driven by the site's own code | the relay as above; the site's collector `apps/stamps/src/collector.ts`; the real-node test `apps/api/test-sandbox/stamps-site.test.ts`: the site's collector, the SDK's `HanaNear` and the API's relay code collect all six stamps on near-sandbox with the deployed wasm (only the vault's approval and the HTTP hop are stood in for), and the e2e stack's contract model is held against the wasm call by call | `corepack pnpm --filter @hana-id/api run test:sandbox` (needs the near-sandbox binary and the stamps wasm, which C's `verify` builds); on testnet: a relayed stamp's transaction is signed by `hana-id-near-relay-dev1.testnet` while its `collect` receipt runs as the user (A, "Check it without a browser") |
+| The stamps contract is locked: it has no access key, so nobody can change its code or its passports | `scripts/lib/demo-deploy.ts` (`deploy-stamps <env> --lock`, refused on the run that deploys); locked 2026-11-13 by the `DeleteKey` transaction `wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU` | `view_access_key_list` in A prints `[]`; `view_account` shows code hash `9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA` |
+| A demo contract the user writes to without holding NEAR | `contracts/hana-guestbook/src/lib.rs` (`add_message`, `get_messages`, `total_messages`; no owner, no upgrade path), at `near.demoGuestbook` in `envs/sandbox-dev.json`, its keys deleted on 2026-11-12 | the view calls in B; `cd contracts/hana-guestbook && cargo test --locked`; `contracts/integration-tests/tests/guestbook.rs` |
+| The contract's owner is a Sputnik DAO council with public delays | `contracts/hana-signer/src/governance.rs`; the DAO's code pinned in `contracts/sputnik/pin.json` | `get_config` in B: `owner` is `hana-id-council-dev1.sputnikv2.testnet` |
+| Logins are paid for by Journear's relayer account | `apps/api` signs `create_session_and_derive` with the relayer's function-call keys (manifest `relayer`) | the transaction list in B: signer `hana-id-relayer-dev1.testnet` |
 
 ### Reproduce it
 
-**A. On the hosted testnet demo** (no setup): <https://hana-id-demo-sandbox-dev.tingtc.workers.dev> (`apps/demo`; NEAR
-testnet, Stellar testnet, Base Sepolia). Use email sign-in: **Log in with Google** works only for Google accounts on
-Journear's tester list, because the Google client is still in Google's testing mode; other accounts see Google's
-"Access blocked".
+**A. The NEAR passport stamps site** (no setup; about five minutes; an email address you can read):
+<https://hana-id-stamps-sandbox-dev.tingtc.workers.dev> (`apps/stamps`; NEAR testnet only: no other chain on the
+page). The Journear Passport window calls the site's app "Stamp Trail". Use email sign-in: Google sign-in works only for
+Google accounts on Journear's tester list, because the Google client is still in Google's testing mode. Allow pop-ups
+for the site. The stamps contract is `near.demoStamps` in `envs/sandbox-dev.json`, today `hana-id-stamps-dev1.testnet`.
+The order below uses Layover's wait: collect Arrival first, then do steps 4 to 7 while its two minutes run.
+
+1. Do: open the site. See: the passport cover, "Journear Passport", "Sign in with email or Google to get a NEAR account
+   with no seed phrase and no NEAR, then collect six stamps. Each one is a real transaction on NEAR testnet.", **Sign
+   in**, and every stamp "Sign in to collect".
+2. Do: click **Sign in**. In the Journear Passport window ("Sign in"), click **Continue with email**, type the address
+   in **Email address**, click **Send code**; type the 6-digit code from the email (from "Journear Passport (testnet)",
+   subject starting `[SANDBOX]`) and click **Continue**. See: "Your passport" with **Account** (your implicit account,
+   64 hex characters, shown shortened; **Show full**, **Copy**, **View on explorer ↗**), **Network** "NEAR testnet",
+   **Balance** "0 NEAR", the **Public passport** link, "0 of 6", Arrival ready to collect and the others "Collect
+   Arrival first".
+3. Arrival. Do: click **Collect** on Arrival. In the window headed "NEAR transaction, fee paid by a relayer" (From:
+   your account; To: the stamps contract; the call `collect` with `{"stamp":"arrival"}`, no deposit, 10 Tgas), move the
+   mouse (Approve ignores clicks until then and for its first second) and click **Approve**. See: "Arrival stamped on
+   NEAR testnet. Your NEAR account was created for it. You paid no gas." with **View the transaction**; the Arrival
+   stamp inked with the date and a **No gas** mark; Layover counting down ("In 2 min …"); Balance still "0 NEAR".
+4. Fare paid. Do: **Collect**, **Approve**. See: "Sponsored stamped on NEAR testnet. You paid no gas." (the notice
+   uses the stamp's id; the slot says "Fare paid") and the stamp with **No gas**. The contract stores it only because
+   the transaction's signer (the relay) is not the caller (you).
+5. Signature (two approvals in one window). Do: click **Collect** on Signature ("Two approvals: sign a message, then
+   send it. The contract checks it on chain."). The slot says "Approval 1 of 2: sign the message…" and the window,
+   headed "Sign in with your NEAR account", shows the message `Stamp my passport: <your account>` for the recipient
+   `hana-id-stamps-dev1.testnet`: **Approve**. Leave the window open: within a few seconds it shows the second request
+   (the slot: "Approval 2 of 2: send it to the contract…"), the `collect` call carrying the signed message, headed
+   "NEAR transaction, fee paid by a relayer": **Approve**. See: "Signature stamped on NEAR testnet. You paid no gas."
+   If the window was closed in between, the slot says "Step 2 of 2: send your signed message to the contract." with
+   **Continue**: click it and approve the `collect` (the message is not signed again).
+6. Postcard. Do: type a note in **Your note** (1 to 140 characters; "Public, on chain."), click **Send postcard**,
+   **Approve**. See: "Postcard stamped on NEAR testnet. You paid no gas." and the note on the stamp. It is public and
+   permanent.
+7. Own fare (your own testnet NEAR). See first: the slot says "The one stamp that needs your own testnet NEAR" and
+   "Copy your account id, paste it into NEAR’s faucet (free, no sign-up), then come back: this unlocks when the NEAR
+   arrives." Do: click **Copy account id**, then **Get testnet NEAR ↗** (NEAR's docs faucet,
+   <https://docs.near.org/getting-started/faucet>, a third-party page that funds implicit accounts with no login);
+   paste the id there, request the NEAR, and come back to the tab. See: within about 5 seconds the Balance shows the
+   NEAR and Own fare is ready. Do: **Collect**; the window is headed "NEAR transaction" (no relayer): **Approve**. See:
+   "Own fare stamped on NEAR testnet. Your NEAR paid the fee.", the stamp without a **No gas** mark, and the balance
+   down by the fee (about 0.0002 NEAR).
+8. Layover. Once its countdown ends (120 s of block time after Arrival, plus 3 s the page adds), do: **Collect**,
+   **Approve**. See: "Layover stamped on NEAR testnet. You paid no gas." and "6 of 6". Too early, the contract refuses
+   it and the slot says "Not yet: the layover needs 2 minutes on NEAR’s clock after your Arrival. Try again in a
+   moment."
+9. Do: open the **Public passport** link (`/p/<your account>`) in a private window. See: "Passport", "Read from NEAR
+   testnet. Anyone can see it.", the six stamps with their dates, five with **No gas**, your note, and under **Recent
+   stamps** your stamps among everyone's, read live from the chain. One that already holds all six:
+   <https://hana-id-stamps-sandbox-dev.tingtc.workers.dev/p/cceaf5d33b7b0fff98c15d9c3669dcfb2e0b2d1d20282382dcbfd3ad93d770c4>.
+
+A stamp that fails says why in plain words (the contract's `ERR_*`, the relay's or the vault's refusal,
+`apps/stamps/src/messages.ts`); "Sent, still confirming on NEAR testnet…" with a NearBlocks link is a relay that timed
+out after sending: it may still land, and the passport shows it on the next read.
+
+**Check it without a browser** (read-only; public RPC; `curl` and `jq`, or [near CLI](https://github.com/near/near-cli-rs)):
+
+```sh
+S=hana-id-stamps-dev1.testnet          # the stamps contract: near.demoStamps in envs/sandbox-dev.json
+A=cceaf5d33b7b0fff98c15d9c3669dcfb2e0b2d1d20282382dcbfd3ad93d770c4   # a traveller who holds all six
+RPC=https://rpc.testnet.near.org
+view() { curl -s $RPC -H 'content-type: application/json' -d "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"query\",\"params\":{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$1\",\"method_name\":\"$2\",\"args_base64\":\"$(printf '%s' "$3" | base64)\"}}" | jq -r '.result.result | implode'; }
+
+view $S catalog '{}'
+view $S totals '{}'
+view $S get_passport "{\"account_id\":\"$A\"}" | jq -c '.stamps[] | {stamp, sponsored, note}'
+view $S recent '{"limit":3}' | jq -c '.[]'
+# Locked: no access key, so nobody can change its code or its passports; the deployed code's hash
+curl -s $RPC -H 'content-type: application/json' -d "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"query\",\"params\":{\"request_type\":\"view_access_key_list\",\"finality\":\"final\",\"account_id\":\"$S\"}}" | jq -c '.result.keys'
+curl -s $RPC -H 'content-type: application/json' -d "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"query\",\"params\":{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$S\"}}" | jq -c '.result | {code_hash, amount}'
+
+# The same with near CLI
+near contract call-function as-read-only $S totals json-args '{}' network-config testnet now
+near contract call-function as-read-only $S get_passport json-args "{\"account_id\": \"$A\"}" network-config testnet now
+near account list-keys $S network-config testnet now
+```
+
+See (2026-11-13; `totals` and `recent` grow as others collect):
+`["arrival","sponsored","own_fare","signature","postcard","layover"]`; `{"passports":2,"stamps":12}`; six lines,
+`{"stamp":"arrival","sponsored":true,"note":null}`, then `sponsored`, `signature`, `postcard` (with
+`"note":"Greetings GM GM"`) and `layover`, each `"sponsored":true`, and last
+`{"stamp":"own_fare","sponsored":false,"note":null}`; the newest stamps as
+`{"account_id":"9a36dbd8…","stamp":"layover","block_timestamp_ms":1794562886352}` (another traveller's run; account id
+shortened here); `[]`; `{"code_hash":"9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA","amount":"19898707694283859600000000"}`
+(about 19.9 NEAR, which pays the contract's storage). near CLI prints the same JSON after "Function execution return
+value", and an empty key table.
+
+Who paid for a stamp, from the chain. The run behind `$A` (2026-11-13; the account was created on 2026-11-12 by the
+relay's activation `H9kjLPrVbxfjFAvzRJh7mHxs5EetiBv9urLkbbhF8cHa`, B below):
+
+| Stamp | Transaction | Signed by (pays the fee) | What it shows |
+|---|---|---|---|
+| Arrival | `DLNTc3n2s4VHvKMa3z8mft15zNksMQ5uJMHx7qJLKPsE` | `hana-id-near-relay-dev1.testnet` | one `Delegate` action; the `collect` receipt on the stamps contract has the user as predecessor |
+| Fare paid | `6YvvtDucooLgNZz4zNobzZTbRyqk1J7ERpF1e9VhRbjZ` | the relay | the same shape; `{"stamp":"sponsored"}` |
+| Signature | `9AFMbPak6EmJMRvsRiMwthkfxf3TxRDvPosSMnGnFoEr` | the relay | the `collect` carries the proof: message `Stamp my passport: cceaf5d3…`, recipient `hana-id-stamps-dev1.testnet`, nonce and signature; the contract verified it in that receipt |
+| Postcard | `2GauvNqfttJ3x7ivqieQgG3VKGbaCQnsAexZnEmYhsHJ` | the relay | `{"stamp":"postcard","note":"Greetings GM GM"}` |
+| Layover | `2RDYzHmH9fm1kx1x8qR4AQdmqw5nxAjGats8YscCDLTh` | the relay | 133 s of block time after the Arrival |
+| Own fare | `Cqo9e7uiV7tJhPZ42BuszUsZAZmchTtuSZJ1tB4E4tdo` | the user's own account | a plain `FunctionCall`, no relay; paid from 0.5 testnet NEAR the team sent the account in `J45xMFpPQWV7W6yMvcLu1rDbk6btNmuastfV41qs7knn` (a judge gets it from NEAR's faucet instead) |
+
+```sh
+tx() { curl -s https://archival-rpc.testnet.near.org -H 'content-type: application/json' \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"EXPERIMENTAL_tx_status\",\"params\":{\"tx_hash\":\"$1\",\"sender_account_id\":\"$2\",\"wait_until\":\"FINAL\"}}" \
+  | jq -c '{signer: .result.transaction.signer_id, actions: [.result.transaction.actions[] | if type == "object" then keys[0] else . end], receipts: [.result.receipts[] | select(.predecessor_id != "system") | {to: .receiver_id, by: .predecessor_id, call: (.receipt.Action.actions[0].FunctionCall.method_name // (.receipt.Action.actions[0] | if type == "object" then keys[0] else . end)), stamp: (.receipt.Action.actions[0].FunctionCall.args // null | if . then (@base64d | fromjson | .stamp) else null end)}]}'; }
+A=cceaf5d33b7b0fff98c15d9c3669dcfb2e0b2d1d20282382dcbfd3ad93d770c4
+tx DLNTc3n2s4VHvKMa3z8mft15zNksMQ5uJMHx7qJLKPsE hana-id-near-relay-dev1.testnet   # Arrival, relayed
+tx 9AFMbPak6EmJMRvsRiMwthkfxf3TxRDvPosSMnGnFoEr hana-id-near-relay-dev1.testnet   # Signature, relayed, with the proof
+tx Cqo9e7uiV7tJhPZ42BuszUsZAZmchTtuSZJ1tB4E4tdo $A                                # Own fare, the user's own transaction
+```
+
+See: `{"signer":"hana-id-near-relay-dev1.testnet","actions":["Delegate"],"receipts":[{"to":"cceaf5d3…","by":"hana-id-near-relay-dev1.testnet","call":"Delegate","stamp":null},{"to":"hana-id-stamps-dev1.testnet","by":"cceaf5d3…","call":"collect","stamp":"arrival"}]}`,
+the same for `"signature"`, and
+`{"signer":"cceaf5d3…","actions":["FunctionCall"],"receipts":[{"to":"hana-id-stamps-dev1.testnet","by":"cceaf5d3…","call":"collect","stamp":"own_fare"}]}`
+(account ids shortened here; the filter leaves out the gas refunds, whose predecessor is `system`). In a browser, a
+stamp's **View transaction ↗** opens the same transaction on NearBlocks testnet
+(`https://testnet.nearblocks.io/txns/<hash>`): the transaction's signer, who pays the fee, is the relay account for
+the five relayed stamps and the user for Own fare, and its receipts show `collect` called by the user's account. The
+contract's page: <https://testnet.nearblocks.io/address/hana-id-stamps-dev1.testnet>.
+
+**B. The hosted demo**, the broader one (no setup): <https://hana-id-demo-sandbox-dev.tingtc.workers.dev> (`apps/demo`;
+NEAR testnet, Stellar testnet, Base Sepolia): the guestbook write, NEP-413 sign-in, signing a transaction, and the key
+export from Passport Home. Use email sign-in, as in A.
 
 1. Do: open the page. See: "Journear Passport demo" and the testnet banner.
 2. Do: click **Log in with email**. In the Journear window ("Sign in with email"), type an address you can read and
@@ -91,7 +218,7 @@ See: `{"signer":"hana-id-near-relay-dev1.testnet","receipts":[{"to":"cceaf5d3…
 and, for the write, `{"to":"cceaf5d3…","by":"hana-id-near-relay-dev1.testnet","call":"Delegate"},{"to":"hana-id-guestbook-dev1.testnet","by":"cceaf5d3…","call":"add_message"},…`
 (account ids shortened here).
 
-**B. View calls anyone can run** (read-only, public RPC; needs `curl` and `jq`, or [near CLI](https://github.com/near/near-cli-rs)).
+View calls on the guestbook and the signer contract, anyone can run (read-only, public RPC, as in A):
 
 ```sh
 RPC=https://rpc.testnet.near.org
@@ -154,28 +281,42 @@ Rust through `rustup` (`contracts/hana-signer/rust-toolchain.toml` pins 1.85.1 w
    See: `Done in …s using pnpm v11.3.0`. The install also points `core.hooksPath` at `.githooks` (the gitleaks
    pre-commit hook).
 2. Do: `corepack pnpm verify --all`. It runs, in phases: the lockfile check; gitleaks over the history; the typecheck
-   of every package; `cargo test --locked` and the wasm build of `contracts/hana-signer` and `contracts/hana-guestbook`;
-   every package's unit tests and the docs checks; the contracts on a local NEAR node (`contracts/integration-tests`,
-   then the API's meta-transaction tests in `apps/api/test-sandbox`); the SDK pack check; Playwright on Chromium.
+   of every package; `cargo test --locked` and the wasm build of `contracts/hana-signer`, `contracts/hana-guestbook`
+   and `contracts/hana-stamps`; every package's unit tests and the docs checks; the contracts on a local NEAR node
+   (`contracts/integration-tests`, then the API's NEAR tests in `apps/api/test-sandbox`, the stamps site's real-node
+   test among them); the SDK pack check; Playwright on Chromium (the stamps site's spec among them).
    `corepack pnpm verify --full` adds Firefox, WebKit and the dependency advisories (needs `cargo install cargo-audit
    --locked`). Leave `HANA_E2E_PORT_BASE` unset. See: a table with every step `pass`, then `total (wall clock) pass`,
-   exit code 0. Measured 2026-11-13 on a
-   16-core Apple M4 Max with Cargo's crates, `near-sandbox` and Playwright's browsers already downloaded:
-   `total (wall clock) pass 11m25s` (the local NEAR node's tests 7m48s of it; Playwright on Chromium 142 passed, 1
+   exit code 0. Measured 2026-11-13 at `develop` 83ac508c on a 16-core Apple M4 Max in a fresh worktree (Cargo's
+   crates, `near-sandbox` and Playwright's browsers already downloaded, every Rust target built from scratch):
+   `total (wall clock) pass 15m19s` (the local NEAR node's tests 11m12s of it; Playwright on Chromium 144 passed, 1
    skipped). Allow longer on a machine that has to download them.
 3. What the local runs simulate, and what is real:
    - `contracts/integration-tests` (`cargo test --locked -- --test-threads=8` there): the real `hana-signer` and
-     guestbook wasm on a local NEAR node (near-workspaces starts `near-sandbox`, downloaded on first use), RSA test
+     guestbook wasm and the stamps wasm on a local NEAR node (near-workspaces starts `near-sandbox`, downloaded on first use), RSA test
      keys standing in for Google and the email issuer, and `contracts/mock-mpc` standing in for the MPC (it records each
      `request_app_private_key` and answers with fixed bytes; it does not run CKD). Real: the contracts, NEAR's runtime,
-     gas, keys, receipts, delegate actions.
+     gas, keys, receipts, delegate actions, the stamps' on-chain checks (`tests/stamps.rs`).
+   - `apps/api/test-sandbox/stamps-site.test.ts` (in `pnpm verify`'s sandbox lane, after the contract lane built the
+     wasm and downloaded `near-sandbox`): the stamps site's own collector, the SDK's `HanaNear` and the API's relay
+     code collect all six stamps on a local node with the real stamps wasm (Layover after moving the node's clock, Own
+     fare after funding the account), and the e2e stack's contract model must answer every call as the wasm does.
+     Stood in for: the vault's approval window (the test signs with the vault's own signers after its request check)
+     and the HTTP hop to the API. Alone, once `verify` has
+     built the wasm: `HANA_SANDBOX_REQUIRED=1 corepack pnpm --filter @hana-id/api exec vitest run -c
+     vitest.sandbox.config.ts test-sandbox/stamps-site.test.ts` (2026-11-13: `2 passed`, 124 s). All three files:
+     `corepack pnpm --filter @hana-id/api run test:sandbox` (`11 passed`, 217 s).
    - `corepack pnpm --filter @hana-id/e2e e2e`: Journear's real browser bundles (vault, sign-in, approval, export,
      Passport Home) and the real API and email issuer Worker code in Node, in three browsers. NEAR is a mocked
      JSON-RPC (`apps/e2e/src/server/chain.ts`), not a node; the MPC is a test key in the same file, real BLS12-381, so
      the browser's CKD decryption and pairing check run for real; Google is an OIDC stub inside each browser context
      (`apps/e2e/src/google-stub.ts`); email codes go to a local outbox. The demo's gasless guestbook write runs in
-     `tests/demo.spec.ts` against a relayer the test routes (2026-11-13, Chromium: `6 passed`). Details:
-     [`apps/e2e/README.md`](apps/e2e/README.md).
+     `tests/demo.spec.ts` against a relayer the test routes (2026-11-13, Chromium: `6 passed`). The stamps site
+     runs in `tests/stamps.spec.ts`: its built page with its real CSP, email sign-in, Arrival, Fare paid, Postcard and
+     Signature with zero NEAR, the public passport, and Signature's Continue after its window was closed, against a
+     model of the stamps contract in the mocked RPC (`apps/e2e/src/server/stamps-contract.ts`, held to the wasm by the
+     real-node test above). Alone: `corepack pnpm --filter @hana-id/e2e e2e tests/stamps.spec.ts --project=chromium` (2026-11-13: `2 passed
+     (19.0s)`, on a checkout where `verify` had just run). Details: [`apps/e2e/README.md`](apps/e2e/README.md).
 4. To click through the demo on that stack yourself (email sign-in; the Google stub exists only inside Playwright):
    ```sh
    corepack pnpm --filter @hana-id/e2e serve     # builds, then serves; wait for "[e2e] stack ready"
@@ -194,12 +335,12 @@ Rust through `rustup` (`contracts/hana-signer/rust-toolchain.toml` pins 1.85.1 w
 
 - The window (rule Q-001): code from the announcement on 2026-10-19 to 2026-11-14 counts; earlier commits are baseline.
 - This repository's first commit, `e0c831fc`, is dated 2026-10-26 13:43 +08:00. No commit on any branch has an
-  earlier date. On 2026-11-13, `develop` (35bc103e) has 1,181 commits and the 231 branches on GitHub together 1,187, every
-  one dated 2026-10-26 to 2026-11-12. Check: `git log --reverse --format='%h %ad %s' --date=iso | head -3`,
+  earlier date. On 2026-11-13, `develop` (83ac508c) has 1,215 commits and the 240 branches on GitHub together 1,221,
+  every one dated 2026-10-26 to 2026-11-13. Check: `git log --reverse --format='%h %ad %s' --date=iso | head -3`,
   `git rev-list --count develop`, `git log --format=%ad --date=short develop | sort | uniq -c`.
 - The first commit, `e0c831fc` (2026-10-26), started this repository from our earlier proof of concept,
   wend-widget-demo: a first version of the `hana-signer` contract and the reference code in `legacy/`, with three docs
-  and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,180
+  and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,214
   further commits, was built in the window: the per-app scope registry, the API, the SDK, email login, the consoles,
   Passport Home and all of the NEAR wallet work. Of today's 4,337 lines of `hana-signer` contract code (tests and
   fixtures excluded), 124 still date from that first commit by `git blame` ([`docs/hackathon.md`](docs/hackathon.md)
@@ -215,6 +356,11 @@ Rust through `rustup` (`contracts/hana-signer/rust-toolchain.toml` pins 1.85.1 w
     directory's NEAR rows, the meta-transaction relay, the guestbook contract and the demo's NEAR card; merged and
     deployed to sandbox-dev on 2026-11-12 with the Journear Passport rename, "Move this wallet" for the NEAR key, the
     admin's NEAR relay tile and SDK 0.4.1.
+  - 2026-11-13: the passport stamps: the `hana-stamps` contract and `deploy-stamps` (D794–D797), the NEAR-only site
+    `apps/stamps` with its e2e spec and real-node test (D798–D802, D805–D807) and its booklet art drawn in code
+    (D803, D804); the contract deployed, hand-checked by the founder and locked on testnet the same day, the site
+    deployed with its app Stamp Trail; sandbox-dev's limits for the judging week (D793); the licences and this
+    write-up (D745–D749).
 - The work after the baseline, as the rules ask (Q-003: tags `pre-hackathon` on the first commit and
   `hackathon-submission` on the submitted one):
   <https://github.com/Hana-Technology/hana-id/compare/pre-hackathon...hackathon-submission>.
@@ -224,16 +370,17 @@ Rust through `rustup` (`contracts/hana-signer/rust-toolchain.toml` pins 1.85.1 w
 The whole repository is submitted; the NEAR integration is what is judged: the `hana-signer` contract (on-chain checks
 of Google's and the email issuer's tokens, the scope registry, sessions, the CKD request to NEAR's MPC, governance by a
 Sputnik DAO council), the browser's CKD decryption, the NEAR wallet (derivation, the implicit account, transaction,
-delegate-action and NEP-413 signing behind the approval window), the gasless relay, the guestbook and the demo's NEAR
-card. **Other chains, disclosed:** the same CKD secret also gives each user a Stellar and an EVM wallet (Stellar
-testnet, Base Sepolia and other EVM testnets), and `packages/sodax` adapts Sodax's cross-chain SDK to those wallets.
-They are part of the product and of this repository, built in the same window, and are not NEAR integrations.
+delegate-action and NEP-413 signing behind the approval window), the gasless relay, the stamps contract and its site,
+the guestbook and the demo's NEAR card. **Other chains, disclosed:** the same CKD secret also gives each user a Stellar
+and an EVM wallet (Stellar testnet, Base Sepolia and other EVM testnets), and `packages/sodax` adapts Sodax's
+cross-chain SDK to those wallets. They are part of the product and of this repository, built in the same window, and
+are not NEAR integrations. The stamps site shows none of them.
 
 ### AI tools and third-party code (rule Q-005)
 
 - **AI.** This repository is built with AI coding agents. Its code, tests and docs were written by Claude Code
   (Anthropic's coding agent) sessions, directed and reviewed by the developer; `CLAUDE.md` holds the agents' project
-  rules. 120 of the 1,181 commits on `develop` carry a `Co-Authored-By: Claude` trailer
+  rules. 120 of the 1,215 commits on `develop` carry a `Co-Authored-By: Claude` trailer
   (`git log -i --grep='Co-Authored-By: Claude' --oneline develop | wc -l`); the others were made the same way without
   one. Treat all of it as AI-written.
 - **Third-party code that matters** (the full list with versions: [`docs/hackathon.md`](docs/hackathon.md)):
@@ -244,7 +391,7 @@ They are part of the product and of this repository, built in the same window, a
   Workers, Durable Objects and D1 through `wrangler`; Neon Postgres (`pg`, `@electric-sql/pglite` in tests); `zod`;
   `jose`; React and Vite; Playwright and Vitest; the Archivo and IBM Plex fonts (SIL Open Font License). Services: NEAR
   testnet and its MPC network (`v1.signer-prod.testnet`), the Sputnik DAO v2 factory (`sputnikv2.testnet`, code pinned in
-  `contracts/sputnik/pin.json`), public NEAR RPCs, Google OAuth, SendGrid for email codes.
+  `contracts/sputnik/pin.json`), public NEAR RPCs, NEAR's docs faucet (linked for Own fare), Google OAuth, SendGrid for email codes.
 - **Our own earlier code (baseline):** the wend-widget-demo proof of concept that the first commit imports: `legacy/`
   (a client and a relayer, unchanged since and kept read-only) and the first version of `contracts/hana-signer`
   (`git show --stat e0c831fc`). `packages/core/src/ckd.ts` started as a port of `legacy/client/ckd.ts`, itself ported
@@ -256,42 +403,56 @@ They are part of the product and of this repository, built in the same window, a
   `@hana-id/react` and `@hana-id/sodax` are Apache-2.0, and `@hana-id/core` is under the repository's licence.
   Third-party material keeps its own licence: [`LICENSING.md`](LICENSING.md) lists it.
 
+
 ### Tracks
 
 `TODO(submit)`: the team picks the tracks for the form. The case for each, against its example prompt
 ([`docs/hackathon.md`](docs/hackathon.md) has the prompts' wording):
 
-| Track | What the demo shows | Where | What it does not meet |
+| Track | What the demos show | Where | What they do not meet |
 |---|---|---|---|
-| Real-World Money (`realworld`) | A user who never held NEAR writes to a NEAR contract through an NEP-366 meta transaction that Journear's relayer pays for, and the relayer pays only for calls to an allowlisted contract (the prompt's "a meta transaction relayer that only pays for calls to our own contract"); each write links to its transaction | `apps/api/src/near/relay.ts`, `delegate.ts`; `apps/demo/src/near-card.ts` | No stablecoin, invoice, payroll or NEAR Intents on NEAR; testnet only. Test USDC can sit in the Stellar and EVM wallets, which are not NEAR |
-| Games With Real Economies (`games`) | Sign-in with an email code or Google gives a player a wallet with no seed phrase and no extension; the first NEAR action needs no NEAR and no gas prompt | `packages/web/src/auth/`, `packages/web/src/vault/login.ts`; the contract's token check above | Journear Passport is a login and wallet layer, not a game: no game loop, NPCs or NEP-245 items. Every NEAR signature opens Journear's approval window (auto-approve rules exist for Stellar and EVM only), so the prompt's "no wallet popups" is not met |
-| Open Innovation (`open`) | The decision "this person may have this key" is made by a public NEAR contract that checks Google's or the email issuer's signature itself; the key comes from NEAR's MPC encrypted to the browser; one sign-in gives wallets on NEAR, Stellar and EVM; failure cases are written down (`docs/system-overview.md` sections 4b to 4g and 5, `docs/security.md` "Known open issues") | `contracts/hana-signer`, `packages/core/src/ckd.ts`, `packages/core/src/derivation.ts` | Testnet MPC; Journear serves the pages that run the key code, so a malicious deploy of them could take keys (below) |
+| Real-World Money (`realworld`) | A user who never held NEAR collects five stamps through NEP-366 meta transactions that Journear's relay pays for, and the relay pays only for calls to allowlisted contracts, the stamps contract and the guestbook (the prompt's "a meta transaction relayer that only pays for calls to our own contract"); each stamp links to its transaction, and a relay that timed out after sending says so with its link; Own fare shows the same user paying for themselves | `apps/api/src/near/relay.ts`, `delegate.ts`; `apps/stamps/src/collector.ts`; `apps/demo/src/near-card.ts` | No stablecoin, invoice, payroll or NEAR Intents on NEAR; testnet only. Test USDC can sit in the hosted demo's Stellar and EVM wallets, which are not NEAR |
+| Games With Real Economies (`games`) | Sign-in with an email code (or Google) gives a player a NEAR account with no seed phrase and no extension; a small progression whose rules a contract enforces (Arrival first, each stamp once, a block-time wait, a note, a signature checked on chain) with no NEAR and no gas prompt for five of six steps | `packages/web/src/auth/`, `packages/web/src/vault/login.ts`; `contracts/hana-stamps` | Not a game: no game loop, economy, NPCs or NEP-245 items. Every stamp opens Journear's approval window and needs Approve (Signature twice; auto-approve rules exist for Stellar and EVM only), so the prompt's "no wallet popups" is not met. Own fare needs testnet NEAR from a third-party faucet page |
+| Open Innovation (`open`) | The decision "this person may have this key" is made by a public NEAR contract that checks Google's or the email issuer's signature itself; the key comes from NEAR's MPC encrypted to the browser; the stamps' rules live in a locked contract anyone can read and call (view calls in A), which verifies a NEP-413 signature on chain; failure cases are written down (`docs/system-overview.md` sections 4b to 4g and 5, `docs/security.md` "Known open issues", the stamps contract's README "Storage and what an attacker can cost it") | `contracts/hana-signer`, `contracts/hana-stamps`, `packages/core/src/ckd.ts`, `packages/core/src/derivation.ts` | Testnet MPC; Journear serves the pages that run the key code, so a malicious deploy of them could take keys (below) |
 
 ### Security and limits
 
-1. Testnet only: the manifest schema accepts only `testnet` (`packages/env/src/schema.ts`), and the hosted demo signs
-   only for NEAR testnet, Stellar testnet and Base Sepolia (`apps/demo/src/config.ts` refuses mainnet settings).
-2. The relayer pays only for FunctionCalls with zero deposit to the contracts in `near.relay.receivers` (sandbox-dev:
-   the guestbook only), within budgets: 5 NEAR a day for the env, 1 NEAR a day per app, 50 relays a day per sender,
-   200 activations a day per app (`envs/sandbox-dev.json` `near.relay`). Past them it answers 503 until 00:00 UTC.
+1. Testnet only: the manifest schema accepts only `testnet` (`packages/env/src/schema.ts`); the stamps site refuses a
+   non-testnet env, a live key or a stamps contract that isn't a `.testnet` account (`apps/stamps/src/config.ts`), and
+   the hosted demo signs only for NEAR testnet, Stellar testnet and Base Sepolia (`apps/demo/src/config.ts`).
+2. The relay pays only for FunctionCalls with zero deposit to the contracts in `near.relay.receivers` (sandbox-dev:
+   the guestbook and the stamps contract), at most 10 Tgas each, within budgets raised for the judging week (D793,
+   `envs/sandbox-dev.json` `near.relay`): 6 NEAR a day for the env, 3 NEAR a day per app, 50 relays a day per sender,
+   300 activations a day per app. Past them it answers 503 until 00:00 UTC. A relayed stamp costs the relay about
+   0.0003 NEAR and a new account's activation about 0.0071. The values go back on 2026-11-26.
 3. Every NEAR signature opens Journear's approval window and needs Approve; nothing NEAR is signed automatically. The
    window decodes the exact bytes; Approve ignores clicks for its first second and until a pointer move or a focus key
    (`packages/web/src/auth/approve-guard.ts`). It shows what is called with what; it cannot say what an unknown
    contract will do.
 4. A user's NEAR account is an implicit account: it exists on chain only after a first transfer (the relayer's
    activation sends 0 NEAR), and the exported NEAR key is the account itself.
-5. Journear serves the vault and approval pages; a malicious deploy of them could read keys of users who load it. This
+5. The stamps contract pays for its own storage (about 19.9 NEAR on 2026-11-13). Anyone can fill it at about what it
+   costs them (a passport is at most about 740 bytes, 0.0074 NEAR; through the relay each new passport needs a new
+   Journear sign-up), and anyone can top it up with a plain transfer, also after the lock. When it runs out, new stamps
+   fail with "The stamps contract is out of storage balance …" and every passport stays readable
+   (`contracts/hana-stamps/README.md` "Storage and what an attacker can cost it").
+6. Postcard notes and guestbook messages are public and permanent: both contracts are locked, so nobody can remove
+   them. The sites show them as text only, with control, bidi and zero-width characters replaced.
+7. `sponsored` and `own_fare` say only who signed the transaction: any NEP-366 relayer, or a contract calling
+   `collect`, makes a stamp "sponsored". They are demo stamps, not proofs of anything else.
+8. Journear serves the vault and approval pages; a malicious deploy of them could read keys of users who load it. This
    is open (`docs/security.md` "Known open issues").
-6. Email login trusts Journear's email issuer: one signer, whose key on testnet is a Worker secret, and that key could
+9. Email login trusts Journear's email issuer: one signer, whose key on testnet is a Worker secret, and that key could
    open any email wallet.
-7. On testnet the signer account still has a full-access key (`allowSignerFullAccessKey`), and the council's three
-   member keys are held by one person, with 60-second delays (`envs/sandbox-dev.json`).
-8. Email codes for the demo's app are limited to about 100 a day (its plan's share of the env's 200-mail daily
-   budget); Google sign-in is limited to listed testers.
-9. One exception to testnet exists elsewhere: Journear staff can let a test app sign real Base and Stellar transactions
-   of up to $9.99 each for a Sodax demo (`docs/decisions.md` D428); the demo's app has it on, the demo page never asks
-   for it.
-10. Not done for mainnet: key custody in KMS, a second email co-signer, CI turned back on, independent reviews
+10. On testnet the signer account still has a full-access key (`allowSignerFullAccessKey`), and the council's three
+    member keys are held by one person, with 60-second delays (`envs/sandbox-dev.json`).
+11. Email codes in the judging week (D793): 333 a day for the environment, of which Stamp Trail may use 200 and the
+    hosted demo's app 100; sign-in starts from one IP address are limited to 10 per 10 minutes and 30 a day, so judges
+    behind one shared address share them. Google sign-in is limited to listed testers.
+12. One exception to testnet exists elsewhere: Journear staff can let a test app sign real Base and Stellar
+    transactions of up to $9.99 each for a Sodax demo (`docs/decisions.md` D428); the hosted demo's app has it on, the
+    demo page never asks for it, and the stamps site shows no Stellar or EVM at all.
+13. Not done for mainnet: key custody in KMS, a second email co-signer, CI turned back on, independent reviews
     ([`docs/mainnet-readiness.md`](docs/mainnet-readiness.md)). Addresses may still change before Journear's address
     freeze: never send real funds to a testnet wallet.
 

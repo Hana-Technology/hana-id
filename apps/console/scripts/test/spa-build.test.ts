@@ -84,7 +84,7 @@ describe('the SPA build', () => {
 
   it('builds nothing of the local preview harness (preview/: its plugin, scenarios or fake data)', () => {
     const all = readdirSync(join(out, 'assets')).map((f) => readFileSync(join(out, 'assets', f), 'utf8')).join('\n') + readFileSync(join(out, 'index.html'), 'utf8');
-    expect(all).not.toMatch(/hana-console-preview-api|__preview|hana_preview|Sora Labs|lumenpay/u);
+    expect(all).not.toMatch(/hana-console-preview-api|__preview|hana_preview|Example Labs|lumenpay/u);
   });
 });
 

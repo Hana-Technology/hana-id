@@ -4,7 +4,7 @@
 
 This file is the source of truth for batch B. If code and this spec disagree, fix the code or raise the problem; don't diverge quietly.
 
-Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi. The decision records this spec implements are vault-architecture, B-key-persistence, single-tx-login, google-flow and derivation-freeze, all dated 2026-10-27. Where this spec departs from one of them for safety, the change is marked and listed under [Open questions → Changes to the 2026-10-27 decisions](#changes-to-the-2026-10-27-decisions).
+Plan doc: an internal planning document (not in this repository). The decision records this spec implements are vault-architecture, B-key-persistence, single-tx-login, google-flow and derivation-freeze, all dated 2026-10-27. Where this spec departs from one of them for safety, the change is marked and listed under [Open questions → Changes to the 2026-10-27 decisions](#changes-to-the-2026-10-27-decisions).
 
 ## Amends
 

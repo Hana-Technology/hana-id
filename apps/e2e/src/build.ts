@@ -7,6 +7,8 @@
 //                                                 with the two e2e envs as its only known environments
 //   demo/                                         the hosted demo (apps/demo): its page and src/main.ts, configured
 //                                                 for the e2e env (DEMO_PK, the mocked EVM chain)
+//   stamps/                                       the stamps site (apps/stamps): its page and src/main.ts, configured
+//                                                 for the e2e env (STAMPS_PK, the mocked stamps contract)
 //
 //   pnpm --filter @hana-id/e2e build
 //
@@ -19,13 +21,16 @@ import type { HanaEnv } from '@hana-id/web';
 import { buildAuthPages } from '../../../packages/web/scripts/build-auth-pages.ts';
 import { buildVault } from '../../../packages/web/scripts/build-vault.ts';
 import { DEFAULT_STELLAR, type DemoConfig, validateDemoConfig } from '../../demo/src/config.ts';
-import { BUILD_DIR, DEMO_PK, E2E_ENV, E2E_GUESTBOOK, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV, VAULT_ORIGIN, portBase } from './stack.ts';
+import { type StampsConfig, validateStampsConfig } from '../../stamps/src/config.ts';
+import { BUILD_DIR, DEMO_PK, E2E_ENV, E2E_GUESTBOOK, E2E_STAMPS, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV, STAMPS_PK, VAULT_ORIGIN, portBase } from './stack.ts';
 
 const e2eRoot = fileURLToPath(new URL('../', import.meta.url));
 export const PAGES_DIR = fileURLToPath(new URL('pages/', BUILD_DIR));
 export const PARTNER_DIR = fileURLToPath(new URL('partner/', BUILD_DIR));
 export const DEMO_DIR = fileURLToPath(new URL('demo/', BUILD_DIR));
 const demoRoot = fileURLToPath(new URL('../../demo/', import.meta.url));
+export const STAMPS_DIR = fileURLToPath(new URL('stamps/', BUILD_DIR));
+const stampsRoot = fileURLToPath(new URL('../../stamps/', import.meta.url));
 
 /** The demo's configuration on the stack: the e2e env, its app key and the mocked EVM chain (no explorer). */
 export const DEMO_CONFIG: DemoConfig = validateDemoConfig({
@@ -36,6 +41,15 @@ export const DEMO_CONFIG: DemoConfig = validateDemoConfig({
   stellar: DEFAULT_STELLAR,
   apiUrl: E2E_ENV.apiUrl,
   near: { rpcUrl: E2E_ENV.rpc, rpcFallbackUrl: E2E_ENV.rpcFallback ?? null, guestbook: E2E_GUESTBOOK, explorer: null },
+});
+
+/** The stamps site's configuration on the stack: the e2e env, its app key, the mocked stamps contract (no explorer or faucet). */
+export const STAMPS_CONFIG: StampsConfig = validateStampsConfig({
+  environment: ENV_NAME,
+  publishableKey: STAMPS_PK,
+  vaultOrigin: VAULT_ORIGIN,
+  apiUrl: E2E_ENV.apiUrl,
+  near: { rpcUrl: E2E_ENV.rpc, rpcFallbackUrl: E2E_ENV.rpcFallback ?? null, stamps: E2E_STAMPS, collectTgas: 10, explorer: null, faucet: null },
 });
 
 /**
@@ -108,6 +122,34 @@ export async function buildDemo(): Promise<void> {
   copyFileSync(`${demoRoot}public/favicon.svg`, `${DEMO_DIR}favicon.svg`);
 }
 
+/** Vite's entry tag in apps/stamps/index.html, swapped for the esbuild output as the demo's is. */
+const STAMPS_ENTRY = '<script type="module" src="/src/main.ts"></script>';
+
+/** The stamps site, bundled by esbuild like the demo, with the e2e env as createHana's only environment. */
+export async function buildStamps(): Promise<void> {
+  rmSync(STAMPS_DIR, { recursive: true, force: true });
+  mkdirSync(STAMPS_DIR, { recursive: true });
+  await build({
+    absWorkingDir: stampsRoot,
+    entryPoints: ['src/main.ts'],
+    bundle: true,
+    format: 'esm',
+    platform: 'browser',
+    target: 'es2022',
+    sourcemap: false,
+    outfile: `${STAMPS_DIR}app.js`,
+    loader: { '.woff2': 'file' },
+    assetNames: 'assets/[name]-[hash]',
+    define: { __HANA_STAMPS_CONFIG__: JSON.stringify(STAMPS_CONFIG) },
+    plugins: [e2eEnvs([E2E_ENV])],
+    logLevel: 'warning',
+  });
+  const html = readFileSync(`${stampsRoot}index.html`, 'utf8');
+  if (html.split(STAMPS_ENTRY).length !== 2) throw new Error(`apps/stamps/index.html must contain ${STAMPS_ENTRY} exactly once`);
+  writeFileSync(`${STAMPS_DIR}index.html`, html.replace(STAMPS_ENTRY, '<script type="module" src="/app.js"></script>\n    <link rel="stylesheet" href="/app.css" />'));
+  copyFileSync(`${stampsRoot}public/favicon.svg`, `${STAMPS_DIR}favicon.svg`);
+}
+
 export async function buildAll(): Promise<void> {
   for (const env of [E2E_ENV, LIVE_ENV]) {
     await buildVault(env, PAGES_DIR);
@@ -115,6 +157,7 @@ export async function buildAll(): Promise<void> {
   }
   await buildPartner();
   await buildDemo();
+  await buildStamps();
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

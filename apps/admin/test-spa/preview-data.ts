@@ -521,7 +521,7 @@ export const supportLookup = (askedIds: number) => ({
 const dayAgo = (n: number): string => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 
 export function emailIssuer(days: number) {
-  const apps = ['app_01jdzlumen01', 'app_01jdzsora001'];
+  const apps = ['app_01jdzlumen01', 'app_01jdzexmp001'];
   const issuance = [0, 1, 2, 3, 4].flatMap((n) => [
     { day: dayAgo(n), appId: apps[0]!, purpose: 'session', count: 180 - n * 11 },
     { day: dayAgo(n), appId: apps[1]!, purpose: 'session', count: 74 - n * 4 },
@@ -541,7 +541,7 @@ export function emailIssuer(days: number) {
   metrics.push({ day: dayAgo(2), appId: null as unknown as string, metric: 'alert:mailbox_guess_limit:backstop', count: 2 });
   return {
     days,
-    appNames: { [apps[0]!]: 'Lumen Pay', [apps[1]!]: 'Sora Wallet' },
+    appNames: { [apps[0]!]: 'Lumen Pay', [apps[1]!]: 'Example Wallet' },
     stats: { days, truncated: false, issuance, metrics: metrics.filter((m) => m.count > 0) },
     policy: {
       required: 1,
@@ -561,14 +561,14 @@ export function emailIssuer(days: number) {
 export function emailLinks(days: number) {
   const app = { appId: 'app_01jdzlumen01', appName: 'Lumen Pay', orgId: 'org_01jdzlumenx', environment: 'live' as const };
   const rows = [0, 1, 2, 3, 4, 5, 6, 7].map((n) => ({ ...app, day: dayAgo(n), proposed: n === 0 ? 64 : 3 + (n % 3), linked: n === 0 ? 12 : 1, activated: 2 + (n % 2), cancelled: n === 2 ? 1 : 0, unlinked: n === 5 ? 2 : 0, auto: n === 0 ? 60 : 3, explicit: n === 0 ? 16 : 1 }));
-  rows.push({ ...app, appId: 'app_01jdzsora001', appName: 'Sora Wallet', orgId: 'org_01jdzsorax', day: dayAgo(0), proposed: 1, linked: 0, activated: 0, cancelled: 0, unlinked: 0, auto: 1, explicit: 0 });
+  rows.push({ ...app, appId: 'app_01jdzexmp001', appName: 'Example Wallet', orgId: 'org_01jdzexmpx', day: dayAgo(0), proposed: 1, linked: 0, activated: 0, cancelled: 0, unlinked: 0, auto: 1, explicit: 0 });
   return {
     days,
     today: dayAgo(0),
     rows,
     jumps: [
       { appId: 'app_01jdzlumen01', appName: 'Lumen Pay', today: 76, median: 4, jumped: true },
-      { appId: 'app_01jdzsora001', appName: 'Sora Wallet', today: 1, median: 0, jumped: false },
+      { appId: 'app_01jdzexmp001', appName: 'Example Wallet', today: 1, median: 0, jumped: false },
     ],
   };
 }

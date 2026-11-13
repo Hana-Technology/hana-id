@@ -234,6 +234,7 @@
 .pp-ghost { opacity: 0.22; }
 .pp-lock { display: none; }
 .pp-slot[data-status='locked'] .pp-lock { display: inline; opacity: 0.5; }
+.pp-slot[data-status='locked'] .pp-ghost { opacity: 0.12; }
 .pp-page-stamps[data-public] .pp-lock { display: none; }
 .pp-slot:is([data-status='available'], [data-status='working'], [data-status='failed']) .pp-outline { color: inherit; }
 .pp-slot:is([data-status='available'], [data-status='working']) .pp-sil { stroke-dasharray: 9 7; stroke-width: 2.6; opacity: 0.75; }

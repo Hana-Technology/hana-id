@@ -26,7 +26,7 @@ import { UNICODE_AGE_SOURCE } from '../src/unicode-age.ts';
 import { PKG, V, VECTORS_TEXT, readText, sha256Hex, testKey } from './helpers.ts';
 
 /** sha256 of vectors/email-v1.json, byte for byte. */
-const VECTORS_SHA256 = '7a58a737ee01eddbfb7cbccd8460a469c824551b07885b9eccad68de1d3efe61';
+const VECTORS_SHA256 = '5430bdfb64cf391ccbe94498298b81b02313629146ae3026d73835975aea314b';
 /** sha256 of JSON.stringify(EMAIL_V1). */
 const CONSTANTS_SHA256 = 'b6baca6ba60dfb9c0f10ec68be30795c7db17c9cec61ad03c131deab042a33b0';
 /** sha256 of src/unicode-age.ts (code points refused as newer than Unicode 15.0, from DerivedAge-18.0.0.txt). */

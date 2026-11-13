@@ -16,8 +16,10 @@ Passport Home pages, the consoles, the scripts, the tests, the docs and `legacy/
 - **Non-production use:** testing, evaluation and development are allowed anywhere by the licence itself.
 - **Change Date and Change License:** on 2030-11-14 this code changes to the Apache License 2.0.
 
-`packages/core` (`@hana-id/core`) is under this licence for now (`"license": "BUSL-1.1"`). Whether it moves to the
-Apache License 2.0 with the other SDK packages is still open.
+`packages/core` (`@hana-id/core`) is under this licence too (`"license": "BUSL-1.1"`; decided 2026-11-13, D747): it
+holds the key derivation, the approval decoders and the policy engine that the service is built on. The Apache-2.0
+packages below depend on it, so production use of the SDK needs an agreement with the Licensor; use on test networks
+is covered by the Additional Use Grant.
 
 ## Under the Apache License 2.0
 

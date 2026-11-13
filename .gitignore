@@ -37,3 +37,5 @@ apps/email-issuer/wrangler.vitest.jsonc
 # Generated per env by apps/admin/scripts/gen-wrangler.ts (the admin Hyperdrive id), and the admin tests' config.
 apps/admin/wrangler.jsonc
 apps/admin/wrangler.vitest.jsonc
+# Security sweep reports are kept outside the repo (docs/security.md); never commit one by accident.
+security-sweep-*.md

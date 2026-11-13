@@ -115,7 +115,7 @@ Verified against `develop` at d1837ec:
 
 ## How Wend uses Privy today (reference use)
 
-Read from `/Users/tingtzechuen/Documents/wend-api` (read only; no secrets or env values copied):
+Read from Wend's backend service (a private repository; read only; no secrets or env values copied):
 
 | Where | Token | What Wend checks | What it uses |
 |---|---|---|---|
@@ -952,7 +952,7 @@ Hana: `docs/decisions.md` D8, D10, D12, D25, D38, D42, D43, D51, D55, D61, D70, 
 key (staged)", "How the popup gets Google's verified email", "Sessions"), `docs/batch-c-spec.md` (uid), `docs/hana-home-spec.md`
 (Support ID); code `packages/web/src/client/client.ts`, `packages/react/src/hooks.ts`, `packages/web/src/vault/`.
 
-Wend (read only): `wend-api` `src/auth/privy.ts`, `src/user/privy-identity.ts`, `src/auth/session.ts`,
+Wend (read only): Wend's backend service (private) `src/auth/privy.ts`, `src/user/privy-identity.ts`, `src/auth/session.ts`,
 `src/user/routes.ts`, `src/auth/privy-admin.ts`, `docs/reference/AUTHENTICATION.md`, `docs/reference/ACTIVE_SESSIONS.md`.
 
 External (read 2026-10-30):

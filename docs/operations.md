@@ -5432,7 +5432,7 @@ so far.
 `@hana-id/core`, `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` are built for installation outside this
 repository (D71) but **not published**: they are still `"private": true`, and the registry is an open decision
 (below). Until then a partner gets tarballs. Their licences (D747, `LICENSING.md`): `web`, `react` and `sodax` are
-Apache-2.0, each with the Apache text as its own `LICENSE`; `core` is `BUSL-1.1` for now, and its tarball carries the
+Apache-2.0, each with the Apache text as its own `LICENSE`; `core` stays `BUSL-1.1` (the user's decision, 2026-11-13), and its tarball carries the
 root `LICENSE` (pnpm copies the workspace root's `LICENSE` into a package that has none).
 
 **How the build works.** Each package's `build:lib` runs `tsc -p tsconfig.build.json` through `scripts/sdk-build.ts`:

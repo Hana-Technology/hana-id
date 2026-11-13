@@ -101,6 +101,14 @@ built-in can resolve) and runs the frozen vectors in a bare V8 context with only
 `btoa`. The bundle is about 435 KB unminified (about 120 KB minified and gzipped), most of it the IDNA tables and
 the domain list, so a browser bundle should import it only where the popup needs it.
 
+## Unicode data licence
+
+`src/unicode-age.ts` is derived from Unicode's `DerivedAge-18.0.0.txt` (the Unicode Character Database), Copyright ©
+Unicode, Inc., under the **Unicode License v3**. Its copyright and permission notice is in
+[`LICENSE-Unicode.txt`](LICENSE-Unicode.txt), copied from <https://www.unicode.org/license.txt>; the licence allows
+the notice to appear in associated documentation rather than with each copy. It is kept beside the table, not in the
+table's header, because the freeze guard pins `src/unicode-age.ts` byte for byte (D791).
+
 ## Disposable-address domains
 
 `src/disposable-domains.ts` vendors `disposable_email_blocklist.conf` from

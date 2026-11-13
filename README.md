@@ -253,7 +253,7 @@ They are part of the product and of this repository, built in the same window, a
 - **Licence:** the repository is under the Business Source License 1.1 ([`LICENSE`](LICENSE)): anyone may read, run,
   test and build on it, and use it in production on test networks, but not on networks whose tokens have monetary
   value or as a commercial hosted service; it becomes Apache-2.0 on 2030-11-14. The SDK packages `@hana-id/web`,
-  `@hana-id/react` and `@hana-id/sodax` are Apache-2.0, and `@hana-id/core` is under the repository's licence for now.
+  `@hana-id/react` and `@hana-id/sodax` are Apache-2.0, and `@hana-id/core` is under the repository's licence.
   Third-party material keeps its own licence: [`LICENSING.md`](LICENSING.md) lists it.
 
 ### Tracks

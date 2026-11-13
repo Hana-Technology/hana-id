@@ -14,7 +14,7 @@ the page.
 
 | Env | URL | App |
 |---|---|---|
-| `sandbox-dev` | `https://hana-id-stamps-sandbox-dev.tingtc.workers.dev` (not deployed yet) | its own, created by staff (below); `HANA_STAMPS_PUBLISHABLE_KEY` |
+| `sandbox-dev` | `https://hana-id-stamps-sandbox-dev.tingtc.workers.dev` (deployed 2026-11-13; the contract locked the same day) | its own, created by staff (below); `HANA_STAMPS_PUBLISHABLE_KEY` |
 
 ## What the page does
 

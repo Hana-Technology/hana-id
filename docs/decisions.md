@@ -11126,6 +11126,19 @@ of 2026-11-13.
   `docs/hackathon-public-checklist.md`, `docs/README.md`'s rows (`docs/hackathon-license-draft.md` too until 2026-11-13,
   when it was folded into D747 and `LICENSING.md`)
 - Confirmed by the user 2026-11-13.
+- Note 2026-11-13 (branch `docs/hackathon-stamps`, asked for by the user): the write-up now leads with the NEAR-only
+  stamps demo (`apps/stamps`, `contracts/hana-stamps`, D794–D807), deployed, hand-checked by the founder and locked on
+  testnet that day. The README's "Reproduce it" is A the stamps site (its "do X, see Y" steps, view calls anyone can
+  run, the founder's run's transactions), B the hosted demo (unchanged, the broader one), C local; the claim table has
+  rows for the stamps contract's rules, its on-chain NEP-413 check and vector, the relay paying for it and the lock;
+  the video's shot list is on the stamps site. The layout above is unchanged.
+- Note 2026-11-13 (the same branch): the founder's answers that day, recorded in `docs/hackathon.md` and
+  `docs/hackathon-public-checklist.md`: nobody on the team enters a second project (Q-015 met); the owners of the
+  earlier proof of concept agree to `legacy/` being public; the two admin Google accounts are secured with strong
+  sign-in; the tracks are chosen and the form filled in by the colleague who submits, its lead (no form value goes in
+  the repository); the stamps contract stays as deployed and locked, with its 120-second Layover wait; the founder runs
+  the final steps on 2026-11-13 (deploy, branch clean-up, tags, public flip, secret scanning and push protection), then
+  the colleague records, posts and submits (checklist step 11).
 - Decision: the root README opens with a section for judges and the screening agents (Claude Code and Codex, the
   event's Q-017): what Journear Passport is in three sentences; NEAR's role as a table of claim, file and check;
   "Reproduce it" as "do X, see Y" on the hosted demo, read-only view calls on public RPCs, and the local runs (each

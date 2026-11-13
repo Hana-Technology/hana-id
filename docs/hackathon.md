@@ -6,7 +6,12 @@ rules name and their commands, the baseline as the README states it and why (D74
 third-party code, the AI use, the tracks against their prompts, and what the submission cannot meet yet.
 `TODO(submit)` marks what the team does before submitting; `hackathon-public-checklist.md` step 8 lists them all.
 
-Last verified against code: 2026-11-13 (branch `docs/hackathon-submission`, docs only, against `develop` @ 35bc103e,
+Last verified against code: 2026-11-13 (branch `docs/hackathon-stamps`, docs only, against `develop` @ 2cd30973 (83ac508c, merged with PR 62): the
+write-up now leads with the NEAR-only stamps demo (the new "The hosted demos" section, the rules table's Q-011 and
+Q-012 rows, the risks, the counts and the baseline's commit count, the stamps contract in "What is judged", the
+libraries, the tracks and what can't be met; the stamps contract's views, keys and transactions read from public
+RPCs the same day; the rules not re-read, no claim here depends on a change); 2026-11-13 (branch
+`docs/hackathon-submission`, docs only, against `develop` @ 35bc103e,
 sandbox-dev running `develop` 1ac3bc36, and the event's live `https://nearhackathon.com/HACKATHON.md`, its home page
 and the three track prompts read the same day); 2026-11-13 (same branch: the licence chosen, the baseline stated and
 measured with `git blame`, the tags decided: D746, D747).
@@ -46,11 +51,11 @@ answered on 2026-11-13. The page `https://nearhackathon.com/request-changes` is 
 | Q-004 | "Old project as-is: no. New feature in the window: yes, if separated per Q-003. No minimum code size." | as Q-003 | Met once the tags are pushed: the baseline commit is separated from the window's work by them |
 | Q-005 | "All allowed, including own pre-hackathon libs and AI code. List in README; own old libs count as baseline." | README "AI tools and third-party code" (AI, the libraries, our own earlier code); [Third-party code](#third-party-code), [AI tools](#ai-tools), [Baseline](#baseline-what-is-stated-and-why) | Met |
 | Q-010 | "Testnet-only projects eligible? Yes, all tracks." | everything here is testnet | Met |
-| Q-011 | "Mandatory integrations? None. Hints are hints. Own contract on NEAR that fits the track is enough." | `contracts/hana-signer`, `contracts/hana-guestbook` | Met |
-| Q-012 | "Local-only demo OK? Yes: public repo, reproducible README, X post with a video; screenshots are not enough when judges cannot open the demo. Hosted demo is a plus; keep it up to 2026-11-18, ideally 2026-11-25." | README "Reproduce it" (hosted, view calls, local); the hosted demo; [`hackathon-demo-script.md`](hackathon-demo-script.md) | Reproducible README: in. Public repo: `TODO(submit)` (flipped near the end, D749). Video and X post: `TODO(submit)` (a colleague records it). Demo uptime: checklist step 9 |
+| Q-011 | "Mandatory integrations? None. Hints are hints. Own contract on NEAR that fits the track is enough." | `contracts/hana-signer`, `contracts/hana-stamps`, `contracts/hana-guestbook` | Met |
+| Q-012 | "Local-only demo OK? Yes: public repo, reproducible README, X post with a video; screenshots are not enough when judges cannot open the demo. Hosted demo is a plus; keep it up to 2026-11-18, ideally 2026-11-25." | README "Reproduce it" (A the stamps site with its view calls, B the hosted demo with its view calls, C local); [The hosted demos](#the-hosted-demos) below; [`hackathon-demo-script.md`](hackathon-demo-script.md) | Reproducible README: in. Public repo: `TODO(submit)` (flipped near the end, D749). Video and X post: `TODO(submit)` (a colleague records it, on the stamps site). Demo uptime: checklist step 9 |
 | Q-013 | "Team keeps all rights; organizers get non-exclusive promo rights to name, screenshots, video, repo link." | `LICENSE`, `LICENSING.md` | Information: the Business Source License keeps the licensor's rights and grants no trademark right |
 | Q-014 | "License? Any. MIT is fine. Repo stays public through judging; add a LICENSE file." | `LICENSE` (Business Source License 1.1), `LICENSING.md` (the SDK packages under Apache-2.0, third-party material), README "AI tools and third-party code" | Met: decided by the founder 2026-11-13 (D747) |
-| Q-015 | "Allowed if projects are independent and disclosed: each README names the other project. Not the same project twice. One person, at most 2 different projects." | not applicable unless someone on the team enters another project | `TODO(submit)`: confirm no other entry |
+| Q-015 | "Allowed if projects are independent and disclosed: each README names the other project. Not the same project twice. One person, at most 2 different projects." | not applicable: nobody on the team enters another project (the founder, 2026-11-13) | Met |
 | Q-017 | as in the table above | README "For judges and screening agents" | The README is written for it: claims with files and checks, "do X, see Y" steps |
 | Procedure 1 | "it must be public by 2026-11-14T23:59:00Z. Judges cannot open a private one." | | `TODO(submit)`: the repository is private (checked 2026-11-13 with `gh repo view`) |
 | Procedure 2 | the X post's four tips: lead with the user problem, "Show one complete moment", "Explain NEAR’s role concretely … Avoid a vague "powered by NEAR"", "Link the demo and public repo, and ask a genuine question" | [`hackathon-demo-script.md`](hackathon-demo-script.md) | Drafts in; posting `TODO(submit)` |
@@ -86,14 +91,37 @@ Q-016 (payout) don't change anything here.
 1. The repository is still private, and the deadline is 2026-11-14T23:59:00Z ("Judges cannot open a private one").
 2. No X post or video yet; the home page says both links are required.
 3. The tags are not pushed yet, so the README's diff link opens only once both exist.
-4. Once public, the history, the 231 branches, the pull requests and the 376 Actions runs are public, with the personal
-   data and internal security notes listed in [`hackathon-public-checklist.md`](hackathon-public-checklist.md).
-5. The hosted demo runs on a personal Cloudflare account on free plans (D417), with an email budget of about 100 codes
-   a day for the demo's app and a NEAR relay budget of 1 NEAR a day for it; many judges on one day can reach either
-   (checklist step 9). Google sign-in works only for listed testers.
+4. Once public, the history, the 241 branches (2026-11-13 evening; 238 merged, checklist step 2), the 61 pull
+   requests and the 376 Actions runs are public, with the personal data and internal security notes listed in
+   [`hackathon-public-checklist.md`](hackathon-public-checklist.md).
+5. Both demo sites run on a personal Cloudflare account on free plans (D417). The judging week's limits (D793): 333
+   code emails a day for the environment, 200 of them for Stamp Trail and 100 for the hosted demo's app; 10 sign-in
+   starts per IP address per 10 minutes and 30 a day; a NEAR relay budget of 3 NEAR a day per app and 6 for the
+   environment. Many judges on one day, or behind one address, can reach them (checklist step 9). Google sign-in works
+   only for listed testers.
 6. A screening agent that runs `corepack pnpm verify --all` needs Rust 1.85.1, `cargo-near` 0.22.0, gitleaks and
-   Playwright's browsers, downloads `near-sandbox` and Cargo's crates on first use, and takes about 10 minutes on a fast
-   machine; the README says so. A README claim that doesn't hold in that run is the main screening risk.
+   Playwright's browsers, downloads `near-sandbox` and Cargo's crates on first use, and takes about 15 minutes on a fast
+   machine (15m19s on 2026-11-13 in a fresh worktree, the Rust targets built from scratch); the README says so. A README claim that doesn't hold in that run is the main screening risk.
+7. The stamps contract pays for its own storage (about 19.9 NEAR on 2026-11-13) and anyone can fill it at about the
+   same cost to themselves; once it runs out new stamps fail until someone tops it up (checklist step 9).
+
+## The hosted demos
+
+Q-012: "Hosted demo is a plus; keep it up to 2026-11-18, ideally 2026-11-25." Both stay up through 2026-11-25
+(checklist step 9); the README and the video lead with the first.
+
+| | The stamps site (NEAR only) | The hosted demo (every chain) |
+|---|---|---|
+| URL | <https://hana-id-stamps-sandbox-dev.tingtc.workers.dev> | <https://hana-id-demo-sandbox-dev.tingtc.workers.dev> |
+| Code | `apps/stamps` (D798–D807); its app is Stamp Trail | `apps/demo` |
+| Contract | `contracts/hana-stamps` at `near.demoStamps` (`hana-id-stamps-dev1.testnet`), deployed and locked 2026-11-13: zero access keys, code hash `9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA`, lock transaction `wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU`; about 19.9 NEAR for its storage | `contracts/hana-guestbook` at `near.demoGuestbook`, locked 2026-11-12 |
+| What a judge does | sign in by email, six stamps: five relayed with zero NEAR (Arrival, Fare paid, Signature with a NEP-413 message verified on chain, Postcard, Layover after 120 s of block time), one paid with testnet NEAR from NEAR's docs faucet (Own fare); a public passport page and a recent-stamps feed read from chain | sign in by email; a gasless guestbook write; a NEP-413 signature; a signed transaction; the Stellar and EVM addresses; the key export from Passport Home |
+| Checked on testnet | the founder's hand-checked run of all six stamps, 2026-11-13 (the account `cceaf5d3…` and its transactions, README "Reproduce it" A) | the founder's run of 2026-11-12 (README "Reproduce it" B) |
+
+The founder decided on 2026-11-13 to keep the locked contract as it is, with its 120-second Layover wait. A redeploy
+would have to go to a new account, since the locked one can't change: `near.demoStamps` and `near.relay.receivers` in `envs/sandbox-dev.json`, the API's `gen` and
+deploy, the site's deploy (`docs/operations.md` "Hosted stamps demo"), and the account and the wait as the README, this
+page, the checklist and the demo script state them.
 
 ## Git tags the rules name
 
@@ -141,7 +169,7 @@ hackathon window":
 
 > The first commit, `e0c831fc` (2026-10-26), started this repository from our earlier proof of concept,
 > wend-widget-demo: a first version of the `hana-signer` contract and the reference code in `legacy/`, with three docs
-> and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,180
+> and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,216
 > further commits, was built in the window: the per-app scope registry, the API, the SDK, email login, the consoles,
 > Passport Home and all of the NEAR wallet work. Of today's 4,337 lines of `hana-signer` contract code (tests and
 > fixtures excluded), 124 still date from that first commit by `git blame`.
@@ -150,7 +178,8 @@ Why: every commit is dated inside the window, but the first one brings in code w
 counts "own old libs" as baseline and asks to list them, so the README says what it is, how much of it is left, and
 how to check.
 
-The facts behind it (from `git`, on `develop` @ 35bc103e):
+The facts behind it (from `git`, on `develop` @ 2cd30973 unless a line says 35bc103e; `contracts/hana-signer/src`
+and `legacy/` are the same at both):
 
 - The first commit is `e0c831fc` (2026-10-26 13:43:21 +08:00): "chore: scaffold hana-id from wend-widget-demo PoC
   (contract, legacy client/relayer, docs)", 28 files, 4,609 lines: 12 files in `legacy/`, 9 in `contracts/`, 3 docs,
@@ -164,7 +193,9 @@ The facts behind it (from `git`, on `develop` @ 35bc103e):
     `eb5eb658`. `git diff --numstat e0c831fc develop -- contracts/hana-signer/src/lib.rs` shows 486 lines added and 677
     of its 754 removed. The contract's other modules are new.
   - The three docs are `docs/batch-a-spec.md`, `docs/context.md` and `docs/hana-embed-ckd-results.md`.
-- How much of the first commit survives today, by `git blame` (a line counts for the commit that last changed it):
+- How much of the first commit survives, by `git blame` (a line counts for the commit that last changed it; the
+  `hana-signer` rows hold on 2cd30973, whose `contracts/hana-signer/src` is unchanged since 35bc103e; the whole-tree
+  rows were measured on 35bc103e and grow with every new file):
 
   | Scope on `develop` | Lines from `e0c831fc` | Of | Share |
   |---|---|---|---|
@@ -185,12 +216,12 @@ The facts behind it (from `git`, on `develop` @ 35bc103e):
 - Later code that started as a port of the baseline says so in its first lines: `packages/core/src/ckd.ts` (from
   `legacy/client/ckd.ts`, itself a port of `near/mpc` at `a7ae426`), `apps/api/src/near/rpc.ts` and
   `apps/api/src/near/tx.ts` (from `legacy/relayer/embed-relayer.ts`).
-- Everything after `e0c831fc`: 1,180 commits on `develop` (1,186 on all the branches on GitHub), dated 2026-10-26 to
-  2026-11-12. `git diff --shortstat e0c831fc develop` prints "1597 files changed, 385838 insertions(+), 892
+- Everything after `e0c831fc`: 1,216 commits on `develop` (1,222 on all the branches on GitHub), dated 2026-10-26 to
+  2026-11-13. `git diff --shortstat e0c831fc develop` prints "1681 files changed, 401871 insertions(+), 897
   deletions(-)" (the lockfile and generated test vectors included).
 - Commits per day on `develop` (`git log --format=%ad --date=short develop | sort | uniq -c`): 10-26 11, 10-27 19,
   10-28 136, 10-29 107, 10-30 76, 11-02 116, 11-03 24, 11-04 133, 11-05 84, 11-06 88, 11-09 99, 11-10 92, 11-11 116,
-  11-12 80.
+  11-12 80, 11-13 36 (by the commits' own +08:00 dates).
 
 ## Other chains
 
@@ -212,8 +243,8 @@ tokens, the per-app scope registry, sessions, the CKD request to NEAR's MPC, gov
 public delays and a watchdog), the browser's CKD decryption, the NEAR wallet (derivation, the implicit account, signing
 of transactions, NEP-366 delegate actions and NEP-413 messages behind the approval window; SDK 0.4.1's `hana.near.*`),
 the meta-transaction relay (`POST /v1/near/activate`, `POST /v1/near/relay`), the wallet directory's NEAR rows, the
-guestbook contract, the demo's NEAR card, Passport Home's NEAR key in "Move this wallet" and the admin's NEAR relay
-tile.
+stamps contract and its NEAR-only site, the guestbook contract, the demo's NEAR card, Passport Home's NEAR key in "Move
+this wallet" and the admin's NEAR relay tile.
 
 ## Third-party code
 
@@ -223,7 +254,7 @@ Versions as pinned on 2026-11-13 (the `package.json` and `Cargo.toml` files; the
 
 | Crate | Version | Used in | For |
 |---|---|---|---|
-| `near-sdk` | 5.9 | `contracts/hana-signer`, `contracts/hana-guestbook`, `contracts/mock-mpc` | the contract framework |
+| `near-sdk` | 5.9 | `contracts/hana-signer`, `contracts/hana-stamps`, `contracts/hana-guestbook`, `contracts/mock-mpc` | the contract framework (`env::ed25519_verify` for the stamps' NEP-413 check) |
 | `num-bigint` | 0.4 | `contracts/hana-signer` | RSA modular exponentiation in `oidc.rs` `verify_rs256` |
 | `borsh`, `serde`, `schemars`, `base64` | 1.3, 1, 0.8, 0.22 | the contracts | state and JSON encoding |
 | `near-workspaces` | =0.23.0 | `contracts/integration-tests` | starts a local `near-sandbox` node per test |
@@ -237,7 +268,7 @@ Versions as pinned on 2026-11-13 (the `package.json` and `Cargo.toml` files; the
 |---|---|---|---|
 | `@noble/curves` | 1.9.7 | `packages/core`, `packages/web`, `apps/api`, `apps/e2e`, `apps/smoke` | BLS12-381 (CKD), Ed25519, secp256k1 |
 | `@noble/hashes` | 1.8.0 | `packages/core`, `apps/email-issuer` | HKDF, SHA-2, SHA-3 |
-| `@scure/base` | 1.2.6 | `packages/core`, `packages/web`, `apps/demo`, `apps/e2e`, `apps/smoke` | base58, base64 |
+| `@scure/base` | 1.2.6 | `packages/core`, `packages/web`, `apps/demo`, `apps/stamps`, `apps/e2e`, `apps/smoke` | base58, base64 |
 | `@near-js/crypto`, `@near-js/transactions`, `@near-js/utils` | 2.5.1 | `apps/api`, `apps/watchdog`, `scripts`; `packages/core`'s tests | relayer and owner transactions; the reference the NEAR codec is tested against |
 | `@stellar/stellar-base` | 15.0.0 | `packages/core`, `packages/web`, `packages/sodax` | Stellar transactions and addresses |
 | `viem` | 2.57.7 | `packages/core`, `apps/e2e` | EVM encoding and decoding |
@@ -263,14 +294,15 @@ Versions as pinned on 2026-11-13 (the `package.json` and `Cargo.toml` files; the
   (`packages/email/README.md`).
 - Services: NEAR testnet and its MPC network (`v1.signer-prod.testnet`), the Sputnik DAO v2 factory
   (`sputnikv2.testnet`), public NEAR RPCs (FastNEAR `test.rpc.fastnear.com`, `rpc.testnet.near.org`, dRPC; the
-  archival RPC and NearBlocks for the checks in the README), Google OAuth, Cloudflare (Workers, D1, R2, Access), Neon
+  archival RPC and NearBlocks for the checks in the README), NEAR's docs faucet
+  (`docs.near.org/getting-started/faucet`, linked by the stamps site for Own fare; a third-party page), Google OAuth, Cloudflare (Workers, D1, R2, Access), Neon
   Postgres, SendGrid, CoinGecko (the mainnet demo's prices).
 
 ## AI tools
 
 This repository is built with AI coding agents. The developer directed Claude Code (Anthropic's coding agent)
 sessions in conversation and reviewed their work; the agents wrote the code, the tests and the docs, and `CLAUDE.md`
-holds their project rules. On 2026-11-13, 120 of the 1,181 commits on `develop` carried a `Co-Authored-By: Claude …`
+holds their project rules. On 2026-11-13, 120 of the 1,217 commits on `develop` carried a `Co-Authored-By: Claude …`
 trailer (`git log -i --grep='Co-Authored-By: Claude' --oneline develop | wc -l`); the others were made the same way
 without one. Treat the code as AI-written throughout. This write-up was drafted the same way.
 
@@ -278,7 +310,7 @@ without one. Treat the code as AI-written throughout. This write-up was drafted 
 
 The prompts are in `github.com/nearai/near-hackathon-prompt-examples` (read 2026-11-13). HACKATHON.md: the hints
 "are hints and wishes, not requirements" (Q-011), and a project lists "every track the project fits". Which tracks go
-in the form is the team's call, `TODO(submit)`.
+in the form is chosen by the colleague who submits, `TODO(submit)`.
 
 ### Real-World Money (`realworld`)
 
@@ -287,13 +319,16 @@ include "Gasless for the freelancer: route their transactions through a meta tra
 calls to our own contract" and "Status updates the freelancer can trust: paid, pending or refunded, with links to the
 transactions".
 
-- Shown: a user signs in with an email code, gets a NEAR account, and writes a guestbook message as an NEP-366
-  delegate action; Journear's relay (`apps/api/src/near/relay.ts`) wraps and pays for it, and relays only to the
-  allowlisted contracts (`apps/api/src/near/delegate.ts` `policyRefusal`; sandbox-dev's `near.relay.receivers` is the
-  guestbook alone); the demo links each write to NearBlocks, and a relay that timed out after sending says "Sent,
-  still confirming" with its link (D788).
-- Not shown: stablecoins on NEAR, NEAR Intents (Q-007: no Intents testnet), invoices, payroll, CSV export. The Stellar
-  and EVM wallets can hold test USDC, but those are not NEAR.
+- Shown: a user signs in with an email code, gets a NEAR account holding no NEAR, and collects five stamps (or writes
+  a guestbook message) as NEP-366 delegate actions; Journear's relay (`apps/api/src/near/relay.ts`) wraps and pays for
+  them, and relays only to the allowlisted contracts (`apps/api/src/near/delegate.ts` `policyRefusal`; sandbox-dev's
+  `near.relay.receivers` are the stamps contract and the guestbook); the contract itself checks that a Fare paid stamp
+  was signed by someone other than the caller; each stamp and write links to NearBlocks, and a relay that timed out
+  after sending says "Sent, still confirming" with its link (D788). Own fare shows the same account paying its own fee
+  once it holds testnet NEAR.
+- Not shown: stablecoins on NEAR, NEAR Intents (Q-007: no Intents testnet), invoices, payroll, refunds, CSV export;
+  testnet only. Own fare's testnet NEAR comes from a third-party faucet page. The Stellar and EVM wallets can hold
+  test USDC, but those are not NEAR.
 
 ### Games With Real Economies (`games`)
 
@@ -301,10 +336,13 @@ Hints: "AGENT NPCS, SOCIAL LOGIN, NEAR INTENTS, NEP-245"; judged "on the game lo
 requirements include "Players sign in with a social or email login. No seed phrases, no wallet popups, no gas prompts
 in the normal game loop."
 
-- Shown: email or Google sign-in, no seed phrase, no extension, no NEAR and no gas prompt for the first NEAR action.
-- Not met: "no wallet popups". Every NEAR signature opens Journear's approval window; the auto-approve rules a partner
-  can offer (`docs/architecture.md` "Signing: approval popup vs auto-approve") exist for Stellar and EVM only. There
-  is no game, game loop, NPC or NEP-245 token here: Journear Passport is the login and wallet layer a game would use.
+- Shown: email or Google sign-in, no seed phrase, no extension, no NEAR and no gas prompt for the first NEAR action;
+  the stamps are a small progression whose rules a contract enforces (Arrival first, each stamp once, a block-time
+  wait, a public note, a signature checked on chain), five of six with no NEAR.
+- Not met: "no wallet popups". Every stamp opens Journear's approval window and needs Approve (Signature twice, in
+  one window); the auto-approve rules a partner can offer (`docs/architecture.md` "Signing: approval popup vs
+  auto-approve") exist for Stellar and EVM only. There is no game, game loop, economy, NPC or NEP-245 token here:
+  Journear Passport is the login and wallet layer a game would use.
 
 ### Open Innovation (`open`)
 
@@ -312,11 +350,14 @@ Hints: "EXPERIMENTAL, CHAIN ABSTRACTION, BUILD YOUR OWN". The example prompt ask
 and anyone can read them" and for "a README section on failure cases".
 
 - Shown: the decision "this person may have this key" is made by a public NEAR contract that checks Google's or the
-  email issuer's signature itself (anyone can read its issuers and scopes, README "View calls anyone can run"); the key
-  comes from NEAR's MPC encrypted to the browser; one sign-in gives wallets on NEAR, Stellar and EVM.
+  email issuer's signature itself (anyone can read its issuers and scopes, README "Reproduce it" B); the key comes from
+  NEAR's MPC encrypted to the browser; one sign-in gives wallets on NEAR, Stellar and EVM. The stamps' rules live in a
+  locked contract with no owner that anyone can read and call (README "Reproduce it" A), and it verifies a NEP-413
+  signature on chain.
 - Failure cases are written down: `docs/system-overview.md` sections 4b to 4g and 5 ("Hard questions, honest
   answers"), `docs/security.md` "What a compromise gives" and "Known open issues", `docs/playbooks.md` (a recovery
-  playbook per alert and incident), and the README's "Security and limits".
+  playbook per alert and incident), `contracts/hana-stamps/README.md` "Storage and what an attacker can cost it", and
+  the README's "Security and limits".
 
 ### Considered, not proposed
 
@@ -330,12 +371,17 @@ and anyone can read them" and for "a README section on failure cases".
 ## What the submission cannot meet yet
 
 - **A public repository** by 2026-11-14T23:59:00Z: private on 2026-11-13 (`gh repo view`); the founder flips it
-  "towards the end, but not now" (D749), after [`hackathon-public-checklist.md`](hackathon-public-checklist.md).
-- **The video and the X post**: a colleague records the video ([`hackathon-demo-script.md`](hackathon-demo-script.md)).
+  on 2026-11-13 after the final deploy, the branch clean-up and the tags ([`hackathon-public-checklist.md`](hackathon-public-checklist.md)
+  step 11, the runbook; D749).
+- **The video, the X post and the submission**: the colleague who submits records, posts and submits, after the flip
+  ([`hackathon-demo-script.md`](hackathon-demo-script.md)).
 - **The tags** (Q-003): decided, pushed by the founder (D746).
 - **Google sign-in for judges**: Journear's Google client is in Google's testing mode, so only listed testers can use
   it. Judges use email sign-in, which works for any address.
-- **Capacity during judging**: about 100 code emails a day for the demo's app, within the env's daily send budget of
-  200; 1 NEAR a day of relay spend for the app and 5 for the env. Past either, sign-in or the gasless write refuses
-  until 00:00 UTC ([`hackathon-public-checklist.md`](hackathon-public-checklist.md) step 9).
-- **NEAR auto-approve**: none; every NEAR signature needs Approve in the window.
+- **Capacity during judging** (D793): 200 code emails a day for Stamp Trail and 100 for the hosted demo's app, within
+  the env's daily send budget of 333; 10 sign-in starts per IP address per 10 minutes and 30 a day; 3 NEAR a day of
+  relay spend per app and 6 for the env. Past any of them, sign-in or the relayed stamp refuses until 00:00 UTC
+  ([`hackathon-public-checklist.md`](hackathon-public-checklist.md) step 9). The stamps contract's storage balance
+  (about 19.9 NEAR) can be used up by anyone; a transfer tops it up.
+- **NEAR auto-approve**: none; every NEAR signature needs Approve in the window, every stamp included.
+- **Mainnet**: none of it; testnet only, and the faucet Own fare needs is a third-party page.

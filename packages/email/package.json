@@ -2,6 +2,7 @@
   "name": "@hana-id/email",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "Email login identity rules: address normalization, the frozen e1. sub derivation, the Google-hosted rule and the pinned disposable-domain list. Runs in Workers and browsers (Web Crypto only).",
   "type": "module",
   "sideEffects": false,

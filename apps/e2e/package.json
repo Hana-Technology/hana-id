@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "Playwright suite for the Hana pages and @hana-id/web against local builds, a mocked Hana API, NEAR RPC and MPC, and an OIDC stub for Google.",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "scripts": {
     "build": "tsx src/build.ts",

@@ -3,6 +3,7 @@ name = "hana-signer"
 description = "Hana ID: OIDC sessions, per-app scope registry and NEAR MPC confidential key derivation"
 version = "0.1.1"
 edition = "2021"
+license = "BUSL-1.1"
 rust-version = "1.85"
 
 [lib]

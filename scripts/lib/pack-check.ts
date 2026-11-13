@@ -26,14 +26,14 @@ const FORBIDDEN: readonly [RegExp, string][] = [
   [/(^|\/)node_modules\//u, 'node_modules'],
 ];
 
-/** Problems with a tarball's file list (paths relative to `package/`). */
+/** Problems with a tarball's file list (paths relative to `package/`): the build, package.json, README.md and LICENSE. */
 export function fileListProblems(pkg: SdkPackage, files: readonly string[]): string[] {
   const problems: string[] = [];
   const allowed = new RegExp(`^${pkg.out.replaceAll('/', '\\/')}\\/.+\\.(js|d\\.ts|js\\.map)$`, 'u');
   for (const f of files) {
     const bad = FORBIDDEN.find(([re]) => re.test(f));
     if (bad) problems.push(`${pkg.name}: ${f} is ${bad[1]}`);
-    else if (f !== 'package.json' && f !== 'README.md' && !allowed.test(f)) problems.push(`${pkg.name}: unexpected file ${f}`);
+    else if (f !== 'package.json' && f !== 'README.md' && f !== 'LICENSE' && !allowed.test(f)) problems.push(`${pkg.name}: unexpected file ${f}`);
   }
   for (const required of ['package.json', 'README.md', `${pkg.out}/index.js`, `${pkg.out}/index.d.ts`]) {
     if (!files.includes(required)) problems.push(`${pkg.name}: ${required} is missing`);
@@ -54,7 +54,8 @@ function exportTargets(exports: Json | undefined): string[] {
 
 /**
  * Problems with a packed package.json: workspace protocol left in, `exports` still at src/ or naming a file not in the
- * tarball, the version not the release version, an @hana-id dependency not `^<version>`, or a missing publish field.
+ * tarball, the version not the release version, an @hana-id dependency not `^<version>`, a missing publish field, or a
+ * `license` that doesn't match the tarball's LICENSE file (present for a licence, absent for UNLICENSED).
  */
 export function manifestProblems(pkg: SdkPackage, manifest: Record<string, Json>, files: readonly string[], version: string): string[] {
   const problems: string[] = [];
@@ -76,6 +77,12 @@ export function manifestProblems(pkg: SdkPackage, manifest: Record<string, Json>
     const path = t.replace(/^\.\//u, '');
     if (!files.includes(path)) p(`exports names ${t}, which is not in the tarball`);
   }
+  // The licence (LICENSING.md at the repo root): a package under a licence ships its text as LICENSE; UNLICENSED ships none.
+  const license = manifest.license;
+  if (typeof license !== 'string' || license === '') p('license is missing');
+  else if (license === 'UNLICENSED') {
+    if (files.includes('LICENSE')) p('license is UNLICENSED but the tarball has a LICENSE file');
+  } else if (!files.includes('LICENSE')) p(`license is ${JSON.stringify(license)} but LICENSE is not in the tarball`);
   for (const field of ['dependencies', 'peerDependencies'] as const) {
     const deps = manifest[field];
     for (const [dep, range] of isRecord(deps) ? Object.entries(deps) : []) {

@@ -100,8 +100,9 @@ describe('buildPackage', () => {
 describe('fileListProblems', () => {
   const ok = ['README.md', 'package.json', 'dist/index.js', 'dist/index.d.ts', 'dist/index.js.map', 'dist/decode/index.js'];
 
-  it('accepts dist JavaScript, declarations and maps plus package.json and README.md', () => {
+  it('accepts dist JavaScript, declarations and maps plus package.json, README.md and LICENSE', () => {
     expect(fileListProblems(core, ok)).toEqual([]);
+    expect(fileListProblems(core, [...ok, 'LICENSE'])).toEqual([]);
     expect(fileListProblems(web, ['README.md', 'package.json', 'dist/lib/index.js', 'dist/lib/index.d.ts'])).toEqual([]);
   });
 
@@ -119,6 +120,7 @@ describe('fileListProblems', () => {
       'dist/pages/sandbox-dev/vault/index.html',
       'tsconfig.json',
       'dist/extra.css',
+      'LICENSE.txt',
     ];
     expect(fileListProblems(core, files)).toEqual([
       '@hana-id/core: .secrets/relayer.json is a .secrets file',
@@ -132,6 +134,7 @@ describe('fileListProblems', () => {
       '@hana-id/core: dist/pages/sandbox-dev/vault/index.html is a Hana page bundle (served by Hana, never packed)',
       '@hana-id/core: unexpected file tsconfig.json',
       '@hana-id/core: unexpected file dist/extra.css',
+      '@hana-id/core: unexpected file LICENSE.txt',
     ]);
     // web's build is dist/lib: a file directly in dist/ is unexpected.
     expect(fileListProblems(web, ['README.md', 'package.json', 'dist/lib/index.js', 'dist/lib/index.d.ts', 'dist/index.js'])).toEqual(['@hana-id/web: unexpected file dist/index.js']);
@@ -148,10 +151,11 @@ describe('fileListProblems', () => {
 });
 
 describe('manifestProblems', () => {
-  const files = ['package.json', 'README.md', 'dist/lib/index.js', 'dist/lib/index.d.ts'];
+  const files = ['package.json', 'README.md', 'LICENSE', 'dist/lib/index.js', 'dist/lib/index.d.ts'];
   const good = {
     name: '@hana-id/web',
     version: '0.1.0',
+    license: 'Apache-2.0',
     type: 'module',
     sideEffects: false,
     engines: { node: '>=22' },
@@ -190,6 +194,15 @@ describe('manifestProblems', () => {
       '@hana-id/web: name is "@hana-id/other"',
       '@hana-id/web: dependencies.@hana-id/core is "0.1.0", not ^0.1.0',
     ]);
+  });
+
+  it('matches the license field to the LICENSE file: shipped for a licence, absent for UNLICENSED', () => {
+    const noLicenseFile = files.filter((f) => f !== 'LICENSE');
+    expect(manifestProblems(web, { ...good, license: 'UNLICENSED' }, noLicenseFile, '0.1.0')).toEqual([]);
+    expect(manifestProblems(web, good, noLicenseFile, '0.1.0')).toEqual(['@hana-id/web: license is "Apache-2.0" but LICENSE is not in the tarball']);
+    expect(manifestProblems(web, { ...good, license: 'UNLICENSED' }, files, '0.1.0')).toEqual(['@hana-id/web: license is UNLICENSED but the tarball has a LICENSE file']);
+    const { license: _omit, ...unlicensed } = good;
+    expect(manifestProblems(web, unlicensed, files, '0.1.0')).toEqual(['@hana-id/web: license is missing']);
   });
 });
 

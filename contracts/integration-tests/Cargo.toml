@@ -3,6 +3,7 @@ name = "integration-tests"
 description = "End-to-end tests of hana-signer (with mock-mpc) in a local NEAR sandbox (near-workspaces)"
 version = "0.1.0"
 edition = "2021"
+license = "BUSL-1.1"
 publish = false
 
 [dev-dependencies]

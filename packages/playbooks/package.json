@@ -2,6 +2,7 @@
   "name": "@hana-id/playbooks",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "Step-by-step recovery playbooks for every watchdog alert kind and incident scenario (D126): the one source of the admin portal's \"Security & monitoring\" playbooks and of docs/playbooks.md.",
   "type": "module",
   "exports": {

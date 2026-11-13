@@ -2,6 +2,7 @@
   "name": "@hana-id/api",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "scripts": {
     "gen": "tsx scripts/gen-wrangler.ts",

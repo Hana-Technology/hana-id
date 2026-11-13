@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "Journear Passport stamps: a NEAR-only testnet demo site for the NEAR hackathon, a partner-style page on @hana-id/web served by a Cloudflare Worker with static assets.",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "scripts": {
     "gen:envs": "tsx ../../packages/web/scripts/gen-envs.ts",

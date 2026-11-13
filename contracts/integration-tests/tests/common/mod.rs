@@ -10,6 +10,8 @@
 
 #![allow(dead_code)]
 
+pub mod meta;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -338,6 +340,24 @@ pub fn guestbook_wasm() -> Result<Vec<u8>> {
             }
             let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("wasm-guestbook");
             build_wasm_at(&contracts_dir().join("hana-guestbook"), "hana_guestbook.wasm", &target, &["--no-abi"]).map_err(|e| format!("{e:#}"))
+        })
+        .clone()
+        .map_err(|e| anyhow!(e))
+}
+
+static STAMPS_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
+
+/// The Journear Passport stamps contract (`contracts/hana-stamps`) exactly as `deploy-stamps` builds what it deploys
+/// (`cargo near build non-reproducible-wasm --no-abi`, scripts/lib/demo-deploy.ts), into `target/wasm-stamps`.
+/// `HANA_STAMPS_WASM=<path>` overrides it.
+pub fn stamps_wasm() -> Result<Vec<u8>> {
+    STAMPS_WASM
+        .get_or_init(|| {
+            if let Ok(path) = std::env::var("HANA_STAMPS_WASM") {
+                return std::fs::read(&path).map_err(|e| format!("reading HANA_STAMPS_WASM={path}: {e}"));
+            }
+            let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("wasm-stamps");
+            build_wasm_at(&contracts_dir().join("hana-stamps"), "hana_stamps.wasm", &target, &["--no-abi"]).map_err(|e| format!("{e:#}"))
         })
         .clone()
         .map_err(|e| anyhow!(e))

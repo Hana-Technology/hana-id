@@ -133,6 +133,7 @@ jobs:
           workspaces: |
             contracts/hana-signer
             contracts/hana-guestbook
+            contracts/hana-stamps
       # Prebuilt release binary, checksum-verified (building it needs Rust >= 1.93 and libudev, and takes ~15 min).
       - name: Install cargo-near
         working-directory: .
@@ -155,6 +156,13 @@ jobs:
         run: cargo test --locked
       - name: Guestbook wasm
         working-directory: contracts/hana-guestbook
+        run: cargo near build non-reproducible-wasm
+      # The passport stamps demo (D796), the same way.
+      - name: Stamps tests
+        working-directory: contracts/hana-stamps
+        run: cargo test --locked
+      - name: Stamps wasm
+        working-directory: contracts/hana-stamps
         run: cargo near build non-reproducible-wasm
 
   typescript:
@@ -247,7 +255,7 @@ jobs:
         with:
           fetch-depth: 0
       - run: rustup show active-toolchain
-      # The tests build hana-signer, mock-mpc and hana-guestbook with their own pinned toolchain.
+      # The tests build hana-signer, mock-mpc, hana-guestbook and hana-stamps with their own pinned toolchain.
       - run: rustup toolchain install 1.85.1 --target wasm32-unknown-unknown --profile minimal
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
         with:
@@ -256,6 +264,7 @@ jobs:
             contracts/hana-signer
             contracts/mock-mpc
             contracts/hana-guestbook
+            contracts/hana-stamps
       # Prebuilt release binary, checksum-verified (building it needs Rust >= 1.93 and libudev, and takes ~15 min).
       - name: Install cargo-near
         working-directory: .

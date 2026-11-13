@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-export const CARGO_LOCKS = ['contracts/hana-signer/Cargo.lock', 'contracts/integration-tests/Cargo.lock', 'contracts/mock-mpc/Cargo.lock', 'contracts/hana-guestbook/Cargo.lock'];
+export const CARGO_LOCKS = ['contracts/hana-signer/Cargo.lock', 'contracts/integration-tests/Cargo.lock', 'contracts/mock-mpc/Cargo.lock', 'contracts/hana-guestbook/Cargo.lock', 'contracts/hana-stamps/Cargo.lock'];
 /** Where a `pnpm audit` finding is, in the allow list's `where`. */
 export const NPM = 'npm';
 

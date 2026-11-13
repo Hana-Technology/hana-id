@@ -3,6 +3,7 @@ name = "mock-mpc"
 description = "Test-only stand-in for the NEAR MPC signer's CKD method (request_app_private_key). Never deploy outside a sandbox."
 version = "0.1.0"
 edition = "2021"
+license = "BUSL-1.1"
 rust-version = "1.85"
 publish = false
 

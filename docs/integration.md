@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-12 (SDK 0.4.1: the Journear Passport names, the relay errors' data, the new mark), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-13 (the SDK packages' licences, "After 0.4.1"), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -252,6 +252,13 @@ wallet by its display name: code written for 0.4.0 builds and runs as it is. Rep
   `retry-after` (`data.retryAfterS`); new type `NearRelayErrorData` ([section 8, NEAR](#near-errors)).
 - The wallet-picker icon (`HANA_ID_ICON`: EIP-6963's `info.icon`, the Stellar Wallets Kit's `productIcon`) is Journear's
   new mark; still a 96 × 96 SVG `data:` URI, the same name and format.
+
+**After 0.4.1** (in the next release, not yet published). **Nothing to change** in your code. The packages carry a
+licence: `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` are under the Apache License 2.0, each with the licence
+text as `LICENSE` in its tarball and `"license": "Apache-2.0"` in its `package.json` (0.4.1 and earlier say
+`UNLICENSED` and ship no licence). `@hana-id/core`'s licence is still being decided; until then its tarball carries
+Journear Passport's Business Source License 1.1, which allows testing, evaluation and development, and use on test
+networks. The names and logos of Journear and Journear Passport are not licensed.
 
 **0.4.0** (after 0.3.1; same environments: `sandbox-dev`). **Nothing to change** for Stellar and EVM: code written for
 0.3.x builds and runs as it is, and an app still on 0.3.x keeps working with Journear Passport's current vault (it just doesn't see

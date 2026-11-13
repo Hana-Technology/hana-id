@@ -2,6 +2,7 @@
   "name": "@hana-id/watchdog",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "Independent watchdog for hana-signer's issuer keys and governance (docs/governance-spec.md \"Watchdog service\"): a Cloudflare Worker on its own account.",
   "type": "module",
   "scripts": {

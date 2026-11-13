@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "@hana-id/react's tests, and a typecheck of its source, on React 18 and @types/react 18 (its peer range is ^18 || ^19; the package itself develops on 19).",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "scripts": {
     "test": "pnpm --filter @hana-id/web gen:envs && vitest run",

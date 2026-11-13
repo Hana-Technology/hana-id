@@ -3,7 +3,7 @@
   "version": "0.4.1",
   "description": "Pure TypeScript core of Journear Passport (formerly Hana ID; no DOM): byte layouts, CKD, derivation v1, signers, decoders, token checks and protocol message schemas.",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "BUSL-1.1",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Hana-Technology/hana-id.git",

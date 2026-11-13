@@ -2,6 +2,7 @@
   "name": "@hana-id/console",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "The partner console Worker (docs/batch-c-spec.md): CONSOLE_DB and its migrations, host dispatch, headers and CSRF, StaffRpc, invites and owner grants, the hourly cron, partner sign-in (AuthHandler, sessions), fresh sign-in (step-ups) and the write paths, and the partner SPA (web/, React 18, Vite, React Router).",
   "type": "module",
   "scripts": {

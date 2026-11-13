@@ -2,6 +2,7 @@
   "name": "@hana-id/sendgrid",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "SendGrid v3 Mail Send for Hana's Workers (D194, D401): the email issuer's user mail, the admin Worker's notices and the watchdog's alerts. One message per request, accepted only on 202, tracking off, errors by status only.",
   "type": "module",
   "sideEffects": false,

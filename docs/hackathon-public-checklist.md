@@ -2,13 +2,14 @@
 
 For the person who flips `Hana-Technology/hana-id` to public for the NEAR HACKATHON (deadline 2026-11-14T23:59:00Z).
 The founder's plan (2026-11-13): public "towards the end, but not now" (D749). Nothing here was changed by the branch
-that wrote it: each item is something to check, or a decision for the founder. Making the repository public, pushing
-tags and adding a LICENSE are the founder's calls (the event's own agent rules say the same: never make a repository
+that wrote it: each item is something to check, or a decision for the founder. Making the repository public and pushing
+tags are the founder's calls (the event's own agent rules say the same: never make a repository
 public, push or post without the human's confirmation).
 
 Last verified against code: 2026-11-13 (branch `docs/hackathon-submission`, docs only: the greps below run on
 `develop` @ 35bc103e, the GitHub settings read with `gh` read-only, the relay balances read from a public RPC; the
-secrets scan is a separate run, section 1).
+secrets scan is a separate run, section 1); 2026-11-13 (same branch: steps 6 to 8 after the founder's decisions on
+the tags and the licence, D746, D747).
 
 ## 1. Secrets in the full history
 
@@ -95,19 +96,30 @@ secrets, no environments.
 
 ## 6. Tags for the window (rule Q-003)
 
-The rules offer "Dedicated branch, or tags pre-hackathon and hackathon-submission, plus a README section linking the
-diff". The repository has no tags (`git ls-remote --tags origin` printed nothing on 2026-11-13). Which commits they go
-on, and whether `pre-hackathon` is needed at all, depends on the baseline decision (D746, open): the options and the
-exact commands are in [`hackathon.md`](hackathon.md) "Git tags the rules name". `TODO(submit)`: the founder creates
-and pushes them after the last submission commit is on `develop`, then fixes or removes the README's link
-`compare/pre-hackathon...hackathon-submission`. Pushing a tag starts no workflow (`publish-sdk.yml` is manual dispatch
-only; `ci.yml` runs on branch pushes and pull requests).
+Decided by the founder 2026-11-13 (D746): both tags, as the rules name them. The repository has none yet
+(`git ls-remote --tags origin` printed nothing on 2026-11-13). The exact commands, and how to move the submission tag,
+are in [`hackathon.md`](hackathon.md) "Git tags the rules name".
+
+- [ ] `TODO(submit)`: the founder pushes `pre-hackathon` on `e0c831fc` (any time), then `hackathon-submission` on the
+      final commit of `develop`, last: after everything is merged, just before the repository goes public. If
+      `develop` changes after that, move the tag to the new final commit.
+- [ ] Then open `https://github.com/Hana-Technology/hana-id/compare/pre-hackathon...hackathon-submission`: the README
+      links it, and it works only once both tags exist and the repository is public.
+
+Pushing a tag starts no workflow (`publish-sdk.yml` is manual dispatch only; `ci.yml` runs on branch pushes and pull
+requests).
 
 ## 7. LICENSE
 
-The rules ask for a LICENSE file (Q-014). The founder has not chosen one (D747): `TODO(submit)`. Options:
-[`hackathon-license-draft.md`](hackathon-license-draft.md). Add the chosen file at the root, and the matching
-`license` field in the four SDK `package.json` files if they should agree.
+Done (D747, decided by the founder 2026-11-13): the root [`LICENSE`](../LICENSE) is the Business Source License 1.1,
+with Hana Tech Pty Ltd as the Licensor, an Additional Use Grant for test networks, the Change Date 2030-11-14 and the
+Apache License 2.0 as the Change License. [`LICENSING.md`](../LICENSING.md) lists what is not under it: `@hana-id/web`,
+`@hana-id/react` and `@hana-id/sodax` under Apache-2.0 (their own `LICENSE`), and third-party material. Still open:
+
+- [ ] `@hana-id/core`'s licence. It is `BUSL-1.1` for now, and its tarball carries the root `LICENSE`. Moving it to
+      Apache-2.0 too is the founder's call, because it holds the derivation, CKD and approval code the service runs.
+      This doesn't block the submission.
+- [ ] Partners get the licences only from the next SDK release (0.4.2): the 0.4.1 tarballs say `UNLICENSED`.
 
 ## 8. The placeholders
 
@@ -115,15 +127,11 @@ The rules ask for a LICENSE file (Q-014). The founder has not chosen one (D747):
 
 | Where | What it needs |
 |---|---|
-| `README.md` "What was built in the hackathon window" | the baseline statement, after the rule check (D746) |
-| `README.md` "What was built in the hackathon window" | the tags' diff link, or its removal (step 6) |
-| `README.md` "AI tools and third-party code" | the licence (step 7) |
-| `README.md` "Tracks" | the tracks for the form |
-| `docs/hackathon.md` | the same items, in its rules table and its tags section |
+| `README.md` "Tracks"; `docs/hackathon.md` "Tracks, against their prompts" | the tracks for the form |
+| `docs/hackathon.md` rules table (Q-003, Q-012, Q-015, Procedures 1 and 2) and its tags section | the tags, the public repository, the video and the post, the check that nobody enters a second project |
 | this page, step 1 | the secrets scan's outcome |
-| this page, steps 5 to 7 | the visibility flip, the tags, the licence |
+| this page, steps 5 and 6 | the visibility flip, the tags |
 | `docs/hackathon-demo-script.md` | the recording, the X post (its repository link), the form's fields |
-| `docs/hackathon-license-draft.md` | the licence choice and the legal entity's exact name |
 
 Also for the form, never written here: the project name, team lead, contact email, team size, the mainnet NEAR payout
 account, the repository and post links, consent (HACKATHON.md "What the human decides").

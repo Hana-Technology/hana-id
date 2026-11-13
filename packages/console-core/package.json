@@ -2,6 +2,7 @@
   "name": "@hana-id/console-core",
   "version": "0.0.0",
   "private": true,
+  "license": "BUSL-1.1",
   "description": "Batch C shared core: RPC types and zod schemas, roles, canonical JSON, the console's nonce and digest layouts, origin rules, the usage event.",
   "type": "module",
   "sideEffects": false,

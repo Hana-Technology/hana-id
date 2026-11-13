@@ -1,4 +1,4 @@
-# Journear Passport (code name Hana ID)
+# Journear Passport
 
 Journear Passport gives each user of a partner app a wallet when they sign in with Google or with a code sent to their
 email, with no seed phrase and no browser extension. The NEAR contract `hana-signer` checks the sign-in token on chain
@@ -7,8 +7,9 @@ encrypted to a one-time key that only the user's browser holds. The browser turn
 Stellar and EVM keys, and NEAR transactions can go through a Journear relayer that pays the gas (NEP-366 meta
 transactions), so a new user's first NEAR transaction needs no NEAR.
 
-**Testnet only.** Every account is a throwaway, and wallets derived on them are disposable. Package and identifier
-names are still `hana-*` (the code name); the product, its pages and its emails say "Journear Passport".
+**Testnet only.** Every account is a throwaway, and wallets derived on them are disposable. The repository, packages
+and testnet accounts use the working name `hana-id`; the product, its pages and its emails say "Journear Passport".
+They are the same thing.
 
 ## For judges and screening agents (NEAR HACKATHON)
 
@@ -196,7 +197,13 @@ Rust through `rustup` (`contracts/hana-signer/rust-toolchain.toml` pins 1.85.1 w
   earlier date. On 2026-11-13, `develop` (35bc103e) has 1,181 commits and the 231 branches on GitHub together 1,187, every
   one dated 2026-10-26 to 2026-11-12. Check: `git log --reverse --format='%h %ad %s' --date=iso | head -3`,
   `git rev-list --count develop`, `git log --format=%ad --date=short develop | sort | uniq -c`.
-- `TODO(submit): baseline statement, pending the rule check`
+- The first commit, `e0c831fc` (2026-10-26), started this repository from our earlier proof of concept,
+  wend-widget-demo: a first version of the `hana-signer` contract and the reference code in `legacy/`, with three docs
+  and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,180
+  further commits, was built in the window: the per-app scope registry, the API, the SDK, email login, the consoles,
+  Passport Home and all of the NEAR wallet work. Of today's 4,337 lines of `hana-signer` contract code (tests and
+  fixtures excluded), 124 still date from that first commit by `git blame` ([`docs/hackathon.md`](docs/hackathon.md)
+  "Baseline" has the commands and the other counts).
 - What was built when (dates from `git log`; each line's decisions in [`docs/decisions.md`](docs/decisions.md)):
   - 2026-10-26 to 10-30: the per-app scope registry in `hana-signer`, the API Worker, deploy and admin scripts, the
     sandbox tests; the browser SDK packages (10-28) and the vault with one-transaction login (deployed on sandbox-dev
@@ -208,8 +215,9 @@ Rust through `rustup` (`contracts/hana-signer/rust-toolchain.toml` pins 1.85.1 w
     directory's NEAR rows, the meta-transaction relay, the guestbook contract and the demo's NEAR card; merged and
     deployed to sandbox-dev on 2026-11-12 with the Journear Passport rename, "Move this wallet" for the NEAR key, the
     admin's NEAR relay tile and SDK 0.4.1.
-- The diff for the window: <https://github.com/Hana-Technology/hana-id/compare/e0c831fc...develop>. With the tags the
-  rules name (Q-003), `TODO(submit)`: <https://github.com/Hana-Technology/hana-id/compare/pre-hackathon...hackathon-submission>.
+- The work after the baseline, as the rules ask (Q-003: tags `pre-hackathon` on the first commit and
+  `hackathon-submission` on the submitted one):
+  <https://github.com/Hana-Technology/hana-id/compare/pre-hackathon...hackathon-submission>.
 
 ### What is judged, and the other chains (rule Q-002)
 
@@ -237,10 +245,16 @@ They are part of the product and of this repository, built in the same window, a
   `jose`; React and Vite; Playwright and Vitest; the Archivo and IBM Plex fonts (SIL Open Font License). Services: NEAR
   testnet and its MPC network (`v1.signer-prod.testnet`), the Sputnik DAO v2 factory (`sputnikv2.testnet`, code pinned in
   `contracts/sputnik/pin.json`), public NEAR RPCs, Google OAuth, SendGrid for email codes.
-- `packages/core/src/ckd.ts` started as a port of `legacy/client/ckd.ts`, itself ported from `near/mpc` at `a7ae426`
-  (its first lines say so).
-- **Licence:** `TODO(submit)`: the rules ask for a LICENSE file (Q-014); none is chosen yet. The options:
-  [`docs/hackathon-license-draft.md`](docs/hackathon-license-draft.md).
+- **Our own earlier code (baseline):** the wend-widget-demo proof of concept that the first commit imports: `legacy/`
+  (a client and a relayer, unchanged since and kept read-only) and the first version of `contracts/hana-signer`
+  (`git show --stat e0c831fc`). `packages/core/src/ckd.ts` started as a port of `legacy/client/ckd.ts`, itself ported
+  from `near/mpc` at `a7ae426` (MIT; its first lines say so), and `apps/api/src/near/rpc.ts` and `tx.ts` as ports of
+  `legacy/relayer/embed-relayer.ts`.
+- **Licence:** the repository is under the Business Source License 1.1 ([`LICENSE`](LICENSE)): anyone may read, run,
+  test and build on it, and use it in production on test networks, but not on networks whose tokens have monetary
+  value or as a commercial hosted service; it becomes Apache-2.0 on 2030-11-14. The SDK packages `@hana-id/web`,
+  `@hana-id/react` and `@hana-id/sodax` are Apache-2.0, and `@hana-id/core` is under the repository's licence for now.
+  Third-party material keeps its own licence: [`LICENSING.md`](LICENSING.md) lists it.
 
 ### Tracks
 

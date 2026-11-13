@@ -2,17 +2,18 @@
 
 The root [`README.md`](../README.md) has the short version for judges and screening agents ("For judges and screening
 agents"). This page holds the rest: the event's rules as read on 2026-11-13 and where each is met, the git tags the
-rules name, the internal notes on the baseline (for the team's decision, D746), the other chains, the full list of
+rules name and their commands, the baseline as the README states it and why (D746), the other chains, the full list of
 third-party code, the AI use, the tracks against their prompts, and what the submission cannot meet yet.
 `TODO(submit)` marks what the team does before submitting; `hackathon-public-checklist.md` step 8 lists them all.
 
 Last verified against code: 2026-11-13 (branch `docs/hackathon-submission`, docs only, against `develop` @ 35bc103e,
 sandbox-dev running `develop` 1ac3bc36, and the event's live `https://nearhackathon.com/HACKATHON.md`, its home page
-and the three track prompts read the same day).
+and the three track prompts read the same day); 2026-11-13 (same branch: the licence chosen, the baseline stated and
+measured with `git blame`, the tags decided: D746, D747).
 
 Related: the video's shot list and post texts, [`hackathon-demo-script.md`](hackathon-demo-script.md); what to check
-before the repository goes public, [`hackathon-public-checklist.md`](hackathon-public-checklist.md); the licence
-options, [`hackathon-license-draft.md`](hackathon-license-draft.md).
+before the repository goes public, [`hackathon-public-checklist.md`](hackathon-public-checklist.md); the licences,
+[`../LICENSE`](../LICENSE) and [`../LICENSING.md`](../LICENSING.md) (why: D747).
 
 ## The event, as its pages say (read 2026-11-13)
 
@@ -39,16 +40,16 @@ answered on 2026-11-13. The page `https://nearhackathon.com/request-changes` is 
 
 | Rule | The wording that matters | Where this repository answers it | State on 2026-11-13 |
 |---|---|---|---|
-| Q-001 | "Yes, from the announcement on 2026-10-19 … The window runs from then to 2026-11-14. Earlier commits are baseline." | README "What was built in the hackathon window"; [Git tags](#git-tags-the-rules-name) and [Baseline](#baseline-internal-notes-for-the-teams-decision) below | Met as far as commit dates go (first commit 2026-10-26, none earlier on any branch). The README's statement about earlier code is `TODO(submit)` (D746, open) |
+| Q-001 | "Yes, from the announcement on 2026-10-19 … The window runs from then to 2026-11-14. Earlier commits are baseline." | README "What was built in the hackathon window"; [Baseline](#baseline-what-is-stated-and-why) below | Met: first commit 2026-10-26, none earlier on any branch; the README states what that commit imports and treats it as baseline (D746) |
 | Q-002 | "Existing product on another chain? Allowed. Only the NEAR integration built in the window is judged. Disclose in README." | README "What is judged, and the other chains"; [Other chains](#other-chains) | Met: the whole repository is submitted, NEAR is the judged integration, Stellar, EVM and Sodax disclosed (D748) |
-| Q-003 | "New repo required? No. Dedicated branch, or tags pre-hackathon and hackathon-submission, plus a README section linking the diff." | README link to `compare/e0c831fc...develop`; [Git tags](#git-tags-the-rules-name) | The diff link is in; the tags are the team's step, `TODO(submit)` (checklist step 6) |
-| Q-004 | "Old project as-is: no. New feature in the window: yes, if separated per Q-003. No minimum code size." | as Q-003 | Not an old project by commit dates; see Q-003 |
-| Q-005 | "All allowed, including own pre-hackathon libs and AI code. List in README; own old libs count as baseline." | README "AI tools and third-party code"; [Third-party code](#third-party-code), [AI tools](#ai-tools) | Met for libraries and AI. Own earlier code: `TODO(submit)` with the baseline statement (D746) |
+| Q-003 | "New repo required? No. Dedicated branch, or tags pre-hackathon and hackathon-submission, plus a README section linking the diff." | README "What was built in the hackathon window": the link `compare/pre-hackathon...hackathon-submission`; [Git tags](#git-tags-the-rules-name) | Met once the founder pushes the two tags: `pre-hackathon` on `e0c831fc`, `hackathon-submission` on the final submitted commit (decided 2026-11-13, D746); `TODO(submit)` in the checklist, step 6 |
+| Q-004 | "Old project as-is: no. New feature in the window: yes, if separated per Q-003. No minimum code size." | as Q-003 | Met once the tags are pushed: the baseline commit is separated from the window's work by them |
+| Q-005 | "All allowed, including own pre-hackathon libs and AI code. List in README; own old libs count as baseline." | README "AI tools and third-party code" (AI, the libraries, our own earlier code); [Third-party code](#third-party-code), [AI tools](#ai-tools), [Baseline](#baseline-what-is-stated-and-why) | Met |
 | Q-010 | "Testnet-only projects eligible? Yes, all tracks." | everything here is testnet | Met |
 | Q-011 | "Mandatory integrations? None. Hints are hints. Own contract on NEAR that fits the track is enough." | `contracts/hana-signer`, `contracts/hana-guestbook` | Met |
 | Q-012 | "Local-only demo OK? Yes: public repo, reproducible README, X post with a video; screenshots are not enough when judges cannot open the demo. Hosted demo is a plus; keep it up to 2026-11-18, ideally 2026-11-25." | README "Reproduce it" (hosted, view calls, local); the hosted demo; [`hackathon-demo-script.md`](hackathon-demo-script.md) | Reproducible README: in. Public repo: `TODO(submit)` (flipped near the end, D749). Video and X post: `TODO(submit)` (a colleague records it). Demo uptime: checklist step 9 |
-| Q-013 | "Team keeps all rights; organizers get non-exclusive promo rights to name, screenshots, video, repo link." | [`hackathon-license-draft.md`](hackathon-license-draft.md) | Information |
-| Q-014 | "License? Any. MIT is fine. Repo stays public through judging; add a LICENSE file." | [`hackathon-license-draft.md`](hackathon-license-draft.md) | `TODO(submit)`: no LICENSE yet; the founder has not chosen one (D747) |
+| Q-013 | "Team keeps all rights; organizers get non-exclusive promo rights to name, screenshots, video, repo link." | `LICENSE`, `LICENSING.md` | Information: the Business Source License keeps the licensor's rights and grants no trademark right |
+| Q-014 | "License? Any. MIT is fine. Repo stays public through judging; add a LICENSE file." | `LICENSE` (Business Source License 1.1), `LICENSING.md` (the SDK packages under Apache-2.0, third-party material), README "AI tools and third-party code" | Met: decided by the founder 2026-11-13 (D747) |
 | Q-015 | "Allowed if projects are independent and disclosed: each README names the other project. Not the same project twice. One person, at most 2 different projects." | not applicable unless someone on the team enters another project | `TODO(submit)`: confirm no other entry |
 | Q-017 | as in the table above | README "For judges and screening agents" | The README is written for it: claims with files and checks, "do X, see Y" steps |
 | Procedure 1 | "it must be public by 2026-11-14T23:59:00Z. Judges cannot open a private one." | | `TODO(submit)`: the repository is private (checked 2026-11-13 with `gh repo view`) |
@@ -65,13 +66,14 @@ Q-016 (payout) don't change anything here.
   cannot open the demo", Q-015's "One person, at most 2 different projects", the home page's judging criteria
   (technical implementation, design, impact, originality, sustainability) and Q-013's rights.
 - **Ambiguous: the tags when no commit predates the window.** Q-003 names the tags `pre-hackathon` and
-  `hackathon-submission` but not their commits. Every commit here is dated inside the window, so no commit is
-  "before" it; where `pre-hackathon` points depends on the baseline decision (D746): see [Git tags](#git-tags-the-rules-name).
-  Q-003 is the answer to "New repo required?", and Q-004 applies it to an "old project", so a repository started in
-  the window may need neither; the rules don't say.
+  `hackathon-submission` but not their commits, and every commit here is dated inside the window. Q-003 is the answer
+  to "New repo required?", and Q-004 applies it to an "old project", so a repository started in the window may need
+  neither; the rules don't say. Decided 2026-11-13 (D746): both tags, `pre-hackathon` on the first commit, which holds
+  the baseline, and `hackathon-submission` on the submitted one.
 - **Ambiguous: code imported by an in-window commit.** Q-001 calls "earlier commits" baseline and Q-005 says "own old
   libs count as baseline"; neither says how to count a commit made in the window that brings in code written before it.
-  A colleague is checking the rule (D746).
+  Decided 2026-11-13 (D746): the README states that the first commit imports our earlier proof of concept and treats
+  it as baseline under Q-005.
 - **Ambiguous: video or screenshots.** The procedure and the home page accept "the demo video or screenshots"; Q-012
   says "X post with a video" and that screenshots are not enough when judges can't open the demo. Judges can open
   this one, but a video is the safe reading, and one is planned.
@@ -82,70 +84,110 @@ Q-016 (payout) don't change anything here.
 ### What could put the entry at risk
 
 1. The repository is still private, and the deadline is 2026-11-14T23:59:00Z ("Judges cannot open a private one").
-2. No LICENSE file (Q-014 says to add one).
-3. No X post or video yet; the home page says both links are required.
-4. The baseline statement (D746) is a placeholder: whatever it says must match what `git log` and `legacy/` show.
-5. Once public, the history, the 231 branches, the pull requests and the 376 Actions runs are public, with the personal
+2. No X post or video yet; the home page says both links are required.
+3. The tags are not pushed yet, so the README's diff link opens only once both exist.
+4. Once public, the history, the 231 branches, the pull requests and the 376 Actions runs are public, with the personal
    data and internal security notes listed in [`hackathon-public-checklist.md`](hackathon-public-checklist.md).
-6. The hosted demo runs on a personal Cloudflare account on free plans (D417), with an email budget of about 100 codes
+5. The hosted demo runs on a personal Cloudflare account on free plans (D417), with an email budget of about 100 codes
    a day for the demo's app and a NEAR relay budget of 1 NEAR a day for it; many judges on one day can reach either
    (checklist step 9). Google sign-in works only for listed testers.
-7. A screening agent that runs `corepack pnpm verify --all` needs Rust 1.85.1, `cargo-near` 0.22.0, gitleaks and
+6. A screening agent that runs `corepack pnpm verify --all` needs Rust 1.85.1, `cargo-near` 0.22.0, gitleaks and
    Playwright's browsers, downloads `near-sandbox` and Cargo's crates on first use, and takes about 10 minutes on a fast
    machine; the README says so. A README claim that doesn't hold in that run is the main screening risk.
 
 ## Git tags the rules name
 
 Q-003 offers "Dedicated branch, or tags pre-hackathon and hackathon-submission, plus a README section linking the
-diff". The repository has no tags today (`git ls-remote --tags origin` printed nothing on 2026-11-13). Creating and
-pushing them is the founder's step, after the last commit of the submission is on `develop`; this branch creates none.
+diff". Decided by the founder 2026-11-13 (D746): both tags, as Q-003 names them. The repository has no tags today
+(`git ls-remote --tags origin` printed nothing on 2026-11-13). The founder creates and pushes them; this branch
+creates none (`TODO(submit)`, checklist step 6).
 
-- **`hackathon-submission`**: the commit on `develop` the judges should read, the merge of the last docs change before
-  the repository is submitted (at or before 2026-11-14T23:59:00Z).
-- **`pre-hackathon`**: depends on D746, still open.
-  - If the team counts the first commit's import as baseline: `pre-hackathon` at `e0c831fc`, so the diff
-    `pre-hackathon...hackathon-submission` is everything after the import.
-  - If it does not: there is no commit before the window, so a `pre-hackathon` tag has nothing to point to. Either skip
-    the tags (the README's diff link from the first commit already covers Q-003's "README section linking the diff")
-    or put `pre-hackathon` on `e0c831fc` and say in the README that it marks the first commit, not earlier work. The
-    rule check decides which.
+- **`pre-hackathon`** on `e0c831fc`, the first commit, which holds the baseline ([Baseline](#baseline-what-is-stated-and-why)).
+  It can be pushed at any time.
+- **`hackathon-submission`** on the final submitted commit of `develop`. It goes on last: after everything is merged,
+  just before the repository goes public. If anything changes on `develop` after that, the tag moves to the new final
+  commit.
 
-Commands (from a clone with `origin` = `Hana-Technology/hana-id`; the ruleset "PR Required Ruleset" targets branches,
-not tags, and pushing a tag starts no workflow: `publish-sdk.yml` is manual dispatch only, `ci.yml` runs on branch
-pushes and pull requests):
+The README links `https://github.com/Hana-Technology/hana-id/compare/pre-hackathon...hackathon-submission`, which
+opens only once both tags exist (and the repository is public). Commands, from a clone with `origin` =
+`Hana-Technology/hana-id` (the ruleset "PR Required Ruleset" targets branches, not tags, and pushing a tag starts no
+workflow: `publish-sdk.yml` is manual dispatch only, `ci.yml` runs on branch pushes and pull requests):
 
 ```sh
 git fetch origin
-git log -1 --format='%H %ad %s' origin/develop          # the commit to submit
-git tag -a hackathon-submission <that commit> -m "NEAR HACKATHON submission"
-git tag -a pre-hackathon e0c831fc -m "<wording from the D746 decision>"   # only if the team keeps this tag
-git push origin refs/tags/hackathon-submission refs/tags/pre-hackathon     # or only the first
-git ls-remote --tags origin                               # check both are there
+# 1. The baseline tag, on the first commit
+git tag -a pre-hackathon e0c831fc -m "Baseline: the wend-widget-demo proof of concept the first commit imports (NEAR HACKATHON Q-003, Q-005)"
+git push origin pre-hackathon
+
+# 2. Last, after everything is merged: the submission tag, on the final commit of develop
+git log -1 --format='%H %ad %s' origin/develop          # check it is the commit to submit
+git tag -a hackathon-submission origin/develop -m "NEAR HACKATHON submission"
+git push origin hackathon-submission
+git ls-remote --tags origin                               # both are there
+
+# If develop changes after that: move the submission tag to the new final commit
+git fetch origin
+git tag -f -a hackathon-submission origin/develop -m "NEAR HACKATHON submission"
+git push origin --force refs/tags/hackathon-submission
 ```
 
-Then open `https://github.com/Hana-Technology/hana-id/compare/pre-hackathon...hackathon-submission` (once public) and
-replace the README's `TODO(submit)` next to that link, or remove the link if the tags are skipped.
+A moved tag changes what the compare link shows; anyone who fetched the old tag keeps it until they fetch with
+`--force` or `--tags --force`.
 
-## Baseline (internal notes for the team's decision)
+## Baseline: what is stated and why
 
-These are facts from `git`, kept for the D746 decision; the README does not use this wording, and says nothing about
-earlier code until the team writes it (`TODO(submit): baseline statement, pending the rule check`).
+Decided by the founder 2026-11-13 (D746): the README states the baseline. Its wording, in "What was built in the
+hackathon window":
 
-- The repository starts at `e0c831fc` (2026-10-26 13:43:21 +08:00): "chore: scaffold hana-id from wend-widget-demo
-  PoC (contract, legacy client/relayer, docs)", 28 files, 4,609 lines. It brings in the team's own proof of concept,
-  measured before the announcement (`docs/hana-embed-ckd-results.md`: "Measured 2026-10-14 on NEAR testnet"):
-  `legacy/client` and `legacy/relayer` (unchanged since: `git diff --stat e0c831fc develop -- legacy` prints nothing;
-  `CLAUDE.md` makes `legacy/` read-only reference code), `contracts/hana-signer/src/lib.rs` and `src/google.rs`
-  (rewritten: `google.rs` is gone, and `git diff --numstat e0c831fc develop -- contracts/hana-signer/src/lib.rs` shows
-  486 lines added and 677 of its 754 removed; the contract's other modules are new), `Cargo.toml`, `Cargo.lock`,
-  `rust-toolchain.toml`, `deploy.sh` and `post-google-keys.sh` (both since deleted), a test fixture, and three docs
-  (`docs/batch-a-spec.md`, `docs/context.md`, `docs/hana-embed-ckd-results.md`).
+> The first commit, `e0c831fc` (2026-10-26), started this repository from our earlier proof of concept,
+> wend-widget-demo: a first version of the `hana-signer` contract and the reference code in `legacy/`, with three docs
+> and config files (`git show --stat e0c831fc`). Per Q-005 that is baseline. Everything else, in at least 1,180
+> further commits, was built in the window: the per-app scope registry, the API, the SDK, email login, the consoles,
+> Passport Home and all of the NEAR wallet work. Of today's 4,337 lines of `hana-signer` contract code (tests and
+> fixtures excluded), 124 still date from that first commit by `git blame`.
+
+Why: every commit is dated inside the window, but the first one brings in code written before the announcement. Q-005
+counts "own old libs" as baseline and asks to list them, so the README says what it is, how much of it is left, and
+how to check.
+
+The facts behind it (from `git`, on `develop` @ 35bc103e):
+
+- The first commit is `e0c831fc` (2026-10-26 13:43:21 +08:00): "chore: scaffold hana-id from wend-widget-demo PoC
+  (contract, legacy client/relayer, docs)", 28 files, 4,609 lines: 12 files in `legacy/`, 9 in `contracts/`, 3 docs,
+  and 4 config files (`.gitignore`, `CLAUDE.md`, `package.json`, `pnpm-workspace.yaml`). It is the team's own proof of
+  concept, measured before the announcement (`docs/hana-embed-ckd-results.md`: "Measured 2026-10-14 on NEAR testnet").
+  - `legacy/client` and `legacy/relayer` (955 lines) are unchanged since: `git diff --stat e0c831fc develop -- legacy`
+    prints nothing, and `CLAUDE.md` makes `legacy/` read-only reference code.
+  - The first contract was `contracts/hana-signer/src/lib.rs` (754 lines) and `src/google.rs` (85 lines), with
+    `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/config.toml`, a test fixture, `deploy.sh` and
+    `post-google-keys.sh`. The two scripts were deleted later, and `google.rs` became `src/oidc.rs` in the next commit,
+    `eb5eb658`. `git diff --numstat e0c831fc develop -- contracts/hana-signer/src/lib.rs` shows 486 lines added and 677
+    of its 754 removed. The contract's other modules are new.
+  - The three docs are `docs/batch-a-spec.md`, `docs/context.md` and `docs/hana-embed-ckd-results.md`.
+- How much of the first commit survives today, by `git blame` (a line counts for the commit that last changed it):
+
+  | Scope on `develop` | Lines from `e0c831fc` | Of | Share |
+  |---|---|---|---|
+  | `hana-signer`'s contract code: `src/*.rs` without the tests and fixtures | 124 (52 in `lib.rs`, 72 in `oidc.rs`) | 4,337 | 2.9% |
+  | the same, with `git blame -M -C -C` (also counts lines moved or copied from other files) | 201 | 4,337 | 4.6% |
+  | all of `contracts/hana-signer/src`, tests and fixtures included | 126 | 12,728 | 1.0% |
+  | the whole tree outside `legacy/`, lockfiles excluded | 531 | 368,520 | 0.14% |
+  | the whole tree outside `legacy/`, lockfiles included | 2,809 | 388,600 | 0.72% (2,278 of them in `contracts/hana-signer/Cargo.lock`) |
+
+  Binary files (fonts, images) are left out. To recount one file:
+
+  ```sh
+  E=$(git rev-parse e0c831fc)
+  git blame --line-porcelain develop -- contracts/hana-signer/src/lib.rs | grep -E '^[0-9a-f]{40} ' \
+    | awk -v E=$E '{t++; if ($1 == E) e++} END {print e+0, "of", t}'
+  ```
+
 - Later code that started as a port of the baseline says so in its first lines: `packages/core/src/ckd.ts` (from
   `legacy/client/ckd.ts`, itself a port of `near/mpc` at `a7ae426`), `apps/api/src/near/rpc.ts` and
   `apps/api/src/near/tx.ts` (from `legacy/relayer/embed-relayer.ts`).
-- Everything after `e0c831fc`: 1,180 commits on `develop` (1,186 on all the branches on GitHub), dated 2026-10-26 to 2026-11-12;
-  `git diff --shortstat e0c831fc develop` prints "1597 files changed, 385838 insertions(+), 892 deletions(-)" (the
-  lockfile and generated test vectors included). The diff: `https://github.com/Hana-Technology/hana-id/compare/e0c831fc...develop`.
+- Everything after `e0c831fc`: 1,180 commits on `develop` (1,186 on all the branches on GitHub), dated 2026-10-26 to
+  2026-11-12. `git diff --shortstat e0c831fc develop` prints "1597 files changed, 385838 insertions(+), 892
+  deletions(-)" (the lockfile and generated test vectors included).
 - Commits per day on `develop` (`git log --format=%ad --date=short develop | sort | uniq -c`): 10-26 11, 10-27 19,
   10-28 136, 10-29 107, 10-30 76, 11-02 116, 11-03 24, 11-04 133, 11-05 84, 11-06 88, 11-09 99, 11-10 92, 11-11 116,
   11-12 80.
@@ -289,9 +331,8 @@ and anyone can read them" and for "a README section on failure cases".
 
 - **A public repository** by 2026-11-14T23:59:00Z: private on 2026-11-13 (`gh repo view`); the founder flips it
   "towards the end, but not now" (D749), after [`hackathon-public-checklist.md`](hackathon-public-checklist.md).
-- **A LICENSE file** (Q-014): none; the founder has not chosen one ([`hackathon-license-draft.md`](hackathon-license-draft.md), D747).
 - **The video and the X post**: a colleague records the video ([`hackathon-demo-script.md`](hackathon-demo-script.md)).
-- **The baseline statement** (Q-001, Q-005): open, decided by the founder at submission (D746).
+- **The tags** (Q-003): decided, pushed by the founder (D746).
 - **Google sign-in for judges**: Journear's Google client is in Google's testing mode, so only listed testers can use
   it. Judges use email sign-in, which works for any address.
 - **Capacity during judging**: about 100 code emails a day for the demo's app, within the env's daily send budget of

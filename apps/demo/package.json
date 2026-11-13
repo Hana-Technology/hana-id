@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "Hosted testnet demo of Hana ID: a partner-style page on @hana-id/web, served by a Cloudflare Worker with static assets.",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "scripts": {
     "gen:envs": "tsx ../../packages/web/scripts/gen-envs.ts",

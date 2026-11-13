@@ -3,7 +3,7 @@
   "version": "0.4.1",
   "description": "React bindings for Journear Passport (formerly Hana ID) over @hana-id/web: HanaProvider, useHana, useWallet.",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Hana-Technology/hana-id.git",

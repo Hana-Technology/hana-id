@@ -10,7 +10,7 @@ and every signature needs the user's Approve in a Journear Passport window. This
 > `hana.*`), error codes, event names and the addresses below keep their old names, so no code change is needed.
 > Match on error codes, never on messages.
 
-Last verified against code: 2026-11-12 (the Journear Passport names; NEAR gasless calls and the relay's allowlist).
+Last verified against code: 2026-11-13 (email codes per day and per IP address on sandbox-dev); 2026-11-12 (the Journear Passport names; NEAR gasless calls and the relay's allowlist).
 
 > **This environment, `sandbox-dev`, is testnet only.** Its wallets are test wallets: until Journear Passport's address
 > freeze, Journear may still change how keys are made, which gives every user new addresses. Never keep real funds in them. A test
@@ -139,8 +139,9 @@ holds your users' wallets and names your on-chain owners), sets your security co
   contract, send Journear its account name. Every NEAR request asks the user in a Journear Passport window: none is
   approved automatically (guide section 8, NEAR).
 - **Email codes**: a code lasts 10 minutes and allows 5 wrong tries, with up to 2 resends 30 seconds apart. Each app
-  can send about 100 code emails a day, within a daily total every app on sandbox-dev shares; past it, email sign-in
-  answers `rate_limited` until 00:00 UTC.
+  can send about 100 code emails a day (resends count), within a daily total of about 330 every app on sandbox-dev
+  shares; past it, email sign-in answers `rate_limited` until 00:00 UTC. One IP address can start 10 sign-ins in 10
+  minutes and 30 a day (a team behind one office address shares them).
 - **Sign-ins**: 20 a minute per app from one IP address (a team testing from one office shares it), 60 a minute per app.
 - **Key export**: 3 an hour per user and app. **Identity tokens**: 10 a minute per session.
 - **The invite link**: one use, 7 days. **Console sessions**: 12 hours, ending after 2 hours without activity.

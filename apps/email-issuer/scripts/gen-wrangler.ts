@@ -77,6 +77,9 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       AUTH_ORIGIN: m.authOrigin,
       VAULT_ORIGIN: m.vaultOrigin,
       ...(t.dailySendBudget ? { DAILY_SEND_BUDGET: String(t.dailySendBudget) } : {}),
+      // Testnet only (D793): named apps' shares of the budget, and lower per-IP and per-requester windows.
+      ...(t.appShares ? { EMAIL_APP_SHARES: JSON.stringify(t.appShares) } : {}),
+      ...(t.tighterLimits ? { EMAIL_TIGHTER_LIMITS: JSON.stringify(t.tighterLimits) } : {}),
       ...(t.access ? { ACCESS_TEAM_DOMAIN: t.access.teamDomain, ACCESS_AUD: t.access.aud, ACCESS_STAFF_EMAILS: JSON.stringify(t.access.staffEmails) } : {}),
       ...(t.sendgridWebhookPublicKey ? { SENDGRID_WEBHOOK_PUBLIC_KEY: t.sendgridWebhookPublicKey } : {}),
       // The issuer's alert mails (D446): the security alias of the dashboard's `email` block.

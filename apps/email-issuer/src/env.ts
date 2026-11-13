@@ -56,6 +56,10 @@ export interface Env {
   VAULT_ORIGIN: string;
   /** The env's daily user-mail budget (the breaker). */
   DAILY_SEND_BUDGET?: string;
+  /** Testnet only (D793): `{appId: mails a day}`, named apps' shares in place of their plan's (limits.ts parseAppShares). */
+  EMAIL_APP_SHARES?: string;
+  /** Testnet only (D793): lower maxes for some windows, applied only below the env's own (limits.ts parseTighterLimits). */
+  EMAIL_TIGHTER_LIMITS?: string;
   /** Cloudflare Access for admin/client-proof: team domain, application AUD tag, staff allowlist (JSON array). */
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;

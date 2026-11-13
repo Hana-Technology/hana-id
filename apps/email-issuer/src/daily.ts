@@ -105,6 +105,8 @@ const ALERT_TEXT: Record<AlertKind, { title: string; what: string; hint: string 
     hint: 'The mailbox is identified in the issuer’s log by a key prefix only; follow the mailbox unlock playbook if the user contacts support.',
   },
 };
+/** The kinds that email the security alias: with ALERT_MAILS_PER_KIND_PER_DAY, the most alert mail a day (D793's sizing). */
+export const ALERT_KINDS = Object.freeze(Object.keys(ALERT_TEXT) as AlertKind[]);
 
 /** The alert's mail, `kind: 'alert'` so the sender bypasses the provider's suppression lists (D401): no address in it. */
 export function alertMail(kind: AlertKind, code: string, appId: string | null, env: string, to: string): { to: string; subject: string; text: string; html: string; kind: 'alert' } {

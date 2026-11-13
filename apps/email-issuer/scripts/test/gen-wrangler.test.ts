@@ -66,6 +66,16 @@ describe('wranglerConfig', () => {
     vi.unstubAllEnvs();
   });
 
+  it('writes appShares and tighterLimits as EMAIL_APP_SHARES and EMAIL_TIGHTER_LIMITS only when set (D793)', () => {
+    const vars = (over: Record<string, unknown>) => (wranglerConfig(manifest(over), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    expect(vars({})).not.toHaveProperty('EMAIL_APP_SHARES');
+    expect(vars({})).not.toHaveProperty('EMAIL_TIGHTER_LIMITS');
+    const tighterLimits = { ipStart: { per10m: 10, perDay: 30 }, mailboxIpCodes: { perDay: 15 } };
+    const v = vars({ appShares: { app_abc: 250 }, tighterLimits });
+    expect(JSON.parse(v.EMAIL_APP_SHARES!)).toEqual({ app_abc: 250 });
+    expect(JSON.parse(v.EMAIL_TIGHTER_LIMITS!)).toEqual(tighterLimits);
+  });
+
   it('writes the issuer’s Worker, its D1, the API’s IssuerRpc, the Durable Objects and the public vars (no secret)', () => {
     const c = wranglerConfig(manifest({ dailySendBudget: 500 }), 'a'.repeat(8) + '-0000-4000-8000-000000000001') as Record<string, any>;
     expect(c.name).toBe('hana-id-email-issuer-sandbox-dev');

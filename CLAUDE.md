@@ -5,7 +5,7 @@ A Privy-style service: partners integrate an SDK; users log in with Google; the 
 Google token on-chain and asks the MPC for the user's key, encrypted so only the user's browser can read it.
 
 Start with `docs/README.md` (doc index): `docs/architecture.md` for how it works today, `docs/decisions.md` for why.
-Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
+Plan doc: an internal planning document (not in this repository).
 
 ## Rules
 

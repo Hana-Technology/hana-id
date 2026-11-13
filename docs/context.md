@@ -1,10 +1,9 @@
 # Context — how Hana ID works and what's been decided
 
-Carried over from the design conversation in wend-widget-demo (Oct 2026). Plan doc:
-https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi · Login journey diagrams: https://claude.ai/artifact/73xpB7AZknWd9s38xw4Fjo ·
-SDK security page: https://claude.ai/artifact/AwzpW8xZ7pAuMoTYgBfcvo
+Carried over from the design conversation in wend-widget-demo (Oct 2026). Plan doc, login journey
+diagrams and SDK security page: internal documents (not in this repository).
 
-Last verified: 2026-11-12 for the product's name and the launcher's label (branch `feat/journear-design`, not merged, not deployed, D765); 2026-11-05 for "Next steps" 7 and "Before mainnet" (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker and the watchdog email through SendGrid too, D401); 2026-11-04 for "Google email scope spike" (branch `feat/token-first-on`: the user's spike results, the D270 gate met); 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
+Last verified: 2026-11-13 for the billing line and the internal documents' links, reworded before the repository went public (branch `chore/pre-public-wording`, not merged, not deployed: no behaviour change); 2026-11-12 for the product's name and the launcher's label (branch `feat/journear-design`, not merged, not deployed, D765); 2026-11-05 for "Next steps" 7 and "Before mainnet" (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker and the watchdog email through SendGrid too, D401); 2026-11-04 for "Google email scope spike" (branch `feat/token-first-on`: the user's spike results, the D270 gate met); 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
 steps" and "Before mainnet", the user-mail provider, the batch B status note). The dated sections below are records
 of their day; "Next steps" is the current list.
 
@@ -254,7 +253,7 @@ switch is gone: the claim allow-list is always on, D271.)
 - **Hana admin console**, separate, behind Cloudflare Access. Contract-billing reports per org/app by day and month
   (logins, derives, monthly active users, new users, gas burnt + USD, failures, latency), CSV statement. Billing-grade
   totals in D1 (Analytics Engine keeps 3 months: operational metrics only).
-- **Billing on hold** (no Stripe/plans yet). Sodax is billed by service contract from the monthly statement.
+- **Billing on hold** (no Stripe/plans yet). The first partner is billed by service contract from the monthly statement.
 - **Allowed origins are security-critical** in shared-login mode: changes need a fresh sign-in, are logged and email
   the other owners, and take effect after 24 h with a cancel (D32, D34).
 - **Infra stays Cloudflare** (review in the plan doc, 2026-10-27): cheapest at every volume, DDoS included, no OS,
@@ -399,7 +398,7 @@ passed the full smoke checklist (2026-10-27)**: signer `hana-id-signer-dev1.test
 `https://hana-id-api-sandbox-dev.tingtc.workers.dev` (personal Cloudflare account: production needs a Hana-owned one),
 apps `s1` (partner client + shared) and `s2` (shared only). Batch B is merged on `develop` and deployed on
 sandbox-dev (2026-10-29; [Batch B status](#batch-b-status-2026-10-28) is the record from before). Setup and deploy commands: `docs/operations.md`. The plan doc's
-Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
+Status section is the summary for humans (an internal document, not in this repository).
 
 **The user's to-dos** (agents never ask for or handle private keys; updated 2026-11-02):
 

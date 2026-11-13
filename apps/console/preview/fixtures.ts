@@ -36,9 +36,9 @@ const idnOrigin = (display: string): string => new URL(display).origin;
 
 export function me(scenario: { multi: boolean; users: boolean; role: 'owner' | 'viewer'; frozen: boolean }): MeAnswer {
   return {
-    user: { id: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@soralabs.example' },
+    user: { id: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@examplelabs.example' },
     memberships: [
-      { orgId: ORG_ID, orgName: 'Sora Labs', status: scenario.frozen ? 'frozen' : 'active', role: scenario.role },
+      { orgId: ORG_ID, orgName: 'Example Labs', status: scenario.frozen ? 'frozen' : 'active', role: scenario.role },
       ...(scenario.multi ? [{ orgId: ORG2_ID, orgName: 'Kestrel Games', status: 'active' as const, role: 'viewer' as const }] : []),
     ],
     features: { users: scenario.users },
@@ -49,7 +49,7 @@ export function me(scenario: { multi: boolean; users: boolean; role: 'owner' | '
 
 export function org(orgId: string, role: 'owner' | 'viewer', frozen: boolean): OrgAnswer {
   if (orgId === ORG2_ID) return { org: { id: ORG2_ID, name: 'Kestrel Games', status: 'active' }, role: 'viewer' };
-  return { org: { id: ORG_ID, name: 'Sora Labs', status: frozen ? 'frozen' : 'active', requiredHd: 'soralabs.example' }, role };
+  return { org: { id: ORG_ID, name: 'Example Labs', status: frozen ? 'frozen' : 'active', requiredHd: 'examplelabs.example' }, role };
 }
 
 export function appDetails(now: number): AppDetail[] {
@@ -200,14 +200,14 @@ export const summaryOf = (a: AppDetail): AppSummary => ({
 export function members(now: number): MembersAnswer {
   return {
     members: [
-      { userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@soralabs.example', role: 'owner', roleSince: now - 60 * D, addedBy: 'hana', addedAt: now - 60 * D, disabled: false },
-      { userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@soralabs.example', role: 'owner', roleSince: now - 44 * D, addedBy: 'usr_Ak3Pz8Qw2n', addedAt: now - 58 * D, disabled: false },
-      { userId: 'usr_Pr4Gh6Tn1s', email: 'priya.raman@soralabs.example', role: 'viewer', roleSince: now - 20 * D, addedBy: 'usr_Ak3Pz8Qw2n', addedAt: now - 20 * D, disabled: false, pendingOwnerFrom: now + 19 * H },
-      { userId: 'usr_Sm9Lk2Vb7q', email: 'sam.okafor@soralabs.example', role: 'viewer', roleSince: now - 33 * D, addedBy: 'usr_Dm7Vx2Kp4r', addedAt: now - 33 * D, disabled: true },
+      { userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@examplelabs.example', role: 'owner', roleSince: now - 60 * D, addedBy: 'hana', addedAt: now - 60 * D, disabled: false },
+      { userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@examplelabs.example', role: 'owner', roleSince: now - 44 * D, addedBy: 'usr_Ak3Pz8Qw2n', addedAt: now - 58 * D, disabled: false },
+      { userId: 'usr_Pr4Gh6Tn1s', email: 'priya.raman@examplelabs.example', role: 'viewer', roleSince: now - 20 * D, addedBy: 'usr_Ak3Pz8Qw2n', addedAt: now - 20 * D, disabled: false, pendingOwnerFrom: now + 19 * H },
+      { userId: 'usr_Sm9Lk2Vb7q', email: 'sam.okafor@examplelabs.example', role: 'viewer', roleSince: now - 33 * D, addedBy: 'usr_Dm7Vx2Kp4r', addedAt: now - 33 * D, disabled: true },
     ],
     invites: [
-      { id: 'inv_Nr5Qz1Wm3', email: 'noor.haddad@soralabs.example', role: 'viewer', createdByKind: 'member', createdBy: 'usr_Ak3Pz8Qw2n', notified: true, createdAt: now - D, expiresAt: now + 6 * D },
-      { id: 'inv_Le8Tx4Kp6', email: 'lee.jung@soralabs.example', role: 'owner', createdByKind: 'hana', createdBy: 'hana', notified: false, createdAt: now - 20 * 60_000, expiresAt: now + 7 * D - 20 * 60_000 },
+      { id: 'inv_Nr5Qz1Wm3', email: 'noor.haddad@examplelabs.example', role: 'viewer', createdByKind: 'member', createdBy: 'usr_Ak3Pz8Qw2n', notified: true, createdAt: now - D, expiresAt: now + 6 * D },
+      { id: 'inv_Le8Tx4Kp6', email: 'lee.jung@examplelabs.example', role: 'owner', createdByKind: 'hana', createdBy: 'hana', notified: false, createdAt: now - 20 * 60_000, expiresAt: now + 7 * D - 20 * 60_000 },
     ],
     grants: [
       { id: 'og_Pr2Hm7Lq4', userId: 'usr_Pr4Gh6Tn1s', grantedByKind: 'member', createdAt: now - 5 * H, notifiedAt: now - 5 * H, ownerFrom: now + 19 * H },
@@ -225,10 +225,10 @@ export function scope(now: number, mine = true) {
         actionNonce: 6,
         allowShared: true,
         clients: [{ provider: 'google', aud: '204871935513-k2v9mq8d0w7hj1n3s6e4c5t0b8a2f9xg.apps.googleusercontent.com' }],
-        owners: [{ kind: 'member', userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@soralabs.example', orgOwner: true }],
+        owners: [{ kind: 'member', userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@examplelabs.example', orgOwner: true }],
         pending: [],
       },
-      drift: { hasDrift: true, missingOnChain: [{ userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@soralabs.example' }], notOrgOwners: [], unknownOnChain: 0 },
+      drift: { hasDrift: true, missingOnChain: [{ userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@examplelabs.example' }], notOrgOwners: [], unknownOnChain: 0 },
       youAreOnChainOwner: false,
       now,
     };
@@ -239,10 +239,10 @@ export function scope(now: number, mine = true) {
       actionNonce: 6,
       allowShared: true,
       clients: [{ provider: 'google', aud: '204871935513-k2v9mq8d0w7hj1n3s6e4c5t0b8a2f9xg.apps.googleusercontent.com' }],
-      owners: [{ kind: 'member', userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@soralabs.example', orgOwner: true }, { kind: 'other_google' }],
-      pending: [{ id: 3, change: { kind: 'SetOwners', owners: [{ kind: 'member', userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@soralabs.example', orgOwner: true }, { kind: 'member', userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@soralabs.example', orgOwner: true }] }, unlockAt: now + 21 * H, executable: false }],
+      owners: [{ kind: 'member', userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@examplelabs.example', orgOwner: true }, { kind: 'other_google' }],
+      pending: [{ id: 3, change: { kind: 'SetOwners', owners: [{ kind: 'member', userId: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@examplelabs.example', orgOwner: true }, { kind: 'member', userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@examplelabs.example', orgOwner: true }] }, unlockAt: now + 21 * H, executable: false }],
     },
-    drift: { hasDrift: true, missingOnChain: [{ userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@soralabs.example' }], notOrgOwners: [], unknownOnChain: 1 },
+    drift: { hasDrift: true, missingOnChain: [{ userId: 'usr_Dm7Vx2Kp4r', email: 'dmitri.volkov@examplelabs.example' }], notOrgOwners: [], unknownOnChain: 1 },
     youAreOnChainOwner: true,
     now,
   };
@@ -303,7 +303,7 @@ export function statementView(s: StatementMeta): StatementView {
   return {
     title: `Journear Passport usage statement ${s.month}`,
     header: [
-      ['Organisation', `Sora Labs (${ORG_ID})`],
+      ['Organisation', `Example Labs (${ORG_ID})`],
       ['Month', s.month],
       ['Network', 'testnet'],
       ['Covers events received up to', new Date(s.asOf).toISOString()],
@@ -386,7 +386,7 @@ export function userDetail(now: number, userId: string) {
 }
 
 export function audit(now: number): AuditAnswer {
-  const c = (seq: number, at: number, action: string, extra: Record<string, unknown>) => ({ source: 'console' as const, seq, at, actorKind: 'member' as const, actorId: 'usr_Ak3Pz8Qw2n', actorEmail: 'aiko.tanaka@soralabs.example', requestId: `${hex(`rq${seq}`, 16)}-SIN`, outcome: 'ok' as const, action, details: {}, ...extra });
+  const c = (seq: number, at: number, action: string, extra: Record<string, unknown>) => ({ source: 'console' as const, seq, at, actorKind: 'member' as const, actorId: 'usr_Ak3Pz8Qw2n', actorEmail: 'aiko.tanaka@examplelabs.example', requestId: `${hex(`rq${seq}`, 16)}-SIN`, outcome: 'ok' as const, action, details: {}, ...extra });
   return {
     entries: [
       c(212, now - 9 * 60_000, 'step_up.confirmed', { appId: 'app_Lm4Pq9Zs2v', details: { kind: 'origin.add' } }),

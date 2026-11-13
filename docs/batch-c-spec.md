@@ -14,7 +14,7 @@ history is in git.
 
 This is the source of truth for batch C. If the code and this spec disagree, fix the code or raise it; don't silently
 diverge. It amends `docs/batch-a-spec.md`, `docs/batch-a2-shared-client.md` and `docs/batch-b-spec.md` where it says
-so. Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
+so. Plan doc: an internal planning document (not in this repository).
 
 ## Confirmed by the user (2026-10-29)
 
@@ -77,8 +77,8 @@ so. Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
   code flow with PKCE, hashed server sessions, `__Host-` cookies, a fresh sign-in bound to each security-critical
   change. Staff: Cloudflare Access (GitHub team in `Hana-Technology`, org 2FA; exact-email Google rules as fallback),
   verified by the admin Worker on every request.
-- **Billing on hold (D31).** No Stripe, plans or invoicing. Sodax is billed under its service contract from the
-  monthly statement.
+- **Billing on hold (D31).** No Stripe, plans or invoicing. The first partner is billed under a service contract from
+  the monthly statement.
 - **No contract change. No user address change** (§Address impact).
 
 ## Goal

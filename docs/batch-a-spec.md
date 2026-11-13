@@ -1,7 +1,7 @@
 # Batch A spec — isolation (contract + API + environments)
 
 Source of truth for batch A. If code and this spec disagree, fix the code or raise it; don't silently diverge.
-Plan doc (Claude Docs): https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
+Plan doc: an internal planning document (not in this repository).
 
 ## Goal
 

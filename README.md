@@ -66,8 +66,8 @@ The order below uses Layover's wait: collect Arrival first, then do steps 4 to 7
    mouse (Approve ignores clicks until then and for its first second) and click **Approve**. See: "Arrival stamped on
    NEAR testnet. Your NEAR account was created for it. You paid no gas." with **View the transaction**; the Arrival
    stamp inked with the date and a **No gas** mark; Layover counting down ("In 2 min …"); Balance still "0 NEAR".
-4. Fare paid. Do: **Collect**, **Approve**. See: "Sponsored stamped on NEAR testnet. You paid no gas." (the notice
-   uses the stamp's id; the slot says "Fare paid") and the stamp with **No gas**. The contract stores it only because
+4. Fare paid. Do: **Collect**, **Approve**. See: "Fare paid stamped on NEAR testnet. You paid no gas." and the stamp
+   with **No gas**. The contract stores it only because
    the transaction's signer (the relay) is not the caller (you).
 5. Signature (two approvals in one window). Do: click **Collect** on Signature ("Two approvals: sign a message, then
    send it. The contract checks it on chain."). The slot says "Approval 1 of 2: sign the message…" and the window,

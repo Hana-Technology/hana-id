@@ -54,7 +54,7 @@ export const SENT_FOR_MS = 3 * 60_000;
 const CONFIRM_TRIES = 4;
 const CONFIRM_GAP_MS = 1500;
 
-const STAMP_TITLES: Record<StampId, string> = { arrival: 'Arrival', sponsored: 'Sponsored', own_fare: 'Own fare', signature: 'Signature', postcard: 'Postcard', layover: 'Layover' };
+const STAMP_TITLES: Record<StampId, string> = { arrival: 'Arrival', sponsored: 'Fare paid', own_fare: 'Own fare', signature: 'Signature', postcard: 'Postcard', layover: 'Layover' };
 
 export interface StampsApp {
   client: StampsClient | null;

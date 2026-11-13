@@ -17,8 +17,12 @@ export const DEFAULT_ENV = 'sandbox-dev';
 
 /** NEAR testnet's explorer (NearBlocks): `<explorer>/address/<id>`, `<explorer>/txns/<hash>`. */
 export const NEAR_TESTNET_EXPLORER = 'https://testnet.nearblocks.io';
-/** A public NEAR testnet faucet, linked from "Own fare" while the account holds too little NEAR for the fee. */
-export const NEAR_TESTNET_FAUCET = 'https://near-faucet.io/';
+/**
+ * A public NEAR testnet faucet, linked from "Own fare" while the account holds too little NEAR for the fee: the NEAR
+ * docs' own (D807), which funds a 64-hex implicit account (5 NEAR, no sign-up). near-faucet.io, linked before, takes
+ * only `*.testnet` names and EVM addresses, so it refused every Journear Passport account.
+ */
+export const NEAR_TESTNET_FAUCET = 'https://docs.near.org/getting-started/faucet';
 /** Gas on a `collect` call when the manifest sets no relay cap: sandbox-dev's cap (`near.relay.maxGasTgas`, 10). */
 export const DEFAULT_COLLECT_TGAS = 10;
 

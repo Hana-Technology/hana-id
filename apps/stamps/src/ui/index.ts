@@ -102,6 +102,10 @@ interface Slot {
   badge: HTMLSpanElement;
   text: HTMLParagraphElement;
   note: HTMLParagraphElement;
+  /** A locked stamp's line of what to do, its link and its Copy button (D807). */
+  detail: HTMLParagraphElement;
+  help: HTMLAnchorElement;
+  copy: HTMLButtonElement;
   field: HTMLDivElement | null;
   input: HTMLInputElement | null;
   count: HTMLSpanElement | null;
@@ -177,7 +181,9 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
   const fullRow = h('dd', { class: 'pp-fullrow' }, fullAccount);
   const copyBtn = h('button', { type: 'button', class: 'jp-btn jp-btn-ghost jp-btn-sm pp-btn', 'data-action': 'copy-account' }, icon(ICON_COPY, 'ic'), UI_TEXT.copy);
   const fullBtn = h('button', { type: 'button', class: 'jp-btn jp-btn-ghost jp-btn-sm pp-btn', 'data-action': 'show-full', 'aria-expanded': 'false', 'aria-controls': `${prefix}-full` }, UI_TEXT.showFull);
-  const balance = h('dd', { class: 'pp-balance', 'data-role': 'balance' });
+  const balanceValue = h('span', {});
+  const balanceLink = h('a', { class: 'pp-link pp-balance-link', 'data-role': 'balance-link' });
+  const balance = h('dd', { class: 'pp-balance', 'data-role': 'balance' }, balanceValue);
   const balanceDt = h('dt', {}, UI_TEXT.balance);
   const stampCount = h('dd', { 'data-role': 'count' });
   const accountActs = h('span', { class: 'pp-acts' }, copyBtn, fullBtn);
@@ -307,7 +313,13 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
 
   function collect(id: StampId): void {
     const slot = slots.get(id);
-    if (!slot || !view || view.busy) return;
+    if (!slot || !view) return;
+    // A stamp's own next step (D807) is the busy slot's: it is offered while the page is busy.
+    if (slot.status === 'continue') {
+      if (view.mode === 'mine') handlers.collect(id);
+      return;
+    }
+    if (view.busy) return;
     if (slot.status !== 'available' && slot.status !== 'failed') return;
     if (id === 'postcard') {
       const note = (slot.input?.value ?? '').trim();
@@ -335,6 +347,9 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
     const buttonLabel = h('span', {}, UI_TEXT.collect);
     const button = h('button', { type: 'button', class: 'jp-btn jp-btn-primary pp-btn pp-collect', 'data-action': 'collect' }, h('span', { class: 'spin', 'aria-hidden': 'true' }), buttonLabel);
     const tx = h('a', { class: 'pp-link pp-tx' }, UI_TEXT.viewTx);
+    const detail = h('p', { class: 'pp-detail' });
+    const help = h('a', { class: 'pp-link pp-help', 'data-role': 'stamp-link' });
+    const copy = h('button', { type: 'button', class: 'jp-btn jp-btn-ghost jp-btn-sm pp-btn pp-slotcopy', 'data-action': 'copy-account', 'aria-label': `${UI_TEXT.copy} your full account id` }, icon(ICON_COPY, 'ic'), UI_TEXT.copyAccount);
     let field: HTMLDivElement | null = null;
     let input: HTMLInputElement | null = null;
     let count: HTMLSpanElement | null = null;
@@ -364,7 +379,7 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
     }
     const cap = h('div', { class: 'pp-cap' }, title);
     const li = h('li', { class: 'pp-slot', 'data-stamp': id }, art, cap);
-    return { id, li, art, outline, stamp: null, stampKey: '', chop, cap, title, meta, metaDate, badge, text, note, field, input, count, button, buttonLabel, tx, status: null };
+    return { id, li, art, outline, stamp: null, stampKey: '', chop, cap, title, meta, metaDate, badge, text, note, detail, help, copy, field, input, count, button, buttonLabel, tx, status: null };
   }
 
   function renderNoteState(slot: Slot): void {
@@ -392,6 +407,9 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
     let showButton = false;
     let showTx = false;
     let showChop = false;
+    let showDetail = false;
+    let showHelp = false;
+    let showCopy = false;
 
     if (state.status === 'collected') {
       const key = String(state.atMs);
@@ -425,7 +443,14 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
       } else if (state.status === 'locked') {
         setText(slot.text, safeText(state.reason, 200));
         showText = slot.text.textContent !== '';
-      } else if (state.status === 'working') {
+        if (typeof state.detail === 'string' && state.detail !== '') {
+          setText(slot.detail, safeText(state.detail, 300));
+          showDetail = true;
+        }
+        showHelp = setLink(slot.help, state.href, base(), origin());
+        if (showHelp) setText(slot.help, safeText(state.hrefLabel || 'Open ↗', 60));
+        showCopy = state.copyAccount === true && typeof view?.accountId === 'string' && view.accountId !== '';
+      } else if (state.status === 'working' || state.status === 'continue') {
         setText(slot.text, safeText(state.stage, 200));
         showText = true;
         showButton = true;
@@ -434,22 +459,32 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
         showText = true;
         showButton = true;
       }
-      showField = slot.id === 'postcard' && showButton;
+      // The postcard's note is sent with its first step: a step to continue needs no field.
+      showField = slot.id === 'postcard' && showButton && state.status !== 'continue';
       setAttr(slot.text, 'role', state.status === 'failed' ? 'alert' : null);
-      const word = state.status === 'failed' ? UI_TEXT.retry : state.status === 'working' ? UI_TEXT.working : slot.id === 'postcard' ? UI_TEXT.collectPostcard : UI_TEXT.collect;
+      const word =
+        state.status === 'failed'
+          ? UI_TEXT.retry
+          : state.status === 'working'
+            ? UI_TEXT.working
+            : state.status === 'continue'
+              ? safeText(state.action, 40) || UI_TEXT.continue
+              : slot.id === 'postcard'
+                ? UI_TEXT.collectPostcard
+                : UI_TEXT.collect;
       setText(slot.buttonLabel, word);
-      if (slot.id !== 'postcard') setDisabled(slot.button, busy || state.status === 'working');
+      if (slot.id !== 'postcard' || state.status === 'continue') setDisabled(slot.button, state.status === 'continue' ? false : busy || state.status === 'working');
       // The accessible name starts with the visible words, then says which stamp.
       setAttr(slot.button, 'aria-label', word.toLowerCase().includes(label.title.toLowerCase()) ? null : `${word} ${label.title}`);
     }
 
     place(slot.art, [state.status === 'collected' ? slot.stamp : slot.outline, showChop && slot.chop]);
-    place(slot.cap, [slot.title, showMeta && slot.meta, showText && slot.text, showNote && slot.note, showField && slot.field, showButton && slot.button, showTx && slot.tx]);
+    place(slot.cap, [slot.title, showMeta && slot.meta, showText && slot.text, showDetail && slot.detail, showNote && slot.note, showField && slot.field, showButton && slot.button, showHelp && slot.help, showCopy && slot.copy, showTx && slot.tx]);
     if (showField) renderNoteState(slot);
 
     if (changed && view) {
       const word = UI_TEXT.status[state.status];
-      setText(live, `${label.title}: ${word}${state.status === 'failed' || state.status === 'working' ? `. ${slot.text.textContent ?? ''}` : ''}`);
+      setText(live, `${label.title}: ${word}${state.status === 'failed' || state.status === 'working' || state.status === 'continue' ? `. ${slot.text.textContent ?? ''}` : ''}`);
     }
   }
 
@@ -487,7 +522,10 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
     const long = id !== shortAccount(id);
     place(accountActs, [id !== '' && copyBtn, long && fullBtn]);
     const hasBalance = mine && typeof view.balanceNear === 'string' && view.balanceNear !== '';
-    if (hasBalance) setText(balance, `${safeText(view.balanceNear, 40)} NEAR`);
+    if (hasBalance) setText(balanceValue, `${safeText(view.balanceNear, 40)} NEAR`);
+    const hasBalanceLink = hasBalance && setLink(balanceLink, view.balanceLink?.href, base(), origin());
+    if (hasBalanceLink) setText(balanceLink, safeText(view.balanceLink?.label || 'Open ↗', 60));
+    place(balance, [balanceValue, hasBalanceLink && balanceLink]);
     const collected = view.stamps.filter((s) => s.status === 'collected').length;
     setText(stampCount, UI_TEXT.collectedOf(collected));
     setText(stampsCount, `${collected} / 6`);

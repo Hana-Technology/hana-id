@@ -7,7 +7,7 @@ import { base64Decode, decodeNearDelegateAction, decodeNearTransaction } from '@
 import { type CollectorDeps, PREP_MAX_AGE_MS, STAGES, createCollector, newRpc, sendOwnFare } from '../src/collector.ts';
 import { plainMessage } from '../src/messages.ts';
 import { CONFIG, NEAR_ACCOUNT, STAMPS } from './fixtures.ts';
-import { FakeChain, TX_HASH, fakeNear, hanaError } from './fakes.ts';
+import { FakeChain, SIG64, TX_HASH, fakeNear, hanaError } from './fakes.ts';
 
 function setup(o: { key?: { nonce: number } | null; balance?: string } = {}) {
   let t = 1_800_000_000_000;
@@ -238,6 +238,123 @@ describe('signature', () => {
     const e = await s.collector.collect({ accountId: 'alice.testnet', stamp: 'signature' }, s.stage).catch((x: unknown) => x);
     expect(plainMessage(e, 'collect')).toMatch(/Only an account whose name is its own key/u);
     expect(s.near.signMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('signature: two approvals, back to back in one window (D807)', () => {
+  /** A signMessage held open until the test answers it (the user reading the first approval). */
+  function holdSignMessage(s: ReturnType<typeof setup>) {
+    let answer!: () => void;
+    s.near.signMessage.mockImplementationOnce(
+      (p) =>
+        new Promise((resolve) => {
+          answer = () => resolve({ accountId: NEAR_ACCOUNT, publicKey: 'ed25519:x', signature: SIG64 });
+          void p;
+        }),
+    );
+    return () => answer();
+  }
+  const reads = (s: ReturnType<typeof setup>) => s.chain.count((c) => c.method === 'query' || c.method === 'block');
+  const proofOf = (s: ReturnType<typeof setup>, i: number) => decodeArgs((decodeNearDelegateAction(s.near.signDelegateAction.mock.calls[i]![0].delegateAction as Uint8Array).actions[0] as { args: Uint8Array }).args).proof;
+
+  async function arrived() {
+    const s = setup();
+    await s.collector.refresh(NEAR_ACCOUNT);
+    await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'arrival' }, s.stage);
+    await s.collector.refresh(NEAR_ACCOUNT);
+    s.near.signDelegateAction.mockClear();
+    s.stages.length = 0;
+    return s;
+  }
+
+  it('with a fresh read: the second request goes out the moment the first resolves, with no read in between', async () => {
+    const s = await arrived();
+    const answer = holdSignMessage(s);
+    const p = s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'signature' }, s.stage);
+    expect(s.near.signMessage).toHaveBeenCalledTimes(1);
+    const before = reads(s);
+    answer();
+    // Microtasks only: no timer, no network.
+    for (let i = 0; i < 6 && s.near.signDelegateAction.mock.calls.length === 0; i++) await Promise.resolve();
+    expect(s.near.signDelegateAction).toHaveBeenCalledTimes(1);
+    expect(reads(s)).toBe(before);
+    expect(s.client.prepareApproval).not.toHaveBeenCalled();
+    expect(s.slept).toEqual([]);
+    await p;
+    expect(s.stages).toEqual([STAGES.signMessage, STAGES.sendProof, STAGES.relaying]);
+    expect(s.collector.hasProof(NEAR_ACCOUNT)).toBe(false);
+  });
+
+  it('without a fresh read: the read runs while the user approves the first, so the second still goes out at once', async () => {
+    const s = await arrived();
+    s.advance(PREP_MAX_AGE_MS + 1);
+    const answer = holdSignMessage(s);
+    const before = reads(s);
+    const p = s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'signature' }, s.stage);
+    // The first signing call is made in the click, before the read answers.
+    expect(s.near.signMessage).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(s.collector.latest(NEAR_ACCOUNT)?.at).toBeGreaterThan(1_800_000_000_000 + PREP_MAX_AGE_MS));
+    const during = reads(s);
+    expect(during).toBeGreaterThan(before);
+    answer();
+    for (let i = 0; i < 6 && s.near.signDelegateAction.mock.calls.length === 0; i++) await Promise.resolve();
+    expect(s.near.signDelegateAction).toHaveBeenCalledTimes(1);
+    expect(reads(s)).toBe(during);
+    expect(s.client.prepareApproval).not.toHaveBeenCalled();
+    await p;
+    expect(s.stages).not.toContain(STAGES.reading);
+  });
+
+  it('the second approval declined (or its window closed): the signed message is kept, and the next click sends only the second, in the click', async () => {
+    const s = await arrived();
+    s.near.signDelegateAction.mockRejectedValueOnce(hanaError(4001));
+    await expect(s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'signature' }, s.stage)).rejects.toMatchObject({ code: 4001 });
+    expect(s.near.signMessage).toHaveBeenCalledTimes(1);
+    expect(s.collector.hasProof(NEAR_ACCOUNT)).toBe(true);
+    expect(s.near.relay).toHaveBeenCalledTimes(1); // the Arrival's only
+    s.stages.length = 0;
+    const p = s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'signature' }, s.stage);
+    // A user gesture: the second request is made synchronously (a fresh read), opening its own window.
+    expect(s.near.signDelegateAction).toHaveBeenCalledTimes(2);
+    expect(s.near.signMessage).toHaveBeenCalledTimes(1);
+    expect(await p).toMatchObject({ status: 'done', txHash: TX_HASH });
+    expect(proofOf(s, 1)).toEqual(proofOf(s, 0));
+    expect(s.stages).toEqual([STAGES.sendProof, STAGES.relaying]);
+    expect(s.collector.hasProof(NEAR_ACCOUNT)).toBe(false);
+    expect(s.chain.stamps.passports.get(NEAR_ACCOUNT)?.map((x) => x.stamp)).toEqual(['arrival', 'signature']);
+  });
+
+  it('a kept proof without a fresh read: prepareApproval in the click (the window opens), then the read, then the second request', async () => {
+    const s = await arrived();
+    s.near.signDelegateAction.mockRejectedValueOnce(hanaError(4001));
+    await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'signature' }, s.stage).catch(() => {});
+    s.advance(PREP_MAX_AGE_MS + 1);
+    const p = s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'signature' }, s.stage);
+    expect(s.client.prepareApproval).toHaveBeenCalledTimes(1);
+    expect(s.near.signDelegateAction).toHaveBeenCalledTimes(1);
+    await p;
+    expect(s.near.signDelegateAction).toHaveBeenCalledTimes(2);
+    expect(s.near.signMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('the contract refusing the proof forgets it (the next click signs a new message); sign-out forgets it too', async () => {
+    const s = await arrived();
+    s.near.relay.mockRejectedValueOnce(hanaError(4100, { status: 422, reason: 'contract_rejected' }, 'Smart contract panicked: ERR_BAD_PROOF'));
+    await expect(s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'signature' }, s.stage)).rejects.toBeTruthy();
+    expect(s.collector.hasProof(NEAR_ACCOUNT)).toBe(false);
+    s.near.signDelegateAction.mockRejectedValueOnce(hanaError(4001));
+    await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'signature' }, s.stage).catch(() => {});
+    expect(s.near.signMessage).toHaveBeenCalledTimes(2);
+    expect(s.collector.hasProof(NEAR_ACCOUNT)).toBe(true);
+    s.collector.reset();
+    expect(s.collector.hasProof(NEAR_ACCOUNT)).toBe(false);
+  });
+
+  it('a relay that may still land (504 with its transaction) forgets the proof: the stamp is sent', async () => {
+    const s = await arrived();
+    s.near.relay.mockRejectedValueOnce(hanaError('api_unavailable', { status: 504, reason: 'timeout', transactionHash: TX_HASH }));
+    expect(await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'signature' }, s.stage)).toEqual({ status: 'sent', txHash: TX_HASH });
+    expect(s.collector.hasProof(NEAR_ACCOUNT)).toBe(false);
   });
 });
 

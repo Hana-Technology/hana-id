@@ -151,6 +151,62 @@ describe('the open passport', () => {
     expect(handlers.collect.mock.calls).toEqual([['own_fare']]);
   });
 
+  it('continue (D807): the step in plain words and an enabled primary button with its label, even while busy; the click calls collect(id)', () => {
+    ui.update(view({ busy: true }));
+    ui.update(view({ busy: true }, { signature: { id: 'signature', status: 'continue', stage: 'Step 2 of 2: send your signed message to the contract.', action: 'Continue' } }));
+    const c = slot('signature');
+    expect(c.getAttribute('data-status')).toBe('continue');
+    expect(c.getAttribute('aria-busy')).toBeNull();
+    expect(c.textContent).toContain('Step 2 of 2: send your signed message to the contract.');
+    const b = c.querySelector<HTMLButtonElement>('[data-action="collect"]')!;
+    expect(b.disabled).toBe(false);
+    expect(b.className).toContain('jp-btn-primary');
+    expect(b.textContent).toContain('Continue');
+    expect(b.getAttribute('aria-label')).toBe('Continue Signature');
+    // Every other collect stays disabled while busy.
+    expect(slot('sponsored').querySelector<HTMLButtonElement>('[data-action="collect"]')!.disabled).toBe(true);
+    click(b);
+    expect(handlers.collect.mock.calls).toEqual([['signature']]);
+    expect($('[data-role="live"]')!.textContent).toContain('Signature: needs your click to continue. Step 2 of 2');
+  });
+
+  it('continue on the postcard hides its note field (the note went with the first step); public mode never shows it', () => {
+    ui.update(view({}, { postcard: { id: 'postcard', status: 'continue', stage: 'Your approval is ready.', action: 'Continue' } }));
+    expect(slot('postcard').querySelector('[data-field="note"]')).toBeNull();
+    expect(slot('postcard').querySelector<HTMLButtonElement>('[data-action="collect"]')!.disabled).toBe(false);
+    ui.update(view({ mode: 'public' }, { postcard: { id: 'postcard', status: 'continue', stage: 'x', action: 'Continue' } }));
+    expect(slot('postcard').querySelector('[data-action="collect"]')).toBeNull();
+  });
+
+  it('locked with help (D807): the reason, a line of what to do, the link in a new tab, and Copy (the copy-account action)', () => {
+    const own: StampState = { id: 'own_fare', status: 'locked', reason: 'Needs testnet NEAR', detail: 'Send testnet NEAR to your account.', href: 'https://faucet.example/', hrefLabel: 'Get testnet NEAR ↗', copyAccount: true };
+    ui.update(view({}, { own_fare: own }));
+    const o = slot('own_fare');
+    expect(o.textContent).toContain('Needs testnet NEAR');
+    expect(o.querySelector('.pp-detail')!.textContent).toBe('Send testnet NEAR to your account.');
+    const a = o.querySelector<HTMLAnchorElement>('[data-role="stamp-link"]')!;
+    expect([a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel'), a.textContent]).toEqual(['https://faucet.example/', '_blank', 'noopener noreferrer', 'Get testnet NEAR ↗']);
+    expect(o.querySelector('[data-action="collect"]')).toBeNull();
+    click(o.querySelector('[data-action="copy-account"]'));
+    expect(handlers.copyAccount).toHaveBeenCalledTimes(1);
+    // A link that isn't http(s) is dropped; without copyAccount, no Copy; a plain locked slot has neither.
+    ui.update(view({}, { own_fare: { ...own, href: 'javascript:alert(1)', copyAccount: false } }));
+    expect(slot('own_fare').querySelector('[data-role="stamp-link"]')).toBeNull();
+    expect(slot('own_fare').querySelector('[data-action="copy-account"]')).toBeNull();
+    expect(slot('layover').querySelector('.pp-detail, [data-role="stamp-link"]')).toBeNull();
+  });
+
+  it('the balance link (D807): beside the balance in mine mode, http(s) only', () => {
+    ui.update(view({ balanceNear: '0', balanceLink: { href: 'https://faucet.example/', label: 'Get testnet NEAR ↗' } }));
+    const a = $<HTMLAnchorElement>('[data-role="balance-link"]')!;
+    expect(a.getAttribute('href')).toBe('https://faucet.example/');
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect($('[data-role="balance"]')!.textContent).toBe('0 NEARGet testnet NEAR ↗');
+    ui.update(view({ balanceNear: '0', balanceLink: { href: 'data:text/html,x', label: 'x' } }));
+    expect($('[data-role="balance-link"]')).toBeNull();
+    expect($('[data-role="balance"]')!.textContent).toBe('0 NEAR');
+  });
+
   it('busy disables every collect control', () => {
     ui.update(view({ busy: true }));
     for (const b of $$('[data-action="collect"]')) expect((b as HTMLButtonElement).disabled).toBe(true);

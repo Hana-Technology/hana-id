@@ -21,7 +21,9 @@ The stamps site (`apps/stamps`, D798–D802): `tests/stamps.spec.ts` signs in by
 Postcard and Signature through the mocked relayer routes and sees them on the public passport, with no CSP violation
 and nothing of another chain on the page. The mocked chain serves the stamps contract (`src/server/stamps-contract.ts`:
 `get_passport`, `recent`, `totals`, `catalog`, every `collect` rule, the signature's NEP-413 proof checked with ed25519
-as on chain) and the test-only `e2e_stamps_collect` the relayer routes call.
+as on chain) and the test-only `e2e_stamps_collect` the relayer routes call. Signature's two approvals land in one
+window with no launcher; a second test holds the vault's key check, closes the window after the first approval and
+collects through the slot's Continue (D807).
 
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown

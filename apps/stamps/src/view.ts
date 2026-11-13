@@ -15,7 +15,7 @@ export const LOCKED = {
   signIn: 'Sign in to collect',
   reading: 'Reading your passport…',
   arrivalFirst: 'Collect Arrival first',
-  needsNear: 'Needs testnet NEAR',
+  needsNear: 'The one stamp that needs your own testnet NEAR',
   checkingBalance: 'Checking your balance…',
   notImplicit: 'Needs a Journear Passport account',
   notCollected: 'Not collected yet',
@@ -23,14 +23,31 @@ export const LOCKED = {
 
 export const SENT_STAGE = 'Sent, still confirming on NEAR testnet…';
 
+/**
+ * D807: a step that needs the user's click: the signature's second approval (its message is signed and kept), or any
+ * stamp's approval the browser wouldn't open by itself (it waits on the SDK's launcher).
+ */
+export const CONTINUE = {
+  signature: 'Step 2 of 2: send your signed message to the contract.',
+  waiting: 'Your approval is ready. Continue opens it in the Journear Passport window.',
+  action: 'Continue',
+} as const;
+
+/** D807: Own fare's locked slot, which says how to unlock it, with the link and Copy (the full account id). */
+export const OWN_FARE_HELP = {
+  detail: 'Copy your account id, paste it into NEAR’s faucet (free, no sign-up), then come back: this unlocks when the NEAR arrives.',
+  hrefLabel: 'Get testnet NEAR ↗',
+  balanceLabel: 'Get testnet NEAR ↗',
+} as const;
+
 /** The notice for a NEAR account id this site can't show or link (neither a 64-hex implicit account nor `.testnet`). */
 export const UNVIEWABLE_NOTICE = 'This NEAR account id isn’t one this site can show. Sign out and in again; if it stays, tell the Journear team.';
 
 /**
- * The faucet's notice, shown while Own fare waits for testnet NEAR and nothing else is said (the UI's locked state
- * carries a reason only, so the link goes here).
+ * The faucet's notice, shown while Own fare waits for testnet NEAR and nothing else is said. The slot itself carries
+ * the link, the steps and Copy too (D807), since another notice is usually up.
  */
-export const FAUCET_NOTICE = 'Own fare is a transaction you pay for yourself: it needs 0.01 testnet NEAR in your account. Get some free from a faucet (paste your account id), then come back.';
+export const FAUCET_NOTICE = 'Own fare is a transaction you pay for yourself: it needs 0.01 testnet NEAR in your account. Get some free from NEAR’s faucet (paste your full account id), then come back.';
 
 /** "In 1 min 40 s" / "In 45 s". */
 export function countdownText(ms: number): string {
@@ -53,7 +70,9 @@ export interface ViewInput {
   txs: ReadonlyMap<StampId, string>;
   /** Stamps sent but not confirmed (D788). */
   sent: ReadonlyMap<StampId, string>;
-  working: { id: StampId; stage: string } | null;
+  working: { id: StampId; stage: string; waiting?: boolean } | null;
+  /** Stamps whose first step is done and kept (the signature's signed message, D807): the slot offers the second. */
+  step2: ReadonlySet<StampId>;
   failed: ReadonlyMap<StampId, string>;
   /** Stamps to mark `fresh` in this view (once). */
   fresh: ReadonlySet<StampId>;
@@ -86,7 +105,10 @@ function stampState(id: StampId, v: ViewInput, held: Map<StampId, ChainStamp>, n
   }
   if (v.mode === 'cover') return { id, status: 'locked', reason: LOCKED.signIn };
   if (v.mode === 'public') return { id, status: 'locked', reason: v.passport === undefined ? LOCKED.reading : LOCKED.notCollected };
-  if (v.working?.id === id) return { id, status: 'working', stage: v.working.stage };
+  if (v.working?.id === id) {
+    if (v.working.waiting === true) return { id, status: 'continue', stage: v.step2.has(id) ? CONTINUE.signature : CONTINUE.waiting, action: CONTINUE.action };
+    return { id, status: 'working', stage: v.working.stage };
+  }
   if (v.sent.has(id)) return { id, status: 'working', stage: SENT_STAGE };
   if (v.passport === undefined && v.local.size === 0) return { id, status: 'locked', reason: LOCKED.reading };
   const failed = v.failed.get(id);
@@ -98,12 +120,16 @@ function stampState(id: StampId, v: ViewInput, held: Map<StampId, ChainStamp>, n
     case 'own_fare': {
       if (v.balance === null) return { id, status: 'locked', reason: LOCKED.checkingBalance };
       if (!v.balance.activated || v.balance.yocto < OWN_FARE_MIN_YOCTO) {
-        return { id, status: 'locked', reason: LOCKED.needsNear };
+        // Shown in the slot itself (D807), whatever notice is up: what to do, the link, Copy for the full id.
+        return { id, status: 'locked', reason: LOCKED.needsNear, detail: OWN_FARE_HELP.detail, ...(v.faucet !== null ? { href: v.faucet, hrefLabel: OWN_FARE_HELP.hrefLabel } : {}), copyAccount: true };
       }
       return available;
     }
     case 'signature':
-      return v.accountId !== null && isImplicitAccount(v.accountId) ? available : { id, status: 'locked', reason: LOCKED.notImplicit };
+      if (v.accountId === null || !isImplicitAccount(v.accountId)) return { id, status: 'locked', reason: LOCKED.notImplicit };
+      // The message is signed (D807): the slot offers the second step (a failure says what went wrong, and its Try
+      // again also sends only the second step).
+      return v.step2.has(id) && failed === undefined ? { id, status: 'continue', stage: CONTINUE.signature, action: CONTINUE.action } : available;
     case 'layover': {
       const left = arrival.atMs + LAYOVER_MS + LAYOVER_MARGIN_MS - now;
       return left > 0 ? { id, status: 'locked', reason: countdownText(left) } : available;
@@ -111,6 +137,11 @@ function stampState(id: StampId, v: ViewInput, held: Map<StampId, ChainStamp>, n
     default:
       return available;
   }
+}
+
+/** Whether the view shows Own fare locked for want of testnet NEAR (the page then reads the balance more often). */
+export function ownFareNeedsNear(view: PassportView): boolean {
+  return view.mode === 'mine' && view.stamps.some((s) => s.id === 'own_fare' && s.status === 'locked' && s.reason === LOCKED.needsNear);
 }
 
 /** Whether the view holds a running layover countdown (the page then renders every second). */
@@ -136,11 +167,14 @@ export function buildView(v: ViewInput, now: number): PassportView {
     // and the page says so instead of failing to render.
     if (isViewableAccount(v.accountId)) view.shareUrl = `${v.origin}${passportPath(v.accountId)}`;
   }
-  if (v.mode === 'mine' && v.balance !== null) view.balanceNear = formatNear(v.balance.yocto);
+  if (v.mode === 'mine' && v.balance !== null) {
+    view.balanceNear = formatNear(v.balance.yocto);
+    if (v.faucet !== null) view.balanceLink = { href: v.faucet, label: OWN_FARE_HELP.balanceLabel };
+  }
   if (v.totals) view.totals = { ...v.totals };
   if (v.mode !== 'cover' && v.accountId !== null && !isViewableAccount(v.accountId)) view.notice = { kind: 'error', text: UNVIEWABLE_NOTICE };
   else if (v.notice) view.notice = { ...v.notice };
-  else if (v.mode === 'mine' && v.faucet !== null && view.stamps.some((s) => s.id === 'own_fare' && s.status === 'locked' && s.reason === LOCKED.needsNear)) {
+  else if (v.mode === 'mine' && v.faucet !== null && ownFareNeedsNear(view)) {
     view.notice = { kind: 'info', text: FAUCET_NOTICE, href: v.faucet, hrefLabel: 'Get testnet NEAR' };
   }
   if (v.busy) view.busy = true;

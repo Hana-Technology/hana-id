@@ -6,7 +6,7 @@
 // deployed one (src/build.ts STAMPS_CONFIG), so its app has a fixed key (STAMPS_PK).
 import { type Page, type TestInfo } from '@playwright/test';
 import { base64Decode, decodeNearSignedDelegateAction } from '@hana-id/core';
-import { API_URL, E2E_STAMPS, ISSUER_URL, NEAR_RPC, STAMPS_ORIGIN, STAMPS_PK, VAULT_ORIGIN } from '../src/stack.ts';
+import { API_URL, E2E_STAMPS, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, STAMPS_ORIGIN, STAMPS_PK, VAULT_ORIGIN } from '../src/stack.ts';
 import { approve, clickClosing, clickUntilTaken, expect, newApp, test, walletDirectory } from './fixtures.ts';
 
 /** Records every CSP violation on the site's own document (the page CSP must allow everything the page does). */
@@ -20,6 +20,37 @@ async function recordCspViolations(page: Page): Promise<void> {
 }
 
 const cspViolations = (page: Page): Promise<string[]> => page.evaluate(() => (window as any).__cspViolations as string[]);
+
+/**
+ * Records every status the Signature slot shows and every notice text (D807), so a test can say the SDK's launcher
+ * fallback was never needed: the slot never asked for a click to continue and no notice pointed at the launcher.
+ */
+async function recordSlotStates(page: Page): Promise<void> {
+  await page.addInitScript((origin) => {
+    if (location.origin !== origin) return;
+    const seen: string[] = [];
+    (window as any).__seen = seen;
+    const note = () => {
+      const sig = document.querySelector('[data-stamp="signature"]');
+      if (sig) seen.push(`signature:${sig.getAttribute('data-status')}`);
+      const n = document.querySelector('[data-role="notice"]');
+      if (n && !n.hasAttribute('hidden')) seen.push(`notice:${n.textContent ?? ''}`);
+    };
+    new MutationObserver(note).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  }, STAMPS_ORIGIN);
+}
+
+const seenStates = (page: Page): Promise<string[]> => page.evaluate(() => (window as any).__seen as string[]);
+
+/** Signs in by email on the stamps page (the window opens from the click) and returns the account. */
+async function signIn(page: Page, info: TestInfo): Promise<string> {
+  const loginP = page.waitForEvent('popup');
+  await page.locator('[data-action="sign-in"]').click();
+  await emailLogin(await loginP, address(info));
+  await expect(page.locator('[data-mode="mine"]')).toBeVisible();
+  const share = (await page.locator('[data-role="share"]').getAttribute('href')) ?? '';
+  return share.slice(`${STAMPS_ORIGIN}/p/`.length);
+}
 
 /** A fresh address per test and browser (the issuer's per-address limits are real here). */
 const address = (info: TestInfo): string => `e2e-stamps-${info.project.name}-${crypto.randomUUID().slice(0, 8)}@mail-e2e.example.com`;
@@ -123,6 +154,7 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
   await newApp({ name: 'Stamp Trail', origins: [STAMPS_ORIGIN], publishableKey: STAMPS_PK, loginMethods: 'google,email' });
   const relayer = await routeNearRelayer(page);
   await recordCspViolations(page);
+  await recordSlotStates(page);
   const res = await page.goto(`${STAMPS_ORIGIN}/`);
   expect(res?.status()).toBe(200);
   const csp = res?.headers()['content-security-policy'] ?? '';
@@ -154,7 +186,9 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
   await expect(page.locator('[data-role="notice"]')).toContainText('Arrival stamped on NEAR testnet.');
   await expect(stampEl(page, 'sponsored')).toHaveAttribute('data-status', 'available');
   await expect(stampEl(page, 'own_fare')).toHaveAttribute('data-status', 'locked');
-  await expect(stampEl(page, 'own_fare')).toContainText('Needs testnet NEAR');
+  await expect(stampEl(page, 'own_fare')).toContainText('The one stamp that needs your own testnet NEAR');
+  // D807: Copy beside it (the full id; the local stack has no faucet to link).
+  await expect(stampEl(page, 'own_fare').locator('[data-action="copy-account"]')).toBeVisible();
   await expect(stampEl(page, 'layover')).toContainText(/In \d+ (min|s)/u);
 
   window = await collectWith(page, 'sponsored', window);
@@ -166,22 +200,32 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
   await expect(stampEl(page, 'postcard')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });
   await expect(stampEl(page, 'postcard')).toContainText(note);
 
-  // Signature: the NEP-413 approval first (the message and the contract as its recipient, shown in the window), then
-  // the relayed collect with the proof: a second request, to the same window while it is open.
+  // Signature (D807): one click, one window, two approvals back to back. The NEP-413 approval first (the message and
+  // the contract as its recipient, shown in the window), then the relayed collect with the proof: a second request,
+  // sent the moment the first resolves, shown in the same window while it is open. No second window opens and the
+  // SDK's launcher is never needed.
+  await expect(stampEl(page, 'signature')).toContainText('Two approvals: sign a message, then send it.');
   const sigP = page.waitForEvent('popup', { timeout: 8_000 }).catch(() => null);
   await stampEl(page, 'signature').locator('[data-action="collect"]').click();
   const sigWindow = !window.isClosed() ? window : await sigP;
   if (!sigWindow) throw new Error('no approval window for the signature');
   await expect(sigWindow.getByText(`Stamp my passport: ${account}`).first()).toBeVisible();
   await expect(sigWindow.getByText(E2E_STAMPS).first()).toBeVisible();
+  await expect(stampEl(page, 'signature')).toContainText('Approval 1 of 2: sign the message');
+  const extra = page.waitForEvent('popup', { timeout: 6_000 }).then(
+    () => true,
+    () => false,
+  );
   await approve(sigWindow);
-  const relayP = page.waitForEvent('popup', { timeout: 8_000 }).catch(() => null);
-  await expect(stampEl(page, 'signature')).toContainText(/approval|relayer/u);
-  const relayWindow = !sigWindow.isClosed() ? sigWindow : await relayP;
-  if (!relayWindow) throw new Error('no approval window for the signature’s collect');
-  await expect(relayWindow.getByText('collect').first()).toBeVisible();
-  await approve(relayWindow);
+  await expect(sigWindow.getByText('collect').first()).toBeVisible();
+  await expect(stampEl(page, 'signature')).toContainText('Approval 2 of 2: send it to the contract');
+  expect(sigWindow.isClosed()).toBe(false);
+  await approve(sigWindow);
   await expect(stampEl(page, 'signature')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });
+  expect(await extra).toBe(false);
+  const seen = await seenStates(page);
+  expect(seen).not.toContain('signature:continue');
+  expect(seen.filter((x) => x.includes('Review in'))).toEqual([]);
 
   expect(relayer.relayed.map((a) => a.stamp)).toEqual(['arrival', 'sponsored', 'postcard', 'signature']);
   expect(relayer.relayed[2]).toEqual({ stamp: 'postcard', note });
@@ -208,4 +252,63 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
   } finally {
     await viewer.close();
   }
+});
+
+test('the Signature stamp’s second step after its window was closed in between: Continue in the slot opens it, the message is not signed again (D807)', async ({ page }, info) => {
+  test.setTimeout(120_000);
+  await newApp({ name: 'Stamp Trail', origins: [STAMPS_ORIGIN], publishableKey: STAMPS_PK, loginMethods: 'google,email' });
+  const relayer = await routeNearRelayer(page);
+  // The vault's own read of the key before it queues a delegate action (checkNearDelegate), held 4 s when armed: time
+  // for the user to close the window after the first approval, before the second request reaches it.
+  let hold = false;
+  const rpcOrigins = new Set([new URL(NEAR_RPC).origin, new URL(NEAR_RPC_FALLBACK).origin]);
+  await page.context().route(
+    (url) => rpcOrigins.has(url.origin),
+    async (route) => {
+      const req = route.request();
+      if (hold && req.method() === 'POST' && req.headers()['origin'] === VAULT_ORIGIN && (req.postData() ?? '').includes('view_access_key')) await new Promise((r) => setTimeout(r, 4_000));
+      await route.fallback();
+    },
+  );
+  await page.goto(`${STAMPS_ORIGIN}/`);
+  const account = await signIn(page, info);
+  const first = await collectWith(page, 'arrival', null);
+  await expect(stampEl(page, 'arrival')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });
+  await first.close();
+
+  // Step 1 in a window of its own; approved, then closed by the user before step 2 arrives.
+  hold = true;
+  const sigP = page.waitForEvent('popup', { timeout: 8_000 });
+  await stampEl(page, 'signature').locator('[data-action="collect"]').click();
+  const sigWindow = await sigP;
+  await expect(sigWindow.getByText(`Stamp my passport: ${account}`).first()).toBeVisible();
+  // Past the click's transient activation (5 s in Chromium and Firefox, less in WebKit): from here the page can't open
+  // a window by itself, as after any await in a real session.
+  await page.waitForTimeout(6_000);
+  await approve(sigWindow);
+  await sigWindow.close();
+  // The browser won't open a window outside a click: the slot says what is next, with its own button. (Should a
+  // browser still let the SDK open one by itself, that is the step-2 request on show; closing it too is a decline,
+  // which ends in the same slot state.)
+  await expect
+    .poll(
+      async () => {
+        for (const p of page.context().pages()) if (p !== page && !p.isClosed()) await p.close();
+        return stampEl(page, 'signature').getAttribute('data-status');
+      },
+      { timeout: 20_000 },
+    )
+    .toBe('continue');
+  await expect(stampEl(page, 'signature')).toContainText('Step 2 of 2: send your signed message to the contract.');
+  hold = false;
+  const nextP = page.waitForEvent('popup', { timeout: 8_000 });
+  await stampEl(page, 'signature').locator('[data-action="collect"]', { hasText: 'Continue' }).click();
+  const next = await nextP;
+  // The waiting request, the relayed collect (its args carry the signed proof): not the message to sign again.
+  await expect(next.getByText('collect').first()).toBeVisible();
+  await expect(stampEl(page, 'signature')).toContainText('Approval 2 of 2: send it to the contract');
+  await approve(next);
+  await expect(stampEl(page, 'signature')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });
+  expect(relayer.relayed.map((a) => a.stamp)).toEqual(['arrival', 'signature']);
+
 });

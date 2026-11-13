@@ -13,7 +13,7 @@ import { type StampsAction, errorInfo, isSignedOut, plainMessage } from './messa
 import { type Route, explorerTxUrl, parseRoute } from './routes.ts';
 import { type ChainStamp, type Passport, RECENT_PAGE, type RecentStamp, STAMP_IDS, type StampId, checkNote, displayNote, isImplicitAccount, parsePassport, parseRecent, parseTotals } from './stamps.ts';
 import type { PassportHandlers, PassportView, StampId as UiStampId } from './ui/index.ts';
-import { type ViewInput, buildView, heldStamps, layoverCounting } from './view.ts';
+import { type ViewInput, buildView, heldStamps, layoverCounting, ownFareNeedsNear } from './view.ts';
 
 /** The part of the partner client the site uses. */
 export type StampsClient = Pick<HanaClient, 'ready' | 'status' | 'addresses' | 'vaultOrigin' | 'login' | 'logout' | 'on' | 'near' | 'prepareApproval'>;
@@ -43,6 +43,11 @@ export interface StampsDeps {
 export const POLL_MS = 15_000;
 /** How often the user's key, block and balance are read again while signed in (D751's 30 s). */
 export const PREP_REFRESH_MS = 30_000;
+/**
+ * D807: while Own fare is locked for want of testnet NEAR (and the tab is visible), the balance is read this often, so
+ * the stamp unlocks soon after the user's transfer lands (one read of the account, only in that state).
+ */
+export const BALANCE_WAIT_MS = 5_000;
 /** How long a sent, unconfirmed stamp (D788) is shown as confirming before the passport alone decides. */
 export const SENT_FOR_MS = 3 * 60_000;
 /** After a collect, the passport is read again until it shows the stamp, at most this many times. */
@@ -98,7 +103,8 @@ export function startStamps(deps: StampsDeps): StampsApp {
   const sent = new Map<StampId, { txHash: string; at: number }>();
   const failed = new Map<StampId, string>();
   let fresh = new Set<StampId>();
-  let working: { id: StampId; stage: string } | null = null;
+  /** The collect in progress; `waiting` while its approval waits on the SDK's launcher (the window didn't open, D807). */
+  let working: { id: StampId; stage: string; waiting?: boolean } | null = null;
   let notice: PassportView['notice'] | null = null;
   let launcherNotice: string | null = null;
   let lastView: PassportView = { mode: 'cover', stamps: [], recent: [] };
@@ -141,6 +147,7 @@ export function startStamps(deps: StampsDeps): StampsApp {
       txs: m === 'mine' ? txs : new Map(),
       sent: m === 'mine' ? new Map([...sent].map(([id, s]) => [id, s.txHash])) : new Map(),
       working: m === 'mine' ? working : null,
+      step2: m === 'mine' && me !== null && collector?.hasProof(me) ? new Set<StampId>(['signature']) : new Set(),
       failed: m === 'mine' ? failed : new Map(),
       fresh: m === 'mine' ? fresh : new Set(),
       balance: prep ? { yocto: prep.balance, activated: prep.key !== null } : null,
@@ -334,6 +341,12 @@ export function startStamps(deps: StampsDeps): StampsApp {
   function collect(id: StampId, input?: { note?: string }): void {
     const accountId = me;
     const col = collector;
+    // D807: the stamp's approval is waiting on the launcher (the browser didn't let the window open by itself). This
+    // click is a user gesture: open the Journear Passport window now; the vault shows the waiting request in it.
+    if (working !== null && working.id === id && working.waiting === true) {
+      client?.prepareApproval();
+      return;
+    }
     if (accountId === null || col === null || working !== null || route.kind !== 'mine' || !STAMP_IDS.includes(id)) return;
     if (heldStamps(passports.get(accountId), local).has(id)) return;
     if (id === 'postcard') {
@@ -349,6 +362,7 @@ export function startStamps(deps: StampsDeps): StampsApp {
     working = { id, stage: STAGES.approving };
     const stage = (text: string): void => {
       if (working?.id !== id) return;
+      // A new stage is a new request: whether it waits on the launcher is the SDK's next `launcher` event to say.
       working = { id, stage: text };
       render();
     };
@@ -383,6 +397,9 @@ export function startStamps(deps: StampsDeps): StampsApp {
         if (me !== accountId) return;
         working = null;
         if (isSignedOut(e)) showError('collect', e);
+        // D807: the signature's second approval declined, or its window closed: the signed message is kept, and the
+        // slot offers that step again (the view's `step2`), with no failure to read.
+        else if (id === 'signature' && col.hasProof(accountId) && errorInfo(e).code === 4001) failed.delete(id);
         else failed.set(id, plainMessage(e, 'collect'));
         // A refused stamp the contract already holds (another tab): the passport says so.
         if (errorInfo(e).message.includes('ERR_ALREADY')) void readPassport(accountId).then(render, () => {});
@@ -424,6 +441,8 @@ export function startStamps(deps: StampsDeps): StampsApp {
     render();
   });
   c.on('launcher', ({ visible: shown, label, clickable }) => {
+    // D807: a collect whose approval now waits on the launcher shows its own Continue in the slot.
+    if (working !== null) working = { ...working, waiting: shown && clickable };
     if (shown && clickable) {
       launcherNotice = `Click “${label}” on the Journear Passport button at the bottom right of the page to continue.`;
       notice = { kind: 'info', text: launcherNotice };
@@ -470,6 +489,19 @@ export function startStamps(deps: StampsDeps): StampsApp {
       if (visible()) void reload();
     });
   }
+  if (typeof window !== 'undefined') {
+    // Back from another window (a wallet, the faucet's): the balance at once, at most once per poll gap.
+    let focusAt = -Infinity;
+    window.addEventListener('focus', () => {
+      if (me === null || route.kind !== 'mine' || clock() - focusAt < BALANCE_WAIT_MS) return;
+      focusAt = clock();
+      collector?.refresh(me).then(render, () => {});
+    });
+  }
+  every(() => {
+    // D807: Own fare waiting for the user's testnet NEAR: read the balance more often, so it unlocks soon after.
+    if (visible() && me !== null && route.kind === 'mine' && working === null && ownFareNeedsNear(lastView)) collector?.refresh(me).then(render, () => {});
+  }, BALANCE_WAIT_MS);
   every(() => {
     if (visible()) void reload();
   }, POLL_MS);

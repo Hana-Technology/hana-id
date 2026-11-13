@@ -61,13 +61,13 @@ function demoAction(id: string, now: number): ActionRecord | undefined {
     case 'act_demo_settings':
       return { id, kind: 'app.settings', status: 'pending', decoded: { appId: app.id, appName: app.name, from: app.settings, changes: { sessionTtlMs: 8 * 3_600_000, idleTtlMs: 45 * 60_000 }, settingsVersion: 12 }, expiresAt };
     case 'act_demo_invite':
-      return { id, kind: 'member.invite', status: 'pending', decoded: { email: 'noor.haddad@soralabs.io', role: 'owner', ownerWait: true }, expiresAt };
+      return { id, kind: 'member.invite', status: 'pending', decoded: { email: 'noor.haddad@soralabs.example', role: 'owner', ownerWait: true }, expiresAt };
     case 'act_demo_owner':
       return { id, kind: 'owner_action', status: 'pending', decoded: { scopeId: 's_lumen_live', actionNonce: 6, method: 'remove_client', provider: 'google', aud: '204871935513-k2v9mq8d0w7hj1n3s6e4c5t0b8a2f9xg.apps.googleusercontent.com', immediate: true }, expiresAt };
     case 'act_demo_ok':
       return { id, kind: 'origin.add', status: 'ok', decoded: originDecoded, expiresAt: now - 60_000, outcome: { status: 'ok', version: 8, changeId: 'gc_Ch4kq81Ns' } };
     case 'act_demo_failed':
-      return { id, kind: 'member.remove', status: 'failed', decoded: { userId: 'usr_Sm9Lk2Vb7q', email: 'sam.okafor@soralabs.io' }, expiresAt: now - 60_000, outcome: { status: 'failed', code: 'sub_mismatch' } };
+      return { id, kind: 'member.remove', status: 'failed', decoded: { userId: 'usr_Sm9Lk2Vb7q', email: 'sam.okafor@soralabs.example' }, expiresAt: now - 60_000, outcome: { status: 'failed', code: 'sub_mismatch' } };
     case 'act_demo_expired':
       return { id, kind: 'raw_sign.on', status: 'expired', decoded: { appId: app.id, appName: app.name, settingsVersion: 12 }, expiresAt: now - 30_000 };
     default:
@@ -115,7 +115,7 @@ function decodedFor(kind: string, params: Record<string, unknown>, now: number):
     case 'member.role':
     case 'member.remove': {
       const m = F.members(now).members.find((x) => x.userId === params.userId);
-      return { userId: params.userId, email: m?.email ?? 'someone@soralabs.io', ...(kind === 'member.role' ? { role: params.role } : {}) };
+      return { userId: params.userId, email: m?.email ?? 'someone@soralabs.example', ...(kind === 'member.role' ? { role: params.role } : {}) };
     }
     case 'org.policy':
       return { requiredHd: params.requiredHd ?? null };

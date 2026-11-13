@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeDomain, normalizeEmail } from '../src/index.ts';
 import { ASSIGNED_AFTER_CUTOFF, UNICODE_AGE_SOURCE } from '../src/unicode-age.ts';
 import { assignedAfterCutoff, hasLoneSurrogate, hasPostCutoffCodePoint } from '../src/unicode.ts';
+import { readText } from './helpers.ts';
 
 const ranges = ASSIGNED_AFTER_CUTOFF.trim()
   .split(/\s+/)
@@ -65,5 +66,18 @@ describe('hasLoneSurrogate', () => {
       expect(text, f).not.toMatch(/\(\?<[=!]/);
       expect(text, f).not.toMatch(/\\[pP]\{/);
     }
+  });
+});
+
+describe('Unicode data licence', () => {
+  it('ships the Unicode License v3 notice for the DerivedAge-derived table and the README points to it', () => {
+    const notice = readText('LICENSE-Unicode.txt');
+    expect(notice.startsWith('UNICODE LICENSE V3\n')).toBe(true);
+    expect(notice).toMatch(/Copyright © 1991-\d{4} Unicode, Inc\./u);
+    expect(notice).toContain('this copyright and permission notice appear in\nassociated Documentation.');
+    const readme = readText('README.md');
+    expect(readme).toContain('## Unicode data licence');
+    expect(readme).toContain('[`LICENSE-Unicode.txt`](LICENSE-Unicode.txt)');
+    expect(readme).toContain(`\`${UNICODE_AGE_SOURCE.file}\``);
   });
 });

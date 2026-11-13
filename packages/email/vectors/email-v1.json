@@ -72,8 +72,8 @@
     },
     {
       "label": "Gmail: a +tag is its own identity",
-      "in": "amdcopper+1@gmail.com",
-      "out": "amdcopper+1@gmail.com"
+      "in": "alice+1@gmail.com",
+      "out": "alice+1@gmail.com"
     },
     {
       "label": "Gmail: dots inside the +tag are kept",
@@ -490,8 +490,8 @@
       "sub": "e1.3KZtCM8vDNYqCx3diKbgPqyOBU3ioLyFTolmv7uB4Kw"
     },
     {
-      "email": "amdcopper+1@gmail.com",
-      "sub": "e1.AY4kQMsJbap9PBKY8j0rd95imEBXWJS7FBDdsq8tUnQ"
+      "email": "alice+1@gmail.com",
+      "sub": "e1.hDxRDA0Yhe4GpBH_cwsLNtK2TdnEGA2JLeVrldqrFBU"
     },
     {
       "email": "ab+x.y@gmail.com",

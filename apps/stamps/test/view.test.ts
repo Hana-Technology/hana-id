@@ -1,7 +1,7 @@
 // Which stamps are available, computed from chain state (D800), and the rest of the PassportView.
 import { describe, expect, it } from 'vitest';
 import type { ChainStamp, StampId } from '../src/stamps.ts';
-import { FAUCET_NOTICE, LAYOVER_MARGIN_MS, LOCKED, SENT_STAGE, type ViewInput, buildView, countdownText, layoverCounting } from '../src/view.ts';
+import { FAUCET_NOTICE, LAYOVER_MARGIN_MS, LOCKED, SENT_STAGE, UNVIEWABLE_NOTICE, type ViewInput, buildView, countdownText, layoverCounting } from '../src/view.ts';
 import { CONFIG, NEAR_ACCOUNT } from './fixtures.ts';
 import { TX_HASH } from './fakes.ts';
 
@@ -126,5 +126,19 @@ describe('buildView', () => {
 
   it('a named account can’t collect Signature', () => {
     expect(statuses(buildView(input({ accountId: 'alice.testnet', passport: { accountId: 'alice.testnet', stamps: [{ stamp: 'arrival', atMs: 1, sponsored: true }] } }), NOW)).signature).toBe(`locked: ${LOCKED.notImplicit}`);
+  });
+});
+
+describe('an account id the site cannot route', () => {
+  it('renders with an error notice and no share link instead of throwing (neither 64-hex nor .testnet)', () => {
+    for (const mode of ['mine', 'public'] as const) {
+      const v = buildView(input({ mode, accountId: 'bob.near', notice: { kind: 'info', text: 'hidden' } }), NOW);
+      expect(v.notice).toEqual({ kind: 'error', text: UNVIEWABLE_NOTICE });
+      expect(v.shareUrl).toBeUndefined();
+      expect(v.accountId).toBe('bob.near');
+    }
+    // A recent entry the site can't link is left out, not thrown on.
+    const r = buildView(input({ mode: 'cover', accountId: null, recent: [{ accountId: 'Bad Id', stamp: 'arrival', atMs: 1 }] }), NOW);
+    expect(r.recent).toEqual([]);
   });
 });

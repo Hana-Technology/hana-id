@@ -4,7 +4,7 @@
 // the Layover 2 minutes after the Arrival's block time. The contract stays the authority: a stamp shown available that
 // the contract refuses comes back as `failed` with its ERR_* in plain words.
 import type { PassportView, StampState } from './ui/index.ts';
-import { explorerAccountUrl, explorerTxUrl, passportPath } from './routes.ts';
+import { explorerAccountUrl, explorerTxUrl, isViewableAccount, passportPath } from './routes.ts';
 import { type ChainStamp, LAYOVER_MS, OWN_FARE_MIN_YOCTO, type Passport, type RecentStamp, STAMP_IDS, type StampId, isImplicitAccount } from './stamps.ts';
 import { formatNear } from '../../demo/src/near.ts';
 
@@ -22,6 +22,9 @@ export const LOCKED = {
 } as const;
 
 export const SENT_STAGE = 'Sent, still confirming on NEAR testnet…';
+
+/** The notice for a NEAR account id this site can't show or link (neither a 64-hex implicit account nor `.testnet`). */
+export const UNVIEWABLE_NOTICE = 'This NEAR account id isn’t one this site can show. Sign out and in again; if it stays, tell the Journear team.';
 
 /**
  * The faucet's notice, shown while Own fare waits for testnet NEAR and nothing else is said (the UI's locked state
@@ -123,17 +126,20 @@ export function buildView(v: ViewInput, now: number): PassportView {
   const view: PassportView = {
     mode: v.mode,
     stamps: STAMP_IDS.map((id) => stampState(id, v, held, now)),
-    recent: v.recent.map((r) => ({ accountId: r.accountId, stamp: r.stamp, atMs: r.atMs, href: passportPath(r.accountId) })),
+    recent: v.recent.filter((r) => isViewableAccount(r.accountId)).map((r) => ({ accountId: r.accountId, stamp: r.stamp, atMs: r.atMs, href: passportPath(r.accountId) })),
   };
   if (v.mode !== 'cover' && v.accountId !== null) {
     view.accountId = v.accountId;
     const explorerUrl = explorerAccountUrl(v.explorer, v.accountId);
     if (explorerUrl) view.explorerUrl = explorerUrl;
-    view.shareUrl = `${v.origin}${passportPath(v.accountId)}`;
+    // An id the site can't route (neither 64-hex nor `.testnet`: the SDK should never give one) gets no share link,
+    // and the page says so instead of failing to render.
+    if (isViewableAccount(v.accountId)) view.shareUrl = `${v.origin}${passportPath(v.accountId)}`;
   }
   if (v.mode === 'mine' && v.balance !== null) view.balanceNear = formatNear(v.balance.yocto);
   if (v.totals) view.totals = { ...v.totals };
-  if (v.notice) view.notice = { ...v.notice };
+  if (v.mode !== 'cover' && v.accountId !== null && !isViewableAccount(v.accountId)) view.notice = { kind: 'error', text: UNVIEWABLE_NOTICE };
+  else if (v.notice) view.notice = { ...v.notice };
   else if (v.mode === 'mine' && v.faucet !== null && view.stamps.some((s) => s.id === 'own_fare' && s.status === 'locked' && s.reason === LOCKED.needsNear)) {
     view.notice = { kind: 'info', text: FAUCET_NOTICE, href: v.faucet, hrefLabel: 'Get testnet NEAR' };
   }

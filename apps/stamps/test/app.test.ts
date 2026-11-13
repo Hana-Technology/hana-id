@@ -9,9 +9,10 @@ import type { HanaAddresses, HanaConfig, HanaStatus } from '@hana-id/web';
 import { POLL_MS, type StampsClient, type StampsDeps, startStamps } from '../src/app.ts';
 import { STAGES } from '../src/collector.ts';
 import { type PassportHandlers, type PassportView, mountPassport } from '../src/ui/index.ts';
-import { LOCKED, SENT_STAGE } from '../src/view.ts';
+import { LOCKED, SENT_STAGE, UNVIEWABLE_NOTICE } from '../src/view.ts';
 import { ADDRESSES, CONFIG, NEAR_ACCOUNT, OTHER_ACCOUNT, STAMPS } from './fixtures.ts';
 import { FakeChain, TX_HASH, fakeNear, hanaError } from './fakes.ts';
+import { decodeNearDelegateAction, decodeNearTransaction } from '@hana-id/core';
 
 type Listener = (...args: unknown[]) => void;
 
@@ -501,5 +502,101 @@ describe('guards', () => {
     expect(h.chain.stamps.passports.get(NEAR_ACCOUNT)?.find((s) => s.stamp === 'postcard')?.note).toBe('hi from the hooks');
     await h.tick(POLL_MS);
     expect(h.root.querySelector(`[data-role="recent-item"][data-kind="arrival"] a`)?.getAttribute('href')).toBe(`https://hana-id-stamps-sandbox-dev.tingtc.workers.dev/p/${NEAR_ACCOUNT}`);
+  });
+});
+
+describe('what reaches a signed request (the site security review)', () => {
+  const noSigning = (h: Harness) => {
+    expect(h.fake.near.signDelegateAction).not.toHaveBeenCalled();
+    expect(h.fake.near.signTransaction).not.toHaveBeenCalled();
+    expect(h.fake.near.signMessage).not.toHaveBeenCalled();
+    expect(h.fake.near.activate).not.toHaveBeenCalled();
+    expect(h.fake.prepareApproval).not.toHaveBeenCalled();
+  };
+
+  it("signed in on someone else's passport: collect and interest do nothing (the route guard)", async () => {
+    const h = boot({ path: `/p/${OTHER_ACCOUNT}`, signedIn: true, realUi: true });
+    await flush();
+    expect(h.last()).toMatchObject({ mode: 'public', accountId: OTHER_ACCOUNT });
+    // The public page has no collect control; put one where it would be, as a hostile or stale DOM could.
+    const fakeButton = Object.assign(document.createElement('button'), { type: 'button' });
+    fakeButton.setAttribute('data-action', 'collect');
+    const note = document.createElement('textarea');
+    note.setAttribute('data-field', 'note');
+    h.root.append(fakeButton, note);
+    for (const target of [fakeButton, note]) {
+      target.dispatchEvent(new Event('pointerover', { bubbles: true }));
+      target.dispatchEvent(new Event('focusin', { bubbles: true }));
+    }
+    for (const id of ['arrival', 'sponsored', 'own_fare', 'signature', 'postcard', 'layover'] as const) h.handlers().collect(id, { note: 'hi' });
+    await h.tick(5_000);
+    noSigning(h);
+    expect(h.chain.stamps.calls).toEqual([]);
+  });
+
+  it('hostile chain answers and a hostile URL never reach the signed bytes: receiver, method, args, deposit and gas are the configured ones', async () => {
+    const hostileNote = '"}],"receiver_id":"evil.testnet","x":"‮';
+    const h = boot({
+      path: '/p/evil.testnet%2F..%2F%22',
+      signedIn: true,
+      chain: (c) => {
+        c.balance = String(10n ** 24n);
+        c.override = (method, args) =>
+          method === 'get_passport'
+            ? { account_id: args.account_id, stamps: [{ stamp: 'arrival', block_timestamp_ms: 'evil', sponsored: 'yes', note: hostileNote }, { stamp: 'collect', block_timestamp_ms: 1, sponsored: true }] }
+            : method === 'recent'
+              ? [{ account_id: 'evil.testnet', stamp: 'arrival', block_timestamp_ms: 1, method: 'transfer' }, { account_id: OTHER_ACCOUNT, stamp: 'nope', block_timestamp_ms: 2 }]
+              : method === 'totals'
+                ? { passports: '1e99', stamps: { receiver_id: 'evil.testnet' } }
+                : undefined;
+      },
+    });
+    await flush();
+    // The hostile path is not a route: the signed-in user's own passport, with its notice.
+    expect(h.last()).toMatchObject({ mode: 'mine', accountId: NEAR_ACCOUNT });
+    const note = '  A real note  ';
+    for (const id of ['arrival', 'sponsored', 'postcard', 'signature', 'own_fare'] as const) {
+      h.handlers().collect(id, id === 'postcard' ? { note } : undefined);
+      await flush();
+      // A poll between collects: the hostile answers are read again before the next signed request.
+      await h.tick(POLL_MS);
+    }
+    const expected: Record<string, Record<string, unknown>> = {
+      arrival: { stamp: 'arrival' },
+      sponsored: { stamp: 'sponsored' },
+      postcard: { stamp: 'postcard', note: 'A real note' },
+    };
+    const delegates = h.fake.near.signDelegateAction.mock.calls.map((c) => decodeNearDelegateAction(c[0].delegateAction as Uint8Array));
+    expect(delegates.length).toBeGreaterThanOrEqual(4);
+    for (const d of delegates) {
+      expect([d.senderId, d.receiverId, d.actions.length]).toEqual([NEAR_ACCOUNT, STAMPS, 1]);
+      const call = d.actions[0] as { type: string; methodName: string; args: Uint8Array; gas: bigint; deposit: bigint };
+      expect([call.type, call.methodName, call.gas, call.deposit]).toEqual(['functionCall', 'collect', BigInt(CONFIG.near.collectTgas) * 10n ** 12n, 0n]);
+      const args = JSON.parse(new TextDecoder().decode(call.args)) as Record<string, unknown>;
+      if (args.stamp === 'signature') {
+        expect(Object.keys(args).sort()).toEqual(['proof', 'stamp']);
+        expect(args.proof).toEqual({ message: `Stamp my passport: ${NEAR_ACCOUNT}`, nonce: expect.any(String), recipient: STAMPS, signature: expect.any(String) });
+      } else expect(args).toEqual(expected[args.stamp as string]);
+    }
+    expect(new Set(delegates.map((d) => JSON.parse(new TextDecoder().decode((d.actions[0] as { args: Uint8Array }).args)).stamp))).toEqual(new Set(['arrival', 'sponsored', 'postcard', 'signature']));
+    expect(h.fake.near.signMessage.mock.calls.map((c) => [c[0].message, c[0].recipient, c[0].callbackUrl])).toEqual([[`Stamp my passport: ${NEAR_ACCOUNT}`, STAMPS, undefined]]);
+    const txs = h.fake.near.signTransaction.mock.calls.map((c) => decodeNearTransaction(c[0].transaction as Uint8Array));
+    expect(txs).toHaveLength(1);
+    const tx = txs[0]!;
+    expect([tx.signerId, tx.receiverId, tx.actions.length]).toEqual([NEAR_ACCOUNT, STAMPS, 1]);
+    const fare = tx.actions[0] as { type: string; methodName: string; args: Uint8Array; gas: bigint; deposit: bigint };
+    expect([fare.type, fare.methodName, fare.gas, fare.deposit]).toEqual(['functionCall', 'collect', BigInt(CONFIG.near.collectTgas) * 10n ** 12n, 0n]);
+    expect(JSON.parse(new TextDecoder().decode(fare.args))).toEqual({ stamp: 'own_fare' });
+  });
+
+  it('an account id the site cannot route (the SDK should never give one) renders a notice, not a crash', async () => {
+    const h = boot({ signedIn: false, realUi: true });
+    await flush();
+    h.handlers().signIn();
+    h.fake.finishLogin!({ ...ADDRESSES, near: 'bob.near' });
+    await flush();
+    expect(h.last()).toMatchObject({ mode: 'mine', accountId: 'bob.near', notice: { kind: 'error', text: UNVIEWABLE_NOTICE } });
+    expect(h.last().shareUrl).toBeUndefined();
+    expect(h.root.textContent).toContain(UNVIEWABLE_NOTICE);
   });
 });

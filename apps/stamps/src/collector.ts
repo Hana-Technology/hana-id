@@ -6,7 +6,12 @@
 //   session, retried while the API answers `near_account_unrecorded`), a NEP-366 delegate action calling
 //   `collect({ stamp, note? })`, `hana.near.signDelegateAction`, `hana.near.relay` (Journear's relayer pays the gas);
 // - signature: `hana.near.signMessage` first (NEP-413, the message and recipient the contract rebuilds), then the
-//   same relayed `collect` with the proof: two approvals, the second in the same Journear window;
+//   same relayed `collect` with the proof: two approvals, the second in the same Journear window (D807): it is sent the
+//   moment the first resolves, with no read in between (the read runs while the user approves the first), so it lands
+//   in the window still open from the first. The signed proof is kept for the page session until the stamp is
+//   collected (`hasProof`), so when the second approval can't be shown by itself (the window was closed: the browser
+//   won't open one outside a click) or is declined, the next click sends only the second request: the message isn't
+//   signed again;
 // - own_fare: `hana.near.signTransaction` of an ordinary `collect` transaction, sent with the RPC's `send_tx`: the
 //   user's own testnet NEAR pays the fee.
 //
@@ -14,13 +19,14 @@
 // Everything a request needs from NEAR (the account's existence, the key's nonce, the latest final block, the balance)
 // is read before the click, in the background (`prepare`); a click with a fresh read signs synchronously. Without one,
 // it calls `hana.prepareApproval()` first (the window opens in the click), then reads, then signs into that window.
-// `signature` needs no read before its first approval, so it always opens the window itself.
+// `signature` needs no read before its first approval, so it always opens the window itself; its second request
+// needs the read, which it starts in the click.
 import type { ApprovalTicket, HanaClient, NearActivateResult } from '@hana-id/web';
 import { base64Encode } from '@hana-id/core';
 import { type AccessKeyState, NearRpc, delegateNonce, transactionNonce } from '../../demo/src/near.ts';
 import type { StampsConfig } from './config.ts';
 import { errorInfo, pageError, relayTransaction } from './messages.ts';
-import { type CollectArgs, OWN_FARE_MIN_YOCTO, type StampId, checkNote, collectArgs, collectDelegate, collectTransaction, contractErrorCode, isImplicitAccount, signatureMessage } from './stamps.ts';
+import { type CollectArgs, OWN_FARE_MIN_YOCTO, type SignatureProof, type StampId, checkNote, collectArgs, collectDelegate, collectTransaction, contractErrorCode, isImplicitAccount, signatureMessage } from './stamps.ts';
 
 /** The part of the partner client the collectors use. */
 export type CollectorClient = Pick<HanaClient, 'near' | 'prepareApproval'>;
@@ -41,7 +47,8 @@ export const BACKGROUND_GAP_MS = 5_000;
 export const STAGES = {
   reading: 'Reading your NEAR account on testnet…',
   activating: 'Preparing your NEAR account…',
-  signMessage: 'Approve the signature in the Journear Passport window…',
+  signMessage: 'Approval 1 of 2: sign the message…',
+  sendProof: 'Approval 2 of 2: send it to the contract…',
   approving: 'Waiting for your approval in the Journear Passport window…',
   relaying: 'Sending it through Journear’s relayer, which pays the fee…',
   retrying: 'That request’s number was already used. Approve a fresh one in the Journear Passport window…',
@@ -90,6 +97,8 @@ export interface Collector {
   refresh(accountId: string): Promise<Prep>;
   /** Background preparation (interest): reads, and with `activate` creates a new account. Failures wait for the click. */
   prepare(accountId: string, activate: boolean): void;
+  /** Whether a signed `signature` proof is kept for `accountId`: its next collect asks only for the second approval. */
+  hasProof(accountId: string): boolean;
   /** Collects a stamp. Synchronous up to the first signing call or `prepareApproval` (call it from the click). */
   collect(req: CollectRequest, stage: (text: string) => void): Promise<CollectOutcome>;
   /** Forgets everything (sign-out). */
@@ -97,6 +106,12 @@ export interface Collector {
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+
+/** Whether `e` is the stamps contract's refusal (the relay's `contract_rejected`, or this page's own ERR_* check). */
+function contractRefused(e: unknown): boolean {
+  const info = errorInfo(e);
+  return info.reason === 'contract_rejected' || info.code === 'contract_rejected' || info.code === 'stamps_contract_refused' || /\bERR_[A-Z_]+\b/u.test(info.message);
+}
 
 export function newRpc(config: StampsConfig, fetchFn: (url: string, init: RequestInit) => Promise<Response>): NearRpc {
   return new NearRpc([config.near.rpcUrl, ...(config.near.rpcFallbackUrl ? [config.near.rpcFallbackUrl] : [])], fetchFn);
@@ -146,6 +161,8 @@ export function createCollector(deps: CollectorDeps): Collector {
   let reading: { accountId: string; promise: Promise<Prep> } | null = null;
   const activating = new Map<string, Promise<NearActivateResult>>();
   const justCreated = new Set<string>();
+  /** The signature stamp's signed NEP-413 proof per account, kept until the stamp is collected (D807). */
+  const proofs = new Map<string, SignatureProof>();
   /** The highest nonce this page signed per account, so a second request before the next read still goes up. */
   const lastNonce = new Map<string, bigint>();
   let backgroundAt = -Infinity;
@@ -233,10 +250,10 @@ export function createCollector(deps: CollectorDeps): Collector {
   }
 
   /** Builds, signs (the approval window) and relays one delegate action from `r`; synchronous up to the signing call. */
-  async function signAndRelay(accountId: string, args: CollectArgs, r: Prep, stage: (text: string) => void): Promise<string> {
+  async function signAndRelay(accountId: string, args: CollectArgs, r: Prep, stage: (text: string) => void, approving: string = STAGES.approving): Promise<string> {
     const nonce = delegateNonce({ keyNonce: r.key!.nonce, blockHeight: r.height, lastSigned: lastNonce.get(accountId) });
     const delegateAction = collectDelegate({ accountId, contract, args, tgas, nonce, blockHeight: r.height });
-    stage(STAGES.approving);
+    stage(approving);
     const { signedDelegateAction } = await c.near.signDelegateAction({ network: 'testnet', delegateAction });
     lastNonce.set(accountId, nonce);
     stage(STAGES.relaying);
@@ -244,21 +261,21 @@ export function createCollector(deps: CollectorDeps): Collector {
   }
 
   /** signAndRelay, once more after a `delegate_nonce_used` (another tab, a read behind the relayer): a second approval. */
-  async function relayWithRetry(accountId: string, args: CollectArgs, r: Prep, stage: (text: string) => void): Promise<string> {
+  async function relayWithRetry(accountId: string, args: CollectArgs, r: Prep, stage: (text: string) => void, approving?: string): Promise<string> {
     try {
-      return await signAndRelay(accountId, args, r, stage);
+      return await signAndRelay(accountId, args, r, stage, approving);
     } catch (e) {
       const info = errorInfo(e);
       if (info.reason !== 'delegate_nonce_used') throw e;
       const held = isObj(e) && isObj(e.data) && typeof e.data.accessKeyNonce === 'string' && /^\d{1,20}$/u.test(e.data.accessKeyNonce) ? BigInt(e.data.accessKeyNonce) : null;
       if (held !== null && held > (lastNonce.get(accountId) ?? 0n)) lastNonce.set(accountId, held);
       stage(STAGES.retrying);
-      return signAndRelay(accountId, args, await refresh(accountId), stage);
+      return signAndRelay(accountId, args, await refresh(accountId), stage, approving);
     }
   }
 
   /** The relayed stamps. With a fresh read the signing call is made synchronously; else prepareApproval first. */
-  async function relayed(req: CollectRequest, args: CollectArgs, stage: (text: string) => void): Promise<string> {
+  async function relayed(req: CollectRequest, args: CollectArgs, stage: (text: string) => void, approving?: string): Promise<string> {
     let ready = fresh(req.accountId);
     if (ready === null || ready.key === null) {
       // Not prepared: the Journear Passport window opens now, in the click, and the next signing call uses it.
@@ -271,22 +288,35 @@ export function createCollector(deps: CollectorDeps): Collector {
         throw e;
       }
     }
-    return relayWithRetry(req.accountId, args, ready, stage);
+    return relayWithRetry(req.accountId, args, ready, stage, approving);
   }
 
-  /** `signature`: NEP-413 first (opens the window in the click: it needs no read), then the relayed collect. */
+  /**
+   * `signature`: NEP-413 first (opens the window in the click: it needs no read), then the relayed collect, sent the
+   * moment the first resolves (the read it needs runs while the user approves the first). With a proof kept from an
+   * earlier click (its second step didn't finish), only the second: in the click, as a relayed stamp's.
+   */
   async function signature(req: CollectRequest, stage: (text: string) => void): Promise<string> {
     const { accountId } = req;
     if (!isImplicitAccount(accountId)) throw pageError('stamps_contract_refused', 'ERR_NOT_IMPLICIT');
+    const kept = proofs.get(accountId);
+    if (kept) return relayed(req, collectArgs('signature', { proof: kept }), stage, STAGES.sendProof);
     const nonce = deps.random(32);
     const message = signatureMessage(accountId);
+    // The second request's read, started now and not awaited: the first signing call below is still made in the click.
+    if (fresh(accountId)?.key == null) ensureReady(accountId, () => {}).catch(() => {});
     stage(STAGES.signMessage);
     const signed = await c.near.signMessage({ message, recipient: contract, nonce });
     if (signed.accountId !== accountId) throw pageError('near_send_failed', 'The signature is for another account');
-    const proof = { message, nonce: base64Encode(nonce), recipient: contract, signature: signed.signature };
-    stage(STAGES.reading);
-    const ready = await ensureReady(accountId, stage);
-    return relayWithRetry(accountId, collectArgs('signature', { proof }), ready, stage);
+    const proof: SignatureProof = { message, nonce: base64Encode(nonce), recipient: contract, signature: signed.signature };
+    proofs.set(accountId, proof);
+    // A fresh read (the usual case): the second request goes out now, into the window still open from the first.
+    let ready = fresh(accountId);
+    if (ready === null || ready.key === null) {
+      stage(STAGES.reading);
+      ready = await ensureReady(accountId, stage);
+    }
+    return relayWithRetry(accountId, collectArgs('signature', { proof }), ready, stage, STAGES.sendProof);
   }
 
   /** `own_fare`: an ordinary transaction the account pays for, sent from the page. */
@@ -320,6 +350,7 @@ export function createCollector(deps: CollectorDeps): Collector {
 
   return {
     latest: (accountId) => (prep !== null && prep.accountId === accountId ? prep : null),
+    hasProof: (accountId) => proofs.has(accountId),
     refresh,
     prepare(accountId, activate) {
       if (clock() - backgroundAt < BACKGROUND_GAP_MS) return;
@@ -339,14 +370,20 @@ export function createCollector(deps: CollectorDeps): Collector {
         const txHash = req.stamp === 'signature' ? await signature(req, stage) : await relayed(req, collectArgs(req.stamp, note !== undefined ? { note } : {}), stage);
         // The first stamp after this page's activation says so.
         const created = justCreated.delete(req.accountId);
+        if (req.stamp === 'signature') proofs.delete(req.accountId);
         return { status: 'done', txHash, created, ...(note !== undefined ? { note } : {}) };
       } catch (e) {
         // The relayer gave up waiting (504 `timeout`) with the transaction sent: no error, it may still land (D788).
         const reason = errorInfo(e).reason;
         if (reason === 'timeout') {
           const sent = relayTransaction(e);
-          if (sent !== null) return { status: 'sent', txHash: sent };
+          if (sent !== null) {
+            if (req.stamp === 'signature') proofs.delete(req.accountId);
+            return { status: 'sent', txHash: sent };
+          }
         }
+        // The contract refused the stamp (a bad proof, or held already): the kept proof is no use.
+        if (req.stamp === 'signature' && contractRefused(e)) proofs.delete(req.accountId);
         // A nonce or expiry refusal: the read this page holds is behind, so the next click must not reuse it.
         if (reason !== null && STALE_READ_REASONS.has(reason)) {
           prep = null;
@@ -362,6 +399,7 @@ export function createCollector(deps: CollectorDeps): Collector {
       activating.clear();
       justCreated.clear();
       lastNonce.clear();
+      proofs.clear();
       backgroundAt = -Infinity;
     },
   };

@@ -1,7 +1,7 @@
 // Which stamps are available, computed from chain state (D800), and the rest of the PassportView.
 import { describe, expect, it } from 'vitest';
 import type { ChainStamp, StampId } from '../src/stamps.ts';
-import { FAUCET_NOTICE, LAYOVER_MARGIN_MS, LOCKED, SENT_STAGE, UNVIEWABLE_NOTICE, type ViewInput, buildView, countdownText, layoverCounting } from '../src/view.ts';
+import { CONTINUE, FAUCET_NOTICE, LAYOVER_MARGIN_MS, LOCKED, OWN_FARE_HELP, SENT_STAGE, UNVIEWABLE_NOTICE, type ViewInput, buildView, countdownText, layoverCounting } from '../src/view.ts';
 import { CONFIG, NEAR_ACCOUNT } from './fixtures.ts';
 import { TX_HASH } from './fakes.ts';
 
@@ -17,6 +17,7 @@ function input(patch: Partial<ViewInput> = {}): ViewInput {
     txs: new Map(),
     sent: new Map(),
     working: null,
+    step2: new Set(),
     failed: new Map(),
     fresh: new Set(),
     balance: { yocto: 0n, activated: true },
@@ -59,6 +60,21 @@ describe('buildView', () => {
     expect(statuses(buildView(input({ passport: undefined }), NOW)).arrival).toBe(`locked: ${LOCKED.reading}`);
   });
 
+  it('D807: a step that needs a click: the signature’s second (kept message), a failure of it, and any approval waiting on the launcher', () => {
+    const passport = held(['arrival']);
+    const step2 = buildView(input({ passport, step2: new Set(['signature']) }), NOW);
+    expect(step2.stamps[3]).toEqual({ id: 'signature', status: 'continue', stage: CONTINUE.signature, action: 'Continue' });
+    const failedStep2 = buildView(input({ passport, step2: new Set(['signature']), failed: new Map([['signature', 'Relayer down.']]) }), NOW);
+    expect(failedStep2.stamps[3]).toEqual({ id: 'signature', status: 'failed', message: 'Relayer down.' });
+    const waiting = buildView(input({ passport, step2: new Set(['signature']), working: { id: 'signature', stage: 'x', waiting: true }, busy: true }), NOW);
+    expect(waiting.stamps[3]).toEqual({ id: 'signature', status: 'continue', stage: CONTINUE.signature, action: 'Continue' });
+    const other = buildView(input({ passport, working: { id: 'sponsored', stage: 'x', waiting: true }, busy: true }), NOW);
+    expect(other.stamps[1]).toEqual({ id: 'sponsored', status: 'continue', stage: CONTINUE.waiting, action: 'Continue' });
+    expect(buildView(input({ passport, working: { id: 'sponsored', stage: 'x' } }), NOW).stamps[1]).toEqual({ id: 'sponsored', status: 'working', stage: 'x' });
+    // Someone else's passport never shows it.
+    expect(buildView(input({ mode: 'public', passport, step2: new Set(['signature']) }), NOW).stamps[3]?.status).toBe('locked');
+  });
+
   it('after Arrival: Own fare needs testnet NEAR (with the faucet), the layover counts down, the rest open', () => {
     const v = buildView(input({ passport: held(['arrival', NOW - 20_000]) }), NOW);
     expect(statuses(v)).toEqual({
@@ -69,9 +85,18 @@ describe('buildView', () => {
       postcard: 'available',
       layover: `locked: ${countdownText(120_000 + LAYOVER_MARGIN_MS - 20_000)}`,
     });
-    expect(v.stamps[2]).toEqual({ id: 'own_fare', status: 'locked', reason: 'Needs testnet NEAR' });
-    // The faucet's link is the notice's, while nothing else is said.
-    expect(v.notice).toEqual({ kind: 'info', text: FAUCET_NOTICE, href: 'https://near-faucet.io/', hrefLabel: 'Get testnet NEAR' });
+    // D807: the slot itself says what to do, with the faucet (one that takes implicit accounts) and Copy.
+    expect(v.stamps[2]).toEqual({ id: 'own_fare', status: 'locked', reason: LOCKED.needsNear, detail: OWN_FARE_HELP.detail, href: 'https://docs.near.org/getting-started/faucet', hrefLabel: 'Get testnet NEAR ↗', copyAccount: true });
+    expect(v.balanceLink).toEqual({ href: 'https://docs.near.org/getting-started/faucet', label: 'Get testnet NEAR ↗' });
+    // The notice says it too, while nothing else is said; with another notice up, the slot still has it all.
+    expect(v.notice).toEqual({ kind: 'info', text: FAUCET_NOTICE, href: 'https://docs.near.org/getting-started/faucet', hrefLabel: 'Get testnet NEAR' });
+    const busy = buildView(input({ passport: held(['arrival']), notice: { kind: 'info', text: 'Layover stamped on NEAR testnet. You paid no gas.' } }), NOW);
+    expect(busy.notice?.text).toBe('Layover stamped on NEAR testnet. You paid no gas.');
+    expect(busy.stamps[2]).toMatchObject({ status: 'locked', href: 'https://docs.near.org/getting-started/faucet', copyAccount: true });
+    // Without a faucet (a local stack): the steps and Copy, no link.
+    const local = buildView(input({ passport: held(['arrival']), faucet: null }), NOW);
+    expect(local.stamps[2]).toEqual({ id: 'own_fare', status: 'locked', reason: LOCKED.needsNear, detail: OWN_FARE_HELP.detail, copyAccount: true });
+    expect(local.balanceLink).toBeUndefined();
     expect(buildView(input({ passport: held(['arrival', NOW - 20_000]), notice: { kind: 'info', text: 'Stamped.' } }), NOW).notice).toEqual({ kind: 'info', text: 'Stamped.' });
     expect(v.balanceNear).toBe('0');
   });

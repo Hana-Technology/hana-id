@@ -6,10 +6,10 @@
 // chain ever reaches the page.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HanaAddresses, HanaConfig, HanaStatus } from '@hana-id/web';
-import { POLL_MS, type StampsClient, type StampsDeps, startStamps } from '../src/app.ts';
+import { BALANCE_WAIT_MS, POLL_MS, type StampsClient, type StampsDeps, startStamps } from '../src/app.ts';
 import { STAGES } from '../src/collector.ts';
 import { type PassportHandlers, type PassportView, mountPassport } from '../src/ui/index.ts';
-import { LOCKED, SENT_STAGE, UNVIEWABLE_NOTICE } from '../src/view.ts';
+import { CONTINUE, LOCKED, OWN_FARE_HELP, SENT_STAGE, UNVIEWABLE_NOTICE } from '../src/view.ts';
 import { ADDRESSES, CONFIG, NEAR_ACCOUNT, OTHER_ACCOUNT, STAMPS } from './fixtures.ts';
 import { FakeChain, TX_HASH, fakeNear, hanaError } from './fakes.ts';
 import { decodeNearDelegateAction, decodeNearTransaction } from '@hana-id/core';
@@ -343,8 +343,10 @@ describe('collecting', () => {
     await flush();
     h.handlers().collect('arrival');
     await flush();
-    expect(h.stamp('own_fare')).toEqual({ id: 'own_fare', status: 'locked', reason: LOCKED.needsNear });
-    // Once the success notice is gone, the faucet's link is the notice.
+    // D807: the slot carries the faucet and Copy whatever notice is up (here the Arrival's success).
+    expect(h.last().notice?.text).toContain('Arrival stamped');
+    expect(h.stamp('own_fare')).toEqual({ id: 'own_fare', status: 'locked', reason: LOCKED.needsNear, detail: OWN_FARE_HELP.detail, href: CONFIG.near.faucet, hrefLabel: 'Get testnet NEAR ↗', copyAccount: true });
+    // Once the success notice is gone, the faucet's link is the notice too.
     h.handlers().refresh();
     await flush();
     expect(h.last().notice).toMatchObject({ kind: 'info', href: CONFIG.near.faucet, hrefLabel: 'Get testnet NEAR' });
@@ -386,6 +388,151 @@ describe('collecting', () => {
     const stages = h.views.flatMap((v) => v.stamps.filter((s) => s.id === 'arrival' && s.status === 'working').map((s) => (s as { stage: string }).stage));
     expect(stages).toContain(STAGES.approving);
     expect(stages).toContain(STAGES.relaying);
+  });
+});
+
+describe('a step that needs the user’s click (D807)', () => {
+  /** Holds the next signDelegateAction open until the test settles it. */
+  function holdDelegate(h: Harness) {
+    let settle!: (e?: unknown) => void;
+    h.fake.near.signDelegateAction.mockImplementationOnce(
+      (p) =>
+        new Promise((resolve, reject) => {
+          settle = (e) => (e === undefined ? resolve({ signature: 'x', signedDelegateAction: Buffer.from(p.delegateAction as Uint8Array).toString('base64') }) : reject(e));
+        }),
+    );
+    return (e?: unknown) => settle(e);
+  }
+
+  async function arrived() {
+    const h = boot({ signedIn: true });
+    await flush();
+    h.handlers().collect('arrival');
+    await flush();
+    return h;
+  }
+
+  it('Signature: the second approval waits on the launcher: the slot says step 2 with Continue, whose click opens the window; the message is not signed again', async () => {
+    const h = await arrived();
+    const settle = holdDelegate(h);
+    h.handlers().collect('signature');
+    await flush();
+    expect(h.stamp('signature')).toEqual({ id: 'signature', status: 'working', stage: STAGES.sendProof });
+    // The window was gone by the second request: the SDK shows its launcher.
+    h.fake.emit('launcher', { visible: true, label: 'Review in Journear Passport', clickable: true });
+    expect(h.stamp('signature')).toEqual({ id: 'signature', status: 'continue', stage: CONTINUE.signature, action: 'Continue' });
+    expect(h.last().busy).toBe(true);
+    h.handlers().collect('signature');
+    // The click opens the window for the request already waiting: nothing new is asked or signed.
+    expect(h.fake.prepareApproval).toHaveBeenCalledTimes(1);
+    expect(h.fake.near.signMessage).toHaveBeenCalledTimes(1);
+    expect(h.fake.near.signDelegateAction).toHaveBeenCalledTimes(2); // the Arrival's and this one
+    h.fake.emit('launcher', { visible: false, label: '', clickable: false });
+    expect(h.stamp('signature')).toEqual({ id: 'signature', status: 'working', stage: STAGES.sendProof });
+    settle();
+    await flush();
+    expect(h.stamp('signature').status).toBe('collected');
+  });
+
+  it('Signature: the second approval declined or its window closed: the slot offers step 2 again; Continue sends only that', async () => {
+    const h = await arrived();
+    h.fake.near.signDelegateAction.mockRejectedValueOnce(hanaError(4001));
+    h.handlers().collect('signature');
+    await flush();
+    expect(h.stamp('signature')).toEqual({ id: 'signature', status: 'continue', stage: CONTINUE.signature, action: 'Continue' });
+    expect(h.last().busy).toBeUndefined();
+    h.handlers().collect('signature');
+    // A user gesture: the second request is made in the click.
+    expect(h.fake.near.signDelegateAction).toHaveBeenCalledTimes(3);
+    expect(h.fake.near.signMessage).toHaveBeenCalledTimes(1);
+    await flush();
+    expect(h.stamp('signature').status).toBe('collected');
+    expect(h.chain.stamps.passports.get(NEAR_ACCOUNT)?.map((x) => x.stamp)).toEqual(['arrival', 'signature']);
+  });
+
+  it('Signature: another failure of step 2 says what went wrong; Try again sends only step 2', async () => {
+    const h = await arrived();
+    h.fake.near.relay.mockRejectedValueOnce(hanaError('api_unavailable', { status: 503, reason: 'relayer_unavailable' }));
+    h.handlers().collect('signature');
+    await flush();
+    expect(h.stamp('signature').status).toBe('failed');
+    h.handlers().collect('signature');
+    await flush();
+    expect(h.fake.near.signMessage).toHaveBeenCalledTimes(1);
+    expect(h.stamp('signature').status).toBe('collected');
+  });
+
+  it('any stamp whose window did not open by itself: Continue in the slot opens it (a user gesture)', async () => {
+    const h = boot({ signedIn: true });
+    await flush();
+    const settle = holdDelegate(h);
+    h.handlers().collect('arrival');
+    await flush();
+    h.fake.emit('launcher', { visible: true, label: 'Review in Journear Passport', clickable: true });
+    expect(h.stamp('arrival')).toEqual({ id: 'arrival', status: 'continue', stage: CONTINUE.waiting, action: 'Continue' });
+    h.fake.prepareApproval.mockClear();
+    h.handlers().collect('arrival');
+    expect(h.fake.prepareApproval).toHaveBeenCalledTimes(1);
+    expect(h.fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
+    settle();
+    await flush();
+    expect(h.stamp('arrival').status).toBe('collected');
+  });
+
+  it('Own fare waiting for NEAR: the balance is read every 5 s while visible, so the slot unlocks on the next read after the transfer', async () => {
+    const h = await arrived();
+    expect(h.stamp('own_fare')).toMatchObject({ status: 'locked', reason: LOCKED.needsNear });
+    const balanceReads = () => h.chain.count((c) => c.method === 'query' && c.params.request_type === 'view_account');
+    const fast = h.timers.find((x) => x.ms === BALANCE_WAIT_MS && !x.stopped)!;
+    const before = balanceReads();
+    fast.fn();
+    await flush();
+    expect(balanceReads()).toBe(before + 1);
+    h.chain.balance = String(10n ** 22n);
+    fast.fn();
+    await flush();
+    expect(h.stamp('own_fare')).toEqual({ id: 'own_fare', status: 'available' });
+    // Unlocked: the fast read stops (the 15 s poll and the 30 s preparation go on as before).
+    const after = balanceReads();
+    fast.fn();
+    await flush();
+    expect(balanceReads()).toBe(after);
+  });
+
+  it('back to the tab (focus): the balance at once', async () => {
+    const h = await arrived();
+    h.chain.balance = String(10n ** 22n);
+    t += BALANCE_WAIT_MS;
+    window.dispatchEvent(new Event('focus'));
+    await flush();
+    expect(h.stamp('own_fare')).toEqual({ id: 'own_fare', status: 'available' });
+  });
+
+  it('Copy (in the slot or beside the account) writes the full 64-hex id, not the shortened one on show', async () => {
+    const h = boot({ signedIn: true, realUi: true });
+    await flush();
+    h.handlers().collect('arrival');
+    await flush();
+    const copy = h.root.querySelector<HTMLButtonElement>('[data-stamp="own_fare"] [data-action="copy-account"]')!;
+    expect(copy).not.toBeNull();
+    copy.click();
+    await flush();
+    expect(h.copied).toEqual([NEAR_ACCOUNT]);
+    expect(NEAR_ACCOUNT).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  it('sign-out forgets the kept message', async () => {
+    const h = await arrived();
+    h.fake.near.signDelegateAction.mockRejectedValueOnce(hanaError(4001));
+    h.handlers().collect('signature');
+    await flush();
+    expect(h.stamp('signature').status).toBe('continue');
+    h.handlers().signOut();
+    await flush();
+    h.fake.readyWith(ADDRESSES);
+    h.fake.emit('statusChanged', 'logged_in');
+    await flush();
+    expect(h.stamp('signature').status).toBe('available');
   });
 });
 

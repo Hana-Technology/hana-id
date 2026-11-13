@@ -28,6 +28,17 @@ const day = (h: number, m: number) => Date.UTC(2026, 10, 13, h, m, 0);
 export const HOSTILE_NOTE =
   '<img src=x onerror=alert(1)> \u202Egnirts desrever\u202C zero\u200Bwidth \u2066isolate\u2069 & "quotes" \u2014 greetings from Kuala Lumpur \u{1F469}\u200D\u{1F4BB}!';
 
+const FAUCET = 'https://docs.near.org/getting-started/faucet';
+const OWN_FARE_LOCKED: StampState = {
+  id: 'own_fare',
+  status: 'locked',
+  reason: 'The one stamp that needs your own testnet NEAR',
+  detail: 'Copy your account id, paste it into NEAR’s faucet (free, no sign-up), then come back: this unlocks when the NEAR arrives.',
+  href: FAUCET,
+  hrefLabel: 'Get testnet NEAR ↗',
+  copyAccount: true,
+};
+
 export interface Fixture {
   name: string;
   label: string;
@@ -74,7 +85,7 @@ export const FIXTURES: Fixture[] = [
         { id: 'arrival', status: 'collected', atMs: day(15, 12), sponsored: true, txUrl: TX(1) },
         { id: 'sponsored', status: 'collected', atMs: day(15, 14), sponsored: true, txUrl: TX(2) },
         { id: 'own_fare', status: 'failed', message: 'Your account has no NEAR for the fee. Get testnet NEAR from a faucet, then try again.' },
-        { id: 'signature', status: 'working', stage: 'Waiting for your approval…' },
+        { id: 'signature', status: 'working', stage: 'Approval 2 of 2: send it to the contract…' },
         { id: 'postcard', status: 'available' },
         { id: 'layover', status: 'locked', reason: 'In 1 min 40 s' },
       ],
@@ -142,6 +153,52 @@ export const FIXTURES: Fixture[] = [
       recent: [],
       totals: { passports: 0, stamps: 0 },
       busy: true,
+    },
+  },
+  {
+    name: 'signature-step2',
+    label: 'D807: Signature step 2 needs a click',
+    view: {
+      mode: 'mine',
+      accountId: ME,
+      explorerUrl: EXPLORER(ME),
+      shareUrl: SHARE(ME),
+      balanceNear: '0',
+      balanceLink: { href: FAUCET, label: 'Get testnet NEAR ↗' },
+      busy: true,
+      stamps: [
+        { id: 'arrival', status: 'collected', atMs: day(15, 12), sponsored: true, txUrl: TX(1) },
+        { id: 'sponsored', status: 'collected', atMs: day(15, 14), sponsored: true, txUrl: TX(2) },
+        OWN_FARE_LOCKED,
+        { id: 'signature', status: 'continue', stage: 'Step 2 of 2: send your signed message to the contract.', action: 'Continue' },
+        { id: 'postcard', status: 'available' },
+        { id: 'layover', status: 'locked', reason: 'In 1 min 40 s' },
+      ],
+      recent: recentAll,
+      totals: { passports: 214, stamps: 805 },
+    },
+  },
+  {
+    name: 'own-fare-locked',
+    label: 'D807: Own fare locked, the faucet in the slot',
+    view: {
+      mode: 'mine',
+      accountId: ME,
+      explorerUrl: EXPLORER(ME),
+      shareUrl: SHARE(ME),
+      balanceNear: '0',
+      balanceLink: { href: FAUCET, label: 'Get testnet NEAR ↗' },
+      notice: { kind: 'info', text: 'Layover stamped on NEAR testnet. You paid no gas.', href: TX(6), hrefLabel: 'View the transaction' },
+      stamps: [
+        { id: 'arrival', status: 'collected', atMs: day(15, 12), sponsored: true, txUrl: TX(1) },
+        { id: 'sponsored', status: 'collected', atMs: day(15, 14), sponsored: true, txUrl: TX(2) },
+        OWN_FARE_LOCKED,
+        { id: 'signature', status: 'collected', atMs: day(15, 15), sponsored: true, txUrl: TX(4) },
+        { id: 'postcard', status: 'collected', atMs: day(15, 16), sponsored: true, note: 'Greetings from NEAR testnet', txUrl: TX(5) },
+        { id: 'layover', status: 'collected', atMs: day(15, 17), sponsored: true, txUrl: TX(6) },
+      ],
+      recent: recentAll,
+      totals: { passports: 214, stamps: 808 },
     },
   },
   {

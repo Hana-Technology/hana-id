@@ -16,15 +16,19 @@ which the site sets in `mine` and `public` modes. The rules the site relies on:
 - `collect('postcard', { note })` passes the note box's text (the module trims it); the site checks it again
   (1 to 140 characters, as the contract counts). Other stamps: `collect(id)`.
 - `failed` offers the collect button again; `working` shows it disabled; `busy: true` disables every collect and the
-  sign-in.
+  sign-in, except a `continue` slot's (D807): `{ status: 'continue', stage, action }` shows the stage and an enabled
+  primary button reading `action` that calls `collect(id)`, synchronously in the click like the others (the site opens
+  the Journear Passport window from it). The postcard's field is not shown in that state.
 - `fresh: true` is set in exactly one `update`: the module inks the stamp then.
 - Every string from the view goes into text nodes, never HTML (the page's CSP requires Trusted Types).
 - Relative times in the recent list refresh on `update`: the site calls it at least every 15 s while the tab is
   visible (the poll), and every second during a layover countdown.
 - The page imports `@hana-id/brand`'s `tokens.css`, `fonts.css` and `components.css` before `src/ui.css`
   (`src/main.ts`): the module's stylesheet imports nothing.
-- The faucet link for Own fare comes as the view's `notice` (`href`, `hrefLabel`): a locked stamp carries a reason
-  only.
+- A locked stamp may carry (D807) `detail` (one line of what to do), `href` + `hrefLabel` (a link, kept only when
+  http(s), opened in a new tab) and `copyAccount` (a Copy button with the `copy-account` action): Own fare's faucet.
+  The view's `balanceLink` (`href`, `label`) is shown beside the balance in `mine` mode. The notice may repeat the
+  faucet link.
 
 ## The `data-*` hooks the site uses
 
@@ -38,6 +42,8 @@ which the site sets in `mine` and `public` modes. The rules the site relies on:
 | `data-role="notice"` + `data-kind` (`info`, `error`) | the notice, always in the DOM, `hidden` when there is none |
 | `data-role="share"` | the public passport link (`href` = `shareUrl`) |
 | `data-role="explorer"` | the account's NearBlocks link |
+| `data-role="stamp-link"`, `data-role="balance-link"` | a locked slot's link, the balance's link (D807) |
+| `data-status="continue"` | a slot whose next step needs the user's click (D807) |
 | `data-role="recent-item"` + `data-kind="<stamp id>"` | each recent stamp, with an `a` to that traveller's passport |
 
 The site also listens for `pointerover` and `focusin` on the root, on `[data-action="collect"]` and

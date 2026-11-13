@@ -9,10 +9,20 @@ export const STAMP_IDS: readonly StampId[] = Object.freeze(['arrival', 'sponsore
 export type StampState =
   | { id: StampId; status: 'collected'; atMs: number; sponsored: boolean; note?: string; txUrl?: string; fresh?: boolean }
   | { id: StampId; status: 'available' }
-  /** e.g. "Collect Arrival first", "In 1 min 40 s". */
-  | { id: StampId; status: 'locked'; reason: string }
+  /**
+   * e.g. "Collect Arrival first", "In 1 min 40 s". Optional (D807), for a stamp the user can unlock themselves (Own
+   * fare's testnet NEAR): `detail`, one line of what to do; `href` + `hrefLabel`, a link (kept only when http(s), opens
+   * in a new tab); `copyAccount`, a Copy button for the full account id (the `copy-account` action).
+   */
+  | { id: StampId; status: 'locked'; reason: string; detail?: string; href?: string; hrefLabel?: string; copyAccount?: boolean }
   /** "Waiting for your approval…", "Sending…". */
   | { id: StampId; status: 'working'; stage: string }
+  /**
+   * D807: the next step needs the user's click (a second approval the browser wouldn't open by itself, or one the
+   * user closed): `stage` says what it is, the slot's primary button reads `action` and calls `collect(id)`, even
+   * while `busy` (it is the busy slot's own next step).
+   */
+  | { id: StampId; status: 'continue'; stage: string; action: string }
   | { id: StampId; status: 'failed'; message: string };
 
 export interface PassportView {
@@ -22,6 +32,8 @@ export interface PassportView {
   explorerUrl?: string;
   /** Mine only. */
   balanceNear?: string;
+  /** Mine only (D807): a link shown beside the balance (how to get testnet NEAR); kept only when http(s). */
+  balanceLink?: { href: string; label: string };
   /**
    * Optional, an addition to the spec's interface: the public passport's link (`/p/<account_id>`, absolute or a path),
    * shown on the identity page as the link to share. Left out, the line isn't shown.

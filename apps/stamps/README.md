@@ -32,8 +32,8 @@ the page.
   |---|---|---|
   | Arrival | relayed (gasless): `hana.near.activate()` for a new account, a NEP-366 delegate action, `signDelegateAction`, `hana.near.relay` | always first |
   | Sponsored | relayed | after Arrival |
-  | Own fare | `hana.near.signTransaction` of an ordinary `collect` transaction, sent with the RPC's `send_tx`: the user's own NEAR pays | after Arrival, once the account holds 0.01 testnet NEAR (until then "Needs testnet NEAR", the balance shown and a notice with a faucet link) |
-  | Signature | `hana.near.signMessage` (NEP-413, message `Stamp my passport: <account_id>`, recipient the contract's account, a fresh 32-byte nonce), then the relayed `collect` with the proof: two approvals in one window | after Arrival, implicit accounts only |
+  | Own fare | `hana.near.signTransaction` of an ordinary `collect` transaction, sent with the RPC's `send_tx`: the user's own NEAR pays | after Arrival, once the account holds 0.01 testnet NEAR. Until then the slot itself says "The one stamp that needs your own testnet NEAR", one line of what to do, a "Get testnet NEAR" link to NEAR's docs faucet (it funds 64-hex implicit accounts: 5 NEAR, no sign-up) and Copy for the full account id; the balance has the same link beside it, and the notice repeats it when nothing else is said (D807) |
+  | Signature | `hana.near.signMessage` (NEP-413, message `Stamp my passport: <account_id>`, recipient the contract's account, a fresh 32-byte nonce), then the relayed `collect` with the proof: two approvals in one window (D807, below) | after Arrival, implicit accounts only |
   | Postcard | relayed, with a note of 1 to 140 characters (Rust's `trim`, Unicode scalar values, as the contract counts) | after Arrival |
   | Layover | relayed | 2 minutes (block time) after Arrival: a countdown, from the Arrival's `block_timestamp_ms` |
 
@@ -45,13 +45,28 @@ the page.
   relayer's nonce and asked once more. A relay that timed out with its transaction sent shows "Sent, still confirming"
   with the NearBlocks link (D788). Gas on each `collect` is the manifest's relay cap (`near.relay.maxGasTgas`, 10 Tgas
   on sandbox-dev).
+- **Two approvals in one window, and the step that needs a click** (D807). The Signature's second request (the relayed
+  `collect` with the proof) is sent the moment the first (`signMessage`) resolves: the read it needs runs while the
+  user approves the first, so nothing is awaited in between on the page and it lands in the window still open from the
+  first (the window waits 15 s for a follow-up; the vault's own two-provider key check before it queues the request
+  takes about 3 s on sandbox-dev). The signed proof is kept in memory for the page session. When the second approval
+  can't be shown by itself (the user closed the window in between, or it timed out: browsers open a window only in a
+  click, so the SDK shows its "Review in Journear Passport" launcher), the slot says "Step 2 of 2: send your signed
+  message to the contract." with a **Continue** button: its click opens the window (`hana.prepareApproval()`) for the
+  request already waiting. When the second approval was declined or its window closed while it was on show, the slot
+  shows the same step, and Continue sends only the second request, from the click: the message isn't signed again. Any
+  other stamp whose approval waits on the launcher shows "Your approval is ready. Continue opens it in the Journear
+  Passport window." with the same button. Copy: the blurb "Two approvals: sign a message, then send it. The contract
+  checks it on chain.", the stages "Approval 1 of 2: sign the message…" and "Approval 2 of 2: send it to the contract…".
 - **Which stamps are open** is computed on the page from the chain (`src/view.ts`), but the contract decides: its
   refusals (`ERR_NO_ARRIVAL`, `ERR_ALREADY`, `ERR_NOT_SPONSORED`, `ERR_NOT_OWN_FARE`, `ERR_BAD_PROOF`, `ERR_NOT_IMPLICIT`,
   `ERR_BAD_NOTE`, `ERR_TOO_SOON`, `ERR_UNKNOWN_STAMP`), the vault's and the relayer's come back on the stamp in plain
   words (`src/messages.ts`). A collected stamp shows at once (then confirmed from the chain), inked once (`fresh`), with
   its transaction's NearBlocks link for this session's stamps and the account's page for older ones.
 - **Polling**: the passport, `recent` (both pages of the ring of 100) and `totals` every 15 s while the tab is visible,
-  again when it becomes visible (back from the faucet), and after each collect until the stamp shows.
+  again when it becomes visible (back from the faucet), and after each collect until the stamp shows. While Own fare
+  waits for testnet NEAR, the account's balance is also read every 5 s while the tab is visible, and at once when the
+  window regains focus (D807).
 
 The rendering is the UI module's (`src/ui/` and `src/ui.css`, the art build's, D803–D804: the booklet and the six
 stamps drawn in code, with a preview harness, `preview:ui` and `shots`; its contract with the site and the `data-*`
@@ -101,7 +116,8 @@ Chosen at build time from the shell (no `.env` files):
 
 From the manifest: `vaultOrigin`, `apiUrl`, `rpc`, `rpcFallback`, `near.demoStamps` (required: without it the build
 and `gen` refuse with "sets no near.demoStamps") and `near.relay.maxGasTgas` (the gas on `collect`, default 10). The
-explorer is NearBlocks testnet; the faucet link is `https://near-faucet.io/` (`src/config.ts`).
+explorer is NearBlocks testnet; the faucet link is NEAR's docs faucet, `https://docs.near.org/getting-started/faucet` (`src/config.ts`, D807:
+`near-faucet.io` takes only `*.testnet` names and EVM addresses, so it refused every Journear Passport account).
 
 ## Deploy
 

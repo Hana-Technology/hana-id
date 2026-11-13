@@ -63,6 +63,7 @@
     "from": "Journear Passport (testnet) <team@hanawallet.io>",
     "sender": "sendgrid",
     "dailySendBudget": 333,
+    "appShares": { "app_2BiAAnH2WH4EQRhDw": 200 },
     "tighterLimits": {
       "ipStart": { "per10m": 10, "perDay": 30 },
       "ipResend": { "per10m": 10 },

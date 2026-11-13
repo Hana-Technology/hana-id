@@ -1866,7 +1866,8 @@ account collects six stamps, once each, `arrival` first. Testnet only; no user k
 **What it trusts: nothing but its own checks.** Each rule is checked by the contract from what NEAR itself gives it:
 the predecessor (the caller: under a meta transaction the delegate action's sender), the transaction's signer, the
 block time, and a signature it verifies itself. It never calls another contract, holds no key, has no owner, admin
-method, upgrade path or oracle, and is not payable (a deposit is refused, so no caller can lose NEAR to it). Journear's
+method, upgrade path or oracle, and `collect` is not payable (a deposit is refused); NEAR attached to a view called as a
+transaction stays in the contract (near-sdk adds no deposit check to a view: it only adds to its balance). Journear's
 relay, the API and the site can only decline to send a call; none of them can make a refused stamp pass. `sponsored`
 means only "the signer was not the caller" (any NEP-366 relayer, or a contract calling it, qualifies) and `own_fare`
 "the caller signed": demo stamps, not proofs of anything else.

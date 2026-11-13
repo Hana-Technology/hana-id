@@ -15,7 +15,8 @@
 //! - Storage is paid by this contract's account (the caller has nothing), so each passport is bounded (six stamps, one
 //!   note) and the public list of recent stamps is a ring of the latest `KEEP_RECENT`. The number of passports isn't
 //!   bounded here: the README says what that can cost and what balance the account should hold.
-//! - Not payable: a call with a deposit is refused, so a caller never loses NEAR to it.
+//! - `collect` is not payable: a call with a deposit is refused. NEAR attached to a view called as a transaction stays
+//!   in the contract (near-sdk adds no deposit check to `&self` methods; it only adds to the balance).
 //! - Notes and account ids are attacker-controlled bytes: a page shows them as text, never as HTML.
 
 use near_sdk::base64::engine::general_purpose::STANDARD as BASE64;

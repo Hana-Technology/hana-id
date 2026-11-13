@@ -285,3 +285,79 @@ export function noteContractWasm(): Uint8Array {
     ...section(11, data),
   ]);
 }
+
+/** Signed LEB128 (wasm's i32.const / i64.const immediates). */
+const sleb = (v: bigint): number[] => {
+  const out: number[] = [];
+  for (;;) {
+    const b = Number(v & 0x7fn);
+    v >>= 7n;
+    if ((v === 0n && (b & 0x40) === 0) || (v === -1n && (b & 0x40) !== 0)) {
+      out.push(b);
+      return out;
+    }
+    out.push(b | 0x80);
+  }
+};
+
+/**
+ * A contract with one method, `go()`, that calls `method` on `target` with go's own input as the arguments, zero
+ * deposit and `gasTgas`, without waiting for the answer: a cross-contract caller (the stamps contract then sees this
+ * contract as the predecessor and the human who called `go` as the signer).
+ *
+ *   (import "env" "input" (func (param i64)))
+ *   (import "env" "read_register" (func (param i64 i64)))
+ *   (import "env" "register_len" (func (param i64) (result i64)))
+ *   (import "env" "promise_create" (func (param i64 i64 i64 i64 i64 i64 i64 i64) (result i64)))
+ *   (memory 1) (data (i32.const 0) target) (data (i32.const 64) method)   ;; 16 zero bytes at 128: the deposit
+ *   (func (export "go") input(0); read_register(0, 256);
+ *     drop(promise_create(len(target), 0, len(method), 64, register_len(0), 256, 128, gas)))
+ */
+export function callerContractWasm(target: string, method: string, gasTgas: bigint): Uint8Array {
+  const t = Buffer.from(target, 'utf8');
+  const m = Buffer.from(method, 'utf8');
+  if (t.length > 64 || m.length > 64) throw new Error('target and method must fit 64 bytes');
+  const types = vec([
+    [0x60, ...vec([[I64]]), ...vec([])],
+    [0x60, ...vec([[I64], [I64]]), ...vec([])],
+    [0x60, ...vec([[I64]]), ...vec([[I64]])],
+    [0x60, ...vec(Array.from({ length: 8 }, () => [I64])), ...vec([[I64]])],
+    [0x60, ...vec([]), ...vec([])],
+  ]);
+  const imports = vec([
+    [...name('env'), ...name('input'), 0x00, 0],
+    [...name('env'), ...name('read_register'), 0x00, 1],
+    [...name('env'), ...name('register_len'), 0x00, 2],
+    [...name('env'), ...name('promise_create'), 0x00, 3],
+  ]);
+  const funcs = vec([[4]]);
+  const memory = vec([[0x00, 0x01]]);
+  const exports = vec([
+    [...name('memory'), 0x02, 0],
+    [...name('go'), 0x00, 4],
+  ]);
+  const c = (n: bigint) => [0x42, ...sleb(n)];
+  const call = (f: number) => [0x10, f];
+  const body = [
+    0x00,
+    ...c(0n), ...call(0),
+    ...c(0n), ...c(256n), ...call(1),
+    ...c(BigInt(t.length)), ...c(0n), ...c(BigInt(m.length)), ...c(64n), ...c(0n), ...call(2), ...c(256n), ...c(128n), ...c(gasTgas * TGAS), ...call(3),
+    0x1a, 0x0b,
+  ];
+  const code = vec([[...uleb(body.length), ...body]]);
+  const data = vec([
+    [0x00, 0x41, ...sleb(0n), 0x0b, ...vec([...t].map((b) => [b]))],
+    [0x00, 0x41, ...sleb(64n), 0x0b, ...vec([...m].map((b) => [b]))],
+  ]);
+  return Uint8Array.from([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    ...section(1, types),
+    ...section(2, imports),
+    ...section(3, funcs),
+    ...section(5, memory),
+    ...section(7, exports),
+    ...section(10, code),
+    ...section(11, data),
+  ]);
+}

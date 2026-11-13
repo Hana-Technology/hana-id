@@ -654,3 +654,58 @@ fn storage_per_passport_and_ring_is_bounded() {
     );
     assert!(arrival_only > 100 && arrival_only < 250, "{arrival_only}");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The order of the checks (README "Rules"): the stamp id; a note or proof that belongs to another stamp; arrival first
+// and once each; then the stamp's own rule. So a postcard without a note, or a signature without a proof, is refused
+// for the passport (ERR_NO_ARRIVAL, ERR_ALREADY) before its own argument is looked at.
+
+#[test]
+fn checks_run_in_the_documented_order() {
+    let mut s = setup();
+    let a = vector_account("a");
+    relayed(&a, T0_MS);
+    // Before arrival: the id, then a foreign argument, then ERR_NO_ARRIVAL before the stamp's own rule.
+    assert_eq!(panics(|| s.collect("nope".into(), Some("note".into()), Some(proof("a.proof")))), ERR_UNKNOWN_STAMP);
+    assert_eq!(panics(|| s.collect("sponsored".into(), Some("note".into()), Some(proof("a.proof")))), ERR_BAD_NOTE);
+    assert_eq!(panics(|| s.collect("sponsored".into(), None, Some(proof("a.proof")))), ERR_BAD_PROOF);
+    assert_eq!(panics(|| s.collect("postcard".into(), None, None)), ERR_NO_ARRIVAL);
+    assert_eq!(panics(|| s.collect("postcard".into(), Some(String::new()), None)), ERR_NO_ARRIVAL);
+    assert_eq!(panics(|| s.collect("signature".into(), None, None)), ERR_NO_ARRIVAL);
+    assert_eq!(panics(|| s.collect("layover".into(), None, None)), ERR_NO_ARRIVAL);
+    collect(&mut s, "arrival");
+    // Once held: ERR_ALREADY before the stamp's own rule.
+    s.collect("postcard".into(), Some("hello".into()), None);
+    assert_eq!(panics(|| s.collect("postcard".into(), Some(String::new()), None)), ERR_ALREADY);
+    assert_eq!(panics(|| s.collect("postcard".into(), None, None)), ERR_ALREADY);
+    s.collect("signature".into(), None, Some(proof("a.proof")));
+    assert_eq!(panics(|| s.collect("signature".into(), None, None)), ERR_ALREADY);
+    // A note on another stamp is refused even when that stamp is already held.
+    assert_eq!(panics(|| s.collect("signature".into(), Some("x".into()), None)), ERR_BAD_NOTE);
+    // The stamp's own rule last: a named account's signature is ERR_NOT_IMPLICIT with or without a proof.
+    arrive(&mut s, "alice.testnet");
+    relayed("alice.testnet", T0_MS + 1);
+    assert_eq!(panics(|| s.collect("signature".into(), None, None)), ERR_NOT_IMPLICIT);
+    assert_eq!(panics(|| s.collect("signature".into(), None, Some(proof("a.proof")))), ERR_NOT_IMPLICIT);
+    assert_eq!(panics(|| s.collect("layover".into(), None, None)), ERR_TOO_SOON);
+}
+
+#[test]
+fn invisible_control_and_bidi_notes_are_stored_as_given_and_read_back_as_json() {
+    let mut s = setup();
+    let who = "bob.testnet";
+    arrive(&mut s, who);
+    relayed(who, T0_MS + 1);
+    // U+FEFF and U+200B are not White_Space (kept by trim); NUL, RLO and other controls are characters like any other.
+    let note = format!("\u{FEFF}{}\u{202E}\u{0000}\u{0007}", "\u{200B}".repeat(136));
+    let stored = s.collect("postcard".into(), Some(note.clone()), None);
+    assert_eq!(stored.note.as_deref(), Some(note.as_str()));
+    let json = serde_json::to_string(&s.get_passport(account(who))).unwrap();
+    let back: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(back["stamps"][1]["note"].as_str(), Some(note.as_str()));
+    // 141 invisible characters are one too many.
+    let mut t = setup();
+    arrive(&mut t, who);
+    relayed(who, T0_MS + 1);
+    assert_eq!(panics(|| t.collect("postcard".into(), Some("\u{200B}".repeat(141)), None)), ERR_BAD_NOTE);
+}

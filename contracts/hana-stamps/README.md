@@ -44,25 +44,32 @@ one of `near.relay.receivers`. Never hard-code it.
 ## Rules
 
 `collect`'s caller is the predecessor: under a meta transaction, the delegate action's sender (the user), not the
-relayer. Each stamp at most once per account, and `arrival` first. The checks run in this order, and the first that
-fails panics with one of these exact messages (the whole panic message; NEAR shows it as `Smart contract panicked:
-ERR_…`):
+relayer. Each stamp at most once per account, and `arrival` first. The first check that fails panics with one of these
+exact messages (the whole panic message; NEAR shows it as `Smart contract panicked: ERR_…`). The checks run in this
+order (`src/lib.rs` `collect`; pinned by the unit test `checks_run_in_the_documented_order`):
 
-| Message | When |
-|---|---|
-| `ERR_UNKNOWN_STAMP` | `stamp` is not one of `catalog()` (exact, case-sensitive) |
-| `ERR_BAD_NOTE` | a `note` on any stamp but `postcard`; or `postcard` without a note, or a note that is empty or over 140 characters after trimming |
-| `ERR_BAD_PROOF` | a `proof` on any stamp but `signature`; or `signature` without a proof, or a proof that doesn't verify (below) |
-| `ERR_ALREADY` | the account already has this stamp (`arrival` again, too) |
-| `ERR_NO_ARRIVAL` | any stamp but `arrival` before the account's `arrival` |
-| `ERR_NOT_SPONSORED` | `sponsored` when the signer is the caller (the user paid for it) |
-| `ERR_NOT_OWN_FARE` | `own_fare` when the signer is not the caller (someone else paid for it) |
-| `ERR_NOT_IMPLICIT` | `signature` from a named account (its key isn't its account id), with or without a proof |
-| `ERR_TOO_SOON` | `layover` less than 120 000 ms of block time after the account's `arrival` |
+| Step | Message | When |
+|---|---|---|
+| 1 | `ERR_UNKNOWN_STAMP` | `stamp` is not one of `catalog()` (exact, case-sensitive) |
+| 2 | `ERR_BAD_NOTE` | a `note` sent with any stamp but `postcard` |
+| 3 | `ERR_BAD_PROOF` | a `proof` sent with any stamp but `signature` |
+| 4 | `ERR_ALREADY` | `arrival` when the account has a passport, or any stamp the account already holds |
+| 4 | `ERR_NO_ARRIVAL` | any stamp but `arrival` before the account's `arrival` |
+| 5 | `ERR_NOT_SPONSORED` | `sponsored` when the signer is the caller (the caller paid for it) |
+| 5 | `ERR_NOT_OWN_FARE` | `own_fare` when the signer is not the caller (someone else paid for it) |
+| 5 | `ERR_NOT_IMPLICIT` | `signature` from a named account (its key isn't its account id), with or without a proof |
+| 5 | `ERR_BAD_PROOF` | `signature` without a proof, or a proof that doesn't verify (below) |
+| 5 | `ERR_BAD_NOTE` | `postcard` without a note, or a note that is empty or over 140 characters after trimming |
+| 5 | `ERR_TOO_SOON` | `layover` less than 120 000 ms of block time after the account's `arrival` |
+
+So the stamp's own argument is looked at last: a `postcard` without a note before `arrival` is `ERR_NO_ARRIVAL`, an
+empty note on a postcard already collected is `ERR_ALREADY`, and the same for a `signature` without a proof.
 
 - **`arrival`**: no rule; creates the passport.
-- **`sponsored`**: `signer_account_id != predecessor_account_id`. A relayed delegate action (Journear's relay or any
-  other NEP-366 relayer) passes; so would a call from another contract. The user paid no gas.
+- **`sponsored`**: `signer_account_id != predecessor_account_id`, and nothing more: the transaction was signed by
+  someone other than the caller. A delegate action relayed by Journear's relay or by any other NEP-366 relayer passes,
+  and so does a call made through another contract (that contract is the caller: it gets its own passport, marked
+  sponsored, and the human who signed is untouched). It doesn't prove who paid or that Journear relayed it.
 - **`own_fare`**: `signer_account_id == predecessor_account_id`: the user signed and paid for the transaction with
   their own testnet NEAR (`hana.near.signTransaction` and `send_tx`). Journear's relay can't collect it.
 - **`signature`**: a NEP-413 signature by the caller's own key, verified on chain with `env::ed25519_verify`. The
@@ -78,8 +85,9 @@ ERR_…`):
 - **`layover`**: `block_timestamp_ms - arrival's block_timestamp_ms >= 120 000`.
 - Every stored stamp records `sponsored` (signer ≠ caller) whatever the stamp: `arrival` relayed is `true`, `own_fare`
   always `false`.
-- Not payable: attaching any deposit is refused (`Method collect doesn't accept deposit`), so a caller can never lose
-  NEAR to it. Malformed arguments (a non-string `stamp`) fail to deserialise, as for any near-sdk method.
+- `collect` is not payable: attaching any deposit is refused (`Method collect doesn't accept deposit`). The views
+  (`get_passport`, `recent`, `totals`, `catalog`) have no deposit check (near-sdk adds none to a `&self` method): NEAR
+  attached to a view called as a transaction stays in the contract (it only adds to its balance). Malformed arguments (a non-string `stamp`) fail to deserialise, as for any near-sdk method.
 - A failed `collect` changes nothing.
 
 **Views.** `get_passport` is `null` for an account with no `arrival`. `recent` lists the ring of the latest 100 stamps

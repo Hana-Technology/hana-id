@@ -444,10 +444,11 @@ describe('the public passport and the recent stamps', () => {
       method === 'get_passport'
         ? { account_id: OTHER_ACCOUNT, stamps: [{ stamp: 'postcard', block_timestamp_ms: 1, sponsored: true, note: '<b onmouseover=alert(1)>hi</b>\u202E' }, { stamp: 'x', block_timestamp_ms: 'y' }] }
         : method === 'recent'
-          ? [{ account_id: '0x8ba1f109551bd432803012645ac136ddd64dba72', stamp: 'arrival', block_timestamp_ms: 1 }, { account_id: 'bad id', stamp: 'arrival', block_timestamp_ms: 1 }, { account_id: 'alice.testnet', stamp: 'arrival', block_timestamp_ms: 2 }]
+          ? [{ account_id: '0x8ba1f109551bd432803012645ac136ddd64dba72', stamp: 'arrival', block_timestamp_ms: 1 }, { account_id: 'bad id', stamp: 'arrival', block_timestamp_ms: 1 }, { account_id: 'alice.testnet', stamp: 'arrival', block_timestamp_ms: 2 }, { account_id: OTHER_ACCOUNT, stamp: 'arrival', block_timestamp_ms: 3 }]
           : { passports: 'many', stamps: 1 };
     await h.tick(POLL_MS);
-    expect(h.last().recent.map((r) => r.accountId)).toEqual(['alice.testnet']);
+    // Implicit accounts only: a named account (anyone can make one, with any name) never reaches the feed.
+    expect(h.last().recent.map((r) => r.accountId)).toEqual([OTHER_ACCOUNT]);
     // Unreadable totals keep the last good ones.
     expect(h.last().totals).toEqual({ passports: 0, stamps: 0 });
     expect(h.root.querySelector('[onmouseover]')).toBeNull();
@@ -471,7 +472,7 @@ describe('guards', () => {
     for (const v of h.views) expect(JSON.stringify(v)).not.toMatch(/stellar|\bevm\b|G[A-Z2-7]{55}|0x[0-9a-fA-F]{40}/iu);
   });
 
-  it('the UI keeps the data-* hooks of src/ui/CONTRACT.md, and a click on them reaches the site', async () => {
+  it('the UI keeps the data-* hooks of UI-CONTRACT.md, and a click on them reaches the site', async () => {
     const h = boot({ signedIn: false, realUi: true });
     await flush();
     expect(h.root.querySelector('[data-mode="cover"]')).not.toBeNull();

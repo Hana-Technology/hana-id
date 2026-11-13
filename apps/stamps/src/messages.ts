@@ -13,7 +13,7 @@ export type StampsAction = 'load' | 'login' | 'logout' | 'collect' | 'copy' | 'r
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 
 /** The page's own failures (src/collector.ts), with codes this module maps. */
-export type PageErrorCode = 'near_page_rpc_failed' | 'near_account_pending' | 'near_send_failed' | 'near_nonce_wait' | 'near_not_enough_balance' | 'stamps_contract_refused';
+export type PageErrorCode = 'near_page_rpc_failed' | 'near_account_pending' | 'near_send_failed' | 'near_nonce_wait' | 'near_not_enough_balance' | 'stamps_contract_refused' | 'stamps_contract_storage';
 
 export const pageError = (code: PageErrorCode, message: string, data?: Record<string, unknown>): Error => Object.assign(new Error(message), { code, ...(data ? { data } : {}) });
 
@@ -69,12 +69,18 @@ const RELAYER_REASONS: Readonly<Record<string, string>> = {
 
 const REPORT = 'If it keeps happening, tell the Journear team.';
 
+/** The stamps contract is out of storage balance (LackBalanceForState). */
+export const STORAGE_MESSAGE = 'The stamps contract is out of storage balance, so it can’t store new stamps right now; Journear has to top it up. Nothing was lost: try again later.';
+
 /** What to tell the user, for an error of `action`. */
 export function plainMessage(e: unknown, action: StampsAction): string {
   const info = errorInfo(e);
   const { code, reason } = info;
   // The contract's own refusal, wherever it came from (the relay's 422 `contract_rejected`, NEAR's failure of an
   // own-fare transaction): only a known ERR_* code is shown, in our words.
+  // The stamps contract's own balance can't pay for the new stamp's storage (NEAR's LackBalanceForState on its
+  // receipt): anyone can fill it, and a plain transfer tops it up. Nothing was stored, nothing is lost.
+  if (code === 'stamps_contract_storage' || (reason === 'contract_rejected' && /LackBalanceForState/u.test(info.message))) return STORAGE_MESSAGE;
   if (reason === 'contract_rejected' || code === 'stamps_contract_refused') {
     const err = contractErrorCode(info.message);
     return err ? CONTRACT_ERRORS[err]! : 'The stamps contract refused this stamp. Nothing was stored.';

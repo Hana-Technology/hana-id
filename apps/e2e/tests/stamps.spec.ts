@@ -53,6 +53,9 @@ async function emailLogin(popup: Page, to: string): Promise<void> {
  * contract (`e2e_stamps_collect`): a panic is the API's 422 `contract_rejected`. Both answer 409
  * near_account_unrecorded until the stack's real wallet directory holds the user's NEAR account.
  */
+/** The relayer's transaction in the mocked answers (base58, as NEAR's hashes). */
+const RELAY_TX = '4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi';
+
 async function routeNearRelayer(page: Page): Promise<{ relayed: Record<string, unknown>[]; refused: string[] }> {
   const relayed: Record<string, unknown>[] = [];
   const refused: string[] = [];
@@ -82,8 +85,11 @@ async function routeNearRelayer(page: Page): Promise<{ relayed: Record<string, u
     const args = new TextDecoder().decode(call.args);
     relayed.push(JSON.parse(args) as Record<string, unknown>);
     const { panic } = (await chain('e2e_stamps_collect', { account_id: d.senderId, args, sponsored: true, nonce: String(d.nonce) })) as { panic: string | null };
-    if (panic) return route.fulfill({ status: 422, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: `Smart contract panicked: ${panic}`, code: 'contract_rejected', status: 'failed' }) });
-    return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ transactionHash: '4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi', status: 'executed' }) });
+    // The API's answers as apps/api/src/near/relay.ts relayAnswerBody writes them (the panic text as NEAR's
+    // ExecutionError gives it, the failed receipt's executor, the relay's transaction).
+    const tx = { transactionHash: RELAY_TX, nearTx: RELAY_TX };
+    if (panic) return route.fulfill({ status: 422, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: `Smart contract panicked: ${panic}`, code: 'contract_rejected', status: 'failed', executor: E2E_STAMPS, ...tx }) });
+    return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ status: 'executed', ...tx }) });
   });
   return { relayed, refused };
 }
@@ -114,7 +120,7 @@ async function collectWith(page: Page, id: string, open: Page | null): Promise<P
 
 test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature with zero NEAR, then the public passport', async ({ page }, info) => {
   test.setTimeout(150_000);
-  await newApp({ name: 'Passport Stamps', origins: [STAMPS_ORIGIN], publishableKey: STAMPS_PK, loginMethods: 'google,email' });
+  await newApp({ name: 'Stamp Trail', origins: [STAMPS_ORIGIN], publishableKey: STAMPS_PK, loginMethods: 'google,email' });
   const relayer = await routeNearRelayer(page);
   await recordCspViolations(page);
   const res = await page.goto(`${STAMPS_ORIGIN}/`);

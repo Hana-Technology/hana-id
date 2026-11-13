@@ -3,7 +3,10 @@ import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { actionCreators, createTransaction, encodeTransaction, Signature, SignedTransaction } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
 import { type LinkTally, linkTallyOf } from '../link-usage.ts';
+import { failedExecutor, failureText, isSettled, statusObject } from './outcome.ts';
 import { type FinalOutcome, type Rpc, decodeSuccessValue, isTransient, isUnknownTx } from './rpc.ts';
+
+export { failedExecutor, failureText, isSettled };
 
 /** 300 Tgas, as the legacy relayer (derive_key waits on the MPC through a yield/resume). */
 export const RELAY_GAS = 300_000_000_000_000n;
@@ -51,41 +54,6 @@ export async function signFunctionCall(opts: {
     signature: new Signature({ keyType: publicKey.keyType, data: opts.keyPair.sign(hash).signature }),
   });
   return { bytes: signed.encode(), hash: baseEncode(hash) };
-}
-
-const statusObject = (s: FinalOutcome['status'] | undefined): { SuccessValue?: string; Failure?: unknown } | null =>
-  s && typeof s === 'object' ? s : null;
-
-/** Settled = the tx has a final SuccessValue or Failure. */
-export function isSettled(o: Partial<FinalOutcome> | null | undefined): o is FinalOutcome {
-  const s = statusObject(o?.status);
-  return !!s && ('SuccessValue' in s || 'Failure' in s);
-}
-
-const failedReceipt = (outcome: FinalOutcome): NonNullable<FinalOutcome['receipts_outcome']>[number] | undefined =>
-  outcome.receipts_outcome?.find((r) => {
-    const s = r.outcome.status;
-    return typeof s === 'object' && s !== null && 'Failure' in s && s.Failure;
-  });
-
-/**
- * The account that ran the first failed receipt (receipts in execution order), or null when no receipt failed (a
- * transaction-level failure) or the RPC did not say. Tells a contract panic from a failure in a contract it called.
- */
-export function failedExecutor(outcome: FinalOutcome): string | null {
-  const executor = failedReceipt(outcome)?.outcome.executor_id;
-  return typeof executor === 'string' && executor ? executor : null;
-}
-
-/** The first failure anywhere in the receipt tree, as readable text. */
-export function failureText(outcome: FinalOutcome): string | null {
-  const failed = failedReceipt(outcome);
-  const failedStatus = failed?.outcome.status;
-  const failure = statusObject(outcome.status)?.Failure ?? (typeof failedStatus === 'object' ? failedStatus.Failure : undefined);
-  if (!failure) return null;
-  const text = JSON.stringify(failure);
-  const panic = /"panic_msg":"((?:[^"\\]|\\.)+)"/u.exec(text)?.[1] ?? /ExecutionError":"((?:[^"\\]|\\.)+)"/u.exec(text)?.[1];
-  return (panic ?? text).slice(0, 500);
 }
 
 /** Gas and tokens a settled transaction burnt, summed over the transaction and every receipt (burntGas). */

@@ -29,14 +29,23 @@ export class FakeStamps {
     readonly now: () => number,
   ) {}
 
-  /** Applies `collect`; returns the panic code, or null when it stored the stamp. */
+  /**
+   * Applies `collect` with the real contract's checks in its order (contracts/hana-stamps/src/lib.rs; the e2e model
+   * apps/e2e/src/server/stamps-contract.ts, pinned to the wasm by apps/api/test-sandbox/stamps-site.test.ts): returns
+   * the panic code, or null when it stored the stamp. The proof is checked for its shape only (the fake signer signs
+   * nothing).
+   */
   collect(sender: string, sponsored: boolean, args: Record<string, unknown>): string | null {
     this.calls.push({ sender, sponsored, args });
     const stamp = String(args.stamp);
-    const held = this.passports.get(sender) ?? [];
+    const held = this.passports.get(sender);
+    const none = (v: unknown) => v === undefined || v === null;
     if (!['arrival', 'sponsored', 'own_fare', 'signature', 'postcard', 'layover'].includes(stamp)) return 'ERR_UNKNOWN_STAMP';
-    if (stamp !== 'arrival' && !held.some((s) => s.stamp === 'arrival')) return 'ERR_NO_ARRIVAL';
-    if (held.some((s) => s.stamp === stamp)) return 'ERR_ALREADY';
+    if (!none(args.note) && stamp !== 'postcard') return 'ERR_BAD_NOTE';
+    if (!none(args.proof) && stamp !== 'signature') return 'ERR_BAD_PROOF';
+    if (stamp === 'arrival' && held) return 'ERR_ALREADY';
+    if (stamp !== 'arrival' && !held) return 'ERR_NO_ARRIVAL';
+    if (held?.some((s) => s.stamp === stamp)) return 'ERR_ALREADY';
     if (stamp === 'sponsored' && !sponsored) return 'ERR_NOT_SPONSORED';
     if (stamp === 'own_fare' && sponsored) return 'ERR_NOT_OWN_FARE';
     let note: string | undefined;
@@ -47,16 +56,16 @@ export class FakeStamps {
     if (stamp === 'signature') {
       if (!/^[0-9a-f]{64}$/u.test(sender)) return 'ERR_NOT_IMPLICIT';
       const p = args.proof as Record<string, unknown> | undefined;
-      const nonceOk = typeof p?.nonce === 'string' && base64Decode(p.nonce).length === 32;
-      const sigOk = typeof p?.signature === 'string' && base64Decode(p.signature).length === 64;
+      const nonceOk = typeof p?.nonce === 'string' && p.nonce.length === 44 && base64Decode(p.nonce).length === 32;
+      const sigOk = typeof p?.signature === 'string' && p.signature.length === 88 && base64Decode(p.signature).length === 64;
       if (!p || p.message !== `Stamp my passport: ${sender}` || p.recipient !== this.account || !nonceOk || !sigOk) return 'ERR_BAD_PROOF';
     }
     if (stamp === 'layover') {
-      const arrival = held.find((s) => s.stamp === 'arrival')!;
-      if (this.now() < arrival.block_timestamp_ms + 120_000) return 'ERR_TOO_SOON';
+      const arrival = held![0]!;
+      if (this.now() - arrival.block_timestamp_ms < 120_000) return 'ERR_TOO_SOON';
     }
     const s: StoredStamp = { stamp, block_timestamp_ms: this.now(), sponsored, ...(note !== undefined ? { note } : {}) };
-    this.passports.set(sender, [...held, s]);
+    this.passports.set(sender, [...(held ?? []), s]);
     this.ring.push({ account_id: sender, stamp, block_timestamp_ms: s.block_timestamp_ms });
     if (this.ring.length > 100) this.ring.shift();
     return null;

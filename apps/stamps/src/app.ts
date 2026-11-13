@@ -10,8 +10,8 @@ import type { NearRpc } from '../../demo/src/near.ts';
 import { type CollectOutcome, type Collector, STAGES, createCollector, newRpc } from './collector.ts';
 import type { StampsConfig } from './config.ts';
 import { type StampsAction, errorInfo, isSignedOut, plainMessage } from './messages.ts';
-import { type Route, explorerTxUrl, isViewableAccount, parseRoute } from './routes.ts';
-import { type ChainStamp, type Passport, RECENT_PAGE, type RecentStamp, STAMP_IDS, type StampId, checkNote, parsePassport, parseRecent, parseTotals } from './stamps.ts';
+import { type Route, explorerTxUrl, parseRoute } from './routes.ts';
+import { type ChainStamp, type Passport, RECENT_PAGE, type RecentStamp, STAMP_IDS, type StampId, checkNote, displayNote, isImplicitAccount, parsePassport, parseRecent, parseTotals } from './stamps.ts';
 import type { PassportHandlers, PassportView, StampId as UiStampId } from './ui/index.ts';
 import { type ViewInput, buildView, heldStamps, layoverCounting } from './view.ts';
 
@@ -195,8 +195,10 @@ export function startStamps(deps: StampsDeps): StampsApp {
       rpc.view(config.near.stamps, 'recent', { from_index: RECENT_PAGE, limit: RECENT_PAGE }).catch(() => []),
       rpc.view(config.near.stamps, 'totals', {}).catch(() => null),
     ]);
-    // Accounts a public passport can't show (and an `0x…` NEAR account that would read as another chain's) are left out.
-    recent = parseRecent(a, b).filter((r) => isViewableAccount(r.accountId));
+    // Only implicit (64-hex) accounts, which is what every Journear Passport user has: anyone can make named accounts
+    // and flood the feed with names of their choosing (a named passport is still viewable at /p/<id>). An `0x…` NEAR
+    // account, which would read as another chain's, is left out too.
+    recent = parseRecent([a, b], isImplicitAccount);
     const parsed = parseTotals(t);
     if (parsed) totals = parsed;
   }
@@ -369,7 +371,7 @@ export function startStamps(deps: StampsDeps): StampsApp {
           sent.set(id, { txHash: r.txHash, at: clock() });
           notice = { kind: 'info', text: `${STAMP_TITLES[id]}: sent, still confirming on NEAR testnet.`, ...(txUrl ? { href: txUrl, hrefLabel: 'View the transaction' } : {}) };
         } else {
-          local.set(id, { stamp: id, atMs: clock(), sponsored: id !== 'own_fare', ...(r.note !== undefined ? { note: r.note } : {}) });
+          local.set(id, { stamp: id, atMs: clock(), sponsored: id !== 'own_fare', ...(r.note !== undefined ? { note: displayNote(r.note) } : {}) });
           fresh.add(id);
           const how = id === 'own_fare' ? 'Your NEAR paid the fee.' : 'You paid no gas.';
           notice = { kind: 'info', text: `${STAMP_TITLES[id]} stamped on NEAR testnet.${r.created ? ' Your NEAR account was created for it.' : ''} ${how}`, ...(txUrl ? { href: txUrl, hrefLabel: 'View the transaction' } : {}) };

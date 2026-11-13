@@ -134,13 +134,14 @@ describe('deploy-stamps', () => {
     await expect(run(['sandbox-dev', '--skip-build', '--yes'], fresh({ afterNew: { passports: 1, stamps: 1 } }))).rejects.toThrow(/expected \{"passports":0,"stamps":0\}/u);
   });
 
-  it('--lock with the deploy deletes the key in the same transaction; once deployed, --lock deletes every key on its own', async () => {
+  it('--lock is refused with the first deploy (a wrong wasm would be final unchecked); once deployed, --lock deletes every key on its own', async () => {
     const chain = fresh();
     const r = await run(['sandbox-dev', '--skip-build', '--lock', '--yes'], chain);
-    expect(r.code).toBe(0);
-    expect(kinds(r.sent[0]!.actions)).toEqual(['deployContract', 'functionCall', 'deleteKey']);
-    expect(chain.keys).toEqual([]);
-    expect(r.out).toContain('has no access keys: its code and passports are final');
+    expect(r.code).not.toBe(0);
+    expect(r.sent).toEqual([]);
+    expect(chain.keys).not.toEqual([]);
+    expect(r.out).toContain('--lock locks only an account that already runs the');
+    expect(r.out).toContain('deploy-stamps sandbox-dev --lock --yes');
 
     const deployed = fresh({ codeHash: ourHash(), totals: { passports: 4, stamps: 17 } });
     const again = await run(['sandbox-dev', '--yes'], deployed);

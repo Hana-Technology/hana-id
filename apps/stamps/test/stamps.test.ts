@@ -2,7 +2,7 @@
 // contract's rules and bytes as the site builds them.
 import { describe, expect, it } from 'vitest';
 import { decodeNearDelegateAction, decodeNearTransaction } from '@hana-id/core';
-import { CONTRACT_ERRORS, NOTE_MAX_CHARS, RECENT_SHOWN, STAMP_IDS, checkNote, collectArgs, collectDelegate, collectTransaction, contractErrorCode, parsePassport, parseRecent, parseTotals, signatureMessage, u64 } from '../src/stamps.ts';
+import { BLANK_NOTE, CONTRACT_ERRORS, NOTE_MAX_CHARS, RECENT_SHOWN, STAMP_IDS, checkNote, displayNote, isImplicitAccount, collectArgs, collectDelegate, collectTransaction, contractErrorCode, parsePassport, parseRecent, parseTotals, signatureMessage, u64 } from '../src/stamps.ts';
 import { BLOCK_HASH } from './fakes.ts';
 import { NEAR_ACCOUNT, OTHER_ACCOUNT, STAMPS } from './fixtures.ts';
 
@@ -66,17 +66,47 @@ describe('parseRecent', () => {
   it('newest first across pages, each (account, stamp) once, at most RECENT_SHOWN', () => {
     const page1 = Array.from({ length: 30 }, (_, i) => ({ account_id: NEAR_ACCOUNT, stamp: STAMP_IDS[i % 6], block_timestamp_ms: i }));
     const page2 = Array.from({ length: 30 }, (_, i) => ({ account_id: `acct${i}.testnet`, stamp: 'arrival', block_timestamp_ms: 1000 + i }));
-    const r = parseRecent(page1, page2);
+    const r = parseRecent([page1, page2]);
     expect(r).toHaveLength(RECENT_SHOWN);
     expect(r[0]).toEqual({ accountId: 'acct29.testnet', stamp: 'arrival', atMs: 1029 });
     expect(r.filter((x) => x.accountId === NEAR_ACCOUNT)).toHaveLength(0);
-    const mine = parseRecent(page1);
+    const mine = parseRecent([page1]);
     expect(mine).toHaveLength(6);
   });
 
   it('drops invalid accounts, stamps and times; survives non-arrays', () => {
-    const r = parseRecent([{ account_id: 'Bad Account', stamp: 'arrival', block_timestamp_ms: 1 }, { account_id: NEAR_ACCOUNT, stamp: 'nope', block_timestamp_ms: 1 }, { account_id: NEAR_ACCOUNT, stamp: 'arrival', block_timestamp_ms: 'soon' }, { account_id: NEAR_ACCOUNT, stamp: 'arrival', block_timestamp_ms: 5 }], 'x', null, { 0: 1 });
+    const r = parseRecent([[{ account_id: 'Bad Account', stamp: 'arrival', block_timestamp_ms: 1 }, { account_id: NEAR_ACCOUNT, stamp: 'nope', block_timestamp_ms: 1 }, { account_id: NEAR_ACCOUNT, stamp: 'arrival', block_timestamp_ms: 'soon' }, { account_id: NEAR_ACCOUNT, stamp: 'arrival', block_timestamp_ms: 5 }], 'x', null, { 0: 1 }]);
     expect(r).toEqual([{ accountId: NEAR_ACCOUNT, stamp: 'arrival', atMs: 5 }]);
+  });
+});
+
+describe('the site against flooding and invisible text (the security review, L3, I3, I4)', () => {
+  it('the feed keeps implicit accounts only, filtered before the cut: named spam never pushes travellers out', () => {
+    const spam = Array.from({ length: 50 }, (_, i) => ({ account_id: `buy-now-${i}.testnet`, stamp: 'arrival', block_timestamp_ms: 2000 + i }));
+    const real = [{ account_id: NEAR_ACCOUNT, stamp: 'arrival', block_timestamp_ms: 10 }];
+    expect(parseRecent([spam, real], isImplicitAccount)).toEqual([{ accountId: NEAR_ACCOUNT, stamp: 'arrival', atMs: 10 }]);
+  });
+
+  it('a note of only invisible, control or bidi characters shows a fixed placeholder; a visible one keeps its text', () => {
+    for (const hostile of ['\u200B'.repeat(140), '\uFEFF', '\u202E', '\u0000', '\u200B\uFEFF\u202E\u0000 \u2066']) {
+      const p = parsePassport({ account_id: NEAR_ACCOUNT, stamps: [stamp('postcard', 1, { note: hostile })] }, NEAR_ACCOUNT)!;
+      expect(p.stamps[0]!.note, JSON.stringify(hostile)).toBe(BLANK_NOTE);
+    }
+    expect(displayNote('\u202Ehi')).toBe('\uFFFDhi');
+    expect(displayNote('hi\u200B')).toBe('hi\uFFFD');
+  });
+
+  it('the page checks a note as the contract does (Rust trim, scalar count), not String.prototype.trim', () => {
+    // U+FEFF is not Unicode White_Space: Rust keeps it (one character); JavaScript's trim() would drop it.
+    expect(checkNote('\uFEFF')).toEqual({ ok: true, text: '\uFEFF', chars: 1 });
+    expect('\uFEFF'.trim()).toBe('');
+    // U+0085 (NEL) is White_Space: Rust trims it; JavaScript's trim() keeps it.
+    expect(checkNote('\u0085')).toMatchObject({ ok: false, reason: 'empty' });
+    expect('\u0085'.trim()).toBe('\u0085');
+    expect(checkNote('\u0085 hi \u0085')).toEqual({ ok: true, text: 'hi', chars: 2 });
+    // 140 four-byte characters fit (140 scalars, 280 UTF-16 units); 141 don't.
+    expect(checkNote('🌸'.repeat(140))).toMatchObject({ ok: true, chars: 140 });
+    expect(checkNote('🌸'.repeat(141))).toMatchObject({ ok: false, reason: 'too_long', chars: 141 });
   });
 });
 

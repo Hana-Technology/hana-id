@@ -71,7 +71,7 @@ export function collectArgs(stamp: StampId, extra: { note?: string; proof?: Sign
 
 const TGAS = 1_000_000_000_000n;
 
-/** `collect(args)` with `tgas` and no deposit (the contract is not payable). */
+/** `collect(args)` with `tgas` and no deposit (`collect` is not payable). */
 export const collectAction = (args: CollectArgs, tgas: number): NearAction => ({ type: 'functionCall', methodName: 'collect', args: utf8(JSON.stringify(args)), gas: BigInt(tgas) * TGAS, deposit: 0n });
 
 const userKey = (accountId: string) => ({ type: 'ed25519' as const, bytes: nearImplicitPublicKey(accountId) });
@@ -112,8 +112,20 @@ export interface ChainStamp {
 
 export interface Passport {
   accountId: string;
-  /** At most one per stamp id, in catalog order. */
+  /** At most one per stamp id, in catalog order (the contract lists them in the order collected; the page re-sorts). */
   stamps: ChainStamp[];
+}
+
+/** What the page shows for a note with nothing visible in it once neutralised (only invisible or control characters). */
+export const BLANK_NOTE = '(blank note)';
+
+/**
+ * A note made safe for a text node (displayText: invisible, control and bidi characters become U+FFFD, cut to 140),
+ * or BLANK_NOTE when nothing but those and spaces is left: an all-invisible postcard doesn't read as a row of `�`.
+ */
+export function displayNote(raw: string): string {
+  const shown = displayText(raw, NOTE_MAX_CHARS);
+  return /^[\p{White_Space}\uFFFD]*$/u.test(shown) ? BLANK_NOTE : shown;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -133,8 +145,9 @@ const NOTE_MAX_UNITS = 4 * NOTE_MAX_CHARS;
 
 /**
  * `get_passport`'s answer for `accountId`: null for no passport (or an answer about another account), else the
- * stamps it holds that parse (a known id, a time, a boolean `sponsored`, an optional bounded string note), each id
- * once, in catalog order. Anything else is dropped.
+ * stamps it holds that parse (a known id, a time, a boolean `sponsored`, an optional bounded string note: the contract
+ * sends `note` on a postcard only), each id once, in catalog order whatever order the contract lists them in (the order
+ * collected). Anything else is dropped.
  */
 export function parsePassport(value: unknown, accountId: string): Passport | null {
   if (!isObj(value) || value.account_id !== accountId || !Array.isArray(value.stamps)) return null;
@@ -144,7 +157,7 @@ export function parsePassport(value: unknown, accountId: string): Passport | nul
     const atMs = u64(s.block_timestamp_ms);
     if (atMs === null || typeof s.sponsored !== 'boolean') continue;
     const stamp: ChainStamp = { stamp: s.stamp, atMs, sponsored: s.sponsored };
-    if (typeof s.note === 'string' && s.note.length > 0 && s.note.length <= NOTE_MAX_UNITS) stamp.note = displayText(s.note, NOTE_MAX_CHARS);
+    if (typeof s.note === 'string' && s.note.length > 0 && s.note.length <= NOTE_MAX_UNITS) stamp.note = displayNote(s.note);
     byId.set(s.stamp, stamp);
   }
   return { accountId, stamps: STAMP_IDS.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])) };
@@ -163,17 +176,18 @@ export const RECENT_PAGE = 50;
 export const RECENT_RING = 100;
 
 /**
- * `recent`'s answers (one or more pages), parsed strictly: entries with a valid NEAR account id, a known stamp and a
- * time; each (account, stamp) once; newest first; at most RECENT_SHOWN. Whatever order the ring answers in, the
+ * `recent`'s answers (one or more pages), parsed strictly: entries with a valid NEAR account id that `keep` accepts
+ * (filtered before the cut, so spam can't push the kept ones out), a known stamp and a time; each (account, stamp)
+ * once; newest first; at most RECENT_SHOWN. Whatever order the ring answers in, the
  * newest are kept.
  */
-export function parseRecent(...pages: unknown[]): RecentStamp[] {
+export function parseRecent(pages: readonly unknown[], keep: (accountId: string) => boolean = () => true): RecentStamp[] {
   const seen = new Set<string>();
   const out: RecentStamp[] = [];
   for (const page of pages) {
     if (!Array.isArray(page)) continue;
     for (const r of page.slice(0, RECENT_RING)) {
-      if (!isObj(r) || !isNearAccountId(r.account_id) || !isStampId(r.stamp)) continue;
+      if (!isObj(r) || !isNearAccountId(r.account_id) || !keep(r.account_id) || !isStampId(r.stamp)) continue;
       const atMs = u64(r.block_timestamp_ms);
       if (atMs === null) continue;
       const key = `${r.account_id} ${r.stamp}`;

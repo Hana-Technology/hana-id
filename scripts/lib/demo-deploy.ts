@@ -2,8 +2,8 @@
 // `near.demoGuestbook`) and deploy-stamps (contracts/hana-stamps, `near.demoStamps`); each passes its `DemoContract`.
 // Observes the chain, prints the plan, and changes nothing without --yes, like deploy-contract. The code is deployed
 // and `new()` called in one transaction (no one can initialise it in between); it is never redeployed (the contracts
-// have no upgrade path: a new version goes to a new account). `--lock` deletes every access key on the account (in the
-// deploy transaction, or on its own once deployed), after which no one can change its code or state. The account's
+// have no upgrade path: a new version goes to a new account). `--lock` deletes every access key on the account (on its own,
+// once deployed: never with the deploy), after which no one can change its code or state. The account's
 // full-access key is read from the near CLI legacy keychain and never printed. Testnet only: the manifest's network is
 // testnet-only, and an RPC on another chain is a blocker. Dependencies are injectable so test/guestbook-deploy.test.ts
 // and test/stamps-deploy.test.ts run the flow against a stub RPC.
@@ -72,7 +72,7 @@ export function demoUsage(c: DemoContract): string {
   return `Usage: ${c.command}.ts <env> [--yes] [--lock] [--wasm <file>] [--skip-build]
   Deploys contracts/${c.crate} to the env's near.${c.manifestField} account (deploy + new() in one transaction).
   --yes          apply the plan (without it, only print it)
-  --lock         delete every access key on the account (with the deploy, or on its own once deployed): no one can
+  --lock         delete every access key on the account once it runs the contract (never with the deploy): no one can
                  change the code or the ${c.stateNoun} afterwards, and the account can never be deleted
   --wasm <file>  deploy this wasm instead of building
   --skip-build   deploy the last built wasm (contracts/${c.crate}/target/near/${c.wasmName})`;
@@ -165,8 +165,11 @@ export function buildDemoPlan(c: DemoContract, m: Manifest, account: string, o: 
           `      near tokens <funded account> send-near ${account} '3 NEAR' network-config ${m.network} sign-with-legacy-keychain send`,
       );
     }
+    // A lock with the first deploy would make a wrong wasm final before anyone checked it (the probe runs after the
+    // keys are gone): lock only an account that already runs this contract, as the documented procedure does.
+    if (opts.lock) blockers.push(`--lock locks only an account that already runs the ${c.name}: deploy first without --lock, check it, then run ${c.command} ${m.name} --lock --yes`);
     if (opts.build) steps.push({ kind: 'build' });
-    steps.push({ kind: 'deploy', lock: opts.lock ? keyIds : [] });
+    steps.push({ kind: 'deploy', lock: [] });
   } else if (opts.lock) {
     if (keyIds.length) steps.push({ kind: 'lock', keys: keyIds });
     else done.push(`${account} has no access keys (locked)`);

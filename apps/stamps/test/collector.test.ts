@@ -278,6 +278,9 @@ describe('own_fare', () => {
     s.chain.sendTxAnswer = () => Response.json({ jsonrpc: '2.0', id: 'x', result: { status: { Failure: { ActionError: { kind: { FunctionCallError: { ExecutionError: 'Smart contract panicked: <script>ERR_NOPE' } } } } } } });
     const odd = await sendOwnFare(rpc, 'AAAA').catch((x: unknown) => x);
     expect(plainMessage(odd, 'collect')).toBe('NEAR testnet refused or failed the transaction. Refresh to check, then try again.');
+    // The contract's receipt out of storage balance: the storage notice, not "your account lacks NEAR".
+    s.chain.sendTxAnswer = () => Response.json({ jsonrpc: '2.0', id: 'x', result: { status: { Failure: { ActionError: { index: 0, kind: { LackBalanceForState: { account_id: STAMPS, amount: '1' } } } } } } });
+    await expect(sendOwnFare(rpc, 'AAAA')).rejects.toMatchObject({ code: 'stamps_contract_storage' });
   });
 });
 

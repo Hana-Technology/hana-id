@@ -104,7 +104,8 @@ export function newRpc(config: StampsConfig, fetchFn: (url: string, init: Reques
 
 /**
  * Sends a signed own-fare transaction (`send_tx`, executed optimistically) and reads its outcome: the contract's
- * panic as `stamps_contract_refused` (the ERR_* code only), NEAR's balance refusal as `near_not_enough_balance`, any
+ * panic as `stamps_contract_refused` (the ERR_* code only), the contract's storage shortfall (a receipt's
+ * LackBalanceForState) as `stamps_contract_storage`, NEAR's balance refusal as `near_not_enough_balance`, any
  * other refusal as `near_send_failed`. An RPC that gave no answer leaves the transaction possibly sent: `sent`.
  */
 export async function sendOwnFare(rpc: NearRpc, signedTxBase64: string): Promise<'done' | 'sent'> {
@@ -123,9 +124,13 @@ export async function sendOwnFare(rpc: NearRpc, signedTxBase64: string): Promise
   }
   const status = isObj(body.result) ? body.result.status : undefined;
   if (isObj(status) && 'Failure' in status) {
-    const code = contractErrorCode(JSON.stringify(status.Failure).slice(0, 4000));
+    const failure = JSON.stringify(status.Failure).slice(0, 4000);
+    const code = contractErrorCode(failure);
     if (code) throw pageError('stamps_contract_refused', code);
-    if (/NotEnoughBalance|LackBalanceForState/u.test(JSON.stringify(status.Failure).slice(0, 4000))) throw pageError('near_not_enough_balance', 'Not enough NEAR for the fee');
+    // A receipt's LackBalanceForState is the stamps contract's (its storage); the user's own shortfall is refused
+    // before the transaction runs (body.error above).
+    if (/LackBalanceForState/u.test(failure)) throw pageError('stamps_contract_storage', 'The stamps contract is out of storage balance');
+    if (/NotEnoughBalance/u.test(failure)) throw pageError('near_not_enough_balance', 'Not enough NEAR for the fee');
     throw pageError('near_send_failed', 'NEAR testnet failed the transaction');
   }
   if (!isObj(status)) throw pageError('near_send_failed', 'NEAR testnet gave no outcome');

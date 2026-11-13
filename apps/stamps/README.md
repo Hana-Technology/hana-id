@@ -53,7 +53,7 @@ the page.
 
 The rendering is the UI module's (`src/ui/` and `src/ui.css`, the art build's, D803–D804: the booklet and the six
 stamps drawn in code, with a preview harness, `preview:ui` and `shots`; its contract with the site and the `data-*`
-hooks the site uses: [`src/ui/CONTRACT.md`](src/ui/CONTRACT.md)). The rest (`src/app.ts` state, `src/view.ts` the view, `src/collector.ts`,
+hooks the site uses: [`UI-CONTRACT.md`](UI-CONTRACT.md)). The rest (`src/app.ts` state, `src/view.ts` the view, `src/collector.ts`,
 `src/stamps.ts` the contract's bytes and answers, `src/routes.ts`, `src/messages.ts`, `src/config.ts`, `src/csp.ts`,
 `worker/`) is the site build's. It reuses the hosted demo's NEAR code by importing it (D802): `apps/demo/src/near.ts`
 (`NearRpc`, the nonce rules, `displayText`, Rust's trim), `errors.ts` (`errorInfo`, `relayTransaction`), `config.ts`

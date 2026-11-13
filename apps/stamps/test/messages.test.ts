@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { pageError, plainMessage } from '../src/messages.ts';
+import { STORAGE_MESSAGE, pageError, plainMessage } from '../src/messages.ts';
 import { hanaError } from './fakes.ts';
 
 describe('plainMessage', () => {
+  it('the stamps contract out of storage balance: one plain notice, from the relay or from NEAR', () => {
+    const relayed = hanaError(4100, { status: 422, reason: 'contract_rejected' }, '{"ActionError":{"index":0,"kind":{"LackBalanceForState":{"account_id":"hana-id-stamps-dev1.testnet","amount":"1"}}}}');
+    expect(plainMessage(relayed, 'collect')).toBe(STORAGE_MESSAGE);
+    expect(plainMessage(pageError('stamps_contract_storage', 'x'), 'collect')).toBe(STORAGE_MESSAGE);
+  });
+
   it('the contract’s ERR_* from the relay, from NEAR, and nothing raw otherwise', () => {
     expect(plainMessage(hanaError(4100, { status: 422, reason: 'contract_rejected' }, 'Smart contract panicked: ERR_ALREADY'), 'collect')).toBe('You already hold this stamp: each one can be collected once.');
     expect(plainMessage(pageError('stamps_contract_refused', 'ERR_TOO_SOON'), 'collect')).toMatch(/^Not yet/u);

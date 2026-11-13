@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decodeSignedDelegate, nearPublicKeyString, policyRefusal, verifyDelegateSignature } from '../src/near/delegate.ts';
 import { nearRelayVar, parseNearRelayConfig } from '../src/near/relay-config.ts';
 import { failedExecutor, failureText } from '../src/near/tx.ts';
-import { accessKeyNonce, assertSuccess, balanceOf, createAccount, failures, finalBlock, NEAR, relayTx, type Sandbox, sandboxBinary, send, signDelegate, type Signer, stampsWasm, startSandbox, TGAS, type User } from './sandbox.ts';
+import { accessKeyNonce, assertSuccess, balanceOf, callerContractWasm, createAccount, failures, finalBlock, NEAR, relayTx, type Sandbox, sandboxBinary, send, signDelegate, type Signer, stampsWasm, startSandbox, TGAS, type User } from './sandbox.ts';
 
 const bin = sandboxBinary();
 const wasm = stampsWasm();
@@ -102,5 +102,23 @@ describe.skipIf(!bin || !wasm)('the stamps contract through the relay on near-sa
     // A delegate to any other contract still fails the relay's receiver check.
     const { refusal } = await relay({ stamp: 'arrival' }, `other.${sb.root.accountId}`);
     expect(refusal).toEqual({ code: 'receiver_not_allowed', receiverId: `other.${sb.root.accountId}` });
+  }, 120_000);
+
+  it('a contract calling collect is its own traveller: its passport, marked sponsored; the human signer gets none', async () => {
+    const caller = await createAccount(sb, 'caller', 5n * NEAR, callerContractWasm(stamps.accountId, 'collect', CAP_TGAS));
+    for (const stamp of ['arrival', 'sponsored']) {
+      const out = await send(sb.rpc, sb.root, caller.accountId, [actionCreators.functionCall('go', Buffer.from(JSON.stringify({ stamp })), 50n * TGAS, 0n)]);
+      expect(failures(out), stamp).toEqual([]);
+    }
+    const passport = await sb.rpc.view<{ account_id: string; stamps: { stamp: string; sponsored: boolean }[] }>(stamps.accountId, 'get_passport', { account_id: caller.accountId });
+    expect(passport.stamps.map((s) => [s.stamp, s.sponsored])).toEqual([
+      ['arrival', true],
+      ['sponsored', true],
+    ]);
+    expect(await sb.rpc.view(stamps.accountId, 'get_passport', { account_id: sb.root.accountId })).toBeNull();
+    // own_fare is refused for it: the signer (the human) is not the caller (the contract).
+    const fare = await send(sb.rpc, sb.root, caller.accountId, [actionCreators.functionCall('go', Buffer.from(JSON.stringify({ stamp: 'own_fare' })), 50n * TGAS, 0n)]);
+    expect(failedExecutor(fare)).toBe(stamps.accountId);
+    expect(failureText(fare)).toContain('ERR_NOT_OWN_FARE');
   }, 120_000);
 });

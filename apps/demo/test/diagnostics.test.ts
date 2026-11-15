@@ -39,7 +39,7 @@ describe('diagnostics', () => {
       v: 1,
       at: '2026-10-29T12:00:00.000Z',
       environment: 'sandbox-dev',
-      appKey: 'pk_test_85gd…',
+      appKey: 'pk_test_LDdt…',
       pageOrigin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev',
       vaultOrigin: 'https://hana-id-vault-sandbox-dev.tingtc.workers.dev',
       sdkVersion: '0.0.0',
@@ -68,7 +68,7 @@ describe('diagnostics', () => {
     for (const secret of [JWT, STELLAR_SECRET, HEX_KEY, 'ab'.repeat(32), SIGNATURE, RELAY_ID, PK, 'sk_abcdefghijkl', 'eyJ']) expect(json).not.toContain(secret);
     const parsed = JSON.parse(json) as { errors: { message: string; code: unknown }[] };
     expect(parsed.errors.map((e) => e.message)).toEqual([
-      'bad token [redacted token] for pk_test_85gd…',
+      'bad token [redacted token] for pk_test_LDdt…',
       'key [redacted] / [redacted hex]',
       'sig [redacted hex] relay [redacted] [redacted]',
     ]);
@@ -110,7 +110,7 @@ describe('scrub', () => {
   });
 
   it('keyPrefix keeps 12 characters', () => {
-    expect(keyPrefix(PK)).toBe('pk_test_85gd…');
+    expect(keyPrefix(PK)).toBe('pk_test_LDdt…');
     expect(keyPrefix('short')).toBe('short');
   });
 });

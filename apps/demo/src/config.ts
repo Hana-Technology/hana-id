@@ -15,7 +15,7 @@ export const DEFAULT_ENV = 'sandbox-dev';
  * The Smoke B app on sandbox-dev (shared Google client). Public, like every publishable key; the app's origins are what
  * protect it, so the demo's origin must be one of them (README "Deploy").
  */
-export const DEFAULT_PUBLISHABLE_KEY = 'pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie';
+export const DEFAULT_PUBLISHABLE_KEY = 'pk_test_LDdtACFeHCNnfAE7rjZJchv7C88kHEPu7';
 
 export const STELLAR_TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
 

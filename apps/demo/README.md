@@ -8,7 +8,7 @@ it is Journear Passport's showcase of the SDK, so it wears the full design syste
 
 | Env | URL | App |
 |---|---|---|
-| `sandbox-dev` | `https://hana-id-demo-sandbox-dev.tingtc.workers.dev` | Smoke B, `pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie` (shared Google client) |
+| `sandbox-dev` | `https://hana-id-demo-sandbox-dev.tingtc.workers.dev` | "Sodax Demo" (was Smoke B), `pk_test_LDdtACFeHCNnfAE7rjZJchv7C88kHEPu7` (rotated 2026-11-15) (shared Google client) |
 
 ## What the page does
 
@@ -161,7 +161,7 @@ Domain instead (no workers.dev URL).
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:add \
-     --app pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie \
+     --app pk_test_LDdtACFeHCNnfAE7rjZJchv7C88kHEPu7 \
      --origin https://hana-id-demo-sandbox-dev.tingtc.workers.dev --remote
    corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:changes:announce <gc id> --remote   # the id printed above
    ```

@@ -10,7 +10,7 @@ const STELLAR_SECRET = `S${'A'.repeat(55)}`;
 const HEX_KEY = `0x${'ab'.repeat(32)}`;
 const SIGNATURE = `0x${'cd'.repeat(65)}`;
 const RELAY_ID = 'Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5';
-const PK = 'pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie';
+const PK = 'pk_test_LDdtACFeHCNnfAE7rjZJchv7C88kHEPu7';
 
 const input = (patch: Partial<DiagnosticsInput> = {}): DiagnosticsInput => ({
   environment: 'sandbox-dev',

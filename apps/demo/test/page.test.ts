@@ -186,7 +186,7 @@ describe('demo page', () => {
   it('creates the client exactly as a partner does, from the baked configuration, and says NEAR in the banner', () => {
     boot();
     expect(fake.config).toEqual({
-      publishableKey: 'pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie',
+      publishableKey: 'pk_test_LDdtACFeHCNnfAE7rjZJchv7C88kHEPu7',
       environment: 'sandbox-dev',
       evm: { chains: [{ id: 84532, rpcUrl: 'https://sepolia.base.org' }], defaultChainId: 84532 },
       stellar: { networkPassphrase: 'Test SDF Network ; September 2015' },

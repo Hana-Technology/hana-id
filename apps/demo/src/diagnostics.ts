@@ -54,7 +54,7 @@ export const MAX_ENTRIES = 20;
 export const MAX_REQUEST_IDS = 5;
 const MAX_MESSAGE = 200;
 
-/** `pk_test_85gd…`: enough to tell apps apart. */
+/** `pk_test_LDdt…`: enough to tell apps apart. */
 export const keyPrefix = (pk: string): string => (pk.length > 12 ? `${pk.slice(0, 12)}…` : pk);
 
 /** An EVM address, or a Stellar account (G…) or contract (C…) address: public, and useful in a report. */

@@ -186,7 +186,7 @@ describe('demo page', () => {
   it('creates the client exactly as a partner does, from the baked configuration, and says NEAR in the banner', () => {
     boot();
     expect(fake.config).toEqual({
-      publishableKey: 'pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie',
+      publishableKey: 'pk_test_LDdtACFeHCNnfAE7rjZJchv7C88kHEPu7',
       environment: 'sandbox-dev',
       evm: { chains: [{ id: 84532, rpcUrl: 'https://sepolia.base.org' }], defaultChainId: 84532 },
       stellar: { networkPassphrase: 'Test SDF Network ; September 2015' },
@@ -435,7 +435,7 @@ describe('demo page', () => {
     const text = copied[0]!;
     expect($('diagnostics').textContent).toBe(text);
     const d = JSON.parse(text) as Record<string, unknown>;
-    expect(d).toMatchObject({ environment: 'sandbox-dev', appKey: 'pk_test_85gd…', status: 'logged_in', addresses: ADDRESSES, supportId: 'HANA-2750-G5HM', pageOrigin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev' });
+    expect(d).toMatchObject({ environment: 'sandbox-dev', appKey: 'pk_test_LDdt…', status: 'logged_in', addresses: ADDRESSES, supportId: 'HANA-2750-G5HM', pageOrigin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev' });
     expect(d.logins).toEqual([{ at: '2026-10-29T12:00:00.000Z', method: 'google', totalMs: 7000, stages: TIMINGS }]);
     expect(d.errors).toEqual([{ at: '2026-10-29T12:00:00.000Z', action: 'sign', code: -32603, reason: null, message: 'relay [redacted] failed', requestId: null }]);
     expect(d.requestIds).toEqual([]);

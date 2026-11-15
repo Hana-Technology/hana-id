@@ -8,7 +8,7 @@ describe('demoConfigFromVars', () => {
   it('defaults to sandbox-dev with the Smoke B app key, Base Sepolia and Stellar testnet', () => {
     expect(CONFIG).toEqual({
       environment: 'sandbox-dev',
-      publishableKey: 'pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie',
+      publishableKey: 'pk_test_LDdtACFeHCNnfAE7rjZJchv7C88kHEPu7',
       vaultOrigin: 'https://hana-id-vault-sandbox-dev.tingtc.workers.dev',
       evm: { id: 84532, name: 'Base Sepolia', rpcUrl: 'https://sepolia.base.org', explorer: 'https://sepolia.basescan.org' },
       stellar: { networkPassphrase: 'Test SDF Network ; September 2015', explorer: 'https://stellar.expert/explorer/testnet' },

@@ -206,9 +206,17 @@ describe('EVM gas sponsorship in the vault build (D834)', () => {
     expect(envs['sandbox-dev']).not.toHaveProperty('evmSponsor');
   });
 
+  it('main checks against core’s pinned table by default (no Base Sepolia entry yet, so 84532 is refused)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hana-gen-envs-evm-'));
+    dirs.push(dir);
+    expect(() => main({ manifests: [sandbox, sponsored], out: join(dir, 'envs.generated.ts') })).toThrow(/no pinned delegate for chain 84532/u);
+    expect(() => main({ manifests: [sandbox], out: join(dir, 'envs.generated.ts') })).not.toThrow();
+  });
+
   it('skips the check for an env the pages aren’t built for', () => {
     const noPages = manifest({ name: 'sandbox-nopages', vaultOrigin: undefined, authOrigin: undefined, evm: { sponsor: sponsorFixture() } });
     expect(sponsorProblems(noPages, undefined)).toEqual([]);
+    expect(sponsorProblems(manifest({ name: 'sandbox-ph', evm: { sponsor: sponsorFixture() } }), { 84532: { address: FIXTURE_DELEGATE, placeholder: true } })).toEqual([`envs/sandbox-ph.json evm.sponsor.chains.84532.delegate ${FIXTURE_DELEGATE} is a placeholder entry of the pinned table, only for local* envs.`]);
     expect(sponsorProblems(sponsored, FIXTURE_PINNED_DELEGATES)).toEqual([]);
   });
 });

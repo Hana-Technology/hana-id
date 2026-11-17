@@ -12111,14 +12111,16 @@ address never changes; testnet only; free tiers; a staff-only allowlist in the m
 - Addresses are EIP-55 checksummed (the form `checksumEvmAddress` in core writes and explorers show): an all-lowercase
   or mistyped one is refused, so a typo is caught at `gen` (`@noble/hashes` 1.8.0, already in the workspace, added to
   `packages/env` and `apps/api` for keccak). Selectors are lowercase.
-- Pinned delegate: `evmSponsorDelegateProblems(sponsor, pinned)` takes the table as a parameter (shape of core's
-  `SPONSOR_DELEGATES`; only `address` is read, compared case-insensitively) so `packages/env` needs no dependency on
-  core. The generators run it: the API's `gen` (`evmSponsorVars`) and the page build (`gen-envs` `sponsorProblems`)
-  refuse a block when no table is passed, a chain has no pinned entry or a delegate differs. Their `main` takes the
-  table as `sponsorDelegates`; once core's table lands, both `main`s pass `SPONSOR_DELEGATES` from
-  `@hana-id/core/evm-sponsor` by default (until then a manifest with the block can't be generated, which is
-  fail-closed and fine: no env has it).
-- Until that wiring, both generators refuse any env carrying the block; the docs say so.
+- Pinned delegate: `evmSponsorDelegateProblems(sponsor, pinned, envName)` takes the table as a parameter (shape of
+  core's `SPONSOR_DELEGATES`; `address` compared case-insensitively, and `placeholder`) so `packages/env` needs no
+  dependency on core. The generators run it: the API's `gen` (`evmSponsorVars`) and the page build (`gen-envs`
+  `sponsorProblems`) refuse a block when no table is passed, a chain has no pinned entry, a delegate differs, or the
+  entry is a placeholder (`placeholder: true`, core's test stand-in for 31337) outside a `local*` env. Wired (after
+  `next` @ d39d1d69 brought core's module): `gen-envs` `main` defaults `sponsorDelegates` to `SPONSOR_DELEGATES`; the
+  API's `gen` loads it in its command line (`cli`, a dynamic import: `apps/api/vitest.config.ts` imports
+  `gen-wrangler.ts` under Node's own type stripping, which core's sources don't support), while `main` and
+  `wranglerConfig` still take it as a parameter. Core has no Base Sepolia entry yet, so a non-local env with the block
+  is refused until the delegate is deployed and pinned.
 - `EVM_SPONSOR` (API var): the block as JSON, its fields in a fixed order and nothing else (`evmSponsorVar`). `gen` also
   runs the API's parser on it and refuses a var the Worker would refuse. The Worker parses it again at run time
   (`parseEvmSponsorConfig(raw, { network, envName, pinnedDelegates })`, same bounds and rules but the provider check on
@@ -12127,10 +12129,10 @@ address never changes; testnet only; free tiers; a staff-only allowlist in the m
   things up). Anything absent, malformed, out of bounds or off testnet is `{ status: 'unconfigured', reason: 'absent' |
   'invalid', problem }`, never a partial config. Self-contained (no Worker-only types, no core root import), so `gen`
   runs it in Node; tests keep its bounds and chain lists equal to the schema's.
-- Run-time delegate check: `pinnedDelegates` is core's pinned table. With the block present, no table or a delegate
-  that differs (or a chain with no entry) is `invalid`. Core's module is on another branch, so nothing passes the table
-  yet: the handlers (WP5a) must pass `SPONSOR_DELEGATES` from `@hana-id/core/evm-sponsor` once it is on `next`; tested
-  here with a fixture table.
+- Run-time delegate check: `pinnedDelegates` is core's pinned table. With the block present, no table, a delegate that
+  differs, a chain with no entry or a placeholder entry outside a `local*` env is `invalid`. The sponsorship handlers
+  (WP5a) must pass `SPONSOR_DELEGATES` from `@hana-id/core/evm-sponsor` (which typechecks in the Worker); tested with a
+  fixture table and with core's own.
 - Shared rules (after the independent review, 2026-11-17): amounts are converted by exact decimal arithmetic on
   `String(v)` (exponent forms included) into a BigInt of the smallest unit, refusing more decimals than it allows
   (`sponsorDecimalUnits`; a float conversion refused valid values such as 33.999997859 gwei); loopback hosts
@@ -12165,6 +12167,12 @@ address never changes; testnet only; free tiers; a staff-only allowlist in the m
   value field: sponsored calls carry 0 (core's approval subject refuses any other value). `sponsoredTarget(config,
   app, chain, to, data)` in the API's parser is the lookup the handlers will use (address in any case, the first 4
   bytes of `data`).
+- Exact calldata (after an audit finding, 2026-11-17: a selector-only rule accepts trailing bytes the sponsor pays
+  for): every target has a required `maxDataBytes` (4 to 8192), so a call's data is always bounded, and an optional
+  `exactCalldata` (1 to 8 distinct lowercase whole-byte entries of 4 to 2048 bytes, each starting with one of the
+  target's selectors and no longer than `maxDataBytes`; one shared rule, `sponsorCalldataProblem`, in both packages).
+  A selector with entries matches only data exactly equal to one of them; a selector without keeps selector matching
+  within `maxDataBytes`. The demo's `checkIn()` is `exactCalldata: ["0x183ff085"]`, `maxDataBytes: 4`.
 - Address impact: none.
 
 ### D836. Sponsorship limits: the founder's budgets, per-app below the env's, hard bounds on every number

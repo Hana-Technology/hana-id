@@ -109,7 +109,7 @@ export function evmSponsorVars(m: Manifest, pinned: PinnedSponsorDelegates | und
   const sponsor = m.evm?.sponsor;
   if (!sponsor) return {};
   if (!pinned) throw new Error(`envs/${m.name}.json has evm.sponsor, but gen was given no pinned delegate table to check it against (D834)`);
-  const problems = evmSponsorDelegateProblems(sponsor, pinned);
+  const problems = evmSponsorDelegateProblems(sponsor, pinned, m.name);
   if (problems.length) throw new Error(`envs/${m.name}.json evm.sponsor:\n${problems.join('\n')}`);
   const value = evmSponsorVar(sponsor);
   const setting = parseEvmSponsorConfig(value, { network: m.network, envName: m.name, pinnedDelegates: pinned });
@@ -457,7 +457,8 @@ export function writeWranglerConfig(manifest: Manifest, d1Arg: string | undefine
 
 /**
  * `root`/`dir` override the repo root (for .secrets/) and the output directory; `loadManifest` the manifest (tests);
- * `sponsorDelegates` the pinned delegate table an `evm.sponsor` block is checked against (evmSponsorVars).
+ * `sponsorDelegates` the pinned delegate table an `evm.sponsor` block is checked against (evmSponsorVars); the CLI
+ * (`cli`) passes core's SPONSOR_DELEGATES.
  */
 export function main(argv: string[], opts: { root?: string; dir?: string; loadManifest?: (name: string) => Manifest; sponsorDelegates?: PinnedSponsorDelegates } = {}): void {
   const valueFlags = ['--d1-id', '--d1-name', '--usage-hyperdrive-id'];
@@ -497,4 +498,14 @@ export function main(argv: string[], opts: { root?: string; dir?: string; loadMa
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main(process.argv.slice(2));
+/**
+ * The command line: `main` with core's pinned delegate table (`@hana-id/core/evm-sponsor` SPONSOR_DELEGATES), loaded
+ * here rather than at module load because vitest.config.ts imports this file under Node's own type stripping, which
+ * core's sources don't support.
+ */
+export async function cli(argv: string[], opts: Omit<Parameters<typeof main>[1] & object, 'sponsorDelegates'> = {}): Promise<void> {
+  const { SPONSOR_DELEGATES } = await import('@hana-id/core/evm-sponsor');
+  main(argv, { ...opts, sponsorDelegates: SPONSOR_DELEGATES });
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) await cli(process.argv.slice(2));

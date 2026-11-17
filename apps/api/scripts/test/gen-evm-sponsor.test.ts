@@ -5,13 +5,14 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { EVM_SPONSOR_BOUNDS as SCHEMA_BOUNDS, isSponsorLoopbackHost as schemaLoopback, LOCAL_EVM_CHAIN_IDS as SCHEMA_LOCAL, loadEnv, type Manifest, manifestSchema, OP_STACK_TEST_CHAIN_IDS as SCHEMA_OP_STACK, sponsorDecimalUnits as schemaDecimal, sponsorRpcUrlProblem as schemaRpcProblem, SPONSOR_TEST_EVM_CHAIN_IDS as SCHEMA_CHAINS, repoRoot } from '@hana-id/env';
+import { EVM_SPONSOR_BOUNDS as SCHEMA_BOUNDS, isSponsorLoopbackHost as schemaLoopback, LOCAL_EVM_CHAIN_IDS as SCHEMA_LOCAL, loadEnv, type Manifest, manifestSchema, OP_STACK_TEST_CHAIN_IDS as SCHEMA_OP_STACK, sponsorDecimalUnits as schemaDecimal, sponsorRpcUrlProblem as schemaRpcProblem, SPONSOR_TEST_EVM_CHAIN_IDS as SCHEMA_CHAINS, evmSponsorDelegateProblems, repoRoot } from '@hana-id/env';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FIXTURE_APP, FIXTURE_DELEGATE, FIXTURE_PINNED_DELEGATES, fixtureAddress, sponsorFixture } from '../../../../packages/env/src/evm-sponsor.fixture.ts';
 import { checksumEvmAddress, EVM_SPONSOR_BOUNDS, evmSponsorVar, isSponsorLoopbackHost, LOCAL_EVM_CHAIN_IDS, OP_STACK_TEST_CHAIN_IDS, parseEvmSponsorConfig, sponsorDecimalUnits, sponsorRpcUrlProblem, SPONSOR_TEST_EVM_CHAIN_IDS } from '../../src/evm/sponsor-config.ts';
-import { devVarsContent, evmRelayKeysLine, evmSponsorVars, LOCAL_D1_ID, TEST_MANIFEST, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { cli, devVarsContent, evmRelayKeysLine, evmSponsorVars, LOCAL_D1_ID, main, TEST_MANIFEST, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 
 /** dotenv's single-quoted value, as wrangler reads .dev.vars (the full parser is in gen-wrangler.test.ts). */
 const devVar = (content: string, name: string): string | undefined => new RegExp(`^${name}='([^']*)'$`, 'mu').exec(content)?.[1];
@@ -102,6 +103,20 @@ describe('the two packages’ shared rules are the same functions', () => {
       withChain({ rpc: 'https://rpc.example.org/v2/key' }),
       withChain({ rpc: 'https://rpc.example.org/?k=1' }),
       withChain({ rpc: 'https://sepolia.base.org/' }),
+      ...[
+        { exactCalldata: undefined, maxDataBytes: 36 },
+        { exactCalldata: [], maxDataBytes: 4 },
+        { exactCalldata: null, maxDataBytes: 4 },
+        { exactCalldata: ['0x183FF085'], maxDataBytes: 4 },
+        { exactCalldata: ['0x183ff08500'], maxDataBytes: 4 },
+        { exactCalldata: ['0x183ff08500'], maxDataBytes: 5 },
+        { exactCalldata: ['0xa9059cbb'], maxDataBytes: 4 },
+        { exactCalldata: ['0x183ff085', '0x183ff085'], maxDataBytes: 4 },
+        { exactCalldata: ['0x183ff085'], maxDataBytes: 3 },
+        { exactCalldata: ['0x183ff085'], maxDataBytes: 8193 },
+        { exactCalldata: ['0x183ff085'], maxDataBytes: undefined },
+        { exactCalldata: ['0x183ff085'], maxDataBytes: null },
+      ].map((fields) => text({ ...sponsorFixture(), apps: { [FIXTURE_APP]: { '84532': [{ ...sponsorFixture().apps[FIXTURE_APP]!['84532']![0]!, ...fields }] } } })),
       ...['__proto__', 'constructor', 'prototype'].flatMap((key) => [
         text(sponsorFixture()).replace('"chains":{', `"chains":{"${key}":{},`),
         text(sponsorFixture()).replace('"apps":{', `"apps":{"${key}":{"84532":[]},`),
@@ -142,6 +157,27 @@ describe('EVM_SPONSOR (D834)', () => {
     const text = readFileSync(path, 'utf8');
     const config = JSON.parse(text.slice(text.indexOf('\n') + 1)) as { vars: Record<string, string> };
     expect(JSON.parse(config.vars.EVM_SPONSOR!)).toEqual(sponsorFixture());
+  });
+
+  it('gen’s command line checks against core’s pinned table (no Base Sepolia entry yet, so 84532 is refused)', async () => {
+    expect(SPONSOR_DELEGATES[84532]).toBeUndefined();
+    await expect(cli(['sandbox-dev'], { dir: tmp(), loadManifest: () => withSponsor() })).rejects.toThrow(/no pinned delegate for chain 84532/u);
+    await expect(cli(['sandbox-dev'], { dir: tmp(), loadManifest: () => base as Manifest })).resolves.toBeUndefined();
+    expect(() => main(['sandbox-dev'], { dir: tmp(), loadManifest: () => withSponsor() })).toThrow(/no pinned delegate table/u);
+    expect(() => main(['sandbox-dev'], { dir: tmp(), loadManifest: () => withSponsor(), sponsorDelegates: FIXTURE_PINNED_DELEGATES })).not.toThrow();
+  });
+
+  it('core’s placeholder entry (31337) is accepted in a local* env and refused anywhere else', () => {
+    const placeholder = SPONSOR_DELEGATES[31337]!;
+    expect(placeholder.placeholder).toBe(true);
+    const s = sponsorFixture();
+    const local = { ...s, chains: { '31337': { ...s.chains['84532']!, opStack: false, delegate: placeholder.address, rpc: 'http://127.0.0.1:8545', rpcFallback: undefined } }, apps: {} };
+    expect(evmSponsorDelegateProblems(local, SPONSOR_DELEGATES, 'local-dev')).toEqual([]);
+    expect(evmSponsorDelegateProblems(local, SPONSOR_DELEGATES, 'sandbox-dev')).toEqual([`evm.sponsor.chains.31337.delegate ${placeholder.address} is a placeholder entry of the pinned table, only for local* envs`]);
+    const raw = evmSponsorVar(local);
+    expect(parseEvmSponsorConfig(raw, { network: 'testnet', envName: 'local-dev', pinnedDelegates: SPONSOR_DELEGATES }).status).toBe('configured');
+    const elsewhere = parseEvmSponsorConfig(raw, { network: 'testnet', envName: 'sandbox-dev', pinnedDelegates: SPONSOR_DELEGATES });
+    expect(elsewhere.status).toBe('unconfigured');
   });
 
   it('refuses the block without a pinned delegate table, or with a delegate the table doesn’t pin', () => {

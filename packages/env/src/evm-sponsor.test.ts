@@ -35,7 +35,7 @@ const chain = (fields: Partial<Record<keyof Chain, unknown>> & Record<string, un
 };
 /** The fixture with the app's 84532 targets replaced. */
 const targets = (list: unknown[]): Record<string, unknown> => ({ ...sponsorFixture(), apps: { [FIXTURE_APP]: { '84532': list } } });
-const target = (fields: Record<string, unknown>) => ({ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], label: 'Check-in', ...fields });
+const target = (fields: Record<string, unknown>) => ({ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], maxDataBytes: 36, label: 'Check-in', ...fields });
 /** evmSponsorProblems' messages for a manifest-like value (rules beyond the shape, any env name or network). */
 const problems = (sponsor: EvmSponsor, name = 'sandbox-dev', network = 'testnet') => evmSponsorProblems({ name, network, evm: { sponsor } }).map((p) => p.message);
 
@@ -313,6 +313,35 @@ describe('evm.sponsor: the staff-only allowlist (D835)', () => {
     expect(messages(withSponsor(targets([target({ selectors: Array.from({ length: 8 }, (_, i) => `0x0000000${i}`) })])))).toEqual([]);
   });
 
+  it('maxDataBytes: required, an integer from 4 to 8192', () => {
+    expect(refused(targets([target({ maxDataBytes: undefined })]))).toBe(true);
+    for (const bad of [3, 8193, 4.5, '36', null]) expect(refused(targets([target({ maxDataBytes: bad })])), String(bad)).toBe(true);
+    for (const ok of [4, 8192]) expect(messages(withSponsor(targets([target({ maxDataBytes: ok })]))), String(ok)).toEqual([]);
+  });
+
+  it('exactCalldata: 1 to 8 distinct lowercase whole-byte entries of 4 to 2048 bytes, each starting with a listed selector, none longer than maxDataBytes', () => {
+    const tranfer = `0xa9059cbb${'00'.repeat(64)}`;
+    expect(messages(withSponsor(targets([target({ selectors: [CHECK_IN_SELECTOR, '0xa9059cbb'], exactCalldata: [CHECK_IN_SELECTOR, tranfer], maxDataBytes: 68 })])))).toEqual([]);
+    expect(messages(withSponsor(targets([target({ exactCalldata: [`0x${'ab'.repeat(2048)}`.replace(/^0xabababab/u, CHECK_IN_SELECTOR)], maxDataBytes: 2048 })])))).toEqual([]);
+    const bad: [unknown, RegExp][] = [
+      [[], /exactCalldata lists 1 to 8 entries/u],
+      [Array.from({ length: 9 }, (_, i) => `${CHECK_IN_SELECTOR}${i.toString(16).padStart(2, '0')}`), /exactCalldata lists 1 to 8 entries/u],
+      [['0x183FF085'], /whole bytes, 4 to 2048 bytes/u],
+      [[`${CHECK_IN_SELECTOR}0`], /whole bytes, 4 to 2048 bytes/u],
+      [['0x183ff0'], /whole bytes, 4 to 2048 bytes/u],
+      [[`${CHECK_IN_SELECTOR}${'00'.repeat(2045)}`], /whole bytes, 4 to 2048 bytes/u],
+      [['183ff085'], /whole bytes, 4 to 2048 bytes/u],
+      [[CHECK_IN_SELECTOR, CHECK_IN_SELECTOR], /exactCalldata lists an entry twice/u],
+      [['0xa9059cbb'], /first 4 bytes are not one of selectors/u],
+      [[`${CHECK_IN_SELECTOR}${'00'.repeat(33)}`], /longer than maxDataBytes/u],
+    ];
+    expect(refused(targets([target({ exactCalldata: [7] })]))).toBe(true);
+    expect(refused(targets([target({ exactCalldata: null })]))).toBe(true);
+    for (const [exactCalldata, re] of bad) {
+      expect(messages(withSponsor(targets([target({ exactCalldata })]))).join(' '), JSON.stringify(exactCalldata).slice(0, 60)).toMatch(re);
+    }
+  });
+
   it('at most 8 apps, with valid app ids', () => {
     const one = sponsorFixture().apps[FIXTURE_APP]!;
     const apps = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`app_Fixture${i}`, one]));
@@ -348,23 +377,32 @@ describe('evm.sponsor: the staff-only allowlist (D835)', () => {
   });
 });
 
+describe('evmSponsorDelegateProblems: placeholder entries', () => {
+  it('refuses a delegate the table marks as a placeholder outside local* envs', () => {
+    const table = { 84532: { address: FIXTURE_DELEGATE, placeholder: true } };
+    expect(evmSponsorDelegateProblems(sponsorFixture(), table, 'sandbox-dev')).toEqual([`evm.sponsor.chains.84532.delegate ${FIXTURE_DELEGATE} is a placeholder entry of the pinned table, only for local* envs`]);
+    expect(evmSponsorDelegateProblems(sponsorFixture(), table, 'local-dev')).toEqual([]);
+    expect(evmSponsorDelegateProblems(sponsorFixture(), { 84532: { address: FIXTURE_DELEGATE, placeholder: false } }, 'sandbox-dev')).toEqual([]);
+  });
+});
+
 describe('evmSponsorDelegateProblems: the pinned delegate table (D834)', () => {
   it('passes when every chain’s delegate is the pinned one (any case in the table)', () => {
-    expect(evmSponsorDelegateProblems(sponsorFixture(), FIXTURE_PINNED_DELEGATES)).toEqual([]);
-    expect(evmSponsorDelegateProblems(sponsorFixture(), { 84532: { address: FIXTURE_DELEGATE.toLowerCase() } })).toEqual([]);
+    expect(evmSponsorDelegateProblems(sponsorFixture(), FIXTURE_PINNED_DELEGATES, 'sandbox-dev')).toEqual([]);
+    expect(evmSponsorDelegateProblems(sponsorFixture(), { 84532: { address: FIXTURE_DELEGATE.toLowerCase() } }, 'sandbox-dev')).toEqual([]);
   });
 
   it('refuses a chain without a pinned entry, and a delegate that differs from it', () => {
-    expect(evmSponsorDelegateProblems(sponsorFixture(), {})).toEqual(['evm.sponsor.chains.84532: no pinned delegate for chain 84532: sponsorship needs a reviewed delegate there first']);
-    expect(evmSponsorDelegateProblems(sponsorFixture(), { 31337: { address: FIXTURE_DELEGATE } })).toHaveLength(1);
+    expect(evmSponsorDelegateProblems(sponsorFixture(), {}, 'sandbox-dev')).toEqual(['evm.sponsor.chains.84532: no pinned delegate for chain 84532: sponsorship needs a reviewed delegate there first']);
+    expect(evmSponsorDelegateProblems(sponsorFixture(), { 31337: { address: FIXTURE_DELEGATE } }, 'sandbox-dev')).toHaveLength(1);
     const other = fixtureAddress('0bad');
-    expect(evmSponsorDelegateProblems(sponsorFixture(), { 84532: { address: other } })).toEqual([`evm.sponsor.chains.84532.delegate ${FIXTURE_DELEGATE} is not the pinned delegate ${other}`]);
+    expect(evmSponsorDelegateProblems(sponsorFixture(), { 84532: { address: other } }, 'sandbox-dev')).toEqual([`evm.sponsor.chains.84532.delegate ${FIXTURE_DELEGATE} is not the pinned delegate ${other}`]);
   });
 
   it('reads only own entries of the table (no prototype lookups)', () => {
     const s = sponsorFixture();
     const sponsor = { chains: { toString: s.chains['84532']! } } as unknown as EvmSponsor;
-    expect(evmSponsorDelegateProblems(sponsor, {})).toHaveLength(1);
+    expect(evmSponsorDelegateProblems(sponsor, {}, 'sandbox-dev')).toHaveLength(1);
   });
 });
 

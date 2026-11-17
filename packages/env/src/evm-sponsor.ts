@@ -29,6 +29,11 @@ export const EVM_SPONSOR_BOUNDS = Object.freeze({
   /** Targets per app, across its chains. */
   targetsPerApp: 8,
   selectorsPerTarget: 8,
+  /** Exact calldata entries per target, and each one's size in bytes. */
+  exactCalldataPerTarget: 8,
+  exactCalldataBytes: 2048,
+  /** A target's `maxDataBytes`: every call's data is at most this long. */
+  maxDataBytes: { min: 4, max: 8192 },
   labelChars: 64,
   maxGasPerTx: { min: 50_000, max: 2_000_000 },
   minGas: { min: 10_000, max: 1_000_000 },
@@ -128,6 +133,23 @@ export function sponsorRpcUrlProblem(value: string, localEnv: boolean): string |
 
 /** Keys no block may hold anywhere: JSON.parse makes them own properties, which object handling could drop or misread. */
 export const FORBIDDEN_SPONSOR_KEYS: readonly string[] = Object.freeze(['__proto__', 'constructor', 'prototype']);
+/**
+ * Why a target's `exactCalldata` can't be used, or null (absent is fine: selector matching within `maxDataBytes`).
+ * 1 to 8 distinct entries, each `0x` + lowercase hex, whole bytes, 4 to 2048 bytes, starting with one of the target's
+ * `selectors` and no longer than its `maxDataBytes` (a number the caller has checked).
+ */
+export function sponsorCalldataProblem(selectors: readonly string[], exactCalldata: unknown, maxDataBytes: number): string | null {
+  if (exactCalldata === undefined) return null;
+  if (!Array.isArray(exactCalldata) || exactCalldata.length < 1 || exactCalldata.length > 8) return 'exactCalldata lists 1 to 8 entries';
+  for (const entry of exactCalldata as unknown[]) {
+    if (typeof entry !== 'string' || !/^0x(?:[0-9a-f]{2}){4,2048}$/u.test(entry)) return 'exactCalldata entries are 0x + lowercase hex, whole bytes, 4 to 2048 bytes';
+  }
+  const entries = exactCalldata as string[];
+  if (new Set(entries).size !== entries.length) return 'exactCalldata lists an entry twice';
+  if (entries.some((e) => !selectors.includes(e.slice(0, 10)))) return "exactCalldata: an entry's first 4 bytes are not one of selectors";
+  if (entries.some((e) => (e.length - 2) / 2 > maxDataBytes)) return 'exactCalldata: an entry is longer than maxDataBytes';
+  return null;
+}
 // ---- End of the shared part.
 
 const eth = (max: number) =>
@@ -201,6 +223,17 @@ export const evmSponsorTargetSchema = z
   .object({
     address: evmAddress,
     selectors: z.array(selector).min(1).max(B.selectorsPerTarget),
+    /**
+     * Calls allowed only with exactly this data (D835: no trailing bytes the sponsor would pay for). A selector with an
+     * entry here matches only these entries; one without keeps selector matching, bounded by maxDataBytes.
+     */
+    exactCalldata: z
+      .array(z.string().regex(/^0x(?:[0-9a-f]{2}){4,2048}$/u, 'exactCalldata entries are 0x + lowercase hex, whole bytes, 4 to 2048 bytes'))
+      .min(1, 'exactCalldata lists 1 to 8 entries')
+      .max(B.exactCalldataPerTarget, 'exactCalldata lists 1 to 8 entries')
+      .optional(),
+    /** The longest call data allowed to this target, bytes (4 to 8192): every sponsored call's length is bounded. */
+    maxDataBytes: z.number().int().min(B.maxDataBytes.min).max(B.maxDataBytes.max),
     /** Staff-facing name of the target (no control or formatting characters, no outer spaces). */
     label: z
       .string()
@@ -326,6 +359,8 @@ export function evmSponsorProblems(m: { name: string; network: string; evm?: { s
         if (a === lower(s.relayerAddress)) tp(i, 'must not be relayerAddress');
         if (delegates.has(a)) tp(i, 'must not be a delegate contract');
         if (new Set(t.selectors).size !== t.selectors.length) tp(i, 'lists a selector twice');
+        const calldataProblem = sponsorCalldataProblem(t.selectors, t.exactCalldata, t.maxDataBytes);
+        if (calldataProblem) tp(i, calldataProblem);
       }
     }
   }
@@ -337,21 +372,26 @@ export function evmSponsorRules(m: Parameters<typeof evmSponsorProblems>[0], ctx
   for (const { path, message } of evmSponsorProblems(m)) ctx.addIssue({ code: z.ZodIssueCode.custom, path, message });
 }
 
-/** The pinned delegate table's shape, as @hana-id/core/evm-sponsor's `SPONSOR_DELEGATES` has it (only `address` is read). */
-export type PinnedSponsorDelegates = Readonly<Record<number, { readonly address: string }>>;
+/**
+ * The pinned delegate table's shape, as @hana-id/core/evm-sponsor's `SPONSOR_DELEGATES` has it (`address` and
+ * `placeholder` are read; a placeholder entry is a test stand-in, not a deployed contract).
+ */
+export type PinnedSponsorDelegates = Readonly<Record<number, { readonly address: string; readonly placeholder?: boolean }>>;
 
 /**
  * Why the block's delegates don't match the pinned, reviewed table (D834), one message each (empty = they match): every
- * chain needs a pinned entry, and its `delegate` must be that entry's address (compared case-insensitively). The
+ * chain needs a pinned entry, its `delegate` must be that entry's address (compared case-insensitively), and a
+ * placeholder entry counts only in `local*` envs (`envName`). The
  * generators run it with core's table (apps/api gen-wrangler, packages/web gen-envs); the table is a parameter so this
  * package needs no dependency on core.
  */
-export function evmSponsorDelegateProblems(sponsor: Pick<EvmSponsor, 'chains'>, pinned: PinnedSponsorDelegates): string[] {
+export function evmSponsorDelegateProblems(sponsor: Pick<EvmSponsor, 'chains'>, pinned: PinnedSponsorDelegates, envName: string): string[] {
   const out: string[] = [];
   for (const [id, c] of Object.entries(sponsor.chains)) {
     const entry = Object.hasOwn(pinned, Number(id)) ? pinned[Number(id)] : undefined;
     if (!entry) out.push(`evm.sponsor.chains.${id}: no pinned delegate for chain ${id}: sponsorship needs a reviewed delegate there first`);
     else if (lower(entry.address) !== lower(c.delegate)) out.push(`evm.sponsor.chains.${id}.delegate ${c.delegate} is not the pinned delegate ${entry.address}`);
+    else if (entry.placeholder === true && !isLocalEnv(envName)) out.push(`evm.sponsor.chains.${id}.delegate ${c.delegate} is a placeholder entry of the pinned table, only for local* envs`);
   }
   return out;
 }

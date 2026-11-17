@@ -12,6 +12,11 @@ export const EVM_SPONSOR_BOUNDS = Object.freeze({
   apps: 8,
   targetsPerApp: 8,
   selectorsPerTarget: 8,
+  /** Exact calldata entries per target, and each one's size in bytes. */
+  exactCalldataPerTarget: 8,
+  exactCalldataBytes: 2048,
+  /** A target's `maxDataBytes`: every call's data is at most this long. */
+  maxDataBytes: { min: 4, max: 8192 },
   labelChars: 64,
   maxGasPerTx: { min: 50_000, max: 2_000_000 },
   minGas: { min: 10_000, max: 1_000_000 },
@@ -65,6 +70,10 @@ export interface EvmSponsorTarget {
   address: string;
   /** 4-byte selectors, lowercase `0x` + 8 hex. */
   selectors: readonly string[];
+  /** Calldata allowed exactly (lowercase hex); a selector with an entry here matches only these. Empty: none. */
+  exactCalldata: readonly string[];
+  /** The longest call data allowed, bytes. */
+  maxDataBytes: number;
   label: string;
 }
 
@@ -80,8 +89,11 @@ export interface EvmSponsorConfig {
   readonly apps: Readonly<Record<string, Readonly<Record<string, readonly Readonly<EvmSponsorTarget>[]>>>>;
 }
 
-/** The pinned, reviewed delegate table (@hana-id/core/evm-sponsor's SPONSOR_DELEGATES; only `address` is read). */
-export type PinnedSponsorDelegates = Readonly<Record<number, { readonly address: string }>>;
+/**
+ * The pinned, reviewed delegate table: @hana-id/core/evm-sponsor's SPONSOR_DELEGATES, which the handlers pass in
+ * (`address` and `placeholder` are read; a placeholder entry counts only in `local*` envs).
+ */
+export type PinnedSponsorDelegates = Readonly<Record<number, { readonly address: string; readonly placeholder?: boolean }>>;
 
 /**
  * Where the parse runs: the Worker's NETWORK and ENV_NAME vars, and the pinned delegate table every chain's `delegate`
@@ -103,7 +115,7 @@ export type EvmSponsorSetting = { status: 'configured'; config: EvmSponsorConfig
 export interface EvmSponsorManifest {
   relayerAddress: string;
   chains: Record<string, EvmSponsorChainManifest>;
-  apps: Record<string, Record<string, { address: string; selectors: string[]; label: string }[]>>;
+  apps: Record<string, Record<string, { address: string; selectors: string[]; exactCalldata?: string[] | undefined; maxDataBytes: number; label: string }[]>>;
 }
 
 export interface EvmSponsorChainManifest {
@@ -160,7 +172,7 @@ export function evmSponsorVar(sponsor: EvmSponsorManifest): string {
   }
   const apps: Record<string, Record<string, unknown[]>> = {};
   for (const [appId, byChain] of Object.entries(sponsor.apps)) {
-    apps[appId] = Object.fromEntries(Object.entries(byChain).map(([id, targets]) => [id, targets.map((t) => ({ address: t.address, selectors: [...t.selectors], label: t.label }))]));
+    apps[appId] = Object.fromEntries(Object.entries(byChain).map(([id, targets]) => [id, targets.map((t) => ({ address: t.address, selectors: [...t.selectors], ...(t.exactCalldata !== undefined ? { exactCalldata: [...t.exactCalldata] } : {}), maxDataBytes: t.maxDataBytes, label: t.label }))]));
   }
   return JSON.stringify({ relayerAddress: sponsor.relayerAddress, chains, apps });
 }
@@ -224,6 +236,23 @@ export function sponsorRpcUrlProblem(value: string, localEnv: boolean): string |
 
 /** Keys no block may hold anywhere: JSON.parse makes them own properties, which object handling could drop or misread. */
 export const FORBIDDEN_SPONSOR_KEYS: readonly string[] = Object.freeze(['__proto__', 'constructor', 'prototype']);
+/**
+ * Why a target's `exactCalldata` can't be used, or null (absent is fine: selector matching within `maxDataBytes`).
+ * 1 to 8 distinct entries, each `0x` + lowercase hex, whole bytes, 4 to 2048 bytes, starting with one of the target's
+ * `selectors` and no longer than its `maxDataBytes` (a number the caller has checked).
+ */
+export function sponsorCalldataProblem(selectors: readonly string[], exactCalldata: unknown, maxDataBytes: number): string | null {
+  if (exactCalldata === undefined) return null;
+  if (!Array.isArray(exactCalldata) || exactCalldata.length < 1 || exactCalldata.length > 8) return 'exactCalldata lists 1 to 8 entries';
+  for (const entry of exactCalldata as unknown[]) {
+    if (typeof entry !== 'string' || !/^0x(?:[0-9a-f]{2}){4,2048}$/u.test(entry)) return 'exactCalldata entries are 0x + lowercase hex, whole bytes, 4 to 2048 bytes';
+  }
+  const entries = exactCalldata as string[];
+  if (new Set(entries).size !== entries.length) return 'exactCalldata lists an entry twice';
+  if (entries.some((e) => !selectors.includes(e.slice(0, 10)))) return "exactCalldata: an entry's first 4 bytes are not one of selectors";
+  if (entries.some((e) => (e.length - 2) / 2 > maxDataBytes)) return 'exactCalldata: an entry is longer than maxDataBytes';
+  return null;
+}
 // ---- End of the shared part.
 
 /** Thrown inside the parse; becomes `{ status: 'unconfigured', reason: 'invalid', problem }`. */
@@ -348,15 +377,19 @@ function parseChain(id: number, v: unknown, localEnv: boolean): EvmSponsorChainC
 
 function parseTarget(v: unknown, what: string): EvmSponsorTarget {
   if (!isObject(v)) return fail(`${what} is not an object`);
-  onlyKeys(v, ['address', 'selectors', 'label'], what);
+  onlyKeys(v, ['address', 'selectors', 'exactCalldata', 'maxDataBytes', 'label'], what);
   const addr = address(v.address, `${what}.address`);
   const selectors = v.selectors;
   if (!Array.isArray(selectors) || selectors.length < 1 || selectors.length > EVM_SPONSOR_BOUNDS.selectorsPerTarget) return fail(`${what}.selectors has 1 to ${EVM_SPONSOR_BOUNDS.selectorsPerTarget} selectors`);
   if (!selectors.every((s) => typeof s === 'string' && /^0x[0-9a-f]{8}$/u.test(s))) fail(`${what}.selectors are 4-byte lowercase hex`);
   if (new Set(selectors).size !== selectors.length) fail(`${what}.selectors lists one twice`);
+  const maxDataBytes = int(v.maxDataBytes, EVM_SPONSOR_BOUNDS.maxDataBytes.min, EVM_SPONSOR_BOUNDS.maxDataBytes.max, `${what}.maxDataBytes`);
+  const calldataProblem = sponsorCalldataProblem(selectors as string[], v.exactCalldata, maxDataBytes);
+  if (calldataProblem) fail(`${what}.${calldataProblem}`);
+  const exactCalldata = Object.freeze(v.exactCalldata === undefined ? [] : [...(v.exactCalldata as string[])]);
   const label = v.label;
   if (typeof label !== 'string' || label.length < 1 || label.length > EVM_SPONSOR_BOUNDS.labelChars || label.trim() !== label || !/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u.test(label)) fail(`${what}.label is not a plain label`);
-  return Object.freeze({ address: addr, selectors: Object.freeze([...(selectors as string[])]), label: label as string });
+  return Object.freeze({ address: addr, selectors: Object.freeze([...(selectors as string[])]), exactCalldata, maxDataBytes, label: label as string });
 }
 
 /**
@@ -407,6 +440,7 @@ function parseStrict(raw: string, where: EvmSponsorWhere): EvmSponsorConfig {
     const entry = Object.hasOwn(pinned!, id) ? pinned![id] : undefined;
     if (!entry) fail(`chains.${id}.delegate: no pinned delegate for the chain`);
     else if (entry.address.toLowerCase() !== chain.delegate.toLowerCase()) fail(`chains.${id}.delegate is not the pinned delegate`);
+    else if (entry.placeholder === true && !localEnv) fail(`chains.${id}.delegate is a placeholder entry of the pinned table, only for local* envs`);
     chains.push([String(id), Object.freeze(chain)]);
   }
   const chainIds = new Set(chains.map(([id]) => id));
@@ -454,7 +488,8 @@ export function sponsorChain(config: EvmSponsorConfig, chainId: number): Readonl
 
 /**
  * The allowlisted target an app's call matches (D835), or null: `to` (any case) is one of the app's targets on the
- * chain, and `data` (well-formed `0x` hex, whole bytes, at least 4) starts with one of its selectors. Value must be 0:
+ * chain, `data` (well-formed `0x` hex, whole bytes, at least 4, at most the target's maxDataBytes) starts with one of its
+ * selectors, and, when that selector has exactCalldata entries, `data` is exactly one of them (any case). Value must be 0:
  * the caller checks it (core's subject decoder refuses any other value).
  */
 export function sponsoredTarget(config: EvmSponsorConfig, appId: string, chainId: number, to: string, data: string): Readonly<EvmSponsorTarget> | null {
@@ -464,5 +499,8 @@ export function sponsoredTarget(config: EvmSponsorConfig, appId: string, chainId
   if (!Object.hasOwn(byChain, key)) return null;
   const sel = data.slice(0, 10).toLowerCase();
   const target = byChain[key]!.find((t) => t.address.toLowerCase() === to.toLowerCase());
-  return target && target.selectors.includes(sel) ? target : null;
+  if (!target || !target.selectors.includes(sel) || (data.length - 2) / 2 > target.maxDataBytes) return null;
+  // A selector with exact entries matches only them: no trailing bytes the sponsor would pay for.
+  const exact = target.exactCalldata.filter((e) => e.startsWith(sel));
+  return exact.length === 0 || exact.includes(data.toLowerCase()) ? target : null;
 }

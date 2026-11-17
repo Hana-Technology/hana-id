@@ -19,7 +19,7 @@ const chain = (fields: ChainFields): EvmSponsorManifest => {
   return { ...s, chains: { '84532': { ...s.chains['84532']!, ...fields } as EvmSponsorManifest['chains'][string] } };
 };
 const withTargets = (list: unknown[]): unknown => ({ ...fixture(), apps: { [FIXTURE_APP]: { '84532': list } } });
-const target = (fields: Record<string, unknown> = {}) => ({ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], label: 'Check-in', ...fields });
+const target = (fields: Record<string, unknown> = {}) => ({ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], maxDataBytes: 36, label: 'Check-in', ...fields });
 
 describe('parseEvmSponsorConfig', () => {
   it('is unconfigured (absent) without the var: sponsorship off', () => {
@@ -54,7 +54,7 @@ describe('parseEvmSponsorConfig', () => {
       sendsPerMinute: 60,
       requireKnownAccount: true,
     });
-    expect(r.config.apps[FIXTURE_APP]?.['84532']).toEqual([{ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], label: 'Journear demo check-in' }]);
+    expect(r.config.apps[FIXTURE_APP]?.['84532']).toEqual([{ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], exactCalldata: [CHECK_IN_SELECTOR], maxDataBytes: 4, label: 'Journear demo check-in' }]);
   });
 
   it('is immutable all the way down: plain frozen objects and arrays, no Map or Set, no prototype', () => {
@@ -113,6 +113,10 @@ describe('parseEvmSponsorConfig', () => {
     expect(problem(text, { ...SANDBOX, pinnedDelegates: {} })).toBe('chains.84532.delegate: no pinned delegate for the chain');
     expect(problem(text, { ...SANDBOX, pinnedDelegates: { 84532: { address: fixtureAddress('0bad') } } })).toBe('chains.84532.delegate is not the pinned delegate');
     expect(parse(text, { ...SANDBOX, pinnedDelegates: { 84532: { address: FIXTURE_DELEGATE.toLowerCase() } } }).status).toBe('configured');
+    // A placeholder entry (core's local test entry) only in local* envs.
+    const placeholder = { 84532: { address: FIXTURE_DELEGATE, placeholder: true } };
+    expect(problem(text, { ...SANDBOX, pinnedDelegates: placeholder })).toBe('chains.84532.delegate is a placeholder entry of the pinned table, only for local* envs');
+    expect(parse(text, { ...SANDBOX, envName: 'local-dev', pinnedDelegates: placeholder }).status).toBe('configured');
     // Only own entries of the table count.
     expect(problem(text, { ...SANDBOX, pinnedDelegates: Object.create({ 84532: { address: FIXTURE_DELEGATE } }) as Record<number, { address: string }> })).toBe('chains.84532.delegate: no pinned delegate for the chain');
     // Absent stays absent, table or not.
@@ -254,6 +258,11 @@ describe('parseEvmSponsorConfig', () => {
       expect(parse(withTargets([target({ selectors })])).status, JSON.stringify(selectors)).toBe('unconfigured');
     }
     for (const label of ['', ' x', 'x\n', 'a‮b', 'x'.repeat(65), 7]) expect(parse(withTargets([target({ label })])).status, JSON.stringify(label)).toBe('unconfigured');
+    for (const maxDataBytes of [undefined, 3, 8193, 4.5, '36', null]) expect(parse(withTargets([target({ maxDataBytes })])).status, String(maxDataBytes)).toBe('unconfigured');
+    for (const exactCalldata of [[], ['0x183FF085'], [`${CHECK_IN_SELECTOR}0`], ['0xa9059cbb'], [CHECK_IN_SELECTOR, CHECK_IN_SELECTOR], [`${CHECK_IN_SELECTOR}${'00'.repeat(33)}`], null, 'x']) {
+      expect(parse(withTargets([target({ exactCalldata })])).status, JSON.stringify(exactCalldata)).toBe('unconfigured');
+    }
+    expect(problem(withTargets([target({ exactCalldata: ['0xa9059cbb'] })]))).toBe(`apps.${FIXTURE_APP}.84532[0].exactCalldata: an entry's first 4 bytes are not one of selectors`);
   });
 });
 
@@ -261,11 +270,28 @@ describe('sponsoredTarget: the allowlist lookup (D835)', () => {
   const r = parse(evmSponsorVar(fixture()));
   const config = r.status === 'configured' ? r.config : null;
 
-  it('matches the app’s target on the chain by address (any case) and selector', () => {
+  it('matches an exact-calldata target only on exactly that calldata (no trailing bytes the sponsor would pay for)', () => {
     expect(config).not.toBeNull();
     const hit = sponsoredTarget(config!, FIXTURE_APP, 84532, FIXTURE_CHECK_IN.toLowerCase(), `${CHECK_IN_SELECTOR}`);
     expect(hit?.label).toBe('Journear demo check-in');
-    expect(sponsoredTarget(config!, FIXTURE_APP, 84532, FIXTURE_CHECK_IN, `0x183FF085${'00'.repeat(32)}`)).not.toBeNull();
+    expect(sponsoredTarget(config!, FIXTURE_APP, 84532, FIXTURE_CHECK_IN, '0x183FF085')).not.toBeNull();
+    for (const junk of [`${CHECK_IN_SELECTOR}00`, `${CHECK_IN_SELECTOR}${'00'.repeat(32)}`, `${CHECK_IN_SELECTOR}${'ff'.repeat(4)}`]) {
+      expect(sponsoredTarget(config!, FIXTURE_APP, 84532, FIXTURE_CHECK_IN, junk), junk).toBeNull();
+    }
+  });
+
+  it('matches a selector-only target by selector, within maxDataBytes; exact entries bind only their own selector', () => {
+    const transfer = '0xa9059cbb';
+    const s = fixture();
+    const mixed = { ...s, apps: { [FIXTURE_APP]: { '84532': [{ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR, transfer], exactCalldata: [CHECK_IN_SELECTOR], maxDataBytes: 68, label: 'Mixed' }] } } };
+    const m = parse(mixed);
+    if (m.status !== 'configured') throw new Error(m.problem ?? 'unconfigured');
+    const t = (data: string) => sponsoredTarget(m.config, FIXTURE_APP, 84532, FIXTURE_CHECK_IN, data);
+    expect(t(`${transfer}${'00'.repeat(64)}`)).not.toBeNull();
+    expect(t(transfer)).not.toBeNull();
+    expect(t(`${transfer}${'00'.repeat(65)}`)).toBeNull();
+    expect(t(CHECK_IN_SELECTOR)).not.toBeNull();
+    expect(t(`${CHECK_IN_SELECTOR}00`)).toBeNull();
   });
 
   it('refuses another app, chain, address or selector, and data shorter than a selector', () => {

@@ -16,6 +16,7 @@ import { readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, type PinnedSponsorDelegates, emailIssuerUrl, evmSponsorDelegateProblems, evmSponsorPageChains, isDevEnv, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
+import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import type { HanaEnv } from '../src/hana-env.ts';
 import { ckdKeyProblem } from './ckd-key.ts';
 
@@ -52,7 +53,7 @@ export function hanaEnv(m: Manifest): HanaEnv | null {
 export function sponsorProblems(m: Manifest, pinned: PinnedSponsorDelegates | undefined): string[] {
   if (!m.evm?.sponsor || hanaEnv(m) === null) return [];
   if (!pinned) return [`envs/${m.name}.json has evm.sponsor, but gen-envs was given no pinned delegate table to check it against (D834).`];
-  return evmSponsorDelegateProblems(m.evm.sponsor, pinned).map((p) => `envs/${m.name}.json ${p}.`);
+  return evmSponsorDelegateProblems(m.evm.sponsor, pinned, m.name).map((p) => `envs/${m.name}.json ${p}.`);
 }
 
 /**
@@ -113,12 +114,13 @@ export function loadManifests(envsDir: string = join(repoRoot, 'envs')): Manifes
 
 /**
  * Writes the generated module; `out` overrides the path (tests), `forPackage` applies the published build's checks,
- * `sponsorDelegates` is the pinned delegate table `evm.sponsor` blocks are checked against. Returns the included env names.
+ * `sponsorDelegates` is the pinned delegate table `evm.sponsor` blocks are checked against (default core's
+ * SPONSOR_DELEGATES). Returns the included env names.
  */
 export function main(opts: { manifests?: readonly Manifest[]; out?: string; forPackage?: boolean; sponsorDelegates?: PinnedSponsorDelegates } = {}): string[] {
   const manifests = opts.manifests ?? loadManifests();
   const out = opts.out ?? GENERATED_PATH;
-  writeAtomically(out, envsModule(manifests, { forPackage: opts.forPackage ?? false, ...(opts.sponsorDelegates ? { sponsorDelegates: opts.sponsorDelegates } : {}) }));
+  writeAtomically(out, envsModule(manifests, { forPackage: opts.forPackage ?? false, sponsorDelegates: opts.sponsorDelegates ?? SPONSOR_DELEGATES }));
   return includedEnvs(manifests).map((e) => e.name);
 }
 

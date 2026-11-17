@@ -183,11 +183,12 @@ which `deploy-stamps <env>` deploys (`docs/operations.md` "Hackathon demo stamps
 Changing it means new, empty passports (no upgrade path); the relay needs the API's `gen` and a redeploy to take a new
 receiver.
 
-`evm.sponsor` (optional, D834–D836; **not live**: no env sets it, and the API has no sponsored route yet). **Until
-core's pinned delegate table is wired into the generators (the next package), the API's `gen` and the page build
-refuse any env that carries this block**, so don't add it to a manifest yet.
-EVM gas sponsorship, where Journear's own relayer submits a user's signed batch through the pinned EIP-7702 delegate and pays
-the network fee within daily budgets. Absent means the feature is off everywhere (fail closed). Testnet only.
+`evm.sponsor` (optional, D834–D836; **not live**: no env sets it, and the API has no sponsored route yet). Core's
+pinned delegate table (`@hana-id/core/evm-sponsor`) has **no entry for Base Sepolia (84532) yet**, only a placeholder
+for the local chain 31337, so today the API's `gen` and the page build refuse any non-local env that carries the block
+(until the delegate is deployed and pinned): don't add it to a manifest yet. EVM gas sponsorship, where Journear's own
+relayer submits a user's signed batch through the pinned EIP-7702 delegate and pays the network fee within daily
+budgets. Absent means the feature is off everywhere (fail closed). Testnet only.
 `packages/env/src/evm-sponsor.ts` holds the schema, its rules and its bounds; the API parses the generated var again
 with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything it refuses as unconfigured.
 
@@ -202,7 +203,8 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
     "dailyBudgetEth": 0.02, "appDailyBudgetEth": 0.01, "lowBalanceEth": 0.05,
     "perUserPerDay": 30, "perAppPerDay": 2000, "sendsPerDay": 5000, "sendsPerMinute": 60,
     "requireKnownAccount": true } },
-  "apps": { "app_…": { "84532": [ { "address": "0x…", "selectors": ["0x…"], "label": "Journear demo check-in" } ] } } } }
+  "apps": { "app_…": { "84532": [ { "address": "0x…", "selectors": ["0x183ff085"], "exactCalldata": ["0x183ff085"],
+                                    "maxDataBytes": 4, "label": "Journear demo check-in" } ] } } } }
 ```
 
 - Addresses (`relayerAddress`, `delegate`, each target's `address`) are written in their EIP-55 checksummed form (an
@@ -219,8 +221,9 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   fragment; a loopback host (http or https) only in `local*` envs; outside them the two are different providers
   (registrable domains). **No API keys in manifest URLs**: the manifest is committed, so a keyed RPC goes in a secret
   (the later handlers read an optional one). `delegate` must be the delegate core pins for that chain
-  (`@hana-id/core/evm-sponsor`), checked by the generators and again by the API at run time; a chain with no pinned
-  delegate can't be sponsored. That check needs the pinned table passed in, which the generators don't do yet (above).
+  (`@hana-id/core/evm-sponsor` `SPONSOR_DELEGATES`), checked by both generators (their command lines pass core's table)
+  and again by the API at run time; a chain with no pinned delegate can't be sponsored, and an entry core marks as a
+  placeholder (`placeholder: true`, a test stand-in) is accepted only in `local*` envs.
 - Limits per chain, every one required except `requireKnownAccount`, with hard bounds: `maxGasPerTx` (50 000 to
   2 000 000), `minGas` (10 000 to 1 000 000, below `maxGasPerTx`), `maxFeePerGasGwei` (above 0, at most 100) and
   `maxPriorityFeePerGasGwei` (0 to `maxFeePerGasGwei`), both to 1 wei; `maxCallsPerBatch` (1 to 8), `deadlineMaxS` (60
@@ -231,11 +234,16 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   wallet directory holds for the app's users; `false` is testnet only.
 - `apps`: the staff-only allowlist (D835), at most 8 apps (`app_…` ids), each naming at least one configured chain
   with 1 to 8 targets in all. A target is a contract `address`, its allowed function `selectors` (1 to 8 distinct,
-  `0x` + 8 lowercase hex) and a staff-facing `label` (1 to 64 characters, no control or formatting characters, no
-  outer spaces). Calls carry no value: there is no field for one. An empty `apps` sponsors nothing.
-- Once the table is wired, `gen` writes the block as the API var `EVM_SPONSOR` and the page build puts
-  `{ chainId: { delegate, relayer } }` into the vault's envs (`HanaEnv.evmSponsor`); a change then needs `gen`, a page
-  build and a redeploy of the API and the pages. A `__proto__`, `constructor` or `prototype` key anywhere in the block
+  `0x` + 8 lowercase hex), `maxDataBytes` (required, 4 to 8192: no sponsored call's data is longer), optional
+  `exactCalldata` (1 to 8 distinct entries, `0x` + lowercase hex, whole bytes, 4 to 2048 bytes, each starting with one
+  of `selectors` and no longer than `maxDataBytes`) and a staff-facing `label` (1 to 64 characters, no control or
+  formatting characters, no outer spaces). A selector with `exactCalldata` entries matches only a call whose data is
+  exactly one of them, so nothing can be appended at the sponsor's cost; use it for every function whose arguments
+  are fixed (the demo's `checkIn()` takes none: `["0x183ff085"]`). A selector without entries matches any data starting
+  with it, up to `maxDataBytes`. Calls carry no value: there is no field for one. An empty `apps` sponsors nothing.
+- `gen` writes the block as the API var `EVM_SPONSOR` and the page build puts `{ chainId: { delegate, relayer } }`
+  into the vault's envs (`HanaEnv.evmSponsor`); a change needs `gen`, a page build and a redeploy of the API and the
+  pages. A `__proto__`, `constructor` or `prototype` key anywhere in the block
   is refused.
 
 `vaultOrigin` and `authOrigin` (optional in the schema until every deployed env has them; `gen` refuses an env

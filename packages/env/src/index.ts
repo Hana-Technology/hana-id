@@ -16,6 +16,7 @@ export {
   evmSponsorTargetSchema,
   FORBIDDEN_SPONSOR_KEYS,
   isSponsorLoopbackHost,
+  sponsorCalldataProblem,
   sponsorDecimalUnits,
   sponsorRpcUrlProblem,
   LOCAL_EVM_CHAIN_IDS,

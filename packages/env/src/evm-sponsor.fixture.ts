@@ -39,7 +39,8 @@ export function sponsorFixture(): EvmSponsor {
         requireKnownAccount: true,
       },
     },
-    apps: { [FIXTURE_APP]: { '84532': [{ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], label: 'Journear demo check-in' }] } },
+    // checkIn() takes no argument: its calldata is exactly the selector, so nothing can be appended at the sponsor's cost.
+    apps: { [FIXTURE_APP]: { '84532': [{ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], exactCalldata: [CHECK_IN_SELECTOR], maxDataBytes: 4, label: 'Journear demo check-in' }] } },
   };
 }
 

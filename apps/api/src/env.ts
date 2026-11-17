@@ -1,3 +1,4 @@
+import type { EvmRelayer } from './evm-relayer.ts';
 import type { LoginRelay } from './login-relay.ts';
 import type { RateLimiter } from './rate-limiter.ts';
 import type { RelayerKey } from './relayer-key.ts';
@@ -62,6 +63,16 @@ export interface Env {
   EVM_SPONSOR?: string;
   /** Optional secret (D834): JSON array of one `0x`-hex secp256k1 private key, the EVM relayer EOA's (`relayerAddress`). */
   EVM_RELAY_KEYS?: string;
+  /**
+   * Optional secrets (D837): a keyed RPC URL per sponsored chain (`EVM_SPONSOR_RPC_84532`), asked before the manifest's
+   * `rpc` and `rpcFallback` (evm/sponsor-chain.ts sponsorRpcUrls). https only; never logged.
+   */
+  [evmSponsorRpc: `EVM_SPONSOR_RPC_${number}`]: string | undefined;
+  /**
+   * The EVM relayer objects (evm-relayer.ts, D837), one per chain and key: bound only in an env whose manifest has
+   * `evm.sponsor` (scripts/gen-wrangler.ts), so absent elsewhere.
+   */
+  EVM_RELAYER?: DurableObjectNamespace<EvmRelayer>;
   /** Optional var (manifest `homeDerivesPerDay`): Home derives allowed per UTC day across the env, 0 for none. Default 500 (home/login.ts). */
   HOME_DERIVES_PER_DAY?: string;
   /**

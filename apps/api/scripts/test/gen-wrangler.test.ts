@@ -17,6 +17,7 @@ import {
   LOCAL_USAGE_CONNECTION_STRING,
   TEST_MANIFEST,
   devVarsContent,
+  durableObjectsConfig,
   emailVars,
   existingD1Id,
   existingUsageHyperdriveId,
@@ -163,8 +164,13 @@ describe('generated configs are never committed', () => {
     expect(manifestSchema.parse(TEST_MANIFEST)).toEqual(TEST_MANIFEST);
     const test = testWranglerConfig() as Record<string, unknown> & { d1_databases: { database_id: string }[]; vars: Record<string, string> };
     const real = wranglerConfig(manifest, '11111111-2222-4333-8444-555555555555') as Record<string, unknown>;
-    // Everything but the env's names, vars and D1 database is the same as any env gets.
-    for (const key of Object.keys(real).filter((k) => !['name', 'vars', 'd1_databases'].includes(k))) expect(test[key], key).toEqual(real[key]);
+    // Everything but the env's names, vars and D1 database is the same as any env gets; the Durable Objects are those of
+    // an env with evm.sponsor (the EVM relayer bound, D837), so its tests run the object.
+    for (const key of Object.keys(real).filter((k) => !['name', 'vars', 'd1_databases', 'durable_objects', 'migrations'].includes(k))) expect(test[key], key).toEqual(real[key]);
+    const withRelayer = durableObjectsConfig(true);
+    expect(test.durable_objects).toEqual(withRelayer.durable_objects);
+    expect(test.migrations).toEqual(withRelayer.migrations);
+    expect(real.durable_objects).toEqual(durableObjectsConfig(false).durable_objects);
     expect(test.d1_databases[0]!.database_id).toBe(LOCAL_D1_ID);
     expect(test.vars).not.toHaveProperty('DO_LOCATION_HINT');
     expect(JSON.stringify(test)).not.toMatch(/\.testnet|workers\.dev/u);

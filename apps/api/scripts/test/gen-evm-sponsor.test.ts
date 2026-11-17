@@ -11,7 +11,7 @@ import { keccak_256 } from '@noble/hashes/sha3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FIXTURE_APP, FIXTURE_DELEGATE, FIXTURE_PINNED_DELEGATES, fixtureAddress, sponsorFixture } from '../../../../packages/env/src/evm-sponsor.fixture.ts';
 import { checksumEvmAddress, EVM_SPONSOR_BOUNDS, evmSponsorVar, isSponsorLoopbackHost, LOCAL_EVM_CHAIN_IDS, OP_STACK_TEST_CHAIN_IDS, parseEvmSponsorConfig, sponsorDecimalUnits, sponsorRpcUrlProblem, SPONSOR_TEST_EVM_CHAIN_IDS } from '../../src/evm/sponsor-config.ts';
-import { cli, devVarsContent, evmRelayKeysLine, evmSponsorVars, LOCAL_D1_ID, main, TEST_MANIFEST, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { cli, devVarsContent, EVM_RELAYER_BINDING, EVM_RELAYER_MIGRATION, evmRelayKeysLine, evmSponsorVars, LOCAL_D1_ID, main, TEST_MANIFEST, testWranglerConfig, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 
 /** dotenv's single-quoted value, as wrangler reads .dev.vars (the full parser is in gen-wrangler.test.ts). */
@@ -195,6 +195,47 @@ describe('EVM_SPONSOR (D834)', () => {
     expect(() => vars(withSponsor())).toThrow(/no pinned delegate table/u);
     expect(() => vars(withSponsor(), { sponsorDelegates: {} })).toThrow(/no pinned delegate for chain 84532/u);
     expect(() => vars(withSponsor(), { sponsorDelegates: { 84532: { address: fixtureAddress('0bad') } } })).toThrow(new RegExp(`delegate ${FIXTURE_DELEGATE} is not the pinned delegate`, 'u'));
+  });
+});
+
+describe('the EVM relayer Durable Object (D837)', () => {
+  type DoConfig = { durable_objects: { bindings: { name: string; class_name: string }[] }; migrations: { tag: string; new_sqlite_classes: string[] }[] };
+  const base3 = [
+    { name: 'RELAYER_KEY', class_name: 'RelayerKey' },
+    { name: 'RATE_LIMITER', class_name: 'RateLimiter' },
+    { name: 'LOGIN_RELAY', class_name: 'LoginRelay' },
+  ];
+  const v1v2 = [
+    { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
+    { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
+  ];
+
+  it('is not bound, and no migration creates it, in an env without evm.sponsor (sandbox-dev and the test manifest unchanged)', () => {
+    for (const m of [manifestSchema.parse(base), TEST_MANIFEST]) {
+      const c = wranglerConfig(m, LOCAL_D1_ID, { sponsorDelegates: FIXTURE_PINNED_DELEGATES }) as unknown as DoConfig;
+      expect(c.durable_objects.bindings).toEqual(base3);
+      expect(c.migrations).toEqual(v1v2);
+    }
+  });
+
+  it('with evm.sponsor: bound as EVM_RELAYER, created by a v3 SQLite migration after v1 and v2 (which stay as they were)', () => {
+    const c = wranglerConfig(withSponsor(), LOCAL_D1_ID, { sponsorDelegates: FIXTURE_PINNED_DELEGATES }) as unknown as DoConfig;
+    expect(c.durable_objects.bindings).toEqual([...base3, { name: 'EVM_RELAYER', class_name: 'EvmRelayer' }]);
+    expect(c.migrations).toEqual([...v1v2, { tag: 'v3', new_sqlite_classes: ['EvmRelayer'] }]);
+    expect(EVM_RELAYER_BINDING).toEqual({ name: 'EVM_RELAYER', class_name: 'EvmRelayer' });
+    expect(EVM_RELAYER_MIGRATION.tag).toBe('v3');
+  });
+
+  it('the API tests’ config binds it (so the tests run the object) while its vars stay those of an env without the block', () => {
+    const c = testWranglerConfig() as unknown as DoConfig & { vars: Record<string, string> };
+    expect(c.durable_objects.bindings.map((b) => b.name)).toEqual(['RELAYER_KEY', 'RATE_LIMITER', 'LOGIN_RELAY', 'EVM_RELAYER']);
+    expect(c.migrations.map((m) => m.tag)).toEqual(['v1', 'v2', 'v3']);
+    expect(c.vars).not.toHaveProperty('EVM_SPONSOR');
+  });
+
+  it('the Worker exports the class in every env (a binding needs it; an export without a binding is inert)', () => {
+    const index = readFileSync(join(repoRoot, 'apps/api/src/index.ts'), 'utf8');
+    expect(index).toMatch(/^export \{ EvmRelayer \} from '\.\/evm-relayer\.ts';$/mu);
   });
 });
 

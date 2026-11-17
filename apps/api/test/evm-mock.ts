@@ -1,0 +1,341 @@
+// A fake EVM chain behind a global fetch stub, for the EVM relayer object and its RPC client (evm-relayer.ts,
+// evm/sponsor-chain.ts): two endpoints (a primary and a fallback) of one chain, each of which can be made to fail.
+// Like a node's pool, it checks a raw transaction's nonce against the sender's mined count, replaces a pending one only
+// with both fees at least 10% higher, answers `already known` for one it holds, and counts `pending` as the mined count
+// plus the pool's run of consecutive nonces from there. Transactions are mined only when a test calls `mine`. The
+// sender is recovered from each raw transaction's signature (type 2 and type 4).
+import { secp256k1 } from '@noble/curves/secp256k1';
+import { keccak_256 } from '@noble/hashes/sha3';
+import { vi } from 'vitest';
+
+export type Hex = `0x${string}`;
+
+export const PRIMARY_RPC = 'https://evm-primary.test.invalid';
+export const FALLBACK_RPC = 'https://evm-fallback.test.invalid';
+
+/** How an endpoint answers: normally, not at all (network error), with an HTTP 503, rate limited, for another chain, or with garbage. */
+export type EndpointMode = 'up' | 'down' | 'http503' | 'rate_limited' | 'wrong_chain' | 'garbage';
+
+export interface MockTx {
+  hash: Hex;
+  raw: Hex;
+  type: 2 | 4;
+  from: Hex;
+  chainId: bigint;
+  nonce: number;
+  maxPriorityFeePerGas: bigint;
+  maxFeePerGas: bigint;
+  gas: bigint;
+  to: Hex;
+  value: bigint;
+  data: Hex;
+  authorizations: number;
+}
+
+/** What a send hook makes the endpoint do with a transaction that passed the pool's checks. */
+export type SendHook =
+  | { error: string; keep?: boolean }
+  | 'hang'
+  | 'accept_then_hang'
+  | 'network'
+  | 'accept_then_network'
+  | 'accept'
+  | undefined;
+
+type Item = Uint8Array | Item[];
+
+const hex = (b: Uint8Array): Hex => `0x${Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')}`;
+const fromHex = (h: string): Uint8Array => {
+  const out = new Uint8Array((h.length - 2) / 2);
+  for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(h.slice(2 + 2 * i, 4 + 2 * i), 16);
+  return out;
+};
+const big = (b: Uint8Array): bigint => (b.length === 0 ? 0n : BigInt(hex(b)));
+
+/** Decodes one RLP item at `pos`: its value and where its encoding ends. */
+function decode(b: Uint8Array, pos: number): { item: Item; end: number } {
+  const p = b[pos]!;
+  if (p < 0x80) return { item: b.subarray(pos, pos + 1), end: pos + 1 };
+  if (p < 0xb8) return { item: b.subarray(pos + 1, pos + 1 + p - 0x80), end: pos + 1 + p - 0x80 };
+  if (p < 0xc0) {
+    const ll = p - 0xb7;
+    const len = Number(big(b.subarray(pos + 1, pos + 1 + ll)));
+    return { item: b.subarray(pos + 1 + ll, pos + 1 + ll + len), end: pos + 1 + ll + len };
+  }
+  let start: number;
+  let len: number;
+  if (p < 0xf8) {
+    start = pos + 1;
+    len = p - 0xc0;
+  } else {
+    const ll = p - 0xf7;
+    len = Number(big(b.subarray(pos + 1, pos + 1 + ll)));
+    start = pos + 1 + ll;
+  }
+  const items: Item[] = [];
+  let at = start;
+  while (at < start + len) {
+    const d = decode(b, at);
+    items.push(d.item);
+    at = d.end;
+  }
+  return { item: items, end: start + len };
+}
+
+/** Item encodings of a list's elements (for rebuilding the unsigned payload). */
+function elementSpans(b: Uint8Array): Uint8Array[] {
+  const p = b[0]!;
+  const start = p < 0xf8 ? 1 : 1 + (p - 0xf7);
+  const spans: Uint8Array[] = [];
+  let at = start;
+  while (at < b.length) {
+    const d = decode(b, at);
+    spans.push(b.subarray(at, d.end));
+    at = d.end;
+  }
+  return spans;
+}
+
+function listHeader(len: number): Uint8Array {
+  if (len < 56) return Uint8Array.of(0xc0 + len);
+  const l: number[] = [];
+  for (let n = len; n > 0; n = Math.floor(n / 256)) l.unshift(n % 256);
+  return Uint8Array.of(0xf7 + l.length, ...l);
+}
+
+const concat = (...parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+};
+
+export function addressOf(publicKeyUncompressed: Uint8Array): Hex {
+  return hex(keccak_256(publicKeyUncompressed.subarray(1)).subarray(-20));
+}
+
+/** Decodes a signed type-2 or type-4 transaction and recovers its sender. */
+export function decodeRawTx(raw: Hex): MockTx {
+  const b = fromHex(raw);
+  const type = b[0];
+  if (type !== 2 && type !== 4) throw new Error('unsupported tx type');
+  const body = b.subarray(1);
+  const fields = decode(body, 0).item as Item[];
+  const spans = elementSpans(body);
+  const n = fields.length;
+  if ((type === 2 && n !== 12) || (type === 4 && n !== 13)) throw new Error('bad field count');
+  const unsignedBody = concat(...spans.slice(0, n - 3));
+  const signingHash = keccak_256(concat(Uint8Array.of(type), listHeader(unsignedBody.length), unsignedBody));
+  const yParity = Number(big(fields[n - 3] as Uint8Array));
+  const r = big(fields[n - 2] as Uint8Array);
+  const s = big(fields[n - 1] as Uint8Array);
+  const pub = new secp256k1.Signature(r, s).addRecoveryBit(yParity).recoverPublicKey(signingHash).toRawBytes(false);
+  return {
+    hash: hex(keccak_256(b)),
+    raw: raw.toLowerCase() as Hex,
+    type,
+    from: addressOf(pub),
+    chainId: big(fields[0] as Uint8Array),
+    nonce: Number(big(fields[1] as Uint8Array)),
+    maxPriorityFeePerGas: big(fields[2] as Uint8Array),
+    maxFeePerGas: big(fields[3] as Uint8Array),
+    gas: big(fields[4] as Uint8Array),
+    to: hex(fields[5] as Uint8Array),
+    value: big(fields[6] as Uint8Array),
+    data: hex(fields[7] as Uint8Array),
+    authorizations: type === 4 ? (fields[9] as Item[]).length : 0,
+  };
+}
+
+const hang = (signal: AbortSignal | null | undefined): Promise<never> =>
+  new Promise((_, reject) => {
+    signal?.addEventListener('abort', () => reject(signal.reason ?? new Error('aborted')));
+  });
+
+export class EvmMock {
+  readonly chainId: number;
+  readonly urls: string[];
+  /** Per endpoint (index into `urls`). */
+  readonly modes: EndpointMode[];
+  /** An endpoint that answers fixed counts (a node behind the chain), by index. */
+  readonly staleCounts = new Map<number, { latest: number; pending: number }>();
+  /** Mined count per sender (lowercase address). */
+  readonly minedCount = new Map<string, number>();
+  /** Pending pool per sender: nonce → transaction. */
+  readonly pool = new Map<string, Map<number, MockTx>>();
+  readonly minedTxs: MockTx[] = [];
+  /** Every eth_sendRawTransaction that reached an endpoint's pool logic, in order. */
+  readonly broadcasts: { endpoint: number; tx: MockTx; outcome: string }[] = [];
+  /** Every call, in arrival order. */
+  readonly calls: { endpoint: number; method: string }[] = [];
+  /** Optional hook for a send that passed the pool's checks. */
+  onSend?: (tx: MockTx, endpoint: number) => SendHook | Promise<SendHook>;
+  /** Called (and awaited) when a read of `method` arrives, before it is answered (to hold or crash mid-read). */
+  onRead?: (method: string, endpoint: number) => Promise<void> | void;
+  /** Answers for eth_getTransactionCount that throw a network error, for the next N calls on every endpoint. */
+  countFailures = 0;
+  private readonly receipts = new Map<string, { tx: MockTx; block: number }>();
+  private block = 100;
+
+  constructor(opts: { chainId?: number; urls?: string[] } = {}) {
+    this.chainId = opts.chainId ?? 31337;
+    this.urls = opts.urls ?? [PRIMARY_RPC, FALLBACK_RPC];
+    this.modes = this.urls.map(() => 'up');
+  }
+
+  install(): this {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const endpoint = this.urls.findIndex((u) => url === u || url === `${u}/`);
+      if (endpoint < 0) throw new Error(`Unexpected fetch to ${url}`);
+      const body = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
+      this.calls.push({ endpoint, method: body.method });
+      const mode = this.modes[endpoint]!;
+      if (mode === 'down') throw new TypeError('Network connection lost.');
+      if (mode === 'http503') return new Response('<html>503</html>', { status: 503 });
+      if (mode === 'garbage') return new Response('{"jsonrpc":"2.0","id":0,"result":"0x1"}', { status: 200 });
+      const reply = (r: { result: unknown } | { error: { code: number; message: string } }) => Response.json({ jsonrpc: '2.0', id: body.id, ...r });
+      if (mode === 'rate_limited') return reply({ error: { code: -32005, message: 'limit exceeded' } });
+      if (body.method === 'eth_chainId') return reply({ result: `0x${(mode === 'wrong_chain' ? this.chainId + 1 : this.chainId).toString(16)}` });
+      if (body.method === 'eth_sendRawTransaction') return this.sendRaw(endpoint, body.params[0] as Hex, init?.signal, reply);
+      await this.onRead?.(body.method, endpoint);
+      if (body.method === 'eth_getTransactionCount') {
+        if (this.countFailures > 0) {
+          this.countFailures--;
+          throw new TypeError('Network connection lost.');
+        }
+        const [address, tag] = body.params as [string, string];
+        const stale = this.staleCounts.get(endpoint);
+        const n = stale ? (tag === 'latest' ? stale.latest : stale.pending) : tag === 'latest' ? this.mined(address) : this.pendingCount(address);
+        return reply({ result: `0x${n.toString(16)}` });
+      }
+      if (body.method === 'eth_getTransactionReceipt') {
+        const got = this.receipts.get((body.params[0] as string).toLowerCase());
+        if (!got) return reply({ result: null });
+        return reply({
+          result: { transactionHash: got.tx.hash, status: '0x1', blockNumber: `0x${got.block.toString(16)}`, gasUsed: '0x5208', effectiveGasPrice: '0x3b9aca00', logs: [] },
+        });
+      }
+      if (body.method === 'eth_getBlockByNumber') return reply({ result: { number: `0x${this.block.toString(16)}`, timestamp: '0x6553f100', baseFeePerGas: '0x1' } });
+      return reply({ error: { code: -32601, message: 'method not found' } });
+    });
+    return this;
+  }
+
+  mined(address: string): number {
+    return this.minedCount.get(address.toLowerCase()) ?? 0;
+  }
+
+  pendingCount(address: string): number {
+    const a = address.toLowerCase();
+    const pool = this.pool.get(a);
+    let n = this.mined(a);
+    while (pool?.has(n)) n++;
+    return n;
+  }
+
+  /** The pool's transaction for a sender's nonce. */
+  pooled(address: string, nonce: number): MockTx | undefined {
+    return this.pool.get(address.toLowerCase())?.get(nonce);
+  }
+
+  /** Every pooled transaction of a sender, by nonce. */
+  pooledAll(address: string): MockTx[] {
+    return [...(this.pool.get(address.toLowerCase())?.values() ?? [])].sort((x, y) => x.nonce - y.nonce);
+  }
+
+  /** Mines a sender's pool from its mined count, in nonce order (at most `max`). Returns what was mined. */
+  mine(address: string, max = Number.POSITIVE_INFINITY): MockTx[] {
+    const a = address.toLowerCase();
+    const pool = this.pool.get(a) ?? new Map<number, MockTx>();
+    const out: MockTx[] = [];
+    let n = this.mined(a);
+    while (pool.has(n) && out.length < max) {
+      const tx = pool.get(n)!;
+      pool.delete(n);
+      this.minedTxs.push(tx);
+      this.receipts.set(tx.hash, { tx, block: ++this.block });
+      out.push(tx);
+      n++;
+    }
+    this.minedCount.set(a, n);
+    return out;
+  }
+
+  /** Another sender's transaction at `nonce` was mined (the key was used elsewhere): the count moves past it. */
+  foreignMine(address: string, upTo: number): void {
+    const a = address.toLowerCase();
+    const pool = this.pool.get(a);
+    for (let n = this.mined(a); n < upTo; n++) pool?.delete(n);
+    this.minedCount.set(a, upTo);
+  }
+
+  /** Drops a pooled transaction (evicted). */
+  drop(address: string, nonce: number): void {
+    this.pool.get(address.toLowerCase())?.delete(nonce);
+  }
+
+  /** Puts a transaction in the pool without any checks (a foreign one, or a node that lies). */
+  admit(tx: MockTx): void {
+    const a = tx.from.toLowerCase();
+    const pool = this.pool.get(a) ?? new Map<number, MockTx>();
+    this.pool.set(a, pool);
+    pool.set(tx.nonce, tx);
+  }
+
+  private async sendRaw(endpoint: number, raw: Hex, signal: AbortSignal | null | undefined, reply: (r: { result: unknown } | { error: { code: number; message: string } }) => Response): Promise<Response> {
+    let tx: MockTx;
+    try {
+      tx = decodeRawTx(raw);
+    } catch {
+      return reply({ error: { code: -32000, message: 'rlp: invalid transaction' } });
+    }
+    const note = (outcome: string) => this.broadcasts.push({ endpoint, tx, outcome });
+    if (tx.chainId !== BigInt(this.chainId)) {
+      note('wrong_chain');
+      return reply({ error: { code: -32000, message: 'invalid chain id for signer' } });
+    }
+    const a = tx.from.toLowerCase();
+    if (tx.nonce < this.mined(a)) {
+      note('nonce_too_low');
+      return reply({ error: { code: -32000, message: 'nonce too low' } });
+    }
+    const existing = this.pooled(a, tx.nonce);
+    if (existing?.hash === tx.hash) {
+      note('already_known');
+      return reply({ error: { code: -32000, message: 'already known' } });
+    }
+    if (existing && (tx.maxFeePerGas * 10n < existing.maxFeePerGas * 11n || tx.maxPriorityFeePerGas * 10n < existing.maxPriorityFeePerGas * 11n)) {
+      note('replacement_underpriced');
+      return reply({ error: { code: -32000, message: 'replacement transaction underpriced' } });
+    }
+    const hook = await this.onSend?.(tx, endpoint);
+    if (hook && typeof hook === 'object') {
+      if (hook.keep) this.admit(tx);
+      note(`error:${hook.error}`);
+      return reply({ error: { code: -32000, message: hook.error } });
+    }
+    if (hook === 'network') {
+      note('network');
+      throw new TypeError('Network connection lost.');
+    }
+    if (hook === 'hang') {
+      note('hang');
+      return hang(signal);
+    }
+    this.admit(tx);
+    if (hook === 'accept_then_hang') {
+      note('accepted_then_hang');
+      return hang(signal);
+    }
+    if (hook === 'accept_then_network') {
+      note('accepted_then_network');
+      throw new TypeError('Network connection lost.');
+    }
+    note(existing ? 'replaced' : 'accepted');
+    return reply({ result: tx.hash });
+  }
+}

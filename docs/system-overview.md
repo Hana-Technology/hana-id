@@ -3,7 +3,7 @@
 A private briefing for the founder: how Hana ID works, what it protects, where it is weak, and how to answer hard
 questions honestly. It states every gap plainly. Decide later what to share outside the company.
 
-Last verified: 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: section 3's billing line (the usage ledger) reworded before the repository went public, no behaviour change); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: section 6's email budget, 333 a day within 30% of a shared SendGrid plan, D793); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Passport Home's "Move this wallet" offers the NEAR key, D779); 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the product's names users read, the user's line in section 1, the export's three steps and checkbox in 2.6, D765); 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
+Last verified: 2026-11-17 (branch `feat/approval-plain-summary`, not merged, not deployed: 2.4's plain summary and Show details, D808–D813); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: section 3's billing line (the usage ledger) reworded before the repository went public, no behaviour change); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: section 6's email budget, 333 a day within 30% of a shared SendGrid plan, D793); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Passport Home's "Move this wallet" offers the NEAR key, D779); 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the product's names users read, the user's line in section 1, the export's three steps and checkbox in 2.6, D765); 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
 reference docs and checked against the code where they were vague; no code changed). Where the docs lag the code or git,
 this file says so. Sandbox-dev's live state is as `docs/operations.md` "What sandbox-dev runs" records it, corrected on
 2026-11-10 by the person who ran that day's deploy and tests (Hana Home, the email co-signer, alerting, the Google
@@ -179,7 +179,11 @@ absolute, 2 h idle; partners can set up to 23 h 50 min), at logout, or when revo
 ### 2.4 Signing with the approval popup
 
 A signing call made in a click opens Hana's **approval popup** on the auth origin. The popup decodes the transaction
-bytes itself and shows what is being signed. The Approve button is guarded: it arms only 1 s after the window shows and
+bytes itself and shows what is being signed: first one plain sentence ("App wants to send 0.1 NEAR to bob.testnet"),
+the network and the most the fee can be, and every warning (who controls the account, raw signing, a permission to
+spend the user's tokens, or "Journear can't explain this request"), with the technical details folded behind "Show
+details" (open from the start when the request can't be explained, never foldable for raw signing; D808–D813). The
+Approve button is guarded: it arms only 1 s after the window shows and
 after a real mouse, touch or keyboard gesture, so a page can't trick a click onto it. The vault re-checks that what was
 approved is exactly what was queued, then signs locally. `personal_sign` and Stellar messages always need the popup.
 Raw signing (signing a bare hash) is off by default, always needs the popup with a red warning, and is refused for test

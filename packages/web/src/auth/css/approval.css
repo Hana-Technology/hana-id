@@ -57,6 +57,67 @@ p.support-id code {
   font-size: var(--jp-text-sm);
 }
 
+/* ---- the plain summary first (D808): "{App} wants to …", its lines, the network and the fee ---- */
+.request > h2.summary-headline {
+  font-size: var(--jp-text-lg);
+  line-height: var(--jp-leading-snug);
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A name (an account id, a contract) moves to the next line whole; only a value longer than the line (a 0x address on a
+   phone) breaks inside. */
+.summary-headline code.mono,
+.summary-line code.mono,
+.summary-warning code.mono {
+  font-size: 0.85em;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+p.summary-line {
+  font-size: var(--jp-text-md);
+}
+
+/* ---- the technical details (D808): folded behind "Show details", open from the start when the request can't be
+   explained, and never foldable for raw signing (a plain section titled "Details") ---- */
+.request-details {
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
+  padding: var(--jp-space-3);
+  min-width: 0;
+}
+
+.request-details > summary.details-toggle {
+  font-weight: var(--jp-weight-semibold);
+  min-height: 24px;
+}
+
+.request-details > .details-body,
+.request-details.fixed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+}
+
+.request-details > .details-body {
+  margin-top: var(--jp-space-3);
+}
+
+.request-details > .details-body > *,
+.request-details.fixed > * {
+  margin: 0;
+}
+
+.request-details h3 {
+  font-size: var(--jp-text-md);
+}
+
+.request-details > summary.details-toggle:focus-visible {
+  outline: 2px solid var(--jp-focus);
+  outline-offset: 2px;
+}
+
 /* ---- the amount first (render-approval.ts amountHeadline): the system's `.jp-confirm .amt` ---- */
 .headline {
   display: flex;
@@ -218,7 +279,9 @@ details summary {
 
 /* Raw bytes shown whole (a raw signature, unknown call data, contract code): a quiet box, all of it, never cut. */
 .request > code.mono,
-.request details > code.mono {
+.request details > code.mono,
+.request-details > .details-body > code.mono,
+.request-details.fixed > code.mono {
   display: block;
   background: var(--jp-bg-subtle);
   border: 1px solid var(--jp-border);

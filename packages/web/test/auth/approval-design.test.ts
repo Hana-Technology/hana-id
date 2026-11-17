@@ -60,13 +60,15 @@ describe('the amount first (amountHeadline)', () => {
     expect(amountHeadline(decodeApprovalRequest({ kind: 'personal_sign', chain: 'evm', address: EVM, context: {}, bytes: utf8('Sign in') }))).toBeNull();
   });
 
-  it('is shown right under the request’s kind, and the rows still show the same value', () => {
+  it('is shown right under the summary’s headline (D808), and the rows still show the same value', () => {
     const el = renderApproval(dom(document), evm(), 'Partner App');
     expect(el.classList.contains('jp-confirm')).toBe(true);
     expect(el.children[0]?.tagName).toBe('H2');
+    expect(el.children[0]?.className).toBe('summary-headline');
     expect(el.children[1]?.className).toBe('headline');
     expect(el.querySelector('.amt')?.textContent).toBe('1ETH');
-    expect(el.querySelector('dl.jp-kv')?.textContent).toContain('1 (1000000000000000000 wei)');
+    expect(el.querySelector('dl.jp-kv.summary-facts')?.textContent).toBe('NetworkSepolia (testnet), chain 11155111Network feeup to 0.000000000000042 ETH');
+    expect(el.querySelector('details.request-details dl.jp-kv')?.textContent).toContain('1 (1000000000000000000 wei)');
     expect(renderApproval(dom(document), evm({ data: '0xa9059cbb' + '00'.repeat(64) }), 'Partner App').querySelector('.headline')).toBeNull();
   });
 });

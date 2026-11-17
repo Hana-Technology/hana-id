@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-13 (judging-week relay limits; SDK licences, "After 0.4.1"; the stamps contract relayed), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-17 (the approval window's plain summary, Show details, spend warnings), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -581,7 +581,7 @@ button.addEventListener('click', async () => {
   when you escalate, with the error `code`, its request ID (`error.requestId`, section 13), when it happened and the
   app; Journear's support finds the user, their logins and sessions by it, and a failed request by its request ID (Journear Passport
   keeps no user id on failed requests). The Journear Passport
-  approval popup also shows it under the account line, so a user can read it out. It comes from Journear Passport's API with the
+  approval popup also shows it in its details ("Show details"), so a user can read it out. It comes from Journear Passport's API with the
   session: `null` for a session saved before this release (until the user's next login) and on an environment that
   can't compute it. An SDK older than 0.2.0 never receives it (the vault gives older SDKs exactly the answers they
   know).
@@ -688,9 +688,21 @@ and raw signing `'off'` refuses raw requests within 10 s too (the vault re-reads
 ## 8. Signing
 
 Every signing request goes through the user. The Journear Passport popup decodes the request bytes itself, so your page can't
-misdescribe them. It lists what the request does as labelled rows, with **Reject** and **Approve** below; a plain
-transfer (EVM value with no call data on a chain it names, one native XLM payment or account creation, NEAR
-transfers only) also leads with the amount ("Sends 0.001 ETH"), never a contract call or a token. The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
+misdescribe them. It starts with one plain sentence built only from those bytes ("Your App wants to send 0.1 NEAR to
+bob.testnet", "Your App wants to use stamps.testnet (collect)", "Your App wants you to sign a message"), the network
+and the most the network fee can be; a plain transfer (EVM value with no call data on a chain it names, one native XLM
+payment or account creation, NEAR transfers only) also shows the amount large ("Sends 0.001 ETH"). Every warning
+follows, always in view: changes to who controls the account, raw signing, and any request that lets someone spend the
+user's tokens (an ERC-20 `approve` or `increaseAllowance`, `setApprovalForAll`, EIP-2612 and Permit2 signatures, a
+Soroban token `approve`, NEAR's `nft_approve`), red when the amount has no limit, with the spender named when Journear
+Passport has verified its contract. The technical details (nonces, hashes, gas, the full list of operations or
+actions, raw arguments, typed-data trees, the user's Support ID) are folded behind **Show details**, which the user can
+always open. When the popup can't explain a request in plain words (a function it doesn't recognise, typed data other
+than a permit it knows, a Soroban call that isn't a token transfer or approval, raw bytes) it says "Journear can’t explain
+this request in plain words. Only approve if you trust Your App." and opens the details from the start; for raw signing
+they can't be folded. Token amounts carry a symbol only for the few tokens Journear has reviewed; anything else shows the
+amount in the token's smallest units, so describe amounts in your own page too. **Reject** and **Approve** are below.
+The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
 re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Declined" and counts down,
 with a Close now button. Each follow-up still needs its own Approve. Reject, closing the
 popup, or 5 min without an answer gives `4001`.
@@ -1086,10 +1098,13 @@ export async function verifyNearSignIn(
 recipient first, flags one that isn't your page's host, and writes out a recipient with characters outside plain
 ASCII (look-alikes). `nonce` is 32 bytes (`-32602` otherwise).
 
-**What the approval window shows** (decoded by Journear Passport from the bytes, never from your description): the network and
-whether Journear Passport checked it, sender and receiver, every action in plain words (a call with its method, attached deposit,
-gas in Tgas and its arguments as escaped JSON, or hex when they aren't JSON, always in full), and the NEAR leaving the
-account (including what publishing a global contract burns: 0.0001 NEAR per byte of code). Adding or removing a key,
+**What the approval window shows** (decoded by Journear Passport from the bytes, never from your description): one plain
+sentence first ("Your App wants to send 0.1 NEAR to bob.testnet", "Your App wants to use your-contract.testnet
+(method)"; an `ft_transfer`'s receiver and amount and an `nft_transfer`'s item are read from its JSON arguments), the
+network and whether Journear Passport checked it, the fee line, and the NEAR leaving the account (including what
+publishing a global contract burns: 0.0001 NEAR per byte of code). Behind **Show details**: sender and receiver, every
+action (a call with its method, attached deposit, gas in Tgas and its arguments as escaped JSON, or hex when they aren't
+JSON, always in full); arguments that aren't JSON open the details from the start. Adding or removing a key,
 deleting the account and deploying or setting a contract change who controls the account: they are shown under a red
 warning; so are a call to a contract on the user's own account and a global contract's burn.
 

@@ -1,0 +1,747 @@
+// The approval window's plain-language summary (D808–D812): one headline ("{App} wants to send 0.1 NEAR to
+// bob.testnet"), a few plain lines, the network fee, and the warnings for requests that let someone spend the user's
+// tokens, built only from the request the popup decoded itself (decode/request.ts). Never from text the partner page
+// supplies: the app's name is a placeholder part (`{ kind: 'app' }`) the page fills with the vault's app name, and every
+// other value comes from the signed bytes. Values a partner chose (addresses, account ids, method names, token ids) are
+// `code` parts, shown as text in mono; a string that isn't display-safe is never put in a summary.
+//
+// `explainable` is false when Journear can't say in plain words what the request does (an unknown contract function,
+// raw bytes, typed data it can't summarise, a Soroban call that isn't a token transfer or approval): the summary then
+// says so, and the popup starts its details open. `detailsMustStayOpen` (raw signing) means the details can't be folded
+// at all. The popup still shows every technical fact in its details; nothing here replaces a fact, it only says it
+// plainly first.
+//
+// Token amounts: only a token on the pinned, reviewed list (MAINNET_DEMO: USDC and EURC on Base, XLM, USDC and EURC
+// on Stellar's public network) gets a symbol and decimals. Any other token's amount is shown as it is signed, in its
+// smallest units, and called "tokens of contract …": a contract's own symbol() or decimals() is the contract's claim.
+import { isDisplaySafeLine } from '../display-safe.ts';
+import { MAINNET_DEMO } from '../mainnet-demo.ts';
+import { STELLAR_MAINNET_PASSPHRASE, evmChainInfo } from '../networks.ts';
+import type { NearAction } from '../near/codec.ts';
+import { isNearAccountId } from '../addresses.ts';
+import { type ContractChain, STELLAR_TESTNET_PASSPHRASE, verifiedContract } from '../verified-contracts.ts';
+import type { AbiValue } from './abi.ts';
+import type { DecodedApproval } from './request.ts';
+import type { DecodedEvmTx } from './evm.ts';
+import { parseStrictJson } from './json.ts';
+import { formatNear, nearMethodName } from './near.ts';
+import type { StellarContractCall, StellarInvocation, StellarOperation, StellarScVal } from './stellar.ts';
+import type { TypedDataStruct, TypedDataValue } from '../typed-data.ts';
+
+/**
+ * One piece of a summary's text: plain words, the requesting app's name (filled in by the page from the vault's app
+ * name), a value shown as code (an address, an account id, a contract), or a value in bold (a verified contract's name).
+ */
+export type SummaryPart = string | { readonly kind: 'app' } | { readonly kind: 'code'; readonly text: string } | { readonly kind: 'strong'; readonly text: string };
+export type SummaryText = readonly SummaryPart[];
+
+/** Why a warning is shown (stable, for tests and the page's classes). */
+export type SummaryWarningCode =
+  /** Journear can't explain the request in plain words. */
+  | 'cannot_explain'
+  /** A permission for someone else to spend a bounded amount of the user's tokens. */
+  | 'spend_permission'
+  /** A permission with no limit, or one so large it has no practical limit. */
+  | 'unlimited_spend'
+  /** A permission to move every item of an NFT collection (setApprovalForAll(true)). */
+  | 'collection_operator'
+  /** Typed data that calls itself Permit2 but isn't Permit2's contract. */
+  | 'permit_lookalike'
+  /** A new contract from code Journear can't read. */
+  | 'contract_creation'
+  /** A sign-in message for another site than the requesting page. */
+  | 'sign_in_mismatch';
+
+export interface SummaryWarning {
+  /** `danger`: red, the popup's strongest style; `warning`: amber. Both always visible, never folded. */
+  readonly level: 'danger' | 'warning';
+  readonly code: SummaryWarningCode;
+  readonly text: SummaryText;
+}
+
+export interface ApprovalSummary {
+  /** "{App} wants to …": the first thing the popup shows. */
+  readonly headline: SummaryText;
+  /** More plain lines (an amount in smallest units, what else a call sends, what a list of actions does). */
+  readonly lines: readonly SummaryText[];
+  /** The most the network fee can be, as a value ("up to 0.000042 ETH"), or null when the request costs no fee itself. */
+  readonly fee: SummaryText | null;
+  /** The network the request is bound to, as a value ("Sepolia (testnet)"), when the request names one. NEAR's line is the page's. */
+  readonly network: SummaryText | null;
+  readonly warnings: readonly SummaryWarning[];
+  /** False when Journear can't say what the request does: the details start open. */
+  readonly explainable: boolean;
+  /** True for raw signing: the details are shown and can't be folded. */
+  readonly detailsMustStayOpen: boolean;
+}
+
+export interface SummaryContext {
+  /** The user's own address on the request's chain (the vault's: EIP-55, G… StrKey or the NEAR implicit account id). */
+  readonly address: string;
+  /** The partner page's origin, as the vault pinned it (a sign-in message's domain is compared with its host). */
+  readonly parentOrigin?: string;
+}
+
+const APP = { kind: 'app' } as const;
+const code = (text: string): SummaryPart => ({ kind: 'code', text });
+const strong = (text: string): SummaryPart => ({ kind: 'strong', text });
+
+/** The line every request Journear can't explain carries. */
+export const cannotExplain = (reason?: string): SummaryText => [`Journear can’t explain this request in plain words${reason ? `: ${reason}` : ''}. Only approve if you trust `, APP, '.'];
+
+/** Allowances at or above this have no practical limit (2^96: the max of a 96-bit balance, which some tokens use as "unlimited"). */
+export const PRACTICALLY_UNLIMITED = 2n ** 96n;
+
+/** Permit2's canonical contract (the same address on every chain). */
+export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+
+const ZERO_ADDRESS = /^0x0{40}$/iu;
+const UINT256_MAX = 2n ** 256n - 1n;
+const UINT160_MAX = 2n ** 160n - 1n;
+const I128_MAX = 2n ** 127n - 1n;
+
+/** `value` with `decimals` decimal places, trailing zeros trimmed: formatTokenUnits(1500000n, 6) = "1.5". */
+export function formatTokenUnits(value: bigint, decimals: number): string {
+  const neg = value < 0n;
+  const abs = neg ? -value : value;
+  const base = 10n ** BigInt(decimals);
+  const whole = abs / base;
+  const frac = decimals === 0 ? '' : (abs % base).toString().padStart(decimals, '0').replace(/0+$/u, '');
+  return `${neg ? '-' : ''}${whole}${frac ? `.${frac}` : ''}`;
+}
+
+// ---- tokens and spenders ----
+
+interface KnownToken {
+  readonly symbol: string;
+  readonly decimals: number;
+}
+
+/** A token on the pinned list for this EVM chain, by address (any case), or null. */
+export function knownEvmToken(chainId: number, address: string): KnownToken | null {
+  const chain = (MAINNET_DEMO.evm as Readonly<Record<number, { tokens: Readonly<Record<string, KnownToken>> }>>)[chainId];
+  if (!chain) return null;
+  const a = address.toLowerCase();
+  for (const [addr, t] of Object.entries(chain.tokens)) if (addr.toLowerCase() === a) return t;
+  return null;
+}
+
+/** A Stellar asset contract on the pinned list (the public network only), by contract id, or null. */
+export function knownStellarToken(networkPassphrase: string, contract: string): KnownToken | null {
+  const s = MAINNET_DEMO.stellar;
+  if (networkPassphrase !== s.networkPassphrase) return null;
+  if (s.native.assetContract === contract) return s.native;
+  for (const t of Object.values(s.assets)) if (t.assetContract === contract) return t;
+  return null;
+}
+
+/** "5 USDC", or "1000 of the token’s smallest units" when the token isn't on the pinned list. */
+function amountOf(amount: bigint, token: KnownToken | null): SummaryText {
+  return token ? [strong(`${formatTokenUnits(amount, token.decimals)} ${token.symbol}`)] : [strong(amount.toString()), ' in the token’s smallest units'];
+}
+
+/** "USDC", or "tokens of contract 0x…". */
+function tokenName(contract: string, token: KnownToken | null): SummaryText {
+  return token ? [token.symbol] : ['tokens of contract ', code(contract)];
+}
+
+/** For a pinned token named by its symbol: which contract that is, so the contract is always in view. */
+const tokenContractLine = (contract: string, token: KnownToken): SummaryText => [`${token.symbol} here is the token contract `, code(contract), ', on Journear’s reviewed list.'];
+
+/** Who would be allowed to spend: a verified contract by name, else its address, said to be unverified. */
+function spenderOf(chain: ContractChain | null, address: string): SummaryText {
+  const v = chain ? verifiedContract(chain, address) : null;
+  if (v) return [strong(v.name), ' (', code(address), ', verified by Journear)'];
+  if (ZERO_ADDRESS.test(address)) return [code(address), ' (the zero address)'];
+  return [code(address), ', an address Journear hasn’t verified,'];
+}
+
+/**
+ * The warning for a permission to spend the user's tokens (ERC-20 approve and increaseAllowance, EIP-2612 and Permit2
+ * signatures, a Soroban token's approve). The caller handles 0 (a revoke: no warning). At or above
+ * PRACTICALLY_UNLIMITED (or the type's max): the red "no limit" warning; below it, the amber one with the amount.
+ * `nftToo`: ERC-20's and ERC-721's approve share one selector, so for a token Journear doesn't know the amount may be
+ * an NFT's item number.
+ */
+function spendWarning(spender: SummaryText, contract: string, token: KnownToken | null, amount: bigint, typeMax: bigint, opts: { more?: boolean; nftToo?: boolean; via?: string } = {}): SummaryWarning {
+  const via = opts.via ? ` ${opts.via}` : '';
+  const yours: SummaryText = token ? [`your ${token.symbol}`] : ['your tokens of contract ', code(contract)];
+  if (amount >= PRACTICALLY_UNLIMITED) {
+    const how = amount >= typeMax ? 'with no limit' : 'with no practical limit';
+    return { level: 'danger', code: 'unlimited_spend', text: ['This lets ', ...spender, ' spend all of ', ...yours, via, `, ${how}, until you take the permission back. Approve only if you trust it completely.`] };
+  }
+  const much: SummaryText = token ? [strong(`${formatTokenUnits(amount, token.decimals)} ${token.symbol}`), ' from your account'] : [strong(amount.toString()), ' (in the token’s smallest units) of ', ...yours];
+  const nft = opts.nftToo && !token ? ` If the contract is an NFT collection, it lets them take your item ${amount} instead.` : '';
+  return { level: 'warning', code: 'spend_permission', text: ['This lets ', ...spender, ` spend ${opts.more ? 'a further ' : 'up to '}`, ...much, via, `, until it is used up or you take the permission back.${nft}`] };
+}
+
+// ---- EVM ----
+
+const abiAddr = (v: AbiValue | undefined): string | null => (v?.kind === 'address' ? v.value : null);
+const abiUint = (v: AbiValue | undefined): bigint | null => (v?.kind === 'uint' ? v.value : null);
+const abiBool = (v: AbiValue | undefined): boolean | null => (v?.kind === 'bool' ? v.value : null);
+const sameEvm = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+
+function evmNative(chainId: number, wei: bigint): string {
+  const info = evmChainInfo(chainId);
+  return info ? `${formatTokenUnits(wei, 18)} ${info.nativeSymbol}` : `${formatTokenUnits(wei, 18)} of this chain’s coin`;
+}
+
+function evmNetwork(chainId: number): SummaryText {
+  const info = evmChainInfo(chainId);
+  return info ? [`${info.label}, chain ${chainId}`] : [`chain ${chainId}, which Journear doesn’t know by name`];
+}
+
+/** "your account" when `address` is the user's, else the address as code. */
+const evmWho = (address: string, me: string): SummaryText => (sameEvm(address, me) ? ['your account'] : [code(address)]);
+
+interface Draft {
+  headline: SummaryText;
+  lines: SummaryText[];
+  warnings: SummaryWarning[];
+  explainable: boolean;
+}
+
+function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
+  const to = tx.to as string;
+  const chain: ContractChain = { kind: 'evm', chainId };
+  const lines: SummaryText[] = [];
+  const warnings: SummaryWarning[] = [];
+  const contract = code(to);
+  const unknown = (reason: string): Draft => ({ headline: [APP, ' wants to use contract ', contract], lines, warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain(reason) }, ...warnings], explainable: false });
+  if (tx.value > 0n) lines.push(['It also sends ', strong(evmNative(chainId, tx.value)), ' to the contract.']);
+  const call = tx.call;
+  if (!call) return unknown(tx.selector ? 'it calls a function Journear doesn’t recognise' : 'it sends data Journear can’t read');
+  const a = call.args;
+  const token = knownEvmToken(chainId, to);
+  if (token) lines.push(tokenContractLine(to, token));
+  switch (call.signature) {
+    case 'transfer(address,uint256)': {
+      const recipient = abiAddr(a[0]) as string;
+      const amount = abiUint(a[1]) as bigint;
+      return {
+        headline: [APP, ' wants to send ', ...(token ? amountOf(amount, token) : ['tokens of contract ', contract]), ' to ', ...evmWho(recipient, me)],
+        lines: token ? lines : [['Amount: ', ...amountOf(amount, null), ' (Journear doesn’t know this token’s decimals).'], ...lines],
+        warnings,
+        explainable: true,
+      };
+    }
+    case 'transferFrom(address,address,uint256)': {
+      const from = abiAddr(a[0]) as string;
+      const recipient = abiAddr(a[1]) as string;
+      const amount = abiUint(a[2]) as bigint;
+      return {
+        headline: [APP, ' wants to move ', ...(token ? amountOf(amount, token) : ['tokens of contract ', contract]), ' from ', ...evmWho(from, me), ' to ', ...evmWho(recipient, me)],
+        lines: token ? lines : [['Amount: ', ...amountOf(amount, null), ' (or, if this contract is an NFT collection, item ', strong(amount.toString()), ').'], ...lines],
+        warnings,
+        explainable: true,
+      };
+    }
+    case 'approve(address,uint256)': {
+      const spender = abiAddr(a[0]) as string;
+      const amount = abiUint(a[1]) as bigint;
+      if (amount === 0n) {
+        return { headline: [APP, ' wants to take back ', code(spender), '’s permission to spend your ', ...tokenName(to, token)], lines, warnings, explainable: true };
+      }
+      warnings.push(spendWarning(spenderOf(chain, spender), to, token, amount, UINT256_MAX, { nftToo: true }));
+      return { headline: [APP, ' wants to let someone else spend your ', ...tokenName(to, token)], lines, warnings, explainable: true };
+    }
+    case 'increaseAllowance(address,uint256)': {
+      const spender = abiAddr(a[0]) as string;
+      const amount = abiUint(a[1]) as bigint;
+      if (amount > 0n) warnings.push(spendWarning(spenderOf(chain, spender), to, token, amount, UINT256_MAX, { more: true }));
+      return { headline: [APP, ' wants to let someone else spend more of your ', ...tokenName(to, token)], lines, warnings, explainable: true };
+    }
+    case 'decreaseAllowance(address,uint256)': {
+      const spender = abiAddr(a[0]) as string;
+      return { headline: [APP, ' wants to lower ', code(spender), '’s permission to spend your ', ...tokenName(to, token)], lines, warnings, explainable: true };
+    }
+    case 'permit(address,address,uint256,uint256,uint8,bytes32,bytes32)': {
+      const owner = abiAddr(a[0]) as string;
+      const spender = abiAddr(a[1]) as string;
+      const amount = abiUint(a[2]) as bigint;
+      if (sameEvm(owner, me) && amount > 0n) warnings.push(spendWarning(spenderOf(chain, spender), to, token, amount, UINT256_MAX));
+      return { headline: [APP, ' wants to submit a signed permission to spend ', ...tokenName(to, token), ' held by ', ...evmWho(owner, me)], lines, warnings, explainable: true };
+    }
+    case 'setApprovalForAll(address,bool)': {
+      const operator = abiAddr(a[0]) as string;
+      if (abiBool(a[1]) === false) return { headline: [APP, ' wants to take back ', code(operator), '’s permission to move your items in collection ', contract], lines, warnings, explainable: true };
+      warnings.push({ level: 'danger', code: 'collection_operator', text: ['This lets ', ...spenderOf(chain, operator), ' move every item you hold in collection ', contract, ', now and later, until you take the permission back. Approve only if you trust it completely.'] });
+      return { headline: [APP, ' wants to let someone else move all your items in collection ', contract], lines, warnings, explainable: true };
+    }
+    case 'safeTransferFrom(address,address,uint256)':
+    case 'safeTransferFrom(address,address,uint256,bytes)':
+      return { headline: [APP, ' wants to send item ', strong((abiUint(a[2]) as bigint).toString()), ' of collection ', contract, ' from ', ...evmWho(abiAddr(a[0]) as string, me), ' to ', ...evmWho(abiAddr(a[1]) as string, me)], lines, warnings, explainable: true };
+    case 'safeTransferFrom(address,address,uint256,uint256,bytes)':
+      return {
+        headline: [APP, ' wants to send ', strong((abiUint(a[3]) as bigint).toString()), ' of item ', strong((abiUint(a[2]) as bigint).toString()), ' of collection ', contract, ' from ', ...evmWho(abiAddr(a[0]) as string, me), ' to ', ...evmWho(abiAddr(a[1]) as string, me)],
+        lines,
+        warnings,
+        explainable: true,
+      };
+    case 'safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)': {
+      const ids = a[2]?.kind === 'array' ? a[2].items.length : 0;
+      return { headline: [APP, ` wants to send ${ids === 1 ? '1 kind' : `${ids} kinds`} of item of collection `, contract, ' from ', ...evmWho(abiAddr(a[0]) as string, me), ' to ', ...evmWho(abiAddr(a[1]) as string, me)], lines, warnings, explainable: true };
+    }
+    case 'multicall(bytes[])':
+    case 'multicall(uint256,bytes[])':
+      return unknown('it bundles several calls Journear can’t read');
+    default:
+      // deposit(), withdraw(uint256): named by the standard, but the contract decides what they do.
+      return { headline: [APP, ' wants to use contract ', contract, ' (', code(call.name), ')'], lines, warnings, explainable: true };
+  }
+}
+
+function evmTx(chainId: number, tx: DecodedEvmTx, me: string): ApprovalSummary {
+  const base = { fee: ['up to ', strong(evmNative(chainId, tx.maxFeeWei))] as SummaryText, network: evmNetwork(chainId), detailsMustStayOpen: false };
+  if (tx.to === null) {
+    return { ...base, headline: [APP, ' wants to create a new contract'], lines: tx.value > 0n ? [['It also sends ', strong(evmNative(chainId, tx.value)), ' to the new contract.']] : [], warnings: [{ level: 'warning', code: 'contract_creation', text: cannotExplain('it creates a new contract from code Journear can’t read') }], explainable: false };
+  }
+  if (tx.data === '0x') return { ...base, headline: [APP, ' wants to send ', strong(evmNative(chainId, tx.value)), ' to ', ...evmWho(tx.to, me)], lines: [], warnings: [], explainable: true };
+  return { ...base, ...evmCall(chainId, tx, me) };
+}
+
+// ---- EIP-712 typed data ----
+
+type Fields = readonly { readonly name: string; readonly type: string }[];
+
+const sameFields = (have: Fields | undefined, want: Fields): boolean => have !== undefined && have.length === want.length && have.every((f, i) => f.name === want[i]?.name && f.type === want[i]?.type);
+
+const EIP2612_PERMIT: Fields = [
+  { name: 'owner', type: 'address' },
+  { name: 'spender', type: 'address' },
+  { name: 'value', type: 'uint256' },
+  { name: 'nonce', type: 'uint256' },
+  { name: 'deadline', type: 'uint256' },
+];
+const DAI_PERMIT: Fields = [
+  { name: 'holder', type: 'address' },
+  { name: 'spender', type: 'address' },
+  { name: 'nonce', type: 'uint256' },
+  { name: 'expiry', type: 'uint256' },
+  { name: 'allowed', type: 'bool' },
+];
+const PERMIT2_DETAILS: Fields = [
+  { name: 'token', type: 'address' },
+  { name: 'amount', type: 'uint160' },
+  { name: 'expiration', type: 'uint48' },
+  { name: 'nonce', type: 'uint48' },
+];
+const PERMIT2_TOKEN_PERMISSIONS: Fields = [
+  { name: 'token', type: 'address' },
+  { name: 'amount', type: 'uint256' },
+];
+const PERMIT2_SHAPES: Readonly<Record<string, { readonly fields: Fields; readonly sub: readonly [string, Fields] }>> = {
+  PermitSingle: { fields: [{ name: 'details', type: 'PermitDetails' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }], sub: ['PermitDetails', PERMIT2_DETAILS] },
+  PermitBatch: { fields: [{ name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }], sub: ['PermitDetails', PERMIT2_DETAILS] },
+  PermitTransferFrom: { fields: [{ name: 'permitted', type: 'TokenPermissions' }, { name: 'spender', type: 'address' }, { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], sub: ['TokenPermissions', PERMIT2_TOKEN_PERMISSIONS] },
+  PermitBatchTransferFrom: { fields: [{ name: 'permitted', type: 'TokenPermissions[]' }, { name: 'spender', type: 'address' }, { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], sub: ['TokenPermissions', PERMIT2_TOKEN_PERMISSIONS] },
+};
+
+const struct = (v: TypedDataValue | undefined): TypedDataStruct | null => (v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as TypedDataStruct) : null);
+const str = (v: TypedDataValue | undefined): string | null => (typeof v === 'string' ? v : null);
+const big = (v: TypedDataValue | undefined): bigint | null => (typeof v === 'bigint' ? v : null);
+
+/**
+ * Typed data that may grant spending without being a shape Journear checks: a permit-like name, or any struct with an
+ * address field called `spender` or `operator`. Wide on purpose: it only adds a "may be" warning.
+ */
+function mayGrantSpending(types: Readonly<Record<string, Fields>>, primaryType: string, domainName: string | null): boolean {
+  const named = /permit|allowance|approv/iu;
+  if (named.test(primaryType) || named.test(domainName ?? '')) return true;
+  return Object.entries(types).some(([name, fields]) => name !== 'EIP712Domain' && fields.some((f) => f.type === 'address' && /^(spender|operator)$/iu.test(f.name)));
+}
+
+function typedData(decoded: Extract<DecodedApproval, { kind: 'eip712' }>, me: string): ApprovalSummary {
+  const { typedData: td, chainId } = decoded;
+  const network: SummaryText | null = chainId === null ? null : evmNetwork(chainId);
+  const chain: ContractChain | null = chainId === null ? null : { kind: 'evm', chainId };
+  const domain = td.domain;
+  const verifying = str(domain.verifyingContract);
+  const base = { fee: null, network, detailsMustStayOpen: false };
+  const pt = td.primaryType;
+  const warnings: SummaryWarning[] = [];
+  const lines: SummaryText[] = [];
+  const ownerLine = (owner: string) => {
+    if (!sameEvm(owner, me)) lines.push(['The tokens’ owner it names is ', code(owner), ', not your account.']);
+  };
+
+  // EIP-2612: the token's own Permit, signed for its contract (the domain's verifyingContract).
+  if (pt === 'Permit' && verifying && sameFields(td.types.Permit, EIP2612_PERMIT)) {
+    const m = td.message;
+    const spender = str(m.spender) as string;
+    const value = big(m.value) as bigint;
+    ownerLine(str(m.owner) as string);
+    const token = chainId === null ? null : knownEvmToken(chainId, verifying);
+    if (token) lines.push(tokenContractLine(verifying, token));
+    if (value === 0n) return { ...base, headline: [APP, ' wants your signature to take back ', code(spender), '’s permission to spend your ', ...tokenName(verifying, token)], lines, warnings, explainable: true };
+    warnings.push(spendWarning(spenderOf(chain, spender), verifying, token, value, UINT256_MAX));
+    return { ...base, headline: [APP, ' wants your signature to let someone else spend your ', ...tokenName(verifying, token)], lines, warnings, explainable: true };
+  }
+  // DAI's permit: all or nothing.
+  if (pt === 'Permit' && verifying && sameFields(td.types.Permit, DAI_PERMIT)) {
+    const m = td.message;
+    const spender = str(m.spender) as string;
+    ownerLine(str(m.holder) as string);
+    const token = chainId === null ? null : knownEvmToken(chainId, verifying);
+    if (token) lines.push(tokenContractLine(verifying, token));
+    if (m.allowed !== true) return { ...base, headline: [APP, ' wants your signature to take back ', code(spender), '’s permission to spend your ', ...tokenName(verifying, token)], lines, warnings, explainable: true };
+    warnings.push(spendWarning(spenderOf(chain, spender), verifying, token, UINT256_MAX, UINT256_MAX));
+    return { ...base, headline: [APP, ' wants your signature to let someone else spend your ', ...tokenName(verifying, token)], lines, warnings, explainable: true };
+  }
+  // Permit2: its own domain (name "Permit2", Permit2's contract, no version), one of its four message shapes.
+  const shape = Object.hasOwn(PERMIT2_SHAPES, pt) ? PERMIT2_SHAPES[pt] : undefined;
+  const isPermit2Domain = domain.name === 'Permit2' && verifying !== null && sameEvm(verifying, PERMIT2_ADDRESS) && domain.version === undefined;
+  if (shape && isPermit2Domain && sameFields(td.types[pt], shape.fields) && sameFields(td.types[shape.sub[0]], shape.sub[1]) && Object.keys(td.types).length === 3) {
+    const m = td.message;
+    const spender = spenderOf(chain, str(m.spender) as string);
+    const allowance = pt === 'PermitSingle' || pt === 'PermitBatch';
+    const entries = (allowance ? m.details : m.permitted) as TypedDataValue;
+    const list = Array.isArray(entries) ? (entries as readonly TypedDataValue[]) : [entries];
+    for (const e of list) {
+      const s = struct(e) as TypedDataStruct;
+      const tokenAddr = str(s.token) as string;
+      const amount = big(s.amount) as bigint;
+      const token = chainId === null ? null : knownEvmToken(chainId, tokenAddr);
+      if (token) lines.push(tokenContractLine(tokenAddr, token));
+      if (amount === 0n) lines.push(['It sets the permission of ', ...spender, ' for ', ...tokenName(tokenAddr, token), ' to zero.']);
+      else warnings.push(spendWarning(spender, tokenAddr, token, amount, allowance ? UINT160_MAX : UINT256_MAX, { via: allowance ? 'through Permit2' : 'through Permit2, once' }));
+    }
+    return { ...base, headline: [APP, ' wants your signature to let someone else spend your tokens through Permit2'], lines, warnings, explainable: true };
+  }
+  // Anything else: Journear can't explain it. Say so louder when it imitates a permit.
+  if (domain.name === 'Permit2' && !isPermit2Domain) {
+    warnings.push({ level: 'danger', code: 'permit_lookalike', text: ['This calls itself Permit2, but it isn’t for Permit2’s contract. Don’t approve unless you know exactly why ', APP, ' needs it.'] });
+  } else if (mayGrantSpending(td.types, pt, str(domain.name))) {
+    warnings.push({ level: 'warning', code: 'spend_permission', text: ['This may be a permission to spend your tokens, in a form Journear can’t check. Read the details before you approve.'] });
+  }
+  return { ...base, headline: [APP, ' wants your signature on data Journear can’t explain'], lines, warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain() }, ...warnings], explainable: false };
+}
+
+// ---- messages ----
+
+/** EIP-4361's first line: `${scheme?}${domain} wants you to sign in with your Ethereum account:`. */
+const SIWE_FIRST_LINE = /^(?:(https?):\/\/)?([A-Za-z0-9.-]+(?::[0-9]{1,5})?) wants you to sign in with your Ethereum account:$/u;
+
+function hostOf(origin: string | undefined): string | null {
+  if (!origin) return null;
+  try {
+    return new URL(origin).host;
+  } catch {
+    return null;
+  }
+}
+
+function message(kind: 'personal_sign' | 'stellar_message', text: string | null, ctx: SummaryContext): ApprovalSummary {
+  const base = { fee: null, network: null, detailsMustStayOpen: false, lines: [] as SummaryText[] };
+  if (text === null) return { ...base, headline: [APP, ' wants you to sign data that isn’t readable text'], warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain('it isn’t plain text') }], explainable: false };
+  const siwe = kind === 'personal_sign' ? SIWE_FIRST_LINE.exec(text.split('\n', 1)[0] ?? '') : null;
+  if (siwe) {
+    const domain = siwe[2] as string;
+    const host = hostOf(ctx.parentOrigin);
+    const warnings: SummaryWarning[] = [];
+    if (host !== null && host.toLowerCase() !== domain.toLowerCase()) {
+      warnings.push({ level: 'warning', code: 'sign_in_mismatch', text: ['This app is at ', code(host), ', but the message signs you in to ', code(domain), '. Sign only if you mean to sign in to ', code(domain), '.'] });
+    }
+    return { ...base, headline: [APP, ' wants you to sign in to ', code(domain)], warnings, explainable: true };
+  }
+  return { ...base, headline: [APP, ' wants you to sign a message'], warnings: [], explainable: true };
+}
+
+// ---- Stellar ----
+
+function stellarNetwork(passphrase: string): SummaryText {
+  if (passphrase === STELLAR_MAINNET_PASSPHRASE) return ['Stellar public network (real funds)'];
+  if (passphrase === STELLAR_TESTNET_PASSPHRASE) return ['Stellar testnet'];
+  return ['the Stellar network named ', code(passphrase)];
+}
+
+const xlm = (stroops: string | bigint): string => `${formatTokenUnits(BigInt(stroops), 7)} XLM`;
+
+/** An amount of a Stellar asset (`native` or `CODE:ISSUER`): "1.5 XLM", or "2 of the asset USDC:G…" (a code is its issuer's choice). */
+function stellarAmount(stroops: string, asset: string): SummaryText {
+  return asset === 'native' ? [strong(xlm(stroops))] : [strong(formatTokenUnits(BigInt(stroops), 7)), ' of the asset ', code(asset)];
+}
+const assetName = (asset: string): SummaryText => (asset === 'native' ? ['XLM'] : ['the asset ', code(asset)]);
+const stellarWho = (account: string, me: string): SummaryText => (account === me ? ['your account'] : [code(account)]);
+
+const scAddr = (v: StellarScVal | undefined): string | null => (v?.type === 'address' ? v.address : null);
+const scInt = (v: StellarScVal | undefined): bigint | null => (v?.type === 'i128' || v?.type === 'u128' ? BigInt(v.value) : null);
+
+/**
+ * A Soroban token call (SEP-41, which every Stellar asset contract implements): `transfer(from, to, amount)` and
+ * `approve(from, spender, amount, expiration_ledger)`, recognised only with exactly those argument types. Anything else
+ * is a call Journear can't summarise (null).
+ */
+function sorobanTokenCall(passphrase: string, c: StellarContractCall, me: string, warnings: SummaryWarning[], authorizes: boolean): SummaryText | null {
+  const token = knownStellarToken(passphrase, c.contract);
+  const a = c.args;
+  const verb = authorizes ? 'authorize sending ' : 'send ';
+  if (c.function === 'transfer' && a.length === 3 && scAddr(a[0]) && scAddr(a[1]) && a[2]?.type === 'i128') {
+    const amount = scInt(a[2]) as bigint;
+    const from = scAddr(a[0]) as string;
+    const what: SummaryText = token ? [...amountOf(amount, token), ' (token contract ', code(c.contract), ')'] : [strong(amount.toString()), ' (in the token’s smallest units) of the token contract ', code(c.contract)];
+    return [verb, ...what, ...(from === me ? [] : [' from ', code(from)]), ' to ', ...stellarWho(scAddr(a[1]) as string, me)];
+  }
+  if (c.function === 'approve' && a.length === 4 && scAddr(a[0]) && scAddr(a[1]) && a[2]?.type === 'i128' && a[3]?.type === 'u32') {
+    const amount = scInt(a[2]) as bigint;
+    const spender = scAddr(a[1]) as string;
+    if (amount === 0n) return ['take back ', code(spender), '’s permission to spend ', ...tokenName(c.contract, token)];
+    warnings.push(spendWarning(spenderOf({ kind: 'stellar', networkPassphrase: passphrase }, spender), c.contract, token, amount, I128_MAX));
+    return ['let someone else spend your ', ...tokenName(c.contract, token)];
+  }
+  return null;
+}
+
+/** What one Stellar operation does, in a few words (no "{App} wants to"), and whether Journear can say that. */
+function stellarOp(passphrase: string, op: StellarOperation, me: string, warnings: SummaryWarning[]): { text: SummaryText; explainable: boolean } {
+  const ok = (text: SummaryText) => ({ text, explainable: true });
+  switch (op.type) {
+    case 'payment':
+      return ok(['send ', ...stellarAmount(op.amount, op.asset), ' to ', ...stellarWho(op.destination, me)]);
+    case 'createAccount':
+      return ok(['create the account ', code(op.destination), ' and send it ', strong(xlm(op.startingBalance))]);
+    case 'pathPaymentStrictReceive':
+      return ok(['pay at most ', ...stellarAmount(op.sendMax, op.sendAsset), ' so that ', ...stellarWho(op.destination, me), ' receives exactly ', ...stellarAmount(op.destAmount, op.destAsset)]);
+    case 'pathPaymentStrictSend':
+      return ok(['pay exactly ', ...stellarAmount(op.sendAmount, op.sendAsset), ' so that ', ...stellarWho(op.destination, me), ' receives at least ', ...stellarAmount(op.destMin, op.destAsset)]);
+    case 'manageSellOffer':
+    case 'createPassiveSellOffer':
+      return ok(op.amount === '0' ? ['cancel an offer to sell ', ...assetName(op.selling)] : ['offer to sell ', ...stellarAmount(op.amount, op.selling), ' for ', ...assetName(op.buying)]);
+    case 'manageBuyOffer':
+      return ok(op.buyAmount === '0' ? ['cancel an offer to buy ', ...assetName(op.buying)] : ['offer to buy ', ...stellarAmount(op.buyAmount, op.buying), ' with ', ...assetName(op.selling)]);
+    case 'changeTrust':
+      return ok(op.limit === '0' ? ['stop holding ', ...assetName(op.asset)] : ['let your account hold ', ...assetName(op.asset)]);
+    case 'setOptions':
+      return ok(op.signer || op.masterWeight !== null || op.lowThreshold !== null || op.medThreshold !== null || op.highThreshold !== null ? ['change who can sign for the account'] : ['change the account’s settings']);
+    case 'accountMerge':
+      return ok(['close the account and send all its XLM to ', code(op.destination)]);
+    case 'allowTrust':
+    case 'setTrustLineFlags':
+      return ok(['change whether ', code(op.trustor), ' may hold an asset you issue']);
+    case 'manageData':
+      return ok([op.value === null ? 'delete a data entry on the account' : 'save a data entry on the account']);
+    case 'bumpSequence':
+      return ok(['move the account’s sequence number forward']);
+    case 'createClaimableBalance':
+      return ok(['set aside ', ...stellarAmount(op.amount, op.asset), ' for others to claim']);
+    case 'claimClaimableBalance':
+      return ok(['claim a balance set aside for you']);
+    case 'clawbackClaimableBalance':
+      return ok(['take back a balance set aside for others']);
+    case 'clawback':
+      return ok(['take back ', ...stellarAmount(op.amount, op.asset), ' from ', code(op.from)]);
+    case 'beginSponsoringFutureReserves':
+      return ok(['pay the reserves of ', code(op.sponsored)]);
+    case 'endSponsoringFutureReserves':
+    case 'revokeSponsorship':
+      return ok(['end a reserve sponsorship']);
+    case 'liquidityPoolDeposit':
+      return ok(['deposit into a liquidity pool']);
+    case 'liquidityPoolWithdraw':
+      return ok(['withdraw from a liquidity pool']);
+    case 'inflation':
+      return ok(['run inflation (it does nothing on Stellar any more)']);
+    case 'extendFootprintTtl':
+      return ok(['keep contract data stored for longer']);
+    case 'restoreFootprint':
+      return ok(['restore archived contract data']);
+    case 'invokeHostFunction': {
+      const f = op.hostFunction;
+      if (f.type !== 'invokeContract') return { text: [f.type === 'uploadContractWasm' ? 'upload contract code' : 'create a contract'], explainable: false };
+      const token = sorobanTokenCall(passphrase, f, me, warnings, false);
+      let explainable = token !== null;
+      // What the call's authorizations also allow: token moves and approvals deeper in the tree.
+      for (const auth of op.auth) {
+        const root = auth.rootInvocation;
+        const sameAsCall = root.function.type === 'contractFn' && root.function.contract === f.contract && root.function.function === f.function;
+        for (const inv of sameAsCall ? root.subInvocations : [root]) if (!authorizations(passphrase, inv, me, warnings)) explainable = false;
+      }
+      return { text: token ?? ['use contract ', code(f.contract), ' (', code(f.function), ')'], explainable };
+    }
+  }
+}
+
+/** Walks an authorization tree; adds a warning for each token approval. True when every call in it is a token call. */
+function authorizations(passphrase: string, inv: StellarInvocation, me: string, warnings: SummaryWarning[]): boolean {
+  const f = inv.function;
+  let ok = f.type === 'contractFn' && sorobanTokenCall(passphrase, f, me, warnings, true) !== null;
+  for (const s of inv.subInvocations) if (!authorizations(passphrase, s, me, warnings)) ok = false;
+  return ok;
+}
+
+const capitalised = (t: SummaryText): SummaryText => {
+  const [first, ...rest] = t;
+  return typeof first === 'string' ? [first.charAt(0).toUpperCase() + first.slice(1), ...rest] : t;
+};
+
+function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me: string): ApprovalSummary {
+  const env = decoded.envelope;
+  const tx = env.tx;
+  const warnings: SummaryWarning[] = [];
+  const ops = tx.operations.map((op) => stellarOp(decoded.networkPassphrase, op, me, warnings));
+  const explainable = ops.every((o) => o.explainable);
+  const lines: SummaryText[] = [];
+  let headline: SummaryText;
+  if (ops.length === 1) headline = [APP, ' wants to ', ...(ops[0] as { text: SummaryText }).text];
+  else {
+    headline = [APP, ` wants to do ${ops.length} things in one Stellar transaction`];
+    ops.forEach((o, i) => lines.push([`${i + 1}. `, ...capitalised(o.text)]));
+  }
+  if (env.envelope === 'fee_bump' && env.feeSource !== me) lines.push(['The network fee is paid by ', code(env.feeSource), '.']);
+  tx.operations.forEach((op, i) => {
+    if (op.source !== null && op.source !== tx.source) lines.push([ops.length === 1 ? 'It acts on the account ' : `Step ${i + 1} acts on the account `, code(op.source), '.']);
+  });
+  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain('it calls a contract Journear can’t summarise') });
+  const feeStroops = env.envelope === 'fee_bump' ? env.fee : tx.fee;
+  return {
+    headline,
+    lines,
+    fee: env.envelope === 'fee_bump' && env.feeSource !== me ? null : ['up to ', strong(xlm(feeStroops))],
+    network: stellarNetwork(decoded.networkPassphrase),
+    warnings,
+    explainable,
+    detailsMustStayOpen: false,
+  };
+}
+
+function stellarAuth(decoded: Extract<DecodedApproval, { kind: 'stellar_auth_entry' }>, me: string): ApprovalSummary {
+  const warnings: SummaryWarning[] = [];
+  const inv = decoded.preimage.invocation;
+  const f = inv.function;
+  const root = f.type === 'contractFn' ? sorobanTokenCall(decoded.networkPassphrase, f, me, warnings, true) : null;
+  let explainable = root !== null;
+  for (const s of inv.subInvocations) if (!authorizations(decoded.networkPassphrase, s, me, warnings)) explainable = false;
+  const what: SummaryText = root ?? (f.type === 'contractFn' ? ['authorize a call to contract ', code(f.contract), ' (', code(f.function), ')'] : ['authorize creating a contract']);
+  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain('it authorizes a contract call Journear can’t summarise') });
+  return { headline: [APP, ' wants to ', ...what], lines: [], fee: null, network: stellarNetwork(decoded.networkPassphrase), warnings, explainable, detailsMustStayOpen: false };
+}
+
+// ---- NEAR ----
+
+/** Strict JSON object arguments, or null. */
+function jsonArgs(args: Uint8Array): Record<string, unknown> | null {
+  try {
+    const v = parseStrictJson(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(args));
+    return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+const isAmount = (v: unknown): v is string => typeof v === 'string' && /^(0|[1-9][0-9]{0,77})$/u.test(v);
+const isTokenId = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 128 && isDisplaySafeLine(v);
+const nearWho = (account: string, me: string): SummaryText => (account === me ? ['your account'] : [code(account)]);
+
+/** What one NEAR action does, in a few words, and whether Journear can say that. */
+function nearAction(a: NearAction, receiver: string, me: string, warnings: SummaryWarning[]): { text: SummaryText; explainable: boolean } {
+  const where = nearWho(receiver, me);
+  const ok = (text: SummaryText) => ({ text, explainable: true });
+  switch (a.type) {
+    case 'transfer':
+      return ok(['send ', strong(formatNear(a.deposit)), ' to ', ...where]);
+    case 'functionCall': {
+      const m = nearMethodName(a.methodName);
+      if (m.text === null) return { text: ['call a function on ', ...where, ' whose name can’t be shown as text'], explainable: false };
+      const args = a.args.length === 0 ? {} : jsonArgs(a.args);
+      if (args === null) return { text: ['use ', ...where, ' (', code(m.text), ') with data Journear can’t read'], explainable: false };
+      // NEP-141 fungible tokens and NEP-171/178 NFTs: their methods' meaning is the standard's (the contract can still lie).
+      if ((m.text === 'ft_transfer' || m.text === 'ft_transfer_call') && typeof args.receiver_id === 'string' && isNearAccountId(args.receiver_id) && isAmount(args.amount)) {
+        return ok(['send ', strong(args.amount), ' (smallest units) of the token ', code(receiver), ' to ', ...nearWho(args.receiver_id, me)]);
+      }
+      if ((m.text === 'nft_transfer' || m.text === 'nft_transfer_call') && typeof args.receiver_id === 'string' && isNearAccountId(args.receiver_id) && isTokenId(args.token_id)) {
+        return ok(['send item ', code(args.token_id), ' of collection ', code(receiver), ' to ', ...nearWho(args.receiver_id, me)]);
+      }
+      if (m.text === 'nft_approve' && typeof args.account_id === 'string' && isNearAccountId(args.account_id) && isTokenId(args.token_id)) {
+        warnings.push({ level: 'warning', code: 'spend_permission', text: ['This lets ', code(args.account_id), ' move your item ', code(args.token_id), ' of collection ', code(receiver), ', until it is used or you take the permission back.'] });
+        return ok(['let someone else move your item ', code(args.token_id), ' of collection ', code(receiver)]);
+      }
+      return ok(['use ', ...where, ' (', code(m.text), ')']);
+    }
+    case 'createAccount':
+      return ok(['create the account ', code(receiver)]);
+    case 'deployContract':
+      return ok(['put a contract on ', ...where]);
+    case 'stake':
+      return ok(['stake (lock) ', strong(formatNear(a.stake))]);
+    case 'addKey':
+      return ok(a.accessKey.permission.type === 'fullAccess' ? ['add a full-access key to ', ...where] : ['add a key to ', ...where, ' that can use ', code(a.accessKey.permission.receiverId)]);
+    case 'deleteKey':
+      return ok(['remove a key from ', ...where]);
+    case 'deleteAccount':
+      return ok(['delete ', ...where, ' and send all its NEAR to ', code(a.beneficiaryId)]);
+    case 'deployGlobalContract':
+      return ok(['publish a global contract']);
+    case 'useGlobalContract':
+      return ok(['set the contract of ', ...where]);
+    case 'delegate':
+      // Never shown: decodeApprovalRequest refuses a transaction that relays a delegate action.
+      return { text: ['relay someone else’s transaction'], explainable: false };
+  }
+}
+
+function nearActions(actions: readonly NearAction[], receiver: string, me: string, relayed: boolean): ApprovalSummary {
+  const warnings: SummaryWarning[] = [];
+  const done = actions.map((a) => nearAction(a, receiver, me, warnings));
+  const explainable = done.every((x) => x.explainable);
+  const lines: SummaryText[] = [];
+  let headline: SummaryText;
+  const transfers = actions.length > 0 && actions.every((a) => a.type === 'transfer');
+  if (transfers && actions.length > 1) {
+    headline = [APP, ' wants to send ', strong(formatNear(actions.reduce((n, a) => n + (a.type === 'transfer' ? a.deposit : 0n), 0n))), ' to ', ...nearWho(receiver, me), ` in ${actions.length} transfers`];
+  } else if (done.length === 1) headline = [APP, ' wants to ', ...(done[0] as { text: SummaryText }).text];
+  else {
+    headline = [APP, ` wants to do ${done.length} things with `, ...nearWho(receiver, me), ' in one transaction'];
+    done.forEach((x, i) => lines.push([`${i + 1}. `, ...capitalised(x.text)]));
+  }
+  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain() });
+  return {
+    headline,
+    lines,
+    fee: relayed ? ['paid for you by a relayer, not from your account'] : ['a small amount of NEAR for gas, from your account'],
+    network: null,
+    warnings,
+    explainable,
+    detailsMustStayOpen: false,
+  };
+}
+
+// ---- the entry point ----
+
+/** The plain summary of a request the popup decoded itself. Pure; never throws for a decoded request. */
+export function summarizeApproval(decoded: DecodedApproval, ctx: SummaryContext): ApprovalSummary {
+  switch (decoded.kind) {
+    case 'evm_tx':
+      return evmTx(decoded.chainId, decoded.tx, ctx.address);
+    case 'eip712':
+      return typedData(decoded, ctx.address);
+    case 'personal_sign':
+    case 'stellar_message':
+      return message(decoded.kind, decoded.message.text, ctx);
+    case 'stellar_tx':
+      return stellarTx(decoded, ctx.address);
+    case 'stellar_auth_entry':
+      return stellarAuth(decoded, ctx.address);
+    case 'raw':
+      return { headline: [APP, ' wants a raw signature that Journear can’t read'], lines: [], fee: null, network: null, warnings: [], explainable: false, detailsMustStayOpen: true };
+    case 'near_tx':
+      return nearActions(decoded.tx.actions, decoded.tx.receiverId, decoded.tx.signerId, false);
+    case 'near_delegate':
+      return nearActions(decoded.delegate.actions, decoded.delegate.receiverId, decoded.delegate.senderId, true);
+    case 'near_message': {
+      const readable = decoded.message.text !== null;
+      return {
+        headline: [APP, ' wants you to prove you own this wallet'],
+        lines: [],
+        fee: null,
+        network: null,
+        warnings: readable ? [] : [{ level: 'warning', code: 'cannot_explain', text: cannotExplain('its message isn’t plain text') }],
+        explainable: readable,
+        detailsMustStayOpen: false,
+      };
+    }
+  }
+}
+
+/** A summary text as one string, with `appName` in place of the app part (tests, logs of the page's own text). */
+export const summaryString = (t: SummaryText, appName: string): string => t.map((p) => (typeof p === 'string' ? p : p.kind === 'app' ? appName : p.text)).join('');

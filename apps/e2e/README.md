@@ -25,6 +25,15 @@ as on chain) and the test-only `e2e_stamps_collect` the relayer routes call. Sig
 window with no launcher; a second test holds the vault's key check, closes the window after the first approval and
 collects through the slot's Continue (D807).
 
+The approval window's plain summary (D808–D813): `tests/approval-summary.spec.ts` checks the details are closed for a
+request the summary explains and the user opens them (mouse and keyboard), open from the start for one it can't, never
+foldable for raw signing (live mode), and that a warning stays in view while they are closed. With
+`HANA_SHOTS_DIR=<dir>` (Chromium only) it also saves each request kind's window at the popup's real size (420 × 680,
+the whole page): NEAR relayed call (closed and open), NEAR transfer, NEP-413, EVM send, ERC-20 transfer and unlimited
+approve, an unknown call, an EIP-2612 permit, a message, a Stellar payment and an account-control change, and the
+mainnet demo's Stellar payment. It drives the partner app's `stellarSignXdr`, `ethSignTypedData`, `nearSignTx`,
+`nearSignDelegate` and `nearSignMessage` actions with requests the test builds.
+
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown
 key is masked). Buttons behind the guard (Approve, the export's Continue and Show key) take `approve()` or

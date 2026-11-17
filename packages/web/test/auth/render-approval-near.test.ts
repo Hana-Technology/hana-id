@@ -57,13 +57,20 @@ describe('renderApproval: NEAR transactions', () => {
     expect(takeovers(el)).toEqual([]);
   });
 
-  it('shows arguments whole (never cut or folded), as hex when they aren’t JSON', () => {
-    expect(tx([call(Uint8Array.of(0xff, 0x01))]).textContent).toContain('ff01');
-    // A padded first key can't push receiver_id or amount out of the text: nothing is cut or folded away.
+  it('shows arguments whole (never cut), as hex when they aren’t JSON; in the details, which start open for hex (D808)', () => {
+    const hex = tx([call(Uint8Array.of(0xff, 0x01))]);
+    expect(hex.textContent).toContain('ff01');
+    expect(hex.querySelector<HTMLDetailsElement>('details.request-details')?.open).toBe(true);
+    // A padded first key can't push receiver_id or amount out of the text: nothing is cut. The JSON of a call the
+    // summary names is in the details (closed), whole, in one box.
     const long = `{"pad":"${'a'.repeat(3000)}","receiver_id":"attacker.testnet","amount":"1"}`;
     const el = tx([call(long)]);
-    expect(el.querySelector('details')).toBeNull();
-    expect(el.querySelector('pre.message')!.textContent!).toContain('"receiver_id": "attacker.testnet"');
+    expect(el.querySelectorAll('details')).toHaveLength(1);
+    expect(el.querySelector<HTMLDetailsElement>('details.request-details')?.open).toBe(false);
+    expect(el.querySelector('details.request-details pre.message')!.textContent!).toContain('"receiver_id": "attacker.testnet"');
+    // ft_transfer's receiver and amount are read into the summary, outside the fold.
+    const ft = tx([{ ...call('{"receiver_id":"attacker.testnet","amount":"5"}', 1n), methodName: 'ft_transfer' } as NearAction], 'usdc.testnet');
+    expect(ft.querySelector('h2.summary-headline')?.textContent).toBe('Partner App wants to send 5 (smallest units) of the token usdc.testnet to attacker.testnet');
     expect(tx([call(new Uint8Array(1000).fill(0xff))]).querySelector('pre.message')!.textContent).toBe('ff'.repeat(1000));
   });
 

@@ -423,20 +423,24 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     const auto = msg.autoApprove;
     // A test app's request the popup itself reads as for a demo mainnet (the vault signs those only under the demo).
     const demo = msg.testApp && decoded ? demoNetworkOf(decoded) : null;
+    const notes = [
+      demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
+      // The out-of-policy case (the confirm pattern's warning alert): why the app's rules didn't sign this one.
+      auto?.reason ? alert(d, 'warning', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
+    ];
+    const supportId = msg.supportId ? supportIdLine(msg.supportId) : null;
     d.show(
       d.h(
         'section',
         { class: 'panel approve' },
         header(msg, `Request ${msg.position} of ${msg.queued}`),
         d.h('p', { class: 'account' }, `Your ${ACCOUNT_CHAIN_NAMES[msg.chain]} account `, d.h('code', { class: 'mono' }, msg.address)),
-        msg.supportId ? supportIdLine(msg.supportId) : null,
         msg.emailShared ? emailSharedLine(msg.appName) : null,
-        demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
-        // The out-of-policy case (the confirm pattern's warning alert): why the app's rules didn't sign this one.
-        auto?.reason ? alert(d, 'warning', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
+        // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
+        // Support ID goes. An unreadable request keeps the Support ID and the notes in view.
         decoded
-          ? renderApproval(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin })
-          : d.h('div', { class: 'request' }, alert(d, 'danger', { class: 'danger' }, `${BRAND.company} can’t read this request, so it can’t be approved.`), d.h('p', { class: 'muted' }, problem)),
+          ? renderApproval(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [supportId] })
+          : d.h('div', { class: 'request' }, supportId, ...notes, alert(d, 'danger', { class: 'danger' }, `${BRAND.company} can’t read this request, so it can’t be approved.`), d.h('p', { class: 'muted' }, problem)),
         buttons('Approve', decoded !== null),
         auto?.active ? stopAutoApproveButton(auto.label) : null,
       ),

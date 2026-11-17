@@ -3,13 +3,14 @@
 // docs/operations.md "Moving an env to another Cloudflare account"): Cloudflare never gives a secret back, so the
 // files are the only source, and a fresh Worker on the new account needs every one of them.
 //
-//   env-secrets <env> [--worker api|issuer|watchdog|console|admin|files] [--yes]
+//   env-secrets <env> [--worker api|issuer|watchdog|console|admin|files] [--secret <NAME>] [--yes]
 //
 // Without --yes it only lists: each secret, its source file, and whether the file is there, private (0600) and
 // well-formed. A missing file is listed, never invented: a key that only exists on the old Worker is gone, and its
 // generator (deploy-contract, vault-kek, identity-key, email-issuer, usage-setup, watchdog secrets) is the way to
 // make a new one, with what that changes (the runbook says which can be replaced and which never). Email sharing's
-// IDENTITY_SEAL_KEY (API and issuer) and EMAIL_CONSENT_KEY (API) are optional: listed, and set when their files exist. With --yes it
+// IDENTITY_SEAL_KEY (API and issuer) and EMAIL_CONSENT_KEY (API) are optional: listed, and set when their files exist; so
+// are the relays' keys (NEAR_RELAY_KEYS with near.relay, EVM_RELAY_KEYS with evm.sponsor). With --yes it
 // refuses while a required secret of the selected Workers is missing or malformed, then sets each one with
 // `wrangler secret put <NAME> --name <worker>` from the Worker's app directory (its generated config names the
 // account), the value on stdin. Nothing here prints a value.
@@ -19,15 +20,18 @@ import { join } from 'node:path';
 import { EMAIL_ISSUER_SECRET_FILES, IDENTITY_SECRET_FILES, type Manifest, accountIdFields, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
 import { SENDGRID_RE, isRsaPrivateJwk, publicEntry as rsaPublicEntry, readKey32 } from './email-issuer.ts';
+import { readEvmRelayKeys } from './evm-relay-keys.ts';
 import { readKeyFile as readP256KeyFile, readSealKeyFile, readSubKeyFile } from './identity-key.ts';
 import { SECRET_FILES, assertPrivate, parseSecretJson, secretsDir } from './secrets.ts';
 import { KEK_FILES, readKekFile } from './vault-kek.ts';
 import { USER_ID_KEY_FILE } from './usage-setup.ts';
 
-export const ENV_SECRETS_USAGE = `Usage: env-secrets.ts <env> [--worker api|issuer|watchdog|console|admin|files] [--yes]
+export const ENV_SECRETS_USAGE = `Usage: env-secrets.ts <env> [--worker api|issuer|watchdog|console|admin|files] [--secret <NAME>] [--yes]
   Lists every Worker secret the env's Workers need, its source file in .secrets/<env>/, and whether that file is
   present, 0600 and well-formed. A missing file is listed, never invented.
   --worker  only this Worker (default: every Worker the manifest has)
+  --secret  only this secret (e.g. EVM_RELAY_KEYS): listed, and with --yes uploaded, alone; refused unless its file
+            is present and well-formed, optional or not
   --yes     upload them (wrangler secret put, the value on stdin) to each Worker on the account its generated config
             names; refused while a required secret of those Workers is missing or malformed
 
@@ -158,6 +162,20 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
     out.push(item('api', 'HOME_RELAYER_KEYS', shown(SECRET_FILES.homeRelayerKeys), false, f(SECRET_FILES.homeRelayerKeys), () => readPool(f(SECRET_FILES.homeRelayerKeys))));
     // Optional (D734): only with the manifest's near.relay; without it POST /v1/near/relay and /activate answer 503.
     if (m.near?.relay) out.push(item('api', 'NEAR_RELAY_KEYS', shown(SECRET_FILES.nearRelayKeys), false, f(SECRET_FILES.nearRelayKeys), () => readPool(f(SECRET_FILES.nearRelayKeys))));
+    // Optional (D834, D849): only with the manifest's evm.sponsor; without it sponsorship answers unconfigured. The key's
+    // address must be evm.sponsor.relayerAddress, as the API's gen checks for .dev.vars.
+    const sponsor = m.evm?.sponsor;
+    if (sponsor) {
+      const file = f(SECRET_FILES.evmRelayKeys);
+      const src = shown(SECRET_FILES.evmRelayKeys);
+      out.push(
+        item('api', 'EVM_RELAY_KEYS', src, false, file, () => {
+          const { address, value } = readEvmRelayKeys(file, src);
+          if (address !== sponsor.relayerAddress) throw new Error(`${src}: the key's address is ${address}, not evm.sponsor.relayerAddress ${sponsor.relayerAddress}`);
+          return value;
+        }, 'the EVM sponsorship relayer; deleting the secret turns sponsorship off'),
+      );
+    }
     out.push(
       item('api', 'KEYS_UPDATER_KEY', shown(SECRET_FILES.keysUpdater, 'private_key'), true, f(SECRET_FILES.keysUpdater), () => {
         const k = (readJson(f(SECRET_FILES.keysUpdater)) as { private_key?: unknown } | null)?.private_key;
@@ -323,7 +341,7 @@ export function configProblem(t: WorkerTarget, root: string): string | null {
 
 /** Runs `env-secrets <argv>`. */
 export function envSecrets(argv: readonly string[], deps: EnvSecretsDeps): void {
-  const args = parseCli(argv, { strings: ['worker'], booleans: ['yes', 'help'] });
+  const args = parseCli(argv, { strings: ['worker', 'secret'], booleans: ['yes', 'help'] });
   if (args.flag('help')) return void deps.log(ENV_SECRETS_USAGE);
   const [envName, ...rest] = args.positionals;
   if (!envName) throw new CliError('Expected <env>');
@@ -336,7 +354,13 @@ export function envSecrets(argv: readonly string[], deps: EnvSecretsDeps): void 
   const env = deps.env ?? process.env;
   const targets = workerTargets(m).filter((t) => only === undefined || t.id === only);
   if (only !== undefined && targets.length === 0) throw new Error(`envs/${m.name}.json has no ${only} Worker`);
-  const items = secretInventory(m, root, only as WorkerId | undefined);
+  const one = args.str('secret');
+  if (one !== undefined && !/^[A-Z][A-Z0-9_]{1,63}$/u.test(one)) throw new CliError('--secret is a secret name (EVM_RELAY_KEYS, …)');
+  const all = secretInventory(m, root, only as WorkerId | undefined);
+  // --secret: that secret alone, on the Workers that have it; every other secret is left as it is (not listed, never a blocker).
+  const items = one === undefined ? all : all.filter((i) => i.name === one);
+  if (one !== undefined && items.length === 0) throw new Error(`${one} is not a secret of ${only ? `the ${only} Worker` : 'any Worker'} of envs/${m.name}.json`);
+  if (one !== undefined) targets.splice(0, targets.length, ...targets.filter((t) => items.some((i) => i.worker === t.id)));
 
   for (const t of targets) {
     const mine = items.filter((i) => i.worker === t.id);
@@ -348,10 +372,12 @@ export function envSecrets(argv: readonly string[], deps: EnvSecretsDeps): void 
     }
   }
   deps.log('Never uploaded: the offline standby signing keys (IDENTITY_SIGNING_KEY_STANDBY stays empty, email-issuer-signing-key-standby.json stays offline). The page Workers and console-auth have no secrets.');
-  const blockers = items.filter((i) => i.required && i.status !== 'ok');
+  // With --secret the one secret must be usable even when it is optional: uploading nothing is never what was asked.
+  const blockers = items.filter((i) => (i.required || one !== undefined) && i.status !== 'ok');
   if (blockers.length) deps.log(`${blockers.length} required secret(s) missing or invalid: ${blockers.map((i) => `${i.worker} ${i.name}`).join(', ')}.`);
   if (!args.flag('yes')) return void deps.log(DRY_RUN_LINE);
 
+  if (blockers.length && one !== undefined) throw new Error(`Refusing to upload ${one}: its file is missing or invalid (listed above); nothing uploaded`);
   if (blockers.length) throw new Error('Refusing to upload while a required secret is missing or invalid (listed above): restore the file, or make a new secret with its own command (docs/operations.md "Moving an env to another Cloudflare account").');
   const problems = targets.map((t) => configProblem(t, root)).filter((p): p is string => p !== null);
   for (const t of targets) accountIdFields(t.accountId, t.accountField, env);

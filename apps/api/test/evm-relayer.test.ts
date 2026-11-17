@@ -187,7 +187,7 @@ async function codeOf(p: Promise<unknown>): Promise<string | null> {
 
 interface Stored {
   meta: { nextNonce: number | null; remembered: number; chainId: number; address: string; gaps: Record<string, number>; alarmMs: number; dayReservedWei: string } | undefined;
-  tx: { nonce: number; kind: string; versions: { hash: string; kind: string }[]; hash: string; maxFeePerGas: string; maxPriorityFeePerGas: string; to: string; data: string; gas: string; minedHash: string | null }[];
+  tx: { nonce: number; kind: string; versions: { hash: string; kind: string }[]; hash: string; maxFeePerGas: string; maxPriorityFeePerGas: string; to: string; data: string; gas: string; minedHash: string | null; takenSince: number | null; takenRuns: number }[];
   digests: string[];
   forget: string[];
   alarm: number | null;
@@ -654,6 +654,44 @@ describe('EvmRelayer: counts are cross-checked and confirmed (M1)', () => {
     expect(await nonces(stub)).toEqual([]);
     expect(await stub.lookup(sent.digest)).toMatchObject({ state: 'taken', minedHash: null, outcome: null });
     expect(await stub.send(request())).toMatchObject({ relayerNonce: 1 });
+  });
+
+  it('a receipt read failing mid-check never steps toward taken (the clock resets); nor does the run’s receipt budget', async () => {
+    const stub = await fresh();
+    const sent = await stub.send(request());
+    chain.foreignMine(RELAYER, 1);
+    for (let i = 0; i < 4; i++) {
+      chain.receiptFailures = 1;
+      await runDurableObjectAlarm(stub);
+      clock.advance(EVM_RELAYER_TAKEN_AFTER_MS);
+    }
+    expect(await stub.lookup(sent.digest)).toMatchObject({ state: 'pending' });
+    expect((await stored(stub)).tx[0]).toMatchObject({ takenSince: null, takenRuns: 0 });
+    // The budget: 17 records whose nonces another sender took; 32 receipt reads a run cover 16 (two endpoints each).
+    const many = await fresh();
+    const sentMany: number[] = [];
+    for (let i = 0; i < 17; i++) sentMany.push((await many.send(request())).relayerNonce);
+    const before = chain.minedCount.get(RELAYER.toLowerCase()) ?? 0;
+    chain.foreignMine(RELAYER, before + 100);
+    await runDurableObjectAlarm(many);
+    clock.advance(EVM_RELAYER_TAKEN_AFTER_MS);
+    await runDurableObjectAlarm(many);
+    const left = (await stored(many)).tx as unknown as { nonce: number; takenSince: number | null }[];
+    expect(left.map((t) => t.nonce)).toEqual([sentMany.at(-1)]);
+    expect(left[0]!.takenSince).toBeNull();
+  });
+
+  it('the original mining late (receipts not yet indexed when the clock started) makes it mined, outcome execute, never taken', async () => {
+    const stub = await fresh();
+    const sent = await stub.send(request());
+    chain.hideReceipts = true;
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).tx[0]).toMatchObject({ takenRuns: 1 });
+    clock.advance(EVM_RELAYER_TAKEN_AFTER_MS - 1_000);
+    chain.hideReceipts = false;
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(sent.digest)).toMatchObject({ state: 'mined', minedHash: sent.transactionHash, outcome: 'execute' });
   });
 
   it('cold start: the chain’s confirmed and pending counts are adopted when ahead (another sender’s), never below what was stored', async () => {

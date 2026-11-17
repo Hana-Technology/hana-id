@@ -29,7 +29,9 @@
     "env-secrets": "tsx env-secrets.ts",
     "d1-move": "tsx d1-move.ts",
     "access-setup": "tsx access-setup.ts",
-    "near-relay-keys": "tsx near-relay-keys.ts"
+    "near-relay-keys": "tsx near-relay-keys.ts",
+    "deploy-evm-delegate": "tsx deploy-evm-delegate.ts",
+    "evm-relay-keys": "tsx evm-relay-keys.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",
@@ -40,6 +42,8 @@
     "@near-js/crypto": "2.5.1",
     "@near-js/transactions": "2.5.1",
     "@near-js/utils": "2.5.1",
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0",
     "pg": "8.23.1",
     "tsx": "4.23.15"
   },

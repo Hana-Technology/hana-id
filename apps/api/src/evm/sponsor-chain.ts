@@ -330,6 +330,20 @@ export class SponsorChain {
     return this.read('eth_getTransactionReceipt', [hash], (r) => (r === null ? null : parseReceipt(r, hash)));
   }
 
+  /**
+   * The transaction's receipt as EVERY endpoint that answers sees it (no failover: each answer counts), for a caller
+   * that must know none of them has it. Endpoints that fail are left out; never throws.
+   */
+  async receiptsEach(hash: Hex): Promise<{ endpoint: number; receipt: EvmReceipt | null }[]> {
+    if (!HASH_RE.test(hash)) throw new Error('hash must be 32 bytes of 0x hex');
+    const out: { endpoint: number; receipt: EvmReceipt | null }[] = [];
+    for (const i of this.order()) {
+      const got = await this.attempt(i, 'eth_getTransactionReceipt', [hash], (r) => (r === null ? null : parseReceipt(r, hash)));
+      if (got.ok) out.push({ endpoint: i, receipt: got.value });
+    }
+    return out;
+  }
+
   /** Any read, with failover; `parse` turns the result into a value or throws (then the next endpoint is asked). */
   async read<T>(method: string, params: unknown[], parse: (result: unknown) => T): Promise<T> {
     let wrongChain = 0;

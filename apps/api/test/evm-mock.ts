@@ -187,6 +187,10 @@ export class EvmMock {
   onSend?: (tx: MockTx, endpoint: number) => SendHook | Promise<SendHook>;
   /** Called (and awaited) when a read of `method` arrives, before it is answered (to hold or crash mid-read). */
   onRead?: (method: string, endpoint: number) => Promise<void> | void;
+  /** Receipts answer null (a node that hasn't indexed them yet). */
+  hideReceipts = false;
+  /** The next N receipt reads fail (no answer). */
+  receiptFailures = 0;
   /** Answers for eth_getTransactionCount that throw a network error, for the next N calls on every endpoint. */
   countFailures = 0;
   private readonly receipts = new Map<string, { tx: MockTx; block: number }>();
@@ -236,7 +240,11 @@ export class EvmMock {
         return reply({ result: `0x${n.toString(16)}` });
       }
       if (body.method === 'eth_getTransactionReceipt') {
-        const got = this.receipts.get((body.params[0] as string).toLowerCase());
+        if (this.receiptFailures > 0) {
+          this.receiptFailures--;
+          throw new TypeError('Network connection lost.');
+        }
+        const got = this.hideReceipts ? undefined : this.receipts.get((body.params[0] as string).toLowerCase());
         if (!got) return reply({ result: null });
         return reply({
           result: { transactionHash: got.tx.hash, status: '0x1', blockNumber: `0x${got.block.toString(16)}`, gasUsed: '0x5208', effectiveGasPrice: '0x3b9aca00', logs: [] },

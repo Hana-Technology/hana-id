@@ -32,6 +32,8 @@ import {
   type WranglerResult,
   type WranglerRun,
 } from '../lib/deploy-check.ts';
+import { loadDelegateArtifact } from '../lib/evm-delegate-artifacts.ts';
+import { sponsorFixture } from '../../packages/env/src/evm-sponsor.fixture.ts';
 
 const HEAD = '0485faa1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7';
 const ID = '0485faa1c2d3';
@@ -675,5 +677,69 @@ describe('usage capture and Hana’s own org (Hana Home’s billing, D596, D597)
     const none = withKind({ status: 0, output: '[]' });
     expect((await runFull(['sandbox-dev', '--d1'], api(true), { pnpm: (_d, argv) => (argv.includes('execute') ? (none.asked.push(argv), { status: 1, output: '' }) : { status: 0, output: '✅ No migrations to apply!' }), hasWranglerConfig: () => true })).code).toBe(0);
     expect(none.asked).toEqual([]);
+  });
+});
+
+// ---- D849: the `evm` group, only for a manifest with evm.sponsor ----
+
+describe('deployCheck and EVM sponsorship', () => {
+  // This file's runs, word for word, as they printed before the `evm` group existed (captured from the code of `next`
+  // @ d14607a6): an env without evm.sponsor prints exactly the same and sends no JSON-RPC.
+  const BEFORE_BARE = `sandbox-dev: this checkout is ${ID} (HEAD ${HEAD})\n  api           ${ID}        https://api.example.test/v1/health\n  vault worker  ${ID}        https://vault.example.test/.well-known/hana-build\n  vault bundle  ${ID}        https://vault.example.test/vault.js\n  auth worker   ${ID}        https://auth.example.test/.well-known/hana-build\n  auth pages    ${ID}        https://auth.example.test/login\n  email issuer  ${ID}        https://issuer.example.test/v1/email/health\nnote: the watchdog (hana-id-watchdog-sandbox-dev) is on its own Cloudflare account (D86) and not read by default: check it with \`deploy-check sandbox-dev --only watchdog\`, logged in to that account\nOK: every piece of sandbox-dev runs ${ID} (this checkout); not read: watchdog`;
+  const BEFORE_FULL = `sandbox-dev: this checkout is ${ID} (HEAD ${HEAD})\n  api                  ${ID}        https://api.example.test/v1/health\n  vault worker         ${ID}        https://vault.example.test/.well-known/hana-build\n  vault bundle         ${ID}        https://vault.example.test/vault.js\n  auth worker          ${ID}        https://auth.example.test/.well-known/hana-build\n  auth pages           ${ID}        https://auth.example.test/login\n  email issuer         ${ID}        https://issuer.example.test/v1/email/health\n  console worker       ${ID}        https://console.example.test/.well-known/hana-build\n  console spa          ${ID}        https://console.example.test/\n  console-auth worker  ${ID}        https://console-auth.example.test/.well-known/hana-build\n  files worker         ${ID}        https://files.example.test/.well-known/hana-build\n  admin worker         ${ID}        wrangler: hana-id-admin-x\nnote: the watchdog (hana-id-watchdog-sandbox-dev) is on its own Cloudflare account (D86) and not read by default: check it with \`deploy-check sandbox-dev --only watchdog\`, logged in to that account\nOK: every piece of sandbox-dev runs ${ID} (this checkout); not read: watchdog`;
+
+  it('an env without evm.sponsor: the output is unchanged and no RPC is asked', async () => {
+    const bare = server(ID);
+    const a = await run(['sandbox-dev'], bare.fetchFn);
+    expect(a).toEqual({ code: 0, out: BEFORE_BARE });
+    expect(bare.seen.some((s) => s.init.method === 'POST')).toBe(false);
+    const w = fakeWrangler(ID);
+    const b = await runFull(['sandbox-dev'], fullServer(ID).fetchFn, { wrangler: w.run });
+    expect(b).toEqual({ code: 0, out: BEFORE_FULL });
+    await expect(run(['sandbox-dev', '--only', 'evm'], bare.fetchFn)).rejects.toThrow(/has no evm: nothing of it is deployed to check/u);
+  });
+
+  const delegate = loadDelegateArtifact('HanaDelegateExecutor');
+  const RPC = 'https://rpc.example.test/';
+  const sponsor = { ...sponsorFixture(), chains: { '84532': { ...sponsorFixture().chains['84532']!, rpc: RPC, rpcFallback: undefined, delegate: delegate.address } } };
+  const withEvm = { ...withIssuer, evm: { sponsor } } as Manifest;
+  const pinned = { 84532: { address: delegate.address, runtimeCodeHash: delegate.runtimeCodeHash, placeholder: false } };
+  /** server(ID) plus a JSON-RPC stub at RPC: chain 84532, the code at each address, every balance 1 ETH. */
+  const withRpc = (code: Record<string, string>) => {
+    const s = server(ID);
+    const rpcCalls: string[] = [];
+    const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) !== RPC) return s.fetchFn(input, init);
+      const { id, method, params } = JSON.parse(String(init?.body)) as { id: number; method: string; params: string[] };
+      rpcCalls.push(method);
+      const result = method === 'eth_chainId' ? '0x14a34' : method === 'eth_getBalance' ? '0xde0b6b3a7640000' : (code[params[0]!.toLowerCase()] ?? '0x');
+      return Response.json({ jsonrpc: '2.0', id, result });
+    }) as typeof fetch;
+    return { fetchFn, rpcCalls };
+  };
+
+  it('reads the evm group by default when the manifest has the block, and --skip evm leaves it out', async () => {
+    // Code whose hash isn't the artifact's: the check fails and says so.
+    const { fetchFn, rpcCalls } = withRpc({ [delegate.address.toLowerCase()]: '0x00' });
+    const r = await run(['sandbox-dev'], fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('evm 84532  RPC https://rpc.example.test answers chain 84532');
+    expect(r.out).toMatch(/FAIL: evm 84532: MISMATCH: the delegate 0x\w+ has runtime code hash/u);
+    expect(r.out).toMatch(/FAIL: evm 84532: app_SponsorFixture1's target 0x\w+ \(Journear demo check-in\) has no code/u);
+    expect(rpcCalls[0]).toBe('eth_chainId');
+    const skipped = withRpc({});
+    const s = await run(['sandbox-dev', '--skip', 'evm'], skipped.fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned });
+    expect(s.code).toBe(0);
+    expect(skipped.rpcCalls).toEqual([]);
+    expect(s.out).toContain('not read (--skip): evm');
+    expect(s.out).toContain(`OK: every piece of sandbox-dev runs ${ID} (this checkout); not read: watchdog, evm`);
+  });
+
+  it("an RPC on the wrong chain, or no answer, is a failure that names the RPC's host only", async () => {
+    const keyed = { ...withEvm, evm: { sponsor: { ...sponsor, chains: { '84532': { ...sponsor.chains['84532'], rpc: 'https://rpc.example.test/v2/secret-part' } } } } } as Manifest;
+    const r = await run(['sandbox-dev', '--only', 'evm'], server(ID).fetchFn, { loadManifest: () => keyed, pinnedDelegates: pinned });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('FAIL: evm 84532: RPC https://rpc.example.test/… answered HTTP 404 to eth_chainId');
+    expect(r.out).not.toContain('secret-part');
   });
 });

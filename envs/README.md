@@ -213,8 +213,10 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   all different.
 - `relayerAddress`: the relayer's EOA, which signs and pays for every sponsored transaction and is the `relayer` each
   signed batch names. Its key is the API secret `EVM_RELAY_KEYS`: a JSON array of one `0x` + 64 lowercase hex key in
-  `.secrets/<env>/evm-relay-keys.json` (0600); `gen <env> --dev-vars` writes it to `.dev.vars` only when the key's
-  address is `relayerAddress`.
+  `.secrets/<env>/evm-relay-keys.json` (0600), made once by `scripts/evm-relay-keys.ts <env>` (which prints only the
+  address); `gen <env> --dev-vars` writes it to `.dev.vars` only when the key's address is `relayerAddress`. The
+  delegate itself is deployed by `scripts/deploy-evm-delegate.ts` (`docs/operations.md` "EVM sponsorship relay (not
+  live)", D849).
 - `chains`: 1 to 4, by decimal chain ID. Each must be one of core's `TEST_EVM_CHAINS`; the local dev chains 31337 and
   1337 only in `local*` envs. `opStack` is true exactly for the OP Stack test chains (84532 Base Sepolia, 11155420 OP
   Sepolia), which also charge an L1 data fee. `rpc` and the optional `rpcFallback` are https URLs of DNS names (no IP

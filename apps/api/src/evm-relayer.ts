@@ -16,8 +16,9 @@
 // - No record is dropped on one node's word. A record is done only when the CONFIRMED count (the `safe` block on an OP
 //   Stack chain, else the latest block − 3) is past its nonce on every endpoint that answers (the lowest is taken; a
 //   spread beyond 2 between endpoints counts as unknown: nothing is deleted or adopted), AND a receipt names one of its
-//   hashes (the one that mined is recorded) or, with none of its hashes mined, the nonce has stayed confirmed for 2
-//   minutes (another sender's: `taken`). Until then its raws are kept, so after a reorg (the latest count falls back
+//   hashes (the one that mined is recorded) or, with none of its hashes mined by a COMPLETE check (every version's
+//   receipt read from every endpoint, up to two, with no failure or budget cut-off; else the clock resets), the nonce
+//   has stayed confirmed for 2 minutes, seen so by two endpoints or on two consecutive runs (another sender's: `taken`). Until then its raws are kept, so after a reorg (the latest count falls back
 //   below it) it is broadcast again.
 // - No permanent gap. A nonce goes back only when every endpoint reached refused it definitely and no endpoint's
 //   pending count holds it. A nonce at or above the chain's pending count with no record (left by a lying node's count,
@@ -116,7 +117,7 @@ export const EVM_RELAYER_DAILY_CAP_FACTOR = 2n;
 /** Fetches per invocation (the free plan allows 50 subrequests). */
 export const EVM_RELAYER_MAX_REQUESTS = 45;
 /** Per alarm run: records advanced, rebroadcasts, receipt reads and gap fillers. */
-export const EVM_RELAYER_RUN_LIMITS = Object.freeze({ records: 6, rebroadcasts: 4, receipts: 8, gapFills: 2 });
+export const EVM_RELAYER_RUN_LIMITS = Object.freeze({ records: 6, rebroadcasts: 4, receipts: 32, gapFills: 2 });
 /** Clock slack allowed above the chain's `deadlineMaxS`. */
 const DEADLINE_SLACK_S = 60;
 /** A 0-value self-transfer's gas. */
@@ -414,8 +415,13 @@ interface PendingTx {
   accepted: boolean;
   /** The version with a receipt (tentative until confirmed; cleared by a reorg). */
   minedHash: Hex | null;
-  /** When the nonce was first seen confirmed with none of our hashes mined (ms), or null. */
+  /**
+   * When the nonce was first seen confirmed with none of our hashes mined (ms), or null, and how many consecutive runs
+   * found that by a COMPLETE check (every version's receipt read, no failure, no budget cut-off). Any incomplete check
+   * resets both.
+   */
   takenSince: number | null;
+  takenRuns: number;
 }
 
 /** `digest:<digest>`: a batch this object sent. */
@@ -740,6 +746,7 @@ export class EvmRelayer extends DurableObject<Env> {
         accepted: false,
         minedHash: null,
         takenSince: null,
+        takenRuns: 0,
       };
       const forgetAt = Number(checked.deadline) * 1000 + EVM_RELAYER_REMEMBER_AFTER_DEADLINE_MS;
       // Persist BEFORE the broadcast: the record, the batch's memory, the next nonce and the day's reservation, in one
@@ -946,45 +953,46 @@ export class EvmRelayer extends DurableObject<Env> {
       return out;
     }
     const kv = this.ctx.storage.kv;
-    let receipts = 0;
+    const budget = { left: EVM_RELAYER_RUN_LIMITS.receipts };
+    const endpoints = Math.min(2, each.length);
     for (const p0 of this.pendingRecords()) {
       let p = p0;
       const included = latest > p.nonce;
-      if (included && !p.minedHash) {
-        for (const v of lookupOrder(p)) {
-          if (receipts >= EVM_RELAYER_RUN_LIMITS.receipts || rpc.exhausted) break;
-          receipts++;
-          let got: Awaited<ReturnType<SponsorChain['receipt']>>;
-          try {
-            got = await rpc.receipt(v.hash);
-          } catch {
-            break;
-          }
-          if (got) {
-            p = { ...p, minedHash: v.hash, takenSince: null };
-            kv.put(txKey(p.nonce), p);
-            out.changed = true;
-            break;
-          }
+      if (!included) {
+        if (p.minedHash || p.takenSince !== null) {
+          // Un-mined by a reorg: back to pending, its raws still here to broadcast again.
+          log({ event: 'evm_relay_reorg', chainId: r.chain.chainId, nonce: String(p.nonce), code: 'unmined' }, 'warn');
+          kv.put(txKey(p.nonce), { ...p, minedHash: null, takenSince: null, takenRuns: 0, accepted: false });
+          out.changed = true;
         }
-      }
-      if (!included && (p.minedHash || p.takenSince !== null)) {
-        // Un-mined by a reorg: back to pending, its raws still here to broadcast again.
-        log({ event: 'evm_relay_reorg', chainId: r.chain.chainId, nonce: String(p.nonce), code: 'unmined' }, 'warn');
-        p = { ...p, minedHash: null, takenSince: null, accepted: false };
-        kv.put(txKey(p.nonce), p);
-        out.changed = true;
         continue;
+      }
+      if (!p.minedHash) {
+        const check = await this.findReceipt(rpc, p, budget, endpoints);
+        if (check.found) {
+          p = { ...p, minedHash: check.found, takenSince: null, takenRuns: 0 };
+          kv.put(txKey(p.nonce), p);
+          out.changed = true;
+        } else if (!check.complete || confirmed <= p.nonce) {
+          // Not every version was read (an RPC failure, the run's budget), or not confirmed yet: no step toward taken.
+          if (p.takenSince !== null || p.takenRuns !== 0) {
+            p = { ...p, takenSince: null, takenRuns: 0 };
+            kv.put(txKey(p.nonce), p);
+          }
+        } else {
+          p = { ...p, takenSince: p.takenSince ?? now, takenRuns: p.takenRuns + 1 };
+          kv.put(txKey(p.nonce), p);
+          out.changed = true;
+        }
       }
       if (confirmed > p.nonce) {
         if (p.minedHash) {
           this.finalize(p, 'mined');
           out.finalized++;
           out.changed = true;
-        } else if (p.takenSince === null) {
-          kv.put(txKey(p.nonce), { ...p, takenSince: now });
-          out.changed = true;
-        } else if (now - p.takenSince >= EVM_RELAYER_TAKEN_AFTER_MS) {
+        } else if (p.takenSince !== null && now - p.takenSince >= EVM_RELAYER_TAKEN_AFTER_MS && (endpoints >= 2 || p.takenRuns >= 2)) {
+          // This run's complete check (above) is the last look: none of its versions mined, from two endpoints (or on
+          // two consecutive complete runs of one), for 2 minutes.
           log({ event: 'evm_relay_nonce_taken', chainId: r.chain.chainId, nonce: String(p.nonce), code: 'taken' }, 'warn');
           this.finalize(p, 'taken');
           out.finalized++;
@@ -1032,6 +1040,28 @@ export class EvmRelayer extends DurableObject<Env> {
       if ((await this.rebroadcast(rpc, r, p)).kind === 'accepted' && !p.accepted) out.changed = true;
     }
     return out;
+  }
+
+  /**
+   * Looks for a receipt of any of the record's versions (the latest, then the original, then the rest), each asked of
+   * every endpoint. `found`: the version with a receipt. `complete`: every version was answered by `endpoints`
+   * endpoints with no receipt, within the run's budget; anything less (a failure, the budget) is incomplete.
+   */
+  private async findReceipt(rpc: SponsorChain, p: PendingTx, budget: { left: number }, endpoints: number): Promise<{ found: Hex | null; complete: boolean }> {
+    let complete = true;
+    for (const v of lookupOrder(p)) {
+      if (budget.left < endpoints || rpc.exhausted) return { found: null, complete: false };
+      budget.left -= endpoints;
+      let answers: { endpoint: number; receipt: unknown }[];
+      try {
+        answers = await rpc.receiptsEach(v.hash);
+      } catch {
+        return { found: null, complete: false };
+      }
+      if (answers.some((a) => a.receipt !== null)) return { found: v.hash, complete: true };
+      if (answers.length < endpoints) complete = false;
+    }
+    return { found: null, complete };
   }
 
   /** A record whose nonce is confirmed: its record goes, its batch is remembered as mined or taken (in a transaction). */
@@ -1105,6 +1135,7 @@ export class EvmRelayer extends DurableObject<Env> {
       accepted: false,
       minedHash: null,
       takenSince: null,
+      takenRuns: 0,
     };
     this.ctx.storage.transactionSync(() => this.ctx.storage.kv.put(txKey(v.nonce), record));
     await this.ensureAlarm(now + EVM_RELAYER_ALARM_MS);

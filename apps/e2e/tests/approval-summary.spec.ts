@@ -39,6 +39,8 @@ async function popupFor(page: Page, name: string, action: string, ...args: unkno
   await runAction(page, name, action, ...args);
   const popup = await clickLauncher(page, 'Review in Journear Passport');
   await expect(popup.locator('h2.summary-headline')).toBeVisible();
+  // A valid request never gets the catch-all summary (review 3): every case here checks it.
+  await expect(popup.locator('.summary-failed')).toHaveCount(0);
   return popup;
 }
 

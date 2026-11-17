@@ -37,6 +37,8 @@ const approveData = (amount: bigint) => `${parseFunctionSignature('approve(addre
 const render = (decoded: DecodedApproval, app = 'Partner App', address = EVM): HTMLElement => {
   const el = renderApproval(dom(document), decoded, app, { envNetwork: 'testnet', testApp: false, parentOrigin: PARTNER, address });
   document.body.replaceChildren(el);
+  // A valid request never gets the catch-all summary (review 3).
+  expect(el.querySelector('.summary-failed')).toBeNull();
   return el;
 };
 const details = (el: ParentNode) => el.querySelector<HTMLDetailsElement>('details.request-details');

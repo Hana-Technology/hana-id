@@ -2,8 +2,8 @@
 // fee and network, the warnings for permissions to spend the user's tokens, and whether Journear can explain the
 // request (the details start open when it can't; raw signing's can't be folded). Hostile inputs included: look-alike
 // and invisible characters, huge values, the zero address, revokes, and typed data that imitates a permit.
-import { Asset, Claimant, LiquidityPoolAsset, Operation, getLiquidityPoolId, xdr } from '@stellar/stellar-base';
-import { describe, expect, it } from 'vitest';
+import { Account, Asset, Claimant, LiquidityPoolAsset, MuxedAccount, Operation, TransactionBuilder, getLiquidityPoolId, xdr } from '@stellar/stellar-base';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
   type ApprovalSummary,
   type DecodedApproval,
@@ -26,13 +26,28 @@ import {
   parseEvmTxRequest,
   parseFunctionSignature,
   sha256,
-  summarizeApproval,
+  summarizeApproval as summarizeApprovalRaw,
   summaryString,
   utf8,
 } from './entries.ts';
 import { ATTACKER, ISSUER, OTHER, PASSPHRASE, TOKEN, ROUTER, USER, addSignerOp, addr, authPreimageBytes, feeBumpBytes, i128, invocation, invokeOp, mergeOp, paymentOp, sourceAuth, txBytes } from './stellar-fixtures.ts';
 
 const APP = 'Partner App';
+
+/**
+ * Every summary these tests build goes through this: the catch-all (UNEXPLAINED_SUMMARY) must never be what a valid
+ * request gets, so a bug can't hide behind it (review 3). Only the test that feeds malformed shapes allows it.
+ */
+const fallbackHits: string[] = [];
+let allowFallback = false;
+const summarizeApproval: typeof summarizeApprovalRaw = (d, ctx) => {
+  const s = summarizeApprovalRaw(d, ctx);
+  if (s === UNEXPLAINED_SUMMARY && !allowFallback) fallbackHits.push(d.kind);
+  return s;
+};
+afterAll(() => {
+  expect(fallbackHits).toEqual([]);
+});
 const text = (t: SummaryText): string => summaryString(t, APP);
 const headline = (s: ApprovalSummary) => text(s.headline);
 const warnings = (s: ApprovalSummary) => s.warnings.map((w) => [w.level, w.code, text(w.text)] as const);
@@ -752,6 +767,7 @@ describe('review 2: malformed values never throw (N1)', () => {
   });
 
   it('summarizeApproval is total: odd decoded shapes give a result, the unexplained one when building fails', () => {
+    allowFallback = true;
     const base = decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([paymentOp()]) });
     if (base.kind !== 'stellar_tx') throw new Error('kind');
     const op = base.envelope.tx.operations[0] as Extract<StellarOperation, { type: 'payment' }>;
@@ -774,6 +790,9 @@ describe('review 2: malformed values never throw (N1)', () => {
     const broken = summarizeApproval({ ...base, envelope: { ...base.envelope, tx: { ...base.envelope.tx, operations: [{ ...op, amount: 'abc' }] as never } } } as DecodedApproval, { address: USER });
     expect(broken).toBe(UNEXPLAINED_SUMMARY);
     expect(broken.explainable).toBe(false);
+    // Red, and says to reject (review 3).
+    expect(warnings(broken)).toEqual([['danger', 'summary_failed', 'Journear couldn’t read this request. Reject it unless you are certain.']]);
+    allowFallback = false;
   });
 });
 
@@ -814,7 +833,8 @@ describe('review 2: steps that move value are always listed (N2)', () => {
   });
 
   it('NEAR: an ft_transfer at step 7 after neutral calls is listed', () => {
-    const neutral = Array.from({ length: 6 }, () => call('ping', '{}'));
+    // Every NEAR call counts as moving value (review 3); account creation is the one neutral action.
+    const neutral: NearAction[] = Array.from({ length: 6 }, () => ({ type: 'createAccount' }));
     const s = near([...neutral, call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5000"}', 1n)], 'usdc.testnet');
     expect(s.lines.map(text)[0]).toBe('7. Send 5,000 (smallest units) of the token usdc.testnet to bob.testnet');
     expect(s.explainable).toBe(false);
@@ -839,5 +859,53 @@ describe('review 2: ERC-1155 batches and withdraw (N3, N4)', () => {
     const dep = evmSummary({ to: TOKEN_EVM, value: 10n ** 17n, data: parseFunctionSignature('deposit()').selector });
     expect(headline(dep)).toBe(`${APP} wants to use contract ${TOKEN_EVM} (deposit), sending it 0.1 ETH`);
     expect(dep.lines).toEqual([]);
+  });
+});
+
+// ---- the third review of 2026-11-17 ----
+
+describe('review 3: the user’s account in muxed form is the user’s (1)', () => {
+  const muxed = new MuxedAccount(new Account(USER, '41'), '7');
+  const muxedTx = (ops: xdr.Operation[]) => {
+    const b = new TransactionBuilder(muxed, { fee: '100', networkPassphrase: PASSPHRASE });
+    for (const op of ops) b.addOperation(op);
+    return new Uint8Array(b.setTimeout(0).build().toEnvelope().toXDR());
+  };
+  const bump = () => Operation.bumpSequence({ bumpTo: '99' });
+  it('a transaction from the user’s muxed account counts its XLM and names it as the user’s', () => {
+    const s = stellar([], muxedTx([Operation.payment({ destination: ATTACKER, asset: Asset.native(), amount: '1000000' }), bump()]));
+    const lines = s.lines.map(text);
+    expect(lines[0]).toBe('XLM leaving your account: up to 1,000,000 XLM, plus the network fee.');
+    expect(lines).toContain('The transaction is from your account (muxed id 7).');
+    expect(lines.join(' ')).not.toContain('from the account M');
+  });
+
+  it('an operation from the user’s muxed account counts too, and says it is the user’s', () => {
+    const s = stellar([Operation.payment({ destination: ATTACKER, asset: Asset.native(), amount: '500', source: muxed.accountId() }), bump()]);
+    expect(text(s.lines[0]!)).toBe('XLM leaving your account: up to 500 XLM, plus the network fee.');
+    expect(text(s.lines[1]!)).toBe(`1. Send 500 XLM to ${ATTACKER} (on your account (muxed id 7))`);
+  });
+
+  it('a payment to the user’s muxed account is to the user; another account’s muxed form is not', () => {
+    expect(headline(stellar([Operation.payment({ destination: muxed.accountId(), asset: Asset.native(), amount: '1' })]))).toBe(`${APP} wants to send 1 XLM to your account (muxed id 7)`);
+    const theirs = new MuxedAccount(new Account(OTHER, '1'), '9').accountId();
+    expect(headline(stellar([Operation.payment({ destination: theirs, asset: Asset.native(), amount: '1' })]))).toBe(`${APP} wants to send 1 XLM to ${theirs}`);
+  });
+});
+
+describe('review 3: the always-listed steps (3)', () => {
+  const bump = () => Operation.bumpSequence({ bumpTo: '99' });
+  it('a NEAR call with no deposit at step 7 is listed first', () => {
+    const neutral: NearAction[] = Array.from({ length: 6 }, () => ({ type: 'createAccount' }));
+    const s = near([...neutral, call('withdraw_all', '{}')], 'vault.testnet');
+    expect(text(s.lines[0]!)).toBe('7. Use vault.testnet (withdraw_all)');
+  });
+
+  it('Stellar revokeSponsorship, changeTrust and claiming are listed; a sequence bump is not', () => {
+    const s = stellar([bump(), bump(), bump(), bump(), bump(), bump(), Operation.revokeAccountSponsorship({ account: USER }), Operation.changeTrust({ asset: new Asset('USDC', ISSUER) })]);
+    const lines = s.lines.map(text);
+    expect(lines[0]).toBe('7. End a reserve sponsorship');
+    expect(lines[1]).toBe(`8. Let your account hold the asset USDC:${ISSUER}`);
+    expect(lines.filter((l) => /Move the account/u.test(l))).toHaveLength(5);
   });
 });

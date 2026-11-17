@@ -26,6 +26,7 @@ import type { DecodedApproval } from './request.ts';
 import type { DecodedEvmTx } from './evm.ts';
 import { parseStrictJson } from './json.ts';
 import { formatNear, nearMethodName } from './near.ts';
+import { MuxedAccount } from '@stellar/stellar-base';
 import type { StellarContractCall, StellarInvocation, StellarOperation, StellarScVal } from './stellar.ts';
 import type { TypedDataStruct, TypedDataValue } from '../typed-data.ts';
 
@@ -53,7 +54,9 @@ export type SummaryWarningCode =
   /** A sign-in message for another site than the requesting page. */
   | 'sign_in_mismatch'
   /** More steps that move or grant value than the summary lists. */
-  | 'many_value_steps';
+  | 'many_value_steps'
+  /** Building the summary failed: the request is shown as unreadable. */
+  | 'summary_failed';
 
 export interface SummaryWarning {
   /** `danger`: red, the popup's strongest style; `warning`: amber. Both always visible, never folded. */
@@ -527,7 +530,28 @@ function stellarAmount(stroops: string | bigint, asset: string): SummaryText {
   return asset === 'native' ? [strong(xlm(stroops))] : [strong(groupDigits(formatTokenUnits(BigInt(stroops), 7))), ' of the asset ', code(asset)];
 }
 const assetName = (asset: string): SummaryText => (asset === 'native' ? ['XLM'] : ['the asset ', code(asset)]);
-const stellarWho = (account: string, me: string): SummaryText => (account === me ? ['your account'] : [code(account)]);
+/**
+ * A Stellar account's base account and muxed id: a muxed address (M…) is its base account (G…) with an id for the
+ * account's own bookkeeping, and moves that base account's funds. Anything else is its own base.
+ */
+export function stellarBaseAccount(address: string): { readonly base: string; readonly muxedId: string | null } {
+  if (!address.startsWith('M')) return { base: address, muxedId: null };
+  try {
+    const m = MuxedAccount.fromAddress(address, '0');
+    return { base: m.baseAccount().accountId(), muxedId: m.id() };
+  } catch {
+    return { base: address, muxedId: null };
+  }
+}
+
+/** Whether a Stellar address is the user's account, written plainly or muxed. Every comparison with the user's uses it. */
+const isMeStellar = (address: string, me: string): boolean => address === me || stellarBaseAccount(address).base === me;
+
+const stellarWho = (account: string, me: string): SummaryText => {
+  if (account === me) return ['your account'];
+  const { base, muxedId } = stellarBaseAccount(account);
+  return base === me && muxedId !== null ? [`your account (muxed id ${muxedId})`] : [code(account)];
+};
 /** "A, B or C". */
 const either = (parts: readonly SummaryText[]): SummaryText => parts.flatMap((p, i) => [...(i === 0 ? [] : i === parts.length - 1 ? [' or '] : [', ']), ...p]);
 
@@ -551,15 +575,15 @@ function sorobanTokenCall(passphrase: string, c: StellarContractCall, me: string
     const from = scAddr(a[0]) as string;
     const verb = { send: 'send ', authorize: 'authorize sending ', nested: 'It also authorizes sending ' }[mode];
     const what: SummaryText = token ? [...amountOf(amount, token), ' (token contract ', code(c.contract), ')'] : [strong(groupDigits(amount.toString())), ' (in the token’s smallest units) of the token contract ', code(c.contract)];
-    return [verb, ...what, ...(from === me ? [] : [' from ', code(from)]), ' to ', ...stellarWho(scAddr(a[1]) as string, me), ...end];
+    return [verb, ...what, ...(from === me ? [] : [' from ', ...stellarWho(from, me)]), ' to ', ...stellarWho(scAddr(a[1]) as string, me), ...end];
   }
   if (c.function === 'approve' && a.length === 4 && scAddr(a[0]) && scAddr(a[1]) && a[2]?.type === 'i128' && a[3]?.type === 'u32') {
     const amount = scInt(a[2]) as bigint;
     const from = scAddr(a[0]) as string;
     const spender = scAddr(a[1]) as string;
-    const whose: SummaryText = from === me ? ['your ', ...tokenName(c.contract, token)] : [...tokenName(c.contract, token), ' held by ', code(from)];
+    const whose: SummaryText = isMeStellar(from, me) ? ['your ', ...tokenName(c.contract, token)] : [...tokenName(c.contract, token), ' held by ', code(from)];
     if (amount === 0n) return [{ send: 'take back ', authorize: 'authorize taking back ', nested: 'It also takes back ' }[mode], code(spender), '’s permission to spend ', ...whose, ...end];
-    warnings.push(spendWarning(spenderOf({ kind: 'stellar', networkPassphrase: passphrase }, spender), c.contract, token, amount, I128_MAX, from === me ? {} : { owner: from }));
+    warnings.push(spendWarning(spenderOf({ kind: 'stellar', networkPassphrase: passphrase }, spender), c.contract, token, amount, I128_MAX, isMeStellar(from, me) ? {} : { owner: from }));
     return [{ send: 'let someone else spend ', authorize: 'authorize someone else to spend ', nested: 'It also lets someone else spend ' }[mode], ...whose, ...end];
   }
   return null;
@@ -743,6 +767,10 @@ function stellarMovesValue(op: StellarOperation): boolean {
     case 'liquidityPoolWithdraw':
     case 'invokeHostFunction':
     case 'beginSponsoringFutureReserves':
+    case 'revokeSponsorship':
+    case 'changeTrust':
+    case 'claimClaimableBalance':
+    case 'clawbackClaimableBalance':
       return true;
     case 'manageSellOffer':
     case 'createPassiveSellOffer':
@@ -751,7 +779,18 @@ function stellarMovesValue(op: StellarOperation): boolean {
       return op.buyAmount !== '0';
     case 'setOptions':
       return op.signer !== null || op.masterWeight !== null || op.lowThreshold !== null || op.medThreshold !== null || op.highThreshold !== null;
-    default:
+    // Deliberately neutral (D813): none moves or grants the user's value. A sequence bump, a data entry (its small
+    // reserve aside), inflation (a no-op), keeping or restoring contract data (their cost is the network fee), ending
+    // a sponsorship begun in the same transaction (its begin is listed), and an issuer's trust-line authorization of
+    // someone else's holding.
+    case 'bumpSequence':
+    case 'manageData':
+    case 'inflation':
+    case 'extendFootprintTtl':
+    case 'restoreFootprint':
+    case 'endSponsoringFutureReserves':
+    case 'allowTrust':
+    case 'setTrustLineFlags':
       return false;
   }
 }
@@ -768,7 +807,7 @@ function xlmLeaving(tx: { readonly source: string; readonly operations: readonly
   let more = false;
   let all = false;
   for (const op of tx.operations) {
-    if ((op.source ?? tx.source) !== me || !stellarMovesValue(op)) continue;
+    if (!isMeStellar(op.source ?? tx.source, me) || !stellarMovesValue(op)) continue;
     any = true;
     switch (op.type) {
       case 'payment':
@@ -821,7 +860,8 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
   const ops = tx.operations.map((op) => {
     const o = { ...stellarOp(decoded.networkPassphrase, op, me, warnings, extra), value: stellarMovesValue(op) };
     // An operation on another account than the transaction's says so in its own line.
-    return op.source !== null && op.source !== tx.source ? { ...o, text: [...o.text, ' (on the account ', code(op.source), ')'] } : o;
+    if (op.source === null || op.source === tx.source) return o;
+    return { ...o, text: [...o.text, ' (on ', ...(isMeStellar(op.source, me) ? stellarWho(op.source, me) : ['the account ', code(op.source)]), ')'] };
   });
   let explainable = ops.every((o) => o.explainable);
   const lines: SummaryText[] = [];
@@ -838,14 +878,14 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
   const more = capped(extra);
   lines.push(...more.lines);
   if (more.capped) explainable = false;
-  if (tx.source !== me) lines.push(['The transaction is from the account ', code(tx.source), '.']);
-  if (env.envelope === 'fee_bump') lines.push(env.feeSource === me ? ['Your account pays the network fee for a transaction from ', ...stellarWho(tx.source, me), '.'] : ['The network fee is paid by ', code(env.feeSource), ', not your account.']);
+  if (tx.source !== me) lines.push(isMeStellar(tx.source, me) ? ['The transaction is from ', ...stellarWho(tx.source, me), '.'] : ['The transaction is from the account ', code(tx.source), '.']);
+  if (env.envelope === 'fee_bump') lines.push(isMeStellar(env.feeSource, me) ? ['Your account pays the network fee for a transaction from ', ...stellarWho(tx.source, me), '.'] : ['The network fee is paid by ', code(env.feeSource), ', not your account.']);
   if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain(ops.every((o) => o.explainable) && !more.capped ? 'it has more steps than this summary lists' : 'it does something Journear can’t summarise') });
   const feeStroops = env.envelope === 'fee_bump' ? env.fee : tx.fee;
   return {
     headline,
     lines,
-    fee: env.envelope === 'fee_bump' && env.feeSource !== me ? null : ['up to ', strong(xlm(feeStroops))],
+    fee: env.envelope === 'fee_bump' && !isMeStellar(env.feeSource, me) ? null : ['up to ', strong(xlm(feeStroops))],
     network: stellarNetwork(decoded.networkPassphrase),
     warnings,
     explainable,
@@ -946,7 +986,8 @@ function nearMovesValue(a: NearAction): boolean {
     case 'delegate':
       return true;
     case 'functionCall':
-      return a.deposit > 0n || /^(ft_|nft_)/u.test(a.methodName);
+      // Any call: one with no deposit can still move tokens the account holds in that contract.
+      return true;
     case 'createAccount':
       return false;
   }
@@ -988,7 +1029,7 @@ export const UNEXPLAINED_SUMMARY: ApprovalSummary = Object.freeze({
   lines: [],
   fee: null,
   network: null,
-  warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain() }],
+  warnings: [{ level: 'danger', code: 'summary_failed', text: ['Journear couldn’t read this request. Reject it unless you are certain.'] }],
   explainable: false,
   detailsMustStayOpen: false,
 }) as ApprovalSummary;

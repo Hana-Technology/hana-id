@@ -1,7 +1,7 @@
 // env-secrets against a temp root with .secrets/<env>/ and generated configs, and a mocked spawn: the inventory, a
 // missing file listed (never invented), the --yes gate, the account checks, the argv/cwd/stdin of each upload, and
 // that no value ever reaches the output.
-import { generateKeyPairSync, randomBytes } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,8 @@ import { type Manifest, loadEnv, p256Thumbprint, rsaJwkThumbprint } from '@hana-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
 import { DRY_RUN_LINE, type EnvSecretsDeps, configProblem, envSecrets, secretInventory, workerTargets } from '../lib/env-secrets.ts';
+import { evmKeyAddress } from '../lib/evm-relay-keys.ts';
+import { sponsorFixture } from '../../packages/env/src/evm-sponsor.fixture.ts';
 
 const ACCOUNT = '0123456789abcdef0123456789abcdef';
 const WATCHDOG_ACCOUNT = 'fedcba9876543210fedcba9876543210';
@@ -313,6 +315,41 @@ describe('env-secrets: email sharing keys (D438, D439)', () => {
     expect(text).toMatch(/EMAIL_CONSENT_KEY <- .*email-consent-key: INVALID \(.*must be 0600/u);
     run(['--worker', 'api', '--yes'], { CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
     expect(spawned.map((s) => s.argv[4])).not.toContain('IDENTITY_SEAL_KEY');
+    expectNoValuePrinted();
+  });
+});
+
+describe('env-secrets: the EVM sponsorship relayer key (D834, D849)', () => {
+  /** A derived test key (never a real one) and the manifest naming its address. */
+  const key = createHash('sha256').update('hana-id env-secrets EVM relay test key').digest();
+  const keyHex = `0x${key.toString('hex')}`;
+  const withSponsor = (relayerAddress: string): Manifest => ({ ...m, evm: { sponsor: { ...sponsorFixture(), relayerAddress } } }) as Manifest;
+  const runWith = (manifest: Manifest, argv: string[], env?: Record<string, string | undefined>) => envSecrets([m.name, ...argv], { ...deps(env), loadManifest: () => manifest });
+
+  it('only with evm.sponsor: absent from the list otherwise, optional (not set) without its file', () => {
+    seedAll();
+    run([]);
+    expect(out.join('\n')).not.toContain('EVM_RELAY_KEYS');
+    out = [];
+    runWith(withSponsor(evmKeyAddress(key)), []);
+    expect(out.join('\n')).toContain(`EVM_RELAY_KEYS <- .secrets/${m.name}/evm-relay-keys.json: not set (optional)`);
+    expect(out.join('\n')).not.toContain('required secret(s) missing');
+  });
+
+  it("with its file: uploaded to the API as the one-key JSON array gen writes, on stdin only; a key for another address is INVALID", () => {
+    seedAll();
+    secret('evm-relay-keys.json', JSON.stringify([keyHex], null, 2));
+    values.push(key.toString('hex'));
+    runWith(withSponsor(evmKeyAddress(key)), ['--worker', 'api', '--yes'], { CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+    const put = spawned.filter((s) => s.argv[4] === 'EVM_RELAY_KEYS');
+    expect(put.map((s) => [s.argv[6], s.cwd.slice(root.length + 1), s.input])).toEqual([[m.cloudflare.workerName, 'apps/api', JSON.stringify([keyHex])]]);
+    expect(put[0]!.argv.join(' ')).not.toContain(keyHex);
+    spawned = [];
+    out = [];
+    runWith(withSponsor(sponsorFixture().relayerAddress), []);
+    expect(out.join('\n')).toMatch(/EVM_RELAY_KEYS <- .*evm-relay-keys\.json: INVALID \(.*the key's address is 0x\w+, not evm\.sponsor\.relayerAddress/u);
+    runWith(withSponsor(sponsorFixture().relayerAddress), ['--worker', 'api', '--yes'], { CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+    expect(spawned.map((s) => s.argv[4])).not.toContain('EVM_RELAY_KEYS');
     expectNoValuePrinted();
   });
 });

@@ -9,7 +9,8 @@
 // well-formed. A missing file is listed, never invented: a key that only exists on the old Worker is gone, and its
 // generator (deploy-contract, vault-kek, identity-key, email-issuer, usage-setup, watchdog secrets) is the way to
 // make a new one, with what that changes (the runbook says which can be replaced and which never). Email sharing's
-// IDENTITY_SEAL_KEY (API and issuer) and EMAIL_CONSENT_KEY (API) are optional: listed, and set when their files exist. With --yes it
+// IDENTITY_SEAL_KEY (API and issuer) and EMAIL_CONSENT_KEY (API) are optional: listed, and set when their files exist; so
+// are the relays' keys (NEAR_RELAY_KEYS with near.relay, EVM_RELAY_KEYS with evm.sponsor). With --yes it
 // refuses while a required secret of the selected Workers is missing or malformed, then sets each one with
 // `wrangler secret put <NAME> --name <worker>` from the Worker's app directory (its generated config names the
 // account), the value on stdin. Nothing here prints a value.
@@ -19,6 +20,7 @@ import { join } from 'node:path';
 import { EMAIL_ISSUER_SECRET_FILES, IDENTITY_SECRET_FILES, type Manifest, accountIdFields, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
 import { SENDGRID_RE, isRsaPrivateJwk, publicEntry as rsaPublicEntry, readKey32 } from './email-issuer.ts';
+import { readEvmRelayKeys } from './evm-relay-keys.ts';
 import { readKeyFile as readP256KeyFile, readSealKeyFile, readSubKeyFile } from './identity-key.ts';
 import { SECRET_FILES, assertPrivate, parseSecretJson, secretsDir } from './secrets.ts';
 import { KEK_FILES, readKekFile } from './vault-kek.ts';
@@ -158,6 +160,20 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
     out.push(item('api', 'HOME_RELAYER_KEYS', shown(SECRET_FILES.homeRelayerKeys), false, f(SECRET_FILES.homeRelayerKeys), () => readPool(f(SECRET_FILES.homeRelayerKeys))));
     // Optional (D734): only with the manifest's near.relay; without it POST /v1/near/relay and /activate answer 503.
     if (m.near?.relay) out.push(item('api', 'NEAR_RELAY_KEYS', shown(SECRET_FILES.nearRelayKeys), false, f(SECRET_FILES.nearRelayKeys), () => readPool(f(SECRET_FILES.nearRelayKeys))));
+    // Optional (D834, D849): only with the manifest's evm.sponsor; without it sponsorship answers unconfigured. The key's
+    // address must be evm.sponsor.relayerAddress, as the API's gen checks for .dev.vars.
+    const sponsor = m.evm?.sponsor;
+    if (sponsor) {
+      const file = f(SECRET_FILES.evmRelayKeys);
+      const src = shown(SECRET_FILES.evmRelayKeys);
+      out.push(
+        item('api', 'EVM_RELAY_KEYS', src, false, file, () => {
+          const { address, value } = readEvmRelayKeys(file, src);
+          if (address !== sponsor.relayerAddress) throw new Error(`${src}: the key's address is ${address}, not evm.sponsor.relayerAddress ${sponsor.relayerAddress}`);
+          return value;
+        }, 'the EVM sponsorship relayer; deleting the secret turns sponsorship off'),
+      );
+    }
     out.push(
       item('api', 'KEYS_UPDATER_KEY', shown(SECRET_FILES.keysUpdater, 'private_key'), true, f(SECRET_FILES.keysUpdater), () => {
         const k = (readJson(f(SECRET_FILES.keysUpdater)) as { private_key?: unknown } | null)?.private_key;

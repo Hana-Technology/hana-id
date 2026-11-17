@@ -2,8 +2,14 @@
 // `EVM_SPONSOR_RPC_<chainId>` when it is set, then the manifest's `rpc`, then its `rpcFallback`. The relayer object
 // (evm-relayer.ts) and the sponsorship handlers (evm/sponsor.ts) both read the chain through this one client.
 //
-// - Every endpoint's `eth_chainId` is checked once per isolate before anything else is asked of it: an endpoint that
-//   answers for another chain is never read from and never sent to (its nonce counts would be another chain's).
+// - Every endpoint's `eth_chainId` is checked before anything else is asked of it, and the answer kept per isolate for
+//   10 minutes: an endpoint that answers for another chain is never read from and never sent to (its nonce counts
+//   would be another chain's). A failed check is remembered for 30 s, so a dead endpoint isn't asked again at once
+//   (unless every endpoint failed it: then all are tried).
+// - Per client (one per critical section): an endpoint that gave no answer once (network, timeout, HTTP error) is
+//   skipped for the rest of the section, and at most `maxRequests` fetches are made (the free plan allows 50
+//   subrequests an invocation); past it every call fails as `unavailable` and a broadcast is `unsent`.
+// - Response bodies are read as a stream and abandoned past EVM_RPC_MAX_RESPONSE_CHARS bytes.
 // - Reads fail over: no answer, an HTTP error, a body that is not a JSON-RPC answer, a malformed result, or a node
 //   that says it is busy or rate limited moves to the next endpoint. Any other JSON-RPC error is the chain's answer
 //   (an `eth_call` revert, say) and is thrown as `rpc_error`, never retried elsewhere.
@@ -23,8 +29,14 @@ export type Hex = `0x${string}`;
 
 /** One attempt's limit: a broadcast can wait this long per endpoint. */
 export const EVM_RPC_TIMEOUT_MS = 8_000;
-/** The largest response body read (a receipt with many logs is far smaller). */
+/** The largest response body read, bytes (a receipt with many logs is far smaller). */
 export const EVM_RPC_MAX_RESPONSE_CHARS = 2 * 1024 * 1024;
+/** How long an endpoint's verified chain ID is trusted per isolate. */
+export const EVM_RPC_CHAIN_CHECK_TTL_MS = 10 * 60_000;
+/** How long a failed chain-ID check keeps an endpoint out (per isolate). */
+export const EVM_RPC_CHAIN_CHECK_RETRY_MS = 30_000;
+/** Fetches per client unless the caller says otherwise. */
+export const EVM_RPC_DEFAULT_MAX_REQUESTS = 45;
 /** At most this many characters of a node's error message are kept (for classification only). */
 const MAX_NODE_MESSAGE_CHARS = 300;
 /** At most this many characters of revert data are kept on an `rpc_error` (2 KiB of bytes). */
@@ -138,12 +150,27 @@ export function sponsorRpcUrls(env: Partial<Record<string, unknown>> | Env, chai
   return urls;
 }
 
-/** Endpoint URL → the chain ID it answered, per isolate (a URL's chain doesn't change while the isolate lives). */
-const verifiedChains = new Map<string, number>();
+/** Endpoint URL → the chain ID it answered and when, per isolate (EVM_RPC_CHAIN_CHECK_TTL_MS). */
+const verifiedChains = new Map<string, { chainId: number; at: number }>();
+/** Endpoint URL → when its chain-ID check last failed (no answer), per isolate (EVM_RPC_CHAIN_CHECK_RETRY_MS). */
+const failedChecks = new Map<string, number>();
 
 /** Forgets the per-isolate chain checks (tests). */
 export function forgetVerifiedChains(): void {
   verifiedChains.clear();
+  failedChecks.clear();
+}
+
+/** One endpoint's view of an address's transaction counts (EIP-155 nonces). */
+export interface EndpointCounts {
+  /** Index into the client's endpoints (never the URL). */
+  endpoint: number;
+  /** Mined at the latest block. */
+  latest: number;
+  /** Mined plus the node's executable pool. */
+  pending: number;
+  /** Mined at a block past reorg risk: `safe` where the chain has it, else `latest` − confirmations. */
+  confirmed: number;
 }
 
 type Attempt<T> = { ok: true; value: T } | { ok: false; failure: 'unavailable' | 'wrong_chain' | 'bad_response' } | { ok: false; failure: 'rpc_error'; error: EvmRpcError };
@@ -177,14 +204,19 @@ export class SponsorChain {
   readonly chainId: number;
   private readonly urls: readonly string[];
   private readonly timeoutMs: number;
+  private readonly maxRequests: number;
   private id = 0;
+  private used = 0;
+  /** Endpoints that gave no answer during this client's life (skipped from then on). */
+  private readonly down = new Set<number>();
 
-  constructor(chainId: number, urls: readonly string[], opts: { timeoutMs?: number } = {}) {
+  constructor(chainId: number, urls: readonly string[], opts: { timeoutMs?: number; maxRequests?: number } = {}) {
     if (!Number.isSafeInteger(chainId) || chainId <= 0) throw new Error('chainId must be a positive safe integer');
     if (urls.length === 0) throw new Error('No RPC endpoint');
     this.chainId = chainId;
     this.urls = [...urls];
     this.timeoutMs = opts.timeoutMs ?? EVM_RPC_TIMEOUT_MS;
+    this.maxRequests = opts.maxRequests ?? EVM_RPC_DEFAULT_MAX_REQUESTS;
   }
 
   /** How many endpoints the client asks, in order (for logs and tests; never the URLs). */
@@ -192,10 +224,60 @@ export class SponsorChain {
     return this.urls.length;
   }
 
+  /** Fetches made so far, and whether the budget is used up. */
+  get requestsUsed(): number {
+    return this.used;
+  }
+
+  get exhausted(): boolean {
+    return this.used >= this.maxRequests;
+  }
+
+  /**
+   * The address's counts from EVERY endpoint that answers all of them (latest, pending, and the confirmed count: at
+   * the `safe` block when `safeTag`, falling back to, and otherwise at, the latest block number − `confirmations`). For
+   * the caller to cross-check: never throws, an empty list when none answered.
+   */
+  async countsEach(address: Hex, opts: { confirmations: number; safeTag: boolean }): Promise<EndpointCounts[]> {
+    checkAddress(address);
+    const out: EndpointCounts[] = [];
+    const count = (r: unknown): number => {
+      const n = quantity(r);
+      if (n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('count too large');
+      return Number(n);
+    };
+    for (const i of this.order()) {
+      const latest = await this.attempt(i, 'eth_getTransactionCount', [address, 'latest'], count);
+      if (!latest.ok) continue;
+      const pending = await this.attempt(i, 'eth_getTransactionCount', [address, 'pending'], count);
+      if (!pending.ok) continue;
+      let confirmed: Attempt<number> | null = null;
+      if (opts.safeTag) {
+        confirmed = await this.attempt(i, 'eth_getTransactionCount', [address, 'safe'], count);
+        if (!confirmed.ok && confirmed.failure !== 'rpc_error') continue;
+        if (!confirmed.ok) confirmed = null;
+      }
+      if (!confirmed) {
+        const head = await this.attempt(i, 'eth_blockNumber', [], quantity);
+        if (!head.ok) continue;
+        const at = head.value > BigInt(opts.confirmations) ? head.value - BigInt(opts.confirmations) : 0n;
+        confirmed = await this.attempt(i, 'eth_getTransactionCount', [address, toQuantity(at)], count);
+        if (!confirmed.ok) continue;
+      }
+      out.push({ endpoint: i, latest: latest.value, pending: pending.value, confirmed: confirmed.value });
+    }
+    return out;
+  }
+
+  /** Endpoint indexes to try, in order: those not down for this client. */
+  private order(): number[] {
+    return this.urls.map((_, i) => i).filter((i) => !this.down.has(i));
+  }
+
   // ---- reads ----
 
-  /** `eth_getTransactionCount` at `latest` (mined) or `pending` (mined and the node's executable pool). */
-  async transactionCount(address: Hex, tag: 'latest' | 'pending'): Promise<number> {
+  /** `eth_getTransactionCount` at `latest` (mined), `pending` (mined and the node's executable pool) or `safe`. */
+  async transactionCount(address: Hex, tag: 'latest' | 'pending' | 'safe'): Promise<number> {
     checkAddress(address);
     return this.read('eth_getTransactionCount', [address, tag], (r) => {
       const n = quantity(r);
@@ -252,16 +334,17 @@ export class SponsorChain {
   async read<T>(method: string, params: unknown[], parse: (result: unknown) => T): Promise<T> {
     let wrongChain = 0;
     let badResponse = 0;
-    for (let i = 0; i < this.urls.length; i++) {
+    const order = this.order();
+    for (const [k, i] of order.entries()) {
       const attempt = await this.attempt(i, method, params, parse);
       if (attempt.ok) return attempt.value;
       if (attempt.failure === 'rpc_error') throw attempt.error;
       if (attempt.failure === 'wrong_chain') wrongChain++;
       if (attempt.failure === 'bad_response') badResponse++;
-      if (i + 1 < this.urls.length) log({ event: 'evm_rpc_failover', chainId: this.chainId, method, rpcEndpoint: i, nextRpcEndpoint: i + 1, code: attempt.failure }, 'warn');
+      if (k + 1 < order.length) log({ event: 'evm_rpc_failover', chainId: this.chainId, method, rpcEndpoint: i, nextRpcEndpoint: order[k + 1]!, code: attempt.failure }, 'warn');
     }
-    if (wrongChain === this.urls.length) throw new EvmRpcError('wrong_chain');
-    if (badResponse > 0 && badResponse + wrongChain === this.urls.length) throw new EvmRpcError('bad_response');
+    if (order.length > 0 && wrongChain === order.length) throw new EvmRpcError('wrong_chain');
+    if (badResponse > 0 && badResponse + wrongChain === order.length) throw new EvmRpcError('bad_response');
     throw new EvmRpcError('unavailable');
   }
 
@@ -273,15 +356,16 @@ export class SponsorChain {
     let reached = false;
     let uncertain = false;
     const rejections: EvmRejection[] = [];
-    for (let i = 0; i < this.urls.length; i++) {
-      const url = this.urls[i]!;
-      const checked = await this.checkChain(url);
+    for (const i of this.order()) {
+      if (this.exhausted) break;
+      const checked = await this.checkChain(i);
       if (checked !== 'ok') {
         if (i + 1 < this.urls.length) log({ event: 'evm_rpc_failover', chainId: this.chainId, method: 'eth_sendRawTransaction', rpcEndpoint: i, nextRpcEndpoint: i + 1, code: checked }, 'warn');
         continue;
       }
+      if (this.exhausted) break;
       reached = true;
-      const answer = await this.post(url, 'eth_sendRawTransaction', [raw]);
+      const answer = await this.post(i, 'eth_sendRawTransaction', [raw]);
       if (answer.kind === 'result') {
         // The hash is always computed here (keccak256 of the raw bytes), whatever the node returned.
         if (typeof answer.result === 'string' && HASH_RE.test(answer.result)) return { kind: 'accepted', hash: rawTxHash(raw) };
@@ -306,10 +390,10 @@ export class SponsorChain {
   // ---- transport ----
 
   private async attempt<T>(i: number, method: string, params: unknown[], parse: (result: unknown) => T): Promise<Attempt<T>> {
-    const url = this.urls[i]!;
-    const checked = await this.checkChain(url);
+    if (this.down.has(i)) return { ok: false, failure: 'unavailable' };
+    const checked = await this.checkChain(i);
     if (checked !== 'ok') return { ok: false, failure: checked };
-    const answer = await this.post(url, method, params);
+    const answer = await this.post(i, method, params);
     if (answer.kind === 'none') return { ok: false, failure: 'unavailable' };
     if (answer.kind === 'error') {
       if (transientRpcError(answer.code, answer.message)) return { ok: false, failure: 'unavailable' };
@@ -323,29 +407,43 @@ export class SponsorChain {
   }
 
   /** `ok` once the endpoint answered this chain's ID (cached per isolate); else why it can't be used now. */
-  private async checkChain(url: string): Promise<'ok' | 'unavailable' | 'wrong_chain'> {
+  private async checkChain(i: number): Promise<'ok' | 'unavailable' | 'wrong_chain'> {
+    const url = this.urls[i]!;
+    const now = Date.now();
     const known = verifiedChains.get(url);
-    if (known !== undefined) return known === this.chainId ? 'ok' : 'wrong_chain';
-    const answer = await this.post(url, 'eth_chainId', []);
-    if (answer.kind !== 'result') return 'unavailable';
-    let id: bigint;
-    try {
-      id = quantity(answer.result);
-    } catch {
+    if (known !== undefined && now - known.at < EVM_RPC_CHAIN_CHECK_TTL_MS) return known.chainId === this.chainId ? 'ok' : 'wrong_chain';
+    const failed = failedChecks.get(url);
+    // A recent failure keeps it out, unless every endpoint of this client failed recently (then all are tried).
+    if (failed !== undefined && now - failed < EVM_RPC_CHAIN_CHECK_RETRY_MS && this.urls.some((u) => !(now - (failedChecks.get(u) ?? -Infinity) < EVM_RPC_CHAIN_CHECK_RETRY_MS))) return 'unavailable';
+    const answer = await this.post(i, 'eth_chainId', []);
+    let id: bigint | null = null;
+    if (answer.kind === 'result') {
+      try {
+        id = quantity(answer.result);
+      } catch {
+        id = null;
+      }
+    }
+    if (id === null) {
+      failedChecks.set(url, now);
       return 'unavailable';
     }
+    failedChecks.delete(url);
     const n = id <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(id) : -1;
-    verifiedChains.set(url, n);
+    verifiedChains.set(url, { chainId: n, at: now });
     if (n !== this.chainId) {
-      log({ event: 'evm_rpc_wrong_chain', chainId: this.chainId, rpcEndpoint: this.urls.indexOf(url), code: 'wrong_chain' }, 'error');
+      log({ event: 'evm_rpc_wrong_chain', chainId: this.chainId, rpcEndpoint: i, code: 'wrong_chain' }, 'error');
       return 'wrong_chain';
     }
     return 'ok';
   }
 
-  private async post(url: string, method: string, params: unknown[]): Promise<{ kind: 'result'; result: unknown } | { kind: 'error'; code: number | null; message: string; data: Hex | null } | { kind: 'none' }> {
+  private async post(i: number, method: string, params: unknown[]): Promise<{ kind: 'result'; result: unknown } | { kind: 'error'; code: number | null; message: string; data: Hex | null } | { kind: 'none' }> {
+    if (this.used >= this.maxRequests) return { kind: 'none' };
+    this.used++;
+    const url = this.urls[i]!;
     const id = ++this.id;
-    let text: string;
+    let text: string | null;
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -356,13 +454,16 @@ export class SponsorChain {
       });
       if (res.status !== 200) {
         await res.body?.cancel().catch(() => undefined);
+        this.down.add(i);
         return { kind: 'none' };
       }
-      text = await res.text();
+      text = await readLimited(res, EVM_RPC_MAX_RESPONSE_CHARS);
     } catch {
+      // No answer (network, timeout): skipped for the rest of this client.
+      this.down.add(i);
       return { kind: 'none' };
     }
-    if (text.length > EVM_RPC_MAX_RESPONSE_CHARS) return { kind: 'none' };
+    if (text === null) return { kind: 'none' };
     let body: unknown;
     try {
       body = JSON.parse(text);
@@ -386,11 +487,36 @@ export class SponsorChain {
 }
 
 /** The client for a configured chain: its endpoints from `sponsorRpcUrls`. */
-export function sponsorChainFor(env: Env, chain: SponsorChainEndpoints, opts: { timeoutMs?: number } = {}): SponsorChain {
+export function sponsorChainFor(env: Env, chain: SponsorChainEndpoints, opts: { timeoutMs?: number; maxRequests?: number } = {}): SponsorChain {
   return new SponsorChain(chain.chainId, sponsorRpcUrls(env, chain), opts);
 }
 
 // ---- parsing ----
+
+/** The body as text, or null once it passes `max` bytes (the rest is never read). */
+async function readLimited(res: Response, max: number): Promise<string | null> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
 
 /** keccak256 of a raw transaction's bytes: its hash. */
 export function rawTxHash(raw: Hex): Hex {

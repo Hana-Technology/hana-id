@@ -1,7 +1,7 @@
 // The sponsorship RPC client (evm/sponsor-chain.ts, D837): endpoint order, the per-isolate chain check, read failover,
 // the broadcast's four outcomes, rejection classes, response checks, and no URL in any error or log.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EvmRpcError, SponsorChain, classifyRejection, forgetVerifiedChains, rawTxHash, sponsorRpcUrls } from '../src/evm/sponsor-chain.ts';
+import { EVM_RPC_CHAIN_CHECK_RETRY_MS, EVM_RPC_CHAIN_CHECK_TTL_MS, EVM_RPC_MAX_RESPONSE_CHARS, EvmRpcError, SponsorChain, classifyRejection, forgetVerifiedChains, rawTxHash, sponsorRpcUrls } from '../src/evm/sponsor-chain.ts';
 import { EvmMock, FALLBACK_RPC, type Hex, PRIMARY_RPC } from './evm-mock.ts';
 
 const ADDRESS = `0x${'11'.repeat(20)}` as Hex;
@@ -72,8 +72,10 @@ describe('SponsorChain reads', () => {
       if (method === 'eth_call') return { error: { code: 3, message: 'execution reverted', data: '0x08c379a0' } };
       return { error: { code: -32601, message: 'nope' } };
     });
-    expect(await rpc.balance(ADDRESS)).toBe(16n);
-    const reverted = await rpc.call({ to: ADDRESS, data: '0x' }).catch((e: unknown) => e);
+    // A new client (one per section): the old one skips the endpoints that gave no answer.
+    const rpc2 = new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]);
+    expect(await rpc2.balance(ADDRESS)).toBe(16n);
+    const reverted = await rpc2.call({ to: ADDRESS, data: '0x' }).catch((e: unknown) => e);
     expect(reverted).toBeInstanceOf(EvmRpcError);
     expect(reverted).toMatchObject({ kind: 'rpc_error', rpcCode: 3, data: '0x08c379a0' });
   });
@@ -114,6 +116,88 @@ describe('SponsorChain reads', () => {
   });
 });
 
+describe('SponsorChain limits and caches (L1, L2, L4)', () => {
+  it('an endpoint that timed out once is skipped for the rest of the client’s life (one section)', async () => {
+    const { calls } = stubFetch((endpoint, _m, _p, signal) =>
+      endpoint === 0 ? new Promise((_, reject) => signal?.addEventListener('abort', () => reject(new Error('timeout')))) : { result: '0x3' },
+    );
+    const rpc = new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC], { timeoutMs: 50 });
+    expect(await rpc.transactionCount(ADDRESS, 'pending')).toBe(3);
+    expect(await rpc.transactionCount(ADDRESS, 'latest')).toBe(3);
+    expect(await rpc.code(ADDRESS).catch(() => 'x')).toBe('x');
+    expect(calls.filter((c) => c.endpoint === 0 && c.method !== 'eth_chainId')).toHaveLength(1);
+  });
+
+  it('a failed chain-ID check keeps the endpoint out for 30 s (unless every endpoint failed); a verified one is re-checked after 10 minutes', async () => {
+    let now = 1_800_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const chain = new EvmMock({ chainId: 31337 }).install();
+    chain.modes[0] = 'down';
+    expect(await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).transactionCount(ADDRESS, 'latest')).toBe(0);
+    chain.modes[0] = 'up';
+    const before = chain.calls.filter((c) => c.endpoint === 0).length;
+    expect(await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).transactionCount(ADDRESS, 'latest')).toBe(0);
+    expect(chain.calls.filter((c) => c.endpoint === 0).length).toBe(before);
+    now += EVM_RPC_CHAIN_CHECK_RETRY_MS;
+    await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).transactionCount(ADDRESS, 'latest');
+    expect(chain.calls.filter((c) => c.endpoint === 0).map((c) => c.method).slice(-2)).toEqual(['eth_chainId', 'eth_getTransactionCount']);
+    // Both failed recently: both are tried anyway.
+    forgetVerifiedChains();
+    chain.modes[0] = 'down';
+    chain.modes[1] = 'down';
+    await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).transactionCount(ADDRESS, 'latest').catch(() => undefined);
+    chain.modes[0] = 'up';
+    chain.modes[1] = 'up';
+    expect(await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).transactionCount(ADDRESS, 'latest')).toBe(0);
+    // The verified answer expires after 10 minutes.
+    const checks = () => chain.calls.filter((c) => c.method === 'eth_chainId').length;
+    const n = checks();
+    await new SponsorChain(31337, [PRIMARY_RPC]).transactionCount(ADDRESS, 'latest');
+    expect(checks()).toBe(n);
+    now += EVM_RPC_CHAIN_CHECK_TTL_MS;
+    await new SponsorChain(31337, [PRIMARY_RPC]).transactionCount(ADDRESS, 'latest');
+    expect(checks()).toBe(n + 1);
+  });
+
+  it('makes at most maxRequests fetches; past it reads fail as unavailable and a broadcast is unsent', async () => {
+    const { calls } = stubFetch(() => ({ result: '0x1' }));
+    const rpc = new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC], { maxRequests: 3 });
+    expect(await rpc.transactionCount(ADDRESS, 'latest')).toBe(1);
+    expect(await rpc.transactionCount(ADDRESS, 'latest')).toBe(1);
+    await expect(rpc.transactionCount(ADDRESS, 'latest')).rejects.toMatchObject({ kind: 'unavailable' });
+    expect(await rpc.broadcast(`0x02${'ab'.repeat(40)}` as Hex)).toEqual({ kind: 'unsent' });
+    expect(calls).toHaveLength(3);
+    expect(rpc.exhausted).toBe(true);
+  });
+
+  it('abandons a body past the size limit, read as a stream', async () => {
+    stubFetch((endpoint) => (endpoint === 0 ? new Response(`{"jsonrpc":"2.0","id":2,"result":"0x1","pad":"${'x'.repeat(EVM_RPC_MAX_RESPONSE_CHARS)}"}`) : { result: '0x2' }));
+    expect(await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).transactionCount(ADDRESS, 'latest')).toBe(2);
+  });
+
+  it('countsEach: every endpoint’s latest, pending and confirmed counts (safe tag, else latest block − N; safe unsupported falls back)', async () => {
+    const chain = new EvmMock({ chainId: 31337 }).install();
+    chain.setMined(ADDRESS, 4);
+    chain.minedCount.set(ADDRESS.toLowerCase(), 6);
+    (chain as unknown as { history: { number: number; counts: Map<string, number> }[] }).history.push({ number: 101, counts: new Map([[ADDRESS.toLowerCase(), 6]]) });
+    chain.blockNumber = 102;
+    chain.safeDepth = 2;
+    const rpc = new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]);
+    expect(await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: false })).toEqual([
+      { endpoint: 0, latest: 6, pending: 6, confirmed: 4 },
+      { endpoint: 1, latest: 6, pending: 6, confirmed: 4 },
+    ]);
+    expect((await rpc.countsEach(ADDRESS, { confirmations: 0, safeTag: false }))[0]!.confirmed).toBe(6);
+    expect((await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: true }))[0]!.confirmed).toBe(4);
+    chain.safeDepth = 1;
+    expect((await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: true }))[0]!.confirmed).toBe(6);
+    chain.supportsSafe = false;
+    expect((await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: true }))[0]!.confirmed).toBe(4);
+    chain.modes[1] = 'down';
+    expect((await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: false })).map((c) => c.endpoint)).toEqual([0]);
+  });
+});
+
 describe('SponsorChain.broadcast', () => {
   const raw = `0x02${'ab'.repeat(40)}` as Hex;
 
@@ -137,7 +221,7 @@ describe('SponsorChain.broadcast', () => {
     for (const second of ['network', new Response('bad gateway', { status: 502 }), { error: { code: -32005, message: 'limit exceeded' } }, { error: { code: -32000, message: 'something odd' } }, { result: 'not a hash' }]) {
       vi.restoreAllMocks();
       stubFetch((endpoint) => (endpoint === 0 ? { error: { code: -32000, message: 'insufficient funds' } } : second instanceof Response ? second.clone() : second));
-      expect(await rpc.broadcast(raw)).toEqual({ kind: 'unknown' });
+      expect(await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).broadcast(raw)).toEqual({ kind: 'unknown' });
     }
     vi.restoreAllMocks();
     forgetVerifiedChains();

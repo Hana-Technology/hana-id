@@ -2,8 +2,11 @@
 // evm/sponsor-chain.ts): two endpoints (a primary and a fallback) of one chain, each of which can be made to fail.
 // Like a node's pool, it checks a raw transaction's nonce against the sender's mined count, replaces a pending one only
 // with both fees at least 10% higher, answers `already known` for one it holds, and counts `pending` as the mined count
-// plus the pool's run of consecutive nonces from there. Transactions are mined only when a test calls `mine`. The
-// sender is recovered from each raw transaction's signature (type 2 and type 4).
+// plus the pool's run of consecutive nonces from there. Transactions are mined only when a test calls `mine`, into a
+// block followed by `confirmations` empty ones; counts are kept per block, so `safe` (head − `safeDepth`) and a block
+// number answer what was mined then. `unmine` is a reorg (mined transactions back to the pool, or dropped), and
+// `staleCounts` an endpoint that answers fixed counts (a node behind, or one that over-reports). The sender is
+// recovered from each raw transaction's signature (type 2 and type 4).
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { vi } from 'vitest';
@@ -160,8 +163,17 @@ export class EvmMock {
   readonly urls: string[];
   /** Per endpoint (index into `urls`). */
   readonly modes: EndpointMode[];
-  /** An endpoint that answers fixed counts (a node behind the chain), by index. */
-  readonly staleCounts = new Map<number, { latest: number; pending: number }>();
+  /** An endpoint that answers fixed counts (a node behind the chain, or one that over-reports), by index. */
+  readonly staleCounts = new Map<number, { latest: number; pending: number; confirmed?: number }>();
+  /** The head block's number; `safe` is `safeDepth` below it. */
+  blockNumber = 100;
+  safeDepth = 2;
+  /** Whether endpoints answer the `safe` tag (else an error, as some nodes do). */
+  supportsSafe = true;
+  /** A large response (bytes of padding) for the next eth_getTransactionCount on endpoint 0, then cleared. */
+  hugeResponse = 0;
+  /** Mined counts per block (a snapshot at each block that changed them). */
+  private readonly history: { number: number; counts: Map<string, number> }[] = [];
   /** Mined count per sender (lowercase address). */
   readonly minedCount = new Map<string, number>();
   /** Pending pool per sender: nonce → transaction. */
@@ -178,7 +190,6 @@ export class EvmMock {
   /** Answers for eth_getTransactionCount that throw a network error, for the next N calls on every endpoint. */
   countFailures = 0;
   private readonly receipts = new Map<string, { tx: MockTx; block: number }>();
-  private block = 100;
 
   constructor(opts: { chainId?: number; urls?: string[] } = {}) {
     this.chainId = opts.chainId ?? 31337;
@@ -202,14 +213,26 @@ export class EvmMock {
       if (body.method === 'eth_chainId') return reply({ result: `0x${(mode === 'wrong_chain' ? this.chainId + 1 : this.chainId).toString(16)}` });
       if (body.method === 'eth_sendRawTransaction') return this.sendRaw(endpoint, body.params[0] as Hex, init?.signal, reply);
       await this.onRead?.(body.method, endpoint);
+      if (body.method === 'eth_blockNumber') return reply({ result: `0x${this.blockNumber.toString(16)}` });
       if (body.method === 'eth_getTransactionCount') {
         if (this.countFailures > 0) {
           this.countFailures--;
           throw new TypeError('Network connection lost.');
         }
         const [address, tag] = body.params as [string, string];
+        if (tag === 'safe' && !this.supportsSafe) return reply({ error: { code: -32602, message: 'invalid block tag' } });
         const stale = this.staleCounts.get(endpoint);
-        const n = stale ? (tag === 'latest' ? stale.latest : stale.pending) : tag === 'latest' ? this.mined(address) : this.pendingCount(address);
+        let n: number;
+        if (stale) n = tag === 'latest' ? stale.latest : tag === 'pending' ? stale.pending : (stale.confirmed ?? stale.latest);
+        else if (tag === 'latest') n = this.mined(address);
+        else if (tag === 'pending') n = this.pendingCount(address);
+        else if (tag === 'safe') n = this.countAt(address, this.blockNumber - this.safeDepth);
+        else n = this.countAt(address, Number(BigInt(tag)));
+        if (endpoint === 0 && this.hugeResponse > 0) {
+          const pad = 'x'.repeat(this.hugeResponse);
+          this.hugeResponse = 0;
+          return new Response(`{"jsonrpc":"2.0","id":${body.id},"result":"0x${n.toString(16)}","pad":"${pad}"}`, { status: 200 });
+        }
         return reply({ result: `0x${n.toString(16)}` });
       }
       if (body.method === 'eth_getTransactionReceipt') {
@@ -219,7 +242,7 @@ export class EvmMock {
           result: { transactionHash: got.tx.hash, status: '0x1', blockNumber: `0x${got.block.toString(16)}`, gasUsed: '0x5208', effectiveGasPrice: '0x3b9aca00', logs: [] },
         });
       }
-      if (body.method === 'eth_getBlockByNumber') return reply({ result: { number: `0x${this.block.toString(16)}`, timestamp: '0x6553f100', baseFeePerGas: '0x1' } });
+      if (body.method === 'eth_getBlockByNumber') return reply({ result: { number: `0x${this.blockNumber.toString(16)}`, timestamp: '0x6553f100', baseFeePerGas: '0x1' } });
       return reply({ error: { code: -32601, message: 'method not found' } });
     });
     return this;
@@ -227,6 +250,29 @@ export class EvmMock {
 
   mined(address: string): number {
     return this.minedCount.get(address.toLowerCase()) ?? 0;
+  }
+
+  /** The sender's mined count as of block `n`. */
+  countAt(address: string, n: number): number {
+    const a = address.toLowerCase();
+    let out = 0;
+    for (const h of this.history) if (h.number <= n) out = h.counts.get(a) ?? 0;
+    return out;
+  }
+
+  /** Starts a sender at mined count `n`, long confirmed (as a funded relayer that sent before). */
+  setMined(address: string, n: number): void {
+    this.minedCount.set(address.toLowerCase(), n);
+    this.history.unshift({ number: 0, counts: new Map([[address.toLowerCase(), n]]) });
+  }
+
+  /** Adds `n` empty blocks. */
+  addBlocks(n: number): void {
+    this.blockNumber += n;
+  }
+
+  private snapshot(): void {
+    this.history.push({ number: this.blockNumber, counts: new Map(this.minedCount) });
   }
 
   pendingCount(address: string): number {
@@ -247,30 +293,59 @@ export class EvmMock {
     return [...(this.pool.get(address.toLowerCase())?.values() ?? [])].sort((x, y) => x.nonce - y.nonce);
   }
 
-  /** Mines a sender's pool from its mined count, in nonce order (at most `max`). Returns what was mined. */
-  mine(address: string, max = Number.POSITIVE_INFINITY): MockTx[] {
+  /**
+   * Mines a sender's pool from its mined count, in nonce order (at most `max`), into one new block, then
+   * `confirmations` empty blocks (5 by default: past the relayer's 3). Returns what was mined.
+   */
+  mine(address: string, max = Number.POSITIVE_INFINITY, opts: { confirmations?: number } = {}): MockTx[] {
     const a = address.toLowerCase();
     const pool = this.pool.get(a) ?? new Map<number, MockTx>();
     const out: MockTx[] = [];
     let n = this.mined(a);
+    this.blockNumber++;
     while (pool.has(n) && out.length < max) {
       const tx = pool.get(n)!;
       pool.delete(n);
       this.minedTxs.push(tx);
-      this.receipts.set(tx.hash, { tx, block: ++this.block });
+      this.receipts.set(tx.hash, { tx, block: this.blockNumber });
       out.push(tx);
       n++;
     }
     this.minedCount.set(a, n);
+    this.snapshot();
+    this.addBlocks(opts.confirmations ?? 5);
     return out;
   }
 
-  /** Another sender's transaction at `nonce` was mined (the key was used elsewhere): the count moves past it. */
+  /**
+   * A reorg: the sender's last `count` mined transactions are un-mined (back into the pool, or gone with `drop`), and
+   * every block since the first of them counts them no more. Only for unconfirmed blocks, as on a real chain.
+   */
+  unmine(address: string, count: number, opts: { drop?: boolean } = {}): MockTx[] {
+    const a = address.toLowerCase();
+    const mine = this.minedTxs.filter((t) => t.from === a);
+    const gone = mine.slice(-count);
+    const fromBlock = Math.min(...gone.map((t) => this.receipts.get(t.hash)!.block));
+    for (const t of gone) {
+      this.minedTxs.splice(this.minedTxs.indexOf(t), 1);
+      this.receipts.delete(t.hash);
+      if (!opts.drop) this.admit(t);
+    }
+    const left = this.mined(a) - gone.length;
+    this.minedCount.set(a, left);
+    for (const h of this.history) if (h.number >= fromBlock) h.counts.set(a, Math.min(h.counts.get(a) ?? 0, left));
+    return gone;
+  }
+
+  /** Another sender's transactions took nonces up to `upTo` and were mined (the key was used elsewhere), confirmed. */
   foreignMine(address: string, upTo: number): void {
     const a = address.toLowerCase();
     const pool = this.pool.get(a);
     for (let n = this.mined(a); n < upTo; n++) pool?.delete(n);
+    this.blockNumber++;
     this.minedCount.set(a, upTo);
+    this.snapshot();
+    this.addBlocks(5);
   }
 
   /** Drops a pooled transaction (evicted). */

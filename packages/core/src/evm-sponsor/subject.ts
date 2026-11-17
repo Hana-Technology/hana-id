@@ -11,7 +11,8 @@
 // Scalars are canonical RLP integers (big-endian, no leading zero, 0 is the empty string), addresses exactly 20 bytes.
 // decodeSponsorSubject accepts exactly one encoding of each subject: anything else (a wrong prefix, non-canonical RLP,
 // trailing bytes, a wrong field count or kind, a value other than 0, 0 or more than 8 calls, calldata over 8 KiB, a
-// zero account, delegate or relayer, a zero deadline, chainId 0) is a DecodeError. encodeSponsorSubject refuses the same
+// zero account, delegate or relayer, a call to the zero address, the account itself or the delegate, a zero deadline
+// or minGas, chainId 0) is a DecodeError. encodeSponsorSubject refuses the same
 // things, so every subject it makes decodes back to itself.
 import { checksumEvmAddress } from '../addresses.ts';
 import { type Bytes, concatBytes, toHex, utf8 } from '../bytes.ts';
@@ -20,8 +21,8 @@ import { fail } from '../decode/errors.ts';
 import { type Hex, bigIntBytes, rlpEncode } from '../signers/evm.ts';
 import { AUTHORIZATION_NONCE_MAX, type Authorization } from './authorization.ts';
 import { EvmSponsorError } from './errors.ts';
-import { EVM_SPONSOR_MAX_CALLS, EVM_SPONSOR_MAX_CALL_DATA_BYTES, type ExecuteCall, type ExecuteInput } from './execute.ts';
-import { U64_MAX, addressBytes, chainIdOf, dataBytes, uint } from './values.ts';
+import { EVM_SPONSOR_MAX_CALLS, EVM_SPONSOR_MAX_CALL_DATA_BYTES, type ExecuteCall, type ExecuteInput, isForbiddenSponsorTarget } from './execute.ts';
+import { U64_MAX, addressBytes, chainIdOf, dataBytes, snapshotList, uint } from './values.ts';
 
 export const EVM_SPONSOR_SUBJECT_PREFIX = 'hana-id/evm-sponsored/v1';
 const PREFIX = utf8(EVM_SPONSOR_SUBJECT_PREFIX);
@@ -47,35 +48,46 @@ export interface EvmSponsorSubject {
 
 const isZero = (b: Uint8Array) => b.every((x) => x === 0);
 
-/** The subject's bytes. Refuses (DecodeError 'invalid_value') whatever decodeSponsorSubject would refuse. */
+/**
+ * The subject's bytes. Refuses (DecodeError 'invalid_value') whatever decodeSponsorSubject would refuse. Every field of
+ * `s` (and of each call) is read once, into the values that are checked and encoded.
+ */
 export function encodeSponsorSubject(s: EvmSponsorSubject): Bytes {
   try {
     if (typeof s !== 'object' || s === null) throw new EvmSponsorError('invalid_input', 'subject must be an object');
-    const account = addressBytes(s.account, 'account');
-    const delegate = addressBytes(s.delegate, 'delegate');
-    const relayer = addressBytes(s.relayer, 'relayer');
+    const { chainId: rawChainId, account: rawAccount, delegate: rawDelegate, authNonce: rawAuthNonce, calls: rawCalls } = s;
+    const { executeNonce: rawNonce, deadline: rawDeadline, relayer: rawRelayer, minGas: rawMinGas } = s;
+    const chainId = chainIdOf(rawChainId);
+    const account = addressBytes(rawAccount, 'account');
+    const delegate = addressBytes(rawDelegate, 'delegate');
+    const relayer = addressBytes(rawRelayer, 'relayer');
     if (isZero(account) || isZero(delegate) || isZero(relayer)) fail('invalid_value', 'account, delegate and relayer must not be the zero address');
-    if (!Array.isArray(s.calls) || s.calls.length === 0 || s.calls.length > EVM_SPONSOR_MAX_CALLS) fail('invalid_value', `calls must hold 1 to ${EVM_SPONSOR_MAX_CALLS} calls`);
-    const calls = s.calls.map((c: ExecuteCall) => {
+    const callList = snapshotList(rawCalls, EVM_SPONSOR_MAX_CALLS, 'calls');
+    if (callList.length === 0) fail('invalid_value', `calls must hold 1 to ${EVM_SPONSOR_MAX_CALLS} calls`);
+    const calls = callList.map((c) => {
       if (typeof c !== 'object' || c === null) fail('invalid_value', 'A call must be an object');
-      if (c.value !== 0n) fail('invalid_value', 'A sponsored call carries no value');
-      return [addressBytes(c.to, 'call.to'), new Uint8Array(0), dataBytes(c.data, EVM_SPONSOR_MAX_CALL_DATA_BYTES, 'call.data')];
+      const { to: rawTo, value, data } = c as ExecuteCall;
+      if (value !== 0n) fail('invalid_value', 'A sponsored call carries no value');
+      const to = addressBytes(rawTo, 'call.to');
+      if (isForbiddenSponsorTarget(to, account, delegate)) fail('invalid_value', 'A sponsored call cannot target the zero address, the account itself or the delegate');
+      return [to, new Uint8Array(0), dataBytes(data, EVM_SPONSOR_MAX_CALL_DATA_BYTES, 'call.data')];
     });
-    const authNonce = s.authNonce === null ? [] : [bigIntBytes(uint(s.authNonce, AUTHORIZATION_NONCE_MAX, 'authNonce'))];
-    const deadline = uint(s.deadline, U64_MAX, 'deadline');
-    if (deadline === 0n) fail('invalid_value', 'deadline must be positive');
+    const authNonce = rawAuthNonce === null ? [] : [bigIntBytes(uint(rawAuthNonce, AUTHORIZATION_NONCE_MAX, 'authNonce'))];
+    const deadline = uint(rawDeadline, U64_MAX, 'deadline');
+    const minGas = uint(rawMinGas, U64_MAX, 'minGas');
+    if (deadline === 0n || minGas === 0n) fail('invalid_value', 'deadline and minGas must be positive');
     return concatBytes(
       PREFIX,
       rlpEncode([
-        bigIntBytes(BigInt(chainIdOf(s.chainId))),
+        bigIntBytes(BigInt(chainId)),
         account,
         delegate,
         authNonce,
         calls,
-        bigIntBytes(uint(s.executeNonce, U64_MAX, 'executeNonce')),
+        bigIntBytes(uint(rawNonce, U64_MAX, 'executeNonce')),
         bigIntBytes(deadline),
         relayer,
-        bigIntBytes(uint(s.minGas, U64_MAX, 'minGas')),
+        bigIntBytes(minGas),
       ]),
     );
   } catch (e) {
@@ -108,9 +120,10 @@ function scalar(item: RlpDecoded | undefined, what: string, max: bigint): bigint
 }
 
 /** Decodes subject bytes strictly (see the module comment). Throws DecodeError for anything it refuses. */
-export function decodeSponsorSubject(bytes: Uint8Array): EvmSponsorSubject {
-  if (!(bytes instanceof Uint8Array)) fail('malformed', 'Subject must be bytes');
-  if (bytes.length > EVM_SPONSOR_SUBJECT_MAX_BYTES) fail('too_large', 'Subject is too large');
+export function decodeSponsorSubject(input: Uint8Array): EvmSponsorSubject {
+  if (!(input instanceof Uint8Array)) fail('malformed', 'Subject must be bytes');
+  if (input.length > EVM_SPONSOR_SUBJECT_MAX_BYTES) fail('too_large', 'Subject is too large');
+  const bytes = Uint8Array.from(input); // decoded from this copy only
   if (bytes.length < PREFIX.length || !PREFIX.every((b, i) => bytes[i] === b)) fail('malformed', 'Not an EVM sponsored-action subject');
   const root = listItem(decodeRlp(bytes.subarray(PREFIX.length)), 'subject');
   if (root.length !== 9) fail('malformed', 'Subject must have exactly 9 fields');
@@ -123,12 +136,19 @@ export function decodeSponsorSubject(bytes: Uint8Array): EvmSponsorSubject {
   if (auth.length > 1) fail('malformed', 'authNonce must be [] or [nonce]');
   const authNonce = auth.length === 0 ? null : scalar(auth[0], 'authNonce', AUTHORIZATION_NONCE_MAX);
 
+  const account = address(accountItem, 'account', true);
+  const delegate = address(delegateItem, 'delegate', true);
+  const accountLower = account.toLowerCase();
+  const delegateLower = delegate.toLowerCase();
+
   const callItems = listItem(callsItem, 'calls');
   if (callItems.length === 0 || callItems.length > EVM_SPONSOR_MAX_CALLS) fail('invalid_value', `calls must hold 1 to ${EVM_SPONSOR_MAX_CALLS} calls`);
   const calls = callItems.map((ci, i) => {
     const c = listItem(ci, `calls[${i}]`);
     if (c.length !== 3) fail('malformed', `calls[${i}] must be [to, value, data]`);
-    const to = address(c[0], `calls[${i}].to`, false);
+    const to = address(c[0], `calls[${i}].to`, true);
+    const toLower = to.toLowerCase();
+    if (toLower === accountLower || toLower === delegateLower) fail('invalid_value', `calls[${i}].to cannot be the account itself or the delegate`);
     if (rlpScalar(c[1], `calls[${i}].value`, 32) !== 0n) fail('invalid_value', `calls[${i}].value must be 0`);
     const data = bytesItem(c[2], `calls[${i}].data`);
     if (data.length > EVM_SPONSOR_MAX_CALL_DATA_BYTES) fail('too_large', `calls[${i}].data is too large`);
@@ -136,18 +156,19 @@ export function decodeSponsorSubject(bytes: Uint8Array): EvmSponsorSubject {
   });
 
   const deadline = scalar(deadlineItem, 'deadline', U64_MAX);
-  if (deadline === 0n) fail('invalid_value', 'deadline must be positive');
+  const minGas = scalar(minGasItem, 'minGas', U64_MAX);
+  if (deadline === 0n || minGas === 0n) fail('invalid_value', 'deadline and minGas must be positive');
 
   return Object.freeze({
     chainId: Number(chainId),
-    account: address(accountItem, 'account', true),
-    delegate: address(delegateItem, 'delegate', true),
+    account,
+    delegate,
     authNonce,
     calls: Object.freeze(calls),
     executeNonce: scalar(nonceItem, 'executeNonce', U64_MAX),
     deadline,
     relayer: address(relayerItem, 'relayer', true),
-    minGas: scalar(minGasItem, 'minGas', U64_MAX),
+    minGas,
   });
 }
 

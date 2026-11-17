@@ -22,7 +22,7 @@ import {
 } from '../signers/evm.ts';
 import { type SignedAuthorization, authorizationListItem } from './authorization.ts';
 import { refuse } from './errors.ts';
-import { U256_MAX, U64_MAX, checkLowS, hex0x, uint } from './values.ts';
+import { U256_MAX, U64_MAX, bytesCopy, checkLowS, checkSigningKey, hex0x, signing, snapshotList, uint } from './values.ts';
 
 /** At most this many authorizations in one type-4 transaction. */
 export const SPONSOR_TX_MAX_AUTHORIZATIONS = 8;
@@ -49,13 +49,9 @@ export interface Eip7702Tx {
 export type SponsorTx = Eip1559Tx | Eip7702Tx;
 
 const bytes = (v: unknown, len: number | null, what: string): Bytes => {
-  if (!(v instanceof Uint8Array) || (len !== null && v.length !== len)) refuse('invalid_input', `${what} must be ${len === null ? 'bytes' : `${len} bytes`}`);
-  return Uint8Array.from(v);
-};
-
-const list = (v: unknown, max: number, what: string): unknown[] => {
-  if (!Array.isArray(v) || v.length > max) refuse('invalid_input', `${what} must be an array of at most ${max}`);
-  return Array.from({ length: v.length }, (_, i) => (v as unknown[])[i]);
+  const b = bytesCopy(v, what);
+  if (len !== null && b.length !== len) refuse('invalid_input', `${what} must be ${len} bytes`);
+  return b;
 };
 
 /** A checked copy of the transaction: every field read once, byte arrays copied; signing and serializing use only it. */
@@ -77,10 +73,10 @@ function checked(tx: SponsorTx): Checked {
   if (maxPriorityFeePerGas > maxFeePerGas) refuse('invalid_input', 'tx.maxPriorityFeePerGas exceeds maxFeePerGas');
   const data = bytes(tx.data, null, 'tx.data');
   if (data.length > SPONSOR_TX_MAX_DATA_BYTES) refuse('invalid_input', 'tx.data is too large');
-  const accessList: EvmAccessListEntry[] = list(tx.accessList, 64, 'tx.accessList').map((e) => {
+  const accessList: EvmAccessListEntry[] = snapshotList(tx.accessList, 64, 'tx.accessList').map((e) => {
     if (typeof e !== 'object' || e === null) refuse('invalid_input', 'tx.accessList entries must be {address, storageKeys}');
-    const entry = e as EvmAccessListEntry;
-    return { address: bytes(entry.address, 20, 'tx.accessList address'), storageKeys: list(entry.storageKeys, 64, 'tx.accessList storage keys').map((k) => bytes(k, 32, 'tx.accessList storage key')) };
+    const { address, storageKeys } = e as EvmAccessListEntry;
+    return { address: bytes(address, 20, 'tx.accessList address'), storageKeys: snapshotList(storageKeys, 64, 'tx.accessList storage keys').map((k) => bytes(k, 32, 'tx.accessList storage key')) };
   });
   const tx1559: Eip1559Tx = {
     type: 'eip1559',
@@ -95,7 +91,7 @@ function checked(tx: SponsorTx): Checked {
     accessList,
   };
   if (type === 'eip1559') return { type, tx1559, authorizations: [] };
-  const auths = list((tx as Eip7702Tx).authorizationList, SPONSOR_TX_MAX_AUTHORIZATIONS, 'tx.authorizationList');
+  const auths = snapshotList((tx as Eip7702Tx).authorizationList, SPONSOR_TX_MAX_AUTHORIZATIONS, 'tx.authorizationList');
   if (auths.length === 0) refuse('invalid_input', `tx.authorizationList must hold 1 to ${SPONSOR_TX_MAX_AUTHORIZATIONS} authorizations`);
   const authorizations = auths.map((a) => {
     // Refuses a malformed tuple, chainId 0, a bad yParity, r or s, and a high s.
@@ -148,8 +144,9 @@ export function serializeSponsorTx(tx: SponsorTx, sig: { yParity: 0 | 1; r: bigi
 
 /** Signs a relayer transaction with the relayer's key `d` (low s) and returns the raw signed transaction. */
 export function signSponsorTx(d: Uint8Array, tx: SponsorTx): Hex {
+  checkSigningKey(d);
   const c = checked(tx);
-  const sig = signEvmDigest(d, signingHashOf(c));
+  const sig = signing(() => signEvmDigest(d, signingHashOf(c)));
   return serializeChecked(c, sig[64] === 27 ? 0 : 1, BigInt(hex0x(sig.subarray(0, 32))), BigInt(hex0x(sig.subarray(32, 64))));
 }
 

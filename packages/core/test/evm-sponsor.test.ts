@@ -16,6 +16,8 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { hashAuthorization, recoverAuthorizationAddress } from 'viem/utils';
+import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { checksumEvmAddress } from '../src/addresses.ts';
 import { concatBytes, from0xHex, toHex, utf8 } from '../src/bytes.ts';
@@ -62,7 +64,7 @@ import {
 } from '../src/evm-sponsor/index.ts';
 import { TEST_EVM_CHAINS } from '../src/networks.ts';
 import { decodeEvmTransaction } from '../src/decode/evm.ts';
-import { bigIntBytes, evmSignerAddress, parseEvmTxRequest, rlpEncode } from '../src/signers/evm.ts';
+import { bigIntBytes, evmSignerAddress, parseEvmTxRequest, rlpEncode, signEvmDigest } from '../src/signers/evm.ts';
 import { hashTypedData, normalizeTypedData } from '../src/typed-data.ts';
 
 type Hex = `0x${string}`;
@@ -82,7 +84,8 @@ const PINNED = SPONSOR_DELEGATES[LOCAL]!.address;
 const OTHER = addr('some other contract');
 const T1 = addr('target 1');
 const T2 = addr('target 2');
-const ENABLED = { enabledChains: [LOCAL] };
+/** The local chain's entry is a placeholder: the signers take it only with the test-only option. */
+const ENABLED = { enabledChains: [LOCAL], allowPlaceholderDelegateInTests: true } as const;
 const N = secp256k1.CURVE.n;
 const U64 = (1n << 64n) - 1n;
 
@@ -298,7 +301,7 @@ describe('signAuthorization', () => {
       expect(codeOf(() => signAuthorization(D, ok, opts as never))).toBe('invalid_input');
     }
     for (const k of [new Uint8Array(32), new Uint8Array(31), from0xHex(`0x${N.toString(16)}`)]) {
-      expect(() => signAuthorization(k, ok, ENABLED)).toThrow('Invalid secp256k1 private key');
+      expect(codeOf(() => signAuthorization(k, ok, ENABLED))).toBe('invalid_input');
     }
   });
 });
@@ -547,6 +550,201 @@ describe('the signers read each input field once', () => {
   });
 });
 
+// ---- review fixes: placeholder, read once, call targets, keys, large chain ids ----
+
+/**
+ * A deep proxy over plain objects and arrays that counts each property read by path (byte arrays are passed through:
+ * the module copies them). `reads` maps "path" → count.
+ */
+function counted<T>(value: T): { obj: T; reads: Map<string, number> } {
+  const reads = new Map<string, number>();
+  const cache = new WeakMap<object, unknown>();
+  const wrap = (v: unknown, path: string): unknown => {
+    if (typeof v !== 'object' || v === null || v instanceof Uint8Array) return v;
+    if (cache.has(v)) return cache.get(v);
+    const p = new Proxy(v, {
+      get(target, key, receiver) {
+        const out = Reflect.get(target, key, receiver);
+        if (typeof key !== 'string') return out;
+        const at = `${path}.${key}`;
+        reads.set(at, (reads.get(at) ?? 0) + 1);
+        return wrap(out, at);
+      },
+    });
+    cache.set(v, p);
+    return p;
+  };
+  return { obj: wrap(value, '$') as T, reads };
+}
+const overRead = (reads: Map<string, number>) => [...reads].filter(([, n]) => n > 1).map(([k]) => k);
+
+/** An array whose `length` reads 1 the first time and `n` after (a cap checked on one read, used on another). */
+function growing<T>(item: T, n: number): T[] {
+  let lengthReads = 0;
+  const backing = Array.from({ length: n }, () => item);
+  return new Proxy(backing, {
+    get(target, key, receiver) {
+      if (key === 'length') return ++lengthReads === 1 ? 1 : n;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+}
+
+describe('the placeholder delegate is refused unless a test opts in', () => {
+  it('signAuthorization and signExecute refuse the 31337 placeholder by default', () => {
+    expect(SPONSOR_DELEGATES[LOCAL]!.placeholder).toBe(true);
+    const a = { chainId: LOCAL, address: PINNED, nonce: 0n };
+    expect(codeOf(() => signAuthorization(D, a, { enabledChains: [LOCAL] }))).toBe('delegate_not_pinned');
+    expect(codeOf(() => signAuthorization(D, { ...a, address: ZERO_ADDRESS }, { enabledChains: [LOCAL], revoke: true }))).toBe('delegate_not_pinned');
+    expect(codeOf(() => signExecute(D, baseInput(), { enabledChains: [LOCAL] }))).toBe('delegate_not_pinned');
+    for (const opt of [false, 'true', 1]) {
+      expect(codeOf(() => signAuthorization(D, a, { enabledChains: [LOCAL], allowPlaceholderDelegateInTests: opt } as never))).toBe('invalid_input');
+      expect(codeOf(() => signExecute(D, baseInput(), { enabledChains: [LOCAL], allowPlaceholderDelegateInTests: opt } as never))).toBe('invalid_input');
+    }
+    expect(signAuthorization(D, a, ENABLED).address).toBe(PINNED);
+  });
+
+  it('no source outside tests passes the test-only option', () => {
+    const repo = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
+    const files = execSync('git ls-files -co --exclude-standard', { cwd: repo, encoding: 'utf8' }).split('\n');
+    const code = files.filter((f) => /\.(ts|tsx|mts|js|mjs)$/u.test(f) && !/(^|\/)(test|tests|test-[a-z]+)\//u.test(f) && !/\.test\.[a-z]+$/u.test(f));
+    const allowed = new Set(['packages/core/src/evm-sponsor/authorization.ts', 'packages/core/src/evm-sponsor/execute.ts', 'packages/core/src/evm-sponsor/values.ts']);
+    const users = code.filter((f) => !allowed.has(f) && existsSync(`${repo}/${f}`) && readFileSync(`${repo}/${f}`, 'utf8').includes('allowPlaceholderDelegateInTests'));
+    expect(code.length).toBeGreaterThan(100);
+    expect(users).toEqual([]);
+  });
+});
+
+describe('every caller-supplied object is read once', () => {
+  it('signAuthorization (the tuple and the options, revoke included)', () => {
+    const t = counted({ chainId: LOCAL, address: ZERO_ADDRESS, nonce: 0n });
+    const o = counted({ enabledChains: [LOCAL], revoke: true, allowPlaceholderDelegateInTests: true as const });
+    signAuthorization(D, t.obj, o.obj);
+    expect(overRead(t.reads)).toEqual([]);
+    expect(overRead(o.reads)).toEqual([]);
+    // A revoke getter that says undefined first and true after can't get the zero address signed.
+    let n = 0;
+    const flip = { enabledChains: [LOCAL], allowPlaceholderDelegateInTests: true as const, get revoke() { return ++n === 1 ? undefined : true; } };
+    expect(codeOf(() => signAuthorization(D, { chainId: LOCAL, address: ZERO_ADDRESS, nonce: 0n }, flip))).toBe('delegate_not_pinned');
+  });
+
+  it('signExecute (the input, each call, the options)', () => {
+    const i = counted(baseInput());
+    const o = counted({ ...ENABLED, enabledChains: [LOCAL] });
+    signExecute(D, i.obj, o.obj);
+    expect(overRead(i.reads)).toEqual([]);
+    expect(overRead(o.reads)).toEqual([]);
+  });
+
+  it('encodeSponsorSubject (a calls array that grows after its cap check is refused or encoded as read)', () => {
+    const s = counted(subject());
+    encodeSponsorSubject(s.obj);
+    expect(overRead(s.reads)).toEqual([]);
+    const call = { to: T1, value: 0n, data: '0x' as Hex };
+    let out: Uint8Array | null = null;
+    try {
+      out = encodeSponsorSubject(subject({ calls: growing(call, 20) }));
+    } catch (e) {
+      expect(e).toBeInstanceOf(DecodeError);
+    }
+    if (out !== null) expect(decodeSponsorSubject(out).calls.length).toBeLessThanOrEqual(EVM_SPONSOR_MAX_CALLS);
+  });
+
+  it('signSponsorTx (the tx, its authorizations, its access list; lists that grow after their cap check)', () => {
+    const auth = signAuthorization(D, { chainId: LOCAL, address: PINNED, nonce: 0n }, ENABLED);
+    const tx = {
+      type: 'eip7702' as const,
+      chainId: BigInt(LOCAL),
+      nonce: 0n,
+      maxPriorityFeePerGas: 1n,
+      maxFeePerGas: 2n,
+      gas: 100_000n,
+      to: from0xHex(ACCOUNT),
+      value: 0n,
+      data: new Uint8Array(4),
+      accessList: [{ address: from0xHex(T1), storageKeys: [new Uint8Array(32)] }],
+      authorizationList: [auth],
+    };
+    const c = counted(tx);
+    signSponsorTx(D_RELAYER, c.obj as SponsorTx);
+    expect(overRead(c.reads)).toEqual([]);
+    const tooMany = { ...tx, authorizationList: growing(auth, 20) } as SponsorTx;
+    let raw: Hex | null = null;
+    try {
+      raw = signSponsorTx(D_RELAYER, tooMany);
+    } catch (e) {
+      expect(e).toBeInstanceOf(EvmSponsorError);
+    }
+    if (raw !== null) expect(parseTransaction(raw).authorizationList!.length).toBeLessThanOrEqual(8);
+    const entry = { address: from0xHex(T1), storageKeys: [] as Uint8Array[] };
+    let raw2: Hex | null = null;
+    try {
+      raw2 = signSponsorTx(D_RELAYER, { ...tx, accessList: growing(entry, 100) } as SponsorTx);
+    } catch (e) {
+      expect(e).toBeInstanceOf(EvmSponsorError);
+    }
+    if (raw2 !== null) expect(parseTransaction(raw2).accessList!.length).toBeLessThanOrEqual(64);
+  });
+});
+
+describe('signExecute refuses deadline 0, minGas 0 and calls to the account, the delegate or the zero address', () => {
+  it('refuses them', () => {
+    expect(codeOf(() => signExecute(D, baseInput({ deadline: 0n }), ENABLED))).toBe('invalid_input');
+    expect(codeOf(() => signExecute(D, baseInput({ minGas: 0n }), ENABLED))).toBe('invalid_input');
+    for (const to of [ACCOUNT, ACCOUNT.toLowerCase() as Hex, PINNED, ZERO_ADDRESS]) {
+      expect(codeOf(() => signExecute(D, baseInput({ calls: [{ to: T1, value: 0n, data: '0x' }, { to, value: 0n, data: '0x' }] }), ENABLED))).toBe('invalid_input');
+    }
+  });
+
+  it('the builders still accept them (the contract does; the vectors cover it)', () => {
+    expect(() => executeDigest(baseInput({ deadline: 0n, minGas: 0n, calls: [{ to: ACCOUNT, value: 0n, data: '0x' }] }))).not.toThrow();
+  });
+});
+
+describe('chain ids above 2^32', () => {
+  const big = [2 ** 32 + 1, 2 ** 40 + 3, Number.MAX_SAFE_INTEGER];
+  it('authorization hash and recovery agree with viem', async () => {
+    for (const chainId of big) {
+      const a = { chainId, address: PINNED, nonce: 1n };
+      expect(hex(authorizationHash(a))).toBe(hashAuthorization({ chainId, address: PINNED, nonce: 1 }));
+      const sig = signEvmDigest(D, authorizationHash(a));
+      const signed: SignedAuthorization = { ...a, yParity: sig[64] === 27 ? 0 : 1, r: hex(sig.subarray(0, 32)), s: hex(sig.subarray(32, 64)) };
+      expect(recoverAuthorization(signed)).toBe(ACCOUNT);
+      expect(await recoverAuthorizationAddress({ authorization: { ...signed, nonce: 1 } })).toBe(ACCOUNT);
+    }
+  });
+
+  it('Execute digest and the subject agree with viem / round-trip', () => {
+    for (const chainId of big) {
+      const i = baseInput({ chainId, implementation: OTHER });
+      expect(hex(executeDigest(i))).toBe(viemHashTypedData(viemTyped(i)));
+      const s = subject({ chainId });
+      expect(decodeSponsorSubject(encodeSponsorSubject(s)).chainId).toBe(chainId);
+    }
+  });
+
+  it('a type-4 transaction on such a chain signs as viem does', async () => {
+    const chainId = 2 ** 40 + 3;
+    const a = { chainId, address: PINNED, nonce: 0n };
+    const sig = signEvmDigest(D, authorizationHash(a));
+    const auth: SignedAuthorization = { ...a, yParity: sig[64] === 27 ? 0 : 1, r: hex(sig.subarray(0, 32)), s: hex(sig.subarray(32, 64)) };
+    const tx: SponsorTx = { type: 'eip7702', chainId: BigInt(chainId), nonce: 1n, maxPriorityFeePerGas: 1n, maxFeePerGas: 2n, gas: 90_000n, to: from0xHex(ACCOUNT), value: 0n, data: new Uint8Array(0), accessList: [], authorizationList: [auth] };
+    const ref = await VIEM_RELAYER.signTransaction({ type: 'eip7702', chainId, nonce: 1, maxPriorityFeePerGas: 1n, maxFeePerGas: 2n, gas: 90_000n, to: ACCOUNT, value: 0n, data: '0x', authorizationList: [{ ...auth, nonce: 0 }] } as never);
+    expect(signSponsorTx(D_RELAYER, tx)).toBe(ref);
+  });
+});
+
+describe('invalid keys', () => {
+  it('are EvmSponsorError invalid_input in every signer, with no key material', () => {
+    const tx: SponsorTx = { type: 'eip1559', chainId: BigInt(LOCAL), nonce: 0n, maxPriorityFeePerGas: 1n, maxFeePerGas: 1n, gas: 21_000n, to: from0xHex(T1), value: 0n, data: new Uint8Array(0), accessList: [] };
+    for (const k of [new Uint8Array(32), new Uint8Array(33).fill(1), from0xHex(`0x${N.toString(16)}`), 'key' as unknown as Uint8Array]) {
+      expect(codeOf(() => signAuthorization(k, { chainId: LOCAL, address: PINNED, nonce: 0n }, ENABLED))).toBe('invalid_input');
+      expect(codeOf(() => signExecute(k, baseInput(), ENABLED))).toBe('invalid_input');
+      expect(codeOf(() => signSponsorTx(k, tx))).toBe('invalid_input');
+    }
+  });
+});
+
 // ---- guard ----
 
 describe('isSponsorDomain', () => {
@@ -625,10 +823,10 @@ describe('sponsor subject', () => {
   it('round-trips many shapes; outputs EIP-55 addresses and lowercase data', () => {
     for (const s of [
       subject({ authNonce: null }),
-      subject({ authNonce: U64 - 1n, executeNonce: U64, deadline: U64, minGas: 0n }),
+      subject({ authNonce: U64 - 1n, executeNonce: U64, deadline: U64, minGas: 1n }),
       subject({ chainId: Number.MAX_SAFE_INTEGER }),
       subject({ calls: Array.from({ length: EVM_SPONSOR_MAX_CALLS }, (_, i) => ({ to: addr(`c${i}`), value: 0n, data: bytesOf(i === 7 ? EVM_SPONSOR_MAX_CALL_DATA_BYTES : i * 50, i) })) }),
-      subject({ calls: [{ to: ZERO_ADDRESS, value: 0n, data: '0x' }] }),
+      subject({ chainId: 2 ** 33 + 7 }),
     ]) {
       const b = encodeSponsorSubject(s);
       expect(b.length).toBeLessThanOrEqual(EVM_SPONSOR_SUBJECT_MAX_BYTES);
@@ -670,7 +868,11 @@ describe('sponsor subject', () => {
       { authNonce: U64 },
       { executeNonce: U64 + 1n },
       { deadline: 0n },
+      { minGas: 0n },
       { account: '0xnope' as Hex },
+      { calls: [{ to: ZERO_ADDRESS, value: 0n, data: '0x' }] },
+      { calls: [{ to: T1, value: 0n, data: '0x' }, { to: ACCOUNT, value: 0n, data: '0x' }] },
+      { calls: [{ to: PINNED.toLowerCase() as Hex, value: 0n, data: '0x' }] },
     ];
     for (const over of bad) expect(decodeCode(() => encodeSponsorSubject(subject(over)))).toBe('invalid_value');
   });
@@ -717,7 +919,11 @@ describe('sponsor subject', () => {
       [set(4, [[T1.toLowerCase(), '0x', bytesOf(EVM_SPONSOR_MAX_CALL_DATA_BYTES + 1)]]), 'too_large'],
       [set(5, '0x010000000000000000'), 'invalid_value'], // 2^64
       [set(6, '0x'), 'invalid_value'], // deadline 0
+      [set(4, [[`0x${'00'.repeat(20)}`, '0x', '0x']]), 'invalid_value'], // call to the zero address
+      [set(4, [[ACCOUNT.toLowerCase(), '0x', '0x']]), 'invalid_value'], // call to the account itself
+      [set(4, [[PINNED.toLowerCase(), '0x', '0x']]), 'invalid_value'], // call to the delegate
       [set(7, `0x${'00'.repeat(20)}`), 'invalid_value'], // zero relayer
+      [set(8, '0x'), 'invalid_value'], // minGas 0
       [set(8, ['0x01']), 'malformed'],
       [new Uint8Array(EVM_SPONSOR_SUBJECT_MAX_BYTES + 1), 'too_large'],
     ];

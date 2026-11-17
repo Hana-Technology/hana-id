@@ -12,7 +12,7 @@ import { type Bytes, concatBytes, from0xHex, toBytes } from '../bytes.ts';
 import { type Hex, bigIntBytes, recoverEvmAddress, rlpEncode, signEvmDigest } from '../signers/evm.ts';
 import { sponsorDelegate } from './delegates.ts';
 import { refuse } from './errors.ts';
-import { U64_MAX, addressBytes, checkLowS, chainIdOf, enabledSet, hex0x, isZeroAddress, scalar32, uint, word32Hex } from './values.ts';
+import { U64_MAX, addressBytes, checkLowS, chainIdOf, checkSigningKey, hex0x, isZeroAddress, scalar32, signerOptions, signing, uint, word32Hex } from './values.ts';
 
 /** The EIP-7702 authorization's signing magic. */
 export const AUTHORIZATION_MAGIC = 0x05;
@@ -45,6 +45,11 @@ export interface SignAuthorizationOptions {
   readonly enabledChains: readonly number[];
   /** Sign the zero address (clear the delegation) instead of the pinned delegate. */
   readonly revoke?: boolean;
+  /**
+   * TESTS ONLY: also sign for a chain whose pinned entry is a placeholder (not a deployed contract). Without it a
+   * placeholder entry is refused. No production code passes it (a test checks the repo's sources).
+   */
+  readonly allowPlaceholderDelegateInTests?: true;
 }
 
 // Every input field is read exactly once, into a plain snapshot that everything after uses (an object with getters can't
@@ -93,19 +98,18 @@ export function authorizationListItem(a: SignedAuthorization): { chainId: number
  * unless `revoke` is true (which allows only the zero address). The key is used for this one signature, never kept.
  */
 export function signAuthorization(d: Uint8Array, a: Authorization, options: SignAuthorizationOptions): SignedAuthorization {
+  checkSigningKey(d);
   const p = parsed(a, false);
-  if (typeof options !== 'object' || options === null) refuse('invalid_input', 'options must be an object');
-  const enabled = enabledSet(options.enabledChains);
-  if (options.revoke !== undefined && typeof options.revoke !== 'boolean') refuse('invalid_input', 'revoke must be a boolean');
-  const revoke = options.revoke === true;
+  const { enabled, revoke, allowPlaceholder } = signerOptions(options, true);
   const pinned = sponsorDelegate(p.chainId);
   if (!enabled.has(p.chainId) || pinned === null) refuse('chain_not_enabled', 'Sponsorship is not enabled on this chain');
+  if (pinned.placeholder && !allowPlaceholder) refuse('delegate_not_pinned', 'The delegate on this chain is a test placeholder');
   if (revoke) {
     if (!isZeroAddress(p.address)) refuse('delegate_not_pinned', 'A revoke authorization names the zero address');
   } else if (hex0x(p.address) !== pinned.address.toLowerCase()) {
     refuse('delegate_not_pinned', 'Only the pinned delegate can be authorized on this chain');
   }
-  const sig = signEvmDigest(d, hashTuple(p));
+  const sig = signing(() => signEvmDigest(d, hashTuple(p)));
   return Object.freeze({
     chainId: p.chainId,
     address: checksumEvmAddress(p.address),
@@ -137,6 +141,8 @@ export function delegationDesignator(address: Hex): Bytes {
  * (no code, contract code, a wrong length or prefix). A designator to the zero address returns the zero address.
  */
 export function delegationTarget(code: Uint8Array): Hex | null {
-  if (!(code instanceof Uint8Array) || code.length !== 23 || code[0] !== 0xef || code[1] !== 0x01 || code[2] !== 0x00) return null;
-  return checksumEvmAddress(code.subarray(3));
+  if (!(code instanceof Uint8Array)) return null;
+  const c = Uint8Array.from(code);
+  if (c.length !== 23 || c[0] !== 0xef || c[1] !== 0x01 || c[2] !== 0x00) return null;
+  return checksumEvmAddress(c.subarray(3));
 }

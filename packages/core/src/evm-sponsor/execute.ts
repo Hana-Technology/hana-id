@@ -15,7 +15,21 @@ import { type Hex, evmSignerAddress, recoverEvmAddress, signEvmDigest } from '..
 import { type NormalizedTypedData, hashTypedData, normalizeTypedData } from '../typed-data.ts';
 import { SPONSOR_DELEGATE_DOMAIN, sponsorDelegate } from './delegates.ts';
 import { refuse } from './errors.ts';
-import { U256_MAX, U64_MAX, addressBytes, chainIdOf, dataBytes, enabledSet, hex0x, isZeroAddress, rsvParts, uint, word32Hex } from './values.ts';
+import {
+  U256_MAX,
+  U64_MAX,
+  addressBytes,
+  chainIdOf,
+  checkSigningKey,
+  dataBytes,
+  hex0x,
+  isZeroAddress,
+  rsvParts,
+  signerOptions,
+  signing,
+  uint,
+  word32Hex,
+} from './values.ts';
 
 /** At most this many calls in one sponsored batch (and at least one: the contract refuses an empty batch). */
 export const EVM_SPONSOR_MAX_CALLS = 8;
@@ -206,22 +220,42 @@ export function recoverExecuteSigner(input: ExecuteInput, signature: Hex | Uint8
 export interface SignExecuteOptions {
   /** The chains the caller has sponsorship switched on for. */
   readonly enabledChains: readonly number[];
+  /**
+   * TESTS ONLY: also sign for a chain whose pinned entry is a placeholder (not a deployed contract). Without it a
+   * placeholder entry is refused. No production code passes it (a test checks the repo's sources).
+   */
+  readonly allowPlaceholderDelegateInTests?: true;
+}
+
+/**
+ * True for a call target a sponsored batch never names: the zero address, the account itself (its own delegate
+ * functions) or the delegate's implementation address. The app allowlist is the main control; this is a second one.
+ */
+export function isForbiddenSponsorTarget(to: Uint8Array, account: Uint8Array, delegate: Uint8Array): boolean {
+  const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
+  return isZeroAddress(to) || same(to, account) || same(to, delegate);
 }
 
 /**
  * Signs an Execute with the user's key `d` and returns the 65-byte `r ‖ s ‖ v` signature (`0x` hex, v 27 or 28, low
- * s). Refuses (EvmSponsorError), besides everything executeTypedData refuses: a chain outside `enabledChains` or
- * without a pinned delegate, an implementation other than that chain's pinned delegate, an account other than this
- * key's address, and any call with value.
+ * s). Refuses (EvmSponsorError), besides everything executeTypedData refuses: an invalid key, a chain outside
+ * `enabledChains` or without a pinned delegate, a placeholder delegate (unless the test-only option is given), an
+ * implementation other than that chain's pinned delegate, an account other than this key's address, a deadline or
+ * minGas of 0, any call with value, and any call to the zero address, the account itself or the delegate.
  */
 export function signExecute(d: Uint8Array, input: ExecuteInput, options: SignExecuteOptions): Hex {
+  checkSigningKey(d);
   const p = parse(input);
-  if (typeof options !== 'object' || options === null) refuse('invalid_input', 'options must be an object');
-  const enabled = enabledSet(options.enabledChains);
+  const { enabled, allowPlaceholder } = signerOptions(options, false);
   const pinned = sponsorDelegate(p.chainId);
   if (!enabled.has(p.chainId) || pinned === null) refuse('chain_not_enabled', 'Sponsorship is not enabled on this chain');
+  if (pinned.placeholder && !allowPlaceholder) refuse('delegate_not_pinned', 'The delegate on this chain is a test placeholder');
   if (hex0x(p.implementation) !== pinned.address.toLowerCase()) refuse('delegate_not_pinned', 'Only the pinned delegate can be named on this chain');
+  if (p.deadline === 0n || p.minGas === 0n) refuse('invalid_input', 'deadline and minGas must be positive');
   if (p.calls.some((c) => c.value !== 0n)) refuse('value_not_allowed', 'Sponsored calls carry no value');
-  if (checksumEvmAddress(p.account) !== evmSignerAddress(d)) refuse('not_own_account', 'The Execute is for another account');
-  return hex0x(signEvmDigest(d, digestOf(p)));
+  if (p.calls.some((c) => isForbiddenSponsorTarget(c.to, p.account, p.implementation))) {
+    refuse('invalid_input', 'A sponsored call cannot target the zero address, the account itself or the delegate');
+  }
+  if (checksumEvmAddress(p.account) !== signing(() => evmSignerAddress(d))) refuse('not_own_account', 'The Execute is for another account');
+  return hex0x(signing(() => signEvmDigest(d, digestOf(p))));
 }

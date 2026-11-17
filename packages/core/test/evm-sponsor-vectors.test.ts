@@ -120,15 +120,15 @@ describe('evm-sponsor-v1.json', () => {
         expect(hex(signEvmDigest(ACCOUNT_KEY, executeDigest(input)))).toBe(c.signature);
         expect(recoverExecuteSigner(input, c.signature)).toBe(V.account);
         expect(encodeExecuteCalldata(input, c.signature)).toBe(c.calldata);
-        if (c.walletSigns) expect(signExecute(ACCOUNT_KEY, input, { enabledChains: [c.inputs.chainId] })).toBe(c.signature);
-        else expect(() => signExecute(ACCOUNT_KEY, input, { enabledChains: [c.inputs.chainId] })).toThrow();
+        if (c.walletSigns) expect(signExecute(ACCOUNT_KEY, input, { enabledChains: [c.inputs.chainId], allowPlaceholderDelegateInTests: true })).toBe(c.signature);
+        else expect(() => signExecute(ACCOUNT_KEY, input, { enabledChains: [c.inputs.chainId], allowPlaceholderDelegateInTests: true })).toThrow();
       });
 
       it('authorization', () => {
         if (c.authorization === null) return;
         const a = { chainId: c.authorization.chainId, address: c.authorization.address, nonce: BigInt(c.authorization.nonce) };
         expect(hex(authorizationHash(a))).toBe(c.authorization.hash);
-        const signed = signAuthorization(ACCOUNT_KEY, a, { enabledChains: [a.chainId] });
+        const signed = signAuthorization(ACCOUNT_KEY, a, { enabledChains: [a.chainId], allowPlaceholderDelegateInTests: true });
         expect({ yParity: signed.yParity, r: signed.r, s: signed.s }).toEqual({ yParity: c.authorization.yParity, r: c.authorization.r, s: c.authorization.s });
         expect(recoverAuthorization(signed)).toBe(V.account);
       });
@@ -147,7 +147,7 @@ describe('evm-sponsor-v1.json', () => {
       it('relayer transaction', () => {
         const t = c.relayerTx;
         if (t === null) return;
-        const signed = c.authorization ? signAuthorization(ACCOUNT_KEY, { chainId: c.authorization.chainId, address: c.authorization.address, nonce: BigInt(c.authorization.nonce) }, { enabledChains: [c.authorization.chainId] }) : null;
+        const signed = c.authorization ? signAuthorization(ACCOUNT_KEY, { chainId: c.authorization.chainId, address: c.authorization.address, nonce: BigInt(c.authorization.nonce) }, { enabledChains: [c.authorization.chainId], allowPlaceholderDelegateInTests: true }) : null;
         const base = {
           chainId: BigInt(t.chainId),
           nonce: BigInt(t.nonce),

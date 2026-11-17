@@ -78,10 +78,63 @@ export function rsvParts(sig: unknown): { r: bigint; s: bigint; recovery: 0 | 1 
   return { r, s, recovery: b[64] === 27 ? 0 : 1 };
 }
 
-/** The `enabledChains` option: an array of positive safe integers. */
-export function enabledSet(enabled: unknown): ReadonlySet<number> {
-  if (!Array.isArray(enabled) || !enabled.every((c) => typeof c === 'number' && Number.isSafeInteger(c) && c > 0)) {
-    refuse('invalid_input', 'enabledChains must be an array of chain IDs');
+/**
+ * A caller's array, read once: its `length` once (checked against `max`), then each element once, into a plain copy.
+ * Everything after uses only the copy.
+ */
+export function snapshotList(v: unknown, max: number, what: string): unknown[] {
+  if (!Array.isArray(v)) refuse('invalid_input', `${what} must be an array`);
+  const n: unknown = v.length;
+  if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0 || n > max) refuse('invalid_input', `${what} must hold at most ${max} entries`);
+  const out: unknown[] = [];
+  for (let i = 0; i < n; i++) out.push((v as unknown[])[i]);
+  return out;
+}
+
+/** A copy of caller bytes, made before anything is checked. */
+export function bytesCopy(v: unknown, what: string): Bytes {
+  if (!(v instanceof Uint8Array)) refuse('invalid_input', `${what} must be bytes`);
+  return Uint8Array.from(v);
+}
+
+export interface SignerOptions {
+  enabled: ReadonlySet<number>;
+  revoke: boolean;
+  allowPlaceholder: boolean;
+}
+
+/**
+ * The signers' options, each read once: `enabledChains` (an array of positive safe integers), `revoke` (a boolean if
+ * present) and the test-only `allowPlaceholderDelegateInTests` (exactly `true` if present).
+ */
+export function signerOptions(options: unknown, withRevoke: boolean): SignerOptions {
+  if (typeof options !== 'object' || options === null) refuse('invalid_input', 'options must be an object');
+  const o = options as { enabledChains?: unknown; revoke?: unknown; allowPlaceholderDelegateInTests?: unknown };
+  const chains = snapshotList(o.enabledChains, 256, 'enabledChains');
+  if (!chains.every((c) => typeof c === 'number' && Number.isSafeInteger(c) && c > 0)) refuse('invalid_input', 'enabledChains must be an array of chain IDs');
+  const revoke: unknown = withRevoke ? o.revoke : undefined;
+  if (revoke !== undefined && typeof revoke !== 'boolean') refuse('invalid_input', 'revoke must be a boolean');
+  const allow: unknown = o.allowPlaceholderDelegateInTests;
+  if (allow !== undefined && allow !== true) refuse('invalid_input', 'allowPlaceholderDelegateInTests must be true if given');
+  return { enabled: new Set(chains as number[]), revoke: revoke === true, allowPlaceholder: allow === true };
+}
+
+/** Refuses anything but a valid 32-byte secp256k1 private key, with a fixed message (never the key). */
+export function checkSigningKey(d: unknown): void {
+  let ok = false;
+  try {
+    ok = d instanceof Uint8Array && d.length === 32 && secp256k1.utils.isValidPrivateKey(d);
+  } catch {
+    ok = false;
   }
-  return new Set(enabled as number[]);
+  if (!ok) refuse('invalid_input', 'Invalid signing key');
+}
+
+/** Runs a signing step, turning any failure into a fixed EvmSponsorError (no key, digest or value in it). */
+export function signing<T>(f: () => T): T {
+  try {
+    return f();
+  } catch {
+    return refuse('invalid_input', 'Signing failed');
+  }
 }

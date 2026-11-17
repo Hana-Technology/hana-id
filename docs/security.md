@@ -1543,7 +1543,7 @@ handshake removes the frame and closes its port, as `destroy()` does.
   facts are one tap away rather than on screen, and the risk is stated in plain words above them instead ("Journear
   can’t tell what this request does. It could move your money or tokens. Only approve if you fully trust {App}.";
   raw signing: "… Reject unless you are certain."), red where what can't be read could move value or control with no
-  visible bound, amber otherwise. A user who approves without opening them relies on that line alone. A token gets a symbol and decimals only from the pinned `MAINNET_DEMO` list,
+  visible bound, amber otherwise. A user who approves without opening them relies on that line alone. A Soroban contract creation lists every call its authorizations hold and is red when it has any or runs a constructor; a NEAR function-call key states its fee allowance. A token gets a symbol and decimals only from the pinned `MAINNET_DEMO` list,
   never from a contract's own claim. Opening or closing the details is ordinary content: the Approve guard is neither
   armed nor reset by it (a unit test and an e2e test check), and a box inside closed details is measured again on
   toggle (`watchOverflowing`). A Stellar passphrase that isn't display-safe is shown as hex. Residual: a spend shape the summary doesn't recognise (a router call, Permit2's witness

@@ -717,7 +717,17 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
       return ok(['restore archived contract data']);
     case 'invokeHostFunction': {
       const f = op.hostFunction;
-      if (f.type !== 'invokeContract') return { text: [f.type === 'uploadContractWasm' ? 'upload contract code' : 'create a contract'], explainable: false, risk: 'warning' };
+      if (f.type !== 'invokeContract') {
+        // Creating a contract: every call its authorizations hold is listed (an authorization of the creation itself is
+        // the operation; what sits under it is listed). Red when it authorizes anything or runs a constructor (V2),
+        // which acts with the authorities given; amber for creating without either, or uploading code.
+        for (const auth of op.auth) {
+          const root = auth.rootInvocation;
+          for (const inv of root.function.type === 'contractFn' ? [root] : root.subInvocations) otherAuthorizations(passphrase, inv, me, warnings, extra);
+        }
+        const red = op.auth.length > 0 || f.type === 'createContractV2';
+        return { text: [f.type === 'uploadContractWasm' ? 'upload contract code' : f.type === 'createContractV2' ? 'create a contract and run its constructor' : 'create a contract'], explainable: false, risk: red ? 'danger' : 'warning' };
+      }
       const token = sorobanTokenCall(passphrase, f, me, warnings, 'send');
       let explainable = token !== null;
       // The call is explained only when its authorizations hold exactly that call and nothing else: any other node is
@@ -986,7 +996,9 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
     case 'stake':
       return ok(['stake (lock) ', strong(formatNear(a.stake))]);
     case 'addKey':
-      return ok(a.accessKey.permission.type === 'fullAccess' ? ['add a full-access key to ', ...where] : ['add a key to ', ...where, ' that can use ', code(a.accessKey.permission.receiverId)]);
+      if (a.accessKey.permission.type === 'fullAccess') return ok(['add a full-access key to ', ...where]);
+      // A function-call key spends the account's NEAR on its calls' fees, up to its allowance: said in view.
+      return ok(['add a key to ', ...where, ' that can use ', code(a.accessKey.permission.receiverId), ...(a.accessKey.permission.allowance === null ? [', with no limit on the NEAR it spends on fees'] : [', spending up to ', strong(formatNear(a.accessKey.permission.allowance)), ' on fees'])]);
     case 'deleteKey':
       return ok(['remove a key from ', ...where]);
     case 'deleteAccount':

@@ -2,7 +2,7 @@
 // fee and network, the warnings for permissions to spend the user's tokens, and whether Journear can explain the
 // request (the details start open when it can't; raw signing's can't be folded). Hostile inputs included: look-alike
 // and invisible characters, huge values, the zero address, revokes, and typed data that imitates a permit.
-import { Account, Asset, Claimant, LiquidityPoolAsset, MuxedAccount, Operation, TransactionBuilder, getLiquidityPoolId, xdr } from '@stellar/stellar-base';
+import { Account, Address, Asset, Claimant, LiquidityPoolAsset, MuxedAccount, Operation, TransactionBuilder, getLiquidityPoolId, xdr } from '@stellar/stellar-base';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   type ApprovalSummary,
@@ -947,5 +947,33 @@ describe('D810: every formerly auto-open case carries its risk line, at the righ
     const s = stellar(Array.from({ length: 22 }, () => paymentOp()));
     expect(codes(s).filter((c) => c === 'steps_not_listed')).toEqual([]);
     expect(text(s.warnings.find((w) => w.code === 'many_value_steps')!.text)).toBe(`This request moves money or tokens in 22 steps and only the first 20 are listed here. Only approve if you fully trust ${APP}. Technical details are below.`);
+  });
+});
+
+// ---- the final review of 2026-11-17 ----
+
+describe('final review: contract creation on Stellar lists its authorizations; NEAR keys say their fee allowance', () => {
+  const steal = () => sourceAuth(invocation(TOKEN, 'transfer', [addr(USER), addr(ATTACKER), i128(10n ** 15n)]));
+  it('a contract created with a constructor or with authorizations: red, every authorized call listed', () => {
+    const s = stellar([Operation.createCustomContract({ address: new Address(USER), wasmHash: Buffer.alloc(32, 5), constructorArgs: [], salt: Buffer.alloc(32, 6), auth: [steal()] })]);
+    expect(s.warnings.find((w) => w.code === 'cannot_explain')?.level).toBe('danger');
+    expect(s.lines.map(text)).toContain(`It also authorizes sending 1,000,000,000,000,000 (in the token’s smallest units) of the token contract ${TOKEN} to ${ATTACKER}.`);
+    expect(s.explainable).toBe(false);
+    // A constructor alone (no authorizations) is red too.
+    const ctor = stellar([Operation.createCustomContract({ address: new Address(USER), wasmHash: Buffer.alloc(32, 5), constructorArgs: [], salt: Buffer.alloc(32, 6) })]);
+    expect(ctor.warnings.find((w) => w.code === 'cannot_explain')?.level).toBe('danger');
+    expect(headline(ctor)).toBe(`${APP} wants to create a contract and run its constructor`);
+  });
+
+  it('uploading contract code alone stays amber', () => {
+    const s = stellar([Operation.uploadContractWasm({ wasm: Buffer.from('00', 'hex') })]);
+    expect(s.warnings.find((w) => w.code === 'cannot_explain')?.level).toBe('warning');
+    expect(s.lines).toEqual([]);
+  });
+
+  it('a NEAR function-call key says what it may spend on fees', () => {
+    const key = (allowance: bigint | null): NearAction => ({ type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance, receiverId: 'app.testnet', methodNames: [] } } });
+    expect(headline(near([key(null)], NEAR_ME))).toBe(`${APP} wants to add a key to your account that can use app.testnet, with no limit on the NEAR it spends on fees`);
+    expect(headline(near([key(25n * 10n ** 22n)], NEAR_ME))).toBe(`${APP} wants to add a key to your account that can use app.testnet, spending up to 0.25 NEAR on fees`);
   });
 });

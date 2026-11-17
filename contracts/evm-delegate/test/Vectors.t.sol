@@ -55,9 +55,9 @@ contract VectorsTest is Base {
         assertGe(cases(j), 3);
     }
 
-    /// Once both branches are in one checkout, the copy must be the core file exactly.
-    function test_vector_isTheCoreFileWhenPresent() public view {
-        if (!vm.exists(CORE_VECTOR)) return;
+    /// The copy is the core file exactly (the core file is the source: `pnpm run generate` copies it here).
+    function test_vector_isTheCoreFile() public view {
+        assertTrue(vm.exists(CORE_VECTOR), "packages/core/test/vectors/evm-sponsor-v1.json is missing");
         assertEq(keccak256(bytes(vm.readFile(VECTOR))), keccak256(bytes(vm.readFile(CORE_VECTOR))), "copy differs");
     }
 

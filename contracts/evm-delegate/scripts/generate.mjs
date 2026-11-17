@@ -13,9 +13,10 @@
 //   node scripts/generate.mjs           write them (run `forge build` first; `pnpm run generate` does both)
 //   node scripts/generate.mjs --check   compare instead; exit 1 naming each stale file (the verify lane runs this)
 //
-// Both modes also check that README.md's "Deployment" table quotes the current addresses and runtime code hashes. When
-// the core vector is not in this checkout, the copy is left as it is and a notice says so. test/Vectors.t.sol checks
-// the contract against the vector; test/Artifacts.t.sol checks the artifacts against a real CREATE2 deployment.
+// Both modes also check that README.md's "Deployment" table quotes the current addresses and runtime code hashes.
+// test/Vectors.t.sol checks the contract against the vector (and that the copy is the core file); test/Artifacts.t.sol
+// checks the artifacts against a real CREATE2 deployment; packages/core/test/evm-sponsor.test.ts checks that the core
+// signer's pinned table agrees with the artifact.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -106,8 +107,8 @@ function main() {
   const artifacts = CONTRACTS.map((c) => artifact(c, forgeOut(c)));
   const files = CONTRACTS.map((c, i) => [join('artifacts', `${c.name}.json`), json(artifacts[i])]);
   const core = join(HERE, CORE_VECTOR);
-  if (existsSync(core)) files.push([VECTOR_COPY, readFileSync(core, 'utf8')]);
-  else console.log(`notice: ${CORE_VECTOR} is not in this checkout; ${VECTOR_COPY} is left as it is`);
+  if (!existsSync(core)) throw new Error(`${CORE_VECTOR} is missing: it is the source of ${VECTOR_COPY}`);
+  files.push([VECTOR_COPY, readFileSync(core, 'utf8')]);
 
   const stale = [];
   for (const [rel, text] of files) {

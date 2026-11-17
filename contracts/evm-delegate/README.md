@@ -181,8 +181,9 @@ from `foundry.toml`; or `forge build --build-info`): solc `0.8.28+commit.7893614
   `structHash`, `digest`, `signature`, `calldata`, and the core-only `authorization`, `subject` and `relayerTx`.
   `test/Vectors.t.sol` checks the contract block against the contract, recomputes every case's hashes, the RFC 6979
   signature and the calldata, then runs the calldata from the vector's relayer against the contract deployed at the
-  case's implementation address; once both files are in one checkout it and `generate.mjs --check` fail if the copy
-  differs from the source.
+  case's implementation address; it and `generate.mjs --check` fail if the copy differs from the source (or the source
+  is missing). `packages/core/test/evm-sponsor.test.ts` in turn fails if the core signer's pinned delegate disagrees
+  with `artifacts/HanaDelegateExecutor.json` on the address or the runtime code hash.
 
 ## Tests
 

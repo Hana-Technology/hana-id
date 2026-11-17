@@ -18,7 +18,7 @@ import type { Hex } from '../signers/evm.ts';
 /** The Execute domain's `name` and `version`, exactly as the contract hashes them. */
 export const SPONSOR_DELEGATE_DOMAIN = Object.freeze({ name: 'HanaDelegateExecutor', version: '1' } as const);
 
-/** The ABI and typed-data layout this module codes against (contract interface v1, D841). */
+/** The ABI and typed-data layout this module codes against (the delegate contract's interface v1). */
 export const SPONSOR_ABI_VERSION = 1;
 
 export interface SponsorDelegate {

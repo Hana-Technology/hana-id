@@ -128,6 +128,8 @@ export function mainnetOfRequest(request: Extract<PortRequest, { method: SignMet
       const chainId = typedDataChainId(normalizeTypedData(request.params[1]));
       return chainId === null || isTestEvmChain(chainId) ? null : { chain: 'evm', chainId };
     }
+    case 'evm_sendSponsored':
+      return isTestEvmChain(request.params.chainId) ? null : { chain: 'evm', chainId: request.params.chainId };
     case 'near_signTransaction':
     case 'near_signDelegateAction':
       // The request names its network; NEAR's bytes don't (a testnet transaction is tied to testnet by its block hash,

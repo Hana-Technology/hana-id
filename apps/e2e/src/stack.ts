@@ -10,6 +10,7 @@
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import type { HanaEnv } from '@hana-id/web';
+import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { portBase, portsFrom } from './ports.ts';
 
 export const ENV_NAME = 'local-e2e';
@@ -43,6 +44,16 @@ export const EVIL_ORIGIN = 'http://evil.e2e.test';
 export const EVM_CHAIN_ID = 31337;
 
 /**
+ * Gas sponsorship on the mocked chain (HanaEnv.evmSponsor, D834): core's pinned local delegate and, as the relayer,
+ * anvil's published second dev account's address (a public test vector). Only the approval popup reads it so far: it
+ * decodes a sponsored action against these (D850). Nothing on the stack relays.
+ */
+export const E2E_SPONSOR_RELAYER = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
+export const E2E_EVM_SPONSOR: NonNullable<HanaEnv['evmSponsor']> = Object.freeze({
+  [String(EVM_CHAIN_ID)]: Object.freeze({ delegate: (SPONSOR_DELEGATES[EVM_CHAIN_ID] as { address: string }).address, relayer: E2E_SPONSOR_RELAYER }),
+});
+
+/**
  * The test MPC's master secret. Test-only and public on purpose: the e2e env pins its public key, so the mock MPC can
  * answer CKD requests that pass the vault's pairing check. It is a small constant so no scanner mistakes it for a key.
  */
@@ -66,6 +77,7 @@ export const E2E_ENV: HanaEnv = Object.freeze({
   devEnv: true,
   emailIssuerUrl: ISSUER_URL,
   emailIss: EMAIL_ISS,
+  evmSponsor: E2E_EVM_SPONSOR,
 });
 
 // ---- live mode: a pk_live_ app end to end ----

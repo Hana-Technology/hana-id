@@ -102,7 +102,15 @@ function refuseReservedRaw(request: SignRequest, rules: SubjectRules): void {
  * the request can't be signed as given (malformed typed data, non-canonical XDR, an envelope that doesn't parse for its
  * network).
  */
+/**
+ * Why evm_sendSponsored is refused (4200): the approval kind, its decoder and its screen are in (D850); the vault's
+ * handler, which builds the subject from the API's prepare answer and sends the signed batch, is the next package.
+ */
+export const SPONSORED_NOT_YET = 'Sponsored actions are not available in this vault yet';
+
 export function approvalSubject(request: SignRequest, addresses: SigningAddresses, rules: SubjectRules): ApprovalSubject {
+  // Before anything else: no sponsored action is built or signed here yet (D850). Refused like an unknown method.
+  if (request.method === 'evm_sendSponsored') throw new VaultError(ErrorCode.unsupportedMethod, SPONSORED_NOT_YET);
   // A test app never signs raw (D39): a raw digest can be a mainnet transaction's hash. Before the app's setting.
   if (request.method === 'hana_signRaw' && rules.testApp) throw new VaultError(ErrorCode.unauthorized, TEST_APP_RAW_RULE, { reason: 'raw_not_allowed_for_test_apps' });
   if (request.method === 'hana_signRaw' && rules.rawSign !== 'approval') throw new VaultError(ErrorCode.unauthorized, 'Raw signing is off for this app', { reason: 'raw_sign_off' });
@@ -273,6 +281,9 @@ export function signRequest(prk: Uint8Array, request: SignRequest, subject: Appr
         if (signed.accountId !== subject.address) throw new Error('The NEAR key is not the session’s account');
         return signed;
       }
+      case 'evm_sendSponsored':
+        // Never reached: approvalSubject refuses it until the vault's sponsored-action handler exists.
+        throw new VaultError(ErrorCode.unsupportedMethod, SPONSORED_NOT_YET);
     }
   } catch (e) {
     if (e instanceof VaultError) throw e;

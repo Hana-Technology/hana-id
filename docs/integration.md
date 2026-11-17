@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-17 (the approval window: plain summary, details always folded, risk lines, spend warnings), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-17 (the approval window; sponsored EVM actions, not live), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -818,6 +818,12 @@ one your RPC reports.
 One key covers every EVM chain. Contract creation (an empty `to`) works with approval, but no policy ever
 auto-approves it. Errors are `ProviderRpcError` with numeric codes. A sign-in that didn't complete is `4001`, and the
 Journear Passport code is in `error.data.code`. Logging out emits `accountsChanged []`, as wallets do.
+
+**Sponsored actions (not live).** Journear will pay the network fee for EVM calls staff allowlist for your app, on
+Base Sepolia first. Each one shows an approval with the calls' usual summary and warnings and "Network fee: none.
+Journear pays it for you."; the first one also sets the account up (its address stays the same). The approval window
+is built; the SDK method and the vault's part are not, so no SDK sends it yet and a vault answers `4200`. This guide
+will describe it when it ships.
 
 ### NEAR
 

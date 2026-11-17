@@ -6,6 +6,7 @@ export * from './abi.ts';
 export * from './eip712.ts';
 export * from './errors.ts';
 export * from './evm.ts';
+export * from './evm-sponsored.ts';
 export * from './hex.ts';
 export * from './message.ts';
 export * from './request.ts';

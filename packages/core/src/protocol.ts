@@ -249,6 +249,13 @@ export const PORT_METHODS = [
   'near_signTransaction',
   'near_signMessage',
   'near_signDelegateAction',
+  /**
+   * A batch of EVM calls Journear's relayer sends for the user, the network fee paid by Journear (EIP-7702 delegate,
+   * D831, D850). Sent only by an SDK of EVM_SPONSOR_SDK_MIN or later, for a chain the vault reported in
+   * `sponsoredChains`. Always the approval popup (D839); the vault builds the approval subject from the API's prepare
+   * answer and its own build manifest, never from the page.
+   */
+  'evm_sendSponsored',
 ] as const;
 
 export type PortMethod = (typeof PORT_METHODS)[number];
@@ -265,6 +272,7 @@ export const SIGN_METHODS = [
   'near_signTransaction',
   'near_signMessage',
   'near_signDelegateAction',
+  'evm_sendSponsored',
 ] as const satisfies readonly PortMethod[];
 
 export type SignMethod = (typeof SIGN_METHODS)[number];
@@ -314,7 +322,32 @@ export interface PortParamsMap {
   near_signMessage: { message: string; recipient: string; nonce: string; callbackUrl?: string };
   /** `delegateAction`: base64 of a borsh NEP-366 `DelegateAction` (without NEP-461's prefix) from the user's account. */
   near_signDelegateAction: { network: NearNetwork; delegateAction: string };
+  /** 1 to EVM_SPONSOR_MAX_CALLS calls on `chainId`, each value `0x0` (sponsored calls carry no value) with a function. */
+  evm_sendSponsored: { chainId: number; calls: SponsoredCallRequest[] };
 }
+
+/** One call of evm_sendSponsored: the target, `0x0` (always), and its calldata (a 4-byte selector and its arguments). */
+export interface SponsoredCallRequest {
+  to: string;
+  value: '0x0';
+  data: `0x${string}`;
+}
+
+/**
+ * The limits of a sponsored batch, as `@hana-id/core/evm-sponsor` has them (EVM_SPONSOR_MAX_CALLS,
+ * EVM_SPONSOR_MAX_CALL_DATA_BYTES): copied here so the root entry doesn't reach that module (a test keeps them equal).
+ */
+export const SPONSORED_MAX_CALLS = 8;
+export const SPONSORED_MAX_CALL_DATA_BYTES = 8192;
+
+const isSponsoredCall = (v: unknown): v is SponsoredCallRequest =>
+  isPlainObject(v) &&
+  exactKeys(v, ['to', 'value', 'data']) &&
+  isAddressFor('evm', v.to) &&
+  v.value === '0x0' &&
+  isHex(v.data) &&
+  v.data.length >= 2 + 8 &&
+  v.data.length <= 2 + 2 * SPONSORED_MAX_CALL_DATA_BYTES;
 
 /**
  * `popupOpened: true` (only on APPROVAL_POPUP_METHODS): the SDK opened `{authOrigin}/approve?from=partner&v=…` in the
@@ -425,6 +458,16 @@ const PARAMS: { [M in PortMethod]: (p: unknown) => PortParamsMap[M] | null } = {
     }
     return out;
   },
+  evm_sendSponsored: (p) =>
+    isPlainObject(p) &&
+    exactKeys(p, ['chainId', 'calls']) &&
+    isInt(p.chainId, 1, Number.MAX_SAFE_INTEGER) &&
+    Array.isArray(p.calls) &&
+    p.calls.length >= 1 &&
+    p.calls.length <= SPONSORED_MAX_CALLS &&
+    p.calls.every(isSponsoredCall)
+      ? { chainId: p.chainId, calls: (p.calls as SponsoredCallRequest[]).map((c) => ({ to: c.to, value: c.value, data: c.data })) }
+      : null,
 };
 
 /** A NEP-413 recipient or callback URL: one line of 1 to NEP413_MAX_FIELD_BYTES bytes of visible text. */
@@ -481,6 +524,13 @@ export interface PortAddresses {
  */
 export const NEAR_SDK_MIN = '0.4.0';
 
+/**
+ * The first SDK version that takes `sponsoredChains` in StatusResult and sends evm_sendSponsored. The vault adds
+ * `sponsoredChains` only for an SDK whose `hana:hello` names this version or later (an older SDK's validators refuse a
+ * key they don't know).
+ */
+export const EVM_SPONSOR_SDK_MIN = '0.5.0';
+
 export interface StatusResult {
   status: VaultStatus;
   addresses?: PortAddresses;
@@ -492,7 +542,20 @@ export interface StatusResult {
    * SUPPORT_ID_SDK_MIN or later (the vault reads the hello's `sdk`).
    */
   supportId?: string;
+  /**
+   * The EVM chains whose network fees Journear pays in this build (its manifest's `evm.sponsor`, D834), ascending:
+   * the chains evm_sendSponsored may name. Present only when there is one, and only to an SDK of EVM_SPONSOR_SDK_MIN
+   * or later. A build property, so the same logged in or out; the vault and the API still decide each request.
+   */
+  sponsoredChains?: number[];
 }
+
+/** At most this many sponsored chains in a status (the manifest's bound, D836). */
+export const SPONSORED_CHAINS_MAX = 4;
+
+/** 1 to SPONSORED_CHAINS_MAX distinct positive chain IDs, ascending. */
+const isSponsoredChains = (v: unknown): v is number[] =>
+  Array.isArray(v) && v.length >= 1 && v.length <= SPONSORED_CHAINS_MAX && v.every((c, i) => isInt(c, 1, Number.MAX_SAFE_INTEGER) && (i === 0 || c > (v[i - 1] as number)));
 
 export interface LoginResult {
   addresses: PortAddresses;
@@ -586,6 +649,8 @@ export interface PortResultMap {
   near_signMessage: { accountId: string; publicKey: string; signature: string };
   /** base64 64-byte signature and base64 borsh SignedDelegateAction (for hana.near.relay or any NEP-366 relayer). */
   near_signDelegateAction: { signature: string; signedDelegateAction: string };
+  /** The relayer's transaction hash, once the receipt shows the batch executed (the delegate's `Executed` event). */
+  evm_sendSponsored: { transactionHash: `0x${string}`; status: 'executed' };
 }
 
 /**
@@ -621,8 +686,9 @@ const isSig65 = (v: unknown): v is `0x${string}` => typeof v === 'string' && /^0
 const isSignedBy = (v: unknown, key: string): boolean => isPlainObject(v) && exactKeys(v, [key, 'signerAddress']) && isAddressFor('stellar', v.signerAddress);
 
 function isStatusResult(v: unknown, extra: readonly string[] = []): v is StatusResult {
-  if (!isPlainObject(v) || !exactKeys(v, ['status', 'persistence'], ['addresses', 'expiresAtMs', 'supportId', ...extra])) return false;
+  if (!isPlainObject(v) || !exactKeys(v, ['status', 'persistence'], ['addresses', 'expiresAtMs', 'supportId', 'sponsoredChains', ...extra])) return false;
   if (!isPersistence(v.persistence)) return false;
+  if (v.sponsoredChains !== undefined && !isSponsoredChains(v.sponsoredChains)) return false;
   if (v.status === 'logged_out') return v.addresses === undefined && v.expiresAtMs === undefined && v.supportId === undefined;
   return v.status === 'logged_in' && isPortAddresses(v.addresses) && isMs(v.expiresAtMs) && (v.supportId === undefined || isSupportId(v.supportId));
 }
@@ -685,6 +751,7 @@ const RESULTS: { [M in PortMethod]: (r: unknown) => boolean } = {
     /^ed25519:[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(r.publicKey) &&
     isSig64Base64(r.signature),
   near_signDelegateAction: (r) => isPlainObject(r) && exactKeys(r, ['signature', 'signedDelegateAction']) && isSig64Base64(r.signature) && isBase64(r.signedDelegateAction, APPROVAL_MESSAGE_MAX_BYTES),
+  evm_sendSponsored: (r) => isPlainObject(r) && exactKeys(r, ['transactionHash', 'status']) && typeof r.transactionHash === 'string' && /^0x[0-9a-fA-F]{64}$/u.test(r.transactionHash) && r.status === 'executed',
 };
 
 export type PortReply<M extends PortMethod = PortMethod> = { v: 1; id: string; result: PortResultMap[M] } | { v: 1; id: string; error: ProtocolError };
@@ -1160,6 +1227,7 @@ export const APPROVAL_KIND: Readonly<Record<SignMethod, ApprovalKind>> = {
   near_signTransaction: 'near_tx',
   near_signMessage: 'near_message',
   near_signDelegateAction: 'near_delegate',
+  evm_sendSponsored: 'evm_sponsored',
 };
 const isApprovalKind = (v: unknown): v is ApprovalKind => (APPROVAL_KINDS as readonly unknown[]).includes(v);
 
@@ -1354,6 +1422,9 @@ export function approvalChain(request: Extract<PortRequest, { method: SignMethod
  * - near_signTransaction: the borsh Transaction, context {nearNetwork}
  * - near_signDelegateAction: the borsh DelegateAction (no NEP-461 prefix), context {nearNetwork}
  * - near_signMessage: NEP-413's u32le(2^31 + 413) ‖ borsh(Payload), no context (NEP-413 names no network)
+ * - evm_sendSponsored: none here. Its subject (`@hana-id/core/evm-sponsor` encodeSponsorSubject, context {chainId})
+ *   holds what the vault chooses (the delegate, the relayer, the nonces, the deadline, the gas floor) from the API's
+ *   prepare answer and its own build manifest, so the vault builds it (sponsoredApprovalContent); this throws.
  */
 export function approvalContent(request: Extract<PortRequest, { method: SignMethod }>): { bytes: Uint8Array; context: ApprovalContext } {
   switch (request.method) {
@@ -1382,6 +1453,8 @@ export function approvalContent(request: Extract<PortRequest, { method: SignMeth
       return { bytes: base64Decode(request.params.delegateAction), context: { nearNetwork: request.params.network } };
     case 'near_signMessage':
       return { bytes: nep413Bytes(request.params), context: {} };
+    case 'evm_sendSponsored':
+      throw new Error('A sponsored action’s approval subject is built by the vault (sponsoredApprovalContent)');
   }
 }
 

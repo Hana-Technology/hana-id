@@ -12336,6 +12336,12 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   up for amounts that leave the user and down for amounts the user receives. A non-zero amount is never shown as 0.
   The exact figure is in the details. The totals ("NEAR leaving your account", "XLM leaving your account") follow it,
   and per-step amounts appear only in the group lines.
+- Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, the leftover Low of PR 65's review), decided while
+  building, to confirm: a Stellar `setOptions` that sets the account's own key's weight to 0 keeps its bullet "Sets your
+  own Journear Passport key’s weight to 0: you lose control of the account" even when its step's line is in view, as
+  NEAR's removal of the user's own key does: the line ("set your own key’s weight to 0") doesn't say the user loses
+  control (`render-approval.ts` `accountControlItems`' `keep`; test `render-approval-sponsored.test.ts`). Any other
+  weight drops its bullet as before.
 - Why: the founder's audience; a long numbered list or a stack of red boxes hides the one fact that matters.
 - Address impact: none.
 
@@ -12346,12 +12352,30 @@ The parallel EVM gas sponsorship builds to the shared spec of 2026-11-17, in num
 `feat/evm-sponsor-core` (the signing core, merged into `next` at d39d1d69), D834–D836 from `feat/evm-sponsor-manifest`
 (the manifest block, its generation and the API's config parser; from `next` @ 7243d2af, `next` merged in; not
 deployed), D841 and D845 from `feat/evm-delegate-contract` (the delegate contract, MIT, in `contracts/evm-delegate`;
-from `next` @ 7243d2af, `next` merged in; not deployed). Decided by the user 2026-11-17: non-Web3 users who don't know what gas is; EVM first, Base Sepolia (84532)
+from `next` @ 7243d2af, `next` merged in; not deployed), D831, D839 and D850 from `feat/evm-sponsored-approval` (the
+approval kind, its decoder, summary and window; from `next` @ e4ee9762; not merged, not deployed). Decided by the user 2026-11-17: non-Web3 users who don't know what gas is; EVM first, Base Sepolia (84532)
 only for now; a self-hosted relayer with an EIP-7702 delegate behind an API gate (no third-party bundler or
 paymaster); Journear absorbs the fees within daily budgets, 0.02 test ETH a day overall and 0.01 per app; the user's
 address never changes; testnet only; free tiers; a staff-only allowlist in the manifest.
 Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/security.md` "The EVM delegate contract",
 `docs/operations.md` "CI and git", `LICENSING.md`.
+
+### D831. One approval for the one-time setup and the first batch; the window's words
+- Date 2026-11-17 · Status: **decided by the user 2026-11-17** (one approval, the wording, never "upgrade" or "smart
+  account") · Built on `feat/evm-sponsored-approval`, not merged, not deployed: `packages/core/src/decode/summary.ts`
+  (`SPONSORED_FEE`, `accountSetupNote`), `packages/web/src/auth/render-approval.ts` (`sponsoredDetails`, `validUntil`);
+  tests `packages/core/test/evm-sponsored-approval.test.ts`, `packages/web/test/auth/render-approval-sponsored.test.ts`,
+  `apps/e2e/tests/approval-summary.spec.ts`.
+- Decision: a sponsored action is one approval; the account's one-time setup (its EIP-7702 authorization) rides with
+  the first batch. The headline is the calls' own summary. The fee row reads "Network fee: none. Journear pays it for
+  you." Only when the approval also signs the authorization, an amber note: "One-time setup: this also turns on free
+  network fees for your account on {chain name}. Your address stays the same and you still approve every action." The
+  words "upgrade" and "smart account" never appear in user-visible text (tested); EIP-7702 is named only in the folded
+  details: "Account setup (EIP-7702): account helper 0x… ✓ Journear Passport account helper v1, chain N, account nonce
+  N" (later: "Account helper (EIP-7702): 0x… ✓ … (no setup in this approval)"), "Paid by: Journear’s relayer 0x…",
+  "Valid until: HH:MM" (with the date when it isn't today, and the raw value). "Turn it off" in Passport Home is
+  phase 2, before mainnet.
+- Address impact: none (EIP-7702 keeps the account's address).
 
 ### D833. The generic signing paths never make a delegate signature: typed data in the delegate's domain and type-4 transactions are refused there
 - Date 2026-11-17 · Status: the approach (Journear's own relayer, an EIP-7702 delegate, the user approves every action)
@@ -12473,6 +12497,14 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Open item (for the relayer package, WP5b): the OP Stack L1 data fee is **not** bounded by these manifest rules. Before
   sending, the relayer must estimate it (the chain's GasPriceOracle predeploy) and count it in the transaction's
   worst-case budget reservation, and refuse the send when gas × fee cap plus that fee doesn't fit.
+
+### D839. A sponsored action is never auto-approved
+- Date 2026-11-17 · Status: **decided by the user 2026-11-17** (the setup note's promise, D831: "you still approve
+  every action") · Built on `feat/evm-sponsored-approval`: `evm_sponsored` in `NEVER_AUTO_APPROVED_KINDS`
+  (`packages/core/src/approval.ts`); the matcher answers `never_covered` (tested).
+- Decision: every sponsored action shows the approval popup with its guarded Approve (D36), whatever policy the app
+  has: its first one also sets up the account, and each one spends Journear's fee budget. No policy format covers it.
+- Address impact: none.
 
 ### D841. The EVM delegate: `contracts/evm-delegate` (Foundry, MIT), its fixed interface, deployed by CREATE2 at a predicted address
 - Date 2026-11-17 · Status: **confirmed by the user 2026-11-17** (location, licence and a revised, freshly deployed self-hosted delegate decided by the user 2026-11-17; the interface from the shared spec; the toolchain, dependency pinning, CREATE2 salts, artifacts and verify wiring decided while building, then confirmed) · Built: `contracts/evm-delegate` (`src/HanaDelegateExecutor.sol`, `src/demo/CheckIn.sol`, `test/*.t.sol`, `test/utils/`, `scripts/generate.mjs`, `artifacts/HanaDelegateExecutor.json`, `artifacts/CheckIn.json`, `test/vectors/execute-v1.json`, `foundry.toml`, `package.json`, `README.md`, `LICENSE`), `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `scripts/ci-changes.mjs` (`EVM_DIR`, `evmChanged`), `scripts/verify.mjs` (the `evm` step), `scripts/test/ci-changes.test.ts`, `scripts/test/verify.test.ts`, `LICENSING.md`
@@ -12670,3 +12702,69 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   sequence. Keys and URLs with keys go into the shell with `read -rs … ; export …`, never typed on a command line.
 - Address impact: none for users (no derivation input changes). The contracts' addresses are the ones D841 predicts.
 
+### D850. The sponsored action's approval: kind `evm_sponsored`, a subject the popup decodes and checks itself, the calls' own summary
+- Date 2026-11-17 · Status: decided while building, to confirm · Built on `feat/evm-sponsored-approval` (from `next` @
+  e4ee9762), not merged, not deployed: `packages/core/src/approval.ts` (`evm_sponsored`), `protocol.ts`
+  (`evm_sendSponsored`, `SponsoredCallRequest`, `SPONSORED_MAX_CALLS`, `SPONSORED_MAX_CALL_DATA_BYTES`,
+  `StatusResult.sponsoredChains`, `SPONSORED_CHAINS_MAX`, `EVM_SPONSOR_SDK_MIN`), `networks.ts` (`mainnetOfRequest`),
+  `evm-sponsor/subject.ts` (`sponsoredApprovalContent`), `decode/evm-sponsored.ts` (`decodeSponsoredAction`,
+  `SponsorChains`, `DecodedSponsoredAction`), `decode/evm.ts` (`decodeCall`, `DecodedEvmCallSite` exported),
+  `decode/request.ts` (`DecodeOptions.sponsorChains`), `decode/summary.ts` (`sponsoredAction`, `sponsoredStep`,
+  `account_setup`), `packages/web/src/auth/render-approval.ts` (`sponsoredDetails`, `evmCallData`, `validUntil`),
+  `auth/approve-page.ts` (passes `env.evmSponsor`), `vault/signing.ts` (`SPONSORED_NOT_YET`), `apps/e2e/src/stack.ts`
+  (`E2E_EVM_SPONSOR`); tests as D831's plus `approval.test.ts`, `approval-flow.test.ts`, `protocol.test.ts`.
+- The kind: `evm_sponsored`, chain `evm`, context `{chainId}`, `bytes` = core's subject (`encodeSponsorSubject`, D846),
+  never empty. The approval digest binds the bytes and the chain, so every field, the authorization nonce included
+  (`[]` and `[0]` differ; tested field by field). The approve-request window message is unchanged: the subject bytes
+  are its `bytes`, so no new field (D429, D476).
+- The port method: `evm_sendSponsored {chainId, calls: [{to, value: '0x0', data}]}`, strict (unknown keys refused), 1
+  to 8 calls, `value` exactly `'0x0'`, `data` 4 to 8192 bytes (a function, never a bare call, D835), `chainId` a
+  positive safe integer; its answer `{transactionHash, status: 'executed'}`. A sign method (the 192 KiB cap,
+  `popupOpened`), `APPROVAL_KIND` `evm_sponsored`; `mainnetOfRequest` names a chain outside `TEST_EVM_CHAINS` (a test
+  app is refused before any popup). `approvalContent` throws for it: the subject holds what the vault chooses (the
+  delegate, the relayer, the nonces, the deadline, the gas floor), so the vault builds it with
+  `sponsoredApprovalContent`. `StatusResult` (and `ready`) may carry `sponsoredChains`: 1 to 4 ascending distinct chain
+  IDs, sent only to an SDK of `EVM_SPONSOR_SDK_MIN` (0.5.0) or later. The limits are copied in `protocol.ts` (the root
+  entry must not reach `@hana-id/core/evm-sponsor`) and a test keeps them equal. Until the vault's handler exists, the
+  vault answers it 4200 (`SPONSORED_NOT_YET`) before anything else.
+- The popup trusts neither the page nor the vault's framing: it decodes the subject bytes itself
+  (`decodeApprovalRequest(subject, { sponsorChains: env.evmSponsor })`, the build's own manifest) and offers no Approve
+  ("Journear can’t read this request, so it can’t be approved.") unless the subject decodes strictly (D846: value 0,
+  no call to the zero address, the account or the delegate, 1 to 8 calls, one encoding per subject), names the
+  context's chain, that chain is sponsored by this build, its delegate is the pinned, non-placeholder
+  `SPONSOR_DELEGATES` entry and the build's, its relayer is the build's, its account is the request's address, and
+  every call has at least 4 bytes of calldata. Not checked by the popup, shown in the details instead: the deadline
+  against its clock (a user's clock drifts; the vault and the API check the window against server time and the
+  contract enforces it), `minGas` (the vault's simulation, D845's duties), the app's allowlist (the popup can't see it;
+  the API enforces it).
+- The summary: each call goes through the same `evmCall` as an ordinary transaction's call, so every spend warning,
+  "can't tell" line and verified-name rule applies unchanged. One call: exactly the summary an EIP-1559 transaction
+  with that call gets (headline, lines, warnings, explainable; tested for every known signature, an unknown selector
+  and undecodable arguments), with the fee row "none. Journear pays it for you." instead of a maximum fee. Several:
+  "{App} wants to do N things in one transaction", grouped by D814 (at most four lines; a group is identical calls,
+  same line, target and calldata; a grant's line is its warning's bullet, which names the spender and the amount; a
+  call's own extra lines, such as an amount in smallest units, follow its line); order value to others, grants, calls
+  (and every call Journear can't read), other value, moves to the user's own account, take-backs. One red "can't tell"
+  line for the batch: the call's own when one kind is unreadable, else "part of it is something Journear can’t
+  summarise". Every call counts as moving value (a call can move tokens the account holds), so a left-out call makes
+  the "not all listed" line red, and a left-out one to someone else or a grant has its own bullet. Nothing is said
+  about ETH leaving: a sponsored call carries no value. The setup note is amber, code `account_setup`, ranked after
+  the can't-tell, not-listed and spend-permission lines in the amber box, and present exactly when the subject
+  carries an authorization nonce.
+- What a hostile page gains from free transactions (the question put to this package): (1) the fee as a brake is gone:
+  an account with no ETH could run no on-chain call before, and now can run sponsored ones; a page can ask again and
+  again at no cost to itself; (2) "Journear pays it for you" may read as Journear vouching for the request.
+  Concluded: no extra visible line. The window is exactly as alarming as for the same unsponsored call (tested), every
+  request needs its own guarded Approve and is never auto-approved (D36, D839), and the API sponsors only calls staff
+  allowlisted for that app (target, selector, exact calldata, value 0; D835) within per-user and per-app limits (D836),
+  so a hostile page gets free calls only to contracts reviewed for its own app. The fee was a weak brake for this
+  audience (they don't know what gas is) and protected only users without ETH. A standing "free doesn't mean safe" line
+  on every sponsored approval would sit on harmless check-ins and dilute the warnings that matter (D809, D814's one
+  box per colour). To revisit if an app's allowlist ever takes a selector that grants or moves tokens (`approve`,
+  `transfer`, `permit`, `setApprovalForAll`): proposed rule, such a selector needs the founder's sign-off in the
+  manifest change. Raw signing after the setup: it could sign an Execute digest (D833), but it could already sign any
+  transaction's hash, so the setup adds no exposure.
+- Known effect: the demo's `checkIn()` is not a selector Journear knows, so its approval carries the red "can't tell"
+  line, as the same call unsponsored would. Making it calm is a separate decision (the CheckIn contract and its
+  function on Journear's verified list, the demo card's package).
+- Address impact: none.

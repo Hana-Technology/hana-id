@@ -60,6 +60,7 @@ const VALID_PARAMS: Record<(typeof PORT_METHODS)[number], unknown> = {
   hana_linkAccount: { method: 'email' },
   hana_requestEmailSharing: { popupBlocked: true },
   ...NEAR_PARAMS,
+  evm_sendSponsored: { chainId: 84532, calls: [{ to: EVM, value: '0x0', data: '0x183ff085' }] },
 };
 
 describe('port requests', () => {

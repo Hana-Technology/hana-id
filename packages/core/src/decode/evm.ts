@@ -64,7 +64,25 @@ function toField(item: RlpItem | undefined): string | null {
   return checksumAddress(b);
 }
 
-function decodeCall(data: Uint8Array): Pick<DecodedEvmTxBase, 'selector' | 'call'> {
+/**
+ * One contract call as the summary reads it: an EVM transaction's (decodeEvmTransaction) or a call of a sponsored
+ * batch (decode/evm-sponsored.ts), decoded by the same decodeCall, so both get the same summary and warnings.
+ */
+export interface DecodedEvmCallSite {
+  /** EIP-55. */
+  readonly to: string;
+  readonly value: bigint;
+  /** Calldata, `0x` hex. */
+  readonly data: string;
+  readonly selector: string | null;
+  readonly call: DecodedEvmCall | null;
+}
+
+/**
+ * The selector and the decoded call of `data`: the call is set when the selector is known and the calldata decodes
+ * against its signature, null otherwise (the page then shows raw `data`). Used for every EVM call the popup shows.
+ */
+export function decodeCall(data: Uint8Array): Pick<DecodedEvmTxBase, 'selector' | 'call'> {
   if (data.length < 4) return { selector: null, call: null };
   const selector = toHex0x(data.subarray(0, 4));
   const fn = knownFunction(selector);

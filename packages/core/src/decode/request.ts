@@ -10,6 +10,7 @@ import { type NormalizedTypedData, normalizeTypedData, typedDataChainId } from '
 import { type TypedDataView, typedDataView } from './eip712.ts';
 import { DecodeError, fail } from './errors.ts';
 import { type DecodedEvmTx, decodeEvmTransaction } from './evm.ts';
+import { type DecodedSponsoredAction, type SponsorChains, decodeSponsoredAction } from './evm-sponsored.ts';
 import { toHex0x } from './hex.ts';
 import { type DecodedMessage, decodeMessage } from './message.ts';
 import {
@@ -39,7 +40,17 @@ export type DecodedApproval =
   | { readonly kind: 'raw'; readonly chain: 'stellar' | 'evm'; readonly hex: string }
   | ({ readonly kind: 'near_tx' } & DecodedNearTx)
   | ({ readonly kind: 'near_delegate' } & DecodedNearDelegate)
-  | ({ readonly kind: 'near_message' } & DecodedNearMessage);
+  | ({ readonly kind: 'near_message' } & DecodedNearMessage)
+  | ({ readonly kind: 'evm_sponsored' } & DecodedSponsoredAction);
+
+/** What the popup knows besides the request: the build's own settings. */
+export interface DecodeOptions {
+  /**
+   * The chains this build sponsors (HanaEnv.evmSponsor): an `evm_sponsored` request is refused unless its chain is
+   * here and its delegate and relayer are these (and the delegate the pinned one). Absent: every one is refused.
+   */
+  readonly sponsorChains?: SponsorChains;
+}
 
 /** The NEAR request's account and key must be the vault's: its implicit account id and the key it is the hex of. */
 function checkNearSigner(address: string, account: string, key: NearPublicKey, what: string): void {
@@ -67,8 +78,9 @@ export function typedDataFromBytes(bytes: Uint8Array): NormalizedTypedData {
  * typed data and raw requests carry no context (approval.ts); typed data shows its domain's chain. A NEAR transaction
  * or delegate action must be signed by the subject's account with its key (`invalid_value` otherwise); NEAR bytes
  * name no network, so the context is the request's claim (the vault checks a test app's transaction's block hash).
+ * A sponsored EVM action is refused unless `options.sponsorChains` has its chain (decode/evm-sponsored.ts).
  */
-export function decodeApprovalRequest(s: ApprovalSubject): DecodedApproval {
+export function decodeApprovalRequest(s: ApprovalSubject, options: DecodeOptions = {}): DecodedApproval {
   try {
     validateApprovalSubject(s);
   } catch (e) {
@@ -118,6 +130,8 @@ export function decodeApprovalRequest(s: ApprovalSubject): DecodedApproval {
     }
     case 'near_message':
       return { kind: s.kind, ...nearMessageView(decodeNep413Message(s.bytes)) };
+    case 'evm_sponsored':
+      return { kind: s.kind, ...decodeSponsoredAction(s.bytes, ctx.chainId as number, s.address, options.sponsorChains) };
     default:
       throw new DecodeError('unsupported', 'Unknown approval kind');
   }

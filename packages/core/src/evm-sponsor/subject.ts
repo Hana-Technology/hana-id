@@ -172,6 +172,16 @@ export function decodeSponsorSubject(input: Uint8Array): EvmSponsorSubject {
   });
 }
 
+/**
+ * The approval request's `bytes` and `context` for a subject (kind `evm_sponsored`, D850): the subject's bytes and its
+ * chain. The vault builds the subject (the API's prepare answer and its own manifest) and sends exactly these to the
+ * popup, which decodes them itself; the approval digest binds every field, the authorization nonce included.
+ */
+export function sponsoredApprovalContent(s: EvmSponsorSubject): { readonly bytes: Bytes; readonly context: { readonly chainId: number } } {
+  const bytes = encodeSponsorSubject(s);
+  return { bytes, context: { chainId: decodeSponsorSubject(bytes).chainId } };
+}
+
 /** The Execute a subject describes (the delegate is the implementation). */
 export function sponsorSubjectExecuteInput(s: EvmSponsorSubject): ExecuteInput {
   return Object.freeze({

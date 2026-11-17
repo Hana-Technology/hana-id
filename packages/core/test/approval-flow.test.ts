@@ -7,6 +7,8 @@ import { type ApprovalSubject, approvalDigest, validateApprovalSubject } from '.
 import { base64Encode, toHex } from '../src/bytes.ts';
 import { decodeApprovalRequest } from '../src/decode/index.ts';
 import { APPROVAL_KIND, type PortRequest, SIGN_METHODS, type SignMethod, approvalChain, approvalContent, newRequestId, parsePortRequest, parseWindowMessage } from '../src/protocol.ts';
+import { sponsoredApprovalContent } from '../src/evm-sponsor/subject.ts';
+import { CHECK_IN, CHECK_IN_DATA, SPONSOR_CHAIN, SPONSOR_CHAINS, sponsorSubject } from './evm-sponsored-fixture.ts';
 import { NEAR_PARAMS, NEAR_USER } from './near-fixtures.ts';
 import { PASSPHRASE, POOL, USER, addr, authPreimageBytes, invocation, paymentOp, txBytes } from './stellar-fixtures.ts';
 
@@ -27,6 +29,7 @@ const PARAMS: Record<SignMethod, unknown> = {
   eth_signTypedData_v4: [EVM_USER, TYPED],
   hana_signRaw: { chain: 'evm', digest: new Uint8Array(32).fill(0xab) },
   ...NEAR_PARAMS,
+  evm_sendSponsored: { chainId: SPONSOR_CHAIN, calls: [{ to: CHECK_IN, value: '0x0', data: CHECK_IN_DATA }] },
 };
 
 /** What the vault builds for a sign request: the approval subject of hana:approve-request. */
@@ -34,7 +37,14 @@ function subjectOf(method: SignMethod, params: unknown = PARAMS[method]): Approv
   const request = parsePortRequest({ v: 1, id: 'r1', method, params }) as Extract<PortRequest, { method: SignMethod }>;
   expect(request).not.toBeNull();
   const chain = approvalChain(request);
-  return { kind: APPROVAL_KIND[method], chain, address: chain === 'stellar' ? USER : chain === 'near' ? NEAR_USER : EVM_USER, ...approvalContent(request) };
+  const address = chain === 'stellar' ? USER : chain === 'near' ? NEAR_USER : EVM_USER;
+  // A sponsored action's subject is the vault's (its prepare answer and manifest): here, the request's calls on the fixture's chain.
+  if (request.method === 'evm_sendSponsored') {
+    expect(() => approvalContent(request)).toThrow(/built by the vault/u);
+    const { chainId, calls } = request.params;
+    return { kind: APPROVAL_KIND[method], chain, address, ...sponsoredApprovalContent(sponsorSubject({ chainId, account: address as `0x${string}`, calls: calls.map((c) => ({ to: c.to as `0x${string}`, value: 0n, data: c.data })) })) };
+  }
+  return { kind: APPROVAL_KIND[method], chain, address, ...approvalContent(request) };
 }
 
 describe('approval flow: port request → approve-request → decoders → digest', () => {
@@ -48,7 +58,7 @@ describe('approval flow: port request → approve-request → decoders → diges
     const message = { v: 1, t: 'hana:approve-request', id: newRequestId(), appName: 'Partner', parentOrigin: 'https://partner.example', ...s, position: 1, queued: 1 };
     const parsed = parseWindowMessage(message, ['hana:approve-request']);
     expect(parsed).not.toBeNull();
-    expect(decodeApprovalRequest(s).kind).toBe(s.kind);
+    expect(decodeApprovalRequest(s, { sponsorChains: SPONSOR_CHAINS }).kind).toBe(s.kind);
     // The popup computes the digest from the message it received, the vault from the subject it queued.
     const p = parsed as typeof message;
     expect(toHex(approvalDigest({ ...p, bytes: Uint8Array.from(p.bytes) }))).toBe(toHex(approvalDigest({ ...s, id: p.id, parentOrigin: p.parentOrigin })));

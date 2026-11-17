@@ -428,8 +428,9 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     let decoded: DecodedApproval | null = null;
     let problem = '';
     try {
-      // A sponsored action is checked against this build's own sponsor chains (its delegate and relayer), never the vault's word.
-      decoded = decodeApprovalRequest(input, env.evmSponsor ? { sponsorChains: env.evmSponsor } : {});
+      // A sponsored action is checked against this build's own sponsor chains (its delegate and relayer) and the page's
+      // clock (its deadline), never the vault's word.
+      decoded = decodeApprovalRequest(input, { ...(env.evmSponsor ? { sponsorChains: env.evmSponsor } : {}), nowMs: now() });
     } catch (err) {
       problem = err instanceof DecodeError ? err.message : 'The request could not be read.';
     }

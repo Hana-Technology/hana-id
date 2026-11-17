@@ -50,7 +50,8 @@ import {
   parseWindowMessage,
 } from '../src/protocol.ts';
 import { matchAutoApprovePolicy, validateAutoApprovePolicy } from '../src/policy/index.ts';
-import { policyJson } from './policy-fixtures.ts';
+import { CHAIN as POLICY_CHAIN, EVM_PERMIT2, EVM_USDC, EVM_USER, EVM_VAULT, policyJson } from './policy-fixtures.ts';
+import { EXECUTE_TYPES } from '../src/evm-sponsor/execute.ts';
 import {
   CHECK_IN,
   CHECK_IN_DATA,
@@ -60,6 +61,7 @@ import {
   SPONSOR_CHAINS,
   SPONSOR_DELEGATE,
   SPONSOR_ME,
+  SPONSOR_NOW_MS,
   SPONSOR_RELAYER,
   TOKEN,
   UINT256_MAX,
@@ -83,7 +85,7 @@ afterAll(() => {
 const text = (t: SummaryText): string => summaryString(t, APP);
 const warnings = (s: ApprovalSummary) => s.warnings.map((w) => [w.level, w.code, text(w.text)] as const);
 
-const decode = (s: ApprovalSubject = sponsoredApproval(), chains: typeof SPONSOR_CHAINS | 'none' = SPONSOR_CHAINS) => decodeApprovalRequest(s, chains === 'none' ? {} : { sponsorChains: chains });
+const decode = (s: ApprovalSubject = sponsoredApproval(), chains: typeof SPONSOR_CHAINS | 'none' = SPONSOR_CHAINS) => decodeApprovalRequest(s, chains === 'none' ? { nowMs: SPONSOR_NOW_MS } : { sponsorChains: chains, nowMs: SPONSOR_NOW_MS });
 const sponsored = (calls: ReturnType<typeof sponsoredCall>[], over: Parameters<typeof sponsorSubject>[0] = {}) => summarizeApproval(decode(sponsoredApproval(sponsorSubject({ calls, ...over }))), { address: SPONSOR_ME });
 
 /** The same call as an ordinary EIP-1559 transaction on the same chain (value 0). */
@@ -466,5 +468,83 @@ describe('the sponsored action’s summary (D831, D850)', () => {
   it('is total: an odd decoded shape gives the unexplained summary, never a throw', () => {
     const d = decode() as Extract<DecodedApproval, { kind: 'evm_sponsored' }>;
     expect(summarizeApprovalRaw({ ...d, calls: [null] } as never, { address: SPONSOR_ME })).toBe(UNEXPLAINED_SUMMARY);
+  });
+});
+
+// ---- D833 in the popup and the matcher: the delegate's typed-data domain is never an eip712 request ----
+
+describe('typed data in the delegate’s domain (D833): the popup refuses it, the matcher never matches it', () => {
+  const eip712 = (json: unknown, address = SPONSOR_ME): ApprovalSubject => ({ kind: 'eip712', chain: 'evm', address, context: {}, bytes: new TextEncoder().encode(JSON.stringify(json)) });
+  const execute = (domain: Record<string, unknown>) => ({
+    types: { EIP712Domain: EXECUTE_TYPES.EIP712Domain, Execute: EXECUTE_TYPES.Execute, Call: EXECUTE_TYPES.Call },
+    primaryType: 'Execute',
+    domain,
+    message: { calls: [{ to: SPENDER, value: '1', data: '0x' }], nonce: '0', deadline: '1900000000', relayer: SPENDER, minGas: '0' },
+  });
+  const salt = `0x${'00'.repeat(12)}${SPONSOR_DELEGATE.slice(2).toLowerCase()}`;
+
+  it.each([
+    ['the exact domain', { name: 'HanaDelegateExecutor', version: '1', chainId: 31337, verifyingContract: SPONSOR_ME, salt }],
+    ['another key order and a hex chain ID', { salt, verifyingContract: SPONSOR_ME, chainId: '0x7a69', version: '1', name: 'HanaDelegateExecutor' }],
+    ['another version', { name: 'HanaDelegateExecutor', version: '9', chainId: 84532, verifyingContract: SPONSOR_ME, salt }],
+  ])('%s: no Approve (unsupported)', (_name, domain) => {
+    expect(decodeError(() => decodeApprovalRequest(eip712(execute(domain))))).toBe('unsupported');
+  });
+
+  it('a look-alike or padded name is ordinary typed data (the delegate never accepts its digest), shown with the red line', () => {
+    for (const name of ['HanaDelegateExecutor ', 'HanaDeIegateExecutor']) {
+      const d = decodeApprovalRequest(eip712(execute({ name, version: '1', chainId: 31337, verifyingContract: SPONSOR_ME, salt })));
+      expect(d.kind).toBe('eip712');
+      expect(summarizeApproval(d, { address: SPONSOR_ME }).warnings.map((w) => [w.level, w.code])).toEqual([['danger', 'cannot_explain']]);
+    }
+  });
+
+  it('a policy-listed (verifyingContract, primaryType) pair in the delegate’s domain never auto-approves', () => {
+    const policy = validateAutoApprovePolicy(policyJson());
+    if (!policy.ok) throw new Error('policy');
+    const permit = (name: string) => ({
+      types: {
+        EIP712Domain: [
+          { name: 'name', type: 'string' },
+          { name: 'chainId', type: 'uint256' },
+          { name: 'verifyingContract', type: 'address' },
+        ],
+        PermitDetails: [
+          { name: 'token', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'expiration', type: 'uint48' },
+          { name: 'nonce', type: 'uint48' },
+        ],
+        PermitSingle: [
+          { name: 'details', type: 'PermitDetails' },
+          { name: 'spender', type: 'address' },
+          { name: 'sigDeadline', type: 'uint256' },
+        ],
+      },
+      primaryType: 'PermitSingle',
+      domain: { name, chainId: POLICY_CHAIN, verifyingContract: EVM_PERMIT2 },
+      message: { details: { token: EVM_USDC, amount: '1000', expiration: 1, nonce: 0 }, spender: EVM_VAULT, sigDeadline: '1' },
+    });
+    const ctx = { usage: null, nowMs: Date.UTC(2026, 10, 17) };
+    // The same shape under Permit2's name matches (the control), under the delegate's name never.
+    expect(matchAutoApprovePolicy(policy.policy, eip712(permit('Permit2'), EVM_USER), ctx)).toMatchObject({ ok: true });
+    expect(matchAutoApprovePolicy(policy.policy, eip712(permit('HanaDelegateExecutor'), EVM_USER), ctx)).toMatchObject({ ok: false, reason: 'decode_failed' });
+  });
+});
+
+describe('the deadline against the popup’s clock (review, Low): at most 2 hours ahead, at most 5 minutes past', () => {
+  const at = (nowS: number, deadline = 1_900_000_000n) => decodeError(() => decodeApprovalRequest(sponsoredApproval(sponsorSubject({ deadline })), { sponsorChains: SPONSOR_CHAINS, nowMs: nowS * 1000 }));
+  it('accepts a deadline from 5 minutes past to 2 hours ahead, inclusive', () => {
+    expect(at(1_900_000_000 - 7200)).toBe('decoded');
+    expect(at(1_900_000_000)).toBe('decoded');
+    expect(at(1_900_000_000 + 300)).toBe('decoded');
+  });
+  it('refuses one further ahead or further past (a drifting clock of minutes still passes)', () => {
+    expect(at(1_900_000_000 - 7201)).toBe('invalid_value');
+    expect(at(1_900_000_000 + 301)).toBe('invalid_value');
+    expect(at(1_700_000_000, 2n ** 64n - 1n)).toBe('invalid_value');
+  });
+  it('refuses when the popup gives no clock (fail closed)', () => {
+    expect(decodeError(() => decodeApprovalRequest(sponsoredApproval(), { sponsorChains: SPONSOR_CHAINS }))).toBe('unsupported');
   });
 });

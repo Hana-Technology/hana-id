@@ -187,7 +187,8 @@ export const ACCOUNT_CONTROL_BANNER =
 /**
  * One account-control warning of an operation: its line, its bullet (D814), and whether the bullet says more than the
  * step's own line and so always stays (`keep`): setting the account's own key to weight 0 locks the user out, which
- * the line ("set your own key’s weight to 0") doesn't say, as NEAR's removal of the user's own key.
+ * the line ("set your own key’s weight to 0") doesn't say, as NEAR's removal of the user's own key; and any threshold
+ * change may lock them out, which the request alone can't rule out.
  */
 interface ControlItem {
   readonly full: string;
@@ -212,7 +213,9 @@ function accountControlItems(op: StellarOperation): ControlItem[] {
               },
         );
       } else if (c === 'thresholds') {
-        out.push({ full: 'This changes the account’s signing thresholds, which decide which keys can move funds and change the account. Wrong values let other signers take over or lock you out for good.', short: ['Changes the signing thresholds'], keep: false });
+        // Whether the new thresholds lock the user out depends on the account's signers and weights, which the request
+        // doesn't carry: the bullet says the risk the line doesn't, so it always stays.
+        out.push({ full: 'This changes the account’s signing thresholds, which decide which keys can move funds and change the account. Wrong values let other signers take over or lock you out for good.', short: ['Changes the signing thresholds: wrong values can lock you out of the account'], keep: true });
       } else if (c === 'master_weight') {
         out.push(
           op.masterWeight === 0

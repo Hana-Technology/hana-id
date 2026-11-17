@@ -36,6 +36,7 @@ import {
   type NearPublicKey,
 } from '@hana-id/core';
 import { withChainKey } from '@hana-id/core/derivation';
+import { isSponsorDomain } from '@hana-id/core/evm-sponsor';
 import { type DemoAssessment, MAINNET_DEMO, type MainnetDemoPriceBook, assessMainnetDemo, formatUsd } from '@hana-id/core/mainnet-demo';
 import {
   parseStellarAuthPreimage,
@@ -108,6 +109,15 @@ function refuseReservedRaw(request: SignRequest, rules: SubjectRules): void {
  */
 export const SPONSORED_NOT_YET = 'Sponsored actions are not available in this vault yet';
 
+/**
+ * Why typed data in a pinned delegate's EIP-712 domain is refused on eth_signTypedData_v4 (D833, reason
+ * `sponsor_domain_reserved`): once an account is delegated, such a signature would run calls as it, outside the
+ * sponsored approval. Refused before any popup or policy, on the same normalized object the signer hashes.
+ */
+export const SPONSOR_DOMAIN_RULE = 'Journear doesn’t sign typed data for its account helper’s domain here: sponsored actions have their own approval';
+
+const sponsorDomainRefusal = (): VaultError => new VaultError(ErrorCode.unauthorized, SPONSOR_DOMAIN_RULE, { reason: 'sponsor_domain_reserved' });
+
 export function approvalSubject(request: SignRequest, addresses: SigningAddresses, rules: SubjectRules): ApprovalSubject {
   // Before anything else: no sponsored action is built or signed here yet (D850). Refused like an unknown method.
   if (request.method === 'evm_sendSponsored') throw new VaultError(ErrorCode.unsupportedMethod, SPONSORED_NOT_YET);
@@ -139,16 +149,18 @@ export function approvalSubject(request: SignRequest, addresses: SigningAddresse
       break;
   }
   let content: ReturnType<typeof approvalContent>;
+  let sponsorDomain = false;
   try {
     content = approvalContent(request);
     // Refuse what the signer would refuse before anything is shown: typed data must normalize, and Stellar XDR must be
     // canonical for its network (the popup decodes these same bytes).
-    if (request.method === 'eth_signTypedData_v4') normalizeTypedData(request.params[1]);
+    if (request.method === 'eth_signTypedData_v4') sponsorDomain = isSponsorDomain(normalizeTypedData(request.params[1]));
     if (request.method === 'stellar_signTransaction') parseStellarEnvelope(request.params.xdr, request.params.networkPassphrase);
     if (request.method === 'stellar_signAuthEntry') parseStellarAuthPreimage(request.params.preimageXdr, request.params.networkPassphrase);
   } catch {
     throw new VaultError(ErrorCode.unauthorized, 'The request is malformed', { reason: 'invalid_request' });
   }
+  if (sponsorDomain) throw sponsorDomainRefusal();
   // NEAR: the bytes must decode (codec.ts, strict), and name this account and its key as the signer (D722).
   if (request.method === 'near_signTransaction' || request.method === 'near_signDelegateAction') {
     let signer: { account: string; key: NearPublicKey };
@@ -257,8 +269,11 @@ export function signRequest(prk: Uint8Array, request: SignRequest, subject: Appr
         return withChainKey(prk, 'evm', ACCOUNT, (d) => personalSign(d, message));
       }
       case 'eth_signTypedData_v4': {
-        // The single EIP-712 parser: the vault hashes the same normalized object the popup rendered.
-        const digest = hashTypedData(normalizeTypedData(request.params[1]));
+        // The single EIP-712 parser: the vault hashes the same normalized object the popup rendered, and checks that
+        // very object against the delegate's domain (D833) once more.
+        const normalized = normalizeTypedData(request.params[1]);
+        if (isSponsorDomain(normalized)) throw sponsorDomainRefusal();
+        const digest = hashTypedData(normalized);
         return withChainKey(prk, 'evm', ACCOUNT, (d) => `0x${Array.from(signEvmDigest(d, digest), (b) => b.toString(16).padStart(2, '0')).join('')}` as `0x${string}`);
       }
       case 'hana_signRaw': {

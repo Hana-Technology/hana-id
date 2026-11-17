@@ -27,6 +27,9 @@ export const calldata = (sig: string, ...args: (bigint | string | boolean)[]): H
 /** The demo's `checkIn()` (exactly its selector). */
 export const CHECK_IN_DATA: Hex = '0x183ff085';
 
+/** The popup's clock in these tests: ten minutes before the fixture's deadline (1 900 000 000). */
+export const SPONSOR_NOW_MS = (1_900_000_000 - 600) * 1000;
+
 export const sponsoredCall = (to: Hex, data: Hex) => ({ to, value: 0n, data });
 
 export function sponsorSubject(over: Partial<EvmSponsorSubject> = {}): EvmSponsorSubject {

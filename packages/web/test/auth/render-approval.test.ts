@@ -77,9 +77,9 @@ describe('renderApproval: Stellar account-control operations', () => {
   it('shows a signer removal, threshold and master-weight changes with their own warnings', () => {
     const el = render([addSignerOp(0), thresholdsOp(), masterWeightOp(0)]);
     const w = takeovers(el);
-    // Three steps, each in its own line naming it whole: the banner, and only the bullet that says more than its line
-    // (the user's own key at weight 0 locks them out; the line says only "set your own key's weight to 0").
-    expect(w).toEqual([ACCOUNT_CONTROL_BANNER, 'Sets your own Journear Passport key’s weight to 0: you lose control of the account']);
+    // Three steps, each in its own line naming it whole: the banner, and only the bullets that say more than their
+    // lines (thresholds can lock the user out; the user's own key at weight 0 does).
+    expect(w).toEqual([ACCOUNT_CONTROL_BANNER, 'Changes the signing thresholds: wrong values can lock you out of the account', 'Sets your own Journear Passport key’s weight to 0: you lose control of the account']);
     expect([...el.querySelectorAll('p.summary-line')].map((p) => p.textContent).slice(0, 3)).toEqual([`Remove the signer ${ATTACKER}`, 'Change the signing thresholds', 'Set your own key’s weight to 0']);
     expect(el.textContent).toContain('Removes signer');
     expect(el.textContent).toContain('Low threshold0');

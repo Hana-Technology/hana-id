@@ -25,6 +25,7 @@ import {
   SPONSOR_CHAINS,
   SPONSOR_DELEGATE,
   SPONSOR_ME,
+  SPONSOR_NOW_MS,
   SPONSOR_RELAYER,
   TOKEN,
   UINT256_MAX,
@@ -40,7 +41,7 @@ const TRANSFER = calldata('transfer(address,uint256)', RECIPIENT, 5_000_000n);
 const APPROVE_MAX = calldata('approve(address,uint256)', SPENDER, UINT256_MAX);
 const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test chain 31337. Your address stays the same and you still approve every action.';
 
-const decodeSponsored = (over: Parameters<typeof sponsorSubject>[0] = {}): DecodedApproval => decodeApprovalRequest(sponsoredApproval(sponsorSubject(over)), { sponsorChains: SPONSOR_CHAINS });
+const decodeSponsored = (over: Parameters<typeof sponsorSubject>[0] = {}): DecodedApproval => decodeApprovalRequest(sponsoredApproval(sponsorSubject(over)), { sponsorChains: SPONSOR_CHAINS, nowMs: SPONSOR_NOW_MS });
 const render = (decoded: DecodedApproval, nowMs?: number): HTMLElement => {
   const el = renderApproval(dom(document), decoded, APP, { envNetwork: 'testnet', testApp: false, parentOrigin: PARTNER, address: SPONSOR_ME, ...(nowMs === undefined ? {} : { nowMs }) });
   document.body.replaceChildren(el);
@@ -137,6 +138,7 @@ describe('/approve: a sponsored action is checked against this build', () => {
   let win: FakeWindow;
   let vault: RemoteWindow;
   let page: ReturnType<typeof startApprovePage>;
+  let clock = SPONSOR_NOW_MS;
   const SPONSOR_ENV: HanaEnv = Object.freeze({ ...ENV, evmSponsor: SPONSOR_CHAINS });
   const request = (over: Parameters<typeof sponsorSubject>[0] = {}, msg: Record<string, unknown> = {}) => ({
     v: 1,
@@ -150,7 +152,10 @@ describe('/approve: a sponsored action is checked against this build', () => {
     ...msg,
   });
   const start = (env: HanaEnv) => {
-    page = startApprovePage({ win, env, isGesture: () => true });
+    // The page's clock: `clock` when it starts, moving with the fake timers (the Approve guard times itself with it).
+    const started = Date.now();
+    const at = clock;
+    page = startApprovePage({ win, env, isGesture: () => true, now: () => at + (Date.now() - started) });
     win.dispatch('focus');
   };
   const approveButton = () => document.querySelector<HTMLButtonElement>('button.primary');
@@ -205,6 +210,23 @@ describe('/approve: a sponsored action is checked against this build', () => {
     expect(document.querySelector('h2.summary-headline')).toBeNull();
   });
 
+  it('a deadline more than 2 hours ahead of the popup’s clock, or more than 5 minutes past: refused, no Approve', () => {
+    for (const [now, ok] of [
+      [SPONSOR_NOW_MS, true],
+      [(1_900_000_000 - 7201) * 1000, false],
+      [(1_900_000_000 + 301) * 1000, false],
+    ] as const) {
+      clock = now;
+      start(SPONSOR_ENV);
+      win.message(request(), ENV.vaultOrigin, vault);
+      expect(approveButton() !== null, String(now)).toBe(ok);
+      page.stop();
+      resetDom();
+    }
+    clock = SPONSOR_NOW_MS;
+    start(SPONSOR_ENV);
+  });
+
   it('the chain must be the request’s own: a subject for 31337 under a context of another chain is refused', () => {
     start(SPONSOR_ENV);
     win.message(request({}, { context: { chainId: 84532 } }), ENV.vaultOrigin, vault);
@@ -233,6 +255,21 @@ describe('Stellar: the user’s own key set to weight 0 keeps its bullet (PR 65�
     const bullets = [...el.querySelectorAll('.danger-box li')].map((li) => li.textContent);
     expect(bullets).toContain('Sets your own Journear Passport key’s weight to 0: you lose control of the account');
     expect(bullets.join('\n')).not.toContain(other);
+  });
+});
+
+describe('Stellar: any signing-threshold change keeps its bullet (review, Low)', () => {
+  // Whether new thresholds lock the user out depends on the account's current signers and weights, which the request
+  // doesn't carry: so the bullet, which says what the line ("change the signing thresholds") doesn't, always stays.
+  it.each([
+    ['all three thresholds', { lowThreshold: 255, medThreshold: 255, highThreshold: 255 }],
+    ['the high threshold alone', { highThreshold: 2 }],
+    ['harmless-looking low thresholds', { lowThreshold: 0, medThreshold: 0, highThreshold: 1 }],
+  ] as const)('%s', (_name, opts) => {
+    const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([Operation.setOptions(opts)]) }), APP, { envNetwork: 'testnet', testApp: false, address: USER });
+    document.body.replaceChildren(el);
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to change the signing thresholds`);
+    expect([...el.querySelectorAll('.danger-box li')].map((li) => li.textContent)).toEqual(['Changes the signing thresholds: wrong values can lock you out of the account']);
   });
 });
 

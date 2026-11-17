@@ -12194,8 +12194,9 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   "Journear can’t tell what this request does: it calls ft_transfer on tok.testnet with arguments that don’t match the
   token standard exactly. It could move your money or tokens. …" (it replaces the generic red line). Any other NEAR
   call with JSON arguments stays explainable, as decided above (it names the contract and the method), but one whose
-  method name matches `transfer`, `withdraw`, `approve`, `send` (anywhere in the name, so `storage_withdraw` too) or
-  starts with `mt_` (the multi-token standard) gets an amber line, code `may_move_tokens`: "This calls {method} on
+  method name contains `transfer`, `withdraw`, `approve`, `send`, `swap`, `execute`, `burn`, `remove_liquidity`,
+  `unwrap`, `claim`, `redeem` or `stake` (anywhere, so `storage_withdraw` and `unstake` too) or starts with `mt_` (the
+  multi-token standard), and doesn't start with `get_`, `view_`, `is_` or `has_` (read calls), gets an amber line, code `may_move_tokens`: "This calls {method} on
   {contract}: a call like this may move tokens or NEAR you hold with that contract. Approve only if you expected it."
   (once per method and contract). Built: `summary.ts` (`NEAR_STANDARD_METHODS`, `nearStandardShape`,
   `NEAR_VALUE_METHOD`); tests in `approval-summary.test.ts` (each malformed shape, the pattern list, grouping and
@@ -12357,7 +12358,9 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   own Journear Passport key’s weight to 0: you lose control of the account" even when its step's line is in view, as
   NEAR's removal of the user's own key does: the line ("set your own key’s weight to 0") doesn't say the user loses
   control (`render-approval.ts` `accountControlItems`' `keep`; test `render-approval-sponsored.test.ts`). Any other
-  weight drops its bullet as before.
+  weight drops its bullet as before. After PR 72's review: every signing-threshold change keeps its bullet too, "Changes
+  the signing thresholds: wrong values can lock you out of the account", since whether new thresholds lock the user out
+  depends on the account's current signers and weights, which the request doesn't carry.
 - Why: the founder's audience; a long numbered list or a stack of red boxes hides the one fact that matters.
 - Address impact: none.
 
@@ -12395,10 +12398,17 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 
 ### D833. The generic signing paths never make a delegate signature: typed data in the delegate's domain and type-4 transactions are refused there
 - Date 2026-11-17 · Status: the approach (Journear's own relayer, an EIP-7702 delegate, the user approves every action)
-  decided by the user 2026-11-17; this rule decided while building, confirmed by the user 2026-11-17 · Built (core
-  only, not yet enforced):
-  `packages/core/src/evm-sponsor/guard.ts` (`isSponsorDomain`), `packages/core/test/evm-sponsor.test.ts`. Enforcement
-  in the vault is a later package (WP3).
+  decided by the user 2026-11-17; this rule decided while building, confirmed by the user 2026-11-17 · Built:
+  `packages/core/src/evm-sponsor/guard.ts` (`isSponsorDomain`), `packages/core/test/evm-sponsor.test.ts`. **Enforced in
+  the vault from branch `feat/evm-sponsored-approval`** (after PR 72's independent review, 2026-11-17; not merged,
+  not deployed): `packages/web/src/vault/signing.ts` refuses typed data in a pinned delegate's domain before any popup
+  or policy (4100, reason `sponsor_domain_reserved`, `SPONSOR_DOMAIN_RULE`), on the normalized object, and checks the
+  very object it hashes again when signing; the popup's decoder refuses it too (`decode/request.ts`, `unsupported`, no
+  Approve), so the auto-approve matcher, which decodes the same way, can never match it (`decode_failed`, tested with a
+  policy-listed pair). Exact name only: a padded or look-alike name is another EIP-712 domain whose digest the delegate
+  never accepts, so it is ordinary typed data (the generic red line). Tests `packages/web/test/vault/sponsor-domain.test.ts`
+  (key order, hex and string chain IDs, another version or primary type, the name alone, look-alikes, unrelated typed
+  data still signs, type 4 refused at the port and by the SDK's `normalizeTxInput`), `packages/core/test/evm-sponsored-approval.test.ts`.
 - Decision: a signature the delegate accepts (an `Execute` or an EIP-7702 authorization) is made only through the
   sponsored-action approval and its signers (`signExecute`, `signAuthorization`, D846). The generic paths refuse
   what could make one: `eth_signTypedData_v4` refuses typed data whose domain `name` is a pinned delegate's
@@ -12749,10 +12759,12 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   no call to the zero address, the account or the delegate, 1 to 8 calls, one encoding per subject), names the
   context's chain, that chain is sponsored by this build, its delegate is the pinned, non-placeholder
   `SPONSOR_DELEGATES` entry and the build's, its relayer is the build's, its account is the request's address, and
-  every call has at least 4 bytes of calldata. Not checked by the popup, shown in the details instead: the deadline
-  against its clock (a user's clock drifts; the vault and the API check the window against server time and the
-  contract enforces it), `minGas` (the vault's simulation, D845's duties), the app's allowlist (the popup can't see it;
-  the API enforces it).
+  every call has at least 4 bytes of calldata. The deadline (amended after PR 72's review): refused when it is more
+  than 2 hours ahead of the popup's clock or more than 5 minutes past it (`SPONSOR_DEADLINE_AHEAD_MAX_S`,
+  `SPONSOR_DEADLINE_PAST_MAX_S`; the manifest allows at most an hour, the margins absorb a drifting clock), and refused
+  without a clock; the vault and the API check the exact window against server time and the contract enforces it. Not
+  checked by the popup, shown in the details instead: `minGas` (the vault's simulation, D845's duties), the app's
+  allowlist (the popup can't see it; the API enforces it).
 - The summary: each call goes through the same `evmCall` as an ordinary transaction's call, so every spend warning,
   "can't tell" line and verified-name rule applies unchanged. One call: exactly the summary an EIP-1559 transaction
   with that call gets (headline, lines, warnings, explainable; tested for every known signature, an unknown selector

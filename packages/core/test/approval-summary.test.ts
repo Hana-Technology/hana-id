@@ -31,7 +31,7 @@ import {
   displayUnits,
   nearDisplay,
   MAX_GROUP_LINES,
-  NEAR_VALUE_METHOD,
+  nearMayMoveValue,
   summaryString,
   utf8,
 } from './entries.ts';
@@ -608,17 +608,20 @@ describe('NEAR standard calls: strict arguments, value-like names (review of the
     expect(s.warnings.map((w) => [w.level, w.code])).toEqual([['danger', 'cannot_explain']]);
   });
 
-  const valueLike = ['transfer', 'my_transfer_all', 'withdraw', 'storage_withdraw', 'approve', 'approve_all', 'send', 'send_tokens', 'mt_transfer', 'mt_batch_transfer', 'mt_approve', 'mt_anything', 'unwrap_and_send'];
+  const valueLike = [
+    'transfer', 'my_transfer_all', 'withdraw', 'storage_withdraw', 'approve', 'approve_all', 'send', 'send_tokens', 'mt_transfer', 'mt_batch_transfer', 'mt_approve', 'mt_anything', 'unwrap_and_send',
+    'swap', 'swap_exact_in', 'execute', 'execute_actions', 'burn', 'burn_all', 'remove_liquidity', 'unwrap', 'near_unwrap', 'claim', 'claim_rewards', 'redeem', 'stake', 'unstake', 'unstake_all', 'restake',
+  ];
   it.each(valueLike)('a call Journear doesn’t recognise named %s stays explained, with an amber line', (method) => {
-    expect(NEAR_VALUE_METHOD.test(method)).toBe(true);
+    expect(nearMayMoveValue(method)).toBe(true);
     const s = near([call(method, '{}')], 'tok.testnet');
     expect(headline(s)).toBe(`${APP} wants to use tok.testnet (${method})`);
     expect(s.explainable).toBe(true);
     expect(warnings(s)).toEqual([['warning', 'may_move_tokens', `This calls ${method} on tok.testnet: a call like this may move tokens or NEAR you hold with that contract. Approve only if you expected it.`]]);
   });
 
-  it.each(['collect', 'add_message', 'ping', 'storage_deposit', 'nft_mint', 'smt_x'])('a call named %s gets no amber line', (method) => {
-    expect(NEAR_VALUE_METHOD.test(method)).toBe(false);
+  it.each(['collect', 'add_message', 'ping', 'storage_deposit', 'nft_mint', 'smt_x', 'get_stake', 'get_swap_quote', 'view_claimable', 'is_approved', 'has_claimed', 'add_liquidity'])('a call named %s gets no amber line', (method) => {
+    expect(nearMayMoveValue(method)).toBe(false);
     expect(near([call(method, '{}')], 'tok.testnet').warnings).toEqual([]);
   });
 

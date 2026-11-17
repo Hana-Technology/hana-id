@@ -11,6 +11,7 @@ import { type TypedDataView, typedDataView } from './eip712.ts';
 import { DecodeError, fail } from './errors.ts';
 import { type DecodedEvmTx, decodeEvmTransaction } from './evm.ts';
 import { type DecodedSponsoredAction, type SponsorChains, decodeSponsoredAction } from './evm-sponsored.ts';
+import { isSponsorDomain } from '../evm-sponsor/guard.ts';
 import { toHex0x } from './hex.ts';
 import { type DecodedMessage, decodeMessage } from './message.ts';
 import {
@@ -50,6 +51,8 @@ export interface DecodeOptions {
    * here and its delegate and relayer are these (and the delegate the pinned one). Absent: every one is refused.
    */
   readonly sponsorChains?: SponsorChains;
+  /** The popup's clock (ms): a sponsored action's deadline is checked against it; without it, refused. */
+  readonly nowMs?: number;
 }
 
 /** The NEAR request's account and key must be the vault's: its implicit account id and the key it is the hex of. */
@@ -111,6 +114,9 @@ export function decodeApprovalRequest(s: ApprovalSubject, options: DecodeOptions
       return { kind: s.kind, message: decodeMessage(s.bytes) };
     case 'eip712': {
       const typedData = typedDataFromBytes(s.bytes);
+      // Never offered on the generic path (D833): an Execute in a pinned delegate's domain runs calls as a delegated
+      // account; sponsored actions have their own request kind. The vault refuses it first; this is the popup's own check.
+      if (isSponsorDomain(typedData)) fail('unsupported', 'Journear doesn’t sign typed data for its account helper’s domain here');
       return { kind: s.kind, chainId: typedDataChainId(typedData), typedData, view: typedDataView(typedData) };
     }
     case 'raw':
@@ -131,7 +137,7 @@ export function decodeApprovalRequest(s: ApprovalSubject, options: DecodeOptions
     case 'near_message':
       return { kind: s.kind, ...nearMessageView(decodeNep413Message(s.bytes)) };
     case 'evm_sponsored':
-      return { kind: s.kind, ...decodeSponsoredAction(s.bytes, ctx.chainId as number, s.address, options.sponsorChains) };
+      return { kind: s.kind, ...decodeSponsoredAction(s.bytes, ctx.chainId as number, s.address, options.sponsorChains, options.nowMs) };
     default:
       throw new DecodeError('unsupported', 'Unknown approval kind');
   }

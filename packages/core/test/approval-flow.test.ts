@@ -8,7 +8,7 @@ import { base64Encode, toHex } from '../src/bytes.ts';
 import { decodeApprovalRequest } from '../src/decode/index.ts';
 import { APPROVAL_KIND, type PortRequest, SIGN_METHODS, type SignMethod, approvalChain, approvalContent, newRequestId, parsePortRequest, parseWindowMessage } from '../src/protocol.ts';
 import { sponsoredApprovalContent } from '../src/evm-sponsor/subject.ts';
-import { CHECK_IN, CHECK_IN_DATA, SPONSOR_CHAIN, SPONSOR_CHAINS, sponsorSubject } from './evm-sponsored-fixture.ts';
+import { CHECK_IN, CHECK_IN_DATA, SPONSOR_CHAIN, SPONSOR_CHAINS, SPONSOR_NOW_MS, sponsorSubject } from './evm-sponsored-fixture.ts';
 import { NEAR_PARAMS, NEAR_USER } from './near-fixtures.ts';
 import { PASSPHRASE, POOL, USER, addr, authPreimageBytes, invocation, paymentOp, txBytes } from './stellar-fixtures.ts';
 
@@ -58,7 +58,7 @@ describe('approval flow: port request → approve-request → decoders → diges
     const message = { v: 1, t: 'hana:approve-request', id: newRequestId(), appName: 'Partner', parentOrigin: 'https://partner.example', ...s, position: 1, queued: 1 };
     const parsed = parseWindowMessage(message, ['hana:approve-request']);
     expect(parsed).not.toBeNull();
-    expect(decodeApprovalRequest(s, { sponsorChains: SPONSOR_CHAINS }).kind).toBe(s.kind);
+    expect(decodeApprovalRequest(s, { sponsorChains: SPONSOR_CHAINS, nowMs: SPONSOR_NOW_MS }).kind).toBe(s.kind);
     // The popup computes the digest from the message it received, the vault from the subject it queued.
     const p = parsed as typeof message;
     expect(toHex(approvalDigest({ ...p, bytes: Uint8Array.from(p.bytes) }))).toBe(toHex(approvalDigest({ ...s, id: p.id, parentOrigin: p.parentOrigin })));

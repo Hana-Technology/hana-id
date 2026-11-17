@@ -1329,10 +1329,16 @@ function nearStandardShape(method: string, args: StrictJsonObject): boolean {
 }
 
 /**
- * A method name that says the call may move what the user holds with the contract: anything with transfer, withdraw,
- * approve or send in it (`storage_withdraw` included), and the multi-token standard's `mt_*` methods.
+ * A method name that says the call may move what the user holds with the contract: transfer, withdraw (so
+ * `storage_withdraw`), approve, send, swap, execute, burn, remove_liquidity, unwrap, claim, redeem or stake (so
+ * `unstake`) anywhere in it, and the multi-token standard's `mt_*` methods.
  */
-export const NEAR_VALUE_METHOD = /transfer|withdraw|approve|send|^mt_/iu;
+export const NEAR_VALUE_METHOD = /transfer|withdraw|approve|send|swap|execute|burn|remove_liquidity|unwrap|claim|redeem|stake|^mt_/iu;
+/** Read-style names (`get_stake`, `view_claimable`, `is_approved`): a view call, never warned about. */
+const NEAR_READ_METHOD = /^(get|view|is|has)_/iu;
+
+/** Whether a NEAR call Journear doesn't recognise gets the amber "may move tokens" line. */
+export const nearMayMoveValue = (method: string): boolean => NEAR_VALUE_METHOD.test(method) && !NEAR_READ_METHOD.test(method);
 
 const pushOnce = (warnings: SummaryWarning[], w: SummaryWarning): void => {
   const key = JSON.stringify(w.text);
@@ -1387,7 +1393,7 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
       const text: SummaryText = ['use ', ...where, ' (', code(method), ')'];
       // A call Journear doesn't recognise stays explained (D810: it names the contract and the method), but one whose
       // name says it may move value gets an amber line: the contract may move what the user holds with it.
-      if (NEAR_VALUE_METHOD.test(method)) {
+      if (nearMayMoveValue(method)) {
         pushOnce(warnings, {
           level: 'warning',
           code: 'may_move_tokens',

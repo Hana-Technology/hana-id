@@ -41,6 +41,9 @@ export const DEPLOY_EVM_DELEGATE_USAGE = `Usage: deploy-evm-delegate.ts <env> [-
 
 export const EVM_DRY_RUN_LINE = 'Dry run: nothing sent. Re-run with --yes --account <keystore> to deploy.';
 export const DEFAULT_EVM_CHAIN = 84532;
+/** Re-reads of an address that shows no code right after its deploy, and the wait before each (30 s in all). */
+export const POST_DEPLOY_READS = 15;
+export const POST_DEPLOY_WAIT_MS = 2_000;
 
 /** Where a chain's explorers verify (forge's `--verifier` settings) and show addresses. */
 export const EXPLORERS: Readonly<Record<number, { blockscout?: string; etherscan: boolean; addressUrls: readonly string[] }>> = Object.freeze({
@@ -64,6 +67,8 @@ export interface EvmDeployDeps {
   root?: string;
   /** Today, for the pinned-table comment. */
   now?: () => Date;
+  /** Waits between reads of a just-deployed address (default setTimeout; tests pass a no-op). */
+  sleep?: (ms: number) => Promise<void>;
   /** Where ETHERSCAN_API_KEY is looked for by --verify (default process.env; forge reads the key itself). */
   env?: Readonly<Record<string, string | undefined>>;
 }
@@ -328,7 +333,12 @@ export async function evmDeployMain(argv: readonly string[], deps: EvmDeployDeps
       const res = deps.runTool('cast', ['send', DETERMINISTIC_DEPLOYER, deployCalldata(a), '--account', account!, '--chain', String(chainId)], { cwd: root, env: { ETH_RPC_URL: url } });
       if (res.error) throw new Error(`cast could not run (${res.error.message}): install Foundry 1.5.1 (foundryup --install 1.5.1)`);
       if (res.status !== 0) throw new Error(`cast send for ${name} failed (exit ${res.status}; its own message is above): nothing more was sent. Re-run the plan to see what is deployed`);
-      const code = await rpc.code(a.address);
+      // A public RPC is several nodes: one that lags the receipt cast waited for answers no code for a few seconds.
+      let code = await rpc.code(a.address);
+      for (let t = 0; code === '0x' && t < POST_DEPLOY_READS; t++) {
+        await (deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))))(POST_DEPLOY_WAIT_MS);
+        code = await rpc.code(a.address);
+      }
       if (code === '0x') throw new Error(`${name}: no code at ${a.address} after the transaction (see cast's receipt above): stop and find out why`);
       const hash = keccakHex(code);
       if (hash !== a.runtimeCodeHash) throw new Error(`MISMATCH after the deploy: ${name} at ${a.address} has runtime code hash ${hash}, not the artifact's ${a.runtimeCodeHash}. Don't pin it`);

@@ -12343,7 +12343,8 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   generated inside the keystore and never shown), rather than `cast wallet import`, which needs a key from somewhere;
   import with `--interactive` stays the documented alternative for an existing testnet-only key.
 - After each send the code at the address is read again and its hash compared (a "successful" send that left other
-  code is a MISMATCH). Then the explorer verification is printed, not run: `forge build`, `forge verify-contract`
+  code is a MISMATCH; no code is re-read every 2 s for 30 s, since a public RPC's nodes can lag the receipt cast
+  waited for). Then the explorer verification is printed, not run: `forge build`, `forge verify-contract`
   with the standard-JSON input built from `foundry.toml` (the metadata is stripped, so no Sourcify full match or
   flattened upload), against Blockscout (no key) and the Etherscan family (`ETHERSCAN_API_KEY` from the shell, never
   on a command line); `--verify` runs them, the Etherscan one only with its key present. Last, the follow-up PR's

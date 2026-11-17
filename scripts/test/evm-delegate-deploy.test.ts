@@ -93,7 +93,7 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
   const run = async (argv: string[], over: Partial<EvmDeployDeps> = {}) => {
     const lines: string[] = [];
     const tools = testTools(ks);
-    const code = await evmDeployMain(['sandbox-dev', '--rpc', anvil.url, ...argv], { log: (l) => lines.push(l), runTool: tools.runTool, now: () => new Date('2026-11-26T10:00:00Z'), env: {}, ...over });
+    const code = await evmDeployMain(['sandbox-dev', '--rpc', anvil.url, ...argv], { log: (l) => lines.push(l), runTool: tools.runTool, now: () => new Date('2026-11-26T10:00:00Z'), sleep: async () => undefined, env: {}, ...over });
     return { code, out: lines.join('\n'), calls: tools.calls };
   };
   const codeHashAt = async (a: string) => keccakHex(await anvil.rpc<string>('eth_getCode', [a, 'latest']));
@@ -192,6 +192,30 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
     };
     await expect(evmDeployMain(['sandbox-dev', '--rpc', anvil.url, '--yes', '--account', ks.name], { log: () => undefined, runTool, env: {} })).rejects.toThrow(/MISMATCH after the deploy: HanaDelegateExecutor .* Don't pin it/u);
   });
+
+  it('re-reads an address that shows no code right after the send (a lagging RPC node), then says so if it stays empty', async () => {
+    const waits: number[] = [];
+    const sleep = async (ms: number) => void waits.push(ms);
+    // A send that "succeeds" and leaves nothing.
+    await expect(evmDeployMain(['sandbox-dev', '--rpc', anvil.url, '--yes', '--account', ks.name], { log: () => undefined, runTool: () => ({ status: 0 }), sleep, env: {} })).rejects.toThrow(/HanaDelegateExecutor: no code at 0x\w+ after the transaction/u);
+    expect(waits).toEqual(Array(15).fill(2000));
+    // The code turns up on a later read: the run goes on.
+    waits.length = 0;
+    const late = async (ms: number) => {
+      waits.push(ms);
+      if (waits.length === 2) {
+        const pre = spawnSync('cast', ['send', DETERMINISTIC_DEPLOYER, deployCalldata(DELEGATE!), '--keystore', `${ks.dir}/${ks.name}`, '--password', ks.password, '--rpc-url', anvil.url], { env: foundryEnv({}) });
+        expect(pre.status).toBe(0);
+      }
+    };
+    const lines: string[] = [];
+    const tools = testTools(ks);
+    let first = true;
+    const runTool: RunTool = (tool, argv, opts) => (first ? ((first = false), { status: 0 }) : tools.runTool(tool, argv, opts));
+    expect(await evmDeployMain(['sandbox-dev', '--rpc', anvil.url, '--yes', '--account', ks.name], { log: (l) => lines.push(l), runTool, sleep: late, env: {} })).toBe(0);
+    expect(waits).toHaveLength(2);
+    expect(lines.join('\n')).toContain(`✓ HanaDelegateExecutor at ${DELEGATE!.address}`);
+  }, 60_000);
 
   it('a failed cast send stops the run and says nothing more was sent', async () => {
     const calls: string[][] = [];

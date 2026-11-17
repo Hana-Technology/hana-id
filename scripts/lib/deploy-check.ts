@@ -17,6 +17,9 @@
 //   files         files worker        GET {files.origin}/.well-known/hana-build           `build`
 //   admin         admin worker        wrangler: the deployed version's HANA_BUILD var     (behind Cloudflare Access)
 //   watchdog      watchdog worker     wrangler, on watchdog.cloudflare.accountId          (only with --only watchdog)
+//   evm           EVM sponsorship     JSON-RPC to evm.sponsor's RPCs (lib/deploy-check-evm.ts, D849): the chain, the
+//                                     delegate's code hash against the artifact and core's pin, the relayer's balance,
+//                                     the allowlisted targets' code. Only when the manifest has evm.sponsor
 //
 // The admin's origin is behind Cloudflare Access, which this script can't (and mustn't) pass, and the watchdog serves
 // nothing without its bearer token; neither gets a public route (D406). For both, wrangler reads the deployed version's
@@ -41,14 +44,17 @@ import { join } from 'node:path';
 import { type Manifest, emailIssuerUrl, loadEnv, repoRoot } from '@hana-id/env';
 import { BUILD_PATH, BUILD_VAR, type BuildId, ISSUER_HEALTH_PATH, parseBuildId, parseBuildMeta, parseVaultBanner } from '@hana-id/env/build-id';
 import { type LocalBuild, localBuild } from '@hana-id/env/local-build';
+import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { CliError, parseCli } from './cli.ts';
+import { type PinnedDelegatesWithHash, checkEvmSponsor } from './deploy-check-evm.ts';
 
 export const DEPLOY_CHECK_USAGE = `Usage: deploy-check.ts <env> [--only <groups>] [--skip <groups>] [--d1] [--skip-head] [--strict]
   After a deploy: reads the build id of every deployed piece of envs/<env>.json and checks they all name one commit,
   this checkout's HEAD. Exits 1 when a piece can't be read, isn't stamped, or names another commit. Groups (each read
   only when the manifest has it): api, pages (the vault and auth Workers and bundles), issuer, console (Worker and
   SPA), console-auth, files, admin (through wrangler: the API's Cloudflare login), watchdog (through wrangler on its
-  own account: read only when --only names it, logged in to that account).
+  own account: read only when --only names it, logged in to that account), evm (only with the manifest's evm.sponsor:
+  each chain's RPC, the delegate's code against its artifact and core's pin, the relayer's balance, the targets' code).
   --only <g,…> read only these groups (comma-separated or repeated)
   --skip <g,…> read every group but these
   --d1         also list the D1 migrations of this checkout that the env's databases lack (the API's, the issuer's,
@@ -63,7 +69,7 @@ export const BODY_LIMIT = 16_384;
 export const BANNER_LIMIT = 256;
 
 /** What `--only` and `--skip` name, in the order the pieces are read and printed. */
-export const GROUPS = ['api', 'pages', 'issuer', 'console', 'console-auth', 'files', 'admin', 'watchdog'] as const;
+export const GROUPS = ['api', 'pages', 'issuer', 'console', 'console-auth', 'files', 'admin', 'watchdog', 'evm'] as const;
 export type Group = (typeof GROUPS)[number];
 /** Read only when `--only` names them: the watchdog's Cloudflare account has its own login (D86). */
 export const OPT_IN_GROUPS: readonly Group[] = ['watchdog'];
@@ -151,7 +157,8 @@ export interface Selection {
 /** Which of the manifest's groups to read: `--only`'s (each must be in the manifest), or all but `--skip`'s and the opt-in ones. */
 export function selectGroups(m: Manifest, targets: readonly Target[], only: readonly Group[], skip: readonly Group[]): Selection {
   if (only.length > 0 && skip.length > 0) throw new CliError('Pass --only or --skip, not both');
-  const present = GROUPS.filter((g) => targets.some((t) => t.group === g));
+  // `evm` has no build id to read: it is there when the manifest has evm.sponsor (D849).
+  const present = GROUPS.filter((g) => targets.some((t) => t.group === g) || (g === 'evm' && m.evm?.sponsor !== undefined));
   for (const g of only) if (!present.includes(g)) throw new CliError(`envs/${m.name}.json has no ${g}: nothing of it is deployed to check`);
   const groups = only.length > 0 ? present.filter((g) => only.includes(g)) : present.filter((g) => !skip.includes(g) && !OPT_IN_GROUPS.includes(g));
   if (groups.length === 0) throw new CliError('Nothing to check: every group is skipped');
@@ -412,6 +419,10 @@ export interface DeployCheckDeps {
   /** True when `dir` has a wrangler config. */
   hasWranglerConfig?: (dir: string) => boolean;
   log?: (line: string) => void;
+  /** Core's pinned delegate table for the `evm` group (default SPONSOR_DELEGATES). */
+  pinnedDelegates?: PinnedDelegatesWithHash;
+  /** The repository root whose contracts/evm-delegate artifacts the `evm` group compares with (default this checkout). */
+  evmRoot?: string;
 }
 
 function defaultPnpm(dir: string, argv: string[]): RunResult {
@@ -521,6 +532,15 @@ export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps
   // Hana's own org for the Home derives no partner pays for: a production network must name one.
   if (isProductionNetwork(m) && m.hanaOrgId === undefined && selection.groups.includes('api')) failures.push('manifest: no hanaOrgId on a production network: the Hana Home derives Hana pays for would be recorded for org_legacy');
 
+  // EVM sponsorship (D849): only for a manifest with evm.sponsor, so an env without it prints nothing new.
+  const evmRead = selection.groups.includes('evm') && m.evm?.sponsor !== undefined;
+  if (evmRead) {
+    const evm = await checkEvmSponsor(m.evm!.sponsor!, { fetch: deps.fetch ?? fetch, pinned: deps.pinnedDelegates ?? SPONSOR_DELEGATES, ...(deps.evmRoot ? { root: deps.evmRoot } : {}) });
+    for (const l of evm.lines) log(l);
+    failures.push(...evm.failures);
+    warnings.push(...evm.warnings);
+  }
+
   if (args.flag('d1')) {
     const pnpm = deps.pnpm ?? defaultPnpm;
     const hasConfig = deps.hasWranglerConfig ?? defaultHasConfig;
@@ -558,6 +578,8 @@ export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps
   for (const w of warnings) log(`warning: ${w}`);
   for (const f of failures) log(`FAIL: ${f}`);
   const scope = selection.notRead.length > 0 ? `; not read: ${selection.notRead.join(', ')}` : '';
-  log(failures.length === 0 ? `OK: every piece of ${m.name} runs ${observed[0]?.build?.id ?? ''}${args.flag('skip-head') ? '' : ' (this checkout)'}${scope}` : `${failures.length} failure(s)`);
+  const evmOk = evmRead ? '; EVM sponsorship checked' : '';
+  const ok = observed.length === 0 ? `OK: ${m.name}'s EVM sponsorship checks out${scope}` : `OK: every piece of ${m.name} runs ${observed[0]?.build?.id ?? ''}${args.flag('skip-head') ? '' : ' (this checkout)'}${evmOk}${scope}`;
+  log(failures.length === 0 ? ok : `${failures.length} failure(s)`);
   return failures.length === 0 ? 0 : 1;
 }

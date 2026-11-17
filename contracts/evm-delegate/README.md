@@ -4,7 +4,7 @@
 the demo target. A user's account delegates to `HanaDelegateExecutor` once; after that Journear's relayer submits
 batches of calls the account's key signed and pays the gas, and the calls run from the account (`msg.sender` at each
 target is the user's address, which never changes). Base Sepolia (84532) first; testnet only. Built and tested here,
-**not deployed** (the deploy is a later step, after 2026-11-25). MIT licensed (`LICENSE`), unlike most of the
+**not deployed** (the deploy is a later step, after 2026-11-25, with `scripts/deploy-evm-delegate.ts`). MIT licensed (`LICENSE`), unlike most of the
 repository (`../../LICENSING.md`). Decisions D841 (location, licence, deployment, interface) and D845 (security
 properties) in `docs/decisions.md`.
 
@@ -147,7 +147,10 @@ cost); one unit less at the check reverts `InsufficientGas` with the nonce uncha
 ## Deployment
 
 Through the deterministic deployment proxy `0x4e59b44847b379578588920cA78FbF26c0B4956C` (CREATE2, present on Base
-Sepolia), with a fixed salt, so the address is the same on every chain and anyone can check it from the source:
+Sepolia), with a fixed salt, so the address is the same on every chain and anyone can check it from the source. The
+deploy script is `scripts/deploy-evm-delegate.ts <env>` (plan by default, `--yes --account <Foundry keystore>` to
+send; it re-derives each address from these artifacts, compares the code at it with the runtime code hash, and prints
+the verification commands and the pinned-table entry): `docs/operations.md` "EVM sponsorship relay (not live)", D849.
 
 | Contract | Salt (keccak256 of) | Predicted address | Runtime code hash |
 |---|---|---|---|

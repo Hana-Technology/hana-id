@@ -1,11 +1,14 @@
-// The approval window's plain summary (D808–D812) in the real popup: the details are closed for a request Journear can
-// explain and the user can open them; they start open for one it can't; raw signing's can't be folded; every warning
-// is visible while the details are closed; opening them doesn't touch the Approve guard.
+// The approval window's plain summary (D808–D813) in the real popup: the details always start closed and the user
+// can open them; a request Journear can't explain, raw signing included, states its risk in view; every warning is
+// visible while the details are closed; opening them doesn't touch the Approve guard.
 //
 // With HANA_SHOTS_DIR set (Chromium only), `screens for review` also saves each case's window at the real popup's
 // size (420 × 680, the whole page) for the founder:
 //
 //   HANA_SHOTS_DIR=<dir> corepack pnpm exec playwright test --project=chromium tests/approval-summary.spec.ts
+//
+// The details always start folded (D810, the founder's decision); a request Journear can't explain states its risk
+// above them.
 import { type Page } from '@playwright/test';
 import { type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey } from '@hana-id/core';
 import { parseFunctionSignature } from '@hana-id/core/decode';
@@ -75,13 +78,18 @@ test('an explainable request: details closed; the user opens them; the guard sti
   expect(await okValue(page, 'send')).toMatchObject({ valid: true });
 });
 
-test('a request Journear can’t explain: the plain line, and the details open from the start', async ({ page }) => {
+test('a request Journear can’t explain: the red risk line in view, the details folded until the user opens them (D810)', async ({ page }) => {
   await openPartner(page, await newApp());
   await login(page);
   const popup = await popupFor(page, 'unknown', 'ethSignTx', evmTx({ to: TOKEN, value: 0n, data: '0xdeadbeef' }));
-  await expect(popup.locator('p.summary-warning.cannot-explain')).toContainText('Journear can’t explain this request in plain words');
-  await expect(details(popup)).toHaveAttribute('open', '');
-  await expect(details(popup).getByText('0xdeadbeef', { exact: true })).toBeVisible();
+  const risk = popup.locator('p.summary-warning.cannot-explain.jp-alert-danger');
+  await expect(risk).toBeVisible();
+  await expect(risk).toContainText('Journear can’t tell what this request does');
+  await expect(details(popup)).not.toHaveAttribute('open', '');
+  const raw = details(popup).getByText('0xdeadbeef', { exact: true });
+  await expect(raw).toBeHidden();
+  await popup.getByText('Show details', { exact: true }).click();
+  await expect(raw).toBeVisible();
 });
 
 test('warnings stay visible while the details are closed (an unlimited ERC-20 approve)', async ({ page }) => {
@@ -93,16 +101,18 @@ test('warnings stay visible while the details are closed (an unlimited ERC-20 ap
   await expect(popup.locator('p.summary-warning.unlimited-spend')).toContainText(`This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN}, with no limit`);
 });
 
-test('raw signing: the details can’t be folded', async ({ page }) => {
+test('raw signing: folded like any other request, the red risk line in view (D810)', async ({ page, browserName }) => {
   await openPartner(page, await newLiveApp({ settings: { rawSign: 'approval' } }), { live: true });
   await login(page);
   await page.evaluate(() => (window as any).e2e.run('raw', 'signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(3) }));
   const popup = await clickLauncher(page, 'Review in Journear Passport');
-  await expect(popup.locator('section.request-details.fixed')).toBeVisible();
-  await expect(popup.locator('details')).toHaveCount(0);
-  await expect(popup.locator('summary')).toHaveCount(0);
-  await expect(popup.getByText(`0x${'03'.repeat(32)}`, { exact: true })).toBeVisible();
-  await expect(popup.getByText('Raw signing can authorize any transaction', { exact: false })).toBeVisible();
+  await expect(popup.locator('p.summary-warning.raw-signing.jp-alert-danger')).toHaveText('This asks you to sign something Journear can’t read at all. On EVM chains it could give away control of your account or your funds. Reject unless you are certain.');
+  await expect(details(popup)).not.toHaveAttribute('open', '');
+  const hex = popup.getByText(`0x${'03'.repeat(32)}`, { exact: true });
+  await expect(hex).toBeHidden();
+  await shot(popup, 'raw-signing', browserName);
+  await popup.getByText('Show details', { exact: true }).click();
+  await expect(hex).toBeVisible();
 });
 
 // ---- the founder's screens ----
@@ -227,7 +237,8 @@ test('screens for review', async ({ page, browserName }) => {
   const callArgs = [sc(stellar), sc(other), amount(1n)];
   const auth = new xdr.SorobanAuthorizationEntry({ credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(), rootInvocation: inv(contract(3), 'transfer', callArgs, [inv(contract(2), 'transfer', [sc(stellar), sc(other), amount(10n ** 15n)])]) });
   popup = await popupFor(page, 'nested', 'stellarSignXdr', build(Operation.invokeContractFunction({ contract: contract(3), function: 'transfer', args: callArgs, auth: [auth] }) as never));
-  await expect(details(popup)).toHaveAttribute('open', '');
+  await expect(details(popup)).not.toHaveAttribute('open', '');
+  await expect(popup.locator('p.summary-warning.cannot-explain.jp-alert-danger')).toBeVisible();
   await shot(popup, 'soroban-nested-transfer', browserName);
   await done(page, popup, 'nested');
 });

@@ -90,7 +90,6 @@ describe('EVM transactions', () => {
     expect(text(s.network!)).toBe('Sepolia (testnet), chain 11155111');
     expect(s.warnings).toEqual([]);
     expect(s.explainable).toBe(true);
-    expect(s.detailsMustStayOpen).toBe(false);
   });
 
   it('a send to the user’s own address says so; a chain Journear can’t name is said plainly, never given a coin', () => {
@@ -182,12 +181,11 @@ describe('EVM transactions', () => {
     expect(headline(tokenCall(calldata('safeTransferFrom(address,address,uint256)', ME, TO, 42n)))).toBe(`${APP} wants to send item 42 of collection ${TOKEN_EVM} from your account to ${TO}`);
   });
 
-  it('an unknown function: Journear can’t explain it, the details start open', () => {
+  it('an unknown function: Journear can’t tell what it does, in red (it could move value with no visible bound)', () => {
     const s = tokenCall('0xdeadbeef0000');
     expect(headline(s)).toBe(`${APP} wants to use contract ${TOKEN_EVM}`);
-    expect(warnings(s)).toEqual([['warning', 'cannot_explain', `Journear can’t explain this request in plain words: it calls a function Journear doesn’t recognise. Only approve if you trust ${APP}.`]]);
+    expect(warnings(s)).toEqual([['danger', 'cannot_explain', `Journear can’t tell what this request does: it calls a function Journear doesn’t recognise. It could move your money or tokens. Only approve if you fully trust ${APP}. Technical details are below.`]]);
     expect(s.explainable).toBe(false);
-    expect(s.detailsMustStayOpen).toBe(false);
     // Fewer than 4 bytes, and a known selector whose arguments don't decode: the same.
     expect(tokenCall('0x01').explainable).toBe(false);
     expect(tokenCall(parseFunctionSignature('transfer(address,uint256)').selector).explainable).toBe(false);
@@ -396,11 +394,12 @@ describe('messages and raw signing', () => {
     }
   });
 
-  it('raw signing: details that can’t be folded', () => {
+  it('raw signing: a red line that says what it risks and to reject (the details fold like any others)', () => {
     const s = summarizeApproval(decodeApprovalRequest({ kind: 'raw', chain: 'evm', address: ME, context: {}, bytes: new Uint8Array(32) }), { address: ME });
     expect(headline(s)).toBe(`${APP} wants a raw signature that Journear can’t read`);
     expect(s.explainable).toBe(false);
-    expect(s.detailsMustStayOpen).toBe(true);
+    expect(warnings(s)).toEqual([['danger', 'raw_signing', 'This asks you to sign something Journear can’t read at all. On EVM chains it could give away control of your account or your funds. Reject unless you are certain.']]);
+    expect('detailsMustStayOpen' in s).toBe(false);
   });
 });
 
@@ -907,5 +906,46 @@ describe('review 3: the always-listed steps (3)', () => {
     expect(lines[0]).toBe('7. End a reserve sponsorship');
     expect(lines[1]).toBe(`8. Let your account hold the asset USDC:${ISSUER}`);
     expect(lines.filter((l) => /Move the account/u.test(l))).toHaveLength(5);
+  });
+});
+
+// ---- the founder's decision of 2026-11-17 (D810): the details always start folded, so each case that used to open
+// them states its risk in plain words, red where the unreadable part could move value or control with no visible bound.
+
+describe('D810: every formerly auto-open case carries its risk line, at the right level', () => {
+  const level = (s: ApprovalSummary, c: string) => s.warnings.find((w) => w.code === c)?.level;
+  const bump = () => Operation.bumpSequence({ bumpTo: '99' });
+  it('red: unknown contract calls (EVM, multicall, NEAR unreadable, Soroban), unexplained typed data, extra authorizations, capped value steps, raw', () => {
+    expect(level(tokenCall('0xdeadbeef'), 'cannot_explain')).toBe('danger');
+    expect(level(tokenCall(`${parseFunctionSignature('multicall(bytes[])').selector}${word(32n)}${word(0n)}`), 'cannot_explain')).toBe('danger');
+    expect(level(near([call('m', Uint8Array.of(0xff))]), 'cannot_explain')).toBe('danger');
+    expect(level(stellar([invokeOp(ROUTER, 'swap', [i128(1n)])]), 'cannot_explain')).toBe('danger');
+    expect(level(stellar([invokeOp(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(1n)], [sourceAuth(invocation(ROUTER, 'x', []))])]), 'cannot_explain')).toBe('danger');
+    const auth = summarizeApproval(decodeApprovalRequest({ kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: authPreimageBytes(invocation(ROUTER, 'swap', [])) }), { address: USER });
+    expect(level(auth, 'cannot_explain')).toBe('danger');
+    expect(level(typed({ types: { EIP712Domain: [{ name: 'name', type: 'string' }], Order: [{ name: 'x', type: 'uint256' }] }, primaryType: 'Order', domain: { name: 'X' }, message: { x: '1' } }), 'cannot_explain')).toBe('danger');
+    expect(level(stellar(Array.from({ length: 22 }, () => paymentOp())), 'many_value_steps')).toBe('danger');
+  });
+
+  it('amber: bounded or not about value (contract creation, a pool, a conditional claim, an unreadable price, a message that isn’t text, leftover neutral steps)', () => {
+    expect(level(evmSummary({ to: null, value: 0n, data: '0x6000' }), 'contract_creation')).toBe('warning');
+    const pool = new LiquidityPoolAsset(Asset.native(), new Asset('USDC', ATTACKER), 30);
+    const id = getLiquidityPoolId('constant_product', pool.getLiquidityPoolParameters()).toString('hex');
+    expect(level(stellar([Operation.liquidityPoolWithdraw({ liquidityPoolId: id, amount: '1', minAmountA: '0', minAmountB: '0' })]), 'cannot_explain')).toBe('warning');
+    expect(level(stellar([Operation.createClaimableBalance({ asset: Asset.native(), amount: '1', claimants: [new Claimant(USER, Claimant.predicateBeforeRelativeTime('100'))] })]), 'cannot_explain')).toBe('warning');
+    const op = Operation.manageSellOffer({ selling: Asset.native(), buying: new Asset('USDC', ATTACKER), amount: '1', price: { n: 1, d: 1 } });
+    op.body().manageSellOfferOp().price(new xdr.Price({ n: 1, d: 0 }));
+    expect(level(stellar([op]), 'cannot_explain')).toBe('warning');
+    const hex = msg('personal_sign', 'a\u202eb');
+    expect(warnings(hex)).toEqual([['warning', 'cannot_explain', `Journear can’t read this message, so it can’t tell what signing it does. Only approve if you fully trust ${APP}. Technical details are below.`]]);
+    const many = stellar(Array.from({ length: 7 }, () => bump()));
+    expect(warnings(many)).toEqual([['warning', 'steps_not_listed', `This request does 7 things at once and not all are listed here. Only approve if you fully trust ${APP}. Technical details are below.`]]);
+    expect(many.explainable).toBe(false);
+  });
+
+  it('a value cap says it in red, once, with no amber steps line beside it', () => {
+    const s = stellar(Array.from({ length: 22 }, () => paymentOp()));
+    expect(codes(s).filter((c) => c === 'steps_not_listed')).toEqual([]);
+    expect(text(s.warnings.find((w) => w.code === 'many_value_steps')!.text)).toBe(`This request moves money or tokens in 22 steps and only the first 20 are listed here. Only approve if you fully trust ${APP}. Technical details are below.`);
   });
 });

@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-17 (the approval window's plain summary and its review fixes, Show details, spend warnings), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-17 (the approval window: plain summary, details always folded, risk lines, spend warnings), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -699,9 +699,11 @@ Passport has verified its contract. The technical details (nonces, hashes, gas, 
 actions, raw arguments, typed-data trees, the user's Support ID) are folded behind **Show details**, which the user can
 always open. When the popup can't explain a request in plain words (a function it doesn't recognise, typed data other
 than a permit it knows, a Soroban call that isn't a token transfer or approval or that authorizes anything else, a
-liquidity pool deposit or withdrawal, more than five steps, raw bytes) it says "Journear can’t explain
-this request in plain words. Only approve if you trust Your App." and opens the details from the start; for raw signing
-they can't be folded. Token amounts carry a symbol only for the few tokens Journear has reviewed; anything else shows the
+liquidity pool deposit or withdrawal, more steps than it lists, raw bytes) it says so above the details in plain words,
+for example "Journear can’t tell what this request does. It could move your money or tokens. Only approve if you fully
+trust Your App.", in red when what it can't read could move funds or control with no visible limit; for raw signing,
+"This asks you to sign something Journear can’t read at all. … Reject unless you are certain." The details stay
+folded in every case until the user opens them. Token amounts carry a symbol only for the few tokens Journear has reviewed; anything else shows the
 amount in the token's smallest units, so describe amounts in your own page too. **Reject** and **Approve** are below.
 The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
 re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Declined" and counts down,

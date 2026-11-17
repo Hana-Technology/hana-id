@@ -79,8 +79,7 @@ p.summary-line {
   font-size: var(--jp-text-md);
 }
 
-/* ---- the technical details (D808): folded behind "Show details", open from the start when the request can't be
-   explained, and never foldable for raw signing (a plain section titled "Details") ---- */
+/* ---- the technical details (D808, D810): always folded behind "Show details" at first, the user opens them ---- */
 .request-details {
   border: 1px solid var(--jp-border);
   border-radius: var(--jp-radius-md);
@@ -93,8 +92,7 @@ p.summary-line {
   min-height: 24px;
 }
 
-.request-details > .details-body,
-.request-details.fixed {
+.request-details > .details-body {
   display: flex;
   flex-direction: column;
   gap: var(--jp-space-3);
@@ -104,8 +102,7 @@ p.summary-line {
   margin-top: var(--jp-space-3);
 }
 
-.request-details > .details-body > *,
-.request-details.fixed > * {
+.request-details > .details-body > * {
   margin: 0;
 }
 
@@ -280,8 +277,7 @@ details summary {
 /* Raw bytes shown whole (a raw signature, unknown call data, contract code): a quiet box, all of it, never cut. */
 .request > code.mono,
 .request details > code.mono,
-.request-details > .details-body > code.mono,
-.request-details.fixed > code.mono {
+.request-details > .details-body > code.mono {
   display: block;
   background: var(--jp-bg-subtle);
   border: 1px solid var(--jp-border);

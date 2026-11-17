@@ -57,10 +57,10 @@ describe('renderApproval: NEAR transactions', () => {
     expect(takeovers(el)).toEqual([]);
   });
 
-  it('shows arguments whole (never cut), as hex when they aren’t JSON; in the details, which start open for hex (D808)', () => {
+  it('shows arguments whole (never cut), as hex when they aren’t JSON; in the details, always folded at first (D808, D810)', () => {
     const hex = tx([call(Uint8Array.of(0xff, 0x01))]);
     expect(hex.textContent).toContain('ff01');
-    expect(hex.querySelector<HTMLDetailsElement>('details.request-details')?.open).toBe(true);
+    expect(hex.querySelector<HTMLDetailsElement>('details.request-details')?.open).toBe(false);
     // A padded first key can't push receiver_id or amount out of the text: nothing is cut. The JSON of a call the
     // summary names is in the details (closed), whole, in one box.
     const long = `{"pad":"${'a'.repeat(3000)}","receiver_id":"attacker.testnet","amount":"1"}`;

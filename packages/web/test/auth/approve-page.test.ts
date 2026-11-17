@@ -10,7 +10,6 @@ import {
   newRequestId,
   parseEvmTxRequest,
   parseWindowMessage,
-  rawSigningWarning,
   utf8,
 } from '@hana-id/core';
 import { STELLAR_MAINNET_PASSPHRASE, shortAddress } from '@hana-id/core';
@@ -682,7 +681,8 @@ describe('/approve', () => {
     const r = stellarRequest({ kind: 'raw', context: {}, bytes });
     send(r);
     const text = pageText();
-    expect(text).toContain(rawSigningWarning('Stellar', 'Partner App'));
+    // D810: the red risk line is the summary's, in plain words.
+    expect(text).toContain('This asks you to sign something Journear can’t read at all. On Stellar it could give away control of your account or your funds. Reject unless you are certain.');
     expect(text).toContain(`0x${Buffer.from(bytes).toString('hex')}`);
     expect(text).not.toContain('payment');
     arm();

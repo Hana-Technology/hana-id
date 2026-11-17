@@ -15,6 +15,7 @@ import {
   utf8,
 } from '@hana-id/core';
 import { type DecodedApproval, decodeApprovalRequest, parseFunctionSignature } from '@hana-id/core/decode';
+import { Operation } from '@stellar/stellar-base';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
 import { TEST_APP_NOTE, startApprovePage } from '../../src/auth/approve-page.ts';
@@ -75,26 +76,49 @@ describe('the summary first, the details folded', () => {
     expect(d.querySelector('summary')?.textContent).toBe(DETAILS_LABELS.show);
   });
 
-  it('a request Journear can’t explain: the plain line outside, the details open (the raw data in them)', () => {
+  it('a request Journear can’t explain: the red risk line outside, the details folded (the raw data in them) (D810)', () => {
     const el = render(evm({ to: TOKEN, value: '0x0', data: '0xdeadbeef00' }));
     const warn = el.querySelector('p.summary-warning.cannot-explain');
-    expect(warn?.textContent).toBe('Journear can’t explain this request in plain words: it calls a function Journear doesn’t recognise. Only approve if you trust Partner App.');
+    expect(warn?.textContent).toBe('Journear can’t tell what this request does: it calls a function Journear doesn’t recognise. It could move your money or tokens. Only approve if you fully trust Partner App. Technical details are below.');
+    expect(warn?.classList.contains('jp-alert-danger')).toBe(true);
     expect(folded(warn)).toBe(false);
-    expect(details(el)?.open).toBe(true);
-    expect(details(el)?.querySelector('summary')?.textContent).toBe(DETAILS_LABELS.hide);
+    expect(details(el)?.open).toBe(false);
+    expect(details(el)?.querySelector('summary')?.textContent).toBe(DETAILS_LABELS.show);
     expect(details(el)?.textContent).toContain('0xdeadbeef00');
     expect(el.dataset.explainable).toBe('false');
   });
 
-  it('raw signing: a details section that can’t be folded (no toggle at all), its danger line outside', () => {
+  it('raw signing: the details fold like any others; the red risk line stays outside (D810)', () => {
     const el = render(decodeApprovalRequest({ kind: 'raw', chain: 'evm', address: EVM, context: {}, bytes: new Uint8Array(32).fill(1) }));
-    expect(el.querySelector('details')).toBeNull();
-    expect(el.querySelector('summary')).toBeNull();
-    const fixed = el.querySelector('section.request-details.fixed');
-    expect(fixed?.querySelector('h3')?.textContent).toBe(DETAILS_LABELS.fixed);
-    expect(fixed?.textContent).toContain(`0x${'01'.repeat(32)}`);
-    expect(el.querySelector('p.danger')?.closest('.request-details')).toBeNull();
+    expect(el.querySelector('section.request-details')).toBeNull();
+    expect(details(el)?.open).toBe(false);
+    expect(details(el)?.textContent).toContain(`0x${'01'.repeat(32)}`);
+    const red = el.querySelector('p.summary-warning.raw-signing');
+    expect(red?.textContent).toBe('This asks you to sign something Journear can’t read at all. On EVM chains it could give away control of your account or your funds. Reject unless you are certain.');
+    expect(red?.classList.contains('jp-alert-danger')).toBe(true);
+    expect(folded(red)).toBe(false);
     expect(el.textContent).toContain(NO_NETWORK_NOTE);
+  });
+
+  it('every case that used to open the details renders them folded, its risk line in view (D810)', () => {
+    const pub = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+    const me = nearImplicitAccountId(pub);
+    const nearTx = (actions: NearAction[]) =>
+      decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: me, context: { nearNetwork: 'testnet' }, bytes: encodeNearTransaction({ signerId: me, publicKey: { type: 'ed25519', bytes: pub }, nonce: 1n, receiverId: 'x.testnet', blockHash: sha256(utf8('b')), actions }) });
+    const cases: [string, DecodedApproval, string, string][] = [
+      ['unknown call', evm({ to: TOKEN, value: '0x0', data: '0xdeadbeef' }), 'cannot-explain', 'jp-alert-danger'],
+      ['NEAR unreadable arguments', nearTx([{ type: 'functionCall', methodName: 'm', args: Uint8Array.of(0xff), gas: 1n, deposit: 0n }]), 'cannot-explain', 'jp-alert-danger'],
+      ['NEAR too many value steps', nearTx([...Array.from({ length: 24 }, (): NearAction => ({ type: 'transfer', deposit: 1n })), { type: 'functionCall', methodName: 'm', args: utf8('{}'), gas: 1n, deposit: 0n }]), 'many-value-steps', 'jp-alert-danger'],
+      ['Stellar too many neutral steps', decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes(Array.from({ length: 7 }, () => Operation.bumpSequence({ bumpTo: '9' }))) }), 'steps-not-listed', 'jp-alert-warning'],
+      ['a message that isn’t text', decodeApprovalRequest({ kind: 'personal_sign', chain: 'evm', address: EVM, context: {}, bytes: Uint8Array.of(0xff, 0xfe) }), 'cannot-explain', 'jp-alert-warning'],
+    ];
+    for (const [name, decoded, cls, tone] of cases) {
+      const el = render(decoded, 'Partner App', decoded.kind.startsWith('near') ? me : decoded.kind === 'stellar_tx' ? USER : EVM);
+      expect(details(el)?.open, name).toBe(false);
+      const w = el.querySelector(`p.summary-warning.${cls}`);
+      expect(w?.classList.contains(tone), name).toBe(true);
+      expect(folded(w), name).toBe(false);
+    }
   });
 });
 
@@ -131,7 +155,7 @@ describe('warnings are never folded', () => {
     // All 100 move value or control (review 2, N2): 20 listed, a red line says so, the rest in the details.
     expect(el.querySelector('p.summary-warning.many-value-steps')?.classList.contains('jp-alert-danger')).toBe(true);
     expect(el.querySelectorAll('p.summary-line')).toHaveLength(21);
-    expect(details(el)?.open).toBe(true);
+    expect(details(el)?.open).toBe(false);
   });
 
   it('Stellar account control: the banner and each operation’s warning outside the fold, the operation framed inside', () => {
@@ -192,7 +216,7 @@ describe('hostile values stay text', () => {
     expect(el.querySelector('p.cannot-explain')?.textContent).toContain(`trust ${name}.`);
   });
 
-  it('a typed-data type name never reaches the summary; the tree is in the open details', () => {
+  it('a typed-data type name never reaches the summary; the tree is in the (folded) details', () => {
     const json = {
       types: { EIP712Domain: [{ name: 'name', type: 'string' }], SafeLoginNoFundsMove: [{ name: 'note', type: 'string' }] },
       primaryType: 'SafeLoginNoFundsMove',
@@ -202,7 +226,7 @@ describe('hostile values stay text', () => {
     const el = render(decodeApprovalRequest({ kind: 'eip712', chain: 'evm', address: EVM, context: {}, bytes: utf8(JSON.stringify(json)) }));
     const outside = [...el.children].filter((c) => !c.matches('details')).map((c) => c.textContent).join(' ');
     expect(outside).not.toContain('SafeLoginNoFundsMove');
-    expect(details(el)?.open).toBe(true);
+    expect(details(el)?.open).toBe(false);
     expect(details(el)?.textContent).toContain('SafeLoginNoFundsMove');
   });
 });

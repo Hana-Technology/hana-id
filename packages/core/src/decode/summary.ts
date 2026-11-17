@@ -6,10 +6,10 @@
 // `code` parts, shown as text in mono; a string that isn't display-safe is never put in a summary.
 //
 // `explainable` is false when Journear can't say in plain words what the request does (an unknown contract function,
-// raw bytes, typed data it can't summarise, a Soroban call that isn't a token transfer or approval): the summary then
-// says so, and the popup starts its details open. `detailsMustStayOpen` (raw signing) means the details can't be folded
-// at all. The popup still shows every technical fact in its details; nothing here replaces a fact, it only says it
-// plainly first.
+// raw bytes, typed data it can't summarise, a Soroban call that isn't a token transfer or approval, more steps than it
+// lists): the summary then states the risk in plain words, red where the unreadable part could move value or control
+// with no visible bound, amber otherwise (D810). The popup's technical details always start folded (the founder's
+// decision, D810); the user can always open them. Nothing here replaces a fact, it only says it plainly first.
 //
 // Token amounts: only a token on the pinned, reviewed list (MAINNET_DEMO: USDC and EURC on Base, XLM, USDC and EURC
 // on Stellar's public network) gets a symbol and decimals. Any other token's amount is shown as it is signed, in its
@@ -56,7 +56,11 @@ export type SummaryWarningCode =
   /** More steps that move or grant value than the summary lists. */
   | 'many_value_steps'
   /** Building the summary failed: the request is shown as unreadable. */
-  | 'summary_failed';
+  | 'summary_failed'
+  /** More steps than the summary lists, none of the left-out ones moving value. */
+  | 'steps_not_listed'
+  /** Raw signing: Journear can't read what is signed at all. */
+  | 'raw_signing';
 
 export interface SummaryWarning {
   /** `danger`: red, the popup's strongest style; `warning`: amber. Both always visible, never folded. */
@@ -75,10 +79,8 @@ export interface ApprovalSummary {
   /** The network the request is bound to, as a value ("Sepolia (testnet)"), when the request names one. NEAR's line is the page's. */
   readonly network: SummaryText | null;
   readonly warnings: readonly SummaryWarning[];
-  /** False when Journear can't say what the request does: the details start open. */
+  /** False when Journear can't say what the request does: a risk warning says so (the details still start folded). */
   readonly explainable: boolean;
-  /** True for raw signing: the details are shown and can't be folded. */
-  readonly detailsMustStayOpen: boolean;
 }
 
 export interface SummaryContext {
@@ -92,8 +94,24 @@ const APP = { kind: 'app' } as const;
 const code = (text: string): SummaryPart => ({ kind: 'code', text });
 const strong = (text: string): SummaryPart => ({ kind: 'strong', text });
 
-/** The line every request Journear can't explain carries. */
-export const cannotExplain = (reason?: string): SummaryText => [`Journear can’t explain this request in plain words${reason ? `: ${reason}` : ''}. Only approve if you trust `, APP, '.'];
+/** How strong a risk line is: red where the unreadable part could move value or control with no visible bound. */
+export type RiskLevel = 'danger' | 'warning';
+
+/** The risk line of a request Journear can't explain, written for someone who doesn't know Web3. */
+export const cannotTell = (level: RiskLevel, reason?: string): SummaryWarning => ({
+  level,
+  code: 'cannot_explain',
+  text: [`Journear can’t tell what this request does${reason ? `: ${reason}` : ''}. It could move your money or tokens. Only approve if you fully trust `, APP, '. Technical details are below.'],
+});
+
+/** A message Journear can't read (not plain text): it can't say what signing it does. */
+const unreadableMessage = (): SummaryWarning => ({ level: 'warning', code: 'cannot_explain', text: ['Journear can’t read this message, so it can’t tell what signing it does. Only approve if you fully trust ', APP, '. Technical details are below.'] });
+
+/** More steps than the summary lists (none of the left-out ones moves value). */
+const stepsNotListed = (n: number): SummaryWarning => ({ level: 'warning', code: 'steps_not_listed', text: [`This request does ${n} things at once and not all are listed here. Only approve if you fully trust `, APP, '. Technical details are below.'] });
+
+/** The worse of two levels. */
+const worse = (a: RiskLevel | null, b: RiskLevel): RiskLevel => (a === 'danger' || b === 'danger' ? 'danger' : 'warning');
 
 /**
  * Allowances at or above this, of a token Journear doesn't know, have no practical limit: 10^27 of its smallest units is
@@ -235,7 +253,7 @@ function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
   const sending: SummaryText = tx.value > 0n ? [', sending it ', strong(evmNative(chainId, tx.value))] : [];
   const valueLine: SummaryText | null = tx.value > 0n ? ['It also sends ', strong(evmNative(chainId, tx.value)), ' to the contract.'] : null;
   const withoutValueLine = () => lines.filter((l) => l !== valueLine);
-  const unknown = (reason: string): Draft => ({ headline: [APP, ' wants to use contract ', contract, ...sending], lines: withoutValueLine(), warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain(reason) }, ...warnings], explainable: false });
+  const unknown = (reason: string): Draft => ({ headline: [APP, ' wants to use contract ', contract, ...sending], lines: withoutValueLine(), warnings: [cannotTell('danger', reason), ...warnings], explainable: false });
   if (valueLine) lines.push(valueLine);
   const call = tx.call;
   if (!call) return unknown(tx.selector ? 'it calls a function Journear doesn’t recognise' : 'it sends data Journear can’t read');
@@ -317,7 +335,7 @@ function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
       const headline: SummaryText = [APP, ` wants to send ${ids.length === 1 ? '1 kind' : `${ids.length} kinds`} of item of collection `, contract, ' from ', ...evmWho(abiAddr(a[0]) as string, me), ' to ', ...evmWho(abiAddr(a[1]) as string, me)];
       // Each item and how many: in view up to five kinds (item ids as written, amounts grouped); more can't be listed.
       if (ids.length > MAX_SUMMARY_STEPS || ids.length !== amounts.length || ids.some((x) => x === null) || amounts.some((x) => x === null)) {
-        return { headline, lines, warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain('it sends more kinds of item than this summary lists') }, ...warnings], explainable: false };
+        return { headline, lines, warnings: [cannotTell('danger', 'it sends more kinds of item than this summary lists'), ...warnings], explainable: false };
       }
       const items: SummaryText[] = ids.map((id, i) => ['Item ', strong((id as bigint).toString()), ': ', strong(groupDigits((amounts[i] as bigint).toString()))]);
       return { headline, lines: [...items, ...lines], warnings, explainable: true };
@@ -334,9 +352,9 @@ function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
 }
 
 function evmTx(chainId: number, tx: DecodedEvmTx, me: string): ApprovalSummary {
-  const base = { fee: ['up to ', strong(evmNative(chainId, tx.maxFeeWei))] as SummaryText, network: evmNetwork(chainId), detailsMustStayOpen: false };
+  const base = { fee: ['up to ', strong(evmNative(chainId, tx.maxFeeWei))] as SummaryText, network: evmNetwork(chainId) };
   if (tx.to === null) {
-    return { ...base, headline: [APP, ' wants to create a new contract'], lines: tx.value > 0n ? [['It also sends ', strong(evmNative(chainId, tx.value)), ' to the new contract.']] : [], warnings: [{ level: 'warning', code: 'contract_creation', text: cannotExplain('it creates a new contract from code Journear can’t read') }], explainable: false };
+    return { ...base, headline: [APP, ' wants to create a new contract'], lines: tx.value > 0n ? [['It also sends ', strong(evmNative(chainId, tx.value)), ' to the new contract.']] : [], warnings: [{ ...cannotTell('warning', 'it creates a new contract from code Journear can’t read'), code: 'contract_creation' }], explainable: false };
   }
   if (tx.data === '0x') return { ...base, headline: [APP, ' wants to send ', strong(evmNative(chainId, tx.value)), ' to ', ...evmWho(tx.to, me)], lines: [], warnings: [], explainable: true };
   return { ...base, ...evmCall(chainId, tx, me) };
@@ -405,7 +423,7 @@ function typedData(decoded: Extract<DecodedApproval, { kind: 'eip712' }>, me: st
   const chain: ContractChain | null = chainId === null ? null : { kind: 'evm', chainId };
   const domain = td.domain;
   const verifying = str(domain.verifyingContract);
-  const base = { fee: null, network, detailsMustStayOpen: false };
+  const base = { fee: null, network };
   const pt = td.primaryType;
   const warnings: SummaryWarning[] = [];
   const lines: SummaryText[] = [];
@@ -472,7 +490,7 @@ function typedData(decoded: Extract<DecodedApproval, { kind: 'eip712' }>, me: st
       const token = chainId === null ? null : knownEvmToken(chainId, tokenAddr);
       if (amount > 0n) warnings.push(spendWarning(spender, tokenAddr, token, amount, UINT256_MAX, { via: 'through Permit2, once' }));
     }
-    return { ...base, headline: [APP, ' wants your signature to let someone else spend your tokens through Permit2, with extra data Journear can’t read'], lines, warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain('it carries extra data Journear can’t read') }, ...warnings], explainable: false };
+    return { ...base, headline: [APP, ' wants your signature to let someone else spend your tokens through Permit2, with extra data Journear can’t read'], lines, warnings: [cannotTell('warning', 'it carries extra data Journear can’t read'), ...warnings], explainable: false };
   }
   // Anything else: Journear can't explain it. Say so louder when it imitates a permit.
   if (domain.name === 'Permit2' && !isPermit2Domain) {
@@ -480,7 +498,7 @@ function typedData(decoded: Extract<DecodedApproval, { kind: 'eip712' }>, me: st
   } else if (mayGrantSpending(td.types, pt, str(domain.name))) {
     warnings.push({ level: 'warning', code: 'spend_permission', text: ['This may be a permission to spend your tokens, in a form Journear can’t check. Read the details before you approve.'] });
   }
-  return { ...base, headline: [APP, ' wants your signature on data Journear can’t explain'], lines, warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain() }, ...warnings], explainable: false };
+  return { ...base, headline: [APP, ' wants your signature on data Journear can’t explain'], lines, warnings: [cannotTell('danger'), ...warnings], explainable: false };
 }
 
 // ---- messages ----
@@ -498,8 +516,8 @@ function hostOf(origin: string | undefined): string | null {
 }
 
 function message(kind: 'personal_sign' | 'stellar_message', text: string | null, ctx: SummaryContext): ApprovalSummary {
-  const base = { fee: null, network: null, detailsMustStayOpen: false, lines: [] as SummaryText[] };
-  if (text === null) return { ...base, headline: [APP, ' wants you to sign data that isn’t readable text'], warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain('it isn’t plain text') }], explainable: false };
+  const base = { fee: null, network: null, lines: [] as SummaryText[] };
+  if (text === null) return { ...base, headline: [APP, ' wants you to sign data that isn’t readable text'], warnings: [unreadableMessage()], explainable: false };
   const siwe = kind === 'personal_sign' ? SIWE_FIRST_LINE.exec(text.split('\n', 1)[0] ?? '') : null;
   if (siwe) {
     const domain = siwe[2] as string;
@@ -618,6 +636,8 @@ const changes = (offerId: string): SummaryText => (offerId === '0' ? [] : [` (it
 interface OpSummary {
   readonly text: SummaryText;
   readonly explainable: boolean;
+  /** When not explainable: how strong its risk line is (amber unless said). */
+  readonly risk?: RiskLevel;
 }
 
 /**
@@ -697,7 +717,7 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
       return ok(['restore archived contract data']);
     case 'invokeHostFunction': {
       const f = op.hostFunction;
-      if (f.type !== 'invokeContract') return { text: [f.type === 'uploadContractWasm' ? 'upload contract code' : 'create a contract'], explainable: false };
+      if (f.type !== 'invokeContract') return { text: [f.type === 'uploadContractWasm' ? 'upload contract code' : 'create a contract'], explainable: false, risk: 'warning' };
       const token = sorobanTokenCall(passphrase, f, me, warnings, 'send');
       let explainable = token !== null;
       // The call is explained only when its authorizations hold exactly that call and nothing else: any other node is
@@ -710,7 +730,8 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
           explainable = false;
         }
       }
-      return { text: token ?? ['use contract ', code(f.contract), ' (', code(f.function), ')'], explainable };
+      // A contract call Journear can't summarise, or one that authorizes more: it could move value with no visible bound.
+      return { text: token ?? ['use contract ', code(f.contract), ' (', code(f.function), ')'], explainable, ...(explainable ? {} : { risk: 'danger' as const }) };
     }
   }
 }
@@ -733,6 +754,7 @@ interface Step {
  * listed in order.
  */
 function steps(items: readonly Step[], warnings: SummaryWarning[]): { lines: SummaryText[]; capped: boolean } {
+  // A neutral-only cap is said by the caller (stepsNotListed); a value cap here, in red.
   const line = (x: Step, i: number): SummaryText => [`${i + 1}. `, ...capitalised(x.text)];
   if (items.length <= MAX_SUMMARY_STEPS) return { lines: items.map(line), capped: false };
   const numbered = items.map((x, i) => ({ x, i }));
@@ -741,7 +763,7 @@ function steps(items: readonly Step[], warnings: SummaryWarning[]): { lines: Sum
   const lines = [...value.slice(0, MAX_VALUE_STEPS), ...neutral.slice(0, MAX_SUMMARY_STEPS)].map((n) => line(n.x, n.i));
   const leftOut = Math.max(0, value.length - MAX_VALUE_STEPS) + Math.max(0, neutral.length - MAX_SUMMARY_STEPS);
   if (value.length > MAX_VALUE_STEPS) {
-    warnings.push({ level: 'danger', code: 'many_value_steps', text: [`This request moves value in ${value.length} steps; only the first ${MAX_VALUE_STEPS} are listed here. Check the details.`] });
+    warnings.push({ level: 'danger', code: 'many_value_steps', text: [`This request moves money or tokens in ${value.length} steps and only the first ${MAX_VALUE_STEPS} are listed here. Only approve if you fully trust `, APP, '. Technical details are below.'] });
   }
   if (leftOut > 0) lines.push([`…and ${leftOut} more: see the details.`]);
   return { lines, capped: leftOut > 0 };
@@ -864,6 +886,9 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
     return { ...o, text: [...o.text, ' (on ', ...(isMeStellar(op.source, me) ? stellarWho(op.source, me) : ['the account ', code(op.source)]), ')'] };
   });
   let explainable = ops.every((o) => o.explainable);
+  let risk: RiskLevel | null = null;
+  for (const o of ops) if (!o.explainable) risk = worse(risk, o.risk ?? 'warning');
+  let stepsCapped = false;
   const lines: SummaryText[] = [];
   let headline: SummaryText;
   if (ops.length === 1) headline = [APP, ' wants to ', ...(ops[0] as OpSummary).text];
@@ -872,15 +897,20 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
     const s = steps(ops, warnings);
     lines.push(...s.lines);
     if (s.capped) explainable = false;
+    stepsCapped = s.capped;
   }
   const leaving = xlmLeaving(tx, me);
   if (leaving) lines.unshift(leaving);
   const more = capped(extra);
   lines.push(...more.lines);
-  if (more.capped) explainable = false;
+  if (more.capped) {
+    explainable = false;
+    risk = 'danger';
+  }
   if (tx.source !== me) lines.push(isMeStellar(tx.source, me) ? ['The transaction is from ', ...stellarWho(tx.source, me), '.'] : ['The transaction is from the account ', code(tx.source), '.']);
   if (env.envelope === 'fee_bump') lines.push(isMeStellar(env.feeSource, me) ? ['Your account pays the network fee for a transaction from ', ...stellarWho(tx.source, me), '.'] : ['The network fee is paid by ', code(env.feeSource), ', not your account.']);
-  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain(ops.every((o) => o.explainable) && !more.capped ? 'it has more steps than this summary lists' : 'it does something Journear can’t summarise') });
+  if (risk) warnings.unshift(cannotTell(risk, ops.length > 1 ? 'part of it is something Journear can’t summarise' : undefined));
+  if (stepsCapped && !warnings.some((w) => w.code === 'many_value_steps')) warnings.push(stepsNotListed(ops.length));
   const feeStroops = env.envelope === 'fee_bump' ? env.fee : tx.fee;
   return {
     headline,
@@ -889,7 +919,6 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
     network: stellarNetwork(decoded.networkPassphrase),
     warnings,
     explainable,
-    detailsMustStayOpen: false,
   };
 }
 
@@ -905,8 +934,8 @@ function stellarAuth(decoded: Extract<DecodedApproval, { kind: 'stellar_auth_ent
   const more = capped(extra);
   if (more.capped) explainable = false;
   const what: SummaryText = root ?? (f.type === 'contractFn' ? ['authorize a call to contract ', code(f.contract), ' (', code(f.function), ')'] : ['authorize creating a contract']);
-  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain('it authorizes a contract call Journear can’t summarise') });
-  return { headline: [APP, ' wants to ', ...what], lines: more.lines, fee: null, network: stellarNetwork(decoded.networkPassphrase), warnings, explainable, detailsMustStayOpen: false };
+  if (!explainable) warnings.unshift(cannotTell('danger', 'it authorizes a contract call Journear can’t summarise'));
+  return { headline: [APP, ' wants to ', ...what], lines: more.lines, fee: null, network: stellarNetwork(decoded.networkPassphrase), warnings, explainable };
 }
 
 // ---- NEAR ----
@@ -997,6 +1026,8 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
   const warnings: SummaryWarning[] = [];
   const done = actions.map((a) => ({ ...nearAction(a, receiver, me, warnings), value: nearMovesValue(a) }));
   let explainable = done.every((x) => x.explainable);
+  const unreadable = !explainable;
+  let stepsCapped = false;
   const lines: SummaryText[] = [];
   let headline: SummaryText;
   const transfers = actions.length > 0 && actions.every((a) => a.type === 'transfer');
@@ -1008,8 +1039,11 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
     const s = steps(done, warnings);
     lines.push(...s.lines);
     if (s.capped) explainable = false;
+    stepsCapped = s.capped;
   }
-  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain(done.every((x) => x.explainable) ? 'it has more steps than this summary lists' : undefined) });
+  // A call Journear can't read (its arguments or its name) could move tokens with no visible bound.
+  if (unreadable) warnings.unshift(cannotTell('danger'));
+  if (stepsCapped && !warnings.some((w) => w.code === 'many_value_steps')) warnings.push(stepsNotListed(done.length));
   return {
     headline,
     lines,
@@ -1017,7 +1051,6 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
     network: null,
     warnings,
     explainable,
-    detailsMustStayOpen: false,
   };
 }
 
@@ -1031,7 +1064,6 @@ export const UNEXPLAINED_SUMMARY: ApprovalSummary = Object.freeze({
   network: null,
   warnings: [{ level: 'danger', code: 'summary_failed', text: ['Journear couldn’t read this request. Reject it unless you are certain.'] }],
   explainable: false,
-  detailsMustStayOpen: false,
 }) as ApprovalSummary;
 
 /**
@@ -1060,7 +1092,14 @@ function summarize(decoded: DecodedApproval, ctx: SummaryContext): ApprovalSumma
     case 'stellar_auth_entry':
       return stellarAuth(decoded, ctx.address);
     case 'raw':
-      return { headline: [APP, ' wants a raw signature that Journear can’t read'], lines: [], fee: null, network: null, warnings: [], explainable: false, detailsMustStayOpen: true };
+      return {
+        headline: [APP, ' wants a raw signature that Journear can’t read'],
+        lines: [],
+        fee: null,
+        network: null,
+        warnings: [{ level: 'danger', code: 'raw_signing', text: [`This asks you to sign something Journear can’t read at all. On ${decoded.chain === 'evm' ? 'EVM chains' : 'Stellar'} it could give away control of your account or your funds. Reject unless you are certain.`] }],
+        explainable: false,
+      };
     case 'near_tx':
       return nearActions(decoded.tx.actions, decoded.tx.receiverId, decoded.tx.signerId, false);
     case 'near_delegate':
@@ -1072,9 +1111,8 @@ function summarize(decoded: DecodedApproval, ctx: SummaryContext): ApprovalSumma
         lines: [],
         fee: null,
         network: null,
-        warnings: readable ? [] : [{ level: 'warning', code: 'cannot_explain', text: cannotExplain('its message isn’t plain text') }],
+        warnings: readable ? [] : [unreadableMessage()],
         explainable: readable,
-        detailsMustStayOpen: false,
       };
     }
   }

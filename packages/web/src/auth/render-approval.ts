@@ -5,10 +5,10 @@
 // The layout (D808–D812): a plain summary first (`summarizeApproval`: "{App} wants to …", its lines, the network and
 // the most the fee can be), then every warning and danger line, the page's notes, the facts a user decides on (the NEAR
 // leaving the account, a NEP-413 recipient, a message's text), and last the technical details in a native
-// `<details>` the user can always open ("Show details"). The details start open when Journear can't explain the request
-// (`explainable: false`), and for raw signing they are a plain section that can't be folded. Nothing a partner
-// controls decides what is folded: only the decoded request does.
-import { isDisplaySafeLine, rawSigningWarning } from '@hana-id/core';
+// `<details>` the user can always open ("Show details"). The details always start folded, raw signing included (the
+// founder's decision, D810): a request Journear can't explain states its risk in plain words above them instead.
+// Nothing a partner controls decides what is folded.
+import { isDisplaySafeLine } from '@hana-id/core';
 import { type ApprovalSummary, type SummaryText, type SummaryWarning, summarizeApproval } from '@hana-id/core/decode';
 import {
   type AbiValue,
@@ -804,7 +804,6 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
   };
 }
 
-const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM chains' } as const;
 
 /**
  * Shown on message and raw requests: their approval binds no network (an empty context in the approval digest; user
@@ -886,17 +885,17 @@ function summaryAlert(d: Dom, w: SummaryWarning, appName: string): HTMLElement {
 }
 
 /** The words on the details' toggle. */
-export const DETAILS_LABELS = { show: 'Show details', hide: 'Hide details', fixed: 'Details' } as const;
+export const DETAILS_LABELS = { show: 'Show details', hide: 'Hide details' } as const;
 
 /**
  * The technical details: a native `<details>` the user opens and closes (keyboard and screen readers get its
- * expanded state from the browser), open at first when `open`; or, when `fixed` (raw signing), a plain section that
- * can't be folded. Opening or closing it never touches the Approve guard: it is ordinary content.
+ * expanded state from the browser). Always folded at first, for every request, raw signing included (the founder's
+ * decision, D810): the risks are stated in plain words above it. Nothing a partner controls changes that, and the user
+ * can always open it. Opening or closing it never touches the Approve guard: it is ordinary content.
  */
-function detailsSection(d: Dom, body: readonly Child[], open: boolean, fixed: boolean): HTMLElement {
-  if (fixed) return d.h('section', { class: 'request-details fixed' }, d.h('h3', { class: 'details-title' }, DETAILS_LABELS.fixed), ...body);
-  const label = d.h('span', { class: 'details-label' }, open ? DETAILS_LABELS.hide : DETAILS_LABELS.show);
-  const el = d.h('details', { class: 'request-details', ...(open ? { attrs: { open: '' } } : {}) }, d.h('summary', { class: 'details-toggle' }, label), d.h('div', { class: 'details-body' }, ...body));
+function detailsSection(d: Dom, body: readonly Child[]): HTMLElement {
+  const label = d.h('span', { class: 'details-label' }, DETAILS_LABELS.show);
+  const el = d.h('details', { class: 'request-details' }, d.h('summary', { class: 'details-toggle' }, label), d.h('div', { class: 'details-body' }, ...body));
   el.addEventListener('toggle', () => {
     label.textContent = el.open ? DETAILS_LABELS.hide : DETAILS_LABELS.show;
   });
@@ -967,7 +966,8 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
       };
     case 'raw':
       return {
-        alerts: { banners: [], dangers: [dangerLine(d, 'danger', undefined, rawSigningWarning(CHAIN_NAMES[decoded.chain], appName))], warnings: [] },
+        // The red risk line is the summary's (raw_signing).
+        alerts: NO_ALERTS,
         network: null,
         visible: [noteLine(d, 'note', NO_NETWORK_NOTE)],
         details: [d.h('h3', {}, 'Raw signature'), mono(d, decoded.hex)],
@@ -1010,6 +1010,6 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
     ...k.alerts.warnings,
     ...k.visible,
     ...(ctx.notes ?? []),
-    detailsSection(d, [...(ctx.detailsExtra ?? []), ...k.details], !summary.explainable, summary.detailsMustStayOpen),
+    detailsSection(d, [...(ctx.detailsExtra ?? []), ...k.details]),
   );
 }

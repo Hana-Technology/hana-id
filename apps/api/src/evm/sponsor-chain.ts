@@ -161,16 +161,37 @@ export function forgetVerifiedChains(): void {
   failedChecks.clear();
 }
 
-/** One endpoint's view of an address's transaction counts (EIP-155 nonces). */
+/** One endpoint's view of an address's transaction counts (EIP-155 nonces), at the snapshot's common blocks. */
 export interface EndpointCounts {
   /** Index into the client's endpoints (never the URL). */
   endpoint: number;
-  /** Mined at the latest block. */
-  latest: number;
-  /** Mined plus the node's executable pool. */
+  /** The endpoint's own head block. */
+  head: number;
+  /** Mined plus the node's executable pool (its own view: a lagging node's pool can be behind). */
   pending: number;
-  /** Mined at a block past reorg risk: `safe` where the chain has it, else `latest` − confirmations. */
+  /** Mined as of the snapshot's `latestBlock` (the same block on every endpoint used). */
+  latest: number;
+  /** Mined as of the snapshot's `confirmedBlock` (the same block on every endpoint used). */
   confirmed: number;
+}
+
+/**
+ * Every endpoint's counts for an address, compared at ONE explicit block each, never across different heads:
+ * `latestBlock` is the lowest head among the endpoints used, `confirmedBlock` the lowest `safe` block among them (or,
+ * where an endpoint has none, its head − `confirmations`), at most `latestBlock`. An endpoint whose head is more than
+ * `lagLimit` blocks behind the highest is left out for this snapshot (`ignored`) rather than holding the others back.
+ */
+export interface CountsSnapshot {
+  endpoints: EndpointCounts[];
+  latestBlock: number;
+  confirmedBlock: number;
+  ignored: number[];
+}
+
+/** An `eth_getLogs` entry, with where it was mined. */
+export interface EvmMinedLog extends EvmLog {
+  transactionHash: Hex;
+  blockNumber: bigint;
 }
 
 type Attempt<T> = { ok: true; value: T } | { ok: false; failure: 'unavailable' | 'wrong_chain' | 'bad_response' } | { ok: false; failure: 'rpc_error'; error: EvmRpcError };
@@ -233,40 +254,60 @@ export class SponsorChain {
     return this.used >= this.maxRequests;
   }
 
-  /**
-   * The address's counts from EVERY endpoint that answers all of them (latest, pending, and the confirmed count: at
-   * the `safe` block when `safeTag`, falling back to, and otherwise at, the latest block number − `confirmations`). For
-   * the caller to cross-check: never throws, an empty list when none answered.
-   */
-  async countsEach(address: Hex, opts: { confirmations: number; safeTag: boolean }): Promise<EndpointCounts[]> {
+  /** See CountsSnapshot. Never throws: an empty `endpoints` when none answered. */
+  async snapshot(address: Hex, opts: { confirmations: number; safeTag: boolean; lagLimit: number }): Promise<CountsSnapshot> {
     checkAddress(address);
-    const out: EndpointCounts[] = [];
-    const count = (r: unknown): number => {
+    const num = (r: unknown): number => {
       const n = quantity(r);
-      if (n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('count too large');
+      if (n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('number too large');
       return Number(n);
     };
+    const blockNum = (r: unknown): number => num(obj(r).number);
+    const heads: { endpoint: number; head: number; safe: number | null; pending: number }[] = [];
     for (const i of this.order()) {
-      const latest = await this.attempt(i, 'eth_getTransactionCount', [address, 'latest'], count);
-      if (!latest.ok) continue;
-      const pending = await this.attempt(i, 'eth_getTransactionCount', [address, 'pending'], count);
-      if (!pending.ok) continue;
-      let confirmed: Attempt<number> | null = null;
+      const head = await this.attempt(i, 'eth_blockNumber', [], num);
+      if (!head.ok) continue;
+      let safe: number | null = null;
       if (opts.safeTag) {
-        confirmed = await this.attempt(i, 'eth_getTransactionCount', [address, 'safe'], count);
-        if (!confirmed.ok && confirmed.failure !== 'rpc_error') continue;
-        if (!confirmed.ok) confirmed = null;
+        const got = await this.attempt(i, 'eth_getBlockByNumber', ['safe', false], blockNum);
+        if (got.ok) safe = got.value;
+        else if (got.failure !== 'rpc_error' && got.failure !== 'bad_response') continue;
       }
-      if (!confirmed) {
-        const head = await this.attempt(i, 'eth_blockNumber', [], quantity);
-        if (!head.ok) continue;
-        const at = head.value > BigInt(opts.confirmations) ? head.value - BigInt(opts.confirmations) : 0n;
-        confirmed = await this.attempt(i, 'eth_getTransactionCount', [address, toQuantity(at)], count);
-        if (!confirmed.ok) continue;
-      }
-      out.push({ endpoint: i, latest: latest.value, pending: pending.value, confirmed: confirmed.value });
+      const pending = await this.attempt(i, 'eth_getTransactionCount', [address, 'pending'], num);
+      if (!pending.ok) continue;
+      heads.push({ endpoint: i, head: head.value, safe, pending: pending.value });
     }
-    return out;
+    const empty: CountsSnapshot = { endpoints: [], latestBlock: 0, confirmedBlock: 0, ignored: [] };
+    if (heads.length === 0) return empty;
+    const top = Math.max(...heads.map((h) => h.head));
+    const used = heads.filter((h) => h.head >= top - opts.lagLimit);
+    const ignored = heads.filter((h) => h.head < top - opts.lagLimit).map((h) => h.endpoint);
+    const latestBlock = Math.min(...used.map((h) => h.head));
+    const confirmedBlock = Math.max(0, Math.min(latestBlock, ...used.map((h) => h.safe ?? h.head - opts.confirmations)));
+    const endpoints: EndpointCounts[] = [];
+    for (const h of used) {
+      const latest = await this.attempt(h.endpoint, 'eth_getTransactionCount', [address, toQuantity(BigInt(latestBlock))], num);
+      if (!latest.ok) continue;
+      const confirmed = await this.attempt(h.endpoint, 'eth_getTransactionCount', [address, toQuantity(BigInt(confirmedBlock))], num);
+      if (!confirmed.ok) continue;
+      endpoints.push({ endpoint: h.endpoint, head: h.head, pending: h.pending, latest: latest.value, confirmed: confirmed.value });
+    }
+    return { endpoints, latestBlock, confirmedBlock, ignored };
+  }
+
+  /** `eth_getLogs` for one address and topics over a block range (at most 256 entries kept). */
+  async logs(q: { address: Hex; topics: (Hex | null)[]; fromBlock: bigint; toBlock: bigint }): Promise<EvmMinedLog[]> {
+    checkAddress(q.address);
+    return this.read('eth_getLogs', [{ address: q.address, topics: q.topics, fromBlock: toQuantity(q.fromBlock), toBlock: toQuantity(q.toBlock) }], (r) => {
+      if (!Array.isArray(r) || r.length > MAX_LOGS) throw new Error('bad logs');
+      return r.map((l) => {
+        const x = obj(l);
+        if (typeof x.address !== 'string' || !ADDRESS_RE.test(x.address) || typeof x.transactionHash !== 'string' || !HASH_RE.test(x.transactionHash)) throw new Error('bad log');
+        const topics = x.topics;
+        if (!Array.isArray(topics) || topics.length > 4 || !topics.every((t) => typeof t === 'string' && HASH_RE.test(t))) throw new Error('bad topics');
+        return { address: x.address.toLowerCase() as Hex, topics: (topics as string[]).map((t) => t.toLowerCase() as Hex), data: dataHex(x.data), transactionHash: x.transactionHash.toLowerCase() as Hex, blockNumber: quantity(x.blockNumber) };
+      });
+    });
   }
 
   /** Endpoint indexes to try, in order: those not down for this client. */
@@ -304,7 +345,7 @@ export class SponsorChain {
   }
 
   /** `eth_call`; a revert is an `rpc_error` with the revert data in `data`. */
-  async call(req: EvmCallRequest, opts: { block?: 'latest' | 'pending'; stateOverride?: EvmStateOverride } = {}): Promise<Hex> {
+  async call(req: EvmCallRequest, opts: { block?: 'latest' | 'pending' | bigint; stateOverride?: EvmStateOverride } = {}): Promise<Hex> {
     checkAddress(req.to);
     if (req.from !== undefined) checkAddress(req.from);
     if (!DATA_RE.test(req.data)) throw new Error('call data must be 0x hex bytes');
@@ -312,7 +353,7 @@ export class SponsorChain {
     if (req.from !== undefined) tx.from = req.from;
     if (req.gas !== undefined) tx.gas = toQuantity(req.gas);
     if (req.value !== undefined) tx.value = toQuantity(req.value);
-    const params: unknown[] = [tx, opts.block ?? 'latest'];
+    const params: unknown[] = [tx, typeof opts.block === 'bigint' ? toQuantity(opts.block) : (opts.block ?? 'latest')];
     if (opts.stateOverride) {
       const o: Record<string, Record<string, string>> = {};
       for (const [a, v] of Object.entries(opts.stateOverride)) {

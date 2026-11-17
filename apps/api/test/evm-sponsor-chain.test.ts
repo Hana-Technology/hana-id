@@ -175,7 +175,7 @@ describe('SponsorChain limits and caches (L1, L2, L4)', () => {
     expect(await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).transactionCount(ADDRESS, 'latest')).toBe(2);
   });
 
-  it('countsEach: every endpoint’s latest, pending and confirmed counts (safe tag, else latest block − N; safe unsupported falls back)', async () => {
+  it('snapshot: each endpoint’s counts at ONE common block (the lowest head; the lowest safe block, else head − N), a lagging endpoint left out', async () => {
     const chain = new EvmMock({ chainId: 31337 }).install();
     chain.setMined(ADDRESS, 4);
     chain.minedCount.set(ADDRESS.toLowerCase(), 6);
@@ -183,18 +183,41 @@ describe('SponsorChain limits and caches (L1, L2, L4)', () => {
     chain.blockNumber = 102;
     chain.safeDepth = 2;
     const rpc = new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]);
-    expect(await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: false })).toEqual([
-      { endpoint: 0, latest: 6, pending: 6, confirmed: 4 },
-      { endpoint: 1, latest: 6, pending: 6, confirmed: 4 },
-    ]);
-    expect((await rpc.countsEach(ADDRESS, { confirmations: 0, safeTag: false }))[0]!.confirmed).toBe(6);
-    expect((await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: true }))[0]!.confirmed).toBe(4);
-    chain.safeDepth = 1;
-    expect((await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: true }))[0]!.confirmed).toBe(6);
+    expect(await rpc.snapshot(ADDRESS, { confirmations: 3, safeTag: false, lagLimit: 8 })).toEqual({
+      endpoints: [
+        { endpoint: 0, head: 102, pending: 6, latest: 6, confirmed: 4 },
+        { endpoint: 1, head: 102, pending: 6, latest: 6, confirmed: 4 },
+      ],
+      latestBlock: 102,
+      confirmedBlock: 99,
+      ignored: [],
+    });
+    expect((await rpc.snapshot(ADDRESS, { confirmations: 3, safeTag: true, lagLimit: 8 })).confirmedBlock).toBe(100);
+    // A fallback 1 block behind: both are read at its head (block 101), where they agree.
+    chain.lag[1] = 1;
+    const one = await rpc.snapshot(ADDRESS, { confirmations: 0, safeTag: false, lagLimit: 8 });
+    expect(one).toMatchObject({ latestBlock: 101, ignored: [] });
+    expect(one.endpoints.map((c) => c.latest)).toEqual([6, 6]);
+    // Far behind: left out.
+    chain.lag[1] = 20;
+    expect(await rpc.snapshot(ADDRESS, { confirmations: 3, safeTag: false, lagLimit: 8 })).toMatchObject({ latestBlock: 102, ignored: [1], endpoints: [{ endpoint: 0 }] });
     chain.supportsSafe = false;
-    expect((await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: true }))[0]!.confirmed).toBe(4);
-    chain.modes[1] = 'down';
-    expect((await rpc.countsEach(ADDRESS, { confirmations: 3, safeTag: false })).map((c) => c.endpoint)).toEqual([0]);
+    chain.lag[1] = 0;
+    expect((await rpc.snapshot(ADDRESS, { confirmations: 3, safeTag: true, lagLimit: 8 })).confirmedBlock).toBe(99);
+  });
+
+  it('logs and eth_call at a block', async () => {
+    let seen: unknown[] = [];
+    stubFetch((_e, method, params) => {
+      seen = params;
+      if (method === 'eth_getLogs') return { result: [{ address: ADDRESS, topics: [HASH], data: '0x', transactionHash: HASH, blockNumber: '0x5' }] };
+      return { result: `0x${'00'.repeat(31)}07` };
+    });
+    const rpc = new SponsorChain(31337, [PRIMARY_RPC]);
+    expect(await rpc.logs({ address: ADDRESS, topics: [HASH, null], fromBlock: 1n, toBlock: 9n })).toEqual([{ address: ADDRESS, topics: [HASH], data: '0x', transactionHash: HASH, blockNumber: 5n }]);
+    expect(seen).toEqual([{ address: ADDRESS, topics: [HASH, null], fromBlock: '0x1', toBlock: '0x9' }]);
+    expect(BigInt(await rpc.call({ to: ADDRESS, data: '0xaffed0e0' }, { block: 12n }))).toBe(7n);
+    expect(seen).toEqual([{ to: ADDRESS, data: '0xaffed0e0' }, '0xc']);
   });
 });
 

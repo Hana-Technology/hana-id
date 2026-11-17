@@ -13,34 +13,44 @@
 // - Never a nonce used twice. Nonces are handed out in order inside the critical section below; a record is written
 //   (with `nextNonce`, in one transaction) and confirmed (`storage.sync()`) BEFORE its raw transaction is broadcast. A
 //   crash at any point leaves either nothing (the nonce was never used) or a record the next run broadcasts again.
-// - No record is dropped on one node's word. A record is done only when the CONFIRMED count (the `safe` block on an OP
-//   Stack chain, else the latest block − 3) is past its nonce on every endpoint that answers (the lowest is taken; a
-//   spread beyond 2 between endpoints counts as unknown: nothing is deleted or adopted), AND a receipt names one of its
-//   hashes (the one that mined is recorded) or, with none of its hashes mined by a COMPLETE check (every version's
-//   receipt read from every endpoint, up to two, with no failure or budget cut-off; else the clock resets), the nonce
-//   has stayed confirmed for 2 minutes, seen so by two endpoints or on two consecutive runs (another sender's: `taken`). Until then its raws are kept, so after a reorg (the latest count falls back
-//   below it) it is broadcast again.
+// - No record is dropped on one node's word. Every run reads each endpoint's counts AT ONE BLOCK (the lowest head among
+//   the endpoints, and the lowest `safe` block, else head − 3: never across different heads); an endpoint more than 8
+//   blocks behind is left out for the run, and those left must agree at those blocks (a true disagreement changes
+//   nothing that run: `counts_disagree`, cleared by the next agreeing run; a single endpoint is used alone, two
+//   consecutive runs before a record goes). A record is done only when the confirmed count is past its nonce AND a
+//   receipt names one of its versions (the one that mined, and its cost, recorded), or none of its versions mined by a
+//   COMPLETE check (every version's receipt read from every endpoint, up to two, no failure or budget cut-off; else the
+//   clock resets) and the account's delegate `nonce()` at the confirmed block shows THIS batch did not run (a nonce past
+//   it with an `Executed(digest)` log makes it mined, `execute`; without the log, keep checking), for 10 minutes, seen so
+//   by two endpoints or on two consecutive runs: `taken` means "certainly not this batch". Until then its raws are kept,
+//   so after a reorg (the common block's count falls back below it) it is broadcast again.
 // - No permanent gap. A nonce goes back only when every endpoint reached refused it definitely and no endpoint's
-//   pending count holds it. A nonce at or above the chain's pending count with no record (left by a lying node's count,
-//   or another sender's pending transaction that was dropped) blocks every later one: after 5 minutes it is filled with
-//   a 0-value self-transfer, so the object heals itself; `reconcile()` (staff only, below) does it at once.
+//   pending count holds it. A nonce life starts at the HIGHEST pending count (a lagging endpoint never makes it reuse a
+//   used nonce); a just-signed transaction every endpoint calls `nonce too low` is dropped and sent again at the next
+//   nonce, and a pending one never accepted with no receipt is moved there. A nonce no endpoint has mined or pending,
+//   below `nextNonce`, with no record (left by a lying node's count, or another sender's pending transaction that was
+//   dropped) blocks every later one: after 5 minutes it is filled with a 0-value self-transfer, so the object heals
+//   itself; `staffReconcile` (below) does it at once.
 // - Stuck transactions: the alarm (every 15 s while anything is pending, backing off to 5 minutes while nothing
 //   changes) rebroadcasts what no node holds, replaces a transaction pending 60 s at the same nonce with both fees
 //   × 1.125 (up to the chain's caps; nodes need +10% on both), and past the batch's deadline replaces it with a 0-value
-//   self-transfer. A send must leave room for two such bumps under the caps (else `fees_too_high`).
+//   self-transfer; both run whatever the counts said (safe for a nonce already mined), expired batches first, then the
+//   least recently signed, one version per record a run. A send must leave room for two bumps (else `fees_too_high`).
 // - A key whose address isn't the config's `relayerAddress`, a missing or malformed key, or one that changed while the
 //   previous key's transactions are pending: every send and every signature is refused (`status().blockedReason` says
 //   which). The key is parsed for each critical section, never stored, never logged, and zeroed after use.
 // - Bounded work and storage: ≤ 45 fetches per invocation (the free plan allows 50 subrequests), ≤ 6 records advanced,
-//   ≤ 4 rebroadcasts, ≤ 8 receipt reads and ≤ 2 gap fillers per run (the rest next run); ≤ 32 pending, ≤ 16 sends
-//   waiting, ≤ 4096 remembered batches, ≤ 16 versions per nonce; a confirmed record is deleted at once, what is
-//   remembered of it 10 minutes after its batch's deadline; reservations over 2 × the chain's `dailyBudgetEth` in a UTC
-//   day are refused (`daily_cap`), a backstop under the handlers' budgets.
+//   ≤ 4 rebroadcasts, ≤ 32 receipt reads and ≤ 2 gap fillers per run (the rest next run); ≤ 32 unmined records (mined
+//   ones awaiting confirmation don't count, ≤ 256 records in all), ≤ 16 sends waiting, ≤ 4096 remembered batches, ≤ 16
+//   versions per nonce; a confirmed record is deleted at once, what is remembered of it 10 minutes after its batch's
+//   deadline. The daily backstop counts WORST-CASE reservations (so it can trip before the handlers' settled budget):
+//   over 2 × the chain's `dailyBudgetEth` in a UTC day, `daily_cap`; a fee bump adds its increase, a confirmed receipt
+//   gives back the reservation less what it cost, a `taken` record keeps it; it is per day, not per key.
 //
 // Concurrency (why there is a queue and no blockConcurrencyWhile): a Durable Object runs one event at a time, and its
 // input gate holds new events only while it awaits STORAGE; while it awaits a fetch (every RPC call) other requests
 // and the alarm run. So every operation that reads or changes nonce state (send's section, the alarm's run,
-// `reconcile`) goes through one FIFO promise queue (`exclusive`): one at a time, in arrival order, including across
+// `staffReconcile`) goes through one FIFO promise queue (`exclusive`): one at a time, in arrival order, including across
 // their RPC awaits. Storage is the synchronous SQLite-backed KV API (as RelayerKey, RateLimiter and LoginRelay use it):
 // each state change is one `transactionSync` (all of it or none), and `storage.sync()` is awaited before any broadcast
 // (the output gate would hold the fetch until the write is durable anyway; the explicit wait doesn't depend on it).
@@ -72,10 +82,13 @@ import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import type { Env } from './env.ts';
 import { log } from './log.ts';
-import { type EndpointCounts, type EvmBroadcast, EvmRpcError, type Hex, type SponsorChain, sponsorChainFor } from './evm/sponsor-chain.ts';
+import { type CountsSnapshot, type EndpointCounts, type EvmBroadcast, type EvmMinedLog, type EvmReceipt, EvmRpcError, type Hex, type SponsorChain, sponsorChainFor } from './evm/sponsor-chain.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, checksumEvmAddress, parseEvmSponsorConfig, sponsorChain } from './evm/sponsor-config.ts';
 
 export type { Hex };
+
+/** The guard `staffReconcile` requires (re-exported by evm-relayer-staff.ts for the admin package only). */
+export const EVM_RELAYER_STAFF_GUARD = 'hana-id/evm-relayer/staff-reconcile/v1';
 
 /** The object's name for a chain and key index (EVM_RELAY_KEYS holds one key today: index 0). */
 export const evmRelayerName = (chainId: number, keyIndex = 0): string => `evm-relayer-${chainId}-${keyIndex}`;
@@ -92,14 +105,24 @@ export const EVM_RELAYER_FEE_BUMP = { num: 9n, den: 8n } as const;
 const NODE_REPLACEMENT_BUMP = { num: 11n, den: 10n } as const;
 /** Blocks below the latest at which a chain without a `safe` tag counts a nonce as confirmed. */
 export const EVM_RELAYER_CONFIRMATIONS = 3;
-/** The most two endpoints' mined (or confirmed) counts may differ before the counts count as unknown. */
-export const EVM_RELAYER_COUNT_TOLERANCE = 2;
-/** A confirmed nonce with none of our hashes mined is another sender's only after it stays so this long. */
-export const EVM_RELAYER_TAKEN_AFTER_MS = 2 * 60_000;
+/** An endpoint whose head is more than this many blocks behind the highest is left out of a run's counts. */
+export const EVM_RELAYER_LAG_LIMIT_BLOCKS = 8;
+/** A confirmed nonce with none of our versions mined (and the batch's account nonce unused) is `taken` after this long. */
+export const EVM_RELAYER_TAKEN_AFTER_MS = 10 * 60_000;
+/** `eth_getLogs` for a batch's Executed event starts this many blocks before the record was first seen at a head. */
+export const EVM_RELAYER_LOG_LOOKBACK_BLOCKS = 64;
+/** The widest `eth_getLogs` range asked (providers limit it). */
+export const EVM_RELAYER_LOG_RANGE_BLOCKS = 5_000;
+/** `Executed(bytes32 indexed digest, uint256 nonce, uint256 callCount)`: the delegate's event (topic 0). */
+export const EXECUTED_TOPIC: Hex = toHexBytes(keccak_256(new TextEncoder().encode('Executed(bytes32,uint256,uint256)')));
+/** The delegate's `nonce()` (the account's Execute nonce). */
+export const DELEGATE_NONCE_SELECTOR: Hex = toHexBytes(keccak_256(new TextEncoder().encode('nonce()')).subarray(0, 4));
 /** A nonce gap (no record, at or above the chain's pending count) is filled after it has blocked this long. */
 export const EVM_RELAYER_GAP_HEAL_MS = 5 * 60_000;
-/** At most this many transactions pending at once; beyond it `relayer_busy`. */
+/** At most this many UNMINED transactions at once (beyond it `relayer_busy`); mined ones awaiting confirmation don't count. */
 export const EVM_RELAYER_MAX_PENDING = 32;
+/** At most this many records in all, mined-but-unconfirmed included (beyond it `relayer_busy`). */
+export const EVM_RELAYER_MAX_RECORDS = 256;
 /** At most this many sends waiting for the critical section; beyond it `relayer_busy` at once. */
 export const EVM_RELAYER_MAX_QUEUE = 16;
 /** At most this many batches remembered (pending or mined, until forgotten); beyond it `relayer_busy`. */
@@ -123,6 +146,10 @@ const DEADLINE_SLACK_S = 60;
 /** A 0-value self-transfer's gas. */
 export const CANCEL_GAS = 21_000n;
 const DAY_MS = 24 * 60 * 60_000;
+
+function toHexBytes(b: Uint8Array): Hex {
+  return `0x${Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')}`;
+}
 
 /** What the handlers send (bigints as bigints: Workers RPC carries them). */
 export interface EvmRelayerSendRequest {
@@ -369,6 +396,8 @@ interface Meta {
   blocked: 'counts_disagree' | 'rpc_unavailable' | null;
   /** The alarm's current interval (ms): 15 s after a change, doubling to 5 minutes while nothing changes. */
   alarmMs: number;
+  /** The mined count at the last agreeing run's common block (records at or above it count against MAX_PENDING). */
+  lastLatest: number;
 }
 
 interface StoredAuthorization {
@@ -402,6 +431,13 @@ interface PendingTx {
   /** The batch's deadline (unix s, decimal); "0" for a gap filler. */
   deadline: string;
   reservedWei: string;
+  /** The Execute's nonce (the account's delegate nonce it uses), decimal; null for a gap filler. */
+  executeNonce: string | null;
+  /** The UTC day the send was counted in (the daily backstop), and the worst case counted for it so far (wei). */
+  day: number;
+  worstWei: string;
+  /** What the mined version cost (gasUsed × effectiveGasPrice + l1Fee), once a receipt says; null before. */
+  costWei: string | null;
   /** When this nonce was first used (ms). */
   sentAt: number;
   /** When the latest version was signed (ms). */
@@ -413,8 +449,14 @@ interface PendingTx {
   versions: Version[];
   /** Whether an endpoint accepted the latest version. */
   accepted: boolean;
-  /** The version with a receipt (tentative until confirmed; cleared by a reorg). */
+  /** The version with a receipt (tentative until confirmed; cleared by a reorg), or the transaction of an Executed log. */
   minedHash: Hex | null;
+  /** True when `minedHash` comes from the account's Executed(digest) log, not from one of our versions' receipts. */
+  minedByLog: boolean;
+  /** Consecutive runs with the nonce confirmed (a single endpoint needs two before the record goes). */
+  confirmedRuns: number;
+  /** The common head block when the record was first seen by a run (where an Executed log search starts). */
+  seenHead: number | null;
   /**
    * When the nonce was first seen confirmed with none of our hashes mined (ms), or null, and how many consecutive runs
    * found that by a COMPLETE check (every version's receipt read, no failure, no budget cut-off). Any incomplete check
@@ -479,6 +521,7 @@ interface Ready {
 
 interface Checked {
   digest: Hex;
+  executeNonce: bigint;
   to: Hex;
   data: Hex;
   gas: bigint;
@@ -489,14 +532,20 @@ interface Checked {
   reservedWei: bigint;
 }
 
-/** What a reconciliation saw (the lowest of the endpoints' counts, the highest pending) and did. */
-interface Repaired {
-  each: EndpointCounts[];
+/** A run's counts: the endpoints used, at one block each (CountsSnapshot), and whether they agreed. */
+interface Counts {
+  snap: CountsSnapshot;
+  used: EndpointCounts[];
   agreed: boolean;
+  single: boolean;
   latest: number;
-  pending: number;
-  pendingHigh: number;
   confirmed: number;
+  pendingLow: number;
+  pendingHigh: number;
+}
+
+/** What a reconciliation saw and did. */
+interface Repaired extends Counts {
   changed: boolean;
   finalized: number;
   filled: number[];
@@ -560,11 +609,14 @@ export class EvmRelayer extends DurableObject<Env> {
   }
 
   /**
-   * STAFF ONLY (D837): re-reads the chain and repairs at once what the alarm would in time (confirmed records, a gap
-   * filled now with `fillGapsNow`), and reports what it found. For the admin package to call through AdminRpc; the
-   * sponsorship handlers never call it, and no route reaches it.
+   * STAFF ONLY, BY CONVENTION (D837): any code holding the EVM_RELAYER binding can call it; the guard argument
+   * (EVM_RELAYER_STAFF_GUARD, exported only from evm-relayer-staff.ts, which the sponsorship handlers never import: a
+   * test checks) keeps it out of their path. It does only what the alarm does in time (re-read the chain, confirm
+   * records, fill a gap: at once with `fillGapsNow`), and reports what it found. For the admin package to call through
+   * `staffReconcileEvmRelayer` from AdminRpc; no route reaches it.
    */
-  async reconcile(opts: { fillGapsNow?: boolean } = {}): Promise<EvmRelayerReconcileReport> {
+  async staffReconcile(guard: string, opts: { fillGapsNow?: boolean } = {}): Promise<EvmRelayerReconcileReport> {
+    if (guard !== EVM_RELAYER_STAFF_GUARD) refuse('invalid_request');
     return this.exclusive(async () => {
       const meta = this.meta();
       if (!meta) refuse('relayer_unconfigured');
@@ -583,7 +635,7 @@ export class EvmRelayer extends DurableObject<Env> {
         return {
           chainId: m.chainId,
           address: r.address,
-          counts: rep.each,
+          counts: rep.used,
           agreed: rep.agreed,
           nextNonce: m.nextNonce,
           finalized: rep.finalized,
@@ -667,7 +719,8 @@ export class EvmRelayer extends DurableObject<Env> {
     const chain = sponsorChain(config, chainId);
     if (!chain) refuse('relayer_unconfigured');
     if (bind && (!meta || meta.address !== address)) {
-      meta = { v: SCHEMA, chainId, address, nextNonce: null, remembered: meta?.remembered ?? 0, day: 0, dayReservedWei: '0', gaps: {}, blocked: null, alarmMs: EVM_RELAYER_ALARM_MS };
+      // A new nonce life (a first send, or a new key): the daily backstop is per day, not per key, so it carries over.
+      meta = { v: SCHEMA, chainId, address, nextNonce: null, remembered: meta?.remembered ?? 0, day: meta?.day ?? 0, dayReservedWei: meta?.dayReservedWei ?? '0', gaps: {}, blocked: null, alarmMs: EVM_RELAYER_ALARM_MS, lastLatest: 0 };
       this.putMeta(meta);
       this.reconciled = false;
     }
@@ -703,7 +756,9 @@ export class EvmRelayer extends DurableObject<Env> {
       this.reconciled = true;
     }
     const meta = this.meta()!;
-    if (this.pendingRecords().length >= EVM_RELAYER_MAX_PENDING || meta.remembered >= EVM_RELAYER_MAX_REMEMBERED) {
+    const records = this.pendingRecords();
+    const unmined = records.filter((p) => !p.minedHash && p.nonce >= meta.lastLatest).length;
+    if (unmined >= EVM_RELAYER_MAX_PENDING || records.length >= EVM_RELAYER_MAX_RECORDS || meta.remembered >= EVM_RELAYER_MAX_REMEMBERED) {
       log({ event: 'evm_relay_busy', chainId: r.chain.chainId, code: 'relayer_busy' }, 'warn');
       refuse('relayer_busy');
     }
@@ -738,6 +793,10 @@ export class EvmRelayer extends DurableObject<Env> {
         authorization: checked.authorization,
         deadline: checked.deadline.toString(),
         reservedWei: checked.reservedWei.toString(),
+        executeNonce: checked.executeNonce.toString(),
+        day,
+        worstWei: checked.reservedWei.toString(),
+        costWei: null,
         sentAt: now,
         signedAt: now,
         raw,
@@ -745,8 +804,11 @@ export class EvmRelayer extends DurableObject<Env> {
         versions: [{ hash, kind: 'execute', raw }],
         accepted: false,
         minedHash: null,
+        minedByLog: false,
         takenSince: null,
         takenRuns: 0,
+        confirmedRuns: 0,
+        seenHead: null,
       };
       const forgetAt = Number(checked.deadline) * 1000 + EVM_RELAYER_REMEMBER_AFTER_DEADLINE_MS;
       // Persist BEFORE the broadcast: the record, the batch's memory, the next nonce and the day's reservation, in one
@@ -771,25 +833,32 @@ export class EvmRelayer extends DurableObject<Env> {
       // No definite answer (or nothing reachable): the record stays and the alarm broadcasts it again.
       if (sent.kind !== 'rejected') return answer;
 
-      const each = await rpc.countsEach(r.address, { confirmations: EVM_RELAYER_CONFIRMATIONS, safeTag: r.chain.opStack });
-      if (each.length === 0) return answer;
       if (sent.reason === 'nonce_too_low') {
-        // Another sender used this key's nonce (no record of ours was at it). Dropped only once every answering
-        // endpoint's CONFIRMED count is past it; then once more with the chain's next nonce.
-        if (Math.min(...each.map((c) => c.confirmed)) <= nonce) return answer;
+        // Every endpoint reached says the nonce is used (a lagging count gave it, or another sender): this transaction,
+        // just signed and never accepted, can't land there. Dropped, then once more at the chain's next nonce (the
+        // highest pending count).
         this.forgetUnsent(nonce, digest, forgetAt, { giveBackWei: checked.reservedWei, day });
         log({ event: 'evm_relay_nonce_taken', chainId: r.chain.chainId, nonce: String(nonce), code: 'nonce_too_low' }, 'warn');
+        let c: Counts;
         try {
-          await this.repair(rpc, r, Date.now(), {});
+          c = await this.counts(rpc, r);
         } catch {
           return refuse('rpc_unavailable');
         }
-        if (attempt === 0 && this.meta()!.nextNonce! > nonce) continue;
+        const next = Math.max(this.meta()!.nextNonce!, c.pendingHigh, c.agreed ? c.confirmed : 0);
+        this.ctx.storage.transactionSync(() => this.putMeta({ ...this.meta()!, nextNonce: next }));
+        if (attempt === 0 && next > nonce) continue;
         return refuse('rejected', 'nonce_too_low');
       }
       // A definite refusal by every endpoint reached: the nonce goes back only when no endpoint's pending count holds
       // it (and it is still the newest), else the record stays for the alarm.
-      if (Math.max(...each.map((c) => c.pending)) > nonce || this.meta()!.nextNonce !== nonce + 1) return answer;
+      let pendingHigh: number;
+      try {
+        pendingHigh = (await this.counts(rpc, r)).pendingHigh;
+      } catch {
+        return answer;
+      }
+      if (pendingHigh > nonce || this.meta()!.nextNonce !== nonce + 1) return answer;
       // The record, the batch's memory, the reservation and the nonce go back in one transaction (never a gap after a crash).
       this.forgetUnsent(nonce, digest, forgetAt, { nextNonce: nonce, giveBackWei: checked.reservedWei, day });
       log({ event: 'evm_relay_rejected', chainId: r.chain.chainId, nonce: String(nonce), evmTx: hash, code: sent.reason }, 'warn');
@@ -868,7 +937,8 @@ export class EvmRelayer extends DurableObject<Env> {
       if (!sameAddress(authSigner, account)) refuse('invalid_request');
       auth = { chainId: a.chainId, address: a.address, nonce: a.nonce.toString(), yParity: a.yParity, r: a.r, s: a.s };
     }
-    return { digest, to: account.toLowerCase() as Hex, data, gas, maxFeePerGas, maxPriorityFeePerGas, authorization: auth, deadline, reservedWei };
+    if (typeof e.nonce !== 'bigint') refuse('invalid_request');
+    return { digest, executeNonce: e.nonce, to: account.toLowerCase() as Hex, data, gas, maxFeePerGas, maxPriorityFeePerGas, authorization: auth, deadline, reservedWei };
   }
 
   private buildTx(chainId: number, nonce: number, t: { to: Hex; data: Hex; gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; authorization: StoredAuthorization | null }): SponsorTx {
@@ -927,42 +997,64 @@ export class EvmRelayer extends DurableObject<Env> {
 
   // ---- the chain ----
 
+  /** The chain's counts as one snapshot (CountsSnapshot), cross-checked: see `repair`. */
+  private async counts(rpc: SponsorChain, r: Ready): Promise<Counts> {
+    const snap = await rpc.snapshot(r.address, { confirmations: EVM_RELAYER_CONFIRMATIONS, safeTag: r.chain.opStack, lagLimit: EVM_RELAYER_LAG_LIMIT_BLOCKS });
+    const used = snap.endpoints;
+    if (used.length === 0) throw new EvmRpcError('unavailable');
+    const same = (k: 'latest' | 'confirmed') => used.every((c) => c[k] === used[0]![k]);
+    return {
+      snap,
+      used,
+      agreed: same('latest') && same('confirmed'),
+      single: used.length === 1,
+      latest: Math.min(...used.map((c) => c.latest)),
+      confirmed: Math.min(...used.map((c) => c.confirmed)),
+      pendingLow: Math.min(...used.map((c) => c.pending)),
+      pendingHigh: Math.max(...used.map((c) => c.pending)),
+    };
+  }
+
   /**
-   * Reconciles with the chain (every endpoint's counts, cross-checked: the lowest taken, a spread beyond the tolerance
-   * changes nothing) and repairs what it finds: a record whose nonce is confirmed is done once a receipt names one of
-   * its versions (or, none of them mined, once it has stayed confirmed for 2 minutes: taken); a record whose nonce is
-   * mined but not yet confirmed keeps its raws, its mined hash noted (and cleared again by a reorg); `nextNonce`
-   * becomes the largest of what is stored, the newest record + 1, the confirmed and the pending count (never lower); a
-   * gap (no record, at or above the pending count, below `nextNonce`) is filled after it has blocked for 5 minutes
-   * (`fillGapsNow`: at once); a record no node holds is broadcast again. Throws when no endpoint answered (nothing
-   * changed then).
+   * Reconciles with the chain and repairs what it finds. The counts are read at ONE block on every endpoint (the lowest
+   * head, and the lowest `safe` block: never across different heads), an endpoint lagging more than
+   * EVM_RELAYER_LAG_LIMIT_BLOCKS behind is left out for the run, and the endpoints left must give the same counts at
+   * those blocks; if not (a true disagreement), nothing is deleted, adopted or filled this run (`counts_disagree`, which
+   * clears itself on the next agreeing run). A single endpoint is used alone, with two consecutive runs needed before a
+   * record is deleted. Then:
+   * - a record whose nonce is mined notes the version with a receipt (cleared again by a reorg); once its nonce is
+   *   confirmed it is done as `mined` (receipt) or, none of its versions mined, as `taken` only after the account's
+   *   delegate nonce at the confirmed block shows this batch did not run (an `Executed(digest)` log found instead makes
+   *   it mined, `execute`), its receipts complete and empty for 10 minutes;
+   * - `nextNonce` = max(stored, newest record + 1, confirmed, pending): the HIGHEST pending count when a nonce life
+   *   starts (a lagging endpoint's lower count would reuse nonces), the lowest after (another sender's pending
+   *   transaction is adopted only when every endpoint sees it); never lower;
+   * - a gap (no record, at or above every endpoint's pending count and the confirmed count, below `nextNonce`) is filled
+   *   after it has blocked for 5 minutes (`fillGapsNow`: at once);
+   * - a record no node holds is broadcast again; one every endpoint calls `nonce too low` that was never accepted and
+   *   has no receipt is moved to a new nonce.
+   * Throws when no endpoint answered (nothing changed then).
    */
   private async repair(rpc: SponsorChain, r: Ready, now: number, opts: { fillGapsNow?: boolean }): Promise<Repaired> {
-    const each = await rpc.countsEach(r.address, { confirmations: EVM_RELAYER_CONFIRMATIONS, safeTag: r.chain.opStack });
-    if (each.length === 0) throw new EvmRpcError('unavailable');
-    const lo = (k: keyof Omit<EndpointCounts, 'endpoint'>) => Math.min(...each.map((c) => c[k]));
-    const hi = (k: keyof Omit<EndpointCounts, 'endpoint'>) => Math.max(...each.map((c) => c[k]));
-    const latest = lo('latest');
-    const pending = lo('pending');
-    const confirmed = lo('confirmed');
-    const agreed = hi('latest') - latest <= EVM_RELAYER_COUNT_TOLERANCE && hi('confirmed') - confirmed <= EVM_RELAYER_COUNT_TOLERANCE;
-    const out: Repaired = { each, agreed, latest, pending, pendingHigh: hi('pending'), confirmed, changed: false, finalized: 0, filled: [] };
-    if (!agreed) {
+    const c = await this.counts(rpc, r);
+    const out: Repaired = { ...c, changed: false, finalized: 0, filled: [] };
+    if (!c.agreed) {
       log({ event: 'evm_relayer_counts_disagree', chainId: r.chain.chainId, code: 'counts_disagree' }, 'error');
       this.setBlocked('counts_disagree');
       return out;
     }
     const kv = this.ctx.storage.kv;
+    const { latest, confirmed } = c;
     const budget = { left: EVM_RELAYER_RUN_LIMITS.receipts };
-    const endpoints = Math.min(2, each.length);
+    const endpoints = Math.min(2, c.used.length);
     for (const p0 of this.pendingRecords()) {
-      let p = p0;
-      const included = latest > p.nonce;
-      if (!included) {
-        if (p.minedHash || p.takenSince !== null) {
-          // Un-mined by a reorg: back to pending, its raws still here to broadcast again.
-          log({ event: 'evm_relay_reorg', chainId: r.chain.chainId, nonce: String(p.nonce), code: 'unmined' }, 'warn');
-          kv.put(txKey(p.nonce), { ...p, minedHash: null, takenSince: null, takenRuns: 0, accepted: false });
+      let p: PendingTx = { ...p0, seenHead: p0.seenHead ?? c.snap.latestBlock };
+      if (p0.seenHead === null || p0.seenHead === undefined) kv.put(txKey(p.nonce), p);
+      if (latest <= p.nonce) {
+        if (p.minedHash || p.takenSince !== null || p.confirmedRuns > 0) {
+          // Un-mined by a reorg (or not yet mined at the common block): back to pending, its raws still here.
+          if (p.minedHash) log({ event: 'evm_relay_reorg', chainId: r.chain.chainId, nonce: String(p.nonce), code: 'unmined' }, 'warn');
+          kv.put(txKey(p.nonce), { ...p, minedHash: null, costWei: null, takenSince: null, takenRuns: 0, confirmedRuns: 0, accepted: false });
           out.changed = true;
         }
         continue;
@@ -970,51 +1062,49 @@ export class EvmRelayer extends DurableObject<Env> {
       if (!p.minedHash) {
         const check = await this.findReceipt(rpc, p, budget, endpoints);
         if (check.found) {
-          p = { ...p, minedHash: check.found, takenSince: null, takenRuns: 0 };
+          p = { ...p, minedHash: check.found.hash, costWei: check.found.cost, takenSince: null, takenRuns: 0 };
           kv.put(txKey(p.nonce), p);
           out.changed = true;
-        } else if (!check.complete || confirmed <= p.nonce) {
-          // Not every version was read (an RPC failure, the run's budget), or not confirmed yet: no step toward taken.
-          if (p.takenSince !== null || p.takenRuns !== 0) {
-            p = { ...p, takenSince: null, takenRuns: 0 };
-            kv.put(txKey(p.nonce), p);
-          }
         } else {
-          p = { ...p, takenSince: p.takenSince ?? now, takenRuns: p.takenRuns + 1 };
-          kv.put(txKey(p.nonce), p);
-          out.changed = true;
+          p = await this.takenStep(rpc, r, p, check.complete && confirmed > p.nonce, c, now);
         }
       }
-      if (confirmed > p.nonce) {
-        if (p.minedHash) {
-          this.finalize(p, 'mined');
-          out.finalized++;
-          out.changed = true;
-        } else if (p.takenSince !== null && now - p.takenSince >= EVM_RELAYER_TAKEN_AFTER_MS && (endpoints >= 2 || p.takenRuns >= 2)) {
-          // This run's complete check (above) is the last look: none of its versions mined, from two endpoints (or on
-          // two consecutive complete runs of one), for 2 minutes.
-          log({ event: 'evm_relay_nonce_taken', chainId: r.chain.chainId, nonce: String(p.nonce), code: 'taken' }, 'warn');
-          this.finalize(p, 'taken');
-          out.finalized++;
-          out.changed = true;
-        }
+      if (confirmed <= p.nonce) {
+        if (p.confirmedRuns !== 0) kv.put(txKey(p.nonce), (p = { ...p, confirmedRuns: 0 }));
+        continue;
+      }
+      p = { ...p, confirmedRuns: p.confirmedRuns + 1 };
+      kv.put(txKey(p.nonce), p);
+      if (c.single && p.confirmedRuns < 2) continue;
+      if (p.minedHash) {
+        this.finalize(p, 'mined');
+        out.finalized++;
+        out.changed = true;
+      } else if (p.takenSince !== null && now - p.takenSince >= EVM_RELAYER_TAKEN_AFTER_MS && (endpoints >= 2 || p.takenRuns >= 2)) {
+        // This run's complete check (above) is the last look: none of its versions mined from two endpoints (or on
+        // two consecutive complete runs of one), and the account's nonce shows the batch did not run.
+        log({ event: 'evm_relay_nonce_taken', chainId: r.chain.chainId, nonce: String(p.nonce), code: 'taken' }, 'warn');
+        this.finalize(p, 'taken');
+        out.finalized++;
+        out.changed = true;
       }
     }
     const records = this.pendingRecords();
     const m = this.meta()!;
     const stored = m.nextNonce;
     const newest = records.reduce((a, p) => Math.max(a, p.nonce + 1), 0);
-    const next = Math.max(stored ?? 0, newest, confirmed, pending);
-    if (stored !== null && pending > stored) log({ event: 'evm_relayer_foreign_pending', chainId: r.chain.chainId, nonce: String(pending), code: 'foreign_pending' }, 'warn');
-    // Gaps: a nonce at or above the chain's (lowest) pending count and below next with no record. Only once a nonce
-    // was ours to hand out (stored !== null): a first reconciliation adopts the chain's counts as they are.
+    const next = Math.max(stored ?? 0, newest, confirmed, stored === null ? c.pendingHigh : c.pendingLow);
+    if (stored !== null && c.pendingLow > stored) log({ event: 'evm_relayer_foreign_pending', chainId: r.chain.chainId, nonce: String(c.pendingLow), code: 'foreign_pending' }, 'warn');
+    // Gaps: a nonce no endpoint has mined or pending (at or above every pending count and the confirmed count), below
+    // next, with no record. Only once a nonce was ours to hand out: a first reconciliation adopts the counts as they are.
     const gaps: Record<string, number> = {};
+    const from = Math.max(confirmed, c.pendingHigh);
     if (stored !== null) {
-      for (let g = Math.max(confirmed, pending); g < next && g < Math.max(confirmed, pending) + 64; g++) {
+      for (let g = from; g < next && g < from + 64; g++) {
         if (kv.get(txKey(g)) === undefined) gaps[String(g)] = m.gaps[String(g)] ?? now;
       }
     }
-    this.ctx.storage.transactionSync(() => this.putMeta({ ...this.meta()!, nextNonce: next, gaps, blocked: null }));
+    this.ctx.storage.transactionSync(() => this.putMeta({ ...this.meta()!, nextNonce: next, gaps, blocked: null, lastLatest: latest }));
     const due = Object.entries(gaps)
       .filter(([, since]) => opts.fillGapsNow === true || now - since >= EVM_RELAYER_GAP_HEAL_MS)
       .map(([g]) => Number(g))
@@ -1023,7 +1113,7 @@ export class EvmRelayer extends DurableObject<Env> {
     const start = maxStartingFees(r.chain);
     for (const g of due) {
       log({ event: 'evm_relayer_gap', chainId: r.chain.chainId, nonce: String(g), code: 'gap_filled' }, 'error');
-      await this.persistAndBroadcast(rpc, r, { nonce: g, digest: null, kind: 'cancel', sentAt: now, reservedWei: '0', deadline: '0', fees: start, versions: [] });
+      await this.persistAndBroadcast(rpc, r, { base: null, nonce: g, digest: null, kind: 'cancel', fees: start });
       out.filled.push(g);
       out.changed = true;
     }
@@ -1035,43 +1125,114 @@ export class EvmRelayer extends DurableObject<Env> {
     let rebroadcasts = 0;
     for (const p of this.pendingRecords()) {
       if (rebroadcasts >= EVM_RELAYER_RUN_LIMITS.rebroadcasts || rpc.exhausted) break;
-      if (p.nonce < pending || latest > p.nonce || out.filled.includes(p.nonce)) continue;
+      if (p.nonce < c.pendingLow || latest > p.nonce || p.minedHash || out.filled.includes(p.nonce)) continue;
       rebroadcasts++;
-      if ((await this.rebroadcast(rpc, r, p)).kind === 'accepted' && !p.accepted) out.changed = true;
+      const sent = await this.rebroadcast(rpc, r, p);
+      if (sent.kind === 'accepted' && !p.accepted) out.changed = true;
+      if (sent.kind === 'rejected' && sent.reason === 'nonce_too_low' && !p.accepted && p.kind === 'execute' && p.digest !== null && !this.expired(p, now)) {
+        const check = await this.findReceipt(rpc, p, budget, endpoints);
+        if (!check.found && check.complete && (await this.reassign(rpc, r, p))) out.changed = true;
+      }
     }
     return out;
   }
 
   /**
-   * Looks for a receipt of any of the record's versions (the latest, then the original, then the rest), each asked of
-   * every endpoint. `found`: the version with a receipt. `complete`: every version was answered by `endpoints`
-   * endpoints with no receipt, within the run's budget; anything less (a failure, the budget) is incomplete.
+   * The `taken` clock for a record whose nonce is mined with none of its versions found: it starts or advances only on
+   * a complete receipt check at a confirmed nonce AND when the account's delegate nonce at the confirmed block is not
+   * past the batch's (the batch did not run). A nonce past it means the batch executed or was superseded: an
+   * `Executed(digest)` log from the account makes the record mined (`execute`); without one, keep checking.
    */
-  private async findReceipt(rpc: SponsorChain, p: PendingTx, budget: { left: number }, endpoints: number): Promise<{ found: Hex | null; complete: boolean }> {
+  private async takenStep(rpc: SponsorChain, r: Ready, p: PendingTx, completeAtConfirmed: boolean, c: Counts, now: number): Promise<PendingTx> {
+    const kv = this.ctx.storage.kv;
+    const reset = (): PendingTx => {
+      if (p.takenSince === null && p.takenRuns === 0) return p;
+      const q = { ...p, takenSince: null, takenRuns: 0 };
+      kv.put(txKey(p.nonce), q);
+      return q;
+    };
+    if (!completeAtConfirmed) return reset();
+    if (p.digest !== null && p.executeNonce !== null) {
+      let accountNonce: bigint;
+      try {
+        const word = await rpc.call({ to: p.to, data: DELEGATE_NONCE_SELECTOR }, { block: BigInt(c.snap.confirmedBlock) });
+        accountNonce = word === '0x' ? 0n : BigInt(word);
+      } catch {
+        return reset();
+      }
+      if (accountNonce > BigInt(p.executeNonce)) {
+        const from = BigInt(Math.max(0, (p.seenHead ?? c.snap.latestBlock) - EVM_RELAYER_LOG_LOOKBACK_BLOCKS));
+        const to = BigInt(c.snap.confirmedBlock);
+        let logs: EvmMinedLog[] = [];
+        try {
+          logs = await rpc.logs({ address: p.to, topics: [EXECUTED_TOPIC, p.digest], fromBlock: to - from > BigInt(EVM_RELAYER_LOG_RANGE_BLOCKS) ? to - BigInt(EVM_RELAYER_LOG_RANGE_BLOCKS) : from, toBlock: to });
+        } catch {
+          return reset();
+        }
+        const hit = logs.find((l) => l.topics[0] === EXECUTED_TOPIC && l.topics[1] === p.digest!.toLowerCase());
+        if (!hit) return reset();
+        log({ event: 'evm_relay_executed_by_log', chainId: r.chain.chainId, nonce: String(p.nonce), evmTx: hit.transactionHash, code: 'executed' });
+        const q = { ...p, minedHash: hit.transactionHash, costWei: null, takenSince: null, takenRuns: 0, minedByLog: true };
+        kv.put(txKey(p.nonce), q);
+        return q;
+      }
+    }
+    const q = { ...p, takenSince: p.takenSince ?? now, takenRuns: p.takenRuns + 1 };
+    kv.put(txKey(p.nonce), q);
+    return q;
+  }
+
+  /**
+   * Moves a record no node will take (every endpoint said `nonce too low`, never accepted, no receipt) to the next
+   * nonce: the same batch re-signed, its memory pointed at the new nonce, in one transaction, then broadcast.
+   */
+  private async reassign(rpc: SponsorChain, r: Ready, p: PendingTx): Promise<boolean> {
+    const kv = this.ctx.storage.kv;
+    const m = this.meta()!;
+    const nonce = m.nextNonce!;
+    if (nonce <= p.nonce || kv.get(txKey(nonce)) !== undefined) return false;
+    const fees = { maxFeePerGas: BigInt(p.maxFeePerGas), maxPriorityFeePerGas: BigInt(p.maxPriorityFeePerGas) };
+    log({ event: 'evm_relay_reassigned', chainId: r.chain.chainId, nonce: String(nonce), code: 'nonce_too_low' }, 'warn');
+    await this.persistAndBroadcast(rpc, r, { base: { ...p, nonce, versions: [], hashes: undefined } as unknown as PendingTx, nonce, digest: p.digest, kind: 'execute', fees, moveFrom: p.nonce });
+    return true;
+  }
+
+  /**
+   * Looks for a receipt of any of the record's versions (the latest, then the original, then the rest), each asked of
+   * every endpoint. `found`: the version with a receipt and what it cost (gasUsed × effectiveGasPrice + l1Fee).
+   * `complete`: every version was answered by `endpoints` endpoints with no receipt, within the run's budget; anything
+   * less (a failure, the budget) is incomplete.
+   */
+  private async findReceipt(rpc: SponsorChain, p: PendingTx, budget: { left: number }, endpoints: number): Promise<{ found: { hash: Hex; cost: string } | null; complete: boolean }> {
     let complete = true;
     for (const v of lookupOrder(p)) {
       if (budget.left < endpoints || rpc.exhausted) return { found: null, complete: false };
       budget.left -= endpoints;
-      let answers: { endpoint: number; receipt: unknown }[];
+      let answers: { endpoint: number; receipt: EvmReceipt | null }[];
       try {
         answers = await rpc.receiptsEach(v.hash);
       } catch {
         return { found: null, complete: false };
       }
-      if (answers.some((a) => a.receipt !== null)) return { found: v.hash, complete: true };
+      const got = answers.find((a) => a.receipt !== null)?.receipt;
+      if (got) return { found: { hash: v.hash, cost: (got.gasUsed * got.effectiveGasPrice + (got.l1Fee ?? 0n)).toString() }, complete: true };
       if (answers.length < endpoints) complete = false;
     }
     return { found: null, complete };
   }
 
-  /** A record whose nonce is confirmed: its record goes, its batch is remembered as mined or taken (in a transaction). */
+  /**
+   * A record whose nonce is confirmed: its record goes, its batch is remembered as mined or taken, and the day's
+   * backstop is settled (the reservation less the receipt's cost when known; a `taken` record keeps its reservation),
+   * in one transaction.
+   */
   private finalize(p: PendingTx, state: 'mined' | 'taken'): void {
     const kv = this.ctx.storage.kv;
     this.ctx.storage.transactionSync(() => {
       kv.delete(txKey(p.nonce));
+      const mined = p.minedHash ? p.versions.find((v) => v.hash === p.minedHash) : undefined;
       if (p.digest) {
         const rem = kv.get<Remembered>(digestKey(p.digest));
-        const mined = p.minedHash ? p.versions.find((v) => v.hash === p.minedHash) : undefined;
         if (rem) {
           kv.put(digestKey(p.digest), {
             ...rem,
@@ -1079,15 +1240,23 @@ export class EvmRelayer extends DurableObject<Env> {
             hash: p.hash,
             raw: mined?.raw ?? p.raw,
             hashes: p.versions.map((v) => v.hash),
-            minedHash: mined?.hash ?? null,
-            outcome: mined?.kind ?? null,
+            minedHash: p.minedHash ?? null,
+            outcome: mined?.kind ?? (p.minedByLog ? 'execute' : null),
           } satisfies Remembered);
         }
       }
-      const gaps = { ...(this.meta()?.gaps ?? {}) };
-      delete gaps[String(p.nonce)];
       const m = this.meta();
-      if (m) this.putMeta({ ...m, gaps });
+      if (m) {
+        const gaps = { ...m.gaps };
+        delete gaps[String(p.nonce)];
+        let dayReservedWei = m.dayReservedWei;
+        if (state === 'mined' && p.costWei !== null && p.day === m.day) {
+          const back = BigInt(p.worstWei) - BigInt(p.costWei);
+          const left = BigInt(m.dayReservedWei) - (back > 0n ? back : 0n);
+          dayReservedWei = (left > 0n ? left : 0n).toString();
+        }
+        this.putMeta({ ...m, gaps, dayReservedWei });
+      }
     });
     log({ event: 'evm_relay_mined', nonce: String(p.nonce), evmTx: p.minedHash ?? p.hash, code: state === 'mined' ? (p.versions.find((v) => v.hash === p.minedHash)?.kind ?? 'execute') : 'taken' });
   }
@@ -1100,21 +1269,27 @@ export class EvmRelayer extends DurableObject<Env> {
   }
 
   /**
-   * Signs a version of nonce `nonce` (an `execute` replacement with the record's payload, or a self-transfer),
-   * stores it as the record (its version appended) and only then broadcasts it.
+   * Signs a version of nonce `nonce` (an `execute` with `base`'s payload, or a self-transfer), stores it as the record
+   * (its version appended; with `moveFrom`, the record moved from that nonce and the batch's memory with it; the day's
+   * worst case raised by any increase) and only then broadcasts it.
    */
   private async persistAndBroadcast(
     rpc: SponsorChain,
     r: Ready,
-    v: { nonce: number; digest: Hex | null; kind: 'execute' | 'cancel'; sentAt: number; reservedWei: string; deadline: string; fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }; versions: Version[]; payload?: PendingTx },
+    v: { base: PendingTx | null; nonce: number; digest: Hex | null; kind: 'execute' | 'cancel'; fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }; moveFrom?: number },
   ): Promise<void> {
     const now = Date.now();
+    const b = v.base;
     const t =
-      v.kind === 'execute' && v.payload
-        ? { to: v.payload.to, data: v.payload.data, gas: BigInt(v.payload.gas), authorization: v.payload.authorization }
+      v.kind === 'execute' && b
+        ? { to: b.to, data: b.data, gas: BigInt(b.gas), authorization: b.authorization }
         : { to: r.address.toLowerCase() as Hex, data: '0x' as Hex, gas: CANCEL_GAS, authorization: null };
     const raw = signSponsorTx(r.key, this.buildTx(r.chain.chainId, v.nonce, { ...t, ...v.fees }));
     const hash = sponsorTxHash(raw);
+    const day = Math.floor(now / DAY_MS);
+    const worstBefore = b ? BigInt(b.gas) * BigInt(b.maxFeePerGas) : 0n;
+    const worstAfter = t.gas * v.fees.maxFeePerGas;
+    const increase = b && v.moveFrom === undefined && worstAfter > worstBefore ? worstAfter - worstBefore : 0n;
     const record: PendingTx = {
       nonce: v.nonce,
       digest: v.digest,
@@ -1125,24 +1300,50 @@ export class EvmRelayer extends DurableObject<Env> {
       maxFeePerGas: v.fees.maxFeePerGas.toString(),
       maxPriorityFeePerGas: v.fees.maxPriorityFeePerGas.toString(),
       authorization: t.authorization,
-      deadline: v.deadline,
-      reservedWei: v.reservedWei,
-      sentAt: v.sentAt,
+      deadline: b?.deadline ?? '0',
+      reservedWei: b?.reservedWei ?? '0',
+      executeNonce: b?.executeNonce ?? null,
+      day: b?.day ?? day,
+      worstWei: ((b ? BigInt(b.worstWei) : 0n) + increase).toString(),
+      costWei: null,
+      sentAt: b?.sentAt ?? now,
       signedAt: now,
       raw,
       hash,
-      versions: [...v.versions, { hash, kind: v.kind, raw }],
+      versions: [...(b?.versions ?? []), { hash, kind: v.kind, raw }],
       accepted: false,
       minedHash: null,
+      minedByLog: false,
       takenSince: null,
       takenRuns: 0,
+      confirmedRuns: 0,
+      seenHead: b?.seenHead ?? null,
     };
-    this.ctx.storage.transactionSync(() => this.ctx.storage.kv.put(txKey(v.nonce), record));
+    const kv = this.ctx.storage.kv;
+    this.ctx.storage.transactionSync(() => {
+      kv.put(txKey(v.nonce), record);
+      const m = this.meta()!;
+      let next: Partial<Meta> = {};
+      if (v.moveFrom !== undefined) {
+        kv.delete(txKey(v.moveFrom));
+        if (v.digest) {
+          const rem = kv.get<Remembered>(digestKey(v.digest));
+          if (rem) kv.put(digestKey(v.digest), { ...rem, nonce: v.nonce });
+        }
+        next = { nextNonce: Math.max(m.nextNonce ?? 0, v.nonce + 1) };
+      }
+      if (increase > 0n && record.day === m.day) next = { ...next, dayReservedWei: (BigInt(m.dayReservedWei) + increase).toString() };
+      if (Object.keys(next).length) this.putMeta({ ...m, ...next });
+    });
     await this.ensureAlarm(now + EVM_RELAYER_ALARM_MS);
     await this.ctx.storage.sync();
     const sent = await rpc.broadcast(raw);
     if (sent.kind === 'accepted') this.markAccepted(v.nonce, hash);
     log({ event: v.kind === 'cancel' ? 'evm_relay_cancel_sent' : 'evm_relay_replaced', chainId: r.chain.chainId, nonce: String(v.nonce), evmTx: hash, code: sent.kind === 'rejected' ? sent.reason : sent.kind }, sent.kind === 'accepted' ? 'info' : 'warn');
+  }
+
+  private expired(p: PendingTx, now: number): boolean {
+    return p.kind === 'execute' && p.digest !== null && BigInt(Math.floor(now / 1000)) > BigInt(p.deadline);
   }
 
   // ---- the alarm ----
@@ -1168,27 +1369,26 @@ export class EvmRelayer extends DurableObject<Env> {
     try {
       if (this.pendingRecords().length > 0 && meta.address === r.address) {
         const rpc = sponsorChainFor(this.env, r.chain, { maxRequests: EVM_RELAYER_MAX_REQUESTS });
-        let rep: Repaired | null = null;
         try {
-          rep = await this.repair(rpc, r, now, {});
+          const rep = await this.repair(rpc, r, now, {});
           this.reconciled = true;
+          changed = rep.changed;
         } catch {
           this.setBlocked('rpc_unavailable');
           log({ event: 'evm_relay_rpc_unavailable', chainId: r.chain.chainId, code: 'rpc_unavailable' }, 'warn');
         }
-        if (rep) {
-          changed = rep.changed;
-          if (rep.agreed) {
-            let advanced = 0;
-            for (const p of this.pendingRecords()) {
-              if (advanced >= EVM_RELAYER_RUN_LIMITS.records || rpc.exhausted) break;
-              if (rep.latest > p.nonce) continue; // mined, waiting to be confirmed
-              // Only records that sent something count against the run's limit.
-              if (await this.advance(rpc, r, p, now)) {
-                changed = true;
-                advanced++;
-              }
-            }
+        // Fee bumps and the deadline's self-transfers run whatever the counts said: both are safe for a nonce that has
+        // already mined (the node refuses them) and needed for one that hasn't. Expired batches first, then the least
+        // recently signed: one version per record per run, so early records can't take every run.
+        const candidates = this.pendingRecords()
+          .filter((p) => !p.minedHash)
+          .sort((a, b) => Number(this.expired(b, now)) - Number(this.expired(a, now)) || a.signedAt - b.signedAt || a.nonce - b.nonce);
+        let advanced = 0;
+        for (const p of candidates) {
+          if (advanced >= EVM_RELAYER_RUN_LIMITS.records || rpc.exhausted) break;
+          if (await this.advance(rpc, r, p, now)) {
+            changed = true;
+            advanced++;
           }
         }
       }
@@ -1205,13 +1405,13 @@ export class EvmRelayer extends DurableObject<Env> {
   private async advance(rpc: SponsorChain, r: Ready, p: PendingTx, now: number): Promise<boolean> {
     const prev = { maxFeePerGas: BigInt(p.maxFeePerGas), maxPriorityFeePerGas: BigInt(p.maxPriorityFeePerGas) };
     const canReplace = p.versions.length < EVM_RELAYER_MAX_HASHES;
-    const expired = p.kind === 'execute' && p.digest !== null && BigInt(Math.floor(now / 1000)) > BigInt(p.deadline);
+    const expired = this.expired(p, now);
     if (!(expired || (canReplace && now - p.signedAt >= EVM_RELAYER_REPLACE_AFTER_MS))) return false;
     const fees = canReplace ? bumpedFees(prev, r.chain) : null;
     // At the caps (or the version cap): no valid replacement. The last version stays (repair broadcast it again if no
     // node held it); it lands once the base fee allows.
     if (!fees) return false;
-    await this.persistAndBroadcast(rpc, r, { nonce: p.nonce, digest: p.digest, kind: expired ? 'cancel' : p.kind, sentAt: p.sentAt, reservedWei: p.reservedWei, deadline: p.deadline, fees, versions: p.versions, payload: p });
+    await this.persistAndBroadcast(rpc, r, { base: p, nonce: p.nonce, digest: p.digest, kind: expired ? 'cancel' : p.kind, fees });
     return true;
   }
 

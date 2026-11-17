@@ -53,6 +53,9 @@ const fromHex = (h: string): Uint8Array => {
   for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(h.slice(2 + 2 * i, 4 + 2 * i), 16);
   return out;
 };
+const utf8 = (t: string): Uint8Array => new TextEncoder().encode(t);
+const NONCE_SELECTOR = `0x${Array.from(keccak_256(utf8('nonce()')).subarray(0, 4), (x) => x.toString(16).padStart(2, '0')).join('')}`;
+const EXECUTED = `0x${Array.from(keccak_256(utf8('Executed(bytes32,uint256,uint256)')), (x) => x.toString(16).padStart(2, '0')).join('')}`;
 const big = (b: Uint8Array): bigint => (b.length === 0 ? 0n : BigInt(hex(b)));
 
 /** Decodes one RLP item at `pos`: its value and where its encoding ends. */
@@ -187,6 +190,13 @@ export class EvmMock {
   onSend?: (tx: MockTx, endpoint: number) => SendHook | Promise<SendHook>;
   /** Called (and awaited) when a read of `method` arrives, before it is answered (to hold or crash mid-read). */
   onRead?: (method: string, endpoint: number) => Promise<void> | void;
+  /** Per endpoint, how many blocks its head is behind the chain's (a lagging node: counts and receipts as of its head). */
+  readonly lag: number[] = [];
+  /** Accounts' delegate nonce() (their Execute nonce), and the Executed logs mined. */
+  readonly accountNonces = new Map<string, bigint>();
+  readonly executedLogs: { address: string; topics: string[]; transactionHash: string; blockNumber: number }[] = [];
+  /** Transactions that, when mined, run an Execute: the account's nonce moves on and an Executed(digest) log appears. */
+  private readonly executions = new Map<string, { account: string; digest: string }>();
   /** Receipts answer null (a node that hasn't indexed them yet). */
   hideReceipts = false;
   /** The next N receipt reads fail (no answer). */
@@ -217,7 +227,8 @@ export class EvmMock {
       if (body.method === 'eth_chainId') return reply({ result: `0x${(mode === 'wrong_chain' ? this.chainId + 1 : this.chainId).toString(16)}` });
       if (body.method === 'eth_sendRawTransaction') return this.sendRaw(endpoint, body.params[0] as Hex, init?.signal, reply);
       await this.onRead?.(body.method, endpoint);
-      if (body.method === 'eth_blockNumber') return reply({ result: `0x${this.blockNumber.toString(16)}` });
+      const head = this.blockNumber - (this.lag[endpoint] ?? 0);
+      if (body.method === 'eth_blockNumber') return reply({ result: `0x${head.toString(16)}` });
       if (body.method === 'eth_getTransactionCount') {
         if (this.countFailures > 0) {
           this.countFailures--;
@@ -227,11 +238,17 @@ export class EvmMock {
         if (tag === 'safe' && !this.supportsSafe) return reply({ error: { code: -32602, message: 'invalid block tag' } });
         const stale = this.staleCounts.get(endpoint);
         let n: number;
+        const lagging = (this.lag[endpoint] ?? 0) > 0;
         if (stale) n = tag === 'latest' ? stale.latest : tag === 'pending' ? stale.pending : (stale.confirmed ?? stale.latest);
-        else if (tag === 'latest') n = this.mined(address);
-        else if (tag === 'pending') n = this.pendingCount(address);
-        else if (tag === 'safe') n = this.countAt(address, this.blockNumber - this.safeDepth);
-        else n = this.countAt(address, Number(BigInt(tag)));
+        else if (tag === 'latest') n = lagging ? this.countAt(address, head) : this.mined(address);
+        // A lagging node's pool view is its head's: what it has mined, nothing pending beyond.
+        else if (tag === 'pending') n = lagging ? this.countAt(address, head) : this.pendingCount(address);
+        else if (tag === 'safe') n = this.countAt(address, head - this.safeDepth);
+        else {
+          const at = Number(BigInt(tag));
+          if (at > head) return reply({ error: { code: -32000, message: 'header not found' } });
+          n = this.countAt(address, at);
+        }
         if (endpoint === 0 && this.hugeResponse > 0) {
           const pad = 'x'.repeat(this.hugeResponse);
           this.hugeResponse = 0;
@@ -244,13 +261,32 @@ export class EvmMock {
           this.receiptFailures--;
           throw new TypeError('Network connection lost.');
         }
-        const got = this.hideReceipts ? undefined : this.receipts.get((body.params[0] as string).toLowerCase());
+        const found = this.hideReceipts ? undefined : this.receipts.get((body.params[0] as string).toLowerCase());
+        const got = found && found.block <= head ? found : undefined;
         if (!got) return reply({ result: null });
         return reply({
           result: { transactionHash: got.tx.hash, status: '0x1', blockNumber: `0x${got.block.toString(16)}`, gasUsed: '0x5208', effectiveGasPrice: '0x3b9aca00', logs: [] },
         });
       }
-      if (body.method === 'eth_getBlockByNumber') return reply({ result: { number: `0x${this.blockNumber.toString(16)}`, timestamp: '0x6553f100', baseFeePerGas: '0x1' } });
+      if (body.method === 'eth_getBlockByNumber') {
+        const tag = body.params[0] as string;
+        if (tag === 'safe' && !this.supportsSafe) return reply({ error: { code: -32602, message: 'invalid block tag' } });
+        const n = tag === 'safe' ? head - this.safeDepth : tag === 'latest' ? head : Number(BigInt(tag));
+        return reply({ result: { number: `0x${n.toString(16)}`, timestamp: '0x6553f100', baseFeePerGas: '0x1' } });
+      }
+      if (body.method === 'eth_call') {
+        // Only the delegate's nonce() on an account: its Execute nonce (as of now: tests set it with executes()).
+        const [call] = body.params as [{ to: string; data: string }];
+        if (call.data !== NONCE_SELECTOR) return reply({ error: { code: 3, message: 'execution reverted' } });
+        return reply({ result: `0x${(this.accountNonces.get(call.to.toLowerCase()) ?? 0n).toString(16).padStart(64, '0')}` });
+      }
+      if (body.method === 'eth_getLogs') {
+        const [q] = body.params as [{ address: string; topics: (string | null)[]; fromBlock: string; toBlock: string }];
+        const from = Number(BigInt(q.fromBlock));
+        const to = Math.min(Number(BigInt(q.toBlock)), head);
+        const logs = this.executedLogs.filter((l) => l.address === q.address.toLowerCase() && l.blockNumber >= from && l.blockNumber <= to && q.topics.every((t, i) => t === null || l.topics[i] === t.toLowerCase()));
+        return reply({ result: logs.map((l) => ({ address: l.address, topics: l.topics, data: '0x', transactionHash: l.transactionHash, blockNumber: `0x${l.blockNumber.toString(16)}` })) });
+      }
       return reply({ error: { code: -32601, message: 'method not found' } });
     });
     return this;
@@ -272,6 +308,11 @@ export class EvmMock {
   setMined(address: string, n: number): void {
     this.minedCount.set(address.toLowerCase(), n);
     this.history.unshift({ number: 0, counts: new Map([[address.toLowerCase(), n]]) });
+  }
+
+  /** Mining `hash` runs the batch `digest` on `account` (its nonce moves on, an Executed log appears). */
+  executes(hash: string, account: string, digest: string): void {
+    this.executions.set(hash.toLowerCase(), { account: account.toLowerCase(), digest });
   }
 
   /** Adds `n` empty blocks. */
@@ -316,6 +357,11 @@ export class EvmMock {
       pool.delete(n);
       this.minedTxs.push(tx);
       this.receipts.set(tx.hash, { tx, block: this.blockNumber });
+      const ex = this.executions.get(tx.hash);
+      if (ex) {
+        this.accountNonces.set(ex.account, (this.accountNonces.get(ex.account) ?? 0n) + 1n);
+        this.executedLogs.push({ address: ex.account, topics: [EXECUTED, ex.digest.toLowerCase()], transactionHash: tx.hash, blockNumber: this.blockNumber });
+      }
       out.push(tx);
       n++;
     }

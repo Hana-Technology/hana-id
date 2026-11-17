@@ -471,6 +471,81 @@ contract HanaDelegateExecutorTest is Base {
         assertEq(uint8(reason[1023]), 0xcd);
     }
 
+    function test_failingCallAfterOthers_isCutTo1024Bytes_andUndoesThem() public {
+        HanaDelegateExecutor.Call[] memory calls = two(
+            HanaDelegateExecutor.Call(address(checkIn), 0, abi.encodeCall(CheckIn.checkIn, ())),
+            HanaDelegateExecutor.Call(address(target), 0, abi.encodeCall(Target.revertBomb, (600_000)))
+        );
+        bytes memory sig = signed(aliceKey, alice, calls, 0, 0);
+        vm.prank(relayer);
+        (bool ok, bytes memory ret) = alice.call{gas: 1_200_000}(
+            abi.encodeCall(HanaDelegateExecutor.execute, (calls, 0, deadline, relayer, 0, sig))
+        );
+        assertFalse(ok);
+        assertEq(bytes4(ret), HanaDelegateExecutor.CallFailed.selector);
+        bytes memory args = new bytes(ret.length - 4);
+        for (uint256 i = 0; i < args.length; i++) {
+            args[i] = ret[i + 4];
+        }
+        (uint256 index, bytes memory reason) = abi.decode(args, (uint256, bytes));
+        assertEq(index, 1);
+        assertEq(reason.length, 1024);
+        assertEq(uint8(reason[0]), 0xab);
+        assertEq(uint8(reason[1023]), 0xcd);
+        assertEq(checkIn.checkIns(alice), 0, "the check-in before it is undone");
+        assertEq(exec(alice).nonce(), 0);
+    }
+
+    /// Value that runs out partway through a batch: the call that can't be paid fails, and every earlier transfer is
+    /// undone with it.
+    function test_valueRunsOutPartway_undoesTheWholeBatch() public {
+        address carol = makeAddr("carol");
+        address dave = makeAddr("dave");
+        address erin = makeAddr("erin");
+        HanaDelegateExecutor.Call[] memory calls = new HanaDelegateExecutor.Call[](3);
+        calls[0] = HanaDelegateExecutor.Call(carol, 4 ether, "");
+        calls[1] = HanaDelegateExecutor.Call(dave, 4 ether, "");
+        calls[2] = HanaDelegateExecutor.Call(erin, 4 ether, ""); // 12 of 10 ether
+        bytes memory sig = signed(aliceKey, alice, calls, 0, 0);
+        vm.expectRevert(Errors.callFailed(2, ""));
+        submit(alice, calls, 0, 0, sig);
+        assertEq(carol.balance + dave.balance + erin.balance, 0);
+        assertEq(alice.balance, 10 ether);
+        assertEq(exec(alice).nonce(), 0);
+    }
+
+    /// Any batch of 1 to 8 calls with data of any length (to a contract, or to an empty account): it runs as signed.
+    function testFuzz_batchesOfOneToEightCalls_anyDataLength(uint8 count, uint256 seed) public {
+        uint256 n = bound(count, 1, 8);
+        HanaDelegateExecutor.Call[] memory calls = new HanaDelegateExecutor.Call[](n);
+        uint256 takes = 0;
+        bytes32 lastTaken;
+        for (uint256 i = 0; i < n; i++) {
+            uint256 r = uint256(keccak256(abi.encode(seed, i)));
+            bytes memory payload = new bytes(r % 1_500);
+            for (uint256 k = 0; k < payload.length; k += 32) {
+                bytes32 w = keccak256(abi.encode(r, k));
+                for (uint256 b = 0; b < 32 && k + b < payload.length; b++) {
+                    payload[k + b] = w[b];
+                }
+            }
+            if (r & 1 == 0) {
+                calls[i] = HanaDelegateExecutor.Call(address(target), 0, abi.encodeCall(Target.take, (payload)));
+                takes++;
+                lastTaken = keccak256(payload);
+            } else {
+                calls[i] = HanaDelegateExecutor.Call(makeAddr(vm.toString(r)), 0, payload); // raw bytes, no code
+            }
+        }
+        bytes32 digest = digestFor(alice, calls, 0, deadline, relayer, 0);
+        vm.expectEmit(true, false, false, true, alice);
+        emit HanaDelegateExecutor.Executed(digest, 0, n);
+        submit(alice, calls, 0, 0, sign(aliceKey, digest));
+        assertEq(target.takes(), takes);
+        if (takes > 0) assertEq(target.lastTaken(), lastTaken);
+        assertEq(exec(alice).nonce(), 1);
+    }
+
     function test_emptyBatch_isRefused() public {
         HanaDelegateExecutor.Call[] memory calls = new HanaDelegateExecutor.Call[](0);
         bytes memory sig = signed(aliceKey, alice, calls, 0, 0);
@@ -598,9 +673,14 @@ contract HanaDelegateExecutorTest is Base {
     }
 
     // ---------------------------------------------------------------------------------------------------------------
-    // ERC-1271: exactly the EOA's ecrecover check, nothing more
+    // ERC-1271: exactly the EOA's ecrecover check (65-byte and ERC-2098 compact forms), nothing more
 
     bytes4 internal constant MAGIC = 0x1626ba7e;
+    bytes4 internal constant NO = 0xffffffff;
+
+    function compact(uint8 v, bytes32 r, bytes32 s) internal pure returns (bytes memory) {
+        return abi.encodePacked(r, bytes32(uint256(s) | (uint256(v - 27) << 255)));
+    }
 
     function test_erc1271_acceptsTheAccountsOwnSignature() public view {
         bytes32 h = keccak256("any hash a protocol computed");
@@ -608,27 +688,64 @@ contract HanaDelegateExecutorTest is Base {
         assertTrue(SignatureChecker.isValidSignatureNow(alice, h, sign(aliceKey, h)));
     }
 
+    /// Permit2 accepts compact signatures from an address without code and asks ERC-1271 once it has code, so the
+    /// delegated account accepts them too: both parities, through OpenZeppelin's SignatureChecker as protocols call it.
+    function test_erc1271_acceptsTheCompactForm() public view {
+        bool[2] memory seen;
+        for (uint256 i = 0; i < 16 && !(seen[0] && seen[1]); i++) {
+            bytes32 h = keccak256(abi.encode("compact", i));
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(aliceKey, h);
+            seen[v - 27] = true;
+            bytes memory c = compact(v, r, s);
+            assertEq(c.length, 64);
+            assertEq(exec(alice).isValidSignature(h, c), MAGIC, "compact");
+            assertTrue(SignatureChecker.isValidSignatureNow(alice, h, c));
+            // The other parity recovers another key.
+            assertEq(exec(alice).isValidSignature(h, compact(v == 27 ? 28 : 27, r, s)), NO, "flipped parity");
+        }
+        assertTrue(seen[0] && seen[1], "both parities exercised");
+    }
+
     function test_erc1271_refusesEverythingElse() public view {
         bytes32 h = keccak256("any hash a protocol computed");
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(aliceKey, h);
-        bytes4 no = 0xffffffff;
-        assertEq(exec(alice).isValidSignature(h, sign(bobKey, h)), no, "another key");
-        assertEq(exec(bob).isValidSignature(h, sign(aliceKey, h)), no, "another account");
-        assertEq(exec(alice).isValidSignature(keccak256("other"), sign(aliceKey, h)), no, "another hash");
+        assertEq(exec(alice).isValidSignature(h, sign(bobKey, h)), NO, "another key");
+        assertEq(exec(bob).isValidSignature(h, sign(aliceKey, h)), NO, "another account");
+        assertEq(exec(alice).isValidSignature(keccak256("other"), sign(aliceKey, h)), NO, "another hash");
         assertEq(
             exec(alice)
                 .isValidSignature(h, abi.encodePacked(r, bytes32(N - uint256(s)), v == 27 ? uint8(28) : uint8(27))),
-            no,
+            NO,
             "high s"
         );
+        assertEq(exec(alice).isValidSignature(h, ""), NO, "empty");
+        assertEq(exec(alice).isValidSignature(h, abi.encodePacked(r)), NO, "32 bytes");
+        assertEq(exec(alice).isValidSignature(h, abi.encodePacked(r, s, v - 27)), NO, "v 0 or 1");
+        assertEq(exec(alice).isValidSignature(h, abi.encodePacked(r, s, v, uint8(0))), NO, "66 bytes");
+        assertEq(exec(alice).isValidSignature(h, abi.encodePacked(r, s, v, r, s, v)), NO, "130 bytes");
+        assertEq(impl.isValidSignature(h, sign(aliceKey, h)), NO, "the implementation itself");
+    }
+
+    function test_erc1271_refusesBadCompactSignatures() public view {
+        bytes32 h = keccak256("any hash a protocol computed");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aliceKey, h);
+        // A high s cannot be written in the compact form: its top bit is taken as the parity, giving another s.
+        assertEq(exec(alice).isValidSignature(h, abi.encodePacked(r, bytes32(N - uint256(s)))), NO, "high s");
+        (uint8 bv, bytes32 br, bytes32 bs) = vm.sign(bobKey, h);
+        assertEq(exec(alice).isValidSignature(h, compact(bv, br, bs)), NO, "another key");
+        assertEq(exec(bob).isValidSignature(h, compact(v, r, s)), NO, "another account");
+        assertEq(exec(alice).isValidSignature(keccak256("other"), compact(v, r, s)), NO, "another hash");
+        assertEq(exec(alice).isValidSignature(h, abi.encodePacked(bytes32(0), bytes32(0))), NO, "zeros");
         assertEq(
-            exec(alice).isValidSignature(h, abi.encodePacked(r, bytes32(uint256(s) | (uint256(v - 27) << 255)))),
-            no,
-            "compact"
+            exec(alice).isValidSignature(h, abi.encodePacked(compact(v, r, s), uint8(0))), NO, "65 bytes: compact + 1"
         );
-        assertEq(exec(alice).isValidSignature(h, ""), no, "empty");
-        assertEq(exec(alice).isValidSignature(h, abi.encodePacked(r, s, v, uint8(0))), no, "66 bytes");
-        assertEq(impl.isValidSignature(h, sign(aliceKey, h)), no, "the implementation itself");
+        assertEq(exec(alice).isValidSignature(h, abi.encodePacked(r, bytes31(s))), NO, "63 bytes");
+        assertEq(impl.isValidSignature(h, compact(v, r, s)), NO, "the implementation itself");
+    }
+
+    function testFuzz_erc1271_anyOtherLength_isRefused(bytes memory sig) public view {
+        vm.assume(sig.length != 64 && sig.length != 65);
+        assertEq(exec(alice).isValidSignature(keccak256("h"), sig), NO);
     }
 
     /// An Execute signature is over this contract's own digest (its domain: name, chain, account, implementation);
@@ -647,6 +764,14 @@ contract HanaDelegateExecutorTest is Base {
         assertEq(permit.allowance(alice, relayer), 5);
         vm.expectRevert(HanaDelegateExecutor.InvalidSignature.selector);
         submit(alice, calls, 0, 0, permitSig);
+
+        // The compact form of a permit works too; execute still takes only 65 bytes.
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aliceKey, permit.digest(relayer, 6, 1));
+        permit.permit(alice, relayer, 6, compact(v, r, s));
+        assertEq(permit.allowance(alice, relayer), 6);
+        (v, r, s) = vm.sign(aliceKey, digestFor(alice, calls, 0, deadline, relayer, 0));
+        vm.expectRevert(HanaDelegateExecutor.InvalidSignature.selector);
+        submit(alice, calls, 0, 0, compact(v, r, s));
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -667,6 +792,27 @@ contract HanaDelegateExecutorTest is Base {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(logs.length, 0);
         assertEq(checkIn.checkIns(carol), 0);
+    }
+
+    /// The first sponsored transaction: the EIP-7702 authorization travels in the same type-4 transaction as the
+    /// execute call (as the relayer sends it), so an account with no code is delegated and runs its batch at once.
+    function test_authorizationInTheSameTransaction_delegatesAndRuns() public {
+        (address carol, uint256 carolKey) = makeAddrAndKey("carol");
+        assertEq(carol.code.length, 0);
+        HanaDelegateExecutor.Call[] memory calls = checkInCall();
+        bytes32 digest = digestFor(carol, calls, 0, deadline, relayer, 100_000);
+        bytes memory data = abi.encodeCall(
+            HanaDelegateExecutor.execute, (calls, 0, deadline, relayer, 100_000, sign(carolKey, digest))
+        );
+        vm.signAndAttachDelegation(address(impl), carolKey);
+        vm.expectEmit(true, false, false, true, carol);
+        emit HanaDelegateExecutor.Executed(digest, 0, 1);
+        vm.prank(relayer);
+        (bool ok,) = carol.call(data);
+        assertTrue(ok);
+        assertEq(carol.code, abi.encodePacked(hex"ef0100", address(impl)));
+        assertEq(checkIn.checkIns(carol), 1);
+        assertEq(exec(carol).nonce(), 1);
     }
 
     function test_revokedDelegation_stopsExecution() public {

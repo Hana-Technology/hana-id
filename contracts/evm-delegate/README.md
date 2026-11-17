@@ -36,7 +36,7 @@ function execute(Call[] calldata calls, uint256 nonce_, uint256 deadline, addres
                  bytes calldata signature) external          // 0x440dfe2d
 function nonce() external view returns (uint256)             // 0xaffed0e0
 function incrementNonce() external                           // 0x627cdcb9; only msg.sender == address(this)
-function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4)   // ERC-1271
+function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4)   // ERC-1271, below
 function eip712Domain() external view returns (bytes1, string, string, uint256, address, bytes32, uint256[]) // ERC-5267
 function supportsInterface(bytes4) external view returns (bool)                                     // ERC-165
 function onERC721Received(...) / onERC1155Received(...) / onERC1155BatchReceived(...)                // accept all
@@ -74,15 +74,75 @@ The nonce lives in the account's storage at the ERC-7201 slot of namespace `hana
 account's storage. `CheckIn` is `checkIn()` (not payable; counts per caller in `checkIns(address)`, emits
 `CheckedIn(address indexed account, uint256 count)`).
 
-## What a submitter must check (the contract cannot)
+`isValidSignature` (ERC-1271) answers `0x1626ba7e` exactly when the signature over `hash` recovers to the account,
+in the 65-byte (r, s, v) or the 64-byte ERC-2098 compact (r, vs) form, low s in both; anything else is `0xffffffff`.
+That is what a protocol checks for a plain EOA: Permit2, for one, takes either form from an address without code and
+asks ERC-1271 once the address has code, so the compact form must keep working for a delegated account. `execute`
+takes only the 65-byte form (the wallet's).
 
-- **The delegation is in place** before sending: the account's code is exactly `0xef0100 ‖ implementation`. A call to
-  an account without it, or delegated elsewhere, runs nothing and still succeeds (an EOA accepts any calldata); an
-  EIP-7702 authorization whose nonce or chain is wrong is skipped by the network, not reverted.
-- **The `Executed` event** in the receipt, from the account, with the signed digest: a successful transaction without
-  it ran nothing.
-- **`minGas`** is the user's floor for the calls (63/64 of what is left reaches the first call): sign the batch's
-  estimate with a margin, and send with enough gas above it for the checks (about 30 000 for one call).
+## No fallback: what reverts once an account is delegated (deliberate)
+
+The contract has `receive()` and its named functions, and no `fallback`. A plain EOA accepts any call; a delegated
+account rejects calldata it doesn't know. So, once delegated:
+
+- **ETH sent with calldata** (a wallet's "data" field, some exchanges' and bridges' withdrawals) reverts. A plain
+  transfer (no calldata) still arrives.
+- **Token callbacks to the account revert**: ERC-1363 `transferAndCall` / `approveAndCall` (`onTransferReceived`,
+  `onApprovalReceived`), ERC-777 `tokensReceived` (and an ERC-777 send needs an ERC-1820 registration, since the
+  account now has code), and any other unknown hook. ERC-721 and ERC-1155 safe transfers work.
+- Plain ERC-20 `transfer` / `transferFrom` to the account are not callbacks and work as before.
+
+Chosen on purpose: a catch-all fallback would make a wrongly encoded call (by the relayer, or anyone) look like a
+success, and would answer token hooks the user never agreed to. The user's key can remove or replace the delegation.
+
+## Duties the contract leaves to others
+
+The contract checks what it can on chain; these must hold elsewhere, and each package that does them tests them.
+
+**The wallet (vault), before it signs:**
+
+- [ ] `minGas` from a simulation of the call loop: `minGas = ceil(L × 1.15) + 5 000 × calls`, `L` the gas the calls
+      used when simulated from the account; refuse when it is above the app's cap. (63/64 of what is left reaches the
+      first call; `test/Gas.t.sol` shows a target that swallows an inner out-of-gas has its full effect or reverts with
+      such a floor, and can be degraded without one.)
+- [ ] The relayer address only from its pinned build manifest, never from the page or the API's answer.
+- [ ] The implementation address and its runtime code hash from the pinned table (they must equal `artifacts/`).
+- [ ] Never sign this domain through the generic typed-data path, and never a raw hash for a partner (D833).
+
+**The relayer, before and after it sends:**
+
+- [ ] The account's code is exactly `0xef0100 ‖ implementation` before sending (or the transaction carries the
+      authorization). A call to an account without it, or delegated elsewhere, runs nothing and still succeeds; an
+      EIP-7702 authorization with a wrong nonce or chain is skipped by the network, not reverted.
+- [ ] `gasLimit = (intrinsic + 25 000 per authorization + pre-loop overhead + minGas + event) × 1.1`, the overhead and
+      event from "Gas" below; never from `eth_estimateGas` alone (it finds the least gas that succeeds, which for a
+      gas-sensitive target can be a degraded run).
+- [ ] Simulate at exactly that gas limit, and require the `Executed` event from the account with the signed digest:
+      in the simulation, and in the receipt (a successful transaction without it ran nothing).
+- [ ] Allowlist exact calldata where a function takes no arguments: `checkIn()` is exactly `0x183ff085`. Trailing
+      bytes still run (the ABI decoder ignores them) but cost the sponsor calldata gas and L1 data fees.
+- [ ] `nonce()` from the chain for the next batch.
+
+## Gas
+
+Measured by `test/Gas.t.sol` (`forge test --mc GasTest -vv` prints them; the test fails if they move by more than a
+little), each in a fresh state: accounts and storage cold. "Frame gas" is the gas given to the call to the account (or
+to `CheckIn`), not the transaction's: add the intrinsic 21 000, calldata, 25 000 per authorization and the delegated
+account's access.
+
+| What | Gas |
+|---|---|
+| Pre-loop overhead (from entry to the `minGas` check), 1 call, first batch (nonce 0 → 1, a zero slot) | 29 719 |
+| Pre-loop overhead, 4 calls, first batch | 33 785 (about 1 360 per extra call) |
+| Pre-loop overhead, 1 call, a later batch (nonce n → n + 1) | 9 819 |
+| `execute` with one `checkIn()`, least frame gas that succeeds, first batch and first check-in | 58 948 |
+| `execute` with one `checkIn()`, least frame gas that succeeds, later batch and later check-in | 16 648 |
+| `checkIn()` alone, least frame gas, an account's first check-in | 23 899 |
+| `checkIn()` alone, least frame gas, a later check-in | 4 746 |
+| The `Executed` event (LOG2, 64 bytes of data) | 1 637 plus memory, about 1 700 |
+
+At the boundary, with `minGas` 100 000, the first call received 97 503 gas (63/64 of the floor less the call's own
+cost); one unit less at the check reverts `InsufficientGas` with the nonce unchanged.
 
 ## Deployment
 
@@ -91,7 +151,7 @@ Sepolia), with a fixed salt, so the address is the same on every chain and anyon
 
 | Contract | Salt (keccak256 of) | Predicted address | Runtime code hash |
 |---|---|---|---|
-| `HanaDelegateExecutor` | `hana-id/evm-delegate/HanaDelegateExecutor/v1` | `0x9Da1B14209582ba699962a8a2F4e9d4506B6b762` | `0x710d7e3fd533a37e4e724da514b75b8331081e2e8b765046f7e179492edb26ba` |
+| `HanaDelegateExecutor` | `hana-id/evm-delegate/HanaDelegateExecutor/v1` | `0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA` | `0xfcc832fe6c7167e0d45589881b103fed92b3a44fe3dd5d489f43e9d44b1e5fd2` |
 | `CheckIn` | `hana-id/evm-delegate/CheckIn/v1` | `0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e` | `0x807946bfc8ed8e9b3fe9ef6bdeed6c9dfa519084bcda4a5b17c2059c96d0bb56` |
 
 The runtime code hash is of the code at that address (the immutable implementation address filled in). The bytecode
@@ -99,6 +159,11 @@ carries no metadata hash or CBOR trailer (`bytecode_hash = "none"`, `cbor_metada
 paths don't move the address; any change to the code, the compiler settings in `foundry.toml` or OpenZeppelin does,
 and every pinned copy (the core signer's table, the manifest) must follow. `forge test --mc ArtifactsTest -vv` prints
 both addresses from a real CREATE2 deployment.
+
+**Verifying on an explorer:** the metadata is stripped, so a Sourcify exact (full) match is not available and
+"flattened source" uploads may not match. Verify with the **standard-JSON input** (`forge verify-contract` builds it
+from `foundry.toml`; or `forge build --build-info`): solc `0.8.28+commit.7893614a`, optimizer on with 10 000 runs, EVM
+`prague`, `metadata.bytecodeHash` `none`, `metadata.appendCBOR` false, the remappings above, no constructor arguments.
 
 ## Checked-in outputs (`node scripts/generate.mjs`, after `forge build`; `pnpm run generate` does both)
 
@@ -122,16 +187,20 @@ both addresses from a real CREATE2 deployment.
 ## Tests
 
 `test/HanaDelegateExecutor.t.sol` (real EIP-7702 delegations through `vm.signAndAttachDelegation` on Prague): the
-batch runs from the account; replay, stale and future nonces; another key, another account, another chain, another
+batch runs from the account; the authorization in the same transaction as `execute`; batches of 1 to 8 calls with data
+of any length (fuzz); value running out partway; a failing call after others (index, the 1024-byte cap, roll-back); replay, stale and future nonces; another key, another account, another chain, another
 implementation (refused by the salt); every signed field tampered with; high-s, ERC-2098 compact, empty, 64, 66 and 130
 bytes, v 0/1, r = s = 0; the deadline second and the one after; the relayer (another, zero, the account itself);
 under-gassed submission and the signed floor; a failing call's index and roll-back, a spoofed executor error, return
 and revert bombs (with a contrast that a copying caller runs out of gas); empty batch; self-calls (`incrementNonce`,
 value to itself, `execute`) and reentry through another contract; the guard after a reverted and a successful batch in
 one transaction; native, ERC-721 and ERC-1155 receipt; unknown calldata reverts; ERC-165; ERC-1271 (the account's
-signature, everything else refused, an Execute signature useless to a Permit2-style protocol and the reverse); an
+signature in both the 65-byte and compact forms, both parities, everything else refused including any other length,
+an Execute signature useless to a Permit2-style protocol and the reverse, a compact permit accepted); an
 undelegated and a revoked account run nothing; the ERC-7201 slot recomputed and the only slot written; the digest
 against Foundry's own EIP-712 hasher; fuzz (any other key, any signature bytes, any wrong nonce, any batch, nonce only
 increases). `test/Invariant.t.sol`: random sequences of valid batches, replays, future nonces, foreign signatures and
-increments; the nonce never decreases and counts exactly the accepted actions. `test/Vectors.t.sol`,
-`test/Artifacts.t.sol` as above.
+increments; the nonce never decreases and counts exactly the accepted actions. `test/Gas.t.sol`: the floor at its
+exact boundary, the swallowing target with and without a floor, the gas numbers. `test/Vectors.t.sol`,
+`test/Artifacts.t.sol` as above. Every check of `execute` (and the gas check moved before the nonce write, or loosened
+by 3 000 or 30 000 gas, and the compact branch) was removed or altered one at a time: each fails the suite.

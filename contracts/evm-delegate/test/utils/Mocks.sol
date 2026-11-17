@@ -49,10 +49,56 @@ contract Target {
         }
     }
 
+    uint256 public takes;
+    bytes32 public lastTaken;
+
+    /// Takes any bytes (the fuzzed batches' data).
+    function take(bytes calldata data) external {
+        takes++;
+        lastTaken = keccak256(data);
+    }
+
     /// Succeeds only with at least `needed` gas left, the way a target with a gas-sensitive branch behaves.
     function needsGas(uint256 needed) external {
         require(gasleft() >= needed, "starved");
         calls++;
+    }
+}
+
+/// Records the gas it was given (the first thing it does), to check the floor the executor guarantees.
+contract GasProbe {
+    uint256 public seen;
+
+    function probe() external {
+        uint256 g = gasleft();
+        seen = g;
+    }
+}
+
+/// Burns about 100 gas per iteration.
+contract Burner {
+    function burn(uint256 iterations) external pure returns (uint256 acc) {
+        for (uint256 i = 0; i < iterations; i++) {
+            acc = uint256(keccak256(abi.encode(acc, i)));
+        }
+    }
+}
+
+/// A target that swallows an inner out-of-gas: with too little gas it still succeeds, degraded. This is the target
+/// a signed gas floor (minGas) protects against a relayer that chooses the gas limit.
+contract Swallower {
+    Burner public immutable burner = new Burner();
+    bool public full;
+
+    /// The cheap path a degraded run takes (an event, no storage), so it can finish on the 1/64 left to it.
+    event Degraded();
+
+    function work(uint256 iterations) external {
+        try burner.burn(iterations) {
+            full = true;
+        } catch {
+            emit Degraded();
+        }
     }
 }
 

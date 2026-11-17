@@ -146,13 +146,22 @@ contract HanaDelegateExecutor is ReentrancyGuardTransient, ERC721Holder, ERC1155
 
     /**
      * @notice ERC-1271: whether `signature` is the account key's signature over `hash`. True exactly when ECDSA
-     *         recovery of a 65-byte low-s signature gives the account's address, which is the check a protocol makes
-     *         for a plain EOA; nothing more is accepted. Protocols that see code at an address (Permit2, for one) ask
-     *         here instead of recovering the signer themselves.
+     *         recovery gives the account's address, from a 65-byte (r, s, v) or a 64-byte ERC-2098 compact (r, vs)
+     *         signature, low s in both: the check a protocol makes for a plain EOA (Permit2 takes both forms from an
+     *         address without code, and asks here once the address has code). Nothing more is accepted. `execute`
+     *         itself takes only the 65-byte form.
      * @return The ERC-1271 magic value `0x1626ba7e` if valid, else `0xffffffff`.
      */
     function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4) {
-        return _signedByThisAccount(hash, signature) ? IERC1271.isValidSignature.selector : bytes4(0xffffffff);
+        bool valid;
+        if (signature.length == 64) {
+            (address signer, ECDSA.RecoverError err,) =
+                ECDSA.tryRecover(hash, bytes32(signature[0:32]), bytes32(signature[32:64]));
+            valid = err == ECDSA.RecoverError.NoError && signer == address(this);
+        } else {
+            valid = _signedByThisAccount(hash, signature);
+        }
+        return valid ? IERC1271.isValidSignature.selector : bytes4(0xffffffff);
     }
 
     /**

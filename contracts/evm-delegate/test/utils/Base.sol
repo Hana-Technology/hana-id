@@ -134,6 +134,39 @@ abstract contract Base is Test {
         return sign(key, digestFor(account, calls, nonce, deadline, relayer, minGas));
     }
 
+    /// Accounts made cold before each measured call, as in a fresh transaction (a test is one transaction, so an
+    /// earlier call would otherwise leave their accounts and storage warm).
+    address[] internal coldSet;
+
+    function coolAll(address to) internal {
+        vm.cool(to);
+        for (uint256 i = 0; i < coldSet.length; i++) {
+            vm.cool(coldSet[i]);
+        }
+    }
+
+    /// The smallest gas limit, in [lo, hi], with which a call from `from` to `to` with `data` does not revert with
+    /// `refusal` (a 4-byte error) when `refusal` is set, or succeeds when it is zero. State is restored after each
+    /// try, and `to` and `coldSet` are cold for each. With `refusal` set, a revert without data (out of gas) counts as
+    /// past the refusal: start `lo` above the gas spent before it.
+    function minGasLimit(address from, address to, bytes memory data, bytes4 refusal, uint256 lo, uint256 hi)
+        internal
+        returns (uint256)
+    {
+        while (lo < hi) {
+            uint256 mid = (lo + hi) / 2;
+            uint256 snap = vm.snapshotState();
+            coolAll(to);
+            vm.prank(from);
+            (bool ok, bytes memory ret) = to.call{gas: mid}(data);
+            vm.revertToState(snap);
+            bool passes = refusal == bytes4(0) ? ok : (ok || ret.length < 4 || bytes4(ret) != refusal);
+            if (passes) hi = mid;
+            else lo = mid + 1;
+        }
+        return lo;
+    }
+
     /// Submits as the relayer.
     function submit(
         address account,

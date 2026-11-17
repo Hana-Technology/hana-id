@@ -110,12 +110,12 @@ export function shortId(text: string): string {
 /** A summary text with every code part cut by shortId (a bullet's form). */
 export const shortCodes = (t: SummaryText): SummaryText => t.map((p) => (typeof p !== 'string' && p.kind === 'code' ? code(shortId(p.text)) : p));
 
-/** Who a spender is, in a bullet: a verified contract by name, else its address. */
+/** Who a spender is, in a bullet: its whole address, after its name when verified, else marked "(unverified)". */
 const spenderShort = (t: SummaryText): SummaryText => {
   const named = t.find((p) => typeof p !== 'string' && p.kind === 'strong');
-  if (named) return [named];
   const c = t.find((p) => typeof p !== 'string' && p.kind === 'code');
-  return c ? [c] : t;
+  if (named && c) return [named, ' (', c, ')'];
+  return c ? [c, ' (unverified)'] : t;
 };
 
 /** How strong a risk line is: red where the unreadable part could move value or control with no visible bound. */
@@ -264,11 +264,11 @@ function spendWarning(spender: SummaryText, contract: string, token: KnownToken 
   const yours: SummaryText = opts.owner ? ['the ', ...tokenName(contract, token), ' held by ', code(opts.owner)] : token ? [`your ${token.symbol}`] : ['your tokens of contract ', code(contract)];
   if (unlimited(amount, token)) {
     const how = amount >= typeMax ? 'with no limit' : 'with no practical limit';
-    return { level: 'danger', code: 'unlimited_spend', text: ['This lets ', ...spender, ' spend all of ', ...yours, via, `, ${how}, until you take the permission back. Approve only if you trust it completely.`], short: shortCodes(['Lets ', ...spenderShort(spender), ' spend all of ', ...yours, via]) };
+    return { level: 'danger', code: 'unlimited_spend', text: ['This lets ', ...spender, ' spend all of ', ...yours, via, `, ${how}, until you take the permission back. Approve only if you trust it completely.`], short: ['Lets ', ...spenderShort(spender), ' spend all of ', ...yours, via] };
   }
   const much: SummaryText = token && !opts.owner ? [strong(`${displayUnits(amount, token.decimals)} ${token.symbol}`), ' from your account'] : [strong(token ? displayUnits(amount, token.decimals) : groupDigits(amount.toString())), token ? ' of ' : ' (in the token’s smallest units) of ', ...yours];
   const nft = opts.nftToo && !token ? ` If the contract is an NFT collection, it lets them take your item ${amount} instead.` : '';
-  return { level: 'warning', code: 'spend_permission', text: ['This lets ', ...spender, ` spend ${opts.more ? 'a further ' : 'up to '}`, ...much, via, `, until it is used up or you take the permission back.${nft}`], short: shortCodes(['Lets ', ...spenderShort(spender), ` spend ${opts.more ? 'a further ' : 'up to '}`, ...much, via]) };
+  return { level: 'warning', code: 'spend_permission', text: ['This lets ', ...spender, ` spend ${opts.more ? 'a further ' : 'up to '}`, ...much, via, `, until it is used up or you take the permission back.${nft}`], short: ['Lets ', ...spenderShort(spender), ` spend ${opts.more ? 'a further ' : 'up to '}`, ...much, via] };
 }
 
 // ---- EVM ----
@@ -331,7 +331,8 @@ function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
       const recipient = abiAddr(a[1]) as string;
       const amount = abiUint(a[2]) as bigint;
       return {
-        headline: [APP, ' wants to move ', ...(token ? amountOf(amount, token) : ['tokens of contract ', contract]), ' from ', ...evmWho(from, me), ' to ', ...evmWho(recipient, me)],
+        // Rounded against the user: down when it reaches them from someone else, up otherwise.
+        headline: [APP, ' wants to move ', ...(token ? amountOf(amount, token, !sameEvm(from, me) && sameEvm(recipient, me) ? 'in' : 'out') : ['tokens of contract ', contract]), ' from ', ...evmWho(from, me), ' to ', ...evmWho(recipient, me)],
         lines: token ? lines : [['Amount: ', ...amountOf(amount, null), ' (or, if this contract is an NFT collection, item ', strong(amount.toString()), ').'], ...lines],
         warnings,
         explainable: true,
@@ -343,7 +344,7 @@ function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
       if (amount === 0n) {
         // ERC-721 shares this selector and item 0 exists: for a contract Journear doesn't know, 0 may be an item, not a revoke.
         if (!token && !ZERO_ADDRESS.test(spender)) {
-          warnings.push({ level: 'warning', code: 'spend_permission', short: shortCodes(['May let ', code(spender), ' take your item 0 of ', contract]), text: ['If contract ', contract, ' is a token, this takes back ', code(spender), '’s permission to spend it. If it is an NFT collection, this lets ', ...spenderOf(chain, spender), ' take your item 0.'] });
+          warnings.push({ level: 'warning', code: 'spend_permission', short: ['May let ', code(spender), ' take your item 0 of ', contract], text: ['If contract ', contract, ' is a token, this takes back ', code(spender), '’s permission to spend it. If it is an NFT collection, this lets ', ...spenderOf(chain, spender), ' take your item 0.'] });
           return { headline: [APP, ' wants to change ', code(spender), '’s permission for contract ', contract], lines, warnings, explainable: true };
         }
         return { headline: [APP, ' wants to take back ', code(spender), '’s permission to spend your ', ...tokenName(to, token)], lines, warnings, explainable: true };
@@ -371,7 +372,7 @@ function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
     case 'setApprovalForAll(address,bool)': {
       const operator = abiAddr(a[0]) as string;
       if (abiBool(a[1]) === false) return { headline: [APP, ' wants to take back ', code(operator), '’s permission to move your items in collection ', contract], lines, warnings, explainable: true };
-      warnings.push({ level: 'danger', code: 'collection_operator', text: ['This lets ', ...spenderOf(chain, operator), ' move every item you hold in collection ', contract, ', now and later, until you take the permission back. Approve only if you trust it completely.'], short: shortCodes(['Lets ', ...spenderShort(spenderOf(chain, operator)), ' move all your items in ', contract]) });
+      warnings.push({ level: 'danger', code: 'collection_operator', text: ['This lets ', ...spenderOf(chain, operator), ' move every item you hold in collection ', contract, ', now and later, until you take the permission back. Approve only if you trust it completely.'], short: ['Lets ', ...spenderShort(spenderOf(chain, operator)), ' move all your items in ', contract] });
       return { headline: [APP, ' wants to let someone else move all your items in collection ', contract], lines, warnings, explainable: true };
     }
     case 'safeTransferFrom(address,address,uint256)':
@@ -647,7 +648,8 @@ function sorobanTokenCall(passphrase: string, c: StellarContractCall, me: string
     const amount = scInt(a[2]) as bigint;
     const from = scAddr(a[0]) as string;
     const verb = { send: 'send ', authorize: 'authorize sending ', nested: 'It also authorizes sending ' }[mode];
-    const what: SummaryText = token ? [...amountOf(amount, token), ' (token contract ', code(c.contract), ')'] : [strong(groupDigits(amount.toString())), ' (in the token’s smallest units) of the token contract ', code(c.contract)];
+    const toMe = isMeStellar(scAddr(a[1]) as string, me) && !isMeStellar(from, me);
+    const what: SummaryText = token ? [...amountOf(amount, token, toMe ? 'in' : 'out'), ' (token contract ', code(c.contract), ')'] : [strong(groupDigits(amount.toString())), ' (in the token’s smallest units) of the token contract ', code(c.contract)];
     return [verb, ...what, ...(from === me ? [] : [' from ', ...stellarWho(from, me)]), ' to ', ...stellarWho(scAddr(a[1]) as string, me), ...end];
   }
   if (c.function === 'approve' && a.length === 4 && scAddr(a[0]) && scAddr(a[1]) && a[2]?.type === 'i128' && a[3]?.type === 'u32') {
@@ -722,8 +724,8 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
       if (op.buyAmount === '0') return ok(['cancel your offer ', code(op.offerId), ' to buy ', ...assetName(op.buying)]);
       {
         const most = times(op.buyAmount, op.price.n, op.price.d, 'up');
-        if (most === null) return badPrice(['offer to buy ', ...stellarAmount(op.buyAmount, op.buying), ' with ', ...assetName(op.selling)]);
-        return ok(['offer to buy ', ...stellarAmount(op.buyAmount, op.buying), ', paying at most ', ...stellarAmount(most, op.selling), ...changes(op.offerId)]);
+        if (most === null) return badPrice(['offer to buy ', ...stellarAmount(op.buyAmount, op.buying, 'in'), ' with ', ...assetName(op.selling)]);
+        return ok(['offer to buy ', ...stellarAmount(op.buyAmount, op.buying, 'in'), ', paying at most ', ...stellarAmount(most, op.selling), ...changes(op.offerId)]);
       }
     case 'changeTrust':
       return ok(op.limit === '0' ? ['stop holding ', ...assetName(op.asset)] : ['let your account hold ', ...assetName(op.asset)]);
@@ -759,7 +761,7 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
     case 'clawbackClaimableBalance':
       return ok(['take back a balance set aside for others']);
     case 'clawback':
-      return ok(['take back ', ...stellarAmount(op.amount, op.asset), ' from ', code(op.from)]);
+      return ok(['take back ', ...stellarAmount(op.amount, op.asset, 'in'), ' from ', code(op.from)]);
     case 'beginSponsoringFutureReserves':
       return ok(['pay the reserves of ', code(op.sponsored)]);
     case 'endSponsoringFutureReserves':
@@ -891,7 +893,8 @@ export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidd
     .filter((g) => g.first.order <= 2)
     .map((g) => {
       const named = g.first.label ? (g.count > 1 ? [...capitalised(g.first.label), ` (${g.count} times)`] : capitalised(g.first.label)) : line(g);
-      return { level: 'danger', code: 'step_left_out', text: ['Not in the lines above: ', ...named, '.'], short: shortCodes(named) };
+      // In full: a key, signer or recipient is never cut where nothing else on the screen shows it.
+      return { level: 'danger', code: 'step_left_out', text: ['Not in the lines above: ', ...named, '.'], short: named };
     });
   return { lines, hidden: n, hiddenRisk: hidden.some((g) => g.first.order <= 4 && g.first.value) ? 'danger' : 'warning', leftOut };
 }
@@ -900,7 +903,8 @@ export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidd
 function stellarStep(op: StellarOperation, text: SummaryText, me: string, txSource: string, suffix: SummaryText): Step {
   const value = stellarMovesValue(op);
   // Grouped only with identical operations (the same XDR, its source included): the same line, nothing hidden.
-  const by = (order: number, label?: SummaryText): Step => ({ ...sameText(text, value, order), key: op.xdr, ...(label ? { label } : {}) });
+  const by = (order: number): Step => ({ ...sameText(text, value, order), key: op.xdr });
+  const coin = (amount: bigint): Step => ({ ...by(1), sum: amount, native: true });
   switch (op.type) {
     case 'payment': {
       const src = op.source ?? txSource;
@@ -918,22 +922,29 @@ function stellarStep(op: StellarOperation, text: SummaryText, me: string, txSour
       return by(0);
     case 'setOptions':
       return by(value ? 0 : 6);
+    // Value to others carries its native-coin amount, so the largest of them ranks first (identical operations
+    // group, so the group's sum is the count times it).
     case 'createAccount':
+      return coin(BigInt(op.startingBalance));
     case 'pathPaymentStrictReceive':
+      return op.sendAsset === 'native' ? coin(BigInt(op.sendMax)) : by(1);
     case 'pathPaymentStrictSend':
+      return op.sendAsset === 'native' ? coin(BigInt(op.sendAmount)) : by(1);
     case 'createClaimableBalance':
+      return op.asset === 'native' ? coin(BigInt(op.amount)) : by(1);
     case 'liquidityPoolDeposit':
       return by(1);
     case 'manageSellOffer':
     case 'createPassiveSellOffer':
-    case 'manageBuyOffer':
-      return by(value ? 1 : 6);
+      return !value ? by(6) : op.selling === 'native' ? coin(BigInt(op.amount)) : by(1);
+    case 'manageBuyOffer': {
+      if (!value) return by(6);
+      const most = op.selling === 'native' ? times(op.buyAmount, op.price.n, op.price.d, 'up') : null;
+      return most !== null ? coin(most) : by(1);
+    }
     case 'invokeHostFunction': {
       const f = op.hostFunction;
-      if (f.type === 'invokeContract' && f.function === 'approve') {
-        const spender = scAddr(f.args[1]);
-        return by(2, spender ? ['let ', code(spender), ' spend tokens of contract ', code(f.contract), ...suffix] : undefined);
-      }
+      if (f.type === 'invokeContract' && f.function === 'approve') return by(2);
       if (f.type === 'invokeContract' && f.function === 'transfer') return by(1);
       return by(3);
     }
@@ -1179,23 +1190,23 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
     case 'stake':
       return same(['stake (lock) ', strong(nearDisplay(a.stake))], 4, true, nearKeyText(a.publicKey));
     case 'addKey':
-      if (a.accessKey.permission.type === 'fullAccess') return same(['add a full-access key to ', ...where], 0, true, nearKeyText(a.publicKey), ['add the full-access key ', code(nearKeyText(a.publicKey)), ' to ', ...where]);
+      // The whole key, in the line: a cut key could be ground to look like one the user expects.
+      if (a.accessKey.permission.type === 'fullAccess') return same(['add the full-access key ', code(nearKeyText(a.publicKey)), ' to ', ...where], 0, true);
       // A function-call key spends the account's NEAR on its calls' fees, up to its allowance: said in view.
       return same(
-        ['add a key to ', ...where, ' that can use ', code(a.accessKey.permission.receiverId), ...(a.accessKey.permission.allowance === null ? [', with no limit on the NEAR it spends on fees'] : [', spending up to ', strong(nearDisplay(a.accessKey.permission.allowance)), ' on fees'])],
+        ['add the key ', code(nearKeyText(a.publicKey)), ' to ', ...where, ' that can use ', code(a.accessKey.permission.receiverId), ...(a.accessKey.permission.allowance === null ? [', with no limit on the NEAR it spends on fees'] : [', spending up to ', strong(nearDisplay(a.accessKey.permission.allowance)), ' on fees'])],
         0,
         true,
-        `${nearKeyText(a.publicKey)}|${a.accessKey.permission.methodNames.join(',')}`,
-        ['add the key ', code(nearKeyText(a.publicKey)), ' to ', ...where, ' that can use ', code(a.accessKey.permission.receiverId)],
+        a.accessKey.permission.methodNames.join(','),
       );
     case 'deleteKey':
-      return same(['remove a key from ', ...where], 0, true, nearKeyText(a.publicKey), ['remove the key ', code(nearKeyText(a.publicKey)), ' from ', ...where]);
+      return same(['remove the key ', code(nearKeyText(a.publicKey)), ' from ', ...where], 0, true);
     case 'deleteAccount':
       return same(['delete ', ...where, ' and send all its NEAR to ', code(a.beneficiaryId)], 0);
     case 'deployGlobalContract':
       return same(['publish a global contract'], 1, true, nearCodeHash(a.code));
     case 'useGlobalContract':
-      return same(['set the contract of ', ...where], 0, true, a.contract.type === 'codeHash' ? nearHash58(a.contract.hash) : a.contract.accountId);
+      return same(['set the contract of ', ...where, ' to the global contract ', code(a.contract.type === 'codeHash' ? nearHash58(a.contract.hash) : a.contract.accountId)], 0, true);
     case 'delegate':
       // Never shown: decodeApprovalRequest refuses a transaction that relays a delegate action.
       return same(['relay someone else’s transaction'], 3, false);

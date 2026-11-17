@@ -159,8 +159,8 @@ test('screens for review', async ({ page, browserName }) => {
   popup = await popupFor(page, 'many', 'nearSignTx', base64Encode(encodeNearTransaction({ signerId: near, publicKey: key, nonce: 11n, receiverId: near, blockHash: NEAR_BLOCK, actions: many })));
   // D814: one red box (the banner in full, the key as a bullet) and two grouped lines.
   await expect(popup.locator('.danger-box')).toHaveCount(1);
-  await expect(popup.locator('.danger-box li')).toHaveText([/^Adds a full-access key \(ed25519:/u]);
-  await expect(popup.locator('p.summary-line')).toHaveText(['Add a full-access key to your account', 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
+  await expect(popup.locator('.danger-box li')).toHaveText([/^Adds a full-access key \(ed25519:[1-9A-HJ-NP-Za-km-z]{43,44}\)$/u]);
+  await expect(popup.locator('p.summary-line')).toHaveText([/^Add the full-access key ed25519:[1-9A-HJ-NP-Za-km-z]{43,44} to your account$/u, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
   await shot(popup, 'near-many-actions-danger', browserName);
   await done(page, popup, 'many');
 

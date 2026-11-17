@@ -158,7 +158,8 @@ describe('renderApproval: NEAR transactions', () => {
     expect(el.textContent).toContain('NEAR leaving your account2.5 NEAR');
   });
 
-  const keyShort = (k: string) => `${k.slice(0, 12)}…${k.slice(-4)}`;
+  // The whole key, never cut (review of 5ef13452).
+  const keyShort = (k: string) => k;
   it.each([
     ['a full-access key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } } as NearAction, `This adds a full-access key to your account. Whoever holds ${nearPublicKeyString(OTHER_KEY.bytes)} can move all its NEAR and tokens and lock you out.`, `Adds a full-access key (${keyShort(nearPublicKeyString(OTHER_KEY.bytes))})`],
     ['a function-call key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance: null, receiverId: 'x.testnet', methodNames: [] } } } as NearAction, 'This adds a key to your account that can call any method of x.testnet and spend NEAR on their fees.', `Adds a key (${keyShort(nearPublicKeyString(OTHER_KEY.bytes))}) that can use x.testnet`],

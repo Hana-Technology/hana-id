@@ -23,6 +23,7 @@ import {
   knownEvmToken,
   knownStellarToken,
   nearImplicitAccountId,
+  nearPublicKeyString,
   parseEvmTxRequest,
   parseFunctionSignature,
   sha256,
@@ -35,6 +36,8 @@ import {
 } from './entries.ts';
 import { ATTACKER, ISSUER, OTHER, PASSPHRASE, TOKEN, ROUTER, USER, addSignerOp, addr, authPreimageBytes, feeBumpBytes, i128, invocation, invokeOp, mergeOp, paymentOp, sourceAuth, txBytes } from './stellar-fixtures.ts';
 
+/** A public key computed here (never a literal in the source), for the full-key assertions. */
+const KEY9 = nearPublicKeyString(new Uint8Array(32).fill(9));
 const APP = 'Partner App';
 
 /**
@@ -863,8 +866,8 @@ describe('final review: contract creation on Stellar lists its authorizations; N
 
   it('a NEAR function-call key says what it may spend on fees', () => {
     const key = (allowance: bigint | null): NearAction => ({ type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance, receiverId: 'app.testnet', methodNames: [] } } });
-    expect(headline(near([key(null)], NEAR_ME))).toBe(`${APP} wants to add a key to your account that can use app.testnet, with no limit on the NEAR it spends on fees`);
-    expect(headline(near([key(25n * 10n ** 22n)], NEAR_ME))).toBe(`${APP} wants to add a key to your account that can use app.testnet, spending up to 0.25 NEAR on fees`);
+    expect(headline(near([key(null)], NEAR_ME))).toBe(`${APP} wants to add the key ${KEY9} to your account that can use app.testnet, with no limit on the NEAR it spends on fees`);
+    expect(headline(near([key(25n * 10n ** 22n)], NEAR_ME))).toBe(`${APP} wants to add the key ${KEY9} to your account that can use app.testnet, spending up to 0.25 NEAR on fees`);
   });
 });
 
@@ -899,7 +902,7 @@ describe('D814: grouped lines', () => {
 
   it('100 actions (99 self-transfers and a full-access key): two lines, control first', () => {
     const s = near([...Array.from({ length: 99 }, (): NearAction => ({ type: 'transfer', deposit: 1n })), fullKey(9)], NEAR_ME);
-    expect(s.lines.map(text)).toEqual(['Add a full-access key to your account', 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
+    expect(s.lines.map(text)).toEqual([`Add the full-access key ${KEY9} to your account`, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
     expect(s.explainable).toBe(true);
   });
 
@@ -1014,7 +1017,7 @@ describe('D810 with D814: the risk lines of requests that leave things out, at t
     for (const s of [tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)), tokenCall('0xdeadbeef'), summarizeApproval(decodeApprovalRequest({ kind: 'raw', chain: 'evm', address: ME, context: {}, bytes: new Uint8Array(32) }), { address: ME })]) {
       for (const w of s.warnings.filter((x) => x.level === 'danger')) expect(w.short?.length, w.code).toBeGreaterThan(0);
     }
-    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)).warnings[0]!.short!)).toBe('Lets 0x3333…3333 spend all of your tokens of contract 0x1111…1111');
+    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)).warnings[0]!.short!)).toBe(`Lets ${SPENDER} (unverified) spend all of your tokens of contract ${TOKEN_EVM}`);
   });
 });
 
@@ -1070,5 +1073,47 @@ describe('D814: nothing that matters is left out unnamed', () => {
     expect(leftOut.map((w) => w.level)).toEqual(['danger', 'danger']);
     expect(leftOut.map((w) => text(w.text)).join(' ')).toContain(k(3));
     expect(leftOut.map((w) => text(w.text)).join(' ')).toContain(k(4));
+  });
+});
+
+describe('review of 5ef13452: control keys in full, spenders marked, sums, directions', () => {
+  const k = (i: number) => Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(80 + i) as never).publicKey();
+  it('a NEAR key change names the whole key in its line and headline', () => {
+    const pub = { type: 'ed25519' as const, bytes: new Uint8Array(32).fill(9) };
+    const full = nearPublicKeyString(pub.bytes);
+    expect(headline(near([{ type: 'addKey', publicKey: pub, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }], NEAR_ME))).toBe(`${APP} wants to add the full-access key ${full} to your account`);
+    expect(headline(near([{ type: 'deleteKey', publicKey: pub }], NEAR_ME))).toBe(`${APP} wants to remove the key ${full} from your account`);
+  });
+
+  it('a left-out control change is named in full, never cut', () => {
+    const s = stellar([1, 2, 3, 4].map((i) => Operation.setOptions({ signer: { ed25519PublicKey: k(i), weight: 1 } })).concat([Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '7' })]));
+    for (const w of s.warnings.filter((x) => x.code === 'step_left_out')) expect(text(w.short!)).toMatch(/G[A-Z2-7]{55}/u);
+  });
+
+  it('a spender bullet keeps the whole address and says when it isn’t verified', () => {
+    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)).warnings[0]!.short!)).toBe(`Lets ${SPENDER} (unverified) spend all of your tokens of contract ${TOKEN_EVM}`);
+  });
+
+  it('a path payment’s coin counts toward the largest amount to others', () => {
+    const s = stellar([
+      Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '1' }),
+      Operation.payment({ destination: ATTACKER, asset: Asset.native(), amount: '1' }),
+      Operation.payment({ destination: k(5), asset: Asset.native(), amount: '1' }),
+      Operation.pathPaymentStrictSend({ sendAsset: Asset.native(), sendAmount: '1000000', destination: k(6), destAsset: new Asset('USDC', ISSUER), destMin: '1', path: [] }),
+      Operation.payment({ destination: k(7), asset: Asset.native(), amount: '1' }),
+    ]);
+    expect(s.lines.map(text).some((l) => l.startsWith('Pay exactly 1,000,000 XLM'))).toBe(true);
+  });
+
+  it('a buy offer’s received amount rounds down, its cost up', () => {
+    const s = stellar([Operation.manageBuyOffer({ selling: Asset.native(), buying: new Asset('USDC', ISSUER), buyAmount: '0.3333333', price: { n: 1, d: 1 } })]);
+    expect(headline(s)).toBe(`${APP} wants to offer to buy about 0.333333 of the asset USDC:${ISSUER}, paying at most about 0.333334 XLM`);
+  });
+
+  it('a left-out approval of 0 is said as taking a permission back', () => {
+    const s = stellar([1, 2, 3, 4].map((i) => Operation.setOptions({ signer: { ed25519PublicKey: k(i), weight: 1 } })).concat([invokeOp(TOKEN, 'approve', [addr(USER), addr(ATTACKER), i128(0n), xdr.ScVal.scvU32(1)])]));
+    const w = s.warnings.filter((x) => x.code === 'step_left_out').map((x) => text(x.text)).join(' ');
+    expect(w).toContain(`Take back ${ATTACKER}’s permission`);
+    expect(w).not.toContain(`Let ${ATTACKER} spend`);
   });
 });

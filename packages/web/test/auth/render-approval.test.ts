@@ -43,7 +43,8 @@ function render(ops: xdr.Operation[], bytes = txBytes(ops)): HTMLElement {
 
 /** The red box (D814): its lead in full, then each other red item's bullet. */
 const takeovers = (el: HTMLElement) => [...el.querySelectorAll('.danger-box .risk-lead, .danger-box li')].map((p) => p.textContent);
-const short = (s: string) => `${s.slice(0, 6)}…${s.slice(-4)}`;
+/** A control bullet names the whole key or address (review of 5ef13452: never cut where nothing else shows it). */
+const short = (s: string) => s;
 const usdc = `USDC:${ISSUER}`;
 const decodedOps = (ops: xdr.Operation[]) => {
   const decoded = decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes(ops) });

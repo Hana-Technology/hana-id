@@ -9,7 +9,7 @@
 // founder's decision, D810): a request Journear can't explain states its risk in plain words above them instead.
 // Nothing a partner controls decides what is folded.
 import { isDisplaySafeLine } from '@hana-id/core';
-import { type ApprovalSummary, type SummaryText, type SummaryWarning, displayUnits, nearDisplay, shortId, summarizeApproval } from '@hana-id/core/decode';
+import { type ApprovalSummary, type SummaryText, type SummaryWarning, displayUnits, nearDisplay, summarizeApproval } from '@hana-id/core/decode';
 import {
   type AbiValue,
   type DecodedApproval,
@@ -353,9 +353,9 @@ function stellarAlerts(d: Dom, env: DecodedStellarEnvelope): Alerts {
 export function accountControlShorts(op: StellarOperation): Child[][] {
   const out: Child[][] = [];
   for (const c of stellarAccountControl(op)) {
-    if (c === 'merge' && op.type === 'accountMerge') out.push(['Closes the account and sends all its XLM to ', idShort(op.destination)]);
+    if (c === 'merge' && op.type === 'accountMerge') out.push(['Closes the account and sends all its XLM to ', op.destination]);
     else if (op.type === 'setOptions') {
-      if (c === 'signer' && op.signer) out.push(op.signer.weight === 0 ? ['Removes signer ', idShort(op.signer.key)] : ['Adds ', idShort(op.signer.key), ` as a signer (weight ${op.signer.weight})`]);
+      if (c === 'signer' && op.signer) out.push(op.signer.weight === 0 ? ['Removes signer ', op.signer.key] : ['Adds ', op.signer.key, ` as a signer (weight ${op.signer.weight})`]);
       else if (c === 'thresholds') out.push(['Changes the signing thresholds']);
       else if (c === 'master_weight') out.push([`Sets your own key’s weight to ${op.masterWeight}`]);
     }
@@ -660,11 +660,11 @@ function nearControlShort(a: NearAction, receiver: string, me: string): Child[] 
   const where = receiver === me ? 'your account' : receiver;
   switch (a.type) {
     case 'addKey':
-      return a.accessKey.permission.type === 'fullAccess' ? ['Adds a full-access key (', idShort(nearKeyText(a.publicKey)), ')'] : ['Adds a key (', idShort(nearKeyText(a.publicKey)), ') that can use ', idShort(a.accessKey.permission.receiverId)];
+      return a.accessKey.permission.type === 'fullAccess' ? ['Adds a full-access key (', nearKeyText(a.publicKey), ')'] : ['Adds a key (', nearKeyText(a.publicKey), ') that can use ', a.accessKey.permission.receiverId];
     case 'deleteKey':
-      return receiver === me && a.publicKey.type === 'ed25519' && toHex(a.publicKey.bytes) === me ? [`Removes your ${BRAND.product} key`] : ['Removes key ', idShort(nearKeyText(a.publicKey))];
+      return receiver === me && a.publicKey.type === 'ed25519' && toHex(a.publicKey.bytes) === me ? [`Removes your ${BRAND.product} key`] : ['Removes key ', nearKeyText(a.publicKey)];
     case 'deleteAccount':
-      return [`Deletes ${where} and sends all its NEAR to `, idShort(a.beneficiaryId)];
+      return [`Deletes ${where} and sends all its NEAR to `, a.beneficiaryId];
     case 'deployContract':
       return [`Deploys a contract to ${where}`];
     case 'useGlobalContract':
@@ -835,10 +835,10 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
       banners: [],
       dangers: lookalike ? [risk(5, 'danger lookalike', [nearRecipientLookalike(asciiEscaped(p.recipient))], ['The recipient has characters that imitate another name'])] : [],
       warnings: [
-        risk(4, 'warn nep413', [nearMessageWarning(p.recipient)], ['Proves to ', idShort(p.recipient), ' that you control this account']),
+        risk(4, 'warn nep413', [nearMessageWarning(p.recipient)], ['Proves to ', p.recipient, ' that you control this account']),
         // Any recipient that isn't exactly this page's host or origin, whatever its shape (a page picks the recipient, so
         // no shape may soften this): one factual line in the warning style.
-        ...(host !== null && !sameSite ? [risk(3, 'warn recipient-mismatch', [nearRecipientMismatch(p.recipient, host)], ['For ', idShort(p.recipient), ', not this app’s ', idShort(host)])] : []),
+        ...(host !== null && !sameSite ? [risk(3, 'warn recipient-mismatch', [nearRecipientMismatch(p.recipient, host)], ['For ', p.recipient, ', not this app’s ', host])] : []),
       ],
     },
     network: null,
@@ -912,9 +912,6 @@ interface RiskItem {
 
 const risk = (rank: number, cls: string, full: readonly Child[], short: readonly Child[]): RiskItem => ({ rank, cls, full, short: short.length > 0 ? short : full });
 
-/** A key, address or account id in a bullet, cut recognisably (core's shortId): the whole value is in the details. */
-const idShort = (text: string): string => shortId(text);
-
 /** The notices of a request: banners, red lines, amber lines. */
 interface Alerts {
   readonly banners: readonly RiskItem[];
@@ -958,7 +955,8 @@ function riskBox(d: Dom, tone: 'danger' | 'warning', items: readonly RiskItem[])
   const [lead, ...rest] = sorted as [RiskItem, ...RiskItem[]];
   const bullets: { item: RiskItem; key: string; count: number }[] = [];
   for (const item of rest) {
-    const key = d.h('span', {}, ...item.short.map((c) => (c instanceof Node ? c.cloneNode(true) : c))).textContent ?? '';
+    // Merged only when their FULL texts are the same: two items whose bullets read alike stay two bullets.
+    const key = d.h('span', {}, ...item.full.map((c) => (c instanceof Node ? c.cloneNode(true) : c))).textContent ?? '';
     const same = bullets.find((b) => b.key === key);
     if (same) same.count++;
     else bullets.push({ item, key, count: 1 });

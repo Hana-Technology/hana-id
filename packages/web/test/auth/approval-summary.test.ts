@@ -9,13 +9,14 @@ import {
   encodeNep413Message,
   evmTxSigningPayload,
   nearImplicitAccountId,
+  nearPublicKeyString,
   newRequestId,
   parseEvmTxRequest,
   sha256,
   utf8,
 } from '@hana-id/core';
 import { type DecodedApproval, decodeApprovalRequest, parseFunctionSignature } from '@hana-id/core/decode';
-import { Operation } from '@stellar/stellar-base';
+import { Keypair, Operation } from '@stellar/stellar-base';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
 import { TEST_APP_NOTE, startApprovePage } from '../../src/auth/approve-page.ts';
@@ -26,6 +27,8 @@ import { ACCOUNT_CONTROL_BANNER, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NO
 import { PASSPHRASE, USER, addSignerOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { ENV, FakeWindow, PARTNER, type RemoteWindow, asWindow, remoteWindow, resetDom } from './helpers.ts';
 
+/** A public key computed here (never a literal in the source), for the full-key assertions. */
+const KEY9 = nearPublicKeyString(new Uint8Array(32).fill(9));
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 const TOKEN = '0x1111111111111111111111111111111111111111';
 const SPENDER = '0x3333333333333333333333333333333333333333';
@@ -154,9 +157,9 @@ describe('warnings are never folded', () => {
     const box = el.children[1] as HTMLElement;
     expect(box.matches('div.danger-box.jp-alert-danger')).toBe(true);
     expect(box.querySelector('.risk-lead')?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
-    expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['Adds a full-access key (ed25519:cGfH…izuN)']);
+    expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual([`Adds a full-access key (${KEY9})`]);
     expect(el.querySelectorAll('.jp-alert-danger')).toHaveLength(1);
-    expect([...el.querySelectorAll('p.summary-line')].map((p) => p.textContent)).toEqual(['Add a full-access key to your account', 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
+    expect([...el.querySelectorAll('p.summary-line')].map((p) => p.textContent)).toEqual([`Add the full-access key ${KEY9} to your account`, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
     expect(details(el)?.open).toBe(false);
   });
 
@@ -387,5 +390,13 @@ describe('/approve: the page around the summary', () => {
     primary()!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
     const answers = vault.postMessage.mock.calls.map((c) => c[0] as Record<string, unknown>).filter((m) => m.t === 'hana:approve-result');
     expect(answers.map((a) => a.approved)).toEqual([true]);
+  });
+});
+
+describe('control bullets keep the whole key; bullets merge only when their full texts match (review of 5ef13452)', () => {
+  it('two different signers: two bullets, each with the whole key', () => {
+    const k = (i: number) => Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(90 + i) as never).publicKey();
+    const el = render(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([1, 2].map((i) => Operation.setOptions({ signer: { ed25519PublicKey: k(i), weight: 1 } }))) }), 'Partner App', USER);
+    expect([...el.querySelectorAll('.danger-box li')].map((li) => li.textContent)).toEqual([`Adds ${k(1)} as a signer (weight 1)`, `Adds ${k(2)} as a signer (weight 1)`]);
   });
 });

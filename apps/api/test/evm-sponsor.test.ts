@@ -6,7 +6,7 @@ import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
-import { checkEvmSponsorRelay, evmSponsorConfig, EVM_SPONSOR_PREPARE_ENDPOINT as PREPARE, EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, sponsorPins, sponsorTiming } from '../src/evm/sponsor.ts';
+import { checkEvmSponsorRelay, evmSponsorConfig, sponsorFaults, EVM_SPONSOR_PREPARE_ENDPOINT as PREPARE, EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, sponsorPins, sponsorTiming } from '../src/evm/sponsor.ts';
 import { DEFAULT_SPONSOR_PORTS, type Hex, keccakHex, sponsorPorts } from '../src/evm/sponsor-ports.ts';
 import { pruneEvmSponsorSends, reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
 import { EVM_SPONSOR_LIMITS } from '../src/evm/sponsor-checks.ts';
@@ -110,6 +110,7 @@ afterEach(() => {
   sponsorPins.table = SPONSOR_DELEGATES;
   sponsorTiming.receiptWaitMs = 30_000;
   sponsorTiming.receiptPollMs = 1_500;
+  sponsorFaults.afterSentPersisted = null;
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1140,5 +1141,116 @@ describe('the relayer’s final interface (PR #70)', () => {
     await checkEvmSponsorRelay(cronEnv(s));
     const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").all<{ detail_json: string }>();
     expect(JSON.parse(ev.results[0]!.detail_json)).toMatchObject({ chainId: LOCAL_CHAIN, blockedReason: 'nonce_gap' });
+  });
+});
+
+describe('the second review: refunds only on a verified "nothing ran", and the row persisted before any give-back', () => {
+  /** A send that got a hash and timed out, the relayer since forgotten it; `minutes` past the deadline for the run. */
+  async function forgottenTimeout(): Promise<Setup & { deadlineMs: number }> {
+    const s = await setup();
+    receiptKind = 'none';
+    const signed = signedSend(s.user);
+    expect((await send(s, signed.body)).status).toBe(504);
+    s.relayer.lookupOverride = async () => null;
+    await ageRows();
+    return { ...s, deadlineMs: Number(signed.body.deadline) * 1000 };
+  }
+
+  it('a row with a hash the relayer forgot: refunded only when every receipt read found nothing and the delegate nonce is not past it', async () => {
+    const s = await forgottenTimeout();
+    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ refused: 1 });
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
+    // The nonce read went through the delegate's slot (a state override), for the account.
+    const nonceRead = s.chain.calls.filter((c) => c.method === 'call' && (c.args as { data: string }).data === '0xaffed0e0').at(-1)!.args as { stateOverride: Record<string, unknown> };
+    expect(nonceRead.stateOverride).toEqual({ [s.user.address]: { code: DESIGNATOR } });
+  });
+
+  it('… but the delegate nonce past the batch’s: lost, the reservation kept', async () => {
+    const s = await forgottenTimeout();
+    s.chain.executeNonce.set(s.user.address.toLowerCase(), 1n);
+    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
+    expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+  });
+
+  it('… and a receipt read that fails decides nothing: open, then lost an hour past the deadline, never refunded', async () => {
+    const s = await forgottenTimeout();
+    s.chain.receiptDown = true;
+    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ open: 1, refused: 0, lost: 0 });
+    expect(await reconcile(s, s.deadlineMs + 61 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
+    expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+  });
+
+  it('a row without a hash: a lookup that fails is not "unknown to the relayer": no refund', async () => {
+    const s = await setup();
+    s.relayer.onSend = async () => {
+      throw new Error('the object was reset');
+    };
+    const signed = signedSend(s.user);
+    expect((await send(s, signed.body)).status).toBe(503);
+    s.relayer.lookupOverride = async () => Promise.reject(new Error('unreachable'));
+    await ageRows();
+    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 3 * 60_000)).toMatchObject({ open: 1, refused: 0 });
+    expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+  });
+
+  it('state taken with a failing receipt read is not settled as taken (it may have mined)', async () => {
+    const s = await setup();
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'taken', minedHash: null, outcome: null, reservedWei: 1n });
+    s.chain.receiptDown = true;
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([504, 'timeout']);
+    expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 0, open: 1 });
+  });
+
+  it('a replay: the row records replay before the give-back; a crash in between and a reconciler run never give back twice', async () => {
+    const s = await setup();
+    // Someone else's spend in the same app budget, which a second give-back would eat into.
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
+    const u2 = testUser();
+    await rememberAccount(s.app.scope, u2.address);
+    s.chain.codes.set(u2.address.toLowerCase(), DESIGNATOR);
+    const inner = s.relayer.onSend;
+    s.relayer.onSend = async (req) => ({ ...(await inner(req)), replay: true });
+    sponsorFaults.afterSentPersisted = async () => {
+      throw new Error('the isolate died here');
+    };
+    const r = await send(s, signedSend(u2).body);
+    expect(r.status).toBe(500);
+    const reserved = s.relayer.sends[1]!.reservedWei;
+    expect((await auditRows(u2.address))[0]).toMatchObject({ status: 'sent' });
+    // The crash lost this copy's give-back (errs high); the reconciler sees replay = 1 and changes no budget.
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 1 });
+    expect(await appSpent(s.app)).toBe(9_000_000_000_000n + reserved);
+    expect((await auditRows(u2.address))[0]).toMatchObject({ status: 'executed', settled_wei: '0' });
+  });
+
+  it('the reconciler never takes a live request’s `sending` row (younger than the request’s lifetime)', async () => {
+    const s = await setup();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const inner = s.relayer.onSend;
+    let reached!: () => void;
+    const atRelayer = new Promise<void>((r) => (reached = r));
+    s.relayer.onSend = async (req) => {
+      reached();
+      await gate;
+      return inner(req);
+    };
+    const pending = send(s, signedSend(s.user).body);
+    await atRelayer;
+    // Two minutes on, the row is still `sending` and the request alive: untouched.
+    expect(await reconcile(s, Date.now() + 2 * 60_000)).toEqual({ settled: 0, refused: 0, lost: 0, open: 0 });
+    release();
+    expect((await pending).status).toBe(200);
+    expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
+    // Six minutes on, a row left `sending` (a request that died) is the reconciler's.
+    await env.DB.prepare("UPDATE evm_sponsor_sends SET status = 'sending', tx_hash = NULL").run();
+    s.relayer.lookupOverride = async () => null;
+    expect(await reconcile(s, Date.now() + 6 * 60_000)).toMatchObject({ open: 1 });
   });
 });

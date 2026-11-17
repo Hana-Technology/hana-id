@@ -13,7 +13,7 @@ import { limiter } from '../handlers.ts';
 import { log } from '../log.ts';
 import { receiptCost, type ReservedFor } from './op-fee.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, sponsorChain } from './sponsor-config.ts';
-import { executedIn } from './sponsor-checks.ts';
+import { designatorHex, executedIn, NONCE_CALLDATA, uintReturn } from './sponsor-checks.ts';
 import { type EvmRelayerLookup, type EvmRelayerPort, type Hex, type SponsorChainPort, type SponsorReceipt, sponsorPorts } from './sponsor-ports.ts';
 
 export const MINUTE = 60_000;
@@ -208,6 +208,36 @@ export async function firstReceipt(chain: SponsorChainPort, hashes: readonly Hex
   return null;
 }
 
+/**
+ * Reads every hash's receipt, telling "no receipt" from a failed read: a mined receipt (its own hash); `none` only when
+ * every read succeeded and found nothing; else `error` (nothing may be decided from it).
+ */
+export async function readReceipts(chain: SponsorChainPort, hashes: readonly Hex[]): Promise<{ kind: 'mined'; receipt: SponsorReceipt } | { kind: 'none' } | { kind: 'error' }> {
+  let failed = false;
+  for (const hash of hashes) {
+    try {
+      const r = await chain.receipt(hash);
+      if (r && r.transactionHash.toLowerCase() === hash) return { kind: 'mined', receipt: r };
+    } catch {
+      failed = true;
+    }
+  }
+  return failed ? { kind: 'error' } : { kind: 'none' };
+}
+
+/**
+ * The account's delegate nonce (`nonce()` run as the pinned delegate through a state override, so it reads the
+ * delegate's storage slot whatever the account's code), or null when it can't be read.
+ */
+export async function chainExecuteNonce(chain: SponsorChainPort, cfg: Readonly<EvmSponsorChainConfig>, account: Hex): Promise<bigint | null> {
+  try {
+    const r = await chain.call({ from: account, to: account, data: NONCE_CALLDATA }, { stateOverride: { [account]: { code: designatorHex(cfg.delegate) } } });
+    return uintReturn(r.toLowerCase() as Hex);
+  } catch {
+    return null;
+  }
+}
+
 /** The relayer's lookup, or null when it doesn't know the digest or can't be asked (`asked` tells them apart). */
 export async function lookupDigest(relayer: EvmRelayerPort | null, digest: Hex): Promise<{ asked: boolean; value: EvmRelayerLookup | null }> {
   if (!relayer) return { asked: false, value: null };
@@ -218,18 +248,38 @@ export async function lookupDigest(relayer: EvmRelayerPort | null, digest: Hex):
   }
 }
 
+/**
+ * A send that verifiably never ran: the row moves to `refused` first, and only then (and only for the caller that moved
+ * it) do the reservation and the failure slot come back. A replay row's were given back by its request.
+ */
+async function refundNeverSent(env: Env, row: SendRow): Promise<boolean> {
+  if (!(await moveRow(env, row.id, OPEN_STATUSES, 'refused', { settledWei: 0n }))) return false;
+  if (!row.replay) {
+    await settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, 0n, row.createdAt);
+    await limiter(env, failureSubject(row.chainId, row.account, row.userId)).giveBack(FAILURES, DAY, '1', row.createdAt).catch(() => undefined);
+  }
+  return true;
+}
+
 // ---- the reconciler (every cron run) ----
 
 /** Rows per run (each: one lookup and at most POLLED_HASHES + 2 receipt reads). */
 export const RECONCILE_ROWS = 20;
 /** A row is the reconciler's once untouched this long (the request's own wait is 30 s). */
 export const RECONCILE_AFTER_MS = MINUTE;
+/**
+ * A `sending` row is the request's until this long after its last update: the request's longest life from the row's
+ * insert to its next move (the relayer object's queue and send, bounded by its RPC timeouts, well under 5 minutes; the
+ * receipt wait happens after the move to `sent`). The reconciler never races a live request's give-back.
+ */
+export const SENDING_LIFETIME_MS = 5 * MINUTE;
 /** An open row older than this writes `evm_relay_stuck` (once an hour per chain). */
 export const STUCK_ROW_MS = 10 * MINUTE;
 /** The relayer forgets a mined batch 10 minutes after its deadline; before 9 minutes, "unknown to it" means never sent. */
 const NEVER_SENT_FROM_MS = 2 * MINUTE;
 const NEVER_SENT_UNTIL_MS = 9 * MINUTE;
-const FORGOTTEN_AFTER_MS = 10 * MINUTE;
+/** Reads that keep failing for a sent row the relayer forgot: given up (lost, the reservation kept) this long past the deadline. */
+const GIVE_UP_AFTER_MS = 60 * MINUTE;
 
 export interface ReconcileCounts {
   settled: number;
@@ -253,10 +303,11 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
       await env.DB.prepare(
         `SELECT id, app_id, chain_id, account, user_id, digest, execute_nonce, tx_hash, deadline, gas_limit, fee_cap_wei, l1_bound_wei,
                 op_bound_wei, reserved_wei, replay, created_at, updated_at, status
-           FROM evm_sponsor_sends WHERE status IN ('sending', 'sent', 'timeout', 'unknown') AND updated_at <= ?1
+           FROM evm_sponsor_sends
+          WHERE ((status IN ('sent', 'timeout', 'unknown') AND updated_at <= ?1) OR (status = 'sending' AND updated_at <= ?3))
           ORDER BY updated_at LIMIT ?2`,
       )
-        .bind(now - RECONCILE_AFTER_MS, RECONCILE_ROWS)
+        .bind(now - RECONCILE_AFTER_MS, RECONCILE_ROWS, now - SENDING_LIFETIME_MS)
         .all<RowColumns>()
     ).results;
   } catch {
@@ -269,30 +320,45 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
     if (!cfg) continue;
     const row = rowOf(c);
     const relayer = sponsorPorts.relayer(env, row.chainId);
+    const chain = sponsorPorts.chain(env, cfg);
     const l = await lookupDigest(relayer, row.digest);
-    const receipt = await firstReceipt(sponsorPorts.chain(env, cfg), hashesToPoll(row.txHash ? [row.txHash] : [], l.value));
-    if (receipt) {
-      if (await settleFromReceipt(env, cfg, row, receipt, OPEN_STATUSES)) counts.settled++;
+    const read = await readReceipts(chain, hashesToPoll(row.txHash ? [row.txHash] : [], l.value));
+    if (read.kind === 'mined') {
+      if (await settleFromReceipt(env, cfg, row, read.receipt, OPEN_STATUSES)) counts.settled++;
       continue;
     }
+    // The relayer says the nonce went to something else: settled at zero only when every receipt read found nothing.
     if (l.value?.state === 'taken') {
-      if (await settleTaken(env, row, OPEN_STATUSES)) counts.settled++;
+      if (read.kind === 'none' && (await settleTaken(env, row, OPEN_STATUSES))) counts.settled++;
+      else counts.open++;
       continue;
     }
     const pastDeadline = now - row.deadline * 1000;
-    if (l.asked && l.value === null && pastDeadline >= NEVER_SENT_FROM_MS && pastDeadline < NEVER_SENT_UNTIL_MS) {
-      if (await moveRow(env, row.id, OPEN_STATUSES, 'refused', { settledWei: 0n })) {
-        if (!row.replay) {
-          await settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, 0n, row.createdAt);
-          await limiter(env, failureSubject(row.chainId, row.account, row.userId)).giveBack(FAILURES, DAY, '1', row.createdAt).catch(() => undefined);
-        }
-        counts.refused++;
-      }
+    // The relayer answered (no error) that it doesn't know the digest, past the deadline (the batch can't execute later).
+    const unknownToRelayer = l.asked && l.value === null && pastDeadline >= NEVER_SENT_FROM_MS;
+    if (unknownToRelayer && row.txHash === null && (c.status === 'sending' || c.status === 'unknown')) {
+      // Never given a hash: while the relayer would still remember a sent batch (to 10 minutes past the deadline), its
+      // "unknown" means nothing was sent: everything comes back. Later it proves nothing: lost, the reservation kept.
+      if (pastDeadline < NEVER_SENT_UNTIL_MS) {
+        if (await refundNeverSent(env, row)) counts.refused++;
+      } else if (await moveRow(env, row.id, OPEN_STATUSES, 'lost')) counts.lost++;
       continue;
     }
-    if (l.asked && l.value === null && pastDeadline >= FORGOTTEN_AFTER_MS) {
-      if (await moveRow(env, row.id, OPEN_STATUSES, 'lost')) counts.lost++;
-      continue;
+    if (unknownToRelayer && row.txHash !== null) {
+      // A hash was sent and the relayer no longer knows it: refunded only when the chain itself shows nothing ran: every
+      // known hash read with no receipt (no read failed) and the account's delegate nonce not past this batch's. A read
+      // that failed decides nothing (tried again next run, lost an hour past the deadline); a nonce past this batch's is
+      // lost, the reservation kept.
+      const onChain = read.kind === 'none' ? await chainExecuteNonce(chain, cfg, row.account) : null;
+      if (read.kind === 'none' && onChain !== null && onChain <= row.executeNonce) {
+        if (await refundNeverSent(env, row)) counts.refused++;
+        continue;
+      }
+      // Executed somewhere we can't see (its nonce is past), or reads still failing an hour past the deadline: lost.
+      if ((read.kind === 'none' && onChain !== null) || pastDeadline >= GIVE_UP_AFTER_MS) {
+        if (await moveRow(env, row.id, OPEN_STATUSES, 'lost')) counts.lost++;
+        continue;
+      }
     }
     counts.open++;
     const age = now - row.createdAt;

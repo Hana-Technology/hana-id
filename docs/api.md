@@ -1201,7 +1201,8 @@ less the receipt's cost (`gasUsed × effectiveGasPrice + l1Fee + operatorFee`; a
 the bound) comes back into the day window it was taken from, a spend above it is charged. A receipt outside what was
 reserved (`gasUsed` below 21 000 or above the gas limit, `effectiveGasPrice` above the cap, `l1Fee` above twice the
 bound, an operator fee above its bound) settles at the reservation and writes `evm_relay_receipt_odd`. A relayer
-`replay` (it had sent the digest) gives this copy's reservation and counts back at once and settles nothing. A refusal
+`replay` (it had sent the digest) gives this copy's reservation and counts back, after its row records `replay` (and
+only if this request moved the row), and settles nothing. A refusal
 at steps 10–11 or a simulation or RPC failure before the relayer gives back what it took (the mark, the shared
 windows, the slot, the budget), except that a simulation revert keeps the windows and the slot. **Copies** are answered
 from the latest audit row of the same chain, digest and app, never from the chain: `executed` the same 200 with
@@ -1209,12 +1210,18 @@ from the latest audit row of the same chain, digest and app, never from the chai
 `409 in_progress` (a row `unknown` or `refused` has no mark, so its batch goes to the relayer again).
 
 **The reconciler** (every cron run, `reconcileEvmSends`; at most 20 rows a run, oldest update first): every row still
-`sending`, `sent`, `timeout` or `unknown` a minute after its last update. The relayer's `lookup` and the receipts of its
-hashes (and the row's own): a receipt settles the row as above (a first attempt answered `unknown` and then sent as a
-copy's replay is settled here, once). Unknown to the relayer 2 to 9 minutes past the deadline (it remembers a pending
-or mined batch until 10 minutes past it): nothing was sent, so the budget and the failure slot come back, the row
-`refused`. Unknown to it later, with no receipt: `lost`, the reservation kept. A row still open 10 minutes after its
-reservation writes `evm_relay_stuck` (once an hour per chain).
+`sent`, `timeout` or `unknown` a minute after its last update, and `sending` only 5 minutes after (a live request's
+row is never raced). The relayer's `lookup` and the receipts of its hashes (and the row's own): a receipt settles the
+row as above (a first attempt answered `unknown` and then sent as a copy's replay is settled here, once). A refund needs
+a verified "nothing ran": a row that never got a hash (`sending`, or `unknown` without one), which the relayer answered
+(no error) it doesn't know 2 to 9 minutes past the deadline (it remembers a pending or mined batch until 10 minutes past
+it), is refunded (the budget and the failure slot back, `refused`); later, `lost`. A row with a hash the relayer no
+longer knows is refunded only when every known hash's receipt read succeeded and found nothing and the account's
+delegate nonce (read through the delegate's slot) is not past the row's; a nonce past it is `lost`; a failing read
+decides nothing (tried again, `lost` an hour past the deadline). `lost` keeps the reservation. `state: 'taken'` settles
+at zero only when every receipt read found nothing. A row moves before anything is given back, and only the caller that
+moved it gives back. A row still open 10 minutes after its reservation writes `evm_relay_stuck` (once an hour per
+chain).
 
 **`GET /v1/evm/sponsor/status?chainId=`** (exactly that parameter; `400 bad_request` otherwise) → 200 `{available,
 reason?, remainingToday?}`: `chain_not_enabled`, `app_not_sponsored`, or `remainingToday` (this app's own day budget left,

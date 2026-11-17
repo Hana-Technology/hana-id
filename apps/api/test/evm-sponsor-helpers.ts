@@ -104,6 +104,8 @@ export interface FakeChain extends SponsorChainPort {
   receipts: Map<string, SponsorReceipt>;
   /** Every read throws (an RPC outage). */
   down: boolean;
+  /** Only receipt reads throw. */
+  receiptDown: boolean;
 }
 
 export function fakeChain(): FakeChain {
@@ -119,6 +121,7 @@ export function fakeChain(): FakeChain {
     simulate: () => '0x',
     receipts: new Map(),
     down: false,
+    receiptDown: false,
     async code(address) {
       f.calls.push({ method: 'code', args: address });
       if (f.down) throw new Error('down');
@@ -156,7 +159,7 @@ export function fakeChain(): FakeChain {
     },
     async receipt(hash) {
       f.calls.push({ method: 'receipt', args: hash });
-      if (f.down) throw new Error('down');
+      if (f.down || f.receiptDown) throw new Error('down');
       return f.receipts.get(hash) ?? null;
     },
   };

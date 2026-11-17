@@ -65,7 +65,6 @@ import {
   envBudgetSubject,
   FAILURES,
   failureSubject,
-  firstReceipt,
   hashesToPoll,
   HOUR,
   lookupDigest,
@@ -74,6 +73,7 @@ import {
   NONCE_FLOOR,
   noteEvent,
   pruneEvmSponsorSends,
+  readReceipts,
   reconcileEvmSends,
   type SendRow,
   type SendStatus,
@@ -94,6 +94,9 @@ const MAX_BODY = 140_000;
 
 /** The receipt wait (the handler polls; nothing holds a lock meanwhile). Mutable for the tests. */
 export const sponsorTiming = { receiptWaitMs: 30_000, receiptPollMs: 1_500 };
+
+/** TESTS ONLY: a fault injected between the row's move to `sent` and a replay's give-back (a crash there). */
+export const sponsorFaults: { afterSentPersisted: (() => Promise<void>) | null } = { afterSentPersisted: null };
 
 type Step<T> = { ok: true; value: T } | { ok: false; response: Response };
 
@@ -345,10 +348,11 @@ async function waitForReceipt(chain: SponsorChainPort, relayer: EvmRelayerPort, 
   const end = Date.now() + sponsorTiming.receiptWaitMs;
   for (;;) {
     const l = await lookupDigest(relayer, digest);
-    const r = await firstReceipt(chain, hashesToPoll([first], l.value));
-    if (r) return r;
-    // Its nonce went to something that is no version of it, and no version has a receipt: it never ran.
-    if (l.value?.state === 'taken') return 'taken';
+    const read = await readReceipts(chain, hashesToPoll([first], l.value));
+    if (read.kind === 'mined') return read.receipt;
+    // Its nonce went to something that is no version of it, and every receipt read (none failed) found nothing: it
+    // never ran. A failed read decides nothing: the next poll, or the reconciler.
+    if (l.value?.state === 'taken' && read.kind === 'none') return 'taken';
     if (Date.now() + sponsorTiming.receiptPollMs > end) return null;
     await new Promise((resolve) => setTimeout(resolve, sponsorTiming.receiptPollMs));
   }
@@ -742,8 +746,10 @@ async function afterReservation(
   }
   lap(ctx, 'relay');
   if (refused) {
-    // A coded refusal: the relayer sent nothing. Everything comes back; the row says so.
-    await Promise.all([undo.notSent(), moveRow(env, row.id, ['sending'], 'refused', { settledWei: 0n })]);
+    // A coded refusal: the relayer sent nothing. The row says so first; only if this request moved it does everything
+    // come back (the caller that moves a row owns its give-back).
+    if (await moveRow(env, row.id, ['sending'], 'refused', { settledWei: 0n })) await undo.notSent();
+    else await undo.unmark();
     return refusalAnswer(ctx, refused.code, refused.reason);
   }
   if (!sent) {
@@ -753,10 +759,14 @@ async function afterReservation(
     await Promise.all([moveRow(env, row.id, ['sending'], 'unknown'), undo.unmark()]);
     return reject(ctx, 503, 'relayer_unavailable', 'The relayer is unavailable, try again', { 'retry-after': '2' });
   }
-  // The relayer had sent this digest already: no second transaction; that send carries its own reservation and counts.
-  if (sent.replay) await undo.giveBackAll();
+  // The row records the hash (and, for a replay, that its reservation is given back) before anything is given back: a
+  // crash in between leaves a row whose settlement gives nothing back (errs high), never twice. A replay (the relayer
+  // had sent this digest already: no second transaction; that send carries its own reservation and counts) gives this
+  // copy's back only when this request moved the row.
   const settled: SendRow = { ...row, txHash: sent.transactionHash, replay: sent.replay };
-  await moveRow(env, row.id, ['sending'], 'sent', { txHash: sent.transactionHash, relayerNonce: sent.relayerNonce, replay: sent.replay });
+  const moved = await moveRow(env, row.id, ['sending'], 'sent', { txHash: sent.transactionHash, relayerNonce: sent.relayerNonce, replay: sent.replay });
+  await sponsorFaults.afterSentPersisted?.();
+  if (sent.replay && moved) await undo.giveBackAll();
 
   // 15. The receipt (no lock is held while waiting), the success rule, the settlement (once: the row moves first).
   const receipt = await waitForReceipt(rpc, relayer, row.digest, sent.transactionHash);

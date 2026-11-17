@@ -12525,6 +12525,18 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   the deadline, the reservation's parts (gas limit, fee cap, L1 and operator bounds) and whether the relayer answered a
   replay, for the reconciler; statuses `refused` and `lost` are added. L5: rows are kept 24 months, then pruned by the
   cron (500 a run, with or without sponsorship on); they also go with the user's erasure (cascade, `uid-erase`).
+- **Amended again 2026-11-17, after the automated review of the fixes** (decided while building, to confirm): a refund
+  needs a verified "nothing ran". A row without a hash (`sending`, or `unknown` without one) is refunded only when the
+  relayer answered (not an error) that it doesn't know the digest, 2 to 9 minutes past the deadline; later it is `lost`.
+  A row with a hash the relayer no longer knows is refunded only when every known hash's receipt read succeeded and found
+  nothing (`readReceipts` tells a failed read from no receipt) and the account's delegate nonce (`nonce()` through the
+  delegate's slot) is not past the row's `execute_nonce`; a nonce past it is `lost`; failing reads are retried, `lost`
+  an hour past the deadline. `state: 'taken'` settles at zero only on reads that all found nothing (in the request and
+  the reconciler). Every give-back follows the durable move of its row, by the caller that moved it: a replay's row moves
+  `sending` → `sent` with `replay = 1` first, and a coded refusal's to `refused` first; the reconciler takes `sending`
+  rows only 5 minutes after their last update (`SENDING_LIFETIME_MS`, beyond a live request's insert-to-move time), so it
+  never races a live request. A crash between the move and the give-back loses that give-back (errs high), never doubles
+  it.
 - **Open, before mainnet:** the relayer's `lookup` forgets a batch 10 minutes past its deadline, so a reconciler that
   can't run for longer leaves rows `lost` with their reservation (errs high); the playbooks and the admin tile for the
   five event kinds (WP11).

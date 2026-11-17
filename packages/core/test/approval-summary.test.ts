@@ -31,6 +31,7 @@ import {
   displayUnits,
   nearDisplay,
   MAX_GROUP_LINES,
+  NEAR_VALUE_METHOD,
   summaryString,
   utf8,
 } from './entries.ts';
@@ -521,10 +522,13 @@ describe('NEAR', () => {
     expect(headline(invisible)).not.toContain('​');
   });
 
-  it('NEP-141 ft_transfer: the amount and receiver from the arguments; malformed ones fall back to the method', () => {
+  it('NEP-141 ft_transfer: the amount and receiver from the arguments; malformed ones are red and not explained', () => {
     expect(headline(near([call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000"}', 1n)], 'usdc.testnet'))).toBe(`${APP} wants to send 1,000 (smallest units) of the token usdc.testnet to bob.testnet`);
     for (const args of ['{"receiver_id":"BОB.testnet","amount":"1"}', '{"receiver_id":"bob.testnet","amount":"01"}', '{"receiver_id":"bob.testnet","amount":1}', '{"receiver_id":"bob.testnet"}']) {
-      expect(headline(near([call('ft_transfer', args, 1n)], 'usdc.testnet'))).toBe(`${APP} wants to use usdc.testnet (ft_transfer)`);
+      const s = near([call('ft_transfer', args, 1n)], 'usdc.testnet');
+      expect(headline(s)).toBe(`${APP} wants to use usdc.testnet (ft_transfer) with arguments that don’t match the token standard`);
+      expect(s.explainable).toBe(false);
+      expect(s.warnings.map((w) => [w.level, w.code])).toEqual([['danger', 'cannot_explain']]);
     }
   });
 
@@ -533,7 +537,7 @@ describe('NEAR', () => {
     expect(warnings(s)).toEqual([['warning', 'spend_permission', 'This lets market.testnet move your item 7 of collection nft.testnet, until it is used or you take the permission back.']]);
     expect(headline(near([call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7"}', 1n)], 'nft.testnet'))).toBe(`${APP} wants to send item 7 of collection nft.testnet to bob.testnet`);
     // A token id with invisible characters isn't put in the summary.
-    expect(headline(near([call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7\\u202e"}', 1n)], 'nft.testnet'))).toBe(`${APP} wants to use nft.testnet (nft_transfer)`);
+    expect(headline(near([call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7\\u202e"}', 1n)], 'nft.testnet'))).toBe(`${APP} wants to use nft.testnet (nft_transfer) with arguments that don’t match the token standard`);
   });
 
 
@@ -542,6 +546,97 @@ describe('NEAR', () => {
     expect(headline(m('Sign in'))).toBe(`${APP} wants you to sign a message for app.example`);
     expect(m('Sign in').explainable).toBe(true);
     expect(m('a‮b').explainable).toBe(false);
+  });
+});
+
+describe('NEAR standard calls: strict arguments, value-like names (review of the approval window)', () => {
+  const standard: [string, string][] = [
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000"}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000","memo":"hi"}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000","memo":null}'],
+    ['ft_transfer_call', '{"receiver_id":"pool.testnet","amount":"5","msg":""}'],
+    ['nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7"}'],
+    ['nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7","approval_id":3,"memo":null}'],
+    ['nft_transfer_call', '{"receiver_id":"bob.testnet","token_id":"7","msg":"x"}'],
+    ['nft_approve', '{"token_id":"7","account_id":"market.testnet"}'],
+    ['nft_approve', '{"token_id":"7","account_id":"market.testnet","msg":null}'],
+  ];
+  it.each(standard)('%s with the standard’s exact shape is explained: %s', (method, args) => {
+    const s = near([call(method, args, 1n)], 'tok.testnet');
+    expect(s.explainable).toBe(true);
+    expect(codes(s)).not.toContain('cannot_explain');
+    expect(headline(s)).not.toContain('with arguments');
+  });
+
+  const malformed: [string, string][] = [
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":1000}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"01000"}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":" 1000"}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000 "}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"1e3"}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"-1"}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000","extra":"1"}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000","msg":"x"}'],
+    ['ft_transfer', '{"receiver_id":["bob.testnet"],"amount":"1000"}'],
+    ['ft_transfer', '{"receiver_id":7,"amount":"1000"}'],
+    ['ft_transfer', '{"receiver_id":"Bob.testnet","amount":"1000"}'],
+    ['ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000","memo":5}'],
+    ['ft_transfer', '{"amount":"1000"}'],
+    ['ft_transfer_call', '{"receiver_id":"pool.testnet","amount":"5"}'],
+    ['ft_transfer_call', '{"receiver_id":"pool.testnet","amount":"5","msg":null}'],
+    ['nft_transfer', '{"receiver_id":"bob.testnet","token_id":7}'],
+    ['nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7","approval_id":"3"}'],
+    ['nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7","approval_id":-1}'],
+    ['nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7","approval_id":1.5}'],
+    ['nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7","approval_id":18446744073709551616}'],
+    ['nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7","owner_id":"x.testnet"}'],
+    ['nft_transfer_call', '{"receiver_id":"bob.testnet","token_id":"7"}'],
+    ['nft_approve', '{"token_id":"7","account_id":"market.testnet","approval_id":1}'],
+    ['nft_approve', '{"token_id":"7","account_id":5}'],
+    ['nft_approve', '{"token_id":"7","account_id":"market.testnet","msg":1}'],
+  ];
+  it.each(malformed)('%s with arguments that aren’t the standard’s exact shape is red and never a plain line: %s', (method, args) => {
+    const s = near([call(method, args, 1n)], 'tok.testnet');
+    expect(s.explainable).toBe(false);
+    expect(headline(s)).toBe(`${APP} wants to use tok.testnet (${method}) with arguments that don’t match the token standard`);
+    expect(warnings(s)).toEqual([['danger', 'cannot_explain', `Journear can’t tell what this request does: it calls ${method} on tok.testnet with arguments that don’t match the token standard exactly. It could move your money or tokens. Only approve if you fully trust ${APP}. Technical details are below.`]]);
+  });
+
+  it('duplicate keys are refused by the strict parser: red, as any arguments Journear can’t read', () => {
+    const s = near([call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"1","amount":"999999"}', 1n)], 'tok.testnet');
+    expect(s.explainable).toBe(false);
+    expect(s.warnings.map((w) => [w.level, w.code])).toEqual([['danger', 'cannot_explain']]);
+  });
+
+  const valueLike = ['transfer', 'my_transfer_all', 'withdraw', 'storage_withdraw', 'approve', 'approve_all', 'send', 'send_tokens', 'mt_transfer', 'mt_batch_transfer', 'mt_approve', 'mt_anything', 'unwrap_and_send'];
+  it.each(valueLike)('a call Journear doesn’t recognise named %s stays explained, with an amber line', (method) => {
+    expect(NEAR_VALUE_METHOD.test(method)).toBe(true);
+    const s = near([call(method, '{}')], 'tok.testnet');
+    expect(headline(s)).toBe(`${APP} wants to use tok.testnet (${method})`);
+    expect(s.explainable).toBe(true);
+    expect(warnings(s)).toEqual([['warning', 'may_move_tokens', `This calls ${method} on tok.testnet: a call like this may move tokens or NEAR you hold with that contract. Approve only if you expected it.`]]);
+  });
+
+  it.each(['collect', 'add_message', 'ping', 'storage_deposit', 'nft_mint', 'smt_x'])('a call named %s gets no amber line', (method) => {
+    expect(NEAR_VALUE_METHOD.test(method)).toBe(false);
+    expect(near([call(method, '{}')], 'tok.testnet').warnings).toEqual([]);
+  });
+
+  it('grouping: identical value-like calls group and say their amber line once; a malformed standard call stays its own red line; shownSteps cover the lines', () => {
+    const s = near([call('withdraw', '{}'), call('withdraw', '{}'), call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5"}', 1n), call('ft_transfer', '{"receiver_id":"bob.testnet","amount":5}', 1n)], 'tok.testnet');
+    expect(headline(s)).toBe(`${APP} wants to do 4 things with tok.testnet in one transaction`);
+    expect(s.lines.map(text)).toEqual(['Send 5 (smallest units) of the token tok.testnet to bob.testnet', 'Use tok.testnet (withdraw), 2 times', 'Use tok.testnet (ft_transfer) with arguments that don’t match the token standard']);
+    // Their order in the box is the page's (red first); here each is said once.
+    expect(s.warnings.map((w) => [w.level, w.code]).sort()).toEqual([['danger', 'cannot_explain'], ['warning', 'may_move_tokens']]);
+    expect(s.explainable).toBe(false);
+    expect([...(s.shownSteps ?? [])].sort()).toEqual([0, 1, 2, 3]);
+  });
+
+  it('a relayed (delegate) call is held to the same rules', () => {
+    const s = delegate([call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"1","memo":{}}', 1n)], 'tok.testnet');
+    expect(s.explainable).toBe(false);
+    expect(codes(s)).toEqual(['cannot_explain']);
+    expect(codes(delegate([call('storage_withdraw', '{}')], 'tok.testnet'))).toEqual(['may_move_tokens']);
   });
 });
 

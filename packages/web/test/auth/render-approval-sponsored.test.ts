@@ -5,7 +5,7 @@
 // page decodes the subject against the build's own sponsor chains and offers no Approve when they don't match.
 // Also: a Stellar setOptions that sets the user's own key to weight 0 keeps its "you lose control" bullet (PR 65's
 // leftover Low).
-import { approvalDigest, newRequestId, toHex } from '@hana-id/core';
+import { approvalDigest, encodeNearTransaction, nearImplicitAccountId, newRequestId, toHex, utf8 } from '@hana-id/core';
 import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
 import { encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
 import { Keypair, Operation } from '@stellar/stellar-base';
@@ -233,6 +233,20 @@ describe('Stellar: the user’s own key set to weight 0 keeps its bullet (PR 65�
     const bullets = [...el.querySelectorAll('.danger-box li')].map((li) => li.textContent);
     expect(bullets).toContain('Sets your own Journear Passport key’s weight to 0: you lose control of the account');
     expect(bullets.join('\n')).not.toContain(other);
+  });
+});
+
+describe('NEAR calls: a malformed standard call is red, a value-like name amber (review of the approval window)', () => {
+  it('both in view above the closed details, each in its own box', () => {
+    const pub = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+    const me = nearImplicitAccountId(pub);
+    const fc = (methodName: string, args: string) => ({ type: 'functionCall' as const, methodName, args: utf8(args), gas: 1n, deposit: 1n });
+    const bytes = encodeNearTransaction({ signerId: me, publicKey: { type: 'ed25519', bytes: pub }, nonce: 1n, receiverId: 'tok.testnet', blockHash: new Uint8Array(32), actions: [fc('ft_transfer', '{"receiver_id":"bob.testnet","amount":5}'), fc('storage_withdraw', '{}')] });
+    const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: me, context: { nearNetwork: 'testnet' }, bytes }), APP, { envNetwork: 'testnet', testApp: false, address: me });
+    document.body.replaceChildren(el);
+    expect(el.querySelector('.danger-box p.risk-lead.cannot-explain')?.textContent).toContain('it calls ft_transfer on tok.testnet with arguments that don’t match the token standard exactly');
+    expect(el.querySelector('.warning-box p.risk-lead.may-move-tokens')?.textContent).toBe('This calls storage_withdraw on tok.testnet: a call like this may move tokens or NEAR you hold with that contract. Approve only if you expected it.');
+    expect(details(el).open).toBe(false);
   });
 });
 

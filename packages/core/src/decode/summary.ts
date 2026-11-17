@@ -24,7 +24,7 @@ import { type ContractChain, STELLAR_TESTNET_PASSPHRASE, verifiedContract } from
 import type { AbiValue } from './abi.ts';
 import type { DecodedApproval } from './request.ts';
 import type { DecodedEvmCall, DecodedEvmCallSite, DecodedEvmTx } from './evm.ts';
-import { parseStrictJson } from './json.ts';
+import { JsonNumber, type StrictJsonObject, parseStrictJson } from './json.ts';
 import { nearCodeHash, nearHash58, nearKeyText, nearMethodName } from './near.ts';
 import { MuxedAccount } from '@stellar/stellar-base';
 import type { StellarContractCall, StellarInvocation, StellarOperation, StellarScVal } from './stellar.ts';
@@ -59,6 +59,8 @@ export type SummaryWarningCode =
   | 'steps_not_listed'
   /** A control change, an approval or value to someone else that isn't in a line: named in its own red bullet. */
   | 'step_left_out'
+  /** A NEAR call Journear doesn't recognise whose method name says it may move tokens (`transfer`, `withdraw`, …). */
+  | 'may_move_tokens'
   /** Raw signing: Journear can't read what is signed at all. */
   | 'raw_signing'
   /** A sponsored EVM action that also sets the account up (its EIP-7702 authorization): the one-time setup note. */
@@ -1284,6 +1286,59 @@ const isAmount = (v: unknown): v is string => typeof v === 'string' && /^(0|[1-9
 const isTokenId = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 128 && isDisplaySafeLine(v);
 const nearWho = (account: string, me: string): SummaryText => (account === me ? ['your account'] : [code(account)]);
 
+/** The NEAR token standards' value-moving methods the summary reads (NEP-141, NEP-171, NEP-178). */
+const NEAR_STANDARD_METHODS: ReadonlySet<string> = new Set(['ft_transfer', 'ft_transfer_call', 'nft_transfer', 'nft_transfer_call', 'nft_approve']);
+
+const hasOnly = (args: StrictJsonObject, keys: readonly string[]): boolean => Object.keys(args).every((k) => keys.includes(k));
+const optText = (args: StrictJsonObject, k: string): boolean => !Object.hasOwn(args, k) || args[k] === null || typeof args[k] === 'string';
+const isNearAccount = (v: unknown): v is string => typeof v === 'string' && isNearAccountId(v);
+const isU64 = (v: unknown): boolean => v instanceof JsonNumber && /^(0|[1-9][0-9]{0,19})$/u.test(v.raw) && BigInt(v.raw) < 2n ** 64n;
+
+/**
+ * Whether a standard method's arguments have exactly the standard's shape: its keys and no others, each of its type
+ * (an amount a canonical decimal string, an account a valid account id, a memo or message a string). Anything else is
+ * read by the contract in a way the summary can't vouch for (a number amount, leading zeros or spaces, another key):
+ * the request isn't explained, so its line can never be a plain one without the amount.
+ */
+function nearStandardShape(method: string, args: StrictJsonObject): boolean {
+  switch (method) {
+    case 'ft_transfer':
+    case 'ft_transfer_call':
+      return (
+        hasOnly(args, method === 'ft_transfer' ? ['receiver_id', 'amount', 'memo'] : ['receiver_id', 'amount', 'memo', 'msg']) &&
+        isNearAccount(args.receiver_id) &&
+        isAmount(args.amount) &&
+        optText(args, 'memo') &&
+        (method === 'ft_transfer' || typeof args.msg === 'string')
+      );
+    case 'nft_transfer':
+    case 'nft_transfer_call':
+      return (
+        hasOnly(args, method === 'nft_transfer' ? ['receiver_id', 'token_id', 'approval_id', 'memo'] : ['receiver_id', 'token_id', 'approval_id', 'memo', 'msg']) &&
+        isNearAccount(args.receiver_id) &&
+        isTokenId(args.token_id) &&
+        (!Object.hasOwn(args, 'approval_id') || args.approval_id === null || isU64(args.approval_id)) &&
+        optText(args, 'memo') &&
+        (method === 'nft_transfer' || typeof args.msg === 'string')
+      );
+    case 'nft_approve':
+      return hasOnly(args, ['token_id', 'account_id', 'msg']) && isNearAccount(args.account_id) && isTokenId(args.token_id) && optText(args, 'msg');
+    default:
+      return false;
+  }
+}
+
+/**
+ * A method name that says the call may move what the user holds with the contract: anything with transfer, withdraw,
+ * approve or send in it (`storage_withdraw` included), and the multi-token standard's `mt_*` methods.
+ */
+export const NEAR_VALUE_METHOD = /transfer|withdraw|approve|send|^mt_/iu;
+
+const pushOnce = (warnings: SummaryWarning[], w: SummaryWarning): void => {
+  const key = JSON.stringify(w.text);
+  if (!warnings.some((x) => JSON.stringify(x.text) === key)) warnings.push(w);
+};
+
 /** What one NEAR action does, in a few words, whether Journear can say that, and how it groups with others. */
 function nearAction(a: NearAction, receiver: string, me: string, warnings: SummaryWarning[]): { text: SummaryText; explainable: boolean; step: Step } {
   const where = nearWho(receiver, me);
@@ -1301,6 +1356,17 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
       const method = m.text;
       const args = a.args.length === 0 ? {} : jsonArgs(a.args);
       if (args === null) return same(['use ', ...where, ' (', code(method), ') with data Journear can’t read'], 3, false, toHex(a.args));
+      // A standard value-moving method whose arguments aren't exactly the standard's: the contract may read them
+      // leniently and move tokens, so it is never a plain "use …" line: red, named, not explained.
+      if (NEAR_STANDARD_METHODS.has(method) && !nearStandardShape(method, args as StrictJsonObject)) {
+        pushOnce(warnings, {
+          level: 'danger',
+          code: 'cannot_explain',
+          text: ['Journear can’t tell what this request does: it calls ', code(method), ' on ', code(receiver), ' with arguments that don’t match the token standard exactly. It could move your money or tokens. Only approve if you fully trust ', APP, '. Technical details are below.'],
+          short: ['Journear can’t read the arguments of ', code(method), ' on ', code(receiver)],
+        });
+        return same(['use ', ...where, ' (', code(method), ') with arguments that don’t match the token standard'], 3, false, toHex(a.args));
+      }
       // NEP-141 fungible tokens and NEP-171/178 NFTs: their methods' meaning is the standard's (the contract can still lie).
       if ((method === 'ft_transfer' || method === 'ft_transfer_call') && typeof args.receiver_id === 'string' && isNearAccountId(args.receiver_id) && isAmount(args.amount)) {
         const to = args.receiver_id;
@@ -1319,6 +1385,16 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
         return same(['let ', code(args.account_id), ' move your item ', code(args.token_id), ' of collection ', code(receiver)], 2, true, args.account_id);
       }
       const text: SummaryText = ['use ', ...where, ' (', code(method), ')'];
+      // A call Journear doesn't recognise stays explained (D810: it names the contract and the method), but one whose
+      // name says it may move value gets an amber line: the contract may move what the user holds with it.
+      if (NEAR_VALUE_METHOD.test(method)) {
+        pushOnce(warnings, {
+          level: 'warning',
+          code: 'may_move_tokens',
+          text: ['This calls ', code(method), ' on ', code(receiver), ': a call like this may move tokens or NEAR you hold with that contract. Approve only if you expected it.'],
+          short: ['May move tokens you hold with ', code(receiver), ' (', code(method), ')'],
+        });
+      }
       return {
         text,
         explainable: true,
@@ -1402,7 +1478,8 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
     }
   }
   // A call Journear can't read (its arguments or its name) could move tokens with no visible bound.
-  if (unreadable) warnings.unshift(cannotTell('danger'));
+  // The generic red line, unless an action already said in red what Journear can't read (a malformed standard call).
+  if (unreadable && !warnings.some((w) => w.code === 'cannot_explain')) warnings.unshift(cannotTell('danger'));
   if (hidden) warnings.push(stepsNotListed(done.length, hidden.n, hidden.risk));
   return {
     headline,

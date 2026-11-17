@@ -12184,6 +12184,22 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   through, the request gets "{App} wants you to approve a request Journear can't explain" with a red "Journear
 couldn’t read this request. Reject it unless you are certain.", not explainable. Every summary the unit, renderer and
 e2e approval tests build is checked never to be that fallback, so the catch can't hide a bug.
+- Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, after an automated review; decided while building, to
+  confirm): a NEAR call to a standard value-moving method (`ft_transfer`, `ft_transfer_call`, `nft_transfer`,
+  `nft_transfer_call`, `nft_approve`) whose arguments aren't exactly the standard's shape (its keys and no others, an
+  amount a canonical decimal string, account ids valid, a memo or message a string or null as the standard has it, an
+  `approval_id` a u64) is no longer the plain "Use tok.testnet (ft_transfer)" line: the contract may read such arguments
+  leniently and move tokens the summary didn't show (a parser differential). It reads "Use tok.testnet (ft_transfer)
+  with arguments that don’t match the token standard", is not explainable, and gets a red line naming the method:
+  "Journear can’t tell what this request does: it calls ft_transfer on tok.testnet with arguments that don’t match the
+  token standard exactly. It could move your money or tokens. …" (it replaces the generic red line). Any other NEAR
+  call with JSON arguments stays explainable, as decided above (it names the contract and the method), but one whose
+  method name matches `transfer`, `withdraw`, `approve`, `send` (anywhere in the name, so `storage_withdraw` too) or
+  starts with `mt_` (the multi-token standard) gets an amber line, code `may_move_tokens`: "This calls {method} on
+  {contract}: a call like this may move tokens or NEAR you hold with that contract. Approve only if you expected it."
+  (once per method and contract). Built: `summary.ts` (`NEAR_STANDARD_METHODS`, `nearStandardShape`,
+  `NEAR_VALUE_METHOD`); tests in `approval-summary.test.ts` (each malformed shape, the pattern list, grouping and
+  `shownSteps`) and `render-approval-sponsored.test.ts`.
 - Why the NEAR/Soroban difference: a NEAR action carries the NEAR it moves in the action itself (the visible "NEAR
   leaving your account"), and its arguments are JSON the user can read when opened; a Soroban call's authorization tree
   can move tokens the summary can't weigh. To confirm.
@@ -12764,6 +12780,10 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   `transfer`, `permit`, `setApprovalForAll`): proposed rule, such a selector needs the founder's sign-off in the
   manifest change. Raw signing after the setup: it could sign an Execute digest (D833), but it could already sign any
   transaction's hash, so the setup adds no exposure.
+- Also on this branch (D810 amended): a NEAR standard value-moving call with arguments that aren't exactly the
+  standard's is red and not explained, and a NEAR call Journear doesn't recognise whose name says it may move value gets
+  an amber line. The sponsored EVM path needs no counterpart: an EVM call whose calldata doesn't decode exactly against
+  a known signature is already "can't tell" (red).
 - Known effect: the demo's `checkIn()` is not a selector Journear knows, so its approval carries the red "can't tell"
   line, as the same call unsponsored would. Making it calm is a separate decision (the CheckIn contract and its
   function on Journear's verified list, the demo card's package).

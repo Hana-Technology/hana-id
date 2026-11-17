@@ -16,6 +16,7 @@ import {
   NEAR_OWN_CONTRACT_TOTAL,
   markOverflowing,
   overflowNote,
+  nearControlWarnings,
   nearMessageWarning,
   nearNetworkLine,
   nearRecipientLookalike,
@@ -36,7 +37,8 @@ function tx(actions: NearAction[], receiverId = ME): HTMLElement {
   return el;
 }
 
-const takeovers = (el: HTMLElement) => [...el.querySelectorAll('p.danger.takeover')].map((p) => p.textContent);
+/** The red box (D814): its lead in full, then each other red item's bullet. */
+const takeovers = (el: HTMLElement) => [...el.querySelectorAll('.danger-box .risk-lead, .danger-box li')].map((p) => p.textContent);
 const call = (args: string | Uint8Array, deposit = 0n): NearAction => ({ type: 'functionCall', methodName: 'add_message', args: typeof args === 'string' ? utf8(args) : Uint8Array.from(args), gas: 30_000_000_000_000n, deposit });
 
 describe('renderApproval: NEAR transactions', () => {
@@ -57,13 +59,20 @@ describe('renderApproval: NEAR transactions', () => {
     expect(takeovers(el)).toEqual([]);
   });
 
-  it('shows arguments whole (never cut or folded), as hex when they aren’t JSON', () => {
-    expect(tx([call(Uint8Array.of(0xff, 0x01))]).textContent).toContain('ff01');
-    // A padded first key can't push receiver_id or amount out of the text: nothing is cut or folded away.
+  it('shows arguments whole (never cut), as hex when they aren’t JSON; in the details, always folded at first (D808, D810)', () => {
+    const hex = tx([call(Uint8Array.of(0xff, 0x01))]);
+    expect(hex.textContent).toContain('ff01');
+    expect(hex.querySelector<HTMLDetailsElement>('details.request-details')?.open).toBe(false);
+    // A padded first key can't push receiver_id or amount out of the text: nothing is cut. The JSON of a call the
+    // summary names is in the details (closed), whole, in one box.
     const long = `{"pad":"${'a'.repeat(3000)}","receiver_id":"attacker.testnet","amount":"1"}`;
     const el = tx([call(long)]);
-    expect(el.querySelector('details')).toBeNull();
-    expect(el.querySelector('pre.message')!.textContent!).toContain('"receiver_id": "attacker.testnet"');
+    expect(el.querySelectorAll('details')).toHaveLength(1);
+    expect(el.querySelector<HTMLDetailsElement>('details.request-details')?.open).toBe(false);
+    expect(el.querySelector('details.request-details pre.message')!.textContent!).toContain('"receiver_id": "attacker.testnet"');
+    // ft_transfer's receiver and amount are read into the summary, outside the fold.
+    const ft = tx([{ ...call('{"receiver_id":"attacker.testnet","amount":"5"}', 1n), methodName: 'ft_transfer' } as NearAction], 'usdc.testnet');
+    expect(ft.querySelector('h2.summary-headline')?.textContent).toBe('Partner App wants to send 5 (smallest units) of the token usdc.testnet to attacker.testnet');
     expect(tx([call(new Uint8Array(1000).fill(0xff))]).querySelector('pre.message')!.textContent).toBe('ff'.repeat(1000));
   });
 
@@ -126,11 +135,13 @@ describe('renderApproval: NEAR transactions', () => {
     const el = tx([call('{}', 5n)]);
     expect(el.querySelector('p.takeover.banner')?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
     expect(el.textContent).toContain(`NEAR leaving your account${NEAR_OWN_CONTRACT_TOTAL} (plus the network fee for gas)`);
-    expect(el.textContent).toContain('NEAR attached or sent0.000000000000000000000005 NEAR');
+    // D814: shown conservatively, never as 0 (the exact figure is in the details).
+    expect(el.textContent).toContain('NEAR attached or sentless than 0.000001 NEAR');
+    expect(el.querySelector('details')?.textContent).toContain('0.000000000000000000000005 NEAR');
   });
 
   it('a call to a contract on the user’s own account carries a warning (it runs with the account’s full authority)', () => {
-    expect(takeovers(tx([call('{}')]))).toEqual([NEAR_ACCOUNT_CONTROL_BANNER, 'This calls a contract on your own account. A contract there runs with your account’s full authority: it can move everything in it.']);
+    expect(takeovers(tx([call('{}')]))).toEqual([NEAR_ACCOUNT_CONTROL_BANNER, 'Calls a contract on your own account']);
     expect(takeovers(tx([call('{}')], 'guestbook.testnet'))).toEqual([]);
   });
 
@@ -147,19 +158,24 @@ describe('renderApproval: NEAR transactions', () => {
     expect(el.textContent).toContain('NEAR leaving your account2.5 NEAR');
   });
 
+  // The whole key, never cut (review of 5ef13452).
+  const keyShort = (k: string) => k;
   it.each([
-    ['a full-access key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } } as NearAction, `This adds a full-access key to your account. Whoever holds ${nearPublicKeyString(OTHER_KEY.bytes)} can move all its NEAR and tokens and lock you out.`],
-    ['a function-call key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance: null, receiverId: 'x.testnet', methodNames: [] } } } as NearAction, 'This adds a key to your account that can call any method of x.testnet and spend NEAR on their fees.'],
-    ['removing the Journear Passport key', { type: 'deleteKey', publicKey: { type: 'ed25519', bytes: PUB } } as NearAction, 'This removes your Journear Passport key from your account: Journear Passport can no longer sign for it, so you lose control of it.'],
-    ['deleting the account', { type: 'deleteAccount', beneficiaryId: 'bob.testnet' } as NearAction, 'This deletes your account and sends all of its NEAR to bob.testnet. It can’t be undone.'],
-    ['deploying a contract', { type: 'deployContract', code: Uint8Array.of(0, 97, 115, 109) } as NearAction, 'This deploys a contract to your account. A contract runs with the account’s own authority: it can move everything in it.'],
-    ['using a global contract', { type: 'useGlobalContract', contract: { type: 'accountId', accountId: 'g.testnet' } } as NearAction, 'This sets your account’s contract to a global contract. A contract runs with the account’s own authority: it can move everything in it.'],
-  ])('%s: under the account-control banner, with its warning', (_, action, warning) => {
+    ['a full-access key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } } as NearAction, `This adds a full-access key to your account. Whoever holds ${nearPublicKeyString(OTHER_KEY.bytes)} can move all its NEAR and tokens and lock you out.`, `Adds a full-access key (${keyShort(nearPublicKeyString(OTHER_KEY.bytes))})`],
+    ['a function-call key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance: null, receiverId: 'x.testnet', methodNames: [] } } } as NearAction, 'This adds a key to your account that can call any method of x.testnet and spend NEAR on their fees.', `Adds a key (${keyShort(nearPublicKeyString(OTHER_KEY.bytes))}) that can use x.testnet`],
+    ['removing the Journear Passport key', { type: 'deleteKey', publicKey: { type: 'ed25519', bytes: PUB } } as NearAction, 'This removes your Journear Passport key from your account: Journear Passport can no longer sign for it, so you lose control of it.', 'Removes your Journear Passport key'],
+    ['deleting the account', { type: 'deleteAccount', beneficiaryId: 'bob.testnet' } as NearAction, 'This deletes your account and sends all of its NEAR to bob.testnet. It can’t be undone.', 'Deletes your account and sends all its NEAR to bob.testnet'],
+    ['deploying a contract', { type: 'deployContract', code: Uint8Array.of(0, 97, 115, 109) } as NearAction, 'This deploys a contract to your account. A contract runs with the account’s own authority: it can move everything in it.', 'Deploys a contract to your account'],
+    ['using a global contract', { type: 'useGlobalContract', contract: { type: 'accountId', accountId: 'g.testnet' } } as NearAction, 'This sets your account’s contract to a global contract. A contract runs with the account’s own authority: it can move everything in it.', 'Sets your account’s contract'],
+  ])('%s: one red box with the banner; the headline names the action (D814)', (_, action, warning, bullet) => {
     const el = tx([action]);
     const banner = el.querySelector('p.takeover.banner');
     expect(banner?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
-    expect(banner?.getAttribute('role')).toBe('alert');
-    expect(takeovers(el)).toEqual([NEAR_ACCOUNT_CONTROL_BANNER, warning]);
+    expect(banner?.closest('.danger-box')?.getAttribute('role')).toBe('alert');
+    // A single action: its headline names it whole, so no bullet repeats it (the banner stays).
+    // Removing the user's own key keeps its bullet: the line names the key, not whose it is.
+    expect(takeovers(el)).toEqual(action.type === 'deleteKey' ? [NEAR_ACCOUNT_CONTROL_BANNER, bullet] : [NEAR_ACCOUNT_CONTROL_BANNER]);
+    expect(nearControlWarnings(action, ME, ME)).toEqual([warning]);
     expect(el.querySelector('li.op.takeover-op')).not.toBeNull();
   });
 
@@ -241,13 +257,14 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
       const bytes = encodeNep413Message({ message: 'Sign in', nonce: new Uint8Array(32), recipient, callbackUrl: null });
       return renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'P', { envNetwork: 'testnet', testApp: false, ...(parentOrigin ? { parentOrigin } : {}) });
     };
-    const mismatches = (el: HTMLElement) => [...el.querySelectorAll('p.recipient-mismatch')].map((p) => [p.className, p.textContent]);
+    // D814: one amber box; a mismatch leads it, in full.
+    const mismatches = (el: HTMLElement) => [...el.querySelectorAll('.warning-box .recipient-mismatch')].map((p) => [p.className, p.textContent]);
     const dangers = (el: HTMLElement) => [...el.querySelectorAll('p.danger')].map((p) => p.textContent);
     expect(mismatches(msg('guestbook.example', 'https://guestbook.example'))).toEqual([]);
     expect(mismatches(msg('https://guestbook.example', 'https://guestbook.example'))).toEqual([]);
     // Every other shape gets the same line, in the same style: no pattern can soften it.
     for (const recipient of ['bank.example', 'https://bank.example/login', 'guestbook.near', 'guestbook.testnet', 'guestbook.example/login', 'Guestbook']) {
-      expect(mismatches(msg(recipient, 'https://guestbook.example'))).toEqual([['warn recipient-mismatch jp-alert jp-alert-warning', nearRecipientMismatch(recipient, 'guestbook.example')]]);
+      expect(mismatches(msg(recipient, 'https://guestbook.example'))).toEqual([['risk-lead warn recipient-mismatch', nearRecipientMismatch(recipient, 'guestbook.example')]]);
     }
     expect(dangers(msg('gооgle.com', 'https://gооgle.com'.normalize()))).toContain(nearRecipientLookalike('g\\u043e\\u043egle.com'));
     expect(nearRecipientMismatch('bank.example', 'guestbook.example')).toBe('This app is at guestbook.example, but the signature is for bank.example. Sign only if you are signing in to bank.example on purpose.');

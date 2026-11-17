@@ -10,7 +10,6 @@ import {
   newRequestId,
   parseEvmTxRequest,
   parseWindowMessage,
-  rawSigningWarning,
   utf8,
 } from '@hana-id/core';
 import { STELLAR_MAINNET_PASSPHRASE, shortAddress } from '@hana-id/core';
@@ -236,10 +235,12 @@ describe('/approve', () => {
     }
   });
 
-  it('batch C15: shows the session’s Support ID under the account line, as text; none without one', () => {
+  it('batch C15: shows the session’s Support ID, as text, first in the details (D808); none without one', () => {
     const r = evmRequest({ supportId: 'HANA-2750-G5HM' });
     send(r);
     const line = document.querySelector('p.support-id');
+    expect(line?.parentElement?.matches('details.request-details > .details-body')).toBe(true);
+    expect(line?.parentElement?.firstElementChild).toBe(line);
     expect(line?.textContent).toBe(`Support ID HANA-2750-G5HM ${SUPPORT_ID_HINT}`);
     expect(line?.querySelector('code')?.textContent).toBe('HANA-2750-G5HM');
     // Decoration only: the digest binds the request, not the code.
@@ -680,7 +681,8 @@ describe('/approve', () => {
     const r = stellarRequest({ kind: 'raw', context: {}, bytes });
     send(r);
     const text = pageText();
-    expect(text).toContain(rawSigningWarning('Stellar', 'Partner App'));
+    // D810: the red risk line is the summary's, in plain words.
+    expect(text).toContain('This asks you to sign something Journear can’t read at all. On Stellar it could give away control of your account or your funds. Reject unless you are certain.');
     expect(text).toContain(`0x${Buffer.from(bytes).toString('hex')}`);
     expect(text).not.toContain('payment');
     arm();

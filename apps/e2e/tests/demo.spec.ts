@@ -164,7 +164,8 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   // The click opened the approval itself: no "Review in Journear Passport" button.
   await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Journear Passport' })).toHaveCount(0);
   await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
-  await expect(approval.getByRole('heading', { name: 'NEAR transaction, fee paid by a relayer' })).toBeVisible();
+  // D808: the plain summary leads; the request's kind heading is in the details.
+  await expect(approval.locator('h2.summary-headline')).toHaveText(new RegExp(`wants to use ${E2E_GUESTBOOK.replace(/[.]/gu, '\\.')} \\(add_message\\)$`, 'u'));
   await expect(approval.getByText('add_message').first()).toBeVisible();
   await expect(approval.getByText(E2E_GUESTBOOK).first()).toBeVisible();
   await approve(approval);
@@ -193,7 +194,8 @@ test('the demo writes to the guestbook when clicked before Hana recorded the NEA
   const approvalP = page.waitForEvent('popup');
   await page.getByRole('button', { name: 'Write to the guestbook (no NEAR needed)' }).click();
   const approval = await approvalP;
-  await expect(approval.getByRole('heading', { name: 'NEAR transaction, fee paid by a relayer' })).toBeVisible();
+  // D808: the plain summary leads; the request's kind heading is in the details.
+  await expect(approval.locator('h2.summary-headline')).toHaveText(new RegExp(`wants to use ${E2E_GUESTBOOK.replace(/[.]/gu, '\\.')} \\(add_message\\)$`, 'u'));
   await approve(approval);
   await expect(page.locator('#near-done')).toBeVisible();
   expect(relayer.refused.length).toBeGreaterThanOrEqual(2);

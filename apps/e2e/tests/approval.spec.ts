@@ -313,7 +313,7 @@ test.describe('raw signing', () => {
     const { stellar } = await loggedInLive(page, await newLiveApp({ settings: { rawSign: 'approval' } }));
     const bytes = await runSignRaw(page, 'raw', 'stellar', 64, 2);
     const popup = await clickLauncher(page, 'Review in Journear Passport');
-    await expect(popup.getByText('Raw signing can authorize any transaction', { exact: false })).toBeVisible();
+    await expect(popup.getByText('This asks you to sign something Journear can’t read at all.', { exact: false })).toBeVisible();
     await expect(popup.getByText('This signature isn’t tied to one network.', { exact: false })).toBeVisible();
     await expect(popup.getByText(stellar).first()).toBeVisible();
     await expect(popup.getByText(LIVE_PARTNER_ORIGIN, { exact: true })).toBeVisible();

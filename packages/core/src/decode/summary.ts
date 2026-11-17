@@ -434,7 +434,7 @@ function evmTx(chainId: number, tx: DecodedEvmTx, me: string): ApprovalSummary {
 // plain words: the fee line, and the one-time setup note when the approval also signs the account's authorization.
 // The calls carry no value (the subject decoder refuses any), so nothing is said about ETH leaving.
 
-/** The fee line of a sponsored action (the founder's wording, D831): "Network fee: none. Journear pays it for you." */
+/** The fee line of a sponsored action (the founder's wording): "Network fee: none. Journear pays it for you." */
 export const SPONSORED_FEE: SummaryText = Object.freeze(['none. Journear pays it for you.']) as SummaryText;
 
 /** A chain's own name for a sentence ("Base Sepolia"), without the network line's "(testnet)". */
@@ -445,7 +445,7 @@ function chainName(chainId: number): string {
 }
 
 /**
- * The one-time setup note (amber, D831): only when the approval also signs the account's EIP-7702 authorization.
+ * The one-time setup note (amber): only when the approval also signs the account's EIP-7702 authorization.
  * Never the words "upgrade" or "smart account" (the founder's rule): what it does for the user, in their terms.
  */
 export const accountSetupNote = (chainId: number): SummaryWarning => ({

@@ -21,7 +21,7 @@ import { type DecodedEvmCallSite, decodeCall } from './evm.ts';
 /**
  * The chains a build sponsors, by decimal chain ID: the delegate it may authorize and the relayer every batch names
  * (the shape of HanaEnv.evmSponsor, generated from the manifest after its delegate was checked against the pinned
- * table, D834). Absent or empty: no chain is sponsored, and every sponsored request is refused.
+ * table). Absent or empty: no chain is sponsored, and every sponsored request is refused.
  */
 export type SponsorChains = Readonly<Record<string, { readonly delegate: string; readonly relayer: string }>>;
 

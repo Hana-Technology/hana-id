@@ -173,7 +173,7 @@ export function decodeSponsorSubject(input: Uint8Array): EvmSponsorSubject {
 }
 
 /**
- * The approval request's `bytes` and `context` for a subject (kind `evm_sponsored`, D850): the subject's bytes and its
+ * The approval request's `bytes` and `context` for a subject (kind `evm_sponsored`): the subject's bytes and its
  * chain. The vault builds the subject (the API's prepare answer and its own manifest) and sends exactly these to the
  * popup, which decodes them itself; the approval digest binds every field, the authorization nonce included.
  */

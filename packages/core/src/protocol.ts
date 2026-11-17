@@ -250,9 +250,9 @@ export const PORT_METHODS = [
   'near_signMessage',
   'near_signDelegateAction',
   /**
-   * A batch of EVM calls Journear's relayer sends for the user, the network fee paid by Journear (EIP-7702 delegate,
-   * D831, D850). Sent only by an SDK of EVM_SPONSOR_SDK_MIN or later, for a chain the vault reported in
-   * `sponsoredChains`. Always the approval popup (D839); the vault builds the approval subject from the API's prepare
+   * A batch of EVM calls Journear's relayer sends for the user, the network fee paid by Journear (an EIP-7702
+   * delegate). Sent only by an SDK of EVM_SPONSOR_SDK_MIN or later, for a chain the vault reported in
+   * `sponsoredChains`. Always the approval popup, never auto-approved; the vault builds the approval subject from the API's prepare
    * answer and its own build manifest, never from the page.
    */
   'evm_sendSponsored',
@@ -543,14 +543,14 @@ export interface StatusResult {
    */
   supportId?: string;
   /**
-   * The EVM chains whose network fees Journear pays in this build (its manifest's `evm.sponsor`, D834), ascending:
+   * The EVM chains whose network fees Journear pays in this build (its manifest's `evm.sponsor`), ascending:
    * the chains evm_sendSponsored may name. Present only when there is one, and only to an SDK of EVM_SPONSOR_SDK_MIN
    * or later. A build property, so the same logged in or out; the vault and the API still decide each request.
    */
   sponsoredChains?: number[];
 }
 
-/** At most this many sponsored chains in a status (the manifest's bound, D836). */
+/** At most this many sponsored chains in a status (the manifest's bound). */
 export const SPONSORED_CHAINS_MAX = 4;
 
 /** 1 to SPONSORED_CHAINS_MAX distinct positive chain IDs, ascending. */

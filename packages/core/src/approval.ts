@@ -27,7 +27,7 @@ export const APPROVAL_DIGEST_DOMAIN = 'hana-id/approve/v1';
  * - `near_tx`: a borsh NEAR `Transaction` (its sha256 is signed);
  * - `near_delegate`: a borsh NEP-366 `DelegateAction`, without NEP-461's prefix (sha256(prefix ‖ bytes) is signed);
  * - `near_message`: NEP-413's `u32le(2^31 + 413) ‖ borsh(Payload)` (its sha256 is signed).
- * - `evm_sponsored`: a sponsored EVM action's subject (`@hana-id/core/evm-sponsor` encodeSponsorSubject, D846, D850):
+ * - `evm_sponsored`: a sponsored EVM action's subject (`@hana-id/core/evm-sponsor` encodeSponsorSubject):
  *   `utf8("hana-id/evm-sponsored/v1") ‖ rlp([chainId, account, delegate, authNonce, calls, executeNonce, deadline,
  *   relayer, minGas])`. The vault signs the Execute it describes and, when `authNonce` is set, the EIP-7702
  *   authorization; the digest binds every field, the authorization nonce included.
@@ -52,7 +52,7 @@ export const APPROVAL_CHAINS: readonly ApprovalChain[] = ['stellar', 'evm', 'nea
 
 /**
  * Kinds no auto-approve policy can ever cover. The NEAR kinds are here because no policy format covers NEAR yet:
- * every NEAR request gets the approval popup. A sponsored EVM action is never auto-approved (D839): its first one
+ * every NEAR request gets the approval popup. A sponsored EVM action is never auto-approved: its first one
  * also sets up the account (EIP-7702), and every one spends Journear's fee budget.
  */
 export const NEVER_AUTO_APPROVED_KINDS: ReadonlySet<ApprovalKind> = new Set([

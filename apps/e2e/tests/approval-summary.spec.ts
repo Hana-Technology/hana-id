@@ -130,7 +130,10 @@ async function injectSponsored(popup: Page, subject: EvmSponsorSubject): Promise
     ({ bytes, address, chainId, vaultOrigin, parentOrigin }) => {
       const id = crypto.randomUUID().replace(/-/gu, '');
       const data = { v: 1, t: 'hana:approve-request', id, appName: 'E2E Partner', parentOrigin, kind: 'evm_sponsored', chain: 'evm', address, bytes: new Uint8Array(bytes), context: { chainId }, position: 1, queued: 1 };
-      window.dispatchEvent(new MessageEvent('message', { data, origin: vaultOrigin, source: window.opener as Window }));
+      // Firefox refuses a cross-origin window as MessageEventInit's `source`: set it on the event itself.
+      const event = new MessageEvent('message', { data, origin: vaultOrigin });
+      Object.defineProperty(event, 'source', { value: window.opener });
+      window.dispatchEvent(event);
     },
     { bytes: Array.from(encodeSponsorSubject(subject)), address: subject.account, chainId: subject.chainId, vaultOrigin: VAULT_ORIGIN, parentOrigin: PARTNER_ORIGIN },
   );

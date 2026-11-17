@@ -60,27 +60,32 @@ describe('the amount first (amountHeadline)', () => {
     expect(amountHeadline(decodeApprovalRequest({ kind: 'personal_sign', chain: 'evm', address: EVM, context: {}, bytes: utf8('Sign in') }))).toBeNull();
   });
 
-  it('is shown right under the request’s kind, and the rows still show the same value', () => {
+  it('is shown right under the summary’s headline (D808), and the rows still show the same value', () => {
     const el = renderApproval(dom(document), evm(), 'Partner App');
     expect(el.classList.contains('jp-confirm')).toBe(true);
     expect(el.children[0]?.tagName).toBe('H2');
+    expect(el.children[0]?.className).toBe('summary-headline');
     expect(el.children[1]?.className).toBe('headline');
     expect(el.querySelector('.amt')?.textContent).toBe('1ETH');
-    expect(el.querySelector('dl.jp-kv')?.textContent).toContain('1 (1000000000000000000 wei)');
+    expect(el.querySelector('dl.jp-kv.summary-facts')?.textContent).toBe('NetworkSepolia (testnet), chain 11155111Network feeup to less than 0.000001 ETH');
+    expect(el.querySelector('details.request-details dl.jp-kv')?.textContent).toContain('1 (1000000000000000000 wei)');
     expect(renderApproval(dom(document), evm({ data: '0xa9059cbb' + '00'.repeat(64) }), 'Partner App').querySelector('.headline')).toBeNull();
   });
 });
 
 describe('the system’s parts, with the page’s own classes kept', () => {
-  it('facts are jp-kv rows; warnings and danger lines are alerts that keep their paragraph and classes', () => {
+  it('facts are jp-kv rows; the red items are one alert box (D814) that keeps their classes', () => {
     const el = renderApproval(dom(document), stellar([addSignerOp()]), 'Partner App');
     expect(el.querySelectorAll('dl:not(.jp-kv)')).toHaveLength(0);
-    const banner = el.querySelector('p.takeover.banner');
-    expect(banner?.classList.contains('jp-alert-danger')).toBe(true);
-    expect(banner?.getAttribute('role')).toBe('alert');
-    // The icon is decorative and adds no text: the alert's text is the warning exactly.
-    expect(banner?.querySelector('svg.ic')?.getAttribute('aria-hidden')).toBe('true');
-    expect(banner?.querySelector(':scope > .body')?.textContent).toBe(banner?.textContent);
-    for (const p of el.querySelectorAll('p.danger.takeover')) expect(p.classList.contains('jp-alert')).toBe(true);
+    const box = el.querySelector('div.danger-box');
+    expect(box?.classList.contains('jp-alert-danger')).toBe(true);
+    expect(box?.getAttribute('role')).toBe('alert');
+    expect(el.querySelectorAll('.jp-alert-danger')).toHaveLength(1);
+    // The icon is decorative and adds no text: the box's text is its lead and its bullets exactly.
+    expect(box?.querySelector('svg.ic')?.getAttribute('aria-hidden')).toBe('true');
+    expect(box?.querySelector(':scope > .body')?.textContent).toBe(box?.textContent);
+    expect(box?.querySelector('p.risk-lead.takeover.banner')).not.toBeNull();
+    // The headline names the signer whole, so no bullet repeats it.
+    expect(box?.querySelectorAll('ul.risk-more > li')).toHaveLength(0);
   });
 });

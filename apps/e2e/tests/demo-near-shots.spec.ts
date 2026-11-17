@@ -102,7 +102,8 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   activation.open();
   await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
   await shots(page, '04-stage-approving');
-  await expect(approval.getByRole('heading', { name: 'NEAR transaction, fee paid by a relayer' })).toBeVisible();
+  // D808: the plain summary leads; the request's kind heading is in the details.
+  await expect(approval.locator('h2.summary-headline')).toHaveText(new RegExp(`wants to use ${E2E_GUESTBOOK.replace(/[.]/gu, '\\.')} \\(add_message\\)$`, 'u'));
   for (const scheme of ['light', 'dark'] as const) {
     await approval.emulateMedia({ colorScheme: scheme });
     await approval.screenshot({ path: `${SHOTS}/04-approval-window-${scheme}.png`, fullPage: true, animations: 'disabled' });

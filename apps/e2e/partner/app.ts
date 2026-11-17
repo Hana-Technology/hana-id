@@ -199,6 +199,17 @@ const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
     const r = await hana.stellar.signTransaction(paymentXdr(address));
     return { signerAddress: r.signerAddress, valid: stellarSignedBy(r.signedTxXdr, address) };
   },
+  /** A Stellar transaction the test built (its XDR), on `networkPassphrase` (testnet by default). */
+  stellarSignXdr: async (xdr: string, networkPassphrase?: string) => {
+    const r = await hana.stellar.signTransaction(xdr, networkPassphrase ? { networkPassphrase } : {});
+    return { signerAddress: r.signerAddress };
+  },
+  /** eth_signTypedData_v4 of typed data the test built (JSON text). */
+  ethSignTypedData: async (json: string) => ({ signature: await hana.ethereum.request({ method: 'eth_signTypedData_v4', params: [hana.addresses?.evm, json] }) }),
+  /** NEAR requests the test built: a borsh Transaction or DelegateAction (base64), a NEP-413 message. */
+  nearSignTx: (transaction: string) => hana.near.signTransaction({ network: 'testnet', transaction }),
+  nearSignDelegate: (delegateAction: string) => hana.near.signDelegateAction({ network: 'testnet', delegateAction }),
+  nearSignMessage: (message: string, recipient: string) => hana.near.signMessage({ message, recipient, nonce: new Uint8Array(32).fill(7) }),
   ethRequestAccounts: () => hana.ethereum.request({ method: 'eth_requestAccounts' }),
   /** eth_signTransaction of a fully filled transaction (no RPC fill); `valid`: signed by the Hana account. */
   ethSignTx: async (tx: Record<string, string>) => {

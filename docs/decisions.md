@@ -12324,10 +12324,13 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   artifact is refused before the chain is read.
 - Chains: test chains only (core's `TEST_EVM_CHAINS`), mainnet ids (core's `KNOWN_EVM_MAINNETS`) refused by name before
   any RPC, 31337/1337 only for `local*` envs; default 84532. The RPC is the manifest's `evm.sponsor.chains.<id>.rpc`
-  when it has the chain (then `--rpc` is refused: one source), else `--rpc` (https, or http to a loopback host; no
-  credentials; a path and query allowed for a keyed provider). Its `eth_chainId` is read first and must be the chain;
-  nothing else is read from an RPC on another chain. The URL is never printed (scheme and host only) and reaches cast
-  in `ETH_RPC_URL`, not on its command line.
+  when it has the chain (then `--rpc` and `HANA_EVM_RPC_URL` are refused: one source), else `--rpc` or the
+  environment variable `HANA_EVM_RPC_URL` (one of them). `--rpc` takes the manifest's no-key form only (https, or
+  http to a loopback host; no credentials, no path beyond `/`, no query or fragment): a command line is echoed by
+  pnpm, kept in shell history and visible in `ps` (the independent review, 2026-11-17). A keyed provider URL goes in
+  `HANA_EVM_RPC_URL` (`read -rs HANA_EVM_RPC_URL; export HANA_EVM_RPC_URL`), where a path and query are allowed and no
+  credentials. Its `eth_chainId` is read first and must be the chain; nothing else is read from an RPC on another
+  chain. The URL is never printed (scheme and host only) and reaches cast in `ETH_RPC_URL`, not on its command line.
 - On chain: the proxy must have exactly its known code (hash `0x2fa86add…`); missing, the script stops and says how a
   chain gets it (its one pre-signed transaction), and never deploys another way, since the addresses depend on it.
   Anvil has the proxy by default; the tests remove it with `anvil_setCode` and use `--disable-default-create2-deployer`.
@@ -12337,7 +12340,9 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Signing: `cast send <proxy> <salt ‖ init code> --account <name> --chain <id>`. Foundry decrypts the keystore after
   its own password prompt on the terminal (stdio inherited, no echo); the script never reads, receives or prints a key
   or a password, and strips `ETH_*`, `CAST_*`, `FOUNDRY_*`, `DAPP_*` and `CHAIN` from cast's environment so only the
-  named keystore signs and no profile changes the build (`ETHERSCAN_API_KEY` is kept for verification). No
+  named keystore signs and no profile changes the build (`ETHERSCAN_API_KEY` is kept for verification). cast and
+  forge run in an empty temporary directory, removed afterwards, so no project-level `foundry.toml` can apply; forge
+  is pointed at `contracts/evm-delegate` by an absolute `--root`. No
   `--private-key` path exists in the script; the tests map `--account` to a temporary keystore of anvil's published
   dev account through an injectable runner. The keystore is made with `cast wallet new <dir> <name>` (the key is
   generated inside the keystore and never shown), rather than `cast wallet import`, which needs a key from somewhere;
@@ -12353,20 +12358,27 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   D836's numbers (`<…>` for the relayer address and the demo app's id). Core's own test then checks the new entry
   against the artifact. `--json` prints the plan only (refused with `--yes`, whose cast output shares stdout).
 - `evm-relay-keys <env> [--show-address]`: one key from `crypto.randomBytes(32)` (drawn again if not a valid scalar),
-  written with the shared `writeSecretJson` (0600 temp file renamed, directory 0700) as
-  `["0x<64 lowercase hex>"]`, exactly what the API's `gen` reads (`evmRelayKeysLine`; a test runs that reader on the
-  file). It refuses to overwrite the file (the only copy; the NEAR relay's script keeps an existing file instead, but a
-  second run there can't change an address that every signed batch names), and refuses a path git would track (inside
-  a work tree and not ignored, checked with `git check-ignore`). It prints only the address and the next steps;
+  as `["0x<64 lowercase hex>"]`, exactly what the API's `gen` reads (`evmRelayKeysLine`; a test runs that reader on the
+  file), into a 0700 directory. It never overwrites the file (the only copy; the NEAR relay's script keeps an existing
+  file instead, but a second run there can't change an address that every signed batch names), race-free: a 0600 temp
+  file (`wx`), then a hard link to the final name, which fails if anything is there (tested with a file created
+  between the check and the link), then the temp name removed. It refuses a path git would track (inside a work tree
+  and not ignored, `git check-ignore`); a `.secrets` that is a symbolic link is judged at its real path (git exits 128
+  on a path beyond a link; a target outside every work tree is fine), and any other git failure is refused with what
+  to do. It prints only the address and the next steps;
   `--show-address` prints an existing file's address and fails when the manifest's `relayerAddress` is another.
 - `env-secrets` lists `EVM_RELAY_KEYS` (optional, API) only with `evm.sponsor`, valid only when the key's address is
-  `relayerAddress` (as `gen` checks), uploaded as `JSON.stringify([key])` through wrangler's stdin.
+  `relayerAddress` (as `gen` checks), uploaded as `JSON.stringify([key])` through wrangler's stdin. A new `--secret
+  <NAME>` lists and uploads one secret alone (other secrets neither listed nor blocking) and refuses it unless its
+  file is present and valid, optional or not: the runbook's upload, in place of a `node -e … | wrangler` pipe (which
+  would upload an empty value on a failed read, and whose JSON errors could quote the file).
 - `deploy-check`'s new group `evm`, read only when the manifest has `evm.sponsor` (an env without it prints exactly
   what it printed before, which a test asserts word for word, and sends no JSON-RPC): per chain, the RPC and the
   fallback on the right chain (an unreachable fallback is a warning), the manifest's delegate equal to the artifact's
   address and to core's pin (address and runtime code hash, not a placeholder), the code at it hashing to the
-  artifact's, the relayer's balance (below one transaction's worst case, `maxGasPerTx` × `maxFeePerGasGwei`, a failure:
-  every send would fail; below `lowBalanceEth` a warning), and code at every allowlisted target. `--only evm` and
+  artifact's, the relayer's balance (a failure below one transaction's worst execution cost, `maxGasPerTx` ×
+  `maxFeePerGasGwei`, doubled on an OP Stack chain as a margin for the L1 data fee, which comes on top and which these
+  numbers don't bound; the message says so; below `lowBalanceEth` a warning), and code at every allowlisted target. `--only evm` and
   `--skip evm` work as for the other groups.
 - Why: the founder deploys once, by hand, with a key that must never be in a file the scripts read; an artifact
   pinned in core is only safe if what is on chain is that artifact, so every step compares hashes rather than
@@ -12375,5 +12387,9 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   checked-in artifact the pin and the tests use); a `--private-key` flag or reading a key file for the deployer; running
   verification by default (it needs a network and an explorer key, and a failure there is not a deploy failure);
   deploying the proxy ourselves on a chain without it (the addresses would no longer be the ones anyone can derive).
+- Timing (the independent review, 2026-11-17): the runbook's steps 1 to 3 (keystore, faucet, plan) may be done any
+  time; from step 4 on, only on the founder's explicit go-ahead and not before 2026-11-26, the hackathon demos staying
+  unchanged to 2026-11-25. The contract deploy touches none of sandbox-dev's services but is part of that frozen
+  sequence. Keys and URLs with keys go into the shell with `read -rs … ; export …`, never typed on a command line.
 - Address impact: none for users (no derivation input changes). The contracts' addresses are the ones D841 predicts.
 

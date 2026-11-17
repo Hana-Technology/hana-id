@@ -3,22 +3,33 @@
 // git would track it; prints only the address and the next steps; --show-address for an existing file. The keys
 // here are derived test values (sha256 of a phrase, or 1), never real ones.
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Manifest, loadEnv } from '@hana-id/env';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { evmRelayKeysLine } from '../../apps/api/scripts/gen-wrangler.ts';
 import { sponsorFixture } from '../../packages/env/src/evm-sponsor.fixture.ts';
-import { evmKeyAddress, evmRelayKeys, freshEvmKey, gitWouldTrack, readEvmRelayKeys } from '../lib/evm-relay-keys.ts';
+import { evmKeyAddress, evmRelayKeys, freshEvmKey, gitWouldTrack, readEvmRelayKeys, writeSecretJsonOnce } from '../lib/evm-relay-keys.ts';
+import { leftoverTempDirs } from './anvil.ts';
 
 const sandbox = loadEnv('sandbox-dev');
 const notGit = () => false;
 const withRelayer = (address: string): Manifest => ({ ...sandbox, evm: { sponsor: { ...sponsorFixture(), relayerAddress: address } } }) as Manifest;
 /** A derived test key and its address (never a real key). */
 const TEST_KEY = Uint8Array.from(createHash('sha256').update('hana-id evm-relay-keys test key').digest());
-const tmpRoot = () => mkdtempSync(join(tmpdir(), 'hana-evm-relay-'));
+const FILE_START = Date.now();
+const made: string[] = [];
+/** A temporary root, removed after each test (it can hold a generated key). */
+const tmpRoot = () => {
+  const d = mkdtempSync(join(tmpdir(), 'hana-evm-relay-'));
+  made.push(d);
+  return d;
+};
+afterEach(() => {
+  for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 describe('evm-relay-keys', () => {
   it('derives the address the textbook way (private key 1)', () => {
@@ -43,7 +54,8 @@ describe('evm-relay-keys', () => {
     const out = lines.join('\n');
     expect(out).toContain(`The relayer's address: ${address}`);
     expect(out).toContain('evm.sponsor.relayerAddress');
-    expect(out).toContain('wrangler secret put EVM_RELAY_KEYS');
+    expect(out).toContain(`env-secrets sandbox-dev --worker api --secret EVM_RELAY_KEYS --yes`);
+    expect(out).not.toContain('node -e');
     const hex = Buffer.from(TEST_KEY).toString('hex');
     for (let i = 0; i + 16 <= hex.length; i += 8) expect(out).not.toContain(hex.slice(i, i + 16));
   });
@@ -123,9 +135,52 @@ describe('evm-relay-keys', () => {
     expect(gitWouldTrack(join(process.cwd(), '..', '.secrets', 'sandbox-dev', 'evm-relay-keys.json'))).toBe(false);
   });
 
+  it('never overwrites, even when the file appears between the check and the write (the link fails; the temp file is removed)', async () => {
+    const root = tmpRoot();
+    const file = join(root, '.secrets', 'sandbox-dev', 'evm-relay-keys.json');
+    const other = JSON.stringify(['someone else']);
+    await expect(
+      evmRelayKeys(['sandbox-dev'], { root, log: () => undefined, random: () => TEST_KEY.slice(), gitWouldTrack: notGit, beforeLink: () => writeFileSync(file, other, { mode: 0o600 }) }),
+    ).rejects.toThrow(/already exists: refusing to overwrite it/u);
+    expect(readFileSync(file, 'utf8')).toBe(other);
+    expect(readdirSync(join(root, '.secrets', 'sandbox-dev'))).toEqual(['evm-relay-keys.json']);
+    // The writer alone: written once, then 'exists', the first content kept.
+    const f2 = join(root, '.secrets', 'b', 'k.json');
+    expect(writeSecretJsonOnce(f2, ['a'])).toBe('written');
+    expect(writeSecretJsonOnce(f2, ['b'])).toBe('exists');
+    expect(JSON.parse(readFileSync(f2, 'utf8'))).toEqual(['a']);
+    expect(statSync(f2).mode & 0o777).toBe(0o600);
+    expect(() => writeSecretJsonOnce(join(root, 'plain', 'k.json'), ['a'])).toThrow(/outside a .secrets directory/u);
+  });
+
+  it('a .secrets linked elsewhere is judged where it really is: outside every work tree is fine, a target git would track is refused', async () => {
+    const repo = tmpRoot();
+    expect(spawnSync('git', ['init', '-q'], { cwd: repo }).status).toBe(0);
+    const outside = tmpRoot();
+    symlinkSync(outside, join(repo, '.secrets'));
+    const file = join(repo, '.secrets', 'sandbox-dev', 'evm-relay-keys.json');
+    expect(gitWouldTrack(file)).toBe(false);
+    await evmRelayKeys(['sandbox-dev'], { root: repo, log: () => undefined });
+    expect(existsSync(join(outside, 'sandbox-dev', 'evm-relay-keys.json'))).toBe(true);
+    // A link to a directory inside the same work tree, not ignored: refused.
+    const repo2 = tmpRoot();
+    expect(spawnSync('git', ['init', '-q'], { cwd: repo2 }).status).toBe(0);
+    mkdirSync(join(repo2, 'keys'));
+    symlinkSync(join(repo2, 'keys'), join(repo2, '.secrets'));
+    await expect(evmRelayKeys(['sandbox-dev'], { root: repo2, log: () => undefined })).rejects.toThrow(/not ignored by git here/u);
+    writeFileSync(join(repo2, '.gitignore'), 'keys/\n');
+    expect(gitWouldTrack(join(repo2, '.secrets', 'sandbox-dev', 'evm-relay-keys.json'))).toBe(false);
+  });
+
   it('refuses bad arguments and a non-testnet env', async () => {
     await expect(evmRelayKeys([], { root: tmpRoot() })).rejects.toThrow(/<env>/u);
     await expect(evmRelayKeys(['sandbox-dev', '--count', '2'], { root: tmpRoot() })).rejects.toThrow();
     await expect(evmRelayKeys(['sandbox-dev'], { root: tmpRoot(), loadManifest: () => ({ ...sandbox, network: 'mainnet' }) as unknown as Manifest })).rejects.toThrow(/testnet only/u);
+  });
+});
+
+describe('cleanup', () => {
+  it('leaves no hana-evm-relay-* directory of this run behind (they held generated keys)', () => {
+    expect(leftoverTempDirs(['hana-evm-relay-'], FILE_START)).toEqual([]);
   });
 });

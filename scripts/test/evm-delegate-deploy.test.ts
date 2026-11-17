@@ -5,7 +5,9 @@
 // the test runner maps it to a temporary keystore of anvil's published dev account, so no key is in the code.
 // deploy-check's `evm` group runs against the deployed contracts too. Skips when Foundry is not installed.
 import { spawnSync } from 'node:child_process';
-import { type Manifest, loadEnv } from '@hana-id/env';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
 import { deployCheck } from '../lib/deploy-check.ts';
@@ -13,8 +15,9 @@ import { DETERMINISTIC_DEPLOYER, create2Address, deployCalldata, keccakHex, load
 import { type EvmDeployDeps, type EvmDeployPlan, type RunTool, checkChain, delegatesEntry, evmDeployMain, foundryEnv, manifestTemplate } from '../lib/evm-delegate-deploy.ts';
 import { rpcLabel, rpcUrlProblem } from '../lib/evm-rpc.ts';
 import { FIXTURE_APP, sponsorFixture } from '../../packages/env/src/evm-sponsor.fixture.ts';
-import { ANVIL_DEV_ADDRESS, type Anvil, FOUNDRY_MISSING, devKeystore, startAnvil } from './anvil.ts';
+import { ANVIL_DEV_ADDRESS, type Anvil, FOUNDRY_MISSING, devKeystore, leftoverTempDirs, startAnvil } from './anvil.ts';
 
+const FILE_START = Date.now();
 const sandbox = loadEnv('sandbox-dev');
 const [DELEGATE, CHECK_IN] = loadDelegateArtifacts();
 const PROXY_CODE = '0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3';
@@ -61,9 +64,11 @@ describe('the artifacts and the pure parts (no chain)', () => {
 
 /** The deploy's tools for the tests: cast with the keystore's directory and password in place of `--account`. */
 function testTools(ks: { dir: string; name: string; password: string }) {
-  const calls: { tool: string; argv: string[]; env: Record<string, string> }[] = [];
+  const calls: { tool: string; argv: string[]; env: Record<string, string>; cwd: string }[] = [];
   const runTool: RunTool = (tool, argv, opts) => {
-    calls.push({ tool, argv, env: opts.env });
+    // Every tool runs in an empty directory of its own (no project foundry.toml can apply).
+    if (readdirSync(opts.cwd).length !== 0 || !basename(opts.cwd).startsWith('hana-evm-cwd-')) throw new Error(`tool cwd ${opts.cwd} is not an empty hana-evm-cwd- directory`);
+    calls.push({ tool, argv, env: opts.env, cwd: opts.cwd });
     if (tool !== 'cast') return { status: 0 };
     const i = argv.indexOf('--account');
     if (i < 0 || argv[i + 1] !== ks.name) throw new Error('the deploy must sign with --account <keystore>');
@@ -82,7 +87,10 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
     anvil = await startAnvil({ chainId: 84532 });
     ks = devKeystore();
   }, 30_000);
-  afterAll(async () => anvil?.stop());
+  afterAll(async () => {
+    await anvil?.stop();
+    if (ks) rmSync(ks.dir, { recursive: true, force: true });
+  });
   beforeEach(async () => {
     snapshot = await anvil.rpc<string>('evm_snapshot');
   });
@@ -140,14 +148,16 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
       expect(c.argv.join(' ')).not.toMatch(/private-key|password|mnemonic|interactive/u);
       // The RPC goes to cast in its environment, never on its command line.
       expect(c.env).toEqual({ ETH_RPC_URL: anvil.url });
+      // Its empty working directory is removed after the run.
+      expect(existsSync(c.cwd)).toBe(false);
     }
     expect(calls[0]!.argv[2]).toBe(`0x${DELEGATE!.salt.slice(2)}${DELEGATE!.bytecode.slice(2)}`);
     expect(await codeHashAt(DELEGATE!.address)).toBe(DELEGATE!.runtimeCodeHash);
     expect(await codeHashAt(CHECK_IN!.address)).toBe(CHECK_IN!.runtimeCodeHash);
     expect(out).toContain(`✓ HanaDelegateExecutor at ${DELEGATE!.address}: runtime code hash ${DELEGATE!.runtimeCodeHash}, the artifact's`);
     expect(out).toContain(`✓ CheckIn at ${CHECK_IN!.address}`);
-    expect(out).toContain(`forge verify-contract ${DELEGATE!.address} src/HanaDelegateExecutor.sol:HanaDelegateExecutor --chain 84532 --compiler-version 0.8.28+commit.7893614a --verifier blockscout --verifier-url https://base-sepolia.blockscout.com/api/ --watch`);
-    expect(out).toContain(`forge verify-contract ${CHECK_IN!.address} src/demo/CheckIn.sol:CheckIn --chain 84532 --compiler-version 0.8.28+commit.7893614a --verifier etherscan --watch`);
+    expect(out).toContain(`forge verify-contract ${DELEGATE!.address} src/HanaDelegateExecutor.sol:HanaDelegateExecutor --root contracts/evm-delegate --chain 84532 --compiler-version 0.8.28+commit.7893614a --verifier blockscout --verifier-url https://base-sepolia.blockscout.com/api/ --watch`);
+    expect(out).toContain(`forge verify-contract ${CHECK_IN!.address} src/demo/CheckIn.sol:CheckIn --root contracts/evm-delegate --chain 84532 --compiler-version 0.8.28+commit.7893614a --verifier etherscan --watch`);
     expect(out).toContain('--show-standard-json-input > HanaDelegateExecutor.standard-input.json');
     expect(out).toContain(delegatesEntry(84532, DELEGATE!, '2026-11-26'));
     expect(out).toContain(`"delegate": "${DELEGATE!.address}"`);
@@ -268,15 +278,25 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
     expect(r.out).toContain('runs other code than the deterministic deployment proxy');
   });
 
-  it('never prints the RPC URL beyond its host (a provider URL can hold a key)', async () => {
+  it('takes a keyed provider URL only from HANA_EVM_RPC_URL, never printing it; --rpc takes no path or query', async () => {
     const keyed = 'https://rpc.example.test/v2/not-a-real-key-123?token=abc';
     const toAnvil = ((_i: string | URL | Request, init?: RequestInit) => fetch(anvil.url, init)) as typeof fetch;
     const lines: string[] = [];
-    const code = await evmDeployMain(['sandbox-dev', '--rpc', keyed], { log: (l) => lines.push(l), runTool: () => ({ status: 0 }), fetch: toAnvil, env: {} });
-    expect(code).toBe(0);
+    const deps = { log: (l: string) => lines.push(l), runTool: () => ({ status: 0 }), fetch: toAnvil };
+    expect(await evmDeployMain(['sandbox-dev'], { ...deps, env: { HANA_EVM_RPC_URL: keyed } })).toBe(0);
     const out = lines.join('\n');
-    expect(out).toContain('RPC https://rpc.example.test/… (--rpc)');
+    expect(out).toContain('RPC https://rpc.example.test/… (HANA_EVM_RPC_URL)');
     expect(out).not.toMatch(/not-a-real-key|token=abc/u);
+    lines.length = 0;
+    expect(await evmDeployMain(['sandbox-dev', '--json'], { ...deps, env: { HANA_EVM_RPC_URL: keyed } })).toBe(0);
+    expect((JSON.parse(lines.join('\n')) as EvmDeployPlan).rpc).toEqual({ source: 'env', label: 'https://rpc.example.test/…' });
+    expect(lines.join('\n')).not.toContain('not-a-real-key');
+    // On the command line: no path, no query (pnpm echoes it, the shell keeps it).
+    for (const url of [keyed, 'https://rpc.example.test/v2/abc', 'https://rpc.example.test/?key=abc', 'https://rpc.example.test/#k']) {
+      await expect(evmDeployMain(['sandbox-dev', '--rpc', url], { ...deps, env: {} })).rejects.toThrow(/no path, query or fragment .*HANA_EVM_RPC_URL/u);
+    }
+    await expect(evmDeployMain(['sandbox-dev', '--rpc', anvil.url], { ...deps, env: { HANA_EVM_RPC_URL: keyed } })).rejects.toThrow(/Both --rpc and HANA_EVM_RPC_URL/u);
+    await expect(evmDeployMain(['sandbox-dev'], { ...deps, env: { HANA_EVM_RPC_URL: 'http://rpc.example.test/v2/k' } })).rejects.toThrow(/in HANA_EVM_RPC_URL must be an https URL/u);
   });
 
   it('takes the RPC from the manifest when it has the chain (and refuses --rpc then)', async () => {
@@ -285,7 +305,8 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
     const code = await evmDeployMain(['sandbox-dev', '--json'], { log: (l) => lines.push(l), runTool: () => ({ status: 0 }), loadManifest: () => withSponsor, env: {} });
     expect(code).toBe(0);
     expect((JSON.parse(lines.join('\n')) as EvmDeployPlan).rpc.source).toBe('manifest');
-    await expect(evmDeployMain(['sandbox-dev', '--rpc', anvil.url], { log: () => undefined, runTool: () => ({ status: 0 }), loadManifest: () => withSponsor })).rejects.toThrow(/drop --rpc/u);
+    await expect(evmDeployMain(['sandbox-dev', '--rpc', anvil.url], { log: () => undefined, runTool: () => ({ status: 0 }), loadManifest: () => withSponsor, env: {} })).rejects.toThrow(/drop --rpc/u);
+    await expect(evmDeployMain(['sandbox-dev'], { log: () => undefined, runTool: () => ({ status: 0 }), loadManifest: () => withSponsor, env: { HANA_EVM_RPC_URL: 'https://rpc.example.test/v2/k' } })).rejects.toThrow(/drop HANA_EVM_RPC_URL/u);
   });
 
   it('--verify runs forge build and the verifications (Etherscan only with its key in the shell, never on a command line)', async () => {
@@ -293,6 +314,8 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
     let r = await run(['--verify']);
     expect(r.code).toBe(0);
     expect(r.calls.map((c) => [c.tool, ...c.argv.slice(0, 1)])).toEqual([['forge', 'build'], ['forge', 'verify-contract'], ['forge', 'verify-contract']]);
+    // forge is pointed at the contract's own directory by an absolute --root.
+    for (const c of r.calls) expect(c.argv[c.argv.indexOf('--root') + 1]).toBe(join(repoRoot, 'contracts', 'evm-delegate'));
     expect(r.calls.filter((c) => c.argv.includes('blockscout')).map((c) => c.argv[1])).toEqual([DELEGATE!.address, CHECK_IN!.address]);
     expect(r.out).toContain('skipped HanaDelegateExecutor on the Etherscan-family explorer: no ETHERSCAN_API_KEY in the shell');
     r = await run(['--verify'], { env: { ETHERSCAN_API_KEY: 'test-only-explorer-key' } });
@@ -332,7 +355,14 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
     await anvil.rpc('anvil_setBalance', [relayer, '0x0']);
     r = await check();
     expect(r.code).toBe(1);
-    expect(r.out).toContain("less than one transaction's worst case (0.0003 ETH): every send would fail");
+    expect(r.out).toContain("holds 0 ETH, less than 0.0006 ETH, one transaction's worst execution cost (0.0003 ETH: maxGasPerTx × maxFeePerGasGwei) doubled as a margin for the OP Stack L1 data fee, which is extra: sends would fail");
+    // Between one and two transactions' worth on an OP Stack chain still fails (the L1 data fee is extra).
+    await anvil.rpc('anvil_setBalance', [relayer, '0x221b262dd8000']); // exactly 0.0006 ETH: at the floor
+    r = await check();
+    expect(r.out).not.toContain('sends would fail');
+    await anvil.rpc('anvil_setBalance', [relayer, '0x221b262dd7fff']);
+    r = await check();
+    expect(r.out).toContain('less than 0.0006 ETH');
 
     await anvil.rpc('anvil_setBalance', [relayer, '0x16345785d8a0000']);
     await anvil.rpc('anvil_setCode', [DELEGATE!.address, '0x00']);
@@ -372,15 +402,22 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local env (c
 });
 
 describe('deploy-evm-delegate refusals (no chain)', () => {
-  const deps: EvmDeployDeps = { log: () => undefined, runTool: () => ({ status: 0 }), fetch: (() => Promise.reject(new Error('no network in this test'))) as typeof fetch };
+  const deps: EvmDeployDeps = { log: () => undefined, runTool: () => ({ status: 0 }), fetch: (() => Promise.reject(new Error('no network in this test'))) as typeof fetch, env: {} };
   it('refuses bad arguments before any RPC', async () => {
     await expect(evmDeployMain([], deps)).rejects.toBeInstanceOf(CliError);
     await expect(evmDeployMain(['sandbox-dev', '--yes', '--rpc', 'https://rpc.example.test'], deps)).rejects.toThrow(/--yes needs --account/u);
     await expect(evmDeployMain(['sandbox-dev', '--yes', '--account', '../keys/x', '--rpc', 'https://rpc.example.test'], deps)).rejects.toThrow(/keystore name/u);
     await expect(evmDeployMain(['sandbox-dev', '--json', '--yes', '--account', 'x'], deps)).rejects.toThrow(/--json prints the plan only/u);
-    await expect(evmDeployMain(['sandbox-dev'], deps)).rejects.toThrow(/no evm.sponsor entry for chain 84532: pass --rpc .*https:\/\/sepolia\.base\.org/u);
+    await expect(evmDeployMain(['sandbox-dev'], deps)).rejects.toThrow(/no evm.sponsor entry for chain 84532: pass --rpc .*https:\/\/sepolia\.base\.org.*HANA_EVM_RPC_URL/u);
     await expect(evmDeployMain(['sandbox-dev', '--rpc', 'http://rpc.example.test'], deps)).rejects.toThrow(/https URL/u);
     await expect(evmDeployMain(['sandbox-dev', '--private-key', 'x'], deps)).rejects.toBeInstanceOf(CliError);
     await expect(evmDeployMain(['sandbox-dev', '--chain', '31337', '--rpc', 'http://127.0.0.1:1'], deps)).rejects.toThrow(/only local\* envs/u);
+  });
+});
+
+// Last: this file's temporary keystores and tool directories are all gone.
+describe('cleanup', () => {
+  it('leaves no hana-evm-keystore-* or hana-evm-cwd-* directory of this run behind', () => {
+    expect(leftoverTempDirs(['hana-evm-keystore-', 'hana-evm-cwd-'], FILE_START)).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@
 // the test and stopped after it. Nothing here talks to a public network. Foundry is optional, as for verify's `evm`
 // step: without `anvil` and `cast` on the PATH the tests that need them skip and say why.
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readdirSync, statSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,9 +31,20 @@ export interface Anvil {
   stop: () => Promise<void>;
 }
 
-/** Starts anvil (Prague) and waits until it answers eth_chainId. */
+/** Starts anvil (Prague) on a free port and waits until it answers eth_chainId; another port if that one was taken. */
 export async function startAnvil(opts: { chainId?: number; noCreate2Deployer?: boolean } = {}): Promise<Anvil> {
-  const port = await freePort();
+  let last: unknown;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await startAnvilOnce(await freePort(), opts);
+    } catch (e) {
+      last = e; // the port went to someone else between freePort and anvil's bind: try another
+    }
+  }
+  throw last;
+}
+
+async function startAnvilOnce(port: number, opts: { chainId?: number; noCreate2Deployer?: boolean }): Promise<Anvil> {
   const args = ['--hardfork', 'prague', '--host', '127.0.0.1', '--port', String(port), '--silent', ...(opts.chainId ? ['--chain-id', String(opts.chainId)] : []), ...(opts.noCreate2Deployer ? ['--disable-default-create2-deployer'] : [])];
   const child: ChildProcess = spawn('anvil', args, { stdio: 'ignore' });
   const url = `http://127.0.0.1:${port}`;
@@ -46,8 +57,11 @@ export async function startAnvil(opts: { chainId?: number; noCreate2Deployer?: b
   };
   const deadline = Date.now() + 15_000;
   for (;;) {
+    if (child.exitCode !== null) throw new Error(`anvil exited (${child.exitCode}) on port ${port}`);
     try {
-      await rpc('eth_chainId');
+      // Our anvil answers with the chain we asked for; anything else on the port is not ours.
+      const chain = await rpc<string>('eth_chainId');
+      if (Number(chain) !== (opts.chainId ?? 31337)) throw new Error('not our anvil');
       break;
     } catch {
       if (Date.now() > deadline || child.exitCode !== null) {
@@ -64,6 +78,20 @@ export async function startAnvil(opts: { chainId?: number; noCreate2Deployer?: b
       child.kill('SIGTERM');
     });
   return { url, rpc, stop };
+}
+
+/** Directories in the OS temp dir with one of `prefixes`, made at or after `since` (ms): what a test file left behind. */
+export function leftoverTempDirs(prefixes: readonly string[], since: number): string[] {
+  return readdirSync(tmpdir())
+    .filter((n) => prefixes.some((p) => n.startsWith(p)))
+    .map((n) => join(tmpdir(), n))
+    .filter((p) => {
+      try {
+        return statSync(p).birthtimeMs >= since - 1000;
+      } catch {
+        return false;
+      }
+    });
 }
 
 /** anvil's published development mnemonic (its default accounts: public test keys, never funded anywhere real). */

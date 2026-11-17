@@ -4,8 +4,9 @@
 //   - each RPC (and the fallback) answers eth_chainId with the chain's id;
 //   - the manifest's `delegate` is the artifact's CREATE2 address, core pins it (address and runtime code hash, not a
 //     placeholder), and the code at it hashes to the artifact's runtime code hash;
-//   - the relayer (`relayerAddress`) holds at least one transaction's worst case (`maxGasPerTx` × `maxFeePerGasGwei`;
-//     less is a failure: every send would fail) and, as a warning, at least `lowBalanceEth`;
+//   - the relayer (`relayerAddress`) holds at least one transaction's worst execution cost (`maxGasPerTx` ×
+//     `maxFeePerGasGwei`), doubled on an OP Stack chain as a margin for the L1 data fee, which comes on top and which
+//     these manifest numbers don't bound (less is a failure: sends would fail), and, as a warning, `lowBalanceEth`;
 //   - every allowlisted target on the chain has code.
 //
 // It prints the RPCs by scheme and host only (rpcLabel), addresses, hashes and balances: all public.
@@ -80,8 +81,13 @@ export async function checkEvmSponsor(sponsor: EvmSponsor, opts: { fetch: typeof
       // The relayer's funds.
       const balance = await rpc.balance(sponsor.relayerAddress);
       const oneTx = BigInt(chain.maxGasPerTx) * (sponsorDecimalUnits(chain.maxFeePerGasGwei, 9) ?? 0n);
+      // The L1 data fee (OP Stack) is extra and unbounded here: twice the execution worst case leaves it a margin.
+      const floor = chain.opStack ? oneTx * 2n : oneTx;
       const low = sponsorDecimalUnits(chain.lowBalanceEth, 18) ?? 0n;
-      if (balance < oneTx) fail(`the relayer ${sponsor.relayerAddress} holds ${formatEth(balance)}, less than one transaction's worst case (${formatEth(oneTx)}): every send would fail. Fund it`);
+      if (balance < floor) {
+        const why = chain.opStack ? `one transaction's worst execution cost (${formatEth(oneTx)}: maxGasPerTx × maxFeePerGasGwei) doubled as a margin for the OP Stack L1 data fee, which is extra` : `one transaction's worst case (maxGasPerTx × maxFeePerGasGwei)`;
+        fail(`the relayer ${sponsor.relayerAddress} holds ${formatEth(balance)}, less than ${formatEth(floor)}, ${why}: sends would fail. Fund it`);
+      }
       else if (balance < low) out.warnings.push(`${tag}: the relayer ${sponsor.relayerAddress} holds ${formatEth(balance)}, below lowBalanceEth (${formatEth(low)}): top it up`);
       out.lines.push(`  ${tag}  relayer ${sponsor.relayerAddress} holds ${formatEth(balance)} (low-balance line ${formatEth(low)})`);
 

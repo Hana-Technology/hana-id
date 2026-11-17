@@ -4,9 +4,11 @@
 //
 // - Everything comes from the artifacts and envs/<env>.json: the env must be a testnet env, the chain a test chain
 //   (never a mainnet ID, whatever the RPC says), and chains 31337/1337 only for `local*` envs. The RPC is the env's
-//   `evm.sponsor.chains.<id>.rpc` when it has one, else `--rpc` for the chain `--chain` names (default 84532); its
-//   eth_chainId is read before anything else and must be that chain. The URL is never printed (a provider's may hold
-//   an API key): messages show its scheme and host, and cast gets it in ETH_RPC_URL, not on its command line.
+//   `evm.sponsor.chains.<id>.rpc` when it has one, else `--rpc` (no path or query: a command line is echoed and kept
+//   in shell history) or, for a keyed provider URL, the environment variable HANA_EVM_RPC_URL, for the chain `--chain`
+//   names (default 84532); its eth_chainId is read before anything else and must be that chain. The URL is never
+//   printed: messages show its scheme and host, and cast gets it in ETH_RPC_URL, not on its command line. cast and
+//   forge run in an empty temporary directory (no foundry.toml there but the one forge is pointed at with --root).
 // - The proxy must be on the chain with its known code. A predicted address that already has code is compared with
 //   the artifact's runtime code hash: equal is "already deployed, matches" (nothing to do), anything else a MISMATCH
 //   (a hard failure: the address is the artifact's own, so different code there means the artifact isn't what was
@@ -20,18 +22,22 @@
 //
 // Dependencies are injectable: test/evm-delegate-deploy.test.ts runs it against a local anvil.
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KNOWN_EVM_MAINNETS, TEST_EVM_CHAINS } from '@hana-id/core';
 import { type Manifest, OP_STACK_TEST_CHAIN_IDS, SPONSOR_TEST_EVM_CHAIN_IDS, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
 import { type DelegateArtifact, DETERMINISTIC_DEPLOYER, DETERMINISTIC_DEPLOYER_CODE_HASH, deployCalldata, keccakHex, loadDelegateArtifacts } from './evm-delegate-artifacts.ts';
-import { type EvmRpc, evmRpc, rpcUrlProblem } from './evm-rpc.ts';
+import { type EvmRpc, evmRpc, rpcFlagUrlProblem, rpcUrlProblem } from './evm-rpc.ts';
 
 export const DEPLOY_EVM_DELEGATE_USAGE = `Usage: deploy-evm-delegate.ts <env> [--chain <id>] [--rpc <url>] [--yes --account <keystore>] [--verify] [--json]
   Deploys contracts/evm-delegate's HanaDelegateExecutor and CheckIn through the deterministic deployment proxy
   (CREATE2) at the addresses their checked-in artifacts predict. Prints the plan; changes nothing without --yes.
   --chain <id>        the chain (default 84532, Base Sepolia): test chains only, never a mainnet
-  --rpc <url>         the chain's RPC, when envs/<env>.json has no evm.sponsor entry for it (https; never printed)
+  --rpc <url>         the chain's RPC, when envs/<env>.json has no evm.sponsor entry for it: https, no path or
+                      query (e.g. https://sepolia.base.org). A provider URL with a key: export HANA_EVM_RPC_URL
+                      instead (read -rs HANA_EVM_RPC_URL; export HANA_EVM_RPC_URL); never printed
   --yes               deploy what is missing with \`cast send\`, signed by your Foundry keystore (cast asks for its
                       password; this script never sees a key or a password)
   --account <name>    the keystore in ~/.foundry/keystores (made with \`cast wallet new ~/.foundry/keystores <name>\`);
@@ -41,6 +47,8 @@ export const DEPLOY_EVM_DELEGATE_USAGE = `Usage: deploy-evm-delegate.ts <env> [-
 
 export const EVM_DRY_RUN_LINE = 'Dry run: nothing sent. Re-run with --yes --account <keystore> to deploy.';
 export const DEFAULT_EVM_CHAIN = 84532;
+/** The environment variable a keyed RPC URL comes from (never a command line). */
+export const EVM_RPC_ENV = 'HANA_EVM_RPC_URL';
 /** Re-reads of an address that shows no code right after its deploy, and the wait before each (30 s in all). */
 export const POST_DEPLOY_READS = 15;
 export const POST_DEPLOY_WAIT_MS = 2_000;
@@ -69,12 +77,12 @@ export interface EvmDeployDeps {
   now?: () => Date;
   /** Waits between reads of a just-deployed address (default setTimeout; tests pass a no-op). */
   sleep?: (ms: number) => Promise<void>;
-  /** Where ETHERSCAN_API_KEY is looked for by --verify (default process.env; forge reads the key itself). */
+  /** Where HANA_EVM_RPC_URL and ETHERSCAN_API_KEY are looked for (default process.env; forge reads the key itself). */
   env?: Readonly<Record<string, string | undefined>>;
 }
 
 /** Environment variables a Foundry tool reads that could change who signs, where it sends or how it compiles. */
-const FOUNDRY_ENV_RE = /^(?:ETH_|CAST_|FOUNDRY_|DAPP_)|^CHAIN$/u;
+const FOUNDRY_ENV_RE = /^(?:ETH_|CAST_|FOUNDRY_|DAPP_)|^CHAIN$|^HANA_EVM_RPC_URL$/u;
 
 /** process.env without those, plus `extra`. */
 export function foundryEnv(extra: Record<string, string>, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
@@ -92,6 +100,7 @@ export const defaultRunTool: RunTool = (tool, argv, opts) => {
 
 export const defaultEvmDeployDeps = (): EvmDeployDeps => ({ log: (l) => console.log(l), runTool: defaultRunTool });
 
+export type RpcSource = 'manifest' | 'flag' | 'env';
 export type ContractState = 'unread' | 'absent' | 'matches' | 'mismatch';
 
 export interface PlannedContract {
@@ -109,7 +118,7 @@ export interface EvmDeployPlan {
   env: string;
   chainId: number;
   chainName: string;
-  rpc: { source: 'manifest' | 'flag'; label: string };
+  rpc: { source: RpcSource; label: string };
   /** The chain id the RPC answered, or null when it wasn't read. */
   rpcChainId: number | null;
   deployer: { address: string; state: 'ok' | 'missing' | 'other-code' | 'unknown' };
@@ -135,7 +144,7 @@ export function checkChain(raw: string | undefined, m: Pick<Manifest, 'name'>): 
 const chainName = (id: number): string => (Object.hasOwn(TEST_EVM_CHAINS, id) ? TEST_EVM_CHAINS[id]! : `chain ${id}`);
 
 /** What the plan finds on chain, contract by contract. Pure over the RPC: the tests drive it through `evmDeployMain`. */
-export async function observeEvmDeploy(m: Manifest, chainId: number, rpc: EvmRpc, source: 'manifest' | 'flag', artifacts: readonly DelegateArtifact[]): Promise<EvmDeployPlan> {
+export async function observeEvmDeploy(m: Manifest, chainId: number, rpc: EvmRpc, source: RpcSource, artifacts: readonly DelegateArtifact[]): Promise<EvmDeployPlan> {
   const plan: EvmDeployPlan = {
     env: m.name,
     chainId,
@@ -189,7 +198,7 @@ export async function observeEvmDeploy(m: Manifest, chainId: number, rpc: EvmRpc
 }
 
 function describePlan(p: EvmDeployPlan, log: (l: string) => void): void {
-  log(`Environment ${p.env}: ${p.chainName} (chain ${p.chainId}), RPC ${p.rpc.label} (${p.rpc.source === 'manifest' ? `envs/${p.env}.json` : '--rpc'})`);
+  log(`Environment ${p.env}: ${p.chainName} (chain ${p.chainId}), RPC ${p.rpc.label} (${p.rpc.source === 'manifest' ? `envs/${p.env}.json` : p.rpc.source === 'env' ? EVM_RPC_ENV : '--rpc'})`);
   if (p.rpcChainId !== null && p.rpcChainId === p.chainId) log(`  eth_chainId ${p.rpcChainId}: the right chain`);
   const proxy = { ok: 'present, with its known code', missing: 'NOT on this chain', 'other-code': 'OTHER CODE at its address', unknown: 'not read' }[p.deployer.state];
   log(`  deterministic deployment proxy ${p.deployer.address}: ${proxy}`);
@@ -211,9 +220,9 @@ function describePlan(p: EvmDeployPlan, log: (l: string) => void): void {
   log(`\nPlan:\n${p.deploy.map((n, i) => `  ${i + 1}. deploy ${n} through the proxy (cast send, signed by your keystore)`).join('\n')}`);
 }
 
-/** The explorer-verification commands for one deployed contract, run from contracts/evm-delegate after `forge build`. */
-export function verifyArgvs(a: Pick<DelegateArtifact, 'address' | 'forgeId' | 'compilerVersion' | 'contractName'>, chainId: number): { label: string; argv: string[] }[] {
-  const base = ['verify-contract', a.address, a.forgeId, '--chain', String(chainId), '--compiler-version', a.compilerVersion];
+/** The explorer-verification commands for one deployed contract, after `forge build --root <root>` (from the repo root, by default). */
+export function verifyArgvs(a: Pick<DelegateArtifact, 'address' | 'forgeId' | 'compilerVersion' | 'contractName'>, chainId: number, root = 'contracts/evm-delegate'): { label: string; argv: string[] }[] {
+  const base = ['verify-contract', a.address, a.forgeId, '--root', root, '--chain', String(chainId), '--compiler-version', a.compilerVersion];
   const ex = EXPLORERS[chainId];
   const out: { label: string; argv: string[] }[] = [];
   if (ex?.blockscout) out.push({ label: 'Blockscout (no API key)', argv: [...base, '--verifier', 'blockscout', '--verifier-url', ex.blockscout, '--watch'] });
@@ -225,13 +234,14 @@ const shellQuote = (a: string): string => (/^[\w@%+=:,./-]+$/u.test(a) ? a : `'$
 
 function printVerification(artifacts: readonly DelegateArtifact[], chainId: number, log: (l: string) => void): void {
   log('\nVerify on the explorer (standard-JSON input; the metadata is stripped, so a flattened upload may not match).');
-  log('From the repo root, at this commit (forge rebuilds with contracts/evm-delegate/foundry.toml):');
-  log('  cd contracts/evm-delegate && forge build');
+  log('From the repo root, at this commit (forge rebuilds with contracts/evm-delegate/foundry.toml). An Etherscan key goes in');
+  log('the shell without echo or history first: read -rs ETHERSCAN_API_KEY; export ETHERSCAN_API_KEY');
+  log('  forge build --root contracts/evm-delegate');
   for (const a of artifacts) {
     for (const v of verifyArgvs(a, chainId)) log(`  forge ${v.argv.map(shellQuote).join(' ')}   # ${a.contractName}: ${v.label}`);
   }
   log('The standard-JSON input itself, to upload by hand where an explorer asks for it (solc 0.8.28, optimizer 10000 runs, EVM prague, metadata bytecodeHash none, no CBOR, no constructor arguments):');
-  for (const a of artifacts) log(`  forge verify-contract ${a.address} ${a.forgeId} --show-standard-json-input > ${a.contractName}.standard-input.json`);
+  for (const a of artifacts) log(`  forge verify-contract ${a.address} ${a.forgeId} --root contracts/evm-delegate --show-standard-json-input > ${a.contractName}.standard-input.json`);
   const urls = EXPLORERS[chainId]?.addressUrls ?? [];
   for (const a of artifacts) for (const u of urls) log(`  ${a.contractName}: ${u}${a.address}`);
 }
@@ -305,16 +315,20 @@ export async function evmDeployMain(argv: readonly string[], deps: EvmDeployDeps
   const chainId = checkChain(args.str('chain'), m);
   const entry = m.evm?.sponsor?.chains[String(chainId)];
   const flagRpc = args.str('rpc');
-  if (entry && flagRpc !== undefined) throw new CliError(`envs/${m.name}.json names chain ${chainId}'s RPC (evm.sponsor.chains.${chainId}.rpc): drop --rpc`);
-  const url = entry?.rpc ?? flagRpc;
-  if (url === undefined) throw new CliError(`envs/${m.name}.json has no evm.sponsor entry for chain ${chainId}: pass --rpc <its https RPC>${chainId === 84532 ? ' (e.g. https://sepolia.base.org)' : ''}`);
-  const urlProblem = rpcUrlProblem(url);
-  if (urlProblem) throw new CliError(`The RPC ${urlProblem}`);
+  const shellEnv = deps.env ?? process.env;
+  const envRpc = shellEnv[EVM_RPC_ENV] === '' ? undefined : shellEnv[EVM_RPC_ENV];
+  if (entry && (flagRpc !== undefined || envRpc !== undefined)) throw new CliError(`envs/${m.name}.json names chain ${chainId}'s RPC (evm.sponsor.chains.${chainId}.rpc): drop ${flagRpc !== undefined ? '--rpc' : `${EVM_RPC_ENV} (unset it)`}`);
+  if (flagRpc !== undefined && envRpc !== undefined) throw new CliError(`Both --rpc and ${EVM_RPC_ENV} are set: use one`);
+  const url = entry?.rpc ?? flagRpc ?? envRpc;
+  if (url === undefined) throw new CliError(`envs/${m.name}.json has no evm.sponsor entry for chain ${chainId}: pass --rpc <its https RPC, no path>${chainId === 84532 ? ' (e.g. https://sepolia.base.org)' : ''}, or a keyed provider URL in ${EVM_RPC_ENV}`);
+  const source: RpcSource = entry ? 'manifest' : flagRpc !== undefined ? 'flag' : 'env';
+  const urlProblem = source === 'flag' ? rpcFlagUrlProblem(url) : rpcUrlProblem(url);
+  if (urlProblem) throw new CliError(`The RPC ${source === 'env' ? `in ${EVM_RPC_ENV} ` : ''}${urlProblem}`);
   const root = deps.root ?? repoRoot;
   const artifacts = loadDelegateArtifacts(root);
   const rpc = evmRpc(url, deps.fetch ?? fetch);
 
-  const plan = await observeEvmDeploy(m, chainId, rpc, entry ? 'manifest' : 'flag', artifacts);
+  const plan = await observeEvmDeploy(m, chainId, rpc, source, artifacts);
   if (json) {
     log(JSON.stringify(plan, null, 2));
     return plan.blockers.length ? 1 : 0;
@@ -322,49 +336,56 @@ export async function evmDeployMain(argv: readonly string[], deps: EvmDeployDeps
   describePlan(plan, log);
   if (plan.blockers.length) return 1;
   const today = (deps.now ?? (() => new Date()))().toISOString().slice(0, 10);
-  if (plan.deploy.length > 0) {
-    if (!yes) {
-      log(`\n${EVM_DRY_RUN_LINE}`);
-      return 0;
-    }
-    for (const [i, name] of plan.deploy.entries()) {
-      const a = artifacts.find((x) => x.contractName === name)!;
-      log(`\n[${i + 1}/${plan.deploy.length}] deploy ${name} at ${a.address}: cast send to the proxy, signed by keystore "${account}" (cast asks for its password)`);
-      const res = deps.runTool('cast', ['send', DETERMINISTIC_DEPLOYER, deployCalldata(a), '--account', account!, '--chain', String(chainId)], { cwd: root, env: { ETH_RPC_URL: url } });
-      if (res.error) throw new Error(`cast could not run (${res.error.message}): install Foundry 1.5.1 (foundryup --install 1.5.1)`);
-      if (res.status !== 0) throw new Error(`cast send for ${name} failed (exit ${res.status}; its own message is above): nothing more was sent. Re-run the plan to see what is deployed`);
-      // A public RPC is several nodes: one that lags the receipt cast waited for answers no code for a few seconds.
-      let code = await rpc.code(a.address);
-      for (let t = 0; code === '0x' && t < POST_DEPLOY_READS; t++) {
-        await (deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))))(POST_DEPLOY_WAIT_MS);
-        code = await rpc.code(a.address);
-      }
-      if (code === '0x') throw new Error(`${name}: no code at ${a.address} after the transaction (see cast's receipt above): stop and find out why`);
-      const hash = keccakHex(code);
-      if (hash !== a.runtimeCodeHash) throw new Error(`MISMATCH after the deploy: ${name} at ${a.address} has runtime code hash ${hash}, not the artifact's ${a.runtimeCodeHash}. Don't pin it`);
-      log(`    ✓ ${name} at ${a.address}: runtime code hash ${hash}, the artifact's`);
-    }
-    log(`\nDeployed: both contracts are at their predicted addresses on chain ${chainId} and match their artifacts.`);
+  if (plan.deploy.length > 0 && !yes) {
+    log(`\n${EVM_DRY_RUN_LINE}`);
+    return 0;
   }
-  if (args.flag('verify')) {
-    log('\nVerifying on the explorer (forge verify-contract, standard-JSON input):');
-    const dir = join(root, 'contracts', 'evm-delegate');
-    const build = deps.runTool('forge', ['build'], { cwd: dir, env: {} });
-    if (build.status !== 0) throw new Error(`forge build failed (exit ${build.status ?? 'none'}): verification not attempted`);
-    let failed = 0;
-    for (const a of artifacts) {
-      for (const v of verifyArgvs(a, chainId)) {
-        if (v.argv.includes('etherscan') && !(deps.env ?? process.env).ETHERSCAN_API_KEY) {
-          log(`  skipped ${a.contractName} on the Etherscan-family explorer: no ETHERSCAN_API_KEY in the shell`);
-          continue;
+  // cast and forge run in an empty directory of their own, so no foundry.toml but contracts/evm-delegate's (named
+  // with --root) can change who signs, where it sends or how it builds.
+  const toolCwd = mkdtempSync(join(tmpdir(), 'hana-evm-cwd-'));
+  try {
+    if (plan.deploy.length > 0) {
+      for (const [i, name] of plan.deploy.entries()) {
+        const a = artifacts.find((x) => x.contractName === name)!;
+        log(`\n[${i + 1}/${plan.deploy.length}] deploy ${name} at ${a.address}: cast send to the proxy, signed by keystore "${account}" (cast asks for its password)`);
+        const res = deps.runTool('cast', ['send', DETERMINISTIC_DEPLOYER, deployCalldata(a), '--account', account!, '--chain', String(chainId)], { cwd: toolCwd, env: { ETH_RPC_URL: url } });
+        if (res.error) throw new Error(`cast could not run (${res.error.message}): install Foundry 1.5.1 (foundryup --install 1.5.1)`);
+        if (res.status !== 0) throw new Error(`cast send for ${name} failed (exit ${res.status}; its own message is above): nothing more was sent. Re-run the plan to see what is deployed`);
+        // A public RPC is several nodes: one that lags the receipt cast waited for answers no code for a few seconds.
+        let code = await rpc.code(a.address);
+        for (let t = 0; code === '0x' && t < POST_DEPLOY_READS; t++) {
+          await (deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))))(POST_DEPLOY_WAIT_MS);
+          code = await rpc.code(a.address);
         }
-        log(`  ${a.contractName}: ${v.label}`);
-        // forge reads ETHERSCAN_API_KEY from the environment itself: the key is never on a command line.
-        const res = deps.runTool('forge', v.argv, { cwd: dir, env: {} });
-        if (res.status !== 0) failed++;
+        if (code === '0x') throw new Error(`${name}: no code at ${a.address} after the transaction (see cast's receipt above): stop and find out why`);
+        const hash = keccakHex(code);
+        if (hash !== a.runtimeCodeHash) throw new Error(`MISMATCH after the deploy: ${name} at ${a.address} has runtime code hash ${hash}, not the artifact's ${a.runtimeCodeHash}. Don't pin it`);
+        log(`    ✓ ${name} at ${a.address}: runtime code hash ${hash}, the artifact's`);
       }
+      log(`\nDeployed: both contracts are at their predicted addresses on chain ${chainId} and match their artifacts.`);
     }
-    if (failed) log(`${failed} verification(s) failed (forge's messages are above); the commands below retry them.`);
+    if (args.flag('verify')) {
+      log('\nVerifying on the explorer (forge verify-contract, standard-JSON input):');
+      const dir = join(root, 'contracts', 'evm-delegate');
+      const build = deps.runTool('forge', ['build', '--root', dir], { cwd: toolCwd, env: {} });
+      if (build.status !== 0) throw new Error(`forge build failed (exit ${build.status ?? 'none'}): verification not attempted`);
+      let failed = 0;
+      for (const a of artifacts) {
+        for (const v of verifyArgvs(a, chainId, dir)) {
+          if (v.argv.includes('etherscan') && !shellEnv.ETHERSCAN_API_KEY) {
+            log(`  skipped ${a.contractName} on the Etherscan-family explorer: no ETHERSCAN_API_KEY in the shell`);
+            continue;
+          }
+          log(`  ${a.contractName}: ${v.label}`);
+          // forge reads ETHERSCAN_API_KEY from the environment itself: the key is never on a command line.
+          const res = deps.runTool('forge', v.argv, { cwd: toolCwd, env: {} });
+          if (res.status !== 0) failed++;
+        }
+      }
+      if (failed) log(`${failed} verification(s) failed (forge's messages are above); the commands below retry them.`);
+    }
+  } finally {
+    rmSync(toolCwd, { recursive: true, force: true });
   }
   printVerification(artifacts, chainId, log);
   printFollowUp(m, chainId, artifacts, today, log);

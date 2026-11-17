@@ -41,6 +41,21 @@ export function rpcUrlProblem(url: string): string | null {
   return 'must be an https URL (http only for a node on this machine)';
 }
 
+/**
+ * Why `url` can't be given on the command line (`--rpc`), or null: rpcUrlProblem's rules, and no path beyond `/`, no
+ * query or fragment, as the manifest's RPCs (no API key in it: a command line is echoed by pnpm, kept in the shell's
+ * history and visible in `ps`). A keyed provider URL goes in the environment instead (HANA_EVM_RPC_URL).
+ */
+export function rpcFlagUrlProblem(url: string): string | null {
+  const base = rpcUrlProblem(url);
+  if (base) return base;
+  const u = new URL(url);
+  if (u.search || u.hash || url.includes('?') || url.includes('#') || (u.pathname !== '/' && u.pathname !== '')) {
+    return 'given with --rpc must have no path, query or fragment (a command line is echoed and kept in shell history): put a keyed provider URL in HANA_EVM_RPC_URL instead';
+  }
+  return null;
+}
+
 export class EvmRpcError extends Error {}
 
 export interface EvmRpc {

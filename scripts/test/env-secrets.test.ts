@@ -352,4 +352,22 @@ describe('env-secrets: the EVM sponsorship relayer key (D834, D849)', () => {
     expect(spawned.map((s) => s.argv[4])).not.toContain('EVM_RELAY_KEYS');
     expectNoValuePrinted();
   });
+
+  it('--secret EVM_RELAY_KEYS uploads that one secret alone, even with other required secrets missing, and refuses a missing or invalid file', () => {
+    // Only the API's config and the EVM key: every other required secret is missing.
+    config('apps/api', m.cloudflare.workerName, ACCOUNT);
+    const mm = withSponsor(evmKeyAddress(key));
+    expect(() => runWith(mm, ['--worker', 'api', '--secret', 'EVM_RELAY_KEYS', '--yes'], { CLOUDFLARE_ACCOUNT_ID: ACCOUNT })).toThrow(/Refusing to upload EVM_RELAY_KEYS: its file is missing or invalid/u);
+    expect(spawned).toEqual([]);
+    secret('evm-relay-keys.json', JSON.stringify([keyHex], null, 2));
+    values.push(key.toString('hex'));
+    out = [];
+    runWith(mm, ['--worker', 'api', '--secret', 'EVM_RELAY_KEYS', '--yes'], { CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+    expect(spawned.map((s) => [s.argv[4], s.input])).toEqual([['EVM_RELAY_KEYS', JSON.stringify([keyHex])]]);
+    expect(out.join('\n')).not.toMatch(/RELAYER_KEYS <-|VAULT_KEK/u);
+    expect(() => runWith(withSponsor(sponsorFixture().relayerAddress), ['--secret', 'EVM_RELAY_KEYS', '--yes'], { CLOUDFLARE_ACCOUNT_ID: ACCOUNT })).toThrow(/Refusing to upload EVM_RELAY_KEYS/u);
+    expect(() => run(['--secret', 'EVM_RELAY_KEYS'])).toThrow(/EVM_RELAY_KEYS is not a secret of any Worker/u);
+    expect(() => run(['--secret', 'evm relay'])).toThrow(CliError);
+    expectNoValuePrinted();
+  });
 });

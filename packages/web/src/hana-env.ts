@@ -39,4 +39,10 @@ export interface HanaEnv {
    * the dashboard blocks: no logo, and `img-src` stays 'self' data:.
    */
   readonly filesOrigin?: string;
+  /**
+   * EVM gas sponsorship, by decimal chain ID: the delegate contract the vault may authorize (EIP-7702) and the relayer
+   * every signed batch names. Generated only after the delegate was checked against the pinned, reviewed delegates.
+   * Absent: no chain is sponsored in this env.
+   */
+  readonly evmSponsor?: Readonly<Record<string, { readonly delegate: string; readonly relayer: string }>>;
 }

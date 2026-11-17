@@ -183,6 +183,69 @@ which `deploy-stamps <env>` deploys (`docs/operations.md` "Hackathon demo stamps
 Changing it means new, empty passports (no upgrade path); the relay needs the API's `gen` and a redeploy to take a new
 receiver.
 
+`evm.sponsor` (optional, D834–D836; **not live**: no env sets it, and the API has no sponsored route yet). Core's
+pinned delegate table (`@hana-id/core/evm-sponsor`) has **no entry for Base Sepolia (84532) yet**, only a placeholder
+for the local chain 31337, so today the API's `gen` and the page build refuse any non-local env that carries the block
+(until the delegate is deployed and pinned): don't add it to a manifest yet. EVM gas sponsorship, where Journear's own
+relayer submits a user's signed batch through the pinned EIP-7702 delegate and pays the network fee within daily
+budgets. Absent means the feature is off everywhere (fail closed). Testnet only.
+`packages/env/src/evm-sponsor.ts` holds the schema, its rules and its bounds; the API parses the generated var again
+with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything it refuses as unconfigured.
+
+```json
+"evm": { "sponsor": {
+  "relayerAddress": "0x…",
+  "chains": { "84532": {
+    "rpc": "https://sepolia.base.org", "rpcFallback": "https://base-sepolia-rpc.publicnode.com",
+    "delegate": "0x…", "opStack": true,
+    "maxGasPerTx": 300000, "maxFeePerGasGwei": 1, "maxPriorityFeePerGasGwei": 0.01,
+    "maxCallsPerBatch": 4, "deadlineMaxS": 600, "minGas": 100000,
+    "dailyBudgetEth": 0.02, "appDailyBudgetEth": 0.01, "lowBalanceEth": 0.05,
+    "perUserPerDay": 30, "perAppPerDay": 2000, "sendsPerDay": 5000, "sendsPerMinute": 60,
+    "requireKnownAccount": true } },
+  "apps": { "app_…": { "84532": [ { "address": "0x…", "selectors": ["0x183ff085"], "exactCalldata": ["0x183ff085"],
+                                    "maxDataBytes": 4, "label": "Journear demo check-in" } ] } } } }
+```
+
+- Addresses (`relayerAddress`, `delegate`, each target's `address`) are written in their EIP-55 checksummed form (an
+  all-lowercase or mistyped one is refused), never the zero address; the relayer, the delegates and the targets are
+  all different.
+- `relayerAddress`: the relayer's EOA, which signs and pays for every sponsored transaction and is the `relayer` each
+  signed batch names. Its key is the API secret `EVM_RELAY_KEYS`: a JSON array of one `0x` + 64 lowercase hex key in
+  `.secrets/<env>/evm-relay-keys.json` (0600); `gen <env> --dev-vars` writes it to `.dev.vars` only when the key's
+  address is `relayerAddress`.
+- `chains`: 1 to 4, by decimal chain ID. Each must be one of core's `TEST_EVM_CHAINS`; the local dev chains 31337 and
+  1337 only in `local*` envs. `opStack` is true exactly for the OP Stack test chains (84532 Base Sepolia, 11155420 OP
+  Sepolia), which also charge an L1 data fee. `rpc` and the optional `rpcFallback` are https URLs of DNS names (no IP
+  literal, no loopback or link-local `.local` host, a dot and no trailing dot) with no credentials, path, query or
+  fragment; a loopback host (http or https) only in `local*` envs; outside them the two are different providers
+  (registrable domains). **No API keys in manifest URLs**: the manifest is committed, so a keyed RPC goes in a secret
+  (the later handlers read an optional one). `delegate` must be the delegate core pins for that chain
+  (`@hana-id/core/evm-sponsor` `SPONSOR_DELEGATES`), checked by both generators (their command lines pass core's table)
+  and again by the API at run time; a chain with no pinned delegate can't be sponsored, and an entry core marks as a
+  placeholder (`placeholder: true`, a test stand-in) is accepted only in `local*` envs.
+- Limits per chain, every one required except `requireKnownAccount`, with hard bounds: `maxGasPerTx` (50 000 to
+  2 000 000), `minGas` (10 000 to 1 000 000, below `maxGasPerTx`), `maxFeePerGasGwei` (above 0, at most 100) and
+  `maxPriorityFeePerGasGwei` (0 to `maxFeePerGasGwei`), both to 1 wei; `maxCallsPerBatch` (1 to 8), `deadlineMaxS` (60
+  to 3600); `dailyBudgetEth` and `appDailyBudgetEth` (above 0, at most 1, to 1 gwei; the app's below the env's) and
+  `lowBalanceEth` (at most 10); `perUserPerDay` (1 to 10 000), `perAppPerDay` (1 to 1 000 000, below `sendsPerDay`),
+  `sendsPerDay` (to 10 000 000), `sendsPerMinute` (to 100 000). One transaction's worst case, `maxGasPerTx` ×
+  `maxFeePerGasGwei`, must fit in `appDailyBudgetEth`. `requireKnownAccount` (default true): sponsor only accounts the
+  wallet directory holds for the app's users; `false` is testnet only.
+- `apps`: the staff-only allowlist (D835), at most 8 apps (`app_…` ids), each naming at least one configured chain
+  with 1 to 8 targets in all. A target is a contract `address`, its allowed function `selectors` (1 to 8 distinct,
+  `0x` + 8 lowercase hex), `maxDataBytes` (required, 4 to 8192: no sponsored call's data is longer), optional
+  `exactCalldata` (1 to 8 distinct entries, `0x` + lowercase hex, whole bytes, 4 to 2048 bytes, each starting with one
+  of `selectors` and no longer than `maxDataBytes`) and a staff-facing `label` (1 to 64 characters, no control or
+  formatting characters, no outer spaces). A selector with `exactCalldata` entries matches only a call whose data is
+  exactly one of them, so nothing can be appended at the sponsor's cost; use it for every function whose arguments
+  are fixed (the demo's `checkIn()` takes none: `["0x183ff085"]`). A selector without entries matches any data starting
+  with it, up to `maxDataBytes`. Calls carry no value: there is no field for one. An empty `apps` sponsors nothing.
+- `gen` writes the block as the API var `EVM_SPONSOR` and the page build puts `{ chainId: { delegate, relayer } }`
+  into the vault's envs (`HanaEnv.evmSponsor`); a change needs `gen`, a page build and a redeploy of the API and the
+  pages. A `__proto__`, `constructor` or `prototype` key anywhere in the block
+  is refused.
+
 `vaultOrigin` and `authOrigin` (optional in the schema until every deployed env has them; `gen` refuses an env
 without them and the page build skips it): the origins of Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin
 (`https://host[:port]`, no path or trailing slash); `https` is required, and loopback (`localhost`, `*.localhost`,

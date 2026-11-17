@@ -45,7 +45,7 @@ describe('@hana-id/core', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
-  it('publishes the derivation, identity, Home, wallet record, Stellar signer, decode, policy, Support ID, mainnet demo, demo constants, demo prices and NEAR subpaths, and they exist', () => {
+  it('publishes the derivation, identity, Home, wallet record, Stellar signer, decode, policy, Support ID, mainnet demo, demo constants, demo prices, NEAR and EVM sponsor subpaths, and they exist', () => {
     expect(pkg.exports).toEqual({
       '.': './src/index.ts',
       './derivation': './src/derivation.ts',
@@ -60,6 +60,7 @@ describe('@hana-id/core', () => {
       './demo-config': './src/demo-config.ts',
       './mainnet-demo-prices': './src/mainnet-demo-prices.ts',
       './near': './src/near/index.ts',
+      './evm-sponsor': './src/evm-sponsor/index.ts',
     });
     for (const path of Object.values(pkg.exports)) expect(existsSync(new URL(`../${path}`, import.meta.url))).toBe(true);
   });
@@ -76,6 +77,15 @@ describe('@hana-id/core', () => {
     expect(packagesReachedFrom(pkg.exports['./policy'] as string)).toContain('@stellar/stellar-base');
     expect(packagesReachedFrom(pkg.exports['./signers/stellar'] as string)).toContain('@stellar/stellar-base');
     expect(packagesReachedFrom(pkg.exports['./mainnet-demo'] as string)).toContain('@stellar/stellar-base');
+  });
+
+  it('keeps the EVM sponsor module out of the root entry and on the repo\'s own crypto (no viem, no stellar-base)', () => {
+    expect(readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')).not.toMatch(/evm-sponsor/u);
+    expect('signAuthorization' in core || 'signExecute' in core || 'decodeSponsorSubject' in core).toBe(false);
+    const reached = [...packagesReachedFrom(pkg.exports['./evm-sponsor'] as string)];
+    expect(reached.length).toBeGreaterThan(0);
+    expect(reached.every((p) => p.startsWith('@noble/') || p.startsWith('@scure/'))).toBe(true);
+    expect(reached.filter((p) => p.startsWith('viem'))).toEqual([]);
   });
 
   it('drops no name of an `export *` module from the root entry (ambiguous star exports vanish silently)', async () => {

@@ -2,10 +2,12 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { type Manifest, loadEnv, manifestSchema } from '@hana-id/env';
+import { TEST_EVM_CHAINS } from '@hana-id/core';
+import { type Manifest, LOCAL_EVM_CHAIN_IDS, loadEnv, manifestSchema, OP_STACK_TEST_CHAIN_IDS, SPONSOR_TEST_EVM_CHAIN_IDS } from '@hana-id/env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ckdKeyProblem } from '../scripts/ckd-key.ts';
-import { GENERATED_PATH, envsModule, hanaEnv, loadManifests, main, packageEnvsProblem, placeholderProblems, writeAtomically } from '../scripts/gen-envs.ts';
+import { GENERATED_PATH, envsModule, hanaEnv, loadManifests, main, packageEnvsProblem, placeholderProblems, sponsorProblems, writeAtomically } from '../scripts/gen-envs.ts';
+import { FIXTURE_DELEGATE, FIXTURE_PINNED_DELEGATES, FIXTURE_RELAYER, fixtureAddress, sponsorFixture } from '../../env/src/evm-sponsor.fixture.ts';
 import type { HanaEnv } from '../src/hana-env.ts';
 
 const dirs: string[] = [];
@@ -174,5 +176,47 @@ describe('writeAtomically (several packages regenerate the module at once while 
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('EVM gas sponsorship in the vault build (D834)', () => {
+  const sponsored = manifest({ name: 'sandbox-evm', evm: { sponsor: sponsorFixture() } });
+
+  it('the schema’s sponsorship chains are exactly core’s TEST_EVM_CHAINS, local and OP Stack ones among them', () => {
+    expect([...SPONSOR_TEST_EVM_CHAIN_IDS].sort((a, b) => a - b)).toEqual(Object.keys(TEST_EVM_CHAINS).map(Number).sort((a, b) => a - b));
+    for (const id of [...LOCAL_EVM_CHAIN_IDS, ...OP_STACK_TEST_CHAIN_IDS]) expect(Object.hasOwn(TEST_EVM_CHAINS, id), String(id)).toBe(true);
+  });
+
+  it('puts { chainId: { delegate, relayer } } into the env, and nothing without the block', () => {
+    expect(hanaEnv(sponsored)?.evmSponsor).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER } });
+    expect(hanaEnv(sandbox)).not.toHaveProperty('evmSponsor');
+  });
+
+  it('generates it only after checking the delegates against the pinned table', async () => {
+    expect(() => envsModule([sandbox, sponsored])).toThrow(/sandbox-evm\.json has evm\.sponsor, but gen-envs was given no pinned delegate table/u);
+    expect(() => envsModule([sponsored], { sponsorDelegates: {} })).toThrow(/no pinned delegate for chain 84532/u);
+    expect(() => envsModule([sponsored], { sponsorDelegates: { 84532: { address: fixtureAddress('0bad') } } })).toThrow(/is not the pinned delegate/u);
+    expect(envsModule([sandbox])).toBe(envsModule([sandbox], { sponsorDelegates: FIXTURE_PINNED_DELEGATES }));
+    const dir = mkdtempSync(join(tmpdir(), 'hana-gen-envs-evm-'));
+    dirs.push(dir);
+    const out = join(dir, 'envs.generated.ts');
+    main({ manifests: [sandbox, sponsored], out, sponsorDelegates: FIXTURE_PINNED_DELEGATES });
+    const envs = ((await import(pathToFileURL(out).href)) as { HANA_ENVS: Readonly<Record<string, HanaEnv>> }).HANA_ENVS;
+    expect(envs['sandbox-evm']?.evmSponsor).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER } });
+    expect(envs['sandbox-dev']).not.toHaveProperty('evmSponsor');
+  });
+
+  it('main checks against core’s pinned table by default (no Base Sepolia entry yet, so 84532 is refused)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hana-gen-envs-evm-'));
+    dirs.push(dir);
+    expect(() => main({ manifests: [sandbox, sponsored], out: join(dir, 'envs.generated.ts') })).toThrow(/no pinned delegate for chain 84532/u);
+    expect(() => main({ manifests: [sandbox], out: join(dir, 'envs.generated.ts') })).not.toThrow();
+  });
+
+  it('skips the check for an env the pages aren’t built for', () => {
+    const noPages = manifest({ name: 'sandbox-nopages', vaultOrigin: undefined, authOrigin: undefined, evm: { sponsor: sponsorFixture() } });
+    expect(sponsorProblems(noPages, undefined)).toEqual([]);
+    expect(sponsorProblems(manifest({ name: 'sandbox-ph', evm: { sponsor: sponsorFixture() } }), { 84532: { address: FIXTURE_DELEGATE, placeholder: true } })).toEqual([`envs/sandbox-ph.json evm.sponsor.chains.84532.delegate ${FIXTURE_DELEGATE} is a placeholder entry of the pinned table, only for local* envs.`]);
+    expect(sponsorProblems(sponsored, FIXTURE_PINNED_DELEGATES)).toEqual([]);
   });
 });

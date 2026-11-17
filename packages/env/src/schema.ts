@@ -2,6 +2,7 @@ import { urlString, z } from './zod.ts';
 import { adminSchema, consoleSchema, dashboardRules, delayMs, emailSchema, filesSchema, usageSchema } from './dashboard.ts';
 import { CLOUDFLARE_ACCOUNT_ID_RE } from './cloudflare.ts';
 import { emailIssuerRules, emailIssuerSchema } from './email-issuer.ts';
+import { evmSchema, evmSponsorRules } from './evm-sponsor.ts';
 import { identityTokenRules, identityTokenSchema } from './identity.ts';
 import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
 
@@ -487,9 +488,16 @@ export const manifestSchema = z
      * (`nearRules`). `relay`: the meta-transaction relay (`nearRelaySchema`, `nearRelayRules`).
      */
     near: nearSchema.optional(),
+    /**
+     * EVM wallet settings (D834–D836). Optional, additive. `sponsor`: gas sponsorship through Journear's own relayer
+     * and the pinned EIP-7702 delegate (`evm-sponsor.ts`: `evmSponsorSchema`, `evmSponsorProblems`); absent, the
+     * feature is off everywhere. Testnet only.
+     */
+    evm: evmSchema.optional(),
   })
   .superRefine((m, ctx) => {
     nearRelayRules(m, ctx);
+    evmSponsorRules(m, ctx);
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
       const value = m[field];
       const problem = value === undefined ? null : endpointUrlProblem(value, m.name);

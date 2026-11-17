@@ -22,16 +22,20 @@
 //              scripts/deploy-contract.ts, and the identity token's IDENTITY_SIGNING_KEY and
 //              IDENTITY_SUB_KEY from .secrets/<env>/identity-* (scripts/identity-key.ts), when they exist; the signing
 //              key must be the manifest's active key, and the offline standby is never written. A KMS env gets the
-//              sub key only (no AWS credentials in .dev.vars; a private signing key file there is refused). Never
-//              prints secrets.
+//              sub key only (no AWS credentials in .dev.vars; a private signing key file there is refused). With
+//              `evm.sponsor` in the manifest, also EVM_RELAY_KEYS from .secrets/<env>/evm-relay-keys.json (a JSON array
+//              of one 0x-hex secp256k1 key whose address is `evm.sponsor.relayerAddress`, D834). Never prints secrets.
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, accountIdFields, apiRpcFallbacksOf, customDomainPlacement, emailIssuerUrl, hanaOwnOrigins, isLoopbackHost, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, type PinnedSponsorDelegates, accountIdFields, apiRpcFallbacksOf, customDomainPlacement, emailIssuerUrl, evmSponsorDelegateProblems, hanaOwnOrigins, isLoopbackHost, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { secp256k1 } from '@noble/curves/secp256k1';
+import { keccak_256 } from '@noble/hashes/sha3';
 import { IDENTITY_RATE_LIMITS } from '../src/identity/limits.ts';
 import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
 import { nearRelayVar } from '../src/near/relay-config.ts';
+import { checksumEvmAddress, evmSponsorVar, parseEvmSponsorConfig } from '../src/evm/sponsor-config.ts';
 import { workersDevHost, writePagesWranglerConfigs } from './pages-wrangler.ts';
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -96,10 +100,29 @@ export function apiPlacement(m: Pick<Manifest, 'apiUrl' | 'cloudflare'>): Record
 }
 
 /**
+ * EVM gas sponsorship's var (D834; manifest `evm.sponsor`): EVM_SPONSOR, the block as the API's parser reads it. Empty
+ * without the block (sponsorship off). With it, `pinned` (core's reviewed delegate table) is required and every chain's
+ * `delegate` must be its entry, and the API's own parser must accept the var: a block the Worker would refuse fails
+ * here, not silently at run time. The relayer's key is the secret EVM_RELAY_KEYS, never a var.
+ */
+export function evmSponsorVars(m: Manifest, pinned: PinnedSponsorDelegates | undefined): Record<string, string> {
+  const sponsor = m.evm?.sponsor;
+  if (!sponsor) return {};
+  if (!pinned) throw new Error(`envs/${m.name}.json has evm.sponsor, but gen was given no pinned delegate table to check it against (D834)`);
+  const problems = evmSponsorDelegateProblems(sponsor, pinned);
+  if (problems.length) throw new Error(`envs/${m.name}.json evm.sponsor:\n${problems.join('\n')}`);
+  const value = evmSponsorVar(sponsor);
+  const setting = parseEvmSponsorConfig(value, { network: m.network, envName: m.name });
+  if (setting.status !== 'configured') throw new Error(`envs/${m.name}.json evm.sponsor: the API would refuse it (${setting.problem ?? setting.reason})`);
+  return { EVM_SPONSOR: value };
+}
+
+/**
  * `usageHyperdriveId`: the usage ledger writer's Hyperdrive config (docs/batch-c-spec.md "Bindings"), bound as
  * `USAGE_DB`. Without it the Worker has no binding and capture is off (logins are unaffected either way).
+ * `sponsorDelegates`: the pinned delegate table `evm.sponsor` is checked against (evmSponsorVars).
  */
-export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriveId?: string } = {}): Record<string, unknown> {
+export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriveId?: string; sponsorDelegates?: PinnedSponsorDelegates } = {}): Record<string, unknown> {
   if (opts.usageHyperdriveId !== undefined && !HYPERDRIVE_ID_RE.test(opts.usageHyperdriveId)) throw new Error('A Hyperdrive id is 32 lowercase hex characters');
   // The API checks callers against both Hana origins (and the login relay serves only them).
   if (!m.vaultOrigin || !m.authOrigin) throw new Error(`envs/${m.name}.json needs vaultOrigin and authOrigin`);
@@ -155,6 +178,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
       ...emailVars(m),
       // The NEAR meta-transaction relay (D733): its account, receivers and limits; its keys are the secret NEAR_RELAY_KEYS.
       ...(m.near?.relay ? { NEAR_RELAY: nearRelayVar(m.near.relay) } : {}),
+      // EVM gas sponsorship (D834): relayer, chains, limits and the staff-only allowlist; its key is the secret EVM_RELAY_KEYS.
+      ...evmSponsorVars(m, opts.sponsorDelegates),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     // The usage ledger's writer (role usage_writer, caching disabled on the config), batch C4; optional. `wrangler dev`
@@ -300,13 +325,41 @@ export function identityDevVarsLines(m: Pick<Manifest, 'name' | 'identityToken'>
   return lines;
 }
 
-export function devVarsContent(secrets: { relayerKeys?: unknown; ownerRelayerKeys?: unknown; homeRelayerKeys?: unknown; nearRelayKeys?: unknown; keysUpdaterKey?: string; identity?: string[] }): string {
+const EVM_KEY_RE = /^0x[0-9a-f]{64}$/u;
+
+/**
+ * The EVM relayer's .dev.vars line (D834): EVM_RELAY_KEYS, a JSON array of exactly one `0x` + 64 lowercase hex
+ * secp256k1 private key whose address is the manifest's `evm.sponsor.relayerAddress` (every signed batch names that
+ * one relayer). A key file for an env without `evm.sponsor`, or for another address, is refused. Messages never
+ * include the key.
+ */
+export function evmRelayKeysLine(m: Pick<Manifest, 'name' | 'evm'>, keys: unknown): string {
+  const file = 'evm-relay-keys.json';
+  const relayer = m.evm?.sponsor?.relayerAddress;
+  if (!relayer) throw new Error(`.secrets/${m.name}/${file} exists but envs/${m.name}.json has no evm.sponsor`);
+  if (!Array.isArray(keys) || keys.length !== 1 || typeof keys[0] !== 'string' || !EVM_KEY_RE.test(keys[0])) {
+    throw new Error(`${file} must be a JSON array of one 0x + 64 lowercase hex secp256k1 private key`);
+  }
+  const key = keys[0];
+  let address: string;
+  try {
+    address = checksumEvmAddress(`0x${Buffer.from(keccak_256(secp256k1.getPublicKey(Buffer.from(key.slice(2), 'hex'), false).subarray(1)).subarray(-20)).toString('hex')}`);
+  } catch {
+    throw new Error(`${file}: the key is not a valid secp256k1 private key`);
+  }
+  if (address !== relayer) throw new Error(`.secrets/${m.name}/${file}: the key's address is ${address}, not evm.sponsor.relayerAddress ${relayer}`);
+  return `EVM_RELAY_KEYS='${JSON.stringify([key])}'`;
+}
+
+export function devVarsContent(secrets: { relayerKeys?: unknown; ownerRelayerKeys?: unknown; homeRelayerKeys?: unknown; nearRelayKeys?: unknown; evmRelayKeysLine?: string; keysUpdaterKey?: string; identity?: string[] }): string {
   const lines: string[] = [];
   if (secrets.relayerKeys !== undefined) lines.push(poolLine('RELAYER_KEYS', 'relayer-keys.json', secrets.relayerKeys));
   if (secrets.ownerRelayerKeys !== undefined) lines.push(poolLine('OWNER_RELAYER_KEYS', 'owner-relayer-keys.json', secrets.ownerRelayerKeys));
   if (secrets.homeRelayerKeys !== undefined) lines.push(poolLine('HOME_RELAYER_KEYS', 'home-relayer-keys.json', secrets.homeRelayerKeys));
   // The NEAR relay's full-access keys (D734), when near-relay-keys made them for this env.
   if (secrets.nearRelayKeys !== undefined) lines.push(poolLine('NEAR_RELAY_KEYS', 'near-relay-keys.json', secrets.nearRelayKeys));
+  // The EVM relayer's key (D834), already checked against the manifest (evmRelayKeysLine).
+  if (secrets.evmRelayKeysLine !== undefined) lines.push(secrets.evmRelayKeysLine);
   if (secrets.keysUpdaterKey !== undefined) {
     if (!SECRET_KEY_RE.test(secrets.keysUpdaterKey)) throw new Error('keys-updater.json has no ed25519 private_key');
     lines.push(`KEYS_UPDATER_KEY=${secrets.keysUpdaterKey}`);
@@ -340,12 +393,14 @@ function readSecretTextIfExists(path: string): string | undefined {
 }
 
 /** Writes <apiDir>/.dev.vars (0600) from <root>/.secrets/<env>/. Returns the number of secrets; never their values. */
-export function writeDevVars(envName: string, root: string = repoRoot, dir: string = apiDir, manifest?: Pick<Manifest, 'name' | 'identityToken'>): { path: string; count: number } {
+export function writeDevVars(envName: string, root: string = repoRoot, dir: string = apiDir, manifest?: Pick<Manifest, 'name' | 'identityToken' | 'evm'>): { path: string; count: number } {
   const secrets = join(root, '.secrets', envName);
   const relayerKeys = readSecretJsonIfExists(join(secrets, 'relayer-keys.json'));
   const ownerRelayerKeys = readSecretJsonIfExists(join(secrets, 'owner-relayer-keys.json'));
   const homeRelayerKeys = readSecretJsonIfExists(join(secrets, 'home-relayer-keys.json'));
   const nearRelayKeys = readSecretJsonIfExists(join(secrets, 'near-relay-keys.json'));
+  const evmRelayKeys = readSecretJsonIfExists(join(secrets, 'evm-relay-keys.json'));
+  const evmLine = evmRelayKeys === undefined ? undefined : evmRelayKeysLine(manifest ?? { name: envName, evm: undefined }, evmRelayKeys);
   const updaterFile = join(secrets, 'keys-updater.json');
   let keysUpdaterKey: string | undefined;
   const updater = readSecretJsonIfExists(updaterFile) as { private_key?: unknown } | undefined;
@@ -359,14 +414,14 @@ export function writeDevVars(envName: string, root: string = repoRoot, dir: stri
     sealKey: readSecretTextIfExists(join(secrets, IDENTITY_SECRET_FILES.sealKey)),
     consentKey: readSecretTextIfExists(join(secrets, IDENTITY_SECRET_FILES.emailConsentKey)),
   });
-  const content = devVarsContent({ relayerKeys, ownerRelayerKeys, homeRelayerKeys, nearRelayKeys, keysUpdaterKey, identity });
+  const content = devVarsContent({ relayerKeys, ownerRelayerKeys, homeRelayerKeys, nearRelayKeys, evmRelayKeysLine: evmLine, keysUpdaterKey, identity });
   const path = join(dir, '.dev.vars');
   // A fresh 0600 file renamed over the old one: an existing world-readable .dev.vars never holds the new secrets.
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
   writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
-  return { path, count: [relayerKeys, ownerRelayerKeys, homeRelayerKeys, nearRelayKeys, keysUpdaterKey].filter((v) => v !== undefined).length + identity.length };
+  return { path, count: [relayerKeys, ownerRelayerKeys, homeRelayerKeys, nearRelayKeys, evmLine, keysUpdaterKey].filter((v) => v !== undefined).length + identity.length };
 }
 
 /**
@@ -391,17 +446,20 @@ export function existingUsageHyperdriveId(path: string, m: Pick<Manifest, 'cloud
  * Writes <dir>/wrangler.jsonc for the env. `usageArg`: a Hyperdrive id, `off` (no binding), or undefined (keep the
  * existing file's, for the same Worker and database).
  */
-export function writeWranglerConfig(manifest: Manifest, d1Arg: string | undefined, dir: string = apiDir, usageArg?: string): { path: string; d1Id: string; usageHyperdriveId: string | null } {
+export function writeWranglerConfig(manifest: Manifest, d1Arg: string | undefined, dir: string = apiDir, usageArg?: string, sponsorDelegates?: PinnedSponsorDelegates): { path: string; d1Id: string; usageHyperdriveId: string | null } {
   const path = join(dir, 'wrangler.jsonc');
   const d1Id = d1Arg ?? existingD1Id(path, manifest.cloudflare.d1Name) ?? LOCAL_D1_ID;
   const usageHyperdriveId = usageArg === 'off' ? null : (usageArg ?? existingUsageHyperdriveId(path, manifest));
   const header = `// Generated by apps/api/scripts/gen-wrangler.ts from envs/${manifest.name}.json: edit the manifest, not this file.\n`;
-  writeFileSync(path, header + JSON.stringify(wranglerConfig(manifest, d1Id, { usageHyperdriveId: usageHyperdriveId ?? undefined }), null, 2) + '\n');
+  writeFileSync(path, header + JSON.stringify(wranglerConfig(manifest, d1Id, { usageHyperdriveId: usageHyperdriveId ?? undefined, ...(sponsorDelegates ? { sponsorDelegates } : {}) }), null, 2) + '\n');
   return { path, d1Id, usageHyperdriveId };
 }
 
-/** `root`/`dir` override the repo root (for .secrets/) and the output directory; `loadManifest` the manifest (tests). */
-export function main(argv: string[], opts: { root?: string; dir?: string; loadManifest?: (name: string) => Manifest } = {}): void {
+/**
+ * `root`/`dir` override the repo root (for .secrets/) and the output directory; `loadManifest` the manifest (tests);
+ * `sponsorDelegates` the pinned delegate table an `evm.sponsor` block is checked against (evmSponsorVars).
+ */
+export function main(argv: string[], opts: { root?: string; dir?: string; loadManifest?: (name: string) => Manifest; sponsorDelegates?: PinnedSponsorDelegates } = {}): void {
   const valueFlags = ['--d1-id', '--d1-name', '--usage-hyperdrive-id'];
   const envName = argv.find((a, i) => !a.startsWith('--') && !valueFlags.includes(argv[i - 1] ?? ''));
   if (!envName) {
@@ -428,7 +486,7 @@ export function main(argv: string[], opts: { root?: string; dir?: string; loadMa
   if (d1Name) console.log(`The D1 binding points at the rehearsal database ${d1Name}: run gen ${loaded.name} again (with the env's own --d1-id) before any deploy or admin command on the env`);
   // The page Workers first: they refuse more envs (workers.dev outside dev envs), and a refusal then writes nothing.
   const pages = writePagesWranglerConfigs(manifest, COMPATIBILITY_DATE, opts.dir);
-  const { path, d1Id, usageHyperdriveId } = writeWranglerConfig(manifest, d1Arg, opts.dir, usageArg);
+  const { path, d1Id, usageHyperdriveId } = writeWranglerConfig(manifest, d1Arg, opts.dir, usageArg, opts.sponsorDelegates);
   console.log(`wrote ${path} (env ${manifest.name}, worker ${manifest.cloudflare.workerName}${d1Id === LOCAL_D1_ID ? ', local D1 placeholder id' : ''})`);
   console.log(usageHyperdriveId ? `usage capture: on (USAGE_DB → Hyperdrive ${usageHyperdriveId})` : 'usage capture: off (no USAGE_DB binding; pass --usage-hyperdrive-id <id> to turn it on)');
   for (const p of pages) console.log(`wrote ${p}`);

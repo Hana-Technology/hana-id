@@ -103,6 +103,12 @@ const CASES = [
     files: { 'docs/share.md': `EMAIL_CONSENT_KEY='${randomBytes(32).toString('base64')}'\n` },
     expect: ['hana-worker-secret-assignment'],
   },
+  {
+    name: 'EVM relayer key (EVM_RELAY_KEYS) as gen-wrangler --dev-vars writes it, pasted into a doc',
+    files: { 'docs/evm.md': `EVM_RELAY_KEYS='${JSON.stringify([`0x${randomBytes(32).toString('hex')}`])}'\n` },
+    expect: ['hana-worker-secret-assignment'],
+  },
+  { name: 'EVM relayer key file copied out of .secrets', files: { 'copy/evm-relay-keys.json': `${JSON.stringify([`0x${randomBytes(32).toString('hex')}`])}\n` }, expect: ['hana-secret-file'] },
   { name: 'uid key file copied out of .secrets', files: { 'copy/user-id-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
   { name: 'USER_ID_KEY line pasted into a doc', files: { 'docs/usage.md': `USER_ID_KEY=${randomBytes(32).toString('base64')}\n` }, expect: ['hana-worker-secret-assignment'] },
   {

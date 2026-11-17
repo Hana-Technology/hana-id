@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, emailIssuerUrl, isDevEnv, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
+import { type Manifest, type PinnedSponsorDelegates, emailIssuerUrl, evmSponsorDelegateProblems, evmSponsorPageChains, isDevEnv, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
 import type { HanaEnv } from '../src/hana-env.ts';
 import { ckdKeyProblem } from './ckd-key.ts';
 
@@ -40,7 +40,19 @@ export function hanaEnv(m: Manifest): HanaEnv | null {
     ...(m.emailIssuer ? { emailIssuerUrl: new URL(emailIssuerUrl(m)).origin, emailIss: m.emailIssuer.iss } : {}),
     // Batch C11: the logo origin (the dashboard's `files` block), the only image origin the auth pages may show.
     ...(m.files ? { filesOrigin: m.files.origin } : {}),
+    // EVM gas sponsorship (D834): per chain, the delegate the vault may authorize and the relayer batches name.
+    ...(m.evm?.sponsor ? { evmSponsor: evmSponsorPageChains(m.evm.sponsor) } : {}),
   };
+}
+
+/**
+ * Why an env's `evm.sponsor` can't go into the pages, one message each (empty = fine, or no block): every chain's
+ * delegate must be the pinned, reviewed one (D834), so without the table nothing with the block is built.
+ */
+export function sponsorProblems(m: Manifest, pinned: PinnedSponsorDelegates | undefined): string[] {
+  if (!m.evm?.sponsor || hanaEnv(m) === null) return [];
+  if (!pinned) return [`envs/${m.name}.json has evm.sponsor, but gen-envs was given no pinned delegate table to check it against (D834).`];
+  return evmSponsorDelegateProblems(m.evm.sponsor, pinned).map((p) => `envs/${m.name}.json ${p}.`);
 }
 
 /**
@@ -70,12 +82,13 @@ function includedEnvs(manifests: readonly Manifest[]): HanaEnv[] {
 }
 
 /**
- * envs.generated.ts for these manifests, sorted by name. Throws if an included env's CKD key has a problem or a value
- * is still a placeholder; with `forPackage`, also if packageEnvsProblem refuses the set.
+ * envs.generated.ts for these manifests, sorted by name. Throws if an included env's CKD key has a problem, a value
+ * is still a placeholder or its `evm.sponsor` delegates aren't `sponsorDelegates`' (sponsorProblems); with
+ * `forPackage`, also if packageEnvsProblem refuses the set.
  */
-export function envsModule(manifests: readonly Manifest[], opts: { forPackage?: boolean } = {}): string {
+export function envsModule(manifests: readonly Manifest[], opts: { forPackage?: boolean; sponsorDelegates?: PinnedSponsorDelegates } = {}): string {
   const envs = includedEnvs(manifests);
-  const problems = envs.flatMap((e) => [ckdKeyProblem(e), ...placeholderProblems(e)]).filter((p): p is string => p !== null);
+  const problems = [...envs.flatMap((e) => [ckdKeyProblem(e), ...placeholderProblems(e)]), ...manifests.flatMap((m) => sponsorProblems(m, opts.sponsorDelegates))].filter((p): p is string => p !== null);
   if (problems.length > 0) throw new Error(`Can't build the Hana pages:\n${problems.join('\n')}`);
   const packageProblem = opts.forPackage ? packageEnvsProblem(envs) : null;
   if (packageProblem) throw new Error(`Can't build the @hana-id/web package: ${packageProblem}`);
@@ -99,13 +112,13 @@ export function loadManifests(envsDir: string = join(repoRoot, 'envs')): Manifes
 }
 
 /**
- * Writes the generated module; `out` overrides the path (tests), `forPackage` applies the published build's checks.
- * Returns the included env names.
+ * Writes the generated module; `out` overrides the path (tests), `forPackage` applies the published build's checks,
+ * `sponsorDelegates` is the pinned delegate table `evm.sponsor` blocks are checked against. Returns the included env names.
  */
-export function main(opts: { manifests?: readonly Manifest[]; out?: string; forPackage?: boolean } = {}): string[] {
+export function main(opts: { manifests?: readonly Manifest[]; out?: string; forPackage?: boolean; sponsorDelegates?: PinnedSponsorDelegates } = {}): string[] {
   const manifests = opts.manifests ?? loadManifests();
   const out = opts.out ?? GENERATED_PATH;
-  writeAtomically(out, envsModule(manifests, { forPackage: opts.forPackage ?? false }));
+  writeAtomically(out, envsModule(manifests, { forPackage: opts.forPackage ?? false, ...(opts.sponsorDelegates ? { sponsorDelegates: opts.sponsorDelegates } : {}) }));
   return includedEnvs(manifests).map((e) => e.name);
 }
 

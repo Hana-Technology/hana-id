@@ -55,6 +55,13 @@ export interface Env {
    * RELAYER_ACCOUNT's pool keys: a function-call key can't sign a Delegate action). One Durable Object per key.
    */
   NEAR_RELAY_KEYS?: string;
+  /**
+   * Optional var (manifest `evm.sponsor`, D834): EVM gas sponsorship's relayer address, chains, limits and staff-only
+   * allowlist as JSON (evm/sponsor-config.ts). Absent or unreadable: sponsorship is unconfigured (off).
+   */
+  EVM_SPONSOR?: string;
+  /** Optional secret (D834): JSON array of one `0x`-hex secp256k1 private key, the EVM relayer EOA's (`relayerAddress`). */
+  EVM_RELAY_KEYS?: string;
   /** Optional var (manifest `homeDerivesPerDay`): Home derives allowed per UTC day across the env, 0 for none. Default 500 (home/login.ts). */
   HOME_DERIVES_PER_DAY?: string;
   /**

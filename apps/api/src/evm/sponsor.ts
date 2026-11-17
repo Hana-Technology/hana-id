@@ -66,6 +66,8 @@ import {
   FAILURES,
   failureSubject,
   hashesToPoll,
+  lookupHashes,
+  persistHashes,
   HOUR,
   lookupDigest,
   MINUTE,
@@ -344,11 +346,18 @@ function checkedResult(r: unknown, digest: Hex): EvmRelayerSendResult | null {
  * transaction at the same nonce) and the one it answered. RPC and lookup failures in between are retried. Null on
  * timeout.
  */
-async function waitForReceipt(chain: SponsorChainPort, relayer: EvmRelayerPort, digest: Hex, first: Hex): Promise<SponsorReceipt | 'taken' | null> {
+async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, relayer: EvmRelayerPort, digest: Hex, first: Hex): Promise<SponsorReceipt | 'taken' | null> {
   const end = Date.now() + sponsorTiming.receiptWaitMs;
+  const known = new Set<Hex>([first]);
   for (;;) {
     const l = await lookupDigest(relayer, digest);
-    const read = await readReceipts(chain, hashesToPoll([first], l.value));
+    // Every new hash the relayer reports is persisted on the row (the reconciler reads them all later).
+    const fresh = lookupHashes(l.value).filter((h) => !known.has(h));
+    if (fresh.length) {
+      for (const h of fresh) known.add(h);
+      await persistHashes(env, rowId, fresh);
+    }
+    const read = await readReceipts(chain, hashesToPoll([...known], l.value));
     if (read.kind === 'mined') return read.receipt;
     // Its nonce went to something that is no version of it, and every receipt read (none failed) found nothing: it
     // never ran. A failed read decides nothing: the next poll, or the reconciler.
@@ -669,6 +678,7 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
     digest,
     executeNonce: req.executeNonce,
     txHash: null,
+    hashes: [],
     deadline: Number(req.deadline),
     reserved: reservedFor,
     replay: false,
@@ -769,7 +779,8 @@ async function afterReservation(
   if (sent.replay && moved) await undo.giveBackAll();
 
   // 15. The receipt (no lock is held while waiting), the success rule, the settlement (once: the row moves first).
-  const receipt = await waitForReceipt(rpc, relayer, row.digest, sent.transactionHash);
+  await persistHashes(env, row.id, [sent.transactionHash]);
+  const receipt = await waitForReceipt(env, row.id, rpc, relayer, row.digest, sent.transactionHash);
   lap(ctx, 'receipt');
   if (receipt === 'taken') {
     await settleTaken(env, settled, ['sent']);

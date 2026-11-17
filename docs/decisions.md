@@ -12528,10 +12528,12 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - **Amended again 2026-11-17, after the automated review of the fixes** (decided while building, to confirm): a refund
   needs a verified "nothing ran". A row without a hash (`sending`, or `unknown` without one) is refunded only when the
   relayer answered (not an error) that it doesn't know the digest, 2 to 9 minutes past the deadline; later it is `lost`.
-  A row with a hash the relayer no longer knows is refunded only when every known hash's receipt read succeeded and found
-  nothing (`readReceipts` tells a failed read from no receipt) and the account's delegate nonce (`nonce()` through the
-  delegate's slot) is not past the row's `execute_nonce`; a nonce past it is `lost`; failing reads are retried, `lost`
-  an hour past the deadline. `state: 'taken'` settles at zero only on reads that all found nothing (in the request and
+  A row with a hash the relayer no longer knows is never refunded (a third review, of 7c1ff932): the delegate nonce
+  lives in the user's account, which the user can re-delegate and rewrite, and a version the row never saw may have
+  mined, so no empty read proves nothing was paid for; it is `lost`, the reservation kept (failing reads retried, `lost`
+  an hour past the deadline). Every hash the relayer reports (its answer, each lookup's list) is persisted on the row
+  (`tx_hashes`, a union in one UPDATE, at most 80) and receipts are read for all of them (`readReceipts` tells a failed
+  read from no receipt), so a version mined after the relayer forgot the digest is still found and settled. `state: 'taken'` settles at zero only on reads that all found nothing (in the request and
   the reconciler). Every give-back follows the durable move of its row, by the caller that moved it: a replay's row moves
   `sending` → `sent` with `replay = 1` first, and a coded refusal's to `refused` first; the reconciler takes `sending`
   rows only 5 minutes after their last update (`SENDING_LIFETIME_MS`, beyond a live request's insert-to-move time), so it

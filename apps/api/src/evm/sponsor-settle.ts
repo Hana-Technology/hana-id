@@ -13,7 +13,7 @@ import { limiter } from '../handlers.ts';
 import { log } from '../log.ts';
 import { receiptCost, type ReservedFor } from './op-fee.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, sponsorChain } from './sponsor-config.ts';
-import { designatorHex, executedIn, NONCE_CALLDATA, uintReturn } from './sponsor-checks.ts';
+import { executedIn } from './sponsor-checks.ts';
 import { type EvmRelayerLookup, type EvmRelayerPort, type Hex, type SponsorChainPort, type SponsorReceipt, sponsorPorts } from './sponsor-ports.ts';
 
 export const MINUTE = 60_000;
@@ -77,6 +77,8 @@ export interface SendRow {
   digest: Hex;
   executeNonce: bigint;
   txHash: Hex | null;
+  /** Every hash the relayer reported for the digest (persisted). */
+  hashes: Hex[];
   deadline: number;
   reserved: ReservedFor;
   /** The relayer answered this send as a replay: its reservation and counts were given back at once. */
@@ -93,6 +95,7 @@ interface RowColumns {
   digest: string;
   execute_nonce: string;
   tx_hash: string | null;
+  tx_hashes: string;
   deadline: number;
   gas_limit: string;
   fee_cap_wei: string;
@@ -114,11 +117,48 @@ const rowOf = (c: RowColumns): SendRow => ({
   digest: c.digest as Hex,
   executeNonce: BigInt(c.execute_nonce),
   txHash: c.tx_hash && /^0x[0-9a-f]{64}$/u.test(c.tx_hash) ? (c.tx_hash as Hex) : null,
+  hashes: parseHashes(c.tx_hashes),
   deadline: c.deadline,
   reserved: { gasLimit: BigInt(c.gas_limit), feeCap: BigInt(c.fee_cap_wei), l1Bound: BigInt(c.l1_bound_wei), operatorBound: BigInt(c.op_bound_wei), reservedWei: BigInt(c.reserved_wei) },
   replay: c.replay === 1,
   createdAt: c.created_at,
 });
+
+/** The persisted hash list (malformed entries dropped). */
+function parseHashes(json: string): Hex[] {
+  try {
+    const v: unknown = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((h): h is Hex => typeof h === 'string' && /^0x[0-9a-f]{64}$/u.test(h)) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** At most this many hashes are kept per row (the relayer signs at most 64 per nonce, plus the answered ones). */
+export const MAX_ROW_HASHES = 80;
+
+/**
+ * Adds hashes to a row's persisted list (a union in one UPDATE, so concurrent writers never drop each other's), bounded
+ * to MAX_ROW_HASHES (a hash beyond it is not added: the relayer's own bound is lower). Never throws.
+ */
+export async function persistHashes(env: Env, id: string, hashes: readonly Hex[]): Promise<void> {
+  const clean = [...new Set(hashes.filter((h) => /^0x[0-9a-fA-F]{64}$/u.test(h)).map((h) => h.toLowerCase()))];
+  if (clean.length === 0) return;
+  try {
+    await env.DB.prepare(
+      `UPDATE evm_sponsor_sends SET tx_hashes = (
+         SELECT json_group_array(value) FROM (
+           SELECT value FROM (SELECT value, 0 AS o FROM json_each(evm_sponsor_sends.tx_hashes)
+                              UNION SELECT value, 1 AS o FROM json_each(?2) WHERE value NOT IN (SELECT value FROM json_each(evm_sponsor_sends.tx_hashes)))
+           ORDER BY o LIMIT ?3))
+       WHERE id = ?1`,
+    )
+      .bind(id, JSON.stringify(clean), MAX_ROW_HASHES)
+      .run();
+  } catch {
+    log({ event: 'evm_sponsor_audit_failed', code: 'hashes' }, 'error');
+  }
+}
 
 /** Moves a row from one of `from` to `status`, with the given fields; true when this call moved it. */
 export async function moveRow(env: Env, id: string, from: readonly SendStatus[], status: SendStatus, f: { txHash?: Hex; relayerNonce?: number; settledWei?: bigint; replay?: boolean } = {}): Promise<boolean> {
@@ -183,16 +223,24 @@ export async function settleTaken(env: Env, row: SendRow, from: readonly SendSta
   return true;
 }
 
-/** At most this many of a digest's hashes are read per poll (the newest: fee bumps, then the deadline's cancel). */
-export const POLLED_HASHES = 4;
-
 const HASH = /^0x[0-9a-fA-F]{64}$/u;
 
-/** The hashes to read for a digest: the mined one when the relayer says so, else the newest ones and `known`. */
-export function hashesToPoll(known: readonly Hex[], l: EvmRelayerLookup | null): Hex[] {
+/** The hashes a lookup lists (well-formed, lowercase), its mined one first. */
+export function lookupHashes(l: EvmRelayerLookup | null): Hex[] {
   const mined = typeof l?.minedHash === 'string' && HASH.test(l.minedHash) ? [l.minedHash.toLowerCase() as Hex] : [];
   const listed = Array.isArray(l?.hashes) ? l.hashes.filter((h): h is Hex => typeof h === 'string' && HASH.test(h)).map((h) => h.toLowerCase() as Hex) : [];
-  return [...new Set([...mined, ...listed.slice(-POLLED_HASHES), ...known.map((h) => h.toLowerCase() as Hex)])].slice(0, POLLED_HASHES + 2);
+  return [...new Set([...mined, ...listed])];
+}
+
+/**
+ * The hashes to read for a digest: the mined one when the relayer says so, then every hash it lists, then every one
+ * known for the row (persisted: complete even after the relayer forgot the digest). Newest relayer versions first.
+ */
+export function hashesToPoll(known: readonly Hex[], l: EvmRelayerLookup | null): Hex[] {
+  const listed = lookupHashes(l);
+  const mined = listed.length && l?.minedHash ? listed.slice(0, 1) : [];
+  const rest = listed.slice(mined.length).reverse();
+  return [...new Set([...mined, ...rest, ...known.map((h) => h.toLowerCase() as Hex)])].slice(0, MAX_ROW_HASHES);
 }
 
 /** One read of every hash: the first mined receipt (its own hash), or null. RPC failures count as "not yet". */
@@ -225,19 +273,6 @@ export async function readReceipts(chain: SponsorChainPort, hashes: readonly Hex
   return failed ? { kind: 'error' } : { kind: 'none' };
 }
 
-/**
- * The account's delegate nonce (`nonce()` run as the pinned delegate through a state override, so it reads the
- * delegate's storage slot whatever the account's code), or null when it can't be read.
- */
-export async function chainExecuteNonce(chain: SponsorChainPort, cfg: Readonly<EvmSponsorChainConfig>, account: Hex): Promise<bigint | null> {
-  try {
-    const r = await chain.call({ from: account, to: account, data: NONCE_CALLDATA }, { stateOverride: { [account]: { code: designatorHex(cfg.delegate) } } });
-    return uintReturn(r.toLowerCase() as Hex);
-  } catch {
-    return null;
-  }
-}
-
 /** The relayer's lookup, or null when it doesn't know the digest or can't be asked (`asked` tells them apart). */
 export async function lookupDigest(relayer: EvmRelayerPort | null, digest: Hex): Promise<{ asked: boolean; value: EvmRelayerLookup | null }> {
   if (!relayer) return { asked: false, value: null };
@@ -263,7 +298,7 @@ async function refundNeverSent(env: Env, row: SendRow): Promise<boolean> {
 
 // ---- the reconciler (every cron run) ----
 
-/** Rows per run (each: one lookup and at most POLLED_HASHES + 2 receipt reads). */
+/** Rows per run (each: one lookup and a receipt read per known hash, at most MAX_ROW_HASHES). */
 export const RECONCILE_ROWS = 20;
 /** A row is the reconciler's once untouched this long (the request's own wait is 30 s). */
 export const RECONCILE_AFTER_MS = MINUTE;
@@ -301,7 +336,7 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
   try {
     rows = (
       await env.DB.prepare(
-        `SELECT id, app_id, chain_id, account, user_id, digest, execute_nonce, tx_hash, deadline, gas_limit, fee_cap_wei, l1_bound_wei,
+        `SELECT id, app_id, chain_id, account, user_id, digest, execute_nonce, tx_hash, tx_hashes, deadline, gas_limit, fee_cap_wei, l1_bound_wei,
                 op_bound_wei, reserved_wei, replay, created_at, updated_at, status
            FROM evm_sponsor_sends
           WHERE ((status IN ('sent', 'timeout', 'unknown') AND updated_at <= ?1) OR (status = 'sending' AND updated_at <= ?3))
@@ -322,7 +357,10 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
     const relayer = sponsorPorts.relayer(env, row.chainId);
     const chain = sponsorPorts.chain(env, cfg);
     const l = await lookupDigest(relayer, row.digest);
-    const read = await readReceipts(chain, hashesToPoll(row.txHash ? [row.txHash] : [], l.value));
+    // Every hash the relayer lists now is persisted first, so the set stays complete after it forgets the digest.
+    const listed = lookupHashes(l.value);
+    if (listed.some((h) => !row.hashes.includes(h))) await persistHashes(env, row.id, listed);
+    const read = await readReceipts(chain, hashesToPoll([...(row.txHash ? [row.txHash] : []), ...row.hashes], l.value));
     if (read.kind === 'mined') {
       if (await settleFromReceipt(env, cfg, row, read.receipt, OPEN_STATUSES)) counts.settled++;
       continue;
@@ -336,7 +374,7 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
     const pastDeadline = now - row.deadline * 1000;
     // The relayer answered (no error) that it doesn't know the digest, past the deadline (the batch can't execute later).
     const unknownToRelayer = l.asked && l.value === null && pastDeadline >= NEVER_SENT_FROM_MS;
-    if (unknownToRelayer && row.txHash === null && (c.status === 'sending' || c.status === 'unknown')) {
+    if (unknownToRelayer && row.txHash === null && row.hashes.length === 0 && (c.status === 'sending' || c.status === 'unknown')) {
       // Never given a hash: while the relayer would still remember a sent batch (to 10 minutes past the deadline), its
       // "unknown" means nothing was sent: everything comes back. Later it proves nothing: lost, the reservation kept.
       if (pastDeadline < NEVER_SENT_UNTIL_MS) {
@@ -344,18 +382,13 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
       } else if (await moveRow(env, row.id, OPEN_STATUSES, 'lost')) counts.lost++;
       continue;
     }
-    if (unknownToRelayer && row.txHash !== null) {
-      // A hash was sent and the relayer no longer knows it: refunded only when the chain itself shows nothing ran: every
-      // known hash read with no receipt (no read failed) and the account's delegate nonce not past this batch's. A read
-      // that failed decides nothing (tried again next run, lost an hour past the deadline); a nonce past this batch's is
-      // lost, the reservation kept.
-      const onChain = read.kind === 'none' ? await chainExecuteNonce(chain, cfg, row.account) : null;
-      if (read.kind === 'none' && onChain !== null && onChain <= row.executeNonce) {
-        if (await refundNeverSent(env, row)) counts.refused++;
-        continue;
-      }
-      // Executed somewhere we can't see (its nonce is past), or reads still failing an hour past the deadline: lost.
-      if ((read.kind === 'none' && onChain !== null) || pastDeadline >= GIVE_UP_AFTER_MS) {
+    if (unknownToRelayer && (row.txHash !== null || row.hashes.length > 0)) {
+      // A hash was sent and the relayer no longer remembers the digest: never refunded. Its receipts (every persisted
+      // hash) were read above; nothing mined among them proves nothing (a version this row never saw, or a node
+      // missing it), and nothing in the user's account (its code and storage are the user's) can prove it either. Lost,
+      // the reservation kept. A read that failed is tried again (it may yet find the receipt), lost an hour past the
+      // deadline.
+      if (read.kind === 'none' || pastDeadline >= GIVE_UP_AFTER_MS) {
         if (await moveRow(env, row.id, OPEN_STATUSES, 'lost')) counts.lost++;
         continue;
       }

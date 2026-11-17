@@ -2028,8 +2028,9 @@ what was reserved (a lying or broken RPC) settles at the reservation and writes 
 chain shows used raises the account's floor only past the request's own nonce, never to the RPC's figure. Settlement
 runs inside the request's `waitUntil` and, failing that, in the cron's reconciler (once per row: the row's status moves
 first, conditionally), so a client that goes away, an isolate that dies or a late receipt never leaves a reservation
-or a failure slot behind for good; a row the relayer no longer remembers and no receipt shows is `lost`, its
-reservation kept.
+or a failure slot behind for good. A refund needs a verified "nothing ran"; a row that got a hash is never refunded once
+the relayer forgets it (nothing in the user's account can prove no version was mined): with no receipt among every
+hash the relayer ever reported (persisted on the row) it is `lost`, its reservation kept.
 
 **Replays and copies.** A signed batch is public once broadcast. A copy is dropped before any count or chain read: an
 `executeNonce` below the account's durable floor (which rises when a batch executes or the chain shows a higher nonce),

@@ -1156,21 +1156,48 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     return { ...s, deadlineMs: Number(signed.body.deadline) * 1000 };
   }
 
-  it('a row with a hash the relayer forgot: refunded only when every receipt read found nothing and the delegate nonce is not past it', async () => {
+  it('a row with a hash the relayer forgot is never refunded: clean empty reads and an untouched nonce still leave it lost, the reservation kept', async () => {
     const s = await forgottenTimeout();
-    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ refused: 1 });
-    expect(await appSpent(s.app)).toBe(0n);
-    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
-    // The nonce read went through the delegate's slot (a state override), for the account.
-    const nonceRead = s.chain.calls.filter((c) => c.method === 'call' && (c.args as { data: string }).data === '0xaffed0e0').at(-1)!.args as { stateOverride: Record<string, unknown> };
-    expect(nonceRead.stateOverride).toEqual({ [s.user.address]: { code: DESIGNATOR } });
-  });
-
-  it('… but the delegate nonce past the batch’s: lost, the reservation kept', async () => {
-    const s = await forgottenTimeout();
-    s.chain.executeNonce.set(s.user.address.toLowerCase(), 1n);
     expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
+  });
+
+  it('a user who re-delegates elsewhere and resets the nonce slot can’t turn a mined batch into a refund', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    const signed = signedSend(s.user);
+    expect((await send(s, signed.body)).status).toBe(504);
+    // The batch was mined under a version this row never saw; the relayer then forgot the digest. The user points the
+    // account at another contract and zeroes the delegate's nonce slot.
+    s.relayer.lookupOverride = async () => null;
+    s.chain.codes.set(s.user.address.toLowerCase(), `0xef0100${'66'.repeat(20)}` as Hex);
+    s.chain.executeNonce.set(s.user.address.toLowerCase(), 0n);
+    await ageRows();
+    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 3 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
+    expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+  });
+
+  it('a fee-bumped version the relayer reported while the request polled is found and settled after the relayer forgot the digest', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    const signed = signedSend(s.user);
+    const bumped = keccakHex(`0x02${'b0'.repeat(32)}` as Hex);
+    // While the request polls, the relayer lists a replacement.
+    s.relayer.lookupOverride = async (digest) => {
+      const req = s.relayer.sends[0]!;
+      return { digest, relayerNonce: 0, transactionHash: bumped, hashes: [keccakHex(rawFor(req)), bumped], state: 'pending', minedHash: null, outcome: null, reservedWei: req.reservedWei };
+    };
+    expect((await send(s, signed.body)).status).toBe(504);
+    const row = await env.DB.prepare('SELECT tx_hashes FROM evm_sponsor_sends').first<{ tx_hashes: string }>();
+    expect(JSON.parse(row!.tx_hashes)).toEqual([keccakHex(rawFor(s.relayer.sends[0]!)), bumped]);
+    // Then the relayer forgets it, and the replacement turns out to be the one mined.
+    s.relayer.lookupOverride = async () => null;
+    s.chain.receipts.set(bumped, receiptFor(s.relayer.sends[0]!, bumped, 'executed'));
+    await ageRows();
+    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 30 * 60_000)).toMatchObject({ settled: 1 });
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'executed', tx_hash: bumped, settled_wei: '9000000000000' });
+    expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
   });
 
   it('… and a receipt read that fails decides nothing: open, then lost an hour past the deadline, never refunded', async () => {
@@ -1249,7 +1276,7 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     expect((await pending).status).toBe(200);
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
     // Six minutes on, a row left `sending` (a request that died) is the reconciler's.
-    await env.DB.prepare("UPDATE evm_sponsor_sends SET status = 'sending', tx_hash = NULL").run();
+    await env.DB.prepare("UPDATE evm_sponsor_sends SET status = 'sending', tx_hash = NULL, tx_hashes = '[]'").run();
     s.relayer.lookupOverride = async () => null;
     expect(await reconcile(s, Date.now() + 6 * 60_000)).toMatchObject({ open: 1 });
   });

@@ -20,6 +20,9 @@ CREATE TABLE evm_sponsor_sends (
   digest        TEXT NOT NULL CHECK (length(digest) = 66 AND digest GLOB '0x*'),
   execute_nonce TEXT NOT NULL CHECK (length(execute_nonce) BETWEEN 1 AND 20),
   tx_hash       TEXT CHECK (tx_hash IS NULL OR (length(tx_hash) = 66 AND tx_hash GLOB '0x*')),
+  -- Every hash the relayer reported for the digest (its answer, then each lookup: fee bumps, the deadline's cancel), so
+  -- receipts can be read for all of them after the relayer forgets the digest. A JSON array, at most 80 entries.
+  tx_hashes     TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tx_hashes) AND json_type(tx_hashes) = 'array' AND json_array_length(tx_hashes) <= 80),
   relayer_nonce INTEGER CHECK (relayer_nonce IS NULL OR relayer_nonce >= 0),
   reserved_wei  TEXT NOT NULL CHECK (length(reserved_wei) BETWEEN 1 AND 78),
   deadline      INTEGER NOT NULL CHECK (deadline > 0),

@@ -1215,10 +1215,12 @@ row is never raced). The relayer's `lookup` and the receipts of its hashes (and 
 row as above (a first attempt answered `unknown` and then sent as a copy's replay is settled here, once). A refund needs
 a verified "nothing ran": a row that never got a hash (`sending`, or `unknown` without one), which the relayer answered
 (no error) it doesn't know 2 to 9 minutes past the deadline (it remembers a pending or mined batch until 10 minutes past
-it), is refunded (the budget and the failure slot back, `refused`); later, `lost`. A row with a hash the relayer no
-longer knows is refunded only when every known hash's receipt read succeeded and found nothing and the account's
-delegate nonce (read through the delegate's slot) is not past the row's; a nonce past it is `lost`; a failing read
-decides nothing (tried again, `lost` an hour past the deadline). `lost` keeps the reservation. `state: 'taken'` settles
+it), is refunded (the budget and the failure slot back, `refused`); later, `lost`. Every hash the relayer reports for
+the digest (its answer, and each lookup's list: fee bumps, the deadline's cancel) is persisted on the row
+(`tx_hashes`), and receipts are read for all of them, so a version mined after the relayer forgot the digest is still
+found and settled. A row with a hash the relayer no longer knows is **never refunded**: nothing it can read proves that
+no version was mined (the account's code and storage are the user's), so with no receipt it is `lost`; a failing read is
+tried again, `lost` an hour past the deadline. `lost` keeps the reservation. `state: 'taken'` settles
 at zero only when every receipt read found nothing. A row moves before anything is given back, and only the caller that
 moved it gives back. A row still open 10 minutes after its reservation writes `evm_relay_stuck` (once an hour per
 chain).
@@ -1229,7 +1231,7 @@ wei) with `available: false, reason: "budget_exhausted"` when the app's or the e
 chain read; never another app's or the env's figures.
 
 **The audit table** `evm_sponsor_sends` (migration 0022, D848): one row per send that reached the reservation: app,
-chain, account, directory user (`ON DELETE CASCADE`), digest, `executeNonce`, deadline, the reservation's parts (gas
+chain, account, directory user (`ON DELETE CASCADE`), digest, `executeNonce`, deadline, every hash the relayer reported, the reservation's parts (gas
 limit, fee cap, L1 and operator bounds, reserved wei), hash, relayer nonce, settled wei, whether the relayer answered a
 replay, status, request id, times. Erased with the user (the cascade, `uid-erase` by the user's ids and addresses);
 kept 24 months, then pruned by the cron (500 rows a run, with or without sponsorship on).
@@ -2061,7 +2063,7 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `guarded_changes` (C) | `id` PK (`gc_…`), `app_id`, `kind` `origin_add`/`policy_set`/`raw_sign_on` with its `origin` or `policy_json` + `policy_id`, `status` `pending`/`active`/`cancelled`/`ended`, the proposer (`member`/`hana`/`system`, id, step-up `sub`, time, country), `waiver` `loopback`/`no_session`, `notified_at`, `active_from`, `cancel_token_hash`, `activated_recorded_at`, expedite and end/cancel fields, `request_id`; indexes by app and status, unnotified, due | 0006 |
 | `app_changes` (C) | `seq` PK, `at`, `org_id`, `app_id`, `scope_id`, `kind`, `detail_json` (valid JSON, allowlisted fields), `actor_kind` `member`/`hana`/`system`/`link`, `actor_id`, `actor_sub`, `request_id` UNIQUE. Append-only: UPDATE refused, DELETE refused until a row is 60 months old (triggers). 0006 wrote one `migration.baseline` row per app (its origins, stored policies as stored, raw-signing values, suspension) | 0006 |
 | `security_events` (C) | `id` PK, `detected_at`, `kind` `drift`/`breaker`/`owner_cap`/`owner_allowance_low`/`home_budget_high` (0018, D541: `{day, derives, ceiling, thresholdPct}`, counts only)/`near_relay_budget_high`/`near_relay_balance_low` (0020, D736: amounts and the relay account, "NEAR relay")/`evm_relay_budget_high`/`evm_relay_balance_low`/`evm_relay_stuck`/`evm_relay_receipt_odd` (0022, D848: amounts, chain ids and the relayer's address, "EVM gas sponsorship"), org/app/scope, `detail_json`, `notified_at` | 0006, 0018, 0020, 0022 |
-| `evm_sponsor_sends` (X, D848) | `id` PK (`es_` + 32 hex), `app_id`, `chain_id`, `account` (EIP-55), `user_id` → end_users ON DELETE CASCADE (NULL without a directory user), `digest`, `execute_nonce`, `tx_hash`, `relayer_nonce`, `reserved_wei`, `settled_wei` (decimal strings), `deadline`, `gas_limit`, `fee_cap_wei`, `l1_bound_wei`, `op_bound_wei`, `replay`, `status` `sending`/`sent`/`executed`/`reverted`/`not_executed`/`timeout`/`unknown`/`refused`/`lost`, `request_id`, `created_at`, `updated_at`; indexes (`chain_id`, `digest`, `created_at`), `account`, `user_id`, (`app_id`, `created_at`), the open rows, `created_at`. One row per sponsored send that reached the reservation; read for a copy's answer and by the reconciler; erased with the user (cascade; `uid-erase` by ids and addresses); pruned after 24 months. Not live | 0022 |
+| `evm_sponsor_sends` (X, D848) | `id` PK (`es_` + 32 hex), `app_id`, `chain_id`, `account` (EIP-55), `user_id` → end_users ON DELETE CASCADE (NULL without a directory user), `digest`, `execute_nonce`, `tx_hash`, `relayer_nonce`, `reserved_wei`, `settled_wei` (decimal strings), `tx_hashes` (JSON, every hash the relayer reported, ≤ 80), `deadline`, `gas_limit`, `fee_cap_wei`, `l1_bound_wei`, `op_bound_wei`, `replay`, `status` `sending`/`sent`/`executed`/`reverted`/`not_executed`/`timeout`/`unknown`/`refused`/`lost`, `request_id`, `created_at`, `updated_at`; indexes (`chain_id`, `digest`, `created_at`), `account`, `user_id`, (`app_id`, `created_at`), the open rows, `created_at`. One row per sponsored send that reached the reservation; read for a copy's answer and by the reconciler; erased with the user (cascade; `uid-erase` by ids and addresses); pruned after 24 months. Not live | 0022 |
 | `org_security_contacts` (C) | (`org_id`, `email` lowercased) PK, `added_by`, `added_at` | 0006 |
 | `session_markers` (C) | `app_id` PK → apps, `first_at` ms: written once, when the relay of a session-pool request on a scope with no `first_session_at` settled; the `no_session` waiver's sign besides `first_session_at` (D220). No user data | 0009 |
 | `apps` (added, H2, 0016) | `first_login_at` ms or NULL: the app's first successful login (Google or email), written once by `markFirstLogin` while the gate read it as NULL; no write after that. NULL hides the app from anyone but its scope's own users in `GET /v1/home/apps` (D462). Backfilled from session markers, vault shares, user events, identity tokens and email sessions |

@@ -90,6 +90,8 @@ export const SECRET_FILES = {
   homeRelayerKeys: 'home-relayer-keys.json',
   /** Same format: full-access keys on manifest.near.relay.account (the API's NEAR_RELAY_KEYS, the NEAR meta-transaction relay, D734). */
   nearRelayKeys: 'near-relay-keys.json',
+  /** JSON array of one `0x` + 64 lowercase hex secp256k1 key: the EVM sponsorship relayer, manifest evm.sponsor.relayerAddress (the API's EVM_RELAY_KEYS, D834, D849). */
+  evmRelayKeys: 'evm-relay-keys.json',
   /** `{account_id, public_key, private_key}`: function-call key on manifest.signer (the API's KEYS_UPDATER_KEY). */
   keysUpdater: 'keys-updater.json',
 } as const;

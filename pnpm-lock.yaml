@@ -931,6 +931,12 @@ importers:
       '@near-js/utils':
         specifier: 2.5.1
         version: 2.5.1(@near-js/types@2.5.1)
+      '@noble/curves':
+        specifier: 1.9.7
+        version: 1.9.7
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
       pg:
         specifier: 8.23.1
         version: 8.23.1

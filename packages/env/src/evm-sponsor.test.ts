@@ -13,6 +13,7 @@ import {
   manifestPath,
   manifestSchema,
   OP_STACK_TEST_CHAIN_IDS,
+  sponsorDecimalUnits,
   SPONSOR_TEST_EVM_CHAIN_IDS,
   type EvmSponsor,
 } from './index.ts';
@@ -56,6 +57,27 @@ describe('evm.sponsor: optional, off when absent (D834)', () => {
     expect(messages(withSponsor({ ...sponsorFixture(), apps: {} }))).toEqual([]);
     const { rpcFallback: _f, requireKnownAccount: _r, ...bare } = sponsorFixture().chains['84532']!;
     expect(messages(withSponsor({ ...sponsorFixture(), chains: { '84532': bare } }))).toEqual([]);
+  });
+
+  it('refuses null for the optional fields', () => {
+    expect(refused(chain({ requireKnownAccount: null }))).toBe(true);
+    expect(refused(chain({ rpcFallback: null }))).toBe(true);
+  });
+
+  it('refuses __proto__, constructor and prototype keys anywhere in the block (as JSON.parse reads a manifest)', () => {
+    const json = JSON.stringify(withSponsor(sponsorFixture()));
+    for (const key of ['__proto__', 'constructor', 'prototype']) {
+      for (const [from, to] of [
+        ['"chains":{', `"chains":{"${key}":{},`],
+        ['"apps":{', `"apps":{"${key}":{"84532":[]},`],
+        [`"${FIXTURE_APP}":{`, `"${FIXTURE_APP}":{"${key}":[],`],
+        ['"rpc":"https://sepolia.base.org"', `"${key}":1,"rpc":"https://sepolia.base.org"`],
+        ['"label":', `"${key}":1,"label":`],
+      ] as const) {
+        const m = JSON.parse(json.replace(from, to)) as unknown;
+        expect(messages(m).join(' '), `${key} ${from}`).toMatch(new RegExp(`forbidden key ${key}`, 'u'));
+      }
+    }
   });
 
   it('refuses unknown fields at every level, and missing required ones', () => {
@@ -139,12 +161,20 @@ describe('evm.sponsor: chains', () => {
 describe('evm.sponsor: endpoints', () => {
   it('rpc and rpcFallback: https, no credentials; http only for a loopback host in local* envs', () => {
     expect(messages(withSponsor(chain({ rpc: 'http://sepolia.base.org' })))).toContain('evm.sponsor.chains.84532.rpc: evm.sponsor.chains.84532.rpc must be an https URL (http only for a loopback host in local* envs)');
-    expect(messages(withSponsor(chain({ rpc: 'http://127.0.0.1:8545' }))).join(' ')).toMatch(/rpc must be an https URL/u);
+    for (const rpc of ['http://127.0.0.1:8545', 'https://127.0.0.1', 'https://[::1]', 'https://localhost.', 'https://a_b.localhost', 'https://[::ffff:127.0.0.1]']) {
+      expect(messages(withSponsor(chain({ rpc }))).join(' '), rpc).toMatch(/rpc must not be a loopback host outside local\* envs/u);
+    }
+    for (const rpc of ['https://169.254.1.1', 'https://[fe80::1]', 'https://10.0.0.1']) expect(messages(withSponsor(chain({ rpc }))).join(' '), rpc).toMatch(/rpc must be a DNS name, not an IP address/u);
+    expect(messages(withSponsor(chain({ rpc: 'https://node.local' }))).join(' ')).toMatch(/must not be a link-local \(\.local\) name/u);
+    // No API keys in manifest URLs: no path, query or fragment (a keyed RPC goes in a secret).
+    for (const rpc of ['https://rpc.example.org/v2/abc', 'https://rpc.example.org/?key=abc', 'https://rpc.example.org/#k']) expect(messages(withSponsor(chain({ rpc }))).join(' '), rpc).toMatch(/a keyed RPC goes in a secret/u);
+    expect(messages(withSponsor(chain({ rpc: 'https://sepolia.base.org/' })))).toEqual([]);
     expect(messages(withSponsor(chain({ rpc: 'https://user:pw@sepolia.base.org' }))).join(' ')).toMatch(/rpc must not carry credentials/u);
     expect(messages(withSponsor(chain({ rpcFallback: 'ftp://x.example' }))).join(' ')).toMatch(/rpcFallback must be an https URL/u);
     expect(refused(chain({ rpc: 'not a url' }))).toBe(true);
     const local = chain({ rpc: 'http://127.0.0.1:8545', rpcFallback: 'http://localhost:8546' }) as EvmSponsor;
     expect(problems(local, 'local-dev')).toEqual([]);
+    for (const rpc of ['http://localhost.:8545', 'http://[::ffff:127.0.0.1]:8545', 'http://a_b.localhost:8545']) expect(problems(chain({ rpc }) as EvmSponsor, 'local-dev'), rpc).toEqual([]);
   });
 
   it('rpcFallback is another endpoint, of another provider outside local* envs', () => {
@@ -222,6 +252,24 @@ describe('evm.sponsor: limits (D836)', () => {
     const edge = { maxGasPerTx: b.maxGasPerTx.max, minGas: b.minGas.max, maxFeePerGasGwei: 0.000000001, maxPriorityFeePerGasGwei: 0, maxCallsPerBatch: b.maxCallsPerBatch, deadlineMaxS: b.deadlineMaxS.max, dailyBudgetEth: b.dailyBudgetEth, appDailyBudgetEth: 0.999999999, lowBalanceEth: b.lowBalanceEth, perUserPerDay: b.perUserPerDay, perAppPerDay: b.perAppPerDay, sendsPerDay: b.sendsPerDay, sendsPerMinute: b.sendsPerMinute };
     expect(messages(withSponsor(chain(edge)))).toEqual([]);
     expect(messages(withSponsor(chain({ maxGasPerTx: b.maxGasPerTx.min, minGas: b.minGas.min, maxCallsPerBatch: 1, deadlineMaxS: b.deadlineMaxS.min, perUserPerDay: 1, perAppPerDay: 1, sendsPerDay: 2, sendsPerMinute: 1, appDailyBudgetEth: 0.001 })))).toEqual([]);
+  });
+});
+
+describe('evm.sponsor: amounts by exact decimal arithmetic', () => {
+  it('takes every value with at most 9 decimals, including the ones a float conversion refused', () => {
+    expect(sponsorDecimalUnits(33.999997859, 9)).toBe(33_999_997_859n);
+    expect(sponsorDecimalUnits(64.999995906, 9)).toBe(64_999_995_906n);
+    expect(sponsorDecimalUnits(1e-9, 9)).toBe(1n);
+    expect(sponsorDecimalUnits(2.5e-8, 9)).toBe(25n);
+    expect(sponsorDecimalUnits(0.02, 9)).toBe(20_000_000n);
+    expect(sponsorDecimalUnits(0, 9)).toBe(0n);
+    for (const bad of [1e-10, 1.0000000001, 0.0000000015, -0.5, Number.NaN, Number.NEGATIVE_INFINITY, '1', undefined]) expect(sponsorDecimalUnits(bad, 9), String(bad)).toBeNull();
+    for (let i = 0; i < 2000; i++) {
+      const n = Math.floor(Math.random() * 1e11);
+      expect(sponsorDecimalUnits(n / 1e9, 9), String(n)).toBe(BigInt(n));
+    }
+    for (const fee of [33.999997859, 64.999995906]) expect(messages(withSponsor(chain({ maxFeePerGasGwei: fee, maxGasPerTx: 100_000, minGas: 50_000 }))), String(fee)).toEqual([]);
+    expect(messages(withSponsor(chain({ appDailyBudgetEth: 0.009999999, dailyBudgetEth: 0.019999999 })))).toEqual([]);
   });
 });
 

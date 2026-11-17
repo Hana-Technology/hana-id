@@ -68,12 +68,29 @@ export interface EvmSponsorTarget {
   label: string;
 }
 
+/**
+ * The parsed config, immutable all the way down: plain frozen objects with no prototype (keys are decimal chain IDs and
+ * app ids) and frozen arrays. Look a chain up with `sponsorChain`, a call with `sponsoredTarget`.
+ */
 export interface EvmSponsorConfig {
   /** The relayer's EOA, EIP-55: the `relayer` every signed batch names and the only sender. */
-  relayerAddress: string;
-  chains: ReadonlyMap<number, EvmSponsorChainConfig>;
-  /** The allowlist: app id → chain ID → targets. */
-  apps: ReadonlyMap<string, ReadonlyMap<number, readonly EvmSponsorTarget[]>>;
+  readonly relayerAddress: string;
+  readonly chains: Readonly<Record<string, Readonly<EvmSponsorChainConfig>>>;
+  /** The allowlist: app id → decimal chain ID → targets. */
+  readonly apps: Readonly<Record<string, Readonly<Record<string, readonly Readonly<EvmSponsorTarget>[]>>>>;
+}
+
+/** The pinned, reviewed delegate table (@hana-id/core/evm-sponsor's SPONSOR_DELEGATES; only `address` is read). */
+export type PinnedSponsorDelegates = Readonly<Record<number, { readonly address: string }>>;
+
+/**
+ * Where the parse runs: the Worker's NETWORK and ENV_NAME vars, and the pinned delegate table every chain's `delegate`
+ * must match. `pinnedDelegates` undefined (no table available) makes a present block `invalid`: fail closed.
+ */
+export interface EvmSponsorWhere {
+  network: string | undefined;
+  envName: string;
+  pinnedDelegates: PinnedSponsorDelegates | undefined;
 }
 
 /**
@@ -148,6 +165,67 @@ export function evmSponsorVar(sponsor: EvmSponsorManifest): string {
   return JSON.stringify({ relayerAddress: sponsor.relayerAddress, chains, apps });
 }
 
+// ---- Shared with the other package's copy, word for word (a test in apps/api/scripts/test/gen-evm-sponsor.test.ts
+// checks both give the same answers): exact decimal amounts, loopback hosts, RPC URL rules.
+
+/**
+ * `v` in units of 10^-`places` (gwei of ETH, wei of gwei) by exact decimal arithmetic on its shortest round-trip
+ * spelling (`String(v)`, exponent forms included), or null when it is not a finite number ≥ 0 or has more decimals.
+ */
+export function sponsorDecimalUnits(v: unknown, places: number): bigint | null {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return null;
+  const m = /^(\d+)(?:\.(\d+))?(?:e([+-]\d+))?$/u.exec(String(v));
+  if (!m) return null;
+  const fraction = m[2] ?? '';
+  const exponent = Number(m[3] ?? '0') - fraction.length + places;
+  const digits = BigInt(`${m[1]!}${fraction}`);
+  if (exponent >= 0) return digits * 10n ** BigInt(exponent);
+  const divisor = 10n ** BigInt(-exponent);
+  return digits % divisor === 0n ? digits / divisor : null;
+}
+
+/**
+ * Hostname is loopback, as the URL parser writes it: `localhost`, `*.localhost`, 127.0.0.0/8, `[::1]` and IPv4-mapped
+ * 127.0.0.0/8 (`[::ffff:7fxx:xxxx]`), each also with a trailing dot.
+ */
+export function isSponsorLoopbackHost(hostname: string): boolean {
+  const h = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname;
+  return h === 'localhost' || h.endsWith('.localhost') || /^127(\.\d{1,3}){3}$/u.test(h) || h === '[::1]' || /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/u.test(h);
+}
+
+const NO_KEYS_IN_URLS = 'no API keys in manifest URLs: a keyed RPC goes in a secret';
+
+/**
+ * Why `value` can't be a sponsorship RPC URL, or null: an https URL of a DNS name (with a dot, no trailing dot, not an
+ * IP literal, not a link-local `.local` name) with no credentials, path, query or fragment. A loopback host only in a
+ * `local*` env (`localEnv`), where http is allowed for it.
+ */
+export function sponsorRpcUrlProblem(value: string, localEnv: boolean): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'is not a URL';
+  }
+  if (url.username || url.password) return `must not carry credentials (${NO_KEYS_IN_URLS})`;
+  if (url.search || url.hash || value.includes('?') || value.includes('#')) return `must have no query or fragment (${NO_KEYS_IN_URLS})`;
+  if (url.pathname !== '/') return `must have no path (${NO_KEYS_IN_URLS})`;
+  if (isSponsorLoopbackHost(url.hostname)) {
+    if (!localEnv) return 'must not be a loopback host outside local* envs';
+    return url.protocol === 'https:' || url.protocol === 'http:' ? null : 'must be an http or https URL';
+  }
+  if (url.protocol !== 'https:') return 'must be an https URL (http only for a loopback host in local* envs)';
+  const host = url.hostname;
+  if (host.startsWith('[') || /^\d{1,3}(\.\d{1,3}){3}$/u.test(host)) return 'must be a DNS name, not an IP address';
+  if (host.endsWith('.') || !host.includes('.')) return 'must be a DNS name with a dot and no trailing dot';
+  if (host.endsWith('.local')) return 'must not be a link-local (.local) name';
+  return null;
+}
+
+/** Keys no block may hold anywhere: JSON.parse makes them own properties, which object handling could drop or misread. */
+export const FORBIDDEN_SPONSOR_KEYS: readonly string[] = Object.freeze(['__proto__', 'constructor', 'prototype']);
+// ---- End of the shared part.
+
 /** Thrown inside the parse; becomes `{ status: 'unconfigured', reason: 'invalid', problem }`. */
 class Invalid extends Error {}
 const fail = (problem: string): never => {
@@ -156,7 +234,12 @@ const fail = (problem: string): never => {
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
+function noForbiddenKeys(v: Record<string, unknown>, what: string): void {
+  for (const k of Object.keys(v)) if (FORBIDDEN_SPONSOR_KEYS.includes(k)) fail(`${what} has a forbidden key ${k}`);
+}
+
 function onlyKeys(v: Record<string, unknown>, allowed: readonly string[], what: string): void {
+  noForbiddenKeys(v, what);
   for (const k of Object.keys(v)) if (!allowed.includes(k)) fail(`${what} has an unknown field ${k}`);
 }
 
@@ -177,37 +260,26 @@ function address(v: unknown, what: string): string {
   return v;
 }
 
-/** Loopback hosts as the URL parser writes them: localhost and its subdomains, 127.0.0.0/8, [::1]. */
-const LOOPBACK_HOST_RE = /^(([a-z0-9-]+\.)*localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|\[::1\])$/u;
-
 function int(v: unknown, min: number, max: number, what: string): number {
   if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < min || v > max) fail(`${what} is not an integer in ${min}..${max}`);
   return v as number;
 }
 
-/** A decimal amount with at most 9 places → integer units of 10^-9 (gwei of ETH, wei of gwei). */
+/** A decimal amount with at most 9 places → integer units of 10^-9 (gwei of ETH, wei of gwei), exactly. */
 function nano(v: unknown, max: number, zeroOk: boolean, what: string): bigint {
   if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > max || (!zeroOk && v === 0)) fail(`${what} is out of bounds`);
-  const n = v as number;
-  const units = Math.round(n * 1e9);
-  if (Math.abs(n * 1e9 - units) >= 1e-6) fail(`${what} has more than 9 decimal places`);
-  if (!zeroOk && units < 1) fail(`${what} is below the smallest unit`);
-  return BigInt(units);
+  const units = sponsorDecimalUnits(v, 9);
+  if (units === null) return fail(`${what} has more than 9 decimal places`);
+  if (!zeroOk && units < 1n) fail(`${what} is below the smallest unit`);
+  return units;
 }
 
 const GWEI = 10n ** 9n;
 
 function rpcUrl(v: unknown, localEnv: boolean, what: string): string {
   if (typeof v !== 'string') return fail(`${what} is not a URL`);
-  let url: URL;
-  try {
-    url = new URL(v);
-  } catch {
-    return fail(`${what} is not a URL`);
-  }
-  if (url.username || url.password) fail(`${what} carries credentials`);
-  const ok = url.protocol === 'https:' || (url.protocol === 'http:' && localEnv && LOOPBACK_HOST_RE.test(url.hostname));
-  if (!ok) fail(`${what} must be https (http only for a loopback host in local* envs)`);
+  const problem = sponsorRpcUrlProblem(v, localEnv);
+  if (problem) fail(`${what} ${problem}`);
   return v;
 }
 
@@ -248,7 +320,8 @@ function parseChain(id: number, v: unknown, localEnv: boolean): EvmSponsorChainC
   if (appDailyBudgetWei >= dailyBudgetWei) fail(`${what}.appDailyBudgetEth is not below dailyBudgetEth`);
   if (perAppPerDay >= sendsPerDay) fail(`${what}.perAppPerDay is not below sendsPerDay`);
   if (BigInt(maxGasPerTx) * maxFeePerGasWei > appDailyBudgetWei) fail(`${what}: one transaction's worst case exceeds appDailyBudgetEth`);
-  const requireKnownAccount = v.requireKnownAccount ?? true;
+  // Absent means the default; null is a value, and not a boolean (as the schema refuses it).
+  const requireKnownAccount = v.requireKnownAccount === undefined ? true : v.requireKnownAccount;
   if (typeof requireKnownAccount !== 'boolean') fail(`${what}.requireKnownAccount is not a boolean`);
   return {
     chainId: id,
@@ -283,15 +356,15 @@ function parseTarget(v: unknown, what: string): EvmSponsorTarget {
   if (new Set(selectors).size !== selectors.length) fail(`${what}.selectors lists one twice`);
   const label = v.label;
   if (typeof label !== 'string' || label.length < 1 || label.length > EVM_SPONSOR_BOUNDS.labelChars || label.trim() !== label || !/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u.test(label)) fail(`${what}.label is not a plain label`);
-  return { address: addr, selectors: Object.freeze([...(selectors as string[])]), label: label as string };
+  return Object.freeze({ address: addr, selectors: Object.freeze([...(selectors as string[])]), label: label as string });
 }
 
 /**
  * Parses EVM_SPONSOR. `unconfigured` for anything absent, malformed, out of bounds or inconsistent (as the manifest
- * schema refuses it), and off testnet. `where`: the Worker's NETWORK and ENV_NAME vars (local dev chains and loopback
- * RPCs only in a `local*` env).
+ * schema refuses it), off testnet, and for a delegate that isn't the pinned one or no pinned table at all. `where`:
+ * see EvmSponsorWhere (local dev chains and loopback RPCs only in a `local*` env).
  */
-export function parseEvmSponsorConfig(raw: string | undefined, where: { network: string | undefined; envName: string }): EvmSponsorSetting {
+export function parseEvmSponsorConfig(raw: string | undefined, where: EvmSponsorWhere): EvmSponsorSetting {
   if (!raw) return { status: 'unconfigured', reason: 'absent', problem: null };
   try {
     return { status: 'configured', config: parseStrict(raw, where) };
@@ -301,7 +374,14 @@ export function parseEvmSponsorConfig(raw: string | undefined, where: { network:
   }
 }
 
-function parseStrict(raw: string, where: { network: string | undefined; envName: string }): EvmSponsorConfig {
+/** A frozen object with no prototype, from entries (so no key is ever read through Object.prototype). */
+function frozenRecord<T>(entries: Iterable<readonly [string, T]>): Readonly<Record<string, T>> {
+  const out = Object.create(null) as Record<string, T>;
+  for (const [k, v] of entries) out[k] = v;
+  return Object.freeze(out);
+}
+
+function parseStrict(raw: string, where: EvmSponsorWhere): EvmSponsorConfig {
   if (where.network !== 'testnet') fail('EVM sponsorship is testnet only');
   const localEnv = /^local/u.test(where.envName);
   let v: unknown;
@@ -314,28 +394,38 @@ function parseStrict(raw: string, where: { network: string | undefined; envName:
   onlyKeys(v, ['relayerAddress', 'chains', 'apps'], 'EVM_SPONSOR');
   const relayerAddress = address(v.relayerAddress, 'relayerAddress');
   if (!isObject(v.chains)) return fail('chains is not an object');
+  noForbiddenKeys(v.chains, 'chains');
   const chainEntries = Object.entries(v.chains);
   if (chainEntries.length < 1 || chainEntries.length > EVM_SPONSOR_BOUNDS.chains) fail(`chains has 1 to ${EVM_SPONSOR_BOUNDS.chains} chains`);
-  const chains = new Map<number, EvmSponsorChainConfig>();
+  const pinned = where.pinnedDelegates;
+  if (!pinned) fail('no pinned delegate table to check the delegates against');
+  const chains: [string, Readonly<EvmSponsorChainConfig>][] = [];
   for (const [k, c] of chainEntries) {
     const id = chainKey(k, 'chains');
     const chain = parseChain(id, c, localEnv);
     if (chain.delegate.toLowerCase() === relayerAddress.toLowerCase()) fail(`chains.${id}.delegate is relayerAddress`);
-    chains.set(id, Object.freeze(chain));
+    const entry = Object.hasOwn(pinned!, id) ? pinned![id] : undefined;
+    if (!entry) fail(`chains.${id}.delegate: no pinned delegate for the chain`);
+    else if (entry.address.toLowerCase() !== chain.delegate.toLowerCase()) fail(`chains.${id}.delegate is not the pinned delegate`);
+    chains.push([String(id), Object.freeze(chain)]);
   }
-  const delegates = new Set([...chains.values()].map((c) => c.delegate.toLowerCase()));
+  const chainIds = new Set(chains.map(([id]) => id));
+  const delegates = new Set(chains.map(([, c]) => c.delegate.toLowerCase()));
   if (!isObject(v.apps)) return fail('apps is not an object');
+  noForbiddenKeys(v.apps, 'apps');
   const appEntries = Object.entries(v.apps);
   if (appEntries.length > EVM_SPONSOR_BOUNDS.apps) fail(`apps lists more than ${EVM_SPONSOR_BOUNDS.apps} apps`);
-  const apps = new Map<string, ReadonlyMap<number, readonly EvmSponsorTarget[]>>();
+  const apps: [string, Readonly<Record<string, readonly Readonly<EvmSponsorTarget>[]>>][] = [];
   for (const [appId, byChain] of appEntries) {
     if (!/^app_[A-Za-z0-9]{1,64}$/u.test(appId)) fail('apps has a key that is not an app id');
-    if (!isObject(byChain) || Object.keys(byChain).length === 0) fail(`apps.${appId} names no chain`);
-    const perChain = new Map<number, readonly EvmSponsorTarget[]>();
+    if (!isObject(byChain)) return fail(`apps.${appId} names no chain`);
+    noForbiddenKeys(byChain, `apps.${appId}`);
+    if (Object.keys(byChain).length === 0) fail(`apps.${appId} names no chain`);
+    const perChain: [string, readonly Readonly<EvmSponsorTarget>[]][] = [];
     let total = 0;
-    for (const [k, list] of Object.entries(byChain as Record<string, unknown>)) {
+    for (const [k, list] of Object.entries(byChain)) {
       const id = chainKey(k, `apps.${appId}`);
-      if (!chains.has(id)) fail(`apps.${appId}.${id} is not a configured chain`);
+      if (!chainIds.has(String(id))) fail(`apps.${appId}.${id} is not a configured chain`);
       if (!Array.isArray(list) || list.length < 1) return fail(`apps.${appId}.${id} lists no target`);
       total += list.length;
       if (total > EVM_SPONSOR_BOUNDS.targetsPerApp) fail(`apps.${appId} has more than ${EVM_SPONSOR_BOUNDS.targetsPerApp} targets`);
@@ -348,22 +438,31 @@ function parseStrict(raw: string, where: { network: string | undefined; envName:
         if (a === relayerAddress.toLowerCase()) fail(`apps.${appId}.${id}: a target is relayerAddress`);
         if (delegates.has(a)) fail(`apps.${appId}.${id}: a target is a delegate`);
       }
-      perChain.set(id, Object.freeze(targets.map((t) => Object.freeze(t))));
+      perChain.push([String(id), Object.freeze(targets)]);
     }
-    apps.set(appId, perChain);
+    apps.push([appId, frozenRecord(perChain)]);
   }
-  return Object.freeze({ relayerAddress, chains, apps });
+  return Object.freeze({ relayerAddress, chains: frozenRecord(chains), apps: frozenRecord(apps) });
+}
+
+/** The chain's settings, or null when sponsorship doesn't cover it. */
+export function sponsorChain(config: EvmSponsorConfig, chainId: number): Readonly<EvmSponsorChainConfig> | null {
+  if (!Number.isSafeInteger(chainId) || chainId < 1) return null;
+  const key = String(chainId);
+  return Object.hasOwn(config.chains, key) ? config.chains[key]! : null;
 }
 
 /**
  * The allowlisted target an app's call matches (D835), or null: `to` (any case) is one of the app's targets on the
- * chain, and `data` (0x hex) starts with one of its selectors. Value must be 0: the caller checks it (core's subject
- * decoder refuses any other value).
+ * chain, and `data` (well-formed `0x` hex, whole bytes, at least 4) starts with one of its selectors. Value must be 0:
+ * the caller checks it (core's subject decoder refuses any other value).
  */
-export function sponsoredTarget(config: EvmSponsorConfig, appId: string, chainId: number, to: string, data: string): EvmSponsorTarget | null {
-  const targets = config.apps.get(appId)?.get(chainId);
-  if (!targets || !/^0x[0-9a-fA-F]{8}/u.test(data)) return null;
+export function sponsoredTarget(config: EvmSponsorConfig, appId: string, chainId: number, to: string, data: string): Readonly<EvmSponsorTarget> | null {
+  if (!/^0x(?:[0-9a-fA-F]{2}){4,}$/u.test(data) || !Object.hasOwn(config.apps, appId)) return null;
+  const byChain = config.apps[appId]!;
+  const key = String(chainId);
+  if (!Object.hasOwn(byChain, key)) return null;
   const sel = data.slice(0, 10).toLowerCase();
-  const target = targets.find((t) => t.address.toLowerCase() === to.toLowerCase());
+  const target = byChain[key]!.find((t) => t.address.toLowerCase() === to.toLowerCase());
   return target && target.selectors.includes(sel) ? target : null;
 }

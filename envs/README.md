@@ -183,8 +183,10 @@ which `deploy-stamps <env>` deploys (`docs/operations.md` "Hackathon demo stamps
 Changing it means new, empty passports (no upgrade path); the relay needs the API's `gen` and a redeploy to take a new
 receiver.
 
-`evm.sponsor` (optional, D834–D836; **not live**: no env sets it, and the API has no sponsored route yet): EVM gas
-sponsorship, where Journear's own relayer submits a user's signed batch through the pinned EIP-7702 delegate and pays
+`evm.sponsor` (optional, D834–D836; **not live**: no env sets it, and the API has no sponsored route yet). **Until
+core's pinned delegate table is wired into the generators (the next package), the API's `gen` and the page build
+refuse any env that carries this block**, so don't add it to a manifest yet.
+EVM gas sponsorship, where Journear's own relayer submits a user's signed batch through the pinned EIP-7702 delegate and pays
 the network fee within daily budgets. Absent means the feature is off everywhere (fail closed). Testnet only.
 `packages/env/src/evm-sponsor.ts` holds the schema, its rules and its bounds; the API parses the generated var again
 with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything it refuses as unconfigured.
@@ -212,11 +214,13 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   address is `relayerAddress`.
 - `chains`: 1 to 4, by decimal chain ID. Each must be one of core's `TEST_EVM_CHAINS`; the local dev chains 31337 and
   1337 only in `local*` envs. `opStack` is true exactly for the OP Stack test chains (84532 Base Sepolia, 11155420 OP
-  Sepolia), which also charge an L1 data fee. `rpc` and the optional `rpcFallback` are https (http only for a loopback
-  host in `local*` envs), carry no credentials, and are different endpoints of different providers outside `local*`
-  envs. `delegate` must be the delegate core pins for that chain (`@hana-id/core/evm-sponsor`): the API's `gen` and the
-  page build refuse the block otherwise, and a chain with no pinned delegate (every chain but the one core pins) can't
-  be sponsored.
+  Sepolia), which also charge an L1 data fee. `rpc` and the optional `rpcFallback` are https URLs of DNS names (no IP
+  literal, no loopback or link-local `.local` host, a dot and no trailing dot) with no credentials, path, query or
+  fragment; a loopback host (http or https) only in `local*` envs; outside them the two are different providers
+  (registrable domains). **No API keys in manifest URLs**: the manifest is committed, so a keyed RPC goes in a secret
+  (the later handlers read an optional one). `delegate` must be the delegate core pins for that chain
+  (`@hana-id/core/evm-sponsor`), checked by the generators and again by the API at run time; a chain with no pinned
+  delegate can't be sponsored. That check needs the pinned table passed in, which the generators don't do yet (above).
 - Limits per chain, every one required except `requireKnownAccount`, with hard bounds: `maxGasPerTx` (50 000 to
   2 000 000), `minGas` (10 000 to 1 000 000, below `maxGasPerTx`), `maxFeePerGasGwei` (above 0, at most 100) and
   `maxPriorityFeePerGasGwei` (0 to `maxFeePerGasGwei`), both to 1 wei; `maxCallsPerBatch` (1 to 8), `deadlineMaxS` (60
@@ -229,9 +233,10 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   with 1 to 8 targets in all. A target is a contract `address`, its allowed function `selectors` (1 to 8 distinct,
   `0x` + 8 lowercase hex) and a staff-facing `label` (1 to 64 characters, no control or formatting characters, no
   outer spaces). Calls carry no value: there is no field for one. An empty `apps` sponsors nothing.
-- `gen` writes the block as the API var `EVM_SPONSOR` and the page build puts `{ chainId: { delegate, relayer } }`
-  into the vault's envs (`HanaEnv.evmSponsor`); a change needs `gen`, a page build and a redeploy of the API and the
-  pages.
+- Once the table is wired, `gen` writes the block as the API var `EVM_SPONSOR` and the page build puts
+  `{ chainId: { delegate, relayer } }` into the vault's envs (`HanaEnv.evmSponsor`); a change then needs `gen`, a page
+  build and a redeploy of the API and the pages. A `__proto__`, `constructor` or `prototype` key anywhere in the block
+  is refused.
 
 `vaultOrigin` and `authOrigin` (optional in the schema until every deployed env has them; `gen` refuses an env
 without them and the page build skips it): the origins of Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin

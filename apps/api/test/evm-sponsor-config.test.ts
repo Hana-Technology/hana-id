@@ -2,13 +2,14 @@
 // bounds, failing closed to `unconfigured`; the allowlist lookup. gen-wrangler's tests check the generated var parses
 // here and that these bounds and chain lists equal the schema's.
 import { describe, expect, it } from 'vitest';
-import { checksumEvmAddress, EVM_SPONSOR_BOUNDS, evmSponsorVar, parseEvmSponsorConfig, sponsoredTarget, type EvmSponsorManifest } from '../src/evm/sponsor-config.ts';
-import { CHECK_IN_SELECTOR, FIXTURE_APP, FIXTURE_CHECK_IN, FIXTURE_DELEGATE, FIXTURE_RELAYER, fixtureAddress, sponsorFixture } from '../../../packages/env/src/evm-sponsor.fixture.ts';
+import { checksumEvmAddress, EVM_SPONSOR_BOUNDS, evmSponsorVar, parseEvmSponsorConfig, sponsorChain, sponsorDecimalUnits, sponsoredTarget, type EvmSponsorManifest, type EvmSponsorWhere } from '../src/evm/sponsor-config.ts';
+import { CHECK_IN_SELECTOR, FIXTURE_APP, FIXTURE_CHECK_IN, FIXTURE_DELEGATE, FIXTURE_PINNED_DELEGATES, FIXTURE_RELAYER, fixtureAddress, sponsorFixture } from '../../../packages/env/src/evm-sponsor.fixture.ts';
 
-const SANDBOX = { network: 'testnet', envName: 'sandbox-test' } as const;
+const SANDBOX: EvmSponsorWhere = { network: 'testnet', envName: 'sandbox-test', pinnedDelegates: FIXTURE_PINNED_DELEGATES };
+const LOCAL: EvmSponsorWhere = { ...SANDBOX, envName: 'local-dev', pinnedDelegates: { ...FIXTURE_PINNED_DELEGATES, 31337: { address: FIXTURE_DELEGATE } } };
 const fixture = (): EvmSponsorManifest => sponsorFixture() as EvmSponsorManifest;
-const parse = (v: unknown, where: { network: string | undefined; envName: string } = SANDBOX) => parseEvmSponsorConfig(typeof v === 'string' ? v : JSON.stringify(v), where);
-const problem = (v: unknown, where?: { network: string | undefined; envName: string }): string | null => {
+const parse = (v: unknown, where: EvmSponsorWhere = SANDBOX) => parseEvmSponsorConfig(typeof v === 'string' ? v : JSON.stringify(v), where);
+const problem = (v: unknown, where?: EvmSponsorWhere): string | null => {
   const r = parse(v, where);
   return r.status === 'unconfigured' ? r.problem : null;
 };
@@ -31,8 +32,8 @@ describe('parseEvmSponsorConfig', () => {
     expect(r.status).toBe('configured');
     if (r.status !== 'configured') return;
     expect(r.config.relayerAddress).toBe(FIXTURE_RELAYER);
-    expect([...r.config.chains.keys()]).toEqual([84532]);
-    expect(r.config.chains.get(84532)).toEqual({
+    expect(Object.keys(r.config.chains)).toEqual(['84532']);
+    expect(sponsorChain(r.config, 84532)).toEqual({
       chainId: 84532,
       rpc: 'https://sepolia.base.org',
       rpcFallback: 'https://base-sepolia-rpc.publicnode.com',
@@ -53,18 +54,69 @@ describe('parseEvmSponsorConfig', () => {
       sendsPerMinute: 60,
       requireKnownAccount: true,
     });
-    expect(r.config.apps.get(FIXTURE_APP)?.get(84532)).toEqual([{ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], label: 'Journear demo check-in' }]);
-    expect(Object.isFrozen(r.config)).toBe(true);
-    expect(Object.isFrozen(r.config.chains.get(84532))).toBe(true);
-    expect(Object.isFrozen(r.config.apps.get(FIXTURE_APP)?.get(84532))).toBe(true);
+    expect(r.config.apps[FIXTURE_APP]?.['84532']).toEqual([{ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], label: 'Journear demo check-in' }]);
+  });
+
+  it('is immutable all the way down: plain frozen objects and arrays, no Map or Set, no prototype', () => {
+    const r = parse(evmSponsorVar(fixture()));
+    if (r.status !== 'configured') throw new Error('expected configured');
+    const c = r.config;
+    const chainCfg = c.chains['84532']!;
+    const targets = c.apps[FIXTURE_APP]!['84532']!;
+    for (const v of [c, c.chains, chainCfg, c.apps, c.apps[FIXTURE_APP], targets, targets[0], targets[0]!.selectors]) {
+      expect(Object.isFrozen(v)).toBe(true);
+      expect(v instanceof Map || v instanceof Set).toBe(false);
+    }
+    expect(Object.getPrototypeOf(c.chains)).toBeNull();
+    expect(Object.getPrototypeOf(c.apps)).toBeNull();
+    expect(() => {
+      (c.chains as Record<string, unknown>)['1'] = chainCfg;
+    }).toThrow(TypeError);
+    expect(() => {
+      (targets as unknown as string[]).push('x');
+    }).toThrow(TypeError);
+    expect(() => {
+      (targets[0]!.selectors as string[])[0] = '0x00000000';
+    }).toThrow(TypeError);
+    expect(sponsorChain(c, 1)).toBeNull();
+    expect(sponsorChain(c, Number.NaN)).toBeNull();
   });
 
   it('defaults requireKnownAccount to true and rpcFallback to none', () => {
     const { requireKnownAccount: _r, rpcFallback: _f, ...bare } = fixture().chains['84532']!;
     const r = parse({ ...fixture(), chains: { '84532': bare } });
-    expect(r.status === 'configured' && r.config.chains.get(84532)).toMatchObject({ requireKnownAccount: true, rpcFallback: null });
+    expect(r.status === 'configured' && sponsorChain(r.config, 84532)).toMatchObject({ requireKnownAccount: true, rpcFallback: null });
     const off = parse(chain({ requireKnownAccount: false }));
-    expect(off.status === 'configured' && off.config.chains.get(84532)?.requireKnownAccount).toBe(false);
+    expect(off.status === 'configured' && sponsorChain(off.config, 84532)?.requireKnownAccount).toBe(false);
+  });
+
+  it('refuses null for the optional fields (as the schema does), rather than taking the default', () => {
+    expect(problem(chain({ requireKnownAccount: null }))).toBe('chains.84532.requireKnownAccount is not a boolean');
+    expect(problem(chain({ rpcFallback: null }))).toBe('chains.84532.rpcFallback is not a URL');
+  });
+
+  it('refuses __proto__, constructor and prototype keys anywhere in the block, explicitly', () => {
+    const text = evmSponsorVar(fixture());
+    for (const key of ['__proto__', 'constructor', 'prototype']) {
+      expect(problem(text.replace('"chains":{', `"chains":{"${key}":{},`)), key).toBe(`chains has a forbidden key ${key}`);
+      expect(problem(text.replace('"apps":{', `"apps":{"${key}":{},`)), key).toBe(`apps has a forbidden key ${key}`);
+      expect(problem(text.replace(`"${FIXTURE_APP}":{`, `"${FIXTURE_APP}":{"${key}":[],`)), key).toBe(`apps.${FIXTURE_APP} has a forbidden key ${key}`);
+      expect(problem(text.replace('"rpc":', `"${key}":1,"rpc":`)), key).toBe(`chains.84532 has a forbidden key ${key}`);
+      expect(problem(text.replace('"label":', `"${key}":1,"label":`)), key).toBe(`apps.${FIXTURE_APP}.84532[0] has a forbidden key ${key}`);
+      expect(problem(text.replace('{"relayerAddress"', `{"${key}":{},"relayerAddress"`)), key).toBe(`EVM_SPONSOR has a forbidden key ${key}`);
+    }
+  });
+
+  it('checks every chain’s delegate against the pinned table it is given, and is unconfigured without one', () => {
+    const text = evmSponsorVar(fixture());
+    expect(problem(text, { ...SANDBOX, pinnedDelegates: undefined })).toBe('no pinned delegate table to check the delegates against');
+    expect(problem(text, { ...SANDBOX, pinnedDelegates: {} })).toBe('chains.84532.delegate: no pinned delegate for the chain');
+    expect(problem(text, { ...SANDBOX, pinnedDelegates: { 84532: { address: fixtureAddress('0bad') } } })).toBe('chains.84532.delegate is not the pinned delegate');
+    expect(parse(text, { ...SANDBOX, pinnedDelegates: { 84532: { address: FIXTURE_DELEGATE.toLowerCase() } } }).status).toBe('configured');
+    // Only own entries of the table count.
+    expect(problem(text, { ...SANDBOX, pinnedDelegates: Object.create({ 84532: { address: FIXTURE_DELEGATE } }) as Record<number, { address: string }> })).toBe('chains.84532.delegate: no pinned delegate for the chain');
+    // Absent stays absent, table or not.
+    expect(parseEvmSponsorConfig(undefined, { ...SANDBOX, pinnedDelegates: undefined })).toEqual({ status: 'unconfigured', reason: 'absent', problem: null });
   });
 
   it('is unconfigured (invalid) for anything that isn’t the block: not JSON, not an object, unknown or missing fields', () => {
@@ -79,7 +131,7 @@ describe('parseEvmSponsorConfig', () => {
   });
 
   it('is unconfigured off testnet, whatever the var says', () => {
-    for (const network of ['mainnet', undefined, '']) expect(problem(evmSponsorVar(fixture()), { network, envName: 'sandbox-test' }), String(network)).toBe('EVM sponsorship is testnet only');
+    for (const network of ['mainnet', undefined, '']) expect(problem(evmSponsorVar(fixture()), { ...SANDBOX, network }), String(network)).toBe('EVM sponsorship is testnet only');
   });
 
   it('refuses chains that aren’t known test chains, local dev chains outside local* envs, and a wrong opStack', () => {
@@ -87,19 +139,49 @@ describe('parseEvmSponsorConfig', () => {
     for (const id of ['1', '8453', '999999']) expect(problem({ ...s, chains: { [id]: { ...s.chains['84532'], opStack: false } }, apps: {} }), id).toBe(`chains.${id}: not a known EVM test chain`);
     const local = { ...s, chains: { '31337': { ...s.chains['84532'], opStack: false, rpc: 'http://127.0.0.1:8545', rpcFallback: undefined } }, apps: {} };
     expect(problem(local)).toBe('chains.31337: a local dev chain outside a local* env');
-    expect(parse(local, { network: 'testnet', envName: 'local-dev' }).status).toBe('configured');
+    expect(parse(local, LOCAL).status).toBe('configured');
     expect(problem(chain({ opStack: false }))).toBe('chains.84532.opStack is wrong for the chain');
     for (const key of ['0x14a34', '084532', 'base']) expect(problem({ ...s, chains: { [key]: s.chains['84532'] }, apps: {} }), key).toBe('chains has a key that is not a chain ID');
     expect(problem({ ...s, chains: {}, apps: {} })).toBe('chains has 1 to 4 chains');
   });
 
-  it('refuses RPCs that aren’t https (loopback http in local* envs only) or carry credentials', () => {
-    expect(problem(chain({ rpc: 'http://sepolia.base.org' }))).toBe('chains.84532.rpc must be https (http only for a loopback host in local* envs)');
-    expect(problem(chain({ rpc: 'http://127.0.0.1:8545' }))).toBe('chains.84532.rpc must be https (http only for a loopback host in local* envs)');
-    expect(parse(chain({ rpc: 'http://127.0.0.1:8545', rpcFallback: 'http://localhost:8546' }), { network: 'testnet', envName: 'local-x' }).status).toBe('configured');
-    expect(problem(chain({ rpc: 'https://u:p@sepolia.base.org' }))).toBe('chains.84532.rpc carries credentials');
+  it('refuses RPCs that aren’t https DNS names with no path, query or credentials (loopback only in local* envs)', () => {
+    expect(problem(chain({ rpc: 'http://sepolia.base.org' }))).toBe('chains.84532.rpc must be an https URL (http only for a loopback host in local* envs)');
+    for (const rpc of ['http://127.0.0.1:8545', 'https://127.0.0.1', 'https://[::1]', 'https://localhost.', 'https://a_b.localhost', 'https://[::ffff:127.0.0.1]', 'https://0x7f.1']) {
+      expect(problem(chain({ rpc })), rpc).toBe('chains.84532.rpc must not be a loopback host outside local* envs');
+    }
+    for (const rpc of ['https://169.254.1.1', 'https://[fe80::1]', 'https://10.0.0.1', 'https://8.8.8.8']) expect(problem(chain({ rpc })), rpc).toBe('chains.84532.rpc must be a DNS name, not an IP address');
+    expect(problem(chain({ rpc: 'https://node.local' }))).toBe('chains.84532.rpc must not be a link-local (.local) name');
+    expect(problem(chain({ rpc: 'https://rpc' }))).toBe('chains.84532.rpc must be a DNS name with a dot and no trailing dot');
+    for (const rpc of ['https://rpc.example.org/v2/abc', 'https://rpc.example.org/x']) expect(problem(chain({ rpc })), rpc).toMatch(/^chains\.84532\.rpc must have no path .*a keyed RPC goes in a secret/u);
+    for (const rpc of ['https://rpc.example.org/?key=abc', 'https://rpc.example.org/?', 'https://rpc.example.org/#x']) expect(problem(chain({ rpc })), rpc).toMatch(/must have no query or fragment/u);
+    expect(parse(chain({ rpc: 'https://sepolia.base.org/' })).status).toBe('configured');
+    for (const host of ['127.0.0.1:8545', 'localhost.:8545', '[::ffff:127.0.0.1]:8545', 'a_b.localhost:8545']) {
+      expect(parse(chain({ rpc: `http://${host}`, rpcFallback: 'http://localhost:8546' }), { ...LOCAL, envName: 'local-x' }).status, host).toBe('configured');
+    }
+    expect(problem(chain({ rpc: 'https://u:p@sepolia.base.org' }))).toMatch(/^chains\.84532\.rpc must not carry credentials/u);
     expect(problem(chain({ rpcFallback: 'https://sepolia.base.org' }))).toBe('chains.84532.rpcFallback is rpc');
     expect(problem(chain({ rpc: 'nope' }))).toBe('chains.84532.rpc is not a URL');
+  });
+
+  it('converts amounts by exact decimal arithmetic: every 9-decimal value, nothing finer', () => {
+    expect(sponsorDecimalUnits(33.999997859, 9)).toBe(33_999_997_859n);
+    expect(sponsorDecimalUnits(64.999995906, 9)).toBe(64_999_995_906n);
+    expect(sponsorDecimalUnits(1e-9, 9)).toBe(1n);
+    expect(sponsorDecimalUnits(1.5e-7, 9)).toBe(150n);
+    expect(sponsorDecimalUnits(0.01, 9)).toBe(10_000_000n);
+    expect(sponsorDecimalUnits(100, 9)).toBe(100_000_000_000n);
+    expect(sponsorDecimalUnits(0, 9)).toBe(0n);
+    for (const bad of [1e-10, 1.0000000001, 0.0000000015, -1, Number.NaN, Number.POSITIVE_INFINITY, '1', null]) expect(sponsorDecimalUnits(bad, 9), String(bad)).toBeNull();
+    for (let i = 0; i < 2000; i++) {
+      const n = Math.floor(Math.random() * 1e11);
+      expect(sponsorDecimalUnits(n / 1e9, 9), String(n)).toBe(BigInt(n));
+    }
+    // The values a float conversion refused, accepted (gas small enough for the worst case to fit the app's day).
+    for (const fee of [33.999997859, 64.999995906]) {
+      const r = parse(chain({ maxFeePerGasGwei: fee, maxGasPerTx: 100_000, minGas: 50_000 }));
+      expect(r.status === 'configured' && sponsorChain(r.config, 84532)?.maxFeePerGasWei, String(fee)).toBe(BigInt(Math.round(fee * 1e9)));
+    }
   });
 
   it('refuses per-app limits at or above the env’s, and inconsistent gas and fees', () => {
@@ -188,10 +270,13 @@ describe('sponsoredTarget: the allowlist lookup (D835)', () => {
 
   it('refuses another app, chain, address or selector, and data shorter than a selector', () => {
     expect(sponsoredTarget(config!, 'app_Other', 84532, FIXTURE_CHECK_IN, CHECK_IN_SELECTOR)).toBeNull();
+    expect(sponsoredTarget(config!, '__proto__', 84532, FIXTURE_CHECK_IN, CHECK_IN_SELECTOR)).toBeNull();
     expect(sponsoredTarget(config!, FIXTURE_APP, 11155111, FIXTURE_CHECK_IN, CHECK_IN_SELECTOR)).toBeNull();
     expect(sponsoredTarget(config!, FIXTURE_APP, 84532, FIXTURE_DELEGATE, CHECK_IN_SELECTOR)).toBeNull();
     expect(sponsoredTarget(config!, FIXTURE_APP, 84532, FIXTURE_CHECK_IN, '0xa9059cbb')).toBeNull();
-    for (const data of ['0x', '0x183ff0', '', '183ff085']) expect(sponsoredTarget(config!, FIXTURE_APP, 84532, FIXTURE_CHECK_IN, data), data).toBeNull();
+    for (const data of ['0x', '0x183ff0', '', '183ff085', `${CHECK_IN_SELECTOR}0`, `${CHECK_IN_SELECTOR}zz`, `${CHECK_IN_SELECTOR}0g`, `${CHECK_IN_SELECTOR} `]) {
+      expect(sponsoredTarget(config!, FIXTURE_APP, 84532, FIXTURE_CHECK_IN, data), data).toBeNull();
+    }
   });
 });
 

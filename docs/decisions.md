@@ -12095,13 +12095,29 @@ address never changes; testnet only; free tiers; a staff-only allowlist in the m
   table as `sponsorDelegates`; once core's table lands, both `main`s pass `SPONSOR_DELEGATES` from
   `@hana-id/core/evm-sponsor` by default (until then a manifest with the block can't be generated, which is
   fail-closed and fine: no env has it).
+- Until that wiring, both generators refuse any env carrying the block; the docs say so.
 - `EVM_SPONSOR` (API var): the block as JSON, its fields in a fixed order and nothing else (`evmSponsorVar`). `gen` also
   runs the API's parser on it and refuses a var the Worker would refuse. The Worker parses it again at run time
-  (`parseEvmSponsorConfig`, same bounds and rules but the provider check on `rpcFallback`, which needs the public
-  suffix list) into wei and gas as bigints, frozen; anything absent, malformed, out of bounds or off testnet is
-  `{ status: 'unconfigured', reason: 'absent' | 'invalid', problem }`, never a partial config. Self-contained (no
-  Worker-only types, no core root import), so `gen` runs it in Node; a test keeps its bounds and chain lists equal to
-  the schema's.
+  (`parseEvmSponsorConfig(raw, { network, envName, pinnedDelegates })`, same bounds and rules but the provider check on
+  `rpcFallback`, which needs the public suffix list) into wei and gas as bigints; the config is immutable all the way
+  down (plain frozen objects with no prototype, frozen arrays; no Map; `sponsorChain` and `sponsoredTarget` look
+  things up). Anything absent, malformed, out of bounds or off testnet is `{ status: 'unconfigured', reason: 'absent' |
+  'invalid', problem }`, never a partial config. Self-contained (no Worker-only types, no core root import), so `gen`
+  runs it in Node; tests keep its bounds and chain lists equal to the schema's.
+- Run-time delegate check: `pinnedDelegates` is core's pinned table. With the block present, no table or a delegate
+  that differs (or a chain with no entry) is `invalid`. Core's module is on another branch, so nothing passes the table
+  yet: the handlers (WP5a) must pass `SPONSOR_DELEGATES` from `@hana-id/core/evm-sponsor` once it is on `next`; tested
+  here with a fixture table.
+- Shared rules (after the independent review, 2026-11-17): amounts are converted by exact decimal arithmetic on
+  `String(v)` (exponent forms included) into a BigInt of the smallest unit, refusing more decimals than it allows
+  (`sponsorDecimalUnits`; a float conversion refused valid values such as 33.999997859 gwei); loopback hosts
+  (`isSponsorLoopbackHost`: `localhost`, `*.localhost`, 127/8, `[::1]`, IPv4-mapped 127/8, each with a trailing dot)
+  and the RPC URL rule (`sponsorRpcUrlProblem`: https DNS names, no IP literal, no loopback or `.local` host outside
+  `local*` envs, no credentials, path, query or fragment: no API keys in manifest URLs, a keyed RPC goes in a secret)
+  are one block of code copied word for word into both packages (they can't share code), with a test comparing the
+  text and differential tests comparing the answers. `__proto__`, `constructor` and `prototype` keys are refused
+  anywhere in the block, explicitly, by both (zod's records drop a `__proto__` key silently); `null` for an optional
+  field is refused by both.
 - `EVM_RELAY_KEYS` (API secret): a JSON array of exactly one `0x` + 64 lowercase hex secp256k1 key, because every
   signed batch names one relayer (`relayerAddress`). `.secrets/<env>/evm-relay-keys.json` (0600);
   `gen --dev-vars` writes it only when the key's address is `relayerAddress`, refuses the file for an env without the
@@ -12141,5 +12157,8 @@ address never changes; testnet only; free tiers; a staff-only allowlist in the m
   they match). Rules: `appDailyBudgetEth` below `dailyBudgetEth` and `perAppPerDay` below `sendsPerDay` (one leaked
   publishable key never uses up the env's day, as D736); one transaction's worst case, `maxGasPerTx` × `maxFeePerGas`,
   fits in `appDailyBudgetEth` (the OP Stack L1 data fee comes on top and is the relayer's to count).
+- Open item (for the relayer package, WP5b): the OP Stack L1 data fee is **not** bounded by these manifest rules. Before
+  sending, the relayer must estimate it (the chain's GasPriceOracle predeploy) and count it in the transaction's
+  worst-case budget reservation, and refuse the send when gas × fee cap plus that fee doesn't fit.
 - Address impact: none.
 

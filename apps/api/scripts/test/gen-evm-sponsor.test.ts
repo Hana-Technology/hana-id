@@ -5,12 +5,12 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { EVM_SPONSOR_BOUNDS as SCHEMA_BOUNDS, LOCAL_EVM_CHAIN_IDS as SCHEMA_LOCAL, loadEnv, type Manifest, manifestSchema, OP_STACK_TEST_CHAIN_IDS as SCHEMA_OP_STACK, SPONSOR_TEST_EVM_CHAIN_IDS as SCHEMA_CHAINS } from '@hana-id/env';
+import { EVM_SPONSOR_BOUNDS as SCHEMA_BOUNDS, isSponsorLoopbackHost as schemaLoopback, LOCAL_EVM_CHAIN_IDS as SCHEMA_LOCAL, loadEnv, type Manifest, manifestSchema, OP_STACK_TEST_CHAIN_IDS as SCHEMA_OP_STACK, sponsorDecimalUnits as schemaDecimal, sponsorRpcUrlProblem as schemaRpcProblem, SPONSOR_TEST_EVM_CHAIN_IDS as SCHEMA_CHAINS, repoRoot } from '@hana-id/env';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FIXTURE_DELEGATE, FIXTURE_PINNED_DELEGATES, fixtureAddress, sponsorFixture } from '../../../../packages/env/src/evm-sponsor.fixture.ts';
-import { checksumEvmAddress, EVM_SPONSOR_BOUNDS, evmSponsorVar, LOCAL_EVM_CHAIN_IDS, OP_STACK_TEST_CHAIN_IDS, parseEvmSponsorConfig, SPONSOR_TEST_EVM_CHAIN_IDS } from '../../src/evm/sponsor-config.ts';
+import { FIXTURE_APP, FIXTURE_DELEGATE, FIXTURE_PINNED_DELEGATES, fixtureAddress, sponsorFixture } from '../../../../packages/env/src/evm-sponsor.fixture.ts';
+import { checksumEvmAddress, EVM_SPONSOR_BOUNDS, evmSponsorVar, isSponsorLoopbackHost, LOCAL_EVM_CHAIN_IDS, OP_STACK_TEST_CHAIN_IDS, parseEvmSponsorConfig, sponsorDecimalUnits, sponsorRpcUrlProblem, SPONSOR_TEST_EVM_CHAIN_IDS } from '../../src/evm/sponsor-config.ts';
 import { devVarsContent, evmRelayKeysLine, evmSponsorVars, LOCAL_D1_ID, TEST_MANIFEST, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 /** dotenv's single-quoted value, as wrangler reads .dev.vars (the full parser is in gen-wrangler.test.ts). */
@@ -50,6 +50,73 @@ describe('the Worker parser agrees with the schema', () => {
   });
 });
 
+describe('the two packages’ shared rules are the same functions', () => {
+  it('the shared block is word for word the same in both files', () => {
+    const block = (path: string) => {
+      const text = readFileSync(join(repoRoot, path), 'utf8');
+      const start = text.indexOf('// ---- Shared with the other package');
+      const end = text.indexOf('// ---- End of the shared part.');
+      expect(start, path).toBeGreaterThan(0);
+      expect(end, path).toBeGreaterThan(start);
+      return text.slice(start, end);
+    };
+    expect(block('apps/api/src/evm/sponsor-config.ts')).toBe(block('packages/env/src/evm-sponsor.ts'));
+  });
+
+  it('decimal amounts: the same answer on edge and random values', () => {
+    const values: unknown[] = [0, 1, 1e-9, 1e-10, 1.5e-7, 0.01, 0.02, 33.999997859, 64.999995906, 1.0000000001, 100, 1e21, -0, -1, Number.NaN, Number.POSITIVE_INFINITY, '1', null];
+    for (let i = 0; i < 2000; i++) values.push(Math.random() * 100, Math.floor(Math.random() * 1e11) / 1e9, Math.floor(Math.random() * 1e13) / 1e12);
+    for (const v of values) for (const places of [6, 9]) expect(sponsorDecimalUnits(v, places), `${String(v)} ${places}`).toBe(schemaDecimal(v, places));
+  });
+
+  it('RPC URLs and loopback hosts: the same verdict, word for word, in and outside local* envs', () => {
+    const urls = [
+      'https://sepolia.base.org', 'https://sepolia.base.org/', 'http://sepolia.base.org', 'https://rpc', 'https://node.local', 'https://rpc.example.org.',
+      'https://rpc.example.org/v2/key', 'https://rpc.example.org/?k=1', 'https://rpc.example.org/?', 'https://rpc.example.org/#x', 'https://u:p@rpc.example.org',
+      'http://127.0.0.1:8545', 'https://127.0.0.1', 'http://localhost.', 'http://a_b.localhost:8545', 'http://[::ffff:127.0.0.1]:8545', 'http://[::1]:8545', 'http://0x7f.1',
+      'https://169.254.1.1', 'https://[fe80::1]', 'https://10.0.0.1', 'ftp://x.example', 'ws://127.0.0.1', 'not a url', '',
+    ];
+    for (const url of urls) for (const local of [true, false]) expect(sponsorRpcUrlProblem(url, local), `${url} ${local}`).toBe(schemaRpcProblem(url, local));
+    for (const host of ['localhost', 'localhost.', 'a_b.localhost', 'x.localhost.', '127.1.2.3', '[::1]', '[::ffff:7f00:1]', '[::ffff:7f01:203]', 'example.org', '128.0.0.1', '[::2]']) {
+      expect(isSponsorLoopbackHost(host), host).toBe(schemaLoopback(host));
+    }
+  });
+
+  it('the schema accepts a block exactly when the Worker parses it (for every rule both can check)', () => {
+    const c = sponsorFixture().chains['84532']!;
+    const text = (s: unknown) => JSON.stringify(s);
+    const withChain = (fields: Record<string, unknown>) => text({ ...sponsorFixture(), chains: { '84532': { ...c, ...fields } } });
+    const cases: string[] = [
+      text(sponsorFixture()),
+      withChain({ requireKnownAccount: null }),
+      withChain({ rpcFallback: null }),
+      withChain({ requireKnownAccount: false }),
+      withChain({ maxFeePerGasGwei: 33.999997859, maxGasPerTx: 100_000, minGas: 50_000 }),
+      withChain({ maxFeePerGasGwei: 1.0000000001 }),
+      withChain({ appDailyBudgetEth: 1e-9 }),
+      withChain({ appDailyBudgetEth: 1e-10 }),
+      withChain({ rpc: 'https://localhost.' }),
+      withChain({ rpc: 'https://a_b.localhost' }),
+      withChain({ rpc: 'https://[::ffff:127.0.0.1]' }),
+      withChain({ rpc: 'https://169.254.1.1' }),
+      withChain({ rpc: 'https://rpc.example.org/v2/key' }),
+      withChain({ rpc: 'https://rpc.example.org/?k=1' }),
+      withChain({ rpc: 'https://sepolia.base.org/' }),
+      ...['__proto__', 'constructor', 'prototype'].flatMap((key) => [
+        text(sponsorFixture()).replace('"chains":{', `"chains":{"${key}":{},`),
+        text(sponsorFixture()).replace('"apps":{', `"apps":{"${key}":{"84532":[]},`),
+        text(sponsorFixture()).replace(`"${FIXTURE_APP}":{`, `"${FIXTURE_APP}":{"${key}":[],`),
+        text(sponsorFixture()).replace('"rpc":', `"${key}":1,"rpc":`),
+      ]),
+    ];
+    for (const json of cases) {
+      const schemaOk = manifestSchema.safeParse({ ...base, evm: { sponsor: JSON.parse(json) as unknown } }).success;
+      const workerOk = parseEvmSponsorConfig(json, { network: 'testnet', envName: base.name, pinnedDelegates: FIXTURE_PINNED_DELEGATES }).status === 'configured';
+      expect(workerOk, json).toBe(schemaOk);
+    }
+  });
+});
+
 describe('EVM_SPONSOR (D834)', () => {
   it('is not written without the block (sponsorship off), and the tests’ config has none', () => {
     expect(base.evm).toBeUndefined();
@@ -62,9 +129,9 @@ describe('EVM_SPONSOR (D834)', () => {
     const v = vars(withSponsor(), { sponsorDelegates: FIXTURE_PINNED_DELEGATES });
     expect(v.EVM_SPONSOR).toBe(evmSponsorVar(sponsorFixture()));
     expect(JSON.parse(v.EVM_SPONSOR!)).toEqual(sponsorFixture());
-    const parsed = parseEvmSponsorConfig(v.EVM_SPONSOR, { network: v.NETWORK, envName: v.ENV_NAME! });
+    const parsed = parseEvmSponsorConfig(v.EVM_SPONSOR, { network: v.NETWORK, envName: v.ENV_NAME!, pinnedDelegates: FIXTURE_PINNED_DELEGATES });
     expect(parsed.status).toBe('configured');
-    expect(parsed.status === 'configured' && parsed.config.chains.get(84532)?.dailyBudgetWei).toBe(2n * 10n ** 16n);
+    expect(parsed.status === 'configured' && parsed.config.chains['84532']?.dailyBudgetWei).toBe(2n * 10n ** 16n);
     // Never a key: the relayer's is the secret EVM_RELAY_KEYS.
     expect(JSON.stringify(v)).not.toMatch(/EVM_RELAY_KEYS|privateKey/u);
   });

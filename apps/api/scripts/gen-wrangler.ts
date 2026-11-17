@@ -112,7 +112,7 @@ export function evmSponsorVars(m: Manifest, pinned: PinnedSponsorDelegates | und
   const problems = evmSponsorDelegateProblems(sponsor, pinned);
   if (problems.length) throw new Error(`envs/${m.name}.json evm.sponsor:\n${problems.join('\n')}`);
   const value = evmSponsorVar(sponsor);
-  const setting = parseEvmSponsorConfig(value, { network: m.network, envName: m.name });
+  const setting = parseEvmSponsorConfig(value, { network: m.network, envName: m.name, pinnedDelegates: pinned });
   if (setting.status !== 'configured') throw new Error(`envs/${m.name}.json evm.sponsor: the API would refuse it (${setting.problem ?? setting.reason})`);
   return { EVM_SPONSOR: value };
 }

@@ -3,7 +3,7 @@
 // budgets. Optional: absent, the feature is off everywhere (the API's parser, apps/api/src/evm/sponsor-config.ts, then
 // answers unconfigured). Testnet only. The API's parser enforces the same bounds again at run time (fail closed).
 import { keccak_256 } from '@noble/hashes/sha3';
-import { isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
+import { isLocalEnv, siteOf } from './origins.ts';
 import { urlString, z } from './zod.ts';
 
 /**
@@ -69,20 +69,81 @@ const evmAddress = z
 /** A 4-byte function selector, lowercase hex. */
 const selector = z.string().regex(/^0x[0-9a-f]{8}$/u, 'A selector is 0x + 8 lowercase hex characters (4 bytes)');
 
-/** At most `places` decimal places (amounts become integer wei; floats like 0.1 round to within 1e-6 of a unit). */
-const places = (v: number, n: number): boolean => Math.abs(v * 10 ** n - Math.round(v * 10 ** n)) < 1e-6;
+// ---- Shared with the other package's copy, word for word (a test in apps/api/scripts/test/gen-evm-sponsor.test.ts
+// checks both give the same answers): exact decimal amounts, loopback hosts, RPC URL rules.
+
+/**
+ * `v` in units of 10^-`places` (gwei of ETH, wei of gwei) by exact decimal arithmetic on its shortest round-trip
+ * spelling (`String(v)`, exponent forms included), or null when it is not a finite number ≥ 0 or has more decimals.
+ */
+export function sponsorDecimalUnits(v: unknown, places: number): bigint | null {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return null;
+  const m = /^(\d+)(?:\.(\d+))?(?:e([+-]\d+))?$/u.exec(String(v));
+  if (!m) return null;
+  const fraction = m[2] ?? '';
+  const exponent = Number(m[3] ?? '0') - fraction.length + places;
+  const digits = BigInt(`${m[1]!}${fraction}`);
+  if (exponent >= 0) return digits * 10n ** BigInt(exponent);
+  const divisor = 10n ** BigInt(-exponent);
+  return digits % divisor === 0n ? digits / divisor : null;
+}
+
+/**
+ * Hostname is loopback, as the URL parser writes it: `localhost`, `*.localhost`, 127.0.0.0/8, `[::1]` and IPv4-mapped
+ * 127.0.0.0/8 (`[::ffff:7fxx:xxxx]`), each also with a trailing dot.
+ */
+export function isSponsorLoopbackHost(hostname: string): boolean {
+  const h = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname;
+  return h === 'localhost' || h.endsWith('.localhost') || /^127(\.\d{1,3}){3}$/u.test(h) || h === '[::1]' || /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/u.test(h);
+}
+
+const NO_KEYS_IN_URLS = 'no API keys in manifest URLs: a keyed RPC goes in a secret';
+
+/**
+ * Why `value` can't be a sponsorship RPC URL, or null: an https URL of a DNS name (with a dot, no trailing dot, not an
+ * IP literal, not a link-local `.local` name) with no credentials, path, query or fragment. A loopback host only in a
+ * `local*` env (`localEnv`), where http is allowed for it.
+ */
+export function sponsorRpcUrlProblem(value: string, localEnv: boolean): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'is not a URL';
+  }
+  if (url.username || url.password) return `must not carry credentials (${NO_KEYS_IN_URLS})`;
+  if (url.search || url.hash || value.includes('?') || value.includes('#')) return `must have no query or fragment (${NO_KEYS_IN_URLS})`;
+  if (url.pathname !== '/') return `must have no path (${NO_KEYS_IN_URLS})`;
+  if (isSponsorLoopbackHost(url.hostname)) {
+    if (!localEnv) return 'must not be a loopback host outside local* envs';
+    return url.protocol === 'https:' || url.protocol === 'http:' ? null : 'must be an http or https URL';
+  }
+  if (url.protocol !== 'https:') return 'must be an https URL (http only for a loopback host in local* envs)';
+  const host = url.hostname;
+  if (host.startsWith('[') || /^\d{1,3}(\.\d{1,3}){3}$/u.test(host)) return 'must be a DNS name, not an IP address';
+  if (host.endsWith('.') || !host.includes('.')) return 'must be a DNS name with a dot and no trailing dot';
+  if (host.endsWith('.local')) return 'must not be a link-local (.local) name';
+  return null;
+}
+
+/** Keys no block may hold anywhere: JSON.parse makes them own properties, which object handling could drop or misread. */
+export const FORBIDDEN_SPONSOR_KEYS: readonly string[] = Object.freeze(['__proto__', 'constructor', 'prototype']);
+// ---- End of the shared part.
 
 const eth = (max: number) =>
   z
     .number()
     .positive()
     .max(max)
-    .refine((v) => places(v, 9) && Math.round(v * 1e9) >= 1, 'An ETH amount has at most 9 decimal places (1 gwei) and is at least 1 gwei');
+    .refine((v) => (sponsorDecimalUnits(v, 9) ?? 0n) >= 1n, 'An ETH amount has at most 9 decimal places (1 gwei) and is at least 1 gwei');
 
 const gwei = (min: 'positive' | 'nonnegative') =>
   (min === 'positive' ? z.number().positive() : z.number().nonnegative())
     .max(B.maxFeePerGasGwei)
-    .refine((v) => places(v, 9) && (min === 'nonnegative' || Math.round(v * 1e9) >= 1), 'A gwei amount has at most 9 decimal places (1 wei)');
+    .refine((v) => {
+      const units = sponsorDecimalUnits(v, 9);
+      return units !== null && (min === 'nonnegative' || units >= 1n);
+    }, 'A gwei amount has at most 9 decimal places (1 wei)');
 
 /** A chain ID as a record key: decimal, no leading zero, a safe integer. */
 const chainIdKey = z.string().regex(/^[1-9][0-9]{0,15}$/u, 'A chain ID is a decimal number').refine((v) => Number.isSafeInteger(Number(v)), 'A chain ID is a safe integer');
@@ -150,7 +211,18 @@ export const evmSponsorTargetSchema = z
   })
   .strict();
 
-export const evmSponsorSchema = z
+/** The first forbidden key in `v` (any depth), as a path, or null. */
+function forbiddenKeyPath(v: unknown, path: (string | number)[] = []): (string | number)[] | null {
+  if (typeof v !== 'object' || v === null) return null;
+  for (const [k, child] of Object.entries(v)) {
+    if (FORBIDDEN_SPONSOR_KEYS.includes(k)) return [...path, k];
+    const found = forbiddenKeyPath(child, [...path, Array.isArray(v) ? Number(k) : k]);
+    if (found) return found;
+  }
+  return null;
+}
+
+const evmSponsorShape = z
   .object({
     /** The relayer's EOA: signs and pays for every sponsored transaction; its key is the Worker secret EVM_RELAY_KEYS. */
     relayerAddress: evmAddress,
@@ -161,29 +233,25 @@ export const evmSponsorSchema = z
   })
   .strict();
 
+/**
+ * The block. `__proto__`, `constructor` and `prototype` keys are refused anywhere in it before the shape is parsed
+ * (zod's records would drop a `__proto__` key without a word).
+ */
+export const evmSponsorSchema = z.preprocess((v, ctx) => {
+  const path = forbiddenKeyPath(v);
+  if (path) ctx.addIssue({ code: 'custom', path, message: `evm.sponsor has a forbidden key ${String(path[path.length - 1])} at ${path.join('.')}` });
+  return v;
+}, evmSponsorShape);
+
 /** EVM wallet settings: gas sponsorship (D834). */
 export const evmSchema = z.object({ sponsor: evmSponsorSchema.optional() }).strict();
 
-export type EvmSponsor = z.infer<typeof evmSponsorSchema>;
+export type EvmSponsor = z.output<typeof evmSponsorShape>;
 export type EvmSponsorChain = z.infer<typeof evmSponsorChainSchema>;
 
 export interface EvmSponsorProblem {
   path: (string | number)[];
   message: string;
-}
-
-/** Why an RPC URL can't be used in env `envName`, or null (as the manifest's NEAR endpoints: https; loopback http in `local*`). */
-function rpcUrlProblem(value: string, envName: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return 'is not a URL';
-  }
-  if (url.username || url.password) return 'must not carry credentials';
-  if (url.protocol === 'https:') return null;
-  if (url.protocol === 'http:' && isLocalEnv(envName) && isLoopbackHost(url.hostname)) return null;
-  return 'must be an https URL (http only for a loopback host in local* envs)';
 }
 
 const safeSite = (url: string): string | null => {
@@ -218,10 +286,10 @@ export function evmSponsorProblems(m: { name: string; network: string; evm?: { s
     if (!SPONSOR_TEST_EVM_CHAIN_IDS.includes(n)) at(['chains', id], `evm.sponsor.chains: ${id} is not a known EVM test chain (TEST_EVM_CHAINS)`);
     else if (LOCAL_EVM_CHAIN_IDS.includes(n) && !isLocalEnv(m.name)) at(['chains', id], `evm.sponsor.chains: the local dev chain ${id} is only for local* envs`);
     if (c.opStack !== OP_STACK_TEST_CHAIN_IDS.includes(n)) p('opStack', `must be ${String(OP_STACK_TEST_CHAIN_IDS.includes(n))} for chain ${id}`);
-    const rpcProblem = rpcUrlProblem(c.rpc, m.name);
+    const rpcProblem = sponsorRpcUrlProblem(c.rpc, isLocalEnv(m.name));
     if (rpcProblem) p('rpc', rpcProblem);
     if (c.rpcFallback !== undefined) {
-      const fbProblem = rpcUrlProblem(c.rpcFallback, m.name);
+      const fbProblem = sponsorRpcUrlProblem(c.rpcFallback, isLocalEnv(m.name));
       if (fbProblem) p('rpcFallback', fbProblem);
       else if (c.rpcFallback === c.rpc) p('rpcFallback', 'must be a different endpoint from rpc');
       else if (!isLocalEnv(m.name) && safeSite(c.rpcFallback) !== null && safeSite(c.rpcFallback) === safeSite(c.rpc)) p('rpcFallback', `must be another provider (registrable domain) than rpc outside local* envs (both are ${safeSite(c.rpc)})`);
@@ -229,8 +297,8 @@ export function evmSponsorProblems(m: { name: string; network: string; evm?: { s
     if (c.minGas >= c.maxGasPerTx) p('minGas', `(${c.minGas}) must be below maxGasPerTx (${c.maxGasPerTx})`);
     if (c.maxPriorityFeePerGasGwei > c.maxFeePerGasGwei) p('maxPriorityFeePerGasGwei', `(${c.maxPriorityFeePerGasGwei}) must not exceed maxFeePerGasGwei (${c.maxFeePerGasGwei})`);
     // One transaction at its worst case (gas limit × fee cap, before any L1 data fee) must fit the app's day.
-    const worstWei = BigInt(c.maxGasPerTx) * BigInt(Math.round(c.maxFeePerGasGwei * 1e9));
-    if (worstWei > BigInt(Math.round(c.appDailyBudgetEth * 1e9)) * 10n ** 9n) p('maxGasPerTx', `× maxFeePerGasGwei (one transaction's worst case) must fit in appDailyBudgetEth (${c.appDailyBudgetEth})`);
+    const worstWei = BigInt(c.maxGasPerTx) * (sponsorDecimalUnits(c.maxFeePerGasGwei, 9) ?? 0n);
+    if (worstWei > (sponsorDecimalUnits(c.appDailyBudgetEth, 9) ?? 0n) * 10n ** 9n) p('maxGasPerTx', `× maxFeePerGasGwei (one transaction's worst case) must fit in appDailyBudgetEth (${c.appDailyBudgetEth})`);
     const pairs: [string, number, string, number][] = [
       ['appDailyBudgetEth', c.appDailyBudgetEth, 'dailyBudgetEth', c.dailyBudgetEth],
       ['perAppPerDay', c.perAppPerDay, 'sendsPerDay', c.sendsPerDay],

@@ -1243,7 +1243,8 @@ vault must be deployed for the relay to serve anyone). Turning it off: remove `n
 **Not live.** Only the manifest block, its generation and the API's config parser exist (branch
 `feat/evm-sponsor-manifest`); the delegate contract, the relayer, the routes, the vault's signing and the SDK come in
 later packages, and no env sets the block. Nothing here is deployed, and nothing is to be set up yet. Testnet only;
-Base Sepolia first.
+Base Sepolia first. **The generators refuse any env that carries the block until core's pinned delegate table is wired
+into them (the next package)**: don't add it to a manifest yet.
 
 What it will do: a user's EVM wallet, which holds no ETH, sends calls to allowlisted contracts through Journear's own
 relayer, which pays the network fee within daily budgets. The user signs one batch (and, the first time, an EIP-7702
@@ -1256,11 +1257,14 @@ allowlist: per app and chain, contract addresses and function selectors; calls c
 (D836): 0.02 test ETH per day across the env, 0.01 per app, 30 sends per user per day, 2000 per app, 5000 across the
 env, 60 a minute. A partner can't add a target: an allowlist change is a manifest change by staff, `gen` and a deploy.
 
-**Generation.** `corepack pnpm --filter @hana-id/api gen <env>` writes `EVM_SPONSOR` (the block as JSON, fields in a
-fixed order) after checking every chain's `delegate` against core's pinned delegate table and that the API's own
-parser accepts the var; the page build (`gen-envs`) puts `{ chainId: { delegate, relayer } }` into the vault's
-generated envs after the same delegate check. Without the block neither writes anything (sponsorship off). With it and
-no pinned table, or a chain the table doesn't pin, both refuse.
+**Generation.** Without the block neither generator writes anything (sponsorship off). With it, both need core's
+pinned delegate table passed in (`sponsorDelegates`), which their `main`s don't do yet, so today **both refuse the env**
+("no pinned delegate table"). Once it is wired: `corepack pnpm --filter @hana-id/api gen <env>` writes `EVM_SPONSOR`
+(the block as JSON, fields in a fixed order) after checking every chain's `delegate` against the table and that the
+API's own parser accepts the var; the page build (`gen-envs`) puts `{ chainId: { delegate, relayer } }` into the
+vault's generated envs after the same check; a chain the table doesn't pin is refused. The API checks the delegates
+against the table again at run time (`parseEvmSponsorConfig`'s `pinnedDelegates`). RPC URLs carry no API key (no
+credentials, path or query): a keyed RPC goes in a secret.
 
 **The relayer's key** is the API secret `EVM_RELAY_KEYS`: a JSON array of one `0x` + 64 lowercase hex secp256k1 key,
 kept in `.secrets/<env>/evm-relay-keys.json` (0600). `gen <env> --dev-vars` writes it to `.dev.vars` only when the

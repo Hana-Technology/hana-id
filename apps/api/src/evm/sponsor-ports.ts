@@ -9,7 +9,7 @@
 // a key, a signature or an address. RPC failures become SponsorRpcError with a fixed message; the handlers answer them as
 // `502 evm_rpc_unavailable` and never echo a node's error text.
 import { keccak_256 } from '@noble/hashes/sha3';
-import type { SignedAuthorization } from '@hana-id/core/evm-sponsor';
+import type { ExecuteInput, SignedAuthorization } from '@hana-id/core/evm-sponsor';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
 import type { EvmSponsorChainConfig } from './sponsor-config.ts';
@@ -18,22 +18,21 @@ export type Hex = `0x${string}`;
 
 // ---- The relayer (the relayer branch's EvmRelayer RPC interface) ----
 
-/** What the handler asks the relayer to send: the user's batch, to the user's account, at the handler's gas and fees. */
+/**
+ * What the handler asks the relayer to send: the user's signed batch (core's Execute input and its signature; the
+ * relayer recomputes the digest and calldata, checks the signature and the pinned implementation itself), at the
+ * handler's gas and fees.
+ */
 export interface EvmRelayerSendRequest {
-  /** The batch's EIP-712 digest (the relayer's idempotency key). */
-  digest: Hex;
   chainId: number;
-  /** The user's account. */
-  to: Hex;
-  /** `execute(...)` calldata. */
-  data: Hex;
+  execute: ExecuteInput;
+  /** 65 bytes r ‖ s ‖ v. */
+  signature: Hex;
   gas: bigint;
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
   /** Present only when the account is not delegated yet: the transaction is then type 4. */
   authorization?: SignedAuthorization;
-  /** The batch's deadline (unix seconds): past it the relayer frees the nonce. */
-  deadline: bigint;
   /** The worst case the handler reserved for this transaction (wei). */
   reservedWei: bigint;
 }
@@ -45,7 +44,11 @@ export interface EvmRelayerSendResult {
   raw: Hex;
   /** True when the relayer had already sent this digest: no second transaction, that one's latest version. */
   replay: boolean;
+  /** executeDigest(execute) as the relayer computed it (must be the handler's). */
+  digest: Hex;
 }
+
+export type EvmRelayerBlockedReason = 'key_changed_with_pending' | 'counts_disagree' | 'rpc_unavailable' | 'nonce_gap';
 
 export interface EvmRelayerStatus {
   address: Hex;
@@ -53,14 +56,26 @@ export interface EvmRelayerStatus {
   /** The oldest pending transaction's age in ms, or null when none is pending. */
   oldestPendingMs: number | null;
   nextNonce: number | null;
+  /** Why the relayer signs nothing right now, or null. */
+  blockedReason: EvmRelayerBlockedReason | null;
 }
 
 /** Every hash the relayer signed for a digest's nonce (oldest first; fee bumps and a deadline cancel add to it). */
 export interface EvmRelayerLookup {
+  digest: Hex;
   relayerNonce: number;
+  /** The mined version's hash once known, else the latest version's. */
   transactionHash: Hex;
   hashes: Hex[];
-  state: 'pending' | 'cancelling' | 'mined';
+  /**
+   * `pending`; `cancelling` (past its deadline, its latest version a self-transfer); `mined` (one of its hashes mined:
+   * `minedHash`); `taken` (its nonce confirmed, none of its hashes mined: the batch did not run).
+   */
+  state: 'pending' | 'cancelling' | 'mined' | 'taken';
+  /** The hash with a receipt (tentative while pending), or null. */
+  minedHash: Hex | null;
+  /** Which version mined: the batch (`execute`) or the deadline's self-transfer (`cancel`); null when none known. */
+  outcome: 'execute' | 'cancel' | null;
   reservedWei: bigint;
 }
 
@@ -75,8 +90,8 @@ export interface EvmRelayerPort {
 export const evmRelayerName = (chainId: number, keyIndex = 0): string => `evm-relayer-${chainId}-${keyIndex}`;
 
 /** The relayer's refusals: thrown as `Error('evm_relayer:<code>[:<reason>]')`; a coded error means nothing was sent. */
-export type EvmRelayerErrorCode = 'relayer_unconfigured' | 'relayer_misconfigured' | 'invalid_request' | 'wrong_chain' | 'deadline_passed' | 'relayer_busy' | 'rpc_unavailable' | 'rejected' | 'internal';
-const RELAYER_CODES: ReadonlySet<string> = new Set(['relayer_unconfigured', 'relayer_misconfigured', 'invalid_request', 'wrong_chain', 'deadline_passed', 'relayer_busy', 'rpc_unavailable', 'rejected', 'internal']);
+export type EvmRelayerErrorCode = 'relayer_unconfigured' | 'relayer_misconfigured' | 'invalid_request' | 'fees_too_high' | 'wrong_chain' | 'deadline_passed' | 'relayer_busy' | 'daily_cap' | 'rpc_unavailable' | 'rejected' | 'internal';
+const RELAYER_CODES: ReadonlySet<string> = new Set(['relayer_unconfigured', 'relayer_misconfigured', 'invalid_request', 'fees_too_high', 'wrong_chain', 'deadline_passed', 'relayer_busy', 'daily_cap', 'rpc_unavailable', 'rejected', 'internal']);
 
 /**
  * A relayer refusal's code and reason, or null for any other failure (an object reset, an unreachable stub): then
@@ -128,6 +143,11 @@ export interface SponsorReceipt {
   effectiveGasPrice: bigint;
   /** The OP Stack L1 data fee the transaction paid (null where the chain reports none). */
   l1Fee: bigint | null;
+  /**
+   * The OP Stack operator fee (Isthmus: gasUsed × operatorFeeScalar ÷ 10^6 + operatorFeeConstant, from the receipt's
+   * fields), null where the receipt reports none. Optional: a client that doesn't read it leaves it out.
+   */
+  operatorFee?: bigint | null;
   logs: SponsorLog[];
 }
 
@@ -231,6 +251,7 @@ export function parseReceipt(v: unknown): SponsorReceipt | null {
     gasUsed: qty(r.gasUsed),
     effectiveGasPrice: qty(r.effectiveGasPrice),
     l1Fee: r.l1Fee === undefined || r.l1Fee === null ? null : qty(r.l1Fee),
+    operatorFee: r.operatorFeeScalar === undefined || r.operatorFeeScalar === null ? null : (r.gasUsed !== undefined ? (qty(r.gasUsed) * qty(r.operatorFeeScalar)) / 1_000_000n : 0n) + (r.operatorFeeConstant === undefined || r.operatorFeeConstant === null ? 0n : qty(r.operatorFeeConstant)),
     logs,
   };
 }

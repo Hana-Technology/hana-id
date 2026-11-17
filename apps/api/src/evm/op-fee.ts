@@ -8,7 +8,7 @@
 // pre-loop overhead is the README's cold first-batch figure (29 719 for one call) plus 1 400 per further call (measured
 // 33 785 for four, about 1 360 each) plus 2 gas per byte of the calls' data (copying and hashing it; the measured
 // figures are for 4-byte calls). The worst case reserved is gasLimit × maxFeePerGas + the L1 data fee's upper bound.
-import type { Hex, SponsorChainPort } from './sponsor-ports.ts';
+import { type Hex, revertOf, type SponsorChainPort } from './sponsor-ports.ts';
 
 export const TX_BASE_GAS = 21_000n;
 /** EIP-7623's floor price per calldata token. */
@@ -64,11 +64,33 @@ export function maxMinGasFor(i: Omit<GasInput, 'minGas'>, maxGasPerTx: bigint): 
 
 export type FeeQuote = { ok: true; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } | { ok: false; baseFee: bigint };
 
-/** maxFee = min(2 × baseFee + tip, cap); a base fee above the cap is refused (`gas_price_too_high`). */
-export function sponsorFees(baseFee: bigint, tip: bigint, cap: bigint): FeeQuote {
-  if (baseFee > cap) return { ok: false, baseFee };
+/** The relayer's replacement bump: × 9/8, rounded up (its EVM_RELAYER_FEE_BUMP). */
+const bump = (x: bigint): bigint => (x * 9n + 7n) / 8n;
+
+/**
+ * The highest fees a send may start at so the relayer can still replace it twice (+12.5% each, rounded up) within the
+ * chain's caps: the relayer's own `maxStartingFees` (it refuses a start above, `fees_too_high`), the same rule.
+ */
+export function maxStartingFees(caps: { maxFeePerGasWei: bigint; maxPriorityFeePerGasWei: bigint }): { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } {
+  const highest = (cap: bigint): bigint => {
+    let x = (cap * 64n) / 81n;
+    while (x > 0n && bump(bump(x)) > cap) x--;
+    return x;
+  };
+  return { maxFeePerGas: highest(caps.maxFeePerGasWei), maxPriorityFeePerGas: highest(caps.maxPriorityFeePerGasWei) };
+}
+
+/**
+ * maxFee = min(2 × baseFee + tip, the starting cap), the tip at most its starting cap and the max fee; a base fee above
+ * the starting cap is refused (`gas_price_too_high`).
+ */
+export function sponsorFees(baseFee: bigint, caps: { maxFeePerGasWei: bigint; maxPriorityFeePerGasWei: bigint }): FeeQuote {
+  const start = maxStartingFees(caps);
+  if (baseFee > start.maxFeePerGas) return { ok: false, baseFee };
+  const tip = caps.maxPriorityFeePerGasWei < start.maxPriorityFeePerGas ? caps.maxPriorityFeePerGasWei : start.maxPriorityFeePerGas;
   const want = 2n * baseFee + tip;
-  return { ok: true, maxFeePerGas: want < cap ? want : cap, maxPriorityFeePerGas: tip };
+  const maxFeePerGas = want < start.maxFeePerGas ? want : start.maxFeePerGas;
+  return { ok: true, maxFeePerGas, maxPriorityFeePerGas: tip < maxFeePerGas ? tip : maxFeePerGas };
 }
 
 /** The OP Stack GasPriceOracle predeploy. */
@@ -107,13 +129,59 @@ export class L1FeeUnavailable extends Error {
   }
 }
 
-/** The reservation: gasLimit × maxFeePerGas + the L1 bound. */
-export const worstCaseWei = (gasLimit: bigint, maxFeePerGas: bigint, l1Bound: bigint): bigint => gasLimit * maxFeePerGas + l1Bound;
+/** `getOperatorFee(uint256 gasUsed)`'s selector (OP Stack Isthmus and later). */
+export const OPERATOR_FEE_SELECTOR: Hex = '0x275aedd2';
 
 /**
- * What a mined transaction cost the relayer: gasUsed × effectiveGasPrice + its L1 fee. On the OP Stack a receipt without
- * `l1Fee` is charged the bound (the budget errs on the side of spending less).
+ * The OP Stack operator fee's upper bound (wei) for a transaction using at most `gasLimit` (Isthmus:
+ * `gasUsed × operatorFeeScalar ÷ 10^6 + operatorFeeConstant`, increasing in gas used, so its value at the gas limit
+ * bounds it). 0 off the OP Stack, and on a chain whose oracle has no `getOperatorFee` (it reverts: before Isthmus there
+ * is no operator fee). Any other failure or answer is refused (L1FeeUnavailable): sponsorship fails closed.
  */
-export function receiptCostWei(r: { gasUsed: bigint; effectiveGasPrice: bigint; l1Fee: bigint | null }, opStack: boolean, l1Bound: bigint): bigint {
-  return r.gasUsed * r.effectiveGasPrice + (opStack ? (r.l1Fee ?? l1Bound) : 0n);
+export async function operatorFeeUpperBound(chain: SponsorChainPort, opStack: boolean, from: Hex, gasLimit: bigint): Promise<bigint> {
+  if (!opStack) return 0n;
+  let r: Hex;
+  try {
+    r = await chain.call({ from, to: GAS_PRICE_ORACLE, data: `${OPERATOR_FEE_SELECTOR}${gasLimit.toString(16).padStart(64, '0')}` });
+  } catch (e) {
+    if (revertOf(e)) return 0n;
+    throw new L1FeeUnavailable();
+  }
+  if (!/^0x[0-9a-f]{64}$/u.test(r.toLowerCase())) throw new L1FeeUnavailable();
+  return BigInt(r);
+}
+
+/**
+ * The reservation: gasLimit × the chain's fee cap (the relayer may replace the transaction with fees up to it) + the L1
+ * data fee's bound + the operator fee's bound.
+ */
+export const worstCaseWei = (gasLimit: bigint, feeCap: bigint, l1Bound: bigint, operatorBound = 0n): bigint => gasLimit * feeCap + l1Bound + operatorBound;
+
+/** What the reservation was made of, for bounding a receipt's figures (receiptCost). */
+export interface ReservedFor {
+  gasLimit: bigint;
+  feeCap: bigint;
+  l1Bound: bigint;
+  operatorBound: bigint;
+  reservedWei: bigint;
+}
+
+/** A receipt's L1 fee may exceed the oracle's bound by this factor (the L1 base fee moves between the read and inclusion). */
+export const L1_FEE_SLACK = 2n;
+
+/**
+ * What a mined transaction cost the relayer: gasUsed × effectiveGasPrice + its L1 fee + its operator fee, each checked
+ * against what the reservation assumed: 21 000 ≤ gasUsed ≤ the gas limit, effectiveGasPrice ≤ the fee cap, l1Fee ≤ 2 ×
+ * the bound, operatorFee ≤ its bound (or 2 × the L1 bound when the oracle had none). A receipt outside that (a lying or
+ * broken RPC) is settled at the reservation and reported `odd`. On the OP Stack a receipt without `l1Fee` is charged
+ * the bound.
+ */
+export function receiptCost(r: { gasUsed: bigint; effectiveGasPrice: bigint; l1Fee: bigint | null; operatorFee?: bigint | null }, opStack: boolean, f: ReservedFor): { cost: bigint; odd: boolean } {
+  const l1 = opStack ? (r.l1Fee ?? f.l1Bound) : 0n;
+  // A receipt that doesn't report the operator fee (a client that doesn't read it) is charged its bound.
+  const op = opStack ? (r.operatorFee ?? f.operatorBound) : 0n;
+  const opCap = f.operatorBound > 0n ? f.operatorBound : f.l1Bound * L1_FEE_SLACK;
+  const odd = r.gasUsed < TX_BASE_GAS || r.gasUsed > f.gasLimit || r.effectiveGasPrice > f.feeCap || l1 > f.l1Bound * L1_FEE_SLACK || l1 < 0n || op > opCap;
+  if (odd) return { cost: f.reservedWei, odd: true };
+  return { cost: r.gasUsed * r.effectiveGasPrice + l1 + op, odd: false };
 }

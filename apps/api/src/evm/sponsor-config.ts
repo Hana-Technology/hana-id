@@ -352,6 +352,9 @@ function parseChain(id: number, v: unknown, localEnv: boolean): EvmSponsorChainC
   // Absent means the default; null is a value, and not a boolean (as the schema refuses it).
   const requireKnownAccount = v.requireKnownAccount === undefined ? true : v.requireKnownAccount;
   if (typeof requireKnownAccount !== 'boolean') fail(`${what}.requireKnownAccount is not a boolean`);
+  // Off, anyone holding a publishable key could make the relayer pay from accounts they make up: local* envs only (as
+  // the manifest schema rules).
+  if (requireKnownAccount === false && !localEnv) fail(`${what}.requireKnownAccount false is only for local* envs`);
   return {
     chainId: id,
     rpc,

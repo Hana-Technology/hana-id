@@ -12,7 +12,7 @@ export async function handleEvmSponsorStatus(request: Request, env: Env, request
   const ctx = newCtx(env, requestId, EVM_SPONSOR_STATUS_ENDPOINT, request);
   const config = evmSponsorReady(env);
   if (!config) return unconfigured(ctx);
-  const gate = await appGate(request, env, ctx, 'evm-sponsor');
+  const gate = await appGate(request, env, ctx, 'evm-sponsor-status');
   if (!gate.ok) return gate.response;
   const { app } = gate;
   const q = toStatusQuery(new URL(request.url));

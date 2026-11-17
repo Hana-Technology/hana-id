@@ -148,6 +148,8 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   evm_relay_budget_high: 'EVM sponsorship daily budget running high',
   evm_relay_balance_low: 'EVM sponsorship relayer running low',
   evm_relay_stuck: 'EVM sponsorship relayer transaction stuck',
+  evm_relay_receipt_odd: 'EVM sponsorship receipt outside its reservation',
+  evm_relay_nonce_taken: 'EVM sponsorship relayer nonce taken by another transaction',
 };
 
 /** A security event's kind in words; an unknown kind reads as its own words. */

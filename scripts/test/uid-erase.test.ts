@@ -363,7 +363,7 @@ describe('uid-erase and the sponsored EVM sends (D848)', PGLITE, () => {
     const evm = `0x${'a1'.repeat(20)}`;
     const olivia = `0x${'d4'.repeat(20)}`;
     api.prepare("INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?, 'evm', ?, 0, 1, 2)").run(root, evm);
-    const row = api.prepare("INSERT INTO evm_sponsor_sends (id, app_id, chain_id, account, user_id, digest, execute_nonce, reserved_wei, status, request_id, created_at, updated_at) VALUES (?, 'app_a', 84532, ?, ?, ?, '0', '1', 'executed', 'rq', 1, 2)");
+    const row = api.prepare("INSERT INTO evm_sponsor_sends (id, app_id, chain_id, account, user_id, digest, execute_nonce, reserved_wei, deadline, gas_limit, fee_cap_wei, l1_bound_wei, op_bound_wei, status, request_id, created_at, updated_at) VALUES (?, 'app_a', 84532, ?, ?, ?, '0', '1', 100, '1', '1', '0', '0', 'executed', 'rq', 1, 2)");
     let k = 0;
     const id = () => `es_${String(++k).padStart(32, '0')}`;
     const digest = `0x${'ee'.repeat(32)}`;

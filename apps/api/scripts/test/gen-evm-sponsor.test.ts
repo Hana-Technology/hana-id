@@ -129,6 +129,14 @@ describe('the two packages’ shared rules are the same functions', () => {
       const workerOk = parseEvmSponsorConfig(json, { network: 'testnet', envName: base.name, pinnedDelegates: FIXTURE_PINNED_DELEGATES }).status === 'configured';
       expect(workerOk, json).toBe(schemaOk);
     }
+    // requireKnownAccount false: refused by both outside local* envs, accepted by both in one.
+    const off = withChain({ requireKnownAccount: false });
+    for (const name of [base.name, 'local-dev']) {
+      const schemaOk = manifestSchema.safeParse({ ...base, name, evm: { sponsor: JSON.parse(off) as unknown } }).success;
+      const workerOk = parseEvmSponsorConfig(off, { network: 'testnet', envName: name, pinnedDelegates: FIXTURE_PINNED_DELEGATES }).status === 'configured';
+      expect([name, workerOk], off).toEqual([name, schemaOk]);
+      expect(workerOk).toBe(name === 'local-dev');
+    }
   });
 });
 

@@ -6,10 +6,11 @@ import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
-import { checkEvmSponsorRelay, EVM_SPONSOR_PREPARE_ENDPOINT as PREPARE, EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, sponsorPins, sponsorTiming } from '../src/evm/sponsor.ts';
-import { DEFAULT_SPONSOR_PORTS, type Hex, sponsorPorts } from '../src/evm/sponsor-ports.ts';
+import { checkEvmSponsorRelay, evmSponsorConfig, EVM_SPONSOR_PREPARE_ENDPOINT as PREPARE, EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, sponsorPins, sponsorTiming } from '../src/evm/sponsor.ts';
+import { DEFAULT_SPONSOR_PORTS, type Hex, keccakHex, sponsorPorts } from '../src/evm/sponsor-ports.ts';
+import { pruneEvmSponsorSends, reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
 import { EVM_SPONSOR_LIMITS } from '../src/evm/sponsor-checks.ts';
-import { sponsorGasLimit } from '../src/evm/op-fee.ts';
+import { maxStartingFees, sponsorGasLimit } from '../src/evm/op-fee.ts';
 import { encodeExecuteCalldata } from '@hana-id/core/evm-sponsor';
 import { appHeaders, ORIGIN, seedApp, type SeededApp, startOfMinuteClock } from './helpers.ts';
 import { vaultHeaders } from './vault-helpers.ts';
@@ -27,6 +28,9 @@ import {
   RELAYER,
   rememberAccount,
   revert as revertErr,
+  digestOf,
+  rawFor,
+  receiptFor,
   type ReceiptKind,
   reads,
   signedSend,
@@ -92,6 +96,7 @@ beforeEach(async () => {
     }
   }
   await env.DB.exec("DELETE FROM security_events WHERE kind LIKE 'evm_relay_%'");
+  await env.DB.exec('DELETE FROM evm_sponsor_sends');
 });
 beforeEach(() => {
   receiptKind = 'executed';
@@ -154,13 +159,19 @@ describe('the gate: the vault only for prepare and send (D832)', () => {
     expect(s.chain.calls).toEqual([]);
   });
 
-  it('a cross-app per-IP window: 30 a minute from one IP across the three routes, then 429', async () => {
+  it('per-IP windows across apps: 30 a minute for prepare and send, 60 for status, apart', async () => {
     const s = await setup();
     const headers = { ...vaultHeaders(s.app), 'cf-connecting-ip': '10.9.9.9' };
     const codes: number[] = [];
-    for (let i = 0; i < EVM_SPONSOR_LIMITS.perIpPerMinute + 1; i++) codes.push((await status(s, '?chainId=31337', headers)).status);
-    expect(codes.slice(0, -1).every((c) => c === 200)).toBe(true);
+    const b = { chainId: 1, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] };
+    for (let i = 0; i < EVM_SPONSOR_LIMITS.perIpPerMinute + 1; i++) codes.push((await prepare(s, b, headers)).status);
+    expect(codes.slice(0, -1).every((c) => c === 400)).toBe(true);
     expect(codes.at(-1)).toBe(429);
+    // The status window is its own: still open.
+    const st: number[] = [];
+    for (let i = 0; i < EVM_SPONSOR_LIMITS.statusPerIpPerMinute + 1; i++) st.push((await status(s, '?chainId=31337', headers)).status);
+    expect(st.slice(0, -1).every((c) => c === 200)).toBe(true);
+    expect(st.at(-1)).toBe(429);
   });
 });
 
@@ -256,15 +267,17 @@ describe('POST /v1/evm/sponsor/send: a delegated account', () => {
     const req = s.relayer.sends[0]!;
     const calldata = encodeExecuteCalldata(signed.input, signed.body.signature as Hex);
     const gas = sponsorGasLimit({ calldata, callData: [CHECK_IN_DATA], minGas: 100_000n, authorizations: 0 });
-    // base fee 0.1 gwei: 2 × 0.1 + 0.01 tip = 0.21 gwei, under the 1 gwei cap.
-    expect(req).toEqual({ digest: signed.digest, chainId: LOCAL_CHAIN, to: s.user.address, data: calldata, gas, maxFeePerGas: 210_000_000n, maxPriorityFeePerGas: 10_000_000n, deadline: BigInt(signed.body.deadline as string), reservedWei: gas * 210_000_000n });
+    // base fee 0.1 gwei: 2 × 0.1 + the tip (0.01 gwei, at most its starting cap, as the relayer's maxStartingFees), under
+    // the starting cap. The reservation is at the 1 gwei cap (the relayer may replace the transaction up to it).
+    const start = maxStartingFees({ maxFeePerGasWei: 1_000_000_000n, maxPriorityFeePerGasWei: 10_000_000n });
+    expect(req).toEqual({ chainId: LOCAL_CHAIN, execute: signed.input, signature: signed.body.signature, gas, maxFeePerGas: 200_000_000n + start.maxPriorityFeePerGas, maxPriorityFeePerGas: start.maxPriorityFeePerGas, reservedWei: gas * 1_000_000_000n });
     expect(s.relayer.names).toContain('evm-relayer-31337-0');
-    // The simulation: from the relayer, to the account, the exact calldata, at exactly the gas limit, no override.
+    // The simulation: from the relayer, to the account, the exact calldata, at exactly the gas limit (no authorization), no override.
     const sim = s.chain.calls.find((c) => c.method === 'call' && (c.args as { data: string }).data === calldata)!.args;
     expect(sim).toEqual({ from: RELAYER, to: s.user.address, data: calldata, gas });
     // Settled to gasUsed × price (60 000 × 0.15 gwei), on the app's budget and the env's.
     expect([await appSpent(s.app), await envSpent()]).toEqual([9_000_000_000_000n, 9_000_000_000_000n]);
-    expect(await auditRows(s.user.address)).toEqual([{ status: 'executed', tx_hash: b.transactionHash, reserved_wei: (gas * 210_000_000n).toString(), settled_wei: '9000000000000', user_id: s.userId, relayer_nonce: 0, app_id: s.app.id }]);
+    expect(await auditRows(s.user.address)).toEqual([{ status: 'executed', tx_hash: b.transactionHash, reserved_wei: (gas * 1_000_000_000n).toString(), settled_wei: '9000000000000', user_id: s.userId, relayer_nonce: 0, app_id: s.app.id }]);
     // The same request again: answered from the audit row (idempotent), no chain read, no second send.
     s.chain.calls.length = 0;
     const again = await send(s, signed.body);
@@ -292,21 +305,28 @@ describe('POST /v1/evm/sponsor/send: a delegated account', () => {
     expect(s.relayer.sends).toEqual([]);
   });
 
-  it('a nonce the chain has used: 409 nonce_stale, the floor rises, and the next copy is dropped before any chain read', async () => {
+  it('a nonce the chain has used: 409 nonce_stale, the floor rises past that nonce only, and a copy is dropped before any chain read', async () => {
     const s = await setup();
-    s.chain.executeNonce.set(s.user.address.toLowerCase(), 3n);
+    // A lying (or simply ahead) RPC says 1000: the floor rises to the request's own nonce + 1, never to the RPC's figure.
+    s.chain.executeNonce.set(s.user.address.toLowerCase(), 1000n);
     const old = signedSend(s.user, { executeNonce: 1n });
     const res = await send(s, old.body);
-    expect([res.status, (await body(res)).code, (await body(await send(s, old.body))).executeNonce]).toEqual([409, 'nonce_stale', '3']);
+    expect([res.status, (await body(res)).code]).toEqual([409, 'nonce_stale']);
     s.chain.calls.length = 0;
+    const copy = await body(await send(s, old.body));
+    expect([copy.code, copy.executeNonce]).toEqual(['nonce_stale', '2']);
+    expect(s.chain.calls).toEqual([]);
+    // Nonce 2 isn't below the floor: it reads the chain again (and only then is stale).
+    s.chain.executeNonce.set(s.user.address.toLowerCase(), 3n);
     const r2 = await send(s, signedSend(s.user, { executeNonce: 2n }).body);
     expect([r2.status, (await body(r2)).code]).toEqual([409, 'nonce_stale']);
-    expect(s.chain.calls).toEqual([]);
+    expect(s.chain.calls.length).toBeGreaterThan(0);
     // A future nonce is stale too, without moving the floor.
     const r3 = await send(s, signedSend(s.user, { executeNonce: 9n }).body);
     expect([(await body(r3)).code]).toEqual(['nonce_stale']);
     expect((await send(s, signedSend(s.user, { executeNonce: 3n }).body)).status).toBe(200);
   });
+
 
   it('403 gas_too_high when the computed limit passes maxGasPerTx; 503 gas_price_too_high when the base fee passes the cap', async () => {
     const s = await setup();
@@ -320,11 +340,16 @@ describe('POST /v1/evm/sponsor/send: a delegated account', () => {
     expect(await appSpent(s.app)).toBe(0n);
   });
 
-  it('caps maxFeePerGas at the manifest’s cap (2 × base + tip above it)', async () => {
+  it('starts the fees at most at the relayer’s maxStartingFees (room for two replacements), and refuses a base fee above it', async () => {
     const s = await setup();
-    s.chain.baseFeeWei = 900_000_000n;
+    const start = maxStartingFees({ maxFeePerGasWei: 1_000_000_000n, maxPriorityFeePerGasWei: 10_000_000n });
+    s.chain.baseFeeWei = 500_000_000n;
     expect((await send(s, signedSend(s.user).body)).status).toBe(200);
-    expect(s.relayer.sends[0]!.maxFeePerGas).toBe(1_000_000_000n);
+    expect(s.relayer.sends[0]!.maxFeePerGas).toBe(start.maxFeePerGas);
+    s.chain.baseFeeWei = start.maxFeePerGas + 1n;
+    s.chain.executeNonce.set(s.user.address.toLowerCase(), 1n);
+    const r = await send(s, signedSend(s.user, { executeNonce: 1n }).body);
+    expect([r.status, (await body(r)).code]).toEqual([503, 'gas_price_too_high']);
   });
 
   it('502 evm_rpc_unavailable when the chain can’t be read; the RPC’s error text is never echoed', async () => {
@@ -376,6 +401,8 @@ describe('POST /v1/evm/sponsor/send: an account not yet delegated (the one-time 
     expect(req.gas - sponsorGasLimit({ calldata, callData: [CHECK_IN_DATA], minGas: 100_000n, authorizations: 0 })).toBe(27_500n);
     const sim = s.chain.calls.find((c) => c.method === 'call' && (c.args as { data: string }).data === calldata)!.args as { stateOverride: Record<string, unknown> };
     expect(sim.stateOverride).toEqual({ [s.user.address]: { code: DESIGNATOR } });
+    // eth_call has no authorization list: it runs with 25 000 less, the gas the batch will have in the real type-4 send.
+    expect((sim as unknown as { gas: bigint }).gas).toBe(req.gas - 25_000n);
     // The delegate nonce of an account without code is read through the same override.
     const nonceRead = s.chain.calls.find((c) => c.method === 'call' && (c.args as { data: string }).data === '0xaffed0e0')!.args as { stateOverride: Record<string, unknown> };
     expect(nonceRead.stateOverride).toEqual({ [s.user.address]: { code: DESIGNATOR } });
@@ -484,7 +511,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
     fail = false;
     const again = await send(s, signed.body);
     expect(again.status).toBe(200);
-    expect(s.relayer.sends.map((x) => x.digest)).toEqual([signed.digest, signed.digest]);
+    expect(s.relayer.sends.map((x) => digestOf(x))).toEqual([signed.digest, signed.digest]);
     expect(await appSpent(s.app)).toBe(first);
   });
 
@@ -496,6 +523,8 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
       ['evm_relayer:rejected:insufficient_funds', 503, 'relayer_rejected'],
       ['evm_relayer:deadline_passed', 400, 'deadline_out_of_range'],
       ['evm_relayer:invalid_request', 503, 'relayer_unavailable'],
+      ['evm_relayer:fees_too_high', 503, 'gas_price_too_high'],
+      ['evm_relayer:daily_cap', 429, 'budget_exhausted'],
     ];
     for (const [message, statusCode, code] of cases) {
       const s = await setup();
@@ -520,16 +549,16 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
       const { keccakHex } = await import('../src/evm/sponsor-ports.ts');
       const raw = rawFor(req);
       const bumped = keccakHex(rawFor(req, 'bumped'));
-      s.relayer.replaced.set(req.digest, [bumped]);
+      s.relayer.replaced.set(digestOf(req), [bumped]);
       // Only the replacement is mined, dearer than the reservation.
       s.chain.receipts.set(bumped, receiptFor(req, bumped, 'executed', { gasUsed: req.gas, price: req.maxFeePerGas * 2n }));
-      return { transactionHash: keccakHex(raw), relayerNonce: 0, raw, replay: false };
+      return { transactionHash: keccakHex(raw), relayerNonce: 0, raw, replay: false, digest: digestOf(req) };
     };
     const res = await send(s, signedSend(s.user).body);
     expect(res.status).toBe(200);
     const req = s.relayer.sends[0]!;
     expect(await appSpent(s.app)).toBe(req.gas * req.maxFeePerGas * 2n);
-    expect(s.relayer.lookups).toContain(req.digest);
+    expect(s.relayer.lookups).toContain(digestOf(req));
   });
 
   it('a relayer replay whose latest version is the deadline cancel (no Executed log): 422 not_executed', async () => {
@@ -541,7 +570,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
 
   it('a relayer answer whose hash is not its raw transaction’s is not trusted', async () => {
     const s = await setup();
-    s.relayer.onSend = async (req) => ({ transactionHash: `0x${'ab'.repeat(32)}`, relayerNonce: 0, raw: `0x02${req.digest.slice(2)}`, replay: false });
+    s.relayer.onSend = async (req) => ({ transactionHash: `0x${'ab'.repeat(32)}`, relayerNonce: 0, raw: `0x02${digestOf(req).slice(2)}`, replay: false, digest: digestOf(req) });
     expect((await body(await send(s, signedSend(s.user).body))).code).toBe('relayer_unavailable');
   });
 
@@ -553,7 +582,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
       const raw = rawFor(req);
       const hash = keccakHex(raw);
       s.chain.receipts.set(hash, (await import('./evm-sponsor-helpers.ts')).receiptFor(req, hash, 'executed'));
-      return { transactionHash: hash, relayerNonce: 4, raw, replay: true };
+      return { transactionHash: hash, relayerNonce: 4, raw, replay: true, digest: digestOf(req) };
     };
     const res = await send(s, signedSend(s.user).body);
     expect(res.status).toBe(200);
@@ -568,7 +597,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
       const raw = rawFor(req);
       const hash = keccakHex(raw);
       s.chain.receipts.set(hash, receiptFor(req, hash, 'executed', { gasUsed: req.gas, price: req.maxFeePerGas + 1n }));
-      return { transactionHash: hash, relayerNonce: 0, raw, replay: false };
+      return { transactionHash: hash, relayerNonce: 0, raw, replay: false, digest: digestOf(req) };
     };
     expect((await send(s, signedSend(s.user).body)).status).toBe(200);
     const req = s.relayer.sends[0]!;
@@ -693,11 +722,11 @@ describe('the OP Stack L1 data fee (D836 addendum)', () => {
     const res = await send(s, signed.body);
     expect(res.status).toBe(200);
     const req = s.relayer.sends[0]!;
-    expect(req.reservedWei).toBe(req.gas * req.maxFeePerGas + 5_000_000_000_000n);
+    expect(req.reservedWei).toBe(req.gas * 1_000_000_000n + 5_000_000_000_000n);
     const oracle = s.chain.calls.find((c) => c.method === 'call' && (c.args as { to: string }).to === '0x420000000000000000000000000000000000000f')!.args as { data: string };
     const size = BigInt(`0x${oracle.data.slice(10)}`);
     expect(oracle.data.slice(0, 10)).toBe('0xf1c7a58b');
-    expect(size).toBe(BigInt((req.data.length - 2) / 2 + 200));
+    expect(size).toBe(BigInt((encodeExecuteCalldata(req.execute, req.signature).length - 2) / 2 + 200));
     expect(await appSpent(s.app, OP_CHAIN)).toBe(9_000_000_000_000n + 1_000_000_000_000n);
   });
 
@@ -750,11 +779,11 @@ describe('POST /v1/evm/sponsor/prepare', () => {
     expect([isEvmSponsorPrepareResponse(b), isEvmSponsorPrepareResponse(o)]).toEqual([true, true]);
   });
 
-  it('allowed: false with account_unrecorded; the allowlist refusals are the send’s, before any chain read; never signs', async () => {
+  it('an account outside the directory: 409 account_unrecorded before any window or chain read; the allowlist refusals are the send’s; never signs', async () => {
     const s = await setup({}, { known: false });
-    const b = await body(await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] }));
-    expect([b.allowed, b.reason]).toEqual([false, 'account_unrecorded']);
-    s.chain.calls.length = 0;
+    const r0 = await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] });
+    expect([r0.status, (await body(r0)).code]).toEqual([409, 'account_unrecorded']);
+    expect(s.chain.calls).toEqual([]);
     const r = await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: `${CHECK_IN_DATA}00` }] });
     expect([r.status, (await body(r)).code]).toEqual([403, 'call_not_sponsored']);
     expect((await body(await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [], extra: 1 }))).code).toBe('bad_request');
@@ -826,7 +855,7 @@ describe('the relayer checks (cron): balance and stuck transactions', () => {
   it('writes evm_relay_balance_low once a day and evm_relay_stuck once an hour; nothing without the config', async () => {
     const s = await setup();
     s.chain.balanceWei = 10n ** 15n;
-    s.relayer.statusValue = { address: RELAYER, pending: 2, oldestPendingMs: 6 * 60_000, nextNonce: 5 };
+    s.relayer.statusValue = { address: RELAYER, pending: 2, oldestPendingMs: 6 * 60_000, nextNonce: 5, blockedReason: null };
     sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => s.relayer.statusValue, lookup: async () => null });
     const e = { ...env, ...s.bindings } as typeof env;
     await checkEvmSponsorRelay(e);
@@ -838,5 +867,278 @@ describe('the relayer checks (cron): balance and stuck transactions', () => {
     s.chain.calls.length = 0;
     await checkEvmSponsorRelay({ ...e, EVM_SPONSOR: undefined } as typeof env);
     expect(s.chain.calls).toEqual([]);
+  });
+});
+
+// ---- after the independent review (2026-11-17): M1–M3, L1–L5 ----
+
+/** The env a cron run sees for a setup. */
+const cronEnv = (s: Pick<Setup, 'bindings'>) => ({ ...env, ...s.bindings }) as typeof env;
+/** Makes every open row the reconciler's (as if a minute had passed since its last update). */
+const ageRows = (ms = 2 * 60_000) => env.DB.prepare('UPDATE evm_sponsor_sends SET updated_at = created_at - ?1, created_at = created_at - ?1').bind(ms).run();
+const reconcile = async (s: Pick<Setup, 'bindings'>, now = Date.now()) => reconcileEvmSends(cronEnv(s), evmSponsorConfig(cronEnv(s))!, now);
+const failuresSpent = async (subject: string) => BigInt(await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject)).spent('evm-sponsor:failures', 86_400_000));
+
+describe('M1: shared windows are counted only once the chain checks passed', () => {
+  it('refusals after the chain reads (no delegation, a future nonce, too much gas, an RPC failure) never use up the app’s or the env’s minute', async () => {
+    const s = await setup({ sendsPerMinute: 1 });
+    const others = await Promise.all(
+      Array.from({ length: 4 }, async () => {
+        const u = testUser();
+        await rememberAccount(s.app.scope, u.address);
+        return u;
+      }),
+    );
+    // No code and no authorization; a future nonce; too much gas; the chain down.
+    expect((await body(await send(s, signedSend(others[0]!).body))).code).toBe('delegation_required');
+    s.chain.codes.set(others[1]!.address.toLowerCase(), DESIGNATOR);
+    expect((await body(await send(s, signedSend(others[1]!, { executeNonce: 5n }).body))).code).toBe('nonce_stale');
+    s.chain.codes.set(others[2]!.address.toLowerCase(), DESIGNATOR);
+    expect((await body(await send(s, signedSend(others[2]!, { minGas: 290_000n }).body))).code).toBe('gas_too_high');
+    s.chain.down = true;
+    expect((await body(await send(s, signedSend(others[3]!).body))).code).toBe('evm_rpc_unavailable');
+    s.chain.down = false;
+    // The env's one send a minute is still there for a valid batch.
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+  });
+
+  it('a user’s attempts that reach the chain are capped per day (perUserPerDay × 3), before any further chain read', async () => {
+    const s = await setup({ perUserPerDay: 1 });
+    s.chain.codes.delete(s.user.address.toLowerCase());
+    for (let i = 0; i < 3; i++) expect((await body(await send(s, signedSend(s.user, { minGas: 100_000n + BigInt(i) }).body))).code).toBe('delegation_required');
+    s.chain.calls.length = 0;
+    const r = await send(s, signedSend(s.user, { minGas: 100_010n }).body);
+    const b = await body(r);
+    expect([r.status, b.code, b.error]).toEqual([429, 'rate_limited', 'Rate limit exceeded (attempts per user)']);
+    expect(s.chain.calls).toEqual([]);
+  });
+});
+
+describe('M2: prepare without a signature', () => {
+  it('the per-account window is keyed by (account, IP): one IP can’t use up a chosen user’s prepares for others', async () => {
+    const s = await setup();
+    const b = { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] };
+    const from = (ip: string) => ({ ...vaultHeaders(s.app), 'cf-connecting-ip': ip });
+    for (let i = 0; i < EVM_SPONSOR_LIMITS.preparesPerAccountIpPerMinute; i++) expect((await prepare(s, b, from('10.1.1.1'))).status).toBe(200);
+    expect((await prepare(s, b, from('10.1.1.1'))).status).toBe(429);
+    expect((await prepare(s, b, from('10.2.2.2'))).status).toBe(200);
+  });
+
+  it('a user’s failure count is never disclosed: a generic not_available', async () => {
+    const s = await setup();
+    s.chain.simulate = () => {
+      throw revertErr('0x756688fe');
+    };
+    for (let i = 0; i < 3; i++) expect((await body(await send(s, signedSend(s.user, { minGas: 100_000n + BigInt(i) }).body))).code).toBe('simulation_reverted');
+    const b = await body(await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] }));
+    expect([b.allowed, b.reason]).toEqual([false, 'not_available']);
+  });
+});
+
+describe('M3: the settlement survives the client, and the cron reconciles what is left', () => {
+  it('everything after the reservation runs inside waitUntil: a client gone before the answer still gets its batch settled', async () => {
+    const s = await setup();
+    const held: Promise<unknown>[] = [];
+    const exec = { waitUntil: (p: Promise<unknown>) => void held.push(p), passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
+    const { call } = await import('./helpers.ts');
+    // The client never reads the answer: only the waitUntil promise is awaited.
+    void call(SEND, { headers: vaultHeaders(s.app), body: signedSend(s.user).body, env: s.bindings, exec });
+    await new Promise((r) => setTimeout(r, 20));
+    while (held.length === 0) await new Promise((r) => setTimeout(r, 10));
+    await Promise.all(held);
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'executed', settled_wei: '9000000000000' });
+    expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
+  });
+
+  it('a timeout reconciled to executed: settled into the reservation’s day, the failure slot freed, the floor raised; idempotent', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    const req = s.relayer.sends[0]!;
+    expect(await appSpent(s.app)).toBe(req.reservedWei);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
+    const hash = keccakHex(rawFor(req));
+    s.chain.receipts.set(hash, receiptFor(req, hash, 'executed'));
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 1 });
+    expect(await reconcile(s)).toMatchObject({ settled: 0 });
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'executed', settled_wei: '9000000000000' });
+    expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
+    const copy = await body(await send(s, signedSend(s.user).body));
+    expect(copy.status === 'executed' || copy.code === 'nonce_stale').toBe(true);
+  });
+
+  it('a timeout reconciled to reverted (charged, a failure) and to the deadline cancel (the lookup’s mined hash: not_executed)', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    const u2 = testUser();
+    await rememberAccount(s.app.scope, u2.address);
+    s.chain.codes.set(u2.address.toLowerCase(), DESIGNATOR);
+    expect((await send(s, signedSend(u2).body)).status).toBe(504);
+    const [a, b] = s.relayer.sends;
+    const ha = keccakHex(rawFor(a!));
+    s.chain.receipts.set(ha, receiptFor(a!, ha, 'reverted'));
+    const cancel = keccakHex(rawFor(b!, 'cancel'));
+    s.chain.receipts.set(cancel, { ...receiptFor(b!, cancel, 'not_executed'), gasUsed: 21_000n });
+    s.relayer.lookupOverride = async (digest) =>
+      digest === digestOf(b!) ? { relayerNonce: 1, transactionHash: cancel, hashes: [keccakHex(rawFor(b!)), cancel], state: 'mined', digest: digestOf(b!), reservedWei: b!.reservedWei, minedHash: cancel, outcome: 'cancel' } : null;
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 2 });
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'reverted', settled_wei: '9000000000000' });
+    expect((await auditRows(u2.address))[0]).toMatchObject({ status: 'not_executed', settled_wei: (21_000n * 150_000_000n).toString() });
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
+  });
+
+  it('an unknown relayer failure, then the copy the relayer answers as a replay: the reconciler settles the first attempt’s reservation', async () => {
+    const s = await setup();
+    const inner = s.relayer.onSend;
+    let fail = true;
+    s.relayer.onSend = async (req) => {
+      if (fail) throw new Error('the object was reset');
+      return { ...(await inner(req)), replay: true };
+    };
+    const signed = signedSend(s.user);
+    expect((await send(s, signed.body)).status).toBe(503);
+    fail = false;
+    expect((await send(s, signed.body)).status).toBe(200);
+    expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 1 });
+    // The first attempt's reservation is now the receipt's cost, counted once; both rows say executed.
+    expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
+    expect((await auditRows(s.user.address)).map((r) => r.status)).toEqual(['executed', 'executed']);
+  });
+
+  it('a send the relayer never had (unknown to it 2 to 9 minutes past the deadline): everything back, refused; later only lost', async () => {
+    const s = await setup();
+    s.relayer.onSend = async () => {
+      throw new Error('the object was reset');
+    };
+    const signed = signedSend(s.user);
+    expect((await send(s, signed.body)).status).toBe(503);
+    s.relayer.lookupOverride = async () => null;
+    await ageRows();
+    const deadlineMs = Number(signed.body.deadline) * 1000;
+    expect(await reconcile(s, deadlineMs + 60_000)).toMatchObject({ open: 1 });
+    expect(await reconcile(s, deadlineMs + 3 * 60_000)).toMatchObject({ refused: 1 });
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
+    // Another one found only after the relayer would have forgotten it: lost, the reservation kept.
+    const s2 = await setup();
+    s2.relayer.onSend = s.relayer.onSend;
+    s2.relayer.lookupOverride = async () => null;
+    const signed2 = signedSend(s2.user);
+    expect((await send(s2, signed2.body)).status).toBe(503);
+    await ageRows();
+    expect(await reconcile(s2, Number(signed2.body.deadline) * 1000 + 11 * 60_000)).toMatchObject({ lost: 1 });
+    expect(await appSpent(s2.app)).toBe(s2.relayer.sends[0]!.reservedWei);
+  });
+
+  it('a row left open over 10 minutes writes evm_relay_stuck', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    await ageRows(11 * 60_000);
+    await reconcile(s);
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").all<{ detail_json: string }>();
+    expect(ev.results.length).toBe(1);
+    expect(JSON.parse(ev.results[0]!.detail_json)).toMatchObject({ chainId: LOCAL_CHAIN, pending: 1 });
+  });
+});
+
+describe('L2: a receipt outside what was reserved is settled at the reservation', () => {
+  for (const [what, cost] of [
+    ['more gas used than the limit', (g: bigint, _f: bigint) => ({ gasUsed: g + 1n, price: 1n })],
+    ['a price above the fee cap', (_g: bigint, _f: bigint) => ({ gasUsed: 50_000n, price: 1_000_000_001n })],
+    ['less than the base 21 000', (_g: bigint, _f: bigint) => ({ gasUsed: 20_999n, price: 1n })],
+  ] as const) {
+    it(what, async () => {
+      const s = await setup();
+      s.relayer.onSend = async (req) => {
+        const raw = rawFor(req);
+        const hash = keccakHex(raw);
+        s.chain.receipts.set(hash, receiptFor(req, hash, 'executed', cost(req.gas, req.maxFeePerGas)));
+        return { transactionHash: hash, relayerNonce: 0, raw, replay: false, digest: digestOf(req) };
+      };
+      expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+      expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+      const ev = await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_receipt_odd'").first<{ n: number }>();
+      expect(ev?.n).toBe(1);
+    });
+  }
+});
+
+describe('L3: the OP Stack operator fee', () => {
+  it('its bound (getOperatorFee at the gas limit) is reserved and the receipt’s operator fee settled; an oracle that fails other than by reverting fails closed', async () => {
+    sponsorPins.table = { ...SPONSOR_DELEGATES, [OP_CHAIN]: { address: OP_DELEGATE } };
+    const s = await setup({}, { chainId: OP_CHAIN });
+    s.chain.l1BoundWei = 1_000n;
+    s.chain.operatorBoundWei = 7_000_000_000_000n;
+    s.relayer.onSend = async (req) => {
+      const raw = rawFor(req);
+      const hash = keccakHex(raw);
+      s.chain.receipts.set(hash, receiptFor(req, hash, 'executed', { gasUsed: 60_000n, price: 150_000_000n, l1Fee: 500n, operatorFee: 3_000_000_000_000n }));
+      return { transactionHash: hash, relayerNonce: 0, raw, replay: false, digest: digestOf(req) };
+    };
+    expect((await send(s, signedSend(s.user, { chainId: OP_CHAIN }).body)).status).toBe(200);
+    const req = s.relayer.sends[0]!;
+    expect(req.reservedWei).toBe(req.gas * 1_000_000_000n + 1_000n + 7_000_000_000_000n);
+    const opRead = s.chain.calls.find((c) => c.method === 'call' && (c.args as { data: string }).data.startsWith('0x275aedd2'))!.args as { data: string };
+    expect(BigInt(`0x${opRead.data.slice(10)}`)).toBe(req.gas);
+    expect(await appSpent(s.app, OP_CHAIN)).toBe(9_000_000_000_000n + 500n + 3_000_000_000_000n);
+    s.chain.operatorBoundWei = 'fail';
+    s.chain.executeNonce.set(s.user.address.toLowerCase(), 1n);
+    const r = await send(s, signedSend(s.user, { chainId: OP_CHAIN, executeNonce: 1n }).body);
+    expect([r.status, (await body(r)).code]).toEqual([502, 'evm_rpc_unavailable']);
+  });
+});
+
+describe('L5: retention', () => {
+  it('rows older than 24 months are pruned (bounded); newer ones stay', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    await env.DB.prepare('UPDATE evm_sponsor_sends SET created_at = 1, updated_at = 1').run();
+    const u2 = testUser();
+    await rememberAccount(s.app.scope, u2.address);
+    s.chain.codes.set(u2.address.toLowerCase(), DESIGNATOR);
+    expect((await send(s, signedSend(u2).body)).status).toBe(200);
+    expect(await pruneEvmSponsorSends(env)).toBe(1);
+    expect((await auditRows(s.user.address)).length).toBe(0);
+    expect((await auditRows(u2.address)).length).toBe(1);
+  });
+});
+
+describe('the relayer’s final interface (PR #70)', () => {
+  it('a relayer digest that is not the handler’s: an internal error, the reservation kept (unknown)', async () => {
+    const s = await setup();
+    const inner = s.relayer.onSend;
+    s.relayer.onSend = async (req) => ({ ...(await inner(req)), digest: `0x${'99'.repeat(32)}` as Hex });
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([503, 'relayer_unavailable']);
+    expect((await auditRows(s.user.address))[0]?.status).toBe('unknown');
+    expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+  });
+
+  it('state taken with no version mined: not_executed, settled at zero, the failure slot back, an event for staff', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'taken', minedHash: null, outcome: null, reservedWei: 1n });
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([422, 'not_executed']);
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'not_executed', settled_wei: '0' });
+    const ev = await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_nonce_taken'").first<{ n: number }>();
+    expect(ev?.n).toBe(1);
+  });
+
+  it('the relayer’s blockedReason writes evm_relay_stuck even with nothing old pending', async () => {
+    const s = await setup();
+    sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => ({ address: RELAYER, pending: 0, oldestPendingMs: null, nextNonce: 3, blockedReason: 'nonce_gap' }), lookup: async () => null });
+    await checkEvmSponsorRelay(cronEnv(s));
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").all<{ detail_json: string }>();
+    expect(JSON.parse(ev.results[0]!.detail_json)).toMatchObject({ chainId: LOCAL_CHAIN, blockedReason: 'nonce_gap' });
   });
 });

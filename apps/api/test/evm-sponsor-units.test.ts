@@ -13,7 +13,9 @@ import {
   l1FeeUpperBound,
   maxMinGasFor,
   PRE_LOOP_GAS,
-  receiptCostWei,
+  receiptCost,
+  operatorFeeUpperBound,
+  maxStartingFees,
   sponsorFees,
   sponsorGasLimit,
   unsignedTxSizeBound,
@@ -31,6 +33,7 @@ describe('constants', () => {
     expect(L1_FEE_UPPER_BOUND_SELECTOR).toBe(kHex('getL1FeeUpperBound(uint256)').slice(0, 10));
     expect(kHex('nonce()').slice(0, 10)).toBe('0xaffed0e0');
     expect(kHex('CallFailed(uint256,bytes)').slice(0, 10)).toBe('0x5c0dee5d');
+    expect(kHex('getOperatorFee(uint256)').slice(0, 10)).toBe('0x275aedd2');
   });
 });
 
@@ -63,18 +66,46 @@ describe('sponsorGasLimit', () => {
 });
 
 describe('fees and the worst case', () => {
-  it('maxFee = min(2 × base + tip, cap); a base above the cap is refused', () => {
-    expect(sponsorFees(100n, 10n, 1000n)).toEqual({ ok: true, maxFeePerGas: 210n, maxPriorityFeePerGas: 10n });
-    expect(sponsorFees(600n, 10n, 1000n)).toEqual({ ok: true, maxFeePerGas: 1000n, maxPriorityFeePerGas: 10n });
-    expect(sponsorFees(1000n, 10n, 1000n)).toEqual({ ok: true, maxFeePerGas: 1000n, maxPriorityFeePerGas: 10n });
-    expect(sponsorFees(1001n, 10n, 1000n)).toEqual({ ok: false, baseFee: 1001n });
+  it('fees start at most at maxStartingFees (two × 9/8 bumps fit the caps); a base above it is refused; the tip never above maxFee', () => {
+    const caps = { maxFeePerGasWei: 1_000_000_000n, maxPriorityFeePerGasWei: 10_000_000n };
+    const start = maxStartingFees(caps);
+    const bump = (x: bigint) => (x * 9n + 7n) / 8n;
+    expect(bump(bump(start.maxFeePerGas)) <= caps.maxFeePerGasWei && bump(bump(start.maxFeePerGas + 1n)) > caps.maxFeePerGasWei).toBe(true);
+    expect(bump(bump(start.maxPriorityFeePerGas)) <= caps.maxPriorityFeePerGasWei && bump(bump(start.maxPriorityFeePerGas + 1n)) > caps.maxPriorityFeePerGasWei).toBe(true);
+    const tip = start.maxPriorityFeePerGas;
+    expect(sponsorFees(100n, caps)).toEqual({ ok: true, maxFeePerGas: 200n + tip, maxPriorityFeePerGas: tip });
+    expect(sponsorFees(600_000_000n, caps)).toEqual({ ok: true, maxFeePerGas: start.maxFeePerGas, maxPriorityFeePerGas: tip });
+    expect(sponsorFees(start.maxFeePerGas, caps)).toEqual({ ok: true, maxFeePerGas: start.maxFeePerGas, maxPriorityFeePerGas: tip });
+    expect(sponsorFees(start.maxFeePerGas + 1n, caps)).toEqual({ ok: false, baseFee: start.maxFeePerGas + 1n });
+    expect(sponsorFees(0n, { maxFeePerGasWei: 100n, maxPriorityFeePerGasWei: 100n })).toEqual({ ok: true, maxFeePerGas: maxStartingFees({ maxFeePerGasWei: 100n, maxPriorityFeePerGasWei: 100n }).maxPriorityFeePerGas, maxPriorityFeePerGas: maxStartingFees({ maxFeePerGasWei: 100n, maxPriorityFeePerGasWei: 100n }).maxPriorityFeePerGas });
     expect(worstCaseWei(200_000n, 1_000n, 7n)).toBe(200_000_007n);
+    expect(worstCaseWei(200_000n, 1_000n, 7n, 3n)).toBe(200_000_010n);
   });
 
-  it('a receipt costs gasUsed × effectiveGasPrice + its L1 fee (the bound when an OP receipt lacks it; none elsewhere)', () => {
-    expect(receiptCostWei({ gasUsed: 10n, effectiveGasPrice: 3n, l1Fee: 5n }, true, 99n)).toBe(35n);
-    expect(receiptCostWei({ gasUsed: 10n, effectiveGasPrice: 3n, l1Fee: null }, true, 99n)).toBe(129n);
-    expect(receiptCostWei({ gasUsed: 10n, effectiveGasPrice: 3n, l1Fee: 5n }, false, 99n)).toBe(30n);
+  it('a receipt costs gasUsed × effectiveGasPrice + L1 fee + operator fee, each bounded by the reservation (else settled at it)', () => {
+    const f = { gasLimit: 100_000n, feeCap: 10n, l1Bound: 99n, operatorBound: 0n, reservedWei: 1_000_099n };
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: 5n }, true, f)).toEqual({ cost: 63_005n, odd: false });
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: null }, true, f)).toEqual({ cost: 63_099n, odd: false });
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: 5n }, false, f)).toEqual({ cost: 63_000n, odd: false });
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: 5n, operatorFee: 7n }, true, f)).toEqual({ cost: 63_012n, odd: false });
+    // No operator fee in the receipt: its bound is charged.
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: 5n }, true, { ...f, operatorBound: 40n })).toEqual({ cost: 63_045n, odd: false });
+    for (const odd of [
+      { gasUsed: 20_999n, effectiveGasPrice: 3n, l1Fee: 5n },
+      { gasUsed: 100_001n, effectiveGasPrice: 3n, l1Fee: 5n },
+      { gasUsed: 21_000n, effectiveGasPrice: 11n, l1Fee: 5n },
+      { gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: 199n },
+      { gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: 5n, operatorFee: 199n },
+    ]) expect(receiptCost(odd, true, f), JSON.stringify(odd, (_k, v) => (typeof v === 'bigint' ? String(v) : v))).toEqual({ cost: 1_000_099n, odd: true });
+  });
+
+  it('the operator fee bound: 0 off the OP Stack; a revert (before Isthmus) is 0; a value is the bound; anything else fails closed', async () => {
+    const port = (answer: () => Promise<string>) => ({ call: answer }) as unknown as Parameters<typeof operatorFeeUpperBound>[0];
+    expect(await operatorFeeUpperBound(port(async () => '0x'), false, RELAYER, 1n)).toBe(0n);
+    expect(await operatorFeeUpperBound(port(async () => Promise.reject(new SponsorRpcError('rpc_error', { rpcCode: 3, nodeMessage: 'execution reverted' }))), true, RELAYER, 1n)).toBe(0n);
+    expect(await operatorFeeUpperBound(port(async () => `0x${(42n).toString(16).padStart(64, '0')}`), true, RELAYER, 1n)).toBe(42n);
+    await expect(operatorFeeUpperBound(port(async () => Promise.reject(new SponsorRpcError('unavailable'))), true, RELAYER, 1n)).rejects.toThrow();
+    await expect(operatorFeeUpperBound(port(async () => '0x12'), true, RELAYER, 1n)).rejects.toThrow();
   });
 
   it('the L1 bound: 0 off the OP Stack with no read; on it, getL1FeeUpperBound(size) from the predeploy, a malformed answer refused', async () => {
@@ -178,8 +209,11 @@ describe('delegation, revert data, success', () => {
 describe('parseReceipt', () => {
   const ok = { transactionHash: `0x${'aa'.repeat(32)}`, status: '0x1', gasUsed: '0x5208', effectiveGasPrice: '0x3b9aca00', logs: [{ address: RELAYER, topics: [EXECUTED_TOPIC], data: '0x' }] };
   it('reads a receipt, with l1Fee when the node gives it', () => {
-    expect(parseReceipt(ok)).toEqual({ transactionHash: ok.transactionHash, status: 1, gasUsed: 21_000n, effectiveGasPrice: 1_000_000_000n, l1Fee: null, logs: [{ address: RELAYER.toLowerCase(), topics: [EXECUTED_TOPIC], data: '0x' }] });
+    expect(parseReceipt(ok)).toEqual({ transactionHash: ok.transactionHash, status: 1, gasUsed: 21_000n, effectiveGasPrice: 1_000_000_000n, l1Fee: null, operatorFee: null, logs: [{ address: RELAYER.toLowerCase(), topics: [EXECUTED_TOPIC], data: '0x' }] });
     expect(parseReceipt({ ...ok, l1Fee: '0x10' })?.l1Fee).toBe(16n);
+    // Isthmus: gasUsed × operatorFeeScalar ÷ 10^6 + operatorFeeConstant.
+    expect(parseReceipt({ ...ok, operatorFeeScalar: '0xf4240', operatorFeeConstant: '0x5' })?.operatorFee).toBe(21_005n);
+    expect(parseReceipt(ok)?.operatorFee).toBeNull();
     expect(parseReceipt(null)).toBeNull();
   });
   it('refuses anything malformed', () => {

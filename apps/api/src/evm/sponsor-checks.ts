@@ -20,15 +20,25 @@ const onlyKeys = (o: Obj, allowed: readonly string[]): boolean => Object.keys(o)
 
 /** Fixed limits (not in the manifest; docs/api.md "EVM gas sponsorship"). The manifest's per-chain numbers are D836's. */
 export const EVM_SPONSOR_LIMITS = Object.freeze({
-  /** Requests per IP subject per minute to the three routes together, across every app (the app gate's window). */
+  /** Requests per IP subject per minute to prepare and send together, across every app (the app gate's window). */
   perIpPerMinute: 30,
+  /** Status reads per IP subject per minute, across every app: a window of its own (status reads no chain). */
+  statusPerIpPerMinute: 60,
   /** Sends per account per minute, counted after the signature, the nonce floor and the replay check. */
   sendsPerAccountPerMinute: 6,
-  /** Sends per app per minute (the day's count and budget are the manifest's). */
+  /**
+   * A user's send attempts per UTC day that reach the chain reads, as a multiple of the manifest's `perUserPerDay`:
+   * a refusal after the reads (a future nonce, no delegation, a stale authorization, too much gas) costs the user, so
+   * one user can't make the sponsor read the chain without bound (D847).
+   */
+  attemptsPerSend: 3,
+  /** Sends per app per minute, counted once the chain checks passed (the day's count and budget are the manifest's). */
   sendsPerAppPerMinute: 120,
-  /** Prepares per account and per app per minute, counted before prepare's chain reads. */
-  preparesPerAccountPerMinute: 20,
+  /** Prepares per (account, IP) per minute: one IP can't use up a chosen account's prepares for everyone else. */
+  preparesPerAccountIpPerMinute: 10,
+  /** Prepares per app and across the env per minute, counted before prepare's chain reads. */
   preparesPerAppPerMinute: 600,
+  preparesPerEnvPerMinute: 2000,
   /** Failed sends (simulation reverted, reverted, not executed) per user per UTC day, then 429 too_many_failures. */
   failuresPerUserPerDay: 3,
   /** The day's spend at which `evm_relay_budget_high` is written (once a UTC day per chain). */

@@ -235,7 +235,8 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   `lowBalanceEth` (at most 10); `perUserPerDay` (1 to 10 000), `perAppPerDay` (1 to 1 000 000, below `sendsPerDay`),
   `sendsPerDay` (to 10 000 000), `sendsPerMinute` (to 100 000). One transaction's worst case, `maxGasPerTx` ×
   `maxFeePerGasGwei`, must fit in `appDailyBudgetEth`. `requireKnownAccount` (default true): sponsor only accounts the
-  wallet directory holds for the app's users; `false` is testnet only.
+  wallet directory holds for the app's users; `false` only in `local*` envs (the relayer would otherwise pay for
+  anyone holding a publishable key; D836 as amended).
 - `apps`: the staff-only allowlist (D835), at most 8 apps (`app_…` ids), each naming at least one configured chain
   with 1 to 8 targets in all. A target is a contract `address`, its allowed function `selectors` (1 to 8 distinct,
   `0x` + 8 lowercase hex), `maxDataBytes` (required, 4 to 8192: no sponsored call's data is longer), optional

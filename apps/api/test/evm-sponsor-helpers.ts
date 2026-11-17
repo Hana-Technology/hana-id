@@ -97,6 +97,8 @@ export interface FakeChain extends SponsorChainPort {
   baseFeeWei: bigint;
   balanceWei: bigint;
   l1BoundWei: bigint | 'fail';
+  /** The oracle's getOperatorFee answer: a bound, `revert` (a chain before Isthmus: no operator fee), or `fail`. */
+  operatorBoundWei: bigint | 'revert' | 'fail';
   /** The simulation's answer (default: success, `0x`); throw `revert(data)` for a revert. */
   simulate: (req: SponsorCallRequest, opts: { stateOverride?: SponsorStateOverride }) => Hex;
   receipts: Map<string, SponsorReceipt>;
@@ -113,6 +115,7 @@ export function fakeChain(): FakeChain {
     baseFeeWei: 100_000_000n,
     balanceWei: 10n ** 18n,
     l1BoundWei: 0n,
+    operatorBoundWei: 'revert',
     simulate: () => '0x',
     receipts: new Map(),
     down: false,
@@ -140,6 +143,11 @@ export function fakeChain(): FakeChain {
       f.calls.push({ method: 'call', args: { ...req, ...(opts.stateOverride ? { stateOverride: opts.stateOverride } : {}) } });
       if (f.down) throw new Error('down');
       if (req.data === '0xaffed0e0') return `0x${(f.executeNonce.get(req.to.toLowerCase()) ?? 0n).toString(16).padStart(64, '0')}`;
+      if (req.to.toLowerCase() === '0x420000000000000000000000000000000000000f' && req.data.startsWith('0x275aedd2')) {
+        if (f.operatorBoundWei === 'revert') throw revert(null);
+        if (f.operatorBoundWei === 'fail') throw new Error('down');
+        return `0x${f.operatorBoundWei.toString(16).padStart(64, '0')}`;
+      }
       if (req.to.toLowerCase() === '0x420000000000000000000000000000000000000f') {
         if (f.l1BoundWei === 'fail') throw revert(null);
         return `0x${f.l1BoundWei.toString(16).padStart(64, '0')}`;
@@ -164,23 +172,28 @@ export const reads = (c: FakeChain): string[] => c.calls.map((x) => x.method);
 export interface FakeRelayer {
   sends: EvmRelayerSendRequest[];
   /** What a send does: by default a transaction whose receipt (on `chain`) executed the batch. */
-  onSend: (req: EvmRelayerSendRequest) => Promise<{ transactionHash: Hex; relayerNonce: number; raw: Hex; replay: boolean }>;
+  onSend: (req: EvmRelayerSendRequest) => Promise<{ transactionHash: Hex; relayerNonce: number; raw: Hex; replay: boolean; digest?: Hex }>;
   statusValue: EvmRelayerStatus;
   names: string[];
   /** Extra hashes lookup lists for a digest (a replacement), and the lookups made. */
   replaced: Map<string, Hex[]>;
   lookups: string[];
+  /** Replaces the lookup's answer (a relayer that forgot a digest, or one that says what was mined). */
+  lookupOverride?: (digest: Hex) => Promise<EvmRelayerLookup | null>;
 }
 
+/** The digest the relayer computes for a send (core's, from the Execute input it gets). */
+export const digestOf = (req: EvmRelayerSendRequest): Hex => `0x${hex(executeDigest(req.execute))}` as Hex;
+
 /** A raw "transaction" for a send (opaque bytes; the handler checks only that its keccak is the hash). */
-export const rawFor = (req: EvmRelayerSendRequest, salt = ''): Hex => `0x02${hex(sha256(new TextEncoder().encode(`${req.digest}${salt}`)))}` as Hex;
+export const rawFor = (req: EvmRelayerSendRequest, salt = ''): Hex => `0x02${hex(sha256(new TextEncoder().encode(`${digestOf(req)}${salt}`)))}` as Hex;
 
 export type ReceiptKind = 'executed' | 'reverted' | 'not_executed' | 'none' | 'wrong_log';
 
-export function receiptFor(req: EvmRelayerSendRequest, hash: Hex, kind: ReceiptKind, cost: { gasUsed: bigint; price: bigint; l1Fee?: bigint | null } = { gasUsed: 60_000n, price: 150_000_000n }): SponsorReceipt {
-  const executed = { address: req.to.toLowerCase() as Hex, topics: [EXECUTED_TOPIC, req.digest.toLowerCase() as Hex], data: `0x${'00'.repeat(64)}` as Hex };
+export function receiptFor(req: EvmRelayerSendRequest, hash: Hex, kind: ReceiptKind, cost: { gasUsed: bigint; price: bigint; l1Fee?: bigint | null; operatorFee?: bigint | null } = { gasUsed: 60_000n, price: 150_000_000n }): SponsorReceipt {
+  const executed = { address: req.execute.account.toLowerCase() as Hex, topics: [EXECUTED_TOPIC, digestOf(req)], data: `0x${'00'.repeat(64)}` as Hex };
   const logs = kind === 'executed' ? [executed] : kind === 'wrong_log' ? [{ ...executed, address: CHECK_IN.toLowerCase() as Hex }] : [];
-  return { transactionHash: hash, status: kind === 'reverted' ? 0 : 1, gasUsed: cost.gasUsed, effectiveGasPrice: cost.price, l1Fee: cost.l1Fee ?? null, logs };
+  return { transactionHash: hash, status: kind === 'reverted' ? 0 : 1, gasUsed: cost.gasUsed, effectiveGasPrice: cost.price, l1Fee: cost.l1Fee ?? null, ...(cost.operatorFee !== undefined ? { operatorFee: cost.operatorFee } : {}), logs };
 }
 
 export function fakeRelayer(chain: FakeChain, kind: () => ReceiptKind = () => 'executed', cost?: Parameters<typeof receiptFor>[3]): FakeRelayer & { binding: DurableObjectNamespace } {
@@ -188,7 +201,7 @@ export function fakeRelayer(chain: FakeChain, kind: () => ReceiptKind = () => 'e
   const r: FakeRelayer = {
     sends: [],
     names: [],
-    statusValue: { address: RELAYER, pending: 0, oldestPendingMs: null, nextNonce: 0 },
+    statusValue: { address: RELAYER, pending: 0, oldestPendingMs: null, nextNonce: 0, blockedReason: null },
     replaced: new Map(),
     lookups: [],
     onSend: async (req) => {
@@ -196,7 +209,7 @@ export function fakeRelayer(chain: FakeChain, kind: () => ReceiptKind = () => 'e
       const hash = keccakHex(raw);
       const k = kind();
       if (k !== 'none') chain.receipts.set(hash, receiptFor(req, hash, k, cost));
-      return { transactionHash: hash, relayerNonce: nonce++, raw, replay: false };
+      return { transactionHash: hash, relayerNonce: nonce++, raw, replay: false, digest: digestOf(req) };
     },
   };
   const stub = {
@@ -207,11 +220,12 @@ export function fakeRelayer(chain: FakeChain, kind: () => ReceiptKind = () => 'e
     status: async () => r.statusValue,
     lookup: async (digest: Hex): Promise<EvmRelayerLookup | null> => {
       r.lookups.push(digest);
-      const req = r.sends.find((x) => x.digest === digest);
+      if (r.lookupOverride) return r.lookupOverride(digest);
+      const req = r.sends.find((x) => digestOf(x) === digest);
       if (!req) return null;
       const first = keccakHex(rawFor(req));
       const hashes = [first, ...(r.replaced.get(digest) ?? [])];
-      return { relayerNonce: 0, transactionHash: hashes.at(-1)!, hashes, state: 'pending', reservedWei: req.reservedWei };
+      return { digest, relayerNonce: 0, transactionHash: hashes.at(-1)!, hashes, state: 'pending', reservedWei: req.reservedWei, minedHash: null, outcome: null };
     },
   };
   const binding = {

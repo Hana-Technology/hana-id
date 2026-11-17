@@ -190,7 +190,7 @@ export default {
       if (pathname === EVM_SPONSOR_PREPARE_ENDPOINT || pathname === EVM_SPONSOR_SEND_ENDPOINT) {
         // EVM gas sponsorship (D847): the app gate, the vault only (D832). 503 sponsorship_unconfigured without its config.
         if (request.method === 'OPTIONS') return await appPreflight(request, env);
-        if (request.method === 'POST') return pathname === EVM_SPONSOR_SEND_ENDPOINT ? await handleEvmSponsorSend(request, env, requestId) : await handleEvmSponsorPrepare(request, env, requestId);
+        if (request.method === 'POST') return pathname === EVM_SPONSOR_SEND_ENDPOINT ? await handleEvmSponsorSend(request, env, requestId, ctx) : await handleEvmSponsorPrepare(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (pathname === EVM_SPONSOR_STATUS_ENDPOINT) {

@@ -27,6 +27,9 @@ import {
   parseFunctionSignature,
   sha256,
   summarizeApproval as summarizeApprovalRaw,
+  displayUnits,
+  nearDisplay,
+  MAX_GROUP_LINES,
   summaryString,
   utf8,
 } from './entries.ts';
@@ -421,12 +424,6 @@ describe('Stellar', () => {
     expect(headline(s)).toBe(`${APP} wants to send 2.5 of the asset USDC:${ISSUER} to ${OTHER}`);
   });
 
-  it('several operations: one line each, numbered; account control is explained (its red warnings are the page’s)', () => {
-    const s = stellar([paymentOp(), addSignerOp(), mergeOp()]);
-    expect(headline(s)).toBe(`${APP} wants to do 3 things in one Stellar transaction`);
-    expect(s.lines.map(text)).toEqual(['XLM leaving your account: all of it (the account is closed).', `1. Send 1 XLM to ${OTHER}`, '2. Change who can sign for the account', expect.stringMatching(/^3\. Close the account and send all its XLM to G/u)]);
-    expect(s.explainable).toBe(true);
-  });
 
   it('a fee-bump paid by someone else names the payer; an operation on another account says so', () => {
     const fb = stellar([], feeBumpBytes(txBytes([paymentOp()]), OTHER));
@@ -536,11 +533,6 @@ describe('NEAR', () => {
     expect(headline(near([call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7\\u202e"}', 1n)], 'nft.testnet'))).toBe(`${APP} wants to use nft.testnet (nft_transfer)`);
   });
 
-  it('several actions: one line each; account control is described plainly (its red warnings are the page’s)', () => {
-    const s = near([{ type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }, { type: 'deleteAccount', beneficiaryId: 'bob.testnet' }], NEAR_ME);
-    expect(headline(s)).toBe(`${APP} wants to do 2 things with your account in one transaction`);
-    expect(s.lines.map(text)).toEqual(['1. Add a full-access key to your account', '2. Delete your account and send all its NEAR to bob.testnet']);
-  });
 
   it('NEP-413: a message for its recipient; a message that isn’t plain text can’t be explained', () => {
     const m = (message: string) => summarizeApproval(decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: NEAR_ME, context: {}, bytes: encodeNep413Message({ message, nonce: new Uint8Array(32), recipient: 'app.example', callbackUrl: null }) }), { address: NEAR_ME });
@@ -643,7 +635,7 @@ describe('review: Stellar classic operations show their deciding terms (H2)', ()
     const id = getLiquidityPoolId('constant_product', pool.getLiquidityPoolParameters()).toString('hex');
     const dep = stellar([Operation.liquidityPoolDeposit({ liquidityPoolId: id, maxAmountA: '9000', maxAmountB: '0.0000001', minPrice: { n: 1, d: 10000000 }, maxPrice: { n: 10000000, d: 1 } })]);
     expect(dep.explainable).toBe(false);
-    expect(headline(dep)).toContain('at most 9,000 of the pool’s first asset and 0.0000001 of its second');
+    expect(headline(dep)).toContain('at most 9,000 of the pool’s first asset and less than 0.000001 of its second');
     const wd = stellar([Operation.liquidityPoolWithdraw({ liquidityPoolId: id, amount: '1', minAmountA: '0', minAmountB: '0' })]);
     expect(wd.explainable).toBe(false);
     expect(headline(wd)).toContain('at least 0 of the pool’s first asset and 0 of its second');
@@ -652,7 +644,7 @@ describe('review: Stellar classic operations show their deciding terms (H2)', ()
   it('path payments keep the most paid and the least received in view', () => {
     const s = stellar([Operation.pathPaymentStrictSend({ sendAsset: Asset.native(), sendAmount: '5', destination: OTHER, destAsset: JUNK, destMin: '0.0000001', path: [] })]);
     expect(headline(s)).toContain('pay exactly 5 XLM');
-    expect(headline(s)).toContain('receives at least 0.0000001 of the asset');
+    expect(headline(s)).toContain('receives at least a tiny amount (less than 0.000001) of the asset');
   });
 
   it('a fee-bump says who pays; the inner transaction’s source when it isn’t the user', () => {
@@ -670,22 +662,6 @@ describe('review: Stellar classic operations show their deciding terms (H2)', ()
   });
 });
 
-describe('review: many steps (M2)', () => {
-  it('more than five steps: value steps all listed (up to 20), the rest capped, and the details start open when capped', () => {
-    const transfers: NearAction[] = Array.from({ length: 99 }, () => ({ type: 'transfer', deposit: 1n }));
-    const s = near([...transfers, { type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }], NEAR_ME);
-    // Every one of the 100 moves value or control: 20 listed, the red line, the rest in the details (review 2, N2).
-    expect(s.lines).toHaveLength(21);
-    expect(text(s.lines[20]!)).toBe('…and 80 more: see the details.');
-    expect(codes(s)).toContain('many_value_steps');
-    expect(s.explainable).toBe(false);
-    // Eight payments all move value: all listed (up to 20), with the XLM leaving, nothing left out.
-    const st = stellar(Array.from({ length: 8 }, () => paymentOp()));
-    expect(st.lines).toHaveLength(9);
-    expect(text(st.lines[0]!)).toBe('XLM leaving your account: up to 8 XLM, plus the network fee.');
-    expect(st.explainable).toBe(true);
-  });
-});
 
 describe('review: EVM and typed data (M1, L2, I1)', () => {
   it('approve(spender, 0) on a token Journear doesn’t know may give away an NFT’s item 0', () => {
@@ -797,29 +773,8 @@ describe('review 2: malformed values never throw (N1)', () => {
 
 describe('review 2: steps that move value are always listed (N2)', () => {
   const bump = () => Operation.bumpSequence({ bumpTo: '99' });
-  it('Stellar: five neutral steps then a payment: the payment is listed first, with the XLM leaving the account', () => {
-    const s = stellar([bump(), bump(), bump(), bump(), bump(), bump(), Operation.payment({ destination: ATTACKER, asset: Asset.native(), amount: '1000000' })]);
-    const lines = s.lines.map(text);
-    expect(lines[0]).toBe('XLM leaving your account: up to 1,000,000 XLM, plus the network fee.');
-    expect(lines[1]).toBe(`7. Send 1,000,000 XLM to ${ATTACKER}`);
-    expect(lines.filter((l) => /^\d+\. Move/u.test(l))).toHaveLength(5);
-    expect(lines.at(-1)).toBe('…and 1 more: see the details.');
-    expect(s.explainable).toBe(false);
-  });
 
-  it('Stellar: a Soroban approve at step 6 is listed and warned about', () => {
-    const s = stellar([bump(), bump(), bump(), bump(), bump(), invokeOp(TOKEN, 'approve', [addr(USER), addr(ATTACKER), i128(5n), xdr.ScVal.scvU32(10)])]);
-    expect(s.lines.map(text)).toContain('6. Let someone else spend your tokens of contract ' + TOKEN);
-    expect(codes(s)).toContain('spend_permission');
-  });
 
-  it('Stellar: more than 20 value steps: 20 listed and a red line', () => {
-    const s = stellar(Array.from({ length: 22 }, () => paymentOp()));
-    expect(s.lines.filter((l) => /^\d+\. Send/u.test(text(l)))).toHaveLength(20);
-    expect(codes(s)).toContain('many_value_steps');
-    expect(s.warnings.find((w) => w.code === 'many_value_steps')?.level).toBe('danger');
-    expect(s.explainable).toBe(false);
-  });
 
   it('Stellar: the XLM leaving counts offers, path payments and claimable balances; a merge is all of it', () => {
     const s = stellar([
@@ -831,13 +786,6 @@ describe('review 2: steps that move value are always listed (N2)', () => {
     expect(text(stellar([paymentOp(), mergeOp()]).lines[0]!)).toBe('XLM leaving your account: all of it (the account is closed).');
   });
 
-  it('NEAR: an ft_transfer at step 7 after neutral calls is listed', () => {
-    // Every NEAR call counts as moving value (review 3); account creation is the one neutral action.
-    const neutral: NearAction[] = Array.from({ length: 6 }, () => ({ type: 'createAccount' }));
-    const s = near([...neutral, call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5000"}', 1n)], 'usdc.testnet');
-    expect(s.lines.map(text)[0]).toBe('7. Send 5,000 (smallest units) of the token usdc.testnet to bob.testnet');
-    expect(s.explainable).toBe(false);
-  });
 });
 
 describe('review 2: ERC-1155 batches and withdraw (N3, N4)', () => {
@@ -879,11 +827,6 @@ describe('review 3: the user’s account in muxed form is the user’s (1)', () 
     expect(lines.join(' ')).not.toContain('from the account M');
   });
 
-  it('an operation from the user’s muxed account counts too, and says it is the user’s', () => {
-    const s = stellar([Operation.payment({ destination: ATTACKER, asset: Asset.native(), amount: '500', source: muxed.accountId() }), bump()]);
-    expect(text(s.lines[0]!)).toBe('XLM leaving your account: up to 500 XLM, plus the network fee.');
-    expect(text(s.lines[1]!)).toBe(`1. Send 500 XLM to ${ATTACKER} (on your account (muxed id 7))`);
-  });
 
   it('a payment to the user’s muxed account is to the user; another account’s muxed form is not', () => {
     expect(headline(stellar([Operation.payment({ destination: muxed.accountId(), asset: Asset.native(), amount: '1' })]))).toBe(`${APP} wants to send 1 XLM to your account (muxed id 7)`);
@@ -892,63 +835,10 @@ describe('review 3: the user’s account in muxed form is the user’s (1)', () 
   });
 });
 
-describe('review 3: the always-listed steps (3)', () => {
-  const bump = () => Operation.bumpSequence({ bumpTo: '99' });
-  it('a NEAR call with no deposit at step 7 is listed first', () => {
-    const neutral: NearAction[] = Array.from({ length: 6 }, () => ({ type: 'createAccount' }));
-    const s = near([...neutral, call('withdraw_all', '{}')], 'vault.testnet');
-    expect(text(s.lines[0]!)).toBe('7. Use vault.testnet (withdraw_all)');
-  });
-
-  it('Stellar revokeSponsorship, changeTrust and claiming are listed; a sequence bump is not', () => {
-    const s = stellar([bump(), bump(), bump(), bump(), bump(), bump(), Operation.revokeAccountSponsorship({ account: USER }), Operation.changeTrust({ asset: new Asset('USDC', ISSUER) })]);
-    const lines = s.lines.map(text);
-    expect(lines[0]).toBe('7. End a reserve sponsorship');
-    expect(lines[1]).toBe(`8. Let your account hold the asset USDC:${ISSUER}`);
-    expect(lines.filter((l) => /Move the account/u.test(l))).toHaveLength(5);
-  });
-});
 
 // ---- the founder's decision of 2026-11-17 (D810): the details always start folded, so each case that used to open
 // them states its risk in plain words, red where the unreadable part could move value or control with no visible bound.
 
-describe('D810: every formerly auto-open case carries its risk line, at the right level', () => {
-  const level = (s: ApprovalSummary, c: string) => s.warnings.find((w) => w.code === c)?.level;
-  const bump = () => Operation.bumpSequence({ bumpTo: '99' });
-  it('red: unknown contract calls (EVM, multicall, NEAR unreadable, Soroban), unexplained typed data, extra authorizations, capped value steps, raw', () => {
-    expect(level(tokenCall('0xdeadbeef'), 'cannot_explain')).toBe('danger');
-    expect(level(tokenCall(`${parseFunctionSignature('multicall(bytes[])').selector}${word(32n)}${word(0n)}`), 'cannot_explain')).toBe('danger');
-    expect(level(near([call('m', Uint8Array.of(0xff))]), 'cannot_explain')).toBe('danger');
-    expect(level(stellar([invokeOp(ROUTER, 'swap', [i128(1n)])]), 'cannot_explain')).toBe('danger');
-    expect(level(stellar([invokeOp(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(1n)], [sourceAuth(invocation(ROUTER, 'x', []))])]), 'cannot_explain')).toBe('danger');
-    const auth = summarizeApproval(decodeApprovalRequest({ kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: authPreimageBytes(invocation(ROUTER, 'swap', [])) }), { address: USER });
-    expect(level(auth, 'cannot_explain')).toBe('danger');
-    expect(level(typed({ types: { EIP712Domain: [{ name: 'name', type: 'string' }], Order: [{ name: 'x', type: 'uint256' }] }, primaryType: 'Order', domain: { name: 'X' }, message: { x: '1' } }), 'cannot_explain')).toBe('danger');
-    expect(level(stellar(Array.from({ length: 22 }, () => paymentOp())), 'many_value_steps')).toBe('danger');
-  });
-
-  it('amber: bounded or not about value (contract creation, a pool, a conditional claim, an unreadable price, a message that isn’t text, leftover neutral steps)', () => {
-    expect(level(evmSummary({ to: null, value: 0n, data: '0x6000' }), 'contract_creation')).toBe('warning');
-    const pool = new LiquidityPoolAsset(Asset.native(), new Asset('USDC', ATTACKER), 30);
-    const id = getLiquidityPoolId('constant_product', pool.getLiquidityPoolParameters()).toString('hex');
-    expect(level(stellar([Operation.liquidityPoolWithdraw({ liquidityPoolId: id, amount: '1', minAmountA: '0', minAmountB: '0' })]), 'cannot_explain')).toBe('warning');
-    expect(level(stellar([Operation.createClaimableBalance({ asset: Asset.native(), amount: '1', claimants: [new Claimant(USER, Claimant.predicateBeforeRelativeTime('100'))] })]), 'cannot_explain')).toBe('warning');
-    const op = Operation.manageSellOffer({ selling: Asset.native(), buying: new Asset('USDC', ATTACKER), amount: '1', price: { n: 1, d: 1 } });
-    op.body().manageSellOfferOp().price(new xdr.Price({ n: 1, d: 0 }));
-    expect(level(stellar([op]), 'cannot_explain')).toBe('warning');
-    const hex = msg('personal_sign', 'a\u202eb');
-    expect(warnings(hex)).toEqual([['warning', 'cannot_explain', `Journear can’t read this message, so it can’t tell what signing it does. Only approve if you fully trust ${APP}. Technical details are below.`]]);
-    const many = stellar(Array.from({ length: 7 }, () => bump()));
-    expect(warnings(many)).toEqual([['warning', 'steps_not_listed', `This request does 7 things at once and not all are listed here. Only approve if you fully trust ${APP}. Technical details are below.`]]);
-    expect(many.explainable).toBe(false);
-  });
-
-  it('a value cap says it in red, once, with no amber steps line beside it', () => {
-    const s = stellar(Array.from({ length: 22 }, () => paymentOp()));
-    expect(codes(s).filter((c) => c === 'steps_not_listed')).toEqual([]);
-    expect(text(s.warnings.find((w) => w.code === 'many_value_steps')!.text)).toBe(`This request moves money or tokens in 22 steps and only the first 20 are listed here. Only approve if you fully trust ${APP}. Technical details are below.`);
-  });
-});
 
 // ---- the final review of 2026-11-17 ----
 
@@ -975,5 +865,155 @@ describe('final review: contract creation on Stellar lists its authorizations; N
     const key = (allowance: bigint | null): NearAction => ({ type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance, receiverId: 'app.testnet', methodNames: [] } } });
     expect(headline(near([key(null)], NEAR_ME))).toBe(`${APP} wants to add a key to your account that can use app.testnet, with no limit on the NEAR it spends on fees`);
     expect(headline(near([key(25n * 10n ** 22n)], NEAR_ME))).toBe(`${APP} wants to add a key to your account that can use app.testnet, spending up to 0.25 NEAR on fees`);
+  });
+});
+
+// ---- the founder's decision of 2026-11-17 (D814): multi-step requests in at most four grouped lines, amounts shown
+// conservatively. ----
+
+describe('D814: amounts as shown', () => {
+  it('exact up to six decimals; less than 0.000001 below; "about", up when leaving and down when received; never 0', () => {
+    expect(displayUnits(15_000_000n, 7)).toBe('1.5');
+    expect(displayUnits(1n, 7)).toBe('less than 0.000001');
+    expect(displayUnits(1n, 7, 'in')).toBe('a tiny amount (less than 0.000001)');
+    expect(nearDisplay(333333333333333333333333n)).toBe('about 0.333334 NEAR');
+    expect(nearDisplay(333333333333333333333333n, 'in')).toBe('about 0.333333 NEAR');
+    expect(displayUnits(12_345_678_901_234n, 7)).toBe('about 1,234,567.890124');
+    expect(displayUnits(0n, 7)).toBe('0');
+    for (const v of [1n, 9n, 10n, 11n, 999_999n, 1_000_001n]) {
+      for (const dir of ['out', 'in'] as const) expect(displayUnits(v, 12, dir)).not.toMatch(/^(about )?0$/u);
+    }
+  });
+
+  it('the EVM fee and a NEAR transfer follow it', () => {
+    expect(text(evmSummary({}).fee!)).toBe('up to 0.000042 ETH');
+    expect(displayUnits(42_000_000_000n, 18)).toBe('less than 0.000001');
+    expect(headline(near([{ type: 'transfer', deposit: 5n }], 'bob.testnet'))).toBe(`${APP} wants to send less than 0.000001 NEAR to bob.testnet`);
+  });
+});
+
+describe('D814: grouped lines', () => {
+  const bump = () => Operation.bumpSequence({ bumpTo: '99' });
+  const pay = (destination: string, amount: string, asset: Asset = Asset.native()) => Operation.payment({ destination, asset, amount });
+  const fullKey = (fill: number): NearAction => ({ type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(fill) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } });
+
+  it('100 actions (99 self-transfers and a full-access key): two lines, control first', () => {
+    const s = near([...Array.from({ length: 99 }, (): NearAction => ({ type: 'transfer', deposit: 1n })), fullKey(9)], NEAR_ME);
+    expect(s.lines.map(text)).toEqual(['Add a full-access key to your account', 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
+    expect(s.explainable).toBe(true);
+  });
+
+  it('mixed recipients: others before the user’s own account, contract calls between; totals per recipient', () => {
+    const s = stellar([pay(OTHER, '1'), pay(USER, '0.5'), pay(OTHER, '2'), invokeOp(ROUTER, 'swap', [i128(1n)]), pay(USER, '0.25'), pay(OTHER, '3')]);
+    const lines = s.lines.map(text);
+    expect(lines[0]).toBe('XLM leaving your account: up to 6.75 XLM, plus what its contract calls or pool deposits take, plus the network fee.');
+    expect(lines.slice(1)).toEqual([`Send 6 XLM to ${OTHER} in 3 payments`, `Use contract ${ROUTER} (swap)`, 'Send 0.75 XLM to your account in 2 payments']);
+  });
+
+  it('value to others by descending total; control changes first', () => {
+    const s = stellar([pay(OTHER, '5'), pay(ATTACKER, '10'), addSignerOp()]);
+    expect(s.lines.map(text).slice(1)).toEqual(['Change who can sign for the account', `Send 10 XLM to ${ATTACKER}`, `Send 5 XLM to ${OTHER}`]);
+  });
+
+  it('never merges different recipients, assets or methods', () => {
+    const usdc = new Asset('USDC', ISSUER);
+    const s = stellar([pay(OTHER, '1'), pay(OTHER, '1', usdc), pay(ATTACKER, '1')]);
+    expect(s.lines.map(text).slice(1)).toEqual([`Send 1 XLM to ${OTHER}`, `Send 1 XLM to ${ATTACKER}`, `Send 1 of the asset USDC:${ISSUER} to ${OTHER}`]);
+    const n = near([call('a', '{}'), call('b', '{}'), call('a', '{}', 10n ** 24n)], 'c.testnet');
+    expect(n.lines.map(text)).toEqual(['Use c.testnet (a), 2 times (attaching 1 NEAR in total)', 'Use c.testnet (b)']);
+  });
+
+  it('more than four groups: three lines, "…and N other steps", a red line when a left-out step moves value', () => {
+    const s = stellar([pay(OTHER, '1'), pay(ATTACKER, '2'), pay(USER, '3'), invokeOp(ROUTER, 'swap', [i128(1n)]), bump(), bump()]);
+    expect(s.lines).toHaveLength(1 + MAX_GROUP_LINES);
+    expect(text(s.lines.at(-1)!)).toBe('…and 3 other steps: see the details.');
+    const w = s.warnings.find((x) => x.code === 'steps_not_listed')!;
+    expect(w.level).toBe('warning');
+    const v = stellar([invokeOp(ROUTER, 'a', []), invokeOp(ROUTER, 'b', []), invokeOp(ROUTER, 'c', []), invokeOp(ROUTER, 'd', []), bump()]);
+    expect(v.warnings.find((x) => x.code === 'steps_not_listed')?.level).toBe('danger');
+    expect(v.explainable).toBe(false);
+  });
+
+  it('the largest amount to others is never left out, even behind control changes (they stay in the red box)', () => {
+    const s = near([fullKey(1), fullKey(2), fullKey(3), fullKey(4), { type: 'transfer', deposit: 10n ** 24n }], 'bob.testnet');
+    expect(s.lines.map(text)).toContain('Send 1 NEAR to bob.testnet');
+    expect(s.lines).toHaveLength(MAX_GROUP_LINES);
+    expect(s.warnings.find((x) => x.code === 'steps_not_listed')?.level).toBe('danger');
+  });
+
+  it('a step on the user’s muxed account says so in its line', () => {
+    const muxed = new MuxedAccount(new Account(USER, '41'), '7');
+    const s = stellar([pay(ATTACKER, '500'), bump()].map((op, i) => (i === 0 ? Operation.payment({ destination: ATTACKER, asset: Asset.native(), amount: '500', source: muxed.accountId() }) : op)));
+    expect(text(s.lines[1]!)).toBe(`Send 500 XLM to ${ATTACKER} (on your account (muxed id 7))`);
+  });
+
+  it('other value (sponsorship, trust lines) before neutral steps', () => {
+    const s = stellar([bump(), bump(), Operation.revokeAccountSponsorship({ account: USER }), Operation.changeTrust({ asset: new Asset('USDC', ISSUER) })]);
+    expect(s.lines.map(text)).toEqual(['End a reserve sponsorship', `Let your account hold the asset USDC:${ISSUER}`, '2 times: move the account’s sequence number forward']);
+  });
+
+  it('property: every (recipient, asset) is in a visible line with its exact total, or a warning says steps are left out', () => {
+    let seed = 11;
+    const rnd = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    const dests = [OTHER, ATTACKER, USER];
+    const assets = [Asset.native(), new Asset('USDC', ISSUER), new Asset('EURC', ISSUER)];
+    for (let round = 0; round < 60; round++) {
+      const ops = Array.from({ length: 2 + rnd(10) }, () => ({ d: dests[rnd(3)]!, a: assets[rnd(3)]!, amt: BigInt(1 + rnd(5_000_000)) }));
+      const s = stellar(ops.map((o) => Operation.payment({ destination: o.d, asset: o.a, amount: formatTokenUnits(o.amt, 7) })));
+      const lines = s.lines.map(text);
+      const sums = new Map<string, { d: string; a: Asset; total: bigint; n: number }>();
+      for (const o of ops) {
+        const k = `${o.d}|${o.a.toString()}`;
+        const e = sums.get(k) ?? { d: o.d, a: o.a, total: 0n, n: 0 };
+        e.total += o.amt;
+        e.n++;
+        sums.set(k, e);
+      }
+      const leftOut = s.warnings.some((w) => w.code === 'steps_not_listed');
+      let missing = 0;
+      let missingOthers = 0;
+      for (const e of sums.values()) {
+        const who = e.d === USER ? 'your account' : e.d;
+        const what = e.a.isNative() ? `${displayUnits(e.total, 7)} XLM` : `${displayUnits(e.total, 7)} of the asset ${e.a.getCode()}:${ISSUER}`;
+        const line = lines.find((l) => l.startsWith(`Send ${what} to ${who}`) && (e.n === 1 ? l === `Send ${what} to ${who}` : l === `Send ${what} to ${who} in ${e.n} payments`));
+        if (!line) {
+          missing++;
+          if (e.d !== USER) missingOthers++;
+        }
+      }
+      // Only what a "…and N other steps" line and its warning cover is missing, and never a group to others while one
+      // to the user's own account is shown.
+      if (missing > 0) expect(leftOut).toBe(true);
+      expect(missing).toBeLessThanOrEqual(Math.max(0, sums.size - (MAX_GROUP_LINES - 1)));
+      const firstOwn = lines.findIndex((l) => / to your account/u.test(l));
+      const lastOther = lines.map((l, i) => (/^Send .* to G/u.test(l) ? i : -1)).reduce((m, i) => Math.max(m, i), -1);
+      if (firstOwn >= 0 && lastOther >= 0) expect(lastOther).toBeLessThan(firstOwn);
+      // A left-out payment to someone else makes the warning red; only the user's own, amber.
+      if (leftOut) expect(s.warnings.find((w) => w.code === 'steps_not_listed')?.level).toBe(missingOthers > 0 ? 'danger' : 'warning');
+    }
+  });
+});
+
+describe('D810 with D814: the risk lines of requests that leave things out, at the right level', () => {
+  const level = (s: ApprovalSummary, c: string) => s.warnings.find((w) => w.code === c)?.level;
+  it('red: unknown contract calls, unexplained typed data, extra authorizations, raw', () => {
+    expect(level(tokenCall('0xdeadbeef'), 'cannot_explain')).toBe('danger');
+    expect(level(near([call('m', Uint8Array.of(0xff))]), 'cannot_explain')).toBe('danger');
+    expect(level(stellar([invokeOp(ROUTER, 'swap', [i128(1n)])]), 'cannot_explain')).toBe('danger');
+    expect(level(stellar([invokeOp(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(1n)], [sourceAuth(invocation(ROUTER, 'x', []))])]), 'cannot_explain')).toBe('danger');
+    expect(level(typed({ types: { EIP712Domain: [{ name: 'name', type: 'string' }], Order: [{ name: 'x', type: 'uint256' }] }, primaryType: 'Order', domain: { name: 'X' }, message: { x: '1' } }), 'cannot_explain')).toBe('danger');
+  });
+
+  it('amber: bounded or not about value', () => {
+    expect(level(evmSummary({ to: null, value: 0n, data: '0x6000' }), 'contract_creation')).toBe('warning');
+    expect(level(stellar([Operation.createClaimableBalance({ asset: Asset.native(), amount: '1', claimants: [new Claimant(USER, Claimant.predicateBeforeRelativeTime('100'))] })]), 'cannot_explain')).toBe('warning');
+    expect(warnings(msg('personal_sign', 'a‮b'))).toEqual([['warning', 'cannot_explain', `Journear can’t read this message, so it can’t tell what signing it does. Only approve if you fully trust ${APP}. Technical details are below.`]]);
+  });
+
+  it('every red warning has a short bullet form', () => {
+    for (const s of [tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)), tokenCall('0xdeadbeef'), summarizeApproval(decodeApprovalRequest({ kind: 'raw', chain: 'evm', address: ME, context: {}, bytes: new Uint8Array(32) }), { address: ME })]) {
+      for (const w of s.warnings.filter((x) => x.level === 'danger')) expect(w.short?.length, w.code).toBeGreaterThan(0);
+    }
+    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)).warnings[0]!.short!)).toBe('Lets 0x3333…3333 spend all of your tokens of contract 0x1111…1111');
   });
 });

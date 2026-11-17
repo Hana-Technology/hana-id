@@ -41,8 +41,15 @@ function render(ops: xdr.Operation[], bytes = txBytes(ops)): HTMLElement {
   return el;
 }
 
-const takeovers = (el: HTMLElement) => [...el.querySelectorAll('p.danger.takeover')].map((p) => p.textContent);
+/** The red box (D814): its lead in full, then each other red item's bullet. */
+const takeovers = (el: HTMLElement) => [...el.querySelectorAll('.danger-box .risk-lead, .danger-box li')].map((p) => p.textContent);
+const short = (s: string) => `${s.slice(0, 6)}…${s.slice(-4)}`;
 const usdc = `USDC:${ISSUER}`;
+const decodedOps = (ops: xdr.Operation[]) => {
+  const decoded = decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes(ops) });
+  if (decoded.kind !== 'stellar_tx') throw new Error('kind');
+  return decoded.envelope.tx.operations;
+};
 
 describe('renderApproval: Stellar account-control operations', () => {
   beforeEach(() => document.body.replaceChildren());
@@ -51,11 +58,11 @@ describe('renderApproval: Stellar account-control operations', () => {
     const el = render([addSignerOp(255)]);
     const banner = el.querySelector('p.takeover.banner');
     expect(banner?.textContent).toBe(ACCOUNT_CONTROL_BANNER);
-    expect(banner?.getAttribute('role')).toBe('alert');
-    expect(takeovers(el)).toEqual([
-      ACCOUNT_CONTROL_BANNER,
-      `This adds ${ATTACKER} as a signer with weight 255. Whoever holds that key can sign for the account and, with enough weight, move all its funds and lock you out.`,
-    ]);
+    expect(banner?.closest('.danger-box')?.getAttribute('role')).toBe('alert');
+    // One red box (D814): the banner in full, the operation's warning as one bullet.
+    expect(el.querySelectorAll('.danger-box')).toHaveLength(1);
+    expect(takeovers(el)).toEqual([ACCOUNT_CONTROL_BANNER, `Adds ${short(ATTACKER)} as a signer (weight 255)`]);
+    expect(accountControlWarnings(decodedOps([addSignerOp(255)])[0]!)).toEqual([`This adds ${ATTACKER} as a signer with weight 255. Whoever holds that key can sign for the account and, with enough weight, move all its funds and lock you out.`]);
     expect(el.querySelector('li.op.takeover-op')).not.toBeNull();
     expect(el.textContent).toContain('Adds signer');
     expect(el.textContent).toContain(`${ATTACKER} (ed25519, weight 255)`);
@@ -66,10 +73,7 @@ describe('renderApproval: Stellar account-control operations', () => {
   it('shows a signer removal, threshold and master-weight changes with their own warnings', () => {
     const el = render([addSignerOp(0), thresholdsOp(), masterWeightOp(0)]);
     const w = takeovers(el);
-    expect(w[0]).toBe(ACCOUNT_CONTROL_BANNER);
-    expect(w).toContain(`This removes signer ${ATTACKER} from the account.`);
-    expect(w.some((t) => t?.startsWith('This changes the account’s signing thresholds'))).toBe(true);
-    expect(w.some((t) => t?.includes('your Journear Passport key) to 0: it can no longer sign'))).toBe(true);
+    expect(w).toEqual([ACCOUNT_CONTROL_BANNER, `Removes signer ${short(ATTACKER)}`, 'Changes the signing thresholds', 'Sets your own key’s weight to 0']);
     expect(el.textContent).toContain('Removes signer');
     expect(el.textContent).toContain('Low threshold0');
     expect(el.textContent).toContain('Medium threshold2');
@@ -80,10 +84,7 @@ describe('renderApproval: Stellar account-control operations', () => {
 
   it('shows the accountMerge destination in the warning and the rows', () => {
     const el = render([mergeOp(OTHER)]);
-    expect(takeovers(el)).toEqual([
-      ACCOUNT_CONTROL_BANNER,
-      `This closes the account and sends all of its XLM to ${OTHER}. It can’t be undone.`,
-    ]);
+    expect(takeovers(el)).toEqual([ACCOUNT_CONTROL_BANNER, `Closes the account and sends all its XLM to ${short(OTHER)}`]);
     expect(el.textContent).toContain(`Sends all XLM to${OTHER}`);
   });
 
@@ -100,7 +101,8 @@ describe('renderApproval: Stellar account-control operations', () => {
 
   it('gives no account-control warning to other operations, a home-domain setOptions included', () => {
     const el = render([paymentOp(), ...Object.values(plainClassicOps).map((b) => b())]);
-    expect(el.querySelector('.takeover')).toBeNull();
+    expect(el.querySelector('.banner')).toBeNull();
+    expect(el.querySelector('.danger-box li.takeover:not(.summary-warning)')).toBeNull();
     expect(el.querySelector('.takeover-op')).toBeNull();
     expect(el.textContent).not.toContain('does not decode');
   });

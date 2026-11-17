@@ -161,6 +161,44 @@ strong.danger {
   font-size: var(--jp-text-md);
 }
 
+/* ---- one box per colour (D814): the most serious item in full, then one short bullet for each other item ---- */
+.risk-box > .body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-2);
+  min-width: 0;
+}
+
+.risk-box p.risk-lead,
+.risk-box ul.risk-more {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.risk-box ul.risk-more {
+  padding-left: var(--jp-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-1);
+}
+
+.jp-alert.danger-box {
+  border-color: var(--jp-danger);
+}
+
+.danger-box p.risk-lead,
+.danger-box ul.risk-more {
+  color: var(--jp-danger);
+}
+
+.danger-box p.risk-lead {
+  font-weight: var(--jp-weight-semibold);
+}
+
+.danger-box p.risk-lead.banner {
+  font-size: var(--jp-text-md);
+}
+
 /* The mainnet demo's banner (D428): one danger alert holding its lines. */
 .jp-alert.mainnet-demo > .body {
   display: flex;

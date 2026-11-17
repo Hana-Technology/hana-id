@@ -82,7 +82,7 @@ test('a request Journear can’t explain: the red risk line in view, the details
   await openPartner(page, await newApp());
   await login(page);
   const popup = await popupFor(page, 'unknown', 'ethSignTx', evmTx({ to: TOKEN, value: 0n, data: '0xdeadbeef' }));
-  const risk = popup.locator('p.summary-warning.cannot-explain.jp-alert-danger');
+  const risk = popup.locator('.danger-box p.risk-lead.summary-warning.cannot-explain');
   await expect(risk).toBeVisible();
   await expect(risk).toContainText('Journear can’t tell what this request does');
   await expect(details(popup)).not.toHaveAttribute('open', '');
@@ -106,7 +106,7 @@ test('raw signing: folded like any other request, the red risk line in view (D81
   await login(page);
   await page.evaluate(() => (window as any).e2e.run('raw', 'signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(3) }));
   const popup = await clickLauncher(page, 'Review in Journear Passport');
-  await expect(popup.locator('p.summary-warning.raw-signing.jp-alert-danger')).toHaveText('This asks you to sign something Journear can’t read at all. On EVM chains it could give away control of your account or your funds. Reject unless you are certain.');
+  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.raw-signing')).toHaveText('This asks you to sign something Journear can’t read at all. On EVM chains it could give away control of your account or your funds. Reject unless you are certain.');
   await expect(details(popup)).not.toHaveAttribute('open', '');
   const hex = popup.getByText(`0x${'03'.repeat(32)}`, { exact: true });
   await expect(hex).toBeHidden();
@@ -157,8 +157,25 @@ test('screens for review', async ({ page, browserName }) => {
   // Many harmless actions and one full-access key: the red banner stays under the headline (review M2).
   const many: NearAction[] = [...Array.from({ length: 99 }, (): NearAction => ({ type: 'transfer', deposit: 1n })), { type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }];
   popup = await popupFor(page, 'many', 'nearSignTx', base64Encode(encodeNearTransaction({ signerId: near, publicKey: key, nonce: 11n, receiverId: near, blockHash: NEAR_BLOCK, actions: many })));
+  // D814: one red box (the banner in full, the key as a bullet) and two grouped lines.
+  await expect(popup.locator('.danger-box')).toHaveCount(1);
+  await expect(popup.locator('.danger-box li')).toHaveText([/^Adds a full-access key \(ed25519:/u]);
+  await expect(popup.locator('p.summary-line')).toHaveText(['Add a full-access key to your account', 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
   await shot(popup, 'near-many-actions-danger', browserName);
   await done(page, popup, 'many');
+
+  // Mixed recipients (D814): a NEAR transaction has one receiver, so this uses a token's transfers: three to someone
+  // else, two to the user's own account, and one other call; grouped by recipient, others first.
+  const ft = (to: string, amount: string): NearAction => ({ type: 'functionCall', methodName: 'ft_transfer', args: new TextEncoder().encode(JSON.stringify({ receiver_id: to, amount })), gas: 30_000_000_000_000n, deposit: 1n });
+  const mixed: NearAction[] = [ft('bob.testnet', '1000'), ft(near, '50'), ft('bob.testnet', '2000'), { type: 'functionCall', methodName: 'ping', args: new TextEncoder().encode('{}'), gas: 30_000_000_000_000n, deposit: 0n }, ft(near, '25'), ft('bob.testnet', '3000')];
+  popup = await popupFor(page, 'mixed', 'nearSignTx', base64Encode(encodeNearTransaction({ signerId: near, publicKey: key, nonce: 12n, receiverId: 'usdc.testnet', blockHash: NEAR_BLOCK, actions: mixed })));
+  await expect(popup.locator('p.summary-line')).toHaveText([
+    'Send 6,000 (smallest units) of the token usdc.testnet to bob.testnet in 3 transfers',
+    'Use usdc.testnet (ping)',
+    'Send 75 (smallest units) of the token usdc.testnet to your account in 2 transfers',
+  ]);
+  await shot(popup, 'near-mixed-recipients', browserName);
+  await done(page, popup, 'mixed');
 
   popup = await popupFor(page, 'nep413', 'nearSignMessage', 'Sign in to Stamp Trail', 'localhost');
   await shot(popup, 'nep413', browserName);
@@ -221,7 +238,7 @@ test('screens for review', async ({ page, browserName }) => {
   for (let i = 0; i < 6; i++) manySteps.addOperation(Operation.bumpSequence({ bumpTo: '99' }));
   manySteps.addOperation(Operation.payment({ destination: other, asset: Asset.native(), amount: '1000000' }));
   popup = await popupFor(page, 'many-steps', 'stellarSignXdr', manySteps.setTimeout(300).build().toXDR());
-  await expect(popup.locator('p.summary-line').nth(1)).toHaveText(`7. Send 1,000,000 XLM to ${other}`);
+  await expect(popup.locator('p.summary-line').nth(1)).toHaveText(`Send 1,000,000 XLM to ${other}`);
   await shot(popup, 'stellar-many-steps-payment', browserName);
   await done(page, popup, 'many-steps');
   const junk = new Asset('USDC', Keypair.random().publicKey());
@@ -238,7 +255,7 @@ test('screens for review', async ({ page, browserName }) => {
   const auth = new xdr.SorobanAuthorizationEntry({ credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(), rootInvocation: inv(contract(3), 'transfer', callArgs, [inv(contract(2), 'transfer', [sc(stellar), sc(other), amount(10n ** 15n)])]) });
   popup = await popupFor(page, 'nested', 'stellarSignXdr', build(Operation.invokeContractFunction({ contract: contract(3), function: 'transfer', args: callArgs, auth: [auth] }) as never));
   await expect(details(popup)).not.toHaveAttribute('open', '');
-  await expect(popup.locator('p.summary-warning.cannot-explain.jp-alert-danger')).toBeVisible();
+  await expect(popup.locator('.danger-box .summary-warning.cannot-explain')).toBeVisible();
   await shot(popup, 'soroban-nested-transfer', browserName);
   await done(page, popup, 'nested');
 });

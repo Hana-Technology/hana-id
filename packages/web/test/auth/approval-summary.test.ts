@@ -63,7 +63,7 @@ describe('the summary first, the details folded', () => {
     }
     const fee = [...el.querySelectorAll('dt')].find((x) => x.textContent === 'Network fee');
     expect(folded(fee ?? null)).toBe(false);
-    expect(fee?.nextElementSibling?.textContent).toBe('up to 0.000000000000042 ETH');
+    expect(fee?.nextElementSibling?.textContent).toBe('up to less than 0.000001 ETH');
   });
 
   it('the user opens and closes the details; the label follows', () => {
@@ -80,7 +80,7 @@ describe('the summary first, the details folded', () => {
     const el = render(evm({ to: TOKEN, value: '0x0', data: '0xdeadbeef00' }));
     const warn = el.querySelector('p.summary-warning.cannot-explain');
     expect(warn?.textContent).toBe('Journear can’t tell what this request does: it calls a function Journear doesn’t recognise. It could move your money or tokens. Only approve if you fully trust Partner App. Technical details are below.');
-    expect(warn?.classList.contains('jp-alert-danger')).toBe(true);
+    expect(warn?.closest('.danger-box')?.classList.contains('jp-alert-danger')).toBe(true);
     expect(folded(warn)).toBe(false);
     expect(details(el)?.open).toBe(false);
     expect(details(el)?.querySelector('summary')?.textContent).toBe(DETAILS_LABELS.show);
@@ -95,7 +95,7 @@ describe('the summary first, the details folded', () => {
     expect(details(el)?.textContent).toContain(`0x${'01'.repeat(32)}`);
     const red = el.querySelector('p.summary-warning.raw-signing');
     expect(red?.textContent).toBe('This asks you to sign something Journear can’t read at all. On EVM chains it could give away control of your account or your funds. Reject unless you are certain.');
-    expect(red?.classList.contains('jp-alert-danger')).toBe(true);
+    expect(red?.closest('.danger-box')?.classList.contains('jp-alert-danger')).toBe(true);
     expect(folded(red)).toBe(false);
     expect(el.textContent).toContain(NO_NETWORK_NOTE);
   });
@@ -108,15 +108,15 @@ describe('the summary first, the details folded', () => {
     const cases: [string, DecodedApproval, string, string][] = [
       ['unknown call', evm({ to: TOKEN, value: '0x0', data: '0xdeadbeef' }), 'cannot-explain', 'jp-alert-danger'],
       ['NEAR unreadable arguments', nearTx([{ type: 'functionCall', methodName: 'm', args: Uint8Array.of(0xff), gas: 1n, deposit: 0n }]), 'cannot-explain', 'jp-alert-danger'],
-      ['NEAR too many value steps', nearTx([...Array.from({ length: 24 }, (): NearAction => ({ type: 'transfer', deposit: 1n })), { type: 'functionCall', methodName: 'm', args: utf8('{}'), gas: 1n, deposit: 0n }]), 'many-value-steps', 'jp-alert-danger'],
-      ['Stellar too many neutral steps', decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes(Array.from({ length: 7 }, () => Operation.bumpSequence({ bumpTo: '9' }))) }), 'steps-not-listed', 'jp-alert-warning'],
+      ['NEAR steps left out that move value', nearTx(['a', 'b', 'c', 'd', 'e'].map((m): NearAction => ({ type: 'functionCall', methodName: m, args: utf8('{}'), gas: 1n, deposit: 0n }))), 'steps-not-listed', 'jp-alert-danger'],
+      ['Stellar neutral steps left out', decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([Operation.bumpSequence({ bumpTo: '9' }), Operation.manageData({ name: 'a', value: 'b' }), Operation.manageData({ name: 'a', value: null }), Operation.setOptions({ homeDomain: 'x.example' }), Operation.inflation({})]) }), 'steps-not-listed', 'jp-alert-warning'],
       ['a message that isn’t text', decodeApprovalRequest({ kind: 'personal_sign', chain: 'evm', address: EVM, context: {}, bytes: Uint8Array.of(0xff, 0xfe) }), 'cannot-explain', 'jp-alert-warning'],
     ];
     for (const [name, decoded, cls, tone] of cases) {
       const el = render(decoded, 'Partner App', decoded.kind.startsWith('near') ? me : decoded.kind === 'stellar_tx' ? USER : EVM);
       expect(details(el)?.open, name).toBe(false);
-      const w = el.querySelector(`p.summary-warning.${cls}`);
-      expect(w?.classList.contains(tone), name).toBe(true);
+      const w = el.querySelector(`.summary-warning.${cls}`);
+      expect(w?.closest('.risk-box')?.classList.contains(tone), name).toBe(true);
       expect(folded(w), name).toBe(false);
     }
   });
@@ -126,7 +126,7 @@ describe('warnings are never folded', () => {
   it('an unlimited approve: the red warning outside the closed details', () => {
     const el = render(evm({ to: TOKEN, value: '0x0', data: approveData(2n ** 256n - 1n) }));
     const w = el.querySelector('p.summary-warning.unlimited-spend');
-    expect(w?.classList.contains('jp-alert-danger')).toBe(true);
+    expect(w?.closest('.danger-box')?.classList.contains('jp-alert-danger')).toBe(true);
     expect(w?.textContent).toContain(`This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN}, with no limit`);
     expect(folded(w)).toBe(false);
     expect(details(el)?.open).toBe(false);
@@ -150,11 +150,13 @@ describe('warnings are never folded', () => {
     const bytes = encodeNearTransaction({ signerId: me, publicKey: { type: 'ed25519', bytes: pub }, nonce: 1n, receiverId: me, blockHash: sha256(utf8('b')), actions });
     const el = render(decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: me, context: { nearNetwork: 'testnet' }, bytes }), 'Partner App', me);
     expect(el.children[0]?.matches('h2.summary-headline')).toBe(true);
-    expect(el.children[1]?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
-    expect(el.children[2]?.classList.contains('takeover')).toBe(true);
-    // All 100 move value or control (review 2, N2): 20 listed, a red line says so, the rest in the details.
-    expect(el.querySelector('p.summary-warning.many-value-steps')?.classList.contains('jp-alert-danger')).toBe(true);
-    expect(el.querySelectorAll('p.summary-line')).toHaveLength(21);
+    // D814: one red box right under the headline, the banner in full, the key as one bullet; two grouped lines.
+    const box = el.children[1] as HTMLElement;
+    expect(box.matches('div.danger-box.jp-alert-danger')).toBe(true);
+    expect(box.querySelector('.risk-lead')?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
+    expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['Adds a full-access key (ed25519:cGfH…izuN)']);
+    expect(el.querySelectorAll('.jp-alert-danger')).toHaveLength(1);
+    expect([...el.querySelectorAll('p.summary-line')].map((p) => p.textContent)).toEqual(['Add a full-access key to your account', 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
     expect(details(el)?.open).toBe(false);
   });
 
@@ -163,8 +165,9 @@ describe('warnings are never folded', () => {
     const banner = el.querySelector('p.takeover.banner');
     expect(banner?.textContent).toBe(ACCOUNT_CONTROL_BANNER);
     expect(folded(banner)).toBe(false);
-    for (const p of el.querySelectorAll('p.danger.takeover')) expect(folded(p)).toBe(false);
-    expect(el.querySelectorAll('p.danger.takeover')).toHaveLength(2);
+    const red = el.querySelectorAll('.danger-box .risk-lead, .danger-box li');
+    for (const p of red) expect(folded(p)).toBe(false);
+    expect(red).toHaveLength(2);
     expect(folded(el.querySelector('li.op.takeover-op'))).toBe(true);
     expect(details(el)?.open).toBe(false);
   });

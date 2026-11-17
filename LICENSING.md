@@ -2,13 +2,15 @@
 
 This repository is Journear Passport, licensed by Hana Tech Pty Ltd. Its working name `hana-id` appears in the
 packages, the code and the testnet accounts. Most of it is under the Business Source License 1.1 ([`LICENSE`](LICENSE)),
-three of the SDK packages that partners install are under the Apache License 2.0, and third-party material keeps its
-own licence. This page lists what is not under `LICENSE`. Anything not listed here is under `LICENSE`.
+three of the SDK packages that partners install are under the Apache License 2.0, the EVM delegate contract is under
+the MIT License, and third-party material keeps its own licence. This page lists what is not under `LICENSE`. Anything
+not listed here is under `LICENSE`.
 
 ## Under the Business Source License 1.1 (`LICENSE`)
 
-Everything not listed below: the contracts, the API and every other Worker, the vault, sign-in, approval, export and
-Passport Home pages, the consoles, the scripts, the tests, the docs and `legacy/`. `LICENSE` sets the parameters:
+Everything not listed below: the contracts (all but `contracts/evm-delegate`), the API and every other Worker, the
+vault, sign-in, approval, export and Passport Home pages, the consoles, the scripts, the tests, the docs and `legacy/`.
+`LICENSE` sets the parameters:
 
 - **Additional Use Grant:** production use on blockchain test networks whose tokens have no monetary value, as long as
   it is not used with a network whose tokens have monetary value and is not offered to third parties as a commercial
@@ -29,6 +31,15 @@ is covered by the Additional Use Grant.
 | `packages/react` (`@hana-id/react`) | [`packages/react/LICENSE`](packages/react/LICENSE) | the whole package |
 | `packages/sodax` (`@hana-id/sodax`) | [`packages/sodax/LICENSE`](packages/sodax/LICENSE) | the whole package |
 
+## Under the MIT License
+
+| What | Licence file | What it covers |
+|---|---|---|
+| `contracts/evm-delegate` (`@hana-id/evm-delegate`, private) | [`contracts/evm-delegate/LICENSE`](contracts/evm-delegate/LICENSE) | the whole directory: the EIP-7702 delegate `HanaDelegateExecutor`, the `CheckIn` demo contract, their tests, scripts, test vector and build artifacts (D841). Revised from Hana's earlier MIT-licensed delegate contract; MIT so that anyone can read, verify and reuse the code that holds authority over a user's account |
+
+It builds on OpenZeppelin Contracts (MIT) and tests with forge-std (MIT or Apache-2.0), installed from npm and GitHub
+by `pnpm install` and not stored here.
+
 ## Third-party material, under its own licence
 
 | What | Where | Licence |
@@ -38,7 +49,7 @@ is covered by the Additional Use Grant.
 | The CKD client, ported from [near/mpc](https://github.com/near/mpc) at `a7ae426` | `packages/core/src/ckd.ts` (and its source, `legacy/client/ckd.ts`) | MIT License, Copyright (c) 2025 NEAR One Limited; its notice is kept in `packages/core/LICENSE-near-mpc.txt` |
 | The disposable-address domain list from `disposable-email-domains/disposable-email-domains` | `packages/email/src/disposable-domains.ts` | CC0 1.0 Universal |
 
-The packages installed from npm and Cargo come with their own licences. They are not stored here.
+The packages installed from npm, GitHub and Cargo come with their own licences. They are not stored here.
 
 ## Names and logos
 

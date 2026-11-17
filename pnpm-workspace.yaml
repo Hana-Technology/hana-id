@@ -4,6 +4,8 @@ packages:
   # @hana-id/react's suite again on React 18 (its peer range is 18 or 19).
   - packages/react/react18
   - scripts
+  # The EVM delegate contract (Foundry): a package so pnpm pins its Solidity dependencies (D841).
+  - contracts/evm-delegate
   # Partner examples whose code the docs quote (each tested, so the published guide always runs).
   - examples/*
 

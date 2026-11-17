@@ -5,7 +5,8 @@
 //
 //   pnpm verify --quick   lockfile, gitleaks, typecheck and unit tests of the affected packages, the docs checks
 //   pnpm verify           + what a develop push ran in CI: contract (cargo test + wasm) and sandbox e2e if Rust
-//                           changed; SDK pack check and Playwright on Chromium if web code changed
+//                           changed; SDK pack check and Playwright on Chromium if web code changed; the EVM
+//                           delegate (forge fmt, test + artifacts check) if it changed and Foundry is installed
 //   pnpm verify --full    everything whatever changed: all packages, the Rust jobs, the pack check, Playwright on
 //                           Chromium, Firefox and WebKit
 //
@@ -18,7 +19,7 @@
 // Phases run one after another; a phase's lanes run side by side, a lane's steps one after another (D423):
 //
 //   0  lockfile
-//   1  gitleaks | typecheck | contract (cargo test + wasm) | dependency advisories (--full)
+//   1  gitleaks | typecheck | contract (cargo test + wasm) | EVM delegate (forge) | dependency advisories (--full)
 //   2  unit tests | docs checks                          (alone: see below)
 //   3  sandbox e2e | SDK pack check                      (Rust nodes beside a short build)
 //   4  Playwright                                        (alone: browsers beside 8 sandbox nodes made Firefox's
@@ -34,7 +35,7 @@ import { appendFileSync, closeSync, existsSync, mkdtempSync, openSync, readFileS
 import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CI_FILES, classify, isDocOnly } from './ci-changes.mjs';
+import { CI_FILES, EVM_DIR, classify, evmChanged, isDocOnly } from './ci-changes.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -266,6 +267,16 @@ export const BROWSERS = ['chromium', 'firefox', 'webkit'];
  * guestbook (D744) and stamps contract (D796). The test-only mock-mpc is built by the sandbox tests. */
 export const CONTRACT_CRATES = ['contracts/hana-signer', 'contracts/hana-guestbook', 'contracts/hana-stamps'];
 
+/** Whether Foundry's `forge` runs here (the EVM delegate's step skips without it, D841). */
+export function hasForge() {
+  return spawnSync('forge', ['--version'], { stdio: 'ignore' }).status === 0;
+}
+
+/** Whether the EVM delegate's Solidity dependencies are installed (by `pnpm install`: they are workspace packages). */
+export function hasEvmDeps(root = ROOT) {
+  return ['@openzeppelin/contracts/package.json', 'forge-std/src/Test.sol'].every((f) => existsSync(join(root, EVM_DIR, 'node_modules', f)));
+}
+
 /** Sandbox tests run this many at a time, each with its own sandbox node (D423; CI's e2e job runs the same). */
 export const SANDBOX_TEST_THREADS = 8;
 
@@ -274,12 +285,13 @@ export const SANDBOX_TEST_THREADS = 8;
  * lane's steps in plan order (a step's lane defaults to its id: a lane of its own).
  *
  * @param {{ mode: 'quick' | 'default' | 'full', files: string[] | null, pkgs: object[],
- *   reads: Map<string, { code: Set<string>, test: Set<string> }>, dirty?: boolean, cpus?: number }} o
+ *   reads: Map<string, { code: Set<string>, test: Set<string> }>, dirty?: boolean, cpus?: number,
+ *   forge?: boolean, evmDeps?: boolean }} o forge, evmDeps: whether Foundry and the delegate's dependencies are there
  */
-export function plan({ mode, files, pkgs, reads, dirty = false, cpus = availableParallelism() }) {
+export function plan({ mode, files, pkgs, reads, dirty = false, cpus = availableParallelism(), forge = hasForge(), evmDeps = hasEvmDeps() }) {
   const scope = mode === 'full' ? null : files;
   const sel = selectPackages(scope, pkgs, reads);
-  const jobs = scope === null || scope.some((f) => VERIFY_FILES.includes(f)) ? { rust: true, web: true } : classify(scope);
+  const jobs = scope === null || scope.some((f) => VERIFY_FILES.includes(f)) ? { rust: true, web: true, evm: true } : { ...classify(scope), evm: evmChanged(scope) };
   const unit = sel.all ? sel : { ...sel, names: sel.names.filter((n) => !DOCS_PACKAGES.includes(n)) };
   const notQuick = mode === 'quick' ? 'not in --quick' : null;
   const browsers = mode === 'full' ? BROWSERS : ['chromium'];
@@ -305,6 +317,15 @@ export function plan({ mode, files, pkgs, reads, dirty = false, cpus = available
       cmd('cargo', ['test', '--locked'], dir),
       cmd('cargo', ['near', 'build', 'non-reproducible-wasm'], dir),
     ]), notQuick ?? (jobs.rust ? null : 'no Rust change')),
+    // The EVM delegate (D841): the formatting, its Foundry tests, then the checked-in artifacts and test vector against the build. An
+    // optional toolchain, as the browsers are: without forge, or before `pnpm install`, it skips and says why.
+    step('evm', 'EVM delegate (forge fmt, test + artifacts check)', 1, [
+      cmd('forge', ['fmt', '--check'], EVM_DIR),
+      cmd('forge', ['test'], EVM_DIR),
+      cmd('node', ['scripts/generate.mjs', '--check'], EVM_DIR),
+    ], notQuick ?? (!jobs.evm ? 'no EVM delegate change'
+      : !forge ? 'Foundry not installed (no `forge` on PATH; contracts/evm-delegate/README.md)'
+        : !evmDeps ? 'its Solidity dependencies are not installed (run `corepack pnpm install`, then verify again)' : null)),
     // Needs the network and cargo-audit, and an advisory can fail it with no change here: before a deploy, not each merge.
     step('audit', 'dependency advisories', 1, [cmd('node', ['scripts/dep-audit.mjs'])], mode === 'full' ? null : 'only in --full'),
     // CI=true as in CI: vitest then fails on a stray `.only`. pnpm's default 4 at a time, for the PGlite suites; a
@@ -550,7 +571,7 @@ async function main() {
   console.log(`verify ${o.mode === 'default' ? '(default)' : `--${o.mode}`} at ${head}${dirty ? ' + uncommitted changes' : ''}`);
   console.log(`  change:   ${change.reason}`);
   console.log(`  packages: ${p.selection.all ? 'all' : p.selection.names.join(', ') || 'none'} (${p.selection.reason})`);
-  console.log(`  jobs:     Rust ${p.jobs.rust ? 'affected' : 'not affected'}, web ${p.jobs.web ? 'affected' : 'not affected'}\n`);
+  console.log(`  jobs:     Rust ${p.jobs.rust ? 'affected' : 'not affected'}, web ${p.jobs.web ? 'affected' : 'not affected'}, EVM ${p.jobs.evm ? 'affected' : 'not affected'}\n`);
   if (o.plan) {
     for (const s of p.steps) {
       console.log(`${s.skip ? 'skip   ' : `phase ${s.phase}`}  ${s.title}${s.skip ? ` (${s.skip})` : s.lane === s.id ? '' : ` (lane ${s.lane}: one step after another)`}`);

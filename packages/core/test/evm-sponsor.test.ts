@@ -84,8 +84,8 @@ const PINNED = SPONSOR_DELEGATES[LOCAL]!.address;
 const OTHER = addr('some other contract');
 const T1 = addr('target 1');
 const T2 = addr('target 2');
-/** The local chain's entry is a placeholder: the signers take it only with the test-only option. */
-const ENABLED = { enabledChains: [LOCAL], allowPlaceholderDelegateInTests: true } as const;
+/** The local chain's entry is the real deterministic deployment (no placeholder): no test-only option needed. */
+const ENABLED = { enabledChains: [LOCAL] } as const;
 const N = secp256k1.CURVE.n;
 const U64 = (1n << 64n) - 1n;
 
@@ -175,7 +175,7 @@ const bytesOf = (n: number, seed = 1): Hex => hex(Uint8Array.from({ length: n },
 // ---- delegates ----
 
 describe('pinned delegates', () => {
-  it('every entry is well formed; only the local chain has one, a marked placeholder; Base Sepolia none yet', () => {
+  it('every entry is well formed; only the local chain has one, the deterministic deployment; Base Sepolia none yet', () => {
     const chains = Object.keys(SPONSOR_DELEGATES).map(Number);
     expect(chains).toEqual([LOCAL]);
     expect(Object.isFrozen(SPONSOR_DELEGATES)).toBe(true);
@@ -191,6 +191,26 @@ describe('pinned delegates', () => {
       // A zero code hash only on a placeholder, and placeholders only on local chains.
       expect(d.runtimeCodeHash === `0x${'0'.repeat(64)}`).toBe(d.placeholder);
       if (d.placeholder) expect(Number(chain)).toBe(LOCAL);
+    }
+    expect(SPONSOR_DELEGATES[LOCAL]!.placeholder).toBe(false);
+  });
+
+  it('every deployed entry is the contract’s checked-in artifact: its CREATE2 address and runtime code hash', () => {
+    // contracts/evm-delegate/artifacts/HanaDelegateExecutor.json (generated from the build, checked by its forge test
+    // against a real CREATE2 deployment). A contract change moves both; this fails until the pin follows.
+    const artifact = JSON.parse(readFileSync(new URL('../../../contracts/evm-delegate/artifacts/HanaDelegateExecutor.json', import.meta.url), 'utf8')) as {
+      contractName: string;
+      create2: { address: string };
+      runtimeCodeHash: string;
+      eip712: { name: string; version: string };
+    };
+    expect(artifact.contractName).toBe('HanaDelegateExecutor');
+    expect(artifact.eip712).toMatchObject(SPONSOR_DELEGATE_DOMAIN);
+    const deployed = Object.values(SPONSOR_DELEGATES).filter((d) => !d.placeholder);
+    expect(deployed.length).toBeGreaterThan(0);
+    for (const d of deployed) {
+      expect(d.address).toBe(artifact.create2.address);
+      expect(d.runtimeCodeHash).toBe(artifact.runtimeCodeHash);
     }
   });
 
@@ -590,20 +610,7 @@ function growing<T>(item: T, n: number): T[] {
   });
 }
 
-describe('the placeholder delegate is refused unless a test opts in', () => {
-  it('signAuthorization and signExecute refuse the 31337 placeholder by default', () => {
-    expect(SPONSOR_DELEGATES[LOCAL]!.placeholder).toBe(true);
-    const a = { chainId: LOCAL, address: PINNED, nonce: 0n };
-    expect(codeOf(() => signAuthorization(D, a, { enabledChains: [LOCAL] }))).toBe('delegate_not_pinned');
-    expect(codeOf(() => signAuthorization(D, { ...a, address: ZERO_ADDRESS }, { enabledChains: [LOCAL], revoke: true }))).toBe('delegate_not_pinned');
-    expect(codeOf(() => signExecute(D, baseInput(), { enabledChains: [LOCAL] }))).toBe('delegate_not_pinned');
-    for (const opt of [false, 'true', 1]) {
-      expect(codeOf(() => signAuthorization(D, a, { enabledChains: [LOCAL], allowPlaceholderDelegateInTests: opt } as never))).toBe('invalid_input');
-      expect(codeOf(() => signExecute(D, baseInput(), { enabledChains: [LOCAL], allowPlaceholderDelegateInTests: opt } as never))).toBe('invalid_input');
-    }
-    expect(signAuthorization(D, a, ENABLED).address).toBe(PINNED);
-  });
-
+describe('the test-only placeholder option (its refusals: test/evm-sponsor-placeholder.test.ts)', () => {
   it('no source outside tests passes the test-only option', () => {
     const repo = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
     const files = execSync('git ls-files -co --exclude-standard', { cwd: repo, encoding: 'utf8' }).split('\n');

@@ -1,0 +1,45 @@
+# HanaDelegateExecutor (D841, D845). Every setting below that reaches the bytecode is pinned: the CREATE2 address and
+# the runtime code hash in artifacts/ depend on them, and the artifacts test fails when they drift.
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+cache_path = "cache"
+# The Solidity dependencies come from pnpm (package.json, pinned with integrity in the root pnpm-lock.yaml).
+libs = ["node_modules"]
+remappings = [
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "forge-std/=node_modules/forge-std/src/",
+]
+solc_version = "0.8.28"
+auto_detect_solc = false
+evm_version = "prague"
+optimizer = true
+optimizer_runs = 10000
+via_ir = false
+# No metadata hash or CBOR trailer: the bytecode, and so the CREATE2 address, depends on the code and the settings
+# only, not on comments or file paths.
+bytecode_hash = "none"
+cbor_metadata = false
+fs_permissions = [
+  { access = "read", path = "./artifacts" },
+  { access = "read", path = "./test/vectors" },
+  { access = "read", path = "./out" },
+  # The source of test/vectors/execute-v1.json (the TypeScript signer's vector), compared when it is in the checkout.
+  { access = "read", path = "../../packages/core/test/vectors" },
+]
+
+[fuzz]
+runs = 1000
+seed = "0x4a6f75726e656172"
+
+[invariant]
+runs = 256
+depth = 64
+# A handler require() states a property: a revert there is a failure.
+fail_on_revert = true
+
+[lint]
+# forge lint is advisory (gas-style notes); the build stays quiet.
+lint_on_build = false

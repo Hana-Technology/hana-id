@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -29,6 +30,19 @@ describe('path rules', () => {
     expect(classify('contracts/hana-signer/src/lib.rs')).toEqual({ rust: true, web: false });
     expect(classify('contracts/hana-signer/rust-toolchain.toml')).toEqual({ rust: true, web: false });
     expect(classify('contracts/integration-tests/README.md')).toEqual({ rust: true, web: false });
+  });
+
+  it('the EVM delegate (Foundry, D841): neither the Rust jobs nor the web jobs; verify runs its own step', async () => {
+    expect(classify('contracts/evm-delegate/src/HanaDelegateExecutor.sol')).toEqual({ rust: false, web: false });
+    expect(classify('contracts/evm-delegate/README.md', 'contracts/evm-delegate/artifacts/CheckIn.json')).toEqual({ rust: false, web: false });
+    const { evmChanged, EVM_DIR } = (await import(pathToFileURL(SCRIPT).href)) as { evmChanged(f: string[]): boolean; EVM_DIR: string };
+    expect(EVM_DIR).toBe('contracts/evm-delegate');
+    expect(evmChanged(['contracts/evm-delegate/foundry.toml'])).toBe(true);
+    expect(evmChanged(['pnpm-lock.yaml'])).toBe(true);
+    expect(evmChanged(['packages/core/test/vectors/evm-sponsor-v1.json'])).toBe(true);
+    expect(evmChanged(['scripts/ci-changes.mjs'])).toBe(true);
+    expect(evmChanged(['contracts/hana-signer/src/lib.rs', 'apps/api/src/gas.ts', 'docs/decisions.md'])).toBe(false);
+    expect(evmChanged(['contracts/evm-delegatex/a.sol'])).toBe(false);
   });
 
   it('app or package code: the web jobs, not the Rust jobs', () => {

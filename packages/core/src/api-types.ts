@@ -392,3 +392,149 @@ export const isRevokeAllResponse = (v: unknown): v is RevokeAllResponse => isObj
 
 /** `409 bad_counter` carries `{expected}`: the counter the API wants next. */
 export const badCounterExpected = (err: ApiError): number | null => (err.code === 'bad_counter' && isMs(err.details.expected) ? err.details.expected : null);
+
+// ---- EVM gas sponsorship (D847; docs/api.md "EVM gas sponsorship"; built, not live) ----
+// The vault's calls (prepare, send) and anyone's status. Integers that can pass 2^53 are decimal strings; addresses and
+// hex data `0x` strings (addresses EIP-55 in answers). Errors are the API's usual `{error, code, requestId, …}`.
+
+/** One call of a sponsored batch: an allowlisted contract, value "0", its calldata. */
+export interface EvmSponsorCall {
+  to: string;
+  value: string;
+  data: string;
+}
+
+/** `POST /v1/evm/sponsor/prepare`. */
+export interface EvmSponsorPrepareBody {
+  chainId: number;
+  account: string;
+  calls: EvmSponsorCall[];
+}
+
+/** Why sponsorship is not offered for a batch or an app right now (prepare's and status's `reason`). */
+export type EvmSponsorUnavailableReason = 'delegated_elsewhere' | 'account_unrecorded' | 'too_many_failures' | 'budget_exhausted' | 'gas_too_high' | 'chain_not_enabled' | 'app_not_sponsored';
+
+const EVM_SPONSOR_REASONS: readonly string[] = ['delegated_elsewhere', 'account_unrecorded', 'too_many_failures', 'budget_exhausted', 'gas_too_high', 'chain_not_enabled', 'app_not_sponsored'];
+
+export interface EvmSponsorPrepareResponse {
+  /** `none`: no code yet (the send carries an authorization); `journear`: delegated to the pinned delegate; `other`: refused. */
+  delegation: 'none' | 'journear' | 'other';
+  /** The account's pending transaction nonce: an authorization signs it. */
+  accountNonce: string;
+  /** The delegate's next Execute nonce (null when delegated elsewhere). */
+  executeNonce: string | null;
+  /** The API's clock, unix seconds (the deadline window is checked against it). */
+  serverNow: number;
+  relayer: string;
+  implementation: string;
+  minGasFloor: string;
+  /** The largest minGas whose transaction fits the chain's gas cap for these calls. */
+  maxMinGas: string;
+  deadlineMaxS: number;
+  allowed: boolean;
+  reason?: EvmSponsorUnavailableReason;
+  requestId?: string;
+}
+
+/** A signed EIP-7702 authorization, sent only for an account not yet delegated. */
+export interface EvmSponsorAuthorizationBody {
+  chainId: number;
+  address: string;
+  nonce: string;
+  yParity: 0 | 1;
+  r: string;
+  s: string;
+}
+
+/** `POST /v1/evm/sponsor/send`. */
+export interface EvmSponsorSendBody extends EvmSponsorPrepareBody {
+  executeNonce: string;
+  /** Unix seconds: at least 30 s and at most `deadlineMaxS` ahead of the API's clock. */
+  deadline: string;
+  relayer: string;
+  minGas: string;
+  /** 65 bytes r ‖ s ‖ v over the Execute's EIP-712 digest. */
+  signature: string;
+  authorization?: EvmSponsorAuthorizationBody;
+}
+
+/** `POST /v1/evm/sponsor/send` 200: the batch ran (`Executed` from the account). `replay` when it answers a copy. */
+export interface EvmSponsorSendResponse {
+  transactionHash: string;
+  status: 'executed';
+  replay?: true;
+  requestId?: string;
+}
+
+/** `GET /v1/evm/sponsor/status?chainId=`: `remainingToday` is this app's own day budget left (wei). */
+export interface EvmSponsorStatusResponse {
+  available: boolean;
+  reason?: EvmSponsorUnavailableReason;
+  remainingToday?: string;
+  requestId?: string;
+}
+
+/** The sponsorship routes' error codes (besides the app gate's and `bad_request`). */
+export type EvmSponsorErrorCode =
+  | 'sponsorship_unconfigured'
+  | 'chain_not_enabled'
+  | 'app_not_sponsored'
+  | 'too_many_calls'
+  | 'value_not_allowed'
+  | 'target_not_allowed'
+  | 'call_not_sponsored'
+  | 'wrong_relayer'
+  | 'min_gas_out_of_range'
+  | 'deadline_out_of_range'
+  | 'invalid_signature'
+  | 'bad_authorization'
+  | 'authorization_not_pinned'
+  | 'invalid_authorization_signature'
+  | 'nonce_stale'
+  | 'in_progress'
+  | 'account_unrecorded'
+  | 'directory_unavailable'
+  | 'rate_limited'
+  | 'rate_limiter_unavailable'
+  | 'evm_rpc_unavailable'
+  | 'delegated_elsewhere'
+  | 'delegation_required'
+  | 'authorization_nonce_stale'
+  | 'gas_too_high'
+  | 'gas_price_too_high'
+  | 'too_many_failures'
+  | 'app_budget_exhausted'
+  | 'budget_exhausted'
+  | 'simulation_reverted'
+  | 'audit_unavailable'
+  | 'relayer_unavailable'
+  | 'relayer_busy'
+  | 'relayer_rejected'
+  | 'reverted'
+  | 'not_executed'
+  | 'timeout';
+
+const isAddress = (v: unknown): v is string => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/u.test(v);
+const isHash = (v: unknown): v is string => typeof v === 'string' && /^0x[0-9a-f]{64}$/u.test(v);
+const isDecimal = (v: unknown, digits = 78): v is string => typeof v === 'string' && v.length <= digits && /^(0|[1-9][0-9]*)$/u.test(v);
+const isReason = (v: unknown): boolean => v === undefined || (typeof v === 'string' && EVM_SPONSOR_REASONS.includes(v));
+
+export const isEvmSponsorPrepareResponse = (v: unknown): v is EvmSponsorPrepareResponse =>
+  isObj(v) &&
+  (v.delegation === 'none' || v.delegation === 'journear' || v.delegation === 'other') &&
+  isDecimal(v.accountNonce, 20) &&
+  (v.executeNonce === null ? v.delegation === 'other' : isDecimal(v.executeNonce, 20)) &&
+  isMs(v.serverNow) &&
+  isAddress(v.relayer) &&
+  isAddress(v.implementation) &&
+  isDecimal(v.minGasFloor, 20) &&
+  isDecimal(v.maxMinGas, 20) &&
+  isMs(v.deadlineMaxS) &&
+  typeof v.allowed === 'boolean' &&
+  isReason(v.reason) &&
+  (v.allowed ? v.reason === undefined : typeof v.reason === 'string');
+
+export const isEvmSponsorSendResponse = (v: unknown): v is EvmSponsorSendResponse => isObj(v) && isHash(v.transactionHash) && v.status === 'executed' && (v.replay === undefined || v.replay === true);
+
+export const isEvmSponsorStatusResponse = (v: unknown): v is EvmSponsorStatusResponse =>
+  isObj(v) && typeof v.available === 'boolean' && isReason(v.reason) && (v.available ? v.reason === undefined : typeof v.reason === 'string') && (v.remainingToday === undefined || isDecimal(v.remainingToday));

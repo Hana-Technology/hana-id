@@ -145,6 +145,9 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   home_budget_high: 'Passport Home daily budget running high',
   near_relay_budget_high: 'NEAR relay daily budget running high',
   near_relay_balance_low: 'NEAR relay account running low',
+  evm_relay_budget_high: 'EVM sponsorship daily budget running high',
+  evm_relay_balance_low: 'EVM sponsorship relayer running low',
+  evm_relay_stuck: 'EVM sponsorship relayer transaction stuck',
 };
 
 /** A security event's kind in words; an unknown kind reads as its own words. */

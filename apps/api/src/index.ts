@@ -8,6 +8,8 @@ import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.t
 import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-demo.ts';
 import { NEAR_ACTIVATE_ENDPOINT, NEAR_RELAY_ENDPOINT, handleNearActivate, handleNearRelay } from './near/relay.ts';
 import { checkNearRelayFunds } from './near/relay-funds.ts';
+import { EVM_SPONSOR_PREPARE_ENDPOINT, EVM_SPONSOR_SEND_ENDPOINT, EVM_SPONSOR_STATUS_ENDPOINT, checkEvmSponsorRelay, handleEvmSponsorPrepare, handleEvmSponsorSend } from './evm/sponsor.ts';
+import { handleEvmSponsorStatus } from './evm/sponsor-status.ts';
 import { guardedChangesMaintenance } from './guarded/cron.ts';
 import { HOME_APPS_ENDPOINT, handleHomeApps } from './home/apps.ts';
 import { HOME_CONFIG_ENDPOINT, handleHomeConfig } from './home/config.ts';
@@ -185,6 +187,18 @@ export default {
         if (request.method === 'POST') return pathname === NEAR_RELAY_ENDPOINT ? await handleNearRelay(request, env, requestId) : await handleNearActivate(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
+      if (pathname === EVM_SPONSOR_PREPARE_ENDPOINT || pathname === EVM_SPONSOR_SEND_ENDPOINT) {
+        // EVM gas sponsorship (D847): the app gate, the vault only (D832). 503 sponsorship_unconfigured without its config.
+        if (request.method === 'OPTIONS') return await appPreflight(request, env);
+        if (request.method === 'POST') return pathname === EVM_SPONSOR_SEND_ENDPOINT ? await handleEvmSponsorSend(request, env, requestId) : await handleEvmSponsorPrepare(request, env, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (pathname === EVM_SPONSOR_STATUS_ENDPOINT) {
+        // EVM gas sponsorship's availability for the app (D847): the partner page or the vault, no chain read.
+        if (request.method === 'OPTIONS') return await appPreflight(request, env);
+        if (request.method === 'GET') return await handleEvmSponsorStatus(request, env, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, OPTIONS' });
+      }
       if (pathname === HOME_CONFIG_ENDPOINT) {
         // Hana Home (docs/hana-home-spec.md): `AUTH_ORIGIN` only. No identity yet: the page calls it before a sign-in.
         if (request.method === 'OPTIONS') return homePreflight(request, env);
@@ -256,7 +270,11 @@ export default {
       // Log their own failures too; also positional-last.
       jobs.push(checkOwnerPoolAllowance(env), checkNearRelayFunds(env));
     }
+    // Every run (EVM sponsorship, D848): the relayer's balance and stuck transactions; nothing without its config. Outside
+    // `jobs` (whose results are read by position) and never failing the run.
+    const evmRelayCheck = checkEvmSponsorRelay(env).catch(() => undefined);
     const [issuerKeys, vault, identity, guarded, drift] = await Promise.allSettled(jobs);
+    await evmRelayCheck;
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (identity?.status === 'rejected') log({ event: 'identity_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (guarded?.status === 'rejected') log({ event: 'guarded_change_cron', outcome: 'error', code: 'internal' }, 'error');

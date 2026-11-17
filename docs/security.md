@@ -1532,7 +1532,8 @@ handshake removes the frame and closes its port, as `destroy()` does.
   explained), pool deposits and withdrawals aren't explained (the request names no assets), an offer with a malformed
   price isn't explained (never divided by). Steps are grouped in at most four lines (D814): never two recipients,
   assets, contracts or methods in one group, each with its count and exact or bounded total, value to others before
-  the user's own account, the largest amount to others never left out; any left-out group gets a bullet in the red
+  the user's own account, the largest amount to others never left out (a control change or grant never gives way while another line can; when one
+  must, it is named in its own red bullet, as every left-out control change, grant and value to someone else is); any left-out group gets a bullet in the red
   box (when it moves or grants value or changes control) or the amber one, and the request isn't explained. Every red
   item is in one red box: the most serious in full, every other as a bullet, none dropped. Amounts are shown with at
   most six decimals, rounded against the user (up when leaving, down when received), never as 0; a Stellar

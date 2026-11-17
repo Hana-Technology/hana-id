@@ -2,7 +2,7 @@
 // fee and network, the warnings for permissions to spend the user's tokens, and whether Journear can explain the
 // request (the details start open when it can't; raw signing's can't be folded). Hostile inputs included: look-alike
 // and invisible characters, huge values, the zero address, revokes, and typed data that imitates a permit.
-import { Account, Address, Asset, Claimant, LiquidityPoolAsset, MuxedAccount, Operation, TransactionBuilder, getLiquidityPoolId, xdr } from '@stellar/stellar-base';
+import { Account, Address, Asset, Claimant, Keypair, LiquidityPoolAsset, MuxedAccount, Operation, TransactionBuilder, getLiquidityPoolId, xdr } from '@stellar/stellar-base';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   type ApprovalSummary,
@@ -596,7 +596,7 @@ describe('review: Soroban authorizations (H1)', () => {
 
   it('an approval for someone else’s tokens doesn’t call them yours', () => {
     const s = stellar([invokeOp(TOKEN, 'approve', [addr(OTHER), addr(ATTACKER), i128(5n), xdr.ScVal.scvU32(10)])]);
-    expect(headline(s)).toBe(`${APP} wants to let someone else spend tokens of contract ${TOKEN} held by ${OTHER}`);
+    expect(headline(s)).toBe(`${APP} wants to let ${ATTACKER} spend tokens of contract ${TOKEN} held by ${OTHER}`);
     expect(text(s.warnings[0]!.text)).toContain(`of the tokens of contract ${TOKEN} held by ${OTHER}`);
     expect(text(s.warnings[0]!.text)).not.toContain('your');
   });
@@ -912,7 +912,7 @@ describe('D814: grouped lines', () => {
 
   it('value to others by descending total; control changes first', () => {
     const s = stellar([pay(OTHER, '5'), pay(ATTACKER, '10'), addSignerOp()]);
-    expect(s.lines.map(text).slice(1)).toEqual(['Change who can sign for the account', `Send 10 XLM to ${ATTACKER}`, `Send 5 XLM to ${OTHER}`]);
+    expect(s.lines.map(text).slice(1)).toEqual([`Add ${ATTACKER} as a signer with weight 255`, `Send 10 XLM to ${ATTACKER}`, `Send 5 XLM to ${OTHER}`]);
   });
 
   it('never merges different recipients, assets or methods', () => {
@@ -1015,5 +1015,60 @@ describe('D810 with D814: the risk lines of requests that leave things out, at t
       for (const w of s.warnings.filter((x) => x.level === 'danger')) expect(w.short?.length, w.code).toBeGreaterThan(0);
     }
     expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)).warnings[0]!.short!)).toBe('Lets 0x3333…3333 spend all of your tokens of contract 0x1111…1111');
+  });
+});
+
+describe('D814: nothing that matters is left out unnamed', () => {
+  it('property: every control change and approval is in a line or named in a red bullet; the largest amount to others is in a line', () => {
+    let seed = 23;
+    const rnd = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    const keys = Array.from({ length: 6 }, (_, i) => Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(40 + i) as never).publicKey());
+    const spenders = [OTHER, ATTACKER, ...keys.slice(0, 3)];
+    const recipients = [OTHER, ATTACKER, USER];
+    for (let round = 0; round < 80; round++) {
+      const named: string[] = [];
+      const outs: { to: string; amount: bigint }[] = [];
+      const ops = Array.from({ length: 3 + rnd(12) }, () => {
+        const kind = rnd(5);
+        if (kind === 0) {
+          const k = keys[rnd(keys.length)]!;
+          named.push(k);
+          return Operation.setOptions({ signer: { ed25519PublicKey: k, weight: 1 + rnd(255) } });
+        }
+        if (kind === 1) {
+          const sp = spenders[rnd(spenders.length)]!;
+          named.push(sp);
+          return invokeOp(TOKEN, 'approve', [addr(USER), addr(sp), i128(BigInt(1 + rnd(1000))), xdr.ScVal.scvU32(10)]);
+        }
+        if (kind === 2) {
+          const to = recipients[rnd(recipients.length)]!;
+          const amount = BigInt(1 + rnd(90_000_000));
+          if (to !== USER) outs.push({ to, amount });
+          return Operation.payment({ destination: to, asset: Asset.native(), amount: formatTokenUnits(amount, 7) });
+        }
+        if (kind === 3) return Operation.manageData({ name: `n${rnd(4)}`, value: 'v' });
+        return Operation.bumpSequence({ bumpTo: String(100 + rnd(3)) });
+      });
+      const s = stellar(ops);
+      const lines = s.lines.map(text).join('\n');
+      const red = s.warnings.filter((w) => w.level === 'danger').map((w) => text(w.text)).join('\n');
+      for (const id of named) expect(lines.includes(id) || red.includes(id), `${id} in round ${round}`).toBe(true);
+      // The largest total to one other recipient is always in a line.
+      const totals = new Map<string, bigint>();
+      for (const o of outs) totals.set(o.to, (totals.get(o.to) ?? 0n) + o.amount);
+      const top = [...totals.entries()].sort((a, b) => (a[1] === b[1] ? 0 : a[1] > b[1] ? -1 : 1))[0];
+      if (top) expect(lines.includes(top[0]), `largest to others in round ${round}`).toBe(true);
+    }
+  });
+
+  it('four control changes and a payment: the payment is in a line; the control change that gives way is named in red', () => {
+    const k = (i: number) => Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(60 + i) as never).publicKey();
+    const s = stellar([1, 2, 3, 4].map((i) => Operation.setOptions({ signer: { ed25519PublicKey: k(i), weight: 1 } })).concat([Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '7' })]));
+    expect(s.lines.map(text)).toContain(`Send 7 XLM to ${OTHER}`);
+    const leftOut = s.warnings.filter((w) => w.code === 'step_left_out');
+    // The fourth was left out anyway; the third gives way to the payment: both named in red.
+    expect(leftOut.map((w) => w.level)).toEqual(['danger', 'danger']);
+    expect(leftOut.map((w) => text(w.text)).join(' ')).toContain(k(3));
+    expect(leftOut.map((w) => text(w.text)).join(' ')).toContain(k(4));
   });
 });

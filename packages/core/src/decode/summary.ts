@@ -57,6 +57,8 @@ export type SummaryWarningCode =
   | 'summary_failed'
   /** More steps than the summary lists, none of the left-out ones moving value. */
   | 'steps_not_listed'
+  /** A control change, an approval or value to someone else that isn't in a line: named in its own red bullet. */
+  | 'step_left_out'
   /** Raw signing: Journear can't read what is signed at all. */
   | 'raw_signing';
 
@@ -655,7 +657,7 @@ function sorobanTokenCall(passphrase: string, c: StellarContractCall, me: string
     const whose: SummaryText = isMeStellar(from, me) ? ['your ', ...tokenName(c.contract, token)] : [...tokenName(c.contract, token), ' held by ', code(from)];
     if (amount === 0n) return [{ send: 'take back ', authorize: 'authorize taking back ', nested: 'It also takes back ' }[mode], code(spender), '’s permission to spend ', ...whose, ...end];
     warnings.push(spendWarning(spenderOf({ kind: 'stellar', networkPassphrase: passphrase }, spender), c.contract, token, amount, I128_MAX, isMeStellar(from, me) ? {} : { owner: from }));
-    return [{ send: 'let someone else spend ', authorize: 'authorize someone else to spend ', nested: 'It also lets someone else spend ' }[mode], ...whose, ...end];
+    return [{ send: 'let ', authorize: 'authorize ', nested: 'It also lets ' }[mode], code(spender), mode === 'authorize' ? ' to spend ' : ' spend ', ...whose, ...end];
   }
   return null;
 }
@@ -726,7 +728,14 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
     case 'changeTrust':
       return ok(op.limit === '0' ? ['stop holding ', ...assetName(op.asset)] : ['let your account hold ', ...assetName(op.asset)]);
     case 'setOptions': {
-      if (op.signer || op.masterWeight !== null || op.lowThreshold !== null || op.medThreshold !== null || op.highThreshold !== null) return ok(['change who can sign for the account']);
+      if (op.signer || op.masterWeight !== null || op.lowThreshold !== null || op.medThreshold !== null || op.highThreshold !== null) {
+        // Who can sign: named, so two changes never read the same (D814).
+        const parts: SummaryText[] = [];
+        if (op.signer) parts.push(op.signer.weight === 0 ? ['remove the signer ', code(op.signer.key)] : ['add ', code(op.signer.key), ` as a signer with weight ${op.signer.weight}`]);
+        if (op.masterWeight !== null) parts.push([`set your own key’s weight to ${op.masterWeight}`]);
+        if (op.lowThreshold !== null || op.medThreshold !== null || op.highThreshold !== null) parts.push(['change the signing thresholds']);
+        return ok(parts.flatMap((p, i) => [...(i > 0 ? [' and '] : []), ...p]));
+      }
       const what = [op.setFlags !== null || op.clearFlags !== null ? 'its flags' : null, op.homeDomain ? 'its home domain' : null, op.inflationDest !== null ? 'its inflation destination' : null].filter((x): x is string => x !== null);
       return ok([what.length === 0 ? 'change nothing on the account' : `change the account’s settings (${what.join(', ')})`]);
     }
@@ -820,6 +829,8 @@ interface Step {
   readonly native?: boolean;
   /** The group's line for several such steps, from the count and the summed amount. */
   readonly many?: (count: number, sum: bigint) => SummaryText;
+  /** What names this step when its line isn't shown (its key, spender or recipient), when its line doesn't. */
+  readonly label?: SummaryText;
 }
 
 /** A step grouped only with steps whose line would read the same (no summed amount). */
@@ -839,7 +850,7 @@ interface StepGroup {
  * the caller says so in a warning (red when a left-out group moves or grants value or changes control). The largest
  * amount to others is never left out: a control group gives way to it (control changes are always in the red box).
  */
-export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidden: number; hiddenRisk: RiskLevel | null } {
+export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidden: number; hiddenRisk: RiskLevel | null; leftOut: SummaryWarning[] } {
   const byKey = new Map<string, StepGroup>();
   items.forEach((x, index) => {
     const k = `${x.order}|${x.key}`;
@@ -854,29 +865,42 @@ export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidd
   const slots = sorted.length <= MAX_GROUP_LINES ? sorted.length : MAX_GROUP_LINES - 1;
   const visible = sorted.slice(0, slots);
   const hidden = sorted.slice(slots);
+  // The largest amount to someone else is always in a line. Room for it comes from the lowest-priority visible group
+  // that isn't a control change or a grant (the rest, then moves to the user's own account, then calls); only when
+  // every visible line is a control change does the last one give way, and then it is named in its own red bullet
+  // (below), as every left-out control change, grant and value to someone else is.
   const topOut = sorted.find((g) => g.first.order === 1);
   if (topOut && hidden.includes(topOut)) {
+    const protectedOrder = (o: number) => o === 0 || o === 2;
     let at = -1;
-    visible.forEach((g, i) => {
-      if (g.first.order === 0) at = i;
-    });
+    for (let i = visible.length - 1; i >= 0 && at < 0; i--) if (!protectedOrder((visible[i] as StepGroup).first.order)) at = i;
+    if (at < 0) for (let i = visible.length - 1; i >= 0 && at < 0; i--) if ((visible[i] as StepGroup).first.order === 0) at = i;
     if (at >= 0) {
       hidden.splice(hidden.indexOf(topOut), 1, visible[at] as StepGroup);
       visible[at] = topOut;
+      visible.sort((a, b) => sorted.indexOf(a) - sorted.indexOf(b));
     }
   }
   const line = (g: StepGroup): SummaryText => capitalised(g.count === 1 ? g.first.text : g.first.many ? g.first.many(g.count, g.sum) : [`${g.count} times: `, ...g.first.text]);
   const lines = visible.map(line);
-  if (hidden.length === 0) return { lines, hidden: 0, hiddenRisk: null };
+  if (hidden.length === 0) return { lines, hidden: 0, hiddenRisk: null, leftOut: [] };
   const n = hidden.reduce((t, g) => t + g.count, 0);
   lines.push([`…and ${n} other ${n === 1 ? 'step' : 'steps'}: see the details.`]);
-  return { lines, hidden: n, hiddenRisk: hidden.some((g) => g.first.order <= 4 && g.first.value) ? 'danger' : 'warning' };
+  // Each left-out control change, grant and value to someone else: its own red bullet, naming who or what.
+  const leftOut: SummaryWarning[] = hidden
+    .filter((g) => g.first.order <= 2)
+    .map((g) => {
+      const named = g.first.label ? (g.count > 1 ? [...capitalised(g.first.label), ` (${g.count} times)`] : capitalised(g.first.label)) : line(g);
+      return { level: 'danger', code: 'step_left_out', text: ['Not in the lines above: ', ...named, '.'], short: shortCodes(named) };
+    });
+  return { lines, hidden: n, hiddenRisk: hidden.some((g) => g.first.order <= 4 && g.first.value) ? 'danger' : 'warning', leftOut };
 }
 
 /** The grouping of one Stellar operation. `suffix`: what the line says about another source account. */
 function stellarStep(op: StellarOperation, text: SummaryText, me: string, txSource: string, suffix: SummaryText): Step {
   const value = stellarMovesValue(op);
-  const by = (order: number): Step => sameText(text, value, order);
+  // Grouped only with identical operations (the same XDR, its source included): the same line, nothing hidden.
+  const by = (order: number, label?: SummaryText): Step => ({ ...sameText(text, value, order), key: op.xdr, ...(label ? { label } : {}) });
   switch (op.type) {
     case 'payment': {
       const src = op.source ?? txSource;
@@ -906,7 +930,10 @@ function stellarStep(op: StellarOperation, text: SummaryText, me: string, txSour
       return by(value ? 1 : 6);
     case 'invokeHostFunction': {
       const f = op.hostFunction;
-      if (f.type === 'invokeContract' && f.function === 'approve') return by(2);
+      if (f.type === 'invokeContract' && f.function === 'approve') {
+        const spender = scAddr(f.args[1]);
+        return by(2, spender ? ['let ', code(spender), ' spend tokens of contract ', code(f.contract), ...suffix] : undefined);
+      }
       if (f.type === 'invokeContract' && f.function === 'transfer') return by(1);
       return by(3);
     }
@@ -1043,6 +1070,7 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
     headline = [APP, ` wants to do ${ops.length} things in one Stellar transaction`];
     const g = groupSteps(ops.map((o) => o.step));
     lines.push(...g.lines);
+    warnings.push(...g.leftOut);
     if (g.hiddenRisk) {
       explainable = false;
       hidden = { n: g.hidden, risk: g.hiddenRisk };
@@ -1108,7 +1136,7 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
   const where = nearWho(receiver, me);
   const value = nearMovesValue(a);
   // Grouped only with actions whose line reads the same and whose `extra` (what the line doesn't show) is equal too.
-  const same = (text: SummaryText, order: number, explainable = true, extra = '') => ({ text, explainable, step: { ...sameText(text, value, order), key: `${JSON.stringify(text)}|${extra}` } });
+  const same = (text: SummaryText, order: number, explainable = true, extra = '', label?: SummaryText) => ({ text, explainable, step: { ...sameText(text, value, order), key: `${JSON.stringify(text)}|${extra}`, ...(label ? { label } : {}) } });
   switch (a.type) {
     case 'transfer': {
       const text: SummaryText = ['send ', strong(nearDisplay(a.deposit)), ' to ', ...where];
@@ -1135,7 +1163,7 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
       }
       if (method === 'nft_approve' && typeof args.account_id === 'string' && isNearAccountId(args.account_id) && isTokenId(args.token_id)) {
         warnings.push({ level: 'warning', code: 'spend_permission', text: ['This lets ', code(args.account_id), ' move your item ', code(args.token_id), ' of collection ', code(receiver), ', until it is used or you take the permission back.'], short: ['Lets ', code(args.account_id), ' move your item ', code(args.token_id)] });
-        return same(['let someone else move your item ', code(args.token_id), ' of collection ', code(receiver)], 2, true, args.account_id);
+        return same(['let ', code(args.account_id), ' move your item ', code(args.token_id), ' of collection ', code(receiver)], 2, true, args.account_id);
       }
       const text: SummaryText = ['use ', ...where, ' (', code(method), ')'];
       return {
@@ -1151,16 +1179,17 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
     case 'stake':
       return same(['stake (lock) ', strong(nearDisplay(a.stake))], 4, true, nearKeyText(a.publicKey));
     case 'addKey':
-      if (a.accessKey.permission.type === 'fullAccess') return same(['add a full-access key to ', ...where], 0, true, nearKeyText(a.publicKey));
+      if (a.accessKey.permission.type === 'fullAccess') return same(['add a full-access key to ', ...where], 0, true, nearKeyText(a.publicKey), ['add the full-access key ', code(nearKeyText(a.publicKey)), ' to ', ...where]);
       // A function-call key spends the account's NEAR on its calls' fees, up to its allowance: said in view.
       return same(
         ['add a key to ', ...where, ' that can use ', code(a.accessKey.permission.receiverId), ...(a.accessKey.permission.allowance === null ? [', with no limit on the NEAR it spends on fees'] : [', spending up to ', strong(nearDisplay(a.accessKey.permission.allowance)), ' on fees'])],
         0,
         true,
         `${nearKeyText(a.publicKey)}|${a.accessKey.permission.methodNames.join(',')}`,
+        ['add the key ', code(nearKeyText(a.publicKey)), ' to ', ...where, ' that can use ', code(a.accessKey.permission.receiverId)],
       );
     case 'deleteKey':
-      return same(['remove a key from ', ...where], 0, true, nearKeyText(a.publicKey));
+      return same(['remove a key from ', ...where], 0, true, nearKeyText(a.publicKey), ['remove the key ', code(nearKeyText(a.publicKey)), ' from ', ...where]);
     case 'deleteAccount':
       return same(['delete ', ...where, ' and send all its NEAR to ', code(a.beneficiaryId)], 0);
     case 'deployGlobalContract':
@@ -1210,6 +1239,7 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
     headline = [APP, ` wants to do ${done.length} things with `, ...nearWho(receiver, me), ' in one transaction'];
     const g = groupSteps(done.map((x) => x.step));
     lines.push(...g.lines);
+    warnings.push(...g.leftOut);
     if (g.hiddenRisk) {
       explainable = false;
       hidden = { n: g.hidden, risk: g.hiddenRisk };

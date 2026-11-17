@@ -12305,7 +12305,13 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   the box gets a bullet: red when a left-out group moves or grants value or changes control, amber otherwise. The
   largest amount to others is never left out (when control groups fill the lines, the last of them gives way: control
   changes are always in the red box anyway); approvals and control changes always have their bullet even when not in a
-  line. A single-step request reads as before.
+  line. Amended after an automated review: room for the largest amount to others comes from the lowest-priority
+  visible group that isn't a control change or a grant (the rest, then moves to the user's own account, then calls);
+  only when every visible line is a control change does the last of them give way. Every left-out control change,
+  grant and value to someone else then gets its own red bullet naming its key, spender or recipient ("Not in the
+  lines above: …"), besides the collective "steps not listed" one. Step lines name what tells two steps apart (a
+  signer change names the signer, an approval its spender), and Stellar steps group only when their operations are
+  identical. A single-step request reads as before.
 - Amounts (all chains, in the summary, its totals and the amount figure): exact up to six decimals; below 0.000001
   "less than 0.000001" (received: "a tiny amount (less than 0.000001)"); otherwise "about N" with six decimals, rounded
   up for amounts that leave the user and down for amounts the user receives. A non-zero amount is never shown as 0.

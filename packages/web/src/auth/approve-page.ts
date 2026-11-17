@@ -136,6 +136,10 @@ export interface ApprovePageDeps {
   isGesture?: GestureCheck;
   /** The mainnet demo's balance reads (default: the browser's fetch); only Hana's pinned public endpoints. */
   fetch?: BalanceFetch;
+  /** The request's renderer (tests inject one that fails). */
+  render?: typeof renderApproval;
+  /** The consent's renderer (tests inject one that fails). */
+  renderConsentScreen?: typeof renderConsent;
 }
 
 type Current =
@@ -155,6 +159,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   const now = deps.now ?? (() => Date.now());
   const isGesture = deps.isGesture ?? isUserGesture;
   const balanceFetch: BalanceFetch = deps.fetch ?? ((url, init) => fetch(url, init));
+  const renderRequest = deps.render ?? renderApproval;
+  const renderPolicy = deps.renderConsentScreen ?? renderConsent;
   const d: Dom = dom(win.document);
   const opener = win.opener;
   const opened = approveOpenerMode(win.location.search);
@@ -271,11 +277,16 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     );
   }
 
-  function buttons(primaryLabel: string, enabled: boolean): HTMLElement {
+  /**
+   * Reject and Approve (or Don't allow and Allow) for the request or consent `forId`. They answer only while that one
+   * is on show: a button left on screen from an earlier request can never answer a newer one.
+   */
+  function buttons(primaryLabel: string, enabled: boolean, forId: string): HTMLElement {
+    const onShow = () => current?.msg.id === forId;
     // The confirm pattern's decision row (D765): the one primary, the other secondary, side by side at 48 px.
     const reject = d.h('button', { class: 'secondary jp-btn jp-btn-secondary jp-btn-lg', attrs: { type: 'button' } }, primaryLabel === 'Allow' ? 'Don’t allow' : 'Reject');
     reject.addEventListener('click', (e) => {
-      if (isGesture(e)) answer(false);
+      if (isGesture(e) && onShow()) answer(false);
     });
     const ok = d.h('button', { class: 'primary jp-btn jp-btn-primary jp-btn-lg', attrs: { type: 'button' } }, primaryLabel);
     ok.disabled = true;
@@ -285,7 +296,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     ok.addEventListener('click', (e) => {
       // The guard is checked here too, not only through `disabled`, and the click must have started (pointerdown, or
       // keydown for a keyboard click, whose detail is 0) after the gesture that armed it.
-      if (isGesture(e) && enabled && guard.mayActivate((e as MouseEvent).detail === 0)) answer(true);
+      if (isGesture(e) && enabled && onShow() && guard.mayActivate((e as MouseEvent).detail === 0)) answer(true);
     });
     primary = enabled ? ok : null;
     return d.h('div', { class: 'actions decide' }, reject, enabled ? ok : null);
@@ -400,6 +411,9 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     primary = null;
   }
 
+  /** The refusal for a request this window can't read or show: no Approve. */
+  const unreadable = (problem: string): HTMLElement[] => [alert(d, 'danger', { class: 'danger' }, `${BRAND.company} can’t read this request, so it can’t be approved.`), d.h('p', { class: 'muted' }, problem)];
+
   function showRequest(msg: WindowMessage<'hana:approve-request'>): void {
     replaceCurrent(msg.id);
     const input: ApprovalDigestInput = {
@@ -418,19 +432,22 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     } catch (err) {
       problem = err instanceof DecodeError ? err.message : 'The request could not be read.';
     }
-    current = { kind: 'request', msg, input, decodable: decoded !== null };
-    state = 'request';
     const auto = msg.autoApprove;
-    // A test app's request the popup itself reads as for a demo mainnet (the vault signs those only under the demo).
-    const demo = msg.testApp && decoded ? demoNetworkOf(decoded) : null;
-    const notes = [
-      demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
-      // The out-of-policy case (the confirm pattern's warning alert): why the app's rules didn't sign this one.
-      auto?.reason ? alert(d, 'warning', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
-    ];
     const supportId = msg.supportId ? supportIdLine(msg.supportId) : null;
-    d.show(
-      d.h(
+    // The new screen is built off the page first. If anything in it fails, the window shows that this request can't be
+    // approved, with no Approve button, rather than leaving the previous screen up (review N1). Only once a screen is
+    // ready does `current` become the new request; until then nothing on screen answers anything (replaceCurrent).
+    let screen: HTMLElement;
+    let approvable = decoded !== null;
+    try {
+      // A test app's request the popup itself reads as for a demo mainnet (the vault signs those only under the demo).
+      const demo = msg.testApp && decoded ? demoNetworkOf(decoded) : null;
+      const notes = [
+        demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
+        // The out-of-policy case (the confirm pattern's warning alert): why the app's rules didn't sign this one.
+        auto?.reason ? alert(d, 'warning', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
+      ];
+      screen = d.h(
         'section',
         { class: 'panel approve' },
         header(msg, `Request ${msg.position} of ${msg.queued}`),
@@ -439,17 +456,25 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
         // Support ID goes. An unreadable request keeps the Support ID and the notes in view.
         decoded
-          ? renderApproval(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [supportId] })
-          : d.h('div', { class: 'request' }, supportId, ...notes, alert(d, 'danger', { class: 'danger' }, `${BRAND.company} can’t read this request, so it can’t be approved.`), d.h('p', { class: 'muted' }, problem)),
-        buttons('Approve', decoded !== null),
+          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [supportId] })
+          : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem)),
+        buttons('Approve', decoded !== null, msg.id),
         auto?.active ? stopAutoApproveButton(auto.label) : null,
-      ),
-    );
+      );
+    } catch {
+      approvable = false;
+      screen = d.h('section', { class: 'panel approve' }, d.h('div', { class: 'request' }, ...unreadable('The request could not be shown.')), buttons('Approve', false, msg.id));
+    }
+    current = { kind: 'request', msg, input, decodable: approvable };
+    state = 'request';
+    d.show(screen);
     guard.rendered();
     // Boxes that hold more than they show say so, now that they are laid out, and again whenever their size changes.
     stopWatching?.();
     stopWatching = watchOverflowing(win.document, win as unknown as Parameters<typeof watchOverflowing>[1]);
   }
+
+  const consentRefusal = (): HTMLElement => d.h('div', { class: 'consent' }, d.h('h1', {}, 'Automatic signing'), alert(d, 'danger', { class: 'danger' }, 'This app’s automatic-signing rules couldn’t be checked, so they can’t be allowed.'));
 
   function showConsent(msg: WindowMessage<'hana:consent-request'>): void {
     replaceCurrent(msg.id);
@@ -464,20 +489,27 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         policy = null;
       }
     }
-    current = { kind: 'consent', msg, valid: policy !== null };
-    state = 'consent';
-    d.show(
-      d.h(
+    // Built off the page first, as a request is: a failure shows the refusal, never the previous screen (review N1).
+    let screen: HTMLElement;
+    let valid = policy !== null;
+    try {
+      screen = d.h(
         'section',
         { class: 'panel consent' },
         header(msg),
         testAppNote(msg),
         policy
-          ? renderConsent(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, expiresAtMs: msg.expiresAtMs, nowMs: now() })
-          : d.h('div', { class: 'consent' }, d.h('h1', {}, 'Automatic signing'), alert(d, 'danger', { class: 'danger' }, 'This app’s automatic-signing rules couldn’t be checked, so they can’t be allowed.')),
-        buttons('Allow', policy !== null),
-      ),
-    );
+          ? renderPolicy(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, expiresAtMs: msg.expiresAtMs, nowMs: now() })
+          : consentRefusal(),
+        buttons('Allow', policy !== null, msg.id),
+      );
+    } catch {
+      valid = false;
+      screen = d.h('section', { class: 'panel consent' }, consentRefusal(), buttons('Allow', false, msg.id));
+    }
+    current = { kind: 'consent', msg, valid };
+    state = 'consent';
+    d.show(screen);
     guard.rendered();
   }
 

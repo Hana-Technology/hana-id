@@ -10,7 +10,9 @@ import {
   type NearAction,
   PERMIT2_ADDRESS,
   PRACTICALLY_UNLIMITED,
+  UNEXPLAINED_SUMMARY,
   STELLAR_MAINNET_PASSPHRASE,
+  type StellarOperation,
   type SummaryText,
   decodeApprovalRequest,
   encodeNearDelegateAction,
@@ -183,8 +185,8 @@ describe('EVM transactions', () => {
 
   it('a value sent with a call is said; contract creation can’t be explained', () => {
     const s = evmSummary({ to: TOKEN_EVM, value: 10n ** 17n, data: parseFunctionSignature('deposit()').selector });
-    expect(headline(s)).toBe(`${APP} wants to use contract ${TOKEN_EVM} (deposit)`);
-    expect(s.lines.map(text)).toEqual(['It also sends 0.1 ETH to the contract.']);
+    expect(headline(s)).toBe(`${APP} wants to use contract ${TOKEN_EVM} (deposit), sending it 0.1 ETH`);
+    expect(s.lines).toEqual([]);
     const c = evmSummary({ to: null, value: 0n, data: '0x6000' });
     expect(headline(c)).toBe(`${APP} wants to create a new contract`);
     expect(codes(c)).toEqual(['contract_creation']);
@@ -408,13 +410,13 @@ describe('Stellar', () => {
   it('several operations: one line each, numbered; account control is explained (its red warnings are the page’s)', () => {
     const s = stellar([paymentOp(), addSignerOp(), mergeOp()]);
     expect(headline(s)).toBe(`${APP} wants to do 3 things in one Stellar transaction`);
-    expect(s.lines.map(text)).toEqual([`1. Send 1 XLM to ${OTHER}`, '2. Change who can sign for the account', expect.stringMatching(/^3\. Close the account and send all its XLM to G/u)]);
+    expect(s.lines.map(text)).toEqual(['XLM leaving your account: all of it (the account is closed).', `1. Send 1 XLM to ${OTHER}`, '2. Change who can sign for the account', expect.stringMatching(/^3\. Close the account and send all its XLM to G/u)]);
     expect(s.explainable).toBe(true);
   });
 
   it('a fee-bump paid by someone else names the payer; an operation on another account says so', () => {
     const fb = stellar([], feeBumpBytes(txBytes([paymentOp()]), OTHER));
-    expect(fb.lines.map(text)).toEqual([`The network fee is paid by ${OTHER}, not your account.`]);
+    expect(fb.lines.map(text)).toEqual(['XLM leaving your account: up to 1 XLM, plus the network fee.', `The network fee is paid by ${OTHER}, not your account.`]);
     expect(fb.fee).toBeNull();
     const foreign = stellar([Operation.payment({ destination: USER, asset: Asset.native(), amount: '1', source: OTHER })]);
     expect(foreign.lines).toEqual([]);
@@ -655,15 +657,19 @@ describe('review: Stellar classic operations show their deciding terms (H2)', ()
 });
 
 describe('review: many steps (M2)', () => {
-  it('more than five steps: the first five, "and N more", and the details start open', () => {
+  it('more than five steps: value steps all listed (up to 20), the rest capped, and the details start open when capped', () => {
     const transfers: NearAction[] = Array.from({ length: 99 }, () => ({ type: 'transfer', deposit: 1n }));
     const s = near([...transfers, { type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }], NEAR_ME);
-    expect(s.lines).toHaveLength(6);
-    expect(text(s.lines[5]!)).toBe('…and 95 more: see the details.');
+    // Every one of the 100 moves value or control: 20 listed, the red line, the rest in the details (review 2, N2).
+    expect(s.lines).toHaveLength(21);
+    expect(text(s.lines[20]!)).toBe('…and 80 more: see the details.');
+    expect(codes(s)).toContain('many_value_steps');
     expect(s.explainable).toBe(false);
+    // Eight payments all move value: all listed (up to 20), with the XLM leaving, nothing left out.
     const st = stellar(Array.from({ length: 8 }, () => paymentOp()));
-    expect(st.lines).toHaveLength(6);
-    expect(st.explainable).toBe(false);
+    expect(st.lines).toHaveLength(9);
+    expect(text(st.lines[0]!)).toBe('XLM leaving your account: up to 8 XLM, plus the network fee.');
+    expect(st.explainable).toBe(true);
   });
 });
 
@@ -723,5 +729,115 @@ describe('review: NEP-413 (L3)', () => {
     const bytes = encodeNep413Message({ message: 'Sign in', nonce: new Uint8Array(32), recipient: 'app.example', callbackUrl: null });
     const s = summarizeApproval(decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: NEAR_ME, context: {}, bytes }), { address: NEAR_ME });
     expect(headline(s)).toBe(`${APP} wants you to sign a message for app.example`);
+  });
+});
+
+// ---- the second review of 2026-11-17 ----
+
+/** A sell offer whose price is set in the XDR directly (the builder refuses malformed prices). */
+function offerWithPrice(n: number, d: number): xdr.Operation {
+  const op = Operation.manageSellOffer({ selling: Asset.native(), buying: new Asset('USDC', ATTACKER), amount: '100', price: { n: 1, d: 1 } });
+  op.body().manageSellOfferOp().price(new xdr.Price({ n, d }));
+  return op;
+}
+
+describe('review 2: malformed values never throw (N1)', () => {
+  it('an offer price with d = 0 or n ≤ 0 is not divided by and not explained', () => {
+    for (const [n, d] of [[1, 0], [-5, 1], [0, 1], [1, -1]] as const) {
+      const s = stellar([offerWithPrice(n, d)]);
+      expect(s.explainable).toBe(false);
+      expect(headline(s)).toContain('at a price Journear can’t read');
+      expect(headline(s)).not.toContain('-');
+    }
+  });
+
+  it('summarizeApproval is total: odd decoded shapes give a result, the unexplained one when building fails', () => {
+    const base = decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([paymentOp()]) });
+    if (base.kind !== 'stellar_tx') throw new Error('kind');
+    const op = base.envelope.tx.operations[0] as Extract<StellarOperation, { type: 'payment' }>;
+    const odd: unknown[] = ['abc', '', '-1', '1e9', '99999999999999999999999999999999999999999', ' 1', null, undefined, {}, [], Number.NaN];
+    let seed = 7;
+    const rnd = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    const shapes: DecodedApproval[] = [];
+    for (let i = 0; i < 300; i++) {
+      const mutated = { ...op, amount: odd[rnd(odd.length)], asset: rnd(2) ? 'native' : odd[rnd(odd.length)], destination: rnd(3) ? op.destination : odd[rnd(odd.length)], type: ['payment', 'manageSellOffer', 'manageBuyOffer', 'createClaimableBalance', 'pathPaymentStrictSend', 'liquidityPoolDeposit'][rnd(6)], price: { n: rnd(3) - 1, d: rnd(3) - 1 }, buyAmount: odd[rnd(odd.length)], claimants: rnd(2) ? [] : odd[rnd(odd.length)] };
+      const ops = Array.from({ length: rnd(30) }, () => mutated);
+      shapes.push({ ...base, envelope: { ...base.envelope, tx: { ...base.envelope.tx, operations: ops as never } } } as DecodedApproval);
+    }
+    shapes.push({ kind: 'evm_tx', chainId: 1, tx: { ...(evm({}) as Extract<DecodedApproval, { kind: 'evm_tx' }>).tx, call: { selector: '0x00', signature: 'safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)', name: 'x', args: [] } } } as DecodedApproval);
+    shapes.push({ kind: 'eip712', chainId: null, typedData: { types: {}, primaryType: 'Permit', domain: {} as never, message: {} as never }, view: { domain: [], primaryType: 'Permit', message: { name: 'Permit', type: 'Permit', children: [] } } } as DecodedApproval);
+    for (const d of shapes) {
+      const s = summarizeApproval(d, { address: USER });
+      expect(Array.isArray(s.headline)).toBe(true);
+      expect(typeof s.explainable).toBe('boolean');
+    }
+    const broken = summarizeApproval({ ...base, envelope: { ...base.envelope, tx: { ...base.envelope.tx, operations: [{ ...op, amount: 'abc' }] as never } } } as DecodedApproval, { address: USER });
+    expect(broken).toBe(UNEXPLAINED_SUMMARY);
+    expect(broken.explainable).toBe(false);
+  });
+});
+
+describe('review 2: steps that move value are always listed (N2)', () => {
+  const bump = () => Operation.bumpSequence({ bumpTo: '99' });
+  it('Stellar: five neutral steps then a payment: the payment is listed first, with the XLM leaving the account', () => {
+    const s = stellar([bump(), bump(), bump(), bump(), bump(), bump(), Operation.payment({ destination: ATTACKER, asset: Asset.native(), amount: '1000000' })]);
+    const lines = s.lines.map(text);
+    expect(lines[0]).toBe('XLM leaving your account: up to 1,000,000 XLM, plus the network fee.');
+    expect(lines[1]).toBe(`7. Send 1,000,000 XLM to ${ATTACKER}`);
+    expect(lines.filter((l) => /^\d+\. Move/u.test(l))).toHaveLength(5);
+    expect(lines.at(-1)).toBe('…and 1 more: see the details.');
+    expect(s.explainable).toBe(false);
+  });
+
+  it('Stellar: a Soroban approve at step 6 is listed and warned about', () => {
+    const s = stellar([bump(), bump(), bump(), bump(), bump(), invokeOp(TOKEN, 'approve', [addr(USER), addr(ATTACKER), i128(5n), xdr.ScVal.scvU32(10)])]);
+    expect(s.lines.map(text)).toContain('6. Let someone else spend your tokens of contract ' + TOKEN);
+    expect(codes(s)).toContain('spend_permission');
+  });
+
+  it('Stellar: more than 20 value steps: 20 listed and a red line', () => {
+    const s = stellar(Array.from({ length: 22 }, () => paymentOp()));
+    expect(s.lines.filter((l) => /^\d+\. Send/u.test(text(l)))).toHaveLength(20);
+    expect(codes(s)).toContain('many_value_steps');
+    expect(s.warnings.find((w) => w.code === 'many_value_steps')?.level).toBe('danger');
+    expect(s.explainable).toBe(false);
+  });
+
+  it('Stellar: the XLM leaving counts offers, path payments and claimable balances; a merge is all of it', () => {
+    const s = stellar([
+      Operation.manageSellOffer({ selling: Asset.native(), buying: new Asset('USDC', ISSUER), amount: '2', price: { n: 1, d: 1 } }),
+      Operation.pathPaymentStrictReceive({ sendAsset: Asset.native(), sendMax: '3', destination: OTHER, destAsset: Asset.native(), destAmount: '1', path: [] }),
+      Operation.createClaimableBalance({ asset: Asset.native(), amount: '4', claimants: [new Claimant(OTHER)] }),
+    ]);
+    expect(text(s.lines[0]!)).toBe('XLM leaving your account: up to 9 XLM, plus the network fee.');
+    expect(text(stellar([paymentOp(), mergeOp()]).lines[0]!)).toBe('XLM leaving your account: all of it (the account is closed).');
+  });
+
+  it('NEAR: an ft_transfer at step 7 after neutral calls is listed', () => {
+    const neutral = Array.from({ length: 6 }, () => call('ping', '{}'));
+    const s = near([...neutral, call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5000"}', 1n)], 'usdc.testnet');
+    expect(s.lines.map(text)[0]).toBe('7. Send 5,000 (smallest units) of the token usdc.testnet to bob.testnet');
+    expect(s.explainable).toBe(false);
+  });
+});
+
+describe('review 2: ERC-1155 batches and withdraw (N3, N4)', () => {
+  const batch = (n: number) => {
+    const ids = Array.from({ length: n }, (_, i) => BigInt(i + 1));
+    const words = [word(ME), word(TO), word(0xa0n), word(BigInt(0xa0 + 32 * (n + 1))), word(BigInt(0xa0 + 64 * (n + 1))), word(BigInt(n)), ...ids.map(word), word(BigInt(n)), ...ids.map(() => word(1234567n)), word(0n)];
+    return `${parseFunctionSignature('safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)').selector}${words.join('')}`;
+  };
+  it('up to five kinds: each item and how many, item ids ungrouped, amounts grouped; more: not explainable', () => {
+    const s = tokenCall(batch(2));
+    expect(s.lines.map(text)).toEqual(['Item 1: 1,234,567', 'Item 2: 1,234,567']);
+    expect(s.explainable).toBe(true);
+    expect(tokenCall(batch(6)).explainable).toBe(false);
+  });
+
+  it('withdraw names its amount; deposit says what it sends in the headline', () => {
+    expect(headline(tokenCall(calldata('withdraw(uint256)', 1000n)))).toBe(`${APP} wants to withdraw 1,000 (smallest units) from contract ${TOKEN_EVM}`);
+    const dep = evmSummary({ to: TOKEN_EVM, value: 10n ** 17n, data: parseFunctionSignature('deposit()').selector });
+    expect(headline(dep)).toBe(`${APP} wants to use contract ${TOKEN_EVM} (deposit), sending it 0.1 ETH`);
+    expect(dep.lines).toEqual([]);
   });
 });

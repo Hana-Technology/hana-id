@@ -31,7 +31,7 @@ foldable for raw signing (live mode), and that a warning stays in view while the
 `HANA_SHOTS_DIR=<dir>` (Chromium only) it also saves each request kind's window at the popup's real size (420 × 680,
 the whole page): NEAR relayed call (closed and open), NEAR transfer, NEP-413, EVM send, ERC-20 transfer and unlimited
 approve, an ERC-20/721 approve of 0, an unknown call, an EIP-2612 permit, a message, a Stellar payment, an
-account-control change, an offer and a Soroban call whose authorization holds another token move, 100 NEAR actions
+account-control change, a payment after six steps that move nothing, an offer and a Soroban call whose authorization holds another token move, 100 NEAR actions
 with one full-access key, and the mainnet demo's Stellar payment. It drives the partner app's `stellarSignXdr`, `ethSignTypedData`, `nearSignTx`,
 `nearSignDelegate` and `nearSignMessage` actions with requests the test builds.
 

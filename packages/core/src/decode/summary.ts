@@ -51,7 +51,9 @@ export type SummaryWarningCode =
   /** A new contract from code Journear can't read. */
   | 'contract_creation'
   /** A sign-in message for another site than the requesting page. */
-  | 'sign_in_mismatch';
+  | 'sign_in_mismatch'
+  /** More steps that move or grant value than the summary lists. */
+  | 'many_value_steps';
 
 export interface SummaryWarning {
   /** `danger`: red, the popup's strongest style; `warning`: amber. Both always visible, never folded. */
@@ -98,8 +100,10 @@ export const cannotExplain = (reason?: string): SummaryText => [`Journear can’
 export const PRACTICALLY_UNLIMITED = 10n ** 27n;
 /** A pinned token's allowance above this many whole tokens has no practical limit. */
 export const PINNED_UNLIMITED_WHOLE = 10n ** 12n;
-/** At most this many numbered lines; the rest are in the details, which then start open. */
+/** At most this many numbered steps that move nothing; the rest are in the details, which then start open. */
 export const MAX_SUMMARY_STEPS = 5;
+/** Steps that move or grant value are always listed, up to this many (then a red line, and the details open). */
+export const MAX_VALUE_STEPS = 20;
 
 /** Permit2's canonical contract (the same address on every chain). */
 export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
@@ -224,8 +228,12 @@ function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
   const lines: SummaryText[] = [];
   const warnings: SummaryWarning[] = [];
   const contract = code(to);
-  const unknown = (reason: string): Draft => ({ headline: [APP, ' wants to use contract ', contract], lines, warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain(reason) }, ...warnings], explainable: false });
-  if (tx.value > 0n) lines.push(['It also sends ', strong(evmNative(chainId, tx.value)), ' to the contract.']);
+  // What the call sends with it: in the headline of a generic call, a line of its own otherwise.
+  const sending: SummaryText = tx.value > 0n ? [', sending it ', strong(evmNative(chainId, tx.value))] : [];
+  const valueLine: SummaryText | null = tx.value > 0n ? ['It also sends ', strong(evmNative(chainId, tx.value)), ' to the contract.'] : null;
+  const withoutValueLine = () => lines.filter((l) => l !== valueLine);
+  const unknown = (reason: string): Draft => ({ headline: [APP, ' wants to use contract ', contract, ...sending], lines: withoutValueLine(), warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain(reason) }, ...warnings], explainable: false });
+  if (valueLine) lines.push(valueLine);
   const call = tx.call;
   if (!call) return unknown(tx.selector ? 'it calls a function Journear doesn’t recognise' : 'it sends data Journear can’t read');
   const a = call.args;
@@ -301,15 +309,24 @@ function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
         explainable: true,
       };
     case 'safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)': {
-      const ids = a[2]?.kind === 'array' ? a[2].items.length : 0;
-      return { headline: [APP, ` wants to send ${ids === 1 ? '1 kind' : `${ids} kinds`} of item of collection `, contract, ' from ', ...evmWho(abiAddr(a[0]) as string, me), ' to ', ...evmWho(abiAddr(a[1]) as string, me)], lines, warnings, explainable: true };
+      const ids = a[2]?.kind === 'array' ? a[2].items.map(abiUint) : [];
+      const amounts = a[3]?.kind === 'array' ? a[3].items.map(abiUint) : [];
+      const headline: SummaryText = [APP, ` wants to send ${ids.length === 1 ? '1 kind' : `${ids.length} kinds`} of item of collection `, contract, ' from ', ...evmWho(abiAddr(a[0]) as string, me), ' to ', ...evmWho(abiAddr(a[1]) as string, me)];
+      // Each item and how many: in view up to five kinds (item ids as written, amounts grouped); more can't be listed.
+      if (ids.length > MAX_SUMMARY_STEPS || ids.length !== amounts.length || ids.some((x) => x === null) || amounts.some((x) => x === null)) {
+        return { headline, lines, warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain('it sends more kinds of item than this summary lists') }, ...warnings], explainable: false };
+      }
+      const items: SummaryText[] = ids.map((id, i) => ['Item ', strong((id as bigint).toString()), ': ', strong(groupDigits((amounts[i] as bigint).toString()))]);
+      return { headline, lines: [...items, ...lines], warnings, explainable: true };
     }
     case 'multicall(bytes[])':
     case 'multicall(uint256,bytes[])':
       return unknown('it bundles several calls Journear can’t read');
+    case 'withdraw(uint256)':
+      return { headline: [APP, ' wants to withdraw ', strong(groupDigits((abiUint(a[0]) as bigint).toString())), ' (smallest units) from contract ', contract, ...sending], lines: withoutValueLine(), warnings, explainable: true };
     default:
-      // deposit(), withdraw(uint256): named by the standard, but the contract decides what they do.
-      return { headline: [APP, ' wants to use contract ', contract, ' (', code(call.name), ')'], lines, warnings, explainable: true };
+      // deposit(): named by the standard, but the contract decides what it does; what it sends is in the headline.
+      return { headline: [APP, ' wants to use contract ', contract, ' (', code(call.name), ')', ...sending], lines: withoutValueLine(), warnings, explainable: true };
   }
 }
 
@@ -564,11 +581,14 @@ function otherAuthorizations(passphrase: string, inv: StellarInvocation, me: str
 }
 
 /** Offers: the price is `n / d` of `buying` per unit of `selling` (a sell offer) or of `selling` per unit bought (a buy offer). */
-const times = (amount: string, n: number, d: number, round: 'down' | 'up'): bigint => {
+const times = (amount: string, n: number, d: number, round: 'down' | 'up'): bigint | null => {
+  // A price whose parts aren't positive integers is malformed: never divided by, and the offer isn't explained.
+  if (!Number.isSafeInteger(n) || !Number.isSafeInteger(d) || n <= 0 || d <= 0) return null;
   const num = BigInt(amount) * BigInt(n);
   const den = BigInt(d);
   return round === 'down' ? num / den : (num + den - 1n) / den;
 };
+const badPrice = (what: SummaryText): OpSummary => ({ text: [...what, ' at a price Journear can’t read'], explainable: false });
 const changes = (offerId: string): SummaryText => (offerId === '0' ? [] : [` (it changes your offer ${offerId})`]);
 
 interface OpSummary {
@@ -594,10 +614,18 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
     case 'manageSellOffer':
     case 'createPassiveSellOffer':
       if (op.amount === '0') return ok(['cancel your offer ', code(op.offerId), ' to sell ', ...assetName(op.selling)]);
-      return ok(['offer to sell ', ...stellarAmount(op.amount, op.selling), ' for at least ', ...stellarAmount(times(op.amount, op.price.n, op.price.d, 'down'), op.buying), ...changes(op.offerId)]);
+      {
+        const least = times(op.amount, op.price.n, op.price.d, 'down');
+        if (least === null) return badPrice(['offer to sell ', ...stellarAmount(op.amount, op.selling), ' for ', ...assetName(op.buying)]);
+        return ok(['offer to sell ', ...stellarAmount(op.amount, op.selling), ' for at least ', ...stellarAmount(least, op.buying), ...changes(op.offerId)]);
+      }
     case 'manageBuyOffer':
       if (op.buyAmount === '0') return ok(['cancel your offer ', code(op.offerId), ' to buy ', ...assetName(op.buying)]);
-      return ok(['offer to buy ', ...stellarAmount(op.buyAmount, op.buying), ', paying at most ', ...stellarAmount(times(op.buyAmount, op.price.n, op.price.d, 'up'), op.selling), ...changes(op.offerId)]);
+      {
+        const most = times(op.buyAmount, op.price.n, op.price.d, 'up');
+        if (most === null) return badPrice(['offer to buy ', ...stellarAmount(op.buyAmount, op.buying), ' with ', ...assetName(op.selling)]);
+        return ok(['offer to buy ', ...stellarAmount(op.buyAmount, op.buying), ', paying at most ', ...stellarAmount(most, op.selling), ...changes(op.offerId)]);
+      }
     case 'changeTrust':
       return ok(op.limit === '0' ? ['stop holding ', ...assetName(op.asset)] : ['let your account hold ', ...assetName(op.asset)]);
     case 'setOptions': {
@@ -668,11 +696,31 @@ const capitalised = (t: SummaryText): SummaryText => {
   return typeof first === 'string' ? [first.charAt(0).toUpperCase() + first.slice(1), ...rest] : t;
 };
 
-/** At most MAX_SUMMARY_STEPS numbered lines, then "…and N more"; `capped` when some were left out. */
-function steps(texts: readonly SummaryText[]): { lines: SummaryText[]; capped: boolean } {
-  const lines = texts.slice(0, MAX_SUMMARY_STEPS).map((t, i) => [`${i + 1}. `, ...capitalised(t)]);
-  if (texts.length <= MAX_SUMMARY_STEPS) return { lines, capped: false };
-  return { lines: [...lines, [`…and ${texts.length - MAX_SUMMARY_STEPS} more: see the details.`]], capped: true };
+/** One step of a request with several, and whether it moves or grants value (or changes who controls the account). */
+interface Step {
+  readonly text: SummaryText;
+  readonly value: boolean;
+}
+
+/**
+ * The numbered lines of a request with several steps, each with its own number. Steps that move or grant value are
+ * always listed, first, up to MAX_VALUE_STEPS (more: a red line, `capped`); steps that move nothing are listed after
+ * them, up to MAX_SUMMARY_STEPS, then "…and N more" (`capped`). A request with no more than MAX_SUMMARY_STEPS steps is
+ * listed in order.
+ */
+function steps(items: readonly Step[], warnings: SummaryWarning[]): { lines: SummaryText[]; capped: boolean } {
+  const line = (x: Step, i: number): SummaryText => [`${i + 1}. `, ...capitalised(x.text)];
+  if (items.length <= MAX_SUMMARY_STEPS) return { lines: items.map(line), capped: false };
+  const numbered = items.map((x, i) => ({ x, i }));
+  const value = numbered.filter((n) => n.x.value);
+  const neutral = numbered.filter((n) => !n.x.value);
+  const lines = [...value.slice(0, MAX_VALUE_STEPS), ...neutral.slice(0, MAX_SUMMARY_STEPS)].map((n) => line(n.x, n.i));
+  const leftOut = Math.max(0, value.length - MAX_VALUE_STEPS) + Math.max(0, neutral.length - MAX_SUMMARY_STEPS);
+  if (value.length > MAX_VALUE_STEPS) {
+    warnings.push({ level: 'danger', code: 'many_value_steps', text: [`This request moves value in ${value.length} steps; only the first ${MAX_VALUE_STEPS} are listed here. Check the details.`] });
+  }
+  if (leftOut > 0) lines.push([`…and ${leftOut} more: see the details.`]);
+  return { lines, capped: leftOut > 0 };
 }
 
 /** At most MAX_SUMMARY_STEPS extra lines, then "…and N more". */
@@ -681,13 +729,97 @@ function capped(lines: readonly SummaryText[]): { lines: SummaryText[]; capped: 
   return { lines: [...lines.slice(0, MAX_SUMMARY_STEPS), [`…and ${lines.length - MAX_SUMMARY_STEPS} more: see the details.`]], capped: true };
 }
 
+/** Whether a Stellar operation moves or grants value, or changes who controls an account: always listed. */
+function stellarMovesValue(op: StellarOperation): boolean {
+  switch (op.type) {
+    case 'payment':
+    case 'createAccount':
+    case 'pathPaymentStrictReceive':
+    case 'pathPaymentStrictSend':
+    case 'accountMerge':
+    case 'createClaimableBalance':
+    case 'clawback':
+    case 'liquidityPoolDeposit':
+    case 'liquidityPoolWithdraw':
+    case 'invokeHostFunction':
+    case 'beginSponsoringFutureReserves':
+      return true;
+    case 'manageSellOffer':
+    case 'createPassiveSellOffer':
+      return op.amount !== '0';
+    case 'manageBuyOffer':
+      return op.buyAmount !== '0';
+    case 'setOptions':
+      return op.signer !== null || op.masterWeight !== null || op.lowThreshold !== null || op.medThreshold !== null || op.highThreshold !== null;
+    default:
+      return false;
+  }
+}
+
+/**
+ * The XLM a transaction can take from the user's account, as NEAR's total does: payments, account creation, a path
+ * payment's most paid, an offer selling XLM (a buy offer's most paid), a claimable balance; a merge takes all of it.
+ * Contract calls and pool deposits can take more, which the line says. Null when no step on the user's account moves
+ * value.
+ */
+function xlmLeaving(tx: { readonly source: string; readonly operations: readonly StellarOperation[] }, me: string): SummaryText | null {
+  let total = 0n;
+  let any = false;
+  let more = false;
+  let all = false;
+  for (const op of tx.operations) {
+    if ((op.source ?? tx.source) !== me || !stellarMovesValue(op)) continue;
+    any = true;
+    switch (op.type) {
+      case 'payment':
+        if (op.asset === 'native') total += BigInt(op.amount);
+        break;
+      case 'createAccount':
+        total += BigInt(op.startingBalance);
+        break;
+      case 'pathPaymentStrictReceive':
+        if (op.sendAsset === 'native') total += BigInt(op.sendMax);
+        break;
+      case 'pathPaymentStrictSend':
+        if (op.sendAsset === 'native') total += BigInt(op.sendAmount);
+        break;
+      case 'manageSellOffer':
+      case 'createPassiveSellOffer':
+        if (op.selling === 'native') total += BigInt(op.amount);
+        break;
+      case 'manageBuyOffer': {
+        if (op.selling !== 'native') break;
+        const most = times(op.buyAmount, op.price.n, op.price.d, 'up');
+        if (most === null) more = true;
+        else total += most;
+        break;
+      }
+      case 'createClaimableBalance':
+        if (op.asset === 'native') total += BigInt(op.amount);
+        break;
+      case 'accountMerge':
+        all = true;
+        break;
+      case 'invokeHostFunction':
+      case 'liquidityPoolDeposit':
+        more = true;
+        break;
+      default:
+        break;
+    }
+  }
+  if (!any || (total === 0n && !all)) return null;
+  if (all) return ['XLM leaving your account: ', strong('all of it (the account is closed)'), '.'];
+  return ['XLM leaving your account: up to ', strong(xlm(total)), more ? ', plus what its contract calls or pool deposits take' : '', ', plus the network fee.'];
+}
+
 function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me: string): ApprovalSummary {
   const env = decoded.envelope;
   const tx = env.tx;
   const warnings: SummaryWarning[] = [];
   const extra: SummaryText[] = [];
   const ops = tx.operations.map((op) => {
-    const o = stellarOp(decoded.networkPassphrase, op, me, warnings, extra);
+    const o = { ...stellarOp(decoded.networkPassphrase, op, me, warnings, extra), value: stellarMovesValue(op) };
     // An operation on another account than the transaction's says so in its own line.
     return op.source !== null && op.source !== tx.source ? { ...o, text: [...o.text, ' (on the account ', code(op.source), ')'] } : o;
   });
@@ -697,10 +829,12 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
   if (ops.length === 1) headline = [APP, ' wants to ', ...(ops[0] as OpSummary).text];
   else {
     headline = [APP, ` wants to do ${ops.length} things in one Stellar transaction`];
-    const s = steps(ops.map((o) => o.text));
+    const s = steps(ops, warnings);
     lines.push(...s.lines);
     if (s.capped) explainable = false;
   }
+  const leaving = xlmLeaving(tx, me);
+  if (leaving) lines.unshift(leaving);
   const more = capped(extra);
   lines.push(...more.lines);
   if (more.capped) explainable = false;
@@ -798,9 +932,29 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
   }
 }
 
+/** Whether a NEAR action moves or grants value, or changes who controls the account: always listed. */
+function nearMovesValue(a: NearAction): boolean {
+  switch (a.type) {
+    case 'transfer':
+    case 'stake':
+    case 'addKey':
+    case 'deleteKey':
+    case 'deleteAccount':
+    case 'deployContract':
+    case 'deployGlobalContract':
+    case 'useGlobalContract':
+    case 'delegate':
+      return true;
+    case 'functionCall':
+      return a.deposit > 0n || /^(ft_|nft_)/u.test(a.methodName);
+    case 'createAccount':
+      return false;
+  }
+}
+
 function nearActions(actions: readonly NearAction[], receiver: string, me: string, relayed: boolean): ApprovalSummary {
   const warnings: SummaryWarning[] = [];
-  const done = actions.map((a) => nearAction(a, receiver, me, warnings));
+  const done = actions.map((a) => ({ ...nearAction(a, receiver, me, warnings), value: nearMovesValue(a) }));
   let explainable = done.every((x) => x.explainable);
   const lines: SummaryText[] = [];
   let headline: SummaryText;
@@ -810,7 +964,7 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
   } else if (done.length === 1) headline = [APP, ' wants to ', ...(done[0] as { text: SummaryText }).text];
   else {
     headline = [APP, ` wants to do ${done.length} things with `, ...nearWho(receiver, me), ' in one transaction'];
-    const s = steps(done.map((x) => x.text));
+    const s = steps(done, warnings);
     lines.push(...s.lines);
     if (s.capped) explainable = false;
   }
@@ -828,8 +982,30 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
 
 // ---- the entry point ----
 
-/** The plain summary of a request the popup decoded itself. Pure; never throws for a decoded request. */
+/** What a request gets when building its summary fails: Journear can't explain it, and its details start open. */
+export const UNEXPLAINED_SUMMARY: ApprovalSummary = Object.freeze({
+  headline: [APP, ' wants you to approve a request Journear can’t explain'],
+  lines: [],
+  fee: null,
+  network: null,
+  warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain() }],
+  explainable: false,
+  detailsMustStayOpen: false,
+}) as ApprovalSummary;
+
+/**
+ * The plain summary of a request the popup decoded itself. Pure and total: any error while building it (a value no
+ * decoder should let through) gives UNEXPLAINED_SUMMARY, never a throw.
+ */
 export function summarizeApproval(decoded: DecodedApproval, ctx: SummaryContext): ApprovalSummary {
+  try {
+    return summarize(decoded, ctx);
+  } catch {
+    return UNEXPLAINED_SUMMARY;
+  }
+}
+
+function summarize(decoded: DecodedApproval, ctx: SummaryContext): ApprovalSummary {
   switch (decoded.kind) {
     case 'evm_tx':
       return evmTx(decoded.chainId, decoded.tx, ctx.address);

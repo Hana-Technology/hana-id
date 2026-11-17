@@ -19,6 +19,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
 import { TEST_APP_NOTE, startApprovePage } from '../../src/auth/approve-page.ts';
 import { dom } from '../../src/auth/dom.ts';
+import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
+import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { ACCOUNT_CONTROL_BANNER, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NO_NETWORK_NOTE, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
 import { PASSPHRASE, USER, addSignerOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { ENV, FakeWindow, PARTNER, type RemoteWindow, asWindow, remoteWindow, resetDom } from './helpers.ts';
@@ -124,7 +126,9 @@ describe('warnings are never folded', () => {
     expect(el.children[0]?.matches('h2.summary-headline')).toBe(true);
     expect(el.children[1]?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
     expect(el.children[2]?.classList.contains('takeover')).toBe(true);
-    expect(el.querySelectorAll('p.summary-line')).toHaveLength(6);
+    // All 100 move value or control (review 2, N2): 20 listed, a red line says so, the rest in the details.
+    expect(el.querySelector('p.summary-warning.many-value-steps')?.classList.contains('jp-alert-danger')).toBe(true);
+    expect(el.querySelectorAll('p.summary-line')).toHaveLength(21);
     expect(details(el)?.open).toBe(true);
   });
 
@@ -273,6 +277,66 @@ describe('/approve: the page around the summary', () => {
     expect(folded(note)).toBe(false);
     expect(folded(document.querySelector('p.support-id'))).toBe(true);
     expect(folded(document.querySelector('.summary-warning.unlimited-spend'))).toBe(false);
+  });
+
+  it('a renderer that fails shows the refusal with no Approve, never the previous screen (review 2, N1)', () => {
+    page.stop();
+    resetDom();
+    win = new FakeWindow('/approve');
+    vault = remoteWindow();
+    win.opener = asWindow(vault);
+    let fail = false;
+    page = startApprovePage({
+      win,
+      env: ENV,
+      isGesture: () => true,
+      render: (...args) => {
+        if (fail) throw new Error('render failed');
+        return renderApproval(...args);
+      },
+    });
+    win.dispatch('focus');
+    // A first request on show, armed: its Approve works.
+    const first = request();
+    win.message(first, ENV.vaultOrigin, vault);
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1 });
+    const staleApprove = primary()!;
+    expect(staleApprove.disabled).toBe(false);
+    // The next one fails to render.
+    fail = true;
+    const second = request();
+    win.message(second, ENV.vaultOrigin, vault);
+    expect(document.querySelector('.request p.danger')?.textContent).toBe('Journear can’t read this request, so it can’t be approved.');
+    expect(primary()).toBeNull();
+    expect(document.querySelector('h2.summary-headline')).toBeNull();
+    // The old Approve, even if a page kept it, answers nothing: it was drawn for the first request.
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    win.dispatch('pointermove', { pointerType: 'mouse', movementX: 4, movementY: 2 });
+    win.dispatch('pointerdown', { pointerType: 'mouse' });
+    staleApprove.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    const answers = vault.postMessage.mock.calls.map((c) => c[0] as Record<string, unknown>).filter((m) => m.t === 'hana:approve-result');
+    // The first was rejected when the second arrived; nothing approved the second.
+    expect(answers.map((a) => [a.id, a.approved])).toEqual([[first.id, false]]);
+    // Reject still answers the second, as not approved.
+    document.querySelector<HTMLButtonElement>('button.secondary')!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    const after = vault.postMessage.mock.calls.map((c) => c[0] as Record<string, unknown>).filter((m) => m.t === 'hana:approve-result');
+    expect(after.map((a) => [a.id, a.approved])).toEqual([[first.id, false], [second.id, false]]);
+  });
+
+  it('a consent renderer that fails shows the refusal with no Allow (review 2, N1)', () => {
+    page.stop();
+    resetDom();
+    win = new FakeWindow('/approve');
+    vault = remoteWindow();
+    win.opener = asWindow(vault);
+    page = startApprovePage({ win, env: ENV, isGesture: () => true, renderConsentScreen: () => { throw new Error('render failed'); } });
+    win.dispatch('focus');
+    const policy = validateAutoApprovePolicy(policyJson());
+    if (!policy.ok) throw new Error('policy');
+    win.message({ v: 1, t: 'hana:consent-request', id: newRequestId(), appName: 'Partner App', parentOrigin: PARTNER, policy: JSON.parse(JSON.stringify(policy.policy)), policyId: policyId(policy.policy), expiresAtMs: Date.now() + 3_600_000, position: 1, queued: 1 }, ENV.vaultOrigin, vault);
+    expect(document.querySelector('div.consent p.danger')).not.toBeNull();
+    expect(primary()).toBeNull();
   });
 
   it('opening or closing the details neither arms nor resets the Approve guard', () => {

@@ -204,6 +204,14 @@ test('screens for review', async ({ page, browserName }) => {
   popup = await popupFor(page, 'control', 'stellarSignXdr', build(Operation.setOptions({ signer: { ed25519PublicKey: other, weight: 255 } })));
   await shot(popup, 'stellar-account-control', browserName);
   await done(page, popup, 'control');
+  // Six steps that move nothing, then a payment: the payment is listed first, with the XLM leaving (review 2, N2).
+  const manySteps = new TransactionBuilder(new Account(stellar, '100'), { fee: '700', networkPassphrase: Networks.TESTNET });
+  for (let i = 0; i < 6; i++) manySteps.addOperation(Operation.bumpSequence({ bumpTo: '99' }));
+  manySteps.addOperation(Operation.payment({ destination: other, asset: Asset.native(), amount: '1000000' }));
+  popup = await popupFor(page, 'many-steps', 'stellarSignXdr', manySteps.setTimeout(300).build().toXDR());
+  await expect(popup.locator('p.summary-line').nth(1)).toHaveText(`7. Send 1,000,000 XLM to ${other}`);
+  await shot(popup, 'stellar-many-steps-payment', browserName);
+  await done(page, popup, 'many-steps');
   const junk = new Asset('USDC', Keypair.random().publicKey());
   popup = await popupFor(page, 'offer', 'stellarSignXdr', build(Operation.manageSellOffer({ selling: Asset.native(), buying: junk, amount: '100', price: { n: 1, d: 10000 } })));
   await shot(popup, 'stellar-offer', browserName);

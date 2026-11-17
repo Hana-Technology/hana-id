@@ -15,6 +15,7 @@
 // on Stellar's public network) gets a symbol and decimals. Any other token's amount is shown as it is signed, in its
 // smallest units, and called "tokens of contract …": a contract's own symbol() or decimals() is the contract's claim.
 import { isDisplaySafeLine } from '../display-safe.ts';
+import { toHex } from '../bytes.ts';
 import { MAINNET_DEMO } from '../mainnet-demo.ts';
 import { STELLAR_MAINNET_PASSPHRASE, evmChainInfo } from '../networks.ts';
 import type { NearAction } from '../near/codec.ts';
@@ -89,8 +90,16 @@ const strong = (text: string): SummaryPart => ({ kind: 'strong', text });
 /** The line every request Journear can't explain carries. */
 export const cannotExplain = (reason?: string): SummaryText => [`Journear can’t explain this request in plain words${reason ? `: ${reason}` : ''}. Only approve if you trust `, APP, '.'];
 
-/** Allowances at or above this have no practical limit (2^96: the max of a 96-bit balance, which some tokens use as "unlimited"). */
-export const PRACTICALLY_UNLIMITED = 2n ** 96n;
+/**
+ * Allowances at or above this, of a token Journear doesn't know, have no practical limit: 10^27 of its smallest units is
+ * a billion whole tokens even at 18 decimals, and below 2^96 (the max of a 96-bit balance, which some tokens use as
+ * "unlimited"). For a pinned token the line is a trillion whole tokens (PINNED_UNLIMITED_WHOLE), more than its supply.
+ */
+export const PRACTICALLY_UNLIMITED = 10n ** 27n;
+/** A pinned token's allowance above this many whole tokens has no practical limit. */
+export const PINNED_UNLIMITED_WHOLE = 10n ** 12n;
+/** At most this many numbered lines; the rest are in the details, which then start open. */
+export const MAX_SUMMARY_STEPS = 5;
 
 /** Permit2's canonical contract (the same address on every chain). */
 export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
@@ -99,6 +108,9 @@ const ZERO_ADDRESS = /^0x0{40}$/iu;
 const UINT256_MAX = 2n ** 256n - 1n;
 const UINT160_MAX = 2n ** 160n - 1n;
 const I128_MAX = 2n ** 127n - 1n;
+
+/** A decimal string with its whole part grouped by thousands: "1234567.5" → "1,234,567.5". */
+export const groupDigits = (n: string): string => n.replace(/^(-?)(\d+)/u, (_, sign: string, whole: string) => sign + whole.replace(/\B(?=(\d{3})+$)/gu, ','));
 
 /** `value` with `decimals` decimal places, trailing zeros trimmed: formatTokenUnits(1500000n, 6) = "1.5". */
 export function formatTokenUnits(value: bigint, decimals: number): string {
@@ -137,8 +149,11 @@ export function knownStellarToken(networkPassphrase: string, contract: string): 
 
 /** "5 USDC", or "1000 of the token’s smallest units" when the token isn't on the pinned list. */
 function amountOf(amount: bigint, token: KnownToken | null): SummaryText {
-  return token ? [strong(`${formatTokenUnits(amount, token.decimals)} ${token.symbol}`)] : [strong(amount.toString()), ' in the token’s smallest units'];
+  return token ? [strong(`${groupDigits(formatTokenUnits(amount, token.decimals))} ${token.symbol}`)] : [strong(groupDigits(amount.toString())), ' in the token’s smallest units'];
 }
+
+/** Whether an allowance has no practical limit (see PRACTICALLY_UNLIMITED). */
+const unlimited = (amount: bigint, token: KnownToken | null): boolean => amount >= PRACTICALLY_UNLIMITED || (token !== null && amount > PINNED_UNLIMITED_WHOLE * 10n ** BigInt(token.decimals));
 
 /** "USDC", or "tokens of contract 0x…". */
 function tokenName(contract: string, token: KnownToken | null): SummaryText {
@@ -163,14 +178,15 @@ function spenderOf(chain: ContractChain | null, address: string): SummaryText {
  * `nftToo`: ERC-20's and ERC-721's approve share one selector, so for a token Journear doesn't know the amount may be
  * an NFT's item number.
  */
-function spendWarning(spender: SummaryText, contract: string, token: KnownToken | null, amount: bigint, typeMax: bigint, opts: { more?: boolean; nftToo?: boolean; via?: string } = {}): SummaryWarning {
+function spendWarning(spender: SummaryText, contract: string, token: KnownToken | null, amount: bigint, typeMax: bigint, opts: { more?: boolean; nftToo?: boolean; via?: string; owner?: string } = {}): SummaryWarning {
   const via = opts.via ? ` ${opts.via}` : '';
-  const yours: SummaryText = token ? [`your ${token.symbol}`] : ['your tokens of contract ', code(contract)];
-  if (amount >= PRACTICALLY_UNLIMITED) {
+  // `owner`: the tokens are someone else's (a Soroban approve `from` another account): never "your".
+  const yours: SummaryText = opts.owner ? ['the ', ...tokenName(contract, token), ' held by ', code(opts.owner)] : token ? [`your ${token.symbol}`] : ['your tokens of contract ', code(contract)];
+  if (unlimited(amount, token)) {
     const how = amount >= typeMax ? 'with no limit' : 'with no practical limit';
     return { level: 'danger', code: 'unlimited_spend', text: ['This lets ', ...spender, ' spend all of ', ...yours, via, `, ${how}, until you take the permission back. Approve only if you trust it completely.`] };
   }
-  const much: SummaryText = token ? [strong(`${formatTokenUnits(amount, token.decimals)} ${token.symbol}`), ' from your account'] : [strong(amount.toString()), ' (in the token’s smallest units) of ', ...yours];
+  const much: SummaryText = token && !opts.owner ? [strong(`${groupDigits(formatTokenUnits(amount, token.decimals))} ${token.symbol}`), ' from your account'] : [strong(token ? groupDigits(formatTokenUnits(amount, token.decimals)) : groupDigits(amount.toString())), token ? ' of ' : ' (in the token’s smallest units) of ', ...yours];
   const nft = opts.nftToo && !token ? ` If the contract is an NFT collection, it lets them take your item ${amount} instead.` : '';
   return { level: 'warning', code: 'spend_permission', text: ['This lets ', ...spender, ` spend ${opts.more ? 'a further ' : 'up to '}`, ...much, via, `, until it is used up or you take the permission back.${nft}`] };
 }
@@ -241,6 +257,11 @@ function evmCall(chainId: number, tx: DecodedEvmTx, me: string): Draft {
       const spender = abiAddr(a[0]) as string;
       const amount = abiUint(a[1]) as bigint;
       if (amount === 0n) {
+        // ERC-721 shares this selector and item 0 exists: for a contract Journear doesn't know, 0 may be an item, not a revoke.
+        if (!token && !ZERO_ADDRESS.test(spender)) {
+          warnings.push({ level: 'warning', code: 'spend_permission', text: ['If contract ', contract, ' is a token, this takes back ', code(spender), '’s permission to spend it. If it is an NFT collection, this lets ', ...spenderOf(chain, spender), ' take your item 0.'] });
+          return { headline: [APP, ' wants to change ', code(spender), '’s permission for contract ', contract], lines, warnings, explainable: true };
+        }
         return { headline: [APP, ' wants to take back ', code(spender), '’s permission to spend your ', ...tokenName(to, token)], lines, warnings, explainable: true };
       }
       warnings.push(spendWarning(spenderOf(chain, spender), to, token, amount, UINT256_MAX, { nftToo: true }));
@@ -338,6 +359,12 @@ const PERMIT2_SHAPES: Readonly<Record<string, { readonly fields: Fields; readonl
   PermitBatchTransferFrom: { fields: [{ name: 'permitted', type: 'TokenPermissions[]' }, { name: 'spender', type: 'address' }, { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], sub: ['TokenPermissions', PERMIT2_TOKEN_PERMISSIONS] },
 };
 
+/** Permit2's witness transfers: the first four fields of each, then one `witness` field of the app's own type. */
+const PERMIT2_WITNESS: Readonly<Record<string, Fields>> = {
+  PermitWitnessTransferFrom: PERMIT2_SHAPES.PermitTransferFrom!.fields,
+  PermitBatchWitnessTransferFrom: PERMIT2_SHAPES.PermitBatchTransferFrom!.fields,
+};
+
 const struct = (v: TypedDataValue | undefined): TypedDataStruct | null => (v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as TypedDataStruct) : null);
 const str = (v: TypedDataValue | undefined): string | null => (typeof v === 'string' ? v : null);
 const big = (v: TypedDataValue | undefined): bigint | null => (typeof v === 'bigint' ? v : null);
@@ -367,7 +394,8 @@ function typedData(decoded: Extract<DecodedApproval, { kind: 'eip712' }>, me: st
   };
 
   // EIP-2612: the token's own Permit, signed for its contract (the domain's verifyingContract).
-  if (pt === 'Permit' && verifying && sameFields(td.types.Permit, EIP2612_PERMIT)) {
+  const typeCount = Object.keys(td.types).length;
+  if (pt === 'Permit' && verifying && typeCount === 2 && sameFields(td.types.Permit, EIP2612_PERMIT)) {
     const m = td.message;
     const spender = str(m.spender) as string;
     const value = big(m.value) as bigint;
@@ -379,7 +407,7 @@ function typedData(decoded: Extract<DecodedApproval, { kind: 'eip712' }>, me: st
     return { ...base, headline: [APP, ' wants your signature to let someone else spend your ', ...tokenName(verifying, token)], lines, warnings, explainable: true };
   }
   // DAI's permit: all or nothing.
-  if (pt === 'Permit' && verifying && sameFields(td.types.Permit, DAI_PERMIT)) {
+  if (pt === 'Permit' && verifying && typeCount === 2 && sameFields(td.types.Permit, DAI_PERMIT)) {
     const m = td.message;
     const spender = str(m.spender) as string;
     ownerLine(str(m.holder) as string);
@@ -408,6 +436,23 @@ function typedData(decoded: Extract<DecodedApproval, { kind: 'eip712' }>, me: st
       else warnings.push(spendWarning(spender, tokenAddr, token, amount, allowance ? UINT160_MAX : UINT256_MAX, { via: allowance ? 'through Permit2' : 'through Permit2, once' }));
     }
     return { ...base, headline: [APP, ' wants your signature to let someone else spend your tokens through Permit2'], lines, warnings, explainable: true };
+  }
+  // Permit2's witness transfers: a certain one-time spend (said, with its tokens and amounts), plus a witness Journear
+  // can't read, so the request stays unexplained and its details start open.
+  const witness = Object.hasOwn(PERMIT2_WITNESS, pt) ? PERMIT2_WITNESS[pt] : undefined;
+  const witnessFields = td.types[pt];
+  if (witness && isPermit2Domain && witnessFields?.length === 5 && sameFields(witnessFields.slice(0, 4), witness) && sameFields(td.types.TokenPermissions, PERMIT2_TOKEN_PERMISSIONS)) {
+    const m = td.message;
+    const spender = spenderOf(chain, str(m.spender) as string);
+    const entries = m.permitted as TypedDataValue;
+    for (const e of Array.isArray(entries) ? (entries as readonly TypedDataValue[]) : [entries]) {
+      const s = struct(e) as TypedDataStruct;
+      const tokenAddr = str(s.token) as string;
+      const amount = big(s.amount) as bigint;
+      const token = chainId === null ? null : knownEvmToken(chainId, tokenAddr);
+      if (amount > 0n) warnings.push(spendWarning(spender, tokenAddr, token, amount, UINT256_MAX, { via: 'through Permit2, once' }));
+    }
+    return { ...base, headline: [APP, ' wants your signature to let someone else spend your tokens through Permit2, with extra data Journear can’t read'], lines, warnings: [{ level: 'warning', code: 'cannot_explain', text: cannotExplain('it carries extra data Journear can’t read') }, ...warnings], explainable: false };
   }
   // Anything else: Journear can't explain it. Say so louder when it imitates a permit.
   if (domain.name === 'Permit2' && !isPermit2Domain) {
@@ -450,52 +495,93 @@ function message(kind: 'personal_sign' | 'stellar_message', text: string | null,
 
 // ---- Stellar ----
 
+/** Stellar's network: its name, or the passphrase (a request may name any), as hex when it isn't display-safe, cut short. */
 function stellarNetwork(passphrase: string): SummaryText {
   if (passphrase === STELLAR_MAINNET_PASSPHRASE) return ['Stellar public network (real funds)'];
   if (passphrase === STELLAR_TESTNET_PASSPHRASE) return ['Stellar testnet'];
-  return ['the Stellar network named ', code(passphrase)];
+  const shown = isDisplaySafeLine(passphrase) ? passphrase : `(shown as hex) ${toHex(new TextEncoder().encode(passphrase))}`;
+  return ['the Stellar network named ', code(shown.length > 64 ? `${shown.slice(0, 63)}…` : shown)];
 }
 
-const xlm = (stroops: string | bigint): string => `${formatTokenUnits(BigInt(stroops), 7)} XLM`;
+const xlm = (stroops: string | bigint): string => `${groupDigits(formatTokenUnits(BigInt(stroops), 7))} XLM`;
 
 /** An amount of a Stellar asset (`native` or `CODE:ISSUER`): "1.5 XLM", or "2 of the asset USDC:G…" (a code is its issuer's choice). */
-function stellarAmount(stroops: string, asset: string): SummaryText {
-  return asset === 'native' ? [strong(xlm(stroops))] : [strong(formatTokenUnits(BigInt(stroops), 7)), ' of the asset ', code(asset)];
+function stellarAmount(stroops: string | bigint, asset: string): SummaryText {
+  return asset === 'native' ? [strong(xlm(stroops))] : [strong(groupDigits(formatTokenUnits(BigInt(stroops), 7))), ' of the asset ', code(asset)];
 }
 const assetName = (asset: string): SummaryText => (asset === 'native' ? ['XLM'] : ['the asset ', code(asset)]);
 const stellarWho = (account: string, me: string): SummaryText => (account === me ? ['your account'] : [code(account)]);
+/** "A, B or C". */
+const either = (parts: readonly SummaryText[]): SummaryText => parts.flatMap((p, i) => [...(i === 0 ? [] : i === parts.length - 1 ? [' or '] : [', ']), ...p]);
 
 const scAddr = (v: StellarScVal | undefined): string | null => (v?.type === 'address' ? v.address : null);
 const scInt = (v: StellarScVal | undefined): bigint | null => (v?.type === 'i128' || v?.type === 'u128' ? BigInt(v.value) : null);
 
+/** How a Soroban token call is phrased: the call itself, what an authorization entry signs, or a call nested under another. */
+type TokenCallMode = 'send' | 'authorize' | 'nested';
+
 /**
  * A Soroban token call (SEP-41, which every Stellar asset contract implements): `transfer(from, to, amount)` and
  * `approve(from, spender, amount, expiration_ledger)`, recognised only with exactly those argument types. Anything else
- * is a call Journear can't summarise (null).
+ * is a call Journear can't summarise (null). `nested` phrases it as a whole line ("It also authorizes sending …").
  */
-function sorobanTokenCall(passphrase: string, c: StellarContractCall, me: string, warnings: SummaryWarning[], authorizes: boolean): SummaryText | null {
+function sorobanTokenCall(passphrase: string, c: StellarContractCall, me: string, warnings: SummaryWarning[], mode: TokenCallMode): SummaryText | null {
   const token = knownStellarToken(passphrase, c.contract);
   const a = c.args;
-  const verb = authorizes ? 'authorize sending ' : 'send ';
+  const end: SummaryText = mode === 'nested' ? ['.'] : [];
   if (c.function === 'transfer' && a.length === 3 && scAddr(a[0]) && scAddr(a[1]) && a[2]?.type === 'i128') {
     const amount = scInt(a[2]) as bigint;
     const from = scAddr(a[0]) as string;
-    const what: SummaryText = token ? [...amountOf(amount, token), ' (token contract ', code(c.contract), ')'] : [strong(amount.toString()), ' (in the token’s smallest units) of the token contract ', code(c.contract)];
-    return [verb, ...what, ...(from === me ? [] : [' from ', code(from)]), ' to ', ...stellarWho(scAddr(a[1]) as string, me)];
+    const verb = { send: 'send ', authorize: 'authorize sending ', nested: 'It also authorizes sending ' }[mode];
+    const what: SummaryText = token ? [...amountOf(amount, token), ' (token contract ', code(c.contract), ')'] : [strong(groupDigits(amount.toString())), ' (in the token’s smallest units) of the token contract ', code(c.contract)];
+    return [verb, ...what, ...(from === me ? [] : [' from ', code(from)]), ' to ', ...stellarWho(scAddr(a[1]) as string, me), ...end];
   }
   if (c.function === 'approve' && a.length === 4 && scAddr(a[0]) && scAddr(a[1]) && a[2]?.type === 'i128' && a[3]?.type === 'u32') {
     const amount = scInt(a[2]) as bigint;
+    const from = scAddr(a[0]) as string;
     const spender = scAddr(a[1]) as string;
-    if (amount === 0n) return ['take back ', code(spender), '’s permission to spend ', ...tokenName(c.contract, token)];
-    warnings.push(spendWarning(spenderOf({ kind: 'stellar', networkPassphrase: passphrase }, spender), c.contract, token, amount, I128_MAX));
-    return ['let someone else spend your ', ...tokenName(c.contract, token)];
+    const whose: SummaryText = from === me ? ['your ', ...tokenName(c.contract, token)] : [...tokenName(c.contract, token), ' held by ', code(from)];
+    if (amount === 0n) return [{ send: 'take back ', authorize: 'authorize taking back ', nested: 'It also takes back ' }[mode], code(spender), '’s permission to spend ', ...whose, ...end];
+    warnings.push(spendWarning(spenderOf({ kind: 'stellar', networkPassphrase: passphrase }, spender), c.contract, token, amount, I128_MAX, from === me ? {} : { owner: from }));
+    return [{ send: 'let someone else spend ', authorize: 'authorize someone else to spend ', nested: 'It also lets someone else spend ' }[mode], ...whose, ...end];
   }
   return null;
 }
 
-/** What one Stellar operation does, in a few words (no "{App} wants to"), and whether Journear can say that. */
-function stellarOp(passphrase: string, op: StellarOperation, me: string, warnings: SummaryWarning[]): { text: SummaryText; explainable: boolean } {
-  const ok = (text: SummaryText) => ({ text, explainable: true });
+/** Two contract calls are the same call: same contract, function and arguments. */
+const sameCall = (a: StellarContractCall, b: StellarContractCall): boolean => a.contract === b.contract && a.function === b.function && JSON.stringify(a.args) === JSON.stringify(b.args);
+
+/**
+ * Every call an authorization tree holds besides the one being made: each said in a line of its own (a token move or
+ * approval in plain words, any other call by contract and function), approvals also warned about. Any such call makes
+ * the request unexplainable (the caller), since the summary's headline describes only the call itself.
+ */
+function otherAuthorizations(passphrase: string, inv: StellarInvocation, me: string, warnings: SummaryWarning[], lines: SummaryText[]): void {
+  const f = inv.function;
+  const said = f.type === 'contractFn' ? sorobanTokenCall(passphrase, f, me, warnings, 'nested') : null;
+  lines.push(said ?? (f.type === 'contractFn' ? ['It also authorizes a call to contract ', code(f.contract), ' (', code(f.function), ').'] : ['It also authorizes creating a contract.']));
+  for (const s of inv.subInvocations) otherAuthorizations(passphrase, s, me, warnings, lines);
+}
+
+/** Offers: the price is `n / d` of `buying` per unit of `selling` (a sell offer) or of `selling` per unit bought (a buy offer). */
+const times = (amount: string, n: number, d: number, round: 'down' | 'up'): bigint => {
+  const num = BigInt(amount) * BigInt(n);
+  const den = BigInt(d);
+  return round === 'down' ? num / den : (num + den - 1n) / den;
+};
+const changes = (offerId: string): SummaryText => (offerId === '0' ? [] : [` (it changes your offer ${offerId})`]);
+
+interface OpSummary {
+  readonly text: SummaryText;
+  readonly explainable: boolean;
+}
+
+/**
+ * What one Stellar operation does, in a few words (no "{App} wants to"), with every term that decides what the user
+ * gives or gets, and whether Journear can say that. Lines for what it also authorizes go to `extra`.
+ */
+function stellarOp(passphrase: string, op: StellarOperation, me: string, warnings: SummaryWarning[], extra: SummaryText[]): OpSummary {
+  const ok = (text: SummaryText): OpSummary => ({ text, explainable: true });
   switch (op.type) {
     case 'payment':
       return ok(['send ', ...stellarAmount(op.amount, op.asset), ' to ', ...stellarWho(op.destination, me)]);
@@ -507,24 +593,33 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
       return ok(['pay exactly ', ...stellarAmount(op.sendAmount, op.sendAsset), ' so that ', ...stellarWho(op.destination, me), ' receives at least ', ...stellarAmount(op.destMin, op.destAsset)]);
     case 'manageSellOffer':
     case 'createPassiveSellOffer':
-      return ok(op.amount === '0' ? ['cancel an offer to sell ', ...assetName(op.selling)] : ['offer to sell ', ...stellarAmount(op.amount, op.selling), ' for ', ...assetName(op.buying)]);
+      if (op.amount === '0') return ok(['cancel your offer ', code(op.offerId), ' to sell ', ...assetName(op.selling)]);
+      return ok(['offer to sell ', ...stellarAmount(op.amount, op.selling), ' for at least ', ...stellarAmount(times(op.amount, op.price.n, op.price.d, 'down'), op.buying), ...changes(op.offerId)]);
     case 'manageBuyOffer':
-      return ok(op.buyAmount === '0' ? ['cancel an offer to buy ', ...assetName(op.buying)] : ['offer to buy ', ...stellarAmount(op.buyAmount, op.buying), ' with ', ...assetName(op.selling)]);
+      if (op.buyAmount === '0') return ok(['cancel your offer ', code(op.offerId), ' to buy ', ...assetName(op.buying)]);
+      return ok(['offer to buy ', ...stellarAmount(op.buyAmount, op.buying), ', paying at most ', ...stellarAmount(times(op.buyAmount, op.price.n, op.price.d, 'up'), op.selling), ...changes(op.offerId)]);
     case 'changeTrust':
       return ok(op.limit === '0' ? ['stop holding ', ...assetName(op.asset)] : ['let your account hold ', ...assetName(op.asset)]);
-    case 'setOptions':
-      return ok(op.signer || op.masterWeight !== null || op.lowThreshold !== null || op.medThreshold !== null || op.highThreshold !== null ? ['change who can sign for the account'] : ['change the account’s settings']);
+    case 'setOptions': {
+      if (op.signer || op.masterWeight !== null || op.lowThreshold !== null || op.medThreshold !== null || op.highThreshold !== null) return ok(['change who can sign for the account']);
+      const what = [op.setFlags !== null || op.clearFlags !== null ? 'its flags' : null, op.homeDomain ? 'its home domain' : null, op.inflationDest !== null ? 'its inflation destination' : null].filter((x): x is string => x !== null);
+      return ok([what.length === 0 ? 'change nothing on the account' : `change the account’s settings (${what.join(', ')})`]);
+    }
     case 'accountMerge':
       return ok(['close the account and send all its XLM to ', code(op.destination)]);
     case 'allowTrust':
+      return ok([op.authorize === 0 ? 'stop ' : 'allow ', code(op.trustor), op.authorize === 0 ? ' from using your asset ' : ' to hold your asset ', code(op.assetCode)]);
     case 'setTrustLineFlags':
-      return ok(['change whether ', code(op.trustor), ' may hold an asset you issue']);
+      return ok(['change the flags of ', code(op.trustor), '’s trust line for your asset ', code(op.asset)]);
     case 'manageData':
       return ok([op.value === null ? 'delete a data entry on the account' : 'save a data entry on the account']);
     case 'bumpSequence':
       return ok(['move the account’s sequence number forward']);
-    case 'createClaimableBalance':
-      return ok(['set aside ', ...stellarAmount(op.amount, op.asset), ' for others to claim']);
+    case 'createClaimableBalance': {
+      // Who can claim it decides who gets it; a claimant's conditions (time windows) are in the details, open then.
+      const conditional = op.claimants.some((c) => !c.unconditional);
+      return { text: ['set aside ', ...stellarAmount(op.amount, op.asset), ' that ', ...either(op.claimants.map((c) => stellarWho(c.destination, me))), ' can claim', ...(conditional ? [' (with conditions)'] : [])], explainable: !conditional };
+    }
     case 'claimClaimableBalance':
       return ok(['claim a balance set aside for you']);
     case 'clawbackClaimableBalance':
@@ -534,12 +629,14 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
     case 'beginSponsoringFutureReserves':
       return ok(['pay the reserves of ', code(op.sponsored)]);
     case 'endSponsoringFutureReserves':
-    case 'revokeSponsorship':
       return ok(['end a reserve sponsorship']);
+    case 'revokeSponsorship':
+      return ok(op.target.type === 'signer' ? ['end a sponsorship of a signer of ', code(op.target.account)] : ['end a reserve sponsorship']);
     case 'liquidityPoolDeposit':
-      return ok(['deposit into a liquidity pool']);
+      // The pool's two assets aren't in the request (only its id): the amounts can't be named, so it isn't explained.
+      return { text: ['deposit at most ', strong(groupDigits(formatTokenUnits(BigInt(op.maxAmountA), 7))), ' of the pool’s first asset and ', strong(groupDigits(formatTokenUnits(BigInt(op.maxAmountB), 7))), ' of its second into the liquidity pool ', code(op.poolId)], explainable: false };
     case 'liquidityPoolWithdraw':
-      return ok(['withdraw from a liquidity pool']);
+      return { text: ['withdraw ', strong(groupDigits(formatTokenUnits(BigInt(op.amount), 7))), ' pool shares from the liquidity pool ', code(op.poolId), ' for at least ', strong(groupDigits(formatTokenUnits(BigInt(op.minAmountA), 7))), ' of the pool’s first asset and ', strong(groupDigits(formatTokenUnits(BigInt(op.minAmountB), 7))), ' of its second'], explainable: false };
     case 'inflation':
       return ok(['run inflation (it does nothing on Stellar any more)']);
     case 'extendFootprintTtl':
@@ -549,25 +646,21 @@ function stellarOp(passphrase: string, op: StellarOperation, me: string, warning
     case 'invokeHostFunction': {
       const f = op.hostFunction;
       if (f.type !== 'invokeContract') return { text: [f.type === 'uploadContractWasm' ? 'upload contract code' : 'create a contract'], explainable: false };
-      const token = sorobanTokenCall(passphrase, f, me, warnings, false);
+      const token = sorobanTokenCall(passphrase, f, me, warnings, 'send');
       let explainable = token !== null;
-      // What the call's authorizations also allow: token moves and approvals deeper in the tree.
+      // The call is explained only when its authorizations hold exactly that call and nothing else: any other node is
+      // said in a line of its own, and the request is then not explainable (its details start open).
       for (const auth of op.auth) {
         const root = auth.rootInvocation;
-        const sameAsCall = root.function.type === 'contractFn' && root.function.contract === f.contract && root.function.function === f.function;
-        for (const inv of sameAsCall ? root.subInvocations : [root]) if (!authorizations(passphrase, inv, me, warnings)) explainable = false;
+        const isCall = root.function.type === 'contractFn' && sameCall(root.function, f);
+        for (const inv of isCall ? root.subInvocations : [root]) {
+          otherAuthorizations(passphrase, inv, me, warnings, extra);
+          explainable = false;
+        }
       }
       return { text: token ?? ['use contract ', code(f.contract), ' (', code(f.function), ')'], explainable };
     }
   }
-}
-
-/** Walks an authorization tree; adds a warning for each token approval. True when every call in it is a token call. */
-function authorizations(passphrase: string, inv: StellarInvocation, me: string, warnings: SummaryWarning[]): boolean {
-  const f = inv.function;
-  let ok = f.type === 'contractFn' && sorobanTokenCall(passphrase, f, me, warnings, true) !== null;
-  for (const s of inv.subInvocations) if (!authorizations(passphrase, s, me, warnings)) ok = false;
-  return ok;
 }
 
 const capitalised = (t: SummaryText): SummaryText => {
@@ -575,24 +668,45 @@ const capitalised = (t: SummaryText): SummaryText => {
   return typeof first === 'string' ? [first.charAt(0).toUpperCase() + first.slice(1), ...rest] : t;
 };
 
+/** At most MAX_SUMMARY_STEPS numbered lines, then "…and N more"; `capped` when some were left out. */
+function steps(texts: readonly SummaryText[]): { lines: SummaryText[]; capped: boolean } {
+  const lines = texts.slice(0, MAX_SUMMARY_STEPS).map((t, i) => [`${i + 1}. `, ...capitalised(t)]);
+  if (texts.length <= MAX_SUMMARY_STEPS) return { lines, capped: false };
+  return { lines: [...lines, [`…and ${texts.length - MAX_SUMMARY_STEPS} more: see the details.`]], capped: true };
+}
+
+/** At most MAX_SUMMARY_STEPS extra lines, then "…and N more". */
+function capped(lines: readonly SummaryText[]): { lines: SummaryText[]; capped: boolean } {
+  if (lines.length <= MAX_SUMMARY_STEPS) return { lines: [...lines], capped: false };
+  return { lines: [...lines.slice(0, MAX_SUMMARY_STEPS), [`…and ${lines.length - MAX_SUMMARY_STEPS} more: see the details.`]], capped: true };
+}
+
 function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me: string): ApprovalSummary {
   const env = decoded.envelope;
   const tx = env.tx;
   const warnings: SummaryWarning[] = [];
-  const ops = tx.operations.map((op) => stellarOp(decoded.networkPassphrase, op, me, warnings));
-  const explainable = ops.every((o) => o.explainable);
+  const extra: SummaryText[] = [];
+  const ops = tx.operations.map((op) => {
+    const o = stellarOp(decoded.networkPassphrase, op, me, warnings, extra);
+    // An operation on another account than the transaction's says so in its own line.
+    return op.source !== null && op.source !== tx.source ? { ...o, text: [...o.text, ' (on the account ', code(op.source), ')'] } : o;
+  });
+  let explainable = ops.every((o) => o.explainable);
   const lines: SummaryText[] = [];
   let headline: SummaryText;
-  if (ops.length === 1) headline = [APP, ' wants to ', ...(ops[0] as { text: SummaryText }).text];
+  if (ops.length === 1) headline = [APP, ' wants to ', ...(ops[0] as OpSummary).text];
   else {
     headline = [APP, ` wants to do ${ops.length} things in one Stellar transaction`];
-    ops.forEach((o, i) => lines.push([`${i + 1}. `, ...capitalised(o.text)]));
+    const s = steps(ops.map((o) => o.text));
+    lines.push(...s.lines);
+    if (s.capped) explainable = false;
   }
-  if (env.envelope === 'fee_bump' && env.feeSource !== me) lines.push(['The network fee is paid by ', code(env.feeSource), '.']);
-  tx.operations.forEach((op, i) => {
-    if (op.source !== null && op.source !== tx.source) lines.push([ops.length === 1 ? 'It acts on the account ' : `Step ${i + 1} acts on the account `, code(op.source), '.']);
-  });
-  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain('it calls a contract Journear can’t summarise') });
+  const more = capped(extra);
+  lines.push(...more.lines);
+  if (more.capped) explainable = false;
+  if (tx.source !== me) lines.push(['The transaction is from the account ', code(tx.source), '.']);
+  if (env.envelope === 'fee_bump') lines.push(env.feeSource === me ? ['Your account pays the network fee for a transaction from ', ...stellarWho(tx.source, me), '.'] : ['The network fee is paid by ', code(env.feeSource), ', not your account.']);
+  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain(ops.every((o) => o.explainable) && !more.capped ? 'it has more steps than this summary lists' : 'it does something Journear can’t summarise') });
   const feeStroops = env.envelope === 'fee_bump' ? env.fee : tx.fee;
   return {
     headline,
@@ -607,14 +721,18 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
 
 function stellarAuth(decoded: Extract<DecodedApproval, { kind: 'stellar_auth_entry' }>, me: string): ApprovalSummary {
   const warnings: SummaryWarning[] = [];
+  const extra: SummaryText[] = [];
   const inv = decoded.preimage.invocation;
   const f = inv.function;
-  const root = f.type === 'contractFn' ? sorobanTokenCall(decoded.networkPassphrase, f, me, warnings, true) : null;
-  let explainable = root !== null;
-  for (const s of inv.subInvocations) if (!authorizations(decoded.networkPassphrase, s, me, warnings)) explainable = false;
+  const root = f.type === 'contractFn' ? sorobanTokenCall(decoded.networkPassphrase, f, me, warnings, 'authorize') : null;
+  // Explained only when the entry authorizes one token call and nothing under it.
+  let explainable = root !== null && inv.subInvocations.length === 0;
+  for (const s of inv.subInvocations) otherAuthorizations(decoded.networkPassphrase, s, me, warnings, extra);
+  const more = capped(extra);
+  if (more.capped) explainable = false;
   const what: SummaryText = root ?? (f.type === 'contractFn' ? ['authorize a call to contract ', code(f.contract), ' (', code(f.function), ')'] : ['authorize creating a contract']);
   if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain('it authorizes a contract call Journear can’t summarise') });
-  return { headline: [APP, ' wants to ', ...what], lines: [], fee: null, network: stellarNetwork(decoded.networkPassphrase), warnings, explainable, detailsMustStayOpen: false };
+  return { headline: [APP, ' wants to ', ...what], lines: more.lines, fee: null, network: stellarNetwork(decoded.networkPassphrase), warnings, explainable, detailsMustStayOpen: false };
 }
 
 // ---- NEAR ----
@@ -647,7 +765,7 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
       if (args === null) return { text: ['use ', ...where, ' (', code(m.text), ') with data Journear can’t read'], explainable: false };
       // NEP-141 fungible tokens and NEP-171/178 NFTs: their methods' meaning is the standard's (the contract can still lie).
       if ((m.text === 'ft_transfer' || m.text === 'ft_transfer_call') && typeof args.receiver_id === 'string' && isNearAccountId(args.receiver_id) && isAmount(args.amount)) {
-        return ok(['send ', strong(args.amount), ' (smallest units) of the token ', code(receiver), ' to ', ...nearWho(args.receiver_id, me)]);
+        return ok(['send ', strong(groupDigits(args.amount)), ' (smallest units) of the token ', code(receiver), ' to ', ...nearWho(args.receiver_id, me)]);
       }
       if ((m.text === 'nft_transfer' || m.text === 'nft_transfer_call') && typeof args.receiver_id === 'string' && isNearAccountId(args.receiver_id) && isTokenId(args.token_id)) {
         return ok(['send item ', code(args.token_id), ' of collection ', code(receiver), ' to ', ...nearWho(args.receiver_id, me)]);
@@ -683,7 +801,7 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
 function nearActions(actions: readonly NearAction[], receiver: string, me: string, relayed: boolean): ApprovalSummary {
   const warnings: SummaryWarning[] = [];
   const done = actions.map((a) => nearAction(a, receiver, me, warnings));
-  const explainable = done.every((x) => x.explainable);
+  let explainable = done.every((x) => x.explainable);
   const lines: SummaryText[] = [];
   let headline: SummaryText;
   const transfers = actions.length > 0 && actions.every((a) => a.type === 'transfer');
@@ -692,9 +810,11 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
   } else if (done.length === 1) headline = [APP, ' wants to ', ...(done[0] as { text: SummaryText }).text];
   else {
     headline = [APP, ` wants to do ${done.length} things with `, ...nearWho(receiver, me), ' in one transaction'];
-    done.forEach((x, i) => lines.push([`${i + 1}. `, ...capitalised(x.text)]));
+    const s = steps(done.map((x) => x.text));
+    lines.push(...s.lines);
+    if (s.capped) explainable = false;
   }
-  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain() });
+  if (!explainable) warnings.unshift({ level: 'warning', code: 'cannot_explain', text: cannotExplain(done.every((x) => x.explainable) ? 'it has more steps than this summary lists' : undefined) });
   return {
     headline,
     lines,
@@ -731,7 +851,7 @@ export function summarizeApproval(decoded: DecodedApproval, ctx: SummaryContext)
     case 'near_message': {
       const readable = decoded.message.text !== null;
       return {
-        headline: [APP, ' wants you to prove you own this wallet'],
+        headline: [APP, ' wants you to sign a message for ', code(decoded.payload.recipient)],
         lines: [],
         fee: null,
         network: null,

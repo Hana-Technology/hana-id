@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-17 (the approval window's plain summary, Show details, spend warnings), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-17 (the approval window's plain summary and its review fixes, Show details, spend warnings), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -691,14 +691,15 @@ Every signing request goes through the user. The Journear Passport popup decodes
 misdescribe them. It starts with one plain sentence built only from those bytes ("Your App wants to send 0.1 NEAR to
 bob.testnet", "Your App wants to use stamps.testnet (collect)", "Your App wants you to sign a message"), the network
 and the most the network fee can be; a plain transfer (EVM value with no call data on a chain it names, one native XLM
-payment or account creation, NEAR transfers only) also shows the amount large ("Sends 0.001 ETH"). Every warning
-follows, always in view: changes to who controls the account, raw signing, and any request that lets someone spend the
+payment or account creation, NEAR transfers only) also shows the amount large ("Sends 0.001 ETH"). Every warning is
+always in view, the red ones right under that sentence: changes to who controls the account, raw signing, and any request that lets someone spend the
 user's tokens (an ERC-20 `approve` or `increaseAllowance`, `setApprovalForAll`, EIP-2612 and Permit2 signatures, a
 Soroban token `approve`, NEAR's `nft_approve`), red when the amount has no limit, with the spender named when Journear
 Passport has verified its contract. The technical details (nonces, hashes, gas, the full list of operations or
 actions, raw arguments, typed-data trees, the user's Support ID) are folded behind **Show details**, which the user can
 always open. When the popup can't explain a request in plain words (a function it doesn't recognise, typed data other
-than a permit it knows, a Soroban call that isn't a token transfer or approval, raw bytes) it says "Journear can’t explain
+than a permit it knows, a Soroban call that isn't a token transfer or approval or that authorizes anything else, a
+liquidity pool deposit or withdrawal, more than five steps, raw bytes) it says "Journear can’t explain
 this request in plain words. Only approve if you trust Your App." and opens the details from the start; for raw signing
 they can't be folded. Token amounts carry a symbol only for the few tokens Journear has reviewed; anything else shows the
 amount in the token's smallest units, so describe amounts in your own page too. **Reject** and **Approve** are below.

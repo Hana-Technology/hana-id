@@ -9,7 +9,7 @@
 import { type Page } from '@playwright/test';
 import { type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey } from '@hana-id/core';
 import { parseFunctionSignature } from '@hana-id/core/decode';
-import { Account, Asset, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-base';
+import { Account, Address, Asset, Keypair, Networks, Operation, StrKey, TransactionBuilder, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC } from '../src/stack.ts';
 import { approve, clickLauncher, expect, login, newApp, newLiveApp, okValue, openPartner, runAction, test } from './fixtures.ts';
 
@@ -142,6 +142,12 @@ test('screens for review', async ({ page, browserName }) => {
   await shot(popup, 'near-transfer', browserName);
   await done(page, popup, 'neartx');
 
+  // Many harmless actions and one full-access key: the red banner stays under the headline (review M2).
+  const many: NearAction[] = [...Array.from({ length: 99 }, (): NearAction => ({ type: 'transfer', deposit: 1n })), { type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }];
+  popup = await popupFor(page, 'many', 'nearSignTx', base64Encode(encodeNearTransaction({ signerId: near, publicKey: key, nonce: 11n, receiverId: near, blockHash: NEAR_BLOCK, actions: many })));
+  await shot(popup, 'near-many-actions-danger', browserName);
+  await done(page, popup, 'many');
+
   popup = await popupFor(page, 'nep413', 'nearSignMessage', 'Sign in to Stamp Trail', 'localhost');
   await shot(popup, 'nep413', browserName);
   await done(page, popup, 'nep413');
@@ -156,6 +162,9 @@ test('screens for review', async ({ page, browserName }) => {
   popup = await popupFor(page, 'approve', 'ethSignTx', evmTx({ to: TOKEN, value: 0n, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) }));
   await shot(popup, 'erc20-unlimited-approve', browserName);
   await done(page, popup, 'approve');
+  popup = await popupFor(page, 'nft0', 'ethSignTx', evmTx({ to: TOKEN, value: 0n, data: call('approve(address,uint256)', SPENDER, 0n) }));
+  await shot(popup, 'erc721-approve-zero', browserName);
+  await done(page, popup, 'nft0');
   popup = await popupFor(page, 'unknown', 'ethSignTx', evmTx({ to: TOKEN, value: 0n, data: `0xdeadbeef${word(42n)}` }));
   await shot(popup, 'evm-unknown-call', browserName);
   await done(page, popup, 'unknown');
@@ -195,6 +204,22 @@ test('screens for review', async ({ page, browserName }) => {
   popup = await popupFor(page, 'control', 'stellarSignXdr', build(Operation.setOptions({ signer: { ed25519PublicKey: other, weight: 255 } })));
   await shot(popup, 'stellar-account-control', browserName);
   await done(page, popup, 'control');
+  const junk = new Asset('USDC', Keypair.random().publicKey());
+  popup = await popupFor(page, 'offer', 'stellarSignXdr', build(Operation.manageSellOffer({ selling: Asset.native(), buying: junk, amount: '100', price: { n: 1, d: 10000 } })));
+  await shot(popup, 'stellar-offer', browserName);
+  await done(page, popup, 'offer');
+  // A token-shaped call on one contract whose authorization also moves another token (review H1): details open.
+  const contract = (n: number) => StrKey.encodeContract(Buffer.alloc(32, n));
+  const sc = (a: string) => nativeToScVal(a, { type: 'address' });
+  const amount = (n: bigint) => nativeToScVal(n, { type: 'i128' });
+  const inv = (c: string, fn: string, args: xdr.ScVal[], subs: xdr.SorobanAuthorizedInvocation[] = []) =>
+    new xdr.SorobanAuthorizedInvocation({ function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(new xdr.InvokeContractArgs({ contractAddress: new Address(c).toScAddress(), functionName: fn, args })), subInvocations: subs });
+  const callArgs = [sc(stellar), sc(other), amount(1n)];
+  const auth = new xdr.SorobanAuthorizationEntry({ credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(), rootInvocation: inv(contract(3), 'transfer', callArgs, [inv(contract(2), 'transfer', [sc(stellar), sc(other), amount(10n ** 15n)])]) });
+  popup = await popupFor(page, 'nested', 'stellarSignXdr', build(Operation.invokeContractFunction({ contract: contract(3), function: 'transfer', args: callArgs, auth: [auth] }) as never));
+  await expect(details(popup)).toHaveAttribute('open', '');
+  await shot(popup, 'soroban-nested-transfer', browserName);
+  await done(page, popup, 'nested');
 });
 
 test('screens for review: the mainnet demo', async ({ page, browserName }) => {

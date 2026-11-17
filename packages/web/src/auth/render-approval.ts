@@ -8,7 +8,7 @@
 // `<details>` the user can always open ("Show details"). The details start open when Journear can't explain the request
 // (`explainable: false`), and for raw signing they are a plain section that can't be folded. Nothing a partner
 // controls decides what is folded: only the decoded request does.
-import { rawSigningWarning } from '@hana-id/core';
+import { isDisplaySafeLine, rawSigningWarning } from '@hana-id/core';
 import { type ApprovalSummary, type SummaryText, type SummaryWarning, summarizeApproval } from '@hana-id/core/decode';
 import {
   type AbiValue,
@@ -70,6 +70,9 @@ function unixTime(s: string): string {
 }
 
 const mono = (d: Dom, text: string) => d.h('code', { class: 'mono' }, text);
+
+/** A network passphrase (a request may name any): as text when display-safe, else its UTF-8 bytes as hex. */
+const passphraseText = (d: Dom, p: string): HTMLElement => (isDisplaySafeLine(p) ? mono(d, p) : mono(d, `(shown as hex) ${toHex(new TextEncoder().encode(p))}`));
 
 /**
  * The facts of a request (D765, the confirm and sign pattern): the design system's key/value rows (`jp-kv`: the key in
@@ -313,7 +316,7 @@ function stellarTx(d: Dom, passphrase: string, tx: StellarTransaction): HTMLElem
   const memoText = memo.type === 'none' ? 'none' : memo.type === 'text' ? (memo.value ?? `(shown as hex) ${memo.hex}`) : memo.type === 'id' ? memo.value : `${memo.type} ${memo.hex}`;
   return [
     facts(d, [
-      row(d, 'Network', passphrase),
+      row(d, 'Network', passphraseText(d, passphrase)),
       row(d, 'Source', mono(d, tx.source)),
       row(d, 'Sequence', mono(d, tx.sequence)),
       row(d, 'Maximum fee', stroops(tx.fee)),
@@ -340,7 +343,6 @@ function stellarAlerts(d: Dom, env: DecodedStellarEnvelope): Alerts {
     banners: ops.some((op) => stellarAccountControl(op).length > 0) ? [dangerLine(d, 'danger takeover banner', { role: 'alert' }, ACCOUNT_CONTROL_BANNER)] : [],
     dangers: ops.flatMap((op) => accountControlWarnings(op).map((w) => dangerLine(d, 'danger takeover', undefined, w))),
     warnings: [
-      env.envelope === 'fee_bump' ? warnLine(d, 'warn', 'This is a fee-bump: it pays the fee for the transaction inside it.') : null,
       env.tx.otherPreconditions ? warnLine(d, 'warn', 'This transaction has extra preconditions (sequence or signer rules).') : null,
     ].filter((x): x is HTMLElement => x !== null),
   };
@@ -931,7 +933,7 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
         details: [
           d.h('h3', {}, 'Stellar authorization'),
           facts(d, [
-            row(d, 'Network', decoded.networkPassphrase),
+            row(d, 'Network', passphraseText(d, decoded.networkPassphrase)),
             row(d, 'Network ID', mono(d, decoded.preimage.networkId)),
             row(d, 'Nonce', mono(d, decoded.preimage.nonce)),
             row(d, 'Valid until ledger', String(decoded.preimage.signatureExpirationLedger)),
@@ -995,13 +997,15 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
     'div',
     { class: 'request jp-confirm', attrs: { 'data-explainable': String(summary.explainable) } },
     d.h('h2', { class: 'summary-headline' }, ...summaryNodes(d, summary.headline, appName)),
-    // The amount first (the confirm and sign pattern), right under the headline, where there is one to show.
-    headline ? amountView(d, headline) : null,
-    ...summary.lines.map((l) => d.h('p', { class: 'summary-line' }, ...summaryNodes(d, l, appName))),
-    keyFacts.some(Boolean) ? rows(d, keyFacts, 'jp-kv facts summary-facts') : null,
+    // The red banners and lines right under the headline: nothing a partner sizes (the summary's lines, the number of
+    // operations) can push them down (review M2).
     ...k.alerts.banners,
     ...danger,
     ...k.alerts.dangers,
+    // The amount (the confirm and sign pattern), where there is one to show.
+    headline ? amountView(d, headline) : null,
+    ...summary.lines.map((l) => d.h('p', { class: 'summary-line' }, ...summaryNodes(d, l, appName))),
+    keyFacts.some(Boolean) ? rows(d, keyFacts, 'jp-kv facts summary-facts') : null,
     ...amber,
     ...k.alerts.warnings,
     ...k.visible,

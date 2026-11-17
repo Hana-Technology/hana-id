@@ -2,7 +2,7 @@
 // fee and network, the warnings for permissions to spend the user's tokens, and whether Journear can explain the
 // request (the details start open when it can't; raw signing's can't be folded). Hostile inputs included: look-alike
 // and invisible characters, huge values, the zero address, revokes, and typed data that imitates a permit.
-import { Asset, Operation, xdr } from '@stellar/stellar-base';
+import { Asset, Claimant, LiquidityPoolAsset, Operation, getLiquidityPoolId, xdr } from '@stellar/stellar-base';
 import { describe, expect, it } from 'vitest';
 import {
   type ApprovalSummary,
@@ -28,7 +28,7 @@ import {
   summaryString,
   utf8,
 } from './entries.ts';
-import { ISSUER, OTHER, PASSPHRASE, TOKEN, ROUTER, USER, addSignerOp, addr, authPreimageBytes, feeBumpBytes, i128, invocation, invokeOp, mergeOp, paymentOp, sourceAuth, txBytes } from './stellar-fixtures.ts';
+import { ATTACKER, ISSUER, OTHER, PASSPHRASE, TOKEN, ROUTER, USER, addSignerOp, addr, authPreimageBytes, feeBumpBytes, i128, invocation, invokeOp, mergeOp, paymentOp, sourceAuth, txBytes } from './stellar-fixtures.ts';
 
 const APP = 'Partner App';
 const text = (t: SummaryText): string => summaryString(t, APP);
@@ -86,7 +86,7 @@ describe('EVM transactions', () => {
   it('an ERC-20 transfer of a token Journear doesn’t know: "tokens of contract", the amount in smallest units, never a guessed symbol', () => {
     const s = tokenCall(calldata('transfer(address,uint256)', TO, 5_000_000n));
     expect(headline(s)).toBe(`${APP} wants to send tokens of contract ${TOKEN_EVM} to ${TO}`);
-    expect(s.lines.map(text)).toEqual(['Amount: 5000000 in the token’s smallest units (Journear doesn’t know this token’s decimals).']);
+    expect(s.lines.map(text)).toEqual(['Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).']);
     expect(s.explainable).toBe(true);
   });
 
@@ -107,7 +107,7 @@ describe('EVM transactions', () => {
       [
         'warning',
         'spend_permission',
-        `This lets ${SPENDER}, an address Journear hasn’t verified, spend up to 1000 (in the token’s smallest units) of your tokens of contract ${TOKEN_EVM}, until it is used up or you take the permission back. If the contract is an NFT collection, it lets them take your item 1000 instead.`,
+        `This lets ${SPENDER}, an address Journear hasn’t verified, spend up to 1,000 (in the token’s smallest units) of your tokens of contract ${TOKEN_EVM}, until it is used up or you take the permission back. If the contract is an NFT collection, it lets them take your item 1000 instead.`,
       ],
     ]);
   });
@@ -121,9 +121,9 @@ describe('EVM transactions', () => {
     expect(codes(tokenCall(calldata('approve(address,uint256)', SPENDER, PRACTICALLY_UNLIMITED - 1n)))).toEqual(['spend_permission']);
   });
 
-  it('approve of 0 is a revoke: no warning', () => {
-    const s = tokenCall(calldata('approve(address,uint256)', SPENDER, 0n));
-    expect(headline(s)).toBe(`${APP} wants to take back ${SPENDER}’s permission to spend your tokens of contract ${TOKEN_EVM}`);
+  it('approve of 0 to the zero address is a revoke: no warning', () => {
+    const s = tokenCall(calldata('approve(address,uint256)', `0x${'0'.repeat(40)}`, 0n));
+    expect(headline(s)).toBe(`${APP} wants to take back 0x${'0'.repeat(40)}’s permission to spend your tokens of contract ${TOKEN_EVM}`);
     expect(s.warnings).toEqual([]);
   });
 
@@ -326,7 +326,7 @@ describe('EIP-712 typed data', () => {
     }
     // A Permit2 domain with a version is not Permit2's.
     const versioned = permitSingle('1');
-    (versioned.types.EIP712Domain as { name: string; type: string }[]).splice(1, 0, { name: 'version', type: 'string' });
+    versioned.types.EIP712Domain = [PERMIT2_DOMAIN[0]!, { name: 'version', type: 'string' }, ...PERMIT2_DOMAIN.slice(1)];
     (versioned.domain as Record<string, unknown>).version = '1';
     expect(typed(versioned).explainable).toBe(false);
   });
@@ -414,11 +414,11 @@ describe('Stellar', () => {
 
   it('a fee-bump paid by someone else names the payer; an operation on another account says so', () => {
     const fb = stellar([], feeBumpBytes(txBytes([paymentOp()]), OTHER));
-    expect(fb.lines.map(text)).toEqual([`The network fee is paid by ${OTHER}.`]);
+    expect(fb.lines.map(text)).toEqual([`The network fee is paid by ${OTHER}, not your account.`]);
     expect(fb.fee).toBeNull();
     const foreign = stellar([Operation.payment({ destination: USER, asset: Asset.native(), amount: '1', source: OTHER })]);
-    expect(foreign.lines.map(text)).toEqual([`It acts on the account ${OTHER}.`]);
-    expect(headline(foreign)).toBe(`${APP} wants to send 1 XLM to your account`);
+    expect(foreign.lines).toEqual([]);
+    expect(headline(foreign)).toBe(`${APP} wants to send 1 XLM to your account (on the account ${OTHER})`);
   });
 
   it('a Soroban token transfer (SEP-41) is summarised; amounts of an unknown token in smallest units', () => {
@@ -444,9 +444,9 @@ describe('Stellar', () => {
     const auth = sourceAuth(invocation(ROUTER, 'swap', [i128(1n)], [invocation(TOKEN, 'approve', [addr(USER), addr(OTHER), i128(2n ** 127n - 1n), xdr.ScVal.scvU32(1)])]));
     const deep = stellar([invokeOp(ROUTER, 'swap', [i128(1n)], [auth])]);
     expect(codes(deep)).toEqual(['cannot_explain', 'unlimited_spend']);
-    // A token transfer whose authorization holds only token calls stays explainable.
-    const t = stellar([invokeOp(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(1n)], [sourceAuth(invocation(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(1n)]))])]);
-    expect(t.explainable).toBe(true);
+    // Any authorization beyond the call itself, even another token call, makes the request unexplainable (review H1).
+    const t = stellar([invokeOp(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(1n)], [sourceAuth(invocation(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(1n)], [invocation(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(1n)])]))])]);
+    expect(t.explainable).toBe(false);
   });
 
   it('a transfer with the wrong argument types is not read as one', () => {
@@ -506,7 +506,7 @@ describe('NEAR', () => {
   });
 
   it('NEP-141 ft_transfer: the amount and receiver from the arguments; malformed ones fall back to the method', () => {
-    expect(headline(near([call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000"}', 1n)], 'usdc.testnet'))).toBe(`${APP} wants to send 1000 (smallest units) of the token usdc.testnet to bob.testnet`);
+    expect(headline(near([call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000"}', 1n)], 'usdc.testnet'))).toBe(`${APP} wants to send 1,000 (smallest units) of the token usdc.testnet to bob.testnet`);
     for (const args of ['{"receiver_id":"BОB.testnet","amount":"1"}', '{"receiver_id":"bob.testnet","amount":"01"}', '{"receiver_id":"bob.testnet","amount":1}', '{"receiver_id":"bob.testnet"}']) {
       expect(headline(near([call('ft_transfer', args, 1n)], 'usdc.testnet'))).toBe(`${APP} wants to use usdc.testnet (ft_transfer)`);
     }
@@ -526,9 +526,9 @@ describe('NEAR', () => {
     expect(s.lines.map(text)).toEqual(['1. Add a full-access key to your account', '2. Delete your account and send all its NEAR to bob.testnet']);
   });
 
-  it('NEP-413: prove you own this wallet; a message that isn’t plain text can’t be explained', () => {
+  it('NEP-413: a message for its recipient; a message that isn’t plain text can’t be explained', () => {
     const m = (message: string) => summarizeApproval(decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: NEAR_ME, context: {}, bytes: encodeNep413Message({ message, nonce: new Uint8Array(32), recipient: 'app.example', callbackUrl: null }) }), { address: NEAR_ME });
-    expect(headline(m('Sign in'))).toBe(`${APP} wants you to prove you own this wallet`);
+    expect(headline(m('Sign in'))).toBe(`${APP} wants you to sign a message for app.example`);
     expect(m('Sign in').explainable).toBe(true);
     expect(m('a‮b').explainable).toBe(false);
   });
@@ -545,5 +545,183 @@ describe('formatTokenUnits and the app placeholder', () => {
     const s = evmSummary({});
     expect(s.headline[0]).toEqual({ kind: 'app' });
     expect(summaryString(s.headline, '<b>x</b>')).toBe(`<b>x</b> wants to send 1 ETH to ${TO}`);
+  });
+});
+
+// ---- the security review of 2026-11-17: whatever decides what the user gives up is in view, or the request isn't
+// explainable (its details start open). ----
+
+describe('review: Soroban authorizations (H1)', () => {
+  const evilTransfer = [addr(USER), addr(OTHER), i128(1n)];
+  const realTransfer = invocation(TOKEN, 'transfer', [addr(USER), addr(ATTACKER), i128(10n ** 15n)]);
+
+  it('a token call whose authorization holds another call (a sub-invocation) is not explainable, and the nested send is said', () => {
+    const s = stellar([invokeOp(ROUTER, 'transfer', evilTransfer, [sourceAuth(invocation(ROUTER, 'transfer', evilTransfer, [realTransfer]))])]);
+    expect(s.explainable).toBe(false);
+    expect(codes(s)[0]).toBe('cannot_explain');
+    expect(s.lines.map(text)).toContain(`It also authorizes sending 1,000,000,000,000,000 (in the token’s smallest units) of the token contract ${TOKEN} to ${ATTACKER}.`);
+  });
+
+  it('a token call with a separate authorization root is not explainable', () => {
+    const s = stellar([invokeOp(ROUTER, 'transfer', evilTransfer, [sourceAuth(realTransfer)])]);
+    expect(s.explainable).toBe(false);
+    expect(s.lines.map(text).join(' ')).toContain(ATTACKER);
+  });
+
+  it('an authorization root that names the same function with other arguments is not the call itself', () => {
+    const s = stellar([invokeOp(TOKEN, 'transfer', evilTransfer, [sourceAuth(invocation(TOKEN, 'transfer', [addr(USER), addr(ATTACKER), i128(9n)]))])]);
+    expect(s.explainable).toBe(false);
+  });
+
+  it('a token transfer authorized exactly as called, with nothing under it, stays explainable', () => {
+    const s = stellar([invokeOp(TOKEN, 'transfer', evilTransfer, [sourceAuth(invocation(TOKEN, 'transfer', evilTransfer))])]);
+    expect(s.explainable).toBe(true);
+    expect(s.lines).toEqual([]);
+  });
+
+  it('an authorization entry with a sub-invocation is not explainable, and the nested send is said', () => {
+    const bytes = authPreimageBytes(invocation(ROUTER, 'transfer', evilTransfer, [realTransfer]));
+    const s = summarizeApproval(decodeApprovalRequest({ kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes }), { address: USER });
+    expect(s.explainable).toBe(false);
+    expect(s.lines.map(text).join(' ')).toContain(ATTACKER);
+  });
+
+  it('an approval for someone else’s tokens doesn’t call them yours', () => {
+    const s = stellar([invokeOp(TOKEN, 'approve', [addr(OTHER), addr(ATTACKER), i128(5n), xdr.ScVal.scvU32(10)])]);
+    expect(headline(s)).toBe(`${APP} wants to let someone else spend tokens of contract ${TOKEN} held by ${OTHER}`);
+    expect(text(s.warnings[0]!.text)).toContain(`of the tokens of contract ${TOKEN} held by ${OTHER}`);
+    expect(text(s.warnings[0]!.text)).not.toContain('your');
+  });
+});
+
+describe('review: Stellar classic operations show their deciding terms (H2)', () => {
+  const JUNK = new Asset('USDC', ATTACKER);
+  it('a sell offer says the least it returns', () => {
+    const s = stellar([Operation.manageSellOffer({ selling: Asset.native(), buying: JUNK, amount: '10000', price: { n: 1, d: 10000000 } })]);
+    expect(headline(s)).toBe(`${APP} wants to offer to sell 10,000 XLM for at least 0.001 of the asset USDC:${ATTACKER}`);
+    expect(s.explainable).toBe(true);
+    const passive = stellar([Operation.createPassiveSellOffer({ selling: Asset.native(), buying: JUNK, amount: '10', price: { n: 2, d: 1 } })]);
+    expect(headline(passive)).toContain('for at least 20 of the asset');
+  });
+
+  it('a buy offer says the most it costs', () => {
+    const s = stellar([Operation.manageBuyOffer({ selling: Asset.native(), buying: JUNK, buyAmount: '1', price: { n: 10000000, d: 1 } })]);
+    expect(headline(s)).toBe(`${APP} wants to offer to buy 1 of the asset USDC:${ATTACKER}, paying at most 10,000,000 XLM`);
+  });
+
+  it('a changed offer says so', () => {
+    const s = stellar([Operation.manageSellOffer({ selling: Asset.native(), buying: JUNK, amount: '1', price: { n: 1, d: 1 }, offerId: '7' })]);
+    expect(headline(s)).toContain('(it changes your offer 7)');
+  });
+
+  it('a claimable balance names who can claim it; conditions make it unexplainable', () => {
+    const s = stellar([Operation.createClaimableBalance({ asset: Asset.native(), amount: '5000', claimants: [new Claimant(ATTACKER)] })]);
+    expect(headline(s)).toBe(`${APP} wants to set aside 5,000 XLM that ${ATTACKER} can claim`);
+    expect(s.explainable).toBe(true);
+    const cond = stellar([Operation.createClaimableBalance({ asset: Asset.native(), amount: '1', claimants: [new Claimant(USER, Claimant.predicateBeforeRelativeTime('100'))] })]);
+    expect(cond.explainable).toBe(false);
+  });
+
+  it('a liquidity pool deposit or withdrawal can’t be explained (the pool’s assets aren’t in the request); its amounts are said', () => {
+    const pool = new LiquidityPoolAsset(Asset.native(), JUNK, 30);
+    const id = getLiquidityPoolId('constant_product', pool.getLiquidityPoolParameters()).toString('hex');
+    const dep = stellar([Operation.liquidityPoolDeposit({ liquidityPoolId: id, maxAmountA: '9000', maxAmountB: '0.0000001', minPrice: { n: 1, d: 10000000 }, maxPrice: { n: 10000000, d: 1 } })]);
+    expect(dep.explainable).toBe(false);
+    expect(headline(dep)).toContain('at most 9,000 of the pool’s first asset and 0.0000001 of its second');
+    const wd = stellar([Operation.liquidityPoolWithdraw({ liquidityPoolId: id, amount: '1', minAmountA: '0', minAmountB: '0' })]);
+    expect(wd.explainable).toBe(false);
+    expect(headline(wd)).toContain('at least 0 of the pool’s first asset and 0 of its second');
+  });
+
+  it('path payments keep the most paid and the least received in view', () => {
+    const s = stellar([Operation.pathPaymentStrictSend({ sendAsset: Asset.native(), sendAmount: '5', destination: OTHER, destAsset: JUNK, destMin: '0.0000001', path: [] })]);
+    expect(headline(s)).toContain('pay exactly 5 XLM');
+    expect(headline(s)).toContain('receives at least 0.0000001 of the asset');
+  });
+
+  it('a fee-bump says who pays; the inner transaction’s source when it isn’t the user', () => {
+    const fb = stellar([], feeBumpBytes(txBytes([paymentOp()], { source: OTHER }), USER));
+    expect(fb.lines.map(text)).toContain(`Your account pays the network fee for a transaction from ${OTHER}.`);
+  });
+
+  it('a network passphrase that isn’t display-safe is shown as hex, cut short', () => {
+    const odd = `Test‮${'x'.repeat(200)}`;
+    const s = summarizeApproval(decodeApprovalRequest({ kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: odd }, bytes: authPreimageBytes(invocation(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(1n)]), odd) }), { address: USER });
+    const n = text(s.network!);
+    expect(n).not.toContain('‮');
+    expect(n).toContain('(shown as hex)');
+    expect(n.length).toBeLessThan(140);
+  });
+});
+
+describe('review: many steps (M2)', () => {
+  it('more than five steps: the first five, "and N more", and the details start open', () => {
+    const transfers: NearAction[] = Array.from({ length: 99 }, () => ({ type: 'transfer', deposit: 1n }));
+    const s = near([...transfers, { type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }], NEAR_ME);
+    expect(s.lines).toHaveLength(6);
+    expect(text(s.lines[5]!)).toBe('…and 95 more: see the details.');
+    expect(s.explainable).toBe(false);
+    const st = stellar(Array.from({ length: 8 }, () => paymentOp()));
+    expect(st.lines).toHaveLength(6);
+    expect(st.explainable).toBe(false);
+  });
+});
+
+describe('review: EVM and typed data (M1, L2, I1)', () => {
+  it('approve(spender, 0) on a token Journear doesn’t know may give away an NFT’s item 0', () => {
+    const s = tokenCall(calldata('approve(address,uint256)', SPENDER, 0n));
+    expect(codes(s)).toEqual(['spend_permission']);
+    expect(headline(s)).toBe(`${APP} wants to change ${SPENDER}’s permission for contract ${TOKEN_EVM}`);
+    expect(text(s.warnings[0]!.text)).toContain('item 0');
+    // The zero address as spender, or a pinned token: a plain revoke.
+    expect(tokenCall(calldata('approve(address,uint256)', `0x${'0'.repeat(40)}`, 0n)).warnings).toEqual([]);
+    expect(tokenCall(calldata('approve(address,uint256)', SPENDER, 0n), 8453, BASE_USDC).warnings).toEqual([]);
+  });
+
+  it('long raw amounts carry thousands separators; a pinned token over a trillion is no practical limit', () => {
+    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, 1234567n)).warnings[0]!.text)).toContain('1,234,567 (in the token’s smallest units)');
+    expect(codes(tokenCall(calldata('approve(address,uint256)', SPENDER, 10n ** 27n)))).toEqual(['unlimited_spend']);
+    expect(codes(tokenCall(calldata('approve(address,uint256)', SPENDER, 10n ** 27n - 1n)))).toEqual(['spend_permission']);
+    expect(codes(tokenCall(calldata('approve(address,uint256)', BASE_SODAX, 10n ** 18n + 1n), 8453, BASE_USDC))).toEqual(['unlimited_spend']);
+    expect(codes(tokenCall(calldata('approve(address,uint256)', BASE_SODAX, 10n ** 18n), 8453, BASE_USDC))).toEqual(['spend_permission']);
+  });
+
+  it('EIP-2612 needs exactly its two types', () => {
+    const extra = permit('1', { types: { EIP712Domain: DOMAIN, Permit: PERMIT_TYPES, Other: [{ name: 'x', type: 'uint256' }] } });
+    expect(typed(extra).explainable).toBe(false);
+  });
+
+  it('Permit2 witness transfers: a spend warning naming the token and amount, details open', () => {
+    const s = typed({
+      types: {
+        EIP712Domain: PERMIT2_DOMAIN,
+        PermitWitnessTransferFrom: [
+          { name: 'permitted', type: 'TokenPermissions' },
+          { name: 'spender', type: 'address' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+          { name: 'witness', type: 'Order' },
+        ],
+        TokenPermissions: [
+          { name: 'token', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+        ],
+        Order: [{ name: 'note', type: 'string' }],
+      },
+      primaryType: 'PermitWitnessTransferFrom',
+      domain: { name: 'Permit2', chainId: 11155111, verifyingContract: PERMIT2_ADDRESS },
+      message: { permitted: { token: TOKEN_EVM, amount: '9000' }, spender: SPENDER, nonce: '1', deadline: '1', witness: { note: 'x' } },
+    });
+    expect(s.explainable).toBe(false);
+    expect(codes(s)).toEqual(['cannot_explain', 'spend_permission']);
+    expect(text(s.warnings[1]!.text)).toContain(`9,000 (in the token’s smallest units) of your tokens of contract ${TOKEN_EVM} through Permit2, once`);
+  });
+});
+
+describe('review: NEP-413 (L3)', () => {
+  it('a neutral headline naming the recipient', () => {
+    const bytes = encodeNep413Message({ message: 'Sign in', nonce: new Uint8Array(32), recipient: 'app.example', callbackUrl: null });
+    const s = summarizeApproval(decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: NEAR_ME, context: {}, bytes }), { address: NEAR_ME });
+    expect(headline(s)).toBe(`${APP} wants you to sign a message for app.example`);
   });
 });

@@ -104,10 +104,28 @@ describe('warnings are never folded', () => {
     expect(details(el)?.open).toBe(false);
   });
 
-  it('a revoke (approve 0) shows no warning', () => {
+  it('approve(spender, 0) on a contract Journear doesn’t know: amber, it may be an NFT’s item 0 (review M1)', () => {
     const el = render(evm({ to: TOKEN, value: '0x0', data: approveData(0n) }));
-    expect(el.querySelector('.summary-warning')).toBeNull();
-    expect(el.querySelector('h2.summary-headline')?.textContent).toContain('take back');
+    const w = el.querySelector('p.summary-warning.spend-permission');
+    expect(w?.textContent).toContain('item 0');
+    expect(folded(w)).toBe(false);
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`Partner App wants to change ${SPENDER}’s permission for contract ${TOKEN}`);
+  });
+
+  it('99 harmless actions and one full-access key: the red banner sits right under the headline; the details start open (review M2)', () => {
+    const pub = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+    const me = nearImplicitAccountId(pub);
+    const actions: NearAction[] = [
+      ...Array.from({ length: 99 }, (): NearAction => ({ type: 'transfer', deposit: 1n })),
+      { type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } },
+    ];
+    const bytes = encodeNearTransaction({ signerId: me, publicKey: { type: 'ed25519', bytes: pub }, nonce: 1n, receiverId: me, blockHash: sha256(utf8('b')), actions });
+    const el = render(decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: me, context: { nearNetwork: 'testnet' }, bytes }), 'Partner App', me);
+    expect(el.children[0]?.matches('h2.summary-headline')).toBe(true);
+    expect(el.children[1]?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
+    expect(el.children[2]?.classList.contains('takeover')).toBe(true);
+    expect(el.querySelectorAll('p.summary-line')).toHaveLength(6);
+    expect(details(el)?.open).toBe(true);
   });
 
   it('Stellar account control: the banner and each operation’s warning outside the fold, the operation framed inside', () => {
@@ -141,7 +159,7 @@ describe('warnings are never folded', () => {
     const me = nearImplicitAccountId(pub);
     const bytes = encodeNep413Message({ message: 'Sign in to Guestbook', nonce: new Uint8Array(32).fill(1), recipient: 'bank.example', callbackUrl: null });
     const el = render(decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: me, context: {}, bytes }), 'Partner App', me);
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe('Partner App wants you to prove you own this wallet');
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe('Partner App wants you to sign a message for bank.example');
     const w = [...el.querySelectorAll('p.warn')].find((p) => p.textContent === nearMessageWarning('bank.example'));
     expect(folded(w ?? null)).toBe(false);
     expect(folded(el.querySelector('p.recipient-mismatch'))).toBe(false);

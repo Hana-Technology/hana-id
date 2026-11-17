@@ -30,8 +30,9 @@ request the summary explains and the user opens them (mouse and keyboard), open 
 foldable for raw signing (live mode), and that a warning stays in view while they are closed. With
 `HANA_SHOTS_DIR=<dir>` (Chromium only) it also saves each request kind's window at the popup's real size (420 × 680,
 the whole page): NEAR relayed call (closed and open), NEAR transfer, NEP-413, EVM send, ERC-20 transfer and unlimited
-approve, an unknown call, an EIP-2612 permit, a message, a Stellar payment and an account-control change, and the
-mainnet demo's Stellar payment. It drives the partner app's `stellarSignXdr`, `ethSignTypedData`, `nearSignTx`,
+approve, an ERC-20/721 approve of 0, an unknown call, an EIP-2612 permit, a message, a Stellar payment, an
+account-control change, an offer and a Soroban call whose authorization holds another token move, 100 NEAR actions
+with one full-access key, and the mainnet demo's Stellar payment. It drives the partner app's `stellarSignXdr`, `ethSignTypedData`, `nearSignTx`,
 `nearSignDelegate` and `nearSignMessage` actions with requests the test builds.
 
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC

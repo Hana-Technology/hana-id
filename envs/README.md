@@ -184,9 +184,10 @@ Changing it means new, empty passports (no upgrade path); the relay needs the AP
 receiver.
 
 `evm.sponsor` (optional, D834–D836; **not live**: no env sets it, and the API has no sponsored route yet). Core's
-pinned delegate table (`@hana-id/core/evm-sponsor`) has **no entry for Base Sepolia (84532) yet**, only a placeholder
-for the local chain 31337, so today the API's `gen` and the page build refuse any non-local env that carries the block
-(until the delegate is deployed and pinned): don't add it to a manifest yet. EVM gas sponsorship, where Journear's own
+pinned delegate table (`@hana-id/core/evm-sponsor`) has **no entry for Base Sepolia (84532) yet**, only the local
+chain 31337 (the delegate's deterministic deployment, which only `local*` envs may use), so today the API's `gen` and
+the page build refuse any non-local env that carries the block (until the delegate is deployed and pinned): don't add
+it to a manifest yet. EVM gas sponsorship, where Journear's own
 relayer submits a user's signed batch through the pinned EIP-7702 delegate and pays the network fee within daily
 budgets. Absent means the feature is off everywhere (fail closed). Testnet only.
 `packages/env/src/evm-sponsor.ts` holds the schema, its rules and its bounds; the API parses the generated var again
@@ -223,7 +224,8 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   (the later handlers read an optional one). `delegate` must be the delegate core pins for that chain
   (`@hana-id/core/evm-sponsor` `SPONSOR_DELEGATES`), checked by both generators (their command lines pass core's table)
   and again by the API at run time; a chain with no pinned delegate can't be sponsored, and an entry core marks as a
-  placeholder (`placeholder: true`, a test stand-in) is accepted only in `local*` envs.
+  placeholder (`placeholder: true`, a test stand-in; core has none today, its 31337 entry being the delegate's
+  deterministic deployment) is accepted only in `local*` envs. Chain 31337 itself is allowed only in `local*` envs.
 - Limits per chain, every one required except `requireKnownAccount`, with hard bounds: `maxGasPerTx` (50 000 to
   2 000 000), `minGas` (10 000 to 1 000 000, below `maxGasPerTx`), `maxFeePerGasGwei` (above 0, at most 100) and
   `maxPriorityFeePerGasGwei` (0 to `maxFeePerGasGwei`), both to 1 wei; `maxCallsPerBatch` (1 to 8), `deadlineMaxS` (60

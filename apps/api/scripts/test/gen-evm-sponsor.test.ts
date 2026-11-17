@@ -167,17 +167,27 @@ describe('EVM_SPONSOR (D834)', () => {
     expect(() => main(['sandbox-dev'], { dir: tmp(), loadManifest: () => withSponsor(), sponsorDelegates: FIXTURE_PINNED_DELEGATES })).not.toThrow();
   });
 
-  it('core’s placeholder entry (31337) is accepted in a local* env and refused anywhere else', () => {
-    const placeholder = SPONSOR_DELEGATES[31337]!;
-    expect(placeholder.placeholder).toBe(true);
+  it('core’s 31337 pin (the delegate’s deterministic deployment, no placeholder) is accepted in a local* env; chain 31337 only there', () => {
+    const pinned = SPONSOR_DELEGATES[31337]!;
+    expect(pinned.placeholder).toBe(false);
     const s = sponsorFixture();
-    const local = { ...s, chains: { '31337': { ...s.chains['84532']!, opStack: false, delegate: placeholder.address, rpc: 'http://127.0.0.1:8545', rpcFallback: undefined } }, apps: {} };
+    const local = { ...s, chains: { '31337': { ...s.chains['84532']!, opStack: false, delegate: pinned.address, rpc: 'http://127.0.0.1:8545', rpcFallback: undefined } }, apps: {} };
     expect(evmSponsorDelegateProblems(local, SPONSOR_DELEGATES, 'local-dev')).toEqual([]);
-    expect(evmSponsorDelegateProblems(local, SPONSOR_DELEGATES, 'sandbox-dev')).toEqual([`evm.sponsor.chains.31337.delegate ${placeholder.address} is a placeholder entry of the pinned table, only for local* envs`]);
     const raw = evmSponsorVar(local);
     expect(parseEvmSponsorConfig(raw, { network: 'testnet', envName: 'local-dev', pinnedDelegates: SPONSOR_DELEGATES }).status).toBe('configured');
-    const elsewhere = parseEvmSponsorConfig(raw, { network: 'testnet', envName: 'sandbox-dev', pinnedDelegates: SPONSOR_DELEGATES });
-    expect(elsewhere.status).toBe('unconfigured');
+    // Not a placeholder, but chain 31337 itself is a local chain: the schema and the Worker refuse it elsewhere.
+    expect(() => withSponsor(local)).toThrow(/31337/u);
+    expect(parseEvmSponsorConfig(raw, { network: 'testnet', envName: 'sandbox-dev', pinnedDelegates: SPONSOR_DELEGATES }).status).toBe('unconfigured');
+  });
+
+  it('a placeholder entry of the pinned table is accepted in a local* env and refused anywhere else (fixture table)', () => {
+    const s = sponsorFixture();
+    const local = { ...s, chains: { '31337': { ...s.chains['84532']!, opStack: false, rpc: 'http://127.0.0.1:8545', rpcFallback: undefined } }, apps: {} };
+    const table = { 31337: { address: FIXTURE_DELEGATE, placeholder: true } };
+    expect(evmSponsorDelegateProblems(local, table, 'local-dev')).toEqual([]);
+    expect(evmSponsorDelegateProblems(local, table, 'sandbox-dev')).toEqual([`evm.sponsor.chains.31337.delegate ${FIXTURE_DELEGATE} is a placeholder entry of the pinned table, only for local* envs`]);
+    const raw = evmSponsorVar(local);
+    expect(parseEvmSponsorConfig(raw, { network: 'testnet', envName: 'local-dev', pinnedDelegates: table }).status).toBe('configured');
   });
 
   it('refuses the block without a pinned delegate table, or with a delegate the table doesn’t pin', () => {

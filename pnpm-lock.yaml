@@ -544,6 +544,19 @@ importers:
         specifier: 4.151.1
         version: 4.151.1(@cloudflare/workers-types@5.20261016.1)(@types/node@22.20.5)(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
+  contracts/evm-delegate:
+    dependencies:
+      '@openzeppelin/contracts':
+        specifier: 5.7.0
+        version: 5.7.0
+    devDependencies:
+      forge-std:
+        specifier: github:foundry-rs/forge-std#7117c90c8cf6c68e5acce4f09a6b24715cea4de6
+        version: https://codeload.github.com/foundry-rs/forge-std/tar.gz/7117c90c8cf6c68e5acce4f09a6b24715cea4de6
+      viem:
+        specifier: 2.57.7
+        version: 2.57.7(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.6.7)
+
   examples/identity-verify:
     dependencies:
       jose:
@@ -1660,6 +1673,9 @@ packages:
     resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
     engines: {node: '>= 20.19.0'}
 
+  '@openzeppelin/contracts@5.7.0':
+    resolution: {integrity: sha512-IL2AZpI+7THMzt1u6Cxmc1zLwVnudtUGvrqXQ/HnbLKfQ/8dIWMMQPDwPIjRQzNrlAo4cxZaCGRB/XvwPo9ILA==}
+
   '@pdf-lib/standard-fonts@1.0.0':
     resolution: {integrity: sha512-hU30BK9IUN/su0Mn9VdlVKsWBS6GyhVfqjwl1FjZN4TxP6cCw0jP2w7V3Hf5uX7M0AZJ16vey9yE0ny7Sa59ZA==}
 
@@ -2717,11 +2733,13 @@ packages:
 
   '@trezor/connect-web@9.6.2':
     resolution: {integrity: sha512-QGuCjX8Bx9aCq1Pg52KifbbzYn00FQu9mCTDSgCVGH/HAzbxhcRkDKc86kFwW8z9NdJxw+XeVJq5Ky/js3iEDA==}
+    deprecated: 'Trezor Connect 9 is no longer supported and gets no fixes. Upgrade to Trezor Connect 10: https://connect.trezor.io/10/guides/migrating-to-connect-10/'
     peerDependencies:
       tslib: ^2.6.2
 
   '@trezor/connect@9.6.2':
     resolution: {integrity: sha512-XsSERBK+KnF6FPsATuhB9AEM0frekVLwAwFo35MRV9I4P+mdv6tnUiZUq8O8aoPbfJwDjtNJSYv+PMsKuRH6rg==}
+    deprecated: 'Trezor Connect 9 is no longer supported and gets no fixes. Upgrade to Trezor Connect 10: https://connect.trezor.io/10/guides/migrating-to-connect-10/'
     peerDependencies:
       tslib: ^2.6.2
 
@@ -3229,6 +3247,7 @@ packages:
 
   axios-retry@4.5.0:
     resolution: {integrity: sha512-aR99oXhpEDGo0UuAlYcn2iGRds30k366Zfa05XWScR9QaQD4JYiP3/1Qt1u7YlefUOK+cn0CcwoL1oefavQUlQ==}
+    deprecated: axios-retry is no longer maintained. See https://github.com/softonic/axios-retry for alternatives.
     peerDependencies:
       axios: 0.x || 1.x
 
@@ -3695,6 +3714,10 @@ packages:
   for-each@0.3.5:
     resolution: {integrity: sha512-dKx12eRCVIzqCxFGplyFKJMPvLEWgmNtUrpTiJIR5u97zEhRG8ySrtboPHZXx7daLxQVrl643cTzbab2tkQjxg==}
     engines: {node: '>= 0.4'}
+
+  forge-std@https://codeload.github.com/foundry-rs/forge-std/tar.gz/7117c90c8cf6c68e5acce4f09a6b24715cea4de6:
+    resolution: {gitHosted: true, integrity: sha512-77BP4BO21fP1p5S+cBvwagV/283aLrOXFjbPLNhSjGtu967ltJaNPSTpHYG5dgdccEGW3ewZvAY2Xf8AcmG4vw==, tarball: https://codeload.github.com/foundry-rs/forge-std/tar.gz/7117c90c8cf6c68e5acce4f09a6b24715cea4de6}
+    version: 1.12.0
 
   form-data@4.0.6:
     resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
@@ -5910,6 +5933,8 @@ snapshots:
   '@noble/hashes@1.8.0': {}
 
   '@noble/hashes@2.4.0': {}
+
+  '@openzeppelin/contracts@5.7.0': {}
 
   '@pdf-lib/standard-fonts@1.0.0':
     dependencies:
@@ -9170,6 +9195,8 @@ snapshots:
   for-each@0.3.5:
     dependencies:
       is-callable: 1.2.7
+
+  forge-std@https://codeload.github.com/foundry-rs/forge-std/tar.gz/7117c90c8cf6c68e5acce4f09a6b24715cea4de6: {}
 
   form-data@4.0.6:
     dependencies:

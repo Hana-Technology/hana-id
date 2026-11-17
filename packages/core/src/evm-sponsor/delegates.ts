@@ -7,12 +7,14 @@
 // Adding an entry: only once the contract is deployed on that chain from the reviewed source, the address checked to
 // be the CREATE2 address the repo predicts, and `runtimeCodeHash` read from the chain and checked against the
 // checked-in artifact (contracts/evm-delegate/artifacts/HanaDelegateExecutor.json). test/evm-sponsor.test.ts checks
-// every entry's shape.
+// every entry's shape, and that every entry that is not a placeholder has the artifact's address and code hash (so a
+// contract change cannot leave a stale pin).
 //
-// Today: no deployed entry. Base Sepolia (84532) has none until the delegate is deployed there (after 2026-11-25);
-// chain 31337 (a local Anvil or Hardhat node) has a PLACEHOLDER entry for tests only, marked `placeholder: true`, with
-// an obviously fake address and a zero code hash. It is replaced by the predicted CREATE2 address once the contract's
-// artifact lands.
+// Today: chain 31337 (a local Anvil or Hardhat node) has the delegate's deterministic deployment: the CREATE2 address
+// through the deterministic deployment proxy and the runtime code hash at that address, from the artifact (anyone can
+// deploy it there; the local lane does). Base Sepolia (84532) has none until the delegate is deployed there (after
+// 2026-11-25) and the on-chain code hash is checked. `placeholder: true` marks an entry that is not a deployed contract;
+// the signers refuse one unless a test opts in, and the tests exercise that with a fixture table.
 import type { Hex } from '../signers/evm.ts';
 
 /** The Execute domain's `name` and `version`, exactly as the contract hashes them. */
@@ -34,17 +36,15 @@ export interface SponsorDelegate {
   readonly placeholder: boolean;
 }
 
-const ZERO_HASH: Hex = `0x${'0'.repeat(64)}`;
-
 export const SPONSOR_DELEGATES: Readonly<Record<number, SponsorDelegate>> = Object.freeze({
-  // PLACEHOLDER for local tests (31337): not a deployed contract. Replace with the predicted CREATE2 address and the
-  // artifact's runtime code hash once contracts/evm-delegate lands.
+  // Local chain: the deterministic deployment of contracts/evm-delegate (artifacts/HanaDelegateExecutor.json `create2`
+  // and `runtimeCodeHash`; a test checks they agree).
   31337: Object.freeze({
-    address: '0x7702000000000000000000000000000000007702',
-    runtimeCodeHash: ZERO_HASH,
+    address: '0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA',
+    runtimeCodeHash: '0xfcc832fe6c7167e0d45589881b103fed92b3a44fe3dd5d489f43e9d44b1e5fd2',
     domain: SPONSOR_DELEGATE_DOMAIN,
     abiVersion: SPONSOR_ABI_VERSION,
-    placeholder: true,
+    placeholder: false,
   }),
 } satisfies Record<number, SponsorDelegate>);
 

@@ -34,10 +34,23 @@ export function isDocOnly(file) {
   return file.endsWith('.md') && !file.startsWith('packages/');
 }
 
+/** The EVM delegate contract (Foundry, D841): under contracts/ but not Rust. No CI job runs its tests while CI is off
+ * (D387); `pnpm verify` does (its `evm` step, `evmChanged`). */
+export const EVM_DIR = 'contracts/evm-delegate';
+
+/** Files outside contracts/evm-delegate/ its checks read: the lockfile pins its Solidity dependencies, and its test
+ * vector is a copy of the TypeScript signer's. */
+export const EVM_EXTERNAL_INPUTS = ['pnpm-lock.yaml', 'packages/core/test/vectors/evm-sponsor-v1.json'];
+
+/** Whether a change needs the EVM delegate's checks (forge test, the artifacts and vector check). */
+export function evmChanged(files) {
+  return files.some((f) => CI_FILES.includes(f) || f.startsWith(`${EVM_DIR}/`) || EVM_EXTERNAL_INPUTS.includes(f));
+}
+
 /** @param {string[]} files changed paths, relative to the repo root */
 export function classify(files) {
   const ci = files.some((f) => CI_FILES.includes(f));
-  const rust = ci || files.some((f) => f.startsWith('contracts/') || RUST_EXTERNAL_INPUTS.includes(f));
+  const rust = ci || files.some((f) => (f.startsWith('contracts/') && !f.startsWith(`${EVM_DIR}/`)) || RUST_EXTERNAL_INPUTS.includes(f));
   const web = ci || files.some((f) => !isDocOnly(f) && !f.startsWith('contracts/'));
   return { rust, web };
 }

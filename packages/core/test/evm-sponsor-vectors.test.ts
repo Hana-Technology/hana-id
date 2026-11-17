@@ -2,7 +2,7 @@
 // scripts/gen-evm-sponsor-vectors.mjs). The delegate's forge test reads the same inputs and must reach the same digest
 // and accept the same calldata (docs/decisions.md D846).
 import { keccak_256 } from '@noble/hashes/sha3';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { from0xHex, toHex, utf8 } from '../src/bytes.ts';
 import {
   EXECUTE_FUNCTION,
@@ -31,6 +31,12 @@ import {
 import { evmSignerAddress, signEvmDigest } from '../src/signers/evm.ts';
 import { encodeTypedDataType, typedDataDomainSeparator } from '../src/typed-data.ts';
 import { readJson } from './helpers.ts';
+
+// The vector names its own implementation per case (0x7702…7702 on 31337), not the real pin: the signers run against a
+// fixture table whose 31337 entry is that address, as a placeholder (so the test-only option is still needed).
+vi.mock('../src/evm-sponsor/delegates.ts', async (importOriginal) =>
+  (await import('./evm-sponsor-fixture.ts')).withFixtureTable(await importOriginal()),
+);
 
 type Hex = `0x${string}`;
 interface VectorCase {

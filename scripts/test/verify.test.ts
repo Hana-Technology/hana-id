@@ -17,7 +17,7 @@ type Cmd = { cmd: string; args: string[]; cwd: string; env: Record<string, strin
 type Step = { id: string; title: string; phase: number; lane: string; run: Cmd[]; skip: string | null };
 type Result = { result: string; ms: number; start: number };
 type Run = { done: Promise<{ ok: boolean; ms: number; failed?: string; cwd?: string }>; stop: () => void };
-type Plan = { mode: string; selection: Selection; jobs: { rust: boolean; web: boolean }; steps: Step[] };
+type Plan = { mode: string; selection: Selection; jobs: { rust: boolean; web: boolean; evm: boolean }; steps: Step[] };
 type Mode = 'quick' | 'default' | 'full';
 interface VerifyModule {
   VERIFY_FILES: string[];
@@ -31,7 +31,9 @@ interface VerifyModule {
   scanReads(pkgs: Pkg[], root?: string): Reads;
   selectPackages(files: string[] | null, pkgs: Pkg[], reads: Reads): Selection;
   changedFiles(base: string, cwd?: string): { files: string[] | null; reason: string };
-  plan(o: { mode: Mode; files: string[] | null; pkgs: Pkg[]; reads: Reads; dirty?: boolean; cpus?: number }): Plan;
+  hasForge(): boolean;
+  hasEvmDeps(root?: string): boolean;
+  plan(o: { mode: Mode; files: string[] | null; pkgs: Pkg[]; reads: Reads; dirty?: boolean; cpus?: number; forge?: boolean; evmDeps?: boolean }): Plan;
   parseArgs(argv: string[]): { mode: Mode; all: boolean; base: string; plan: boolean; json: boolean; files: string[] | null };
   summaryTable(rows: string[][]): string;
   summaryRows(steps: Step[], results: Map<string, Result>, failed: object | null, wallMs: number): string[][];
@@ -215,7 +217,8 @@ describe("package selection (this repo's workspace)", () => {
 describe('the plan', () => {
   const pkgs = V.workspacePackages();
   const reads = V.scanReads(pkgs);
-  const plan = (mode: Mode, files: string[] | null, dirty = false) => V.plan({ mode, files, pkgs, reads, dirty, cpus: 8 });
+  const plan = (mode: Mode, files: string[] | null, dirty = false, tools = { forge: true, evmDeps: true }) =>
+    V.plan({ mode, files, pkgs, reads, dirty, cpus: 8, ...tools });
   const step = (p: Plan, id: string) => {
     const s = p.steps.find((x) => x.id === id);
     if (!s) throw new Error(`no step ${id}`);
@@ -227,7 +230,7 @@ describe('the plan', () => {
   it('--quick: lockfile, gitleaks, typecheck, unit tests and docs checks, never the Rust, pack or browser jobs', () => {
     const p = plan('quick', ['packages/web/src/index.ts', 'contracts/hana-signer/src/lib.rs']);
     expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'unit', 'docs']);
-    for (const id of ['contract', 'sandbox', 'pack', 'e2e']) expect(step(p, id).skip, id).toBe('not in --quick');
+    for (const id of ['contract', 'evm', 'sandbox', 'pack', 'e2e']) expect(step(p, id).skip, id).toBe('not in --quick');
   });
 
   it('default: what a develop push ran, by CI’s rules (scripts/ci-changes.mjs)', () => {
@@ -252,19 +255,42 @@ describe('the plan', () => {
 
     const docs = plan('default', ['docs/operations.md']);
     expect(ran(docs)).toEqual(['install', 'secrets', 'typecheck', 'unit', 'docs']);
+    expect(step(docs, 'evm').skip).toBe('no EVM delegate change');
+  });
+
+  it('the EVM delegate (D841): its change runs forge and the artifacts check, not the Rust lanes', () => {
+    const evm = plan('default', ['contracts/evm-delegate/src/HanaDelegateExecutor.sol']);
+    expect(ran(evm)).toEqual(['install', 'secrets', 'typecheck', 'evm', 'unit', 'docs']);
+    expect(step(evm, 'contract').skip).toBe('no Rust change');
+    expect(step(evm, 'evm').run.map((c) => [c.cwd, line(c)])).toEqual([
+      ['contracts/evm-delegate', 'forge fmt --check'],
+      ['contracts/evm-delegate', 'forge test'],
+      ['contracts/evm-delegate', 'node scripts/generate.mjs --check'],
+    ]);
+    // The lockfile pins its Solidity dependencies.
+    expect(ran(plan('default', ['pnpm-lock.yaml']))).toContain('evm');
+  });
+
+  it('the EVM delegate skips, saying why, without Foundry or before its dependencies are installed', () => {
+    const files = ['contracts/evm-delegate/src/HanaDelegateExecutor.sol'];
+    expect(step(plan('default', files, false, { forge: false, evmDeps: true }), 'evm').skip).toMatch(/^Foundry not installed \(no `forge` on PATH/u);
+    expect(step(plan('default', files, false, { forge: true, evmDeps: false }), 'evm').skip).toMatch(/Solidity dependencies are not installed \(run `corepack pnpm install`/u);
+    expect(step(plan('full', null, false, { forge: false, evmDeps: false }), 'evm').skip).toMatch(/^Foundry not installed/u);
+    expect(typeof V.hasForge()).toBe('boolean');
+    expect(V.hasEvmDeps('/nonexistent')).toBe(false);
   });
 
   it('a change to the verify or CI definitions runs every job', () => {
     for (const f of ['scripts/verify.mjs', '.githooks/pre-push', '.github/workflows/ci.yml']) {
       const p = plan('default', [f]);
-      expect(p.jobs, f).toEqual({ rust: true, web: true });
+      expect(p.jobs, f).toEqual({ rust: true, web: true, evm: true });
       expect(p.selection.all, f).toBe(true);
     }
   });
 
   it('--full: every package and job whatever changed, Playwright on all three browsers', () => {
     const p = plan('full', ['docs/operations.md']);
-    expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'audit', 'unit', 'docs', 'sandbox', 'pack', 'e2e']);
+    expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'pack', 'e2e']);
     expect(p.selection.all).toBe(true);
     expect(step(p, 'typecheck').run.map(line)).toEqual(['pnpm -r --workspace-concurrency=4 --reporter=append-only typecheck']);
     expect(step(p, 'e2e').run.map(line)).toEqual(['pnpm --filter @hana-id/e2e run e2e --forbid-only --project chromium --project firefox --project webkit']);
@@ -272,15 +298,15 @@ describe('the plan', () => {
 
   it('cheapest first: lockfile; gitleaks + typecheck + contract; unit + docs; sandbox beside pack then browsers (D423)', () => {
     const p = plan('full', null);
-    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, contract: 1, audit: 1, unit: 2, docs: 2, sandbox: 3, pack: 3, e2e: 4 });
+    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, contract: 1, evm: 1, audit: 1, unit: 2, docs: 2, sandbox: 3, pack: 3, e2e: 4 });
     const laneIds = (ph: number) => V.lanes(p.steps, ph).map(([lane, steps]) => [lane, steps.map((s) => s.id)]);
-    expect(laneIds(1)).toEqual([['secrets', ['secrets']], ['typecheck', ['typecheck']], ['contract', ['contract']], ['audit', ['audit']]]);
+    expect(laneIds(1)).toEqual([['secrets', ['secrets']], ['typecheck', ['typecheck']], ['contract', ['contract']], ['evm', ['evm']], ['audit', ['audit']]]);
     // The pack check and Playwright one after the other (both build @hana-id/web), beside the sandbox nodes.
     expect(laneIds(3)).toEqual([['sandbox', ['sandbox']], ['web', ['pack']]]);
     // Playwright alone, after the sandbox nodes are gone (Firefox timed out beside them, 2026-11-06).
     expect(laneIds(4)).toEqual([['e2e', ['e2e']]]);
     // The table lists the steps in the order they start.
-    expect(p.steps.map((s) => s.id)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'audit', 'unit', 'docs', 'sandbox', 'pack', 'e2e']);
+    expect(p.steps.map((s) => s.id)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'pack', 'e2e']);
   });
 
   it('the unit tests share their phase with the docs checks only, in every tier (D140: PGlite and workerd time out under load)', () => {

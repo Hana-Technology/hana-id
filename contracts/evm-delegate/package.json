@@ -1,0 +1,25 @@
+{
+  "name": "@hana-id/evm-delegate",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "HanaDelegateExecutor, the EIP-7702 delegate for sponsored EVM transactions (D841, D845), and the CheckIn demo target: Foundry sources, tests, the shared EIP-712 test vector and the checked-in build artifacts.",
+  "type": "module",
+  "exports": {
+    "./artifacts/*": "./artifacts/*",
+    "./vectors/*": "./test/vectors/*"
+  },
+  "scripts": {
+    "forge:build": "forge build",
+    "forge:test": "forge test",
+    "generate": "forge build && node scripts/generate.mjs",
+    "generate:check": "forge build && node scripts/generate.mjs --check"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.7.0"
+  },
+  "devDependencies": {
+    "forge-std": "github:foundry-rs/forge-std#7117c90c8cf6c68e5acce4f09a6b24715cea4de6",
+    "viem": "2.57.7"
+  }
+}

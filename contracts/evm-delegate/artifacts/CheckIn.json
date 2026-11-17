@@ -1,0 +1,76 @@
+{
+  "contractName": "CheckIn",
+  "source": "contracts/evm-delegate/src/demo/CheckIn.sol",
+  "license": "MIT",
+  "compiler": {
+    "version": "0.8.28+commit.7893614a",
+    "evmVersion": "prague",
+    "optimizer": {
+      "enabled": true,
+      "runs": 10000
+    },
+    "viaIR": false,
+    "metadata": {
+      "bytecodeHash": "none",
+      "appendCBOR": false
+    }
+  },
+  "create2": {
+    "deployer": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+    "saltLabel": "hana-id/evm-delegate/CheckIn/v1",
+    "salt": "0x32de0fe3ca7ac617f5ac7e3f18605cc5f6fb4f0afb223c8c777f5b7aa7d4620e",
+    "initCodeHash": "0xf4851c71a1925383b3bfdd0d4845c45f90a7dad3ee7f92eca17638eb96b26c23",
+    "address": "0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e"
+  },
+  "runtimeCodeHash": "0x807946bfc8ed8e9b3fe9ef6bdeed6c9dfa519084bcda4a5b17c2059c96d0bb56",
+  "abi": [
+    {
+      "type": "function",
+      "name": "checkIn",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "checkIns",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "CheckedIn",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    }
+  ],
+  "bytecode": "0x6080604052348015600e575f5ffd5b506101508061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c8063183ff085146100385780631acc9b6214610042575b5f5ffd5b610040610073565b005b6100616100503660046100d8565b5f6020819052908152604090205481565b60405190815260200160405180910390f35b335f9081526020819052604081205461008d906001610112565b335f8181526020818152604091829020849055905183815292935090917fdddb6e14f7f2101397a6526aab95e964de7f1f44ed06aa47a1c9a0e6b9924456910160405180910390a250565b5f602082840312156100e8575f5ffd5b813573ffffffffffffffffffffffffffffffffffffffff8116811461010b575f5ffd5b9392505050565b8082018082111561014a577f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b9291505056",
+  "deployedBytecode": "0x608060405234801561000f575f5ffd5b5060043610610034575f3560e01c8063183ff085146100385780631acc9b6214610042575b5f5ffd5b610040610073565b005b6100616100503660046100d8565b5f6020819052908152604090205481565b60405190815260200160405180910390f35b335f9081526020819052604081205461008d906001610112565b335f8181526020818152604091829020849055905183815292935090917fdddb6e14f7f2101397a6526aab95e964de7f1f44ed06aa47a1c9a0e6b9924456910160405180910390a250565b5f602082840312156100e8575f5ffd5b813573ffffffffffffffffffffffffffffffffffffffff8116811461010b575f5ffd5b9392505050565b8082018082111561014a577f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b9291505056",
+  "immutableReferences": []
+}

@@ -85,6 +85,7 @@ describe('the system’s parts, with the page’s own classes kept', () => {
     expect(box?.querySelector('svg.ic')?.getAttribute('aria-hidden')).toBe('true');
     expect(box?.querySelector(':scope > .body')?.textContent).toBe(box?.textContent);
     expect(box?.querySelector('p.risk-lead.takeover.banner')).not.toBeNull();
-    expect(box?.querySelectorAll('ul.risk-more > li.danger.takeover')).toHaveLength(1);
+    // The headline names the signer whole, so no bullet repeats it.
+    expect(box?.querySelectorAll('ul.risk-more > li')).toHaveLength(0);
   });
 });

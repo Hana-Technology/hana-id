@@ -10,7 +10,7 @@
 // The details always start folded (D810, the founder's decision); a request Journear can't explain states its risk
 // above them.
 import { type Page } from '@playwright/test';
-import { type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey } from '@hana-id/core';
+import { type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey, nearPublicKeyString } from '@hana-id/core';
 import { parseFunctionSignature } from '@hana-id/core/decode';
 import { Account, Address, Asset, Keypair, Networks, Operation, StrKey, TransactionBuilder, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC } from '../src/stack.ts';
@@ -157,9 +157,14 @@ test('screens for review', async ({ page, browserName }) => {
   // Many harmless actions and one full-access key: the red banner stays under the headline (review M2).
   const many: NearAction[] = [...Array.from({ length: 99 }, (): NearAction => ({ type: 'transfer', deposit: 1n })), { type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }];
   popup = await popupFor(page, 'many', 'nearSignTx', base64Encode(encodeNearTransaction({ signerId: near, publicKey: key, nonce: 11n, receiverId: near, blockHash: NEAR_BLOCK, actions: many })));
-  // D814: one red box (the banner in full, the key as a bullet) and two grouped lines.
+  // D814: one red box with the banner only (the key's own line names it whole, so no bullet repeats it) and two
+  // grouped lines: the key appears exactly once above the fold.
   await expect(popup.locator('.danger-box')).toHaveCount(1);
-  await expect(popup.locator('.danger-box li')).toHaveText([/^Adds a full-access key \(ed25519:[1-9A-HJ-NP-Za-km-z]{43,44}\)$/u]);
+  await expect(popup.locator('.danger-box .risk-lead')).toHaveText(/account/u);
+  await expect(popup.locator('.danger-box li')).toHaveCount(0);
+  const keyText = nearPublicKeyString(new Uint8Array(32).fill(9));
+  const aboveFold = await popup.locator('div.request > :not(details)').allTextContents();
+  expect(aboveFold.join('\n').split(keyText).length - 1).toBe(1);
   await expect(popup.locator('p.summary-line')).toHaveText([/^Add the full-access key ed25519:[1-9A-HJ-NP-Za-km-z]{43,44} to your account$/u, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
   await shot(popup, 'near-many-actions-danger', browserName);
   await done(page, popup, 'many');
@@ -231,6 +236,9 @@ test('screens for review', async ({ page, browserName }) => {
   await shot(popup, 'stellar-payment', browserName);
   await done(page, popup, 'pay');
   popup = await popupFor(page, 'control', 'stellarSignXdr', build(Operation.setOptions({ signer: { ed25519PublicKey: other, weight: 255 } })));
+  // One step: the banner, and the headline naming the signer whole; no bullet repeats it.
+  await expect(popup.locator('.danger-box li')).toHaveCount(0);
+  await expect(popup.locator('h2.summary-headline')).toContainText(`add ${other} as a signer with weight 255`);
   await shot(popup, 'stellar-account-control', browserName);
   await done(page, popup, 'control');
   // Six steps that move nothing, then a payment: the payment is listed first, with the XLM leaving (review 2, N2).

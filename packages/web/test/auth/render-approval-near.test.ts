@@ -167,12 +167,14 @@ describe('renderApproval: NEAR transactions', () => {
     ['deleting the account', { type: 'deleteAccount', beneficiaryId: 'bob.testnet' } as NearAction, 'This deletes your account and sends all of its NEAR to bob.testnet. It can’t be undone.', 'Deletes your account and sends all its NEAR to bob.testnet'],
     ['deploying a contract', { type: 'deployContract', code: Uint8Array.of(0, 97, 115, 109) } as NearAction, 'This deploys a contract to your account. A contract runs with the account’s own authority: it can move everything in it.', 'Deploys a contract to your account'],
     ['using a global contract', { type: 'useGlobalContract', contract: { type: 'accountId', accountId: 'g.testnet' } } as NearAction, 'This sets your account’s contract to a global contract. A contract runs with the account’s own authority: it can move everything in it.', 'Sets your account’s contract'],
-  ])('%s: one red box, the banner in full and the action’s bullet (D814)', (_, action, warning, bullet) => {
+  ])('%s: one red box with the banner; the headline names the action (D814)', (_, action, warning, bullet) => {
     const el = tx([action]);
     const banner = el.querySelector('p.takeover.banner');
     expect(banner?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
     expect(banner?.closest('.danger-box')?.getAttribute('role')).toBe('alert');
-    expect(takeovers(el)).toEqual([NEAR_ACCOUNT_CONTROL_BANNER, bullet]);
+    // A single action: its headline names it whole, so no bullet repeats it (the banner stays).
+    // Removing the user's own key keeps its bullet: the line names the key, not whose it is.
+    expect(takeovers(el)).toEqual(action.type === 'deleteKey' ? [NEAR_ACCOUNT_CONTROL_BANNER, bullet] : [NEAR_ACCOUNT_CONTROL_BANNER]);
     expect(nearControlWarnings(action, ME, ME)).toEqual([warning]);
     expect(el.querySelector('li.op.takeover-op')).not.toBeNull();
   });

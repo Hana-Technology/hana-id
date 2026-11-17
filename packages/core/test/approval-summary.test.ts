@@ -1117,3 +1117,22 @@ describe('review of 5ef13452: control keys in full, spenders marked, sums, direc
     expect(w).not.toContain(`Let ${ATTACKER} spend`);
   });
 });
+
+describe('shownSteps: the steps whose own line is in view', () => {
+  const fullKey = (fill: number): NearAction => ({ type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(fill) }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } });
+  it('a single step: its headline is its line', () => {
+    expect(near([fullKey(9)], NEAR_ME).shownSteps).toEqual([0]);
+    expect(stellar([addSignerOp(1)]).shownSteps).toEqual([0]);
+  });
+  it('grouped lines: every member of a visible group, none of a left-out one', () => {
+    const many = near([...Array.from({ length: 99 }, (): NearAction => ({ type: 'transfer', deposit: 1n })), fullKey(9)], NEAR_ME);
+    expect([...(many.shownSteps ?? [])].sort((a, b) => a - b)).toEqual(Array.from({ length: 100 }, (_, i) => i));
+    const six = near([1, 2, 3, 4, 5, 6].map(fullKey), NEAR_ME);
+    expect(six.shownSteps).toHaveLength(3);
+    expect(six.warnings.filter((w) => w.code === 'step_left_out')).toHaveLength(3);
+    for (const i of six.shownSteps ?? []) expect(JSON.stringify(six.lines)).toContain(nearPublicKeyString(new Uint8Array(32).fill(i + 1)));
+  });
+  it('a summary that names no step (an EVM call, a message) lists none', () => {
+    expect(near([], NEAR_ME).shownSteps ?? []).toEqual([]);
+  });
+});

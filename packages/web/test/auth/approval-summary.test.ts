@@ -16,7 +16,7 @@ import {
   utf8,
 } from '@hana-id/core';
 import { type DecodedApproval, decodeApprovalRequest, parseFunctionSignature } from '@hana-id/core/decode';
-import { Keypair, Operation } from '@stellar/stellar-base';
+import { Asset, Keypair, Operation, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
 import { TEST_APP_NOTE, startApprovePage } from '../../src/auth/approve-page.ts';
@@ -48,6 +48,8 @@ const render = (decoded: DecodedApproval, app = 'Partner App', address = EVM): H
 const details = (el: ParentNode) => el.querySelector<HTMLDetailsElement>('details.request-details');
 /** True when `node` sits inside the foldable details. */
 const folded = (node: Element | null) => node !== null && node.closest('details.request-details') !== null;
+/** Everything in view before the details: the text a user reads without opening them. */
+const aboveFold = (el: HTMLElement): string => [...el.children].filter((c) => !c.matches('details')).map((c) => c.textContent).join('\n');
 
 beforeEach(() => document.body.replaceChildren());
 
@@ -157,7 +159,9 @@ describe('warnings are never folded', () => {
     const box = el.children[1] as HTMLElement;
     expect(box.matches('div.danger-box.jp-alert-danger')).toBe(true);
     expect(box.querySelector('.risk-lead')?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
-    expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual([`Adds a full-access key (${KEY9})`]);
+    // The key's own line names it whole, so no bullet repeats it: the key appears exactly once above the fold.
+    expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual([]);
+    expect(aboveFold(el).split(KEY9).length - 1).toBe(1);
     expect(el.querySelectorAll('.jp-alert-danger')).toHaveLength(1);
     expect([...el.querySelectorAll('p.summary-line')].map((p) => p.textContent)).toEqual([`Add the full-access key ${KEY9} to your account`, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
     expect(details(el)?.open).toBe(false);
@@ -170,7 +174,7 @@ describe('warnings are never folded', () => {
     expect(folded(banner)).toBe(false);
     const red = el.querySelectorAll('.danger-box .risk-lead, .danger-box li');
     for (const p of red) expect(folded(p)).toBe(false);
-    expect(red).toHaveLength(2);
+    expect(red).toHaveLength(1);
     expect(folded(el.querySelector('li.op.takeover-op'))).toBe(true);
     expect(details(el)?.open).toBe(false);
   });
@@ -394,9 +398,72 @@ describe('/approve: the page around the summary', () => {
 });
 
 describe('control bullets keep the whole key; bullets merge only when their full texts match (review of 5ef13452)', () => {
-  it('two different signers: two bullets, each with the whole key', () => {
+  it('signers left out of the lines keep their bullets, whole; those in a line get none', () => {
     const k = (i: number) => Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(90 + i) as never).publicKey();
-    const el = render(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([1, 2].map((i) => Operation.setOptions({ signer: { ed25519PublicKey: k(i), weight: 1 } }))) }), 'Partner App', USER);
-    expect([...el.querySelectorAll('.danger-box li')].map((li) => li.textContent)).toEqual([`Adds ${k(1)} as a signer (weight 1)`, `Adds ${k(2)} as a signer (weight 1)`]);
+    const el = render(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([1, 2, 3, 4, 5].map((i) => Operation.setOptions({ signer: { ed25519PublicKey: k(i), weight: 1 } }))) }), 'Partner App', USER);
+    const bullets = [...el.querySelectorAll('.danger-box li')].map((li) => li.textContent ?? '').join('\n');
+    for (const i of [1, 2, 3]) expect(bullets).not.toContain(k(i));
+    for (const i of [4, 5]) expect(bullets).toContain(k(i));
+  });
+
+  it('property: every signer and spender is named whole above the fold at least once', () => {
+    let seed = 31;
+    const rnd = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    const keys = Array.from({ length: 6 }, (_, i) => Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(100 + i) as never).publicKey());
+    const token = 'CABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNSZ';
+    for (let round = 0; round < 40; round++) {
+      const named: string[] = [];
+      const ops = Array.from({ length: 2 + rnd(10) }, () => {
+        const kind = rnd(4);
+        const key = keys[rnd(keys.length)]!;
+        if (kind === 0) {
+          named.push(key);
+          return Operation.setOptions({ signer: { ed25519PublicKey: key, weight: 1 + rnd(9) } });
+        }
+        if (kind === 1) {
+          named.push(key);
+          return Operation.invokeContractFunction({ contract: token, function: 'approve', args: [nativeToScVal(USER, { type: 'address' }), nativeToScVal(key, { type: 'address' }), nativeToScVal(BigInt(1 + rnd(99)), { type: 'i128' }), xdr.ScVal.scvU32(9)] });
+        }
+        if (kind === 2) return Operation.payment({ destination: keys[rnd(keys.length)]!, asset: Asset.native(), amount: String(1 + rnd(50)) });
+        return Operation.bumpSequence({ bumpTo: String(rnd(3)) });
+      });
+      const el = render(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes(ops) }), 'Partner App', USER);
+      const above = aboveFold(el);
+      for (const id of named) expect(above.includes(id), `${id} in round ${round}`).toBe(true);
+    }
+  });
+});
+
+describe('a control change is named whole above the fold: once in its own line, or as a bullet when left out', () => {
+  it('property: every NEAR key added or removed appears in full above the fold, never zero times', () => {
+    const pub = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+    const me = nearImplicitAccountId(pub);
+    let seed = 7;
+    const rnd = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 60; round++) {
+      const named = new Set<string>();
+      const actions = Array.from({ length: 1 + rnd(12) }, (): NearAction => {
+        const kind = rnd(4);
+        const bytes = new Uint8Array(32).fill(40 + rnd(8));
+        if (kind === 0) {
+          named.add(nearPublicKeyString(bytes));
+          return { type: 'addKey', publicKey: { type: 'ed25519', bytes }, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } };
+        }
+        if (kind === 1) {
+          named.add(nearPublicKeyString(bytes));
+          return { type: 'deleteKey', publicKey: { type: 'ed25519', bytes } };
+        }
+        if (kind === 2) return { type: 'transfer', deposit: BigInt(1 + rnd(5)) * 10n ** 24n };
+        return { type: 'functionCall', methodName: `m${rnd(6)}`, args: utf8('{}'), gas: 1n, deposit: 0n };
+      });
+      const bytes = encodeNearTransaction({ signerId: me, publicKey: { type: 'ed25519', bytes: pub }, nonce: 1n, receiverId: me, blockHash: sha256(utf8('b')), actions });
+      const el = render(decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: me, context: { nearNetwork: 'testnet' }, bytes }), 'Partner App', me);
+      const above = aboveFold(el);
+      for (const key of named) expect(above.includes(key), `${key} in round ${round}`).toBe(true);
+      // A key whose step is in a visible line is not repeated as a bullet.
+      const lines = [...el.querySelectorAll('h2.summary-headline, p.summary-line')].map((p) => p.textContent ?? '').join('\n');
+      const bullets = [...el.querySelectorAll('.danger-box li')].map((li) => li.textContent ?? '').join('\n');
+      for (const key of named) if (lines.includes(key) && !bullets.includes('Not in the lines above')) expect(bullets.includes(key), `${key} repeated in round ${round}`).toBe(false);
+    }
   });
 });

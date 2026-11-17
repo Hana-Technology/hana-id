@@ -341,9 +341,9 @@ function stellarAlerts(d: Dom, env: DecodedStellarEnvelope): Alerts {
   const ops = env.tx.operations;
   return {
     banners: ops.some((op) => stellarAccountControl(op).length > 0) ? [risk(0, 'danger takeover banner', [ACCOUNT_CONTROL_BANNER], ['Changes who controls a Stellar account'])] : [],
-    dangers: ops.flatMap((op) => {
+    dangers: ops.flatMap((op, step) => {
       const shorts = accountControlShorts(op);
-      return accountControlWarnings(op).map((w, i) => risk(0, 'danger takeover', [w], shorts[i] ?? [w]));
+      return accountControlWarnings(op).map((w, i) => ({ ...risk(0, 'danger takeover', [w], shorts[i] ?? [w]), step }));
     }),
     warnings: env.tx.otherPreconditions ? [risk(5, 'warn', ['This transaction has extra preconditions (sequence or signer rules).'], ['Has extra preconditions'])] : [],
   };
@@ -656,13 +656,18 @@ function nearActionList(d: Dom, actions: readonly NearAction[], receiver: string
 }
 
 /** The bullet form of an action's control warning (D814). */
+/** Whether an action removes the user's own Journear Passport key from their account. */
+function ownKeyRemoval(a: NearAction, receiver: string, me: string): boolean {
+  return a.type === 'deleteKey' && receiver === me && a.publicKey.type === 'ed25519' && toHex(a.publicKey.bytes) === me;
+}
+
 function nearControlShort(a: NearAction, receiver: string, me: string): Child[] {
   const where = receiver === me ? 'your account' : receiver;
   switch (a.type) {
     case 'addKey':
       return a.accessKey.permission.type === 'fullAccess' ? ['Adds a full-access key (', nearKeyText(a.publicKey), ')'] : ['Adds a key (', nearKeyText(a.publicKey), ') that can use ', a.accessKey.permission.receiverId];
     case 'deleteKey':
-      return receiver === me && a.publicKey.type === 'ed25519' && toHex(a.publicKey.bytes) === me ? [`Removes your ${BRAND.product} key`] : ['Removes key ', nearKeyText(a.publicKey)];
+      return ownKeyRemoval(a, receiver, me) ? [`Removes your ${BRAND.product} key`] : ['Removes key ', nearKeyText(a.publicKey)];
     case 'deleteAccount':
       return [`Deletes ${where} and sends all its NEAR to `, a.beneficiaryId];
     case 'deployContract':
@@ -757,10 +762,14 @@ export function nearNetworkLine(kind: 'near_tx' | 'near_delegate', network: 'tes
 function nearAlerts(d: Dom, actions: readonly NearAction[], receiver: string, me: string): Alerts {
   return {
     banners: nearChangesControl(actions, receiver, me) ? [risk(0, 'danger takeover banner', [NEAR_ACCOUNT_CONTROL_BANNER], ['Changes who controls a NEAR account'])] : [],
-    dangers: actions.flatMap((a) => [
-      ...nearControlWarnings(a, receiver, me).map((w) => risk(0, 'danger takeover', [w], nearControlShort(a, receiver, me))),
-      ...nearCostWarnings(a, receiver, me).map((w) => risk(3, 'danger takeover', [w], nearCostShort(a, receiver, me))),
-    ]),
+    dangers: actions.flatMap((a, i) => {
+      // Removing the user's own Journear Passport key: the line names the key but not whose it is, so the bullet stays.
+      const step = ownKeyRemoval(a, receiver, me) ? undefined : i;
+      return [
+        ...nearControlWarnings(a, receiver, me).map((w) => ({ ...risk(0, 'danger takeover', [w], nearControlShort(a, receiver, me)), step })),
+        ...nearCostWarnings(a, receiver, me).map((w) => risk(3, 'danger takeover', [w], nearCostShort(a, receiver, me))),
+      ];
+    }),
     warnings: [],
   };
 }
@@ -908,6 +917,8 @@ interface RiskItem {
   readonly cls: string;
   readonly full: readonly Child[];
   readonly short: readonly Child[];
+  /** For a control change's line: its step (operation or action index), dropped when that step's own line is in view. */
+  readonly step?: number;
 }
 
 const risk = (rank: number, cls: string, full: readonly Child[], short: readonly Child[]): RiskItem => ({ rank, cls, full, short: short.length > 0 ? short : full });
@@ -1074,7 +1085,12 @@ export const TYPED_DATA_NO_CHAIN = 'This signature isn’t tied to one chain: it
 export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, ctx: ApprovalRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
   const summary: ApprovalSummary = summarizeApproval(decoded, { address: ctx.address ?? '', ...(ctx.parentOrigin ? { parentOrigin: ctx.parentOrigin } : {}) });
   const k = kindParts(d, decoded, appName, ctx);
-  const redBox = riskBox(d, 'danger', [...k.alerts.banners, ...k.alerts.dangers, ...summary.warnings.filter((w) => w.level === 'danger').map((w) => summaryItem(d, w, appName))]);
+  // A control change's bullet repeats nothing: when its step's own line is in view (the headline of a single step, or a
+  // grouped line, which names the whole key, signer or address), the bullet is dropped. The banner always stays, and
+  // steps left out of the lines keep their bullets (the summary's step_left_out).
+  const shown = new Set(summary.shownSteps ?? []);
+  const dangers = k.alerts.dangers.filter((it) => it.step === undefined || !shown.has(it.step));
+  const redBox = riskBox(d, 'danger', [...k.alerts.banners, ...dangers, ...summary.warnings.filter((w) => w.level === 'danger').map((w) => summaryItem(d, w, appName))]);
   const amberBox = riskBox(d, 'warning', [...summary.warnings.filter((w) => w.level === 'warning').map((w) => summaryItem(d, w, appName)), ...k.alerts.warnings]);
   const network = summary.network ? summaryNodes(d, summary.network, appName) : k.network ? [k.network] : null;
   const headline = amountHeadline(decoded);

@@ -83,6 +83,11 @@ export interface ApprovalSummary {
   readonly warnings: readonly SummaryWarning[];
   /** False when Journear can't say what the request does: a risk warning says so (the details still start folded). */
   readonly explainable: boolean;
+  /**
+   * The steps (operations or actions, by index) whose own line is in view: the headline of a single-step request, or
+   * a visible grouped line. A bullet repeating such a step's control change is dropped by the page.
+   */
+  readonly shownSteps?: readonly number[];
 }
 
 export interface SummaryContext {
@@ -841,6 +846,8 @@ const sameText = (text: SummaryText, value: boolean, order: number): Step => ({ 
 interface StepGroup {
   readonly first: Step;
   readonly index: number;
+  /** The steps in this group, by index. */
+  readonly members: number[];
   count: number;
   sum: bigint;
 }
@@ -852,7 +859,7 @@ interface StepGroup {
  * the caller says so in a warning (red when a left-out group moves or grants value or changes control). The largest
  * amount to others is never left out: a control group gives way to it (control changes are always in the red box).
  */
-export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidden: number; hiddenRisk: RiskLevel | null; leftOut: SummaryWarning[] } {
+export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidden: number; hiddenRisk: RiskLevel | null; leftOut: SummaryWarning[]; shown: number[] } {
   const byKey = new Map<string, StepGroup>();
   items.forEach((x, index) => {
     const k = `${x.order}|${x.key}`;
@@ -860,7 +867,8 @@ export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidd
     if (g) {
       g.count++;
       g.sum += x.sum ?? 0n;
-    } else byKey.set(k, { first: x, index, count: 1, sum: x.sum ?? 0n });
+      g.members.push(index);
+    } else byKey.set(k, { first: x, index, members: [index], count: 1, sum: x.sum ?? 0n });
   });
   const outRank = (a: StepGroup, b: StepGroup): number => (a.first.native === b.first.native ? (a.sum === b.sum ? a.index - b.index : a.sum > b.sum ? -1 : 1) : a.first.native ? -1 : 1);
   const sorted = [...byKey.values()].sort((a, b) => a.first.order - b.first.order || (a.first.order === 1 ? outRank(a, b) : a.index - b.index));
@@ -885,7 +893,9 @@ export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidd
   }
   const line = (g: StepGroup): SummaryText => capitalised(g.count === 1 ? g.first.text : g.first.many ? g.first.many(g.count, g.sum) : [`${g.count} times: `, ...g.first.text]);
   const lines = visible.map(line);
-  if (hidden.length === 0) return { lines, hidden: 0, hiddenRisk: null, leftOut: [] };
+  // A grouped line names its steps whole (the group's key holds everything the line says), so they count as shown.
+  const shown = visible.flatMap((g) => g.members);
+  if (hidden.length === 0) return { lines, hidden: 0, hiddenRisk: null, leftOut: [], shown };
   const n = hidden.reduce((t, g) => t + g.count, 0);
   lines.push([`…and ${n} other ${n === 1 ? 'step' : 'steps'}: see the details.`]);
   // Each left-out control change, grant and value to someone else: its own red bullet, naming who or what.
@@ -896,7 +906,7 @@ export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidd
       // In full: a key, signer or recipient is never cut where nothing else on the screen shows it.
       return { level: 'danger', code: 'step_left_out', text: ['Not in the lines above: ', ...named, '.'], short: named };
     });
-  return { lines, hidden: n, hiddenRisk: hidden.some((g) => g.first.order <= 4 && g.first.value) ? 'danger' : 'warning', leftOut };
+  return { lines, hidden: n, hiddenRisk: hidden.some((g) => g.first.order <= 4 && g.first.value) ? 'danger' : 'warning', leftOut, shown };
 }
 
 /** The grouping of one Stellar operation. `suffix`: what the line says about another source account. */
@@ -1076,10 +1086,15 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
   let hidden: { n: number; risk: RiskLevel } | null = null;
   const lines: SummaryText[] = [];
   let headline: SummaryText;
-  if (ops.length === 1) headline = [APP, ' wants to ', ...(ops[0] as OpSummary).text];
-  else {
+  // The steps whose own line is in view (the headline of a single step counts as its line).
+  let shownSteps: number[] = [];
+  if (ops.length === 1) {
+    headline = [APP, ' wants to ', ...(ops[0] as OpSummary).text];
+    shownSteps = [0];
+  } else {
     headline = [APP, ` wants to do ${ops.length} things in one Stellar transaction`];
     const g = groupSteps(ops.map((o) => o.step));
+    shownSteps = g.shown;
     lines.push(...g.lines);
     warnings.push(...g.leftOut);
     if (g.hiddenRisk) {
@@ -1107,6 +1122,7 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
     network: stellarNetwork(decoded.networkPassphrase),
     warnings,
     explainable,
+    shownSteps,
   };
 }
 
@@ -1243,12 +1259,15 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
   const lines: SummaryText[] = [];
   let headline: SummaryText;
   const transfers = actions.length > 0 && actions.every((a) => a.type === 'transfer');
+  // The steps whose own line is in view (the headline of a single action counts as its line).
+  let shownSteps: number[] = done.length === 1 ? [0] : [];
   if (transfers && actions.length > 1) {
     headline = [APP, ' wants to send ', strong(nearDisplay(actions.reduce((n, a) => n + (a.type === 'transfer' ? a.deposit : 0n), 0n))), ' to ', ...nearWho(receiver, me), ` in ${actions.length} transfers`];
   } else if (done.length === 1) headline = [APP, ' wants to ', ...(done[0] as { text: SummaryText }).text];
   else {
     headline = [APP, ` wants to do ${done.length} things with `, ...nearWho(receiver, me), ' in one transaction'];
     const g = groupSteps(done.map((x) => x.step));
+    shownSteps = g.shown;
     lines.push(...g.lines);
     warnings.push(...g.leftOut);
     if (g.hiddenRisk) {
@@ -1266,6 +1285,7 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
     network: null,
     warnings,
     explainable,
+    shownSteps,
   };
 }
 

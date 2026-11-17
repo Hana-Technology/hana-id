@@ -504,18 +504,28 @@ describe('EvmRelayer: crashes at every step never reuse a nonce, leave a gap or 
 describe('EvmRelayer: RPC failures (and L1, L4)', () => {
   it('reads and sends fail over to the fallback; a primary that flaps keeps nonces consecutive and every raw single', async () => {
     const stub = await fresh();
+    // A nonce life starts only with both endpoints agreeing.
     chain.modes[0] = 'down';
+    expect(await codeOf(stub.send(request()))).toBe('rpc_unavailable');
+    chain.modes[0] = 'up';
+    clock.advance(31_000);
     expect((await stub.send(request())).relayerNonce).toBe(0);
-    expect(chain.broadcasts.map((b) => b.endpoint)).toEqual([1]);
+    // Warm, with the primary down: the send goes to the fallback.
+    chain.modes[0] = 'down';
+    clock.advance(31_000);
+    await stub.send(request());
+    expect(chain.broadcasts.map((b) => b.endpoint)).toEqual([0, 1]);
+    chain.drop(RELAYER, 0);
+    chain.drop(RELAYER, 1);
     let flip = 0;
     chain.onSend = (_tx, endpoint) => (endpoint === 0 && flip++ % 2 === 0 ? 'network' : undefined);
     const modes = ['up', 'down', 'http503', 'rate_limited'] as const;
     for (let i = 1; i <= 8; i++) {
       chain.modes[0] = modes[i % modes.length]!;
       clock.advance(31_000);
-      expect((await stub.send(request())).relayerNonce).toBe(i);
+      expect((await stub.send(request())).relayerNonce).toBe(i + 1);
     }
-    expect(chain.pooledAll(RELAYER).map((t) => t.nonce)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(chain.pooledAll(RELAYER).map((t) => t.nonce)).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
     for (const n of new Set(chain.broadcasts.map((b) => b.tx.nonce))) expect(new Set(chain.broadcasts.filter((b) => b.tx.nonce === n).map((b) => b.tx.hash)).size).toBe(1);
   });
 
@@ -547,11 +557,15 @@ describe('EvmRelayer: RPC failures (and L1, L4)', () => {
     expect(chain.pooled(RELAYER, 1)?.hash).toBe(sent.transactionHash);
   });
 
-  it('a body past the size limit is abandoned (read as a stream) and the fallback answers', async () => {
+  it('a body past the size limit is abandoned (read as a stream): that endpoint gives no count, the run goes on', async () => {
     const stub = await fresh();
+    await stub.send(request());
     chain.hugeResponse = 2 * 1024 * 1024 + 10;
-    expect((await stub.send(request())).relayerNonce).toBe(0);
+    clock.advance(EVM_RELAYER_REPLACE_AFTER_MS);
+    await runDurableObjectAlarm(stub);
     expect(chain.calls.some((c) => c.endpoint === 1 && c.method === 'eth_getTransactionCount')).toBe(true);
+    // Only one endpoint gave counts: nothing destructive, but the fee bump happened.
+    expect((await stored(stub)).tx[0]!.versions).toHaveLength(2);
   });
 
   it(`rebroadcasts at most ${EVM_RELAYER_RUN_LIMITS.rebroadcasts} per run, the rest the next run`, async () => {
@@ -583,27 +597,28 @@ describe('EvmRelayer: counts are cross-checked and confirmed (M1)', () => {
     expect(await stub.status()).toMatchObject({ blockedReason: null, pending: 0 });
   });
 
-  it('P2 (alone): the only endpoint answering over-reports: the live record stays, the skipped nonces are filled after 5 minutes, all mine', async () => {
+  it('P2 (alone): the only endpoint answering over-reports: nothing is adopted or deleted (two must agree); bumps and sends go on; counts_unconfirmed after 5 minutes', async () => {
     let stub = await fresh();
-    await stub.send(request());
+    const a = await stub.send(request());
     chain.modes[1] = 'down';
     chain.staleCounts.set(0, { latest: 3, pending: 3, confirmed: 3 });
     stub = await crash(stub);
     const b = await stub.send(request());
-    expect(b.relayerNonce).toBe(3);
-    expect(await nonces(stub)).toEqual([0, 3]);
-    chain.staleCounts.delete(0);
-    chain.modes[1] = 'up';
+    expect(b.relayerNonce).toBe(1);
+    expect(await nonces(stub)).toEqual([0, 1]);
     await runDurableObjectAlarm(stub);
-    expect(await stub.status()).toMatchObject({ blockedReason: 'nonce_gap' });
-    expect(chain.pooledAll(RELAYER).map((t) => t.nonce)).toEqual([0, 3]);
+    expect(await nonces(stub)).toEqual([0, 1]);
+    expect(await stub.status()).toMatchObject({ blockedReason: null });
     clock.advance(EVM_RELAYER_GAP_HEAL_MS);
     await runDurableObjectAlarm(stub);
-    expect(chain.pooledAll(RELAYER).map((t) => t.nonce)).toEqual([0, 1, 2, 3]);
-    expect(chain.pooled(RELAYER, 1)).toMatchObject({ to: RELAYER.toLowerCase(), value: 0n, data: '0x', gas: CANCEL_GAS });
-    expect(chain.mine(RELAYER).map((t) => t.nonce)).toEqual([0, 1, 2, 3]);
+    expect(await stub.status()).toMatchObject({ blockedReason: 'counts_unconfirmed' });
+    expect((await stored(stub)).tx.every((t) => t.versions.length >= 2)).toBe(true);
+    chain.staleCounts.delete(0);
+    chain.modes[1] = 'up';
+    chain.mine(RELAYER);
     await runDurableObjectAlarm(stub);
     expect(await stub.status()).toMatchObject({ pending: 0, blockedReason: null });
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined' });
   });
 
   it('a reorg: mined but not confirmed keeps the record (its mined hash noted); un-mined, the same raw goes out again; confirmed, it goes', async () => {
@@ -666,25 +681,27 @@ describe('EvmRelayer: counts are cross-checked and confirmed (M1)', () => {
       await runDurableObjectAlarm(stub);
       clock.advance(EVM_RELAYER_TAKEN_AFTER_MS);
     }
-    // Never taken (its deadline passed meanwhile, so its latest version is the self-transfer).
-    expect((await stub.lookup(sent.digest))?.state).toBe('cancelling');
+    // Never taken (and, its nonce agreed mined, not bumped either).
+    expect((await stub.lookup(sent.digest))?.state).toBe('pending');
     expect((await stored(stub)).tx[0]).toMatchObject({ takenSince: null, takenRuns: 0 });
-    // The budget: 17 records whose nonces another sender took; 32 receipt reads a run cover 16 (two endpoints each).
+    // The budget: 17 records whose nonces another sender took. A run can't afford every check: those it doesn't reach
+    // are skipped (their clock neither advances nor resets), the least recently checked go first next run, and all of
+    // them become taken in time; none goes before 10 minutes after its own first complete check.
     const many = await fresh();
-    const sentMany: number[] = [];
-    for (let i = 0; i < 17; i++) sentMany.push((await many.send(request())).relayerNonce);
+    const sentMany: { relayerNonce: number; digest: Hex }[] = [];
+    for (let i = 0; i < 17; i++) sentMany.push(await many.send(request()));
     const before = chain.minedCount.get(RELAYER.toLowerCase()) ?? 0;
     chain.foreignMine(RELAYER, before + 100);
     await runDurableObjectAlarm(many);
-    clock.advance(EVM_RELAYER_TAKEN_AFTER_MS);
-    await runDurableObjectAlarm(many);
-    // The run's receipt reads ran out before every record was checked: those left were cut off, so their clock was reset
-    // (none of them stepped toward taken), while the ones checked in full went.
-    const left = (await stored(many)).tx as unknown as { nonce: number; takenSince: number | null }[];
-    expect(left.length).toBeGreaterThan(0);
-    expect(left.length).toBeLessThan(sentMany.length);
-    expect(left.every((t) => t.takenSince === null)).toBe(true);
-    expect(left.map((t) => t.nonce)).toEqual(sentMany.slice(-left.length));
+    const first = (await stored(many)).tx as unknown as { nonce: number; takenSince: number | null }[];
+    expect(first.some((t) => t.takenSince !== null)).toBe(true);
+    expect(first.some((t) => t.takenSince === null)).toBe(true);
+    for (let i = 0; i < 80 && (await nonces(many)).length > 0; i++) {
+      clock.advance(30_000);
+      await runDurableObjectAlarm(many);
+    }
+    expect(await nonces(many)).toEqual([]);
+    for (const x of sentMany) expect(await many.lookup(x.digest)).toMatchObject({ state: 'taken' });
   });
 
   it('the original mining late (receipts not yet indexed when the clock started) makes it mined, outcome execute, never taken', async () => {
@@ -1117,10 +1134,16 @@ describe('EvmRelayer: lagging endpoints, throughput and the backstop (second rev
     chain.lag[1] = 1;
     clock.advance(40_000);
     await runDurableObjectAlarm(stub);
+    // Mined on the primary only (its receipt noted, one endpoint's word: not enough to stop the deadline's
+    // self-transfer, which the primary refuses as too low); the note survives the new version.
+    expect((await stored(stub)).tx[0]).toMatchObject({ minedHash: a.transactionHash, minedVotes: 1 });
     expect((await stored(stub)).tx[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
     chain.lag[1] = 0;
     chain.unmine(RELAYER, 1, { drop: true });
     await runDurableObjectAlarm(stub);
+    // Un-mined: the note is cleared, and the latest version (the self-transfer) goes out.
+    expect((await stored(stub)).tx[0]).toMatchObject({ minedHash: null });
+    expect(chain.pooled(RELAYER, 10)?.to).toBe(RELAYER.toLowerCase());
     chain.mine(RELAYER);
     await runDurableObjectAlarm(stub);
     expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined', outcome: 'cancel' });
@@ -1176,6 +1199,95 @@ describe('EvmRelayer: lagging endpoints, throughput and the backstop (second rev
     await configure(stub, overlay({ EVM_RELAY_KEYS: JSON.stringify([OTHER_KEY_HEX]), EVM_SPONSOR: sponsorVar({}, otherAddress) }));
     await stub.send(request({ execute: { relayer: otherAddress } }));
     expect(BigInt((await stored(stub)).meta!.dayReservedWei)).toBeGreaterThan(21_000n * GWEI);
+  });
+});
+
+describe('EvmRelayer: one endpoint’s word never decides (automated review of the second round)', () => {
+  it('an endpoint with an inflated head (and counts to match its claim) can’t make a record go or a nonce be adopted', async () => {
+    const stub = await fresh();
+    const a = await stub.send(request());
+    // Endpoint 0 claims a head 1000 blocks ahead, where it says the relayer has mined 40.
+    chain.headBoost[0] = 1_000;
+    chain.staleCounts.set(0, { latest: 40, pending: 40, confirmed: 40 });
+    for (let i = 0; i < 3; i++) {
+      clock.advance(EVM_RELAYER_TAKEN_AFTER_MS);
+      await runDurableObjectAlarm(stub);
+    }
+    expect(await nonces(stub)).toEqual([0]);
+    expect((await stored(stub)).meta?.nextNonce).toBe(1);
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'cancelling' });
+    expect(await stub.status()).toMatchObject({ blockedReason: 'counts_disagree' });
+    // With the other endpoint down, it is alone: still nothing destructive (two must agree).
+    chain.modes[1] = 'down';
+    clock.advance(EVM_RELAYER_TAKEN_AFTER_MS);
+    await runDurableObjectAlarm(stub);
+    expect(await nonces(stub)).toEqual([0]);
+    expect((await stub.send(request())).relayerNonce).toBe(1);
+  });
+
+  it('an honestly lagging endpoint (far behind) doesn’t stall bumps or sends; records confirm once it catches up', async () => {
+    const stub = await fresh();
+    const a = await stub.send(request({ execute: { deadline: nowS() + 90n } }));
+    chain.lag[1] = 50;
+    clock.advance(EVM_RELAYER_REPLACE_AFTER_MS);
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).tx[0]!.versions).toHaveLength(2);
+    expect((await stub.send(request())).relayerNonce).toBe(1);
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    // Mined at the primary's head: noted, kept (the comparison block is the lagging one's), no more bumps.
+    expect((await stored(stub)).tx.every((t) => t.minedHash !== null)).toBe(true);
+    chain.lag[1] = 0;
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined' });
+    expect(await stub.status()).toMatchObject({ pending: 0, blockedReason: null });
+  });
+
+  it('nonce too low because our own version mined (its receipt not yet indexed): resolved as mined, never sent again', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    // The primary takes it but the answer is lost, and the fallback is down: never seen accepted.
+    chain.onSend = () => 'accept_then_network';
+    chain.modes[1] = 'down';
+    const req = request();
+    const a = await stub.send(req);
+    chain.onSend = undefined;
+    chain.modes[1] = 'up';
+    expect((await stored(stub)).tx.find((t) => t.nonce === 1)).toMatchObject({ accepted: false });
+    chain.executes(a.transactionHash, USER, a.digest);
+    chain.accountNonces.set(USER.toLowerCase(), req.execute.nonce);
+    chain.hideReceipts = true;
+    chain.mine(RELAYER);
+    const sentBefore = chain.broadcasts.length;
+    for (let i = 0; i < 3; i++) {
+      clock.advance(30_000);
+      await runDurableObjectAlarm(stub);
+    }
+    expect(chain.broadcasts.slice(sentBefore).filter((b) => b.tx.nonce !== 1 && b.tx.to === USER.toLowerCase())).toEqual([]);
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined', outcome: 'execute', minedHash: a.transactionHash });
+  });
+
+  it('reassign (another sender took the nonce of a record never accepted): moved to the next nonce, its old hashes kept, the backstop counted', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    chain.onSend = () => 'network';
+    const req = request();
+    const a = await stub.send(req);
+    chain.onSend = undefined;
+    const dayBefore = BigInt((await stored(stub)).meta!.dayReservedWei);
+    // Another sender's transaction took nonce 1, mined and confirmed.
+    chain.foreignMine(RELAYER, 2);
+    await runDurableObjectAlarm(stub);
+    const moved = (await stored(stub)).tx.find((t) => t.nonce === 2)!;
+    expect(moved.versions.map((v) => v.hash)).toContain(a.transactionHash);
+    expect(moved.versions).toHaveLength(2);
+    expect(chain.pooled(RELAYER, 2)?.hash).toBe(moved.hash);
+    const l = await stub.lookup(a.digest);
+    expect(l).toMatchObject({ relayerNonce: 2, state: 'pending' });
+    expect(l!.hashes).toEqual([a.transactionHash, moved.hash]);
+    expect(BigInt((await stored(stub)).meta!.dayReservedWei)).toBe(dayBefore + BigInt(moved.gas) * BigInt(moved.maxFeePerGas));
   });
 });
 

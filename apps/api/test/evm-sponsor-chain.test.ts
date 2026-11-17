@@ -175,7 +175,7 @@ describe('SponsorChain limits and caches (L1, L2, L4)', () => {
     expect(await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).transactionCount(ADDRESS, 'latest')).toBe(2);
   });
 
-  it('snapshot: each endpoint’s counts at ONE common block (the lowest head; the lowest safe block, else head − N), a lagging endpoint left out', async () => {
+  it('snapshot: each endpoint’s counts at ONE common block (the lowest head; the lowest safe block, else head − N); a lagging or inflated head never leaves anyone out', async () => {
     const chain = new EvmMock({ chainId: 31337 }).install();
     chain.setMined(ADDRESS, 4);
     chain.minedCount.set(ADDRESS.toLowerCase(), 6);
@@ -185,25 +185,32 @@ describe('SponsorChain limits and caches (L1, L2, L4)', () => {
     const rpc = new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]);
     expect(await rpc.snapshot(ADDRESS, { confirmations: 3, safeTag: false, lagLimit: 8 })).toEqual({
       endpoints: [
-        { endpoint: 0, head: 102, pending: 6, latest: 6, confirmed: 4 },
-        { endpoint: 1, head: 102, pending: 6, latest: 6, confirmed: 4 },
+        { endpoint: 0, head: 102, pending: 6, ownLatest: 6, latest: 6, confirmed: 4 },
+        { endpoint: 1, head: 102, pending: 6, ownLatest: 6, latest: 6, confirmed: 4 },
       ],
       latestBlock: 102,
       confirmedBlock: 99,
-      ignored: [],
+      lagging: [],
     });
     expect((await rpc.snapshot(ADDRESS, { confirmations: 3, safeTag: true, lagLimit: 8 })).confirmedBlock).toBe(100);
     // A fallback 1 block behind: both are read at its head (block 101), where they agree.
     chain.lag[1] = 1;
     const one = await rpc.snapshot(ADDRESS, { confirmations: 0, safeTag: false, lagLimit: 8 });
-    expect(one).toMatchObject({ latestBlock: 101, ignored: [] });
+    expect(one).toMatchObject({ latestBlock: 101, lagging: [] });
     expect(one.endpoints.map((c) => c.latest)).toEqual([6, 6]);
-    // Far behind: left out.
+    // Far behind: reported as lagging, still the comparison block (the lowest head is the reference: no endpoint's
+    // claimed head can push the others out).
     chain.lag[1] = 20;
-    expect(await rpc.snapshot(ADDRESS, { confirmations: 3, safeTag: false, lagLimit: 8 })).toMatchObject({ latestBlock: 102, ignored: [1], endpoints: [{ endpoint: 0 }] });
+    expect(await rpc.snapshot(ADDRESS, { confirmations: 3, safeTag: false, lagLimit: 8 })).toMatchObject({ latestBlock: 82, lagging: [1] });
+    chain.lag[1] = 0;
+    chain.headBoost[0] = 1_000;
+    // (A new client: this one's request budget is spent.)
+    const boosted = await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).snapshot(ADDRESS, { confirmations: 3, safeTag: false, lagLimit: 8 });
+    expect(boosted).toMatchObject({ latestBlock: 102, lagging: [1] });
+    chain.headBoost[0] = 0;
     chain.supportsSafe = false;
     chain.lag[1] = 0;
-    expect((await rpc.snapshot(ADDRESS, { confirmations: 3, safeTag: true, lagLimit: 8 })).confirmedBlock).toBe(99);
+    expect((await new SponsorChain(31337, [PRIMARY_RPC, FALLBACK_RPC]).snapshot(ADDRESS, { confirmations: 3, safeTag: true, lagLimit: 8 })).confirmedBlock).toBe(99);
   });
 
   it('logs and eth_call at a block', async () => {

@@ -169,6 +169,8 @@ export interface EndpointCounts {
   head: number;
   /** Mined plus the node's executable pool (its own view: a lagging node's pool can be behind). */
   pending: number;
+  /** Mined at the endpoint's OWN head (`latest` tag): its word alone, used only for non-destructive steps. */
+  ownLatest: number;
   /** Mined as of the snapshot's `latestBlock` (the same block on every endpoint used). */
   latest: number;
   /** Mined as of the snapshot's `confirmedBlock` (the same block on every endpoint used). */
@@ -177,15 +179,16 @@ export interface EndpointCounts {
 
 /**
  * Every endpoint's counts for an address, compared at ONE explicit block each, never across different heads:
- * `latestBlock` is the lowest head among the endpoints used, `confirmedBlock` the lowest `safe` block among them (or,
- * where an endpoint has none, its head − `confirmations`), at most `latestBlock`. An endpoint whose head is more than
- * `lagLimit` blocks behind the highest is left out for this snapshot (`ignored`) rather than holding the others back.
+ * `latestBlock` is the LOWEST head among the endpoints that answered (no endpoint's claimed head is the reference by
+ * itself: an inflated head can't push the others out), `confirmedBlock` the lowest `safe` block among them (or, where
+ * an endpoint has none, its head − `confirmations`), at most `latestBlock`. `lagging`: endpoints more than `lagLimit`
+ * blocks behind the highest head, for information only (nobody is left out).
  */
 export interface CountsSnapshot {
   endpoints: EndpointCounts[];
   latestBlock: number;
   confirmedBlock: number;
-  ignored: number[];
+  lagging: number[];
 }
 
 /** An `eth_getLogs` entry, with where it was mined. */
@@ -254,6 +257,11 @@ export class SponsorChain {
     return this.used >= this.maxRequests;
   }
 
+  /** Fetches left in this client's budget. */
+  get remaining(): number {
+    return Math.max(0, this.maxRequests - this.used);
+  }
+
   /** See CountsSnapshot. Never throws: an empty `endpoints` when none answered. */
   async snapshot(address: Hex, opts: { confirmations: number; safeTag: boolean; lagLimit: number }): Promise<CountsSnapshot> {
     checkAddress(address);
@@ -263,7 +271,7 @@ export class SponsorChain {
       return Number(n);
     };
     const blockNum = (r: unknown): number => num(obj(r).number);
-    const heads: { endpoint: number; head: number; safe: number | null; pending: number }[] = [];
+    const heads: { endpoint: number; head: number; safe: number | null; pending: number; ownLatest: number }[] = [];
     for (const i of this.order()) {
       const head = await this.attempt(i, 'eth_blockNumber', [], num);
       if (!head.ok) continue;
@@ -275,13 +283,15 @@ export class SponsorChain {
       }
       const pending = await this.attempt(i, 'eth_getTransactionCount', [address, 'pending'], num);
       if (!pending.ok) continue;
-      heads.push({ endpoint: i, head: head.value, safe, pending: pending.value });
+      const ownLatest = await this.attempt(i, 'eth_getTransactionCount', [address, 'latest'], num);
+      if (!ownLatest.ok) continue;
+      heads.push({ endpoint: i, head: head.value, safe, pending: pending.value, ownLatest: ownLatest.value });
     }
-    const empty: CountsSnapshot = { endpoints: [], latestBlock: 0, confirmedBlock: 0, ignored: [] };
+    const empty: CountsSnapshot = { endpoints: [], latestBlock: 0, confirmedBlock: 0, lagging: [] };
     if (heads.length === 0) return empty;
     const top = Math.max(...heads.map((h) => h.head));
-    const used = heads.filter((h) => h.head >= top - opts.lagLimit);
-    const ignored = heads.filter((h) => h.head < top - opts.lagLimit).map((h) => h.endpoint);
+    const used = heads;
+    const lagging = heads.filter((h) => h.head < top - opts.lagLimit).map((h) => h.endpoint);
     const latestBlock = Math.min(...used.map((h) => h.head));
     const confirmedBlock = Math.max(0, Math.min(latestBlock, ...used.map((h) => h.safe ?? h.head - opts.confirmations)));
     const endpoints: EndpointCounts[] = [];
@@ -290,24 +300,43 @@ export class SponsorChain {
       if (!latest.ok) continue;
       const confirmed = await this.attempt(h.endpoint, 'eth_getTransactionCount', [address, toQuantity(BigInt(confirmedBlock))], num);
       if (!confirmed.ok) continue;
-      endpoints.push({ endpoint: h.endpoint, head: h.head, pending: h.pending, latest: latest.value, confirmed: confirmed.value });
+      endpoints.push({ endpoint: h.endpoint, head: h.head, pending: h.pending, ownLatest: h.ownLatest, latest: latest.value, confirmed: confirmed.value });
     }
-    return { endpoints, latestBlock, confirmedBlock, ignored };
+    return { endpoints, latestBlock, confirmedBlock, lagging };
+  }
+
+  /**
+   * The same read from EVERY endpoint that answers it (no failover: each answer counts on its own), for a caller that
+   * must not take one endpoint's word. Endpoints that fail are left out; never throws.
+   */
+  async readEach<T>(method: string, params: unknown[], parse: (result: unknown) => T): Promise<{ endpoint: number; value: T }[]> {
+    const out: { endpoint: number; value: T }[] = [];
+    for (const i of this.order()) {
+      const got = await this.attempt(i, method, params, parse);
+      if (got.ok) out.push({ endpoint: i, value: got.value });
+    }
+    return out;
+  }
+
+  /** The delegate's `nonce()` on `account` at `block`, from every endpoint that answers (an EOA's empty code reads 0). */
+  async delegateNonceEach(account: Hex, selector: Hex, block: bigint): Promise<{ endpoint: number; value: bigint }[]> {
+    checkAddress(account);
+    return this.readEach('eth_call', [{ to: account, data: selector }, toQuantity(block)], (r) => {
+      const d = dataHex(r);
+      return d === '0x' ? 0n : BigInt(d);
+    });
+  }
+
+  /** `eth_getLogs` (as `logs`) from every endpoint that answers. */
+  async logsEach(q: { address: Hex; topics: (Hex | null)[]; fromBlock: bigint; toBlock: bigint }): Promise<{ endpoint: number; value: EvmMinedLog[] }[]> {
+    checkAddress(q.address);
+    return this.readEach('eth_getLogs', [{ address: q.address, topics: q.topics, fromBlock: toQuantity(q.fromBlock), toBlock: toQuantity(q.toBlock) }], parseLogs);
   }
 
   /** `eth_getLogs` for one address and topics over a block range (at most 256 entries kept). */
   async logs(q: { address: Hex; topics: (Hex | null)[]; fromBlock: bigint; toBlock: bigint }): Promise<EvmMinedLog[]> {
     checkAddress(q.address);
-    return this.read('eth_getLogs', [{ address: q.address, topics: q.topics, fromBlock: toQuantity(q.fromBlock), toBlock: toQuantity(q.toBlock) }], (r) => {
-      if (!Array.isArray(r) || r.length > MAX_LOGS) throw new Error('bad logs');
-      return r.map((l) => {
-        const x = obj(l);
-        if (typeof x.address !== 'string' || !ADDRESS_RE.test(x.address) || typeof x.transactionHash !== 'string' || !HASH_RE.test(x.transactionHash)) throw new Error('bad log');
-        const topics = x.topics;
-        if (!Array.isArray(topics) || topics.length > 4 || !topics.every((t) => typeof t === 'string' && HASH_RE.test(t))) throw new Error('bad topics');
-        return { address: x.address.toLowerCase() as Hex, topics: (topics as string[]).map((t) => t.toLowerCase() as Hex), data: dataHex(x.data), transactionHash: x.transactionHash.toLowerCase() as Hex, blockNumber: quantity(x.blockNumber) };
-      });
-    });
+    return this.read('eth_getLogs', [{ address: q.address, topics: q.topics, fromBlock: toQuantity(q.fromBlock), toBlock: toQuantity(q.toBlock) }], parseLogs);
   }
 
   /** Endpoint indexes to try, in order: those not down for this client. */
@@ -606,6 +635,17 @@ function dataHex(v: unknown): Hex {
 }
 
 const MAX_LOGS = 256;
+
+function parseLogs(r: unknown): EvmMinedLog[] {
+  if (!Array.isArray(r) || r.length > MAX_LOGS) throw new Error('bad logs');
+  return r.map((l) => {
+    const x = obj(l);
+    if (typeof x.address !== 'string' || !ADDRESS_RE.test(x.address) || typeof x.transactionHash !== 'string' || !HASH_RE.test(x.transactionHash)) throw new Error('bad log');
+    const topics = x.topics;
+    if (!Array.isArray(topics) || topics.length > 4 || !topics.every((t) => typeof t === 'string' && HASH_RE.test(t))) throw new Error('bad topics');
+    return { address: x.address.toLowerCase() as Hex, topics: (topics as string[]).map((t) => t.toLowerCase() as Hex), data: dataHex(x.data), transactionHash: x.transactionHash.toLowerCase() as Hex, blockNumber: quantity(x.blockNumber) };
+  });
+}
 
 function parseReceipt(v: unknown, hash: Hex): EvmReceipt {
   const r = obj(v);

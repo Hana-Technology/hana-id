@@ -192,6 +192,8 @@ export class EvmMock {
   onRead?: (method: string, endpoint: number) => Promise<void> | void;
   /** Per endpoint, how many blocks its head is behind the chain's (a lagging node: counts and receipts as of its head). */
   readonly lag: number[] = [];
+  /** Per endpoint, how many blocks it claims beyond the chain's head (a node that inflates its head). */
+  readonly headBoost: number[] = [];
   /** Accounts' delegate nonce() (their Execute nonce), and the Executed logs mined. */
   readonly accountNonces = new Map<string, bigint>();
   readonly executedLogs: { address: string; topics: string[]; transactionHash: string; blockNumber: number }[] = [];
@@ -227,7 +229,7 @@ export class EvmMock {
       if (body.method === 'eth_chainId') return reply({ result: `0x${(mode === 'wrong_chain' ? this.chainId + 1 : this.chainId).toString(16)}` });
       if (body.method === 'eth_sendRawTransaction') return this.sendRaw(endpoint, body.params[0] as Hex, init?.signal, reply);
       await this.onRead?.(body.method, endpoint);
-      const head = this.blockNumber - (this.lag[endpoint] ?? 0);
+      const head = this.blockNumber - (this.lag[endpoint] ?? 0) + (this.headBoost[endpoint] ?? 0);
       if (body.method === 'eth_blockNumber') return reply({ result: `0x${head.toString(16)}` });
       if (body.method === 'eth_getTransactionCount') {
         if (this.countFailures > 0) {

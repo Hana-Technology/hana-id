@@ -3,10 +3,14 @@
 // Hana code in `data.code`; a network failure inside the SDK can surface as a TypeError. Either carries the Hana API
 // request it came from in `data.requestId` (D405), when it came from one.
 import { isApiRequestId } from '@hana-id/core';
+import { userMessageFor } from '@hana-id/web';
 import { displayText } from './near.ts';
 
-/** `near`: the NEAR card's gasless guestbook write (activate, sign, relay) and its reads from NEAR testnet. */
-export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy' | 'identity' | 'near';
+/**
+ * `near`: the NEAR card's gasless guestbook write (activate, sign, relay) and its reads from NEAR testnet. `gasFree`:
+ * the gas-free check-in card's `hana.evm.sendSponsored` (gas-free-card.ts, D867).
+ */
+export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy' | 'identity' | 'near' | 'gasFree';
 
 export interface ErrorInfo {
   /** The most specific code: the Hana string code when there is one, else the numeric code, else null. */
@@ -150,8 +154,19 @@ function nearMessage(e: unknown, code: string | number | null, reason: string | 
   return null;
 }
 
+/**
+ * The SDK's plain sentence for an error (`userMessage`, D861: worked out in the SDK from the code and `data.reason`
+ * only), or the same sentence from `userMessageFor` when the error doesn't carry one.
+ */
+export function sdkUserMessage(e: unknown): string {
+  if (isObj(e) && typeof e.userMessage === 'string' && e.userMessage) return e.userMessage;
+  return userMessageFor(isObj(e) ? e.code : undefined, isObj(e) ? e.data : undefined);
+}
+
 /** What to tell the user, for an error of `action`. */
 export function plainMessage(e: unknown, action: DemoAction): string {
+  // The gas-free check-in shows the SDK's own words for every refusal (D867): no sentence of the demo's own.
+  if (action === 'gasFree') return isSignedOut(e) ? SIGNED_OUT_MESSAGE : sdkUserMessage(e);
   const { code, reason } = errorInfo(e);
   const near = nearMessage(e, code, reason, action);
   if (near !== null) return near;

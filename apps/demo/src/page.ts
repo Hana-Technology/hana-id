@@ -8,6 +8,7 @@ import type { HanaAddresses, HanaClient, HanaConfig, HanaStatus } from '@hana-id
 import type { DemoConfig } from './config.ts';
 import { type ErrorRecord, type LoginTiming, diagnosticsJson } from './diagnostics.ts';
 import { type DemoAction, errorInfo, isSignedOut, plainMessage } from './errors.ts';
+import { type GasFreeCard, startGasFreeCard } from './gas-free-card.ts';
 import { type NearCard, startNearCard } from './near-card.ts';
 import type { FetchLike } from './near.ts';
 import { TEST_MESSAGE, shorten, testEvmTransaction, utf8Hex } from './requests.ts';
@@ -37,6 +38,7 @@ export type DemoClient = Pick<
   | 'stellar'
   | 'ethereum'
   | 'near'
+  | 'evm'
   | 'prepareApproval'
 >;
 
@@ -213,6 +215,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
 
   let client: DemoClient | null = null;
   let nearCard: NearCard | null = null;
+  let gasFreeCard: GasFreeCard | null = null;
   let progress = '';
   let pending = false;
   let unlockMs: number | null = null;
@@ -250,7 +253,8 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
   }
 
   function clearError(): void {
-    for (const id of ['error', 'near-error']) alertText(id, null);
+    // The gas-free card's box exists only once the card has been shown.
+    for (const id of ['error', 'near-error', 'gas-free-error']) if (document.getElementById(id)) alertText(id, null);
   }
 
   /** The page's info alert: what lasts while its state does (the launcher's hint, a session that ended). */
@@ -301,6 +305,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     if (!loggedIn) renderIdentity(null);
     for (const id of ['logout', 'revoke', 'sign-personal', 'sign-stellar', 'sign-evm-tx', 'export-stellar', 'export-evm', 'export-near', 'identity-token', 'email-share']) disable(id, pending || !loggedIn);
     nearCard?.render(loggedIn, pending);
+    gasFreeCard?.render(loggedIn, pending);
   }
 
   /** The decoded token (display only) and the verify snippet, or nothing. */
@@ -615,6 +620,9 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     showError,
     plainMessage,
   });
+
+  // D867: only for an env whose manifest has an `evm.sponsor` block; otherwise null and nothing is added to the page.
+  gasFreeCard = startGasFreeCard({ config, client: c, after: el('wallet'), run, clock });
 
   // The status line's "in N min" stays current.
   setInterval(render, 30_000);

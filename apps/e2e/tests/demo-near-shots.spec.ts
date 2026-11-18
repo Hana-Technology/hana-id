@@ -5,8 +5,8 @@
 //   HANA_SHOTS_DIR=<dir> corepack pnpm exec playwright test --project=chromium tests/demo-near-shots.spec.ts
 import { type Page } from '@playwright/test';
 import { base64Decode, decodeNearSignedDelegateAction } from '@hana-id/core';
-import { API_URL, DEMO_ORIGIN, DEMO_PK, E2E_GUESTBOOK, NEAR_RPC } from '../src/stack.ts';
-import { approve, chooseAccount, expect, newApp, test } from './fixtures.ts';
+import { API_URL, DEMO_ORIGIN, E2E_GUESTBOOK, NEAR_RPC } from '../src/stack.ts';
+import { DEMO_APP, approve, chooseAccount, expect, newApp, test } from './fixtures.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const VIEWPORTS = { desktop: { width: 1100, height: 1000 }, phone: { width: 390, height: 844 } } as const;
@@ -77,7 +77,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await chain('e2e_guestbook_add', { account_id: 'mallory.testnet', text: '<img src=x onerror=alert(1)> ‮gnp.exe https://evil.example' });
   await chain('e2e_guestbook_add', { account_id: 'a'.repeat(20) + '.' + 'b'.repeat(20) + '.testnet', text: 'Building on NEAR with Journear Passport: sign in with email, write with zero NEAR, no extension, no seed phrase.' });
 
-  await newApp({ name: 'Hana ID demo', origins: [DEMO_ORIGIN], publishableKey: DEMO_PK });
+  await newApp(DEMO_APP);
   await page.setViewportSize(VIEWPORTS.desktop);
   await page.goto(`${DEMO_ORIGIN}/`);
   await expect(page.locator('#status')).toHaveText('Signed out.');

@@ -37,6 +37,7 @@ import { stampsHost } from './stamps.ts';
 import { authHost, type PagesEnv, vaultHost } from './hosts.ts';
 import { serve, servedAt } from './http.ts';
 import { MockEvm, partnerHost } from './partner.ts';
+import { e2eRelayer } from '../relayer-key.ts';
 
 export async function startStack(fingerprint: string): Promise<void> {
   const modules = await loadApiModules();
@@ -49,8 +50,8 @@ export async function startStack(fingerprint: string): Promise<void> {
   const google = await GoogleBackend.create();
   google.install();
   chain.googleKid = google.kid;
-  const evm = new MockEvm();
-  const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk(), evmAccounts: evm.accounts });
+  const evm = new MockEvm(e2eRelayer().address);
+  const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk(), evm });
   const issuer = await LocalIssuer.start(d1, issuerKey);
   const loopback = ['127.0.0.1'];
 
@@ -66,7 +67,7 @@ export async function startStack(fingerprint: string): Promise<void> {
   await serve(PORTS.issuer, loopback, issuer.handler());
   // Live mode (LIVE_ENV): a second Worker and pair of page hosts for the https origins, on the same D1 and chain.
   const live: PagesEnv = { envName: LIVE_ENV_NAME, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, apiUrl: LIVE_API_URL, nearRpc: LIVE_NEAR_RPC };
-  const liveApi = new MockApi(d1, chain, modules, { serves: live, evmAccounts: evm.accounts });
+  const liveApi = new MockApi(d1, chain, modules, { serves: live });
   await serve(PORTS.liveVault, loopback, servedAt(LIVE_VAULT_ORIGIN, vaultHost(modules, d1, live)));
   await serve(PORTS.liveAuth, loopback, servedAt(LIVE_AUTH_ORIGIN, authHost(modules, live)));
   await serve(PORTS.liveApi, loopback, servedAt(LIVE_API_URL, (req) => liveApi.handle(req)));

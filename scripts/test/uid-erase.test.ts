@@ -269,7 +269,7 @@ describe('uid-erase: the plan (dry run)', PGLITE, () => {
 describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('erases the account’s rows in the ledger, the wallet directory and the issuer, records it, and leaves everyone else alone', async () => {
     const out = await uidErase([...ARGV, '--yes'], deps());
-    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userEvents: 6, issuerApps: 2, issuerEmails: 1 });
+    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userEvents: 6, evmSponsorSends: 0, issuerApps: 2, issuerEmails: 1 });
     // D714: the names that stay, and the shares that stay.
     expect(api.prepare('SELECT provider, sub FROM home_profiles ORDER BY provider, sub').all().map((r) => `${r.provider}:${r.sub}`)).toEqual([`google:${GOOGLE.sub}`, `google:${OTHER.sub}`]);
     expect(api.prepare('SELECT app_id, sub FROM name_shares ORDER BY app_id, sub').all().map((r) => `${r.app_id}:${r.sub}`)).toEqual([`app_n1:${OTHER.sub}`, `app_n2:${GOOGLE.sub}`]);
@@ -338,7 +338,7 @@ describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('is re-runnable: a second run finds nothing and still answers', async () => {
     await uidErase([...ARGV, '--yes'], deps());
     const again = await uidErase([...ARGV, '--yes'], deps());
-    expect(again!.erased).toEqual({ ledgerEvents: 0, ledgerAppUsers: 0, directoryWallets: 0, directoryIdentities: 0, emailConsents: 0, nameShares: 0, homeNames: 0, directoryUsers: 0, userEvents: 0, issuerApps: 0, issuerEmails: 0 });
+    expect(again!.erased).toEqual({ ledgerEvents: 0, ledgerAppUsers: 0, directoryWallets: 0, directoryIdentities: 0, emailConsents: 0, nameShares: 0, homeNames: 0, directoryUsers: 0, userEvents: 0, evmSponsorSends: 0, issuerApps: 0, issuerEmails: 0 });
   });
 
   it('works from the root identity too, with the sub on stdin', async () => {
@@ -350,10 +350,41 @@ describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('an env without an issuer erases the ledger and the wallet directory; --no-ledger skips the ledger and records nothing', async () => {
     const noIssuer = { ...M, emailIssuer: undefined } as Manifest;
     const out = await uidErase([...ARGV, '--yes', '--no-ledger'], deps({ loadManifest: () => noIssuer, issuerD1: async () => Promise.reject(new Error('no issuer')) }));
-    expect(out!.erased).toEqual({ directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userEvents: 6 });
+    expect(out!.erased).toEqual({ directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userEvents: 6, evmSponsorSends: 0 });
     expect((await ledgerCount(GOOGLE)).e).toBe(2);
     expect((await ledger.query('SELECT 1 FROM ops.erasures')).rows).toEqual([]);
     expect(lines.join('\n')).toMatch(/record the ticket and these counts in the support log by hand/u);
+  });
+});
+
+describe('uid-erase and the sponsored EVM sends (D848)', PGLITE, () => {
+  it('deletes the users’ evm_sponsor_sends rows by internal id and by their addresses; other users’ stay; none without migration 0022', async () => {
+    const root = await userOf(GOOGLE);
+    const evm = `0x${'a1'.repeat(20)}`;
+    const olivia = `0x${'d4'.repeat(20)}`;
+    api.prepare("INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?, 'evm', ?, 0, 1, 2)").run(root, evm);
+    const row = api.prepare("INSERT INTO evm_sponsor_sends (id, app_id, chain_id, account, user_id, digest, execute_nonce, reserved_wei, deadline, gas_limit, fee_cap_wei, l1_bound_wei, op_bound_wei, call_count, targets_json, with_setup, status, request_id, created_at, updated_at) VALUES (?, 'app_a', 84532, ?, ?, ?, '0', '1', 100, '1', '1', '0', '0', 1, '[]', 0, 'executed', 'rq', 1, 2)");
+    let k = 0;
+    const id = () => `es_${String(++k).padStart(32, '0')}`;
+    const digest = `0x${'ee'.repeat(32)}`;
+    row.run(id(), evm, root, digest);
+    // Written without a directory user (requireKnownAccount off), and an address the user's is reused under elsewhere.
+    row.run(id(), evm, null, digest);
+    row.run(id(), olivia, await userOf(OTHER), digest);
+    // The billing record of the user's transaction (D852): no personal data, kept through the erasure on purpose.
+    api.prepare("INSERT INTO evm_sponsor_billing (chain_id, record_key, send_id, org_id, app_id, environment, tx_hash, outcome, settled_wei, call_count, targets_json, with_setup, created_at, settled_at) VALUES (84532, ?, 'es_00000000000000000000000000000001', 'org_a', 'app_a', 'sandbox-dev', ?, 'executed', '5', 1, '[]', 0, 1, 2)").run(`0x${'ab'.repeat(32)}`, `0x${'ab'.repeat(32)}`);
+    const out = await uidErase([...ARGV, '--yes'], deps());
+    expect(out!.plan.sponsorSends).toBe(2);
+    expect(one(api, 'SELECT COUNT(*) AS n FROM evm_sponsor_billing')).toBe(1);
+    expect(lines.join('\n')).toMatch(/sponsored 2 sponsored EVM send audit row\(s\) deleted/u);
+    expect(lines.join('\n')).not.toContain(evm);
+    expect(out!.erased).toMatchObject({ evmSponsorSends: 2 });
+    expect((api.prepare('SELECT account FROM evm_sponsor_sends').all() as { account: string }[]).map((r) => r.account)).toEqual([olivia]);
+    api.exec('DROP TABLE evm_sponsor_sends');
+    const again = await uidErase([...ARGV, '--yes'], deps());
+    expect(again!.plan.sponsorSends).toBeNull();
+    expect(again!.erased).not.toHaveProperty('evmSponsorSends');
+    expect(lines.join('\n')).toMatch(/sponsored none: the API's D1 has no evm_sponsor_sends \(migration 0022 not applied\)/u);
   });
 });
 
@@ -373,7 +404,7 @@ describe('uid-erase and user_events (readiness 7.17)', PGLITE, () => {
     api.exec('DROP TABLE user_events');
     const out = await uidErase([...ARGV, '--yes'], deps());
     expect(out!.plan.events).toBeNull();
-    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, issuerApps: 2, issuerEmails: 1 });
+    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, evmSponsorSends: 0, issuerApps: 2, issuerEmails: 1 });
     expect(lines.join('\n')).toMatch(/events {4}none \(the API's D1 has no user_events: migration 0013 not applied\)/u);
   });
 });

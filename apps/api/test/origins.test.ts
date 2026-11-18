@@ -118,6 +118,11 @@ describe('Origin × x-hana-parent-origin matrix (appGate)', () => {
       // The NEAR relay (D735): the vault may call it; the SDK calls it from the partner's page.
       '/v1/near/relay': ['vault'],
       '/v1/near/activate': ['vault'],
+      // EVM gas sponsorship (D832, D847): prepare and send are the vault's only; the status is the partner page's too
+      // (evm-sponsor.test.ts covers them: unconfigured here, they answer 503 before the gate).
+      '/v1/evm/sponsor/prepare': ['vault'],
+      '/v1/evm/sponsor/send': ['vault'],
+      '/v1/evm/sponsor/status': ['vault'],
     });
   });
 

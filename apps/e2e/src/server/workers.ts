@@ -20,14 +20,20 @@ export function registerCloudflareModule(): void {
 }
 
 /**
- * A Durable Object's storage, in memory: the synchronous KV API, one alarm, deleteAll. Values are structured clones,
- * as workerd stores them, so an object can't change a stored value by mutating what it put or got.
+ * A Durable Object's storage, in memory: the synchronous KV API (list by prefix, end, limit and order), one alarm,
+ * transactionSync (all or nothing), sync, deleteAll. Values are structured clones, as workerd stores them, so an object
+ * can't change a stored value by mutating what it put or got.
+ *
+ * `soonAlarmMs`: an alarm asked for at most 15 s ahead fires after at most this long instead (the EVM relayer's run
+ * after a change, so a user's next action needn't wait for it); a later one keeps its time.
  */
 export class MemoryStorage {
-  private readonly data = new Map<string, unknown>();
+  private data = new Map<string, unknown>();
   private alarmTimer: ReturnType<typeof setTimeout> | null = null;
   /** Called when the alarm fires (the object's `alarm()`). */
   onAlarm: () => Promise<void> = async () => undefined;
+
+  constructor(private readonly soonAlarmMs: number | null = null) {}
 
   readonly kv = {
     get: <T>(key: string): T | undefined => (this.data.has(key) ? (structuredClone(this.data.get(key)) as T) : undefined),
@@ -35,13 +41,33 @@ export class MemoryStorage {
       this.data.set(key, structuredClone(value));
     },
     delete: (key: string): boolean => this.data.delete(key),
-    /** Entries in key order, optionally under a prefix (the email issuer's objects list theirs). */
-    list: <T>(options: { prefix?: string } = {}): Iterable<[string, T]> =>
-      [...this.data.keys()]
-        .filter((k) => options.prefix === undefined || k.startsWith(options.prefix))
-        .sort()
-        .map((k): [string, T] => [k, structuredClone(this.data.get(k)) as T]),
+    /** Entries in key order (or reversed), under a prefix, before `end`, at most `limit`. */
+    list: <T>(options: { prefix?: string; end?: string; limit?: number; reverse?: boolean } = {}): Iterable<[string, T]> => {
+      const keys = [...this.data.keys()]
+        .filter((k) => (options.prefix === undefined || k.startsWith(options.prefix)) && (options.end === undefined || k < options.end))
+        .sort();
+      if (options.reverse) keys.reverse();
+      return keys.slice(0, options.limit ?? keys.length).map((k): [string, T] => [k, structuredClone(this.data.get(k)) as T]);
+    },
   };
+
+  /** Runs `fn` against the storage; if it throws, every change it made is undone. */
+  transactionSync<T>(fn: () => T): T {
+    const before = new Map(this.data);
+    try {
+      return fn();
+    } catch (e) {
+      this.data = before;
+      throw e;
+    }
+  }
+
+  /** Writes are in memory already. */
+  async sync(): Promise<void> {}
+
+  async deleteAlarm(): Promise<void> {
+    this.clearAlarm();
+  }
   private alarmAt: number | null = null;
 
   async getAlarm(): Promise<number | null> {
@@ -51,7 +77,8 @@ export class MemoryStorage {
   async setAlarm(at: number | Date): Promise<void> {
     this.clearAlarm();
     this.alarmAt = Number(at);
-    const ms = Math.max(0, Number(at) - Date.now());
+    const asked = Math.max(0, Number(at) - Date.now());
+    const ms = this.soonAlarmMs !== null && asked <= 15_000 ? Math.min(asked, this.soonAlarmMs) : asked;
     this.alarmTimer = setTimeout(() => {
       this.alarmTimer = null;
       this.alarmAt = null;
@@ -86,6 +113,7 @@ export class MemoryNamespace<T extends object> {
   constructor(
     private readonly cls: DurableObjectClass<T>,
     private readonly env: () => unknown,
+    private readonly opts: { soonAlarmMs?: number } = {},
   ) {}
 
   idFromName(name: string): string {
@@ -95,7 +123,7 @@ export class MemoryNamespace<T extends object> {
   get(id: string): T {
     let obj = this.objects.get(id);
     if (!obj) {
-      const storage = new MemoryStorage();
+      const storage = new MemoryStorage(this.opts.soonAlarmMs ?? null);
       const created = new this.cls({ storage, id }, this.env());
       const alarm = (created as { alarm?: () => Promise<void> }).alarm;
       if (typeof alarm === 'function') storage.onAlarm = () => alarm.call(created);
@@ -109,7 +137,9 @@ export class MemoryNamespace<T extends object> {
 /**
  * RATE_LIMITER that always allows. The real windows are per IP, and every page in the suite is the same client: the
  * relay's 10 writes per minute would fail a parallel run. apps/api's own tests cover the limits, and the single-use
- * markers (`reserve`: the identity token's session proofs), which this always grants.
+ * markers (`reserve`: the identity token's and the sponsorship's session proofs, a sponsored batch's digest), which
+ * this always grants, and the amounts (`spend`: the sponsorship's budgets and slots), never short here; a nonce floor
+ * (`floor`) is always 0.
  */
 export const allowAllLimiter = {
   idFromName: (name: string): string => name,
@@ -120,6 +150,12 @@ export const allowAllLimiter = {
     unhitSliding: async () => undefined,
     reserve: async () => true,
     release: async () => undefined,
+    spend: async () => ({ ok: true as const, spent: '0' }),
+    spent: async () => '0',
+    giveBack: async () => undefined,
+    charge: async () => undefined,
+    floor: async () => '0',
+    raiseFloor: async () => undefined,
   }),
 };
 

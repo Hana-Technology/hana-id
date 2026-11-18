@@ -91,7 +91,9 @@ describe('parseEvmSponsorConfig', () => {
     const s = fixture();
     const local = parse({ ...s, chains: { '31337': { ...s.chains['84532'], opStack: false, rpc: 'http://127.0.0.1:8545', rpcFallback: undefined } }, apps: {} }, LOCAL);
     expect(local.status === 'configured' && sponsorChain(local.config, 31337)?.rpcFallback).toBeNull();
-    const off = parse(chain({ requireKnownAccount: false }));
+    // false only in local* envs (D836 as amended after the review).
+    expect(problem(chain({ requireKnownAccount: false }))).toBe('chains.84532.requireKnownAccount false is only for local* envs');
+    const off = parse(chain({ requireKnownAccount: false }), { ...SANDBOX, envName: 'local-dev' });
     expect(off.status === 'configured' && sponsorChain(off.config, 84532)?.requireKnownAccount).toBe(false);
   });
 

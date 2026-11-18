@@ -5,7 +5,8 @@
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { PAGES_DIR } from '../build.ts';
-import { API_URL, AUTH_ORIGIN, E2E_EVM_SPONSOR_VAR, ENV_NAME, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, VAULT_ORIGIN } from '../stack.ts';
+import { e2eRelayer } from '../relayer-key.ts';
+import { API_URL, AUTH_ORIGIN, ENV_NAME, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, VAULT_ORIGIN, e2eEvmSponsorVar } from '../stack.ts';
 import type { ApiModules, Fetcher } from './api-modules.ts';
 import type { D1Shim } from './d1.ts';
 import type { Handler } from './http.ts';
@@ -56,7 +57,7 @@ export interface PagesEnv {
   evmSponsor?: string;
 }
 
-const E2E_PAGES: PagesEnv = { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL, nearRpc: NEAR_RPC, nearRpcFallback: NEAR_RPC_FALLBACK, emailIssuerUrl: ISSUER_URL, evmSponsor: E2E_EVM_SPONSOR_VAR };
+const E2E_PAGES: PagesEnv = { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL, nearRpc: NEAR_RPC, nearRpcFallback: NEAR_RPC_FALLBACK, emailIssuerUrl: ISSUER_URL, evmSponsor: e2eEvmSponsorVar(e2eRelayer().address) };
 
 export function vaultHost(api: ApiModules, d1: D1Shim, pages: PagesEnv = E2E_PAGES): Handler {
   // EMAIL_ISSUER_URL: the vault page's connect-src names the issuer (the vault calls google-match, batch 8b).

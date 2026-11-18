@@ -362,7 +362,9 @@ export function evmSponsorProblems(m: { name: string; network: string; evm?: { s
       ['perAppPerDay', c.perAppPerDay, 'sendsPerDay', c.sendsPerDay],
     ];
     for (const [app, appValue, env, envValue] of pairs) if (appValue >= envValue) p(app, `(${appValue}) must be below ${env} (${envValue})`);
-    if (c.requireKnownAccount === false && m.network !== 'testnet') p('requireKnownAccount', 'false is testnet only (the relayer then pays for anyone holding a publishable key)');
+    // Off, anyone holding a publishable key could make the relayer pay from accounts they make up (D836, the review of
+    // 2026-11-17): local* envs only, as the Worker's parser rules too.
+    if (c.requireKnownAccount === false && (m.network !== 'testnet' || !isLocalEnv(m.name))) p('requireKnownAccount', 'false is only for local* envs (the relayer then pays for anyone holding a publishable key)');
     if (lower(c.delegate) === lower(s.relayerAddress)) p('delegate', 'must not be relayerAddress');
     delegates.add(lower(c.delegate));
   }

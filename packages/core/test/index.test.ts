@@ -45,7 +45,7 @@ describe('@hana-id/core', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
-  it('publishes the derivation, identity, Home, wallet record, Stellar signer, decode, policy, Support ID, mainnet demo, demo constants, demo prices, NEAR and EVM sponsor subpaths, and they exist', () => {
+  it('publishes the derivation, identity, Home, wallet record, Stellar signer, decode, policy, Support ID, mainnet demo, demo constants, demo prices, NEAR, EVM sponsor and sponsor session subpaths, and they exist', () => {
     expect(pkg.exports).toEqual({
       '.': './src/index.ts',
       './derivation': './src/derivation.ts',
@@ -61,6 +61,7 @@ describe('@hana-id/core', () => {
       './mainnet-demo-prices': './src/mainnet-demo-prices.ts',
       './near': './src/near/index.ts',
       './evm-sponsor': './src/evm-sponsor/index.ts',
+      './sponsor-session': './src/sponsor-session.ts',
     });
     for (const path of Object.values(pkg.exports)) expect(existsSync(new URL(`../${path}`, import.meta.url))).toBe(true);
   });
@@ -86,6 +87,13 @@ describe('@hana-id/core', () => {
     expect(reached.length).toBeGreaterThan(0);
     expect(reached.every((p) => p.startsWith('@noble/') || p.startsWith('@scure/'))).toBe(true);
     expect(reached.filter((p) => p.startsWith('viem'))).toEqual([]);
+  });
+
+  it('serves the sponsor session check on a subpath of its own for the API (the root entry also has it), on noble only', () => {
+    expect('checkEvmSponsorSessionProof' in core).toBe(true);
+    const reached = [...packagesReachedFrom(pkg.exports['./sponsor-session'] as string)];
+    expect(reached.length).toBeGreaterThan(0);
+    expect(reached.every((p) => p.startsWith('@noble/') || p.startsWith('@scure/'))).toBe(true);
   });
 
   it('drops no name of an `export *` module from the root entry (ambiguous star exports vanish silently)', async () => {

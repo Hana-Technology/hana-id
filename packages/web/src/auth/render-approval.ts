@@ -1,10 +1,19 @@
 // What the approval popup shows for a request (docs/batch-b-spec.md "Approval flow" step 4), rendered from the popup's
 // own decode of the request bytes (@hana-id/core/decode), never from a summary the vault sent. Every value is text;
 // strings the decoders flag as unsafe to show (control, bidi or invisible characters) are shown as hex.
-import { rawSigningWarning } from '@hana-id/core';
+//
+// The layout (D808–D812): a plain summary first (`summarizeApproval`: "{App} wants to …", its lines, the network and
+// the most the fee can be), then every warning and danger line, the page's notes, the facts a user decides on (the NEAR
+// leaving the account, a NEP-413 recipient, a message's text), and last the technical details in a native
+// `<details>` the user can always open ("Show details"). The details always start folded, raw signing included (the
+// founder's decision, D810): a request Journear can't explain states its risk in plain words above them instead.
+// Nothing a partner controls decides what is folded.
+import { isDisplaySafeLine } from '@hana-id/core';
+import { type ApprovalSummary, type SummaryText, type SummaryWarning, displayUnits, nearDisplay, summarizeApproval } from '@hana-id/core/decode';
 import {
   type AbiValue,
   type DecodedApproval,
+  type DecodedEvmCallSite,
   type DecodedEvmTx,
   type DecodedMessage,
   type DecodedStellarEnvelope,
@@ -62,6 +71,9 @@ function unixTime(s: string): string {
 }
 
 const mono = (d: Dom, text: string) => d.h('code', { class: 'mono' }, text);
+
+/** A network passphrase (a request may name any): as text when display-safe, else its UTF-8 bytes as hex. */
+const passphraseText = (d: Dom, p: string): HTMLElement => (isDisplaySafeLine(p) ? mono(d, p) : mono(d, `(shown as hex) ${toHex(new TextEncoder().encode(p))}`));
 
 /**
  * The facts of a request (D765, the confirm and sign pattern): the design system's key/value rows (`jp-kv`: the key in
@@ -172,30 +184,52 @@ const offer = (id: string, amount: string) => (id === '0' ? 'new offer' : amount
 export const ACCOUNT_CONTROL_BANNER =
   `Danger: this transaction changes who controls a Stellar account. Whoever gets control can take everything in it, and ${BRAND.product} can’t undo it. Approve only if you started this change yourself; an app should almost never need it.`;
 
-export function accountControlWarnings(op: StellarOperation): string[] {
-  const out: string[] = [];
+/**
+ * One account-control warning of an operation: its line, its bullet (D814), and whether the bullet says more than the
+ * step's own line and so always stays (`keep`): setting the account's own key to weight 0 locks the user out, which
+ * the line ("set your own key’s weight to 0") doesn't say, as NEAR's removal of the user's own key; and any threshold
+ * change may lock them out, which the request alone can't rule out.
+ */
+interface ControlItem {
+  readonly full: string;
+  readonly short: Child[];
+  readonly keep: boolean;
+}
+
+function accountControlItems(op: StellarOperation): ControlItem[] {
+  const out: ControlItem[] = [];
   for (const c of stellarAccountControl(op)) {
     if (c === 'merge' && op.type === 'accountMerge') {
-      out.push(`This closes the account and sends all of its XLM to ${op.destination}. It can’t be undone.`);
+      out.push({ full: `This closes the account and sends all of its XLM to ${op.destination}. It can’t be undone.`, short: ['Closes the account and sends all its XLM to ', op.destination], keep: false });
     } else if (op.type === 'setOptions') {
       if (c === 'signer' && op.signer) {
         out.push(
           op.signer.weight === 0
-            ? `This removes signer ${op.signer.key} from the account.`
-            : `This adds ${op.signer.key} as a signer with weight ${op.signer.weight}. Whoever holds that key can sign for the account and, with enough weight, move all its funds and lock you out.`,
+            ? { full: `This removes signer ${op.signer.key} from the account.`, short: ['Removes signer ', op.signer.key], keep: false }
+            : {
+                full: `This adds ${op.signer.key} as a signer with weight ${op.signer.weight}. Whoever holds that key can sign for the account and, with enough weight, move all its funds and lock you out.`,
+                short: ['Adds ', op.signer.key, ` as a signer (weight ${op.signer.weight})`],
+                keep: false,
+              },
         );
       } else if (c === 'thresholds') {
-        out.push('This changes the account’s signing thresholds, which decide which keys can move funds and change the account. Wrong values let other signers take over or lock you out for good.');
+        // Whether the new thresholds lock the user out depends on the account's signers and weights, which the request
+        // doesn't carry: the bullet says the risk the line doesn't, so it always stays.
+        out.push({ full: 'This changes the account’s signing thresholds, which decide which keys can move funds and change the account. Wrong values let other signers take over or lock you out for good.', short: ['Changes the signing thresholds: wrong values can lock you out of the account'], keep: true });
       } else if (c === 'master_weight') {
         out.push(
           op.masterWeight === 0
-            ? `This sets the weight of the account’s own key (your ${BRAND.product} key) to 0: it can no longer sign for the account, so you lose control of it.`
-            : `This sets the weight of the account’s own key (your ${BRAND.product} key) to ${op.masterWeight}, which changes what it can still do on the account.`,
+            ? { full: `This sets the weight of the account’s own key (your ${BRAND.product} key) to 0: it can no longer sign for the account, so you lose control of it.`, short: [`Sets your own ${BRAND.product} key’s weight to 0: you lose control of the account`], keep: true }
+            : { full: `This sets the weight of the account’s own key (your ${BRAND.product} key) to ${op.masterWeight}, which changes what it can still do on the account.`, short: [`Sets your own key’s weight to ${op.masterWeight}`], keep: false },
         );
       }
     }
   }
   return out;
+}
+
+export function accountControlWarnings(op: StellarOperation): string[] {
+  return accountControlItems(op).map((c) => c.full);
 }
 
 function classic(d: Dom, op: StellarOperation): Child[] {
@@ -266,7 +300,8 @@ function classic(d: Dom, op: StellarOperation): Child[] {
 }
 
 function operation(d: Dom, op: StellarOperation, index: number): HTMLElement {
-  const body: Child[] = accountControlWarnings(op).map((w) => dangerLine(d, 'danger takeover', undefined, w));
+  // Its account-control warnings are shown above the details (stellarAlerts); the frame marks the operation here.
+  const body: Child[] = [];
   switch (op.type) {
     case 'invokeHostFunction':
       body.push(hostFunction(d, op.hostFunction));
@@ -304,7 +339,7 @@ function stellarTx(d: Dom, passphrase: string, tx: StellarTransaction): HTMLElem
   const memoText = memo.type === 'none' ? 'none' : memo.type === 'text' ? (memo.value ?? `(shown as hex) ${memo.hex}`) : memo.type === 'id' ? memo.value : `${memo.type} ${memo.hex}`;
   return [
     facts(d, [
-      row(d, 'Network', passphrase),
+      row(d, 'Network', passphraseText(d, passphrase)),
       row(d, 'Source', mono(d, tx.source)),
       row(d, 'Sequence', mono(d, tx.sequence)),
       row(d, 'Maximum fee', stroops(tx.fee)),
@@ -313,7 +348,6 @@ function stellarTx(d: Dom, passphrase: string, tx: StellarTransaction): HTMLElem
       row(d, 'Memo', memoText),
       tx.soroban && row(d, 'Resource fee', stroops(tx.soroban.resourceFee)),
     ]),
-    tx.otherPreconditions ? warnLine(d, 'warn', 'This transaction has extra preconditions (sequence or signer rules).') : d.h('span'),
     d.h('h2', {}, tx.operations.length === 1 ? '1 operation' : `${tx.operations.length} operations`),
     d.h('ol', { class: 'ops' }, ...tx.operations.map((op, i) => operation(d, op, i))),
     tx.soroban && tx.soroban.readWrite.length > 0
@@ -322,15 +356,28 @@ function stellarTx(d: Dom, passphrase: string, tx: StellarTransaction): HTMLElem
   ];
 }
 
-function stellarEnvelope(d: Dom, passphrase: string, env: DecodedStellarEnvelope): HTMLElement[] {
-  const banner = env.tx.operations.some((op) => stellarAccountControl(op).length > 0) ? [dangerLine(d, 'danger takeover banner', { role: 'alert' }, ACCOUNT_CONTROL_BANNER)] : [];
-  return [...banner, ...envelopeBody(d, passphrase, env)];
+/**
+ * The Stellar transaction's notices, shown above the details: the account-control banner and each operation's warning
+ * (D110), extra preconditions, a fee-bump.
+ */
+function stellarAlerts(d: Dom, env: DecodedStellarEnvelope): Alerts {
+  const ops = env.tx.operations;
+  return {
+    banners: ops.some((op) => stellarAccountControl(op).length > 0) ? [risk(0, 'danger takeover banner', [ACCOUNT_CONTROL_BANNER], ['Changes who controls a Stellar account'])] : [],
+    // A bullet that says more than its step's line (the user's own key set to 0) stays even when that line is in view.
+    dangers: ops.flatMap((op, step) => accountControlItems(op).map((c) => ({ ...risk(0, 'danger takeover', [c.full], c.short), ...(c.keep ? {} : { step }) }))),
+    warnings: env.tx.otherPreconditions ? [risk(5, 'warn', ['This transaction has extra preconditions (sequence or signer rules).'], ['Has extra preconditions'])] : [],
+  };
+}
+
+/** The account-control warnings' bullet forms (D814), one per line of accountControlWarnings, in the same order. */
+export function accountControlShorts(op: StellarOperation): Child[][] {
+  return accountControlItems(op).map((c) => c.short);
 }
 
 function envelopeBody(d: Dom, passphrase: string, env: DecodedStellarEnvelope): HTMLElement[] {
   if (env.envelope === 'fee_bump') {
     return [
-      warnLine(d, 'warn', 'This is a fee-bump: it pays the fee for the transaction inside it.'),
       facts(d, [row(d, 'Fee paid by', mono(d, env.feeSource)), row(d, 'Fee-bump fee', stroops(env.fee))]),
       d.h('h2', {}, 'Inner transaction'),
       ...stellarTx(d, passphrase, env.tx),
@@ -360,21 +407,27 @@ function abiValue(d: Dom, v: AbiValue): HTMLElement {
   }
 }
 
+/** A call's data in the details: the function and its arguments, or the raw bytes of one Journear doesn't know. */
+function evmCallData(d: Dom, c: Pick<DecodedEvmCallSite, 'data' | 'selector' | 'call'>): HTMLElement[] {
+  if (c.call) {
+    return [
+      d.h('p', {}, 'Function ', d.h('strong', {}, c.call.signature), ' ', mono(d, c.call.selector)),
+      ...(c.call.args.length > 0 ? [d.h('ol', { class: 'args' }, ...c.call.args.map((a) => d.h('li', {}, abiValue(d, a))))] : []),
+    ];
+  }
+  // The summary says Journear doesn't know the function; the bytes are here.
+  if (c.data !== '0x') return [d.h('p', {}, c.selector ? `Unknown function ${c.selector}. Its raw data:` : 'Raw data:'), mono(d, c.data)];
+  return [];
+}
+
 function evmTx(d: Dom, chainId: number, tx: DecodedEvmTx): HTMLElement[] {
   const fees =
     tx.type === 'eip1559'
       ? [row(d, 'Max fee per gas', gwei(tx.maxFeePerGas)), row(d, 'Priority fee per gas', gwei(tx.maxPriorityFeePerGas))]
       : [row(d, 'Gas price', gwei(tx.gasPrice))];
   const data: Child[] = [];
-  if (tx.to === null) data.push(warnLine(d, 'warn', 'This creates a contract.'), d.h('details', {}, d.h('summary', {}, 'Code'), mono(d, tx.data)));
-  else if (tx.call) {
-    data.push(
-      d.h('p', {}, 'Function ', d.h('strong', {}, tx.call.signature), ' ', mono(d, tx.call.selector)),
-      tx.call.args.length > 0 ? d.h('ol', { class: 'args' }, ...tx.call.args.map((a) => d.h('li', {}, abiValue(d, a)))) : null,
-    );
-  } else if (tx.data !== '0x') {
-    data.push(warnLine(d, 'warn', tx.selector ? `Unknown function ${tx.selector}. Its raw data:` : 'Raw data:'), mono(d, tx.data));
-  }
+  if (tx.to === null) data.push(d.h('p', {}, 'Creates a contract from this code:'), mono(d, tx.data));
+  else data.push(...evmCallData(d, tx));
   return [
     facts(d, [
       row(d, 'Chain ID', String(chainId)),
@@ -387,6 +440,53 @@ function evmTx(d: Dom, chainId: number, tx: DecodedEvmTx): HTMLElement[] {
       tx.type === 'eip1559' && tx.accessList.length > 0 && row(d, 'Access list', `${tx.accessList.length} entries`),
     ]),
     ...(data.filter(Boolean) as HTMLElement[]),
+  ];
+}
+
+// ---- sponsored EVM actions (D831, D850) ----
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * A sponsored batch's deadline (unix seconds) in the user's own time: "14:05", with its date when it isn't today
+ * (`nowMs`), and the raw value. Out of the Date range: the raw value only.
+ */
+export function validUntil(deadline: bigint, nowMs?: number): string {
+  if (deadline > 8_640_000_000_000n) return `${deadline} (unix seconds)`;
+  const t = new Date(Number(deadline) * 1000);
+  const now = nowMs === undefined ? null : new Date(nowMs);
+  const today = now !== null && now.getFullYear() === t.getFullYear() && now.getMonth() === t.getMonth() && now.getDate() === t.getDate();
+  const day = today ? '' : ` on ${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`;
+  return `${pad2(t.getHours())}:${pad2(t.getMinutes())}${day} (your time; unix ${deadline})`;
+}
+
+/**
+ * A sponsored action's details: the request's own facts (chain, account, the account helper it uses or sets up, the
+ * relayer that pays, until when it can run, its nonce and gas floor), then every call as an EVM transaction's details
+ * show one. EIP-7702 is named only here, folded (D831).
+ */
+function sponsoredDetails(d: Dom, decoded: Extract<DecodedApproval, { kind: 'evm_sponsored' }>, nowMs: number | undefined): HTMLElement[] {
+  const s = decoded.subject;
+  const helper = `${BRAND.product} account helper v${decoded.helperVersion}`;
+  return [
+    d.h('h3', {}, `EVM action, network fee paid by ${BRAND.company}`),
+    facts(d, [
+      row(d, 'Chain ID', String(decoded.chainId)),
+      row(d, 'From', mono(d, s.account)),
+      s.authNonce !== null
+        ? row(d, 'Account setup (EIP-7702)', 'account helper ', mono(d, s.delegate), ` ✓ ${helper}, chain ${decoded.chainId}, account nonce ${s.authNonce}`)
+        : row(d, 'Account helper (EIP-7702)', mono(d, s.delegate), ` ✓ ${helper} (no setup in this approval)`),
+      row(d, 'Paid by', `${BRAND.company}’s relayer `, mono(d, s.relayer)),
+      row(d, 'Valid until', validUntil(s.deadline, nowMs)),
+      row(d, 'Action nonce', String(s.executeNonce)),
+      row(d, 'Gas floor', `${s.minGas} gas`),
+    ]),
+    d.h('h2', {}, decoded.calls.length === 1 ? '1 call' : `${decoded.calls.length} calls`),
+    d.h(
+      'ol',
+      { class: 'ops' },
+      ...decoded.calls.map((c, i) => d.h('li', { class: 'op' }, d.h('h3', {}, `${i + 1}. Call`), facts(d, [row(d, 'To', mono(d, c.to)), row(d, 'Value', wei(c.value))]), ...evmCallData(d, c))),
+    ),
   ];
 }
 
@@ -455,7 +555,7 @@ export function nearCostWarnings(a: NearAction, receiver: string, me: string): s
     case 'functionCall':
       return receiver === me ? ['This calls a contract on your own account. A contract there runs with your account’s full authority: it can move everything in it.'] : [];
     case 'deployGlobalContract':
-      return [`This publishes a global contract and burns ${formatNear(nearGlobalContractBurn(a.code.length))} from ${receiver === me ? 'your account' : receiver} (0.0001 NEAR per byte of code). Burnt NEAR is gone for good.`];
+      return [`This publishes a global contract and burns ${nearDisplay(nearGlobalContractBurn(a.code.length))} from ${receiver === me ? 'your account' : receiver} (0.0001 NEAR per byte of code). Burnt NEAR is gone for good.`];
     default:
       return [];
   }
@@ -486,17 +586,27 @@ export function markOverflowing(root: ParentNode): void {
  */
 export function watchOverflowing(root: ParentNode, win: { ResizeObserver?: typeof ResizeObserver; addEventListener(t: 'resize', l: () => void): void; removeEventListener(t: 'resize', l: () => void): void }): () => void {
   markOverflowing(root);
+  // A box inside closed details measures zero: measure again whenever the details open or close (D808). `toggle`
+  // doesn't bubble, so it is caught on the way down.
+  const onToggle = () => markOverflowing(root);
+  root.addEventListener('toggle', onToggle, true);
   const RO = win.ResizeObserver;
   if (typeof RO === 'function') {
     const ro = new RO((entries) => {
       for (const e of entries) markOne(e.target as HTMLElement);
     });
     for (const box of Array.from(root.querySelectorAll<HTMLElement>('pre.message'))) ro.observe(box);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      root.removeEventListener('toggle', onToggle, true);
+    };
   }
   const onResize = () => markOverflowing(root);
   win.addEventListener('resize', onResize);
-  return () => win.removeEventListener('resize', onResize);
+  return () => {
+    win.removeEventListener('resize', onResize);
+    root.removeEventListener('toggle', onToggle, true);
+  };
 }
 
 function markOne(box: HTMLElement): void {
@@ -596,17 +706,47 @@ function nearActionList(d: Dom, actions: readonly NearAction[], receiver: string
       'ol',
       { class: 'ops' },
       ...actions.map((a, i) => {
-        const warnings = nested ? [] : [...nearControlWarnings(a, receiver, me), ...nearCostWarnings(a, receiver, me)];
+        // Its warnings are shown above the details (nearAlerts); the frame marks the action here.
+        const warned = !nested && nearControlWarnings(a, receiver, me).length + nearCostWarnings(a, receiver, me).length > 0;
         return d.h(
           'li',
-          { class: warnings.length > 0 ? 'op takeover-op' : 'op' },
+          { class: warned ? 'op takeover-op' : 'op' },
           d.h('h3', {}, `${i + 1}. ${NEAR_ACTION_NAMES[a.type]}`),
-          ...warnings.map((w) => dangerLine(d, 'danger takeover', undefined, w)),
           ...nearActionBody(d, a, receiver, me, nested),
         );
       }),
     ),
   );
+}
+
+/** The bullet form of an action's control warning (D814). */
+/** Whether an action removes the user's own Journear Passport key from their account. */
+function ownKeyRemoval(a: NearAction, receiver: string, me: string): boolean {
+  return a.type === 'deleteKey' && receiver === me && a.publicKey.type === 'ed25519' && toHex(a.publicKey.bytes) === me;
+}
+
+function nearControlShort(a: NearAction, receiver: string, me: string): Child[] {
+  const where = receiver === me ? 'your account' : receiver;
+  switch (a.type) {
+    case 'addKey':
+      return a.accessKey.permission.type === 'fullAccess' ? ['Adds a full-access key (', nearKeyText(a.publicKey), ')'] : ['Adds a key (', nearKeyText(a.publicKey), ') that can use ', a.accessKey.permission.receiverId];
+    case 'deleteKey':
+      return ownKeyRemoval(a, receiver, me) ? [`Removes your ${BRAND.product} key`] : ['Removes key ', nearKeyText(a.publicKey)];
+    case 'deleteAccount':
+      return [`Deletes ${where} and sends all its NEAR to `, a.beneficiaryId];
+    case 'deployContract':
+      return [`Deploys a contract to ${where}`];
+    case 'useGlobalContract':
+      return [`Sets ${where}’s contract`];
+    default:
+      return [];
+  }
+}
+
+/** The bullet form of an action's cost warning (D814). */
+function nearCostShort(a: NearAction, receiver: string, me: string): Child[] {
+  if (a.type === 'deployGlobalContract') return [`Burns ${nearDisplay(nearGlobalContractBurn(a.code.length))}`];
+  return receiver === me ? ['Calls a contract on your own account'] : [];
 }
 
 /** The NEAR leaving the account: deposits (and stake), and whether a DeleteAccount sends everything. */
@@ -622,12 +762,12 @@ function nearTotal(d: Dom, actions: readonly NearAction[], receiver: string, me:
     row(
       d,
       'NEAR leaving your account',
-      t.deletesAccount ? d.h('strong', { class: 'danger' }, 'All of it (the account is deleted)') : own ? d.h('strong', { class: 'danger' }, NEAR_OWN_CONTRACT_TOTAL) : d.h('strong', {}, formatNear(leaving)),
+      t.deletesAccount ? d.h('strong', { class: 'danger' }, 'All of it (the account is deleted)') : own ? d.h('strong', { class: 'danger' }, NEAR_OWN_CONTRACT_TOTAL) : d.h('strong', {}, nearDisplay(leaving)),
       ' (plus the network fee for gas)',
     ),
-    own && leaving > 0n && row(d, 'NEAR attached or sent', formatNear(leaving)),
-    t.burned > 0n && row(d, 'NEAR burnt', d.h('strong', { class: 'danger' }, formatNear(t.burned)), ' (publishing a global contract)'),
-    t.staked > 0n && row(d, 'NEAR staked (locked)', formatNear(t.staked)),
+    own && leaving > 0n && row(d, 'NEAR attached or sent', nearDisplay(leaving)),
+    t.burned > 0n && row(d, 'NEAR burnt', d.h('strong', { class: 'danger' }, nearDisplay(t.burned)), ' (publishing a global contract)'),
+    t.staked > 0n && row(d, 'NEAR staked (locked)', nearDisplay(t.staked)),
   ]);
 }
 
@@ -648,13 +788,13 @@ function nearDelegateTotal(d: Dom, actions: readonly NearAction[], receiver: str
     : own
       ? d.h('strong', { class: 'danger' }, NEAR_OWN_CONTRACT_TOTAL)
       : t.burned > 0n
-        ? d.h('strong', {}, formatNear(t.burned))
+        ? d.h('strong', {}, nearDisplay(t.burned))
         : d.h('strong', {}, NEAR_DELEGATE_NONE);
   return facts(d, [
     row(d, 'NEAR leaving your account', leaving),
-    t.total > 0n && row(d, 'NEAR this sends, paid by the relayer', formatNear(t.total)),
-    t.burned > 0n && row(d, 'NEAR burnt', d.h('strong', { class: 'danger' }, formatNear(t.burned)), ' (publishing a global contract)'),
-    t.staked > 0n && row(d, 'NEAR staked (locked)', formatNear(t.staked)),
+    t.total > 0n && row(d, 'NEAR this sends, paid by the relayer', nearDisplay(t.total)),
+    t.burned > 0n && row(d, 'NEAR burnt', d.h('strong', { class: 'danger' }, nearDisplay(t.burned)), ' (publishing a global contract)'),
+    t.staked > 0n && row(d, 'NEAR staked (locked)', nearDisplay(t.staked)),
   ]);
 }
 
@@ -682,43 +822,61 @@ export function nearNetworkLine(kind: 'near_tx' | 'near_delegate', network: 'tes
   return `${name}, as the app says: ${BRAND.company} can’t check this`;
 }
 
-function nearBanner(d: Dom, actions: readonly NearAction[], receiver: string, me: string): HTMLElement[] {
-  return nearChangesControl(actions, receiver, me) ? [dangerLine(d, 'danger takeover banner', { role: 'alert' }, NEAR_ACCOUNT_CONTROL_BANNER)] : [];
+/** A NEAR request's notices, shown above the details: the account-control banner and each action's red line (D723). */
+function nearAlerts(d: Dom, actions: readonly NearAction[], receiver: string, me: string): Alerts {
+  return {
+    banners: nearChangesControl(actions, receiver, me) ? [risk(0, 'danger takeover banner', [NEAR_ACCOUNT_CONTROL_BANNER], ['Changes who controls a NEAR account'])] : [],
+    dangers: actions.flatMap((a, i) => {
+      // Removing the user's own Journear Passport key: the line names the key but not whose it is, so the bullet stays.
+      const step = ownKeyRemoval(a, receiver, me) ? undefined : i;
+      return [
+        ...nearControlWarnings(a, receiver, me).map((w) => ({ ...risk(0, 'danger takeover', [w], nearControlShort(a, receiver, me)), step })),
+        ...nearCostWarnings(a, receiver, me).map((w) => risk(3, 'danger takeover', [w], nearCostShort(a, receiver, me))),
+      ];
+    }),
+    warnings: [],
+  };
 }
 
-function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>, ctx: NearRenderContext): HTMLElement[] {
+function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>, ctx: NearRenderContext): Parts {
   const tx = decoded.tx;
-  return [
-    ...nearBanner(d, tx.actions, tx.receiverId, tx.signerId),
-    facts(d, [
-      row(d, 'Network', nearNetworkLine('near_tx', decoded.network, ctx)),
-      row(d, 'From', mono(d, tx.signerId)),
-      row(d, 'To', mono(d, tx.receiverId)),
-      row(d, 'Nonce', mono(d, String(tx.nonce))),
-      row(d, 'Block hash', mono(d, nearHash58(tx.blockHash))),
-      row(d, 'Transaction hash', mono(d, decoded.hash)),
-    ]),
-    nearTotal(d, tx.actions, tx.receiverId, tx.signerId),
-    nearActionList(d, tx.actions, tx.receiverId, tx.signerId, false),
-  ];
+  return {
+    alerts: nearAlerts(d, tx.actions, tx.receiverId, tx.signerId),
+    network: nearNetworkLine('near_tx', decoded.network, ctx),
+    visible: [nearTotal(d, tx.actions, tx.receiverId, tx.signerId)],
+    details: [
+      d.h('h3', {}, 'NEAR transaction'),
+      facts(d, [
+        row(d, 'Network', nearNetworkLine('near_tx', decoded.network, ctx)),
+        row(d, 'From', mono(d, tx.signerId)),
+        row(d, 'To', mono(d, tx.receiverId)),
+        row(d, 'Nonce', mono(d, String(tx.nonce))),
+        row(d, 'Block hash', mono(d, nearHash58(tx.blockHash))),
+        row(d, 'Transaction hash', mono(d, decoded.hash)),
+      ]),
+      nearActionList(d, tx.actions, tx.receiverId, tx.signerId, false),
+    ],
+  };
 }
 
-function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>, ctx: NearRenderContext): HTMLElement[] {
+function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>, ctx: NearRenderContext): Parts {
   const da = decoded.delegate;
-  return [
-    ...nearBanner(d, da.actions, da.receiverId, da.senderId),
-    noteLine(d, 'note', NEAR_DELEGATE_NOTES.relayer),
-    noteLine(d, 'note', NEAR_DELEGATE_NOTES.network),
-    facts(d, [
-      row(d, 'Network', nearNetworkLine('near_delegate', decoded.network, ctx)),
-      row(d, 'From', mono(d, da.senderId)),
-      row(d, 'To', mono(d, da.receiverId)),
-      row(d, 'Valid until block', String(da.maxBlockHeight)),
-      row(d, 'Nonce', mono(d, String(da.nonce))),
-    ]),
-    nearDelegateTotal(d, da.actions, da.receiverId, da.senderId),
-    nearActionList(d, da.actions, da.receiverId, da.senderId, false),
-  ];
+  return {
+    alerts: nearAlerts(d, da.actions, da.receiverId, da.senderId),
+    network: nearNetworkLine('near_delegate', decoded.network, ctx),
+    visible: [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId), noteLine(d, 'note', NEAR_DELEGATE_NOTES.relayer), noteLine(d, 'note', NEAR_DELEGATE_NOTES.network)],
+    details: [
+      d.h('h3', {}, 'NEAR transaction, fee paid by a relayer'),
+      facts(d, [
+        row(d, 'Network', nearNetworkLine('near_delegate', decoded.network, ctx)),
+        row(d, 'From', mono(d, da.senderId)),
+        row(d, 'To', mono(d, da.receiverId)),
+        row(d, 'Valid until block', String(da.maxBlockHeight)),
+        row(d, 'Nonce', mono(d, String(da.nonce))),
+      ]),
+      nearActionList(d, da.actions, da.receiverId, da.senderId, false),
+    ],
+  };
 }
 
 /** The page's host (`https://app.example:8443` → `app.example`), or null for a value that isn't an origin. */
@@ -740,24 +898,28 @@ export const nearRecipientLookalike = (escaped: string): string => `The recipien
 
 const asciiEscaped = (s: string): string => Array.from(s, (ch) => (/^[\x20-\x7e]$/u.test(ch) ? ch : Array.from({ length: ch.length }, (_, i) => `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`).join(''))).join('');
 
-function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: NearRenderContext): HTMLElement[] {
+function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: NearRenderContext): Parts {
   const p = decoded.payload;
   const host = originHost(ctx.parentOrigin);
   const sameSite = host !== null && (p.recipient === host || p.recipient === ctx.parentOrigin);
   const lookalike = /[^\x20-\x7e]/u.test(p.recipient);
-  return [
-    warnLine(d, 'warn', nearMessageWarning(p.recipient)),
-    // Any recipient that isn't exactly this page's host or origin, whatever its shape (a page picks the recipient, so no
-    // shape may soften this): one factual line in the warning style.
-    host !== null && !sameSite ? warnLine(d, 'warn recipient-mismatch', nearRecipientMismatch(p.recipient, host)) : null,
-    lookalike ? dangerLine(d, 'danger', undefined, nearRecipientLookalike(asciiEscaped(p.recipient))) : null,
-    facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl)), row(d, 'Nonce', mono(d, toHex(p.nonce)))]),
-    noteLine(d, 'note', NO_NETWORK_NOTE),
-    ...message(d, decoded.message),
-  ].filter((x): x is HTMLElement => x !== null);
+  return {
+    alerts: {
+      banners: [],
+      dangers: lookalike ? [risk(5, 'danger lookalike', [nearRecipientLookalike(asciiEscaped(p.recipient))], ['The recipient has characters that imitate another name'])] : [],
+      warnings: [
+        risk(4, 'warn nep413', [nearMessageWarning(p.recipient)], ['Proves to ', p.recipient, ' that you control this account']),
+        // Any recipient that isn't exactly this page's host or origin, whatever its shape (a page picks the recipient, so
+        // no shape may soften this): one factual line in the warning style.
+        ...(host !== null && !sameSite ? [risk(3, 'warn recipient-mismatch', [nearRecipientMismatch(p.recipient, host)], ['For ', p.recipient, ', not this app’s ', host])] : []),
+      ],
+    },
+    network: null,
+    visible: [facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl))]), noteLine(d, 'note', NO_NETWORK_NOTE), ...message(d, decoded.message)],
+    details: [d.h('h3', {}, 'Sign in with your NEAR account'), facts(d, [row(d, 'Recipient', mono(d, p.recipient)), row(d, 'Nonce', mono(d, toHex(p.nonce)))])],
+  };
 }
 
-const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM chains' } as const;
 
 /**
  * Shown on message and raw requests: their approval binds no network (an empty context in the approval digest; user
@@ -783,22 +945,22 @@ export function amountHeadline(decoded: DecodedApproval): AmountHeadline | null 
     case 'evm_tx': {
       const { tx } = decoded;
       const info = evmChainInfo(decoded.chainId);
-      return tx.to !== null && tx.data === '0x' && info ? { value: formatUnits(tx.value, 18), unit: info.nativeSymbol } : null;
+      return tx.to !== null && tx.data === '0x' && info ? { value: displayUnits(tx.value, 18), unit: info.nativeSymbol } : null;
     }
     case 'stellar_tx': {
       const ops = decoded.envelope.tx.operations;
       const op = ops.length === 1 ? ops[0] : undefined;
       if (!op || op.source) return null;
-      if (op.type === 'createAccount') return { value: formatUnits(op.startingBalance, 7), unit: 'XLM' };
+      if (op.type === 'createAccount') return { value: displayUnits(BigInt(op.startingBalance), 7), unit: 'XLM' };
       // Native XLM only. A credit asset's code is chosen by its issuer, so any account can issue "USDC" or even
       // "XLM": a bare code in the headline would vouch for an asset the popup can't verify. The rows show it in full,
       // code and issuer, as before.
-      return op.type === 'payment' && op.asset === 'native' ? { value: formatUnits(op.amount, 7), unit: 'XLM' } : null;
+      return op.type === 'payment' && op.asset === 'native' ? { value: displayUnits(BigInt(op.amount), 7), unit: 'XLM' } : null;
     }
     case 'near_tx': {
       const actions = decoded.tx.actions;
       if (actions.length === 0 || !actions.every((a) => a.type === 'transfer')) return null;
-      return { value: formatNear(nearDeposits(actions).total).replace(/ NEAR$/u, ''), unit: 'NEAR' };
+      return { value: displayUnits(nearDeposits(actions).total, 24), unit: 'NEAR' };
     }
     default:
       return null;
@@ -810,64 +972,212 @@ function amountView(d: Dom, a: AmountHeadline): HTMLElement {
   return d.h('div', { class: 'headline' }, d.h('p', { class: 'headline-label' }, 'Sends'), d.h('p', { class: 'amt amount' }, d.h('span', { class: 'amt-value' }, a.value), d.h('small', {}, a.unit)));
 }
 
-/** The body of the approval screen for a decoded request. */
-export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
-  const parts: HTMLElement[] = [];
-  switch (decoded.kind) {
-    case 'stellar_tx':
-      parts.push(d.h('h2', {}, 'Stellar transaction'), ...stellarEnvelope(d, decoded.networkPassphrase, decoded.envelope));
-      break;
-    case 'stellar_auth_entry':
-      parts.push(
-        d.h('h2', {}, 'Stellar authorization'),
-        facts(d, [
-          row(d, 'Network', decoded.networkPassphrase),
-          row(d, 'Network ID', mono(d, decoded.preimage.networkId)),
-          row(d, 'Nonce', mono(d, decoded.preimage.nonce)),
-          row(d, 'Valid until ledger', String(decoded.preimage.signatureExpirationLedger)),
-        ]),
-        invocation(d, decoded.preimage.invocation),
-      );
-      break;
-    case 'stellar_message':
-      parts.push(d.h('h2', {}, 'Sign a Stellar message'), noteLine(d, 'note', NO_NETWORK_NOTE), ...message(d, decoded.message));
-      break;
-    case 'personal_sign':
-      parts.push(d.h('h2', {}, 'Sign a message'), noteLine(d, 'note', NO_NETWORK_NOTE), ...message(d, decoded.message));
-      break;
-    case 'evm_tx':
-      parts.push(d.h('h2', {}, 'EVM transaction'), ...evmTx(d, decoded.chainId, decoded.tx));
-      break;
-    case 'eip712':
-      parts.push(
-        d.h('h2', {}, 'Sign typed data'),
-        decoded.chainId === null ? warnLine(d, 'warn', 'This signature names no chain: it may be valid on any chain.') : d.h('p', {}, `Chain ID ${decoded.chainId}`),
-        d.h('h3', {}, 'Domain'),
-        d.h('ul', { class: 'tree' }, ...decoded.view.domain.map((n) => typedNode(d, n))),
-        d.h('h3', {}, decoded.view.primaryType),
-        d.h('ul', { class: 'tree' }, typedNode(d, decoded.view.message)),
-      );
-      break;
-    case 'raw':
-      parts.push(
-        d.h('h2', {}, 'Raw signature'),
-        dangerLine(d, 'danger', undefined, rawSigningWarning(CHAIN_NAMES[decoded.chain], appName)),
-        noteLine(d, 'note', NO_NETWORK_NOTE),
-        mono(d, decoded.hex),
-      );
-      break;
-    case 'near_tx':
-      parts.push(d.h('h2', {}, 'NEAR transaction'), ...nearTx(d, decoded, near));
-      break;
-    case 'near_delegate':
-      parts.push(d.h('h2', {}, 'NEAR transaction, fee paid by a relayer'), ...nearDelegate(d, decoded, near));
-      break;
-    case 'near_message':
-      parts.push(d.h('h2', {}, 'Sign in with your NEAR account'), ...nearMessage(d, decoded, near));
-      break;
+/**
+ * One notice of a request (D814): its rank in its box (0 the most serious), the page's classes for it, its full text
+ * (the box's lead) and its bullet (one short line, when another item leads).
+ */
+interface RiskItem {
+  readonly rank: number;
+  readonly cls: string;
+  readonly full: readonly Child[];
+  readonly short: readonly Child[];
+  /** For a control change's line: its step (operation or action index), dropped when that step's own line is in view. */
+  readonly step?: number;
+}
+
+const risk = (rank: number, cls: string, full: readonly Child[], short: readonly Child[]): RiskItem => ({ rank, cls, full, short: short.length > 0 ? short : full });
+
+/** The notices of a request: banners, red lines, amber lines. */
+interface Alerts {
+  readonly banners: readonly RiskItem[];
+  readonly dangers: readonly RiskItem[];
+  readonly warnings: readonly RiskItem[];
+}
+
+/** One request kind's screen: its notices, its network line (NEAR's, D726), what stays visible and what folds. */
+interface Parts {
+  readonly alerts: Alerts;
+  readonly network: string | null;
+  readonly visible: readonly HTMLElement[];
+  readonly details: readonly HTMLElement[];
+}
+
+const NO_ALERTS: Alerts = { banners: [], dangers: [], warnings: [] };
+
+/** A summary text as nodes: the app's name in bold (bidi-isolated by the page's CSS), codes in mono, all text. */
+function summaryNodes(d: Dom, t: SummaryText, appName: string): Child[] {
+  return t.map((p) => (typeof p === 'string' ? p : p.kind === 'app' ? d.h('strong', { class: 'app-name' }, appName) : p.kind === 'code' ? mono(d, p.text) : d.h('strong', {}, p.text)));
+}
+
+/** Ranks in the boxes (D814): control, unreadable, unlimited spend, own-contract or burn, left-out steps, the rest. */
+const RED_RANK: Partial<Record<SummaryWarning['code'], number>> = { raw_signing: 1, cannot_explain: 1, summary_failed: 1, unlimited_spend: 2, collection_operator: 2, permit_lookalike: 2, steps_not_listed: 4 };
+const AMBER_RANK: Partial<Record<SummaryWarning['code'], number>> = { cannot_explain: 1, contract_creation: 1, steps_not_listed: 2, spend_permission: 3, may_move_tokens: 3, sign_in_mismatch: 4, account_setup: 4 };
+
+/** A warning of the summary as a box item, classes keyed on its code. */
+function summaryItem(d: Dom, w: SummaryWarning, appName: string): RiskItem {
+  const cls = `summary-warning ${w.code.replace(/_/gu, '-')} ${w.level === 'danger' ? 'danger takeover' : 'warn'}`;
+  const rank = (w.level === 'danger' ? RED_RANK : AMBER_RANK)[w.code] ?? 5;
+  return risk(rank, cls, summaryNodes(d, w.text, appName), w.short ? summaryNodes(d, w.short, appName) : []);
+}
+
+/**
+ * At most one box per colour (D814): the most serious item in full, then every other item as one short bullet, the
+ * same bullet said once with its count. No item is dropped. Red boxes are announced (role alert).
+ */
+function riskBox(d: Dom, tone: 'danger' | 'warning', items: readonly RiskItem[]): HTMLElement | null {
+  if (items.length === 0) return null;
+  const sorted = items.map((x, i) => ({ x, i })).sort((a, b) => a.x.rank - b.x.rank || a.i - b.i).map((e) => e.x);
+  const [lead, ...rest] = sorted as [RiskItem, ...RiskItem[]];
+  const bullets: { item: RiskItem; key: string; count: number }[] = [];
+  for (const item of rest) {
+    // Merged only when their FULL texts are the same: two items whose bullets read alike stay two bullets.
+    const key = d.h('span', {}, ...item.full.map((c) => (c instanceof Node ? c.cloneNode(true) : c))).textContent ?? '';
+    const same = bullets.find((b) => b.key === key);
+    if (same) same.count++;
+    else bullets.push({ item, key, count: 1 });
   }
-  // The amount first (the confirm and sign pattern), right under the request's kind, where there is one to show.
+  return alert(
+    d,
+    tone,
+    { tag: 'div', class: `risk-box ${tone === 'danger' ? 'danger-box' : 'warning-box'}`, ...(tone === 'danger' ? { attrs: { role: 'alert' } } : {}) },
+    d.h('p', { class: `risk-lead ${lead.cls}` }, ...lead.full),
+    bullets.length > 0 ? d.h('ul', { class: 'risk-more' }, ...bullets.map((b) => d.h('li', { class: b.item.cls }, ...b.item.short, b.count > 1 ? ` (${b.count} times)` : ''))) : null,
+  );
+}
+
+/** The words on the details' toggle. */
+export const DETAILS_LABELS = { show: 'Show details', hide: 'Hide details' } as const;
+
+/**
+ * The technical details: a native `<details>` the user opens and closes (keyboard and screen readers get its
+ * expanded state from the browser). Always folded at first, for every request, raw signing included (the founder's
+ * decision, D810): the risks are stated in plain words above it. Nothing a partner controls changes that, and the user
+ * can always open it. Opening or closing it never touches the Approve guard: it is ordinary content.
+ */
+function detailsSection(d: Dom, body: readonly Child[]): HTMLElement {
+  const label = d.h('span', { class: 'details-label' }, DETAILS_LABELS.show);
+  const el = d.h('details', { class: 'request-details' }, d.h('summary', { class: 'details-toggle' }, label), d.h('div', { class: 'details-body' }, ...body));
+  el.addEventListener('toggle', () => {
+    label.textContent = el.open ? DETAILS_LABELS.hide : DETAILS_LABELS.show;
+  });
+  return el;
+}
+
+/** Everything the popup knows besides the request: the network context (D726), the user's address, the page's notes. */
+export interface ApprovalRenderContext extends NearRenderContext {
+  /** The user's address on the request's chain (the vault's), so the summary can say "your account". */
+  readonly address?: string;
+  /** The page's own notices (the test-app note or the mainnet demo's banner, the out-of-policy line): after the request's. */
+  readonly notes?: readonly (HTMLElement | null)[];
+  /** First in the details (the Support ID). */
+  readonly detailsExtra?: readonly (HTMLElement | null)[];
+  /** The page's clock (ms): a sponsored action's "Valid until" names its date when it isn't today. */
+  readonly nowMs?: number;
+}
+
+function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext, nowMs?: number): Parts {
+  switch (decoded.kind) {
+    case 'stellar_tx': {
+      const memo = decoded.envelope.tx.memo;
+      return {
+        alerts: stellarAlerts(d, decoded.envelope),
+        network: null,
+        // A memo is how an exchange or a payee tells deposits apart: changing it can send funds to someone else's credit.
+        visible: memo.type === 'none' ? [] : [facts(d, [row(d, 'Memo', memo.type === 'text' ? (memo.value === null ? mono(d, `(shown as hex) ${memo.hex}`) : mono(d, memo.value)) : mono(d, memo.type === 'id' ? memo.value : `${memo.type} ${memo.hex}`))])],
+        details: [d.h('h3', {}, 'Stellar transaction'), ...envelopeBody(d, decoded.networkPassphrase, decoded.envelope)],
+      };
+    }
+    case 'stellar_auth_entry':
+      return {
+        alerts: NO_ALERTS,
+        network: null,
+        visible: [],
+        details: [
+          d.h('h3', {}, 'Stellar authorization'),
+          facts(d, [
+            row(d, 'Network', passphraseText(d, decoded.networkPassphrase)),
+            row(d, 'Network ID', mono(d, decoded.preimage.networkId)),
+            row(d, 'Nonce', mono(d, decoded.preimage.nonce)),
+            row(d, 'Valid until ledger', String(decoded.preimage.signatureExpirationLedger)),
+          ]),
+          invocation(d, decoded.preimage.invocation),
+        ],
+      };
+    case 'stellar_message':
+    case 'personal_sign':
+      return {
+        alerts: NO_ALERTS,
+        network: null,
+        visible: [noteLine(d, 'note', NO_NETWORK_NOTE), ...message(d, decoded.message)],
+        details: [d.h('h3', {}, decoded.kind === 'personal_sign' ? 'Sign a message' : 'Sign a Stellar message'), facts(d, [row(d, 'Size', `${decoded.message.length} bytes`)]), d.h('p', {}, 'The message’s bytes:'), mono(d, decoded.message.hex)],
+      };
+    case 'evm_tx':
+      return { alerts: NO_ALERTS, network: null, visible: [], details: [d.h('h3', {}, 'EVM transaction'), ...evmTx(d, decoded.chainId, decoded.tx)] };
+    case 'evm_sponsored':
+      // Every risk line is the summary's: the same per-call warnings as an EVM transaction's, and the setup note.
+      return { alerts: NO_ALERTS, network: null, visible: [], details: sponsoredDetails(d, decoded, nowMs) };
+    case 'eip712':
+      return {
+        alerts: { banners: [], dangers: [], warnings: decoded.chainId === null ? [risk(5, 'warn no-chain', [TYPED_DATA_NO_CHAIN], ['Isn’t tied to one chain'])] : [] },
+        network: null,
+        visible: [],
+        details: [
+          d.h('h3', {}, 'Sign typed data'),
+          decoded.chainId === null ? d.h('p', {}, 'No chain ID') : d.h('p', {}, `Chain ID ${decoded.chainId}`),
+          d.h('h3', {}, 'Domain'),
+          d.h('ul', { class: 'tree' }, ...decoded.view.domain.map((n) => typedNode(d, n))),
+          d.h('h3', {}, decoded.view.primaryType),
+          d.h('ul', { class: 'tree' }, typedNode(d, decoded.view.message)),
+        ],
+      };
+    case 'raw':
+      return {
+        // The red risk line is the summary's (raw_signing).
+        alerts: NO_ALERTS,
+        network: null,
+        visible: [noteLine(d, 'note', NO_NETWORK_NOTE)],
+        details: [d.h('h3', {}, 'Raw signature'), mono(d, decoded.hex)],
+      };
+    case 'near_tx':
+      return nearTx(d, decoded, near);
+    case 'near_delegate':
+      return nearDelegate(d, decoded, near);
+    case 'near_message':
+      return nearMessage(d, decoded, near);
+  }
+}
+
+/** Typed data whose domain names no chain (D35). */
+export const TYPED_DATA_NO_CHAIN = 'This signature isn’t tied to one chain: it may be valid on any of them.';
+
+/** The body of the approval screen for a decoded request. */
+export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, ctx: ApprovalRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
+  const summary: ApprovalSummary = summarizeApproval(decoded, { address: ctx.address ?? '', ...(ctx.parentOrigin ? { parentOrigin: ctx.parentOrigin } : {}) });
+  const k = kindParts(d, decoded, appName, ctx, ctx.nowMs);
+  // A control change's bullet repeats nothing: when its step's own line is in view (the headline of a single step, or a
+  // grouped line, which names the whole key, signer or address), the bullet is dropped. The banner always stays, and
+  // steps left out of the lines keep their bullets (the summary's step_left_out).
+  const shown = new Set(summary.shownSteps ?? []);
+  const dangers = k.alerts.dangers.filter((it) => it.step === undefined || !shown.has(it.step));
+  const redBox = riskBox(d, 'danger', [...k.alerts.banners, ...dangers, ...summary.warnings.filter((w) => w.level === 'danger').map((w) => summaryItem(d, w, appName))]);
+  const amberBox = riskBox(d, 'warning', [...summary.warnings.filter((w) => w.level === 'warning').map((w) => summaryItem(d, w, appName)), ...k.alerts.warnings]);
+  const network = summary.network ? summaryNodes(d, summary.network, appName) : k.network ? [k.network] : null;
   const headline = amountHeadline(decoded);
-  if (headline) parts.splice(1, 0, amountView(d, headline));
-  return d.h('div', { class: 'request jp-confirm' }, ...parts);
+  const keyFacts = [network && row(d, 'Network', ...network), summary.fee && row(d, 'Network fee', ...summaryNodes(d, summary.fee, appName))];
+  return d.h(
+    'div',
+    { class: 'request jp-confirm', attrs: { 'data-explainable': String(summary.explainable) } },
+    d.h('h2', { class: 'summary-headline' }, ...summaryNodes(d, summary.headline, appName)),
+    // The red banners and lines right under the headline: nothing a partner sizes (the summary's lines, the number of
+    // operations) can push them down (review M2).
+    redBox,
+    // The amount (the confirm and sign pattern), where there is one to show.
+    headline ? amountView(d, headline) : null,
+    ...summary.lines.map((l) => d.h('p', { class: 'summary-line' }, ...summaryNodes(d, l, appName))),
+    keyFacts.some(Boolean) ? rows(d, keyFacts, 'jp-kv facts summary-facts') : null,
+    amberBox,
+    ...k.visible,
+    ...(ctx.notes ?? []),
+    detailsSection(d, [...(ctx.detailsExtra ?? []), ...k.details]),
+  );
 }

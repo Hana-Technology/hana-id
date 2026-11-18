@@ -8,7 +8,7 @@
 //
 // borsh(s) is u32 LE byte length ‖ UTF-8; contextString is the network passphrase (Stellar), the decimal chain ID
 // (EVM) or `near:testnet` / `near:mainnet` (NEAR, D722) for the kinds whose request names its network (stellar_tx,
-// stellar_auth_entry, evm_tx, near_tx, near_delegate), and '' for the others:
+// stellar_auth_entry, evm_tx, evm_sponsored, near_tx, near_delegate), and '' for the others:
 // a message, typed data (its domain carries the chain) or a raw request names none, and the vault, which never learns
 // the partner's selected EVM chain (the SDK answers eth_chainId), has none to bind.
 import { sha256 } from '@noble/hashes/sha2';
@@ -27,6 +27,10 @@ export const APPROVAL_DIGEST_DOMAIN = 'hana-id/approve/v1';
  * - `near_tx`: a borsh NEAR `Transaction` (its sha256 is signed);
  * - `near_delegate`: a borsh NEP-366 `DelegateAction`, without NEP-461's prefix (sha256(prefix ‖ bytes) is signed);
  * - `near_message`: NEP-413's `u32le(2^31 + 413) ‖ borsh(Payload)` (its sha256 is signed).
+ * - `evm_sponsored`: a sponsored EVM action's subject (`@hana-id/core/evm-sponsor` encodeSponsorSubject):
+ *   `utf8("hana-id/evm-sponsored/v1") ‖ rlp([chainId, account, delegate, authNonce, calls, executeNonce, deadline,
+ *   relayer, minGas])`. The vault signs the Execute it describes and, when `authNonce` is set, the EIP-7702
+ *   authorization; the digest binds every field, the authorization nonce included.
  */
 export const APPROVAL_KINDS = [
   'stellar_tx',
@@ -39,6 +43,7 @@ export const APPROVAL_KINDS = [
   'near_tx',
   'near_message',
   'near_delegate',
+  'evm_sponsored',
 ] as const;
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
 
@@ -47,7 +52,8 @@ export const APPROVAL_CHAINS: readonly ApprovalChain[] = ['stellar', 'evm', 'nea
 
 /**
  * Kinds no auto-approve policy can ever cover. The NEAR kinds are here because no policy format covers NEAR yet:
- * every NEAR request gets the approval popup.
+ * every NEAR request gets the approval popup. A sponsored EVM action is never auto-approved: its first one
+ * also sets up the account (EIP-7702), and every one spends Journear's fee budget.
  */
 export const NEVER_AUTO_APPROVED_KINDS: ReadonlySet<ApprovalKind> = new Set([
   'raw',
@@ -56,6 +62,7 @@ export const NEVER_AUTO_APPROVED_KINDS: ReadonlySet<ApprovalKind> = new Set([
   'near_tx',
   'near_message',
   'near_delegate',
+  'evm_sponsored',
 ]);
 
 /** The NEAR networks a request may name. */
@@ -73,7 +80,7 @@ export type ApprovalContext =
 export function approvalKindContext(kind: ApprovalKind): 'networkPassphrase' | 'chainId' | 'nearNetwork' | 'none' {
   if (kind === 'stellar_tx' || kind === 'stellar_auth_entry') return 'networkPassphrase';
   if (kind === 'near_tx' || kind === 'near_delegate') return 'nearNetwork';
-  return kind === 'evm_tx' ? 'chainId' : 'none';
+  return kind === 'evm_tx' || kind === 'evm_sponsored' ? 'chainId' : 'none';
 }
 
 /** The signed part of a request: everything the popup renders and the digest binds, except `id` and origin. */
@@ -138,6 +145,7 @@ export function validateApprovalSubject(s: ApprovalSubject): void {
       throw new Error(`A raw Stellar request is 1 to ${RAW_STELLAR_MAX_BYTES} bytes`);
     }
   }
+  if (s.kind === 'evm_sponsored' && s.bytes.length === 0) throw new Error('An evm_sponsored request is its subject bytes');
 }
 
 /**

@@ -124,6 +124,7 @@ describe('approval subject validation', () => {
       ['near_tx', 'near'],
       ['near_message', 'near'],
       ['near_delegate', 'near'],
+      ['evm_sponsored', 'evm'],
     ]);
   });
 
@@ -192,6 +193,7 @@ describe('approval subject validation', () => {
       ['near_tx', 'nearNetwork'],
       ['near_message', 'none'],
       ['near_delegate', 'nearNetwork'],
+      ['evm_sponsored', 'chainId'],
     ]);
   });
 

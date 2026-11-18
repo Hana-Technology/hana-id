@@ -10,7 +10,7 @@ and every signature needs the user's Approve in a Journear Passport window. This
 > `hana.*`), error codes, event names and the addresses below keep their old names, so no code change is needed.
 > Match on error codes, never on messages.
 
-Last verified against code: 2026-11-13 (email codes per day and per IP on sandbox-dev; the stamps demo on the relay allowlist); 2026-11-12 (Journear Passport names; NEAR gasless calls).
+Last verified against code: 2026-11-17 (the Support ID under Show details); 2026-11-13 (email codes per day and per IP on sandbox-dev; the stamps relay).
 
 > **This environment, `sandbox-dev`, is testnet only.** Its wallets are test wallets: until Journear Passport's address
 > freeze, Journear may still change how keys are made, which gives every user new addresses. Never keep real funds in them. A test
@@ -148,7 +148,7 @@ holds your users' wallets and names your on-chain owners), sets your security co
 
 ## Getting help
 
-- **Support ID** (`HANA-XXXX-XXXX`): a user sees it in Journear Passport's approval window under their account, and on Passport Home
+- **Support ID** (`HANA-XXXX-XXXX`): a user sees it in Journear Passport's approval window under Show details, and on Passport Home
   (on your app's page there).
   Your page has it as `hana.supportId`: show it where your users look for help. The console's **Users** page finds a
   user by it.

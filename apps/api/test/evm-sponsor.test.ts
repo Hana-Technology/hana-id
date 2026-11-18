@@ -339,28 +339,22 @@ describe('POST /v1/evm/sponsor/send: a delegated account', () => {
     expect(s.relayer.sends).toEqual([]);
   });
 
-  it('a nonce the chain has used: 409 nonce_stale, the floor rises past that nonce only, and a copy is dropped before any chain read', async () => {
+  it('a nonce the chain has used: 409 nonce_stale with the chain’s nonce; the floor is not raised from a head read (N2: a reorg could undo it)', async () => {
     const s = await setup();
-    // A lying (or simply ahead) RPC says 1000: the floor rises to the request's own nonce + 1, never to the RPC's figure.
     s.chain.executeNonce.set(s.user.address.toLowerCase(), 1000n);
     const old = signedSend(s.user, { executeNonce: 1n });
     const res = await send(s, old.body);
-    expect([res.status, (await body(res)).code]).toEqual([409, 'nonce_stale']);
-    s.chain.calls.length = 0;
-    const copy = await body(await send(s, old.body));
-    expect([copy.code, copy.executeNonce]).toEqual(['nonce_stale', '2']);
-    expect(s.chain.calls).toEqual([]);
-    // Nonce 2 isn't below the floor: it reads the chain again (and only then is stale).
-    s.chain.executeNonce.set(s.user.address.toLowerCase(), 3n);
-    const r2 = await send(s, signedSend(s.user, { executeNonce: 2n }).body);
-    expect([r2.status, (await body(r2)).code]).toEqual([409, 'nonce_stale']);
-    expect(s.chain.calls.length).toBeGreaterThan(0);
+    const b = await body(res);
+    expect([res.status, b.code, b.executeNonce]).toEqual([409, 'nonce_stale', '1000']);
+    const floor = await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`evm-sponsor:account:${LOCAL_CHAIN}:${s.user.address.toLowerCase()}`)).floor('evm-sponsor:nonce');
+    expect(floor).toBe('0');
+    // The chain says the nonce is used; after a reorg in which it isn't, the same batch goes through.
+    s.chain.executeNonce.set(s.user.address.toLowerCase(), 1n);
+    expect((await send(s, old.body)).status).toBe(200);
     // A future nonce is stale too, without moving the floor.
     const r3 = await send(s, signedSend(s.user, { executeNonce: 9n }).body);
     expect([(await body(r3)).code]).toEqual(['nonce_stale']);
-    expect((await send(s, signedSend(s.user, { executeNonce: 3n }).body)).status).toBe(200);
   });
-
 
   it('403 gas_too_high when the computed limit passes maxGasPerTx; 503 gas_price_too_high when the base fee passes the cap', async () => {
     const s = await setup();
@@ -1961,6 +1955,34 @@ describe('L2: the nonce floor and the outcome follow the relayer’s verdict at 
     expect(await appSpent(s.app)).toBe(21_000n * 100_000_000n);
     expect(await floorOf(s)).toBe('0');
     // Checked once: a second run changes nothing.
+    expect(await reconcile(s)).toMatchObject({ corrected: 0, confirmed: 0 });
+  });
+
+  it('N1: a relayer replay copy settled at head, then a reorg: no correction of its own; the ledger view counts the transaction and its cost once', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    const req = s.relayer.sends[0]!;
+    const first = keccakHex(rawFor(req));
+    const cancel = keccakHex(rawFor(req, 'cancel'));
+    // A second row for the same digest that the relayer answered as a replay (settled at head with no charge of its own).
+    const COPY = `es_${'f'.repeat(32)}`;
+    const cols = (await env.DB.prepare('SELECT name FROM pragma_table_info(?1)').bind('evm_sponsor_sends').all<{ name: string }>()).results.map((c) => c.name);
+    const copied = cols.map((c) => (c === 'id' ? `'${COPY}'` : c === 'replay' ? '1' : c === 'settled_wei' ? "'0'" : c)).join(', ');
+    await env.DB.prepare(`INSERT INTO evm_sponsor_sends (${cols.join(', ')}) SELECT ${copied} FROM evm_sponsor_sends`).run();
+    s.chain.receipts.set(cancel, receiptFor(req, cancel, 'not_executed', { gasUsed: 21_000n, price: 100_000_000n }));
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: cancel, hashes: [first, cancel], state: 'mined', minedHash: cancel, outcome: 'cancel', costWei: 1n, reservedWei: req.reservedWei });
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ corrected: 1, confirmed: 1 });
+    const records = await billingRows();
+    expect(records.map((r) => r.send_id)).not.toContain(COPY);
+    // The ledger view's rule (migrations-usage 0009): a record a correction superseded counts no more.
+    const counted = records.filter((r) => !records.some((c) => c.corrects === r.record_key));
+    expect(counted.length).toBe(1);
+    expect(counted.reduce((n, r) => n + BigInt(r.total_cost_wei as string), 0n)).toBe(21_000n * 100_000_000n);
+    expect(await appSpent(s.app)).toBe(21_000n * 100_000_000n);
+    const copy = await env.DB.prepare("SELECT confirmed_at, settled_wei FROM evm_sponsor_sends WHERE id = ?1").bind(COPY).first<{ confirmed_at: number | null; settled_wei: string }>();
+    expect(copy?.confirmed_at).not.toBeNull();
+    expect(copy?.settled_wei).toBe('0');
     expect(await reconcile(s)).toMatchObject({ corrected: 0, confirmed: 0 });
   });
 });

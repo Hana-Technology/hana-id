@@ -519,6 +519,14 @@ async function confirmSettled(env: Env, config: EvmSponsorConfig, now: number, c
     const receipt = read.receipt;
     const cancelled = v.outcome === 'cancel';
     const outcome: Outcome = !cancelled && executedIn(receipt, row.account, row.digest) ? 'executed' : receipt.status === 0 && !cancelled ? 'reverted' : 'not_executed';
+    if (row.replay) {
+      // A relayer replay's transaction is the original send's: that row carries the money, the record and its
+      // correction. Here only the row is confirmed (and the floor follows an executed batch).
+      await env.DB.prepare('UPDATE evm_sponsor_sends SET confirmed_at = ?2 WHERE id = ?1 AND confirmed_at IS NULL').bind(row.id, now).run().catch(() => undefined);
+      if (outcome === 'executed' && v.outcome === 'execute') await raiseAccountFloor(env, row);
+      counts.confirmed++;
+      continue;
+    }
     const { cost } = receiptCost(receipt, cfg.opStack, row.reserved);
     const figures = figuresOf(receipt, cost, cfg, row, null);
     const before = c.settled_wei !== null && /^\d{1,78}$/u.test(c.settled_wei) ? BigInt(c.settled_wei) : 0n;

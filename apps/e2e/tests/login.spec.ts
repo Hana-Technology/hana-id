@@ -48,10 +48,11 @@ test('one click on the partner button plus the chooser logs in', async ({ page, 
   expect(requests.count(`${API_URL}/v1/login-relay/`)).toBeGreaterThanOrEqual(2);
   expect(requests.count(LOGIN_ENDPOINT)).toBe(1);
   expect(requests.count(`${API_URL}/v1/derive`)).toBe(0);
-  // A clean shared-mode login reads NEAR four times: the vault's registry check of its scope (Q7: get_scope) and of the
+  // A clean shared-mode login reads NEAR five times: the vault's registry check of its scope (Q7: get_scope) and of the
   // shared client (D117: get_config), in parallel; the path through `get_identity` (batch 7); and, after the login,
-  // the wallet's sign-in methods (`get_account`, for `linkChanged`). Re-syncs are only for failures.
-  expect(requests.count(NEAR_RPC)).toBe(4);
+  // the wallet's sign-in methods twice (`get_account`: for `linkChanged`, and since D865 for the popup's last word,
+  // which every login with the follow-up key now reads). Re-syncs are only for failures.
+  expect(requests.count(NEAR_RPC)).toBe(5);
 });
 
 test('D381: a session key WebCrypto refuses once (WebKit Linux’s Ed25519 OperationError) is asked for again: the popup stays and signs in', async ({ page }) => {

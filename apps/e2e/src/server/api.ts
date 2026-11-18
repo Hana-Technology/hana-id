@@ -527,6 +527,8 @@ export class MockApi {
     // apps/api's precheck and links.rs refuse: no_such_member).
     const member = found.account.members.find((m) => m.key === b.memberKey);
     if (endpoint === '/v1/link/cancel' && member && this.chain.isActive(member)) throw new HttpError(422, 'link_refused', { reason: 'no_such_member' });
+    // unlink_identity drops only an active member (a pending one is cancelled instead).
+    if (endpoint === '/v1/link/unlink' && member && !this.chain.isActive(member)) throw new HttpError(422, 'link_refused', { reason: 'no_such_member' });
     if (!this.chain.unlink(b.memberKey, endpoint === '/v1/link/unlink')) throw new HttpError(422, 'contract_rejected', { reason: 'no_such_member' });
     return this.api.done(ctx, 200, { result: null, nearTx: this.chain.newTxHash() });
   }

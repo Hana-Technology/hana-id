@@ -67,9 +67,11 @@ describe('token_first in an app without email login (google-record, D269)', () =
     expect(Object.keys(r).sort()).toEqual(['accessToken', 'commitment', 'googleIdToken', 'pk']);
     expect(r).toMatchObject({ pk: 'pk_test_1111111111111111111111', accessToken: ACCESS, googleIdToken: token });
     expect(r.commitment).toMatchObject({ scopeId: SCOPE, keyIndex: 0, maxUses: run.params.maxUses, expiresAtMs: run.params.expiresAtMs });
-    // Never google-match, and no follow-up notice (no done, no banners): the popup closed after the ID token.
+    // Never google-match; one follow-up notice since D865, the vault's last word (no banners), that the popup waits for.
     expect(b.backend.matchCalls).toEqual([]);
-    expect(b.backend.relayWrites).toEqual([]);
+    await t.waitUntil(() => b.backend.relayWrites.length === 1, 'the last word');
+    const { id } = followSlot(run.params.followKey as Uint8Array, 2);
+    expect(await decryptRelayValue(run.params.relayKey as Uint8Array, id, await b.backend.takeRelay(id), isFollowNotice)).toEqual({ t: 'done', banners: [] });
     // The ID token that went on chain is the relayed openid one.
     expect((b.backend.calls.find((c) => c.path === '/v1/login')?.body as { jwt: string }).jwt).toBe(token);
   });

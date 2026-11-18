@@ -18,7 +18,8 @@
 // - a proof the vault asked for (a link method's, `leg: 'proof'`) goes to its own follow-up slot;
 // then, instead of closing, the window goes to /login/email's follow-up mode, which reads the vault's next notice
 // (google-match's screens, link banners, the vault's last word). A record-only login (token_first in an app without
-// email login, `record`: the access token is for the issuer's directory only, D269) has no follow-up mode: it closes.
+// email login, `record`: the access token is for the issuer's directory only, D269) has the follow-up mode too since
+// D865 (an active member's own notice, the link banners, the vault's last word).
 // It doesn't depend on tokeninfo either: when tokeninfo can't answer or refuses the token, the access token is
 // dropped, nothing goes to slot 1, and the login is batch B's openid login with the account chooser (the vault then
 // records nothing); only another client's token still ends it.
@@ -501,7 +502,9 @@ async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, {
     d.show(errorView(d, 'Sign-in stopped', STORAGE_TEXT, 'storage_unavailable'));
     return 'relay_failed';
   }
-  if (followKey && !taken.record) {
+  // Every login with the follow-up key reads the vault's last word, a record-only one too (D865: a member is asked
+  // before its wallet opens, whatever app it signs in through).
+  if (followKey) {
     try {
       if (accessLeg) {
         // The second, silent request for the email scope: its answer goes to follow-up slot 1.

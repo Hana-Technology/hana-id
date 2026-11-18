@@ -204,7 +204,7 @@ export function fakeRelayer(chain: FakeChain, kind: () => ReceiptKind = () => 'e
   const r: FakeRelayer = {
     sends: [],
     names: [],
-    statusValue: { address: RELAYER, pending: 0, oldestPendingMs: null, nextNonce: 0, blockedReason: null },
+    statusValue: { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, nextNonce: 0, halted: null },
     replaced: new Map(),
     lookups: [],
     onSend: async (req) => {
@@ -228,7 +228,7 @@ export function fakeRelayer(chain: FakeChain, kind: () => ReceiptKind = () => 'e
       if (!req) return null;
       const first = keccakHex(rawFor(req));
       const hashes = [first, ...(r.replaced.get(digest) ?? [])];
-      return { digest, relayerNonce: 0, transactionHash: hashes.at(-1)!, hashes, state: 'pending', reservedWei: req.reservedWei, minedHash: null, outcome: null };
+      return { digest, relayerNonce: 0, transactionHash: hashes.at(-1)!, hashes, state: 'pending', reservedWei: req.reservedWei, minedHash: null, outcome: null, costWei: null };
     },
   };
   const binding = {

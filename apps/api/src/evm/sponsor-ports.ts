@@ -1,6 +1,6 @@
 // The two things EVM gas sponsorship's handlers (evm/sponsor.ts, D847) talk to, as ports: the relayer Durable Object
-// (`EvmRelayer`, apps/api/src/evm-relayer.ts, on the relayer branch: EvmRelayerPort is its RPC interface, `send`,
-// `status` and `lookup`, with its error convention) and the chain (SponsorChainPort: the subset of that branch's
+// (`EvmRelayer`, apps/api/src/evm-relayer.ts, the simplified fail-stop relayer of D851 built on its own branch:
+// EvmRelayerPort is its pinned RPC interface, `send`, `status` and `lookup`, with its error convention) and the chain (SponsorChainPort: the subset of that branch's
 // `SponsorChain` client, apps/api/src/evm/sponsor-chain.ts, the handlers use, with the same method names, shapes and
 // error fields). The handlers reach them only through `sponsorPorts`, so tests replace both with fakes, and at the merge
 // `sponsorPorts.chain` points at `sponsorChainFor` and `minimalSponsorChain` goes, without touching the handlers.
@@ -48,16 +48,17 @@ export interface EvmRelayerSendResult {
   digest: Hex;
 }
 
-export type EvmRelayerBlockedReason = 'key_changed_with_pending' | 'counts_disagree' | 'rpc_unavailable' | 'nonce_gap';
-
 export interface EvmRelayerStatus {
   address: Hex;
-  pending: number;
-  /** The oldest pending transaction's age in ms, or null when none is pending. */
-  oldestPendingMs: number | null;
+  /** Records not mined yet. */
+  unmined: number;
+  /** Mined records waiting for confirmed depth. */
+  awaitingConfirmation: number;
+  /** The oldest unmined record's age in ms, or null. */
+  oldestUnminedMs: number | null;
   nextNonce: number | null;
-  /** Why the relayer signs nothing right now, or null. */
-  blockedReason: EvmRelayerBlockedReason | null;
+  /** The relayer stopped taking new sends (it waits for staff), or null. */
+  halted: null | { reason: string; since: number; nonce?: number };
 }
 
 /** Every hash the relayer signed for a digest's nonce (oldest first; fee bumps and a deadline cancel add to it). */
@@ -66,16 +67,18 @@ export interface EvmRelayerLookup {
   relayerNonce: number;
   /** The mined version's hash once known, else the latest version's. */
   transactionHash: Hex;
+  /** Every version, the batch's and the deadline's self-transfer. */
   hashes: Hex[];
   /**
-   * `pending`; `cancelling` (past its deadline, its latest version a self-transfer); `mined` (one of its hashes mined:
-   * `minedHash`); `taken` (its nonce confirmed, none of its hashes mined: the batch did not run).
+   * `pending`; `cancelling` (past its deadline, its latest version a self-transfer); `mined` (one of its own versions
+   * mined at confirmed depth: `minedHash`, `outcome`, `costWei`); `closed` (resolved by staff: `outcome`
+   * `consumed_elsewhere` or `never_sent`). Remembered for at least 7 days after resolution.
    */
-  state: 'pending' | 'cancelling' | 'mined' | 'taken';
-  /** The hash with a receipt (tentative while pending), or null. */
+  state: 'pending' | 'cancelling' | 'mined' | 'closed';
   minedHash: Hex | null;
-  /** Which version mined: the batch (`execute`) or the deadline's self-transfer (`cancel`); null when none known. */
-  outcome: 'execute' | 'cancel' | null;
+  outcome: 'execute' | 'cancel' | 'consumed_elsewhere' | 'never_sent' | null;
+  /** The mined version's cost (from its receipt), or null. */
+  costWei: bigint | null;
   reservedWei: bigint;
 }
 
@@ -90,8 +93,8 @@ export interface EvmRelayerPort {
 export const evmRelayerName = (chainId: number, keyIndex = 0): string => `evm-relayer-${chainId}-${keyIndex}`;
 
 /** The relayer's refusals: thrown as `Error('evm_relayer:<code>[:<reason>]')`; a coded error means nothing was sent. */
-export type EvmRelayerErrorCode = 'relayer_unconfigured' | 'relayer_misconfigured' | 'invalid_request' | 'fees_too_high' | 'wrong_chain' | 'deadline_passed' | 'relayer_busy' | 'daily_cap' | 'rpc_unavailable' | 'rejected' | 'internal';
-const RELAYER_CODES: ReadonlySet<string> = new Set(['relayer_unconfigured', 'relayer_misconfigured', 'invalid_request', 'fees_too_high', 'wrong_chain', 'deadline_passed', 'relayer_busy', 'daily_cap', 'rpc_unavailable', 'rejected', 'internal']);
+export type EvmRelayerErrorCode = 'relayer_unconfigured' | 'relayer_misconfigured' | 'invalid_request' | 'fees_too_high' | 'wrong_chain' | 'deadline_passed' | 'relayer_busy' | 'relayer_halted' | 'daily_cap' | 'rpc_unavailable' | 'rejected' | 'internal';
+const RELAYER_CODES: ReadonlySet<string> = new Set(['relayer_unconfigured', 'relayer_misconfigured', 'invalid_request', 'fees_too_high', 'wrong_chain', 'deadline_passed', 'relayer_busy', 'relayer_halted', 'daily_cap', 'rpc_unavailable', 'rejected', 'internal']);
 
 /**
  * A relayer refusal's code and reason, or null for any other failure (an object reset, an unreachable stub): then
@@ -119,7 +122,7 @@ function relayerFromBinding(env: Env, chainId: number): EvmRelayerPort | null {
 export const relayerBinding = (env: Env): DurableObjectNamespace | undefined => (env as unknown as { EVM_RELAYER?: DurableObjectNamespace }).EVM_RELAYER;
 
 /**
- * `oldestPendingMs` as an age: the relayer reports an age; a value that looks like an epoch timestamp (after 2001) is
+ * `oldestUnminedMs` as an age: the relayer reports an age; a value that looks like an epoch timestamp (after 2001) is
  * turned into one anyway, so the stuck check holds either way.
  */
 export function pendingAgeMs(v: number | null, now: number): number | null {
@@ -148,6 +151,8 @@ export interface SponsorReceipt {
    * fields), null where the receipt reports none. Optional: a client that doesn't read it leaves it out.
    */
   operatorFee?: bigint | null;
+  /** The block it was mined in (optional: a client that doesn't read it leaves it out). */
+  blockNumber?: bigint | null;
   logs: SponsorLog[];
 }
 
@@ -172,6 +177,8 @@ export interface SponsorChainPort {
   latestBlock(): Promise<{ baseFeePerGas: bigint }>;
   call(req: SponsorCallRequest, opts?: { block?: 'latest' | 'pending'; stateOverride?: SponsorStateOverride }): Promise<Hex>;
   receipt(hash: Hex): Promise<SponsorReceipt | null>;
+  /** A block's timestamp (unix seconds), for the billing record. Optional: without it the record has none. */
+  blockTimestamp?(blockNumber: bigint): Promise<bigint>;
 }
 
 /** The relayer branch's EvmRpcError kinds. */
@@ -251,6 +258,7 @@ export function parseReceipt(v: unknown): SponsorReceipt | null {
     gasUsed: qty(r.gasUsed),
     effectiveGasPrice: qty(r.effectiveGasPrice),
     l1Fee: r.l1Fee === undefined || r.l1Fee === null ? null : qty(r.l1Fee),
+    blockNumber: r.blockNumber === undefined || r.blockNumber === null ? null : qty(r.blockNumber),
     operatorFee: r.operatorFeeScalar === undefined || r.operatorFeeScalar === null ? null : (r.gasUsed !== undefined ? (qty(r.gasUsed) * qty(r.operatorFeeScalar)) / 1_000_000n : 0n) + (r.operatorFeeConstant === undefined || r.operatorFeeConstant === null ? 0n : qty(r.operatorFeeConstant)),
     logs,
   };
@@ -371,6 +379,11 @@ export function minimalSponsorChain(env: Env, chain: Pick<EvmSponsorChainConfig,
       return read('eth_call', params, (v) => data(v));
     },
     receipt: (hash) => read('eth_getTransactionReceipt', [hash], parseReceipt),
+    blockTimestamp: (n) =>
+      read('eth_getBlockByNumber', [toQty(n), false], (v) => {
+        if (typeof v !== 'object' || v === null) return bad();
+        return qty((v as Record<string, unknown>).timestamp);
+      }),
   };
 }
 

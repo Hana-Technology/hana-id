@@ -9,6 +9,8 @@ import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { checkEvmSponsorRelay, evmSponsorConfig, sponsorFaults, EVM_SPONSOR_PREPARE_ENDPOINT as PREPARE, EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, sponsorPins, sponsorTiming } from '../src/evm/sponsor.ts';
 import { DEFAULT_SPONSOR_PORTS, type Hex, keccakHex, sponsorPorts } from '../src/evm/sponsor-ports.ts';
 import { pruneEvmSponsorSends, reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
+import { BILLING_LATE_MS, mirrorEvmBilling, RECORD_EVM_SPONSORED_SQL } from '../src/evm/sponsor-billing.ts';
+import { usageTransport } from '../src/usage/record.ts';
 import { EVM_SPONSOR_LIMITS } from '../src/evm/sponsor-checks.ts';
 import { maxStartingFees, sponsorGasLimit } from '../src/evm/op-fee.ts';
 import { encodeExecuteCalldata } from '@hana-id/core/evm-sponsor';
@@ -97,6 +99,22 @@ beforeEach(async () => {
   }
   await env.DB.exec("DELETE FROM security_events WHERE kind LIKE 'evm_relay_%'");
   await env.DB.exec('DELETE FROM evm_sponsor_sends');
+  await env.DB.exec('DELETE FROM evm_sponsor_billing');
+});
+/** What the ledger was sent (the usage transport, faked: no test reaches a database). */
+let ledgerCalls: { sql: string; rows: Record<string, unknown>[] }[] = [];
+let ledgerDown = false;
+const realTransport = usageTransport.query;
+beforeEach(() => {
+  ledgerCalls = [];
+  ledgerDown = false;
+  usageTransport.query = async (_b, sql, params) => {
+    if (ledgerDown) throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    ledgerCalls.push({ sql, rows: JSON.parse(String(params[0])) as Record<string, unknown>[] });
+  };
+});
+afterEach(() => {
+  usageTransport.query = realTransport;
 });
 beforeEach(() => {
   receiptKind = 'executed';
@@ -856,7 +874,7 @@ describe('the relayer checks (cron): balance and stuck transactions', () => {
   it('writes evm_relay_balance_low once a day and evm_relay_stuck once an hour; nothing without the config', async () => {
     const s = await setup();
     s.chain.balanceWei = 10n ** 15n;
-    s.relayer.statusValue = { address: RELAYER, pending: 2, oldestPendingMs: 6 * 60_000, nextNonce: 5, blockedReason: null };
+    s.relayer.statusValue = { address: RELAYER, unmined: 2, awaitingConfirmation: 0, oldestUnminedMs: 6 * 60_000, nextNonce: 5, halted: null };
     sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => s.relayer.statusValue, lookup: async () => null });
     const e = { ...env, ...s.bindings } as typeof env;
     await checkEvmSponsorRelay(e);
@@ -878,6 +896,7 @@ const cronEnv = (s: Pick<Setup, 'bindings'>) => ({ ...env, ...s.bindings }) as t
 /** Makes every open row the reconciler's (as if a minute had passed since its last update). */
 const ageRows = (ms = 2 * 60_000) => env.DB.prepare('UPDATE evm_sponsor_sends SET updated_at = created_at - ?1, created_at = created_at - ?1').bind(ms).run();
 const reconcile = async (s: Pick<Setup, 'bindings'>, now = Date.now()) => reconcileEvmSends(cronEnv(s), evmSponsorConfig(cronEnv(s))!, now);
+const billingRows = async () => (await env.DB.prepare('SELECT * FROM evm_sponsor_billing ORDER BY settled_at, record_key').all<Record<string, unknown>>()).results;
 const failuresSpent = async (subject: string) => BigInt(await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject)).spent('evm-sponsor:failures', 86_400_000));
 
 describe('M1: shared windows are counted only once the chain checks passed', () => {
@@ -984,7 +1003,7 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     const cancel = keccakHex(rawFor(b!, 'cancel'));
     s.chain.receipts.set(cancel, { ...receiptFor(b!, cancel, 'not_executed'), gasUsed: 21_000n });
     s.relayer.lookupOverride = async (digest) =>
-      digest === digestOf(b!) ? { relayerNonce: 1, transactionHash: cancel, hashes: [keccakHex(rawFor(b!)), cancel], state: 'mined', digest: digestOf(b!), reservedWei: b!.reservedWei, minedHash: cancel, outcome: 'cancel' } : null;
+      digest === digestOf(b!) ? { relayerNonce: 1, transactionHash: cancel, hashes: [keccakHex(rawFor(b!)), cancel], state: 'mined', digest: digestOf(b!), reservedWei: b!.reservedWei, minedHash: cancel, outcome: 'cancel', costWei: 21_000n * 150_000_000n } : null;
     await ageRows();
     expect(await reconcile(s)).toMatchObject({ settled: 2 });
     expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'reverted', settled_wei: '9000000000000' });
@@ -1012,7 +1031,7 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     expect((await auditRows(s.user.address)).map((r) => r.status)).toEqual(['executed', 'executed']);
   });
 
-  it('a send the relayer never had (unknown to it 2 to 9 minutes past the deadline): everything back, refused; later only lost', async () => {
+  it('a send the relayer doesn’t know stays open (no inference from silence), and an hour past the deadline is lost: the reservation kept, billed as lost', async () => {
     const s = await setup();
     s.relayer.onSend = async () => {
       throw new Error('the object was reset');
@@ -1022,19 +1041,26 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     s.relayer.lookupOverride = async () => null;
     await ageRows();
     const deadlineMs = Number(signed.body.deadline) * 1000;
-    expect(await reconcile(s, deadlineMs + 60_000)).toMatchObject({ open: 1 });
-    expect(await reconcile(s, deadlineMs + 3 * 60_000)).toMatchObject({ refused: 1 });
+    const reserved = s.relayer.sends[0]!.reservedWei;
+    expect(await reconcile(s, deadlineMs + 3 * 60_000)).toMatchObject({ open: 1, refused: 0 });
+    expect(await reconcile(s, deadlineMs + 61 * 60_000)).toMatchObject({ lost: 1 });
+    expect(await appSpent(s.app)).toBe(reserved);
+    expect(await billingRows()).toMatchObject([{ outcome: 'lost', tx_hash: null, settled_wei: reserved.toString(), total_cost_wei: null }]);
+  });
+
+  it('the relayer’s staff closed it as never sent: everything back, refused, no billing record', async () => {
+    const s = await setup();
+    s.relayer.onSend = async () => {
+      throw new Error('the object was reset');
+    };
+    const signed = signedSend(s.user);
+    expect((await send(s, signed.body)).status).toBe(503);
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [`0x${'aa'.repeat(32)}`], state: 'closed', minedHash: null, outcome: 'never_sent', costWei: null, reservedWei: 1n });
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ refused: 1 });
     expect(await appSpent(s.app)).toBe(0n);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
-    // Another one found only after the relayer would have forgotten it: lost, the reservation kept.
-    const s2 = await setup();
-    s2.relayer.onSend = s.relayer.onSend;
-    s2.relayer.lookupOverride = async () => null;
-    const signed2 = signedSend(s2.user);
-    expect((await send(s2, signed2.body)).status).toBe(503);
-    await ageRows();
-    expect(await reconcile(s2, Number(signed2.body.deadline) * 1000 + 11 * 60_000)).toMatchObject({ lost: 1 });
-    expect(await appSpent(s2.app)).toBe(s2.relayer.sends[0]!.reservedWei);
+    expect(await billingRows()).toEqual([]);
   });
 
   it('a row left open over 10 minutes writes evm_relay_stuck', async () => {
@@ -1122,25 +1148,36 @@ describe('the relayer’s final interface (PR #70)', () => {
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
 
-  it('state taken with no version mined: not_executed, settled at zero, the failure slot back, an event for staff', async () => {
+  it('the relayer’s staff closed it as consumed elsewhere: the reservation kept as the cost, billed, an event for staff', async () => {
     const s = await setup();
     receiptKind = 'none';
-    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'taken', minedHash: null, outcome: null, reservedWei: 1n });
-    const r = await send(s, signedSend(s.user).body);
-    expect([r.status, (await body(r)).code]).toEqual([422, 'not_executed']);
-    expect(await appSpent(s.app)).toBe(0n);
-    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
-    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'not_executed', settled_wei: '0' });
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'closed', minedHash: null, outcome: 'consumed_elsewhere', costWei: null, reservedWei: 1n });
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 1 });
+    const reserved = s.relayer.sends[0]!.reservedWei;
+    expect(await appSpent(s.app)).toBe(reserved);
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: reserved.toString() });
+    expect(await billingRows()).toMatchObject([{ outcome: 'consumed_elsewhere', tx_hash: null, settled_wei: reserved.toString() }]);
     const ev = await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_nonce_taken'").first<{ n: number }>();
     expect(ev?.n).toBe(1);
   });
 
-  it('the relayer’s blockedReason writes evm_relay_stuck even with nothing old pending', async () => {
+  it('a halted relayer: evm_relay_stuck (“Sponsored transactions are paused”), status answers paused, a send is 503 sponsorship_paused with everything back', async () => {
     const s = await setup();
-    sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => ({ address: RELAYER, pending: 0, oldestPendingMs: null, nextNonce: 3, blockedReason: 'nonce_gap' }), lookup: async () => null });
+    const halted = { reason: 'nonce_gap', since: Date.now(), nonce: 3 };
+    s.relayer.statusValue = { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, nextNonce: 3, halted };
     await checkEvmSponsorRelay(cronEnv(s));
     const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").all<{ detail_json: string }>();
-    expect(JSON.parse(ev.results[0]!.detail_json)).toMatchObject({ chainId: LOCAL_CHAIN, blockedReason: 'nonce_gap' });
+    expect(JSON.parse(ev.results[0]!.detail_json)).toMatchObject({ chainId: LOCAL_CHAIN, halted: 'nonce_gap' });
+    expect(await body(await status(s, '?chainId=31337'))).toMatchObject({ available: false, reason: 'paused' });
+    s.relayer.onSend = async () => {
+      throw new Error('evm_relayer:relayer_halted');
+    };
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([503, 'sponsorship_paused']);
+    expect(await appSpent(s.app)).toBe(0n);
+    expect((await auditRows(s.user.address))[0]?.status).toBe('refused');
   });
 });
 
@@ -1158,7 +1195,8 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
 
   it('a row with a hash the relayer forgot is never refunded: clean empty reads and an untouched nonce still leave it lost, the reservation kept', async () => {
     const s = await forgottenTimeout();
-    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
+    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ open: 1, refused: 0 });
+    expect(await reconcile(s, s.deadlineMs + 61 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
   });
@@ -1174,7 +1212,7 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     s.chain.codes.set(s.user.address.toLowerCase(), `0xef0100${'66'.repeat(20)}` as Hex);
     s.chain.executeNonce.set(s.user.address.toLowerCase(), 0n);
     await ageRows();
-    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 3 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
+    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 61 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
 
@@ -1186,7 +1224,7 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     // While the request polls, the relayer lists a replacement.
     s.relayer.lookupOverride = async (digest) => {
       const req = s.relayer.sends[0]!;
-      return { digest, relayerNonce: 0, transactionHash: bumped, hashes: [keccakHex(rawFor(req)), bumped], state: 'pending', minedHash: null, outcome: null, reservedWei: req.reservedWei };
+      return { digest, relayerNonce: 0, transactionHash: bumped, hashes: [keccakHex(rawFor(req)), bumped], state: 'pending', minedHash: null, outcome: null, costWei: null, reservedWei: req.reservedWei };
     };
     expect((await send(s, signed.body)).status).toBe(504);
     const row = await env.DB.prepare('SELECT tx_hashes FROM evm_sponsor_sends').first<{ tx_hashes: string }>();
@@ -1221,15 +1259,34 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
 
-  it('state taken with a failing receipt read is not settled as taken (it may have mined)', async () => {
+  it('the relayer reports one of the row’s own versions mined but its receipt can’t be read: settled from the relayer’s cost an hour past the deadline (bounded by the reservation)', async () => {
     const s = await setup();
-    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'taken', minedHash: null, outcome: null, reservedWei: 1n });
+    receiptKind = 'none';
+    const signed = signedSend(s.user);
+    expect((await send(s, signed.body)).status).toBe(504);
+    const req = s.relayer.sends[0]!;
+    const mined = keccakHex(rawFor(req));
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: mined, hashes: [mined], state: 'mined', minedHash: mined, outcome: 'execute', costWei: 8_000_000_000_000n, reservedWei: req.reservedWei });
     s.chain.receiptDown = true;
-    const r = await send(s, signedSend(s.user).body);
-    expect([r.status, (await body(r)).code]).toEqual([504, 'timeout']);
-    expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
     await ageRows();
-    expect(await reconcile(s)).toMatchObject({ settled: 0, open: 1 });
+    const deadlineMs = Number(signed.body.deadline) * 1000;
+    expect(await reconcile(s, deadlineMs + 3 * 60_000)).toMatchObject({ open: 1 });
+    expect(await reconcile(s, deadlineMs + 61 * 60_000)).toMatchObject({ settled: 1 });
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'mined', settled_wei: '8000000000000' });
+    expect(await appSpent(s.app)).toBe(8_000_000_000_000n);
+    expect(await billingRows()).toMatchObject([{ outcome: 'mined', tx_hash: mined, total_cost_wei: '8000000000000', gas_used: null }]);
+  });
+
+  it('a lookup naming a mined hash that is not one of the row’s own is not used', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    const signed = signedSend(s.user);
+    expect((await send(s, signed.body)).status).toBe(504);
+    const stranger = `0x${'5e'.repeat(32)}` as Hex;
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: stranger, hashes: [], state: 'mined', minedHash: stranger, outcome: 'execute', costWei: 1n, reservedWei: 1n });
+    s.chain.receiptDown = true;
+    await ageRows();
+    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 61 * 60_000)).toMatchObject({ settled: 0 });
   });
 
   it('a replay: the row records replay before the give-back; a crash in between and a reconciler run never give back twice', async () => {
@@ -1279,5 +1336,109 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     await env.DB.prepare("UPDATE evm_sponsor_sends SET status = 'sending', tx_hash = NULL, tx_hashes = '[]'").run();
     s.relayer.lookupOverride = async () => null;
     expect(await reconcile(s, Date.now() + 6 * 60_000)).toMatchObject({ open: 1 });
+  });
+});
+
+describe('billing records (D852): one permanent record per sponsored transaction, no personal data', () => {
+  it('an executed send leaves one record with the org, app, chain, hash, costs, calls, targets and setup; no address, user or IP; a copy writes nothing more', async () => {
+    const s = await setup({}, { delegated: false });
+    const signed = signedSend(s.user, { authNonce: 0n });
+    const r = await send(s, signed.body);
+    expect(r.status).toBe(200);
+    const hash = (await body(r)).transactionHash as string;
+    const [b, ...more] = await billingRows();
+    expect(more).toEqual([]);
+    const org = await env.DB.prepare('SELECT org_id FROM apps WHERE id = ?1').bind(s.app.id).first<{ org_id: string }>();
+    expect(b).toMatchObject({
+      chain_id: LOCAL_CHAIN,
+      record_key: hash,
+      org_id: org!.org_id,
+      app_id: s.app.id,
+      environment: 'local-test',
+      tx_hash: hash,
+      outcome: 'executed',
+      gas_used: '60000',
+      effective_gas_price_wei: '150000000',
+      execution_wei: '9000000000000',
+      l1_fee_wei: '0',
+      operator_fee_wei: '0',
+      total_cost_wei: '9000000000000',
+      settled_wei: '9000000000000',
+      call_count: 1,
+      with_setup: 1,
+      mirrored_at: null,
+    });
+    expect(JSON.parse(b!.targets_json as string)).toEqual([{ address: CHECK_IN.toLowerCase(), selector: '0x183ff085' }]);
+    const text = JSON.stringify(b).toLowerCase();
+    for (const personal of [s.user.address.toLowerCase(), s.userId.toLowerCase()]) expect(text.includes(personal), personal).toBe(false);
+    // The same request again (a copy answered from the audit row): still one record.
+    expect((await send(s, signed.body)).status).toBe(200);
+    expect((await billingRows()).length).toBe(1);
+  });
+
+  it('reverted, not executed and the deadline’s cancel each leave a record; a relayer replay leaves none of its own', async () => {
+    const s = await setup();
+    receiptKind = 'reverted';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(422);
+    receiptKind = 'not_executed';
+    expect((await send(s, signedSend(s.user, { minGas: 100_001n }).body)).status).toBe(422);
+    expect((await billingRows()).map((b) => b.outcome).sort()).toEqual(['not_executed', 'reverted']);
+    const u2 = testUser();
+    await rememberAccount(s.app.scope, u2.address);
+    s.chain.codes.set(u2.address.toLowerCase(), DESIGNATOR);
+    receiptKind = 'executed';
+    const inner = s.relayer.onSend;
+    s.relayer.onSend = async (req) => ({ ...(await inner(req)), replay: true });
+    expect((await send(s, signedSend(u2).body)).status).toBe(200);
+    expect((await billingRows()).length).toBe(2);
+  });
+
+  it('records survive the user’s erasure and the audit rows’ 24-month retention', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    await env.DB.prepare('DELETE FROM end_user_wallets WHERE user_id = ?1').bind(s.userId).run();
+    await env.DB.prepare('DELETE FROM end_users WHERE user_id = ?1').bind(s.userId).run();
+    expect((await auditRows(s.user.address)).length).toBe(0);
+    expect((await billingRows()).length).toBe(1);
+    await env.DB.prepare('UPDATE evm_sponsor_billing SET created_at = 1, settled_at = 1').run();
+    expect(await pruneEvmSponsorSends(env)).toBe(0);
+    expect((await billingRows()).length).toBe(1);
+  });
+
+  it('the cron copies records to the usage ledger once, retries while it is down, and nothing is lost without it', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    ledgerDown = true;
+    expect(await mirrorEvmBilling(cronEnv(s))).toBe(0);
+    expect((await billingRows())[0]!.mirrored_at).toBeNull();
+    ledgerDown = false;
+    expect(await mirrorEvmBilling(cronEnv(s))).toBe(1);
+    expect(ledgerCalls.map((c) => c.sql)).toEqual([RECORD_EVM_SPONSORED_SQL]);
+    expect(ledgerCalls[0]!.rows[0]).toMatchObject({ chain_id: LOCAL_CHAIN, outcome: 'executed', settled_wei: '9000000000000', with_setup: false, targets: [{ address: CHECK_IN.toLowerCase(), selector: '0x183ff085' }] });
+    expect(Object.keys(ledgerCalls[0]!.rows[0]!).sort()).toEqual(['app_id', 'block_number', 'block_time', 'call_count', 'chain_id', 'created_at', 'effective_gas_price_wei', 'environment', 'execution_wei', 'gas_used', 'l1_fee_wei', 'operator_fee_wei', 'org_id', 'outcome', 'record_key', 'settled_at', 'settled_wei', 'targets', 'total_cost_wei', 'tx_hash', 'with_setup']);
+    expect((await billingRows())[0]!.mirrored_at).not.toBeNull();
+    expect(await mirrorEvmBilling(cronEnv(s))).toBe(0);
+    // Without the ledger binding: nothing is sent, the record waits in D1.
+    const u2 = testUser();
+    await rememberAccount(s.app.scope, u2.address);
+    s.chain.codes.set(u2.address.toLowerCase(), DESIGNATOR);
+    expect((await send(s, signedSend(u2).body)).status).toBe(200);
+    expect(await mirrorEvmBilling({ ...cronEnv(s), USAGE_DB: undefined } as typeof env)).toBe(0);
+    expect((await billingRows()).filter((b) => b.mirrored_at === null).length).toBe(1);
+  });
+
+  it('a settled send without its record, or a record the ledger hasn’t had for an hour, raises evm_billing_late', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    ledgerDown = true;
+    await env.DB.prepare('UPDATE evm_sponsor_billing SET settled_at = settled_at - ?1').bind(BILLING_LATE_MS + 1).run();
+    await checkEvmSponsorRelay(cronEnv(s));
+    const late = async () => (await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_billing_late'").all<{ detail_json: string }>()).results.map((r) => JSON.parse(r.detail_json) as Record<string, number>);
+    expect(await late()).toEqual([{ missing: 0, unmirrored: 1 }]);
+    await env.DB.exec("DELETE FROM security_events WHERE kind = 'evm_billing_late'");
+    await env.DB.exec('DELETE FROM evm_sponsor_billing');
+    await env.DB.prepare('UPDATE evm_sponsor_sends SET updated_at = updated_at - ?1, created_at = created_at - ?1').bind(BILLING_LATE_MS + 1).run();
+    await checkEvmSponsorRelay(cronEnv(s));
+    expect(await late()).toEqual([{ missing: 1, unmirrored: 0 }]);
   });
 });

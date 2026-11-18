@@ -145,11 +145,12 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   home_budget_high: 'Passport Home daily budget running high',
   near_relay_budget_high: 'NEAR relay daily budget running high',
   near_relay_balance_low: 'NEAR relay account running low',
-  evm_relay_budget_high: 'EVM sponsorship daily budget running high',
-  evm_relay_balance_low: 'EVM sponsorship relayer running low',
-  evm_relay_stuck: 'EVM sponsorship relayer transaction stuck',
-  evm_relay_receipt_odd: 'EVM sponsorship receipt outside its reservation',
-  evm_relay_nonce_taken: 'EVM sponsorship relayer nonce taken by another transaction',
+  evm_relay_budget_high: "Free network fees: today's budget is nearly used up",
+  evm_relay_balance_low: 'Free network fees: the paying account is running low',
+  evm_relay_stuck: 'Sponsored transactions are paused',
+  evm_relay_receipt_odd: 'Free network fees: a payment looked wrong and was counted at the most it could cost',
+  evm_billing_late: 'Free network fees: a billing record is late',
+  evm_relay_nonce_taken: 'Free network fees: a payment slot was used by another transaction',
 };
 
 /** A security event's kind in words; an unknown kind reads as its own words. */

@@ -37,7 +37,8 @@ import { readJson } from '../http.ts';
 import { log } from '../log.ts';
 import type { Limit } from '../rate-limiter.ts';
 import { AUTHORIZATION_GAS, L1FeeUnavailable, l1FeeUpperBound, maxMinGasFor, operatorFeeUpperBound, sponsorFees, sponsorGasLimit, unsignedTxSizeBound, worstCaseWei } from './op-fee.ts';
-import { type EvmSponsorChainConfig, type EvmSponsorConfig, parseEvmSponsorConfig, type PinnedSponsorDelegates, sponsorChain } from './sponsor-config.ts';
+import { type EvmSponsorChainConfig, type EvmSponsorConfig, parseEvmSponsorConfig, type PinnedSponsorDelegates, sponsorChain, sponsoredTarget } from './sponsor-config.ts';
+import { lateBilling, mirrorEvmBilling } from './sponsor-billing.ts';
 import {
   appSponsoredOn,
   authorizationRefusal,
@@ -81,7 +82,6 @@ import {
   type SendStatus,
   settleBudget,
   settleFromReceipt,
-  settleTaken,
 } from './sponsor-settle.ts';
 
 export { budgetWindow, envBudgetSubject, noteEvent };
@@ -273,14 +273,20 @@ async function reserveBudget(env: Env, ctx: Ctx, app: App, chain: Readonly<EvmSp
 
 // ---- the audit row (D848) ----
 
-async function insertAudit(env: Env, ctx: Ctx, r: SendRow): Promise<boolean> {
+/** The batch's shape for its billing record (D852): the allowlisted target and selector of each call (public chain data). */
+interface BatchShape {
+  targets: { address: string; selector: string }[];
+  withSetup: boolean;
+}
+
+async function insertAudit(env: Env, ctx: Ctx, r: SendRow, shape: BatchShape): Promise<boolean> {
   try {
     await env.DB.prepare(
       `INSERT INTO evm_sponsor_sends (id, app_id, chain_id, account, user_id, digest, execute_nonce, reserved_wei, deadline, gas_limit, fee_cap_wei,
-         l1_bound_wei, op_bound_wei, status, request_id, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'sending', ?14, ?15, ?15)`,
+         l1_bound_wei, op_bound_wei, call_count, targets_json, with_setup, status, request_id, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'sending', ?17, ?18, ?18)`,
     )
-      .bind(r.id, r.appId, r.chainId, r.account, r.userId, r.digest, r.executeNonce.toString(), r.reserved.reservedWei.toString(), r.deadline, r.reserved.gasLimit.toString(), r.reserved.feeCap.toString(), r.reserved.l1Bound.toString(), r.reserved.operatorBound.toString(), ctx.requestId, r.createdAt)
+      .bind(r.id, r.appId, r.chainId, r.account, r.userId, r.digest, r.executeNonce.toString(), r.reserved.reservedWei.toString(), r.deadline, r.reserved.gasLimit.toString(), r.reserved.feeCap.toString(), r.reserved.l1Bound.toString(), r.reserved.operatorBound.toString(), shape.targets.length, JSON.stringify(shape.targets), shape.withSetup ? 1 : 0, ctx.requestId, r.createdAt)
       .run();
     return true;
   } catch {
@@ -346,7 +352,7 @@ function checkedResult(r: unknown, digest: Hex): EvmRelayerSendResult | null {
  * transaction at the same nonce) and the one it answered. RPC and lookup failures in between are retried. Null on
  * timeout.
  */
-async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, relayer: EvmRelayerPort, digest: Hex, first: Hex): Promise<SponsorReceipt | 'taken' | null> {
+async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, relayer: EvmRelayerPort, digest: Hex, first: Hex): Promise<{ receipt: SponsorReceipt; cancelled: boolean } | null> {
   const end = Date.now() + sponsorTiming.receiptWaitMs;
   const known = new Set<Hex>([first]);
   for (;;) {
@@ -358,10 +364,11 @@ async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, 
       await persistHashes(env, rowId, fresh);
     }
     const read = await readReceipts(chain, hashesToPoll([...known], l.value));
-    if (read.kind === 'mined') return read.receipt;
-    // Its nonce went to something that is no version of it, and every receipt read (none failed) found nothing: it
-    // never ran. A failed read decides nothing: the next poll, or the reconciler.
-    if (l.value?.state === 'taken' && read.kind === 'none') return 'taken';
+    // Only a receipt for one of its own hashes settles it here; anything else is the reconciler's.
+    if (read.kind === 'mined') {
+      const v = l.value;
+      return { receipt: read.receipt, cancelled: v?.state === 'mined' && v.outcome === 'cancel' && v.minedHash?.toLowerCase() === read.receipt.transactionHash.toLowerCase() };
+    }
     if (Date.now() + sponsorTiming.receiptPollMs > end) return null;
     await new Promise((resolve) => setTimeout(resolve, sponsorTiming.receiptPollMs));
   }
@@ -376,6 +383,9 @@ function refusalAnswer(ctx: Ctx, code: string, reason: string | null): Response 
       return unconfigured(ctx);
     case 'relayer_busy':
       return done(ctx, 503, { error: 'The relayer is busy, try again', code: 'relayer_busy', retryAfterS: 2 }, { 'retry-after': '2' });
+    case 'relayer_halted':
+      log({ event: 'evm_sponsor_relayer_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'relayer_halted' }, 'error');
+      return done(ctx, 503, { error: 'Free network fees are paused for now, try again later', code: 'sponsorship_paused', retryAfterS: 300 }, { 'retry-after': '300' });
     case 'fees_too_high':
       return done(ctx, 503, { error: 'Network fees are too high right now, try again later', code: 'gas_price_too_high', retryAfterS: 30 }, { 'retry-after': '30' });
     case 'daily_cap':
@@ -686,7 +696,11 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   };
   const giveBackAll = () => Promise.all([giveBack(env, shared, sharedAt), freeSlot(), settleBudget(env, app.id, chain.chainId, reserved, 0n, sharedAt)]);
   const notSent = () => Promise.all([unmark(), giveBackAll()]);
-  const tail = afterReservation(env, ctx, chain, config.relayerAddress as Hex, relayer, rpc, req, row, calldata, authorization, fees, { unmark, notSent, giveBackAll });
+  const shape: BatchShape = {
+    targets: req.calls.map((c) => ({ address: (sponsoredTarget(config, app.id, chain.chainId, c.to, c.data)?.address ?? c.to).toLowerCase(), selector: c.data.slice(0, 10).toLowerCase() })),
+    withSetup: authorization !== null,
+  };
+  const tail = afterReservation(env, ctx, chain, config.relayerAddress as Hex, relayer, rpc, req, row, shape, calldata, authorization, fees, { unmark, notSent, giveBackAll });
   exec?.waitUntil(tail.then(
     () => undefined,
     () => undefined,
@@ -704,6 +718,7 @@ async function afterReservation(
   rpc: SponsorChainPort,
   req: SendRequest,
   row: SendRow,
+  shape: BatchShape,
   calldata: Hex,
   authorization: SignedAuthorization | null,
   fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
@@ -730,7 +745,7 @@ async function afterReservation(
   lap(ctx, 'simulate');
 
   // 14. The audit row, then the relayer. Without the row nothing is sent.
-  if (!(await insertAudit(env, ctx, row))) {
+  if (!(await insertAudit(env, ctx, row, shape))) {
     await undo.notSent();
     return reject(ctx, 503, 'audit_unavailable', 'Try again');
   }
@@ -782,17 +797,13 @@ async function afterReservation(
   await persistHashes(env, row.id, [sent.transactionHash]);
   const receipt = await waitForReceipt(env, row.id, rpc, relayer, row.digest, sent.transactionHash);
   lap(ctx, 'receipt');
-  if (receipt === 'taken') {
-    await settleTaken(env, settled, ['sent']);
-    return failed(ctx, 'not_executed', sent.transactionHash);
-  }
   if (!receipt) {
     await moveRow(env, row.id, ['sent'], 'timeout');
     return done(ctx, 504, { error: 'Sent, not confirmed within 30 s: look the transaction up by its hash', code: 'timeout', transactionHash: sent.transactionHash });
   }
-  const result = await settleFromReceipt(env, chain, settled, receipt, ['sent']);
+  const result = await settleFromReceipt(env, chain, settled, receipt.receipt, ['sent'], { cancelled: receipt.cancelled, chain: rpc });
   const outcome = result?.outcome ?? (await settledOutcome(env, row.id));
-  const hash = receipt.transactionHash.toLowerCase() as Hex;
+  const hash = receipt.receipt.transactionHash.toLowerCase() as Hex;
   if (outcome === 'executed') return done(ctx, 200, { transactionHash: hash, status: 'executed' });
   // A revert, or a transaction that ran nothing (e.g. an authorization the network skipped, or the deadline's cancel).
   return failed(ctx, outcome === 'reverted' ? 'reverted' : 'not_executed', hash);
@@ -808,6 +819,28 @@ async function settledOutcome(env: Env, id: string): Promise<'executed' | 'rever
   }
 }
 
+/** The relayer's halt reason as plain data (lowercase words and underscores), or null when it isn't halted. */
+export function haltedReason(h: unknown): string | null {
+  if (typeof h !== 'object' || h === null) return null;
+  const r = (h as { reason?: unknown }).reason;
+  return typeof r === 'string' && /^[a-z_]{1,40}$/u.test(r) ? r : 'halted';
+}
+
+/** Whether the chain's relayer is halted (for status's `paused`); null when it can't be asked. Bounded to 2 s. */
+export async function relayerHalted(env: Env, chainId: number): Promise<boolean | null> {
+  const relayer = sponsorPorts.relayer(env, chainId);
+  if (!relayer) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const s = await Promise.race([relayer.status(), new Promise<null>((r) => (timer = setTimeout(() => r(null), 2_000)))]);
+    return s ? haltedReason(s.halted) !== null : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---- the cron: the relayer's balance and stuck transactions, the reconciler, the retention ----
 
 /**
@@ -818,6 +851,11 @@ async function settledOutcome(env: Env, id: string): Promise<'executed' | 'rever
  */
 export async function checkEvmSponsorRelay(env: Env, now: number = Date.now()): Promise<void> {
   await pruneEvmSponsorSends(env, now);
+  // The billing records (D852): copied to the usage ledger and checked for lateness with or without the config, since
+  // records outlive sponsorship being switched off.
+  await mirrorEvmBilling(env, now);
+  const late = await lateBilling(env, now);
+  if (late && (late.missing > 0 || late.unmirrored > 0)) await noteEvent(env, null, 'evm_billing_late', [String(Math.floor(now / HOUR) * HOUR)], { missing: late.missing, unmirrored: late.unmirrored }, now);
   const config = evmSponsorReady(env);
   if (!config) return;
   for (const chain of Object.values(config.chains)) {
@@ -830,11 +868,11 @@ export async function checkEvmSponsorRelay(env: Env, now: number = Date.now()): 
     try {
       const relayer = sponsorPorts.relayer(env, chain.chainId);
       const s = relayer ? await relayer.status() : null;
-      const age = s ? pendingAgeMs(s.oldestPendingMs, now) : null;
-      const blocked = s && typeof s.blockedReason === 'string' && /^[a-z_]{1,40}$/u.test(s.blockedReason) ? s.blockedReason : null;
-      if (s && ((age !== null && age > EVM_SPONSOR_LIMITS.stuckAfterMs) || blocked)) {
+      const age = s ? pendingAgeMs(s.oldestUnminedMs, now) : null;
+      const halted = s ? haltedReason(s.halted) : null;
+      if (s && ((age !== null && age > EVM_SPONSOR_LIMITS.stuckAfterMs) || halted)) {
         const hour = String(Math.floor(now / HOUR) * HOUR);
-        await noteEvent(env, null, 'evm_relay_stuck', [String(chain.chainId), hour], { chainId: chain.chainId, pending: s.pending, oldestPendingMs: age, ...(blocked ? { blockedReason: blocked } : {}) }, now);
+        await noteEvent(env, null, 'evm_relay_stuck', [String(chain.chainId), hour], { chainId: chain.chainId, pending: s.unmined, oldestPendingMs: age, ...(halted ? { halted } : {}) }, now);
       }
     } catch {
       log({ event: 'evm_sponsor_relay_check', outcome: 'error', code: 'relayer_unavailable' }, 'warn');

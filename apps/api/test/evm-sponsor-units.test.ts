@@ -209,11 +209,12 @@ describe('delegation, revert data, success', () => {
 describe('parseReceipt', () => {
   const ok = { transactionHash: `0x${'aa'.repeat(32)}`, status: '0x1', gasUsed: '0x5208', effectiveGasPrice: '0x3b9aca00', logs: [{ address: RELAYER, topics: [EXECUTED_TOPIC], data: '0x' }] };
   it('reads a receipt, with l1Fee when the node gives it', () => {
-    expect(parseReceipt(ok)).toEqual({ transactionHash: ok.transactionHash, status: 1, gasUsed: 21_000n, effectiveGasPrice: 1_000_000_000n, l1Fee: null, operatorFee: null, logs: [{ address: RELAYER.toLowerCase(), topics: [EXECUTED_TOPIC], data: '0x' }] });
+    expect(parseReceipt(ok)).toEqual({ transactionHash: ok.transactionHash, status: 1, gasUsed: 21_000n, effectiveGasPrice: 1_000_000_000n, l1Fee: null, blockNumber: null, operatorFee: null, logs: [{ address: RELAYER.toLowerCase(), topics: [EXECUTED_TOPIC], data: '0x' }] });
     expect(parseReceipt({ ...ok, l1Fee: '0x10' })?.l1Fee).toBe(16n);
     // Isthmus: gasUsed × operatorFeeScalar ÷ 10^6 + operatorFeeConstant.
     expect(parseReceipt({ ...ok, operatorFeeScalar: '0xf4240', operatorFeeConstant: '0x5' })?.operatorFee).toBe(21_005n);
     expect(parseReceipt(ok)?.operatorFee).toBeNull();
+    expect(parseReceipt({ ...ok, blockNumber: '0x7b' })?.blockNumber).toBe(123n);
     expect(parseReceipt(null)).toBeNull();
   });
   it('refuses anything malformed', () => {

@@ -6,7 +6,7 @@ import type { Env } from '../env.ts';
 import { appGate, done, newCtx, reject } from '../handlers.ts';
 import { sponsorChain } from './sponsor-config.ts';
 import { appSponsoredOn, toStatusQuery } from './sponsor-checks.ts';
-import { budgetLeft, budgetsSpent, EVM_SPONSOR_STATUS_ENDPOINT, evmSponsorReady, unconfigured } from './sponsor.ts';
+import { budgetLeft, budgetsSpent, EVM_SPONSOR_STATUS_ENDPOINT, evmSponsorReady, relayerHalted, unconfigured } from './sponsor.ts';
 
 export async function handleEvmSponsorStatus(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, EVM_SPONSOR_STATUS_ENDPOINT, request);
@@ -20,6 +20,8 @@ export async function handleEvmSponsorStatus(request: Request, env: Env, request
   const chain = sponsorChain(config, q.chainId);
   if (!chain) return done(ctx, 200, { available: false, reason: 'chain_not_enabled' });
   if (!appSponsoredOn(config, app.id, chain.chainId)) return done(ctx, 200, { available: false, reason: 'app_not_sponsored' });
+  // The relayer stopped taking new sends and waits for staff (D851): nothing can be sent until it resumes.
+  if ((await relayerHalted(env, chain.chainId)) === true) return done(ctx, 200, { available: false, reason: 'paused' });
   let spent: { app: bigint; env: bigint };
   try {
     spent = await budgetsSpent(env, app, chain.chainId, Date.now());

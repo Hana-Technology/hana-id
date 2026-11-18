@@ -1,4 +1,5 @@
--- EVM gas sponsorship (D847, D848): the audit row of every sponsored send, and three security event kinds.
+-- EVM gas sponsorship (D847, D848, D852): the audit row of every sponsored send, the billing record of every sponsored
+-- transaction, and the security event kinds.
 -- Expand-only: a new table and a widened CHECK. An API ahead of it refuses every send (`503 audit_unavailable`: no row,
 -- nothing is sent) and logs its alerts' failed inserts (`evm_sponsor_alert_failed`); an API without sponsorship
 -- configured never touches either. Applied by the founder (docs/operations.md "Migrations").
@@ -31,8 +32,13 @@ CREATE TABLE evm_sponsor_sends (
   l1_bound_wei  TEXT NOT NULL CHECK (length(l1_bound_wei) BETWEEN 1 AND 78),
   op_bound_wei  TEXT NOT NULL CHECK (length(op_bound_wei) BETWEEN 1 AND 78),
   replay        INTEGER NOT NULL DEFAULT 0 CHECK (replay IN (0, 1)),
+  -- The batch's shape, for its billing record: the number of calls, each call's allowlisted target and selector (public
+  -- chain data, JSON), and whether it carried the one-time setup.
+  call_count    INTEGER NOT NULL CHECK (call_count BETWEEN 1 AND 8),
+  targets_json  TEXT NOT NULL CHECK (json_valid(targets_json)),
+  with_setup    INTEGER NOT NULL CHECK (with_setup IN (0, 1)),
   settled_wei   TEXT CHECK (settled_wei IS NULL OR length(settled_wei) BETWEEN 1 AND 78),
-  status        TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'executed', 'reverted', 'not_executed', 'timeout', 'unknown', 'refused', 'lost')),
+  status        TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'executed', 'reverted', 'not_executed', 'mined', 'timeout', 'unknown', 'refused', 'lost', 'consumed_elsewhere')),
   request_id    TEXT NOT NULL,
   created_at    INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at    INTEGER NOT NULL CHECK (updated_at >= created_at)
@@ -46,16 +52,57 @@ CREATE INDEX evm_sponsor_sends_app ON evm_sponsor_sends (app_id, created_at DESC
 CREATE INDEX evm_sponsor_sends_open ON evm_sponsor_sends (status, updated_at) WHERE status IN ('sending', 'sent', 'timeout', 'unknown');
 CREATE INDEX evm_sponsor_sends_created ON evm_sponsor_sends (created_at);
 
+-- The billing record (D852): one per sponsored transaction that reached the chain (the batch: executed, reverted or run
+-- without effect; or the relayer's deadline self-transfer: cancelled), and one per charge with no mined transaction of
+-- its own (`lost`, `consumed_elsewhere`: the kept reservation is the amount), so the books add up. Written in the same D1
+-- batch as the audit row's final move, at most once per (chain, transaction) and per send. NO personal data: no account
+-- address, user id or IP; the transaction hash is public chain data. NEVER pruned and NOT erased with a user (it is the
+-- business's record of what it paid; the audit row that linked it to a user goes with the user). No foreign key, so
+-- neither the audit row's erasure nor its 24-month retention touches it. Amounts in wei (decimal strings); no USD here.
+-- Copied to the usage ledger (`usage.evm_sponsored_txs`) by the cron; `mirrored_at` says when.
+CREATE TABLE evm_sponsor_billing (
+  chain_id                INTEGER NOT NULL CHECK (chain_id > 0),
+  record_key              TEXT NOT NULL CHECK (length(record_key) BETWEEN 1 AND 80),  -- the tx hash, or 'send:<es_…>' without one
+  send_id                 TEXT NOT NULL UNIQUE CHECK (send_id GLOB 'es_*'),
+  org_id                  TEXT NOT NULL,
+  app_id                  TEXT NOT NULL,
+  environment             TEXT NOT NULL,
+  tx_hash                 TEXT CHECK (tx_hash IS NULL OR (length(tx_hash) = 66 AND tx_hash GLOB '0x*')),
+  block_number            TEXT,
+  block_timestamp         INTEGER,
+  outcome                 TEXT NOT NULL CHECK (outcome IN ('executed', 'reverted', 'not_executed', 'cancelled', 'mined', 'lost', 'consumed_elsewhere')),
+  gas_used                TEXT,
+  effective_gas_price_wei TEXT,
+  execution_wei           TEXT,
+  l1_fee_wei              TEXT,
+  operator_fee_wei        TEXT,
+  total_cost_wei          TEXT,
+  settled_wei             TEXT NOT NULL CHECK (length(settled_wei) BETWEEN 1 AND 78),
+  call_count              INTEGER NOT NULL,
+  targets_json            TEXT NOT NULL CHECK (json_valid(targets_json)),
+  with_setup              INTEGER NOT NULL CHECK (with_setup IN (0, 1)),
+  created_at              INTEGER NOT NULL,
+  settled_at              INTEGER NOT NULL,
+  mirrored_at             INTEGER,
+  PRIMARY KEY (chain_id, record_key),
+  -- A mined transaction has its hash as its key; a charge without one has the send as its key.
+  CHECK ((tx_hash IS NOT NULL AND record_key = tx_hash) OR (tx_hash IS NULL AND outcome IN ('lost', 'consumed_elsewhere') AND record_key = 'send:' || send_id))
+);
+CREATE INDEX evm_sponsor_billing_org ON evm_sponsor_billing (org_id, settled_at);
+CREATE INDEX evm_sponsor_billing_app ON evm_sponsor_billing (app_id, settled_at);
+CREATE INDEX evm_sponsor_billing_unmirrored ON evm_sponsor_billing (settled_at) WHERE mirrored_at IS NULL;
+
 -- `security_events` gains `evm_relay_budget_high` (a chain's day spend reached 80% of `dailyBudgetEth`, once a day),
 -- `evm_relay_balance_low` (the relayer below `lowBalanceEth`, once a day), `evm_relay_stuck` (a relayer transaction
 -- pending over 5 minutes, or a send unsettled over 10, once an hour) and `evm_relay_receipt_odd` (a receipt outside what
 -- the reservation assumed, settled at the reservation; once an hour) and `evm_relay_nonce_taken` (the relayer's nonce for
--- a batch went to something that is no version of it; the batch didn't run; once an hour). SQLite can't alter a CHECK, so the table is rebuilt as 0020 did:
+-- a batch went to something that is no version of it; the batch didn't run; once an hour) and `evm_billing_late` (a
+-- settled send without its billing record, or a record not yet copied to the usage ledger, an hour on; once an hour). SQLite can't alter a CHECK, so the table is rebuilt as 0020 did:
 -- same columns, rows and index. No table references it.
 CREATE TABLE security_events_new (
   id          TEXT PRIMARY KEY,
   detected_at INTEGER NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken')),
+  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late')),
   org_id      TEXT,
   app_id      TEXT,
   scope_id    TEXT,

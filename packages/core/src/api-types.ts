@@ -412,9 +412,9 @@ export interface EvmSponsorPrepareBody {
 }
 
 /** Why sponsorship is not offered for a batch or an app right now (prepare's and status's `reason`). */
-export type EvmSponsorUnavailableReason = 'delegated_elsewhere' | 'not_available' | 'budget_exhausted' | 'gas_too_high' | 'chain_not_enabled' | 'app_not_sponsored';
+export type EvmSponsorUnavailableReason = 'delegated_elsewhere' | 'not_available' | 'budget_exhausted' | 'gas_too_high' | 'chain_not_enabled' | 'app_not_sponsored' | 'paused';
 
-const EVM_SPONSOR_REASONS: readonly string[] = ['delegated_elsewhere', 'not_available', 'budget_exhausted', 'gas_too_high', 'chain_not_enabled', 'app_not_sponsored'];
+const EVM_SPONSOR_REASONS: readonly string[] = ['delegated_elsewhere', 'not_available', 'budget_exhausted', 'gas_too_high', 'chain_not_enabled', 'app_not_sponsored', 'paused'];
 
 export interface EvmSponsorPrepareResponse {
   /** `none`: no code yet (the send carries an authorization); `journear`: delegated to the pinned delegate; `other`: refused. */
@@ -510,6 +510,7 @@ export type EvmSponsorErrorCode =
   | 'relayer_unavailable'
   | 'relayer_busy'
   | 'relayer_rejected'
+  | 'sponsorship_paused'
   | 'reverted'
   | 'not_executed'
   | 'timeout';

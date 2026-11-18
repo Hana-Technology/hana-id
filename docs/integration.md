@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-17 (the approval window; sponsored EVM actions, not live), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (gas-free EVM actions, not live; 0.5.0 not yet published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -205,13 +205,13 @@ release with their SHA-256 checksums: check them (`shasum -a 256 *.tgz`), then i
 or yarn. Install every package you use, `@hana-id/core` included, from its tarball, never from a registry:
 
 ```sh
-npm install ./hana-id-core-0.4.1.tgz ./hana-id-web-0.4.1.tgz              # always
-npm install ./hana-id-react-0.4.1.tgz                                      # React apps
-npm install ./hana-id-sodax-0.4.1.tgz @sodax/types@2.2.0                   # Sodax adapters
+npm install ./hana-id-core-0.5.0.tgz ./hana-id-web-0.5.0.tgz              # always
+npm install ./hana-id-react-0.5.0.tgz                                      # React apps
+npm install ./hana-id-sodax-0.5.0.tgz @sodax/types@2.2.0                   # Sodax adapters
 ```
 
 Commit the tarballs to your repository (or a private artifact store) and depend on them by path
-(`"@hana-id/web": "file:vendor/hana-id-web-0.4.1.tgz"`), so every install gets the same bytes.
+(`"@hana-id/web": "file:vendor/hana-id-web-0.5.0.tgz"`), so every install gets the same bytes.
 
 | Package | What | Peer dependencies (tested) |
 |---|---|---|
@@ -234,6 +234,24 @@ at the top). A new environment means a new release.
 
 ### Release notes
 
+**0.5.0** (after 0.4.1, **not yet published**: until Journear sends you its tarballs, stay on 0.4.1; same environments:
+`sandbox-dev`). **Nothing to change** in your code: code written for 0.4.x builds and runs as it is. Replace all the
+tarballs you use together (they depend on each other at `^0.5.0`).
+
+- New, **not live yet**: gas-free EVM actions. `hana.evm.sendSponsored({ chainId, calls })` runs contract calls with
+  Journear paying the network fee, after the user approves them; `hana.evm.sponsorship(chainId)` and
+  `hana.evm.sponsoredChains` say where and whether it is offered; EIP-5792 `wallet_sendCalls`,
+  `wallet_getCallsStatus` and `wallet_getCapabilities` on `hana.ethereum` do the same for viem and wagmi. No environment
+  offers it yet, so `sponsoredChains` is empty ([section 8, Gas-free actions](#gas-free-actions-not-live)). New types:
+  `HanaSponsorError`, `EvmSponsorErrorData`, `SendSponsoredParams`, `SendSponsoredResult`, `SponsoredCall`,
+  `SponsorshipStatus`.
+- `wallet_sendCalls` is no longer `4200`: see above. `eth_sendTransaction` is unchanged (never gas-free).
+- The packages carry a licence: `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` are under the Apache License 2.0,
+  each with the licence text as `LICENSE` in its tarball and `"license": "Apache-2.0"` in its `package.json` (0.4.1 and
+  earlier say `UNLICENSED` and ship no licence). `@hana-id/core`'s licence is still being decided; until then its
+  tarball carries Journear Passport's Business Source License 1.1, which allows testing, evaluation and development,
+  and use on test networks. The names and logos of Journear and Journear Passport are not licensed.
+
 **0.4.1** (after 0.4.0; same environments: `sandbox-dev`). **Nothing to change** unless you find Journear Passport's
 wallet by its display name: code written for 0.4.0 builds and runs as it is. Replace all the tarballs you use together
 (they depend on each other at `^0.4.1`).
@@ -252,13 +270,6 @@ wallet by its display name: code written for 0.4.0 builds and runs as it is. Rep
   `retry-after` (`data.retryAfterS`); new type `NearRelayErrorData` ([section 8, NEAR](#near-errors)).
 - The wallet-picker icon (`HANA_ID_ICON`: EIP-6963's `info.icon`, the Stellar Wallets Kit's `productIcon`) is Journear's
   new mark; still a 96 × 96 SVG `data:` URI, the same name and format.
-
-**After 0.4.1** (in the next release, not yet published). **Nothing to change** in your code. The packages carry a
-licence: `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` are under the Apache License 2.0, each with the licence
-text as `LICENSE` in its tarball and `"license": "Apache-2.0"` in its `package.json` (0.4.1 and earlier say
-`UNLICENSED` and ship no licence). `@hana-id/core`'s licence is still being decided; until then its tarball carries
-Journear Passport's Business Source License 1.1, which allows testing, evaluation and development, and use on test
-networks. The names and logos of Journear and Journear Passport are not licensed.
 
 **0.4.0** (after 0.3.1; same environments: `sandbox-dev`). **Nothing to change** for Stellar and EVM: code written for
 0.3.x builds and runs as it is, and an app still on 0.3.x keeps working with Journear Passport's current vault (it just doesn't see
@@ -819,11 +830,63 @@ One key covers every EVM chain. Contract creation (an empty `to`) works with app
 auto-approves it. Errors are `ProviderRpcError` with numeric codes. A sign-in that didn't complete is `4001`, and the
 Journear Passport code is in `error.data.code`. Logging out emits `accountsChanged []`, as wallets do.
 
-**Sponsored actions (not live).** Journear will pay the network fee for EVM calls staff allowlist for your app, on
-Base Sepolia first. Each one shows an approval with the calls' usual summary and warnings and "Network fee: none.
-Journear pays it for you."; the first one also sets the account up (its address stays the same). The approval window
-is built; the SDK method and the vault's part are not, so no SDK sends it yet and a vault answers `4200`. This guide
-will describe it when it ships.
+**Gas-free actions (not live).** `eth_sendTransaction` is never made gas-free; ask for it by name with
+`hana.evm.sendSponsored` or EIP-5792 `wallet_sendCalls` (next section).
+
+### Gas-free actions (not live)
+
+SDK 0.5.0 or later. **Not live:** no environment offers it yet (`hana.evm.sponsoredChains` is `[]`); Base Sepolia
+first. Journear pays the network fee for contract calls Journear staff allowlist for your app (each contract and
+function, value 0), within daily limits. Your users need no ETH. Ask Journear to allowlist your calls.
+
+**Call it in the click**, like `login()`: the approval window opens in the click.
+
+```ts
+button.onclick = () => {
+  hana.evm
+    .sendSponsored({ chainId: 84532, calls: [{ to: '0xYourContract', data: '0x183ff085' }] })
+    .then(({ transactionHash }) => showDone(transactionHash))
+    .catch((e) => showError(e.message)); // a HanaSponsorError: the message is plain words your users can read
+};
+```
+
+- `calls`: 1 to 8, run in order, all or nothing. Each has `to`, `data` (a function call, at least 4 bytes) and no ETH
+  (`value` left out or 0). The answer is `{ transactionHash, status: 'executed' }` once the calls ran.
+- `hana.evm.sponsorship(chainId)` → `{ available, reason?, remainingToday? }`: check before showing a "free" button.
+- viem and wagmi: `sendCalls` (EIP-5792, version 2.0.0) on `hana.ethereum` does the same and returns an `id`;
+  `getCallsStatus` reads the receipt from your chain's RPC (pending until it has it). `getCapabilities` shows `atomic:
+  supported` on the chains it is offered on.
+
+**What users see:** Journear Passport's usual approval window, with the calls' own summary and warnings, "Network fee:
+none. Journear pays it for you." and, the first time only, "One-time setup: this also turns on free network fees for
+your account on Base Sepolia. Your address stays the same and you still approve every action." Every action asks the
+user; none is approved automatically.
+
+<a id="gas-free-errors"></a>**Errors** (`HanaSponsorError`, a `HanaError`; `data` is `EvmSponsorErrorData`, each field
+only in its exact shape: `status`, `reason`, `requestId`, `retryAfterS`, `transactionHash`, `callIndex`, `retryable`):
+
+| Code | `data.reason` | Message (show it as it is) |
+|---|---|---|
+| `4001` | | the user declined |
+| `4100` | `chain_not_sponsored`, `chain_not_enabled` | Free network fees aren’t offered on this network. |
+| `4100` | `delegated_elsewhere` | Your account was set up by another wallet app, so Journear can’t pay network fees for it. Nothing was sent. |
+| `4100` | `call_not_sponsored`, `app_not_sponsored`, `target_not_allowed` | Journear doesn’t pay network fees for this action. |
+| `4100` | `gas_too_high` | This action is too big for free network fees. |
+| `4100` | `not_available` | Free network fees aren’t available for your account right now. Try again later. |
+| `4100` | `budget_exhausted` | Journear’s free network fees for this app are used up for today. Try again tomorrow. |
+| `4100` | `clock_wrong` | Your device’s clock is wrong. Set it to the right time, then try again. |
+| `4100` | `deadline_passed` | This took too long, so nothing was sent. Please try again. |
+| `4100` | `reverted`, `not_executed` (with `transactionHash`) | The action didn’t go through, so nothing changed. |
+| `4100` | `simulation_reverted` (`callIndex`) | This action would fail, so it wasn’t sent. Nothing changed. |
+| `4100` | `nonce_stale`, `authorization_nonce_stale` | Your account changed while this was getting ready. Nothing was sent. Please try again. |
+| `busy` | `sponsor_in_flight` | Your last action is still going through. Wait for it to finish, then try again. |
+| `rate_limited` | `rate_limited`, `app_budget_exhausted`, `too_many_failures` (`retryAfterS`) | Too many actions right now… / …used up for today… |
+| `session_ended` | | Your sign-in has ended. Sign in again, then try again. |
+| `api_unavailable` | `timeout` (with `transactionHash`) | Your action was sent but isn’t confirmed yet. Check again in a minute before you try again. |
+| `api_unavailable` | `unknown_outcome` | Journear couldn’t tell whether your action went through. Check before you try again. |
+| `api_unavailable` | `bad_answer`, others | Journear couldn’t get this action ready (or send it) right now. |
+
+With a `transactionHash`, look the transaction up before asking the user to try again.
 
 ### NEAR
 
@@ -1589,7 +1652,7 @@ window, not returned.
 | `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Journear Passport's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `mainnet_demo_unconfirmed` (Journear's sandbox mainnet demo couldn't be confirmed on, section 12), `email_match_unavailable` (Journear Passport's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Journear Passport's NEAR providers), `path_disputed` (they disagree: report it), `share_unconfirmed` (a signature or an identity token: Journear Passport's API couldn't confirm for 3 minutes that this device is still signed in, "Signed out from Journear Passport" in section 4) | back off, or contact Journear |
 | `near_*` reasons, and the codes of `hana.near.relay` and `hana.near.activate` | NEAR: refusals before Journear Passport's window, and Journear Passport's relay (`4100`, `rate_limited` or `api_unavailable` with the API's code in `data.reason`) | the table in [section 8, NEAR](#near-errors) |
 | `storage_unavailable` | The Journear Passport popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
-| `busy` | An export is already running | wait |
+| `busy` | An export is already running, or a gas-free action of the same user (`data.reason: 'sponsor_in_flight'`) | wait |
 | `identity_unavailable` | `getIdentityToken()`: Journear Passport's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |
 | `session_ended` | `getIdentityToken()`: the Journear Passport session is over (`sessionExpired` fires too; `data.reason: 'signed_out'` when Journear Passport signed this device out), or ends within 30 s (`data.reason: 'session_ending'`) | treat as logged out |
 

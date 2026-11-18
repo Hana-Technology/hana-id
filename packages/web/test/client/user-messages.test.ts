@@ -6,10 +6,11 @@ import { jargonIn } from '@hana-id/brand/plain-words';
 import { describe, expect, it } from 'vitest';
 import { HanaError, ProviderRpcError, RpcCode, toProviderRpcError } from '../../src/client/errors.ts';
 import { readFileSync } from 'node:fs';
-import { DEFAULT_USER_MESSAGE, NEAR_RELAY_REASONS, SPONSOR_REASONS, SPONSORSHIP_REASONS, userMessageFor } from '../../src/client/user-messages.ts';
+import { DEFAULT_USER_MESSAGE, NEAR_RELAY_REASON_NAMES, NEAR_RELAY_REASONS, SPONSOR_REASON_NAMES, SPONSOR_REASONS, SPONSORSHIP_REASON_NAMES, userMessageFor } from '../../src/client/user-messages.ts';
 import { HanaSponsorError } from '../../src/client/evm-sponsor.ts';
 import { SPONSOR_TEXT } from '../../src/vault/evm-sponsor.ts';
-import { SPONSOR_REASONS as exportedReasons, SPONSORSHIP_REASONS as exportedSponsorship, userMessageFor as exported } from '../../src/index.ts';
+import * as sdk from '../../src/index.ts';
+import { userMessageFor as exported } from '../../src/index.ts';
 
 /**
  * Every `data.reason` a sponsored action's error can carry, read from the vault's own source (vault/evm-sponsor.ts), with
@@ -73,8 +74,8 @@ describe('userMessage (D861)', () => {
     expect(userMessageFor('login_cancelled', { reason: 'link_remove' })).toBe('You chose to remove this sign-in from that wallet. Finish it in the Journear Passport window. Then sign in again when you’re ready.');
     // D871: the user's own close, and a new Google user who didn't share the email address.
     expect(userMessageFor('login_cancelled', { reason: 'popup_closed' })).toBe('You closed the Journear Passport window, so nothing changed. Sign in again when you’re ready.');
-    expect(userMessageFor('login_cancelled', { reason: 'email_consent_declined' })).toBe('Google didn’t share your email address, so nothing changed. You can sign in with email instead.');
-    expect(userMessageFor('login_cancelled', { reason: 'google_account_mismatch' })).toMatch(/^Google answered for a different account, so nothing changed\./u);
+    expect(userMessageFor('login_cancelled', { reason: 'email_consent_declined' })).toBe('You didn’t share your Google email address, so no wallet was opened. Sign in with email instead, or try Google again.');
+    expect(userMessageFor('login_cancelled', { reason: 'google_account_mismatch' })).toBe('You picked a different Google account, so nothing changed. Try again with the same account, or sign in with email instead.');
     expect(userMessageFor('login_cancelled', undefined)).toBe('The sign-in was cancelled. Nothing was changed.');
   });
 
@@ -146,10 +147,35 @@ describe('userMessage by source, and the closer sentences of D871', () => {
   const near = NEAR_RELAY_REASONS as Record<string, string>;
   const sponsor = SPONSOR_REASONS as Record<string, string>;
 
-  it('exports the reason tables, frozen', () => {
-    expect(exportedReasons).toBe(SPONSOR_REASONS);
-    expect(exportedSponsorship).toEqual(['chain_not_enabled', 'app_not_sponsored', 'paused', 'budget_exhausted', 'not_available']);
-    expect(Object.isFrozen(SPONSOR_REASONS) && Object.isFrozen(SPONSORSHIP_REASONS) && Object.isFrozen(NEAR_RELAY_REASONS)).toBe(true);
+  it('exports the reason NAMES, frozen, and no sentence table: sentences come only through userMessage and userMessageFor', () => {
+    expect(sdk.SPONSOR_REASON_NAMES).toEqual(Object.keys(SPONSOR_REASONS));
+    expect(sdk.NEAR_RELAY_REASON_NAMES).toEqual(Object.keys(NEAR_RELAY_REASONS));
+    expect(sdk.SPONSORSHIP_REASON_NAMES).toEqual(['chain_not_enabled', 'app_not_sponsored', 'paused', 'budget_exhausted', 'not_available']);
+    for (const list of [SPONSOR_REASON_NAMES, NEAR_RELAY_REASON_NAMES, SPONSORSHIP_REASON_NAMES]) expect(Object.isFrozen(list)).toBe(true);
+    expect(Object.keys(sdk)).not.toContain('SPONSOR_REASONS');
+    expect(Object.keys(sdk)).not.toContain('NEAR_RELAY_REASONS');
+  });
+
+  it('a NEAR relay result that may follow its send says to check first (from the API source: results without notSent)', () => {
+    // The relay's RelayResult literals in the API (its handler and the relayer key object): `{ ok: false, status, code,
+    // … }`. One without an unconditional `notSent: true` may come after the transaction went out.
+    const sources = ['../../../../apps/api/src/relayer-key.ts', '../../../../apps/api/src/near/relay.ts'].map((p) => readFileSync(new URL(p, import.meta.url), 'utf8'));
+    const mayFollow = new Set<string>();
+    const seen = new Set<string>();
+    for (const src of sources) {
+      for (const m of src.matchAll(/\{ ok: false, status: \d+, code: '([a-z_]+)'([^\n]*)/gu)) {
+        seen.add(m[1]!);
+        if (!/notSent: true(?! as const)/u.test(m[2]!)) mayFollow.add(m[1]!);
+      }
+    }
+    expect([...mayFollow].sort()).toEqual(expect.arrayContaining(['contract_rejected', 'near_error', 'near_rejected', 'near_unavailable', 'relayer_busy', 'relayer_unavailable', 'timeout']));
+    for (const code of seen) expect(Object.hasOwn(NEAR_RELAY_REASONS, code), code).toBe(true);
+    for (const code of mayFollow) {
+      const text = userMessageFor('api_unavailable', { reason: code }, 'near_relay');
+      // NEAR refused the transaction itself: an invalid transaction is never included, so it never ran.
+      if (code === 'near_rejected') expect(text).toBe('The network refused this request, so it didn’t go through. Try again.');
+      else expect(text, code).toMatch(/\bcheck\b/iu);
+    }
   });
 
   it('a reason name the NEAR relay shares with a sponsored action reads by the error, not by the name', () => {
@@ -192,7 +218,7 @@ describe('userMessage by source, and the closer sentences of D871', () => {
       expect(userMessageFor(4100, { reason: r }), r).not.toBe(DEFAULT_USER_MESSAGE);
     }
     for (const r of ['near_rpc_unavailable', 'near_rpc_single_provider', 'mainnet_demo_unconfirmed']) expect(userMessageFor('api_unavailable', { reason: r }), r).toMatch(/nothing was signed/u);
-    expect(userMessageFor('email_sharing_unavailable', { reason: 'off' })).toBe('This app doesn’t ask for your email address yet. Nothing was shared.');
+    expect(userMessageFor('email_sharing_unavailable', { reason: 'off' })).toBe('This app doesn’t ask for your email address. Nothing was shared.');
     expect(userMessageFor('email_sharing_unavailable', { reason: 'no_address' })).toMatch(/Sign in again/u);
     expect(userMessageFor('email_sharing_unavailable', { reason: 'unavailable' })).toBe(userMessageFor('email_sharing_unavailable', undefined));
   });

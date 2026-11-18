@@ -141,8 +141,10 @@ automatically. The first one also sets the account up (an EIP-7702 authorization
 EIP-5792 `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` on `hana.ethereum` do the same for
 viem and wagmi (`5710` on a chain without it, where 0.4.x answered `4200`). `eth_sendTransaction` is never gas-free.
 Refusals are `HanaSponsorError` with `data.reason` (type `SponsorReason`: the known reasons, or any string, so a new
-one never breaks your build). `SPONSOR_REASONS` maps each known reason to its `userMessage`, and `SPONSORSHIP_REASONS`
-lists `sponsorship()`'s. The partner guide's section 8 lists every reason and the limits.
+one never breaks your build). `SPONSOR_REASON_NAMES`, `SPONSORSHIP_REASON_NAMES` and `NEAR_RELAY_REASON_NAMES` list
+the known names to branch on; the sentences come only through `userMessage` and `userMessageFor`, and may be reworded
+at any time. `sponsorship()` called before `hana.ready` waits for it (up to about 35 s on a slow connection). The
+partner guide's section 8 lists every reason and the limits.
 
 ### Sign-in methods (apps with email)
 

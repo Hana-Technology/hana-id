@@ -155,6 +155,8 @@ export function sponsoredCalls(calls: unknown): PortParamsMap['evm_sendSponsored
 
 export class HanaEvm {
   readonly #host: EvmSponsorHost;
+  /** The host's `ready`, asked once: every `sponsorship()` before it shares the one wait. */
+  #ready: Promise<unknown> | null = null;
 
   constructor(host: EvmSponsorHost) {
     this.#host = host;
@@ -203,7 +205,7 @@ export class HanaEvm {
     if (typeof chainId !== 'number' || !Number.isSafeInteger(chainId) || chainId <= 0) throw invalid('chainId must be a positive integer');
     if (this.#host.ready) {
       try {
-        await this.#host.ready();
+        await (this.#ready ??= this.#host.ready());
       } catch (e) {
         throw asSponsorError(e);
       }

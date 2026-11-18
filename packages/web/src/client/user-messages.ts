@@ -15,7 +15,7 @@ const TEST_APP = `This app is a test version, so ${P} lets it use only test netw
 const TEST_APP_KIND = `This app is a test version, and ${P} doesn’t sign this kind of request for it. ${NOTHING_SIGNED}`;
 const OUT_OF_DATE_SIGNED = 'This request is out of date, so nothing was signed. Try again.';
 const CANT_CHECK = `${P} couldn’t check this request right now, so nothing was signed. Try again later.`;
-const APP_SETUP = `This app isn’t set up correctly with ${P}. Tell the app’s team.`;
+const APP_SETUP = `This app isn’t set up correctly with ${P}, so nothing was sent. Tell the app’s team.`;
 
 /** The sentence for a code, when `data.reason` doesn't pick a closer one. */
 const BY_CODE: Readonly<Record<string, string>> = Object.freeze({
@@ -70,8 +70,8 @@ const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Ob
     link_remove: `You chose to remove this sign-in from that wallet. Finish it in the ${P} window. Then sign in again when you’re ready.`,
     // D871: the window closed by the user, and a new Google user who didn't share their email address.
     popup_closed: `You closed the ${P} window, so nothing changed. Sign in again when you’re ready.`,
-    email_consent_declined: 'Google didn’t share your email address, so nothing changed. You can sign in with email instead.',
-    google_account_mismatch: 'Google answered for a different account, so nothing changed. Try again, or sign in with email instead.',
+    email_consent_declined: 'You didn’t share your Google email address, so no wallet was opened. Sign in with email instead, or try Google again.',
+    google_account_mismatch: 'You picked a different Google account, so nothing changed. Try again with the same account, or sign in with email instead.',
   },
   [ErrorCode.unauthorized]: {
     mainnet_not_allowed: TEST_APP,
@@ -85,7 +85,7 @@ const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Ob
     near_relayed_delegate: CHECK_STOP,
     // D871: the vault's other NEAR refusals (before its window, nothing signed).
     near_key_unknown: 'Your account isn’t set up yet, so nothing was signed. Try again in a moment.',
-    near_delegate_nonce_used: 'This request was already used, perhaps in another tab. Nothing was signed. Try again.',
+    near_delegate_nonce_used: 'This request was already used, perhaps in another tab. Nothing new was signed. Check whether it went through before you try again.',
     near_delegate_nonce_stale: OUT_OF_DATE_SIGNED,
     near_delegate_nonce_too_large: 'This request can’t be checked yet, so nothing was signed. Wait a few seconds and try again.',
     near_delegate_expiry: OUT_OF_DATE_SIGNED,
@@ -93,7 +93,7 @@ const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Ob
     near_delegate_test_app_receiver: TEST_APP_KIND,
     // D871: Journear's sandbox mainnet demo (Journear's own app; partner apps never see these).
     mainnet_demo_over_cap: 'This is over the limit for one payment in this test version. Nothing was signed. Try a smaller amount.',
-    mainnet_demo_unknown_call: `${P} can’t tell how much this could move, so nothing was signed.`,
+    mainnet_demo_unknown_call: `${P} can’t tell how much money this could send, so nothing was signed.`,
     mainnet_demo_wrong_destination: 'This would send money to a wallet that isn’t yours, so it was stopped. Nothing was signed.',
     mainnet_demo_unpriced: 'Journear has no price for this token, so nothing was signed.',
     mainnet_demo_prices_stale: 'Journear’s prices for this test version are out of date, so nothing was signed. Try again later.',
@@ -108,7 +108,7 @@ const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Ob
     mainnet_demo_unconfirmed: 'Journear couldn’t check this just now, so nothing was signed. Try again in a few seconds.',
   },
   email_sharing_unavailable: {
-    off: 'This app doesn’t ask for your email address yet. Nothing was shared.',
+    off: 'This app doesn’t ask for your email address. Nothing was shared.',
     no_address: `${P} has no email address for this sign-in. Sign in again, then try again.`,
   },
   [ErrorCode.disconnected]: {
@@ -240,14 +240,17 @@ const SPONSOR_REASON_TEXT = {
 
 /** A sponsored action's known reason (SPONSOR_REASONS). */
 export type KnownSponsorReason = keyof typeof SPONSOR_REASON_TEXT;
+/** Internal (tests and the SDK's own lookups): the sentences are reached through `userMessage` and `userMessageFor` only. */
 export const SPONSOR_REASONS: Readonly<Record<KnownSponsorReason, string>> = Object.freeze(SPONSOR_REASON_TEXT);
+/** Every known sponsored-action reason name, to branch on (the sentences may be reworded at any time). */
+export const SPONSOR_REASON_NAMES: readonly KnownSponsorReason[] = Object.freeze(Object.keys(SPONSOR_REASON_TEXT) as KnownSponsorReason[]);
 /** `data.reason` of a HanaSponsorError: a known reason, or one a later release adds (keep a default branch). */
 export type SponsorReason = KnownSponsorReason | (string & {});
 
 /** The reasons `hana.evm.sponsorship()` answers with when `available` is false. */
-export const SPONSORSHIP_REASONS = Object.freeze(['chain_not_enabled', 'app_not_sponsored', 'paused', 'budget_exhausted', 'not_available'] as const);
+export const SPONSORSHIP_REASON_NAMES = Object.freeze(['chain_not_enabled', 'app_not_sponsored', 'paused', 'budget_exhausted', 'not_available'] as const);
 /** A reason `hana.evm.sponsorship()` knows. */
-export type KnownSponsorshipReason = (typeof SPONSORSHIP_REASONS)[number];
+export type KnownSponsorshipReason = (typeof SPONSORSHIP_REASON_NAMES)[number];
 /** `SponsorshipStatus.reason`: a known reason, or one a later release adds. */
 export type SponsorshipReason = KnownSponsorshipReason | (string & {});
 
@@ -258,17 +261,20 @@ const table = (t: object): Readonly<Record<string, string>> => t as Readonly<Rec
  * The reasons of Journear Passport's NEAR relay (`hana.near.relay`, `activate`: the API's codes it passes on as
  * `data.reason` with 4100, `rate_limited` or `api_unavailable`). Some names are also a sponsored action's
  * (`gas_too_high`, `app_budget_exhausted`, `timeout`, `relayer_busy`, …): which sentence is meant depends on the error's
- * source (`userMessageFor`'s third argument), never on the name alone.
+ * source (`userMessageFor`'s third argument), never on the name alone. A result the relay can answer after its
+ * transaction may have gone out (the API's key object returns it without `notSent`) says to check first: retrying
+ * with a new signature could run the request twice (tested against the API's source).
  */
 const NEAR_OUT_OF_DATE = 'This request is out of date, so nothing was sent. Try again.';
 const NEAR_NOT_PAID = 'Journear doesn’t pay the fee for this kind of request. Nothing was sent.';
 const NEAR_UNUSABLE = 'Journear couldn’t use this request, so nothing was sent. Try again, or tell the app’s team.';
 const NEAR_UNAVAILABLE = 'Journear couldn’t send this right now. Try again later.';
+const NEAR_REFUSED = 'The network refused this request, so it didn’t go through. Try again.';
 const NEAR_UNKNOWN = 'Journear couldn’t tell whether your request went through. Check before you try again.';
 const NEAR_RELAY_REASON_TEXT = {
   near_account_unrecorded: 'Journear is still setting up your account for this app. Try again in a few seconds.',
   delegate_nonce_used: 'This request was already sent, perhaps in another tab. Check whether it went through before you try again.',
-  delegate_nonce_too_large: NEAR_OUT_OF_DATE,
+  delegate_nonce_too_large: 'This request can’t be used yet, so nothing was sent. Wait a few seconds and try again.',
   delegate_expired: NEAR_OUT_OF_DATE,
   block_height_too_far: NEAR_OUT_OF_DATE,
   action_not_allowed: NEAR_NOT_PAID,
@@ -280,27 +286,36 @@ const NEAR_RELAY_REASON_TEXT = {
   bad_delegate_signature: NEAR_UNUSABLE,
   sender_not_implicit: NEAR_UNUSABLE,
   account_not_activated: 'Your account isn’t set up yet, so nothing was sent. Try again in a moment.',
-  access_key_missing: `${P} can’t act for this account any more, so nothing was sent. Tell the app’s support.`,
-  already_relayed: 'This request is already being sent. Wait a moment, then check before you try again.',
-  contract_rejected: 'The request ran but didn’t work, so nothing changed. Try again, or tell the app’s team.',
-  delegate_rejected: 'The network refused this request, so it didn’t go through. Try again.',
+  access_key_missing: `${P} can’t act for this account any more, so nothing was sent. Tell the app’s team.`,
+  already_relayed: 'This request was already sent. Check whether it went through before you try again.',
+  contract_rejected: 'This didn’t finish, but part of it may have gone through. Check before you try again, or tell the app’s team.',
+  delegate_rejected: NEAR_REFUSED,
   rate_limited: 'Too many requests right now. Wait a moment and try again.',
-  app_budget_exhausted: 'Journear’s free requests for this app are used up for today. Try again tomorrow.',
-  relay_budget_exhausted: 'Journear’s free requests are used up for today. Try again tomorrow.',
+  // The sponsored action's sentences where the meaning is the same.
+  app_budget_exhausted: SPONSOR.budgetUsed,
+  relay_budget_exhausted: 'Journear’s free network fees are used up for today. Try again tomorrow.',
   timeout: 'Your request was sent but isn’t confirmed yet. Check again in a minute before you try again.',
-  relayer_busy: 'Journear is busy right now. Wait a few seconds, then try again.',
-  relayer_unavailable: NEAR_UNAVAILABLE,
-  near_unavailable: NEAR_UNAVAILABLE,
+  // After a broadcast (a dropped transaction, a nonce lost to it) as well as before: check first.
+  relayer_busy: 'Journear is busy right now. Check whether your request went through before you try again.',
+  // The key object unreachable, or failing after its send began, and NEAR unreachable on a retry: outcome unknown.
+  relayer_unavailable: NEAR_UNKNOWN,
+  near_unavailable: NEAR_UNKNOWN,
   directory_unavailable: NEAR_UNAVAILABLE,
   rate_limiter_unavailable: NEAR_UNAVAILABLE,
-  near_rejected: NEAR_UNKNOWN,
+  // NEAR refused the transaction itself (an invalid transaction is never included), so it never ran.
+  near_rejected: NEAR_REFUSED,
   near_error: NEAR_UNKNOWN,
-  relayer_unconfigured: 'Free requests aren’t available here right now. Nothing was sent.',
+  relayer_unconfigured: SPONSOR.notOffered,
+  // The key object's own pool check (returned without `notSent`, so the rule above applies).
+  method_not_allowed: 'Journear couldn’t use this request. Check whether it went through before you try again, or tell the app’s team.',
 } satisfies Record<string, string>;
 
 /** A NEAR relay reason. */
 export type NearRelayReason = keyof typeof NEAR_RELAY_REASON_TEXT;
+/** Internal, as SPONSOR_REASONS. */
 export const NEAR_RELAY_REASONS: Readonly<Record<NearRelayReason, string>> = Object.freeze(NEAR_RELAY_REASON_TEXT);
+/** Every known NEAR relay reason name, to branch on (the sentences may be reworded at any time). */
+export const NEAR_RELAY_REASON_NAMES: readonly NearRelayReason[] = Object.freeze(Object.keys(NEAR_RELAY_REASON_TEXT) as NearRelayReason[]);
 
 /**
  * Where an error came from, when a reason's name alone can't say (`userMessageFor`'s third argument): a sponsored EVM

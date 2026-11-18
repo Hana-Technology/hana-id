@@ -14574,6 +14574,34 @@ deployed. SDK 0.5.0 has never been sent to a partner (its commits are on `next` 
      `login_cancelled`'s `popup_closed`, `email_consent_declined` and `google_account_mismatch`. Plain by D853 and the
      shared word list (tested); the sentences are listed for the founder in the PR.
   5. The vault's comment that a partner may show a refusal's `message` as it is now says to show `userMessage` (D861).
-- Not done, for a decision: `wallet_getCapabilities` reports `atomic: supported` from the build's chain list, whatever
-  the app's allowlist or budget (options in the PR); no Base Sepolia `DEMO_CHECK_IN` pin (it comes with the deploy).
+- **Amended after PR 94's independent review (2026-11-18, to confirm):**
+  1. **A NEAR relay result that may follow its send says to check first** (H1): `relayer_unavailable` (the key object
+     unreachable, or failing after its send began), `near_unavailable` (on a retry), `relayer_busy` (a dropped
+     transaction, a nonce lost to it), `contract_rejected`, `timeout`, `near_error` and the key object's
+     `method_not_allowed` now each say to check before trying again: retrying with a new signature could run a
+     transfer twice. A test reads the API's RelayResult literals (`apps/api/src/near/relay.ts`, `src/relayer-key.ts`)
+     and holds every one returned without an unconditional `notSent: true` to a sentence with "check"; `near_rejected`
+     (NEAR refused the transaction itself, so it was never included) is the one exception, "The network refused this
+     request, so it didn’t go through. Try again." A new code there fails the test until it has a sentence.
+  2. **The reviewer's sentences** for `contract_rejected`, `delegate_nonce_too_large`, `near_delegate_nonce_used`,
+     `already_relayed`, `near_rejected`, the app-setup reasons, `email_consent_declined`, `google_account_mismatch`,
+     `off`, `mainnet_demo_unknown_call` and `access_key_missing`; the NEAR relay's budget and off sentences say "free
+     network fees", the sponsored action's own words where the meaning is the same (`app_budget_exhausted`,
+     `relayer_unconfigured`). Every remaining "nothing was sent / signed / changed" was checked against where its
+     reason is produced (each is a refusal before any send or signature) except `login_cancelled`'s "nothing changed",
+     which keeps D861's code-level claim.
+  3. **Names, not sentences, are the API** (L3): `SPONSOR_REASON_NAMES`, `SPONSORSHIP_REASON_NAMES` and
+     `NEAR_RELAY_REASON_NAMES` are exported; the sentence tables are not (only `userMessage` and `userMessageFor` reach
+     them), and the guide says the sentences may be reworded at any time.
+  4. **Before `ready`** (L4, L5): `sponsorship()` calls share one wait, and `wallet_getCapabilities` waits too, bounded
+     by the vault connection's timeouts (one frame retry, up to 15 s, then 20 s for `ready`: about 35 s); the guide
+     says to show a neutral state meanwhile.
+- **`wallet_getCapabilities` stays as documented (option (a), the reviewer's reasoning)**: EIP-5792's `atomic` says the
+  wallet can run batches on that chain, which is true wherever the build sponsors it; whether this app's calls are
+  paid for today is a different, changing question, and `hana.evm.sponsorship()` answers it. Answering capabilities from
+  the API (b) would make a static capability change during the day and cost a request per call; hiding it until known
+  (c) breaks pages that ask once. A possible later step: omit a chain only after `sponsorship()` has seen a permanent
+  reason for it (`app_not_sponsored`, `chain_not_enabled`), never a passing one.
+- Not done: no Base Sepolia `DEMO_CHECK_IN` pin (it comes with the deploy); the API's `method_not_allowed` could carry
+  `notSent` (it is refused before any send), which would let its sentence say so.
 - Address impact: none.

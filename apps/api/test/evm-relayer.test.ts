@@ -1385,6 +1385,63 @@ describe('review M1: one unmined batch per account', () => {
     await runDurableObjectAlarm(stub);
     expect((await stub.send(request({}, USER_KEY))).relayerNonce).toBe(2);
   });
+
+  it('the second action right after the first mined (no run since): one on-demand check sees it, marks it seen, lets the second through', async () => {
+    const stub = await fresh();
+    const first = await stub.send(request({}, USER_KEY));
+    chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
+    const reads = chain.calls.length;
+    expect(await stub.send(request({}, USER_KEY))).toMatchObject({ relayerNonce: 1, broadcast: 'accepted' });
+    expect((await stored(stub)).recs.find((r) => r.nonce === 0)!.seen).toEqual({ hash: first.transactionHash, block: chain.receiptBlock(first.transactionHash) });
+    // Bounded: the latest count and at most one receipt per version, on top of the send's own reads.
+    expect(chain.calls.slice(reads).filter((c) => c.method === 'eth_getTransactionReceipt').length).toBe(1);
+  });
+
+  it('the first still pending: refused relayer_busy:account (the check finds no receipt)', async () => {
+    const stub = await fresh();
+    await stub.send(request({}, USER_KEY));
+    expect(await codeOf(stub.send(request({}, USER_KEY)))).toBe('relayer_busy:account');
+    expect((await stored(stub)).recs).toHaveLength(1);
+  });
+
+  it('a receipt that exists while the latest count is not past the nonce is not enough: refused', async () => {
+    const stub = await fresh();
+    const first = await stub.send(request({}, USER_KEY));
+    chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
+    intercept((m, p) => (m === 'eth_getTransactionCount' && p[1] === 'latest' ? '0x0' : undefined));
+    expect(await codeOf(stub.send(request({}, USER_KEY)))).toBe('relayer_busy:account');
+    expect((await stored(stub)).recs.find((r) => r.nonce === 0)!.seen).toBeNull();
+    void first;
+  });
+
+  it('the check\'s receipt read fails: refused relayer_busy:account, nothing happens to the first batch', async () => {
+    const stub = await fresh();
+    const first = await stub.send(request({}, USER_KEY));
+    chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
+    chain.receiptFailures = 1;
+    expect(await codeOf(stub.send(request({}, USER_KEY)))).toBe('relayer_busy:account');
+    chain.addBlocks(5);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(first.digest)).toMatchObject({ state: 'mined', outcome: 'execute' });
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('a reorg after the second was let through: the first goes back to unmined and out again; relayer nonce order keeps the account\'s two batches in order; both mine', async () => {
+    const stub = await fresh();
+    const first = await stub.send(request({}, USER_KEY));
+    chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
+    const second = await stub.send(request({}, USER_KEY));
+    expect(second.relayerNonce).toBe(1);
+    chain.unmine(RELAYER, 1, { drop: true });
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).recs.find((r) => r.nonce === 0)!.seen).toBeNull();
+    expect(chain.pooledAll(RELAYER).map((t) => t.hash)).toEqual([first.transactionHash, second.transactionHash]);
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(first.digest)).toMatchObject({ state: 'mined', minedHash: first.transactionHash });
+    expect(await stub.lookup(second.digest)).toMatchObject({ state: 'mined', minedHash: second.transactionHash });
+    expect(await halted(stub)).toBeNull();
+  });
 });
 
 describe('review M2/M3: a nonce is never freed', () => {

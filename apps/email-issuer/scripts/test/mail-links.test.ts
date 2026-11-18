@@ -74,7 +74,8 @@ describe('links in user mail (D862)', () => {
       expect(m.text).not.toMatch(/https?:\/\//u);
       expect(m.text).not.toContain('/link/cancel');
       expect(m.text).toContain('Not you?');
-      expect(m.text).toContain('Journear Passport sign-in window');
+      // Pending (D864): this email's own sign-in shows the cancel; active (D862): the root's banner removes it.
+      expect(m.text).toContain(pending ? 'Journear Passport will show the new sign-in with a button to cancel it' : 'Journear Passport sign-in window');
     }
   });
 

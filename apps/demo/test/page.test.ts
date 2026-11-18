@@ -50,6 +50,17 @@ class FakeClient {
   readonly ethereum = { request: vi.fn(async (_a: { method: string; params?: unknown }): Promise<unknown> => `0x${'ab'.repeat(65)}`) };
   readonly near = fakeNear(() => this.addresses?.near ?? null);
   readonly prepareApproval = vi.fn(() => ({ cancel: vi.fn() }));
+  /** How often the page read `hana.evm` (the gas-free card's only way in, D867). */
+  evmReads = 0;
+  readonly fakeEvm = {
+    sponsoredChains: [31337],
+    sponsorship: vi.fn(async (_chainId: number) => ({ available: true })),
+    sendSponsored: vi.fn(async (_p: unknown): Promise<{ transactionHash: `0x${string}`; status: 'executed' }> => ({ transactionHash: `0x${'cd'.repeat(32)}`, status: 'executed' })),
+  };
+  get evm() {
+    this.evmReads += 1;
+    return this.fakeEvm;
+  }
 
   constructor(readonly config: HanaConfig) {
     this.ready = new Promise((res, rej) => {
@@ -1126,5 +1137,46 @@ describe('the NEAR card', () => {
     const d = JSON.parse(copied.at(-1)!) as { addresses: Record<string, string>; errors: { action: string; code: unknown; reason: unknown }[] };
     expect(d.addresses.near).toBe(NEAR_ACCOUNT);
     expect(d.errors.map((e) => [e.action, e.code, e.reason])).toEqual([['near', 4100, 'near_delegate_nonce_used']]);
+  });
+});
+
+describe('the gas-free check-in card (D867)', () => {
+  const SPONSORED = { ...CONFIG, environment: 'local-e2e', evm: { id: 31337, name: 'Local test chain', rpcUrl: 'http://127.0.0.1:4460', explorer: null }, evmSponsor: { chainIds: [31337] } };
+
+  it('sandbox-dev (no evm.sponsor block): the page is what it was, and hana.evm is never read', async () => {
+    expect(CONFIG).not.toHaveProperty('evmSponsor');
+    boot();
+    await loginFlow();
+    await settle();
+    expect($('gas-free')).toBeNull();
+    expect(document.querySelectorAll('main > section').length).toBe(new DOMParser().parseFromString(html, 'text/html').querySelectorAll('main > section').length);
+    expect(fake.evmReads).toBe(0);
+    expect(fake.ethereum.request.mock.calls.some(([a]) => a.method === 'eth_call')).toBe(false);
+  });
+
+  it('with the block and the app sponsored: the card after the addresses; a refusal in its own box, in the SDK’s words, in diagnostics', async () => {
+    boot(SPONSORED);
+    await loginFlow();
+    await settle();
+    expect($('gas-free')!.previousElementSibling!.id).toBe('wallet');
+    expect(fake.fakeEvm.sponsorship).toHaveBeenCalledWith(31337);
+    fake.fakeEvm.sendSponsored.mockRejectedValueOnce(Object.assign(hanaError(4100, { reason: 'budget_exhausted' }), { userMessage: 'Journear’s free network fees for this app are used up for today. Try again tomorrow.' }));
+    click('gas-free-check-in');
+    expect(fake.fakeEvm.sendSponsored).toHaveBeenCalledWith({ chainId: 31337, calls: [{ to: '0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e', data: '0x183ff085' }] });
+    // While it runs, the page's other actions wait (one request at a time).
+    expect(($('sign-personal') as HTMLButtonElement).disabled).toBe(true);
+    await settle();
+    expect($('gas-free-error')!.hidden).toBe(false);
+    expect($('gas-free-error-text')!.textContent).toBe('Journear’s free network fees for this app are used up for today. Try again tomorrow.');
+    expect($('error')!.hidden).toBe(true);
+    click('copy-diagnostics');
+    await flush();
+    const d = JSON.parse(copied.at(-1)!) as { errors: { action: string; code: unknown; reason: unknown }[] };
+    expect(d.errors.map((e) => [e.action, e.code, e.reason])).toEqual([['gasFree', 4100, 'budget_exhausted']]);
+    // The next action clears it.
+    click('gas-free-check-in');
+    expect($('gas-free-error')!.hidden).toBe(true);
+    await settle();
+    expect($('gas-free-done')!.hidden).toBe(false);
   });
 });

@@ -62,10 +62,17 @@ export const E2E_SPONSOR_TARGETS = Object.freeze([
 ]);
 
 /**
- * The API's EVM_SPONSOR (D836) for the mocked chain in this local env, sponsoring `appIds` (the API answers each
- * request with its own app's var: a manifest lists at most 8 apps). Wide limits: the suite's browsers share one relayer.
+ * The hosted demo's app (DEMO_PK) on the stack's allowlist: Journear's demo check-in only, and only its exact call data
+ * (`exactCalldata`, D835: no trailing bytes), as a deployed env would list the demo app for the gas-free card (D867).
  */
-export const e2eEvmSponsorVar = (relayer: string, appIds: readonly string[] = []): string =>
+export const E2E_DEMO_SPONSOR_TARGETS = Object.freeze([{ address: '0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e', selectors: ['0x183ff085'], exactCalldata: ['0x183ff085'], maxDataBytes: 4, label: 'Demo check-in' }]);
+
+/**
+ * The API's EVM_SPONSOR (D836) for the mocked chain in this local env, sponsoring `appIds` (the API answers each
+ * request with its own app's var: a manifest lists at most 8 apps) for `targets`. Wide limits: the suite's browsers
+ * share one relayer.
+ */
+export const e2eEvmSponsorVar = (relayer: string, appIds: readonly string[] = [], targets: readonly object[] = E2E_SPONSOR_TARGETS): string =>
   JSON.stringify({
     relayerAddress: relayer,
     chains: {
@@ -90,7 +97,7 @@ export const e2eEvmSponsorVar = (relayer: string, appIds: readonly string[] = []
         requireKnownAccount: false,
       },
     },
-    apps: Object.fromEntries(appIds.map((id) => [id, { [String(EVM_CHAIN_ID)]: E2E_SPONSOR_TARGETS }])),
+    apps: Object.fromEntries(appIds.map((id) => [id, { [String(EVM_CHAIN_ID)]: targets }])),
   });
 
 /**

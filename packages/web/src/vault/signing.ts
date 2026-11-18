@@ -104,10 +104,10 @@ function refuseReservedRaw(request: SignRequest, rules: SubjectRules): void {
  * network).
  */
 /**
- * Why evm_sendSponsored is refused (4200): the approval kind, its decoder and its screen are in (D850); the vault's
- * handler, which builds the subject from the API's prepare answer and sends the signed batch, is the next package.
+ * evm_sendSponsored never goes through approvalSubject or signRequest: its subject is built from the API's prepare
+ * answer and the build (vault/evm-sponsor.ts, D855). Refused here (4200) so no path can sign one generically.
  */
-export const SPONSORED_NOT_YET = 'Sponsored actions are not available in this vault yet';
+export const SPONSORED_ELSEWHERE = 'A sponsored action has its own flow';
 
 /**
  * Why typed data in a pinned delegate's EIP-712 domain is refused on eth_signTypedData_v4 (D833, reason
@@ -119,8 +119,8 @@ export const SPONSOR_DOMAIN_RULE = 'Journear doesn’t sign typed data for its a
 const sponsorDomainRefusal = (): VaultError => new VaultError(ErrorCode.unauthorized, SPONSOR_DOMAIN_RULE, { reason: 'sponsor_domain_reserved' });
 
 export function approvalSubject(request: SignRequest, addresses: SigningAddresses, rules: SubjectRules): ApprovalSubject {
-  // Before anything else: no sponsored action is built or signed here yet (D850). Refused like an unknown method.
-  if (request.method === 'evm_sendSponsored') throw new VaultError(ErrorCode.unsupportedMethod, SPONSORED_NOT_YET);
+  // Before anything else: a sponsored action is never built or signed here (D855). Refused like an unknown method.
+  if (request.method === 'evm_sendSponsored') throw new VaultError(ErrorCode.unsupportedMethod, SPONSORED_ELSEWHERE);
   // A test app never signs raw (D39): a raw digest can be a mainnet transaction's hash. Before the app's setting.
   if (request.method === 'hana_signRaw' && rules.testApp) throw new VaultError(ErrorCode.unauthorized, TEST_APP_RAW_RULE, { reason: 'raw_not_allowed_for_test_apps' });
   if (request.method === 'hana_signRaw' && rules.rawSign !== 'approval') throw new VaultError(ErrorCode.unauthorized, 'Raw signing is off for this app', { reason: 'raw_sign_off' });
@@ -297,8 +297,8 @@ export function signRequest(prk: Uint8Array, request: SignRequest, subject: Appr
         return signed;
       }
       case 'evm_sendSponsored':
-        // Never reached: approvalSubject refuses it until the vault's sponsored-action handler exists.
-        throw new VaultError(ErrorCode.unsupportedMethod, SPONSORED_NOT_YET);
+        // Never reached: approvalSubject refuses it; vault/evm-sponsor.ts signs sponsored actions.
+        throw new VaultError(ErrorCode.unsupportedMethod, SPONSORED_ELSEWHERE);
     }
   } catch (e) {
     if (e instanceof VaultError) throw e;

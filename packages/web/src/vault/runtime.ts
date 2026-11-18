@@ -81,30 +81,48 @@ export class Clock {
 /** The part of the Web Locks API the vault uses (navigator.locks). */
 export interface Locks {
   request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+  /**
+   * Runs `callback(true)` holding `name` when nobody holds it now, else `callback(false)` at once without it (the Web
+   * Locks API's `ifAvailable`): a refusal, not a queue. The sponsored action's one-at-a-time slot (D855).
+   */
+  requestIfAvailable<T>(name: string, callback: (held: boolean) => Promise<T>): Promise<T>;
 }
 
 /** An in-page lock (when navigator.locks is missing): serialises callers in this document only. */
 export function localLocks(): Locks {
   const tails = new Map<string, Promise<unknown>>();
+  const request = <T>(name: string, callback: () => Promise<T>): Promise<T> => {
+    const prev = tails.get(name) ?? Promise.resolve();
+    const run = prev.then(callback, callback);
+    const tail = run.catch(() => undefined);
+    tails.set(name, tail);
+    void tail.then(() => {
+      if (tails.get(name) === tail) tails.delete(name);
+    });
+    return run;
+  };
   return {
-    request<T>(name: string, callback: () => Promise<T>): Promise<T> {
-      const prev = tails.get(name) ?? Promise.resolve();
-      const run = prev.then(callback, callback);
-      const tail = run.catch(() => undefined);
-      tails.set(name, tail);
-      void tail.then(() => {
-        if (tails.get(name) === tail) tails.delete(name);
-      });
-      return run;
+    request,
+    requestIfAvailable<T>(name: string, callback: (held: boolean) => Promise<T>): Promise<T> {
+      if (tails.has(name)) return callback(false);
+      return request(name, () => callback(true));
     },
   };
 }
 
 /** navigator.locks when present (it serialises across this app's tabs), else localLocks(). */
-export function browserLocks(nav: { locks?: { request(name: string, cb: () => Promise<unknown>): Promise<unknown> } } | undefined): Locks {
+interface NavigatorLocks {
+  request(name: string, cb: () => Promise<unknown>): Promise<unknown>;
+  request(name: string, options: { ifAvailable: true }, cb: (lock: unknown) => Promise<unknown>): Promise<unknown>;
+}
+
+export function browserLocks(nav: { locks?: NavigatorLocks } | undefined): Locks {
   const locks = nav?.locks;
   if (!locks || typeof locks.request !== 'function') return localLocks();
-  return { request: <T>(name: string, callback: () => Promise<T>) => locks.request(name, callback) as Promise<T> };
+  return {
+    request: <T>(name: string, callback: () => Promise<T>) => locks.request(name, callback) as Promise<T>,
+    requestIfAvailable: <T>(name: string, callback: (held: boolean) => Promise<T>) => locks.request(name, { ifAvailable: true }, (lock) => callback(lock !== null)) as Promise<T>,
+  };
 }
 
 /** The per-app BroadcastChannel (outcomes only, never key material). */

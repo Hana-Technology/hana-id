@@ -55,8 +55,18 @@ describe('evm.sponsor: optional, off when absent (D834)', () => {
 
   it('accepts an empty allowlist (sponsorship configured, nothing sponsored) and optional fields left out', () => {
     expect(messages(withSponsor({ ...sponsorFixture(), apps: {} }))).toEqual([]);
-    const { rpcFallback: _f, requireKnownAccount: _r, ...bare } = sponsorFixture().chains['84532']!;
+    const { requireKnownAccount: _r, ...bare } = sponsorFixture().chains['84532']!;
     expect(messages(withSponsor({ ...sponsorFixture(), chains: { '84532': bare } }))).toEqual([]);
+  });
+
+  it('requires rpcFallback outside local* envs: the vault signs the one-time setup only when two providers agree (D855)', () => {
+    const { rpcFallback: _f, ...noFallback } = sponsorFixture().chains['84532']!;
+    expect(problems({ ...sponsorFixture(), chains: { '84532': noFallback } })).toContain(
+      'evm.sponsor.chains.84532.rpcFallback is required outside local* envs: the vault reads the account from two providers before it signs the one-time setup',
+    );
+    const s = sponsorFixture();
+    const local: EvmSponsor = { ...s, chains: { '31337': { ...s.chains['84532']!, opStack: false, rpc: 'http://127.0.0.1:8545', rpcFallback: undefined } }, apps: {} };
+    expect(problems(local, 'local-dev')).toEqual([]);
   });
 
   it('refuses null for the optional fields', () => {
@@ -407,7 +417,16 @@ describe('evmSponsorDelegateProblems: the pinned delegate table (D834)', () => {
 });
 
 describe('evmSponsorPageChains: what the vault build gets', () => {
-  it('is { chainId: { delegate, relayer } } for each chain', () => {
-    expect(evmSponsorPageChains(sponsorFixture())).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER } });
+  it('is { chainId: { delegate, relayer, rpc, rpcFallback? } } for each chain (the public manifest URLs, read by the vault, D855)', () => {
+    expect(evmSponsorPageChains(sponsorFixture())).toEqual({
+      '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER, rpc: 'https://sepolia.base.org', rpcFallback: 'https://base-sepolia-rpc.publicnode.com' },
+    });
+  });
+
+  it('leaves rpcFallback out when the chain has none', () => {
+    const s = sponsorFixture();
+    const c = { ...s.chains['84532']! };
+    delete (c as { rpcFallback?: string }).rpcFallback;
+    expect(evmSponsorPageChains({ ...s, chains: { '84532': c } })).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER, rpc: 'https://sepolia.base.org' } });
   });
 });

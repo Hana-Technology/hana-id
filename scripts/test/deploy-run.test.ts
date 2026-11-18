@@ -1,7 +1,6 @@
 // Runs deploy-contract and admin scope:register end to end against a stub RPC, a temp keychain and a temp .secrets
 // root: checks the --yes gate (dry run sends nothing and writes nothing) and that no secret key reaches the output.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { loadEnv } from '@hana-id/env';
@@ -13,6 +12,7 @@ import { DRY_RUN_LINE, type DeployRpc, deployMain } from '../lib/deploy-run.ts';
 import { keysUpdaterFile, poolKeysFile, readKeysUpdater, readPoolKeys, readRelayerKeys, relayerKeysFile, writeRelayerKeys } from '../lib/keys.ts';
 import { type AccessKeyListEntry, type AccountView, codeHashOf, type TxSigner } from '../lib/near.ts';
 import { ACCOUNT_OWNER, GOVERNANCE_DEFAULT, NOW } from './sim-fixtures.ts';
+import { testTempDir } from './temp.ts';
 
 const m = {
   ...loadEnv('sandbox-dev'),
@@ -38,7 +38,7 @@ let wasm: string;
 let fullKeys: Record<string, KeyPair>;
 
 beforeEach(() => {
-  const root = mkdtempSync(join(tmpdir(), 'hana-id-deploy-'));
+  const root = testTempDir('hana-id-deploy-');
   home = join(root, 'home');
   secretsRoot = join(root, 'repo');
   mkdirSync(secretsRoot);

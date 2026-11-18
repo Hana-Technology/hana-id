@@ -95,6 +95,34 @@ export function renderVaultHtml(config: VaultConfig): string {
   ].join('\n');
 }
 
+/**
+ * The sponsored chains' public RPC origins (EVM_SPONSOR's `chains.*.rpc` and `rpcFallback`, the manifest's no-key
+ * URLs; D855): the vault reads the account's code and transaction count from them itself before it signs an EIP-7702
+ * authorization. Read leniently and only for this: a malformed var adds nothing (sponsorship then can't read the chain
+ * and refuses; logins are unaffected). Only http(s) origins; at most 8.
+ */
+export function sponsorRpcOrigins(raw: string | undefined): string[] {
+  if (!raw) return [];
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const chains = typeof v === 'object' && v !== null ? (v as { chains?: unknown }).chains : undefined;
+  if (typeof chains !== 'object' || chains === null || Array.isArray(chains)) return [];
+  const out: string[] = [];
+  for (const c of Object.values(chains as Record<string, unknown>)) {
+    if (typeof c !== 'object' || c === null) continue;
+    for (const url of [(c as { rpc?: unknown }).rpc, (c as { rpcFallback?: unknown }).rpcFallback]) {
+      if (typeof url !== 'string' || /\s/u.test(url)) continue;
+      const o = originOf(url);
+      if (o && /^https?:\/\/[^\s;,']+$/u.test(o) && !out.includes(o)) out.push(o);
+    }
+  }
+  return out.slice(0, 8);
+}
+
 export async function handleVaultPage(request: Request, env: Env, requestId: string): Promise<Response> {
   const started = Date.now();
   const head = request.method === 'HEAD';
@@ -108,7 +136,8 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
   const issuerOrigin = env.EMAIL_ISSUER_URL ? originOf(env.EMAIL_ISSUER_URL) : null;
   if (!apiOrigin || !rpcOrigin || (env.NEAR_RPC_FALLBACK && !fallbackOrigin) || (env.EMAIL_ISSUER_URL && !issuerOrigin)) return errorPage(503, requestId, undefined, 'misconfigured', head);
   const rpcOrigins = fallbackOrigin && fallbackOrigin !== rpcOrigin ? `${rpcOrigin} ${fallbackOrigin}` : rpcOrigin;
-  const extraOrigins = issuerOrigin && issuerOrigin !== apiOrigin ? ` ${issuerOrigin}` : '';
+  const sponsorOrigins = sponsorRpcOrigins(env.EVM_SPONSOR).filter((o) => o !== apiOrigin && o !== rpcOrigin && o !== fallbackOrigin && o !== issuerOrigin);
+  const extraOrigins = `${issuerOrigin && issuerOrigin !== apiOrigin ? ` ${issuerOrigin}` : ''}${sponsorOrigins.map((o) => ` ${o}`).join('')}`;
 
   let app: App | null;
   let settings: AppSettings;

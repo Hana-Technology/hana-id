@@ -2,8 +2,7 @@
 // (lib/demo-deploy.ts; test/guestbook-deploy.test.ts covers it in full), with the stamps contract's account, probe
 // (`totals()`), balance and texts: the --yes gate, the one deploy + new() transaction, the blockers, --lock, and that
 // no secret key reaches the output.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type Manifest, loadEnv } from '@hana-id/env';
@@ -13,6 +12,7 @@ import { CliError } from '../lib/cli.ts';
 import { DEMO_DRY_RUN_LINE, DEMO_INIT_GAS, type DemoRpc } from '../lib/demo-deploy.ts';
 import { STAMPS_STATE_BYTES, STAMPS_USAGE, stampsMain, stampsNeedYocto } from '../lib/stamps-deploy.ts';
 import { type AccessKeyListEntry, type AccountView, codeHashOf, EMPTY_CODE_HASH, STORAGE_YOCTO_PER_BYTE, type TxSigner } from '../lib/near.ts';
+import { testTempDir } from './temp.ts';
 
 const env = loadEnv('sandbox-dev');
 const STAMPS = env.near!.demoStamps!;
@@ -24,7 +24,7 @@ let wasm: string;
 let key: KeyPair;
 
 beforeEach(() => {
-  const root = mkdtempSync(join(tmpdir(), 'hana-id-stamps-'));
+  const root = testTempDir('hana-id-stamps-');
   home = join(root, 'home');
   wasm = join(root, 'hana_stamps.wasm');
   writeFileSync(wasm, Buffer.alloc(WASM_BYTES, 5));

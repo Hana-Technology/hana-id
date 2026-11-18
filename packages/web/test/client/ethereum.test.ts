@@ -556,7 +556,7 @@ describe('signing', () => {
 
   it('eth_sign and other signing or wallet methods are 4200, and never reach the vault or the RPC', async () => {
     const rpc = await loggedIn();
-    for (const method of ['eth_sign', 'eth_signTypedData', 'eth_signTypedData_v3', 'wallet_sendCalls', 'eth_sendUserOperation', 'wallet_requestPermissions', 'eth_coinbase']) {
+    for (const method of ['eth_sign', 'eth_signTypedData', 'eth_signTypedData_v3', 'wallet_showCallsStatus', 'eth_sendUserOperation', 'wallet_requestPermissions', 'eth_coinbase']) {
       await refused(s.client.ethereum.request({ method, params: [] }), 4200);
     }
     expect(s.vault.requests).toEqual([]);

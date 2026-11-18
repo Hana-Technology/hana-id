@@ -2,7 +2,7 @@
 // the test and stopped after it. Nothing here talks to a public network. Foundry is optional, as for verify's `evm`
 // step: without `anvil` and `cast` on the PATH the tests that need them skip and say why.
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,31 +80,18 @@ async function startAnvilOnce(port: number, opts: { chainId?: number; noCreate2D
   return { url, rpc, stop };
 }
 
-/** Directories in the OS temp dir with one of `prefixes`, made at or after `since` (ms): what a test file left behind. */
-export function leftoverTempDirs(prefixes: readonly string[], since: number): string[] {
-  return readdirSync(tmpdir())
-    .filter((n) => prefixes.some((p) => n.startsWith(p)))
-    .map((n) => join(tmpdir(), n))
-    .filter((p) => {
-      try {
-        return statSync(p).birthtimeMs >= since - 1000;
-      } catch {
-        return false;
-      }
-    });
-}
-
 /** anvil's published development mnemonic (its default accounts: public test keys, never funded anywhere real). */
 export const ANVIL_TEST_MNEMONIC = 'test test test test test test test test test test test junk';
 /** Its first account, funded with 10 000 test ETH on every anvil. */
 export const ANVIL_DEV_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
 
 /**
- * A temporary Foundry keystore holding anvil's first development account, as `cast wallet import` makes one. Returns
+ * A temporary Foundry keystore (in `root`, the test file's own temp directory) holding anvil's first development
+ * account, as `cast wallet import` makes one. Returns
  * the keystore's directory, its name and its (throwaway) password.
  */
-export function devKeystore(): { dir: string; name: string; password: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'hana-evm-keystore-'));
+export function devKeystore(root: string): { dir: string; name: string; password: string } {
+  const dir = mkdtempSync(join(root, 'keystore-'));
   const name = 'hana-test-deployer';
   const password = `test-only-${Math.random().toString(36).slice(2)}`;
   const r = spawnSync('cast', ['wallet', 'import', name, '--mnemonic', ANVIL_TEST_MNEMONIC, '--mnemonic-index', '0', '--keystore-dir', dir, '--unsafe-password', password], { encoding: 'utf8' });

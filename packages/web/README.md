@@ -26,7 +26,7 @@ The packages aren't on a registry yet. Journear sends you the tarballs with thei
 install them together (`@hana-id/core` too, from its tarball, never from a registry):
 
 ```sh
-npm install ./hana-id-core-0.4.1.tgz ./hana-id-web-0.4.1.tgz
+npm install ./hana-id-core-0.5.0.tgz ./hana-id-web-0.5.0.tgz
 ```
 
 ESM only, with TypeScript declarations. Use a bundler (Vite, webpack, esbuild, Next.js) or TypeScript with
@@ -215,7 +215,7 @@ device out (the `disconnect` event then has `reason: 'signed_out'` too): ask the
 `login_timeout`, `rate_limited`. NEAR refusals carry `data.reason` (`near_key_unknown`: call `activate()` first;
 `near_account_unrecorded` from the relay just after a login: retry for about 20 s).
 
-To show an error to your user, use `error.userMessage` (releases after 0.4.1): a plain sentence worked out from the
+To show an error to your user, use `error.userMessage` (SDK 0.5.0): a plain sentence worked out from the
 code alone ("You rejected this in Journear Passport, or closed it. Nothing was approved."). `message` is for you and
 your logs. For a code read elsewhere (SWK's `ext[0]`, a provider error a library wrapped), call
 `userMessageFor(code, data)`.

@@ -607,7 +607,7 @@ describe('golden: Hana Home opens the vault’s address', () => {
     await h.open();
     expect(h.page.moving.state).toBe('refused');
     expect(h.page.moving.errorCode).toBe('address_mismatch');
-    expect(document.getElementById('home-export-problem')?.textContent).toContain('is not the one Journear has on record for you in this app, so nothing is shown');
+    expect(document.getElementById('home-export-problem')?.textContent).toContain('Journear opened a different wallet from the one it has on record for you in this app, so it stopped. Nothing was shown or changed.');
     expect(h.page.moving.holdsSecret).toBe(false);
     expect(zeroed.has(vector(ROOT).prkHex)).toBe(true);
     expect(document.getElementById('home-export-addresses')).toBeNull();
@@ -832,7 +832,7 @@ describe('the two NEAR providers (a path that isn’t the identity’s own)', ()
     expect(h.page.moving.state).toBe('refused');
     expect(h.page.moving.errorCode).toBe(code);
     expect(document.getElementById('home-export-problem')?.textContent).toContain(words);
-    expect(document.getElementById('home-export-problem')?.textContent).toContain(`Code: ${code}`);
+    expect(document.getElementById('home-export-problem')?.textContent).toContain(`Error code (for support): ${code}`);
     expect(h.logins()).toEqual([]);
     expect(h.page.moving.holdsSecret).toBe(false);
   });
@@ -859,8 +859,8 @@ describe('refusals read as Hana’s own sentences', () => {
     [502, 'near_unavailable', 'Passport Home is not reachable right now. Nothing on screen was lost. Try again in a moment.'],
     [503, 'home_directory_unavailable', 'Passport Home is not reachable right now.'],
     [503, 'rate_limiter_unavailable', 'Passport Home is not reachable right now.'],
-    [422, 'ckd_failed', 'The key service didn’t produce the key this time. Nothing was shown. Sign in again to retry.'],
-    [400, 'nonce_mismatch', 'Google’s answer could not be verified. Sign in again to retry.'],
+    [422, 'ckd_failed', 'Journear couldn’t open your wallet this time. Nothing was shown. Sign in again to retry.'],
+    [400, 'nonce_mismatch', 'Journear couldn’t check your Google sign-in. Sign in again to retry.'],
     [400, 'some_new_code', 'Something went wrong. Try again.'],
   ])('%i %s', async (status, code, sentence) => {
     const h = start({ login: () => refusal(status, code) });
@@ -870,8 +870,8 @@ describe('refusals read as Hana’s own sentences', () => {
     expect(h.page.moving.errorCode).toBe(code);
     const text = document.getElementById('home-export-problem')?.textContent ?? '';
     expect(text).toContain(sentence);
-    expect(text).toContain(`Code: ${code}`);
-    expect(text).toContain('Request: req_9');
+    expect(text).toContain(`Error code (for support): ${code}`);
+    expect(text).toContain('Request ID (for support): req_9');
     expect(pageText()).not.toContain('internal words');
     // One request, never sent again by the page; nothing held; "Try again" goes back to the start, not to Google.
     expect(h.logins()).toHaveLength(1);
@@ -1260,11 +1260,11 @@ describe('the guard and the auto-hide', () => {
 describe('words and source', () => {
   it('the availability sentence mentions the move only where the page offers it', () => {
     expect(coverageText('shared', true, true).detail).toContain('You can also move it to another wallet app');
-    expect(coverageText('partner_client', true, true).detail).toContain('To stop depending on it, you can move the wallet');
+    expect(coverageText('partner_client', true, true).detail).toContain('To avoid that, you can move it to another wallet app below.');
     for (const [coverage, mine, canMove] of [['shared', true, false], ['exit', true, false], ['shared', false, true], ['none', true, true], ['unknown', true, true]] as const) {
       expect(coverageText(coverage, mine, canMove).detail, `${coverage} ${mine} ${canMove}`).not.toMatch(/move/u);
     }
-    expect(coverageText('shared', true, true).badge).toBe('Stays reachable');
+    expect(coverageText('shared', true, true).badge).toBe('Safe if the app closes');
   });
 
   it('the route: shared and the app’s own clients; never for a linked app that isn’t the user’s', () => {
@@ -1302,10 +1302,10 @@ describe('NEAR: the third key of the opened wallet (D779)', () => {
     const want = nearVector(OWN);
     expect(document.getElementById('home-export-address-near')?.textContent).toBe(want.accountId);
     // Stellar, EVM, then NEAR, as the app's page lists them.
-    expect([...document.querySelectorAll('#home-export-addresses .home-address-label')].map((x) => x.textContent)).toEqual(['Stellar', 'EVM (Ethereum and similar networks)', 'NEAR']);
+    expect([...document.querySelectorAll('#home-export-addresses .home-address-label')].map((x) => x.textContent)).toEqual(['Stellar', 'Ethereum-style (Ethereum and similar networks)', 'NEAR']);
     expect([...document.querySelectorAll('#home-export .actions button')].map((b) => [b.id, b.textContent])).toEqual([
       ['home-export-stellar', 'Stellar key'],
-      ['home-export-evm', 'EVM key'],
+      ['home-export-evm', 'Ethereum-style key'],
       ['home-export-near', 'NEAR key'],
       ['home-export-lock', 'Lock now'],
     ]);
@@ -1352,9 +1352,9 @@ describe('NEAR: the third key of the opened wallet (D779)', () => {
     expect(notes).toHaveLength(3);
     expect(notes[0]).toContain('This key is the NEAR account itself');
     expect(notes[0]).toContain('full control of the account');
-    expect(notes[1]).toContain('Choose NEAR testnet in the other wallet app');
+    expect(notes[1]).toContain('Choose NEAR’s test network (“testnet”) in the other wallet app');
     expect(notes[1]).toContain('doesn’t exist on NEAR yet');
-    expect(notes[2]).toContain('Journear pays NEAR fees only for a few calls it has approved');
+    expect(notes[2]).toContain('Journear pays NEAR network fees only for a few actions it has approved');
     expect(notes[2]).toContain('only in apps that use Journear Passport');
     expect(notes.join(' ')).not.toMatch(/\bHana\b/u);
     const h = start();

@@ -469,12 +469,12 @@ describe('your apps', () => {
     const cards = [...document.querySelectorAll('.home-card')];
     expect(cards.map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
     const badgeOf = (id: string) => document.querySelector(`.home-card[data-scope="${id}"] .home-card-foot .badge`)?.textContent;
-    expect(badgeOf('s1')).toBe('Stays reachable');
-    expect(badgeOf('s2')).toBe('Stays reachable');
-    expect(badgeOf('s3')).toBe('Depends on the app');
-    expect(badgeOf('s4')).toBe('Out of reach');
+    expect(badgeOf('s1')).toBe('Safe if the app closes');
+    expect(badgeOf('s2')).toBe('Safe if the app closes');
+    expect(badgeOf('s3')).toBe('Needs the app');
+    expect(badgeOf('s4')).toBe('Can’t be opened here');
     // An app where the user has no wallet is never called theirs, or "available".
-    expect(badgeOf('s6')).toBe('Supported');
+    expect(badgeOf('s6')).toBe('Safe if the app closes');
     expect(badgeOf('s5')).toBe('Not checked yet');
     expect(cards[0]?.textContent).toContain('Sodax Earn');
     expect(cards[0]?.textContent).toContain('Paused');
@@ -520,7 +520,7 @@ describe('your apps', () => {
     expect(document.getElementById('home-address-stellar')?.textContent).toBe(G);
     expect(document.getElementById('home-address-evm')?.textContent).toBe(EVM);
     expect(document.getElementById('home-support-id')?.textContent).toBe('HANA-AB12-CD34');
-    expect(pageText()).toContain('Signing in to this wallet doesn’t depend on the app');
+    expect(pageText()).toContain('If this app shuts down, you can still sign in to this wallet through Journear.');
     const links = [...document.querySelectorAll('#app a')] as HTMLAnchorElement[];
     expect(links.map((a) => a.getAttribute('href'))).toEqual([`https://stellar.expert/explorer/testnet/account/${G}`]);
     expect(links[0]?.getAttribute('rel')).toBe('noopener noreferrer');
@@ -583,7 +583,7 @@ describe('your apps', () => {
       });
     await h.signIn();
     (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
-    expect([...document.querySelectorAll('.home-address-label')].map((x) => x.textContent)).toEqual(['Stellar', 'EVM (Ethereum and similar networks)', 'NEAR']);
+    expect([...document.querySelectorAll('.home-address-label')].map((x) => x.textContent)).toEqual(['Stellar', 'Ethereum-style (Ethereum and similar networks)', 'NEAR']);
     expect(document.getElementById('home-address-near')?.textContent).toBe(NEAR);
     expect(document.getElementById('home-no-near')).toBeNull();
     const links = [...document.querySelectorAll('#app a')].map((a) => a.getAttribute('href'));
@@ -624,12 +624,12 @@ describe('your apps', () => {
     (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
     await h.page.idle();
     expect(h.appCalls().at(-1)?.url.search).toBe('?scopeId=s1');
-    expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Stays reachable');
+    expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Safe if the app closes');
     h.click('home-back');
     (document.querySelector('.home-card[data-scope="s5"] .home-open') as HTMLElement).click();
     await h.page.idle();
     expect(h.appCalls().at(-1)?.url.search).toBe('?appId=app_Apps5');
-    expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Out of reach');
+    expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Can’t be opened here');
     expect(h.appCalls()).toHaveLength(3);
   });
 
@@ -688,7 +688,7 @@ describe('your apps', () => {
     expect([...document.querySelectorAll('#home-content h2')].map((x) => x.textContent)).toEqual(['Your apps', 'The app from your link', 'Devices and auto-approve', 'Your name', 'Find an app']);
     expect(document.querySelector('#home-linked .note')?.textContent).toContain('Journear has no wallet on record for this Google account in it.');
     expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's8']);
-    expect(document.querySelector('#home-linked .home-card-foot .badge')?.textContent).toBe('Supported');
+    expect(document.querySelector('#home-linked .home-card-foot .badge')?.textContent).toBe('Safe if the app closes');
     // The link's parameter is an app id, never anything of the user's; the page changed no URL.
     expect(h.win.replaced).toEqual([]);
     expect(h.win.location.assigned).toEqual([]);
@@ -809,7 +809,7 @@ describe('partner strings are text only', () => {
     const open = document.querySelector('.home-open') as HTMLElement;
     expect(open.getAttribute('aria-label')).toBe(`View ${XSS}`);
     open.click();
-    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Passport Home', 'App details', 'App', 'Would a wallet here depend on the app?', 'Your addresses', 'Devices and auto-approve', 'Your name', 'Move this wallet to another wallet app']);
+    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Passport Home', 'App details', 'App', 'Would a wallet here need the app?', 'Your addresses', 'Devices and auto-approve', 'Your name', 'Move this wallet to another wallet app']);
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe(XSS);
     expect(document.querySelector('#app script')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
@@ -1099,7 +1099,7 @@ describe('API refusals', () => {
     const alert = document.getElementById('home-problem');
     expect(alert?.getAttribute('role')).toBe('alert');
     expect(alert?.textContent).toContain('Passport Home is not reachable right now.');
-    expect([...(alert?.querySelectorAll('.code') ?? [])].map((x) => x.textContent)).toEqual(['Code: home_directory_unavailable', 'Request: req_9']);
+    expect([...(alert?.querySelectorAll('.code') ?? [])].map((x) => x.textContent)).toEqual(['Error code (for support): home_directory_unavailable', 'Request ID (for support): req_9']);
     expect(pageText()).not.toContain('D1 is down');
     advance(5 * MIN);
     await h.page.idle();

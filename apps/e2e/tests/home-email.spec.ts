@@ -117,7 +117,7 @@ test('an email user signs in to Hana Home with a code and sees their app and add
   expect(popups).toBe(0);
   const card = home.locator(`.home-card[data-scope="${scopeId}"]`);
   await expect(card).toContainText(name);
-  await expect(card.locator('.home-card-foot .badge')).toHaveText('Stays reachable');
+  await expect(card.locator('.home-card-foot .badge')).toHaveText('Safe if the app closes');
   await shots(home, 'h10-04-signed-in-list', browserName);
   await card.getByRole('button', { name: `View ${name}` }).click();
   await expect(home.locator('#home-address-stellar')).toHaveText(wallet.stellar);

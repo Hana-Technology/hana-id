@@ -178,5 +178,5 @@ holds your users' wallets and names your on-chain owners), sets your security co
 - Send your Journear contact the Support ID, the request ID, the error `code` and `data.reason`, when it happened (with
   the time zone) and the app. Neither ID is a secret: nobody can act on a wallet with them.
 - **A user whose email code doesn't arrive**, or who sees "Too many attempts": the guide's section 13 ("A user who can't
-  get an email code") says what to tell them: the spam folder, Resend, waiting until 00:00 UTC, and when to contact
-  Journear. During the pilot Journear can't yet lift a block on one address.
+  get an email code") says what to tell them: the spam folder, Resend, waiting until 00:00 UTC, and what to send
+  Journear. Journear can then mail the address a one-time link that unlocks it or starts its codes again.

@@ -1908,16 +1908,26 @@ them.
 
 - **"The code never arrived."** Look in the spam or junk folder for mail from Journear Passport
   (`team@hanawallet.io`; on testnet "Journear Passport (testnet)"). Wait 30 seconds, then choose **Resend code** (2
-  resends at most). A code works for 10 minutes. If it still doesn't come, Journear may be blocked from mailing that
-  address: after a bounce (a full or closed mailbox), for 30 days; after the mail was marked as spam, until Journear
-  lifts it. Journear Passport doesn't say so on screen, so nobody can learn from it which addresses are blocked.
-- **"Too many attempts."** The address had too many codes or wrong tries. It works again later, at the latest after
-  00:00 UTC. A browser where the user signed in before keeps a few attempts of its own.
-- **In the meantime**, the user can sign in another way only if their wallet has one: Google, when they linked it.
-  Another email address opens a different wallet.
-- **Then contact Journear** with the app, when it happened (with the time zone) and, if the user agrees, their email
-  address, sent privately (never in a shared channel). During the pilot Journear can't yet lift a block for one user:
-  the mailed unblock step isn't available. A bounce block ends by itself after 30 days.
+  resends at most). A code works for 10 minutes. If it still doesn't come, Journear may have stopped mailing that
+  address: after a bounce (a full or closed mailbox) or after its mail was marked as spam. The sign-in window doesn't
+  say so, so nobody can find out from it which addresses are stopped.
+- **"Too many attempts."** The address had too many codes or wrong tries. It works again after 00:00 UTC at the latest.
+- **Meanwhile** the user can sign in another way only if their wallet has one (Google, when they linked it). Another
+  email address opens a different wallet.
+- **Ask Journear for help**: send the app, when it happened (with the time zone), what the user saw, your support case
+  reference, and the user's email address, privately (never in a shared channel), once the user agrees. Journear then
+  mails that address one of two emails, and only whoever reads that mailbox can use it:
+  - "Unlock your Journear sign-in", for too many attempts. The user opens its link **in the browser where they use your
+    app**, presses **Unlock my email**, then signs in to your app with that email in the same browser within 24
+    hours. It doesn't cover Passport Home yet.
+  - "Confirm your email to get Journear sign-in codes again", when codes never arrive. The user presses **Yes, this is
+    my email**, then signs in as usual.
+
+  Each link works once, within 24 hours, and nothing happens until the user presses the button. A user who didn't ask
+  for it can ignore it. The pages tell the user to "ask the app's support to send a new email" when a link was used or
+  expired, or when the user still can't sign in: that is you, so ask Journear again. The unlock needs private
+  browsing off. Journear can send each at most once a day and 3 times in 30 days for one address. These pages
+  are new and not on sandbox-dev yet; until they are, a lock ends at 00:00 UTC by itself.
 
 ## 14. Security notes for integrators
 

@@ -1051,7 +1051,7 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
     const copy = await body(await send(s, signedSend(s.user).body));
-    expect(copy.status === 'executed' || copy.code === 'nonce_stale').toBe(true);
+    expect(copy.status === 'executed' || copy.code === 'nonce_stale', JSON.stringify(copy)).toBe(true);
   });
 
   it('a timeout reconciled to reverted (charged, a failure) and to the deadline cancel (the lookup’s mined hash: not_executed)', async () => {

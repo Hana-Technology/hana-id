@@ -8,16 +8,17 @@
 // `502 evm_rpc_unavailable` and never echo a node's error text.
 import { keccak_256 } from '@noble/hashes/sha3';
 import type { Env } from '../env.ts';
-import { type EvmRejectionCause, type EvmRelayerErrorCode, type EvmRelayerLookup, type EvmRelayerSendRequest, type EvmRelayerSent, type EvmRelayerStatus, evmRelayerError, evmRelayerName } from '../evm-relayer.ts';
+import { type EvmRejectionCause, type EvmRelayerErrorCode, type EvmRelayerLookup, type EvmRelayerSendAnswer, type EvmRelayerSendRequest, type EvmRelayerSent, type EvmRelayerStatus, evmRelayerError, evmRelayerName } from '../evm-relayer.ts';
 import { type EvmReceipt, type Hex, type SponsorChain, sponsorChainFor } from './sponsor-chain.ts';
 import type { EvmSponsorChainConfig } from './sponsor-config.ts';
 
-export type { EvmRejectionCause, EvmRelayerLookup, EvmRelayerSendRequest, EvmRelayerSent, EvmRelayerStatus, Hex };
+export type { EvmRejectionCause, EvmRelayerLookup, EvmRelayerSendAnswer, EvmRelayerSendRequest, EvmRelayerSent, EvmRelayerStatus, Hex };
 export { EvmRpcError } from './sponsor-chain.ts';
 
 /** The relayer object's RPC methods the handlers call (nothing here reaches its staff tools). */
 export interface EvmRelayerPort {
-  send(req: EvmRelayerSendRequest): Promise<EvmRelayerSent>;
+  /** A coded refusal comes back as `{ok: false, refused, reason}` (nothing sent); anything thrown is unknown. */
+  send(req: EvmRelayerSendRequest): Promise<EvmRelayerSendAnswer>;
   status(): Promise<EvmRelayerStatus>;
   lookup(digest: Hex): Promise<EvmRelayerLookup | null>;
 }

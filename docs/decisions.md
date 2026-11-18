@@ -12984,7 +12984,13 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   quarantined with an alert; without the block a cron run makes one D1 read. `evm_relay_stuck` at 2 minutes (oldest
   unmined, and unaccepted once the relayer reports it). Found while testing: workerd logs every Durable Object RPC method
   that rejects as "Uncaught (in promise)" on the callee's side even when the caller handles it (RateLimiter too): the
-  handlers catch every relayer refusal; the log line is the runtime's.
+  handlers catch every relayer refusal; the log line is the runtime's (since PR 86 the relayer returns its coded refusals
+  as values, `{ok: false, refused, reason}`, which the handlers branch on; a thrown coded error is still read the same
+  way). With PR 86: the relayer's `authority_reserved` (cause `request`: the user's account had other transactions
+  waiting, the batch cancelled at once) is `422 account_pending` with its own plain sentence and a failure charged;
+  `sender_restricted` (cause `relayer`) is `sponsorship_paused`; `oldestUnacceptedMs` over 2 minutes raises
+  `evm_relay_stuck`; fixtures within the new caps (`deadlineMaxS` 300). PR 84 removed the 15-second wait for a user's
+  second action noted above.
 - Address impact: none.
 
 ### D848. The sponsorship audit table and its security events

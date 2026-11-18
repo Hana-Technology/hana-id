@@ -1273,7 +1273,8 @@ step 12:
     back, the row `refused`, the user's attempts too unless their input caused it (`invalid_request`,
     `deadline_passed`): `relayer_busy` → `429 relayer_busy` (`retry-after: 2`; `:account`, that account's previous batch
     not yet seen mined by the relayer's run: `429 account_busy`, `retry-after: 5`), `invalid_request` (the relayer refusing
-    the handlers' own checked request: our mismatch) → `503 internal_error` with `evm_relay_stuck {internal}`, `relayer_halted` → `503 sponsorship_paused`
+    the handlers' own checked request: our mismatch) → `503 internal_error` with `evm_relay_stuck {internal}`; the
+    relayer returns these as values (`{ok: false, refused, reason}`) and a thrown coded error is read the same way, `relayer_halted` → `503 sponsorship_paused`
     (`retry-after: 300`), `fees_too_high` → `503 gas_price_too_high` (30 s), `fees_too_low` (the relayer's follow-up:
     the fees below the base fee with margin) → `503 gas_price_too_high` (15 s), `daily_cap` → `429 budget_exhausted`,
     `relayer_unconfigured` / `relayer_misconfigured` → `503 sponsorship_unconfigured`, `rpc_unavailable` → `502
@@ -1285,7 +1286,8 @@ step 12:
     now, never after a wait: the row `rejected` with `rejection` `<cause>:<code>`; the money settles later to the
     cancel's cost (the reconciler, from the relayer's `lookup`: `mined`, `outcome: "cancel"`, `costWei`, or the cancel's
     own receipt). By `rejection.cause`: `request` (the batch's own size or shape) → `422 not_executed`, the failure
-    charged; `pricing` (turned away over its fees) → `503 gas_price_too_high` (15 s), the user's attempts, the shared
+    charged (the relayer's `authority_reserved`, the user's own account having other transactions waiting: `422
+    account_pending`); `pricing` (turned away over its fees) → `503 gas_price_too_high` (15 s), the user's attempts, the shared
     windows and the failure slot back, no alert; `relayer`, and any cause this API doesn't know → `503
     sponsorship_paused`, the same given back, and `evm_relay_stuck {rejected: <code>}` (the relayer halts itself on such
     a refusal). A malformed rejection is read as `relayer`.

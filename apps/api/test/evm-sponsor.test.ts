@@ -910,7 +910,7 @@ describe('the relayer checks (cron): balance and stuck transactions', () => {
   it('writes evm_relay_balance_low once a day and evm_relay_stuck once an hour; nothing without the config', async () => {
     const s = await setup();
     s.chain.balanceWei = 10n ** 15n;
-    s.relayer.statusValue = { address: RELAYER, unmined: 2, awaitingConfirmation: 0, oldestUnminedMs: 11 * 60_000, nextNonce: 5, halted: null };
+    s.relayer.statusValue = { address: RELAYER, unmined: 2, awaitingConfirmation: 0, oldestUnminedMs: 11 * 60_000, oldestUnacceptedMs: null, nextNonce: 5, halted: null };
     sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => s.relayer.statusValue, lookup: async () => null });
     const e = { ...env, ...s.bindings } as typeof env;
     await checkEvmSponsorRelay(e);
@@ -1196,7 +1196,7 @@ describe('the relayer’s final interface (PR #70)', () => {
   it('a halted relayer: evm_relay_stuck (“Free network fees: paused or slow, needs a look”), status answers paused, a send is 503 sponsorship_paused with everything back', async () => {
     const s = await setup();
     const halted = { reason: 'nonce_gap' as const, since: Date.now(), nonce: 3 };
-    s.relayer.statusValue = { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, nextNonce: 3, halted };
+    s.relayer.statusValue = { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, oldestUnacceptedMs: null, nextNonce: 3, halted };
     await checkEvmSponsorRelay(cronEnv(s));
     const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").all<{ detail_json: string }>();
     expect(JSON.parse(ev.results[0]!.detail_json)).toMatchObject({ chainId: LOCAL_CHAIN, halted: 'nonce_gap' });
@@ -1841,7 +1841,7 @@ describe('the one-time setup’s authorization is attached only when nothing of 
 describe('the relayer halted or slow (cron and prepare)', () => {
   it('a halt with its refusal code is raised with it; prepare answers paused; an unmined transaction under 2 minutes raises nothing', async () => {
     const s = await setup();
-    s.relayer.statusValue = { address: RELAYER, unmined: 1, awaitingConfirmation: 0, oldestUnminedMs: 90_000, nextNonce: 3, halted: null };
+    s.relayer.statusValue = { address: RELAYER, unmined: 1, awaitingConfirmation: 0, oldestUnminedMs: 90_000, oldestUnacceptedMs: null, nextNonce: 3, halted: null };
     await checkEvmSponsorRelay(cronEnv(s));
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ n: number }>())?.n).toBe(0);
     s.relayer.statusValue = { ...s.relayer.statusValue, halted: { reason: 'relayer_cannot_send', since: Date.now(), nonce: 2, code: 'insufficient_funds' } };
@@ -2083,5 +2083,19 @@ describe('the relayer’s answers as values (PR 86’s interface)', () => {
     const r = await send(s, signedSend(s.user).body);
     expect([r.status, (await body(r)).code]).toEqual([422, 'account_pending']);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
+  });
+});
+
+describe('the relayer’s oldest unaccepted transaction (PR 86’s status field)', () => {
+  it('over 2 minutes raises evm_relay_stuck with its age; under it, nothing', async () => {
+    const s = await setup();
+    s.relayer.statusValue = { address: RELAYER, unmined: 1, awaitingConfirmation: 0, oldestUnminedMs: 10_000, oldestUnacceptedMs: 60_000, nextNonce: 1, halted: null };
+    sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => s.relayer.statusValue, lookup: async () => null });
+    await checkEvmSponsorRelay(cronEnv(s));
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ n: number }>())?.n).toBe(0);
+    s.relayer.statusValue = { ...s.relayer.statusValue, oldestUnacceptedMs: 3 * 60_000 };
+    await checkEvmSponsorRelay(cronEnv(s));
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ detail_json: string }>();
+    expect(JSON.parse(ev!.detail_json)).toMatchObject({ oldestUnacceptedMs: 3 * 60_000 });
   });
 });

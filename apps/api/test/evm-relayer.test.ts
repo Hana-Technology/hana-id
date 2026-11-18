@@ -16,6 +16,8 @@ import {
   EVM_RELAYER_ALARM_MAX_MS,
   EVM_RELAYER_ALARM_MS,
   EVM_RELAYER_BUMP_AFTER_MS,
+  EVM_RELAYER_IDLE_CHECK_MS,
+  EVM_RELAYER_STAFF_GUARD,
   EVM_RELAYER_MAX_QUEUE,
   EVM_RELAYER_MAX_RECORDS,
   EVM_RELAYER_MAX_UNMINED,
@@ -32,7 +34,7 @@ import {
   maxStartingFees,
   verifySend,
 } from '../src/evm-relayer.ts';
-import { evmRelayerStaffAdoptNonce, evmRelayerStaffClose, evmRelayerStaffFill, evmRelayerStaffResume, evmRelayerStaffStatus } from '../src/evm-relayer-staff.ts';
+import { evmRelayerStaffAdoptNonce, evmRelayerStaffCancel, evmRelayerStaffClose, evmRelayerStaffFill, evmRelayerStaffResume, evmRelayerStaffStatus } from '../src/evm-relayer-staff.ts';
 import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { checksumEvmAddress, evmSponsorVar, parseEvmSponsorConfig, sponsorChain } from '../src/evm/sponsor-config.ts';
 import { uid } from './helpers.ts';
@@ -117,10 +119,16 @@ function signRaw(e: ExecuteInput, key: Uint8Array): Hex {
   const sig = secp256k1.sign(digest, key);
   return `0x${sig.r.toString(16).padStart(64, '0')}${sig.s.toString(16).padStart(64, '0')}${(27 + sig.recovery).toString(16)}` as Hex;
 }
-function request(over: Partial<Omit<EvmRelayerSendRequest, 'execute'>> & { execute?: Partial<ExecuteInput> } = {}, key = USER_KEY): EvmRelayerSendRequest {
+let userSeq = 0;
+/**
+ * A request signed by `key` for its own account; without a key, by a fresh test user's (one unmined batch per account,
+ * D851), or by USER_KEY when the test names the account itself.
+ */
+function request(over: Partial<Omit<EvmRelayerSendRequest, 'execute'>> & { execute?: Partial<ExecuteInput> } = {}, given?: Uint8Array): EvmRelayerSendRequest {
+  const key = given ?? (over.execute?.account ? USER_KEY : testKey(`user ${userSeq++}`));
   const gas = over.gas ?? 200_000n;
   const maxFeePerGas = over.maxFeePerGas ?? GWEI / 10n;
-  const execute: ExecuteInput = { chainId: CHAIN, account: USER, implementation: DELEGATE, calls: [{ to: CHECK_IN, value: 0n, data: '0x183ff085' }], nonce: executeNonce++, deadline: nowS() + 300n, relayer: RELAYER, minGas: 100_000n, ...over.execute };
+  const execute: ExecuteInput = { chainId: CHAIN, account: addressFor(key), implementation: DELEGATE, calls: [{ to: CHECK_IN, value: 0n, data: '0x183ff085' }], nonce: executeNonce++, deadline: nowS() + 300n, relayer: RELAYER, minGas: 100_000n, ...over.execute };
   const { execute: _e, ...rest } = over;
   return { chainId: CHAIN, execute, signature: signRaw(execute, key), gas, maxFeePerGas, maxPriorityFeePerGas: GWEI / 1000n, reservedWei: gas * maxFeePerGas + 10n ** 12n, ...rest };
 }
@@ -192,7 +200,7 @@ describe('verifySend: the in-object check', () => {
   };
 
   it('builds execute(...) to the account with value 0 from the Execute and its signature; the digest is its own', () => {
-    const req = request({ authorization: authorization() });
+    const req = request({ authorization: authorization() }, USER_KEY);
     const v = verifySend(req, ctx());
     expect(v).toMatchObject({ digest: digestOf(req), to: USER.toLowerCase(), gas: req.gas, fees: { maxFeePerGas: req.maxFeePerGas, maxPriorityFeePerGas: req.maxPriorityFeePerGas }, deadline: Number(req.execute.deadline) });
     expect(v.data).toBe(encodeExecuteCalldata(req.execute, req.signature).toLowerCase());
@@ -202,13 +210,13 @@ describe('verifySend: the in-object check', () => {
   it('refuses each unsafe field with its code', () => {
     const other = testKey('someone else');
     const cases: [EvmRelayerSendRequest, string][] = [
-      [request({}, other), 'invalid_request'],
+      [request({ execute: { account: USER } }, other), 'invalid_request'],
       [request({ execute: { relayer: OTHER } }), 'invalid_request'],
       [request({ execute: { implementation: CHECK_IN } }), 'invalid_request'],
       [request({ execute: { chainId: 84532 } }), 'invalid_request'],
       [{ ...request(), chainId: 84532 }, 'invalid_request'],
       [request({ execute: { calls: [{ to: CHECK_IN, value: 1n, data: '0x183ff085' }] } }), 'invalid_request'],
-      [request({ execute: { calls: [{ to: USER, value: 0n, data: '0x' }] } }), 'invalid_request'],
+      [request({ execute: { calls: [{ to: USER, value: 0n, data: '0x' }] } }, USER_KEY), 'invalid_request'],
       [request({ execute: { calls: [{ to: DELEGATE, value: 0n, data: '0x' }] } }), 'invalid_request'],
       [request({ execute: { calls: [{ to: RELAYER, value: 0n, data: '0x' }] } }), 'invalid_request'],
       [request({ execute: { calls: [{ to: `0x${'0'.repeat(40)}`, value: 0n, data: '0x' }] } }), 'invalid_request'],
@@ -227,10 +235,10 @@ describe('verifySend: the in-object check', () => {
       [request({ execute: { deadline: nowS() + 5n } }), 'deadline_passed'],
       [request({ execute: { deadline: nowS() + 661n } }), 'invalid_request'],
       [{ ...request(), signature: '0x1234' as Hex }, 'invalid_request'],
-      [request({ authorization: { ...authorization(), chainId: 84532 } }), 'invalid_request'],
-      [request({ authorization: authorization({}, other) }), 'invalid_request'],
-      [request({ authorization: { ...authorization(), address: CHECK_IN } }), 'invalid_request'],
-      [request({ authorization: { ...authorization(), s: `0x${'f'.repeat(64)}` as Hex } }), 'invalid_request'],
+      [request({ authorization: { ...authorization(), chainId: 84532 } }, USER_KEY), 'invalid_request'],
+      [request({ authorization: authorization({}, other) }, USER_KEY), 'invalid_request'],
+      [request({ authorization: { ...authorization(), address: CHECK_IN } }, USER_KEY), 'invalid_request'],
+      [request({ authorization: { ...authorization(), s: `0x${'f'.repeat(64)}` as Hex } }, USER_KEY), 'invalid_request'],
     ];
     for (const [req, want] of cases) expect([req.execute, code(req)]).toEqual([req.execute, want]);
     expect(code(request())).toBe('ok');
@@ -258,7 +266,7 @@ describe('send: new records', () => {
   it('a fresh object reads the pending count ONCE, signs type 2 at it, persists (alarm set) before the broadcast; the same Execute is a replay', async () => {
     chain.setMined(RELAYER, 7);
     const stub = await fresh();
-    const req = request();
+    const req = request({}, USER_KEY);
     const sent = await stub.send(req);
     expect(sent).toMatchObject({ digest: digestOf(req), relayerNonce: 7, replay: false });
     const tx = chain.pooled(RELAYER, 7)!;
@@ -278,7 +286,7 @@ describe('send: new records', () => {
 
   it('type 4 with the user’s authorization', async () => {
     const stub = await fresh();
-    const sent = await stub.send(request({ authorization: authorization() }));
+    const sent = await stub.send(request({ authorization: authorization() }, USER_KEY));
     expect(chain.pooled(RELAYER, sent.relayerNonce)).toMatchObject({ type: 4, authorizations: 1, to: USER.toLowerCase() });
   });
 
@@ -375,7 +383,7 @@ describe('idempotency and the queue', () => {
     chain.mine(RELAYER);
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs).toEqual([]);
-    expect(await stub.send({ ...req, gas: 250_000n })).toMatchObject({ transactionHash: results[0]!.transactionHash, raw: results[0]!.raw, replay: true });
+    expect(await stub.send({ ...req, gas: 250_000n })).toMatchObject({ transactionHash: results[0]!.transactionHash, raw: null, replay: true, broadcast: 'accepted' });
     expect(chain.broadcasts).toHaveLength(1);
   });
 
@@ -575,11 +583,11 @@ describe('record transitions', () => {
     await runDurableObjectAlarm(stub);
     const rec = (await stored(stub)).recs[0]!;
     expect(rec.versions).toHaveLength(2);
-    chain.admit(decodeRawTx(sent.raw));
+    chain.admit(decodeRawTx(sent.raw!));
     chain.mine(RELAYER);
     await runDurableObjectAlarm(stub);
     expect(await stub.lookup(digestOf(req))).toMatchObject({ state: 'mined', transactionHash: sent.transactionHash, minedHash: sent.transactionHash, outcome: 'execute', hashes: rec.versions.map((v) => v.hash) });
-    expect(await stub.send(req)).toMatchObject({ transactionHash: sent.transactionHash, raw: sent.raw, replay: true });
+    expect(await stub.send(req)).toMatchObject({ transactionHash: sent.transactionHash, raw: null, replay: true });
   });
 
   it('past the deadline: a 0-value self-transfer at the same nonce (cancelling); when it mines, outcome cancel', async () => {
@@ -603,13 +611,13 @@ describe('record transitions', () => {
     const sent = await stub.send(req);
     advance(61_000);
     await runDurableObjectAlarm(stub);
-    chain.admit(decodeRawTx(sent.raw));
+    chain.admit(decodeRawTx(sent.raw!));
     chain.mine(RELAYER);
     await runDurableObjectAlarm(stub);
     expect(await stub.lookup(digestOf(req))).toMatchObject({ state: 'mined', minedHash: sent.transactionHash, outcome: 'execute' });
   });
 
-  it('the alarm backs off (15 s doubling to 5 minutes) while nothing changes; after the last record, the next forget time; batches forgotten after 7 days', async () => {
+  it('the alarm backs off (15 s doubling to 5 minutes) while nothing changes; after the last record, hourly chain checks; batches forgotten after 7 days', async () => {
     const stub = await fresh();
     const req = request();
     await stub.send(req);
@@ -621,13 +629,14 @@ describe('record transitions', () => {
     expect(gaps).toEqual([30_000, 60_000, 120_000, 240_000, EVM_RELAYER_ALARM_MAX_MS, EVM_RELAYER_ALARM_MAX_MS]);
     chain.mine(RELAYER);
     await runDurableObjectAlarm(stub);
-    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_REMEMBER_MS + 1);
+    // With no records: hourly chain checks (sooner than the 7-day forget time).
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_IDLE_CHECK_MS);
     advance(EVM_RELAYER_REMEMBER_MS - 1000);
     expect(await stub.lookup(digestOf(req))).not.toBeNull();
     advance(2000);
     await runDurableObjectAlarm(stub);
     expect(await stub.lookup(digestOf(req))).toBeNull();
-    expect(await stored(stub)).toMatchObject({ digs: [], alarm: null });
+    expect(await stored(stub)).toMatchObject({ digs: [], alarm: now + EVM_RELAYER_IDLE_CHECK_MS });
   });
 });
 
@@ -739,7 +748,7 @@ describe('halt: foreign_transactions', () => {
     expect(await evmRelayerStaffAdoptNonce(stub, WHO, 3, 'n')).toMatchObject({ refused: 'unmined_records' });
     chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
     await runDurableObjectAlarm(stub);
-    expect(await evmRelayerStaffAdoptNonce(stub, WHO, 1, 'n')).toMatchObject({ refused: 'not_above_records' });
+    expect(await evmRelayerStaffAdoptNonce(stub, WHO, 1, 'n')).toMatchObject({ refused: 'below_next_nonce' });
     chain.addBlocks(5);
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs).toEqual([]);
@@ -764,19 +773,25 @@ describe('halt: rejected_unsent', () => {
     expect(await codeOf(stub.send(request()))).toBe('relayer_halted');
     await runDurableObjectAlarm(stub);
     expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ refused: 'rejected_unsent' });
+    expect(sent.broadcast).toBe('rejected');
     chain.onSend = undefined;
     await runDurableObjectAlarm(stub);
-    expect(chain.pooled(RELAYER, 0)?.hash).toBe(sent.transactionHash);
+    const rec = (await stored(stub)).recs[0]!;
+    expect(rec.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+    expect(chain.pooled(RELAYER, 0)?.hash).toBe(rec.versions[1]!.hash);
     expect(await evmRelayerStaffResume(stub, WHO, 'funded')).toMatchObject({ done: true });
   });
 
-  it('later: a rebroadcast definitely refused for a record never accepted (a first broadcast with no answer)', async () => {
+  it('later: the batch refused (a first broadcast with no answer) is cancelled; only our cancel refused too halts', async () => {
     const stub = await fresh();
     chain.onSend = () => 'network';
     await stub.send(request());
     expect(await halted(stub)).toBeNull();
-    chain.onSend = () => ({ error: 'replacement transaction underpriced' });
+    chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
     await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toBeNull();
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
     expect(await halted(stub)).toMatchObject({ reason: 'rejected_unsent', nonce: 0 });
   });
 
@@ -787,37 +802,24 @@ describe('halt: rejected_unsent', () => {
     chain.onSend = () => ({ error: 'nonce too low' });
     await runDurableObjectAlarm(stub);
     expect(await halted(stub)).toBeNull();
-    expect((await stored(stub)).recs[0]).toMatchObject({ accepted: false, rejected: null });
+    expect((await stored(stub)).recs[0]).toMatchObject({ accepted: false, batchRejected: null, cancelRejected: null });
   });
 
-  it('a record never sent: staffClose(never_sent) after its deadline frees its share; the gap it leaves is adopted; staffResume', async () => {
+  it('a cancel that never goes out: staffCancel bumps it (the nonce is never freed); once one is taken and mined, staffResume', async () => {
     const stub = await fresh();
     chain.onSend = () => ({ error: 'insufficient funds' });
-    const req = request({ execute: { deadline: nowS() + 60n } });
+    const req = request();
     await stub.send(req);
-    expect(await evmRelayerStaffClose(stub, WHO, 0, 'never_sent', 'n')).toMatchObject({ refused: 'deadline_not_passed' });
-    advance(61_000);
-    await runDurableObjectAlarm(stub);
-    expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
-    expect(await evmRelayerStaffClose(stub, WHO, 0, 'never_sent', 'it never left')).toMatchObject({ done: true });
-    expect(await stub.lookup(digestOf(req))).toMatchObject({ state: 'closed', outcome: 'never_sent' });
-    expect((await stored(stub)).meta!.dayWei).toBe('0');
-    expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ refused: 'nonce_gap' });
-    expect(await evmRelayerStaffAdoptNonce(stub, WHO, 0, 'nonce 0 is free')).toMatchObject({ done: true });
-    expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ done: true });
+    expect(await halted(stub)).toMatchObject({ reason: 'rejected_unsent' });
     chain.onSend = undefined;
-    expect((await stub.send(request())).relayerNonce).toBe(0);
-  });
-
-  it('staffClose(never_sent) refuses a record once accepted, and one whose nonce is in use', async () => {
-    const stub = await fresh();
-    await stub.send(request({ execute: { deadline: nowS() + 60n } }));
-    chain.onSend = () => ({ error: 'insufficient funds' });
-    await stub.send(request({ execute: { deadline: nowS() + 60n } }));
-    advance(61_000);
-    expect(await evmRelayerStaffClose(stub, WHO, 0, 'never_sent', 'n')).toMatchObject({ refused: 'accepted_before' });
-    chain.admit(foreign(1));
-    expect(await evmRelayerStaffClose(stub, WHO, 1, 'never_sent', 'n')).toMatchObject({ refused: 'nonce_in_use' });
+    expect(await evmRelayerStaffCancel(stub, WHO, 0, 'funded, send the cancel again')).toMatchObject({ done: true });
+    expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel', 'cancel']);
+    expect((await stored(stub)).meta!.nextNonce).toBe(1);
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(digestOf(req))).toMatchObject({ state: 'mined', outcome: 'cancel' });
+    expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ done: true });
+    expect((await stub.send(request())).relayerNonce).toBe(1);
   });
 });
 
@@ -917,7 +919,7 @@ describe('staff tools: input and records', () => {
     expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ done: false, refused: 'not_halted' });
     const s = await evmRelayerStaffStatus(stub);
     expect(s).toMatchObject({ chainId: CHAIN, address: RELAYER, nextNonce: 1, halted: null, gapSeen: null });
-    expect(s.records[0]).toMatchObject({ nonce: 0, accepted: true, rejected: null, seen: null });
+    expect(s.records[0]).toMatchObject({ nonce: 0, accepted: true, batchRejected: null, cancelRejected: null, seen: null });
     expect(JSON.stringify(s, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v))).not.toMatch(/"raw"|"data"/u);
     expect(s.staffLog[0]).toMatchObject({ seq: 1, at: now, who: WHO, action: 'resume', note: 'n', done: false, refused: 'not_halted' });
   });
@@ -978,7 +980,7 @@ describe('secrets stay out of logs and errors', () => {
     for (const m of ['log', 'warn', 'error'] as const) vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
     chain = new EvmMock({ chainId: CHAIN, urls: [KEYED_RPC, PRIMARY_RPC, FALLBACK_RPC] }).install();
     const stub = await fresh(overlay({ EVM_SPONSOR_RPC_31337: KEYED_RPC }));
-    const req = request({ authorization: authorization() });
+    const req = request({ authorization: authorization() }, USER_KEY);
     const sent = await stub.send(req);
     chain.onSend = () => ({ error: 'insufficient funds' });
     advance(EVM_RELAYER_BUMP_AFTER_MS);
@@ -989,7 +991,7 @@ describe('secrets stay out of logs and errors', () => {
     await evmRelayerStaffResume(stub, WHO, 'n');
     const text = `${lines.join('\n')} ${err}`;
     const auth = req.authorization!;
-    for (const secret of [keyHex(RELAYER_KEY).slice(2), sent.raw.slice(2), req.signature.slice(2), encodeExecuteCalldata(req.execute, req.signature).slice(2), auth.r.slice(2), auth.s.slice(2), 'test.invalid', 'SECRET-PROVIDER-KEY']) {
+    for (const secret of [keyHex(RELAYER_KEY).slice(2), sent.raw!.slice(2), req.signature.slice(2), encodeExecuteCalldata(req.execute, req.signature).slice(2), auth.r.slice(2), auth.s.slice(2), 'test.invalid', 'SECRET-PROVIDER-KEY']) {
       expect(text.toLowerCase()).not.toContain(secret.toLowerCase());
     }
     expect(lines.length).toBeGreaterThan(3);
@@ -1001,5 +1003,235 @@ describe('secrets stay out of logs and errors', () => {
     expect(evmRelayerError(new Error('evm_relayer:rejected:insufficient_funds'))).toEqual({ code: 'rejected', reason: 'insufficient_funds' });
     expect(evmRelayerError(new Error('evm_relayer:made_up'))).toBeNull();
     expect(evmRelayerError(new Error('Network connection lost.'))).toBeNull();
+  });
+});
+
+// ---- The independent review of PR 75 (2026-11-18): each finding and probe as a test (probe-pr75 L1–L6). ----
+
+const userKeyFor = (label: string) => {
+  const key = testKey(label);
+  return { key, addr: addressFor(key) };
+};
+/** A request from another user's account (their own key signs it). */
+function reqFor(label: string, over: Parameters<typeof request>[0] = {}): EvmRelayerSendRequest {
+  const u = userKeyFor(label);
+  return request({ ...over, execute: { account: u.addr, ...(over.execute ?? {}) } }, u.key);
+}
+/** Rejects every transaction that is not the relayer's own self-transfer (the user-shaped batch), with `message`. */
+const rejectBatches = (message: string) => (tx: { to: string }) => (tx.to === RELAYER.toLowerCase() ? undefined : { error: message });
+/** Wraps the mock's fetch on the read endpoint: `edit` may return a replacement JSON-RPC result. */
+function intercept(edit: (method: string, params: unknown[]) => unknown) {
+  const f = globalThis.fetch as unknown as { getMockImplementation(): (i: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
+  const inner = f.getMockImplementation();
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const body = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith(PRIMARY_RPC)) {
+      const r = edit(body.method, body.params);
+      if (r !== undefined) return Response.json({ jsonrpc: '2.0', id: body.id, result: r });
+    }
+    return inner(input, init);
+  });
+}
+
+describe('review H1: no user can halt sponsorship', () => {
+  it('(a) the object computes the intrinsic gas (calldata at the EIP-7623 floor, 25 000 per authorization) and refuses a gas below it plus minGas', async () => {
+    const stub = await fresh();
+    const big = `0x183ff085${'ff'.repeat(8000)}` as Hex;
+    expect(await codeOf(stub.send(reqFor('attacker', { execute: { calls: [{ to: CHECK_IN, value: 0n, data: big }] } })))).toBe('invalid_request');
+    // Plain calldata: 200 000 gas is enough for the execute's own calldata, but not with minGas 190 000 on top.
+    expect(await codeOf(stub.send(reqFor('attacker', { execute: { minGas: 190_000n } })))).toBe('invalid_request');
+    expect(chain.broadcasts).toEqual([]);
+  });
+
+  it('(b) probe L4: a definite rejection of the batch at send: its own cancel at the same nonce at once, broadcast "rejected", no halt; the next user is served', async () => {
+    const stub = await fresh();
+    chain.onSend = rejectBatches('intrinsic gas too low');
+    const req = reqFor('attacker', { execute: { calls: [{ to: CHECK_IN, value: 0n, data: `0x183ff085${'ff'.repeat(400)}` as Hex }] } });
+    const sent = await stub.send(req);
+    expect(sent).toMatchObject({ relayerNonce: 0, replay: false, broadcast: 'rejected' });
+    const rec = (await stored(stub)).recs[0]!;
+    expect(rec.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+    expect(chain.pooled(RELAYER, 0)).toMatchObject({ to: RELAYER.toLowerCase(), value: 0n });
+    expect(await halted(stub)).toBeNull();
+    chain.onSend = undefined;
+    expect(await stub.send(reqFor('victim'))).toMatchObject({ relayerNonce: 1, broadcast: 'accepted' });
+    expect(await stub.send(req)).toMatchObject({ replay: true, broadcast: 'rejected' });
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(sent.digest)).toMatchObject({ state: 'mined', outcome: 'cancel' });
+  });
+
+  it('(b) only when our own cancel is ALSO definitely refused does it halt (rejected_unsent: funds or key, our causes)', async () => {
+    const stub = await fresh();
+    chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
+    expect(await stub.send(request())).toMatchObject({ broadcast: 'rejected' });
+    expect(await halted(stub)).toMatchObject({ reason: 'rejected_unsent', nonce: 0 });
+  });
+
+  it('no request-shaped input causes a halt: every definite rejection of the batch, at send or later, ends in its cancel', async () => {
+    const messages = ['nonce too high', 'replacement transaction underpriced', 'transaction underpriced', 'max fee per gas less than block base fee', 'intrinsic gas too low', 'invalid sender', 'insufficient funds for gas * price + value', 'authority already reserved', 'something unknown'];
+    for (const [i, message] of messages.entries()) {
+      const stub = await fresh();
+      chain.onSend = rejectBatches(message);
+      await stub.send(reqFor(`shaper ${i}`, { authorization: i % 2 ? authorization({}, userKeyFor(`shaper ${i}`).key) : undefined }));
+      chain.onSend = (tx) => (i % 2 && tx.to !== RELAYER.toLowerCase() ? 'network' : rejectBatches(message)(tx));
+      advance(EVM_RELAYER_BUMP_AFTER_MS);
+      await runDurableObjectAlarm(stub);
+      expect([message, await halted(stub)]).toEqual([message, null]);
+      chain.onSend = undefined;
+    }
+    // Later: a first broadcast with no answer, then a definite refusal of the batch: the next version is its cancel.
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    await stub.send(request());
+    chain.onSend = rejectBatches('intrinsic gas too low');
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('probe L3: accounts whose type-4 batches no pool takes fill the unmined cap only until their deadline; nothing halts', async () => {
+    const stub = await fresh();
+    chain.onSend = (tx) => (tx.type === 4 ? { error: 'authority already reserved' } : undefined);
+    for (let i = 0; i < EVM_RELAYER_MAX_UNMINED; i++) {
+      const u = userKeyFor(`attacker ${i}`);
+      await stub.send(request({ authorization: authorization({}, u.key), execute: { account: u.addr, deadline: nowS() + 120n } }, u.key));
+    }
+    expect(await codeOf(stub.send(reqFor('victim')))).toBe('relayer_busy');
+    advance(121_000);
+    for (let i = 0; i < 3; i++) await runDurableObjectAlarm(stub);
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.send(reqFor('victim'))).toMatchObject({ broadcast: 'accepted' });
+    expect(await halted(stub)).toBeNull();
+  });
+});
+
+describe('review M1: one unmined batch per account', () => {
+  it('a second batch from an account with one unmined is relayer_busy:account; other accounts go on; once mined the account may send again', async () => {
+    const stub = await fresh();
+    await stub.send(request({}, USER_KEY));
+    expect(await codeOf(stub.send(request({}, USER_KEY)))).toBe('relayer_busy:account');
+    expect((await stub.send(reqFor('someone else'))).relayerNonce).toBe(1);
+    chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
+    await runDurableObjectAlarm(stub);
+    expect((await stub.send(request({}, USER_KEY))).relayerNonce).toBe(2);
+  });
+});
+
+describe('review M2/M3: a nonce is never freed', () => {
+  it('probe L5: staffClose(never_sent) is gone; staffCancel signs a cancel at the SAME nonce, keeps the old versions; if the old raw lands, it resolves as execute', async () => {
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    const a = await stub.send(request({ execute: { deadline: nowS() + 600n } }));
+    expect(await codeOf(stub.staffClose(EVM_RELAYER_STAFF_GUARD, WHO, 0, 'never_sent' as never, 'n'))).toBe('invalid_request');
+    expect(await evmRelayerStaffCancel(stub, WHO, 0, 'free it')).toMatchObject({ done: true });
+    expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+    expect((await stored(stub)).meta!.nextNonce).toBe(1);
+    chain.onSend = undefined;
+    const b = await stub.send(reqFor('second user'));
+    expect(b.relayerNonce).toBe(1);
+    chain.drop(RELAYER, 0);
+    chain.admit(decodeRawTx(a.raw!));
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined', outcome: 'execute', minedHash: a.transactionHash });
+    expect(await stub.lookup(b.digest)).toMatchObject({ state: 'mined', outcome: 'execute' });
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('staffCancel refuses: no record, a key that can’t sign, a nonce mined at head, a receipt of its own, no valid replacement left', async () => {
+    const stub = await fresh();
+    expect(await evmRelayerStaffCancel(stub, WHO, 0, 'n')).toMatchObject({ refused: 'no_state' });
+    await stub.send(request());
+    expect(await evmRelayerStaffCancel(stub, WHO, 5, 'n')).toMatchObject({ refused: 'no_record' });
+    await configure(stub, overlay({ EVM_RELAY_KEYS: undefined }));
+    expect(await evmRelayerStaffCancel(stub, WHO, 0, 'n')).toMatchObject({ refused: 'key_mismatch' });
+    await configure(stub);
+    chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
+    expect(await evmRelayerStaffCancel(stub, WHO, 0, 'n')).toMatchObject({ refused: 'nonce_mined' });
+    await stub.send(reqFor('b', { maxFeePerGas: maxStartingFees({ maxFeePerGasWei: GWEI, maxPriorityFeePerGasWei: GWEI / 100n }).maxFeePerGas, reservedWei: ETH / 100n }));
+    for (let i = 0; i < 9; i++) await evmRelayerStaffCancel(stub, WHO, 1, 'again');
+    expect(await evmRelayerStaffCancel(stub, WHO, 1, 'n')).toMatchObject({ refused: 'no_valid_replacement' });
+  });
+
+  it('probe L6: staffAdoptNonce never lowers nextNonce', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    intercept((m) => (m === 'eth_getTransactionCount' ? '0x0' : undefined));
+    expect(await evmRelayerStaffAdoptNonce(stub, WHO, 0, 'n')).toMatchObject({ refused: 'below_next_nonce' });
+    expect((await stored(stub)).meta!.nextNonce).toBe(1);
+  });
+});
+
+describe('review L1, L3 and storage', () => {
+  it('probe L1: a receipt alone (the confirmed count not yet past the nonce) never finalizes', async () => {
+    const stub = await fresh();
+    const a = await stub.send(request());
+    chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
+    intercept((m, p) => (m === 'eth_getTransactionReceipt' && (p[0] as string) === a.transactionHash ? { transactionHash: a.transactionHash, status: '0x1', blockNumber: '0x1', gasUsed: '0x5208', effectiveGasPrice: '0x1', logs: [] } : undefined));
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'pending' });
+    chain.addBlocks(chain.safeDepth);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined' });
+  });
+
+  it('probe L1b (documented limit): a read endpoint lying about both the receipt and the counts finalizes a transaction that never landed; the honest counts later halt it (nonce_gap)', async () => {
+    const stub = await fresh();
+    const a = await stub.send(request());
+    chain.drop(RELAYER, 0);
+    let lie = true;
+    intercept((m, p) => (!lie ? undefined : m === 'eth_getTransactionReceipt' ? { transactionHash: p[0], status: '0x1', blockNumber: '0x1', gasUsed: '0x5208', effectiveGasPrice: '0x1', logs: [] } : m === 'eth_getTransactionCount' ? '0x1' : undefined));
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined' });
+    lie = false;
+    await stub.send(reqFor('next'));
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'nonce_gap', nonce: 0 });
+  });
+
+  it('with no records the alarm still checks the chain hourly: foreign transactions halt before the next send', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).recs).toEqual([]);
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_IDLE_CHECK_MS);
+    chain.admit(foreign(1));
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'foreign_transactions', nonce: 1 });
+  });
+
+  it('a final batch keeps only hashes, no raw transaction; its replay answers raw null', async () => {
+    const stub = await fresh();
+    const req = request();
+    await stub.send(req);
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    const dig = await runInDurableObject(stub, (_i, state) => state.storage.kv.get<Record<string, unknown>>(`dig:${digestOf(req)}`));
+    expect(dig).not.toHaveProperty('raw');
+    expect(await stub.send(req)).toMatchObject({ replay: true, raw: null, broadcast: 'accepted' });
+  });
+});
+
+describe('review M4: CPU-relevant counts', () => {
+  it('derives the relayer address once per isolate; each send and run logs its signatures, recoveries, fetches and key derivations', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    const stub = await fresh();
+    await stub.send(request());
+    await stub.send(reqFor('other', { authorization: authorization({}, userKeyFor('other').key) }));
+    await runDurableObjectAlarm(stub);
+    const ops = lines.filter((l) => l.includes('"evmOps"')).map((l) => (JSON.parse(l) as { event: string; evmOps: Record<string, number> }));
+    expect(ops.map((o) => o.event)).toEqual(['evm_relay_sent', 'evm_relay_sent', 'evm_relayer_run']);
+    expect(ops[1]!.evmOps).toMatchObject({ signatures: 1, recoveries: 2, keyDerivations: 0 });
+    expect(ops[1]!.evmOps.fetches).toBeGreaterThan(0);
   });
 });

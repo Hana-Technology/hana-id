@@ -1,60 +1,64 @@
 // The EVM relayer for gas sponsorship (D851; replaces D837's self-repairing design). One SQLite-backed Durable Object
 // per chain and key, `evm-relayer-<chainId>-0`: it holds the relayer EOA's key (secret EVM_RELAY_KEYS) and its nonces.
-// PRINCIPLE: do only what is safe on our own evidence; on anything odd, HALT and wait for staff. Evidence is only this
-// object's storage, broadcast answers, and the ONE trusted read endpoint's answers (EVM_SPONSOR_RPC_<chainId>, else the
-// manifest's `rpc`) about the relayer's own counts and our own transaction hashes. Nothing in a user's account is.
+// PRINCIPLE: do only what is safe on our own evidence; on anything odd that only WE can cause, HALT and wait for staff.
+// Evidence: this object's storage, broadcast answers, and ONE trusted read endpoint (EVM_SPONSOR_RPC_<chainId>, else
+// `rpc`) about the relayer's own counts and our own transaction hashes. Nothing in a user's account is evidence.
 //
-// A RECORD is one nonce: `rec:<nonce>` until final, its batch in `dig:<digest>` (kept 7 days after it is final).
-//   new          send(): a verified Execute gets `nextNonce`, is signed, persisted (sync) BEFORE its broadcast.
-//   unmined → seen        a receipt of one of ITS OWN versions exists (the trusted endpoint, any block).
-//   seen → mined (final)  that receipt's block is at confirmed depth (≤ `safe`, else ≤ head − 12): minedHash, outcome
-//                         (`execute`/`cancel`) and cost recorded, the record deleted, its batch kept as `mined`.
-//   seen → unmined        the latest count falls to or below its nonce (a reorg): its latest raw is broadcast again.
-//   unmined/seen → closed (final)  only staffClose, with a verdict (`consumed_elsewhere`/`never_sent`).
-// While unmined at head (nonce ≥ the latest count) each run does ONE of: a new version (signed, persisted, synced,
-// then broadcast; ≤ 8 versions, all hashes and raws kept until final), or a rebroadcast of the latest raw.
-//   cancel   the batch's deadline passed: a 0-value self-transfer at the same nonce, fees bumped.
-//   bump     the latest version was signed ≥ 60 s ago: both fees × 1.125 within the caps (7 versions, the 8th for the
-//            cancel). Sends must start with room for two bumps (`maxStartingFees`).
-//   (filler) staffFill: a 0-value self-transfer at a gap nonce, a record with no batch.
+// A RECORD is one nonce (`rec:<nonce>` until final; its batch `dig:<digest>`, hashes only, 7 days after final). A nonce
+// is never freed: once signed it ends only by a receipt, or by staffClose when the chain shows it consumed elsewhere.
+//   new         send(): a verified Execute (gas ≥ its intrinsic gas + minGas, one unmined batch per account) gets
+//               `nextNonce`, is signed, persisted (sync) BEFORE its broadcast.
+//   → seen      a receipt of one of ITS OWN versions (the trusted endpoint), its nonce below the latest count.
+//   → mined     that receipt's block ≤ confirmed (`safe`, else head − 12) AND the confirmed count past the nonce: final,
+//               with minedHash, outcome (`execute`/`cancel`) and cost.
+//   seen → unmined  the latest count falls to its nonce (a reorg; its latest raw goes out again), or the receipt
+//               vanished on a complete check (it waits: a receipt again, or at confirmed depth the first halt below).
+//   → closed    only staffClose(consumed_elsewhere).
+// Each run, for each record unmined at head (nonce ≥ latest count), ONE of (a new version is signed, persisted, synced,
+// then broadcast; ≤ 8 versions, every hash and raw kept until final), else a rebroadcast of the latest raw:
+//   cancel    a 0-value self-transfer at the same nonce, fees bumped, when the batch's deadline passed, or when the
+//             batch was definitely refused and never accepted (at send this happens at once: the caller is told
+//             `broadcast: 'rejected'`), or by staffCancel. A cancel has no input from the user.
+//   bump      the latest version was signed ≥ 60 s ago: both fees × 1.125 within the caps (7 batch versions, the 8th
+//             for the cancel). Sends must start with room for two bumps (`maxStartingFees`).
+//   (filler)  staffFill: a 0-value self-transfer at a gap nonce, a record with no batch.
 //
-// THE OBJECT: fresh (no `nextNonce`) → running → halted(reason). A fresh object reads the pending count ONCE, at its
-// first send, as its first nonce; after that only `nextNonce + 1` per send, or staffAdoptNonce, sets it. NOTHING
-// clears a halt by itself: only staffResume, which re-reads the chain and refuses while any condition below holds.
-// HALT conditions (checked by every alarm run and by staffResume; at send where noted):
-//   nonce_consumed_elsewhere  the confirmed count is past a record's nonce and none of its versions has a receipt.
-//   nonce_gap                 the pending count is below the lowest record unmined at head (or `nextNonce` if none),
-//                             seen on two runs in a row: a nonce nobody holds blocks every later one.
-//   foreign_transactions      the latest or pending count is above `nextNonce`: another sender uses this key.
-//   rejected_unsent           a definite pool rejection of a record none of whose versions was ever accepted (at
-//                             send: any; later: any but `nonce too low`, which the first rule settles by receipts).
-//   stuck_past_deadline       a record unmined at head 30 minutes after its batch's deadline.
-//   key_mismatch              records exist and the key's address is not `relayerAddress` or not the records' signer
-//                             (also at send). A missing key halts nothing: it only stops signing.
+// THE OBJECT: fresh (no `nextNonce`) → running → halted(reason). A fresh object reads the pending count ONCE (its first
+// send); after that only `nextNonce + 1` per send, or staffAdoptNonce raising it, sets it. NOTHING clears a halt by
+// itself: only staffResume, which re-reads the chain and refuses while any condition holds. Conditions, checked by
+// every alarm run (also with no records: hourly), at send where noted, and by staffResume; none is user-triggerable:
+//   nonce_consumed_elsewhere  the confirmed count is past a record's nonce and none of its versions has a receipt
+//                             (needs a transaction from our key that we didn't sign).
+//   nonce_gap                 the pending count is below the lowest record unmined at head (or `nextNonce`), on two
+//                             runs in a row (needs a nonce with no record: from our key, not ours).
+//   foreign_transactions      the latest or pending count is above `nextNonce` (another sender with our key).
+//   rejected_unsent           our own cancel (or filler) definitely refused while no version was ever accepted (no
+//                             funds, our nonce stale: our causes; at send too; `nonce too low` later: receipts decide).
+//   stuck_past_deadline       unmined at head 30 minutes after the deadline although its cancel goes out (fees, funds).
+//   key_mismatch              records exist and the key's address isn't `relayerAddress` or the records' signer (also
+//                             at send). A missing key halts nothing: it only stops signing (the off switch).
 //   storage_inconsistent      a stored invariant broken (records without `nextNonce`, a record at or above it, a
 //                             record's batch entry missing or pointing elsewhere; also at send).
-// WHILE HALTED: new sends are refused (`relayer_halted`); replays of a known digest still answer; every run still
-// finalizes by receipts, rebroadcasts, bumps and cancels (all safe on our own evidence). Nothing is deleted, adopted,
-// reassigned or guessed except by a staff tool, and each staff action is recorded (who, when, what, note, outcome).
-// STAFF (evm-relayer-staff.ts only; each re-reads the chain and refuses unsafe use):
-//   staffClose(n, consumed_elsewhere)  confirmed count > n and every version's receipt read: none. Reservation kept.
-//   staffClose(n, never_sent)          no version ever accepted, latest and pending counts ≤ n, deadline passed. Freed.
+// WHILE HALTED: new sends `relayer_halted`; replays answer; runs still finalize, rebroadcast, bump and cancel. Each
+// staff action is recorded (who, when, what, note, outcome). STAFF (evm-relayer-staff.ts only; each re-reads the chain):
+//   staffClose(n, consumed_elsewhere)  confirmed count > n, every version's receipt read: none. Reservation kept.
+//   staffCancel(n)      a record with no receipt, its nonce not mined at head: a cancel version (old ones kept).
 //   staffFill(n)        no record at n, n < nextNonce, n == the pending count and the latest count ≤ n.
-//   staffAdoptNonce(n)  no unmined record, n above every record, latest == pending == n.
+//   staffAdoptNonce(n)  no unmined record, n ≥ nextNonce (so above every record), latest == pending == n.
 //
-// Concurrency: every operation that reads or changes nonce state (send, the alarm, the staff tools) runs through one
-// FIFO queue (`exclusive`), across its RPC awaits; storage uses the synchronous KV API, each change one
-// `transactionSync`. `status`, `lookup` and `staffStatus` read storage only. Bounded: ≤ 45 fetches, ≤ 20 receipt
-// reads and ≤ 4 signatures a run; ≤ 8 unmined and ≤ 64 records (`relayer_busy` beyond), ≤ 16 sends waiting; the
-// alarm runs while records exist, 15 s after a change, doubling to 5 minutes while nothing changes. Daily backstop: a
-// UTC day's worst cases (each send's reservation with its gas at the fee cap) ≤ 2 × `dailyBudgetEth` (`daily_cap`).
-// Errors: `Error('evm_relayer:<code>[:<reason>]')` (evmRelayerError). A coded error means THIS call sent nothing; any
-// other failure is unknown (keep the reservation; resending the same digest is safe). SECURITY: nothing logs the key, a
-// raw transaction, calldata, a signature, an authorization or an RPC URL; the key is parsed per section, then zeroed.
+// Concurrency: send, the alarm and the staff tools run through one FIFO queue (`exclusive`) across their RPC awaits;
+// each storage change is one `transactionSync`. `status`, `lookup`, `staffStatus` read storage only. Bounded: ≤ 45
+// fetches, ≤ 20 receipt reads, ≤ 4 signatures a run (each send and run logs `evmOps`); ≤ 8 unmined, ≤ 64 records
+// (`relayer_busy`), ≤ 16 waiting; the alarm 15 s after a change, doubling to 5 minutes, hourly with no records. Daily
+// backstop: a UTC day's worst cases (each reservation with its gas at the fee cap) ≤ 2 × `dailyBudgetEth`.
+// Errors: `Error('evm_relayer:<code>[:<reason>]')`; a coded error means THIS call sent nothing, any other is unknown.
+// SECURITY: nothing logs the key, a raw transaction, calldata, a signature, an authorization or an RPC URL; the key is
+// parsed per section and zeroed; only a hash of it keys the per-isolate address cache.
 import { DurableObject } from 'cloudflare:workers';
 import { type ExecuteInput, type SignedAuthorization, SPONSOR_DELEGATES, type SponsorTx, encodeExecuteCalldata, executeDigest, recoverAuthorization, recoverExecuteSigner, signSponsorTx, sponsorTxHash } from '@hana-id/core/evm-sponsor';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
+import { sha256 } from '@noble/hashes/sha256';
 import type { Env } from './env.ts';
 import { log } from './log.ts';
 import { type EvmBroadcast, type EvmReceipt, EvmRpcError, type Hex, type SponsorChain, receiptCostWei, sponsorChainFor } from './evm/sponsor-chain.ts';
@@ -67,6 +71,7 @@ export const EVM_RELAYER_STAFF_GUARD = 'hana-id/evm-relayer/staff/v1';
 export const evmRelayerName = (chainId: number, keyIndex = 0): string => `evm-relayer-${chainId}-${keyIndex}`;
 export const EVM_RELAYER_ALARM_MS = 15_000;
 export const EVM_RELAYER_ALARM_MAX_MS = 5 * 60_000;
+export const EVM_RELAYER_IDLE_CHECK_MS = 60 * 60_000;
 export const EVM_RELAYER_BUMP_AFTER_MS = 60_000;
 export const EVM_RELAYER_DEPTH_WITHOUT_SAFE = 12;
 export const EVM_RELAYER_MAX_UNMINED = 8;
@@ -79,6 +84,11 @@ export const EVM_RELAYER_STUCK_AFTER_DEADLINE_MS = 30 * 60_000;
 export const EVM_RELAYER_MAX_REQUESTS = 45;
 export const EVM_RELAYER_RUN_LIMITS = Object.freeze({ receipts: 20, signatures: 4 });
 export const CANCEL_GAS = 21_000n;
+/** EIP-7702's per-authorization cost and EIP-7623's calldata floor, as nodes check a transaction's intrinsic gas. */
+const AUTHORIZATION_GAS = 25_000n;
+const FLOOR_PER_TOKEN = 10n;
+/** The largest raw transaction nodes take into their pools (geth: 128 KiB). */
+const MAX_RAW_BYTES = 128 * 1024;
 const DAILY_CAP_FACTOR = 2n;
 const MIN_DEADLINE_LEAD_S = 5;
 const DEADLINE_SLACK_S = 60;
@@ -90,8 +100,9 @@ const SCHEMA = 1;
 
 export type EvmRelayerHaltReason = 'nonce_consumed_elsewhere' | 'nonce_gap' | 'foreign_transactions' | 'rejected_unsent' | 'stuck_past_deadline' | 'key_mismatch' | 'storage_inconsistent';
 export type EvmRelayerHalt = { reason: EvmRelayerHaltReason; since: number; nonce?: number };
-export type EvmRelayerOutcome = 'execute' | 'cancel' | 'consumed_elsewhere' | 'never_sent';
-export type EvmRelayerVerdict = 'consumed_elsewhere' | 'never_sent';
+export type EvmRelayerOutcome = 'execute' | 'cancel' | 'consumed_elsewhere';
+/** What the batch's broadcast came to: taken by an endpoint, definitely refused (its cancel then took the nonce), or not known. */
+export type EvmRelayerBroadcast = 'accepted' | 'rejected' | 'unknown';
 
 /** What the handlers send: core's Execute input, the user's 65-byte signature, an authorization for type 4. */
 export interface EvmRelayerSendRequest {
@@ -105,9 +116,9 @@ export interface EvmRelayerSendRequest {
   /** The handler's worst-case reservation (at least gas × maxFeePerGas). */
   reservedWei: bigint;
 }
-/** `transactionHash`/`raw`: the version seen mined, else the latest. `replay`: this digest was already sent. */
-export interface EvmRelayerSent { digest: Hex; transactionHash: Hex; relayerNonce: number; raw: Hex; replay: boolean }
-/** `minedHash`, `outcome` (`execute`/`cancel`) and `costWei` only once mined at confirmed depth; `closed` by staff. */
+/** `transactionHash`/`raw`: the version seen mined, else the latest (`raw` null once the batch is final). */
+export interface EvmRelayerSent { digest: Hex; transactionHash: Hex; relayerNonce: number; raw: Hex | null; replay: boolean; broadcast: EvmRelayerBroadcast }
+/** `minedHash`, `outcome` and `costWei` only once mined at confirmed depth; `closed` only by staff. */
 export interface EvmRelayerLookup {
   digest: Hex;
   relayerNonce: number;
@@ -124,9 +135,9 @@ export interface EvmRelayerStaffEntry {
   seq: number;
   at: number;
   who: string;
-  action: 'resume' | 'close' | 'fill' | 'adopt_nonce';
+  action: 'resume' | 'close' | 'cancel' | 'fill' | 'adopt_nonce';
   nonce: number | null;
-  verdict: EvmRelayerVerdict | null;
+  verdict: 'consumed_elsewhere' | null;
   note: string;
   done: boolean;
   refused: string | null;
@@ -141,7 +152,7 @@ export interface EvmRelayerStaffStatus extends EvmRelayerStatus {
 }
 export interface EvmRelayerStaffResult { done: boolean; refused: string | null; status: EvmRelayerStaffStatus }
 
-/** `rejected` is reserved by the interface and never thrown: a definite rejection halts, and the record is answered. */
+/** `rejected` is reserved by the interface and never thrown: a refused batch is answered with `broadcast: 'rejected'`. */
 export type EvmRelayerErrorCode = 'relayer_unconfigured' | 'relayer_misconfigured' | 'invalid_request' | 'fees_too_high' | 'wrong_chain' | 'deadline_passed' | 'relayer_busy' | 'relayer_halted' | 'daily_cap' | 'rpc_unavailable' | 'rejected' | 'internal';
 const CODES: ReadonlySet<string> = new Set(['relayer_unconfigured', 'relayer_misconfigured', 'invalid_request', 'fees_too_high', 'wrong_chain', 'deadline_passed', 'relayer_busy', 'relayer_halted', 'daily_cap', 'rpc_unavailable', 'rejected', 'internal']);
 const refuse = (code: EvmRelayerErrorCode, reason?: string): never => {
@@ -170,7 +181,20 @@ export function parseEvmRelayKey(raw: string | undefined): Uint8Array | null {
   d.fill(0);
   return null;
 }
-const addressOfKey = (d: Uint8Array): Hex => checksumEvmAddress(toHex(keccak_256(secp256k1.getPublicKey(d, false).subarray(1)).subarray(-20))) as Hex;
+
+/** sha256(key) → its address, per isolate: deriving the public key is the costliest step of a cold section. */
+const ADDRESSES = new Map<string, Hex>();
+function addressOfKey(d: Uint8Array, onDerive?: () => void): Hex {
+  const id = toHex(sha256(d));
+  let a = ADDRESSES.get(id);
+  if (!a) {
+    onDerive?.();
+    a = checksumEvmAddress(toHex(keccak_256(secp256k1.getPublicKey(d, false).subarray(1)).subarray(-20))) as Hex;
+    if (ADDRESSES.size >= 4) ADDRESSES.clear();
+    ADDRESSES.set(id, a);
+  }
+  return a;
+}
 
 /** The address of EVM_RELAY_KEYS' key, or null when it is missing or malformed. */
 export function evmRelayKeyAddress(raw: string | undefined): Hex | null {
@@ -187,6 +211,7 @@ export type FeeCaps = { maxFeePerGasWei: bigint; maxPriorityFeePerGasWei: bigint
 type Fees = { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
 const ceilDiv = (a: bigint, b: bigint): bigint => (a + b - 1n) / b;
 const minBig = (a: bigint, b: bigint): bigint => (a < b ? a : b);
+const maxBig = (a: bigint, b: bigint): bigint => (a > b ? a : b);
 const bump = (x: bigint): bigint => ceilDiv(x * 9n, 8n);
 const nodeMinimum = (x: bigint): bigint => ceilDiv(x * 11n, 10n);
 
@@ -207,6 +232,17 @@ export function maxStartingFees(caps: FeeCaps): Fees {
     return x;
   };
   return { maxFeePerGas: highest(caps.maxFeePerGasWei), maxPriorityFeePerGas: highest(caps.maxPriorityFeePerGasWei) };
+}
+
+/**
+ * A transaction's intrinsic gas as nodes check it before taking it: 21 000, calldata at 4 gas a token (a zero byte one
+ * token, any other four), at least EIP-7623's floor of 10 a token, and 25 000 per EIP-7702 authorization (no access
+ * list is ever sent).
+ */
+export function intrinsicGas(data: Uint8Array, authorizations: number): bigint {
+  let tokens = 0n;
+  for (const b of data) tokens += b === 0 ? 1n : 4n;
+  return maxBig(21_000n + 4n * tokens + AUTHORIZATION_GAS * BigInt(authorizations), 21_000n + FLOOR_PER_TOKEN * tokens);
 }
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/u;
@@ -273,7 +309,8 @@ export function verifySend(req: EvmRelayerSendRequest, ctx: VerifyContext): Payl
   } catch {
     return refuse('invalid_request');
   }
-  if (data.length > 2 + 2 * MAX_DATA_BYTES) refuse('invalid_request');
+  // The pool's own static checks, so no node refuses a batch for a reason the user's input chose.
+  if (data.length > 2 + 2 * MAX_DATA_BYTES || gas < intrinsicGas(fromHex(data), auth ? 1 : 0) + e.minGas) refuse('invalid_request');
   return { digest: digestOf(e), to: account.toLowerCase() as Hex, data, gas, authorization: auth, fees: { maxFeePerGas, maxPriorityFeePerGas }, deadline: Number(e.deadline), reservedWei };
 }
 
@@ -306,6 +343,8 @@ interface Rec {
   nonce: number;
   /** null for a staff filler. */
   digest: Hex | null;
+  /** The batch's account (lowercase): one unmined batch per account. null for a filler. */
+  account: Hex | null;
   /** The batch's deadline (unix s); a filler's signing time. */
   deadline: number;
   reservedWei: string;
@@ -321,22 +360,24 @@ interface Rec {
   versions: Version[];
   /** An endpoint accepted one of its versions. */
   accepted: boolean;
-  /** A definite rejection while never accepted, or null. */
-  rejected: string | null;
-  /** A receipt of one of its versions, not yet at confirmed depth. */
+  /** A definite refusal of a batch version while none was accepted (its cancel follows), or null. */
+  batchRejected: string | null;
+  /** A definite refusal of our own cancel or filler while none was accepted (rejected_unsent), or null. */
+  cancelRejected: string | null;
+  /** A receipt of one of its versions, not yet final. */
   seen: { hash: Hex; block: number } | null;
 }
 interface Dig {
   nonce: number;
   state: 'pending' | 'mined' | 'closed';
   reservedWei: string;
-  /** Once final: the hash answered (the mined one, else the latest) and its raw, every version, the outcome. */
+  /** Once final (hashes only): the hash answered (the mined one, else the latest), every version, the outcome. */
   hash?: Hex;
-  raw?: Hex;
   hashes?: Hex[];
   minedHash?: Hex | null;
   outcome?: EvmRelayerOutcome;
   costWei?: string | null;
+  batchRejected?: boolean;
   resolvedAt?: number;
 }
 const pad = (n: number): string => String(n).padStart(16, '0');
@@ -348,6 +389,7 @@ const latestOf = (r: Rec): Version => r.versions[r.versions.length - 1]!;
 const feesOf = (v: Version): Fees => ({ maxFeePerGas: BigInt(v.maxFeePerGas), maxPriorityFeePerGas: BigInt(v.maxPriorityFeePerGas) });
 const selfTransfer = (address: Hex): Payload => ({ to: address.toLowerCase() as Hex, data: '0x', gas: CANCEL_GAS, authorization: null });
 const version = (raw: Hex, kind: Version['kind'], f: Fees): Version => ({ hash: sponsorTxHash(raw), raw, kind, maxFeePerGas: f.maxFeePerGas.toString(), maxPriorityFeePerGas: f.maxPriorityFeePerGas.toString() });
+const broadcastOf = (r: Rec): EvmRelayerBroadcast => (r.batchRejected !== null ? 'rejected' : r.accepted ? 'accepted' : 'unknown');
 
 interface Ctx {
   chain: Readonly<EvmSponsorChainConfig>;
@@ -361,10 +403,13 @@ type Counts = { head: number; confirmedBlock: number; latest: number; confirmed:
 type Condition = { reason: EvmRelayerHaltReason; nonce?: number };
 /** `incomplete`: a record past the confirmed count could not be fully checked this run (budget or a failed read). */
 type RunResult = { conditions: Condition[]; changed: boolean; incomplete: boolean; gap: number | null };
+/** What a section did that costs CPU: logged as `evmOps` (cold-isolate CPU on the free plan is measured at deploy). */
+type Ops = { signatures: number; recoveries: number; fetches: number; keyDerivations: number };
 
 export class EvmRelayer extends DurableObject<Env> {
   #queue: Promise<unknown> = Promise.resolve();
   #waiting = 0;
+  #ops: Ops = { signatures: 0, recoveries: 0, fetches: 0, keyDerivations: 0 };
 
   /** Checks the Execute, then signs, persists and broadcasts its transaction (or answers the one already sent). */
   async send(req: EvmRelayerSendRequest): Promise<EvmRelayerSent> {
@@ -375,6 +420,7 @@ export class EvmRelayer extends DurableObject<Env> {
     return this.#exclusive(async () => {
       started = true;
       this.#waiting--;
+      this.#ops = { signatures: 0, recoveries: 0, fetches: 0, keyDerivations: 0 };
       const meta = this.#meta();
       if (meta && meta.chainId !== req.chainId) refuse('wrong_chain');
       const c = this.#context(req.chainId);
@@ -445,25 +491,37 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  async staffClose(guard: string, who: string, nonce: number, verdict: EvmRelayerVerdict, note: string): Promise<EvmRelayerStaffResult> {
-    if (verdict !== 'consumed_elsewhere' && verdict !== 'never_sent') refuse('invalid_request');
+  async staffClose(guard: string, who: string, nonce: number, verdict: 'consumed_elsewhere', note: string): Promise<EvmRelayerStaffResult> {
+    if (verdict !== 'consumed_elsewhere') refuse('invalid_request');
     return this.#staffAct(guard, who, note, { action: 'close', nonce, verdict }, async (meta, c) => {
       const r = this.#rec(nonce);
       if (!r) return 'no_record';
       const rpc = this.#client(c);
       const n = await this.#counts(rpc, meta.address);
-      if (verdict === 'consumed_elsewhere') {
-        if (n.confirmed <= nonce) return 'nonce_not_consumed_at_confirmed_depth';
-        const found = await this.#findReceipt(rpc, r, { left: EVM_RELAYER_MAX_VERSIONS });
-        if (found.found) return 'receipt_found';
-        if (!found.complete) return 'incomplete_check';
-      } else {
-        if (r.accepted) return 'accepted_before';
-        if (n.latest > nonce || n.pending > nonce) return 'nonce_in_use';
-        if (Date.now() <= r.deadline * 1000) return 'deadline_not_passed';
-      }
-      const last = latestOf(r);
-      this.#resolve(r, { state: 'closed', hash: last.hash, raw: last.raw, minedHash: null, outcome: verdict, costWei: null }, verdict === 'never_sent' ? BigInt(r.worstWei) : 0n);
+      if (n.confirmed <= nonce) return 'nonce_not_consumed_at_confirmed_depth';
+      const found = await this.#findReceipt(rpc, r, { left: EVM_RELAYER_MAX_VERSIONS });
+      if (found.found) return 'receipt_found';
+      if (!found.complete) return 'incomplete_check';
+      this.#resolve(r, { state: 'closed', hash: latestOf(r).hash, minedHash: null, outcome: 'consumed_elsewhere', costWei: null }, 0n);
+      return null;
+    });
+  }
+
+  async staffCancel(guard: string, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> {
+    return this.#staffAct(guard, who, note, { action: 'cancel', nonce, verdict: null }, async (meta, c) => {
+      const r = this.#rec(nonce);
+      if (!r) return 'no_record';
+      if (!this.#canSign(c, meta)) return 'key_mismatch';
+      const rpc = this.#client(c);
+      const n = await this.#counts(rpc, meta.address);
+      if (n.latest > nonce) return 'nonce_mined';
+      const found = await this.#findReceipt(rpc, r, { left: EVM_RELAYER_MAX_VERSIONS });
+      if (found.found) return 'receipt_found';
+      if (!found.complete) return 'incomplete_check';
+      const next = this.#nextVersion(c, r, Date.now(), true);
+      if (!next) return 'no_valid_replacement';
+      await this.#store(next);
+      this.#afterBroadcast(next, await rpc.broadcast(latestOf(next).raw), false);
       return null;
     });
   }
@@ -480,7 +538,7 @@ export class EvmRelayer extends DurableObject<Env> {
       const t = selfTransfer(meta.address);
       const fees = maxStartingFees(c.chain);
       const worst = CANCEL_GAS * c.chain.maxFeePerGasWei;
-      const r: Rec = { nonce, digest: null, deadline: Math.floor(now / 1000), reservedWei: '0', day: Math.floor(now / DAY_MS), worstWei: worst.toString(), ...t, gas: t.gas.toString(), sentAt: now, signedAt: now, versions: [version(signSponsorTx(c.key!, buildTx(c.chain.chainId, nonce, t, fees)), 'cancel', fees)], accepted: false, rejected: null, seen: null };
+      const r: Rec = { nonce, digest: null, account: null, deadline: Math.floor(now / 1000), reservedWei: '0', day: Math.floor(now / DAY_MS), worstWei: worst.toString(), ...t, gas: t.gas.toString(), sentAt: now, signedAt: now, versions: [version(this.#sign(c, nonce, t, fees), 'cancel', fees)], accepted: false, batchRejected: null, cancelRejected: null, seen: null };
       await this.#persist(r, worst);
       this.#afterBroadcast(r, await rpc.broadcast(r.versions[0]!.raw), false);
       return null;
@@ -490,8 +548,9 @@ export class EvmRelayer extends DurableObject<Env> {
   async staffAdoptNonce(guard: string, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> {
     return this.#staffAct(guard, who, note, { action: 'adopt_nonce', nonce, verdict: null }, async (meta, c) => {
       const records = this.#records();
+      if (meta.nextNonce !== null && nonce < meta.nextNonce) return 'below_next_nonce';
+      // Every record is below nextNonce, so n ≥ nextNonce is above them all.
       if (records.some((r) => r.seen === null)) return 'unmined_records';
-      if (records.some((r) => r.nonce >= nonce)) return 'not_above_records';
       const n = await this.#counts(this.#client(c), meta.address);
       if (n.latest !== nonce || n.pending !== nonce) return 'chain_count_differs';
       this.#putMeta({ ...this.#meta()!, nextNonce: nonce, gapSeen: null });
@@ -509,6 +568,7 @@ export class EvmRelayer extends DurableObject<Env> {
     if (!c.key) refuse('relayer_misconfigured');
     const now = Date.now();
     const v = verifySend(req, { chain: c.chain, relayer: c.keyAddress!, pinned: SPONSOR_DELEGATES, nowMs: now });
+    this.#ops.recoveries += v.authorization ? 2 : 1;
     const records = this.#records();
     if (meta && meta.address !== c.keyAddress) {
       if (records.length > 0) {
@@ -522,6 +582,8 @@ export class EvmRelayer extends DurableObject<Env> {
       this.#halt({ reason: 'storage_inconsistent' }, now);
       refuse('relayer_halted');
     }
+    // The delegate's batch nonce is sequential: a second batch of an account while one is unmined can only stall.
+    if (records.some((r) => r.seen === null && r.account === v.to)) refuse('relayer_busy', 'account');
     if (records.filter((r) => r.seen === null).length >= EVM_RELAYER_MAX_UNMINED || records.length >= EVM_RELAYER_MAX_RECORDS || (meta?.remembered ?? 0) >= EVM_RELAYER_MAX_REMEMBERED) refuse('relayer_busy');
     const day = Math.floor(now / DAY_MS);
     // The most any version can cost: the reservation with its gas at the fee cap (bumps and the cancel stay below).
@@ -538,37 +600,48 @@ export class EvmRelayer extends DurableObject<Env> {
       this.#putMeta((meta = { ...(meta ?? fresh), nextNonce: pending }));
     }
     const nonce = meta.nextNonce!;
-    let raw: Hex;
-    try {
-      raw = signSponsorTx(c.key!, buildTx(c.chain.chainId, nonce, v, v.fees));
-    } catch {
-      return refuse('invalid_request');
-    }
-    const r: Rec = { nonce, digest, deadline: v.deadline, reservedWei: v.reservedWei.toString(), day, worstWei: worst.toString(), to: v.to, data: v.data, gas: v.gas.toString(), authorization: v.authorization, sentAt: now, signedAt: now, versions: [version(raw, 'execute', v.fees)], accepted: false, rejected: null, seen: null };
+    const raw = this.#sign(c, nonce, v, v.fees);
+    if (raw.length > 2 + 2 * MAX_RAW_BYTES) refuse('invalid_request');
+    let r: Rec = { nonce, digest, account: v.to, deadline: v.deadline, reservedWei: v.reservedWei.toString(), day, worstWei: worst.toString(), to: v.to, data: v.data, gas: v.gas.toString(), authorization: v.authorization, sentAt: now, signedAt: now, versions: [version(raw, 'execute', v.fees)], accepted: false, batchRejected: null, cancelRejected: null, seen: null };
     await this.#persist(r, worst);
     const hash = r.versions[0]!.hash;
     const sent = await rpc.broadcast(raw);
-    log({ event: 'evm_relay_sent', chainId: c.chain.chainId, nonce: String(nonce), evmTx: hash, code: sent.kind === 'rejected' ? sent.reason : sent.kind }, sent.kind === 'accepted' ? 'info' : 'warn');
-    if (this.#afterBroadcast(r, sent, true)) this.#halt({ reason: 'rejected_unsent', nonce }, Date.now());
-    // Answered whatever the broadcast said: the record exists and every run broadcasts it again.
-    return { digest, transactionHash: hash, relayerNonce: nonce, raw, replay: false };
+    r = this.#afterBroadcast(r, sent, true);
+    if (r.batchRejected !== null) {
+      // No node took the batch, and its refusal may be the user's doing: its nonce goes to our own cancel, at once.
+      const next = this.#nextVersion(c, r, now, true);
+      if (next) {
+        await this.#store(next);
+        if (this.#afterBroadcast(next, await rpc.broadcast(latestOf(next).raw), true).cancelRejected !== null) this.#halt({ reason: 'rejected_unsent', nonce }, Date.now());
+      }
+    }
+    this.#ops.fetches = rpc.requestsUsed;
+    log({ event: 'evm_relay_sent', chainId: c.chain.chainId, nonce: String(nonce), evmTx: hash, code: sent.kind === 'rejected' ? sent.reason : sent.kind, evmOps: this.#ops }, sent.kind === 'accepted' ? 'info' : 'warn');
+    // Answered whatever the broadcast said: the record exists and every run broadcasts it (or its cancel) again.
+    return { digest, transactionHash: hash, relayerNonce: nonce, raw, replay: false, broadcast: broadcastOf(r) };
   }
 
   #replay(digest: Hex, dig: Dig): EvmRelayerSent {
-    if (dig.state !== 'pending') return { digest, transactionHash: dig.hash!, relayerNonce: dig.nonce, raw: dig.raw!, replay: true };
+    if (dig.state !== 'pending') return { digest, transactionHash: dig.hash!, relayerNonce: dig.nonce, raw: null, replay: true, broadcast: dig.batchRejected ? 'rejected' : dig.outcome === 'consumed_elsewhere' ? 'unknown' : 'accepted' };
     const r = this.#rec(dig.nonce);
     if (!r || r.digest !== digest) {
       this.#halt({ reason: 'storage_inconsistent', nonce: dig.nonce }, Date.now());
       return refuse('internal');
     }
     const v = r.versions.find((x) => x.hash === r.seen?.hash) ?? latestOf(r);
-    return { digest, transactionHash: v.hash, relayerNonce: r.nonce, raw: v.raw, replay: true };
+    return { digest, transactionHash: v.hash, relayerNonce: r.nonce, raw: v.raw, replay: true, broadcast: broadcastOf(r) };
   }
 
-  /**
-   * Stores a new record (with its batch entry, `nextNonce` + 1 and the day's worst case for a send) in one
-   * transaction, sets the alarm and waits for storage to confirm it: only then may its raw leave.
-   */
+  #sign(c: Ctx, nonce: number, t: Payload, fees: Fees): Hex {
+    this.#ops.signatures++;
+    try {
+      return signSponsorTx(c.key!, buildTx(c.chain.chainId, nonce, t, fees));
+    } catch {
+      return refuse('invalid_request');
+    }
+  }
+
+  /** Stores a new record (its batch entry, `nextNonce` + 1, the day's worst case) in one transaction, then confirms it. */
   async #persist(r: Rec, worst: bigint): Promise<void> {
     const kv = this.ctx.storage.kv;
     this.ctx.storage.transactionSync(() => {
@@ -581,6 +654,12 @@ export class EvmRelayer extends DurableObject<Env> {
     await this.#persisted(Date.now());
   }
 
+  /** Stores a record's new version and confirms it: only then may its raw leave. */
+  async #store(r: Rec): Promise<void> {
+    this.#putRec(r);
+    await this.#persisted(Date.now());
+  }
+
   /** The alarm set and storage confirmed: from here a broadcast can't outrun what it depends on. */
   async #persisted(now: number): Promise<void> {
     const current = await this.ctx.storage.getAlarm();
@@ -588,17 +667,17 @@ export class EvmRelayer extends DurableObject<Env> {
     await this.ctx.storage.sync();
   }
 
-  /** Notes a broadcast's answer; true when it makes the record rejected_unsent (see the header). */
-  #afterBroadcast(r: Rec, sent: EvmBroadcast, atSend: boolean): boolean {
-    const cur = this.#rec(r.nonce);
-    if (!cur) return false;
-    if (sent.kind === 'accepted') {
-      if (!cur.accepted || cur.rejected) this.#putRec({ ...cur, accepted: true, rejected: null });
-      return false;
-    }
-    if (sent.kind !== 'rejected' || cur.accepted || (!atSend && sent.reason === 'nonce_too_low')) return false;
-    if (cur.rejected !== sent.reason) this.#putRec({ ...cur, rejected: sent.reason });
-    return true;
+  /**
+   * Notes a broadcast's answer on the stored record and returns it: accepted, or (none ever accepted) a definite
+   * refusal of the batch version or of our own cancel. `nonce too low` counts only at send (later, receipts decide).
+   */
+  #afterBroadcast(r: Rec, sent: EvmBroadcast, atSend: boolean): Rec {
+    const cur = this.#rec(r.nonce) ?? r;
+    let next = cur;
+    if (sent.kind === 'accepted') next = { ...cur, accepted: true, cancelRejected: null };
+    else if (sent.kind === 'rejected' && !cur.accepted && (atSend || sent.reason !== 'nonce_too_low')) next = latestOf(cur).kind === 'execute' ? { ...cur, batchRejected: sent.reason } : { ...cur, cancelRejected: sent.reason };
+    if (next !== cur && this.#rec(r.nonce)) this.#putRec(next);
+    return next;
   }
 
   // ---- the alarm ----
@@ -607,8 +686,8 @@ export class EvmRelayer extends DurableObject<Env> {
     const now = Date.now();
     const meta = this.#meta();
     if (!meta) return this.ctx.storage.deleteAlarm();
+    this.#ops = { signatures: 0, recoveries: 0, fetches: 0, keyDerivations: 0 };
     this.#prune(now);
-    if (this.#records().length === 0) return this.#schedule(now, false);
     let c: Ctx;
     try {
       c = this.#context(meta.chainId);
@@ -629,6 +708,7 @@ export class EvmRelayer extends DurableObject<Env> {
       if (first) this.#halt(first, now);
       for (const x of out.conditions) log({ event: 'evm_relayer_condition', chainId: meta.chainId, code: x.reason, ...(x.nonce !== undefined ? { nonce: String(x.nonce) } : {}) }, 'warn');
       if (this.#meta()!.gapSeen !== out.gap) this.#putMeta({ ...this.#meta()!, gapSeen: out.gap });
+      log({ event: 'evm_relayer_run', chainId: meta.chainId, evmOps: this.#ops });
       await this.#schedule(now, out.changed);
     } finally {
       c.key?.fill(0);
@@ -661,13 +741,14 @@ export class EvmRelayer extends DurableObject<Env> {
         continue;
       }
       // Mined at head: by one of our versions, or (none found at confirmed depth) by something else.
-      if (r.seen && r.seen.block > n.confirmedBlock) continue;
+      if (r.seen && (r.seen.block > n.confirmedBlock || r.nonce >= n.confirmed)) continue;
       const found = await this.#findReceipt(rpc, r, budget);
       if (found.found) {
         const { version: v, receipt } = found.found;
         const cost = receiptCostWei(receipt);
-        if (receipt.blockNumber <= BigInt(n.confirmedBlock)) {
-          this.#resolve(r, { state: 'mined', hash: v.hash, raw: v.raw, minedHash: v.hash, outcome: v.kind, costWei: cost.toString() }, BigInt(r.worstWei) - cost);
+        // Final only with both: the receipt at confirmed depth AND the confirmed count past the nonce.
+        if (receipt.blockNumber <= BigInt(n.confirmedBlock) && r.nonce < n.confirmed) {
+          this.#resolve(r, { state: 'mined', hash: v.hash, minedHash: v.hash, outcome: v.kind, costWei: cost.toString() }, BigInt(r.worstWei) - cost);
           log({ event: 'evm_relay_mined', chainId: c.chain.chainId, nonce: String(r.nonce), evmTx: v.hash, code: v.kind });
         } else this.#putRec({ ...r, seen: { hash: v.hash, block: Number(receipt.blockNumber) } });
         out.changed = true;
@@ -691,33 +772,35 @@ export class EvmRelayer extends DurableObject<Env> {
       const next = signatures < EVM_RELAYER_RUN_LIMITS.signatures && this.#canSign(c, meta) ? this.#nextVersion(c, r, now) : null;
       if (next) {
         signatures++;
-        this.#putRec(next);
-        await this.#persisted(now);
+        await this.#store(next);
         out.changed = true;
       }
       const v = latestOf(next ?? r);
       const sent = await rpc.broadcast(v.raw);
-      out.changed ||= sent.kind === 'accepted' && !r.accepted;
       if (sent.kind !== 'accepted' || next) log({ event: next ? `evm_relay_${v.kind === 'cancel' ? 'cancel_sent' : 'bumped'}` : 'evm_relay_rebroadcast', chainId: c.chain.chainId, nonce: String(r.nonce), evmTx: v.hash, code: sent.kind === 'rejected' ? sent.reason : sent.kind }, 'warn');
-      this.#afterBroadcast(r, sent, false);
+      const after = this.#afterBroadcast(next ?? r, sent, false);
+      // A batch just refused (its cancel is due) or newly accepted: run again soon.
+      out.changed ||= (after.accepted && !r.accepted) || (after.batchRejected !== null && r.batchRejected === null);
     }
-    for (const r of this.#records()) if (r.nonce >= n.latest && r.rejected && !r.accepted) out.conditions.push({ reason: 'rejected_unsent', nonce: r.nonce });
+    for (const r of this.#records()) if (r.nonce >= n.latest && r.cancelRejected !== null && !r.accepted) out.conditions.push({ reason: 'rejected_unsent', nonce: r.nonce });
+    this.#ops.fetches = rpc.requestsUsed;
     return out;
   }
 
-  /** The record with a new version due now (a cancel past the deadline, else a bump after 60 s), or null. */
-  #nextVersion(c: Ctx, r: Rec, now: number): Rec | null {
+  /**
+   * The record with a new version due now, or null: a cancel once the batch's deadline passed or the batch was
+   * refused with none accepted (or `cancel`: staffCancel and send's at-once cancel), else a bump after 60 s.
+   */
+  #nextVersion(c: Ctx, r: Rec, now: number, cancel = false): Rec | null {
     const last = latestOf(r);
-    // The batch's deadline passed: switch to the self-transfer at once. Otherwise bump the latest kind after 60 s.
-    const toCancel = last.kind === 'execute' && r.digest !== null && now > r.deadline * 1000;
-    const kind = toCancel ? 'cancel' : last.kind;
+    const toCancel = last.kind === 'execute' && r.digest !== null && (cancel || now > r.deadline * 1000 || (r.batchRejected !== null && !r.accepted));
+    const kind = toCancel || (cancel && last.kind === 'cancel') ? 'cancel' : last.kind;
     if (r.versions.length >= (kind === 'cancel' ? EVM_RELAYER_MAX_VERSIONS : EVM_RELAYER_MAX_VERSIONS - 1)) return null;
-    if (!toCancel && now - r.signedAt < EVM_RELAYER_BUMP_AFTER_MS) return null;
+    if (!toCancel && !cancel && now - r.signedAt < EVM_RELAYER_BUMP_AFTER_MS) return null;
     const fees = bumpedFees(feesOf(last), c.chain);
     if (!fees) return null;
-    const t: Payload = toCancel ? selfTransfer(this.#meta()!.address) : { to: r.to, data: r.data, gas: BigInt(r.gas), authorization: r.authorization };
-    const v = version(signSponsorTx(c.key!, buildTx(c.chain.chainId, r.nonce, t, fees)), kind, fees);
-    return { ...r, to: t.to, data: t.data, gas: t.gas.toString(), authorization: t.authorization, signedAt: now, versions: [...r.versions, v] };
+    const t: Payload = kind === 'cancel' ? selfTransfer(this.#meta()!.address) : { to: r.to, data: r.data, gas: BigInt(r.gas), authorization: r.authorization };
+    return { ...r, to: t.to, data: t.data, gas: t.gas.toString(), authorization: t.authorization, signedAt: now, versions: [...r.versions, version(this.#sign(c, r.nonce, t, fees), kind, fees)] };
   }
 
   /** Receipts of the record's versions (the one seen mined, then newest first) until one is found. */
@@ -736,14 +819,14 @@ export class EvmRelayer extends DurableObject<Env> {
     return { found: null, complete: true };
   }
 
-  /** A record made final (mined, or closed by staff): deleted, its batch kept 7 days, `giveBack` off the backstop. */
-  #resolve(r: Rec, d: Required<Pick<Dig, 'state' | 'hash' | 'raw' | 'minedHash' | 'outcome' | 'costWei'>>, giveBack: bigint): void {
+  /** A record made final (mined, or closed by staff): deleted, its batch kept 7 days (hashes only), `giveBack` off the backstop. */
+  #resolve(r: Rec, d: Required<Pick<Dig, 'state' | 'hash' | 'minedHash' | 'outcome' | 'costWei'>>, giveBack: bigint): void {
     const kv = this.ctx.storage.kv;
     const now = Date.now();
     this.ctx.storage.transactionSync(() => {
       kv.delete(recKey(r.nonce));
       if (r.digest) {
-        kv.put(digKey(r.digest), { nonce: r.nonce, reservedWei: r.reservedWei, ...d, hashes: r.versions.map((x) => x.hash), resolvedAt: now } satisfies Dig);
+        kv.put(digKey(r.digest), { nonce: r.nonce, reservedWei: r.reservedWei, ...d, hashes: r.versions.map((x) => x.hash), ...(r.batchRejected !== null ? { batchRejected: true } : {}), resolvedAt: now } satisfies Dig);
         kv.put(forgetKey(now + EVM_RELAYER_REMEMBER_MS, r.digest), 1);
       }
       const m = this.#meta()!;
@@ -767,7 +850,7 @@ export class EvmRelayer extends DurableObject<Env> {
     const config = (setting as { config: EvmSponsorConfig }).config;
     const chain = sponsorChain(config, chainId) ?? refuse('relayer_unconfigured');
     const key = parseEvmRelayKey(this.env.EVM_RELAY_KEYS);
-    const keyAddress = key ? addressOfKey(key) : null;
+    const keyAddress = key ? addressOfKey(key, () => this.#ops.keyDerivations++) : null;
     if (key && keyAddress === config.relayerAddress) return { chain, key, keyAddress, keyWrong: false };
     key?.fill(0);
     log({ event: 'evm_relayer_key_mismatch', chainId, code: key ? 'address_mismatch' : 'key_missing_or_malformed' }, 'error');
@@ -829,16 +912,17 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  /** While records exist: 15 s after a change, else double up to 5 minutes. Else the next forget time, or none. */
+  /** While records exist: 15 s after a change, else double up to 5 minutes. Else hourly (or the next forget time if sooner). */
   async #schedule(now: number, changed: boolean): Promise<void> {
+    const m = this.#meta()!;
     if (this.#records().length > 0) {
-      const m = this.#meta()!;
       const every = changed ? EVM_RELAYER_ALARM_MS : Math.min(m.alarmMs * 2, EVM_RELAYER_ALARM_MAX_MS);
       if (m.alarmMs !== every) this.#putMeta({ ...m, alarmMs: every });
       return this.ctx.storage.setAlarm(now + every);
     }
-    const next = Array.from(this.ctx.storage.kv.list<number>({ prefix: 'fgt:', limit: 1 }), ([k]) => k)[0];
-    return next ? this.ctx.storage.setAlarm(Math.max(now + 1_000, Number(next.slice(4, 20)) + 1)) : this.ctx.storage.deleteAlarm();
+    const next = Array.from(this.ctx.storage.kv.list<number>({ prefix: 'fgt:', limit: 1 }), ([k]) => Number(k.slice(4, 20)) + 1)[0];
+    const at = Math.min(next ?? Number.POSITIVE_INFINITY, m.nextNonce !== null ? now + EVM_RELAYER_IDLE_CHECK_MS : Number.POSITIVE_INFINITY);
+    return Number.isFinite(at) ? this.ctx.storage.setAlarm(Math.max(now + 1_000, at)) : this.ctx.storage.deleteAlarm();
   }
 
   // ---- staff plumbing ----
@@ -848,6 +932,7 @@ export class EvmRelayer extends DurableObject<Env> {
     const text = (s: unknown, max: number): boolean => typeof s === 'string' && s.trim().length > 0 && s.length <= max && !/[\u0000-\u001f\u007f]/u.test(s);
     if (guard !== EVM_RELAYER_STAFF_GUARD || !text(who, 128) || !text(note, 500) || (what.nonce !== null && (!Number.isSafeInteger(what.nonce) || what.nonce < 0))) refuse('invalid_request');
     return this.#exclusive(async () => {
+      this.#ops = { signatures: 0, recoveries: 0, fetches: 0, keyDerivations: 0 };
       const meta = this.#meta();
       let refused: string | null = 'no_state';
       let c: Ctx | null = null;

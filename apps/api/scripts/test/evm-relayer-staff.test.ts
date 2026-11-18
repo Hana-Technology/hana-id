@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 const src = join(import.meta.dirname, '..', '..', 'src');
 const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? files(join(dir, f)) : f.endsWith('.ts') ? [join(dir, f)] : []));
-const STAFF = /evm-relayer-staff|EVM_RELAYER_STAFF_GUARD|\bstaff(?:Status|Resume|Close|Fill|AdoptNonce)\b|evmRelayerStaff[A-Z]/u;
+const STAFF = /evm-relayer-staff|EVM_RELAYER_STAFF_GUARD|\bstaff(?:Status|Resume|Close|Cancel|Fill|AdoptNonce)\b|evmRelayerStaff[A-Z]/u;
 const ALLOWED = new Set(['evm-relayer.ts', 'evm-relayer-staff.ts']);
 
 describe('the EVM relayer’s staff tools', () => {
@@ -29,7 +29,7 @@ describe('the EVM relayer’s staff tools', () => {
   it('the staff module holds the guard and reaches every staff method; the object checks the guard on each', () => {
     const staff = readFileSync(join(src, 'evm-relayer-staff.ts'), 'utf8');
     const object = readFileSync(join(src, 'evm-relayer.ts'), 'utf8');
-    for (const m of ['staffStatus', 'staffResume', 'staffClose', 'staffFill', 'staffAdoptNonce']) {
+    for (const m of ['staffStatus', 'staffResume', 'staffClose', 'staffCancel', 'staffFill', 'staffAdoptNonce']) {
       expect(staff).toMatch(new RegExp(`stub\\.${m}\\(EVM_RELAYER_STAFF_GUARD`, 'u'));
       expect(object).toMatch(new RegExp(`async ${m}\\(guard: string`, 'u'));
     }

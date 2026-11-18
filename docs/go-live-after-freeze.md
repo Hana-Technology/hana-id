@@ -1,8 +1,8 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-18 (branch `docs/go-live-checklist`, from `next` @ 41dd817a, docs only, nothing
-run against any service, testnet or account; commands checked against the scripts on `next` and on the open PRs 71 and
-77 as they stood that day).
+Last verified against code: 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
+85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
+migration, secret and alert name checked against the scripts and the runbook on that commit).
 
 One ordered list for the first deploy of `next` to sandbox-dev after the hackathon freeze. It is written so you can
 follow it literally, one step at a time. For the reasons behind a step, follow its link into
@@ -24,11 +24,11 @@ time. Phases 1 to 5 wait for you to say "go ahead deploy".
 | 1 | Merge `next` into `develop`, update the deploy checkout, run every check, write down what runs now, take a restore point | the day, after 2026-11-25 | about 1 h | the assistant merges and checks; **you** say go and take the restore point |
 | 2 | Database changes: two D1 migrations, two ledger migrations | the same day, right after phase 1 | 15 min | **You** |
 | 3 | Deploy the new code, sponsorship still off; check both demos | the same day, right after phase 2 | about 1 h | the assistant deploys on "go ahead deploy"; **you** check the sites |
-| 4 | Switch gas-free actions (EVM sponsorship) on: contracts, the relayer key, secrets, deploy | the same day or a later one | half a day, with a review in the middle | **you**: keys, passwords, funding, secrets, the hand test; the assistant: the PR, the deploy, the checks |
+| 4 | Switch gas-free actions (EVM sponsorship) on: contracts, the relayer key, secrets, deploy | a later day: **recommended only once the admin portal's sponsorship page and a way to try a gas-free action on a real site exist** (neither does yet) | half a day, with a review in the middle | **you**: keys, passwords, funding, secrets, the hand test; the assistant: the PR, the deploy, the checks |
 | 5 | Afterwards: CI on, the NEAR relay's limits back, the email budget, the docs, a week of watching | 2026-11-26 and the week after | 30–60 min, then a look each day | **you**: CI and the email budget; the assistant: the PRs and the deploy |
 
 The rule for who does what: anything with a password, a private key, a faucet, a third-party dashboard, a remote
-database migration or a secret upload is **yours** (the assistant never handles those). Merges, local checks, Worker
+database migration, a secret upload or a contract deploy is **yours** (the assistant never handles those). Merges, local checks, Worker
 deploys and `deploy-check` are the assistant's once you say "go ahead deploy"; you can also run them yourself, the
 commands are the same.
 
@@ -66,13 +66,12 @@ Each step can be done on any day. None of them deploys, migrates or uploads anyt
 Foundry gives you `cast` and `forge`, which sign and check the contract deploy.
 
 ```sh
-foundryup --install 1.5.1
 cast --version
 ```
 
-You see: `cast Version: 1.5.1…` (the runbook asks for exactly 1.5.1).
-If `foundryup` is not found: Foundry's installer isn't on this machine yet. TO CONFIRM: ask the assistant for the
-installer step; don't pick one from a search result.
+You see: `cast Version: 1.5.1-stable` (the dev Mac has it already). If it shows another version:
+`foundryup --install 1.5.1`, then check again. If `cast` isn't found at all, ask the assistant to install Foundry
+1.5.1 from its release; don't pick an installer from a search result.
 
 ### 0.2 A copy of `next` to run the plan from
 
@@ -86,8 +85,8 @@ cd ../hana-id-next
 corepack pnpm install
 ```
 
-You see: `HEAD is now at …` and then pnpm's install summary with no error. TO CONFIRM: the folder name
-`../hana-id-next` is a suggestion; any folder outside the main checkout works.
+You see: `HEAD is now at …` and then pnpm's install summary with no error. The folder `../hana-id-next` sits beside
+the main checkout. Remove it after phase 1 with `git worktree remove ../hana-id-next` (from the main checkout).
 
 ### 0.3 Create the testnet-only deployer keystore (once)
 
@@ -153,7 +152,8 @@ Then:
    issue or the repo. You paste it once, in phase 4.
 3. Leave the browser tab; nothing else is set up now.
 
-TO CONFIRM: which provider you pick.
+The runbook makes this keyed endpoint **required** for sandbox-dev (only a `local*` env goes without it), and the two
+measurements of 4.6 run against it. Which provider is your choice (question 1 at the end).
 
 ### 0.7 The three GitHub settings before CI goes on
 
@@ -192,18 +192,14 @@ Tell the assistant your choice; it prepares the PR. Nothing changes until it is 
 
 Start only after 2026-11-25, and only after you have said "go ahead deploy".
 
-### 1.1 Everything that goes live is merged into `next` (the assistant)
+### 1.1 `next` holds everything that goes live (the assistant)
 
-The assistant merges, in this order, each after `pnpm verify` passes on the merged result:
+The sponsorship routes (D1 migration 0022, ledger migration 0009), the NEAR relay's billing records (0023, 0010) and
+the sign-in's Keep it / Remove notice are already merged into `next`. The assistant merges, each after `pnpm verify`
+passes on the merged result, anything else you want in this deploy: the PR of 0.9 if you chose to fold it in, and any
+later PR you name.
 
-1. PR 71 (the API's sponsorship routes, D1 migration 0022, ledger migration 0009);
-2. PR 77 (the NEAR relay's billing records, D1 migration 0023, ledger migration 0010; it says "merge after #71");
-3. PR 85 (the sign-in's Keep it / Remove notice);
-4. the admin portal's sponsorship page, if its PR is ready (TO CONFIRM: it is still being built);
-5. the PR of 0.9, if you chose to fold it in.
-
-You see: each PR on GitHub marked "Merged" into `next`. If one isn't ready, the assistant tells you; you decide
-whether to wait.
+You see: on GitHub, no open PR into `next` that you expected to ship.
 
 ### 1.2 Merge `next` into `develop` (the assistant opens it, you say go)
 
@@ -223,7 +219,7 @@ gh pr merge <PR number> --repo Hana-Technology/hana-id --admin --merge
 You see: the PR "Merged". If GitHub prints a "Bypassed rule violations" line, that is the organisation's PR rule being
 bypassed with your account: the assistant reports it to you each time.
 
-### 1.3 Tag what goes live (TO CONFIRM the name)
+### 1.3 Tag what goes live
 
 A tag marks the exact commit, so anyone can find it later. Never move the `pre-hackathon` or `hackathon-submission`
 tags: the hackathon's compare link depends on them.
@@ -234,7 +230,8 @@ git tag -a sandbox-dev-<yyyy-mm-dd> origin/develop -m "sandbox-dev: the first de
 git push origin sandbox-dev-<yyyy-mm-dd>
 ```
 
-You see: `* [new tag] sandbox-dev-…`. TO CONFIRM: the repo has no naming rule for deploy tags yet.
+You see: `* [new tag] sandbox-dev-…`. The repo has no naming rule for deploy tags yet: the name is question 2 at the
+end.
 
 ### 1.4 Update the deploy checkout
 
@@ -316,7 +313,7 @@ Use a fresh email address and a private browser window.
    within seconds.
 2. The hosted demo, <https://hana-id-demo-sandbox-dev.tingtc.workers.dev>: sign in by email; your addresses show; one
    signature opens the approval window and returns.
-3. The public Sodax sample site loads and signs in (TO CONFIRM: its URL is in the sample repository, not here).
+3. The public Sodax sample site loads and signs in (its address isn't in this repository: question 3 at the end).
 
 Note what the approval windows say: phase 3 changes their wording, and you compare after.
 If a demo doesn't work **before** you deployed anything: stop. Don't deploy on top of a broken demo.
@@ -324,7 +321,8 @@ If a demo doesn't work **before** you deployed anything: stop. Don't deploy on t
 ## Phase 2: database changes
 
 You run these, from the main checkout, right after phase 1. Runbook: [Checking a deploy](operations.md#checking-a-deploy-deploy-check-d384-d406)
-("Migrations: apply from the deployed commit") and, on PR 77, "NEAR relay billing records".
+("Migrations: apply from the deployed commit") and
+[NEAR relay billing records](operations.md#near-relay-billing-records-d863-built-not-deployed) steps 1 to 3.
 
 **Why this order.** Each migration only adds tables, so the API running now (the old code) keeps working while you
 apply them. The new API, deployed in phase 3, writes billing records from its first NEAR relay: if it ran before the
@@ -435,14 +433,37 @@ A fresh email address, a private window. Give each site a minute after the deplo
 1. Stamps site: sign in by email. Collect **Arrival**. In the approval window you see a plain summary at the top, the
    fee row "free for you. Someone else pays it.", an amber line "This acts as you: … can use anything you keep with
    it." (naming the stamps program), and the technical part folded behind **Show details**. After you approve: "It was
-   free for you." Collect one more stamp (Fare paid or Postcard).
+   free for you." Keep the tab open: item 5 uses your next stamp.
 2. Hosted demo: sign in by email; the addresses show; one signature: the window starts with a plain summary and
    **Show details** is folded; the NEAR card's guestbook write goes through with 0 NEAR.
-3. The Sodax sample site still signs in and signs (TO CONFIRM its URL).
+3. The Sodax sample site still signs in and signs (question 3).
 4. The admin portal: **System status** loads and the **NEAR relay** tile reads On; **Security & monitoring** shows no
    new alert from the deploy.
-5. Ten minutes later, glance at the admin portal again: no "billing record is late" alert should appear for today's
-   relays (that alert comes only after an hour or the next day, so check again tomorrow).
+5. **One NEAR billing record against the chain** (once; runbook "NEAR relay billing records" step 4). Just before
+   your second stamp (**Fare paid**, same user as item 1, so there is no account creation in it), and again just after
+   it is stamped, read the relay account's balance:
+
+   ```sh
+   near account view-account-summary hana-id-near-relay-dev1.testnet network-config testnet now
+   ```
+
+   Then read the newest record (you run it: it reads the remote database):
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT tokens_burnt, attached_yocto, figures_from FROM near_relay_billing ORDER BY created_at DESC LIMIT 1"
+   ```
+
+   You see: one row. `tokens_burnt` + `attached_yocto` (both in yoctoNEAR: 1 NEAR is 10^24) equals what the relay
+   account lost between the two balances. Do it at a quiet moment, so no one else's stamp lands in between, and read
+   the second balance about 30 seconds after the stamp (the relay holds some gas while a transaction runs and gets it
+   back a few blocks later). If the balance shown is rounded too much to compare, read both from the relay account's
+   page on a NEAR testnet explorer instead (the runbook allows either). If the
+   account lost more: newer NEAR versions charge something the record misses; tell the developer team (the records
+   would under-count the cost, D863). Nothing needs undoing.
+6. The next day, the admin portal: no "Free NEAR transactions: a billing record is late" alert. If one comes, its
+   counts say why: `parked` and `unmirrored` usually catch up by themselves; `misses` or `unrecordedLast` (the last
+   transaction the chain took from a relay key that day has no record) go to the developer team with the day;
+   `notFinal` means checking the NEAR RPC endpoints.
 
 If a demo is broken after the deploy and you can't wait: "Rollback", phase 3.
 
@@ -451,7 +472,11 @@ and your hand check (docs go with every deploy).
 
 ## Phase 4: switching gas-free actions (sponsorship) on
 
-Can be the same day or a later one, again only on your go-ahead. The numbered runbook is
+**Recommendation: wait with this phase** until two things exist: the admin portal's sponsorship page (until then,
+if the relayer stops itself, only an engineer can see why and restart it) and a way to try a gas-free action on a real
+site (the hosted demo has no check-in card yet, so 4.15 can't be done). Phases 1 to 3 and 5 don't depend on it.
+
+When you go ahead, only on your go-ahead, the numbered runbook is
 [EVM sponsorship relay (not live)](operations.md#evm-sponsorship-relay-not-live); this phase follows it, with the
 go-live order. **Read "What cannot be undone" in the rollback section first**: after 4.13 the EVM relayer exists for
 good.
@@ -507,8 +532,7 @@ cast balance <relayer address> --rpc-url https://sepolia.base.org --ether
 ```
 
 You see: at least `0.07`, ideally `0.1`.
-If the faucets give too little a day: TO CONFIRM with the assistant whether to send test ETH from the deployer instead
-(`cast send` with `--account hana-evm-deployer`); the runbook only names the faucet.
+If the faucets give too little a day: question 4 at the end (moving test ETH from the deployer).
 
 ### 4.6 The two measurements owed on Base Sepolia (you and the assistant)
 
@@ -518,8 +542,9 @@ They are measured once before switching on (D851 item 18; runbook "The relayer",
 - Send from the **deployer** keystore, **never** from the relayer key: a transaction the relayer didn't send makes
   it stop as if its key had leaked (`foreign_transactions`).
 - The keyed URL goes into the shell without echo (`read -rs`), never on a command line.
-- TO CONFIRM: the exact `cast` commands; the assistant gives them on the day, and clears the waiting test
-  transaction afterwards so the deployer has nothing pending.
+- The runbook names the two checks but not their `cast` commands: the assistant gives you each command on the day
+  (you type the keystore password), and a last one that replaces the waiting test transaction so the deployer has
+  nothing pending.
 
 1. A test transaction with a very low tip, so it waits. Ask the endpoint for the deployer's pending transaction count
    (`eth_getTransactionCount` with `pending`) before and after.
@@ -544,8 +569,8 @@ A branch from `develop` (the freeze is over), PR into `develop`. It holds:
     `perUserPerDay` **30**, `deadlineMaxS` **300**; and the rest as printed (`lowBalanceEth` 0.05, `perAppPerDay`
     2000, `sendsPerDay` 5000, `sendsPerMinute` 60, `maxGasPerTx` 300000, `maxFeePerGasGwei` 1,
     `requireKnownAccount` true);
-  - the app allowed to use it: TO CONFIRM which app (`app_…` id from
-    `corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:list --remote`);
+  - the app allowed to use it (question 5 at the end), by its `app_…` id from
+    `corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:list --remote`;
 - the docs that still say "no Base Sepolia entry yet", and the deploy recorded in D849 (date, addresses, both
   transaction hashes, the explorer links).
 
@@ -599,7 +624,7 @@ corepack pnpm --filter @hana-id/scripts run env-secrets sandbox-dev --worker api
 You see: `Set EVM_RELAY_KEYS on Worker …`. Until the deploy of 4.13 nothing uses it: the running API still answers
 "not configured".
 
-### 4.12 Upload the read endpoint (you)
+### 4.12 Upload the read endpoint (you; required)
 
 ```sh
 corepack pnpm --dir apps/api exec wrangler secret put EVM_SPONSOR_RPC_84532
@@ -612,8 +637,8 @@ You see: a success line for `EVM_SPONSOR_RPC_84532`. Never type the URL anywhere
 
 The same ten steps as phase 3, in the same order, from this checkout (every stamped Worker must run one commit for
 `deploy-check`). This deploy creates the EVM relayer (wrangler migration `v3`): from here on it can't be undone. The
-vault pages now carry the chain's delegate and relayer. TO CONFIRM: whether the two demo sites need redeploying in
-this phase (they don't use sponsorship yet).
+vault pages now carry the chain's delegate and relayer. Rows 9 and 10 (the two demo sites) can be skipped: neither
+uses sponsorship yet, and `deploy-check` doesn't read them.
 
 ### 4.14 Check the deploy
 
@@ -629,16 +654,16 @@ line with `EVM sponsorship checked` in it. A `warning: … below lowBalanceEth`:
 
 ### 4.15 The first gas-free action, by hand (you)
 
-TO CONFIRM: the demo card for a gas-free check-in comes with a later package; until it is deployed there is no button
-for this on the real sites. When it exists: sign in with a fresh test user (0 ETH), check in on Base Sepolia, approve
+Not possible yet: the gas-free check-in card comes with a later package, and until it is deployed no real site has a
+button for it (the reason for the recommendation above). When it exists: sign in with a fresh test user (0 ETH), check in on Base Sepolia, approve
 in the window. You see: it goes through, the user's balance stays 0, and on the explorer the transaction was sent by
 the relayer address.
 
 ### 4.16 What the admin portal should show (you)
 
 - **Security & monitoring**: no "Free network fees: …" alert (their meanings: operations "EVM gas sponsorship",
-  arrives with PR 71).
-- The sponsorship page with the relayer's state: TO CONFIRM, it is still being built. Until it exists, an engineer
+  "Watching it").
+- The relayer's state: the admin portal has no sponsorship page yet (it is being built). Until it exists, an engineer
   reads the relayer's status (`halted: null` means running) and runs its staff tools for you.
 
 ### 4.17 The free-plan CPU measurement (the assistant)
@@ -738,10 +763,10 @@ Look at the admin portal (**Security & monitoring** and **System status**) once 
 |---|---|---|
 | `near_relay_balance_low` | The NEAR relay account is below its low line | [playbook](playbooks.md#near-relay-balance-low) |
 | `near_relay_budget_high` | Today's NEAR relay spend reached 80% of its budget | [playbook](playbooks.md#near-relay-budget-high) |
-| `near_billing_late` | A NEAR relay's billing record is missing or not copied to the ledger | operations "NEAR relay billing records" (arrives with PR 77) |
+| "Free NEAR transactions: a billing record is late" (`near_billing_late`) | A NEAR relay's record is missing, waiting, not read back, not copied to the ledger, or a key's last transaction of the day has none (`unrecordedLast`) | operations "NEAR relay billing records", "Watching it"; 3.12 item 6 |
 | `relayer_balance_low` and the other relayer funds alerts | The sign-in relayer is running low | [playbook](playbooks.md#relayer-out-of-funds) |
-| "Free network fees: the paying account is running low" (`evm_relay_balance_low`) | The EVM relayer needs test ETH | operations "EVM gas sponsorship" (arrives with PR 71); fund it (4.5) |
-| "Free network fees: paused or slow, needs a look" (`evm_relay_stuck`) | The relayer stopped itself, refused an action, or a send is slow | operations "The relayer: what it does, when it stops, what to do" |
+| "Free network fees: the paying account is running low" (`evm_relay_balance_low`) | The EVM relayer needs test ETH | operations "EVM gas sponsorship", "Watching it"; fund it (4.5) |
+| "Free network fees: paused or slow, needs a look" (`evm_relay_stuck`) | The relayer stopped itself, refused an action, its oldest transaction waited over 2 minutes, or a send stayed unsettled over 10 | operations "The relayer: what it does, when it stops, what to do" |
 | "Free network fees: today's budget is nearly used up" (`evm_relay_budget_high`) | 80% of the day's 0.02 test ETH is used | usually nothing; it resets at 00:00 UTC |
 | "Free network fees: a payment looked wrong …" (`evm_relay_receipt_odd`) | The read endpoint gave an odd answer | check or replace the endpoint (4.12) |
 | "Free network fees: a payment slot was used by another transaction" (`evm_relay_nonce_taken`) | The relayer key may be used elsewhere | the leaked-key steps in operations "EVM sponsorship relay" |
@@ -760,8 +785,8 @@ your notes; anything that asks for money; any message this list doesn't mention.
 | 0 | Nothing to undo. The plan sent nothing. GitHub settings change back in the same place. | The keystore and the provider account are yours; keep them. |
 | 1 | If you stop before phase 2, just don't deploy: nothing on sandbox-dev changed. A wrong tag: `git push origin :refs/tags/sandbox-dev-<yyyy-mm-dd>`. | Undoing the merge into `develop` is a revert PR; ask the assistant. |
 | 2 | Nothing to undo after a success: the four migrations only add tables, and the old API ignores them. | A failed migration (`❌`): stop and ask. The Time Travel restore (below) is a last resort: it loses every write after the bookmark (sign-ins, new wallets, app changes). |
-| 3 | Roll each Worker back to its previous version, in the reverse order of the table (stamps site first, files last), e.g. `corepack pnpm --dir apps/api exec wrangler rollback` for the API and the same command in each app's own folder (`apps/files`, `apps/console`, `apps/admin`, …). Or redeploy every piece from a checkout at the commit you wrote down in 1.6. | TO CONFIRM: the exact rollback form for the two page Workers (their configs are `apps/api/wrangler.vault.jsonc` and `wrangler.auth.jsonc`). The phase 2 migrations stay: the older code works with them. After a rollback, `deploy-check sandbox-dev --skip-head` checks the pieces agree. |
-| 4 | **The off switch**: `corepack pnpm --dir apps/api exec wrangler secret delete EVM_RELAY_KEYS`. To stop using your read endpoint only: `corepack pnpm --dir apps/api exec wrangler secret delete EVM_SPONSOR_RPC_84532` (the relayer then reads the manifest's `rpc`). | After 4.13, fix forward: don't roll the API back past the deploy that created the relayer (TO CONFIRM: Cloudflare is expected to refuse a rollback across a Durable Object migration). |
+| 3 | Roll each Worker back to its previous version, in the reverse order of the table (stamps site first, files last): `corepack pnpm --dir apps/api exec wrangler rollback` for the API, `corepack pnpm --dir apps/api exec wrangler rollback --name hana-id-vault-sandbox-dev` and `… --name hana-id-auth-sandbox-dev` for the two page Workers, and `wrangler rollback` from each other app's own folder (`apps/files`, `apps/email-issuer`, `apps/console`, `apps/console-auth`, `apps/admin`, `apps/watchdog`, `apps/demo`, `apps/stamps`). wrangler shows the version it goes back to and asks first. Or redeploy every piece from a checkout at the commit you wrote down in 1.6. | The phase 2 migrations stay: the older code works with them. After a rollback, `deploy-check sandbox-dev --skip-head` checks the pieces agree. |
+| 4 | **The off switch**: `corepack pnpm --dir apps/api exec wrangler secret delete EVM_RELAY_KEYS`. The read endpoint stays: it is required, and replacing it is the same `wrangler secret put EVM_SPONSOR_RPC_84532` with the new URL. | After 4.13, fix forward: don't roll the API back past the deploy that created the relayer. A rollback never undoes a Durable Object (wrangler says so), so the old code would run beside the relayer's stored state; use the off switch. |
 | 5 | CI off: `gh workflow disable CI -R Hana-Technology/hana-id`. Limits or email budget: a PR with the old values, then the same `gen` and deploy. | |
 
 **The D1 restore** (only with the assistant, only if the data is damaged): runbook
@@ -791,19 +816,17 @@ Everything here runs on free plans. These would cost money; each needs your expl
 
 Free: faucets, Blockscout and Basescan verification, standard GitHub runners on a public repository.
 
-## TO CONFIRM (open points in this list)
+## Questions for you (each with the recommended answer)
 
-1. 0.1: how Foundry's installer (`foundryup`) gets onto the machine.
-2. 0.2: the second folder's name for `next` in phase 0.
-3. 0.6: which RPC provider.
-4. 1.1: whether the admin portal's sponsorship page is ready to merge.
-5. 1.3: the tag's name (no naming rule yet).
-6. 1.10 and 3.12: the Sodax sample site's URL.
-7. 4.5: sending test ETH from the deployer to the relayer with `cast send`, if faucets are too slow.
-8. 4.6: the exact `cast` commands for the two measurements, and clearing the waiting test transaction.
-9. 4.7: which app (`app_…`) is allowed to use sponsorship.
-10. 4.13: whether the two demo sites are redeployed in phase 4.
-11. 4.15: the gas-free check-in card on a real site (a later package).
-12. 4.16: the admin portal's sponsorship page and what it shows.
-13. Rollback, phase 3: the rollback command for the two page Workers.
-14. Rollback, phase 4: that Cloudflare refuses a rollback across the `v3` Durable Object migration.
+1. **Which RPC provider for the Base Sepolia read endpoint (0.6)?** Recommended: whichever of Alchemy or QuickNode
+   offers Base Sepolia on a free plan with no card and refuses requests at the limit instead of billing them.
+2. **What do we call the deploy tag (1.3)?** Recommended: `sandbox-dev-<the deploy date>`, for example
+   `sandbox-dev-2026-11-26`.
+3. **What is the Sodax sample site's address, to check it before and after (1.10, 3.12)?** Recommended: check it in
+   both places; the address isn't in this repository.
+4. **If faucets are slow, may the assistant give you a `cast send` command that moves 0.1 test ETH from the deployer
+   to the relayer (4.5)?** Recommended: yes; it signs with your keystore and asks for its password.
+5. **Which app may use free network fees (4.7)?** Recommended: the hosted demo's app only, the one the check-in card
+   will live in, and no partner app until the admin page exists.
+6. **When does phase 4 happen?** Recommended: not on the first deploy day; once the admin portal's sponsorship page
+   and the demo's check-in card are merged and deployed.

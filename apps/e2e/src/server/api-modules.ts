@@ -1,8 +1,8 @@
 // The API Worker's own code that the local stack runs unchanged (apps/api/src): the Worker itself (routing, the app
 // gate and origin rule, GET /v1/app, the vault endpoints, the login relay and its Durable Object), the vault page
-// renderer and the two page hosts. So the suite checks the real wire format, CORS, frame-ancestors, CSP and page
-// headers, not a copy of them. Only POST /v1/login and /v1/derive are mocked (api.ts): they need the relayer and the
-// MPC.
+// renderer and the two page hosts, and EVM gas sponsorship's routes with the real relayer object over the mocked EVM
+// chain (partner.ts MockEvm). So the suite checks the real wire format, CORS, frame-ancestors, CSP and page headers,
+// not a copy of them. Only POST /v1/login and /v1/derive are mocked (api.ts): they need the NEAR relayer and the MPC.
 //
 // They are loaded at runtime (tsx compiles them) through a computed specifier, so this package's typecheck doesn't pull
 // the Worker sources and their Cloudflare types in; the interfaces below are the slice of their exports used here.
@@ -55,6 +55,8 @@ export interface ApiModules {
   worker: { fetch(request: Request, env: ApiEnv, ctx: ExecutionContextLike): Promise<Response> };
   /** apps/api/src/login-relay.ts: the relay's Durable Object class. */
   LoginRelay: new (state: unknown, env: unknown) => object;
+  /** apps/api/src/evm-relayer.ts: the EVM sponsorship relayer's Durable Object class (D851). */
+  EvmRelayer: new (state: unknown, env: unknown) => object;
   /** apps/api/src/handlers.ts: what every app endpoint runs first (key, origin rule, rate limits). */
   appGate(request: Request, env: ApiEnv, ctx: ApiCtx, kind: 'relay' | 'config'): Promise<ApiGate>;
   newCtx(env: ApiEnv, requestId: string, endpoint: string, request?: Request): ApiCtx;
@@ -85,7 +87,7 @@ export async function loadApiModules(): Promise<ApiModules> {
   // The Worker's Durable Object classes extend `cloudflare:workers`' DurableObject.
   registerCloudflareModule();
   const [index, handlers, apps, origins, page, host, claims, directory] = await Promise.all([
-    load<{ default: ApiModules['worker']; LoginRelay: ApiModules['LoginRelay'] }>('index.ts'),
+    load<{ default: ApiModules['worker']; LoginRelay: ApiModules['LoginRelay']; EvmRelayer: ApiModules['EvmRelayer'] }>('index.ts'),
     load<Pick<ApiModules, 'appGate' | 'newCtx' | 'done'>>('handlers.ts'),
     load<Pick<ApiModules, 'getAppByKey'>>('apps.ts'),
     load<Pick<ApiModules, 'isLoopbackOrigin'>>('origins.ts'),
@@ -97,6 +99,7 @@ export async function loadApiModules(): Promise<ApiModules> {
   return {
     worker: index.default,
     LoginRelay: index.LoginRelay,
+    EvmRelayer: index.EvmRelayer,
     appGate: handlers.appGate,
     newCtx: handlers.newCtx,
     done: handlers.done,

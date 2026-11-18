@@ -62,6 +62,11 @@ describe('userMessage (D861)', () => {
     expect(userMessageFor('link_pending', { effectiveAtMs: 1 })).toBe('This email is waiting to be linked to a wallet. Sign in again and follow the steps in the Journear Passport window.');
   });
 
+  it('login_cancelled when the user chose to remove this sign-in from a wallet (D865): true before and after the removal is confirmed', () => {
+    expect(userMessageFor('login_cancelled', { reason: 'link_remove' })).toBe('You chose to remove this sign-in from that wallet. Finish it in the Journear Passport window. Then sign in again when you’re ready.');
+    expect(userMessageFor('login_cancelled', { reason: 'popup_closed' })).toBe('The sign-in was cancelled. Nothing was changed.');
+  });
+
   it('a known reason picks a closer sentence; an unknown one, or one of another shape, keeps the code’s', () => {
     expect(userMessageFor(4001, undefined)).toBe('You rejected this in Journear Passport, or closed it. Nothing was approved.');
     expect(userMessageFor(4100, { reason: 'mainnet_not_allowed', chain: 'evm', chainId: 8453 })).toBe('This app is a test version, so Journear Passport lets it use only test networks. Nothing was signed.');

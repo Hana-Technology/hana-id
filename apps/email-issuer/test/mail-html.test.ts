@@ -250,7 +250,7 @@ describe('notices: the designed HTML part', () => {
       [
         'This email is being linked with a Google account, so both will open the same Journear wallet in “Sodax Demo”. The link starts working after a waiting period (24 hours; shorter in a test version), and it can be cancelled until then.',
         '',
-        'Not you? Change your email password. Then sign in to “Sodax Demo” with this email before the waiting period ends: Journear Passport will show the new sign-in with a button to cancel it. Once the waiting period has ended, don’t sign in to “Sodax Demo” with this email, and tell the app’s support.',
+        'Not you? Change your email password, then sign in to “Sodax Demo” with this email. During the waiting period you can cancel the link there. After it, the Journear Passport sign-in window lets you remove this email from that wallet. Don’t add money to that wallet.',
         '',
       ].join('\n'),
     );
@@ -263,7 +263,7 @@ describe('notices: the designed HTML part', () => {
       for (const line of n.text.split('\n').filter(Boolean)) expect(visibleText(n.html)).toContain(line);
     }
     // An app name that isn't display-safe is "an app" in the advice too.
-    expect(linkNoticeMail({ to: 'a@example.com', appName: 'evil.com', pending: true }).text).toContain('sign in to an app with this email before the waiting period ends');
+    expect(linkNoticeMail({ to: 'a@example.com', appName: 'evil.com', pending: true }).text).toContain('sign in to an app with this email. During the waiting period');
   });
 
   it('unlock and confirm: one button to their page with the token in the fragment', () => {

@@ -22,7 +22,13 @@ import { buildAuthPages } from '../../../packages/web/scripts/build-auth-pages.t
 import { buildVault } from '../../../packages/web/scripts/build-vault.ts';
 import { DEFAULT_STELLAR, type DemoConfig, validateDemoConfig } from '../../demo/src/config.ts';
 import { type StampsConfig, validateStampsConfig } from '../../stamps/src/config.ts';
-import { BUILD_DIR, DEMO_PK, E2E_ENV, E2E_GUESTBOOK, E2E_STAMPS, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV, STAMPS_PK, VAULT_ORIGIN, portBase } from './stack.ts';
+import { e2eRelayer } from './relayer-key.ts';
+import { BUILD_DIR, DEMO_PK, E2E_ENV as E2E_ENV_BASE, E2E_GUESTBOOK, E2E_STAMPS, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV as LIVE_ENV_BASE, STAMPS_PK, VAULT_ORIGIN, e2eEvmSponsor, portBase } from './stack.ts';
+
+/** An env with gas sponsorship on the mocked chain, its relayer the stack's own (src/relayer-key.ts, D834). */
+const sponsored = (e: HanaEnv): HanaEnv => Object.freeze({ ...e, evmSponsor: e2eEvmSponsor(e2eRelayer().address) });
+const E2E_ENV = sponsored(E2E_ENV_BASE);
+const LIVE_ENV = sponsored(LIVE_ENV_BASE);
 
 const e2eRoot = fileURLToPath(new URL('../', import.meta.url));
 export const PAGES_DIR = fileURLToPath(new URL('pages/', BUILD_DIR));

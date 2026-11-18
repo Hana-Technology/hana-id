@@ -19,6 +19,12 @@ import { nearRelayKeyName, type RelayerKey, type RelayResult } from '../src/rela
 import { runInDurableObject } from 'cloudflare:test';
 import { appHeaders, call, type Chain, ORIGIN, type SeededApp, startOfMinuteClock } from './helpers.ts';
 import { MOCK_RECEIPT_GAS, MOCK_TX_GAS } from './near-mock.ts';
+import { blockFigures, BudgetedRpc, checkNearBillingLate, finalStatus, GIVE_UP_TRIES, initialRecord, isRowRefused, NEAR_BILLING_FETCHES, nearBillingFaults, nearBillingMaintenance } from '../src/near/relay-billing.ts';
+import { rpcHealth } from '../src/near/rpc.ts';
+import { pruneEvmSponsorSends } from '../src/evm/sponsor-settle.ts';
+import { usageTransport } from '../src/usage/record.ts';
+
+const HOUR = 60 * 60_000;
 import { spentSession, vaultHeaders, vaultSetup } from './vault-helpers.ts';
 
 const GUESTBOOK = 'guestbook.test.near';
@@ -911,5 +917,310 @@ describe('the hourly funds check (near_relay_balance_low)', () => {
     expect(await checkNearRelayFunds({ ...env, NETWORK: 'mainnet' })).toBe(0);
     const rows = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'near_relay_balance_low' ORDER BY detected_at").all<{ detail_json: string }>();
     expect(rows.results.map((r) => JSON.parse(r.detail_json).missing)).toEqual([false, true]);
+  });
+});
+
+describe('billing records (D863): one permanent record per relayed NEAR transaction, written after the answer', () => {
+  let s: Awaited<ReturnType<typeof setup>>;
+  const rows = async () => (await env.DB.prepare('SELECT * FROM near_relay_billing ORDER BY created_at, tx_hash').all<Record<string, unknown>>()).results;
+  const store = () => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName('near-relay:billing'));
+  const lateEvents = async () => (await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'near_billing_late'").all<{ detail_json: string }>()).results.map((r) => JSON.parse(r.detail_json) as Record<string, number>);
+  let ledgerCalls: Record<string, unknown>[][] = [];
+  const realTransport = usageTransport.query;
+  beforeEach(async () => {
+    s = await setup();
+    await env.DB.exec('DELETE FROM near_relay_billing');
+    await env.DB.exec("DELETE FROM security_events WHERE kind = 'near_billing_late'");
+    await runInDurableObject(store(), async (_i, state) => state.storage.deleteAll());
+    ledgerCalls = [];
+    usageTransport.query = async (_b, _sql, params) => void ledgerCalls.push(JSON.parse(String(params[0])) as Record<string, unknown>[]);
+    nearBillingFaults.throwAt = null;
+  });
+  afterEach(() => {
+    usageTransport.query = realTransport;
+    nearBillingFaults.throwAt = null;
+  });
+
+  it('an `ok` relay is final at once from the relay’s own figures (no FINAL read), with its key and nonce; copied to the ledger once', async () => {
+    const res = await relay(s.app, plainRelay(delegate(s.user)));
+    const b = await body(res);
+    expect([res.status, b.status]).toEqual([200, 'executed']);
+    const [r, ...more] = await rows();
+    expect(more).toEqual([]);
+    const org = await env.DB.prepare('SELECT org_id FROM apps WHERE id = ?1').bind(s.app.id).first<{ org_id: string }>();
+    const gas = String(BigInt(MOCK_TX_GAS.gas_burnt) + 2n * BigInt(MOCK_RECEIPT_GAS.gas_burnt));
+    expect(r).toMatchObject({ network: 'testnet', tx_hash: b.transactionHash, org_id: org!.org_id, app_id: s.app.id, kind: 'delegate', relay_code: 'ok', outcome: 'executed', figures_from: 'relay', gas_burnt: gas, attached_yocto: '0', receiver: GUESTBOOK, methods_json: '["add_message"]', mirrored_at: null, tries: 0 });
+    expect(r!.final_at).not.toBeNull();
+    expect(typeof r!.relayer_pk).toBe('string');
+    expect(typeof r!.relayer_nonce).toBe('number');
+    expect(JSON.stringify(r).includes(s.user.accountId)).toBe(false);
+    const before = s.near.waitUntil.filter((w) => w.method === 'tx').length;
+    await nearBillingMaintenance(env, Date.now() + 2 * 60_000);
+    expect(s.near.waitUntil.filter((w) => w.method === 'tx').length).toBe(before);
+    expect((await rows())[0]!.mirrored_at).not.toBeNull();
+    expect(ledgerCalls.length).toBe(1);
+    expect(Object.keys(ledgerCalls[0]![0]!).sort()).toEqual(['app_id', 'attached_yocto', 'block_hash', 'block_height', 'block_time', 'created_at', 'environment', 'figures_from', 'final_at', 'gas_burnt', 'had_failed_receipt', 'kind', 'methods', 'network', 'org_id', 'outcome', 'receiver', 'relay_code', 'tokens_burnt_yocto', 'tx_hash']);
+    await nearBillingMaintenance(env, Date.now() + 3 * 60_000);
+    expect(ledgerCalls.length).toBe(1);
+  });
+
+  it('a relay that certainly never ran (refused before inclusion, dropped) is final at once as not_executed, nothing burnt', () => {
+    const base = { ok: false as const, status: 502, error: 'x', nearTx: '1'.repeat(44) };
+    expect(initialRecord({ ...base, code: 'near_rejected' })).toEqual({ outcome: 'not_executed', gas: '0', tokens: '0', final: true });
+    expect(initialRecord({ ...base, code: 'relayer_busy' })).toEqual({ outcome: 'not_executed', gas: '0', tokens: '0', final: true });
+    // Anything else the cron reads again: a contract failure (whose receipt decides), a timeout, an `ok` without figures.
+    expect(initialRecord({ ...base, code: 'contract_rejected', relayGasBurnt: '1', relayTokensBurnt: '1' }).final).toBe(false);
+    expect(initialRecord({ ...base, code: 'timeout' }).final).toBe(false);
+    expect(initialRecord({ ok: true, result: null, nearTx: '1'.repeat(44) }).final).toBe(false);
+  });
+
+  it('an activation leaves one record without a receiver, with the NEAR the relay sent; a refused relay (nothing sent) leaves none', async () => {
+    s.near.missingAccounts.add(s.user.accountId);
+    expect((await activate(s.app, { accountId: s.user.accountId })).status).toBe(200);
+    expect((await activate(s.app, { accountId: s.user.accountId })).status).toBe(200);
+    const all = await rows();
+    expect(all.map((r) => [r.kind, r.receiver, r.attached_yocto, r.methods_json])).toEqual([['activation', null, '0', '[]']]);
+    expect(JSON.stringify(all).includes(s.user.accountId)).toBe(false);
+    const refused = await relay(s.app, plainRelay(delegate(s.user, { receiverId: 'other.test.near' })));
+    expect(refused.status).toBe(403);
+    expect((await rows()).length).toBe(1);
+  });
+
+  it('the write runs after the answer (waitUntil): the request waits for nothing', async () => {
+    const held: Promise<unknown>[] = [];
+    const exec = { waitUntil: (p: Promise<unknown>) => void held.push(p), passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
+    const res = await call('/v1/near/relay', { headers: appHeaders(s.app), body: plainRelay(delegate(s.user)), exec });
+    expect(res.status).toBe(200);
+    expect(held.length).toBeGreaterThan(0);
+    await Promise.all(held);
+    expect((await rows()).length).toBe(1);
+  });
+
+  it('a D1 write that fails parks the record (bounded) and the cron writes it later; the relay answers as before', async () => {
+    await env.DB.exec('ALTER TABLE near_relay_billing RENAME TO near_relay_billing_hidden');
+    try {
+      const res = await relay(s.app, plainRelay(delegate(s.user)));
+      expect([res.status, (await body(res)).status]).toEqual([200, 'executed']);
+      expect(await store().queueLength('near-relay-billing')).toBe(1);
+      await expect(nearBillingMaintenance(env, Date.now() + 2 * 60_000)).resolves.toBeTypeOf('number');
+      expect(await store().queueLength('near-relay-billing')).toBe(1);
+    } finally {
+      await env.DB.exec('ALTER TABLE near_relay_billing_hidden RENAME TO near_relay_billing');
+    }
+    await nearBillingMaintenance(env, Date.now() + 3 * 60_000);
+    expect(await store().queueLength('near-relay-billing')).toBe(0);
+    expect((await rows()).map((r) => r.outcome)).toEqual(['executed']);
+  });
+
+  it('a relay that may have been sent but has no hash (the key object unreachable) counts as a miss, alerted once a day with the count', async () => {
+    const broken = { RELAYER_KEY: { idFromName: (n: string) => n, get: () => ({ relayNear: async () => Promise.reject(new Error('gone')) }) } as unknown as typeof env.RELAYER_KEY };
+    expect((await relay(s.app, plainRelay(delegate(s.user)), broken)).status).toBe(503);
+    const counts = await checkNearBillingLate(env);
+    expect(counts.misses).toBe(1);
+    // Once a day: an hour on, no second event.
+    await checkNearBillingLate(env, Date.now() + HOUR);
+    expect(await lateEvents()).toEqual([{ misses: 1, parked: 0, notFinal: 0, unmirrored: 0, unrecordedLast: 0 }]);
+  });
+
+  it('a contract failure is read again: not FINAL yet → tried later (doubling); FINAL → its figures and the block, the user’s own call failed', async () => {
+    s.near.onNearTx = () => ({ failIn: 'receiver', failure: { ActionError: { index: 0, kind: { FunctionCallError: { ExecutionError: 'Smart contract panicked: no' } } } } });
+    const res = await relay(s.app, plainRelay(delegate(s.user)));
+    expect((await body(res)).code).toBe('contract_rejected');
+    const t0 = Date.now();
+    await nearBillingMaintenance(env, t0 + 2 * 60_000);
+    let [r] = await rows();
+    expect(r).toMatchObject({ outcome: 'pending', tries: 1, final_at: null });
+    expect(s.near.waitUntil.filter((w) => w.method === 'tx').map((w) => w.waitUntil)).toContain('NONE');
+    expect(Number(r!.next_try_at)).toBe(t0 + 2 * 60_000 + 2 * 60_000);
+    s.near.txFinal = true;
+    await nearBillingMaintenance(env, t0 + 10 * 60_000);
+    [r] = await rows();
+    expect(r).toMatchObject({ outcome: 'failed', had_failed_receipt: 0, figures_from: 'final', tries: 2, block_height: expect.any(String) });
+    expect(r!.block_hash).toMatch(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u);
+  });
+
+  it('`unknown` only after GIVE_UP_TRIES actual reads and six hours: a record starved of budget is late, never unknown', async () => {
+    const res = await relay(s.app, plainRelay(delegate(s.user)));
+    const hash = (await body(res)).transactionHash as string;
+    // Not final at once (as a timeout would leave it), and never found on chain.
+    await env.DB.prepare("UPDATE near_relay_billing SET tx_hash = ?1, outcome = 'pending', figures_from = NULL, final_at = NULL, next_try_at = 0 WHERE tx_hash = ?2").bind('1'.repeat(44), hash).run();
+    await env.DB.prepare('UPDATE near_relay_billing SET created_at = created_at - ?1').bind(7 * HOUR).run();
+    // Seven hours old and starved (never read): the alert, no `unknown`.
+    await checkNearBillingLate(env);
+    expect((await lateEvents())[0]).toMatchObject({ notFinal: 1 });
+    expect((await rows())[0]).toMatchObject({ outcome: 'pending', tries: 0 });
+    for (let i = 0; i < GIVE_UP_TRIES - 1; i++) {
+      await env.DB.exec('UPDATE near_relay_billing SET next_try_at = 0');
+      await nearBillingMaintenance(env);
+    }
+    expect((await rows())[0]).toMatchObject({ outcome: 'pending', tries: GIVE_UP_TRIES - 1 });
+    await env.DB.exec('UPDATE near_relay_billing SET next_try_at = 0');
+    await nearBillingMaintenance(env);
+    expect((await rows())[0]).toMatchObject({ outcome: 'unknown', relay_code: 'ok', tries: GIVE_UP_TRIES });
+  });
+
+  it('a run makes at most NEAR_BILLING_FETCHES outside fetches; the rest wait, oldest first', async () => {
+    for (let i = 0; i < 14; i++) {
+      await env.DB.prepare(
+        "INSERT INTO near_relay_billing (network, tx_hash, org_id, app_id, environment, kind, relay_code, outcome, attached_yocto, receiver, methods_json, created_at, next_try_at) VALUES ('testnet', ?1, 'org', ?2, 'test', 'delegate', 'timeout', 'pending', '0', ?3, '[]', ?4, ?4)",
+      )
+        .bind(`${'1'.repeat(43)}${'ABCDEFGHJKLMNPQRSTUV'[i]}`, s.app.id, GUESTBOOK, i)
+        .run();
+    }
+    // The day's first run also checks the relay keys' nonces (one read per key), inside the same budget.
+    const fetches = await nearBillingMaintenance(env);
+    expect(fetches).toBe(NEAR_BILLING_FETCHES);
+    const tried = (await rows()).filter((r) => Number(r.tries) > 0).map((r) => Number(r.created_at));
+    expect(tried.length).toBeGreaterThan(0);
+    expect(Math.max(...tried)).toBe(tried.length - 1);
+    // The next run: the ones still waiting (no nonce check again today), each read once.
+    expect(await nearBillingMaintenance(env)).toBe(14 - tried.length);
+    expect((await rows()).every((r) => Number(r.tries) === 1)).toBe(true);
+  });
+
+  it('its own RPC client: a failing endpoint is never marked down for the relay (the isolate’s health untouched)', async () => {
+    rpcHealth.clear();
+    const before = rpcHealth.order(['https://a.example', 'https://b.example']);
+    const rpc = new BudgetedRpc(['https://a.example', 'https://b.example'], 2);
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network'));
+    await expect(rpc.call('tx', {})).rejects.toThrow();
+    expect(rpc.left).toBe(1);
+    expect(rpcHealth.order(['https://a.example', 'https://b.example'])).toEqual(before);
+    await expect(rpc.call('tx', {})).rejects.toThrow();
+    await expect(rpc.call('tx', {})).rejects.toThrow(/budget/u);
+  });
+
+  it('the job is isolated: anything thrown inside is logged, never thrown to the cron', async () => {
+    nearBillingFaults.throwAt = 'start';
+    await expect(nearBillingMaintenance(env)).resolves.toBe(0);
+  });
+
+  it('the daily nonce check: the last included transaction of each key must have a record; reservation jumps and refused nonces count nothing', async () => {
+    const res = await relay(s.app, plainRelay(delegate(s.user)));
+    expect(res.status).toBe(200);
+    const [r] = await rows();
+    const pk = r!.relayer_pk as string;
+    const n = BigInt(r!.relayer_nonce as number);
+    const cols = Object.keys(r!);
+    // A record of this key at another nonce (a copy of the relayed one with its own hash and outcome).
+    const record = async (nonce: bigint, hash: string, outcome = 'executed') => {
+      const values = cols.map((c) => (c === 'tx_hash' ? hash : c === 'relayer_nonce' ? Number(nonce) : c === 'outcome' ? outcome : r![c]));
+      await env.DB.prepare(`INSERT INTO near_relay_billing (${cols.join(', ')}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(', ')})`).bind(...values).run();
+    };
+    const hash = (c: string) => c.repeat(43);
+    const day = (d: number) => Math.floor(Date.now() / 86_400_000) * 86_400_000 + d * 86_400_000 + 3_600_000;
+    const unrecorded = async (d: number) => (await checkNearBillingLate(env, day(d))).unrecordedLast;
+    // Day 0: the chain shows the recorded relay as the key's last; the first run only starts the watermark.
+    s.near.akNonce.set(pk, n);
+    await nearBillingMaintenance(env, day(0));
+    expect(await unrecorded(0)).toBe(0);
+    // Day 1: the relay key object restarted and resumed past its reservation (+100); one transaction there was refused
+    // (its nonce skipped, recorded not_executed), the next one included and recorded. The nonces jumped by 102 with two
+    // records: a gap count would say 100; nothing is missing.
+    await record(n + 101n, hash('A'), 'not_executed');
+    await record(n + 102n, hash('B'));
+    s.near.akNonce.set(pk, n + 102n);
+    await nearBillingMaintenance(env, day(1));
+    expect(await unrecorded(1)).toBe(0);
+    // Day 2: nothing included since: nothing to check.
+    await nearBillingMaintenance(env, day(2));
+    expect(await unrecorded(2)).toBe(0);
+    // Day 3: the key's last included transaction has no record (two without one): ONE for the key that day.
+    s.near.akNonce.set(pk, n + 104n);
+    await nearBillingMaintenance(env, day(3));
+    expect(await unrecorded(3)).toBe(1);
+    // Day 4: the chain says the last included one is the nonce a record calls not executed: counted as well.
+    await record(n + 105n, hash('C'), 'not_executed');
+    s.near.akNonce.set(pk, n + 105n);
+    await nearBillingMaintenance(env, day(4));
+    expect(await unrecorded(4)).toBe(1);
+    // Day 5, the limit: an unrecorded transaction followed by a recorded one the same day goes unseen.
+    await record(n + 107n, hash('D'));
+    s.near.akNonce.set(pk, n + 107n);
+    await nearBillingMaintenance(env, day(5));
+    expect(await unrecorded(5)).toBe(0);
+    // Once a day: a second run that day reads nothing more.
+    s.near.akNonce.set(pk, n + 109n);
+    await nearBillingMaintenance(env, day(5) + HOUR);
+    expect(await unrecorded(5)).toBe(0);
+    expect((await lateEvents()).map((e) => e.unrecordedLast)).toEqual([1, 1]);
+  });
+
+  it('a parked record D1 refuses for good (a constraint) is counted as a miss and dropped; the ones behind it are written', async () => {
+    const res = await relay(s.app, plainRelay(delegate(s.user)));
+    expect(res.status).toBe(200);
+    const [r] = await rows();
+    await env.DB.exec('DELETE FROM near_relay_billing');
+    const good = { ...r!, tx_hash: 'E'.repeat(43) };
+    delete (good as Record<string, unknown>).mirrored_at;
+    // Rows that can never be written, ahead of a good one: one the table's CHECK refuses (INSERT OR IGNORE skips it
+    // without an error), one D1 can't bind (a missing field), and something that isn't a record at all.
+    await store().queuePush('near-relay-billing', { ...good, tx_hash: 'F'.repeat(43), outcome: 'bogus' }, 500, Date.now());
+    await store().queuePush('near-relay-billing', { ...good, tx_hash: 'G'.repeat(43), app_id: undefined }, 500, Date.now() + 1);
+    await store().queuePush('near-relay-billing', 'not a record', 500, Date.now() + 2);
+    await store().queuePush('near-relay-billing', good, 500, Date.now() + 3);
+    // A duplicate of a written record is no miss.
+    await store().queuePush('near-relay-billing', good, 500, Date.now() + 4);
+    await nearBillingMaintenance(env, Date.now() + 2 * 60_000);
+    expect(await store().queueLength('near-relay-billing')).toBe(0);
+    expect((await rows()).map((x) => x.tx_hash)).toEqual(['E'.repeat(43)]);
+    expect((await checkNearBillingLate(env, Date.now() + 2 * 60_000)).misses).toBe(3);
+  });
+
+  it('a relay record the table skips without an error (INSERT OR IGNORE) is a miss at once, not parked', async () => {
+    await env.DB.exec("CREATE TRIGGER near_billing_skip BEFORE INSERT ON near_relay_billing BEGIN SELECT RAISE(IGNORE); END");
+    try {
+      const res = await relay(s.app, plainRelay(delegate(s.user)));
+      expect(res.status).toBe(200);
+    } finally {
+      await env.DB.exec('DROP TRIGGER near_billing_skip');
+    }
+    expect(await rows()).toEqual([]);
+    expect(await store().queueLength('near-relay-billing')).toBe(0);
+    expect((await checkNearBillingLate(env)).misses).toBe(1);
+  });
+
+  it('isRowRefused tells a row D1 refuses from a database it can’t reach', () => {
+    expect(isRowRefused(new Error('D1_ERROR: CHECK constraint failed: outcome IN (...): SQLITE_CONSTRAINT'))).toBe(true);
+    expect(isRowRefused(new Error('D1_ERROR: NOT NULL constraint failed: near_relay_billing.app_id'))).toBe(true);
+    expect(isRowRefused(new Error("D1_TYPE_ERROR: Type 'undefined' not supported for value 'undefined'"))).toBe(true);
+    expect(isRowRefused(new Error('D1_ERROR: no such table: near_relay_billing'))).toBe(false);
+    expect(isRowRefused(new Error('Network connection lost.'))).toBe(false);
+  });
+
+  it('finalStatus: a failure in the user’s own call is `failed`; one only in a later callback is `executed` with had_failed_receipt', () => {
+    const ok = { SuccessValue: '' };
+    const fail = { Failure: { ActionError: { index: 0 } } };
+    // nearcore's shape: the transaction's first receipt (the delegate action), the user's call it produced, a callback.
+    const o = (call: unknown, callback: unknown) => ({
+      status: ok,
+      transaction_outcome: { outcome: { gas_burnt: 1, tokens_burnt: '1', receipt_ids: ['R1'] } },
+      receipts_outcome: [
+        { id: 'R1', outcome: { gas_burnt: 1, tokens_burnt: '1', status: ok, receipt_ids: ['R2'] } },
+        { id: 'R2', outcome: { gas_burnt: 1, tokens_burnt: '1', status: call, receipt_ids: ['R3'] } },
+        { id: 'R3', outcome: { gas_burnt: 1, tokens_burnt: '1', status: callback, receipt_ids: [] } },
+      ],
+    });
+    expect(finalStatus(o(ok, ok) as never)).toEqual({ outcome: 'executed', hadFailedReceipt: false });
+    expect(finalStatus(o(fail, ok) as never)).toEqual({ outcome: 'failed', hadFailedReceipt: false });
+    expect(finalStatus(o(ok, fail) as never)).toEqual({ outcome: 'executed', hadFailedReceipt: true });
+    expect(finalStatus({ ...o(ok, ok), status: fail } as never)).toEqual({ outcome: 'failed', hadFailedReceipt: false });
+  });
+
+  it('block height and time from a nearcore `block` answer (height, timestamp_nanosec in ns; the number form loses precision)', () => {
+    const real = { header: { height: 189_000_123, timestamp: 1_731_900_000_123_456_800, timestamp_nanosec: '1731900000123456789', hash: '7tkzFg8RHBmMw1ncRJZCCZAizgq4rwCftTKYLce8RU8t' } };
+    expect(blockFigures(real)).toEqual({ height: '189000123', time: 1_731_900_000_123 });
+    expect(blockFigures({ header: { height: 5, timestamp: 2_000_000 } })).toEqual({ height: '5', time: 2 });
+    expect(blockFigures({ header: { height: -1 } })).toEqual({ height: null, time: null });
+    expect(blockFigures(null)).toEqual({ height: null, time: null });
+  });
+
+  it('records are never pruned and stay through a user’s erasure (no link to the directory or the audit rows)', async () => {
+    expect((await relay(s.app, plainRelay(delegate(s.user)))).status).toBe(200);
+    await env.DB.prepare('UPDATE near_relay_billing SET created_at = 1').run();
+    await pruneEvmSponsorSends(env);
+    await env.DB.exec('DELETE FROM end_user_wallets');
+    await env.DB.exec('DELETE FROM end_users');
+    expect((await rows()).length).toBe(1);
   });
 });

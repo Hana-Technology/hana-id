@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-11-18 (branch `fix/evm-relayer-unaccepted-first`, from `next`, not merged, not deployed: D851 item 18 new (an untaken batch cancelled early only after two runs and with a later record waiting, two Base Sepolia measurements owed, the pools' 7702 texts, no backoff, `oldestUnacceptedMs`, refusals returned as values), D834 and D836 amended (tip cap, batch size, `deadlineMaxS` ≤ 300), to confirm); 2026-11-18 (branch `fix/evm-relayer-account-next`, from `next`, not merged, not deployed: D851 item 17 new, the account's earlier batch checked on demand at send, to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`: D864 confirmed by the user 2026-11-18, its review amendments (the cancelled and late screens' words, `link_pending`'s `userMessage`) to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`, from `next` @ 2b25fc75, not merged, not deployed: D864 new, the cancel-by-email path owed since D259 decided by the user 2026-11-18, details decided while building, to confirm; D259's and D862's "not built" and "open" notes amended; a row of "Superseded or amended"); 2026-11-18 (branch `feat/plain-wording-other`, with `next` @ af938240 merged (PRs 75, 76, 79): D861 and D862 confirmed by the user 2026-11-18, their review amendments to confirm; D861's sponsored reasons read from PR 76's `evm-sponsor.ts`, the signing-domain message reworded); 2026-11-18 (branch `feat/plain-wording-other`, from `next`, not merged, not deployed: D861 new, a plain sentence in SDK errors approved in principle by the founder 2026-11-18, its shape decided while building, to confirm; D862 new, decided while building, to confirm; two rows of "Superseded or amended" for D419's user-mail banner and D670's notice button); 2026-11-18 (branch `fix/evm-relayer-halt-narrowing`, from `next`, not merged, not deployed: D851 item 16 narrowed (halts on the trusted endpoint's own refusal only, a first version's replacement refusal confirmed by its pending count, `fee_cap_too_low` only when a version is required), to confirm); 2026-11-18 (branch `fix/evm-relayer-fee-refusals`, from `next`, not merged, not deployed: D851 item 16 new (fee refusals of a batch are cause `pricing`, `fees_too_low` before anything is stored; after its review: cancels priced from a fresh base fee, `fee_cap_too_low`, a first version's `replacement_underpriced` is the relayer's), to confirm; PR 75 confirmed by the user); 2026-11-18 (branch `feat/evm-sponsor-vault`, with `next` @ e3b6b761 merged: D838, D855 and D856 confirmed by the user 2026-11-18, their review amendments to confirm; D838 moved into number order); 2026-11-18 (branch `chore/ci-on-next`, from `next`, not merged, CI not switched on: D857 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D387 and D383 with a row of "Superseded or amended"; D841's CI note done); 2026-11-18 (branch `feat/evm-relayer-simple`, after its re-review: D851 amended (each refusal's cause; `relayer_cannot_send` with the code replaces `rejected_unsent`; `rejection` in `send`'s answer)); 2026-11-18 (branch `feat/evm-relayer-simple`, after its independent review: D851 amended (no user-triggerable halt, the at-once cancel, intrinsic gas, `staffCancel` instead of `never_sent`, adopt only upwards, one batch per account, finality needs the confirmed count, hourly checks, hashes only after final, `evmOps`)); 2026-11-18 (branch `feat/evm-relayer-simple`, not merged, not deployed: D851 new, the simplified fail-stop relayer decided by the user 2026-11-18, details decided while building, to confirm; D837 (PR 70's self-repairing relayer, never merged) written down as superseded by D851, with a row of "Superseded or amended"); 2026-11-18 (branch `feat/evm-sponsor-vault`, re-check of PR 76: D855 amended (the setup needs both endpoints, `rpcFallback` required outside `local*` envs, the capped read, privacy)); 2026-11-18 (branch `chore/ci-on-next`, after its independent review: D857 confirmed by the user 2026-11-18, the review's changes under "Amended while building", to confirm (`develop`'s nightly until `next` merges, the existing $0 budget, the founder's settings, Foundry by checksum, no pnpm cache in the `evm` and publish builds, two residuals); D841's CI note); 2026-11-18 (branch `feat/evm-sponsor-vault`, after its independent review: D855 amended (the vault reads the account's setup itself, the setup's own failure text, the cross-tab slot, the floor and its open item), D856 with the API's five additions); 2026-11-18 (branch `feat/evm-sponsor-vault`, not merged, not deployed: D838 new (no transparent sponsoring decided by the user 2026-11-17, the rest to confirm), D855 and D856 new, decided while building, to confirm; D850's `SPONSORED_NOT_YET` replaced, D855); 2026-11-17 (branch `feat/approval-plain-summary`: D814 amended by the founder (a control bullet whose step's line is in view is dropped)); 2026-11-17 (branch `feat/approval-plain-summary`, review of 5ef13452: D814 amended (whole control keys, spender markers, native sums, directions)); 2026-11-17 (branch `feat/approval-plain-summary`: D814 new, decided by the user, details to confirm, amending D809 and D813; D810's steps line); 2026-11-17 (branch `feat/approval-plain-summary`, final review: D810 and D811 notes on Soroban contract creation and NEAR key allowances); 2026-11-17 (branch `feat/approval-plain-summary`: D808–D813 confirmed by the user, D810 amended by the user (details always folded, risk lines in plain words, red or amber)); 2026-11-17 (branch `feat/approval-plain-summary`, after its third security review: D809, D810, D813 amended (muxed accounts, the red fallback and its test, the always-listed steps)); 2026-11-17 (branch `feat/approval-plain-summary`, after its second security review: D809, D810, D811, D813 amended (value steps always listed, the XLM leaving line, offer prices, a total summary, ERC-1155 batches, withdraw, the page's screen built before it switches)); 2026-11-17 (branch `feat/approval-plain-summary`, after its security review: D809–D813 amended (authorizations, offers, pools, claimants, caps, banners first, approve 0, thresholds, witness, NEP-413)); 2026-11-17 (branch `feat/approval-plain-summary`, from `next`, not merged, not deployed: D808–D811 decided by the user 2026-11-17, their details and D812–D813 decided while building, to confirm; three rows of "Superseded or amended" for D723, D110 and D765); 2026-11-17 (branch `feat/evm-deploy-scripts`, not merged, not deployed: D849, decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ 8d2c435b merged: D834's placeholder sentence after core's 31337 entry became the real pin, its rule tested with a fixture table; the EVM entries in number order under one heading); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ d39d1d69 merged: D841 and D845 confirmed by the user 2026-11-17; D846 amended: the 31337 pin is the delegate's deterministic deployment, the placeholder mechanism tested on a fixture table; the EVM section's heading and intro cover D833, D841, D845, D846); 2026-11-17 (branch `feat/evm-delegate-contract`, after its independent audit: D841 and D845 amended (ERC-1271's compact form and the new address, no fallback's consequences, explorer verification, the duties checklist, the gas numbers, more tests), details decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, not merged, not deployed: D841 and D845 new, the EVM delegate contract (WP0 of the EVM gas sponsorship builds); location, licence and a fresh self-hosted delegate decided by the user 2026-11-17, details decided while building, to confirm); 2026-11-17 (branch `feat/evm-sponsor-manifest`, after `next` @ d39d1d69 merged in: D833, D834, D835, D836 and D846 confirmed by the user 2026-11-17, open items kept; the entries in number order under one heading; D835 adds exact calldata and `maxDataBytes`; D834 wires core's pinned table and refuses its placeholder outside `local*` envs); 2026-11-17 (branch `feat/evm-sponsor-manifest`, not merged, not deployed: D834–D836 new, the founder's choices decided by the user 2026-11-17, the details decided while building, to confirm; the other numbers of D830–D846 are other packages'); 2026-11-17 (branch `feat/evm-sponsor-core`, not merged, not deployed: D833 and D846 new, details decided while building, to confirm; D846 after its independent review: the placeholder refused by default, read-once copies everywhere, call targets, deadline and minGas, key errors, the next layers' list); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: D31 and D765 reworded before the repository went public, the decisions unchanged); 2026-11-13 (branch `fix/stamps-signature-two-step`, not merged, not deployed: D807 new, found by the user's hand check 2026-11-13, details decided while building, to confirm); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: D793 new, asked for by the user, the SendGrid plan and its recent volume stated by the user (Essentials 50K, shared; sized to 30%, the user's choice), values and the two testnet overrides decided while building, confirmed by the user 2026-11-13, amended after its security review; D792 is another branch's); 2026-11-13 (branch `merge/stamps-all`, not merged, not deployed: D805 and D806 new, the app name chosen by the user 2026-11-13, the rest decided while integrating, to confirm; D794–D797 from `feat/stamps-contract`); 2026-11-13 (branch `feat/stamps-art`, not merged, not deployed: D803 and D804 new, decided while building the passport stamps demo's UI, to confirm); 2026-11-13 (branch `feat/stamps-site`, not merged, not deployed: D798–D802 new, asked for by the user 2026-11-13, details to confirm); 2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-122026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-12); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D786's note after the security review); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D784–D787 new, decided while building, to confirm); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: D789 new, asked for by the user, details decided while building, to confirm, amending D765, D770, D773 and D774, with a row of "Superseded or amended"); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-12 (branch `docs/near-partner-guide`: D778 new, decided while building, to confirm; numbered after the rebrand's D765–D777); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: D779–D783 new (first numbered D768–D774, renumbered after the rebrand took D765–D777); D781 corrected after the branch's security review, L1); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-11 (branch `feat/near-demo`, not merged, not deployed: D750–D754 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): D730–D739 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-directory`, after its security review, not merged, not deployed: D762 and D763 new, from the review, to confirm; D756 to D758 amended (the lookup never picks, "listed", the vault's SDK gate, the migration first); D764 reserved); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: D755–D761 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D762–D764 reserved); 2026-11-11 (branch `feat/near-core`, not merged, not deployed: D720–D728 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D726 after the branch's automated security review; D729 the full security review's fixes, amending D723 and D726); 2026-11-11 (branch `feat/near-guestbook`, not merged, not deployed: D740–D744 new, asked for by the user, details to confirm); 2026-11-11 (branch `merge/partner-start-and-email-flow`: D707, D711, D712 and D713 confirmed by the user 2026-11-11); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: D711 and D713 new, proposed; D712 taken by `test/flaky-pass-1111`, so the live state is D713; after review: the hostile-value tests attributed, Execute's line, "any owner"); 2026-11-11 (branch `docs/partner-start-here`, not merged, docs only: D707, the sign-in guidance decided by the user, the page asked for by the user, its wording to confirm); 2026-11-11 (branch `test/flaky-pass-1111`: D712 new, to confirm); 2026-11-11 (branch `docs/google-email-change-open-items`: D709 and D710 new, open items logged at the user's request: a changed Google address blocked from email sign-in by a full account, and a second wallet from an email login before the next Google login); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11; D708 new, decided by the user: auto-approved Sodax swaps deferred, with what they would take); 2026-11-11 (branch `release/sdk-0.3.1`, not merged: D705 SDK 0.3.1 decided by the user, amending D695's "no SDK version bump", with a row of "Superseded or amended"; D706, the user's 2026-11-10 "keep sending files", written down); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: D704 asked for by the user, details proposed, amending D700 with a row of "Superseded or amended"; after review: the HTML budget and row counts, well-formed cuts, the error-level log, the security digest's last line; the plain-word rows chosen and confirmed by the user, a second row of "Superseded or amended" for D697; after the re-review: D703 amended (null as "none", quoting, `…Start`/`asOf`, depth) with a row of "Superseded or amended", a title for every code, `APP_CHANGE_KINDS`); 2026-11-11 (branch `merge/dry-run-fixes`: D697, D699, D700, D701 and D703 confirmed by the user 2026-11-11; D700's digests to be designed, asked for by the user, on a later branch); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: D701 and D703 proposed, D702 confirmed by the user 2026-11-11, amending D357's setup; after review: D701's server clock and latest policy, D702's network refine and wording); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: D696 confirmed by the user; D697 proposed; D698 confirmed by the user, D242 amended for testnet only; D699 and D700 asked for by the user, D674 and D697 amended, two rows of "Superseded or amended"; after the branch's review D698 and D700 amended: the gate re-checked at acceptance, unlinked JSON, invalid times refused); 2026-11-11 (branch `fix/signed-out-reason`, not merged, not deployed: D695 new, confirmed by the user 2026-11-11); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: D680 confirmed by the user; after the security review D681, D683 confirmed, D682 amended (3-minute grace), D684 built (idle slow-down), D690–D694 new; after the re-review D681–D683, D690 and D693 amended; a row of "Superseded or amended" for D465 and D662); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D679 confirmed by the user, D673 superseded by D685 (decided by the user), D670 and D671 amended; D686–D689 from the security review, confirmed by the user 2026-11-10; two rows of "Superseded or amended"); 2026-11-10 (branch `feat/html-emails-ui`, not merged, not deployed: D689 from the security review, proposed, amending D678); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D675 (designed HTML emails: D670 and D672 asked for by the user, details proposed; D671, D673–D675 proposed), D419 amended with a row of "Superseded or amended"; D676–D678 asked for by the user, details proposed; D679 proposed, not built; D575 amended, D623 noted, a row of "Superseded or amended"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: D651–D652 confirmed by the user, D653–D655 declined for now, D656–D659 after the security review; D653–D659 confirmed by the user 2026-11-10); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: D570–D573; a row of "Superseded or amended" for D85); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: D585–D594 new; notes on D461 and D526; four rows of "Superseded or amended"; after the independent review: D595–D599 new; D587 and D591 corrected; four more rows of "Superseded or amended"; D585–D599 confirmed by the user 2026-11-10, D605 new and confirmed); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `docs/tidy-deployed-1110`: this header only, no entry changed: the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `feat/hana-home-h5`, not merged, not deployed: D537's exception worded for a session with no share, meaning unchanged); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D538 and the amendments confirmed by the user, D539 new and confirmed, D532 amended for the policy's check); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: H5's security review: D536–D538 new, D532, D534, D535 amended); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D535 new, with two rows of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: D520–D529 confirmed, D540–D543 decided by the user; open item 4 closed by D520; H3's security review: D524 corrected); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 amended (the per-app first-login marker, the exposure closed); D500–D503 and D510–D513 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 (exposure), D500 (staleness, overlay), D502, D510, D513: H2's and H4's security reviews; no new number); 2026-11-09 (branch `test/flake-fixes`, not merged, not deployed: D495 new, D493 and D494 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: H6's security review: D493, D494 amended with the combined alarm, the alarm's known limits, unreadable pins, the email Home audience on the exit list; D474's note and a row of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: D493, D494 new (decided while building, to confirm); H6 built: the exit client, D468, D480–D491); 2026-11-09 (branch `fix/demo-swap-hub-wallet`, not merged, not deployed: every Sodax deposit's spoke `to` and a swap's intent bound to the user's own addresses, the popup's swap line, `mainnet_demo_wrong_destination`, D492, amending D429 point 3 and D476's note, with a row of "Superseded or amended"); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `docs/hana-home-h6-design`, not merged: D480–D489 new, the rows for D460, D464 and D468, statuses confirmed by the user for D436, D445, D446, D448–D457, D470, D471, D473–D475; no code changed); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D436 (branch `feat/mainnet-demo-live-prices`, asked for by the user 2026-11-09, the mechanics to confirm, amending D429's price table, with a row of "Superseded or amended") on 2026-11-09; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-11-18 (branch `feat/near-relay-billing`: D863's amendment after the independent review of PR 77 confirmed by the user; the re-check's amendment still to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` and `next` @ 0a636344 merged: D863 amended after the re-check of 2e5b8dc0, to confirm: the last included transaction per key must have a record, a refused parked row is a miss, what billing can rely on); 2026-11-18 (branch `feat/near-relay-billing`, after its independent review: D863 amended (the cron's own client and budget, records final at once, the nonce check, parked writes, the plain wording), to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` merged: D863 confirmed by the user 2026-11-18); 2026-11-18 (branch `feat/near-relay-billing`, not merged, not deployed: D863 new); 2026-11-18 (branch `feat/evm-sponsor-api`: the amendments of D847 (up to the re-review of a0a83e25), D848, D851 (items up to 18) and D852 confirmed by the user; D847's final-check amendment still to confirm); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ 0a636344 merged: D847 amended after the final check of 811a0c1e, to confirm: no billing correction for a relayer replay, no nonce floor rise from a head read, two known items); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ af938240 merged: D847 and D848 amended while integrating the relayer (D851) and the vault (D856), to confirm: the session proof checked, M2 closed, rejected batches by cause, the relayer's funds and the per-app slot, the authorization rule, gas from the relayer's intrinsic gas, success at head as an accepted risk, the e2e on the real routes); 2026-11-18 (branch `feat/evm-sponsor-api`: D832, D840, D847, D848 confirmed by the user 2026-11-18; D847 and D848 amended for the simplified relayer (D851); D852 new, the billing records); 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review: D834, D836, D847 and D848 amended (M1–M3, L1–L5, the relayer's final interface), open items before mainnet recorded); 2026-11-17 (branch `feat/evm-sponsor-api`, not merged, not deployed: D832, D840, D847, D848 new and D836's addendum (the L1 fee in the reservation), decided while building, to confirm; the section heading and intro name them); 2026-11-18 (branch `feat/link-member-banner`: D865 confirmed by the user 2026-11-18, its later amendments to confirm; the re-check's fixes (the `link_remove` message, D158's residual noted)); 2026-11-18 (branch `feat/link-member-banner`, `next` @ its latest merged in: D865 amended by the review's three recommendations, decided by the user 2026-11-18 (Not now and Don't ask again, no notice for case A's silent hosted link, D864's corrected texts with Remove from its late screen), and its `link_remove` message; D864 amended); 2026-11-18 (branch `feat/link-member-banner`, from `feat/link-cancel-by-email` (PR 83), not merged, not deployed: D865 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D259's banner rule and D864's "not done" (a), with a row of "Superseded or amended"); 2026-11-18 (branch `fix/evm-relayer-unaccepted-first`, from `next`, not merged, not deployed: D851 item 18 new (an untaken batch cancelled early only after two runs and with a later record waiting, two Base Sepolia measurements owed, the pools' 7702 texts, no backoff, `oldestUnacceptedMs`, refusals returned as values), D834 and D836 amended (tip cap, batch size, `deadlineMaxS` ≤ 300), to confirm); 2026-11-18 (branch `fix/evm-relayer-account-next`, from `next`, not merged, not deployed: D851 item 17 new, the account's earlier batch checked on demand at send, to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`: D864 confirmed by the user 2026-11-18, its review amendments (the cancelled and late screens' words, `link_pending`'s `userMessage`) to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`, from `next` @ 2b25fc75, not merged, not deployed: D864 new, the cancel-by-email path owed since D259 decided by the user 2026-11-18, details decided while building, to confirm; D259's and D862's "not built" and "open" notes amended; a row of "Superseded or amended"); 2026-11-18 (branch `feat/plain-wording-other`, with `next` @ af938240 merged (PRs 75, 76, 79): D861 and D862 confirmed by the user 2026-11-18, their review amendments to confirm; D861's sponsored reasons read from PR 76's `evm-sponsor.ts`, the signing-domain message reworded); 2026-11-18 (branch `feat/plain-wording-other`, from `next`, not merged, not deployed: D861 new, a plain sentence in SDK errors approved in principle by the founder 2026-11-18, its shape decided while building, to confirm; D862 new, decided while building, to confirm; two rows of "Superseded or amended" for D419's user-mail banner and D670's notice button); 2026-11-18 (branch `fix/evm-relayer-halt-narrowing`, from `next`, not merged, not deployed: D851 item 16 narrowed (halts on the trusted endpoint's own refusal only, a first version's replacement refusal confirmed by its pending count, `fee_cap_too_low` only when a version is required), to confirm); 2026-11-18 (branch `fix/evm-relayer-fee-refusals`, from `next`, not merged, not deployed: D851 item 16 new (fee refusals of a batch are cause `pricing`, `fees_too_low` before anything is stored; after its review: cancels priced from a fresh base fee, `fee_cap_too_low`, a first version's `replacement_underpriced` is the relayer's), to confirm; PR 75 confirmed by the user); 2026-11-18 (branch `feat/evm-sponsor-vault`, with `next` @ e3b6b761 merged: D838, D855 and D856 confirmed by the user 2026-11-18, their review amendments to confirm; D838 moved into number order); 2026-11-18 (branch `chore/ci-on-next`, from `next`, not merged, CI not switched on: D857 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D387 and D383 with a row of "Superseded or amended"; D841's CI note done); 2026-11-18 (branch `feat/evm-relayer-simple`, after its re-review: D851 amended (each refusal's cause; `relayer_cannot_send` with the code replaces `rejected_unsent`; `rejection` in `send`'s answer)); 2026-11-18 (branch `feat/evm-relayer-simple`, after its independent review: D851 amended (no user-triggerable halt, the at-once cancel, intrinsic gas, `staffCancel` instead of `never_sent`, adopt only upwards, one batch per account, finality needs the confirmed count, hourly checks, hashes only after final, `evmOps`)); 2026-11-18 (branch `feat/evm-relayer-simple`, not merged, not deployed: D851 new, the simplified fail-stop relayer decided by the user 2026-11-18, details decided while building, to confirm; D837 (PR 70's self-repairing relayer, never merged) written down as superseded by D851, with a row of "Superseded or amended"); 2026-11-18 (branch `feat/evm-sponsor-vault`, re-check of PR 76: D855 amended (the setup needs both endpoints, `rpcFallback` required outside `local*` envs, the capped read, privacy)); 2026-11-18 (branch `chore/ci-on-next`, after its independent review: D857 confirmed by the user 2026-11-18, the review's changes under "Amended while building", to confirm (`develop`'s nightly until `next` merges, the existing $0 budget, the founder's settings, Foundry by checksum, no pnpm cache in the `evm` and publish builds, two residuals); D841's CI note); 2026-11-18 (branch `feat/evm-sponsor-vault`, after its independent review: D855 amended (the vault reads the account's setup itself, the setup's own failure text, the cross-tab slot, the floor and its open item), D856 with the API's five additions); 2026-11-18 (branch `feat/evm-sponsor-vault`, not merged, not deployed: D838 new (no transparent sponsoring decided by the user 2026-11-17, the rest to confirm), D855 and D856 new, decided while building, to confirm; D850's `SPONSORED_NOT_YET` replaced, D855); 2026-11-17 (branch `feat/approval-plain-summary`: D814 amended by the founder (a control bullet whose step's line is in view is dropped)); 2026-11-17 (branch `feat/approval-plain-summary`, review of 5ef13452: D814 amended (whole control keys, spender markers, native sums, directions)); 2026-11-17 (branch `feat/approval-plain-summary`: D814 new, decided by the user, details to confirm, amending D809 and D813; D810's steps line); 2026-11-17 (branch `feat/approval-plain-summary`, final review: D810 and D811 notes on Soroban contract creation and NEAR key allowances); 2026-11-17 (branch `feat/approval-plain-summary`: D808–D813 confirmed by the user, D810 amended by the user (details always folded, risk lines in plain words, red or amber)); 2026-11-17 (branch `feat/approval-plain-summary`, after its third security review: D809, D810, D813 amended (muxed accounts, the red fallback and its test, the always-listed steps)); 2026-11-17 (branch `feat/approval-plain-summary`, after its second security review: D809, D810, D811, D813 amended (value steps always listed, the XLM leaving line, offer prices, a total summary, ERC-1155 batches, withdraw, the page's screen built before it switches)); 2026-11-17 (branch `feat/approval-plain-summary`, after its security review: D809–D813 amended (authorizations, offers, pools, claimants, caps, banners first, approve 0, thresholds, witness, NEP-413)); 2026-11-17 (branch `feat/approval-plain-summary`, from `next`, not merged, not deployed: D808–D811 decided by the user 2026-11-17, their details and D812–D813 decided while building, to confirm; three rows of "Superseded or amended" for D723, D110 and D765); 2026-11-17 (branch `feat/evm-deploy-scripts`, not merged, not deployed: D849, decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ 8d2c435b merged: D834's placeholder sentence after core's 31337 entry became the real pin, its rule tested with a fixture table; the EVM entries in number order under one heading); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ d39d1d69 merged: D841 and D845 confirmed by the user 2026-11-17; D846 amended: the 31337 pin is the delegate's deterministic deployment, the placeholder mechanism tested on a fixture table; the EVM section's heading and intro cover D833, D841, D845, D846); 2026-11-17 (branch `feat/evm-delegate-contract`, after its independent audit: D841 and D845 amended (ERC-1271's compact form and the new address, no fallback's consequences, explorer verification, the duties checklist, the gas numbers, more tests), details decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, not merged, not deployed: D841 and D845 new, the EVM delegate contract (WP0 of the EVM gas sponsorship builds); location, licence and a fresh self-hosted delegate decided by the user 2026-11-17, details decided while building, to confirm); 2026-11-17 (branch `feat/evm-sponsor-manifest`, after `next` @ d39d1d69 merged in: D833, D834, D835, D836 and D846 confirmed by the user 2026-11-17, open items kept; the entries in number order under one heading; D835 adds exact calldata and `maxDataBytes`; D834 wires core's pinned table and refuses its placeholder outside `local*` envs); 2026-11-17 (branch `feat/evm-sponsor-manifest`, not merged, not deployed: D834–D836 new, the founder's choices decided by the user 2026-11-17, the details decided while building, to confirm; the other numbers of D830–D846 are other packages'); 2026-11-17 (branch `feat/evm-sponsor-core`, not merged, not deployed: D833 and D846 new, details decided while building, to confirm; D846 after its independent review: the placeholder refused by default, read-once copies everywhere, call targets, deadline and minGas, key errors, the next layers' list); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: D31 and D765 reworded before the repository went public, the decisions unchanged); 2026-11-13 (branch `fix/stamps-signature-two-step`, not merged, not deployed: D807 new, found by the user's hand check 2026-11-13, details decided while building, to confirm); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: D793 new, asked for by the user, the SendGrid plan and its recent volume stated by the user (Essentials 50K, shared; sized to 30%, the user's choice), values and the two testnet overrides decided while building, confirmed by the user 2026-11-13, amended after its security review; D792 is another branch's); 2026-11-13 (branch `merge/stamps-all`, not merged, not deployed: D805 and D806 new, the app name chosen by the user 2026-11-13, the rest decided while integrating, to confirm; D794–D797 from `feat/stamps-contract`); 2026-11-13 (branch `feat/stamps-art`, not merged, not deployed: D803 and D804 new, decided while building the passport stamps demo's UI, to confirm); 2026-11-13 (branch `feat/stamps-site`, not merged, not deployed: D798–D802 new, asked for by the user 2026-11-13, details to confirm); 2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-122026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-12); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D786's note after the security review); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D784–D787 new, decided while building, to confirm); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: D789 new, asked for by the user, details decided while building, to confirm, amending D765, D770, D773 and D774, with a row of "Superseded or amended"); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-12 (branch `docs/near-partner-guide`: D778 new, decided while building, to confirm; numbered after the rebrand's D765–D777); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: D779–D783 new (first numbered D768–D774, renumbered after the rebrand took D765–D777); D781 corrected after the branch's security review, L1); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-11 (branch `feat/near-demo`, not merged, not deployed: D750–D754 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): D730–D739 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-directory`, after its security review, not merged, not deployed: D762 and D763 new, from the review, to confirm; D756 to D758 amended (the lookup never picks, "listed", the vault's SDK gate, the migration first); D764 reserved); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: D755–D761 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D762–D764 reserved); 2026-11-11 (branch `feat/near-core`, not merged, not deployed: D720–D728 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D726 after the branch's automated security review; D729 the full security review's fixes, amending D723 and D726); 2026-11-11 (branch `feat/near-guestbook`, not merged, not deployed: D740–D744 new, asked for by the user, details to confirm); 2026-11-11 (branch `merge/partner-start-and-email-flow`: D707, D711, D712 and D713 confirmed by the user 2026-11-11); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: D711 and D713 new, proposed; D712 taken by `test/flaky-pass-1111`, so the live state is D713; after review: the hostile-value tests attributed, Execute's line, "any owner"); 2026-11-11 (branch `docs/partner-start-here`, not merged, docs only: D707, the sign-in guidance decided by the user, the page asked for by the user, its wording to confirm); 2026-11-11 (branch `test/flaky-pass-1111`: D712 new, to confirm); 2026-11-11 (branch `docs/google-email-change-open-items`: D709 and D710 new, open items logged at the user's request: a changed Google address blocked from email sign-in by a full account, and a second wallet from an email login before the next Google login); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11; D708 new, decided by the user: auto-approved Sodax swaps deferred, with what they would take); 2026-11-11 (branch `release/sdk-0.3.1`, not merged: D705 SDK 0.3.1 decided by the user, amending D695's "no SDK version bump", with a row of "Superseded or amended"; D706, the user's 2026-11-10 "keep sending files", written down); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: D704 asked for by the user, details proposed, amending D700 with a row of "Superseded or amended"; after review: the HTML budget and row counts, well-formed cuts, the error-level log, the security digest's last line; the plain-word rows chosen and confirmed by the user, a second row of "Superseded or amended" for D697; after the re-review: D703 amended (null as "none", quoting, `…Start`/`asOf`, depth) with a row of "Superseded or amended", a title for every code, `APP_CHANGE_KINDS`); 2026-11-11 (branch `merge/dry-run-fixes`: D697, D699, D700, D701 and D703 confirmed by the user 2026-11-11; D700's digests to be designed, asked for by the user, on a later branch); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: D701 and D703 proposed, D702 confirmed by the user 2026-11-11, amending D357's setup; after review: D701's server clock and latest policy, D702's network refine and wording); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: D696 confirmed by the user; D697 proposed; D698 confirmed by the user, D242 amended for testnet only; D699 and D700 asked for by the user, D674 and D697 amended, two rows of "Superseded or amended"; after the branch's review D698 and D700 amended: the gate re-checked at acceptance, unlinked JSON, invalid times refused); 2026-11-11 (branch `fix/signed-out-reason`, not merged, not deployed: D695 new, confirmed by the user 2026-11-11); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: D680 confirmed by the user; after the security review D681, D683 confirmed, D682 amended (3-minute grace), D684 built (idle slow-down), D690–D694 new; after the re-review D681–D683, D690 and D693 amended; a row of "Superseded or amended" for D465 and D662); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D679 confirmed by the user, D673 superseded by D685 (decided by the user), D670 and D671 amended; D686–D689 from the security review, confirmed by the user 2026-11-10; two rows of "Superseded or amended"); 2026-11-10 (branch `feat/html-emails-ui`, not merged, not deployed: D689 from the security review, proposed, amending D678); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D675 (designed HTML emails: D670 and D672 asked for by the user, details proposed; D671, D673–D675 proposed), D419 amended with a row of "Superseded or amended"; D676–D678 asked for by the user, details proposed; D679 proposed, not built; D575 amended, D623 noted, a row of "Superseded or amended"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: D651–D652 confirmed by the user, D653–D655 declined for now, D656–D659 after the security review; D653–D659 confirmed by the user 2026-11-10); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: D570–D573; a row of "Superseded or amended" for D85); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: D585–D594 new; notes on D461 and D526; four rows of "Superseded or amended"; after the independent review: D595–D599 new; D587 and D591 corrected; four more rows of "Superseded or amended"; D585–D599 confirmed by the user 2026-11-10, D605 new and confirmed); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `docs/tidy-deployed-1110`: this header only, no entry changed: the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `feat/hana-home-h5`, not merged, not deployed: D537's exception worded for a session with no share, meaning unchanged); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D538 and the amendments confirmed by the user, D539 new and confirmed, D532 amended for the policy's check); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: H5's security review: D536–D538 new, D532, D534, D535 amended); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D535 new, with two rows of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: D520–D529 confirmed, D540–D543 decided by the user; open item 4 closed by D520; H3's security review: D524 corrected); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 amended (the per-app first-login marker, the exposure closed); D500–D503 and D510–D513 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 (exposure), D500 (staleness, overlay), D502, D510, D513: H2's and H4's security reviews; no new number); 2026-11-09 (branch `test/flake-fixes`, not merged, not deployed: D495 new, D493 and D494 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: H6's security review: D493, D494 amended with the combined alarm, the alarm's known limits, unreadable pins, the email Home audience on the exit list; D474's note and a row of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: D493, D494 new (decided while building, to confirm); H6 built: the exit client, D468, D480–D491); 2026-11-09 (branch `fix/demo-swap-hub-wallet`, not merged, not deployed: every Sodax deposit's spoke `to` and a swap's intent bound to the user's own addresses, the popup's swap line, `mainnet_demo_wrong_destination`, D492, amending D429 point 3 and D476's note, with a row of "Superseded or amended"); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `docs/hana-home-h6-design`, not merged: D480–D489 new, the rows for D460, D464 and D468, statuses confirmed by the user for D436, D445, D446, D448–D457, D470, D471, D473–D475; no code changed); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D436 (branch `feat/mainnet-demo-live-prices`, asked for by the user 2026-11-09, the mechanics to confirm, amending D429's price table, with a row of "Superseded or amended") on 2026-11-09; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -9688,6 +9688,7 @@ suspended app's Home logins (D586's `suspended` line, built as "Hana pays"), to 
 | D837: the EVM relayer repairs itself (endpoints' agreement, verdicts from the user's account, moved records, timed gap fills); never merged (PR 70) | The relayer does only what is safe on its own evidence and stops for staff on anything odd only our side can cause; staff tools resolve it, and a nonce is never given up (D851) | `apps/api/src/evm-relayer.ts` |
 | D419 (user mail only): the HTML banner "[SANDBOX] Not production: this email is from Journear Passport sandbox-dev (testnet), for testing." | "Test email: this comes from a test version of Journear Passport. Don’t use it with real money.", the same in every test env, the label only switching it on; admin and watchdog mail keep D419's (D853, D861) | `apps/email-issuer/src/mail.ts` `mailEnvNotice` |
 | D670's notice button ("Open the cancel page" to `{authOrigin}/link/cancel`, a page never built, D259) | No link: "Not you?" says where a cancel or removal is today, the sign-in window's banners (D862) | `apps/email-issuer/src/mail.ts` `linkNoticeMail` |
+| D259: a login names its own method in the banners only when it made the link (`self && !fresh` skipped), so an active member's sign-in opens the shared wallet with nothing said; D864 (a): a member can't remove itself | Before an active member's sign-in opens the shared wallet, its own notice: **Remove this email** (a confirmation, one more sign-in, `unlink_identity` by the member) or **Keep it** (not asked again in that browser) (D865) | `packages/web/src/vault/login.ts` `memberNotice`, `MemberRemove`; `auth/email-page.ts` |
 | D259 / D862: a pending link is cancelled only by a sign-in of the wallet's active method (the Google account); the pending notice says to sign in with that Google account | The email that waits to join cancels it from its own sign-in: the refused sign-in shows the link with "Cancel this link" (one more code); the notice says to sign in with this email (D864) | `packages/web/src/vault/login.ts` `LinkWaiting`, `auth/email-page.ts`, `apps/email-issuer/src/mail.ts` `linkNoticeMail` |
 
 ## Proposed, not yet confirmed
@@ -12390,10 +12391,12 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
 - Address impact: none.
 
 
-## EVM gas sponsorship (D833–D846), 2026-11-17
+## EVM gas sponsorship (D831–D852), 2026-11-17
 
 The parallel EVM gas sponsorship builds to the shared spec of 2026-11-17, in number order: D833 and D846 from
-`feat/evm-sponsor-core` (the signing core, merged into `next` at d39d1d69), D834–D836 from `feat/evm-sponsor-manifest`
+`feat/evm-sponsor-core` (the signing core, merged into `next` at d39d1d69), D832, D840, D847, D848 and D836's addendum
+from `feat/evm-sponsor-api` (the API handlers; from `next` @ d14607a6, `next` @ d95b5ff5 merged in; not merged, not
+deployed), D849 from `feat/evm-deploy-scripts` (the deploy and key scripts, merged into `next` at d95b5ff5), D834–D836 from `feat/evm-sponsor-manifest`
 (the manifest block, its generation and the API's config parser; from `next` @ 7243d2af, `next` merged in; not
 deployed), D841 and D845 from `feat/evm-delegate-contract` (the delegate contract, MIT, in `contracts/evm-delegate`;
 from `next` @ 7243d2af, `next` merged in; not deployed), D831, D839 and D850 from `feat/evm-sponsored-approval` (the
@@ -12420,6 +12423,23 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   "Valid until: HH:MM" (with the date when it isn't today, and the raw value). "Turn it off" in Passport Home is
   phase 2, before mainnet.
 - Address impact: none (EIP-7702 keeps the account's address).
+
+### D832. The vault prepares and submits sponsored actions; the signatures never go to the partner page
+- Date 2026-11-17 · Status: the vault submits decided by the user 2026-11-17 (the shared spec); the API's enforcement
+  decided while building, **confirmed by the user 2026-11-18** · Built (API side; the vault's is WP3): `apps/api/src/origins.ts` (`HANA_CALLERS`,
+  `PARTNER_ENDPOINTS`), `apps/api/src/evm/sponsor.ts`, `sponsor-status.ts`; tests `apps/api/test/evm-sponsor.test.ts`
+  ("the gate"), `test/origins.test.ts`.
+- Decision: `POST /v1/evm/sponsor/prepare` and `POST /v1/evm/sponsor/send` are callable only from the vault
+  (`VAULT_ORIGIN` with an `x-hana-parent-origin` in force for the app), never from a partner page: the Execute signature
+  and the EIP-7702 authorization exist only in the vault and the API. `GET /v1/evm/sponsor/status` (no signature, no
+  chain read) is the partner page's and the vault's. All three are behind the app gate kind `evm-sponsor`.
+- Why: a partner page holding a user's authorization could submit it elsewhere or race the vault; keeping both
+  signatures inside Journear's origin means the page only ever sees the result (the hash). The Origin header is still
+  forgeable by a script, so this is not what bounds a spender: the account's signature, the allowlist and the limits
+  are (D847).
+- Rejected: prepare from the partner page (the SDK has nothing to do with its answer; it would open chain reads to any
+  page holding the key).
+- Address impact: none.
 
 ### D833. The generic signing paths never make a delegate signature: typed data in the delegate's domain and type-4 transactions are refused there
 - Date 2026-11-17 · Status: the approach (Journear's own relayer, an EIP-7702 delegate, the user approves every action)
@@ -12509,6 +12529,10 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   (later packages).
 - Rejected: importing core into `packages/env` (a new dependency edge for one list); a check at schema time with a
   table the schema can't see; all-lowercase addresses (no typo check); several relayer keys (one `relayer` is signed).
+- Amended 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review; decided while building, to confirm):
+  `requireKnownAccount: false` is accepted only in `local*` envs, by both the schema (`evmSponsorProblems`) and the
+  Worker's parser (`parseChain`), with a differential test for both env kinds (`scripts/test/gen-evm-sponsor.test.ts`):
+  off, anyone holding a publishable key could make the relayer pay from accounts they make up.
 - Address impact: none (no derivation changes).
 
 - Amended 2026-11-18 (branch `fix/evm-relayer-unaccepted-first`, to confirm): two more rules in both parsers' shared
@@ -12554,6 +12578,41 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Open item (for the relayer package, WP5b): the OP Stack L1 data fee is **not** bounded by these manifest rules. Before
   sending, the relayer must estimate it (the chain's GasPriceOracle predeploy) and count it in the transaction's
   worst-case budget reservation, and refuse the send when gas × fee cap plus that fee doesn't fit.
+- Addendum 2026-11-17 (branch `feat/evm-sponsor-api`, the API handlers; decided while building, to confirm): the L1
+  fee is in the reservation. The handler (not the relayer object) reads the upper bound from the OP Stack
+  GasPriceOracle predeploy `0x4200…000F`, `getL1FeeUpperBound(uint256)` (`0xf1c7a58b`), for an upper bound of the
+  unsigned transaction's size (calldata + 200 + 128 per authorization bytes), and reserves `gasLimit × maxFeePerGas +
+  that bound` from the app's and the env's day budgets before sending; an oracle that doesn't answer a uint256 fails
+  closed (`502 evm_rpc_unavailable`, nothing sent), and a bound that doesn't fit is refused like any other reservation
+  (`429 app_budget_exhausted` / `budget_exhausted`). Settled from the receipt's `l1Fee`; an OP Stack receipt without
+  it is charged the bound. Off the OP Stack (`opStack: false`) the bound is 0 and no read is made. Built:
+  `apps/api/src/evm/op-fee.ts` (`l1FeeUpperBound`, `unsignedTxSizeBound`, `worstCaseWei`, `receiptCostWei`), tests
+  `apps/api/test/evm-sponsor.test.ts` ("the OP Stack L1 data fee"), `test/evm-sponsor-units.test.ts`.
+
+### D840. An account delegated anywhere but the pinned delegate is refused
+- Date 2026-11-17 · Status: decided while building, **confirmed by the user 2026-11-18** (number reserved by the shared
+  spec) · Built: `apps/api/src/evm/sponsor-checks.ts` (`classifyDelegation`), `sponsor.ts` (send step 8, prepare's `delegation`);
+  tests `apps/api/test/evm-sponsor.test.ts`, `test/evm-sponsor-units.test.ts`. The vault's own refusal is WP3.
+- Decision: the account's code is read before every send and prepare. No code: sponsorship needs an attached
+  authorization (`409 delegation_required` without one). Exactly `0xef0100 ‖ the chain's pinned delegate`: delegated
+  to Journear (`journear`; an attached authorization is dropped, never sent). Anything else (a designator to another
+  address, the zero-address designator's leftovers, contract code, a malformed designator): `409 delegated_elsewhere`,
+  and prepare answers `delegation: "other"`, `executeNonce: null`, `allowed: false`. The API never sends an
+  authorization for such an account (it would re-delegate an account the user pointed elsewhere) and never runs a
+  batch through code it didn't pin.
+- Why: under another delegate the account's behaviour, storage and nonce are that contract's; Journear can't know what
+  a batch would do there, and re-delegating it without the user choosing to would take the account from whatever the
+  user set up.
+- Rejected: offering to re-delegate (the "turn it off" and change flows are Passport Home's, phase 2).
+- Amended 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review; decided while building, to
+  confirm): `requireKnownAccount: false` only in `local*` envs (D834's amendment). The reservation is `gasLimit × the
+  fee cap` (not the starting fee: the relayer may replace the transaction with fees up to the cap) `+ the L1 bound + the
+  OP Stack operator fee's bound` (Isthmus: `getOperatorFee(gasLimit)` on the GasPriceOracle, `0x275aedd2`; a chain whose
+  oracle reverts it has no operator fee, 0; any other failure fails closed). Sends start at most at the relayer's
+  `maxStartingFees` (the highest fees two × 9/8 replacements keep within the caps; the relayer refuses a start above,
+  `fees_too_high`), so a base fee above that is `503 gas_price_too_high`. Settlement adds the receipt's operator fee
+  (`gasUsed × operatorFeeScalar ÷ 10^6 + operatorFeeConstant`), or its bound when the receipt doesn't report one.
+- Address impact: none.
 
 - Amended 2026-11-18 (branch `fix/evm-relayer-unaccepted-first`, to confirm): `deadlineMaxS` at most 300 (was 3600):
   a user's action that can't go out is cancelled at its deadline at the latest, so a short window bounds how long one
@@ -12737,6 +12796,298 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   safety property); a bare scalar for the subject's authorization nonce (ambiguous at 0).
 - Address impact: none. EIP-7702 sets code on the user's existing account; its address and derivation are unchanged.
 
+### D847. The sponsorship API: its order of checks, the simulation, success = the account's `Executed` log, and the per-user identity
+- Date 2026-11-17 · Status: the API gate, budgets, simulation and success rule from the shared spec (decided by the user
+  2026-11-17); the details decided while building, **confirmed by the user 2026-11-18**; the amendments below up to and
+  including the re-review of a0a83e25 **confirmed by the user 2026-11-18**; later ones amended while building, to confirm · Built: `apps/api/src/evm/sponsor.ts`,
+  `sponsor-checks.ts`, `op-fee.ts`, `sponsor-status.ts`, `sponsor-ports.ts`; `src/index.ts` (routes, the cron's relayer
+  check), `src/handlers.ts` (gate kind `evm-sponsor`), `src/origins.ts`, `src/env.ts` (`EVM_RELAYER`,
+  `EVM_SPONSOR_RPC_<chainId>`); `packages/core/src/api-types.ts` (`EvmSponsor*` types and guards); tests
+  `apps/api/test/evm-sponsor.test.ts`, `test/evm-sponsor-units.test.ts`, `test/evm-sponsor-helpers.ts`,
+  `packages/core/test/evm-sponsor-api-types.test.ts`; docs `docs/api.md` "EVM gas sponsorship", `docs/security.md`
+  "EVM gas sponsorship: the API's checks", `docs/operations.md`. Not live: no env has the block, no Worker the binding.
+- Fail closed: every route answers `503 sponsorship_unconfigured`, before the gate and before reading anything, unless
+  `EVM_SPONSOR` parses with core's `SPONSOR_DELEGATES` as the pinned table, the `EVM_RELAYER` binding exists and
+  `EVM_RELAY_KEYS` is set (only its presence is read; the relayer object parses it). Envs without the block behave as
+  before; `gen sandbox-dev` is unchanged by this package.
+- The order of `send` (docs/api.md has it with every code): chain, app, every call (count, value 0, never the account,
+  delegate, relayer or zero address, the allowlist); relayer, minGas window, deadline window (now + 30 s to
+  `deadlineMaxS`); the Execute signature over the **pinned** implementation (never one the request names) recovering
+  to the account; the authorization (this chain, never 0, the pinned delegate, the account's signature); the replay
+  checks (the account's durable nonce floor, the digest's mark, both answered from the audit row with no count and no
+  chain read); the directory; the minute windows (account 6, app 120, env `sendsPerMinute`); the chain reads; the
+  delegation (D840) and both nonces; the gas limit and fee; the digest's atomic mark; the day windows (user, app,
+  env); the user's failure slot (3 a UTC day); the worst-case reservation (D836 addendum); the simulation; the audit
+  row; the relayer; the receipt; the settlement. Difference from the spec's list: the directory lookup comes before the
+  chain reads (one indexed D1 read is cheaper than three RPCs, and its user id keys the later windows), and the day
+  windows after the gas and fee checks (a refusal there would otherwise have to give them back).
+- The gas limit: `ceil((21 000 + 10 × calldata tokens + 25 000 per authorization + 2 600 delegated-code access + 29 800
+  + 1 400 per further call + 2 per byte of the calls' data + minGas + 3 000) × 1.1)`, refused above `maxGasPerTx`
+  (`403 gas_too_high`). 10 per token is EIP-7623's floor price (above the standard 4), so the limit covers both of its
+  sums; the 2 600 is the README's "the delegated account's access"; 29 800 and 1 400 round up the README's 29 719 and
+  ≈1 360; the per-byte term covers copying and hashing data longer than the measured 4-byte calls. Prepare's
+  `maxMinGas` (an addition to the spec's answer) is the largest `minGas` that fits, so the vault can refuse above it.
+  Fees: `min(2 × base + tip, cap)`; a base above the cap is `503 gas_price_too_high`, never a raised cap.
+- The simulation: `eth_call` from the relayer, to the account, the exact calldata, at exactly the gas limit, with the
+  account's code overridden to the designator when the authorization is attached (and for prepare's `nonce()` of an
+  account without code). Success there means the pinned delegate ran the whole batch: its only successful path emits
+  `Executed` (eth_call shows no logs; the code check makes "the account ran the delegate" hold). A revert is `422
+  simulation_reverted` with `revertData` (well-formed, ≤ 2 KiB, else left out, never truncated) and `callIndex` (only from
+  a `CallFailed` naming a call of the batch). It spends nothing, keeps the day windows and counts as a failure.
+- Success is status 1 **and** a log from the account itself with topic 0 `Executed(bytes32,uint256,uint256)` and topic 1
+  the signed digest; status 0 is `422 reverted`, status 1 without it `422 not_executed` (e.g. an authorization the
+  network skipped), both with the hash, charged and counted as failures. The receipt is polled up to 30 s by the
+  handler; nothing holds a lock meanwhile (the relayer object's critical section ends at the broadcast); a timeout is
+  `504 timeout {transactionHash}` with the reservation kept.
+- The relayer's answers (its branch's convention, `feat/evm-relayer-do`): a coded refusal `Error('evm_relayer:<code>[:<
+  reason>]')` sent nothing, so everything comes back and the row is `refused` (`relayer_busy`, `relayer_rejected`,
+  `sponsorship_unconfigured`, `evm_rpc_unavailable`, `deadline_out_of_range` or `relayer_unavailable` answered). Any
+  other failure is unknown (it may have broadcast): `503 relayer_unavailable`, the row `unknown`, the reservation and
+  counts kept, the mark dropped so the same batch can go to the relayer again (idempotent per digest: it answers the
+  first transaction with `replay: true`, and that copy's reservation and counts come back; the first attempt's
+  reservation stays, erring high). The answer is trusted only when its hash is its raw transaction's keccak. The
+  receipt is polled over every hash `lookup(digest)` lists (the newest 4 and the answered one: the relayer's alarm
+  replaces a transaction with bumped fees, or with a self-transfer past the deadline, at the same nonce), the first
+  mined deciding, settled from that receipt with any excess charged; a self-transfer has no `Executed` log, so `422
+  not_executed`.
+- **The per-user identity for `requireKnownAccount`** (the rule the spec asked to number): the account must be listed
+  in the wallet directory (`end_user_wallets`, chain `evm`, the EIP-55 address) for **exactly one** user
+  (`end_users.user_id`, the internal `hu_…` id) of **the app's scope**; that id keys the user's day window and failure
+  count (across chains for the failures). The directory is per scope, so a user recorded through another app of the
+  same scope counts, as the NEAR relay's D735 does; an account known only in **another scope** (or to two users of this
+  one: ambiguous, logged `evm_account_ambiguous`) is `409 account_unrecorded` (retryable, `retry-after: 2`: the vault's
+  record can lag a fresh login), and the answer never says whether it is known elsewhere. A failed read is `503
+  directory_unavailable`, never "unknown". With `requireKnownAccount: false` (testnet only) the account itself keys the
+  failure count and there is no user window. Prepare reports the same as `allowed: false, reason:
+  "account_unrecorded"`, which tells a holder of the publishable key whether an address is a user of the scope (as
+  `near_account_unrecorded` does; noted for the review).
+- Error shapes: the API's usual `{error, code, requestId, …}` with the extra fields named in docs/api.md
+  (`callIndex`, `revertData`, `transactionHash`, `executeNonce`, `accountNonce`, `minGasFloor`, `maxGas`,
+  `maxCalls`, `serverNow`, `deadlineMaxS`, `retryable`, `retryAfterS`), each set by the API in its exact shape. The
+  spec's "`{ error: { status, reason, requestId, … } }`" is the SDK's error object (D788's `data.status`,
+  `data.reason`), which the SDK builds from this body; the API's body keeps the shape every other route has.
+- Ports: the handlers reach the relayer and the chain only through `sponsorPorts`: `EvmRelayerPort` is the relayer
+  branch's `EvmRelayer` RPC interface (`send`, `status`, `lookup`; bigints as DO RPC carries them) and
+  `SponsorChainPort` the subset of its `SponsorChain` client the handlers use, with the same names and shapes (`code`,
+  `transactionCount`, `balance`, `latestBlock`, `call(req, {stateOverride})` throwing a revert as `rpc_error` with its
+  data, `receipt`; checked by type against that branch's files). Until the merge a minimal JSON-RPC client of their own
+  (`minimalSponsorChain`: the keyed secret, `rpc`, `rpcFallback`; `eth_chainId` checked once per endpoint and isolate;
+  a JSON-RPC error is an answer, not a failover) stands in; at the merge `sponsorPorts.chain` becomes `sponsorChainFor`.
+  The binding is read untyped (`relayerBinding`) so `env.ts` is the relayer branch's alone. The
+  relayer object is `evm-relayer-<chainId>-0` exactly, never with a location suffix (one nonce sequence per key).
+- Fixed limits (not in the manifest; `EVM_SPONSOR_LIMITS`): per IP 30 a minute across apps and the three routes; per
+  account 6 sends and 20 prepares a minute; per app 120 sends and 600 prepares a minute; 3 failures per user a day; the
+  budget alert at 80%; stuck after 5 minutes.
+- Rejected: `eth_estimateGas` for the limit; `eth_simulateV1` for the simulation's logs (not on every node; the code
+  check gives the same guarantee); answering a replay with a fresh chain read (a public batch would cost the sponsor RPC
+  reads on every re-post); a per-user ETH budget (the manifest has counts per user; the app's and env's budgets bound
+  the money).
+- **Amended 2026-11-17 after the independent review** (branch `feat/evm-sponsor-api`; amended while building,
+  **confirmed by the user 2026-11-18**). M1: before the chain reads only what the account's key holder pays for is counted: the account's minute (6)
+  and the user's day of **attempts**, `perUserPerDay × 3` (90 at D836's 30; the account's without a directory user),
+  so one user can't make the sponsor read the chain without bound; the app's and the env's minute and every day window
+  are counted only after the delegation, nonce, gas and fee checks, so free refusals (a future nonce, no delegation, a
+  stale authorization, too much gas, an RPC failure) never use up shared windows. M2: prepare answers `409
+  account_unrecorded` (with `requireKnownAccount`) before any window or chain read; its per-account window is keyed by
+  (account, IP) on the IP's own limiter (10 a minute); an env-wide prepare minute (2000) sits beside the app's (600);
+  the user's failure count is never named (a generic `not_available`); `status` has its own per-IP window (60 a
+  minute, kind `evm-sponsor-status`). L1: the simulation runs at `gasLimit − 25 000 × authorizations` (eth_call has no
+  authorization list, so its intrinsic charge is that much lower: the batch gets exactly the gas it will have). L2: a
+  nonce the chain shows used raises the floor to the request's `executeNonce + 1`, never to the figure an RPC reported
+  (superseded by N2 below: no floor rise from a head read at all);
+  a receipt outside what was reserved settles at the reservation (D848). The relayer interface is PR #70's final one:
+  `send({chainId, execute, signature, authorization?, gas, maxFeePerGas, maxPriorityFeePerGas, reservedWei})` → `{digest,
+  transactionHash, relayerNonce, raw, replay}` (its digest must equal the handler's, else unknown with the reservation
+  kept; the handler keeps every check of its own), `lookup` with `state` `taken`, `minedHash`, `outcome`, `status` with
+  `blockedReason`, the codes `fees_too_high` (→ `503 gas_price_too_high`) and `daily_cap` (→ `429 budget_exhausted`),
+  each meaning nothing was sent.
+- **Open: the session binding (M2).** What exists: the vault's authenticated calls (`POST /v1/wallets/record`,
+  `/v1/identity/token`, `/v1/mainnet-demo/events`) prove the session with an Ed25519 signature by the session key over
+  core's `identityMessage` (signer, app, session key, `issuedAtMs`, a nonce, a payload; single use through the
+  `identity-proof:<session key>` markers) and `checkChainSession` (the session live on chain in the app's scope), and the
+  mainnet demo adds a `walletProof` tying an address to the session. Binding prepare and send to it needs a new payload
+  kind in core, the vault (WP3, not built) sending it, and the API checking that the session's account root is the
+  directory user of the account: a protocol addition across core, the vault and the API, so not done here. Until then a
+  holder of the publishable key can still learn from prepare whether an address is a user of the scope, and can fill the
+  app's or the env's prepare minute from about 20 or 70 IPs; send is bounded by the account's own signature.
+  Before mainnet. **Done 2026-11-18** (the amendment below: D856's proof is checked on both routes).
+- **Open, before mainnet:** a per-user ETH budget (today counts per user, money per app and env); sliding (not fixed
+  UTC-day) windows; a review of the sybil and IPv6 limits (a /64 is one IP subject); a fork test of the gas constants
+  (pre-loop overhead, the 2 600 access, the event) on Base.
+- **Amended 2026-11-18 for the simplified relayer (D851)** (amended while building, **confirmed by the user 2026-11-18**): the relayer's
+  interface is D851's (PR #70 is closed unmerged): `send` unchanged; `lookup` → `state` `pending`/`cancelling`/`mined`/
+  `closed`, `minedHash`, `outcome` `execute`/`cancel`/`consumed_elsewhere`/`never_sent`, `costWei`, remembered at least 7
+  days; `status()` → `unmined`, `awaitingConfirmation`, `oldestUnminedMs`, `nextNonce`, `halted`. Its new coded error
+  `relayer_halted` (nothing was sent) is answered `503 sponsorship_paused` with everything given back, and a halted
+  relayer makes `GET /v1/evm/sponsor/status` answer `available: false, reason: "paused"` (a 2-second bounded read of
+  `status()`). The `taken` state is gone, and so is every handling that existed only for it. In the request, a send
+  settles only from a receipt for one of its own hashes.
+- **Amended 2026-11-18 while integrating the relayer (D851) and the vault (D856)** (amended while building,
+  **confirmed by the user 2026-11-18**). (1) The ports are the real modules: the chain is the relayer's own client (`sponsorChainFor`: ONE trusted
+  read endpoint, no read failover; the minimal client is gone), the relayer stub is typed from `evm-relayer.ts`; the
+  receipt's operator fee is the client's. (2) **The session proof (D856) is checked** on prepare and send, as
+  `docs/api.md` specifies, before any window, replay check, directory read or chain read: core's
+  `checkEvmSponsorSessionProof` (method from the path, the hash over the one parsed body, `chainId` a safe positive
+  integer first), the single-use `identity-proof:` marker to `issuedAtMs + 120 s`, the share in `session` mode, the
+  session on chain with one read (`singleRead`, D513: a session not visible yet is `503 session_not_visible`, not `410`,
+  so a lagging node ends nothing), and with `requireKnownAccount` the account's directory user must be the session's
+  account root's (`403 account_mismatch`). This closes M2's open item: prepare's `account_unrecorded` answers only the
+  account's own session, and its per-account minute is keyed by the account alone (the (account, IP) keying is gone).
+  The open item "the session binding (M2)" above is done. (3) **A batch no node took** (`broadcast: rejected`) is
+  answered at once (no 30 s wait), the row `rejected` with `rejection` `<cause>:<code>`, the money settled later to the
+  cancel's cost from the relayer's `lookup` (`outcome: cancel`, `costWei`) or the cancel's receipt. `request` charges a
+  failure (`422 not_executed`); `pricing` (the relayer's follow-up) is `503 gas_price_too_high` (15 s); `relayer` and any
+  cause not known yet are `503 sponsorship_paused` and `evm_relay_stuck`; neither of the last two charges the user's
+  failure slot, attempts or shared windows. The relayer's coded `fees_too_low` (PR 81) is `503
+  gas_price_too_high` (15 s), with the relayer's own types since `next` @ e70ac794; `relayer_busy` (also `:account`) is `429` with
+  `retryAfterS` 2 (5 for `account`); a coded refusal not caused by the user's input gives their attempts back too. (4)
+  **The relayer's funds:** before each send its balance (cached 3 s per isolate, forgotten after each send) must be at
+  least `lowBalanceEth` and cover 3 × this send's worst case; then, binding, the audit row is inserted by one `INSERT …
+  SELECT … WHERE` only while the balance covers 3 × (the reserved worst cases of every committed send of the chain plus
+  this one's), so a burst across isolates can't each pass alone (after the automated review of the first version,
+  which compared each request alone); else `503 sponsorship_paused` and the day's `evm_relay_balance_low` (with
+  `neededWei`), so no user triggers the relayer's own low-funds halt; prepare reports `paused` for that and for a halted
+  relayer. (5) **One app can't fill the
+  relayer:** at most 4 of an app's sends unsettled per chain (an amount slot on `app:<id>`, a UTC-day window, given back
+  by whoever settles the row), else `429 relayer_busy` (5 s). (6) **The authorization** is attached only when the account
+  has no code and its pending and latest counts both equal its nonce (nothing of the account's own in flight). (7)
+  **Gas** uses the relayer's own `intrinsicGas` (imported, not re-implemented: 4 a token, EIP-7623's floor of 10 a
+  token, 25 000 per authorization) plus the README overhead and minGas, refused above `maxGasPerTx` before reserving;
+  fees start at the relayer's own `maxStartingFees`. (8) **Success at head (an accepted risk):** the user's 200 comes
+  from the first receipt of one of the row's own hashes with the account's `Executed(digest)`, before confirmed depth;
+  a reorg in between could answer success for a batch that then doesn't run (on testnet, accepted; the money follows
+  the receipt, and the relayer's own verdict at depth is what the reconciler uses when a receipt can't be read). (9)
+  `status().halted` and the relayer's oldest unmined transaction over 10 minutes (was 5; now 2, below) write `evm_relay_stuck`, its
+  title now "Free network fees: paused or slow, needs a look". (10) The e2e stack runs these routes and the real relayer
+  object over its mocked chain (the stand-in is deleted); `apps/api/test/evm-sponsor-relayer.test.ts` runs the routes
+  against the real object over `test/evm-mock.ts`. Found while integrating: the relayer takes a second batch of one
+  account only after its own run saw the first mined (its alarm, 15 s after a change), so a user's next action within
+  about that long is `429 relayer_busy` (retry in 5 s). Also found by the e2e: the vault sends `minGas = maxMinGas`
+  exactly, so prepare's calldata shape must cost at least any real batch's: its deadline, minGas and signature words
+  have no zero byte (a real deadline's zero byte made a shape cheaper than the batch, `403 gas_too_high`). Every new
+  code has a plain sentence in the vault's `SPONSOR_TEXT` and the SDK's `SPONSOR_REASONS` (D853): paused, fees too high,
+  busy, the session check, the wrong account.
+- **Amended 2026-11-18 after the re-review of a0a83e25** (amended while building, **confirmed by the user 2026-11-18**). M1: the whole send after
+  the session check runs inside the request's `waitUntil`, and an app's share of the relayer is derived from its open
+  audit rows (checked first, then atomically in the audit row's insert with the funds check): no counter, nothing to
+  leak. M2: a full share settles the app's own open rows inline first (the reconciler, at most 4, never a live
+  request's); the Worker keeps its one 15-minute cron (no 1-minute pattern exists in `gen-wrangler`). M3: `lost` needs
+  the relayer's `lookup` to have answered and every receipt read to have succeeded empty. L1: a second row of one digest
+  whose transaction is billed to the other is `duplicate` (zero, reservation back). L2: the account's nonce floor rises
+  only on the relayer's verdict at confirmed depth; every row settled at head is checked against that verdict and a reorg
+  corrected by a correction billing record. **Residual:** the user's 200 (and a revert's 422) still come from the first
+  receipt at head; a reorg between it and confirmed depth answers the user something the chain then contradicts (the
+  books are corrected, the answer isn't: on testnet accepted); a row older than the relayer's 7-day memory is never
+  checked; a corrected row's failure slot isn't revisited. L3: calldata over the relayer's limit (`batch_too_large`) and
+  fees under its floor (its own `feesTooLow`) are refused before anything is sent; the relayer's `invalid_request` is our
+  mismatch: `503 internal_error`, everything back, an event. L4: `/status` keeps the halt state 15 s per isolate. L5:
+  `outcome_unknown` (an unknown send, a lost or unread row: "check before you try again"), `account_busy` ("your last
+  action is still going through"). L6: a body that repeats a key is refused. L7: a record the ledger refuses alone is
+  quarantined with an alert; without the block a cron run makes one D1 read. `evm_relay_stuck` at 2 minutes (oldest
+  unmined, and unaccepted once the relayer reports it). Found while testing: workerd logs every Durable Object RPC method
+  that rejects as "Uncaught (in promise)" on the callee's side even when the caller handles it (RateLimiter too): the
+  handlers catch every relayer refusal; the log line is the runtime's (since PR 86 the relayer returns its coded refusals
+  as values, `{ok: false, refused, reason}`, which the handlers branch on; a thrown coded error is still read the same
+  way). With PR 86: the relayer's `authority_reserved` (cause `request`: the user's account had other transactions
+  waiting, the batch cancelled at once) is `422 account_pending` with its own plain sentence and a failure charged;
+  `sender_restricted` (cause `relayer`) is `sponsorship_paused`; `oldestUnacceptedMs` over 2 minutes raises
+  `evm_relay_stuck`; fixtures within the new caps (`deadlineMaxS` 300). PR 84 removed the 15-second wait for a user's
+  second action noted above.
+- **Amended 2026-11-18 after the final check of 811a0c1e** (amended while building, to confirm). N1: a billing
+  correction is never written for a relayer replay's row (the correction's insert requires `replay = 0`, as the first
+  record's does); the reconciler only confirms a replay row and raises the floor after an executed verdict, so a reorg
+  that changes the original send's transaction is corrected once, on the original's record. N2: a `nonce_stale` answer
+  no longer raises the account's nonce floor (it came from `nonce()` read at head: a reorg in which the batch then fails
+  would have left the floor above the chain's nonce for good); only the relayer's verdict at confirmed depth raises it.
+  A stale copy now reads the chain each time (the account's minute and the user's day still bound it). **Known and
+  accepted** (no code): up to four `unknown` rows whose sends never reached the relayer object hold the app's
+  in-flight share until the reconciler settles them (about 65 minutes); a full share re-runs the inline settle (at
+  most 4 rows, never a live request's) on each attempt, bounded.
+- Address impact: none.
+
+### D848. The sponsorship audit table and its security events
+- Date 2026-11-17 · Status: decided while building, **confirmed by the user 2026-11-18**; the amendments below
+  **confirmed by the user 2026-11-18** · Built: `apps/api/migrations/0022_evm_sponsor.sql`,
+  `apps/api/src/evm/sponsor.ts` (`insertAudit`, `updateAudit`, `replayAnswer`, `noteEvent`,
+  `checkEvmSponsorRelay`), `src/index.ts` (the cron), `packages/console-core/src/types.ts` (`SECURITY_EVENT_KINDS`),
+  `src/audit-words.ts`, `scripts/lib/uid-erase.ts`; tests `apps/api/test/evm-sponsor.test.ts`,
+  `test/migration-0003.test.ts`, `test/migration-0006.test.ts`, `scripts/test/uid-erase.test.ts`. Migration 0022 is
+  applied by the founder (local only here; nothing remote).
+- Decision: `evm_sponsor_sends`, one row per send that reached the relayer step, written **before** the relayer is asked
+  (no row, no send: `503 audit_unavailable`): `id` (`es_` + 32 hex), app, chain, account, the directory user (NULL
+  without one; `REFERENCES end_users ON DELETE CASCADE`), digest, `executeNonce`, hash, relayer nonce, reserved and
+  settled wei (decimal strings), status `sending` → `sent` → `executed` / `reverted` / `not_executed` / `timeout`, or
+  `refused` (a coded relayer refusal: nothing sent) or `unknown` (the relayer failed otherwise), request id, times. A copy of a batch is answered from the latest row of its chain,
+  digest and app. Erased with the user: the cascade (also the retention purge of a dead scope's users) and `uid-erase`,
+  which deletes by the user's internal ids and every wallet address of theirs and prints the count on a `sponsored`
+  line. No signature, authorization or raw transaction is stored.
+- Security events (the table's CHECK widened, rebuilt as 0020 did): `evm_relay_budget_high` (the env's day reservations
+  on a chain reach 80% of `dailyBudgetEth`; written by the send that crosses it, once a UTC day per chain),
+  `evm_relay_balance_low` (the relayer's balance below `lowBalanceEth`; once a UTC day per chain) and `evm_relay_stuck`
+  (the relayer object's oldest pending transaction older than 5 minutes; once an hour per chain), both from the
+  15-minute cron (every run, outside the positional job list, never failing it; nothing without the config). Amounts,
+  chain ids and the relayer's address only. The admin's Security & monitoring view titles them (`console-core`); their
+  playbooks and the admin tile are WP11.
+- `oldestPendingMs` is the relayer's age of its oldest pending transaction (a value that looks like an epoch
+  timestamp is turned into an age anyway).
+- Rejected: an audit row only for successes (failures cost the sponsor too); storing the raw transaction (the hash and
+  the relayer's own record suffice).
+- **Amended 2026-11-17 after the independent review** (branch `feat/evm-sponsor-api`; amended while building,
+  **confirmed by the user 2026-11-18**). M3: everything from the reservation on runs inside the request's `waitUntil` (`handleEvmSponsorSend` takes
+  the execution context), so a client that goes away doesn't stop the settlement; and the cron's reconciler
+  (`apps/api/src/evm/sponsor-settle.ts` `reconcileEvmSends`, every run, 20 rows a run, oldest update first) settles
+  every row still `sending`, `sent`, `timeout` or `unknown` a minute after its last update, from the relayer's `lookup`
+  (the mined hash, else every hash) and the receipts. A settlement happens once: the row moves first by a conditional
+  UPDATE from its open states, and only the caller that moved it changes the budgets, the failure slot and the floor;
+  amounts settle into the day window of the row's `created_at`. Unknown to the relayer 2 to 9 minutes past the
+  deadline: nothing was sent, everything back, `refused`; later and still no receipt: `lost` (the reservation kept).
+  `state: 'taken'` with no version mined: `not_executed`, settled at zero, the failure slot back, and
+  `evm_relay_nonce_taken` for staff; `outcome: 'cancel'` settles the self-transfer's cost and answers `not_executed`.
+  A row open over 10 minutes writes `evm_relay_stuck`, as does the relayer's `blockedReason`. L2: a receipt with
+  `gasUsed` below 21 000 or above the gas limit, `effectiveGasPrice` above the fee cap, `l1Fee` above twice the bound
+  or an operator fee above its bound is settled at the reservation and writes `evm_relay_receipt_odd`. The row now keeps
+  the deadline, the reservation's parts (gas limit, fee cap, L1 and operator bounds) and whether the relayer answered a
+  replay, for the reconciler; statuses `refused` and `lost` are added. L5: rows are kept 24 months, then pruned by the
+  cron (500 a run, with or without sponsorship on); they also go with the user's erasure (cascade, `uid-erase`).
+- **Amended again 2026-11-17, after the automated review of the fixes** (amended while building, **confirmed by the user 2026-11-18**): a refund
+  needs a verified "nothing ran". A row without a hash (`sending`, or `unknown` without one) is refunded only when the
+  relayer answered (not an error) that it doesn't know the digest, 2 to 9 minutes past the deadline; later it is `lost`.
+  A row with a hash the relayer no longer knows is never refunded (a third review, of 7c1ff932): the delegate nonce
+  lives in the user's account, which the user can re-delegate and rewrite, and a version the row never saw may have
+  mined, so no empty read proves nothing was paid for; it is `lost`, the reservation kept (failing reads retried, `lost`
+  an hour past the deadline). Every hash the relayer reports (its answer, each lookup's list) is persisted on the row
+  (`tx_hashes`, a union in one UPDATE, at most 80) and receipts are read for all of them (`readReceipts` tells a failed
+  read from no receipt), so a version mined after the relayer forgot the digest is still found and settled. `state: 'taken'` settles at zero only on reads that all found nothing (in the request and
+  the reconciler). Every give-back follows the durable move of its row, by the caller that moved it: a replay's row moves
+  `sending` → `sent` with `replay = 1` first, and a coded refusal's to `refused` first; the reconciler takes `sending`
+  rows only 5 minutes after their last update (`SENDING_LIFETIME_MS`, beyond a live request's insert-to-move time), so it
+  never races a live request. A crash between the move and the give-back loses that give-back (errs high), never doubles
+  it.
+- **Open, before mainnet:** the relayer's `lookup` forgets a batch 10 minutes past its deadline, so a reconciler that
+  can't run for longer leaves rows `lost` with their reservation (errs high); the playbooks and the admin tile for the
+  five event kinds (WP11).
+- **Amended 2026-11-18 for the simplified relayer (D851) and the billing records (D852)** (amended while building,
+  **confirmed by the user 2026-11-18**): a row settles ONLY from (a) a receipt for one of its own persisted hashes (a lookup's mined hash counts only
+  when the lookup also lists it as a version), or (b) the relayer's lookup: `mined` with `costWei` (used only when the
+  receipt itself still can't be read an hour past the deadline: the row `mined`, the money the relayer's cost, at most
+  the reservation), `closed` `never_sent` (refunded, `refused`) or `closed` `consumed_elsewhere` (the reservation kept as
+  the cost, the row `consumed_elsewhere`, `evm_relay_nonce_taken`). Nothing is inferred from the relayer not knowing a
+  digest any more (the 2-to-9-minute rule is gone): anything else stays open and an hour past the deadline is `lost`,
+  the reservation kept. A row's final move writes its billing record (D852) in the same D1 batch. `status().halted`
+  writes `evm_relay_stuck`, titled in plain words "Sponsored transactions are paused"; the other event titles are
+  plain words too. New statuses `mined` and `consumed_elsewhere`; the row keeps the batch's shape (call count, each
+  call's allowlisted target and selector, whether it carried the one-time setup) for its billing record.
+- **Amended 2026-11-18 while integrating the relayer (D851)** (amended while building, **confirmed by the user 2026-11-18**): `never_sent` is
+  gone from the relayer (staff cancel instead), and with it the reconciler's refund (`ReconcileCounts.refused`). New
+  status `rejected` (open: a batch no node took, its nonce given to the relayer's own cancel) and column `rejection`
+  (`<cause>:<code>`; migration 0022 edited, never applied anywhere); the reconciler takes `rejected` rows and settles
+  them from the cancel's receipt (any hash but the batch's) or at once from the relayer's `mined` verdict with
+  `costWei`, billed `cancelled`. A rejected batch's copy is answered as its send was. The app's in-flight slot (D847)
+  is given back by whoever moves the row to its outcome. `evm_relay_stuck` is also written for the relayer's oldest
+  unmined transaction over 10 minutes (was 5; now 2, below), with the halt's `haltCode`, and for a batch the relayer itself refused
+  (`rejected`); `evm_relay_balance_low` also by a send the balance can't cover 3 times over (`neededWei`). Open: the
+  billing record doesn't say whose doing a cancel was (the audit row's `rejection` does).
+- Address impact: none.
 ### D849. The EVM delegate's deploy and the relayer key: plan by default, a Foundry keystore signs, artifacts and core's pin checked on chain
 - Date 2026-11-17 · Status: testnet only, Base Sepolia first, the contract deployed fresh through the deterministic
   deployer after 2026-11-25 and nothing run against a public network by an agent: decided by the user 2026-11-17;
@@ -12900,8 +13251,8 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 ### D851. The EVM relayer object: simplified and fail-stop (on anything odd it stops and waits for staff)
 - Date 2026-11-18 · Status: the simplified fail-stop relayer replacing D837's self-repairing design **decided by the
   user 2026-11-18**, the PR (75) confirmed by the user 2026-11-18; the details below decided while building and amended
-  after its independent review the same day (marked "Review"), to confirm; item 16 (fee refusals, branch
-  `fix/evm-relayer-fee-refusals`) decided while fixing an automated review of the merged code, to confirm · Built (not deployed; nothing calls it yet: the handlers are PR 71's):
+  after its independent review the same day (marked "Review"), **confirmed by the user 2026-11-18**; item 16 (fee refusals, branch
+  `fix/evm-relayer-fee-refusals`) decided while fixing an automated review of the merged code, **confirmed by the user 2026-11-18** (with items 17 and 18) · Built (not deployed; nothing calls it yet: the handlers are PR 71's):
   `apps/api/src/evm-relayer.ts` (`EvmRelayer`; its header states the whole design), `apps/api/src/evm-relayer-staff.ts`
   (the staff tools, for the admin package), `apps/api/src/evm/sponsor-chain.ts` (`SponsorChain`), `apps/api/src/env.ts`
   (`EVM_RELAYER`, `EVM_SPONSOR_RPC_<chainId>`), `apps/api/src/index.ts` (the export), `apps/api/src/log.ts` (`chainId`,
@@ -12945,7 +13296,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   `staffResume`, `staffClose(nonce, 'consumed_elsewhere')`, `staffCancel(nonce)`, `staffFill(nonce)`,
   `staffAdoptNonce(n)`; each acting one takes `who` and a note, re-reads the chain, refuses unsafe use, and is recorded
   (who, when, what, note, done or why refused). They return `{ done, refused, status }`.
-- Details decided while building (to confirm):
+- Details decided while building (**confirmed by the user 2026-11-18**):
   1. Review (H1): the object computes the transaction's intrinsic gas (21 000, calldata at 4 a token and at least
      EIP-7623's 10 a token, 25 000 per authorization; no access list is ever sent) and refuses (`invalid_request`) a
      gas below it plus `minGas`, and a raw transaction over 128 KiB, before anything is stored. Not checked here: the
@@ -12999,7 +13350,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   15. Out of scope here (the handlers', PR 71): the account's code check, the simulation, the `Executed` check, the
       L1-fee reservation, the allowlist and per-app caps. The object re-checks the Execute itself (`verifySend`,
       exported and tested as a table).
-  16. Fee refusals (branch `fix/evm-relayer-fee-refusals`, to confirm; amended after its review the same day): a
+  16. Fee refusals (branch `fix/evm-relayer-fee-refusals`, confirmed by the user 2026-11-18; amended after its review the same day): a
       batch's fees are the handler's, so a batch refused over its fees is not the relayer broken: `underpriced`,
       `fee_below_base_fee` and `replacement_underpriced` of a BATCH version are cause `pricing` (a third cause): its
       cancel at once, no halt, `rejection: { cause: 'pricing', code }`. Exception: `replacement_underpriced` on a
@@ -13016,7 +13367,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
       Consequence: a send needs the read endpoint (with it down, sends are refused `rpc_unavailable`; the handlers need
       it anyway). The handlers map `fees_too_low` and `pricing` to 503 `gas_price_too_high` with a short `retryAfterS`,
       everything given back, no failure charged.
-      Narrowed (branch `fix/evm-relayer-halt-narrowing`, after an automated review of the merged code, to confirm):
+      Narrowed (branch `fix/evm-relayer-halt-narrowing`, after an automated review of the merged code, confirmed by the user 2026-11-18):
       (a) a refusal halts only on our own evidence: the trusted read endpoint itself refused (`byRead` in the
       broadcast's answer); a relayer-cause refusal heard only from the fallback cancels the batch, halts nothing, and
       is counted for staff (`staffStatus().unconfirmedRefusal`: count, last time, nonce, code; log
@@ -13026,7 +13377,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
       (a staff cancel, a first cancel or a reprice of a record nothing accepted); a routine bump the caps stop is no new
       version (the latest is broadcast again), and a record an endpoint accepted never raises it.
   17. One unmined batch per account, checked on demand (branch `fix/evm-relayer-account-next`, from integrating the
-      API, to confirm): when an account's earlier batch is still unmined in storage, `send` makes ONE bounded check of
+      API, confirmed by the user 2026-11-18): when an account's earlier batch is still unmined in storage, `send` makes ONE bounded check of
       it inside the critical section on the run's own evidence (the trusted endpoint's latest count past its nonce,
       then its versions' receipts: at most 1 + 8 extra fetches, within the 45 a send may use) and, when that shows it
       mined, marks it `seen` and lets the new batch through; otherwise, or when a read fails, `relayer_busy:account` as
@@ -13037,7 +13388,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
       the wrong batch nonce: the delegate reverts it (InvalidNonce), and the sponsor pays one reverted transaction.
       Accepted: rare (a reorg of an L2 block plus a lost first batch), bounded, and visible in the receipts.
   18. An unaccepted batch never holds the relayer up (branch `fix/evm-relayer-unaccepted-first`, after the API and
-      relayer review, to confirm). A user could keep their own account's transactions waiting in the pools so that
+      relayer review, confirmed by the user 2026-11-18). A user could keep their own account's transactions waiting in the pools so that
       ours, a type-4 carrying their authorization, is refused with a text the relayer didn't know ("authority already
       reserved"), leaving our nonce in no pool and every later sponsored transaction (all apps) waiting behind it until
       the batch's deadline. Now: (a) the pools' EIP-7702 texts are classified (checked in go-ethereum's and op-geth's
@@ -13676,8 +14027,270 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
   the link), is now "This email is waiting to be linked to a wallet. Sign in again and follow the steps in the
   Journear Passport window." It is per code, so a Google sign-in waiting to join an email wallet (an explicit
   `linkAccount`, rare) reads "This email" too.
+- Amended 2026-11-18 by D865 (decided by the user, PR 85's review): the pending notice mail's "Not you?" and the
+  `now_active` screen's words, which told the email's holder not to sign in after the wait, now send them to sign in,
+  where they can cancel or, after the wait, remove the email; the `now_active` screen offers **Remove this email**
+  itself (D865, item 3 of its amendment has the words).
 - Rejected: a `/link/cancel` page reached from the mail (a link in a security mail is what phishing copies, D862; it
   would need an issuer path for the identity key and a code anyway); accepting the sign-in's own token (needs a
   contract change: a session nonce isn't a `link_change` proof, and a founder decision and redeploy); continuing the
   sign-in after a cancel (the login already ended for the partner; the email would then face case B's choice anyway).
 - Address impact: none.
+
+### D852. Every sponsored transaction leaves a permanent billing record, in D1 and copied to the usage ledger
+- Date 2026-11-18 · Status: the requirement decided by the user 2026-11-18 ("we should have necessary records in place so
+  in the future when we turn on billing for partners, we can bill for the sponsored transactions as well … for now we
+  should make sure we have all historical records for each sponsored tx recorded"); the design decided while building,
+  **confirmed by the user 2026-11-18** · Built: `apps/api/migrations/0022_evm_sponsor.sql` (`evm_sponsor_billing`, the batch shape on
+  `evm_sponsor_sends`), `apps/api/migrations-usage/0009_evm_sponsored.sql` (`usage.evm_sponsored_txs`,
+  `usage.record_evm_sponsored`, `usage.evm_sponsored_monthly`), `apps/api/src/evm/sponsor-billing.ts`,
+  `sponsor-settle.ts` (`moveRow`'s billing statement, `settleFromReceipt`, `settleFromRelayerCost`, `settleAsCharge`),
+  `sponsor.ts` (the cron: `mirrorEvmBilling`, `lateBilling`); tests `apps/api/test/evm-sponsor.test.ts` ("billing
+  records"), `apps/api/test-usage/evm-sponsored.test.ts`, `scripts/test/uid-erase.test.ts`. Local only: neither
+  migration is applied anywhere; the founder applies D1 and Neon migrations.
+- What exists today: the usage ledger (Neon, `usage.events`, `usage.gas_settlements`, the monthly statements of D92 and
+  D325) records the login pool's relayed calls (`login`, `session`, `derive`, `revoke`, `unlock`, `owner_action`, and
+  the link and Home ones), each with its NEAR transaction and the settled gas. **The NEAR meta-transaction relay (D736)
+  leaves no per-transaction record there**: `/v1/near/relay` and `/v1/near/activate` open no usage event, so what it
+  paid exists only as the RateLimiter's day budget counts (no history) and the request log (`nearTx`, kept as long as
+  Workers logs are). Adding them would take a new ledger endpoint kind (or a table like this one) and the
+  D1-then-copy path used here.
+- Decision: a billing record per sponsored transaction that reached the chain: the batch (`executed`, `reverted`,
+  `not_executed`: it ran without effect, e.g. an authorization the network skipped), the relayer's deadline
+  self-transfer (`cancelled`), or `mined` when only the relayer's cost is known; and one per charge with no mined
+  transaction of its own (`lost`, `consumed_elsewhere`), with the kept reservation as the amount, so the books add up.
+  No record for a send that never reached the chain (refused, never sent) or for a relayer replay (the original send
+  carries the transaction). Fields: org, app, chain, environment (the env's name), transaction hash, block number and
+  time, outcome, gas used, effective gas price, the execution cost, the L1 data fee, the operator fee, the total cost,
+  the settled amount (what the budgets kept), the number of calls, each call's allowlisted target and selector, whether
+  it carried the one-time setup, created and settled times. Amounts in wei; no USD.
+- Where: the record of truth is a D1 table (`evm_sponsor_billing`), written in the same D1 batch as the audit row's final
+  move (a settled send can't exist without its record; a second settlement attempt writes nothing: keyed on (chain,
+  transaction hash), or the send for a charge without one, and unique per send). The cron copies the records to the usage
+  ledger (`usage.evm_sponsored_txs` through `usage.record_evm_sponsored`, idempotent on the same key, validating every
+  row), so future billing and the monthly statements read one place; queryable per org, app and month
+  (`usage.evm_sponsored_monthly`). While the ledger is unbound or unreachable the records wait in D1 and the next run
+  copies them. `evm_billing_late` ("Free network fees: a billing record is late") is raised when a settled send has no
+  record an hour on, or (with the ledger bound) a record isn't copied within an hour.
+- Why D1 first, rather than writing the ledger directly: the usage capture path is best effort by design (it fails
+  open, never delaying a request), and a ledger outage must not lose a charge; one D1 batch makes the record exactly as
+  durable as the settlement itself.
+- No personal data: no account address, user id or IP. The transaction hash is public chain data: anyone can read the
+  transaction (and the account it was sent to) on the chain, so storing it reveals nothing that isn't already public, and
+  it is the proof that the charge happened. What linked the hash to a Journear user (the audit row, the directory) goes
+  with the user's erasure; these records stay on purpose (the business's record of what it paid): `uid-erase` doesn't
+  touch them, they have no foreign key to the audit row or the directory, the audit rows' 24-month retention doesn't
+  prune them, and in the ledger none of the retention functions or `usage.erase_uid` reads the table (tested).
+- What a billing job will need later: a daily ETH/USD rate per chain (as `usage.near_usd_rates` for NEAR), a rule for
+  what to charge (the cost, a markup, a flat fee per action), and how to treat `lost` and `consumed_elsewhere` amounts
+  (they are Journear's spend, possibly not the partner's).
+- Address impact: none.
+
+## NEAR relay billing records (branch `feat/near-relay-billing`), 2026-11-18
+
+From `feat/evm-sponsor-api` @ 69ee88aa (to merge after PR #71, whose migrations it follows), not merged, not
+deployed. The founder, 2026-11-18: "go ahead with NEAR billing records".
+
+### D863. The NEAR meta-transaction relay leaves a permanent billing record per transaction, as EVM sponsorship does
+- Date 2026-11-18 · Status: the requirement decided by the user 2026-11-18; the details decided while building,
+  **confirmed by the user 2026-11-18** · Built: `apps/api/migrations/0023_near_relay_billing.sql`, `apps/api/migrations-usage/0010_near_relayed.sql`,
+  `apps/api/src/near/relay-billing.ts`, `src/near/relay.ts` (the write after the answer), `src/index.ts` (the handlers'
+  execution context, the cron), `packages/console-core` (`near_billing_late`); tests `apps/api/test/near-relay.test.ts`
+  ("billing records"), `apps/api/test-usage/near-relayed.test.ts`, `scripts/test/uid-erase.test.ts`,
+  `test/migration-0003.test.ts`, `test/migration-0006.test.ts`. Local only: no migration applied anywhere.
+- Why a new path rather than the login pool's settlement: `usage.gas_settlements` settles at FINAL the transactions of
+  `usage.events`, which the relay never writes (D852 found it leaves no per-transaction record), and the admin Worker's
+  settlement job reads those events. So the relay gets EVM sponsorship's pattern (D852): D1 first, then a copy to the
+  ledger, with the same FINAL re-read the gas settlements do.
+- Decision: one record per NEAR transaction the relay sent for a user that may have reached the chain (a relayed
+  delegate action or an activation, success or failure: everything but "certainly not sent"), keyed on (network,
+  transaction hash), INSERT OR IGNORE. Written in D1 (`near_relay_billing`) right after the relay's answer, inside the
+  request's `waitUntil`: the request path waits for nothing, and the relay's behaviour, answers and limits are unchanged.
+  The relay's own figures (EXECUTED_OPTIMISTIC) are provisional; the cron (every run, 20 records a run) re-reads each
+  transaction at FINAL with the relay account as signer for the settled gas and tokens burnt (the transaction and every
+  receipt, refunds included), the status (`executed`, or `failed` when the transaction or any receipt failed) and the
+  block (height, time); a transaction still unknown six hours on is `unknown` with the relay's figures. Final records are
+  copied to the usage ledger (`usage.near_relayed_txs` through `usage.record_near_relayed`; `usage.near_relayed_monthly`
+  per org, app and month) and retried until they land.
+- Fields: org, app, environment, network, transaction hash, block height and time, kind (`delegate`/`activation`), the
+  relay's answer code, outcome, gas burnt, tokens burnt (yoctoNEAR), the NEAR the relay attached or sent for the user
+  (real spend: an activation's transfer, `near.relay.activationYocto`; a delegate's deposits, refused by policy today so
+  0), the contract a delegate called and its method names, created and final times.
+- Fail open for the relay: a write that fails (migration 0023 not applied yet, D1 unreachable) never fails or delays a
+  relay; it is counted on a RateLimiter object (`near-relay:billing`, which needs no migration) and the cron writes
+  `near_billing_late` ("Free NEAR transactions: a billing record is late") once an hour while writes fail, a record isn't final an
+  hour on, or (with the ledger bound) isn't copied an hour on. Safe to deploy onto the running relay in either order with
+  the migration; additive migrations only (a new table; `security_events` rebuilt to widen its CHECK, as 0020 and 0022
+  did). `gen sandbox-dev` is unchanged: no new binding, var or secret.
+- Pseudonymous: holds no name, email, account id or user id (an activation's receiver is the user's implicit account, so
+  it is not stored), and no IP; the transaction hash is public chain data that can be traced to an account. The transaction hash is public chain data: on NEAR it names a transaction whose signer is the
+  relay account and whose receiver, for a delegate, is the user's implicit account, so the hash leads anyone to that
+  public account on the chain, exactly as an EVM transaction hash leads to the account it was sent to. That reveals
+  nothing that isn't already public; Journear's own link from the account to a person (the wallet directory) goes with
+  the user's erasure. The records are never pruned and stay through an erasure on purpose (the business's record of what
+  it paid): no foreign key, `uid-erase` doesn't touch them, and in the ledger no retention function or
+  `usage.erase_uid` reads the table (tested).
+- No USD: yoctoNEAR only; `usage.near_usd_rates` (the daily NEAR/USD rate the admin Worker already fetches, D325) can
+  price them when billing is decided.
+- Records exist only from the deploy on: what the relay paid before (the stamps demo) can't be rebuilt from Journear's
+  data, only estimated by hand from the relay account's transactions on a NEAR explorer (docs/operations.md "NEAR relay
+  billing records").
+- **Amended 2026-11-18 after the independent review of PR 77** (amended while building, **confirmed by the user
+  2026-11-18**; its nonce check replaced by the next amendment): (1) the cron reads
+  with `tx` `wait_until: 'NONE'` (an answer at once) and takes an outcome as final only when the node says `FINAL`,
+  through a client of its own (one endpoint a call, its own RPC health: it can never mark an endpoint down for the live
+  relay), with per-record backoff (`next_try_at`, doubling from a minute to six hours, oldest first); (2) a hard budget
+  of 10 outside fetches a run, no per-record `block` read (the block hash is kept; height and time only with budget
+  left); records final at once without a read: an `ok` relay (its own complete figures: every receipt at
+  EXECUTED_OPTIMISTIC, summed) and a relay that certainly never ran (`near_rejected`, `relayer_busy` with a hash:
+  `not_executed`); `unknown` only after 8 actual reads and six hours, never from starvation; the job isolated (nothing it
+  throws reaches the other cron jobs); throughput 960 reads a day, a backlog above it only late; (3) D1 writes: a
+  WITHOUT ROWID table, the org and app indexes dropped (the ledger has them), about 5 rows written per usual relay; (4)
+  a result sent without a hash counts as a miss; a failed write is parked (a bounded queue on the RateLimiter object)
+  and written later; each record keeps the relay key and its nonce, and a daily check of each key's nonce on chain
+  against the records counts transactions without one (`nonceGaps`; replaced below); (5) `near_billing_late` once a UTC day with the
+  counts, "not final" only past the give-up time; (6) `executed` with `had_failed_receipt` when only a later callback
+  receipt failed (the user's own action, read from the receipt ids, decides `failed`); (7) pseudonymous, not "no
+  personal data": no name, email, account id or user id, but the hash is public chain data that can be traced to an
+  account; (8) the deploy order (docs/operations.md): D1 migrations only with `wrangler d1 migrations apply --remote`
+  (0022 then 0023), the ledger's 0009 then 0010, the Worker after them at a quiet moment.
+- **Amended 2026-11-18 after the re-check of PR 77 at 2e5b8dc0** (amended while building, to confirm). (1) The daily
+  nonce check counted false gaps every day: the relay key object reserves nonces in blocks of 100 and resumes past its
+  reservation on each cold start (`NONCE_RESERVATION`, `relayer-key.ts`), and a refused transaction's nonce is skipped,
+  so `(hi − lo) − recorded` counted every skipped nonce. Replaced: once a UTC day per relay key, the key's nonce on chain
+  (the last included transaction's) must equal a recorded nonce of that key (any outcome but `not_executed`), or be
+  unchanged since the last check (nothing included); else ONE `unrecordedLast` for that key that day (the late alert's
+  `nonceGaps` renamed). What it proves: the most recent included transaction per key per day has a record. What it
+  can't: an unrecorded transaction followed by a recorded one the same day; nor how many are missing. An exact count
+  would need a counter inside the relay key object, deliberately not built now so the live relay is untouched. A
+  transaction included in the seconds before the check whose record is still being written could be counted once
+  (rare; the next day's check is clean). The test models the reservation jump and a refused nonce. (2) A parked row
+  that D1 refuses for good no longer blocks the queue: counted as a miss, acknowledged, the drain goes on; any other
+  error still stops the drain until the next run. "Refused for good" is a constraint or bind-type error, something
+  that isn't a record, or (found while testing: INSERT OR IGNORE skips a row breaking a CHECK or NOT NULL constraint
+  without an error) a write that changed nothing and whose row isn't there; a duplicate is fine. The relay's own write
+  uses the same test: a row skipped that way is a miss at once, not parked. (3) What a later billing job can rely on: the
+  amounts and the time of recording, not block data. Records final from the relay's own figures (`figures_from:
+  'relay'`) and `not_executed` ones have no block hash, height or time, and `had_failed_receipt` is always 0 for them;
+  only `figures_from: 'final'` records carry a block hash. Unverified: whether newer NEAR versions charge a gas refund
+  penalty outside `tokens_burnt`; checked once at deploy time against one testnet transaction's balance change
+  (docs/operations.md, the deploy's step 4).
+- Address impact: none.
+
+## A linked sign-in's own notice, and its removal of itself (branch `feat/link-member-banner`), 2026-11-18
+
+From `feat/link-cancel-by-email` (PR 83) @ 88104036, then `next` @ 6db2bb8b merged in (PR 83 merged); not merged, not deployed.
+
+### D865. An active member is asked before its sign-in opens the shared wallet, and can remove itself
+- Date 2026-11-18 · Status: **confirmed by the user 2026-11-18** (decided 2026-11-18, "go ahead": the member's own
+  notice with Remove, the reviewer's M1 on PR 83; the review's three recommendations below, "Amended after PR 85's
+  review", decided by the user 2026-11-18, "yes to all three"; confirmed with the PR, "confirm D865"); the review
+  amendments' items 4 and 5 and the re-check's fixes amended while building, to confirm · Built: `packages/core/src/relay.ts` (notices
+  `member_link`, `member_remove`, `member_removed`; the answer `{choice}`), `packages/web/src/vault/login.ts`
+  (`PendingLogin.memberNotice`, `MemberRemove`), `packages/web/src/auth/email-page.ts` (`showMemberLink`,
+  `showMemberConfirm`, `proveMemberRemove`, `showMemberRemoved`); tests `packages/core/test/linking-protocol.test.ts`,
+  `packages/web/test/vault/linking.test.ts`, `packages/web/test/auth/email-follow.test.ts`,
+  `apps/api/test/email-login.test.ts`, `apps/e2e/tests/linking.spec.ts` (and the stack's chain: `unlink_identity`
+  refuses a pending member) · Amends D259 (a login's own method) and D864's "not done" (a), with a row of
+  "Superseded or amended"
+- Context: an active member of an account (an email that joined a Google wallet in case B, or a Google account that
+  joined an email wallet in case A) opens the root's wallet at every sign-in, with nothing said after the login that
+  made the link (D259 skips the signing-in method's own banner). Someone who reads a mailbox once could link it to
+  their own Google wallet; once active, the mailbox's owner signs in and lands in a wallet that the Google account's
+  holder also opens, and anything they put in is that person's. The contract already lets the member unlink itself
+  (`unlink_identity`, `j == member`; links.rs) and the API relays it (`POST /v1/link/unlink`, tested for the member).
+- Decision:
+  1. **When**: every sign-in whose identity is an active member of an account, without a link made by this login and
+     with the follow-up channel (an app with email), after the path is resolved and confirmed (D263) and **before**
+     the chain step: nothing opens the shared wallet until the user answers. **No time window**: the contract and the
+     API set none on a member's own removal (nor on the root's: its 7-day Remove is the banners' display rule,
+     `RECENT_LINK_MS`), so the notice shows for as long as the link exists, until "Keep it" in that browser. So there
+     is no "window expired" state.
+  2. **The notice** (`member_link`, the root's method by kind only, since when, an opaque `linkId`): heading "This email
+     now also opens another wallet"; amber box "Since {date}, this email opens a wallet that a Google account also
+     opens. Whoever holds that Google account can open it too."; "If you didn’t set this up, remove this email from
+     it."; muted "If you set this up yourself, keep it. We won’t ask again on this device."; buttons **Remove this
+     email** (red) and **Keep it**. A Google member reads the same with the words swapped ("This Google account now
+     also opens another wallet", "… a wallet that an email also opens. Whoever holds that email can open it too.",
+     **Remove this Google account**).
+  3. **Keep it**: the login goes on exactly as before; the popup stores `hana.ml.<linkId>` in `localStorage` on
+     `authOrigin` (where device tickets live) and answers at once at the next sign-in in that browser. Another browser
+     or device asks once too. `linkId` is sha256 of the root's and the member's identity keys and `sinceMs`: a new link
+     of the same pair asks again.
+  4. **Remove**: first a confirmation: "Remove this email from that wallet?"; red box "After you remove it, this email
+     can’t open that wallet any more. Anything in it stays there, and whoever holds that Google account can still open
+     it."; "If you added money to that wallet, move it out first. Choose Go back, then Keep it, and sign in to move
+     it."; "If you sign in with this email again afterwards, it opens a new, empty wallet of its own."; muted "We’ll
+     send one more code to this email to check it’s you." (Google: "Google will ask you to sign in again to check it’s
+     you."); **Remove it** (red), **Go back**. Then the login ends `login_cancelled`, `data.reason: 'link_remove'` (a
+     new reason, same code; the partner's `login()` doesn't wait on the code step), and `MemberRemove` gets its own
+     `AFTERWORD_MS` (5 min) for the proof, so the login's 5-minute limit never cuts the code step short.
+  5. **The proof and the checks**: from a fresh `get_identity`, the `link_change` "unlink" nonce for this member only
+     (fresh 32-byte salt, the account's epoch); one more code to the same address (or Google with `login_hint`); the
+     vault takes it only if it verifies against the chain's keys with that nonce and its `sub` is the signed-in one; it
+     re-reads, relays `POST /v1/link/unlink` only while still an active member of the same root at the same epoch; the
+     API's precheck and the contract check it all again. No contract, API or issuer change.
+  6. **Outcomes** (`member_removed`, after a read): `removed` ("This email was removed"; green "This email no longer
+     opens that wallet. Anything in it stays there, with whoever holds that Google account. Anyone signed in to that
+     wallet in this app will be asked to sign in again."; "If you sign in with this email again, it opens a new, empty
+     wallet of its own."; "If you didn’t set up the link, change your email password."); `already_removed` ("This email
+     was already removed", "This email no longer opens that wallet. There’s nothing more to do."); `not_removed` ("This
+     email wasn’t removed", "Nothing changed: this email still opens that wallet.", "Close this window, then sign in
+     to {app} with this email again to try again.", the code for support); `unknown` ("We couldn’t check the
+     removal", "Journear couldn’t be reached, so we can’t tell whether this email was removed.", "Sign in to {app} with
+     this email again. If it still opens that wallet, you’ll be asked again."). A failed relay that landed reads as
+     `removed`. A removal doesn't mark the link kept, so a failed one asks again.
+  7. **What the next sign-in opens**: `unlink_identity` puts the member in the root's `unlinked` list. The issuer's
+     case-B lookup and google-match judge the pair `unlinked` (`decide.ts`), so there is no "Link and continue" again;
+     the email gets a session token for its own path, which no session ever opened (a member never had a wallet of its
+     own: links.rs refuses a joiner with one), so it is a new, empty wallet (tested end to end). The same for a Google
+     member.
+  8. **Partner signals**: none new beyond the `login_cancelled` reason; `linkChanged` belongs to a session's own
+     wallet, and this login opens none.
+- Not done: the D864 notice mail's active advice and its "now_active" screen still tell the email's holder not to
+  sign in with that email; with this notice, signing in is now the way to remove it (a wording change for the founder).
+  After "Keep it" this browser never asks again, so a user who kept it to move money out first removes it from another
+  browser (no settings page lists links).
+- Rejected: a 7-day window (the contract sets none; the risk lasts as long as the link); asking after the login (the
+  partner would already hold a session on the shared wallet); continuing the login after a removal (it would open a
+  new wallet the user hasn't seen explained, and the code step would run inside the login's 5 minutes).
+- Address impact: none (no path or key derivation changes; a removed member opens its own path, as before its link).
+- Amended after PR 85's review (2026-11-18; items 1 to 3 decided by the user, "yes to all three"; item 4 and the
+  details to confirm). Points 2 to 4 above are as first built; these replace them where they differ:
+  1. **"Keep it" no longer means "never ask again"**: the main safe button is **Not now** (the sign-in goes on, nothing
+     stored, asked again at the next sign-in); a smaller, separate **Don't ask again on this device** (below the
+     buttons) stores `hana.ml.<linkId>` as "Keep it" did. Muted line: "If you set this up yourself, you can choose
+     Don’t ask again on this device." The confirmation's advice: "If you added money to that wallet, move it out
+     first. Choose Go back, then Not now, and sign in to move it. You’ll be asked again next time."
+  2. **No notice for an automatic, harmless link**, decided only from recorded data, never from the partner: the
+     member's provider and the root's (`get_identity`), the contract's `Member.auto` (`get_account` on the vault's
+     RPC: made by automatic linking), and google-match's answer for this very login (the email issuer, from Google's
+     userinfo with this login's access token): `decision: 'linked'` (this Google account's verified address is in this
+     account) and `googleHosted` (Gmail, or a Workspace address whose `hd` is its domain). A Google member, `auto`,
+     `linked`, Google-hosted: case A's silent link of the same person's address: **no notice**. `linked` and not
+     hosted (case A after "Link and continue"), `auto` false (`linkAccount`), and every email member (case B is always
+     "Link and continue"): `chosen`, the notice as above. Can't be told (no google-match in an app without email
+     login, the issuer down, another decision, the account unreadable): **shown**, `how: 'automatic'`: a blue box,
+     "This usually happens when that email is your own Gmail or Google Workspace address. If you don’t recognise it,
+     remove this Google account from it.", **Not now** first and **Remove this Google account** not in red. The
+     chain doesn't record whether a link had a code step or whether the address is hosted; `auto` and google-match
+     are what is recorded. The rule inherits D158's accepted residual: a Workspace or Cloud Identity domain whose mail
+     isn't on Google still reports `hd` equal to its domain, so its admin-made accounts count as Google-hosted and get
+     no notice; the domain's admin controls that mailbox anyway.
+  3. **D864's texts corrected** (amends D864): the pending notice mail's "Not you?" is "Change your email password,
+     then sign in to “{app}” with this email. During the waiting period you can cancel the link there. After it, the
+     Journear Passport sign-in window lets you remove this email from that wallet. Don’t add money to that wallet."
+     (the issuer doesn't know the link's date, so no date). The "can't be cancelled any more" screen: red box "The
+     waiting period has ended: this email and that Google account now open the same wallet."; "If you didn’t set this
+     up, don’t add money to it. Choose Remove this email below, and change your email password."; buttons **Remove
+     this email** (red) and **Close**. Remove goes through the same confirmation, then the member's own removal
+     (`MemberRemove`, started by `LinkWaiting` on `{choice: 'remove'}`), so there is no "sign in again" step.
+  4. **The partner's message** for `login_cancelled` with `link_remove`: "You chose to remove this sign-in from that
+     wallet. Finish it in the Journear Passport window. Then sign in again when you’re ready." (the reason picks it;
+     other `login_cancelled` keep "The sign-in was cancelled. Nothing was changed."). It is true either way: at that
+     moment the removal still waits for its code in the window (first built as "You removed …", corrected after the
+     re-check of PR 85).
+  5. **Every interactive sign-in has the channel**: an app without email login (record, D269) now gets the follow-up
+     channel too (its callback goes to the follow-up mode, the vault always sends its last word), so a member signing
+     in through any app of the scope is asked. Its login reads NEAR once more (the last word's `get_account`). An env
+     without an email issuer has no email identities, so no links. Tested in the vault.

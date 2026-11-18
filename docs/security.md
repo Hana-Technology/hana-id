@@ -2164,8 +2164,8 @@ stands between a request and the key:
   chain and the pinned delegate and recover to the account. It builds the `execute(...)` calldata itself, sent to the
   account with value 0. Its own signatures are only that, a same-nonce fee bump, a same-nonce 0-value self-transfer
   (the cancel), or a staff filler (a 0-value self-transfer).
-- **No user can stall it.** A batch no endpoint ever took, whose nonce the trusted pool doesn't hold, is replaced by
-  its cancel on the next run (about 15 s), whatever the pool's refusal text, so one user keeping their own account's
+- **No user can stall it.** A batch no endpoint ever took, whose nonce the trusted pool doesn't hold on two runs in a
+  row while a later record waits behind it, is replaced by its cancel (about 30 s), whatever the pool's refusal text, so one user keeping their own account's
   transactions queued (which makes pools refuse our type-4 with "authority already reserved" or similar) can't hold up
   every later sponsored transaction until the deadline; the alarm never backs off while such a record exists, and
   `deadlineMaxS` is at most 300.

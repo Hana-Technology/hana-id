@@ -17,8 +17,8 @@
 // then broadcast; ≤ 8 versions, every hash and raw kept until final), else a rebroadcast of the latest raw:
 //   cancel    a 0-value self-transfer at the same nonce when the batch's deadline passed, it was definitely refused
 //             and never accepted (at send at once: `broadcast: 'rejected'`, `rejection`), or (no endpoint ever took
-//             it, rebroadcast, its nonce in no trusted pool: pending == nonce) on the next run, so it can't hold every
-//             later nonce up; safe: the cancel takes the same nonce, the record ends by whichever receipt; no halt; or
+//             it, rebroadcast, its nonce in no trusted pool: pending == nonce, on two runs in a row, a later record
+//             waiting) so it can't hold every later nonce up; safe: same nonce, ends by whichever receipt; no halt; or
 //             by staffCancel. Priced from a FRESH base fee (≥ 2 × base + tip, within the caps); a REQUIRED one impossible
 //             (first cancel or reprice, nothing taken): halt `fee_cap_too_low`; a routine bump impossible: rebroadcast.
 //   bump      the latest version was signed ≥ 60 s ago: both fees × 1.125 within the caps (7 batch versions, the 8th
@@ -421,6 +421,8 @@ interface Rec {
   cannotSend: string | null;
   /** Our own cancel or filler was refused over its price: reprice it on the next run (no halt). */
   priceRefused?: boolean;
+  /** Consecutive runs that found this batch untaken after a rebroadcast with its nonce in no trusted pool. */
+  unpooledRuns?: number;
   /** A receipt of one of its versions, not yet final. */
   seen: { hash: Hex; block: number } | null;
 }
@@ -898,10 +900,15 @@ export class EvmRelayer extends DurableObject<Env> {
       // A batch just refused (its cancel is due) or newly accepted: run again soon.
       out.changed ||= (after.accepted && !r.accepted) || (after.batchRejected !== null && r.batchRejected === null) || (after.priceRefused === true && !r.priceRefused);
       if (after.cannotSend !== null && sent.kind === 'rejected') out.conditions.push({ reason: 'relayer_cannot_send', nonce: r.nonce, code: after.cannotSend });
-      // A batch no endpoint ever took, broadcast once more without being taken, whose nonce the trusted pool doesn't
-      // hold (pending == its nonce): every later transaction waits behind it, so its cancel takes the nonce now.
-      if (!after.accepted && after.digest !== null && latestOf(after).kind === 'execute' && sent.kind !== 'accepted' && n.pending === r.nonce && signatures < EVM_RELAYER_RUN_LIMITS.signatures && this.#canSign(c, meta)) {
-        const cancel = this.#nextVersion(c, after, now, n.baseFee, true);
+      // A batch no endpoint ever took, broadcast again without being taken, whose nonce the trusted pool doesn't hold
+      // (pending == its nonce), on TWO runs in a row (a pool-less endpoint's pending count never moves, so once is not
+      // evidence), with a later record waiting behind it: its cancel takes the nonce now. Nothing behind: the deadline.
+      const unpooled = !after.accepted && after.digest !== null && latestOf(after).kind === 'execute' && sent.kind !== 'accepted' && n.pending === r.nonce;
+      const runs = unpooled ? (r.unpooledRuns ?? 0) + 1 : 0;
+      if (runs !== (after.unpooledRuns ?? 0)) this.#putRec({ ...after, unpooledRuns: runs });
+      const blocking = meta.nextNonce !== null && r.nonce < meta.nextNonce - 1;
+      if (unpooled && runs >= 2 && blocking && signatures < EVM_RELAYER_RUN_LIMITS.signatures && this.#canSign(c, meta)) {
+        const cancel = this.#nextVersion(c, this.#rec(r.nonce) ?? after, now, n.baseFee, true);
         if (cancel === 'fee_cap_too_low') out.conditions.push({ reason: 'relayer_cannot_send', nonce: r.nonce, code: cancel });
         else if (cancel) {
           signatures++;

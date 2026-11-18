@@ -963,7 +963,8 @@ A batch no endpoint takes is replaced at once by its 0-value self-transfer at th
 (`pricing`: the handler reprices), only cancels (so no user's input or market move can stop the relayer); any other
 is ours and also halts it (`relayer_cannot_send`). A send priced below the latest base fee × 1.125 is refused
 `fees_too_low`; the relayer prices its own cancels from a fresh base fee and reprices one the pool turns away. A batch
-no endpoint takes and the trusted pool doesn't hold is cancelled on the next run (the alarm doesn't back off while one
+no endpoint takes and the trusted pool doesn't hold, on two runs in a row with a later record waiting behind it, is
+cancelled then (the alarm doesn't back off while one
 exists; `status().oldestUnacceptedMs`). `send` answers a coded refusal as a value (`{ ok: false, refused, reason }`). It never waits for a receipt; `lookup(digest)` and
 `status()` read storage only.
 

@@ -1620,7 +1620,7 @@ describe('review H1 (API + relayer): one user can\'t stall the relayer with an u
     return request({ authorization: authorization({}, a.key), execute: { account: a.addr } }, a.key);
   };
 
-  it('a type-4 refused with a text nobody classified (unknown): the next run, finding its nonce in no pool, cancels it; the victims behind it mine; no halt, no backoff', async () => {
+  it('a type-4 refused with a text nobody classified (unknown), victims behind it: the second run in a row that finds its nonce in no pool cancels it; the victims mine; no halt, no backoff', async () => {
     const stub = await fresh();
     chain.onSend = (tx) => (tx.type === 4 ? { error: 'some pool rule nobody has written down yet' } : undefined);
     const a = await stub.send(attackerRequest());
@@ -1632,6 +1632,11 @@ describe('review H1 (API + relayer): one user can\'t stall the relayer with an u
     expect((await stub.status()).oldestUnacceptedMs).toBe(5_000);
     expect((await stored(stub)).alarm).toBeLessThanOrEqual(now - 5_000 + EVM_RELAYER_ALARM_MS);
     await runDurableObjectAlarm(stub);
+    // Once is not enough (a pool-less endpoint's pending count may never move): the same on the next run.
+    expect((await stored(stub)).recs.find((r) => r.nonce === 0)!.versions.map((v) => v.kind)).toEqual(['execute']);
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_ALARM_MS);
+    advance(EVM_RELAYER_ALARM_MS);
+    await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs.find((r) => r.nonce === 0)!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
     expect(chain.pendingCount(RELAYER)).toBe(3);
     expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_ALARM_MS);
@@ -1641,6 +1646,39 @@ describe('review H1 (API + relayer): one user can\'t stall the relayer with an u
     for (const v of victims) expect(await stub.lookup(v.digest)).toMatchObject({ state: 'mined', outcome: 'execute' });
     expect(await halted(stub)).toBeNull();
     expect((await stub.status()).oldestUnacceptedMs).toBeNull();
+  });
+
+  it('a pool-less endpoint (pending never moves) where broadcasts time out twice: with nothing behind it the batch is NOT cancelled early and mines; with a victim behind it, the second run cancels it and the victim mines', async () => {
+    for (const behind of [false, true]) {
+      chain = new EvmMock({ chainId: CHAIN }).install();
+      const stub = await fresh();
+      let aHash = '';
+      chain.onSend = (tx) => (aHash === '' || tx.hash === aHash ? 'network' : undefined);
+      const a = await stub.send(request());
+      aHash = a.transactionHash;
+      // The sequencer has it all along; the trusted endpoint keeps no pool, so its pending count is the mined count,
+      // and every re-send of A's raw times out (a forwarding endpoint, no "already known").
+      chain.admit(decodeRawTx(a.raw!));
+      intercept((m, p) => (m === 'eth_getTransactionCount' && p[1] === 'pending' ? `0x${chain.mined(RELAYER).toString(16)}` : undefined));
+      const inner = vi.mocked(globalThis.fetch).getMockImplementation()!;
+      vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+        const body = JSON.parse(String(init?.body)) as { method: string; params: unknown[] };
+        if (body.method === 'eth_sendRawTransaction' && String(body.params[0]).toLowerCase() === a.raw!.toLowerCase()) throw new TypeError('The operation timed out.');
+        return inner(input, init);
+      });
+      const victim = behind ? await stub.send(reqFor('behind')) : null;
+      for (let i = 0; i < 2; i++) {
+        advance(EVM_RELAYER_ALARM_MS);
+        await runDurableObjectAlarm(stub);
+      }
+      const kinds = (await stored(stub)).recs.find((r) => r.nonce === 0)!.versions.map((v) => v.kind);
+      expect([behind, kinds]).toEqual([behind, behind ? ['execute', 'cancel'] : ['execute']]);
+      chain.mine(RELAYER);
+      await runDurableObjectAlarm(stub);
+      expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined', outcome: behind ? 'cancel' : 'execute' });
+      if (victim) expect(await stub.lookup(victim.digest)).toMatchObject({ state: 'mined', outcome: 'execute' });
+      expect(await halted(stub)).toBeNull();
+    }
   });
 
   it('the pool\'s own 7702 refusal texts are definite: "authority already reserved" cancels at once (cause request, no halt)', async () => {

@@ -13,7 +13,7 @@ import { limiter } from '../handlers.ts';
 import { log } from '../log.ts';
 import { receiptCost, type ReservedFor } from './op-fee.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, sponsorChain } from './sponsor-config.ts';
-import { type BillingFigures, type BillingOutcome, billingStatement, correctionStatement } from './sponsor-billing.ts';
+import { type BillingFigures, type BillingOutcome, billingStatement, correctionStatement, notChargedCorrectionStatement } from './sponsor-billing.ts';
 import { executedIn } from './sponsor-checks.ts';
 import { blockTimestamp, type EvmRelayerLookup, type EvmRelayerPort, type Hex, type SponsorChainPort, type SponsorReceipt, sponsorPorts } from './sponsor-ports.ts';
 
@@ -25,6 +25,14 @@ export const HOUR = 60 * MINUTE;
 
 export const accountSubject = (chainId: number, account: string) => `evm-sponsor:account:${chainId}:${account.toLowerCase()}`;
 export const appSubjectOf = (appId: string) => `app:${appId}`;
+/** The user's day of sends and attempts (with a directory user). */
+export const userSubjectOf = (userId: string) => `evm-sponsor:user:${userId}`;
+/** The env's minute and day of sends. */
+export const envSubjectOf = (chainId: number) => `evm-sponsor:global:${chainId}`;
+/** The day windows a send counts in (its name on each subject), given back when it was not the user's or the partner's doing. */
+export const dayWindowName = (chainId: number) => `evm-sponsor:${chainId}:day`;
+export const ENV_DAY_WINDOW = 'evm-sponsor:day';
+export const attemptsWindowName = (chainId: number) => `evm-sponsor:${chainId}:attempts`;
 /** The env's day budget lives on its own object (read by the status route). */
 export const envBudgetSubject = (chainId: number) => `evm-sponsor:budget:${chainId}`;
 /** The day budget's window, on `app:<id>` and on the env's budget object. */
@@ -37,7 +45,7 @@ export const failureSubject = (chainId: number, account: string, userId: string 
 /** The statuses of a send still in flight: an app's count of these is its share of the relayer (D847, derived from D1). */
 export const INFLIGHT_STATUSES = ['sending', 'sent', 'timeout', 'unknown', 'rejected'] as const;
 
-export type EventKind = 'evm_relay_budget_high' | 'evm_relay_balance_low' | 'evm_relay_stuck' | 'evm_relay_receipt_odd' | 'evm_relay_nonce_taken' | 'evm_billing_late';
+export type EventKind = 'evm_relay_budget_high' | 'evm_relay_balance_low' | 'evm_relay_stuck' | 'evm_relay_receipt_odd' | 'evm_relay_nonce_taken' | 'evm_billing_late' | 'evm_relay_closed_slot_mined';
 
 /** One security event per fixed id (`kind` and `idParts`). Amounts, counts and chain ids only. Never throws. */
 export async function noteEvent(env: Env, ctx: { requestId?: string; endpoint?: string } | null, kind: EventKind, idParts: string[], detail: Record<string, unknown>, now: number): Promise<void> {
@@ -112,10 +120,12 @@ interface RowColumns {
   created_at: number;
   updated_at: number;
   status: SendStatus;
+  /** `<cause>:<code>` of a batch no node took (its counts were settled at that rejection), or null. */
+  rejection: string | null;
 }
 
 const ROW_COLUMNS = `id, app_id, chain_id, account, user_id, digest, execute_nonce, tx_hash, tx_hashes, deadline, gas_limit, fee_cap_wei, l1_bound_wei,
-                op_bound_wei, reserved_wei, replay, created_at, updated_at, status`;
+                op_bound_wei, reserved_wei, replay, created_at, updated_at, status, rejection`;
 
 const rowOf = (c: RowColumns): SendRow => ({
   id: c.id,
@@ -288,16 +298,57 @@ export async function settleFromRelayerCost(env: Env, row: SendRow, minedHash: H
 }
 
 /**
- * A charge with no mined transaction of its own, kept as the reservation: `lost` (nothing proved nothing was spent) or
- * `consumed_elsewhere` (staff closed the relayer's record: its nonce went to something else; `evm_relay_nonce_taken`).
+ * A charge with no mined transaction of its own, kept as the reservation: `lost` (nothing proved nothing was spent).
  * The row moves with its billing record (the reservation as the amount); no budget moves.
  */
-export async function settleAsCharge(env: Env, row: SendRow, status: 'lost' | 'consumed_elsewhere'): Promise<boolean> {
+export async function settleAsCharge(env: Env, row: SendRow, status: 'lost'): Promise<boolean> {
   const now = Date.now();
   const amount = row.replay ? 0n : row.reserved.reservedWei;
-  if (!(await moveRow(env, row.id, OPEN_STATUSES, status, { settledWei: amount }, (st) => billingStatement(env, row.id, st, status, amount, null, now)))) return false;
-  if (status === 'consumed_elsewhere') await noteEvent(env, null, 'evm_relay_nonce_taken', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId }, now);
+  return moveRow(env, row.id, OPEN_STATUSES, status, { settledWei: amount }, (st) => billingStatement(env, row.id, st, status, amount, null, now));
+}
+
+/**
+ * A slot used up by a transaction Journear's relayer did not send (`consumed_elsewhere`: staff closed the relayer's
+ * record after the relayer itself stopped on it; a leaked or misused relayer key), so the user's action never ran.
+ * Journear's own loss, not the partner's (D869, the founder's decision): the row settles at 0 with its billing record
+ * (outcome `consumed_elsewhere`, settled 0, no cost figures: a billing job never bills it, the monthly view shows it
+ * apart, counted), the amount set aside goes back to the app's and the env's day budgets, and the user's and the app's
+ * day counts, the user's attempts and failure slot are given back (none of it was their doing). Once: the row moves
+ * only from the status it was read in (`prior`), so only one caller moves it and that caller knows what was already
+ * returned: a `rejected` row's counts were settled when it was rejected (given back then for a cause not the user's,
+ * kept for the user's own `request` cause), so only its money comes back here. The row is final, so no later receipt
+ * or correction can charge it. `evm_relay_nonce_taken` is written for staff. Never throws.
+ */
+export async function settleNotCharged(env: Env, row: SendRow, prior: SendStatus): Promise<boolean> {
+  const now = Date.now();
+  if (!OPEN_STATUSES.includes(prior)) return false;
+  if (!(await moveRow(env, row.id, [prior], 'consumed_elsewhere', { settledWei: 0n }, (st) => billingStatement(env, row.id, st, 'consumed_elsewhere', 0n, null, now)))) return false;
+  if (!row.replay) await giveBackNotCharged(env, row, row.reserved.reservedWei, { counts: prior !== 'rejected', failure: prior !== 'rejected' });
+  await noteEvent(env, null, 'evm_relay_nonce_taken', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId, charged: false }, now);
   return true;
+}
+
+/**
+ * Gives back what a not-charged send took (D869): `money` (what its budgets hold for it now) to the app's and the env's
+ * day budgets; with `counts`, the user's, the app's and the env's day counts and the user's attempts; with `failure`, the
+ * failure slot. Un-hit in the windows of the row's creation (an attempt counted just before UTC midnight and created
+ * just after decrements the next day's attempts: negligible, D869). Callers call it once, after the one move. Never throws.
+ */
+async function giveBackNotCharged(env: Env, row: SendRow, money: bigint, o: { counts: boolean; failure: boolean }): Promise<void> {
+  const at = row.createdAt;
+  const unhit = (subject: string, name: string) => limiter(env, subject).unhit([{ name, windowMs: DAY, max: 1 }], at).catch(() => undefined);
+  await Promise.all([
+    settleBudget(env, row.appId, row.chainId, money, 0n, at),
+    ...(o.failure ? [limiter(env, failureSubject(row.chainId, row.account, row.userId)).giveBack(FAILURES, DAY, '1', at).catch(() => undefined)] : []),
+    ...(o.counts
+      ? [
+          unhit(appSubjectOf(row.appId), dayWindowName(row.chainId)),
+          unhit(envSubjectOf(row.chainId), ENV_DAY_WINDOW),
+          ...(row.userId ? [unhit(userSubjectOf(row.userId), dayWindowName(row.chainId))] : []),
+          unhit(row.userId ? userSubjectOf(row.userId) : accountSubject(row.chainId, row.account), attemptsWindowName(row.chainId)),
+        ]
+      : []),
+  ]);
 }
 
 /** At most this many hashes per row are read per poll. */
@@ -376,6 +427,8 @@ export interface ReconcileCounts {
   /** Rows settled at head the relayer's verdict at confirmed depth agreed with, and rows it corrected (a reorg). */
   confirmed: number;
   corrected: number;
+  /** Closed slots found mined after all (`evm_relay_closed_slot_mined`), from the lowest-priority watch. */
+  closedMined?: number;
 }
 
 /** Inline (the send path, when the app's in-flight share is full): this app's and chain's rows only, at most `limit`. */
@@ -390,7 +443,7 @@ export interface ReconcileScope {
  * A row settles ONLY from (a) a receipt for one of its own hashes (every hash the relayer ever reported, persisted on
  * the row, and the ones its lookup lists now), or (b) the relayer's lookup: `mined` (at confirmed depth) with its cost
  * (for a `rejected` row at once: its cancel; for any other when the receipt itself still can't be read an hour past
- * the deadline) or `closed` `consumed_elsewhere` (the reservation kept as the cost, an event for staff). Anything else
+ * the deadline) or `closed` `consumed_elsewhere` (not charged: Journear's loss, everything given back, D869; an event for staff). Anything else
  * stays open, and an hour past the deadline becomes `lost` with the reservation kept (and a billing record of that
  * amount). A `rejected` row's receipt of any hash but its batch's is the cancel's. Never throws.
  */
@@ -445,7 +498,7 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
       continue;
     }
     if (v?.state === 'closed' && v.outcome === 'consumed_elsewhere') {
-      if (await settleAsCharge(env, row, 'consumed_elsewhere')) counts.settled++;
+      if (await settleNotCharged(env, row, c.status)) counts.settled++;
       continue;
     }
     if (v?.state === 'mined' && v.minedHash && own.has(v.minedHash.toLowerCase() as Hex) && typeof v.costWei === 'bigint' && (v.outcome === 'execute' || v.outcome === 'cancel') && (rejected || pastDeadline >= GIVE_UP_AFTER_MS)) {
@@ -470,6 +523,8 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
     await noteEvent(env, null, 'evm_relay_stuck', [String(chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId, pending: s.rows, oldestPendingMs: s.oldestMs }, now);
   }
   if (!scope) await confirmSettled(env, config, now, counts);
+  // Lowest priority, after everything else: closed slots that may still mine (D869 review L2).
+  if (!scope) counts.closedMined = await watchClosedSlots(env, config, now);
   return counts;
 }
 
@@ -505,6 +560,11 @@ async function confirmSettled(env: Env, config: EvmSponsorConfig, now: number, c
     const row = rowOf(c);
     const l = await lookupDigest(sponsorPorts.relayer(env, row.chainId), row.digest);
     const v = l.value;
+    // Settled at head, then reorged out, then its slot used by something else and closed by staff (D869): not charged.
+    if (l.asked && v?.state === 'closed' && v.outcome === 'consumed_elsewhere') {
+      if (await correctToNotCharged(env, c, row, now)) counts.corrected++;
+      continue;
+    }
     if (!l.asked || v?.state !== 'mined' || !v.minedHash) continue;
     const mined = v.minedHash.toLowerCase() as Hex;
     if (mined === row.txHash) {
@@ -545,6 +605,78 @@ async function confirmSettled(env: Env, config: EvmSponsorConfig, now: number, c
     log({ event: 'evm_sponsor_corrected', code: `${c.status}:${outcome}` }, 'error');
     counts.corrected++;
   }
+}
+
+/**
+ * A row settled from a receipt at head (`executed`, `reverted`, `not_executed`, unconfirmed) whose transaction the
+ * chain later dropped (a reorg) and whose slot staff then closed as used by something else (D869): the row moves to
+ * `consumed_elsewhere` at 0 with a correction record `fix:<send>` (outcome `consumed_elsewhere`, settled 0, no
+ * transaction: never an edit of the first), in one D1 batch guarded on the status read and `confirmed_at IS NULL`, so
+ * only one run moves it; that run gives back what the first settlement charged and the counts it kept (the day counts
+ * and attempts, unless a rejection settled them; the failure slot, unless the send was `executed` or rejected). True
+ * when this call moved it. Never throws.
+ */
+async function correctToNotCharged(env: Env, c: RowColumns & { settled_wei: string | null }, row: SendRow, now: number): Promise<boolean> {
+  const before = c.settled_wei !== null && /^\d{1,78}$/u.test(c.settled_wei) ? BigInt(c.settled_wei) : 0n;
+  const original = row.txHash ? row.txHash.toLowerCase() : `send:${row.id}`;
+  try {
+    const [moved] = await env.DB.batch([
+      env.DB.prepare("UPDATE evm_sponsor_sends SET status = 'consumed_elsewhere', settled_wei = '0', confirmed_at = ?3, updated_at = MAX(created_at, ?3) WHERE id = ?1 AND status = ?2 AND confirmed_at IS NULL").bind(row.id, c.status, now),
+      notChargedCorrectionStatement(env, row.id, original, now),
+    ]);
+    if ((moved!.meta.changes ?? 0) !== 1) return false;
+  } catch {
+    return false;
+  }
+  if (!row.replay) await giveBackNotCharged(env, row, before, { counts: c.rejection === null, failure: c.rejection === null && c.status !== 'executed' });
+  await noteEvent(env, null, 'evm_relay_nonce_taken', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId, charged: false, corrected: true }, now);
+  log({ event: 'evm_sponsor_corrected', code: `${c.status}:consumed_elsewhere` }, 'error');
+  return true;
+}
+
+// ---- a slot closed as used elsewhere that later mines anyway (D869 review L2) ----
+
+/** How long after a close the cron keeps looking for the closed slot's own transactions. */
+export const CLOSED_WATCH_MS = 7 * DAY;
+/** Closed rows checked per run, and hashes per row (lowest priority: after everything else). */
+export const CLOSED_WATCH_ROWS = 4;
+export const CLOSED_WATCH_HASHES = 8;
+
+/**
+ * For 7 days after staff closed a slot as used elsewhere, reads receipts for the row's own persisted hashes (at most
+ * CLOSED_WATCH_ROWS rows, CLOSED_WATCH_HASHES hashes each, a run): one mined means the close was mistaken and the user's
+ * action ran for free and unrecorded as a charge. It writes `evm_relay_closed_slot_mined` once per row (its id) for
+ * staff, and never charges anything. Returns how many it found. Never throws.
+ */
+export async function watchClosedSlots(env: Env, config: EvmSponsorConfig, now: number = Date.now()): Promise<number> {
+  let rows: { id: string; chain_id: number; tx_hash: string | null; tx_hashes: string }[];
+  try {
+    rows = (
+      await env.DB.prepare(
+        `SELECT s.id, s.chain_id, s.tx_hash, s.tx_hashes FROM evm_sponsor_sends s
+          WHERE s.status = 'consumed_elsewhere' AND s.replay = 0 AND s.updated_at >= ?1
+            AND NOT EXISTS (SELECT 1 FROM security_events e WHERE e.kind = 'evm_relay_closed_slot_mined' AND e.detail_json LIKE '%' || s.id || '%')
+          ORDER BY s.updated_at DESC LIMIT ?2`,
+      )
+        .bind(now - CLOSED_WATCH_MS, CLOSED_WATCH_ROWS)
+        .all<{ id: string; chain_id: number; tx_hash: string | null; tx_hashes: string }>()
+    ).results;
+  } catch {
+    return 0;
+  }
+  let found = 0;
+  for (const r of rows) {
+    const cfg = sponsorChain(config, r.chain_id);
+    if (!cfg) continue;
+    const hashes = [...new Set([...(r.tx_hash ? [r.tx_hash.toLowerCase() as Hex] : []), ...parseHashes(r.tx_hashes)])].slice(0, CLOSED_WATCH_HASHES);
+    if (hashes.length === 0) continue;
+    const read = await readReceipts(sponsorPorts.chain(env, cfg), hashes);
+    if (read.kind !== 'mined') continue;
+    found++;
+    await noteEvent(env, null, 'evm_relay_closed_slot_mined', [r.id], { chainId: r.chain_id, sendId: r.id }, now);
+    log({ event: 'evm_sponsor_closed_slot_mined', code: 'not_charged' }, 'error');
+  }
+  return found;
 }
 
 /** The audit rows' retention (D848): 24 months, then deleted by the hourly cron, at most this many a run. */

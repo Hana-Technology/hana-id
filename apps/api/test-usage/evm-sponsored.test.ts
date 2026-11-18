@@ -107,3 +107,33 @@ describe('corrections (D847: a reorg the relayer’s verdict showed)', () => {
     expect((await failure(copy([row({ record_key: hash('c3'), tx_hash: hash('c3'), corrects: first })])))?.message).toMatch(/corrects/u);
   });
 });
+
+describe('not charged (D869: a slot lost to Journear’s own key)', () => {
+  const NULLS = { tx_hash: null, outcome: 'consumed_elsewhere', block_number: null, block_time: null, gas_used: null, effective_gas_price_wei: null, execution_wei: null, l1_fee_wei: null, operator_fee_wei: null, total_cost_wei: null, settled_wei: '0' };
+
+  it('a not-charged record (NULL costs, settled 0) round-trips; the monthly view counts it at 0 beside the app’s real charges', async () => {
+    expect(await copy([row({ record_key: hash('d1'), tx_hash: hash('d1'), app_id: 'app_nc', settled_wei: '7000' }), row({ ...NULLS, record_key: 'send:es_000000000000000000000000000000d2', app_id: 'app_nc' })])).toBe(2);
+    expect(await copy([row({ ...NULLS, record_key: 'send:es_000000000000000000000000000000d2', app_id: 'app_nc' })])).toBe(0);
+    const [r] = await db.query<Record<string, unknown>>("SELECT tx_hash, outcome, settled_wei::text AS settled_wei, total_cost_wei, l1_fee_wei, gas_used FROM usage.evm_sponsored_txs WHERE record_key = 'send:es_000000000000000000000000000000d2'");
+    expect(r).toEqual({ tx_hash: null, outcome: 'consumed_elsewhere', settled_wei: '0', total_cost_wei: null, l1_fee_wei: null, gas_used: null });
+    const rows = await db.asRole('usage_admin', () =>
+      db.query<{ outcome: string; transactions: string; settled_wei: string; total_cost_wei: string | null }>(
+        "SELECT outcome, transactions::text AS transactions, settled_wei::text AS settled_wei, total_cost_wei::text AS total_cost_wei FROM usage.evm_sponsored_monthly WHERE app_id = 'app_nc' ORDER BY outcome",
+      ),
+    );
+    expect(rows).toEqual([
+      { outcome: 'consumed_elsewhere', transactions: '1', settled_wei: '0', total_cost_wei: null },
+      { outcome: 'executed', transactions: '1', settled_wei: '7000', total_cost_wei: '9000000000500' },
+    ]);
+  });
+
+  it('a correction to not charged (no transaction, settled 0) supersedes the first record; the view counts only the correction', async () => {
+    const first = hash('e1');
+    expect(await copy([row({ record_key: first, tx_hash: first, app_id: 'app_ncfix', settled_wei: '9000000000500' })])).toBe(1);
+    expect(await copy([row({ ...NULLS, record_key: 'fix:es_000000000000000000000000000000e1', app_id: 'app_ncfix', corrects: first })])).toBe(1);
+    const rows = await db.asRole('usage_admin', () => db.query<{ outcome: string; settled_wei: string }>("SELECT outcome, settled_wei::text AS settled_wei FROM usage.evm_sponsored_monthly WHERE app_id = 'app_ncfix'"));
+    expect(rows).toEqual([{ outcome: 'consumed_elsewhere', settled_wei: '0' }]);
+    // Without a transaction, only a not-charged correction is allowed.
+    expect(await failure(copy([row({ ...NULLS, outcome: 'executed', record_key: 'fix:es_000000000000000000000000000000e2', app_id: 'app_ncfix', corrects: first })]))).not.toBeNull();
+  });
+});

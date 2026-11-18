@@ -963,6 +963,25 @@ const identityKmsSigner: Playbook = {
   related: ['identity-signing-key-compromised', 'api-or-cloudflare-compromised'],
 };
 
+// A relayer slot staff closed as used elsewhere whose own transaction went through after all (D869 review L2).
+const evmRelayClosedSlotMined: Playbook = {
+  id: 'evm-relay-closed-slot-mined',
+  title: 'Free network fees: a slot staff closed went through after all',
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "An `evm_relay_closed_slot_mined` security event: within 7 days of staff closing a relayer slot as “used by something else”, one of that slot's own transactions was found on the network. The close was mistaken: the user's action ran, for free.",
+  signals: ["An `evm_relay_closed_slot_mined` row in the admin's security events, emailed by the feed (once per slot: the network and the send's id)."],
+  impact: ["The user's action happened, but it was recorded as not done and not charged (D869): the partner wasn't billed for it, and nothing will charge it now. Nothing else is affected.", "How urgent: this week. It means the slot was closed on wrong evidence: check how, so it doesn't happen again."],
+  steps: [
+    { title: 'Tell an engineer', who: 'anyone', detail: "Give an engineer the event's details (the network and the send id). The engineer looks up the send's transactions on the block explorer and the relayer's staff log for who closed the slot and why." },
+    { title: 'Find why the close looked right', who: 'a founder', detail: "With the engineer: a slot is closed only when the relayer stopped because its number was used by something else. If the read endpoint gave wrong answers, replace it (the secret `EVM_SPONSOR_RPC_<chainId>`). Nothing is charged afterwards: the record stays at 0, Journear's own cost." },
+  ],
+  verify: ['No further events of this kind after the cause is fixed.'],
+  followUps: ['Note the case in the decision log if the read endpoint was at fault.'],
+  refs: ['docs/operations.md#evm-gas-sponsorship-not-live-yet-d834d836-d847-d848-d851-d856', 'D869', 'D851'],
+};
+
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   homeBudgetHigh,
   nearRelayBudgetHigh,
@@ -988,4 +1007,5 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   emailIssuerKey,
   identitySigningKey,
   identityKmsSigner,
+  evmRelayClosedSlotMined,
 ];

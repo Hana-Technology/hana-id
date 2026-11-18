@@ -127,7 +127,7 @@ describe('broadcast', () => {
   it('rejected only when every endpoint reached refused it definitely; unknown when any gave no definite answer; unsent when none was reached', async () => {
     const r = await raw();
     chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
-    expect(await client().broadcast(r)).toEqual({ kind: 'rejected', reason: 'insufficient_funds' });
+    expect(await client().broadcast(r)).toEqual({ kind: 'rejected', reason: 'insufficient_funds', byRead: 'insufficient_funds' });
     chain.onSend = (_tx, endpoint) => (endpoint === 0 ? { error: 'insufficient funds' } : 'network');
     expect(await client().broadcast(r)).toEqual({ kind: 'unknown' });
     chain.onSend = undefined;

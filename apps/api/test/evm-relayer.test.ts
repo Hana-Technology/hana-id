@@ -28,6 +28,7 @@ import {
   type EvmRelayer,
   type EvmRelayerSendRequest,
   bumpedFees,
+  cancelFees,
   evmRelayKeyAddress,
   evmRelayerError,
   evmRelayerName,
@@ -1237,6 +1238,79 @@ describe('review H1: no user can halt sponsorship', () => {
     const sent = await stub.send(request());
     expect(sent).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'relayer', code: 'replacement_underpriced' } });
     expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', nonce: 1, code: 'replacement_underpriced' });
+  });
+
+  it('a first version\'s replacement refusal the trusted endpoint does not confirm (its pending count == the nonce) is pricing: cancel priced fresh, no halt, noted for staff', async () => {
+    const stub = await fresh();
+    chain.onSend = rejectBatches('replacement transaction underpriced');
+    const sent = await stub.send(request());
+    expect(sent).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'pricing', code: 'replacement_underpriced' } });
+    expect(await halted(stub)).toBeNull();
+    expect(chain.pooled(RELAYER, 0)).toMatchObject({ to: RELAYER.toLowerCase() });
+    expect((await evmRelayerStaffStatus(stub)).unconfirmedRefusal).toEqual({ count: 1, lastAt: now, nonce: 0, code: 'replacement_underpriced' });
+  });
+
+  it('a first version\'s replacement refusal from the fallback alone (the read endpoint not reached) is pricing: no halt', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    chain.admit(foreign(1, GWEI / 9n));
+    forgetVerifiedChains();
+    chain.modes[0] = 'down';
+    const sent = await stub.send(request());
+    expect(sent.rejection).toEqual({ cause: 'pricing', code: 'replacement_underpriced' });
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('a refusal only we can cause, heard from the fallback alone (the read endpoint not reached), halts nothing: noted for staff', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    forgetVerifiedChains();
+    chain.modes[0] = 'down';
+    chain.onSend = rejectBatches('insufficient funds for gas * price + value');
+    const sent = await stub.send(request());
+    expect(sent).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'relayer', code: 'insufficient_funds' } });
+    expect(await halted(stub)).toBeNull();
+    expect((await evmRelayerStaffStatus(stub)).unconfirmedRefusal).toMatchObject({ count: 1, nonce: 1, code: 'insufficient_funds' });
+  });
+
+  it('a first version\'s replacement refusal whose confirming read fails is pricing: no halt', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    chain.admit(foreign(1, GWEI / 9n));
+    chain.onRead = (method) => (method === 'eth_getTransactionCount' ? Promise.reject(new TypeError('Network connection lost.')) : undefined);
+    const sent = await stub.send(request());
+    chain.onRead = undefined;
+    expect(sent.rejection).toEqual({ cause: 'pricing', code: 'replacement_underpriced' });
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('a routine bump that the caps can\'t price higher (an accepted cancel at the cap past the bump interval): the latest is broadcast again, no halt', async () => {
+    const stub = await fresh();
+    const caps = { maxFeePerGasWei: GWEI, maxPriorityFeePerGasWei: GWEI / 100n };
+    await stub.send(request({ ...maxStartingFees(caps), reservedWei: ETH / 100n, execute: { deadline: nowS() + 60n } }));
+    advance(61_000);
+    await runDurableObjectAlarm(stub);
+    for (let i = 0; i < 3; i++) {
+      advance(EVM_RELAYER_BUMP_AFTER_MS);
+      await runDurableObjectAlarm(stub);
+    }
+    const rec = (await stored(stub)).recs[0]!;
+    expect(rec.accepted).toBe(true);
+    const last = rec.versions.at(-1)!;
+    // No higher valid cancel exists under the caps: the routine bump stops, the latest goes out again.
+    expect(cancelFees({ maxFeePerGas: BigInt(last.maxFeePerGas), maxPriorityFeePerGas: BigInt(last.maxPriorityFeePerGas) }, chain.baseFee, caps)).toBeNull();
+    expect(chain.broadcasts.at(-1)!.tx.hash).toBe(last.hash);
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('a REQUIRED reprice (our cancel refused over its price) that the caps make impossible halts: fee_cap_too_low', async () => {
+    const stub = await fresh();
+    chain.onSend = (tx) => (tx.to === RELAYER.toLowerCase() ? { error: 'transaction underpriced' } : { error: 'intrinsic gas too low' });
+    await stub.send(request());
+    expect(await halted(stub)).toBeNull();
+    chain.baseFee = 2n * GWEI;
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', nonce: 0, code: 'fee_cap_too_low' });
   });
 
   it('replacement_underpriced of a batch\'s own later bump is pricing: no halt', async () => {

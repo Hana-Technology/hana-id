@@ -25,6 +25,18 @@ as on chain) and the test-only `e2e_stamps_collect` the relayer routes call. Sig
 window with no launcher; a second test holds the vault's key check, closes the window after the first approval and
 collects through the slot's Continue (D807).
 
+The support pages (D866): `tests/support-pages.spec.ts` locks an address with wrong codes (the dev envs' backstop),
+sees the sign-in window refuse it, has staff unlock it, opens the mailed link, checks nothing happens before the
+button (the token can't be used), presses it once (a double click is one request), and signs in; and bounces an
+address, sees no code sent, has staff unsuppress it, presses the confirm page's button, and signs in. Staff calls and
+bounces go through the issuer's real routes: `POST {ISSUER}/__e2e/staff {action: 'unlock' | 'unsuppress', email,
+ticket?}` (a Cloudflare Access JWT the stack signs with a throwaway key; the issuer's Access check fetches the certs
+from `e2e-access.invalid`, answered in the stack's process) and `POST {ISSUER}/__e2e/bounce {email, event?}` (a
+SendGrid event signed with a throwaway P-256 key). Both no CORS, refused with an `Origin`. With `HANA_SHOTS_DIR=<dir>`
+(Chromium) it saves each page at phone width before the button, after it and expired (the issuer's `410 link_expired`
+routed in the browser), and the two mails. The in-memory Durable Object alarm waits past Node's longest timer (24.8
+days) instead of firing at once (a staff action's 30-day log).
+
 Gas-free EVM actions (D838, D847, D851, D855, D856): `tests/evm-sponsor.spec.ts` runs `hana.evm.sendSponsored` from a
 click through the vault's prepare, one approval and send against apps/api's **own** sponsorship routes (the session
 proof, the allowlist and every check) and the **real relayer object** (`EvmRelayer`, in memory), which signs with the

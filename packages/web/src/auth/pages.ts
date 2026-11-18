@@ -7,7 +7,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core/demo-config';
 import { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
 
-export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export' | 'share' | 'home' | 'home-callback';
+export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export' | 'share' | 'home' | 'home-callback' | 'unlock' | 'confirm';
 
 export interface AuthPage {
   readonly name: AuthPageName;
@@ -30,6 +30,9 @@ export const AUTH_PAGES: readonly AuthPage[] = Object.freeze([
   { name: 'home', path: '/home', file: 'home.html', title: BRAND.home },
   // D491: the exit Google client's only redirect URI (home-callback-page.ts).
   { name: 'home-callback', path: '/home/callback', file: 'home/callback.html', title: `Signing in to ${BRAND.home}` },
+  // D866: the staff unlock and unsuppress mails' pages (support-page.ts), one button each.
+  { name: 'unlock', path: '/email/unlock', file: 'email/unlock.html', title: 'Unlock sign-in with your email' },
+  { name: 'confirm', path: '/email/confirm', file: 'email/confirm.html', title: 'Confirm your email' },
 ]);
 
 /** Google's JWKS host, which the export window reads (as the vault does). */
@@ -113,6 +116,11 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
     case 'share':
       // D411: the sheet reads the sealed address from the API (`/v1/identity/email-consent/preview`); nothing else.
       return [originOf(env.apiUrl)];
+    case 'unlock':
+    case 'confirm':
+      // D866: one POST to the email issuer when the user presses the button; nothing else (no API, no image from
+      // elsewhere). An env without an email issuer gets nothing, and the page says it went wrong.
+      return env.emailIssuerUrl ? [originOf(env.emailIssuerUrl)] : [];
   }
 }
 

@@ -718,17 +718,30 @@ describe('deployCheck and EVM sponsorship', () => {
     return { fetchFn, rpcCalls };
   };
 
+  /** The API Worker's secret names as `wrangler secret list --format json` prints them (names only; no value exists there). */
+  const secretList = (names: string[], status = 0, output?: string) => {
+    const calls: { dir: string; argv: string[] }[] = [];
+    const pnpm = (dir: string, argv: string[]) => {
+      calls.push({ dir, argv });
+      return { status, output: output ?? JSON.stringify(names.map((name) => ({ name, type: 'secret_text' })), null, '  ') };
+    };
+    return { pnpm, calls, hasWranglerConfig: () => true };
+  };
+  const withSecret = () => secretList(['EVM_RELAY_KEYS', 'EVM_SPONSOR_RPC_84532', 'VAULT_KEK']);
+
   it('reads the evm group by default when the manifest has the block, and --skip evm leaves it out', async () => {
     // Code whose hash isn't the artifact's: the check fails and says so.
     const { fetchFn, rpcCalls } = withRpc({ [delegate.address.toLowerCase()]: '0x00' });
-    const r = await run(['sandbox-dev'], fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned });
+    const r = await run(['sandbox-dev'], fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned, ...withSecret() });
     expect(r.code).toBe(1);
     expect(r.out).toContain('evm 84532  RPC https://rpc.example.test answers chain 84532');
     expect(r.out).toMatch(/FAIL: evm 84532: MISMATCH: the delegate 0x\w+ has runtime code hash/u);
     expect(r.out).toMatch(/FAIL: evm 84532: app_SponsorFixture1's target 0x\w+ \(Journear demo check-in\) has no code/u);
     expect(rpcCalls[0]).toBe('eth_chainId');
     const skipped = withRpc({});
-    const s = await run(['sandbox-dev', '--skip', 'evm'], skipped.fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned });
+    const listed = secretList([]);
+    const s = await run(['sandbox-dev', '--skip', 'evm'], skipped.fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned, pnpm: listed.pnpm, hasWranglerConfig: listed.hasWranglerConfig });
+    expect(listed.calls).toEqual([]);
     expect(s.code).toBe(0);
     expect(skipped.rpcCalls).toEqual([]);
     expect(s.out).toContain('not read (--skip): evm');
@@ -737,9 +750,40 @@ describe('deployCheck and EVM sponsorship', () => {
 
   it("an RPC on the wrong chain, or no answer, is a failure that names the RPC's host only", async () => {
     const keyed = { ...withEvm, evm: { sponsor: { ...sponsor, chains: { '84532': { ...sponsor.chains['84532'], rpc: 'https://rpc.example.test/v2/secret-part' } } } } } as Manifest;
-    const r = await run(['sandbox-dev', '--only', 'evm'], server(ID).fetchFn, { loadManifest: () => keyed, pinnedDelegates: pinned });
+    const r = await run(['sandbox-dev', '--only', 'evm'], server(ID).fetchFn, { loadManifest: () => keyed, pinnedDelegates: pinned, ...withSecret() });
     expect(r.code).toBe(1);
     expect(r.out).toContain('FAIL: evm 84532: RPC https://rpc.example.test/… answered HTTP 404 to eth_chainId');
     expect(r.out).not.toContain('secret-part');
+  });
+
+  // D851 as amended: a deployed env's relayer reads the chain only through its keyed endpoint, so deploy-check fails
+  // without the secret. It asks wrangler for the API Worker's secret NAMES (Cloudflare never returns a value).
+  it('fails when the API Worker lacks EVM_SPONSOR_RPC_<chainId>, naming what to upload and the checklist step', async () => {
+    const good = withRpc({ [delegate.address.toLowerCase()]: '0x00' });
+    const present = withSecret();
+    const ok = await run(['sandbox-dev', '--only', 'evm'], good.fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned, ...present });
+    expect(present.calls).toEqual([{ dir: expect.stringMatching(/apps\/api$/u) as unknown as string, argv: ['exec', 'wrangler', 'secret', 'list', '--name', withEvm.cloudflare.workerName, '--format', 'json'] }]);
+    expect(ok.out).toContain(`evm 84532  secret EVM_SPONSOR_RPC_84532 is set on ${withEvm.cloudflare.workerName} (its name only: the value is never read)`);
+    expect(ok.out).not.toMatch(/FAIL: evm 84532: the API Worker has no secret/u);
+
+    const missing = await run(['sandbox-dev', '--only', 'evm'], good.fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned, ...secretList(['EVM_RELAY_KEYS']) });
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain(
+      `FAIL: evm 84532: the API Worker ${withEvm.cloudflare.workerName} has no secret EVM_SPONSOR_RPC_84532, the relayer's trusted read endpoint (required outside local* envs; without it sponsorship stays off): upload it with \`corepack pnpm --dir apps/api exec wrangler secret put EVM_SPONSOR_RPC_84532\` (docs/go-live-after-freeze.md step 4.12)`,
+    );
+
+    const noConfig = await run(['sandbox-dev', '--only', 'evm'], good.fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned, pnpm: present.pnpm, hasWranglerConfig: () => false });
+    expect(noConfig.out).toContain(`FAIL: evm: no wrangler config in apps/api to list the API Worker's secret names with; run \`corepack pnpm --filter @hana-id/api gen sandbox-dev\` first`);
+    for (const [status, output] of [[1, 'Authentication error'], [0, 'not json at all']] as const) {
+      const r = await run(['sandbox-dev', '--only', 'evm'], good.fetchFn, { loadManifest: () => withEvm, pinnedDelegates: pinned, ...secretList([], status, output) });
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`FAIL: evm: could not list the API Worker's secret names (${withEvm.cloudflare.workerName})`);
+    }
+  });
+
+  it('an env without evm.sponsor lists no secrets', async () => {
+    const listed = secretList([]);
+    expect((await run(['sandbox-dev', '--d1'], server(ID).fetchFn, { pnpm: (d, a) => (a.includes('secret') ? listed.pnpm(d, a) : { status: 0, output: 'No migrations to apply!' }), hasWranglerConfig: () => true })).code).toBe(0);
+    expect(listed.calls).toEqual([]);
   });
 });

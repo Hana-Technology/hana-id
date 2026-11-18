@@ -12,7 +12,8 @@
 //   to the mailbox that day. These bound mail; they don't keep the owner in: an attacker with many IPs can use them all
 //   up. What keeps the owner in: a valid device ticket or unlock grant never waits on an app's, a domain's or the
 //   general pool (its own per-address allowance, the owner pool, which fresh tickets fill only to half), and an
-//   unlock grant only the mailed token can use;
+//   unlock grant only the mailed token can use, only once its holder pressed the support page's button
+//   (`activateGrant`, D866), and only for the exact address it was mailed to;
 // - `reserveGuess`: one code check, counted before the code is compared and refunded when it was right; inside a hard
 //   ceiling of 25 failed checks per UTC day: a backstop of 18 open to anyone, then an owner slot of 4 (requesters that
 //   started before the trip, no failures) and a ticket slot of 3 (challenges a ticket or a grant started); past the
@@ -21,7 +22,8 @@
 // The limits that differ between dev and production (`MailboxLimits`) come with every call that uses them (the worker
 // picks them from its env name with `limitsFor`; absent, production's). Counters are keyed by window name and start,
 // never by max, so a changed set applies at once to the counts already stored.
-// - `staffAction`: the per-mailbox cap on staff actions (1 a day, 3 in 30 days per kind); `issueGrant`, `revokeTickets`;
+// - `staffAction` / `unstaffAction`: the per-mailbox cap on staff actions (1 a day, 3 in 30 days per kind; a mail the
+//   provider refused gives its place back); `issueGrant`, `activateGrant`, `revokeTickets`;
 // - `reserveDomain` / `domainVerified` (a `dom:` object): one code mail to a recipient domain, within its day (which
 //   grows with its verified logins) and the requester prefixes' shares of it; a verified challenge's mails come back.
 import { DurableObject } from 'cloudflare:workers';
@@ -77,7 +79,7 @@ export type Reservation = { keys: string[] };
  * The owner's proof a start presented: a device ticket the worker checked (its MAC, for this exact address) or the hash
  * of a mailed unlock token. Checked here too: a ticket against the address's revocation, a grant against the stored one.
  */
-export type OwnerClaim = { kind: 'ticket'; id: string; addrKey: string; issuedAtMs: number; untagged?: boolean } | { kind: 'grant'; hash: string };
+export type OwnerClaim = { kind: 'ticket'; id: string; addrKey: string; issuedAtMs: number; untagged?: boolean } | { kind: 'grant'; hash: string; addrKey: string };
 /** What a challenge keeps of it: the ticket (allowances are per ticket) or the grant it used up. */
 /**
  * `untagged`: the ticket's address is the mailbox's own (no `+tag`): the mailbox-wide owner totals count it but never
@@ -101,6 +103,19 @@ export type RowGrant = { ok: true; granted: number; keys: string[] } | { ok: fal
  * half of it, then the general pool like a user's; `owner_aged`: a ticket ≥ 7 days old or an unlock grant); staff's.
  */
 export type BudgetKind = 'user' | 'owner' | 'owner_aged' | 'staff';
+/**
+ * An unlock grant (`ugrant:<sha256 of the token>@<issued ms>`, D866): `mailed` until the support page's button is
+ * pressed, `active` then (a start may use it), `used` by the start that took it (given back as `active` if that start
+ * fails); `addrKey` is the exact address (K_sup HMAC) it was mailed to. A grant stored before D866 (a number) is never
+ * active.
+ */
+interface GrantEntry {
+  state: 'mailed' | 'active' | 'used';
+  addrKey: string;
+}
+const isGrant = (v: unknown): v is GrantEntry => typeof v === 'object' && v !== null && typeof (v as GrantEntry).addrKey === 'string' && ['mailed', 'active', 'used'].includes((v as GrantEntry).state);
+/** What the support page's press found (`activateGrant`). */
+export type GrantActivation = 'active' | 'used' | 'expired' | 'unknown';
 /** A live ticket of an exact address, as the mailbox object registers it at issue. */
 interface TicketEntry {
   id: string;
@@ -327,20 +342,29 @@ export class RateLimiter extends DurableObject<Env> {
     await this.sweepAt(now + DAY);
   }
 
-  /** The key of this mailbox's unused unlock grant whose token hashes to `hash`, issued within the last 24 h, or null. */
-  private unusedGrant(hash: string, now: number): string | null {
-    for (const [key, left] of this.kv().list<number>({ prefix: `ugrant:${hash}@` })) {
+  /**
+   * The key of this mailbox's active (pressed, unused) unlock grant whose token hashes to `hash`, for the exact address
+   * `addrKey`, issued within the last 24 h, or null.
+   */
+  private unusedGrant(hash: string, addrKey: string, now: number): string | null {
+    for (const [key, v] of this.kv().list<unknown>({ prefix: `ugrant:${hash}@` })) {
       const issued = Number(key.slice(key.lastIndexOf('@') + 1));
-      if (left > 0 && issued + UNLOCK_GRANT_TTL_MS > now) return key;
+      if (isGrant(v) && v.state === 'active' && v.addrKey === addrKey && issued + UNLOCK_GRANT_TTL_MS > now) return key;
     }
     return null;
+  }
+
+  /** Sets the grant at `key` (a stored GrantEntry) to `state`. */
+  private setGrant(key: string, state: GrantEntry['state']): void {
+    const v = this.kv().get<unknown>(key);
+    if (isGrant(v)) this.kv().put(key, { ...v, state } satisfies GrantEntry);
   }
 
   /** The claim, checked: the ticket (not revoked) or the unused grant; null when it doesn't hold. */
   private ownerOf(claim: OwnerClaim | null, now: number): OwnerRef | null {
     if (!claim) return null;
     if (claim.kind === 'ticket') return this.ticketLive(claim.addrKey, claim.id) ? claim : null;
-    const key = this.unusedGrant(claim.hash, now);
+    const key = this.unusedGrant(claim.hash, claim.addrKey, now);
     return key ? { kind: 'grant', key } : null;
   }
 
@@ -467,7 +491,7 @@ export class RateLimiter extends DurableObject<Env> {
       if (!r.ok) return r;
       reservation = r.reservation;
     }
-    if (owner?.kind === 'grant') this.kv().put(owner.key, 0);
+    if (owner?.kind === 'grant') this.setGrant(owner.key, 'used');
     const createdKeys = this.count([created, ...ownerDay]);
     this.kv().put(LIVE_KEY, [...live, expiresAtMs]);
     const startKey = `start:${ip}@${this.day(now)}`;
@@ -541,7 +565,7 @@ export class RateLimiter extends DurableObject<Env> {
   unadmit(created: Reservation, expiresAtMs: number | null, now: number = Date.now(), owner: OwnerRef | null = null): void {
     this.refund(created);
     if (expiresAtMs !== null) this.releaseLive(expiresAtMs, now);
-    if (owner?.kind === 'grant' && this.kv().get<number>(owner.key) === 0) this.kv().put(owner.key, 1);
+    if (owner?.kind === 'grant' && (this.kv().get<GrantEntry>(owner.key) as GrantEntry | undefined)?.state === 'used') this.setGrant(owner.key, 'active');
   }
 
   // ---- staff ----
@@ -556,15 +580,43 @@ export class RateLimiter extends DurableObject<Env> {
     return true;
   }
 
+  /** Gives back the staff action counted at `at` (its mail never left: the provider refused it), D866. */
+  unstaffAction(kind: 'unlock' | 'unsuppress' | 'revoke', at: number): void {
+    const log = this.kv().get<number[]>(staffLog(kind)) ?? [];
+    const i = log.lastIndexOf(at);
+    if (i < 0) return;
+    const rest = [...log.slice(0, i), ...log.slice(i + 1)];
+    if (rest.length) this.kv().put(staffLog(kind), rest);
+    else this.kv().delete(staffLog(kind));
+  }
+
   /**
    * Staff unlock (`admin/unlock`, D198, abuse review M3): stores a one-time grant under `grantHash` (sha256 of the token
-   * the worker mails to the address). One start presenting the token, within 24 h, counts as an owner's: past the live
-   * and challenge caps, its mail free and in the owner pool, its checks in the ticket slot and then the grant's own 2.
-   * Clears nothing: the shared guess counters stay, so an unlock gives an attacker nothing.
+   * the worker mails to the address) for the exact address `addrKey`, `mailed`: it does nothing until the address's
+   * holder presses the support page's button (`activateGrant`, D866). Then one start presenting the token for that
+   * address, within 24 h of the mail, counts as an owner's: past the live and challenge caps, its mail free and in the
+   * owner pool, its checks in the ticket slot and then the grant's own 2. Clears nothing: the shared guess counters stay,
+   * so an unlock gives an attacker nothing.
    */
-  async issueGrant(grantHash: string, now: number = Date.now()): Promise<void> {
-    this.kv().put(`ugrant:${grantHash}@${now}`, 1);
+  async issueGrant(grantHash: string, addrKey: string, now: number = Date.now()): Promise<void> {
+    this.kv().put(`ugrant:${grantHash}@${now}`, { state: 'mailed', addrKey } satisfies GrantEntry);
     await this.sweepAt(now + UNLOCK_GRANT_TTL_MS);
+  }
+
+  /**
+   * The support page's press (`POST /v1/email/unlock`, D866): the grant of `grantHash` for `addrKey` becomes `active`
+   * (again: pressing twice changes nothing). `used` once a start took it, `expired` past its 24 h, `unknown` when there
+   * is none for this address (never issued, or swept).
+   */
+  activateGrant(grantHash: string, addrKey: string, now: number = Date.now()): GrantActivation {
+    for (const [key, v] of this.kv().list<unknown>({ prefix: `ugrant:${grantHash}@` })) {
+      if (!isGrant(v) || v.addrKey !== addrKey) continue;
+      if (Number(key.slice(key.lastIndexOf('@') + 1)) + UNLOCK_GRANT_TTL_MS <= now) return 'expired';
+      if (v.state === 'used') return 'used';
+      if (v.state === 'mailed') this.setGrant(key, 'active');
+      return 'active';
+    }
+    return 'unknown';
   }
 
   /** Staff revocation (`admin/revoke-tickets`): every live device ticket of this exact address. */

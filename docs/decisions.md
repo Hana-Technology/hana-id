@@ -14435,9 +14435,13 @@ From `next` @ 0a636344; not merged, not deployed.
   stops on it, staff close the slot, the reconciler reads the relayer's `closed` verdict) and the user's action in it is
   lost, the partner is not charged: the send row settles at 0 (`consumed_elsewhere`), the amount set aside goes back to
   the app's and the env's day budgets, and the user's and the app's and the env's day counts, the user's attempts and
-  the failure slot are given back (none of it was the user's or the partner's doing). Once: only the settlement that
-  moved the row gives anything back. The row is final: no later receipt, mined verdict or correction moves it (they
-  act on open, or settled-at-head, rows only).
+  the failure slot are given back (none of it was the user's or the partner's doing). Once: the row moves only from the
+  status it was read in, so only one settlement moves it, and that one knows what was already returned: a `rejected`
+  row's counts were settled at its rejection (given back then for a cause not the user's, kept for the user's own
+  `request` cause), so only its money comes back (found in the automated review of this change: returning them again
+  would have eaten into other actions' counts the same day; tests for every prior status and two settlements at once).
+  The row is final: no later receipt, mined verdict or correction moves it (they act on open, or settled-at-head, rows
+  only).
 - The billing record is kept: outcome `consumed_elsewhere`, `settled_wei` 0, no cost figures (`total_cost_wei` NULL), in
   D1 `evm_sponsor_billing` and mirrored to `usage.evm_sponsored_txs`; the monthly view groups it apart (its count is
   Journear's own losses; a billing job summing `settled_wei` never bills it). `evm_relay_nonce_taken` says

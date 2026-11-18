@@ -1364,7 +1364,8 @@ billed `cancelled`), or (b) the relayer's `lookup` (D851): `mined` (at confirmed
 `mined`, or `not_executed` for a cancel; the money the relayer's cost, at most the reservation); `closed`
 `consumed_elsewhere` (not charged, D869: the row `consumed_elsewhere` settled at 0, the reservation given back to the
 app's and the env's day budgets, the user's, the app's and the env's day counts, the user's attempts and failure slot
-given back; `evm_relay_nonce_taken` with `charged: false`). A
+given back once (a `rejected` row's counts were settled at its rejection: only its money comes back); the row moves
+only from the status it was read in; `evm_relay_nonce_taken` with `charged: false`). A
 lookup's mined hash counts only when it lists it as one of the batch's versions. Nothing is inferred from the relayer
 not knowing a digest: anything else stays open, and an hour past the deadline is `lost` (the reservation kept), but only
 when the relayer's `lookup` answered and every receipt read succeeded and found nothing (a failed read decides

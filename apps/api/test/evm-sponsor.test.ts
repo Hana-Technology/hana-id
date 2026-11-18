@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { checkEvmSponsorRelay, evmSponsorConfig, sponsorFaults, EVM_SPONSOR_PREPARE_ENDPOINT as PREPARE, EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, sponsorPins, sponsorTiming } from '../src/evm/sponsor.ts';
 import { DEFAULT_SPONSOR_PORTS, type Hex, keccakHex, sponsorPorts } from '../src/evm/sponsor-ports.ts';
-import { pruneEvmSponsorSends, reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
+import { type SendRow, pruneEvmSponsorSends, reconcileEvmSends, settleNotCharged } from '../src/evm/sponsor-settle.ts';
 import { checksumEvmAddress } from '../src/evm/sponsor-config.ts';
 import { BILLING_LATE_MS, mirrorEvmBilling, RECORD_EVM_SPONSORED_SQL } from '../src/evm/sponsor-billing.ts';
 import { usageTransport } from '../src/usage/record.ts';
@@ -1704,6 +1704,63 @@ describe('a batch no node took (broadcast: rejected)', () => {
   };
   const attempts = (s: Setup) => hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:attempts`);
   const appMinute = (s: Setup) => hits(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:minute`, 60_000);
+
+  /** Every count a send takes: the user's, the app's and the env's day, the user's attempts, the failure slot. */
+  const counts = async (s: Setup) => ({
+    userDay: await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:day`),
+    appDay: await hits(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:day`),
+    envDay: await hits(`evm-sponsor:global:${LOCAL_CHAIN}`, 'evm-sponsor:day'),
+    attempts: await attempts(s),
+    failures: await failuresSpent(`evm-sponsor:failures:${s.userId}`),
+  });
+  const closedElsewhere = (s: Setup) => {
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'closed', minedHash: null, outcome: 'consumed_elsewhere', costWei: null, reservedWei: 1n });
+  };
+
+  for (const [cause, code] of [['relayer', 'insufficient_funds'], ['pricing', 'underpriced'], ['request', 'gas_limit']] as const) {
+    it(`D869: a rejected batch (cause ${cause}) later closed as used elsewhere: its money comes back, its counts are not returned a second time`, async () => {
+      const s = await setup();
+      // Another action of the same user and app earlier today: a second give-back would eat into its counts.
+      const rl = (sub: string) => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(sub));
+      await rl(`evm-sponsor:user:${s.userId}`).hit([{ name: `evm-sponsor:${LOCAL_CHAIN}:day`, windowMs: 86_400_000, max: 100 }, { name: `evm-sponsor:${LOCAL_CHAIN}:attempts`, windowMs: 86_400_000, max: 100 }]);
+      await rl(`app:${s.app.id}`).hit([{ name: `evm-sponsor:${LOCAL_CHAIN}:day`, windowMs: 86_400_000, max: 100 }]);
+      await rl(`evm-sponsor:global:${LOCAL_CHAIN}`).hit([{ name: 'evm-sponsor:day', windowMs: 86_400_000, max: 100 }]);
+      await rl(`evm-sponsor:failures:${s.userId}`).spend('evm-sponsor:failures', 86_400_000, '10', '1');
+      rejecting(s, cause, code);
+      await send(s, signedSend(s.user).body);
+      expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'rejected' });
+      // What the rejection itself settled (given back for a cause not the user's; kept for the user's own).
+      const afterRejection = await counts(s);
+      expect(await appSpent(s.app)).toBeGreaterThan(0n);
+      closedElsewhere(s);
+      await ageRows();
+      expect(await reconcile(s)).toMatchObject({ settled: 1 });
+      expect(await counts(s)).toEqual(afterRejection);
+      expect(await appSpent(s.app)).toBe(0n);
+      expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+      await ageRows(60 * 60_000);
+      await reconcile(s);
+      expect(await counts(s)).toEqual(afterRejection);
+    });
+  }
+
+  it('D869: two settlements of one row at once: one moves it, the counts and the money come back exactly once', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    const open = await counts(s);
+    expect(open).toMatchObject({ userDay: 1, appDay: 1, envDay: 1, failures: 1n });
+    const c = await env.DB.prepare('SELECT * FROM evm_sponsor_sends WHERE account = ?1').bind(s.user.address).first<Record<string, unknown>>();
+    const row: SendRow = { id: String(c!.id), appId: String(c!.app_id), chainId: Number(c!.chain_id), account: c!.account as Hex, userId: (c!.user_id as string) ?? null, digest: c!.digest as Hex, executeNonce: BigInt(String(c!.execute_nonce)), txHash: null, hashes: [], deadline: Number(c!.deadline), reserved: { gasLimit: 0n, feeCap: 0n, l1Bound: 0n, operatorBound: 0n, reservedWei: BigInt(String(c!.reserved_wei)) }, replay: false, createdAt: Number(c!.created_at) };
+    const both = await Promise.all([settleNotCharged(cronEnv(s), row, 'timeout'), settleNotCharged(cronEnv(s), row, 'timeout')]);
+    expect(both.filter(Boolean)).toHaveLength(1);
+    expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: open.attempts - 1, failures: 0n });
+    expect(await appSpent(s.app)).toBe(0n);
+    // A third, later attempt (the reconciler again, or a status read before the move): nothing moves, nothing comes back.
+    expect(await settleNotCharged(cronEnv(s), row, 'timeout')).toBe(false);
+    expect(await settleNotCharged(cronEnv(s), row, 'consumed_elsewhere')).toBe(false);
+    expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: open.attempts - 1, failures: 0n });
+  });
 
   it('cause request (the batch’s own size or shape): answered at once 422 not_executed, a failure charged; the cancel’s cost settles from the relayer’s lookup', async () => {
     const s = await setup();

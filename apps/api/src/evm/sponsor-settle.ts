@@ -311,14 +311,18 @@ export async function settleAsCharge(env: Env, row: SendRow, status: 'lost'): Pr
  * Journear's own loss, not the partner's (D869, the founder's decision): the row settles at 0 with its billing record
  * (outcome `consumed_elsewhere`, settled 0, no cost figures: a billing job never bills it, the monthly view shows it
  * apart, counted), the amount set aside goes back to the app's and the env's day budgets, and the user's and the app's
- * day counts, the user's attempts and failure slot are given back (none of it was their doing). Once: only the caller
- * that moved the row gives anything back; the row is final, so no later receipt or correction can charge it.
- * `evm_relay_nonce_taken` is written for staff. Never throws.
+ * day counts, the user's attempts and failure slot are given back (none of it was their doing). Once: the row moves
+ * only from the status it was read in (`prior`), so only one caller moves it and that caller knows what was already
+ * returned: a `rejected` row's counts were settled when it was rejected (given back then for a cause not the user's,
+ * kept for the user's own `request` cause), so only its money comes back here. The row is final, so no later receipt
+ * or correction can charge it. `evm_relay_nonce_taken` is written for staff. Never throws.
  */
-export async function settleNotCharged(env: Env, row: SendRow): Promise<boolean> {
+export async function settleNotCharged(env: Env, row: SendRow, prior: SendStatus): Promise<boolean> {
   const now = Date.now();
-  if (!(await moveRow(env, row.id, OPEN_STATUSES, 'consumed_elsewhere', { settledWei: 0n }, (st) => billingStatement(env, row.id, st, 'consumed_elsewhere', 0n, null, now)))) return false;
-  if (!row.replay) {
+  if (!OPEN_STATUSES.includes(prior)) return false;
+  if (!(await moveRow(env, row.id, [prior], 'consumed_elsewhere', { settledWei: 0n }, (st) => billingStatement(env, row.id, st, 'consumed_elsewhere', 0n, null, now)))) return false;
+  if (!row.replay && prior === 'rejected') await settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, 0n, row.createdAt);
+  else if (!row.replay) {
     const at = row.createdAt;
     const unhit = (subject: string, name: string) => limiter(env, subject).unhit([{ name, windowMs: DAY, max: 1 }], at).catch(() => undefined);
     await Promise.all([
@@ -479,7 +483,7 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
       continue;
     }
     if (v?.state === 'closed' && v.outcome === 'consumed_elsewhere') {
-      if (await settleNotCharged(env, row)) counts.settled++;
+      if (await settleNotCharged(env, row, c.status)) counts.settled++;
       continue;
     }
     if (v?.state === 'mined' && v.minedHash && own.has(v.minedHash.toLowerCase() as Hex) && typeof v.costWei === 'bigint' && (v.outcome === 'execute' || v.outcome === 'cancel') && (rejected || pastDeadline >= GIVE_UP_AFTER_MS)) {

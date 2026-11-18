@@ -43,21 +43,55 @@ export const EVIL_ORIGIN = 'http://evil.e2e.test';
 /** The mocked EVM chain (anvil's id). */
 export const EVM_CHAIN_ID = 31337;
 
-/**
- * Gas sponsorship on the mocked chain (HanaEnv.evmSponsor, D834): core's pinned local delegate, as the relayer anvil's
- * published second dev account's address (a public test vector), and the mocked EVM RPC, from which the vault reads the
- * account's setup itself (D855). The routes are a test-only stand-in (src/server/sponsor-standin.ts); nothing relays.
- */
-export const E2E_SPONSOR_RELAYER = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
-export const E2E_EVM_SPONSOR: NonNullable<HanaEnv['evmSponsor']> = Object.freeze({
-  [String(EVM_CHAIN_ID)]: Object.freeze({ delegate: (SPONSOR_DELEGATES[EVM_CHAIN_ID] as { address: string }).address, relayer: E2E_SPONSOR_RELAYER, rpc: EVM_RPC }),
-});
+/** Core's pinned delegate on the mocked chain (its deterministic local deployment, D834). */
+export const E2E_SPONSOR_DELEGATE = (SPONSOR_DELEGATES[EVM_CHAIN_ID] as { address: string }).address;
 
 /**
- * The API's EVM_SPONSOR var as far as the vault page reads it (its CSP connect-src names the sponsored chain's RPC, D855).
- * Not a full manifest block: the stack's sponsorship routes are a test-only stand-in (src/server/sponsor-standin.ts).
+ * Gas sponsorship on the mocked chain (HanaEnv.evmSponsor, D834): core's pinned local delegate, the stack's relayer
+ * (src/relayer-key.ts: a key made at the first run, kept in .build/; build.ts puts its address into the bundles) and
+ * the mocked EVM RPC, ONE endpoint (only a local* env may have one: the vault reads the account's setup itself, D855).
  */
-export const E2E_EVM_SPONSOR_VAR = JSON.stringify({ relayerAddress: E2E_SPONSOR_RELAYER, chains: { [String(EVM_CHAIN_ID)]: { rpc: EVM_RPC } } });
+export const e2eEvmSponsor = (relayer: string): NonNullable<HanaEnv['evmSponsor']> =>
+  Object.freeze({ [String(EVM_CHAIN_ID)]: Object.freeze({ delegate: E2E_SPONSOR_DELEGATE, relayer, rpc: EVM_RPC }) });
+
+/** The CheckIn demo (contracts/evm-delegate) and the two made-up contracts the sponsorship tests call. */
+export const E2E_SPONSOR_TARGETS = Object.freeze([
+  { address: '0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e', selectors: ['0x183ff085'], maxDataBytes: 4, label: 'Check-in' },
+  { address: '0x4444444444444444444444444444444444444444', selectors: ['0x183ff085'], maxDataBytes: 4, label: 'Unknown' },
+  { address: '0x1111111111111111111111111111111111111111', selectors: ['0xa9059cbb', '0x095ea7b3'], maxDataBytes: 68, label: 'Token' },
+]);
+
+/**
+ * The API's EVM_SPONSOR (D836) for the mocked chain in this local env, sponsoring `appIds` (the API answers each
+ * request with its own app's var: a manifest lists at most 8 apps). Wide limits: the suite's browsers share one relayer.
+ */
+export const e2eEvmSponsorVar = (relayer: string, appIds: readonly string[] = []): string =>
+  JSON.stringify({
+    relayerAddress: relayer,
+    chains: {
+      [String(EVM_CHAIN_ID)]: {
+        rpc: EVM_RPC,
+        delegate: E2E_SPONSOR_DELEGATE,
+        opStack: false,
+        maxGasPerTx: 300_000,
+        maxFeePerGasGwei: 10,
+        maxPriorityFeePerGasGwei: 1,
+        maxCallsPerBatch: 4,
+        deadlineMaxS: 600,
+        minGas: 100_000,
+        dailyBudgetEth: 1,
+        appDailyBudgetEth: 0.5,
+        lowBalanceEth: 0.01,
+        perUserPerDay: 1000,
+        perAppPerDay: 50_000,
+        sendsPerDay: 100_000,
+        sendsPerMinute: 10_000,
+        // local* only (D836): the wallet proof of the session (D856) ties the account to the user.
+        requireKnownAccount: false,
+      },
+    },
+    apps: Object.fromEntries(appIds.map((id) => [id, { [String(EVM_CHAIN_ID)]: E2E_SPONSOR_TARGETS }])),
+  });
 
 /**
  * The test MPC's master secret. Test-only and public on purpose: the e2e env pins its public key, so the mock MPC can
@@ -83,7 +117,6 @@ export const E2E_ENV: HanaEnv = Object.freeze({
   devEnv: true,
   emailIssuerUrl: ISSUER_URL,
   emailIss: EMAIL_ISS,
-  evmSponsor: E2E_EVM_SPONSOR,
 });
 
 // ---- live mode: a pk_live_ app end to end ----

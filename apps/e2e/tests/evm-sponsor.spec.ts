@@ -1,7 +1,8 @@
-// Gas-free EVM actions end to end (D831, D838, D855, D856): the partner page's hana.evm.sendSponsored in a click, the
-// vault's prepare against the stack's TEST-ONLY stand-in for the sponsorship routes (src/server/sponsor-standin.ts: it
-// checks the session proof, the Execute and the authorization signatures as the real API will, and answers `executed`
-// with a made-up hash; nothing reaches a chain), one approval window, and the vault's send.
+// Gas-free EVM actions end to end (D831, D838, D847, D851, D855, D856): the partner page's hana.evm.sendSponsored in a
+// click, the vault's prepare against apps/api's own sponsorship routes (the session proof, the allowlist, every check),
+// one approval window, and the vault's send, which the real relayer object signs and broadcasts to the stack's mocked
+// EVM chain (src/server/partner.ts MockEvm: it mines each sponsored transaction at once, runs the setup and the batch
+// as the delegate would and logs Executed). The stack's API only counts the routes' answers and can hold an app's sends.
 //
 // Covered: the first action (one window, the one-time setup note, the authorization sent), a later one (no note), a
 // decline, an account set up by another app (the plain refusal, no window), a second action while one is still going
@@ -61,7 +62,7 @@ async function sponsoredWindow(page: Page, name: string, calls: { to: string; da
 
 /**
  * Signs in to a new app on a scope of its own, so each test (and each browser) has its own EVM account on the mocked
- * chain: the stand-in and the vault read the account's setup there.
+ * chain: the API and the vault read the account's setup there.
  */
 async function freshSession(page: Page): Promise<{ evm: string; appId: string }> {
   const app = await newApp({ scopeId: `sp${Math.random().toString(36).slice(2, 12)}` });
@@ -196,8 +197,9 @@ test('EIP-5792: viem’s sendCalls runs as one gas-free action; capabilities say
   await approve(popup);
   const v = await okValue<{ id: string; status: string; atomic: boolean; capabilities: Record<string, unknown> }>(page, 'calls');
   expect(v.id).toMatch(/^0x[0-9a-f]{64}$/u);
-  // The mocked chain never mined the stand-in's made-up hash: the status is pending, atomic.
-  expect(v).toMatchObject({ status: 'pending', atomic: true });
+  // The relayer's transaction, mined on the mocked chain: atomic.
+  expect(v).toMatchObject({ atomic: true });
+  expect(['pending', 'success']).toContain(v.status);
   expect(v.capabilities).toMatchObject({ [EVM_CHAIN_ID]: { atomic: { status: 'supported' } } });
 });
 

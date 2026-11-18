@@ -21,7 +21,8 @@ import { DEMO_CHECK_IN, type NearAction, base64Encode, encodeNearDelegateAction,
 import { parseFunctionSignature } from '@hana-id/core/decode';
 import { Account, Address, Asset, Keypair, Networks, Operation, StrKey, TransactionBuilder, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
-import { E2E_SPONSOR_RELAYER, E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import { e2eRelayer } from '../src/relayer-key.ts';
+import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { approve, clickLauncher, expect, login, newApp, newLiveApp, okValue, openPartner, runAction, test } from './fixtures.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
@@ -157,7 +158,7 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
     calls: [{ to: TOKEN, value: 0n, data: call('transfer(address,uint256)', RECIPIENT, 5_000_000n) as `0x${string}` }],
     executeNonce: 0n,
     deadline: BigInt(Math.floor(Date.now() / 1000) + 600),
-    relayer: E2E_SPONSOR_RELAYER,
+    relayer: e2eRelayer().address,
     minGas: 100_000n,
     ...over,
   });

@@ -50,8 +50,17 @@ let allowFallback = false;
 const summarizeApproval: typeof summarizeApprovalRaw = (d, ctx) => {
   const s = summarizeApprovalRaw(d, ctx);
   if (s === UNEXPLAINED_SUMMARY && !allowFallback) fallbackHits.push(d.kind);
+  // Composed texts never double their punctuation or spacing (review of PR 73); the odd shapes fed on purpose aside.
+  if (!allowFallback) for (const t of [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])]) {
+    const str = summaryString(t, APP);
+    if (/\.\.|[^\S\n]{2}|\s[.,;:]|up to less than|up to about/u.test(str)) punctuationHits.push(str);
+  }
   return s;
 };
+const punctuationHits: string[] = [];
+afterAll(() => {
+  expect(punctuationHits).toEqual([]);
+});
 afterAll(() => {
   expect(fallbackHits).toEqual([]);
 });

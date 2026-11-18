@@ -93,7 +93,7 @@ describe('the summary of a check-in', () => {
     expect(s.lines.map(text)).toEqual(LINES);
     expect(s.warnings).toEqual([]);
     expect(s.explainable).toBe(true);
-    expect(text(s.fee!)).toBe('up to less than 0.000001 ETH');
+    expect(text(s.fee!)).toBe('less than 0.000001 ETH');
   });
 
   it('sponsored: the same, the fee line Journear’s; the one-time setup note still the first time', () => {
@@ -133,8 +133,34 @@ describe('the summary of a check-in', () => {
   it('several check-ins in a batch: one grouped line, nothing left out, no box', () => {
     const s = sponsored([sponsoredCall(CHECK_IN, '0x183ff085'), sponsoredCall(CHECK_IN, '0x183ff085')]);
     expect(text(s.headline)).toBe(`${APP} wants to do 2 things in one transaction`);
-    expect(s.lines.map(text)).toEqual([`2 times: check you in. ${LINES[0]} ${LINES[1]}`]);
+    // In a batch the reassurance is about the check-in alone, never the whole request.
+    expect(s.lines.map(text)).toEqual([`2 times: check you in. This is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens. ${LINES[1]}`]);
+    const mixed = sponsored([sponsoredCall(CHECK_IN, '0x183ff085'), sponsoredCall(OTHER, '0xdeadbeef')]);
+    expect(mixed.lines.map(text)).toContain(`Use contract ${OTHER}`);
+    expect(mixed.lines.map(text).join('\n')).toContain('The check-in itself doesn’t move any money or tokens.');
+    expect(JSON.stringify(mixed)).not.toContain('It doesn’t move any money');
     expect(s.warnings).toEqual([]);
     expect(s.explainable).toBe(true);
+  });
+});
+
+describe('punctuation and rounded amounts in composed texts (review of PR 73)', () => {
+  it('a fee below the shown precision reads "less than …", never "up to less than"; a rounded one "up to" its rounded-up figure', () => {
+    expect(text(plain(OTHER, '0x', 0n).fee!)).toBe('less than 0.000001 ETH');
+    // 21 000 gas × 1 234 567 000 wei = 0.000025925907 ETH: rounded up, so "up to" stays true without "about".
+    const tx = parseEvmTxRequest({ chainId: '0x7a69', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x4995ff58', maxPriorityFeePerGas: '0x1', to: OTHER, value: '0x0', data: '0x' });
+    const s = summarizeApproval(decodeApprovalRequest({ kind: 'evm_tx', chain: 'evm', address: SPONSOR_ME, context: { chainId: 31337 }, bytes: evmTxSigningPayload(tx) }), { address: SPONSOR_ME });
+    expect(text(s.fee!)).toBe('up to 0.000026 ETH');
+  });
+
+  it('a left-out step whose line ends with a full stop gets one, not two', () => {
+    const calls = [1n, 2n, 3n, 4n, 5n].map((n) => sponsoredCall(OTHER, `0xa9059cbb${'0'.repeat(24)}${'de'.repeat(20)}${n.toString(16).padStart(64, '0')}` as `0x${string}`));
+    const s = sponsored(calls);
+    const left = s.warnings.filter((w) => w.code === 'step_left_out').map((w) => text(w.text));
+    expect(left.length).toBeGreaterThan(0);
+    for (const t of left) {
+      expect(t).toMatch(/[^.]\.$/u);
+      expect(t).not.toMatch(/\.\.|\s{2}|\s[.,]/u);
+    }
   });
 });

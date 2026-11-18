@@ -12839,7 +12839,13 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   box (the one-time setup note still appears when the authorization is signed). The details name the function:
   "Function checkIn() 0x183ff085". Anything else keeps the red "can't tell" line and gets no name: another contract
   with the same selector, a look-alike address, extra calldata, any value, a chain where it isn't pinned (tested).
-  In a batch it groups like any call and counts as moving nothing.
+  In a batch it groups like any call and counts as moving nothing, and its reassurance is about itself alone: "This
+  is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens." (after PR 73's review).
+- Also after PR 73's review (decided while building, to confirm): a bound below the shown precision reads "less than
+  0.000001 ETH", never "up to less than …", and a rounded-up one "up to {the rounded-up figure}", never "up to about"
+  (`upTo` in `summary.ts`: the network fee, "XLM leaving your account", a spend permission's amount); composed risk
+  texts end with one full stop (`sentence`: "Not in the lines above: …" no longer doubles it), and a test checks every
+  summary the unit tests build for doubled punctuation or spacing.
 - Why not add `checkIn()` to the known selectors: a selector names a standard's function, and any contract can have a
   `checkIn()` that does anything; the plain reading is earned by the reviewed contract, not the name.
 - Address impact: none.

@@ -1,12 +1,21 @@
 -- Usage ledger, the NEAR meta-transaction relay's billing records (D863): one permanent record per NEAR transaction the
 -- relay sent for a user that reached the chain (a relayed delegate action or an account activation; success or
--- failure), copied by the API's cron from its D1 table `near_relay_billing` (hot-DB migration 0023) once the
--- transaction was read at FINAL, through `usage.record_near_relayed`. As EVM sponsorship's (0009, D852): idempotent on
+-- failure), copied by the API's cron from its D1 table `near_relay_billing` (hot-DB migration 0023) once final,
+-- through `usage.record_near_relayed`. As EVM sponsorship's (0009, D852): idempotent on
 -- (network, tx_hash); pseudonymous (no name, email, account id, user id or IP; the transaction hash is public chain data
 -- that can be traced to an account);
 -- not partitioned, and none of 0007's retention functions or `usage.erase_uid` touches it: never pruned, kept through a
 -- user's erasure. Amounts in yoctoNEAR, no USD: a billing job can price them with `usage.near_usd_rates` (the daily
 -- NEAR/USD rate the admin Worker already fetches, D325). Records exist only from the deploy of this code on.
+--
+-- What a later billing job can rely on: the amounts (gas_burnt, tokens_burnt, attached_yocto) and the time of
+-- recording (created_at, final_at). Not on block data: a record final from the relay's own figures (figures_from
+-- 'relay': an `ok` relay, which waited for every receipt and summed them) and a `not_executed` one were never read
+-- back, so they have no block_hash, block_height or block_time, and had_failed_receipt is always false for them (the
+-- relay's answer doesn't say which receipt failed; an `ok` relay had none that failed its user's action). Only
+-- figures_from 'final' records carry a block hash (height and time when the cron's budget allowed). Unverified: whether
+-- newer NEAR protocol versions charge a gas refund penalty outside tokens_burnt (checked once at deploy time against a
+-- testnet transaction's balance change, docs/operations.md "NEAR relay billing records").
 --
 -- Applied by the founder with scripts/usage-migrate.ts (never from a Worker).
 

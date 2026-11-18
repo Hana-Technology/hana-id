@@ -1969,8 +1969,10 @@ account on the chain, as an EVM hash does. Journear's own link from the account 
 with the user's erasure. The record is written after the relay's answer and its failure never fails a relay (a failed
 write is parked in a bounded queue and written by the cron). The cron reads the chain for it through a client of its
 own (at most 10 fetches a run, `wait_until: 'NONE'`, its own endpoint health), so it can never slow the live relay or
-mark an endpoint down for it; a daily check of each relay key's nonce on chain against the records makes a missing
-record visible (`near_billing_late {nonceGaps}`).
+mark an endpoint down for it; a daily check per relay key that its last transaction on chain has a record makes a
+missing record for that one visible (`near_billing_late {unrecordedLast}`); it can't see an unrecorded transaction
+followed by a recorded one the same day (an exact count would need a counter in the relay key object, not built so the
+live relay is untouched).
 
 `POST /v1/near/activate` and `POST /v1/near/relay` (`apps/api/src/near/`; `docs/api.md` "NEAR relay") let a Hana user's
 NEAR implicit account, which holds no NEAR, act through NEP-366 meta transactions paid by Hana's relay account. Testnet

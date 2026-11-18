@@ -72,7 +72,7 @@ export function initialRecord(r: RelayResult): { outcome: 'executed' | 'not_exec
 /** Where misses are counted (a RateLimiter `charge` per UTC day: no migration needed) and failed writes parked. */
 const BILLING_SUBJECT = 'near-relay:billing';
 const MISSES = 'near-relay:billing-misses';
-const NONCE_GAPS = 'near-relay:billing-nonce-gaps';
+const UNRECORDED_LAST = 'near-relay:billing-unrecorded-last';
 const PARKED = 'near-relay-billing';
 /** Records parked at most (beyond it a failed write is only counted). */
 export const PARK_MAX = 500;
@@ -263,8 +263,12 @@ export function blockFigures(b: unknown): { height: string | null; time: number 
   return { height, time };
 }
 
-/** Writes the parked records into D1 (no fetch). */
-async function drainParked(env: Env): Promise<number> {
+/** D1's refusal of the row itself (SQLite's constraint errors), as opposed to a failure to reach the database. */
+export const isConstraintError = (e: unknown): boolean => /SQLITE_CONSTRAINT|constraint failed/u.test(e instanceof Error ? e.message : String(e));
+
+/** Writes the parked records into D1 (no fetch); a row D1 refuses for good is counted as a miss and dropped. */
+
+async function drainParked(env: Env, now: number): Promise<number> {
   let parked: [string, unknown][];
   try {
     parked = await limiter(env, BILLING_SUBJECT).queuePeek(PARKED, 50);
@@ -276,8 +280,13 @@ async function drainParked(env: Env): Promise<number> {
     try {
       await insert(env, item as Fields).run();
       done.push(key);
-    } catch {
-      break; // D1 still refuses: the next run
+    } catch (e) {
+      // A row the table refuses for good (a CHECK or NOT NULL constraint) would block the queue for ever: it is counted
+      // as a miss and acknowledged. Anything else (D1 down, no table yet): the next run.
+      if (!isConstraintError(e)) break;
+      log({ event: 'near_billing_parked_refused', code: 'constraint' }, 'error');
+      await countMiss(env, now);
+      done.push(key);
     }
   }
   if (done.length) await limiter(env, BILLING_SUBJECT).queueAck(PARKED, done).catch(() => undefined);
@@ -285,9 +294,16 @@ async function drainParked(env: Env): Promise<number> {
 }
 
 /**
- * Once a UTC day, per relay key (one `view_access_key` each, inside the budget): the key's nonce on chain against the
- * records' nonces. A range is checked a day after it was seen (its records have landed by then): every nonce the key
- * used in it should have a record. The missing ones are counted for `near_billing_late`.
+ * Once a UTC day, per relay key (one `view_access_key` each, inside the budget): the key's nonce on chain is the nonce of
+ * the last transaction of that key the chain included. Unchanged since the last check: nothing was included, nothing to
+ * check. Changed: that transaction must have a record (any outcome but `not_executed`, which says it never ran); if none
+ * has its nonce, ONE "last included transaction has no record" is counted for the key that day.
+ *
+ * What it can't prove: it looks only at the most recent included transaction per key per day, so an unrecorded one
+ * followed by a recorded one the same day goes unseen. Nonces themselves jump (the relay key object reserves them in
+ * blocks and resumes past its reservation after a restart; a refused transaction's nonce is skipped), so counting the
+ * gap between two nonces says nothing. An exact count would need a counter inside the relay key object, deliberately
+ * not built so the live relay is untouched (D863). The first run only starts the watermark.
  */
 async function checkNonces(env: Env, rpc: BudgetedRpc, now: number): Promise<number> {
   const config = nearRelayConfig(env);
@@ -295,7 +311,7 @@ async function checkNonces(env: Env, rpc: BudgetedRpc, now: number): Promise<num
   if (!config || keys.state !== 'ok') return 0;
   const day = Math.floor(now / DAY);
   const store = limiter(env, BILLING_SUBJECT);
-  let gaps = 0;
+  let unrecorded = 0;
   try {
     // Nothing recorded yet (or no table before migration 0023): nothing to compare, no chain read.
     const any = await env.DB.prepare('SELECT EXISTS (SELECT 1 FROM near_relay_billing) AS n').first<{ n: number }>();
@@ -313,25 +329,20 @@ async function checkNonces(env: Env, rpc: BudgetedRpc, now: number): Promise<num
       continue;
     }
     try {
-      const [seen, checked] = await Promise.all([store.floor(`near-billing:seen:${pk}`), store.floor(`near-billing:checked:${pk}`)]);
-      const lo = BigInt(checked);
-      const hi = BigInt(seen);
-      if (hi > lo && lo > 0n) {
-        const recorded = await env.DB.prepare('SELECT COUNT(DISTINCT relayer_nonce) AS n FROM near_relay_billing WHERE relayer_pk = ?1 AND relayer_nonce > ?2 AND relayer_nonce <= ?3 AND outcome <> ?4')
-          .bind(pk, Number(lo), Number(hi), 'not_executed')
+      const last = BigInt(await store.floor(`near-billing:seen:${pk}`));
+      if (last > 0n && onChain > last && onChain <= BigInt(Number.MAX_SAFE_INTEGER)) {
+        const hit = await env.DB.prepare('SELECT 1 AS n FROM near_relay_billing WHERE relayer_pk = ?1 AND relayer_nonce = ?2 AND outcome <> ?3 LIMIT 1')
+          .bind(pk, Number(onChain), 'not_executed')
           .first<{ n: number }>();
-        const missing = Number(hi - lo) - (recorded?.n ?? 0);
-        if (missing > 0) gaps += missing;
+        if (!hit) unrecorded++;
       }
-      // The range just checked is done; the one seen now is checked tomorrow. The first run only starts the watermark.
-      await store.raiseFloor(`near-billing:checked:${pk}`, (hi > 0n ? hi : onChain).toString());
       await store.raiseFloor(`near-billing:seen:${pk}`, onChain.toString());
     } catch {
       // the next day
     }
   }
-  if (gaps > 0) await store.charge(NONCE_GAPS, DAY, String(gaps), now, now).catch(() => undefined);
-  return gaps;
+  if (unrecorded > 0) await store.charge(UNRECORDED_LAST, DAY, String(unrecorded), now, now).catch(() => undefined);
+  return unrecorded;
 }
 
 /**
@@ -483,7 +494,7 @@ export async function mirrorNearBilling(env: Env, now: number = Date.now()): Pro
  * and today's nonce gaps (transactions of a relay key without a record). Logs when the event can't be written (the
  * event's CHECK before migration 0023). Never throws.
  */
-export async function checkNearBillingLate(env: Env, now: number = Date.now()): Promise<{ misses: number; parked: number; notFinal: number; unmirrored: number; nonceGaps: number }> {
+export async function checkNearBillingLate(env: Env, now: number = Date.now()): Promise<{ misses: number; parked: number; notFinal: number; unmirrored: number; unrecordedLast: number }> {
   const store = limiter(env, BILLING_SUBJECT);
   const read = async (p: Promise<string | number>): Promise<number> => {
     try {
@@ -492,7 +503,7 @@ export async function checkNearBillingLate(env: Env, now: number = Date.now()): 
       return 0;
     }
   };
-  const [misses, parked, nonceGaps] = await Promise.all([read(store.spent(MISSES, DAY, now)), read(store.queueLength(PARKED)), read(store.spent(NONCE_GAPS, DAY, now))]);
+  const [misses, parked, unrecordedLast] = await Promise.all([read(store.spent(MISSES, DAY, now)), read(store.queueLength(PARKED)), read(store.spent(UNRECORDED_LAST, DAY, now))]);
   let notFinal = 0;
   let unmirrored = 0;
   try {
@@ -501,7 +512,7 @@ export async function checkNearBillingLate(env: Env, now: number = Date.now()): 
   } catch {
     // no table yet: the misses tell
   }
-  const counts = { misses, parked, notFinal, unmirrored, nonceGaps };
+  const counts = { misses, parked, notFinal, unmirrored, unrecordedLast };
   if (Object.values(counts).some((n) => n > 0)) {
     try {
       await env.DB.prepare("INSERT OR IGNORE INTO security_events (id, detected_at, kind, detail_json) VALUES (?1, ?2, 'near_billing_late', ?3)")
@@ -526,7 +537,7 @@ export async function nearBillingMaintenance(env: Env, now: number = Date.now())
   const rpc = new BudgetedRpc(rpcEndpoints(env), NEAR_BILLING_FETCHES);
   try {
     if (nearBillingFaults.throwAt === 'start') throw new Error('test fault');
-    await drainParked(env);
+    await drainParked(env, now);
     await checkNonces(env, rpc, now);
     await finalizeNearBilling(env, rpc, now);
     await fillBlocks(env, rpc);

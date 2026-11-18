@@ -1266,14 +1266,31 @@ each one's "transaction fee" (tokens burnt); which app each belonged to can only
 3. Only then deploy the API, at a quiet moment (no demo running). A relay between the deploy and the migration would
    not get a record (it is only counted, and alerted the next day as "a billing record is late"), so the migrations
    go first.
+4. **After the deploy, check one record against the chain** (once): relay one test transaction on testnet (e.g. a
+   stamp in the demo), then compare the relay account's balance change for it (its balance on a NEAR explorer or
+   `near account view-account-summary <relay account> network-config testnet now`, just before and just after) with
+   the record's `tokens_burnt` + `attached_yocto` (`wrangler d1 execute <d1> --remote --command "SELECT tokens_burnt,
+   attached_yocto, figures_from FROM near_relay_billing ORDER BY created_at DESC LIMIT 1"`). They should match. If the
+   account lost more, newer NEAR versions charge something outside `tokens_burnt` (such as a gas refund penalty): tell
+   the developer team, since the records then under-count the cost (D863).
+
+**What a later billing job can rely on.** The amounts (tokens burnt, NEAR attached or sent) and the time of recording.
+Not block data: a record final from the relay's own figures (`figures_from: 'relay'`, the usual case) or one that
+certainly never ran has no block hash, height or time, and its "a later step failed" flag is always off; only records
+read back from the chain (`figures_from: 'final'`) carry a block hash.
 
 **Watching it.** "Free NEAR transactions: a billing record is late" (`near_billing_late`, once a day, with counts) means
 one of: `misses` (a relay may have been sent but its record couldn't be written or even named), `parked` (records waiting
 for D1, written by the cron once it works again), `notFinal` (records still not read back from the chain six hours on),
-`unmirrored` (records not copied to the usage ledger an hour on: check the ledger connection first), `nonceGaps` (the
-relay key was used on chain more times than there are records: something sent without a record; look at the day's relay
-logs). What to do: for `parked` and `unmirrored`, usually nothing (they catch up); for `misses` and `nonceGaps`, tell
-the developer team with the day; for `notFinal`, check the NEAR RPC endpoints. The cron reads the chain at most 10 times
+`unmirrored` (records not copied to the usage ledger an hour on: check the ledger connection first), `unrecordedLast`
+(for that many relay keys, the last transaction the chain took from the key that day has no record: something was sent
+without one; look at the day's relay logs). What `unrecordedLast` can and can't prove: it checks only the most recent
+transaction per key per day, so an unrecorded transaction followed by a recorded one the same day is not seen, and it
+is one per key, not a count of missing records. An exact count would need a counter inside the relay key object, left
+out on purpose so the live relay isn't touched. (The key's number on chain jumps on its own: the key object sets aside
+numbers in blocks of 100 and skips ahead after a restart, and a refused transaction's number is skipped; that is
+normal and not counted.) What to do: for `parked` and `unmirrored`, usually nothing (they catch up); for `misses` and
+`unrecordedLast`, tell the developer team with the day; for `notFinal`, check the NEAR RPC endpoints. The cron reads the chain at most 10 times
 a run for this (96 runs a day: up to 960 reads); most records need none. Monthly sums per org and app:
 `SELECT * FROM usage.near_relayed_monthly` as staff. No new binding or secret.
 

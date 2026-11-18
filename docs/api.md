@@ -1142,14 +1142,17 @@ other record (a contract or delegate failure, a timeout, an RPC error) is read b
 in a bounded queue on the RateLimiter object `near-relay:billing` (500) and written by the cron; a result with no hash,
 or a park that fails, is counted as a miss. **The cron** (every run, isolated: nothing it throws reaches the other
 jobs): at most 10 outside fetches through a client of its own (one endpoint a call, its own health: it never marks an
-endpoint down for the relay); writes the parked records; once a UTC day reads each relay key's nonce
-(`view_access_key`) and counts the nonces used on chain without a record (checked a day later, so their records have
-landed); reads due records oldest `next_try_at` first with `tx` `wait_until: 'NONE'`, final only when the node says
+endpoint down for the relay); writes the parked records (a row D1 refuses for good, a constraint error, is counted
+as a miss and dropped so it can't block the queue); once a UTC day reads each relay key's nonce (`view_access_key`:
+the nonce of the key's last transaction the chain included) and, when it moved since the day before, requires a record
+with that nonce (any outcome but `not_executed`), else counts one `unrecordedLast` for the key (it proves the most
+recent transaction per key per day has a record, not every one: nonces jump with the relay key object's reservations
+and refused transactions, so gaps can't be counted); reads due records oldest `next_try_at` first with `tx` `wait_until: 'NONE'`, final only when the node says
 `FINAL` (status: `failed` when the transaction or the user's own action failed, `executed` with `had_failed_receipt`
 when only a later callback receipt did), else again later, doubling from a minute to six hours; a record is `unknown`
 only after 8 actual reads and six hours (one starved of budget is only late); fills block height and time with what
 budget is left; copies final records to the usage ledger (`usage.record_near_relayed`, migrations-usage 0010).
-`near_billing_late` once a UTC day with `{misses, parked, notFinal, unmirrored, nonceGaps}` (not final six hours on;
+`near_billing_late` once a UTC day with `{misses, parked, notFinal, unmirrored, unrecordedLast}` (not final six hours on;
 not copied an hour on). D1 rows written per relay: about 5 for the usual final-at-once record (the insert: the row and
 its two index entries; the ledger copy's mark: the row and its to-do entry), one or two more for a record read at
 FINAL. Throughput: 96 runs a day × 10 fetches, up to 960 FINAL reads a day; a backlog above it waits and is alerted
@@ -1916,13 +1919,18 @@ a ledger that never answers delays no response).
 ### Usage ledger: NEAR relayed transactions (`migrations-usage/0010_near_relayed.sql`, D863; not deployed)
 
 `usage.near_relayed_txs`: the NEAR meta-transaction relay's billing records, copied from the API's D1
-`near_relay_billing` by the cron once read at FINAL, through `usage.record_near_relayed(rows jsonb)` (the writer's; at
+`near_relay_billing` by the cron once final, through `usage.record_near_relayed(rows jsonb)` (the writer's; at
 most 500 rows, every row validated, unknown fields refused, `ON CONFLICT (network, tx_hash) DO NOTHING`).
 `usage.near_relayed_monthly` (staff): per org, app, network, UTC month, kind and outcome, the count and the sums of
 tokens burnt, NEAR attached and gas. Rows also carry `had_failed_receipt`, `figures_from` (`relay`/`final`) and
 `block_hash`; outcomes `executed`, `failed`, `not_executed`, `unknown`. Pseudonymous (no name, email, account id or user
 id; the hash can be traced to an account); never touched by the retention functions or `usage.erase_uid`.
-yoctoNEAR only: `usage.near_usd_rates` (the daily NEAR/USD rate the admin Worker fetches) can price them later.
+yoctoNEAR only: `usage.near_usd_rates` (the daily NEAR/USD rate the admin Worker fetches) can price them later. **What a
+billing job can rely on:** the amounts and the time of recording (`created_at`, `final_at`), not block data. A record
+final from the relay's own figures (`figures_from: 'relay'`) or `not_executed` was never read back: no `block_hash`,
+`block_height` or `block_time`, and `had_failed_receipt` is always false for it; only `figures_from: 'final'` records
+carry a block hash. Unverified: whether newer NEAR versions charge a gas refund penalty outside `tokens_burnt` (a check
+at deploy time, `docs/operations.md` "NEAR relay billing records").
 
 ### Usage ledger: EVM sponsored transactions (`migrations-usage/0009_evm_sponsored.sql`, D852; not live)
 

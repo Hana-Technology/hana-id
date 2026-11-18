@@ -19,7 +19,7 @@ import { nearRelayKeyName, type RelayerKey, type RelayResult } from '../src/rela
 import { runInDurableObject } from 'cloudflare:test';
 import { appHeaders, call, type Chain, ORIGIN, type SeededApp, startOfMinuteClock } from './helpers.ts';
 import { MOCK_RECEIPT_GAS, MOCK_TX_GAS } from './near-mock.ts';
-import { blockFigures, BudgetedRpc, checkNearBillingLate, finalStatus, GIVE_UP_TRIES, initialRecord, NEAR_BILLING_FETCHES, nearBillingFaults, nearBillingMaintenance } from '../src/near/relay-billing.ts';
+import { blockFigures, BudgetedRpc, checkNearBillingLate, finalStatus, GIVE_UP_TRIES, initialRecord, isConstraintError, NEAR_BILLING_FETCHES, nearBillingFaults, nearBillingMaintenance } from '../src/near/relay-billing.ts';
 import { rpcHealth } from '../src/near/rpc.ts';
 import { pruneEvmSponsorSends } from '../src/evm/sponsor-settle.ts';
 import { usageTransport } from '../src/usage/record.ts';
@@ -1019,7 +1019,7 @@ describe('billing records (D863): one permanent record per relayed NEAR transact
     expect(counts.misses).toBe(1);
     // Once a day: an hour on, no second event.
     await checkNearBillingLate(env, Date.now() + HOUR);
-    expect(await lateEvents()).toEqual([{ misses: 1, parked: 0, notFinal: 0, unmirrored: 0, nonceGaps: 0 }]);
+    expect(await lateEvents()).toEqual([{ misses: 1, parked: 0, notFinal: 0, unmirrored: 0, unrecordedLast: 0 }]);
   });
 
   it('a contract failure is read again: not FINAL yet → tried later (doubling); FINAL → its figures and the block, the user’s own call failed', async () => {
@@ -1095,23 +1095,78 @@ describe('billing records (D863): one permanent record per relayed NEAR transact
     await expect(nearBillingMaintenance(env)).resolves.toBe(0);
   });
 
-  it('the daily nonce check: a relay key’s nonces used on chain without a record are counted and alerted', async () => {
+  it('the daily nonce check: the last included transaction of each key must have a record; reservation jumps and refused nonces count nothing', async () => {
     const res = await relay(s.app, plainRelay(delegate(s.user)));
     expect(res.status).toBe(200);
     const [r] = await rows();
     const pk = r!.relayer_pk as string;
     const n = BigInt(r!.relayer_nonce as number);
+    const cols = Object.keys(r!);
+    // A record of this key at another nonce (a copy of the relayed one with its own hash and outcome).
+    const record = async (nonce: bigint, hash: string, outcome = 'executed') => {
+      const values = cols.map((c) => (c === 'tx_hash' ? hash : c === 'relayer_nonce' ? Number(nonce) : c === 'outcome' ? outcome : r![c]));
+      await env.DB.prepare(`INSERT INTO near_relay_billing (${cols.join(', ')}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(', ')})`).bind(...values).run();
+    };
+    const hash = (c: string) => c.repeat(43);
     const day = (d: number) => Math.floor(Date.now() / 86_400_000) * 86_400_000 + d * 86_400_000 + 3_600_000;
-    // Day 0: the watermark starts just below the recorded relay.
-    s.near.akNonce.set(pk, n - 1n);
+    const unrecorded = async (d: number) => (await checkNearBillingLate(env, day(d))).unrecordedLast;
+    // Day 0: the chain shows the recorded relay as the key's last; the first run only starts the watermark.
+    s.near.akNonce.set(pk, n);
     await nearBillingMaintenance(env, day(0));
-    // Day 1: the chain moved on by three (the recorded relay and two without a record).
-    s.near.akNonce.set(pk, n + 2n);
+    expect(await unrecorded(0)).toBe(0);
+    // Day 1: the relay key object restarted and resumed past its reservation (+100); one transaction there was refused
+    // (its nonce skipped, recorded not_executed), the next one included and recorded. The nonces jumped by 102 with two
+    // records: a gap count would say 100; nothing is missing.
+    await record(n + 101n, hash('A'), 'not_executed');
+    await record(n + 102n, hash('B'));
+    s.near.akNonce.set(pk, n + 102n);
     await nearBillingMaintenance(env, day(1));
-    // Day 2: the range of day 1 is checked.
+    expect(await unrecorded(1)).toBe(0);
+    // Day 2: nothing included since: nothing to check.
     await nearBillingMaintenance(env, day(2));
-    const counts = await checkNearBillingLate(env, day(2));
-    expect(counts.nonceGaps).toBe(2);
+    expect(await unrecorded(2)).toBe(0);
+    // Day 3: the key's last included transaction has no record (two without one): ONE for the key that day.
+    s.near.akNonce.set(pk, n + 104n);
+    await nearBillingMaintenance(env, day(3));
+    expect(await unrecorded(3)).toBe(1);
+    // Day 4: the chain says the last included one is the nonce a record calls not executed: counted as well.
+    await record(n + 105n, hash('C'), 'not_executed');
+    s.near.akNonce.set(pk, n + 105n);
+    await nearBillingMaintenance(env, day(4));
+    expect(await unrecorded(4)).toBe(1);
+    // Day 5, the limit: an unrecorded transaction followed by a recorded one the same day goes unseen.
+    await record(n + 107n, hash('D'));
+    s.near.akNonce.set(pk, n + 107n);
+    await nearBillingMaintenance(env, day(5));
+    expect(await unrecorded(5)).toBe(0);
+    // Once a day: a second run that day reads nothing more.
+    s.near.akNonce.set(pk, n + 109n);
+    await nearBillingMaintenance(env, day(5) + HOUR);
+    expect(await unrecorded(5)).toBe(0);
+    expect((await lateEvents()).map((e) => e.unrecordedLast)).toEqual([1, 1]);
+  });
+
+  it('a parked record D1 refuses for good (a constraint) is counted as a miss and dropped; the ones behind it are written', async () => {
+    const res = await relay(s.app, plainRelay(delegate(s.user)));
+    expect(res.status).toBe(200);
+    const [r] = await rows();
+    await env.DB.exec('DELETE FROM near_relay_billing');
+    const good = { ...r!, tx_hash: 'E'.repeat(43) };
+    delete (good as Record<string, unknown>).mirrored_at;
+    // A row the table's CHECK refuses (an outcome it doesn't know), then a good one.
+    await store().queuePush('near-relay-billing', { ...good, tx_hash: 'F'.repeat(43), outcome: 'bogus' }, 500, Date.now());
+    await store().queuePush('near-relay-billing', good, 500, Date.now() + 1);
+    await nearBillingMaintenance(env, Date.now() + 2 * 60_000);
+    expect(await store().queueLength('near-relay-billing')).toBe(0);
+    expect((await rows()).map((x) => x.tx_hash)).toEqual(['E'.repeat(43)]);
+    expect((await checkNearBillingLate(env, Date.now() + 2 * 60_000)).misses).toBe(1);
+  });
+
+  it('isConstraintError tells a row D1 refuses from a database it can’t reach', () => {
+    expect(isConstraintError(new Error('D1_ERROR: CHECK constraint failed: outcome IN (...): SQLITE_CONSTRAINT'))).toBe(true);
+    expect(isConstraintError(new Error('D1_ERROR: NOT NULL constraint failed: near_relay_billing.app_id'))).toBe(true);
+    expect(isConstraintError(new Error('D1_ERROR: no such table: near_relay_billing'))).toBe(false);
+    expect(isConstraintError(new Error('Network connection lost.'))).toBe(false);
   });
 
   it('finalStatus: a failure in the user’s own call is `failed`; one only in a later callback is `executed` with had_failed_receipt', () => {

@@ -14131,10 +14131,28 @@ deployed. The founder, 2026-11-18: "go ahead with NEAR billing records".
   WITHOUT ROWID table, the org and app indexes dropped (the ledger has them), about 5 rows written per usual relay; (4)
   a result sent without a hash counts as a miss; a failed write is parked (a bounded queue on the RateLimiter object)
   and written later; each record keeps the relay key and its nonce, and a daily check of each key's nonce on chain
-  against the records counts transactions without one (`nonceGaps`); (5) `near_billing_late` once a UTC day with the
+  against the records counts transactions without one (`nonceGaps`; replaced below); (5) `near_billing_late` once a UTC day with the
   counts, "not final" only past the give-up time; (6) `executed` with `had_failed_receipt` when only a later callback
   receipt failed (the user's own action, read from the receipt ids, decides `failed`); (7) pseudonymous, not "no
   personal data": no name, email, account id or user id, but the hash is public chain data that can be traced to an
   account; (8) the deploy order (docs/operations.md): D1 migrations only with `wrangler d1 migrations apply --remote`
   (0022 then 0023), the ledger's 0009 then 0010, the Worker after them at a quiet moment.
+- **Amended 2026-11-18 after the re-check of PR 77 at 2e5b8dc0** (amended while building, to confirm). (1) The daily
+  nonce check counted false gaps every day: the relay key object reserves nonces in blocks of 100 and resumes past its
+  reservation on each cold start (`NONCE_RESERVATION`, `relayer-key.ts`), and a refused transaction's nonce is skipped,
+  so `(hi − lo) − recorded` counted every skipped nonce. Replaced: once a UTC day per relay key, the key's nonce on chain
+  (the last included transaction's) must equal a recorded nonce of that key (any outcome but `not_executed`), or be
+  unchanged since the last check (nothing included); else ONE `unrecordedLast` for that key that day (the late alert's
+  `nonceGaps` renamed). What it proves: the most recent included transaction per key per day has a record. What it
+  can't: an unrecorded transaction followed by a recorded one the same day; nor how many are missing. An exact count
+  would need a counter inside the relay key object, deliberately not built now so the live relay is untouched. A
+  transaction included in the seconds before the check whose record is still being written could be counted once
+  (rare; the next day's check is clean). The test models the reservation jump and a refused nonce. (2) A parked row
+  that D1 refuses for good (a constraint error) no longer blocks the queue: counted as a miss, acknowledged, the drain
+  goes on; any other error still stops the drain until the next run. (3) What a later billing job can rely on: the
+  amounts and the time of recording, not block data. Records final from the relay's own figures (`figures_from:
+  'relay'`) and `not_executed` ones have no block hash, height or time, and `had_failed_receipt` is always 0 for them;
+  only `figures_from: 'final'` records carry a block hash. Unverified: whether newer NEAR versions charge a gas refund
+  penalty outside `tokens_burnt`; checked once at deploy time against one testnet transaction's balance change
+  (docs/operations.md, the deploy's step 4).
 - Address impact: none.

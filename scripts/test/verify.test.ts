@@ -392,10 +392,12 @@ describe('.github/workflows/ci.yml: every job has its step, with the same comman
     expect(cmds('evm')).toEqual(['forge fmt --check', 'forge test', 'node scripts/generate.mjs --check']);
     for (const c of cmds('evm')) expect(yml, c).toContain(`run: ${c}`);
     expect(yml).toContain(`working-directory: ${p.steps.find((s) => s.id === 'evm')!.run[0]!.cwd}`);
-    // Foundry at the version the delegate's README documents, through the official action.
+    // Foundry at the version the delegate's README documents, the release tarball checksum-verified, in both jobs.
     const foundry = /Foundry (\d+\.\d+\.\d+)/u.exec(readFileSync(join(repoRoot, 'contracts', 'evm-delegate', 'README.md'), 'utf8'))?.[1];
-    expect(yml).toMatch(/uses: foundry-rs\/foundry-toolchain@[0-9a-f]{40} # v/u);
-    expect(yml).toContain(`version: v${foundry}`);
+    expect(foundry).toBeDefined();
+    expect(yml.split(`FOUNDRY_VERSION: ${foundry}\n`)).toHaveLength(3);
+    expect(yml.match(/FOUNDRY_SHA256: [0-9a-f]{64}\n/gu)).toHaveLength(2);
+    expect(yml).not.toContain('foundry-toolchain');
     // Playwright with --forbid-only, as verify's e2e step.
     expect(cmds('e2e')[0]).toContain('--forbid-only');
     expect(yml).toContain('pnpm run e2e --forbid-only');

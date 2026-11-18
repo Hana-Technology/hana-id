@@ -194,19 +194,29 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      # No pnpm cache: this filtered install must not save a partial store under the lockfile's shared cache key.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          cache: pnpm
+          cache: ''
       - run: pnpm install --frozen-lockfile --filter @hana-id/evm-delegate...
         working-directory: .
-      # The Foundry the repo documents (contracts/evm-delegate/README.md); solc 0.8.28 is fetched by forge on first use.
-      # No cache: the tests fork no chain, and the action would save one per commit.
-      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
-        with:
-          version: v1.5.1
-          cache: false
-      - run: forge --version
+      # The Foundry the repo documents (contracts/evm-delegate/README.md): the release's Linux tarball, checksum-verified
+      # (GitHub's digest of the release asset, re-computed on download 2026-11-18); solc 0.8.28 is fetched by forge on
+      # first use. Bumping Foundry means re-pinning both values here and in the TypeScript job.
+      - name: Install Foundry (checksum-verified)
+        working-directory: .
+        env:
+          FOUNDRY_VERSION: 1.5.1
+          FOUNDRY_SHA256: 73640b01bd9ed29fdb4965085099371f8cf0dbbec3e2086cf54564efc4dcfe88
+        run: |
+          curl -sSfL -o foundry.tar.gz "https://github.com/foundry-rs/foundry/releases/download/v${FOUNDRY_VERSION}/foundry_v${FOUNDRY_VERSION}_linux_amd64.tar.gz"
+          echo "${FOUNDRY_SHA256}  foundry.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.foundry/bin"
+          tar -xzf foundry.tar.gz -C "$HOME/.foundry/bin" forge cast anvil
+          rm foundry.tar.gz
+          "$HOME/.foundry/bin/forge" --version | grep -F "Version: ${FOUNDRY_VERSION}-"
+          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
       - run: forge fmt --check
       - run: forge test
       - run: node scripts/generate.mjs --check
@@ -224,11 +234,21 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # anvil and cast for the EVM deploy tests (D849), which skip without them, as on a machine without Foundry.
-      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
-        with:
-          version: v1.5.1
-          cache: false
+      # anvil and cast for the EVM deploy tests (D849), which skip without them, as on a machine without Foundry. The
+      # same pinned release as the evm job.
+      - name: Install Foundry (checksum-verified)
+        working-directory: .
+        env:
+          FOUNDRY_VERSION: 1.5.1
+          FOUNDRY_SHA256: 73640b01bd9ed29fdb4965085099371f8cf0dbbec3e2086cf54564efc4dcfe88
+        run: |
+          curl -sSfL -o foundry.tar.gz "https://github.com/foundry-rs/foundry/releases/download/v${FOUNDRY_VERSION}/foundry_v${FOUNDRY_VERSION}_linux_amd64.tar.gz"
+          echo "${FOUNDRY_SHA256}  foundry.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.foundry/bin"
+          tar -xzf foundry.tar.gz -C "$HOME/.foundry/bin" forge cast anvil
+          rm foundry.tar.gz
+          "$HOME/.foundry/bin/forge" --version | grep -F "Version: ${FOUNDRY_VERSION}-"
+          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test

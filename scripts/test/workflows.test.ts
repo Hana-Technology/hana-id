@@ -9,8 +9,8 @@ import { repoRoot } from '@hana-id/env';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
-type Step = { uses?: string; with?: Record<string, unknown>; if?: string };
-type Job = { 'runs-on'?: unknown; 'timeout-minutes'?: unknown; permissions?: unknown; steps?: Step[]; uses?: string; environment?: unknown };
+type Step = { uses?: string; with?: Record<string, unknown>; if?: string; run?: string; env?: Record<string, unknown> };
+type Job = { 'runs-on'?: unknown; 'timeout-minutes'?: unknown; permissions?: unknown; steps?: Step[]; uses?: string; environment?: unknown; env?: Record<string, unknown> };
 type Workflow = { on?: unknown; permissions?: unknown; jobs?: Record<string, Job> };
 
 const DIR = join(repoRoot, '.github', 'workflows');
@@ -69,6 +69,28 @@ describe('every workflow', () => {
 
       it('holds read-only permissions at the top', () => {
         expect(onlyRead(w.permissions), JSON.stringify(w.permissions)).toBe(true);
+      });
+
+      it('checks every downloaded file against a sha256 pinned in the workflow (no unverified binary runs)', () => {
+        for (const [id, j] of jobs) {
+          for (const st of j.steps ?? []) {
+            const run = st.run ?? '';
+            const downloads = [...run.matchAll(/\b(?:curl|wget)\b[^\n]*/gu)].map((m) => m[0]);
+            if (downloads.length === 0) continue;
+            const where = `${f} ${id}: ${downloads[0]}`;
+            // Fetching a page into a pipe that runs it is never allowed.
+            expect(run, where).not.toMatch(/\b(?:curl|wget)\b[^\n]*\|\s*(?:ba|z)?sh\b/u);
+            // Every download writes a file (-o / -O), and as many checks as downloads follow it.
+            for (const d of downloads) expect(d, where).toMatch(/\s-(?:o|O)\s|\s-\w*[oO]\s/u);
+            expect((run.match(/sha256sum -c -/gu) ?? []).length, where).toBeGreaterThanOrEqual(downloads.length);
+            // Each check reads a pinned hash: a *_SHA256 variable of 64 hex characters in the step's or the job's env.
+            const env = { ...(j.env ?? {}), ...(st.env ?? {}) };
+            const pinned = Object.entries(env).filter(([k, v]) => /_SHA256$/u.test(k) && /^[0-9a-f]{64}$/u.test(String(v))).map(([k]) => k);
+            expect(pinned.length, where).toBeGreaterThan(0);
+            for (const m of run.matchAll(/echo "\$\{?(\w+)\}?\s+[^"]+" \| sha256sum -c -/gu)) expect(pinned, where).toContain(m[1]);
+            expect((run.match(/echo "\$\{?\w+\}?\s+[^"]+" \| sha256sum -c -/gu) ?? []).length, where).toBe((run.match(/sha256sum -c -/gu) ?? []).length);
+          }
+        }
       });
 
       it('keeps every artifact at most 3 days', () => {

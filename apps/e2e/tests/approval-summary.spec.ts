@@ -109,7 +109,7 @@ test('warnings stay visible while the details are closed (an unlimited ERC-20 ap
   const popup = await popupFor(page, 'approve', 'ethSignTx', evmTx({ to: TOKEN, value: 0n, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) }));
   await expect(details(popup)).not.toHaveAttribute('open', '');
   await expect(popup.locator('p.summary-warning.unlimited-spend')).toBeVisible();
-  await expect(popup.locator('p.summary-warning.unlimited-spend')).toContainText(`This lets ${short(SPENDER)} (not checked by Journear) take all your tokens from ${short(TOKEN)} (an unlisted token), now or later, with no limit`);
+  await expect(popup.locator('p.summary-warning.unlimited-spend')).toContainText(`This lets ${short(SPENDER)} (not checked by Journear) take all your tokens from ${shortId(TOKEN)} (an unlisted token), now or later, with no limit`);
 });
 
 test('raw signing: folded like any other request, the red risk line in view (D810)', async ({ page, browserName }) => {
@@ -213,7 +213,7 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
 
   // An unlimited approve, first time: as alarming as unsponsored, plus the fee line and the setup note.
   await injectSponsored(popup, subject({ authNonce: 0n, calls: [{ to: TOKEN, value: 0n, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) as `0x${string}` }] }));
-  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.unlimited-spend')).toContainText(`This lets ${short(SPENDER)} (not checked by Journear) take all your tokens from ${short(TOKEN)} (an unlisted token), now or later, with no limit`);
+  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.unlimited-spend')).toContainText(`This lets ${short(SPENDER)} (not checked by Journear) take all your tokens from ${shortId(TOKEN)} (an unlisted token), now or later, with no limit`);
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(setup);
   await shot(popup, 'sponsored-approve-warning', browserName);
 

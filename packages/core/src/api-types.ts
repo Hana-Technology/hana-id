@@ -491,6 +491,7 @@ export type EvmSponsorErrorCode =
   | 'near_unavailable'
   | 'account_mismatch'
   | 'account_busy'
+  | 'account_pending'
   | 'outcome_unknown'
   | 'internal_error'
   | 'batch_too_large'

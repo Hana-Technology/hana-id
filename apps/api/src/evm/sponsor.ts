@@ -482,7 +482,7 @@ async function replayAnswer(env: Env, ctx: Ctx, app: App, chainId: number, diges
     return null;
   }
   if (!row) return null;
-  if (row.rejection) return rejectionAnswer(ctx, rejectionKind(row.rejection.split(':')[0] ?? ''));
+  if (row.rejection) return rejectionAnswer(ctx, rejectionKind(row.rejection.split(':')[0] ?? ''), row.rejection.split(':')[1] ?? '');
   const hash = row.tx_hash && /^0x[0-9a-f]{64}$/u.test(row.tx_hash) ? (row.tx_hash as Hex) : null;
   if (row.status === 'executed' && hash) return done(ctx, 200, { transactionHash: hash, status: 'executed', replay: true });
   if ((row.status === 'reverted' || row.status === 'not_executed') && hash) return failed(ctx, row.status, hash);
@@ -519,7 +519,10 @@ export const rejectionKind = (cause: string): RejectionKind => (cause === 'reque
 const REJECTION_CAUSES: ReadonlySet<string> = new Set<EvmRejectionCause>(['request', 'pricing', 'relayer']);
 
 /** The answer to a batch no node took (its nonce went to the relayer's cancel at once): nothing ran. */
-function rejectionAnswer(ctx: Ctx, kind: RejectionKind): Response {
+function rejectionAnswer(ctx: Ctx, kind: RejectionKind, code = ''): Response {
+  // The user's own account had other transactions waiting (the relayer's `authority_reserved`): nothing ran; a
+  // failure, with its own plain sentence.
+  if (code === 'authority_reserved') return done(ctx, 422, { error: 'The account has other transactions waiting: nothing ran', code: 'account_pending' });
   if (kind === 'request') return done(ctx, 422, { error: 'The network refused this batch: nothing ran', code: 'not_executed' });
   if (kind === 'pricing') return done(ctx, 503, { error: 'Network fees are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
   return paused(ctx);
@@ -585,7 +588,13 @@ async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, 
   }
 }
 
-/** A coded refusal the user's own input caused: their attempts stay counted. Any other gives them back. */
+/** A relayer answer that is a coded refusal (`{ok: false, refused, reason}`: nothing was sent), or null. */
+function codedAnswer(a: unknown): { code: string; reason: string | null } | null {
+  if (typeof a !== 'object' || a === null || (a as { ok?: unknown }).ok !== false) return null;
+  const r = a as { refused?: unknown; reason?: unknown };
+  return relayerRefusal(`evm_relayer:${typeof r.refused === 'string' ? r.refused : ''}${typeof r.reason === 'string' && r.reason ? `:${r.reason}` : ''}`) ?? { code: 'internal', reason: null };
+}
+
 /** A coded refusal the user's own input caused: their attempts stay counted. Any other gives them back. */
 const userCaused = (code: string): boolean => code === 'deadline_passed';
 
@@ -1067,19 +1076,19 @@ async function afterReservation(
   let sent: EvmRelayerSent | null;
   let refused: { code: string; reason: string | null } | null = null;
   try {
-    sent = checkedResult(
-      await relayer.send({
-        chainId: chain.chainId,
-        execute: executeInput(chain, req),
-        signature: req.signature,
-        gas: row.reserved.gasLimit,
-        maxFeePerGas: fees.maxFeePerGas,
-        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-        ...(authorization ? { authorization } : {}),
-        reservedWei: row.reserved.reservedWei,
-      }),
-      row.digest,
-    );
+    const answer: unknown = await relayer.send({
+      chainId: chain.chainId,
+      execute: executeInput(chain, req),
+      signature: req.signature,
+      gas: row.reserved.gasLimit,
+      maxFeePerGas: fees.maxFeePerGas,
+      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      ...(authorization ? { authorization } : {}),
+      reservedWei: row.reserved.reservedWei,
+    });
+    // A coded refusal comes back as a value (`ok: false`, nothing sent); a thrown coded error is read the same way.
+    refused = codedAnswer(answer);
+    sent = refused ? null : checkedResult(answer, row.digest);
   } catch (e) {
     sent = null;
     refused = relayerRefusal(e);
@@ -1150,7 +1159,7 @@ async function rejectedNow(env: Env, ctx: Ctx, row: SendRow, sent: EvmRelayerSen
   const now = Date.now();
   log({ event: 'evm_sponsor_rejected', requestId: ctx.requestId, endpoint: ctx.endpoint, code: `${kind}:${code}` }, kind === 'relayer' ? 'error' : 'warn');
   if (kind === 'relayer') await noteEvent(env, ctx, 'evm_relay_stuck', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId, rejected: code }, now);
-  return rejectionAnswer(ctx, kind);
+  return rejectionAnswer(ctx, kind, code);
 }
 
 async function settledOutcome(env: Env, id: string): Promise<'executed' | 'reverted' | 'not_executed'> {

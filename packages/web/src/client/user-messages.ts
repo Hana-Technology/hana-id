@@ -125,6 +125,7 @@ const SPONSOR = Object.freeze({
   wrongAccount: 'This isn’t the account you’re signed in with. Nothing was sent. Sign in again, then try again.',
   signInNotReady: 'Journear is still finishing your sign-in. Try again in a few seconds.',
   signInUnchecked: 'Journear couldn’t check your sign-in, so nothing was sent. Sign in again, then try again.',
+  accountPending: 'Your account has other actions waiting on the network, so this one couldn’t go through. Wait a moment, then try again.',
 });
 
 export const SPONSOR_REASONS: Readonly<Record<string, string>> = Object.freeze({
@@ -186,6 +187,7 @@ export const SPONSOR_REASONS: Readonly<Record<string, string>> = Object.freeze({
   config_unavailable: SPONSOR.unavailable,
   internal_error: SPONSOR.unavailable,
   outcome_unknown: SPONSOR.unknownOutcome,
+  account_pending: SPONSOR.accountPending,
   account_busy: SPONSOR.busy,
   batch_too_large: SPONSOR.tooBig,
 });

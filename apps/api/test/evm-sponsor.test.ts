@@ -2064,3 +2064,30 @@ describe('L7: one bad record never blocks the others; an env without the block r
     expect(s.chain.calls).toEqual([]);
   });
 });
+
+describe('the relayer’s answers as values (PR 86’s interface)', () => {
+  it('a coded refusal returned as `{ok: false}` is read as a thrown one: nothing sent, everything back', async () => {
+    const s = await setup();
+    s.relayer.onSend = async () => ({ ok: false, refused: 'relayer_busy', reason: 'account' }) as never;
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([429, 'account_busy']);
+    expect((await auditRows(s.user.address))[0]?.status).toBe('refused');
+    expect(await appSpent(s.app)).toBe(0n);
+  });
+
+  it('an `ok: true` answer is the transaction', async () => {
+    const s = await setup();
+    const inner = s.relayer.onSend;
+    s.relayer.onSend = async (req) => ({ ok: true, ...(await inner(req)) }) as never;
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+  });
+
+  it('the user’s account had other transactions waiting (`authority_reserved`, cause request): 422 account_pending, a failure', async () => {
+    const s = await setup();
+    const inner = fakeRelayer(s.chain, () => 'none').onSend;
+    s.relayer.onSend = async (req) => ({ ...(await inner(req)), broadcast: 'rejected', rejection: { cause: 'request', code: 'authority_reserved' } as never });
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([422, 'account_pending']);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
+  });
+});

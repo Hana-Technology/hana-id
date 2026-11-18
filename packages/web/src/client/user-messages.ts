@@ -184,6 +184,10 @@ export const SPONSOR_REASONS: Readonly<Record<string, string>> = Object.freeze({
   directory_unavailable: SPONSOR.unavailable,
   rate_limiter_unavailable: SPONSOR.unavailable,
   config_unavailable: SPONSOR.unavailable,
+  internal_error: SPONSOR.unavailable,
+  outcome_unknown: SPONSOR.unknownOutcome,
+  account_busy: SPONSOR.busy,
+  batch_too_large: SPONSOR.tooBig,
 });
 
 /** The codes a sponsored action's errors come with. */

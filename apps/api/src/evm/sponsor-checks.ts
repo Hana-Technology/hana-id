@@ -43,8 +43,8 @@ export const EVM_SPONSOR_LIMITS = Object.freeze({
   failuresPerUserPerDay: 3,
   /** The day's spend at which `evm_relay_budget_high` is written (once a UTC day per chain). */
   budgetAlertPct: 80,
-  /** The relayer's oldest unmined transaction older than this writes `evm_relay_stuck` (once an hour per chain). */
-  stuckAfterMs: 10 * 60_000,
+  /** The relayer's oldest unmined (or unaccepted) transaction older than this writes `evm_relay_stuck` (once an hour per chain). */
+  stuckAfterMs: 2 * 60_000,
   /** A send needs the relayer's balance to cover this many times its worst case (else `sponsorship_paused`). */
   balanceMargin: 3n,
   /** An app's sends in flight per chain (the relayer takes at most 8 unmined across every app). */
@@ -311,4 +311,53 @@ export function revertDetails(revertData: Hex | null, callCount: number): { reve
 /** Success (D847): status 1 and an `Executed(digest, …)` log emitted by the account itself. */
 export function executedIn(receipt: SponsorReceipt, account: Hex, digest: Hex): boolean {
   return receipt.status === 1 && receipt.logs.some((l) => l.address.toLowerCase() === account.toLowerCase() && l.topics[0] === EXECUTED_TOPIC && l.topics[1] === digest.toLowerCase());
+}
+
+// ---- strict JSON (D856: the body hashed is the body acted on) ----
+
+/**
+ * Whether JSON text repeats a key within one object (compared after unescaping, as JSON.parse compares them). A parser
+ * that keeps the last of two copies would act on one value where a reader of the text sees another, so the sponsorship
+ * routes refuse such a body. Meant for text JSON.parse accepts; anything malformed answers false (the parse refuses it).
+ */
+export function hasDuplicateJsonKey(text: string): boolean {
+  const stack: (Set<string> | null)[] = [];
+  let i = 0;
+  let expectKey = false;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      if (j >= text.length) return false;
+      const top = stack.at(-1);
+      if (expectKey && top) {
+        let key: string;
+        try {
+          key = JSON.parse(text.slice(i, j + 1)) as string;
+        } catch {
+          return false;
+        }
+        if (top.has(key)) return true;
+        top.add(key);
+        expectKey = false;
+      }
+      i = j + 1;
+      continue;
+    }
+    if (ch === '{') {
+      stack.push(new Set());
+      expectKey = true;
+    } else if (ch === '[') {
+      stack.push(null);
+      expectKey = false;
+    } else if (ch === '}' || ch === ']') {
+      stack.pop();
+      expectKey = false;
+    } else if (ch === ',') {
+      expectKey = stack.at(-1) instanceof Set;
+    }
+    i++;
+  }
+  return false;
 }

@@ -2252,8 +2252,12 @@ own funds** are checked before every send: its balance must be at least `lowBala
 every send of the chain already committed plus this one's, checked atomically by the audit row's insert (one D1
 statement, so a burst across isolates can't each pass alone), else `503 sponsorship_paused` and
 `evm_relay_balance_low`; no user's batch, nor a burst of them, can make the relayer's own broadcast fail for funds (which
-halts it for staff for every app). **One app can't fill the relayer:** at most 4 of an app's sends are unsettled per chain at
-once (the relayer takes 8 unmined in all), past that `429 relayer_busy`. Failures cost the sponsor
+halts it for staff for every app). **One app can't fill the relayer:** at most 4 of an app's sends are open per chain at
+once (the relayer takes 8 unmined in all), counted from the audit rows in the same statement that writes the row (no
+counter that a crash could leak), past that `429 relayer_busy` after the app's own open rows were settled inline. The
+whole send runs inside the request's `waitUntil` from before its first count. A row is `lost` only when the relayer
+answered and every receipt read succeeded empty; a reorg the relayer's verdict at confirmed depth shows is corrected
+with a correction billing record; the user's own answer still comes from the head receipt (D847's residual). Failures cost the sponsor
 and are charged: a revert or a transaction that ran nothing is settled from its receipt and counts as one of the user's
 3 failures; a simulation revert spends nothing but counts too. A relayer refusal with a code sent nothing and gives
 everything back. A batch no node took (`broadcast: rejected`: its nonce went to the relayer's own cancel at once) is

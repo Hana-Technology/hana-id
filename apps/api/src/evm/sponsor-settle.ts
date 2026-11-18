@@ -13,7 +13,7 @@ import { limiter } from '../handlers.ts';
 import { log } from '../log.ts';
 import { receiptCost, type ReservedFor } from './op-fee.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, sponsorChain } from './sponsor-config.ts';
-import { type BillingFigures, type BillingOutcome, billingStatement } from './sponsor-billing.ts';
+import { type BillingFigures, type BillingOutcome, billingStatement, correctionStatement } from './sponsor-billing.ts';
 import { executedIn } from './sponsor-checks.ts';
 import { blockTimestamp, type EvmRelayerLookup, type EvmRelayerPort, type Hex, type SponsorChainPort, type SponsorReceipt, sponsorPorts } from './sponsor-ports.ts';
 
@@ -34,19 +34,8 @@ export const NONCE_FLOOR = 'evm-sponsor:nonce';
 export const FAILURES = 'evm-sponsor:failures';
 /** The failed-send count's object: the user's (across chains), or the account's on the chain without a directory user. */
 export const failureSubject = (chainId: number, account: string, userId: string | null) => (userId ? `evm-sponsor:failures:${userId}` : `evm-sponsor:failures:${chainId}:${account.toLowerCase()}`);
-/**
- * An app's sends in flight on a chain (on `app:<id>`, a UTC-day amount window): one slot taken before the reservation and
- * given back when the send is settled (by whoever moves its row) or never sent, so one app can't fill the relayer's
- * unmined cap. A slot whose give-back was lost (a crash between the move and it) is gone at the next UTC midnight.
- */
-export const inflightWindow = (chainId: number) => `evm-sponsor:${chainId}:inflight`;
-
-/** Gives back a send's in-flight slot (taken at its `created_at`). Never throws. */
-export async function freeInflight(env: Env, row: Pick<SendRow, 'appId' | 'chainId' | 'createdAt'>): Promise<void> {
-  await limiter(env, appSubjectOf(row.appId))
-    .giveBack(inflightWindow(row.chainId), DAY, '1', row.createdAt)
-    .catch(() => undefined);
-}
+/** The statuses of a send still in flight: an app's count of these is its share of the relayer (D847, derived from D1). */
+export const INFLIGHT_STATUSES = ['sending', 'sent', 'timeout', 'unknown', 'rejected'] as const;
 
 export type EventKind = 'evm_relay_budget_high' | 'evm_relay_balance_low' | 'evm_relay_stuck' | 'evm_relay_receipt_odd' | 'evm_relay_nonce_taken' | 'evm_billing_late';
 
@@ -77,7 +66,7 @@ export async function settleBudget(env: Env, appId: string, chainId: number, res
 
 // ---- the audit row ----
 
-export type SendStatus = 'sending' | 'sent' | 'executed' | 'reverted' | 'not_executed' | 'mined' | 'timeout' | 'unknown' | 'rejected' | 'refused' | 'lost' | 'consumed_elsewhere';
+export type SendStatus = 'sending' | 'sent' | 'executed' | 'reverted' | 'not_executed' | 'mined' | 'timeout' | 'unknown' | 'rejected' | 'refused' | 'lost' | 'consumed_elsewhere' | 'duplicate';
 /**
  * The states a settlement may move a row from. `rejected`: no node took the batch and the relayer gave its nonce to its
  * own cancel at once (the send answered at once); the row settles to the cancel's cost once the relayer reports it.
@@ -124,6 +113,9 @@ interface RowColumns {
   updated_at: number;
   status: SendStatus;
 }
+
+const ROW_COLUMNS = `id, app_id, chain_id, account, user_id, digest, execute_nonce, tx_hash, tx_hashes, deadline, gas_limit, fee_cap_wei, l1_bound_wei,
+                op_bound_wei, reserved_wei, replay, created_at, updated_at, status`;
 
 const rowOf = (c: RowColumns): SendRow => ({
   id: c.id,
@@ -182,13 +174,14 @@ export async function persistHashes(env: Env, id: string, hashes: readonly Hex[]
  * billing record's statement, sponsor-billing.ts) runs in the same D1 batch, right after the move: a settled row and its
  * record are written together or not at all.
  */
-export async function moveRow(env: Env, id: string, from: readonly SendStatus[], status: SendStatus, f: { txHash?: Hex; relayerNonce?: number; settledWei?: bigint; replay?: boolean; rejection?: string } = {}, billing?: (status: SendStatus) => D1PreparedStatement): Promise<boolean> {
+export async function moveRow(env: Env, id: string, from: readonly SendStatus[], status: SendStatus, f: { txHash?: Hex; relayerNonce?: number; settledWei?: bigint; replay?: boolean; rejection?: string; confirmedAt?: number } = {}, billing?: (status: SendStatus) => D1PreparedStatement): Promise<boolean> {
   try {
     const update = env.DB.prepare(
       `UPDATE evm_sponsor_sends SET status = ?2, tx_hash = COALESCE(?3, tx_hash), relayer_nonce = COALESCE(?4, relayer_nonce),
-         settled_wei = COALESCE(?5, settled_wei), replay = COALESCE(?6, replay), rejection = COALESCE(?9, rejection), updated_at = MAX(created_at, ?7)
+         settled_wei = COALESCE(?5, settled_wei), replay = COALESCE(?6, replay), rejection = COALESCE(?9, rejection), confirmed_at = COALESCE(?10, confirmed_at),
+         updated_at = MAX(created_at, ?7)
        WHERE id = ?1 AND status IN (SELECT value FROM json_each(?8))`,
-    ).bind(id, status, f.txHash ?? null, f.relayerNonce ?? null, f.settledWei?.toString() ?? null, f.replay === undefined ? null : f.replay ? 1 : 0, Date.now(), JSON.stringify(from), f.rejection ?? null);
+    ).bind(id, status, f.txHash ?? null, f.relayerNonce ?? null, f.settledWei?.toString() ?? null, f.replay === undefined ? null : f.replay ? 1 : 0, Date.now(), JSON.stringify(from), f.rejection ?? null, f.confirmedAt ?? null);
     const [r] = billing ? await env.DB.batch([update, billing(status)]) : [await update.run()];
     return (r!.meta.changes ?? 0) === 1;
   } catch {
@@ -211,9 +204,12 @@ function figuresOf(receipt: SponsorReceipt, cost: bigint, cfg: Readonly<EvmSpons
  * Settles a row from a receipt for one of its own hashes, once: the row moves from `from` to its outcome, with its
  * billing record in the same D1 batch; then, unless it was a replay (already given back), the reservation settles to the
  * receipt's checked cost (receiptCost: a receipt outside what was reserved settles at the reservation and writes
- * `evm_relay_receipt_odd`), a success frees its failure slot and raises the account's floor past its own executeNonce.
- * `cancelled`: the receipt is the relayer's deadline self-transfer (its lookup says so): the batch didn't run, the row
- * is `not_executed`, the record `cancelled`. Null when another caller had already settled it.
+ * `evm_relay_receipt_odd`) and a success frees its failure slot. `cancelled`: the receipt is the relayer's own cancel:
+ * the batch didn't run, the row is `not_executed`, the record `cancelled`. `confirmed`: the relayer's verdict at
+ * confirmed depth names this very transaction (else the row waits for the reconciler's check, D847, and the account's
+ * nonce floor rises only then). A transaction already billed to another row of the digest (a first attempt that came
+ * back unknown, then the retry) makes this row a `duplicate`: settled at zero, its reservation given back, so the money is
+ * charged once. Null when another caller had already settled it.
  */
 export async function settleFromReceipt(
   env: Env,
@@ -221,7 +217,7 @@ export async function settleFromReceipt(
   row: SendRow,
   receipt: SponsorReceipt,
   from: readonly SendStatus[],
-  o: { cancelled?: boolean; chain?: SponsorChainPort } = {},
+  o: { cancelled?: boolean; chain?: SponsorChainPort; confirmed?: boolean } = {},
 ): Promise<{ outcome: Outcome; cost: bigint } | null> {
   const outcome: Outcome = !o.cancelled && executedIn(receipt, row.account, row.digest) ? 'executed' : receipt.status === 0 && !o.cancelled ? 'reverted' : 'not_executed';
   const { cost, odd } = receiptCost(receipt, cfg.opStack, row.reserved);
@@ -229,19 +225,46 @@ export async function settleFromReceipt(
   const figures = figuresOf(receipt, cost, cfg, row, at);
   const record: BillingOutcome = o.cancelled ? 'cancelled' : outcome;
   const now = Date.now();
-  const moved = await moveRow(env, row.id, from, outcome, { txHash: figures.txHash, settledWei: row.replay ? 0n : cost }, (status) => billingStatement(env, row.id, status, record, cost, figures, now));
+  const moved = await moveRow(env, row.id, from, outcome, { txHash: figures.txHash, settledWei: row.replay ? 0n : cost, ...(o.confirmed ? { confirmedAt: now } : {}) }, (status) => billingStatement(env, row.id, status, record, cost, figures, now));
   if (!moved) return null;
-  if (odd) await noteEvent(env, null, 'evm_relay_receipt_odd', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId, settledAtReservation: true }, now);
-  if (!row.replay) await Promise.all([settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, cost, row.createdAt), freeInflight(env, row)]);
-  if (outcome === 'executed') {
-    if (!row.replay) await limiter(env, failureSubject(row.chainId, row.account, row.userId)).giveBack(FAILURES, DAY, '1', row.createdAt).catch(() => undefined);
-    try {
-      await limiter(env, accountSubject(row.chainId, row.account)).raiseFloor(NONCE_FLOOR, (row.executeNonce + 1n).toString());
-    } catch {
-      log({ event: 'evm_sponsor_floor_failed', code: 'rate_limiter_unavailable' }, 'error');
-    }
+  if (await billedElsewhere(env, row, figures.txHash)) {
+    await settleDuplicate(env, row);
+    return { outcome, cost: 0n };
   }
+  if (odd) await noteEvent(env, null, 'evm_relay_receipt_odd', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId, settledAtReservation: true }, now);
+  if (!row.replay) await settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, cost, row.createdAt);
+  if (outcome === 'executed' && !row.replay) await limiter(env, failureSubject(row.chainId, row.account, row.userId)).giveBack(FAILURES, DAY, '1', row.createdAt).catch(() => undefined);
+  if (outcome === 'executed' && o.confirmed) await raiseAccountFloor(env, row);
   return { outcome, cost };
+}
+
+/** The account's nonce floor past this row's own nonce: only on the relayer's verdict at confirmed depth (D847). */
+async function raiseAccountFloor(env: Env, row: Pick<SendRow, 'chainId' | 'account' | 'executeNonce'>): Promise<void> {
+  try {
+    await limiter(env, accountSubject(row.chainId, row.account)).raiseFloor(NONCE_FLOOR, (row.executeNonce + 1n).toString());
+  } catch {
+    log({ event: 'evm_sponsor_floor_failed', code: 'rate_limiter_unavailable' }, 'error');
+  }
+}
+
+/** Whether the transaction's billing record belongs to another row (this row's own insert was ignored). */
+async function billedElsewhere(env: Env, row: Pick<SendRow, 'id' | 'chainId'>, txHash: Hex): Promise<boolean> {
+  try {
+    const b = await env.DB.prepare('SELECT send_id FROM evm_sponsor_billing WHERE chain_id = ?1 AND record_key = ?2').bind(row.chainId, txHash.toLowerCase()).first<{ send_id: string }>();
+    return b !== null && b.send_id !== row.id;
+  } catch {
+    return false;
+  }
+}
+
+/** A second row of a digest whose transaction is billed to the first: `duplicate`, zero, everything it reserved back. */
+async function settleDuplicate(env: Env, row: SendRow): Promise<void> {
+  await env.DB.prepare("UPDATE evm_sponsor_sends SET status = 'duplicate', settled_wei = '0', confirmed_at = COALESCE(confirmed_at, ?2), updated_at = MAX(created_at, ?2) WHERE id = ?1")
+    .bind(row.id, Date.now())
+    .run()
+    .catch(() => undefined);
+  if (row.replay) return;
+  await Promise.all([settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, 0n, row.createdAt), limiter(env, failureSubject(row.chainId, row.account, row.userId)).giveBack(FAILURES, DAY, '1', row.createdAt).catch(() => undefined)]);
 }
 
 /**
@@ -255,8 +278,12 @@ export async function settleFromRelayerCost(env: Env, row: SendRow, minedHash: H
   const status: SendStatus = cancelled ? 'not_executed' : 'mined';
   const now = Date.now();
   const figures: BillingFigures = { txHash: minedHash, blockNumber: null, blockTimestamp: null, gasUsed: null, effectiveGasPrice: null, executionWei: null, l1FeeWei: null, operatorFeeWei: null, totalCostWei: cost };
-  if (!(await moveRow(env, row.id, OPEN_STATUSES, status, { txHash: minedHash, settledWei: row.replay ? 0n : cost }, (st) => billingStatement(env, row.id, st, cancelled ? 'cancelled' : 'mined', cost, figures, now)))) return false;
-  if (!row.replay) await Promise.all([settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, cost, row.createdAt), freeInflight(env, row)]);
+  if (!(await moveRow(env, row.id, OPEN_STATUSES, status, { txHash: minedHash, settledWei: row.replay ? 0n : cost, confirmedAt: now }, (st) => billingStatement(env, row.id, st, cancelled ? 'cancelled' : 'mined', cost, figures, now)))) return false;
+  if (await billedElsewhere(env, row, minedHash)) {
+    await settleDuplicate(env, row);
+    return true;
+  }
+  if (!row.replay) await settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, cost, row.createdAt);
   return true;
 }
 
@@ -269,7 +296,6 @@ export async function settleAsCharge(env: Env, row: SendRow, status: 'lost' | 'c
   const now = Date.now();
   const amount = row.replay ? 0n : row.reserved.reservedWei;
   if (!(await moveRow(env, row.id, OPEN_STATUSES, status, { settledWei: amount }, (st) => billingStatement(env, row.id, st, status, amount, null, now)))) return false;
-  if (!row.replay) await freeInflight(env, row);
   if (status === 'consumed_elsewhere') await noteEvent(env, null, 'evm_relay_nonce_taken', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId }, now);
   return true;
 }
@@ -347,6 +373,16 @@ export interface ReconcileCounts {
   settled: number;
   lost: number;
   open: number;
+  /** Rows settled at head the relayer's verdict at confirmed depth agreed with, and rows it corrected (a reorg). */
+  confirmed: number;
+  corrected: number;
+}
+
+/** Inline (the send path, when the app's in-flight share is full): this app's and chain's rows only, at most `limit`. */
+export interface ReconcileScope {
+  appId: string;
+  chainId: number;
+  limit: number;
 }
 
 /**
@@ -358,21 +394,29 @@ export interface ReconcileCounts {
  * stays open, and an hour past the deadline becomes `lost` with the reservation kept (and a billing record of that
  * amount). A `rejected` row's receipt of any hash but its batch's is the cancel's. Never throws.
  */
-export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now: number = Date.now()): Promise<ReconcileCounts> {
-  const counts: ReconcileCounts = { settled: 0, lost: 0, open: 0 };
+export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now: number = Date.now(), scope?: ReconcileScope): Promise<ReconcileCounts> {
+  const counts: ReconcileCounts = { settled: 0, lost: 0, open: 0, confirmed: 0, corrected: 0 };
   let rows: RowColumns[];
   try {
-    rows = (
-      await env.DB.prepare(
-        `SELECT id, app_id, chain_id, account, user_id, digest, execute_nonce, tx_hash, tx_hashes, deadline, gas_limit, fee_cap_wei, l1_bound_wei,
-                op_bound_wei, reserved_wei, replay, created_at, updated_at, status
-           FROM evm_sponsor_sends
-          WHERE ((status IN ('sent', 'timeout', 'unknown', 'rejected') AND updated_at <= ?1) OR (status = 'sending' AND updated_at <= ?3))
-          ORDER BY updated_at LIMIT ?2`,
-      )
-        .bind(now - RECONCILE_AFTER_MS, RECONCILE_ROWS, now - SENDING_LIFETIME_MS)
-        .all<RowColumns>()
-    ).results;
+    rows = scope
+      ? // Inline: no age wait, but never a row a live request still owns (`sending`, `sent`).
+        (
+          await env.DB.prepare(
+            `SELECT ${ROW_COLUMNS} FROM evm_sponsor_sends
+              WHERE status IN ('timeout', 'unknown', 'rejected') AND app_id = ?1 AND chain_id = ?2 ORDER BY updated_at LIMIT ?3`,
+          )
+            .bind(scope.appId, scope.chainId, scope.limit)
+            .all<RowColumns>()
+        ).results
+      : (
+          await env.DB.prepare(
+            `SELECT ${ROW_COLUMNS} FROM evm_sponsor_sends
+              WHERE ((status IN ('sent', 'timeout', 'unknown', 'rejected') AND updated_at <= ?1) OR (status = 'sending' AND updated_at <= ?3))
+              ORDER BY updated_at LIMIT ?2`,
+          )
+            .bind(now - RECONCILE_AFTER_MS, RECONCILE_ROWS, now - SENDING_LIFETIME_MS)
+            .all<RowColumns>()
+        ).results;
   } catch {
     log({ event: 'evm_sponsor_reconcile', outcome: 'error', code: 'audit_unavailable' }, 'warn');
     return counts;
@@ -395,8 +439,9 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
     const rejected = c.status === 'rejected';
     if (read.kind === 'mined') {
       const hash = read.receipt.transactionHash.toLowerCase();
-      const cancelled = (v?.state === 'mined' && v.outcome === 'cancel' && v.minedHash?.toLowerCase() === hash) || (rejected && hash !== row.txHash);
-      if (await settleFromReceipt(env, cfg, row, read.receipt, OPEN_STATUSES, { cancelled, chain })) counts.settled++;
+      const atDepth = v?.state === 'mined' && v.minedHash?.toLowerCase() === hash;
+      const cancelled = (atDepth && v?.outcome === 'cancel') || (rejected && hash !== row.txHash);
+      if (await settleFromReceipt(env, cfg, row, read.receipt, OPEN_STATUSES, { cancelled, chain, confirmed: atDepth && v?.outcome === 'execute' })) counts.settled++;
       continue;
     }
     if (v?.state === 'closed' && v.outcome === 'consumed_elsewhere') {
@@ -408,7 +453,9 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
       if (await settleFromRelayerCost(env, row, v.minedHash.toLowerCase() as Hex, v.costWei, v.outcome === 'cancel')) counts.settled++;
       continue;
     }
-    if (pastDeadline >= GIVE_UP_AFTER_MS && v?.state !== 'mined' && v?.state !== 'pending' && v?.state !== 'cancelling') {
+    // Lost only on evidence: the relayer answered (it doesn't know the digest, or knows it unmined nowhere) and every
+    // receipt read succeeded and found nothing. A failed lookup or read leaves the row open.
+    if (pastDeadline >= GIVE_UP_AFTER_MS && l.asked && read.kind === 'none' && v?.state !== 'mined' && v?.state !== 'pending' && v?.state !== 'cancelling') {
       if (await settleAsCharge(env, row, 'lost')) counts.lost++;
       continue;
     }
@@ -422,7 +469,74 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
   for (const [chainId, s] of stuck) {
     await noteEvent(env, null, 'evm_relay_stuck', [String(chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId, pending: s.rows, oldestPendingMs: s.oldestMs }, now);
   }
+  if (!scope) await confirmSettled(env, config, now, counts);
   return counts;
+}
+
+/** Rows settled at head checked per run, and how long the relayer remembers a digest (past that a row stays as it is). */
+export const CONFIRM_ROWS = 20;
+export const CONFIRM_WITHIN_MS = 7 * DAY;
+
+/**
+ * The reorg check (D847): a row settled from a receipt at head (`confirmed_at` NULL) is compared with the relayer's
+ * verdict at confirmed depth once it has one. The same transaction: confirmed (and, executed, the account's nonce floor
+ * rises past its nonce). Another of the batch's own versions: the row takes that transaction's outcome and cost, the
+ * budgets move by the difference, and a correction billing record supersedes the first (never an edit). Nothing else
+ * moves a row. Never throws.
+ */
+async function confirmSettled(env: Env, config: EvmSponsorConfig, now: number, counts: ReconcileCounts): Promise<void> {
+  let rows: (RowColumns & { settled_wei: string | null })[];
+  try {
+    rows = (
+      await env.DB.prepare(
+        `SELECT ${ROW_COLUMNS}, settled_wei FROM evm_sponsor_sends
+          WHERE confirmed_at IS NULL AND status IN ('executed', 'reverted', 'not_executed') AND updated_at <= ?1 AND created_at >= ?2
+          ORDER BY updated_at LIMIT ?3`,
+      )
+        .bind(now - RECONCILE_AFTER_MS, now - CONFIRM_WITHIN_MS, CONFIRM_ROWS)
+        .all<RowColumns & { settled_wei: string | null }>()
+    ).results;
+  } catch {
+    return;
+  }
+  for (const c of rows) {
+    const cfg = sponsorChain(config, c.chain_id);
+    if (!cfg) continue;
+    const row = rowOf(c);
+    const l = await lookupDigest(sponsorPorts.relayer(env, row.chainId), row.digest);
+    const v = l.value;
+    if (!l.asked || v?.state !== 'mined' || !v.minedHash) continue;
+    const mined = v.minedHash.toLowerCase() as Hex;
+    if (mined === row.txHash) {
+      await env.DB.prepare('UPDATE evm_sponsor_sends SET confirmed_at = ?2 WHERE id = ?1 AND confirmed_at IS NULL').bind(row.id, now).run().catch(() => undefined);
+      if (c.status === 'executed' && v.outcome === 'execute') await raiseAccountFloor(env, row);
+      counts.confirmed++;
+      continue;
+    }
+    if (!lookupHashes(v).includes(mined)) continue;
+    const read = await readReceipts(sponsorPorts.chain(env, cfg), [mined]);
+    if (read.kind !== 'mined') continue;
+    const receipt = read.receipt;
+    const cancelled = v.outcome === 'cancel';
+    const outcome: Outcome = !cancelled && executedIn(receipt, row.account, row.digest) ? 'executed' : receipt.status === 0 && !cancelled ? 'reverted' : 'not_executed';
+    const { cost } = receiptCost(receipt, cfg.opStack, row.reserved);
+    const figures = figuresOf(receipt, cost, cfg, row, null);
+    const before = c.settled_wei !== null && /^\d{1,78}$/u.test(c.settled_wei) ? BigInt(c.settled_wei) : 0n;
+    try {
+      const [moved] = await env.DB.batch([
+        env.DB.prepare('UPDATE evm_sponsor_sends SET status = ?2, tx_hash = ?3, settled_wei = ?4, confirmed_at = ?5, updated_at = MAX(created_at, ?5) WHERE id = ?1 AND confirmed_at IS NULL').bind(row.id, outcome, mined, row.replay ? '0' : cost.toString(), now),
+        correctionStatement(env, row.id, row.txHash ?? '', cancelled ? 'cancelled' : outcome, row.replay ? 0n : cost, figures, now),
+      ]);
+      if ((moved!.meta.changes ?? 0) !== 1) continue;
+    } catch {
+      continue;
+    }
+    // The budgets follow the transaction that counts: what the first settlement charged comes back, the final cost is taken.
+    if (!row.replay) await settleBudget(env, row.appId, row.chainId, before, cost, row.createdAt);
+    if (outcome === 'executed' && v.outcome === 'execute') await raiseAccountFloor(env, row);
+    log({ event: 'evm_sponsor_corrected', code: `${c.status}:${outcome}` }, 'error');
+    counts.corrected++;
+  }
 }
 
 /** The audit rows' retention (D848): 24 months, then deleted by the hourly cron, at most this many a run. */

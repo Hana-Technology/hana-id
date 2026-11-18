@@ -12,7 +12,7 @@ import { type EvmRelayer, evmRelayerName } from '../src/evm-relayer.ts';
 import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { EXECUTED_TOPIC } from '../src/evm/sponsor-checks.ts';
 import { DEFAULT_SPONSOR_PORTS, type EvmRelayerPort, sponsorPorts } from '../src/evm/sponsor-ports.ts';
-import { EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, forgetRelayerBalances, sponsorTiming } from '../src/evm/sponsor.ts';
+import { EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, forgetRelayerBalances, forgetRelayerStatus, sponsorTiming } from '../src/evm/sponsor.ts';
 import { EvmMock, type Hex, type MockTx, PRIMARY_RPC } from './evm-mock.ts';
 import { DELEGATE, LOCAL_CHAIN, RELAYER, nearMock, rememberAccount, sessionsInMemory, signedSend, sponsorCall, sponsorEnv, sponsorVar, testUser, type TestUser } from './evm-sponsor-helpers.ts';
 import { seedApp, type SeededApp, uid } from './helpers.ts';
@@ -100,6 +100,7 @@ const sendFor = (w: World, signed: { body: Record<string, unknown>; digest: Hex 
 beforeEach(() => {
   forgetVerifiedChains();
   forgetRelayerBalances();
+  forgetRelayerStatus();
   sponsorTiming.receiptWaitMs = 3_000;
   sponsorTiming.receiptPollMs = 50;
 });
@@ -142,7 +143,7 @@ describe('the routes and the relayer object, end to end over the fake chain', ()
     expect([first.status, (await body(first)).code]).toEqual([504, 'timeout']);
     const r = await sendFor(w, signedSend(w.user, { executeNonce: 0n, minGas: 100_001n }));
     const b = await body(r);
-    expect([r.status, b.code, b.retryAfterS]).toEqual([429, 'relayer_busy', 5]);
+    expect([r.status, b.code, b.retryAfterS]).toEqual([429, 'account_busy', 5]);
   });
 
   it('a batch the node refuses for its own shape (intrinsic gas): 422 at once, the user charged a failure; the relayer keeps running', async () => {

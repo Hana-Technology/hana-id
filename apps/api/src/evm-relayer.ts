@@ -102,6 +102,8 @@ const DAILY_CAP_FACTOR = 2n;
 const MIN_DEADLINE_LEAD_S = 5;
 const DEADLINE_SLACK_S = 60;
 const MAX_DATA_BYTES = 32 * 1024;
+/** The most calldata a batch's transaction may carry (the handlers refuse a larger batch before anything is counted). */
+export const EVM_RELAYER_MAX_DATA_BYTES = MAX_DATA_BYTES;
 const STAFF_LOG_KEEP = 200;
 const PRUNE_PER_RUN = 256;
 const DAY_MS = 24 * 60 * 60_000;
@@ -244,6 +246,8 @@ export function evmRelayKeyAddress(raw: string | undefined): Hex | null {
 export type FeeCaps = { maxFeePerGasWei: bigint; maxPriorityFeePerGasWei: bigint };
 type Fees = { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
 const ceilDiv = (a: bigint, b: bigint): bigint => (a + b - 1n) / b;
+/** The pool's fee floor the object refuses below (`fees_too_low`): a tip under 1 wei, or a max fee under 9/8 of the base fee. */
+export const feesTooLow = (f: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }, baseFee: bigint): boolean => f.maxPriorityFeePerGas < MIN_TIP_WEI || f.maxFeePerGas < ceilDiv(baseFee * 9n, 8n);
 const minBig = (a: bigint, b: bigint): bigint => (a < b ? a : b);
 const maxBig = (a: bigint, b: bigint): bigint => (a > b ? a : b);
 const bump = (x: bigint): bigint => ceilDiv(x * 9n, 8n);
@@ -656,7 +660,7 @@ export class EvmRelayer extends DurableObject<Env> {
       const block = await rpc.latestBlock().catch(() => refuse('rpc_unavailable'));
       this.#baseFee = { wei: block.baseFeePerGas, at: now };
     }
-    if (v.fees.maxPriorityFeePerGas < MIN_TIP_WEI || v.fees.maxFeePerGas < ceilDiv(this.#baseFee.wei * 9n, 8n)) refuse('fees_too_low');
+    if (feesTooLow(v.fees, this.#baseFee.wei)) refuse('fees_too_low');
     if (!meta || meta.nextNonce === null) {
       // A fresh nonce life: the trusted endpoint's pending count, read once. Nothing is stored if it fails.
       const pending = await rpc.transactionCount(c.keyAddress!, 'pending').catch(() => refuse('rpc_unavailable'));

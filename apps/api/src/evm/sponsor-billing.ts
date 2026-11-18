@@ -74,6 +74,39 @@ export function billingStatement(env: Env, sendId: string, status: string, outco
   );
 }
 
+/**
+ * A correction (D847): the send's final figures when the relayer's verdict at confirmed depth names another of its
+ * transactions than the receipt it was settled from (a reorg). A new record keyed 'fix:<send>' that names the record it
+ * supersedes; the first is never edited. INSERT OR IGNORE: one correction per send.
+ */
+export function correctionStatement(env: Env, sendId: string, corrects: string, outcome: BillingOutcome, settledWei: bigint, figures: BillingFigures, now: number): D1PreparedStatement {
+  return env.DB.prepare(
+    `INSERT OR IGNORE INTO evm_sponsor_billing (chain_id, record_key, send_id, org_id, app_id, environment, tx_hash, block_number,
+       block_timestamp, outcome, gas_used, effective_gas_price_wei, execution_wei, l1_fee_wei, operator_fee_wei, total_cost_wei,
+       settled_wei, call_count, targets_json, with_setup, created_at, settled_at, corrects)
+     SELECT s.chain_id, 'fix:' || s.id, s.id, a.org_id, s.app_id, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, s.call_count, s.targets_json,
+            s.with_setup, s.created_at, ?14, ?15
+       FROM evm_sponsor_sends s JOIN apps a ON a.id = s.app_id
+      WHERE s.id = ?1`,
+  ).bind(
+    sendId,
+    env.ENV_NAME,
+    figures.txHash.toLowerCase(),
+    s(figures.blockNumber),
+    figures.blockTimestamp ?? null,
+    outcome,
+    s(figures.gasUsed),
+    s(figures.effectiveGasPrice),
+    s(figures.executionWei),
+    s(figures.l1FeeWei),
+    s(figures.operatorFeeWei),
+    s(figures.totalCostWei),
+    settledWei.toString(),
+    now,
+    corrects,
+  );
+}
+
 // ---- the ledger copy (every cron run) ----
 
 export const RECORD_EVM_SPONSORED_SQL = 'SELECT usage.record_evm_sponsored($1::jsonb) AS n';
@@ -103,6 +136,7 @@ interface BillingColumns {
   with_setup: number;
   created_at: number;
   settled_at: number;
+  corrects: string | null;
 }
 
 /** A record as the ledger function takes it (times as ISO strings; amounts as decimal strings). */
@@ -136,6 +170,7 @@ export function ledgerRow(c: BillingColumns): Record<string, unknown> {
     with_setup: c.with_setup === 1,
     created_at: iso(c.created_at),
     settled_at: iso(c.settled_at),
+    ...(c.corrects ? { corrects: c.corrects } : {}),
   };
 }
 
@@ -155,8 +190,8 @@ export async function mirrorEvmBilling(env: Env, now: number = Date.now()): Prom
         await env.DB.prepare(
           `SELECT chain_id, record_key, org_id, app_id, environment, tx_hash, block_number, block_timestamp, outcome, gas_used,
                   effective_gas_price_wei, execution_wei, l1_fee_wei, operator_fee_wei, total_cost_wei, settled_wei, call_count,
-                  targets_json, with_setup, created_at, settled_at
-             FROM evm_sponsor_billing WHERE mirrored_at IS NULL ORDER BY settled_at LIMIT ?1`,
+                  targets_json, with_setup, created_at, settled_at, corrects
+             FROM evm_sponsor_billing WHERE mirrored_at IS NULL AND quarantined_at IS NULL ORDER BY settled_at LIMIT ?1`,
         )
           .bind(MIRROR_BATCH)
           .all<BillingColumns>()
@@ -168,7 +203,11 @@ export async function mirrorEvmBilling(env: Env, now: number = Date.now()): Prom
     try {
       await usageTransport.query(binding, RECORD_EVM_SPONSORED_SQL, [JSON.stringify(rows.map(ledgerRow))]);
     } catch (err) {
-      log({ event: 'evm_billing_mirror_failed', code: classifyWriteError(err).code, synced: sent }, 'error');
+      const why = classifyWriteError(err);
+      log({ event: 'evm_billing_mirror_failed', code: why.code, synced: sent }, 'error');
+      // The ledger refused the batch's input: one bad row must not hold every other back. Row by row (at most
+      // QUARANTINE_TRIES of them), a row refused on its own is set aside (`quarantined_at`, `evm_billing_late`).
+      if (why.kind === 'rejected') sent += await mirrorOneByOne(env, binding, rows.slice(0, QUARANTINE_TRIES), now);
       return sent;
     }
     try {
@@ -186,6 +225,25 @@ export async function mirrorEvmBilling(env: Env, now: number = Date.now()): Prom
   return sent;
 }
 
+/** Rows tried alone after the ledger refused a batch's input. */
+export const QUARANTINE_TRIES = 20;
+
+async function mirrorOneByOne(env: Env, binding: Hyperdrive, rows: BillingColumns[], now: number): Promise<number> {
+  let sent = 0;
+  for (const r of rows) {
+    try {
+      await usageTransport.query(binding, RECORD_EVM_SPONSORED_SQL, [JSON.stringify([ledgerRow(r)])]);
+      await env.DB.prepare('UPDATE evm_sponsor_billing SET mirrored_at = ?3 WHERE chain_id = ?1 AND record_key = ?2').bind(r.chain_id, r.record_key, now).run();
+      sent++;
+    } catch (err) {
+      if (classifyWriteError(err).kind !== 'rejected') return sent;
+      await env.DB.prepare('UPDATE evm_sponsor_billing SET quarantined_at = ?3 WHERE chain_id = ?1 AND record_key = ?2').bind(r.chain_id, r.record_key, now).run().catch(() => undefined);
+      log({ event: 'evm_billing_quarantined', code: 'ledger_refused' }, 'error');
+    }
+  }
+  return sent;
+}
+
 /** A settled send without its billing record, or a record the ledger hasn't had for this long, is raised to staff. */
 export const BILLING_LATE_MS = 60 * 60_000;
 
@@ -193,7 +251,7 @@ export const BILLING_LATE_MS = 60 * 60_000;
  * Counts what's late: settled sends (not replays) older than BILLING_LATE_MS with no billing record, and (with the
  * ledger bound) records not copied to it within BILLING_LATE_MS. Null when it can't be read.
  */
-export async function lateBilling(env: Env, now: number = Date.now()): Promise<{ missing: number; unmirrored: number } | null> {
+export async function lateBilling(env: Env, now: number = Date.now()): Promise<{ missing: number; unmirrored: number; quarantined: number } | null> {
   try {
     const missing = await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM evm_sponsor_sends s
@@ -202,8 +260,9 @@ export async function lateBilling(env: Env, now: number = Date.now()): Promise<{
     )
       .bind(now - BILLING_LATE_MS)
       .first<{ n: number }>();
-    const unmirrored = env.USAGE_DB ? await env.DB.prepare('SELECT COUNT(*) AS n FROM evm_sponsor_billing WHERE mirrored_at IS NULL AND settled_at <= ?1').bind(now - BILLING_LATE_MS).first<{ n: number }>() : { n: 0 };
-    return { missing: missing?.n ?? 0, unmirrored: unmirrored?.n ?? 0 };
+    const unmirrored = env.USAGE_DB ? await env.DB.prepare('SELECT COUNT(*) AS n FROM evm_sponsor_billing WHERE mirrored_at IS NULL AND quarantined_at IS NULL AND settled_at <= ?1').bind(now - BILLING_LATE_MS).first<{ n: number }>() : { n: 0 };
+    const quarantined = await env.DB.prepare('SELECT COUNT(*) AS n FROM evm_sponsor_billing WHERE quarantined_at IS NOT NULL AND mirrored_at IS NULL').first<{ n: number }>();
+    return { missing: missing?.n ?? 0, unmirrored: unmirrored?.n ?? 0, quarantined: quarantined?.n ?? 0 };
   } catch {
     return null;
   }

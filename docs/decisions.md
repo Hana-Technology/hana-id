@@ -12955,6 +12955,26 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   have no zero byte (a real deadline's zero byte made a shape cheaper than the batch, `403 gas_too_high`). Every new
   code has a plain sentence in the vault's `SPONSOR_TEXT` and the SDK's `SPONSOR_REASONS` (D853): paused, fees too high,
   busy, the session check, the wrong account.
+- **Amended 2026-11-18 after the re-review of a0a83e25** (amended while building, to confirm). M1: the whole send after
+  the session check runs inside the request's `waitUntil`, and an app's share of the relayer is derived from its open
+  audit rows (checked first, then atomically in the audit row's insert with the funds check): no counter, nothing to
+  leak. M2: a full share settles the app's own open rows inline first (the reconciler, at most 4, never a live
+  request's); the Worker keeps its one 15-minute cron (no 1-minute pattern exists in `gen-wrangler`). M3: `lost` needs
+  the relayer's `lookup` to have answered and every receipt read to have succeeded empty. L1: a second row of one digest
+  whose transaction is billed to the other is `duplicate` (zero, reservation back). L2: the account's nonce floor rises
+  only on the relayer's verdict at confirmed depth; every row settled at head is checked against that verdict and a reorg
+  corrected by a correction billing record. **Residual:** the user's 200 (and a revert's 422) still come from the first
+  receipt at head; a reorg between it and confirmed depth answers the user something the chain then contradicts (the
+  books are corrected, the answer isn't: on testnet accepted); a row older than the relayer's 7-day memory is never
+  checked; a corrected row's failure slot isn't revisited. L3: calldata over the relayer's limit (`batch_too_large`) and
+  fees under its floor (its own `feesTooLow`) are refused before anything is sent; the relayer's `invalid_request` is our
+  mismatch: `503 internal_error`, everything back, an event. L4: `/status` keeps the halt state 15 s per isolate. L5:
+  `outcome_unknown` (an unknown send, a lost or unread row: "check before you try again"), `account_busy` ("your last
+  action is still going through"). L6: a body that repeats a key is refused. L7: a record the ledger refuses alone is
+  quarantined with an alert; without the block a cron run makes one D1 read. `evm_relay_stuck` at 2 minutes (oldest
+  unmined, and unaccepted once the relayer reports it). Found while testing: workerd logs every Durable Object RPC method
+  that rejects as "Uncaught (in promise)" on the callee's side even when the caller handles it (RateLimiter too): the
+  handlers catch every relayer refusal; the log line is the runtime's.
 - Address impact: none.
 
 ### D848. The sponsorship audit table and its security events

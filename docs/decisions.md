@@ -12819,55 +12819,6 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   function on Journear's verified list, the demo card's package): made by the user 2026-11-18, D854.
 - Address impact: none.
 
-## Plain words and the demo check-in, 2026-11-18
-
-### D853. Every user-visible text is written in plain, everyday words (standing rule)
-- Date 2026-11-18 · Status: **decided by the user 2026-11-18** · Applies to every text a user sees: the approval
-  window, Passport Home, the login and email pages, the launcher, errors shown to users, the demo sites, the partner
-  SDK's default texts.
-- Decision, in the founder's words: "our audience is not native Web3 users and might be very non-technical savvy so we
-  want to keep it as simple and as layman as possible (remember this style for all future wordings)". So: say what
-  happens to the user's money, tokens or account in everyday words; no chain jargon above the fold (gas, nonce,
-  calldata, selector, contract call, EIP numbers, "upgrade", "smart account"), which may appear only in the folded
-  details; short sentences; name the app and what it wants first. Technical precision is kept, one tap away in the
-  details, never dropped. A wording that would make a risk sound smaller than it is never counts as plainer (D809).
-- Where it lives: `docs/security.md` "Browser" (the approval window's wording rules), and this entry for everything
-  else. Reviews of user-visible text check against it.
-- Address impact: none.
-
-### D854. Journear's demo check-in is on the verified list, and its one function reads in plain words
-- Date 2026-11-18 · Status: putting the demo `CheckIn` contract on the wallet's verified list so the demo's sponsored
-  action reads plainly with no red box: **decided by the user 2026-11-18**; the details below decided while building,
-  to confirm · Built on `feat/evm-demo-verified` (from `next` @ c6b434f4), not merged, not deployed:
-  `packages/core/src/demo-check-in.ts` (`DEMO_CHECK_IN`, `DEMO_CHECK_IN_CALLDATA`, `isDemoCheckInCall`),
-  `verified-contracts.ts` (`DEMO_CHECK_IN_NAME`, an entry per pinned chain), `decode/summary.ts` (`demoCheckIn`),
-  `packages/web/src/auth/render-approval.ts` (`evmCallData` names `checkIn()`), `scripts/lib/evm-delegate-deploy.ts`
-  (`checkInEntry`, printed in the deploy's follow-up); tests `packages/core/test/demo-check-in.test.ts`,
-  `verified-contracts.test.ts`, `evm-sponsored-approval.test.ts`, `packages/web/test/auth/render-approval-sponsored.test.ts`,
-  `scripts/test/evm-delegate-deploy.test.ts`, `apps/e2e/tests/approval-summary.spec.ts`.
-- The pin: `DEMO_CHECK_IN`, by chain, the contract's deterministic CREATE2 address and runtime code hash from
-  `contracts/evm-delegate/artifacts/CheckIn.json` (a test ties every entry to the artifact). Today 31337 only (the
-  local chain); Base Sepolia's line is added by the deploy's follow-up PR with the delegate's (`deploy-evm-delegate`
-  prints it), once the code hash is read on chain. On the verified list as "Journear demo check-in" (protocol
-  Journear, its source the artifact at the pinning commit) for each pinned chain; a local chain has no explorer.
-- The summary, sponsored or not, only when the call is exactly the pinned contract on that chain (any letter case),
-  calldata exactly `0x183ff085` (no trailing bytes) and value 0: headline "{App} wants to check you in"; lines "This is
-  Journear’s demo check-in. It doesn’t move any money or tokens." and "It uses Journear demo check-in (0x…, verified
-  by Journear)." (the name and whole address in view, as a verified spender is shown); explainable; no red or amber
-  box (the one-time setup note still appears when the authorization is signed). The details name the function:
-  "Function checkIn() 0x183ff085". Anything else keeps the red "can't tell" line and gets no name: another contract
-  with the same selector, a look-alike address, extra calldata, any value, a chain where it isn't pinned (tested).
-  In a batch it groups like any call and counts as moving nothing, and its reassurance is about itself alone: "This
-  is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens." (after PR 73's review).
-- Also after PR 73's review (decided while building, to confirm): a bound below the shown precision reads "less than
-  0.000001 ETH", never "up to less than …", and a rounded-up one "up to {the rounded-up figure}", never "up to about"
-  (`upTo` in `summary.ts`: the network fee, "XLM leaving your account", a spend permission's amount); composed risk
-  texts end with one full stop (`sentence`: "Not in the lines above: …" no longer doubles it), and a test checks every
-  summary the unit tests build for doubled punctuation or spacing.
-- Why not add `checkIn()` to the known selectors: a selector names a standard's function, and any contract can have a
-  `checkIn()` that does anything; the plain reading is earned by the reviewed contract, not the name.
-- Address impact: none.
-
 ### D851. The EVM relayer object: simplified and fail-stop (on anything odd it stops and waits for staff)
 - Date 2026-11-18 · Status: the simplified fail-stop relayer replacing D837's self-repairing design **decided by the
   user 2026-11-18**; the details below decided while building and amended after its independent review the same day
@@ -12965,4 +12916,53 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   record moved to a new nonce, gap fills on a timer, per-run budgets that defer a verdict); a stored halt for an RPC
   outage (the run just tries later); review: freeing a nonce by any staff tool, and halting on a refusal the user's
   input could have caused.
+- Address impact: none.
+
+## Plain words and the demo check-in, 2026-11-18
+
+### D853. Every user-visible text is written in plain, everyday words (standing rule)
+- Date 2026-11-18 · Status: **decided by the user 2026-11-18** · Applies to every text a user sees: the approval
+  window, Passport Home, the login and email pages, the launcher, errors shown to users, the demo sites, the partner
+  SDK's default texts.
+- Decision, in the founder's words: "our audience is not native Web3 users and might be very non-technical savvy so we
+  want to keep it as simple and as layman as possible (remember this style for all future wordings)". So: say what
+  happens to the user's money, tokens or account in everyday words; no chain jargon above the fold (gas, nonce,
+  calldata, selector, contract call, EIP numbers, "upgrade", "smart account"), which may appear only in the folded
+  details; short sentences; name the app and what it wants first. Technical precision is kept, one tap away in the
+  details, never dropped. A wording that would make a risk sound smaller than it is never counts as plainer (D809).
+- Where it lives: `docs/security.md` "Browser" (the approval window's wording rules), and this entry for everything
+  else. Reviews of user-visible text check against it.
+- Address impact: none.
+
+### D854. Journear's demo check-in is on the verified list, and its one function reads in plain words
+- Date 2026-11-18 · Status: putting the demo `CheckIn` contract on the wallet's verified list so the demo's sponsored
+  action reads plainly with no red box: **decided by the user 2026-11-18**; the details below decided while building,
+  to confirm · Built on `feat/evm-demo-verified` (from `next` @ c6b434f4), not merged, not deployed:
+  `packages/core/src/demo-check-in.ts` (`DEMO_CHECK_IN`, `DEMO_CHECK_IN_CALLDATA`, `isDemoCheckInCall`),
+  `verified-contracts.ts` (`DEMO_CHECK_IN_NAME`, an entry per pinned chain), `decode/summary.ts` (`demoCheckIn`),
+  `packages/web/src/auth/render-approval.ts` (`evmCallData` names `checkIn()`), `scripts/lib/evm-delegate-deploy.ts`
+  (`checkInEntry`, printed in the deploy's follow-up); tests `packages/core/test/demo-check-in.test.ts`,
+  `verified-contracts.test.ts`, `evm-sponsored-approval.test.ts`, `packages/web/test/auth/render-approval-sponsored.test.ts`,
+  `scripts/test/evm-delegate-deploy.test.ts`, `apps/e2e/tests/approval-summary.spec.ts`.
+- The pin: `DEMO_CHECK_IN`, by chain, the contract's deterministic CREATE2 address and runtime code hash from
+  `contracts/evm-delegate/artifacts/CheckIn.json` (a test ties every entry to the artifact). Today 31337 only (the
+  local chain); Base Sepolia's line is added by the deploy's follow-up PR with the delegate's (`deploy-evm-delegate`
+  prints it), once the code hash is read on chain. On the verified list as "Journear demo check-in" (protocol
+  Journear, its source the artifact at the pinning commit) for each pinned chain; a local chain has no explorer.
+- The summary, sponsored or not, only when the call is exactly the pinned contract on that chain (any letter case),
+  calldata exactly `0x183ff085` (no trailing bytes) and value 0: headline "{App} wants to check you in"; lines "This is
+  Journear’s demo check-in. It doesn’t move any money or tokens." and "It uses Journear demo check-in (0x…, verified
+  by Journear)." (the name and whole address in view, as a verified spender is shown); explainable; no red or amber
+  box (the one-time setup note still appears when the authorization is signed). The details name the function:
+  "Function checkIn() 0x183ff085". Anything else keeps the red "can't tell" line and gets no name: another contract
+  with the same selector, a look-alike address, extra calldata, any value, a chain where it isn't pinned (tested).
+  In a batch it groups like any call and counts as moving nothing, and its reassurance is about itself alone: "This
+  is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens." (after PR 73's review).
+- Also after PR 73's review (decided while building, to confirm): a bound below the shown precision reads "less than
+  0.000001 ETH", never "up to less than …", and a rounded-up one "up to {the rounded-up figure}", never "up to about"
+  (`upTo` in `summary.ts`: the network fee, "XLM leaving your account", a spend permission's amount); composed risk
+  texts end with one full stop (`sentence`: "Not in the lines above: …" no longer doubles it), and a test checks every
+  summary the unit tests build for doubled punctuation or spacing.
+- Why not add `checkIn()` to the known selectors: a selector names a standard's function, and any contract can have a
+  `checkIn()` that does anything; the plain reading is earned by the reviewed contract, not the name.
 - Address impact: none.

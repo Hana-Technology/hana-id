@@ -10,13 +10,14 @@
 // The details always start folded (D810, the founder's decision); a request Journear can't explain states its risk
 // above them.
 //
-// Sponsored EVM actions (D850): the vault has no handler for evm_sendSponsored yet (the next package), so their test
-// injects the request into the real popup: it opens the popup with an ordinary request, then dispatches a
-// `hana:approve-request` of kind `evm_sponsored` on the popup's window as the vault would post it (origin vaultOrigin,
-// source the opener). The popup decodes and renders it with the build's real sponsor chains (E2E_ENV.evmSponsor), so the
-// screens are the real ones; only the vault's half of the flow is missing.
+// Sponsored EVM actions (D850): the real flow, from the partner page's click to the vault's send, and the founder's
+// sponsored-*.png screens, are in tests/evm-sponsor.spec.ts (D855). This file keeps the render-level test that injects
+// subjects straight into the popup (every summary case, and requests the vault would never build, such as a relayer
+// that isn't the build's, which the popup must refuse): it opens the popup with an ordinary request, then dispatches a
+// `hana:approve-request` of kind `evm_sponsored` on the popup's window as a vault would post it (origin vaultOrigin,
+// source the opener).
 import { type Page } from '@playwright/test';
-import { type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey, nearPublicKeyString } from '@hana-id/core';
+import { DEMO_CHECK_IN, type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey, nearPublicKeyString } from '@hana-id/core';
 import { parseFunctionSignature } from '@hana-id/core/decode';
 import { Account, Address, Asset, Keypair, Networks, Operation, StrKey, TransactionBuilder, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
@@ -124,6 +125,10 @@ test('raw signing: folded like any other request, the red risk line in view (D81
 
 // ---- sponsored EVM actions (D831, D850), injected into the real popup ----
 
+/** Journear's demo check-in on the mocked chain (D854), and a contract Journear doesn't know. */
+const CHECK_IN = (DEMO_CHECK_IN[EVM_CHAIN_ID] as { address: `0x${string}` }).address;
+const UNKNOWN_CONTRACT = '0x4444444444444444444444444444444444444444' as const;
+
 /** Posts a sponsored action to the popup as its vault would (see the header). */
 async function injectSponsored(popup: Page, subject: EvmSponsorSubject): Promise<void> {
   await popup.evaluate(
@@ -139,7 +144,7 @@ async function injectSponsored(popup: Page, subject: EvmSponsorSubject): Promise
   );
 }
 
-test('a sponsored action: the calls’ own summary and warnings, the fee line, the one-time setup note (render level, D850)', async ({ page, browserName }) => {
+test('a sponsored action: the calls’ own summary and warnings, the fee line, the one-time setup note (render level, D850)', async ({ page }) => {
   await openPartner(page, await newApp());
   await login(page);
   const me = (await page.evaluate(() => (window as any).e2e.addresses().evm)) as `0x${string}`;
@@ -160,37 +165,47 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
   const fee = popup.locator('.summary-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
   const setup = 'One-time setup: this also turns on free network fees for your account on the local test chain 31337. Your address stays the same and you still approve every action.';
 
-  // First time: a known call and the account's setup.
-  await injectSponsored(popup, subject({ authNonce: 0n }));
-  await expect(headline).toHaveText(`E2E Partner wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
+  const checkIn = [{ to: CHECK_IN, value: 0n, data: '0x183ff085' as const }];
+  const checkInLines = ['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${CHECK_IN}, verified by Journear).`];
+
+  // First time: Journear's demo check-in (D854) and the account's setup: plain words, only the amber setup note.
+  await injectSponsored(popup, subject({ authNonce: 0n, calls: checkIn }));
+  await expect(headline).toHaveText('E2E Partner wants to check you in');
+  await expect(popup.locator('p.summary-line')).toHaveText(checkInLines);
   await expect(fee).toHaveText('none. Journear pays it for you.');
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(setup);
   await expect(popup.locator('.danger-box')).toHaveCount(0);
   await expect(popup.locator('button.primary')).toBeVisible();
   await expect(details(popup)).not.toHaveAttribute('open', '');
   expect(await popup.locator('body').innerText()).not.toMatch(/upgrade|smart account/iu);
-  await shot(popup, 'sponsored-first-time', browserName);
   await popup.getByText('Show details', { exact: true }).click();
   await expect(details(popup).getByText('Account setup (EIP-7702)', { exact: true })).toBeVisible();
-  await shot(popup, 'sponsored-first-time-details', browserName);
+  await expect(details(popup).getByText('checkIn()', { exact: true })).toBeVisible();
 
-  // Later: the same call, no setup note.
+  // Later: the same check-in, no box at all.
+  await injectSponsored(popup, subject({ executeNonce: 1n, calls: checkIn }));
+  await expect(headline).toHaveText('E2E Partner wants to check you in');
+  await expect(popup.locator('.risk-box')).toHaveCount(0);
+  await expect(fee).toHaveText('none. Journear pays it for you.');
+
+  // A token transfer, first time and later.
+  await injectSponsored(popup, subject({ authNonce: 0n }));
+  await expect(headline).toHaveText(`E2E Partner wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
+  await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(setup);
+  await expect(popup.locator('.danger-box')).toHaveCount(0);
   await injectSponsored(popup, subject({ executeNonce: 1n }));
   await expect(headline).toHaveText(`E2E Partner wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
   await expect(popup.locator('.risk-box')).toHaveCount(0);
-  await expect(fee).toHaveText('none. Journear pays it for you.');
-  await shot(popup, 'sponsored-later', browserName);
 
-  // A call Journear doesn't recognise (the demo's check-in): the same red line as unsponsored.
-  await injectSponsored(popup, subject({ executeNonce: 1n, calls: [{ to: '0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e', value: 0n, data: '0x183ff085' }] }));
+  // The check-in's selector on a contract Journear doesn't know: the same red line as unsponsored, no name.
+  await injectSponsored(popup, subject({ executeNonce: 1n, calls: [{ to: UNKNOWN_CONTRACT, value: 0n, data: '0x183ff085' }] }));
   await expect(popup.locator('.danger-box p.risk-lead.summary-warning.cannot-explain')).toContainText('Journear can’t tell what this request does: it calls a function Journear doesn’t recognise.');
-  await shot(popup, 'sponsored-unknown-call', browserName);
+  await expect(headline).toHaveText(`E2E Partner wants to use contract ${UNKNOWN_CONTRACT}`);
 
   // An unlimited approve, first time: as alarming as unsponsored, plus the fee line and the setup note.
   await injectSponsored(popup, subject({ authNonce: 0n, calls: [{ to: TOKEN, value: 0n, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) as `0x${string}` }] }));
   await expect(popup.locator('.danger-box p.risk-lead.summary-warning.unlimited-spend')).toContainText(`This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN}, with no limit`);
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(setup);
-  await shot(popup, 'sponsored-approve-warning', browserName);
 
   // Another relayer than the build's: refused, no Approve.
   await injectSponsored(popup, subject({ relayer: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' }));

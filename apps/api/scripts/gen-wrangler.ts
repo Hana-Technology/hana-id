@@ -117,6 +117,35 @@ export function evmSponsorVars(m: Manifest, pinned: PinnedSponsorDelegates | und
   return { EVM_SPONSOR: value };
 }
 
+/** The EVM relayer object's binding and the migration that creates its class (D851). */
+export const EVM_RELAYER_BINDING = Object.freeze({ name: 'EVM_RELAYER', class_name: 'EvmRelayer' });
+export const EVM_RELAYER_MIGRATION = Object.freeze({ tag: 'v3', new_sqlite_classes: Object.freeze(['EvmRelayer']) });
+
+/**
+ * The Durable Objects: every env's three, and the EVM relayer (D851) only in an env whose manifest has `evm.sponsor`.
+ * An env without the block gets exactly the bindings and migrations it had before (no v3), so its next deploy creates
+ * no class. With the block, `v3` creates `EvmRelayer` (SQLite-backed). Deployed migrations are append-only: once an
+ * env has deployed v3, keep `evm.sponsor` in its manifest (removing it would drop v3 from the list and the next deploy
+ * would fail); turn sponsorship off with the off switch instead (docs/operations.md "EVM sponsorship relay").
+ */
+export function durableObjectsConfig(withEvmRelayer: boolean): { durable_objects: { bindings: { name: string; class_name: string }[] }; migrations: { tag: string; new_sqlite_classes: string[] }[] } {
+  return {
+    durable_objects: {
+      bindings: [
+        { name: 'RELAYER_KEY', class_name: 'RelayerKey' },
+        { name: 'RATE_LIMITER', class_name: 'RateLimiter' },
+        { name: 'LOGIN_RELAY', class_name: 'LoginRelay' },
+        ...(withEvmRelayer ? [{ ...EVM_RELAYER_BINDING }] : []),
+      ],
+    },
+    migrations: [
+      { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
+      { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
+      ...(withEvmRelayer ? [{ tag: EVM_RELAYER_MIGRATION.tag, new_sqlite_classes: [...EVM_RELAYER_MIGRATION.new_sqlite_classes] }] : []),
+    ],
+  };
+}
+
 /**
  * `usageHyperdriveId`: the usage ledger writer's Hyperdrive config (docs/batch-c-spec.md "Bindings"), bound as
  * `USAGE_DB`. Without it the Worker has no binding and capture is off (logins are unaffected either way).
@@ -186,17 +215,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
     // needs a local connection string for a Hyperdrive binding: an unroutable placeholder, so local capture fails open
     // (usage_write_failed in the dev log) and never reaches a real ledger.
     ...(opts.usageHyperdriveId ? { hyperdrive: [{ binding: 'USAGE_DB', id: opts.usageHyperdriveId, localConnectionString: LOCAL_USAGE_CONNECTION_STRING }] } : {}),
-    durable_objects: {
-      bindings: [
-        { name: 'RELAYER_KEY', class_name: 'RelayerKey' },
-        { name: 'RATE_LIMITER', class_name: 'RateLimiter' },
-        { name: 'LOGIN_RELAY', class_name: 'LoginRelay' },
-      ],
-    },
-    migrations: [
-      { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
-      { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
-    ],
+    // The EVM relayer only with evm.sponsor (durableObjectsConfig).
+    ...durableObjectsConfig(m.evm?.sponsor !== undefined),
     // The vault's per-IP and per-share flood limits and the identity token's per-session one, counted where the
     // request runs with no network hop (D95).
     ratelimits: [...VAULT_RATE_LIMITS, ...IDENTITY_RATE_LIMITS].map((r) => ({ name: r.name, namespace_id: r.namespace_id, simple: { ...r.simple } })),
@@ -233,11 +253,15 @@ export const TEST_MANIFEST: Manifest = {
   cloudflare: { workerName: 'hana-id-api-test', d1Name: 'hana-id-test' },
 };
 
-/** The API tests' wrangler config: the generator's output for TEST_MANIFEST, with the local placeholder D1 id. */
+/**
+ * The API tests' wrangler config: the generator's output for TEST_MANIFEST, with the local placeholder D1 id, and the
+ * EVM relayer's binding and migration as an env with `evm.sponsor` gets them (TEST_MANIFEST has no block, so
+ * EVM_SPONSOR stays unset: test/evm-relayer.test.ts gives each object its own config).
+ */
 export function testWranglerConfig(): Record<string, unknown> {
   // Local only: no Custom Domain route for the placeholder apiUrl (vitest's workers pool never deploys).
   const { routes: _r, workers_dev: _w, preview_urls: _p, ...config } = wranglerConfig(TEST_MANIFEST, LOCAL_D1_ID);
-  return config;
+  return { ...config, ...durableObjectsConfig(true) };
 }
 
 /**

@@ -231,6 +231,18 @@ const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
     const hash = await wallet.sendTransaction({ account: account as `0x${string}`, to: '0x000000000000000000000000000000000000dEaD', value: 1000n, chain });
     return { account, hash };
   },
+  /** Gas-free EVM actions (D838): `calls` as the test built them, on the mocked chain. */
+  sendSponsored: (calls: { to: string; data: string }[]) => hana.evm.sendSponsored({ chainId: EVM_CHAIN_ID, calls }),
+  sponsorship: () => hana.evm.sponsorship(EVM_CHAIN_ID),
+  sponsoredChains: async () => hana.evm.sponsoredChains,
+  /** The same through EIP-5792 with viem's own sendCalls, then its getCallsStatus. */
+  viemSendCalls: async (calls: { to: `0x${string}`; data: `0x${string}` }[]) => {
+    const [account] = await wallet.requestAddresses();
+    const { id } = await wallet.sendCalls({ account: account as `0x${string}`, chain, calls });
+    const capabilities = await wallet.getCapabilities({ account: account as `0x${string}` });
+    const status = await wallet.getCallsStatus({ id });
+    return { id, status: status.status, atomic: status.atomic, capabilities };
+  },
   wagmiConnect: async () => {
     const r = await connect(wagmi, { connector: hanaConnector() });
     return { accounts: r.accounts, chainId: r.chainId };

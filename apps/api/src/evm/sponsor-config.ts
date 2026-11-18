@@ -326,6 +326,8 @@ function parseChain(id: number, v: unknown, localEnv: boolean): EvmSponsorChainC
   if (LOCAL_EVM_CHAIN_IDS.includes(id) && !localEnv) fail(`${what}: a local dev chain outside a local* env`);
   if (v.opStack !== OP_STACK_TEST_CHAIN_IDS.includes(id)) fail(`${what}.opStack is wrong for the chain`);
   const rpc = rpcUrl(v.rpc, localEnv, `${what}.rpc`);
+  // D855: required outside local* envs (the vault reads the account from two providers before it signs the setup).
+  if (v.rpcFallback === undefined && !localEnv) fail(`${what}.rpcFallback is required outside local* envs`);
   const rpcFallback = v.rpcFallback === undefined ? null : rpcUrl(v.rpcFallback, localEnv, `${what}.rpcFallback`);
   if (rpcFallback === rpc) fail(`${what}.rpcFallback is rpc`);
   const delegate = address(v.delegate, `${what}.delegate`);

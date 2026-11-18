@@ -41,8 +41,11 @@ export interface HanaEnv {
   readonly filesOrigin?: string;
   /**
    * EVM gas sponsorship, by decimal chain ID: the delegate contract the vault may authorize (EIP-7702) and the relayer
-   * every signed batch names. Generated only after the delegate was checked against the pinned, reviewed delegates.
+   * every signed batch names, and the chain's public RPC endpoints (manifest `rpc`, `rpcFallback`: no keys), from which
+   * the vault reads the account's code and transaction count itself before it signs an authorization (a chain
+   * without `rpc` is not sponsored by the vault). Generated only after the delegate was checked against the pinned,
+   * reviewed delegates.
    * Absent: no chain is sponsored in this env.
    */
-  readonly evmSponsor?: Readonly<Record<string, { readonly delegate: string; readonly relayer: string }>>;
+  readonly evmSponsor?: Readonly<Record<string, { readonly delegate: string; readonly relayer: string; readonly rpc?: string; readonly rpcFallback?: string }>>;
 }

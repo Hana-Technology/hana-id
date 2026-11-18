@@ -5,19 +5,25 @@
 // the test runner maps it to a temporary keystore of anvil's published dev account, so no key is in the code.
 // deploy-check's `evm` group runs against the deployed contracts too. Skips when Foundry is not installed.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
 import { deployCheck } from '../lib/deploy-check.ts';
 import { DETERMINISTIC_DEPLOYER, create2Address, deployCalldata, keccakHex, loadDelegateArtifacts } from '../lib/evm-delegate-artifacts.ts';
-import { type EvmDeployDeps, type EvmDeployPlan, type RunTool, checkChain, delegatesEntry, evmDeployMain, foundryEnv, manifestTemplate } from '../lib/evm-delegate-deploy.ts';
+import { type EvmDeployDeps, type EvmDeployPlan, type RunTool, checkChain, checkInEntry, delegatesEntry, evmDeployMain as deployMain, foundryEnv, manifestTemplate } from '../lib/evm-delegate-deploy.ts';
 import { rpcLabel, rpcUrlProblem } from '../lib/evm-rpc.ts';
 import { FIXTURE_APP, sponsorFixture } from '../../packages/env/src/evm-sponsor.fixture.ts';
-import { ANVIL_DEV_ADDRESS, type Anvil, FOUNDRY_MISSING, devKeystore, leftoverTempDirs, startAnvil } from './anvil.ts';
+import { ANVIL_DEV_ADDRESS, type Anvil, FOUNDRY_MISSING, devKeystore, startAnvil } from './anvil.ts';
 
-const FILE_START = Date.now();
+// Everything this file puts on disk (the keystore, the deploy's tool directories) goes in one private directory,
+// listed at the end and removed after the file: nothing is looked for in, or left in, the shared temp directory.
+const FILE_ROOT = mkdtempSync(join(tmpdir(), 'hana-evm-deploy-t-'));
+afterAll(() => rmSync(FILE_ROOT, { recursive: true, force: true }));
+/** evmDeployMain with this file's temp root (a test may still pass its own). */
+const evmDeployMain = (argv: readonly string[], deps: EvmDeployDeps) => deployMain(argv, { tmpRoot: FILE_ROOT, ...deps });
 const sandbox = loadEnv('sandbox-dev');
 const [DELEGATE, CHECK_IN] = loadDelegateArtifacts();
 const PROXY_CODE = '0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3';
@@ -56,6 +62,8 @@ describe('the artifacts and the pure parts (no chain)', () => {
     const entry = delegatesEntry(84532, DELEGATE!, '2026-11-26');
     expect(entry).toContain(`  84532: Object.freeze({\n    address: '${DELEGATE!.address}',\n    runtimeCodeHash: '${DELEGATE!.runtimeCodeHash}',\n    domain: SPONSOR_DELEGATE_DOMAIN,\n    abiVersion: SPONSOR_ABI_VERSION,\n    placeholder: false,\n  }),`);
     expect(entry).toContain('2026-11-26');
+    // The demo check-in's pin: one line for DEMO_CHECK_IN (packages/core/src/demo-check-in.ts, D854).
+    expect(checkInEntry(84532, CHECK_IN!, '2026-11-26')).toBe(`  84532: Object.freeze({ address: '${CHECK_IN!.address}', runtimeCodeHash: '${CHECK_IN!.runtimeCodeHash}' }), // Base Sepolia, code hash checked on 2026-11-26`);
     const block = manifestTemplate(84532, DELEGATE!.address, CHECK_IN!.address, { rpc: 'https://sepolia.base.org', rpcFallback: 'https://base-sepolia-rpc.publicnode.com' });
     expect(block).toContain(`"delegate": "${DELEGATE!.address}", "opStack": true`);
     expect(block).toContain(`"address": "${CHECK_IN!.address}", "selectors": ["0x183ff085"], "exactCalldata": ["0x183ff085"]`);
@@ -67,7 +75,7 @@ function testTools(ks: { dir: string; name: string; password: string }) {
   const calls: { tool: string; argv: string[]; env: Record<string, string>; cwd: string }[] = [];
   const runTool: RunTool = (tool, argv, opts) => {
     // Every tool runs in an empty directory of its own (no project foundry.toml can apply).
-    if (readdirSync(opts.cwd).length !== 0 || !basename(opts.cwd).startsWith('hana-evm-cwd-')) throw new Error(`tool cwd ${opts.cwd} is not an empty hana-evm-cwd- directory`);
+    if (readdirSync(opts.cwd).length !== 0 || !basename(opts.cwd).startsWith('hana-evm-cwd-') || !opts.cwd.startsWith(FILE_ROOT)) throw new Error(`tool cwd ${opts.cwd} is not an empty hana-evm-cwd- directory in this file's temp root`);
     calls.push({ tool, argv, env: opts.env, cwd: opts.cwd });
     if (tool !== 'cast') return { status: 0 };
     const i = argv.indexOf('--account');
@@ -85,7 +93,7 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
   let ks: ReturnType<typeof devKeystore>;
   beforeAll(async () => {
     anvil = await startAnvil({ chainId: 84532 });
-    ks = devKeystore();
+    ks = devKeystore(FILE_ROOT);
   }, 30_000);
   afterAll(async () => {
     await anvil?.stop();
@@ -160,6 +168,8 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
     expect(out).toContain(`forge verify-contract ${CHECK_IN!.address} src/demo/CheckIn.sol:CheckIn --root contracts/evm-delegate --chain 84532 --compiler-version 0.8.28+commit.7893614a --verifier etherscan --watch`);
     expect(out).toContain('--show-standard-json-input > HanaDelegateExecutor.standard-input.json');
     expect(out).toContain(delegatesEntry(84532, DELEGATE!, '2026-11-26'));
+    expect(out).toContain(checkInEntry(84532, CHECK_IN!, '2026-11-26'));
+    expect(out).toContain('DEMO_CHECK_IN in packages/core/src/demo-check-in.ts');
     expect(out).toContain(`"delegate": "${DELEGATE!.address}"`);
     expect(out).toContain('"rpc": "https://sepolia.base.org"');
 
@@ -417,7 +427,7 @@ describe('deploy-evm-delegate refusals (no chain)', () => {
 
 // Last: this file's temporary keystores and tool directories are all gone.
 describe('cleanup', () => {
-  it('leaves no hana-evm-keystore-* or hana-evm-cwd-* directory of this run behind', () => {
-    expect(leftoverTempDirs(['hana-evm-keystore-', 'hana-evm-cwd-'], FILE_START)).toEqual([]);
+  it('leaves nothing in its own temp directory: the keystore and every tool directory are gone', () => {
+    expect(readdirSync(FILE_ROOT)).toEqual([]);
   });
 });

@@ -25,6 +25,8 @@
 //   GET  /__e2e/chain[?sub=<sub>]     {relayed: [{method, tokens: [{provider, sub, claims}]}], sessions}: the transactions
 //                                     the relayer sent that carried a token (of `sub`), and the live sessions on its
 //                                     path; claim names only, never a token
+//   POST /__e2e/evm-sponsor           {appId, account?, delegation?, hold?}: the sponsorship stand-in's state (sponsor-standin.ts);
+//   GET  /__e2e/evm-sponsor?appId=    its counts for that app
 //   GET  /__e2e/wallets?address=<a>   [{userId, supportCode, internalId, scopeId, wallets: [{chain, address}],
 //                                     identities: [{provider, sub, role, status}]}]: the wallet directory's users listing
 //                                     that address (migration 0011, written by the Worker's own POST /v1/wallets/record;
@@ -43,11 +45,12 @@ import {
 } from '@hana-id/core';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { base58 } from '@scure/base';
-import { API_URL, AUTH_ORIGIN, E2E_ENV, ENV_NAME, LIVE_SCOPE_ID, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
+import { API_URL, AUTH_ORIGIN, E2E_ENV, E2E_EVM_SPONSOR_VAR, ENV_NAME, LIVE_SCOPE_ID, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
 import type { ApiApp, ApiCtx, ApiEnv, ApiModules } from './api-modules.ts';
 import { CHANGE_DELAY_MS, type Chain, type RelayedTx, mpcAnswer } from './chain.ts';
 import type { D1Shim } from './d1.ts';
 import { json } from './http.ts';
+import { type EvmAccounts, SponsorStandIn } from './sponsor-standin.ts';
 import { ExecContext, MemoryNamespace, allowAllLimiter, allowAllRateLimit } from './workers.ts';
 
 const KEY_INDEX_LIMIT = 0x8000_0000;
@@ -154,6 +157,8 @@ export interface MockApiOptions {
   email?: { iss: string; publicKeys: unknown[] };
   /** The stack's Google signing key, for `GET /__e2e/google-key` (google-backend.ts; the tests' stub signs with it). */
   googleKey?: () => Promise<unknown>;
+  /** The mocked EVM chain's accounts (partner.ts MockEvm), which the sponsorship stand-in sets up. */
+  evmAccounts?: EvmAccounts;
 }
 
 export class MockApi {
@@ -164,6 +169,8 @@ export class MockApi {
   private readonly fingerprint: string;
   private readonly control: boolean;
   private readonly googleKey: (() => Promise<unknown>) | null;
+  /** TEST ONLY: the EVM gas sponsorship routes until the real ones are merged (sponsor-standin.ts). */
+  private readonly sponsor: SponsorStandIn;
 
   constructor(
     private readonly d1: D1Shim,
@@ -175,6 +182,7 @@ export class MockApi {
     this.control = opts.serves === undefined;
     this.googleKey = opts.googleKey ?? null;
     const serves = opts.serves ?? { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL };
+    this.sponsor = new SponsorStandIn(d1, serves.vaultOrigin, opts.evmAccounts);
     const env: ApiEnv = {
       DB: d1,
       ENV_NAME: serves.envName,
@@ -198,6 +206,8 @@ export class MockApi {
       ...identityBindings(serves.apiUrl),
       // The wallet directory's user ids (D312): a throwaway uid key, as usage-setup sets it on a real env.
       USER_ID_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
+      // Only the vault page's CSP reads it here (the sponsored chain's RPC, D855); the stand-in answers the routes.
+      EVM_SPONSOR: E2E_EVM_SPONSOR_VAR,
       ...(opts.email ? { EMAIL_ISS: opts.email.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(opts.email.publicKeys) } : {}),
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);
@@ -265,6 +275,7 @@ export class MockApi {
     const url = new URL(req.url);
     if (url.pathname.startsWith('/__e2e/')) return this.control ? this.controlEndpoint(req, url) : json(404, { error: 'not_found' });
     if (req.method === 'POST' && MOCKED.has(url.pathname)) return this.mocked(req, url.pathname);
+    if (SponsorStandIn.handles(url.pathname)) return this.sponsor.handle(req, url);
     return this.api.worker.fetch(req, this.env, this.exec);
   }
 
@@ -492,6 +503,7 @@ export class MockApi {
     if (p === '/__e2e/health') return json(200, { ok: true, fingerprint: this.fingerprint });
     if (p === '/__e2e/google-key' && req.method === 'GET' && this.googleKey) return json(200, await this.googleKey());
     if (p === '/__e2e/chain' && req.method === 'GET') return json(200, this.chainView(url.searchParams.get('sub')));
+    if (p === '/__e2e/evm-sponsor') return this.sponsor.control(req, url);
     if (p === '/__e2e/wallets' && req.method === 'GET') return json(200, this.walletUsers(url.searchParams.get('address') ?? ''));
     if (p === '/__e2e/apps' && req.method === 'POST') return json(201, this.createApp((await req.json()) as AppSpec));
     const m = /^\/__e2e\/apps\/(pk_(?:test|live)_[1-9A-HJ-NP-Za-km-z]+)\/(revoke|shares)$/u.exec(p);

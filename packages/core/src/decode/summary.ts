@@ -20,7 +20,8 @@ import { MAINNET_DEMO } from '../mainnet-demo.ts';
 import { KNOWN_EVM_MAINNETS, STELLAR_MAINNET_PASSPHRASE, TEST_EVM_CHAINS, evmChainInfo } from '../networks.ts';
 import type { NearAction } from '../near/codec.ts';
 import { isNearAccountId } from '../addresses.ts';
-import { type ContractChain, STELLAR_TESTNET_PASSPHRASE, verifiedContract } from '../verified-contracts.ts';
+import { type ContractChain, DEMO_CHECK_IN_NAME, STELLAR_TESTNET_PASSPHRASE, verifiedContract } from '../verified-contracts.ts';
+import { isDemoCheckInCall } from '../demo-check-in.ts';
 import type { AbiValue } from './abi.ts';
 import type { DecodedApproval } from './request.ts';
 import type { DecodedEvmCall, DecodedEvmCallSite, DecodedEvmTx } from './evm.ts';
@@ -198,6 +199,22 @@ export function displayUnits(value: bigint, decimals: number, dir: AmountDirecti
   return `about ${groupDigits(formatTokenUnits(dir === 'out' ? value - rem + step : value - rem, decimals))}`;
 }
 
+/**
+ * "up to {amount}" for a bound, read plainly: an amount below the shown precision is "less than 0.000001 …" (never "up to
+ * less than"), and one rounded up ("about N", out) is "up to N" (the rounded-up figure is still an upper bound). `shown`
+ * is displayUnits' text, with its unit after it.
+ */
+export function upTo(shown: string): SummaryText {
+  if (shown.startsWith('less than ')) return [strong(shown)];
+  return ['up to ', strong(shown.startsWith('about ') ? shown.slice('about '.length) : shown)];
+}
+
+/** A text as a sentence: one full stop at its end, never two (a line that already ends with one keeps it). */
+const sentence = (t: SummaryText): SummaryText => {
+  const last = t[t.length - 1];
+  return typeof last === 'string' && /[.!?]$/u.test(last) ? t : [...t, '.'];
+};
+
 /** A NEAR amount as the summary shows it. */
 export const nearDisplay = (yocto: bigint, dir: AmountDirection = 'out'): string => `${displayUnits(yocto, 24, dir)} NEAR`;
 
@@ -277,7 +294,8 @@ function spendWarning(spender: SummaryText, contract: string, token: KnownToken 
   }
   const much: SummaryText = token && !opts.owner ? [strong(`${displayUnits(amount, token.decimals)} ${token.symbol}`), ' from your account'] : [strong(token ? displayUnits(amount, token.decimals) : groupDigits(amount.toString())), token ? ' of ' : ' (in the token’s smallest units) of ', ...yours];
   const nft = opts.nftToo && !token ? ` If the contract is an NFT collection, it lets them take your item ${amount} instead.` : '';
-  return { level: 'warning', code: 'spend_permission', text: ['This lets ', ...spender, ` spend ${opts.more ? 'a further ' : 'up to '}`, ...much, via, `, until it is used up or you take the permission back.${nft}`], short: ['Lets ', ...spenderShort(spender), ` spend ${opts.more ? 'a further ' : 'up to '}`, ...much, via] };
+  const bound: SummaryText = opts.more ? [' spend a further ', ...much] : much[0] && typeof much[0] !== 'string' && much[0].kind === 'strong' ? [' spend ', ...upTo(much[0].text), ...much.slice(1)] : [' spend up to ', ...much];
+  return { level: 'warning', code: 'spend_permission', text: ['This lets ', ...spender, ...bound, via, `, until it is used up or you take the permission back.${nft}`], short: ['Lets ', ...spenderShort(spender), ` spend ${opts.more ? 'a further ' : 'up to '}`, ...much, via] };
 }
 
 // ---- EVM ----
@@ -308,7 +326,19 @@ interface Draft {
 }
 
 /** What evmCall reads of a call: an EVM transaction's (DecodedEvmTx) or a sponsored batch's (DecodedEvmCallSite). */
-type EvmCallInput = { readonly to: string | null; readonly value: bigint; readonly selector: string | null; readonly call: DecodedEvmCall | null };
+type EvmCallInput = { readonly to: string | null; readonly value: bigint; readonly data: string; readonly selector: string | null; readonly call: DecodedEvmCall | null };
+
+/**
+ * Journear's demo check-in (D854), in plain words: only for exactly the pinned contract on this chain, exactly
+ * `checkIn()` and no value (isDemoCheckInCall); its name and address stay in view, as a verified contract's do.
+ */
+const demoCheckIn = (to: string, inBatch = false): Draft => ({
+  headline: [APP, ' wants to check you in'],
+  // In a batch the reassurance is about the check-in alone: the other steps say what they do.
+  lines: [[inBatch ? 'This is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens.' : 'This is Journear’s demo check-in. It doesn’t move any money or tokens.'], ['It uses ', strong(DEMO_CHECK_IN_NAME), ' (', code(to), ', verified by Journear).']],
+  warnings: [],
+  explainable: true,
+});
 
 function evmCall(chainId: number, tx: EvmCallInput, me: string): Draft {
   const to = tx.to as string;
@@ -322,6 +352,7 @@ function evmCall(chainId: number, tx: EvmCallInput, me: string): Draft {
   const withoutValueLine = () => lines.filter((l) => l !== valueLine);
   const unknown = (reason: string): Draft => ({ headline: [APP, ' wants to use contract ', contract, ...sending], lines: withoutValueLine(), warnings: [cannotTell('danger', reason), ...warnings], explainable: false });
   if (valueLine) lines.push(valueLine);
+  if (isDemoCheckInCall(chainId, to, tx.data, tx.value)) return demoCheckIn(to);
   const call = tx.call;
   if (!call) return unknown(tx.selector ? 'it calls a function Journear doesn’t recognise' : 'it sends data Journear can’t read');
   const a = call.args;
@@ -420,7 +451,7 @@ function evmCall(chainId: number, tx: EvmCallInput, me: string): Draft {
 }
 
 function evmTx(chainId: number, tx: DecodedEvmTx, me: string): ApprovalSummary {
-  const base = { fee: ['up to ', strong(evmNative(chainId, tx.maxFeeWei))] as SummaryText, network: evmNetwork(chainId) };
+  const base = { fee: upTo(evmNative(chainId, tx.maxFeeWei)), network: evmNetwork(chainId) };
   if (tx.to === null) {
     return { ...base, headline: [APP, ' wants to create a new contract'], lines: tx.value > 0n ? [['It also sends ', strong(evmNative(chainId, tx.value)), ' to the new contract.']] : [], warnings: [{ ...cannotTell('warning', 'it creates a new contract from code Journear can’t read'), code: 'contract_creation' }], explainable: false };
   }
@@ -466,11 +497,6 @@ function callLine(headline: SummaryText): SummaryText {
   return word === '' ? rest : [word, ...rest];
 }
 
-/** A line as a sentence: ends with a full stop. */
-const sentence = (t: SummaryText): SummaryText => {
-  const last = t[t.length - 1];
-  return typeof last === 'string' && last.endsWith('.') ? t : [...t, '.'];
-};
 
 const GRANTS: ReadonlySet<SummaryWarningCode> = new Set(['spend_permission', 'unlimited_spend', 'collection_operator']);
 
@@ -480,12 +506,13 @@ const GRANTS: ReadonlySet<SummaryWarningCode> = new Set(['spend_permission', 'un
  * smallest units), and two calls group only when their target and calldata are equal too. Order: value to others,
  * grants, contract calls (and every call Journear can't read), other value, moves to the user's own account, revokes.
  */
-function sponsoredStep(c: DecodedEvmCallSite, d: Draft, me: string): Step {
+function sponsoredStep(chainId: number, c: DecodedEvmCallSite, d: Draft, me: string): Step {
   const grant = d.explainable ? d.warnings.find((w) => GRANTS.has(w.code)) : undefined;
   const head = grant?.short ?? callLine(d.headline);
-  const text: SummaryText = d.lines.length === 0 ? head : [...head, '. ', ...d.lines.flatMap((l, i) => [...(i > 0 ? [' '] : []), ...sentence(l)])];
+  const text: SummaryText = d.lines.length === 0 ? head : [...sentence(head), ' ', ...d.lines.flatMap((l, i) => [...(i > 0 ? [' '] : []), ...sentence(l)])];
   const key = `${JSON.stringify(text)}|${c.to.toLowerCase()}|${c.data}`;
   const step = (order: number, value = true): Step => ({ text, value, order, key });
+  if (isDemoCheckInCall(chainId, c.to, c.data, c.value)) return step(3, false);
   if (!d.explainable || !c.call) return step(3);
   if (grant) return step(2);
   const a = c.call.args;
@@ -516,7 +543,7 @@ function sponsoredStep(c: DecodedEvmCallSite, d: Draft, me: string): Step {
 
 function sponsoredAction(decoded: Extract<DecodedApproval, { kind: 'evm_sponsored' }>, me: string): ApprovalSummary {
   const { chainId, calls } = decoded;
-  const drafts = calls.map((c) => evmCall(chainId, c, me));
+  const drafts = calls.map((c) => (calls.length > 1 && isDemoCheckInCall(chainId, c.to, c.data, c.value) ? demoCheckIn(c.to, true) : evmCall(chainId, c, me)));
   const warnings: SummaryWarning[] = [];
   let explainable = drafts.every((d) => d.explainable);
   let headline: SummaryText;
@@ -536,7 +563,7 @@ function sponsoredAction(decoded: Extract<DecodedApproval, { kind: 'evm_sponsore
     const distinct = new Set(tells.map((w) => JSON.stringify(w.text)));
     if (tells.length > 0) warnings.push(distinct.size === 1 ? (tells[0] as SummaryWarning) : cannotTell(tells.reduce<RiskLevel | null>((l, w) => worse(l, w.level), null) as RiskLevel, 'part of it is something Journear can’t summarise'));
     warnings.push(...drafts.flatMap((d) => d.warnings.filter((w) => w.code !== 'cannot_explain')));
-    const g = groupSteps(calls.map((c, i) => sponsoredStep(c, drafts[i] as Draft, me)));
+    const g = groupSteps(calls.map((c, i) => sponsoredStep(chainId, c, drafts[i] as Draft, me)));
     shownSteps = g.shown;
     lines.push(...g.lines);
     warnings.push(...g.leftOut);
@@ -1032,7 +1059,7 @@ export function groupSteps(items: readonly Step[]): { lines: SummaryText[]; hidd
     .map((g) => {
       const named = g.first.label ? (g.count > 1 ? [...capitalised(g.first.label), ` (${g.count} times)`] : capitalised(g.first.label)) : line(g);
       // In full: a key, signer or recipient is never cut where nothing else on the screen shows it.
-      return { level: 'danger', code: 'step_left_out', text: ['Not in the lines above: ', ...named, '.'], short: named };
+      return { level: 'danger', code: 'step_left_out', text: sentence(['Not in the lines above: ', ...named]), short: named };
     });
   return { lines, hidden: n, hiddenRisk: hidden.some((g) => g.first.order <= 4 && g.first.value) ? 'danger' : 'warning', leftOut, shown };
 }
@@ -1193,7 +1220,7 @@ function xlmLeaving(tx: { readonly source: string; readonly operations: readonly
   }
   if (!any || (total === 0n && !all)) return null;
   if (all) return ['XLM leaving your account: ', strong('all of it (the account is closed)'), '.'];
-  return ['XLM leaving your account: up to ', strong(xlm(total)), more ? ', plus what its contract calls or pool deposits take' : '', ', plus the network fee.'];
+  return ['XLM leaving your account: ', ...upTo(xlm(total)), more ? ', plus what its contract calls or pool deposits take' : '', ', plus the network fee.'];
 }
 
 function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me: string): ApprovalSummary {
@@ -1246,7 +1273,7 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
   return {
     headline,
     lines,
-    fee: env.envelope === 'fee_bump' && !isMeStellar(env.feeSource, me) ? null : ['up to ', strong(xlm(feeStroops))],
+    fee: env.envelope === 'fee_bump' && !isMeStellar(env.feeSource, me) ? null : upTo(xlm(feeStroops)),
     network: stellarNetwork(decoded.networkPassphrase),
     warnings,
     explainable,

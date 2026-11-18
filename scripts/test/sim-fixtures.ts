@@ -1,10 +1,10 @@
 // Shared fixtures for the governance script tests: temp keychain/.secrets roots, keys and access-key entries.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
 import type { GovernanceView } from '../lib/contract.ts';
 import type { AccessKeyListEntry } from '../lib/near.ts';
+import { testTempDir } from './temp.ts';
 
 export const NEAR = 10n ** 24n;
 export const NOW = 1_800_000_000_000;
@@ -33,7 +33,7 @@ export const fcEntry = (k: KeyPair | string, receiver_id: string, method_names: 
 
 /** A temp dir with `home` (a ~/.near-credentials/testnet keychain) and `repo` (where .secrets/ goes). */
 export function tempRoots(): { home: string; secretsRoot: string; dir: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'hana-id-gov-'));
+  const dir = testTempDir('hana-id-gov-');
   const home = join(dir, 'home');
   const secretsRoot = join(dir, 'repo');
   mkdirSync(join(home, '.near-credentials', 'testnet'), { recursive: true });

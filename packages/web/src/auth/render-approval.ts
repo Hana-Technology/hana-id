@@ -43,7 +43,7 @@ import {
   stellarAccountControl,
   stellarFlagNames,
 } from '@hana-id/core/decode';
-import { type NearAction, evmChainInfo, toHex } from '@hana-id/core';
+import { DEMO_CHECK_IN_CALLDATA, type NearAction, evmChainInfo, isDemoCheckInCall, toHex } from '@hana-id/core';
 import { BRAND } from '@hana-id/brand';
 import { type Child, type Dom, dom, row, rows } from './dom.ts';
 import { alert } from './ui.ts';
@@ -407,8 +407,12 @@ function abiValue(d: Dom, v: AbiValue): HTMLElement {
   }
 }
 
-/** A call's data in the details: the function and its arguments, or the raw bytes of one Journear doesn't know. */
-function evmCallData(d: Dom, c: Pick<DecodedEvmCallSite, 'data' | 'selector' | 'call'>): HTMLElement[] {
+/**
+ * A call's data in the details: the function and its arguments, or the raw bytes of one Journear doesn't know. The
+ * pinned demo check-in on its chain (D854) is named as its one function.
+ */
+function evmCallData(d: Dom, chainId: number, c: Pick<DecodedEvmCallSite, 'to' | 'value' | 'data' | 'selector' | 'call'> | (Pick<DecodedEvmTx, 'to' | 'value' | 'data' | 'selector' | 'call'>)): HTMLElement[] {
+  if (isDemoCheckInCall(chainId, c.to, c.data, c.value)) return [d.h('p', {}, 'Function ', d.h('strong', {}, 'checkIn()'), ' ', mono(d, DEMO_CHECK_IN_CALLDATA))];
   if (c.call) {
     return [
       d.h('p', {}, 'Function ', d.h('strong', {}, c.call.signature), ' ', mono(d, c.call.selector)),
@@ -427,7 +431,7 @@ function evmTx(d: Dom, chainId: number, tx: DecodedEvmTx): HTMLElement[] {
       : [row(d, 'Gas price', gwei(tx.gasPrice))];
   const data: Child[] = [];
   if (tx.to === null) data.push(d.h('p', {}, 'Creates a contract from this code:'), mono(d, tx.data));
-  else data.push(...evmCallData(d, tx));
+  else data.push(...evmCallData(d, chainId, tx));
   return [
     facts(d, [
       row(d, 'Chain ID', String(chainId)),
@@ -485,7 +489,7 @@ function sponsoredDetails(d: Dom, decoded: Extract<DecodedApproval, { kind: 'evm
     d.h(
       'ol',
       { class: 'ops' },
-      ...decoded.calls.map((c, i) => d.h('li', { class: 'op' }, d.h('h3', {}, `${i + 1}. Call`), facts(d, [row(d, 'To', mono(d, c.to)), row(d, 'Value', wei(c.value))]), ...evmCallData(d, c))),
+      ...decoded.calls.map((c, i) => d.h('li', { class: 'op' }, d.h('h3', {}, `${i + 1}. Call`), facts(d, [row(d, 'To', mono(d, c.to)), row(d, 'Value', wei(c.value))]), ...evmCallData(d, decoded.chainId, c))),
     ),
   ];
 }

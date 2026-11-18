@@ -126,6 +126,8 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
   'rate.overridden': 'Rate overridden',
   'support.lookup': 'Support ID looked up',
   'users.find': 'Wallet directory searched',
+  'evm_relay.staff_action': 'Network fee relayer tool used',
+  'evm_relay.staff_result': 'Network fee relayer tool result',
 };
 
 /** An action or change code in words: its title from `ACTION_TITLES`, else its own words (`some_new.kind` → "Some new kind"). */

@@ -50,6 +50,23 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
     transaction**: a real `add_message` transaction, sent only when the account holds at least 0.01 NEAR; otherwise it
     shows the signed transaction and its hash and says it wasn't sent for lack of NEAR for the fee (D754);
   - the borsh bytes come from `@hana-id/core/near`'s codec, the one the vault decodes with (no NEAR SDK in the page);
+- **Try an action with no network fee** (D867, `src/gas-free-card.ts`), right after the addresses, **only** where the
+  env sponsors it: one button, *Check in*, that runs Journear's demo check-in (`checkIn()` on the pinned `CheckIn`,
+  D854) through `hana.evm.sendSponsored`, the network fee paid by Journear. The card exists only when (1) the env's
+  manifest has an `evm.sponsor` block (its chain IDs are baked in as `evmSponsor`; no block, no key, and the card
+  module returns before touching the page or the SDK), (2) one of those chains is in `hana.evm.sponsoredChains` and has
+  a `DEMO_CHECK_IN` pin (from `@hana-id/core`: the chain and the address are never taken from the page, the URL or an
+  answer), and (3) signed in, `hana.evm.sponsorship(chain)` says available, or not available for a passing reason (the
+  day's budget used up, paused, not available for this account: the SDK's sentence in a blue note, the button off,
+  asked again when the user comes back after a minute). Otherwise there is no card at all. It sends exactly
+  `{ to: <pinned check-in>, data: '0x183ff085' }` (checked with `isDemoCheckInCall`), in the click. The stages: "Approve
+  the check-in in the Journear Passport window." and, once the user is back on the page, "Checking you in. This takes a
+  few seconds. If you haven’t approved it yet, go back to the Journear Passport window."; then "Done. You checked in.
+  The network fee was paid for you: you paid nothing." with *See it on the public record ↗* (`<explorer>/tx/<hash>`)
+  when the sponsored chain is the demo's own and has an explorer, and "You’ve checked in N times so far." read from
+  the program's `checkIns(address)` through the page's EVM provider (same condition: its RPC is already in the CSP).
+  Every refusal is the SDK's own `userMessage` (D861) in the card's red box (and in the diagnostics as `gasFree`); a
+  rejection in the window is a quiet line. sandbox-dev has no block today, so its demo has no card;
 - **Sign**: an EVM `personal_sign` message, a Stellar (SEP-53) message, and a Base Sepolia test transaction (a 0-value
   transfer to yourself, fully filled, `eth_signTransaction`). Each needs the user's Approve in the Journear popup, and
   nothing is ever broadcast, so no funds are needed;
@@ -148,7 +165,8 @@ Chosen at build time from the shell (no `.env` files, so the build and the Worke
 The EVM chain is Base Sepolia (84532, `https://sepolia.base.org`) and Stellar is testnet (`src/config.ts`). NEAR
 comes from the manifest: `rpc` and `rpcFallback` (the card's reads), `apiUrl` (relay and activate) and
 `near.demoGuestbook` (a `.testnet` account; without it the card has no guestbook write or list); the explorer is
-NearBlocks testnet.
+NearBlocks testnet. The gas-free card's chains come from the manifest's `evm.sponsor.chains` keys (`evmSponsor`, only
+when the block exists, D867).
 
 ## Deploy
 
@@ -199,7 +217,7 @@ Both need `http://localhost:5174` on the app's origins (`app:origins:add … --o
 ## Tests
 
 ```sh
-corepack pnpm --filter @hana-id/demo test        # config, CSP, Worker headers, gen-wrangler, diagnostics redaction, errors, the page and its patterns (happy-dom), toasts, the brand
+corepack pnpm --filter @hana-id/demo test        # config, CSP, Worker headers, gen-wrangler, diagnostics redaction, errors, the page and its patterns (happy-dom), the gas-free card, toasts, the brand
 corepack pnpm --filter @hana-id/demo typecheck
 ```
 
@@ -213,6 +231,9 @@ holds the user's NEAR account (the vault records it after login), and a second t
 and checks the card waits and retries. The approval popup leads with "… wants to use the guestbook (add_message)", the call itself under Show details
 (D808). What keeps the page and the API from drifting is `apps/api/test/near-demo-page.test.ts`: the
 page's own builders and nonce (`src/near.ts`) and the SDK's own `activate` and `relay` requests, through the real
-routes with the fake NEAR RPC and sandbox-dev's 10 Tgas cap. Screens of the NEAR card (light and dark, desktop and phone, each stage):
+routes with the fake NEAR RPC and sandbox-dev's 10 Tgas cap. The gas-free card: `tests/demo-gas-free.spec.ts` (the
+first check-in with its setup note, the second without, the count, a rejection, the day's budget used up, paused, no
+card for an app that isn't sponsored; screens with `HANA_SHOTS_DIR`); by hand: `docs/operations.md` "Trying the
+gas-free check-in by hand on the local stack". Screens of the NEAR card (light and dark, desktop and phone, each stage):
 `HANA_SHOTS_DIR=<dir> corepack pnpm exec playwright test --project=chromium tests/demo-near-shots.spec.ts` in
 `apps/e2e`.

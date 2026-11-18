@@ -56,9 +56,10 @@ describe('code mails: the designed HTML part', () => {
       const bare = codeMail({ to: 'a@example.com', code: '550046', appName: 'Sodax Demo', authOrigin: AUTH, purpose });
       expect(bare.text).toBe(m.text);
       expect(bare.subject).toBe(m.subject);
-      expect(bare.html).not.toContain('Not production');
+      expect(bare.html).not.toContain('Test email');
       expect(imgs(bare.html)).toEqual([]);
-      expect(m.html).toContain('[SANDBOX] Not production: this email is from Journear Passport sandbox-dev (testnet), for testing.');
+      expect(m.html).toContain('Test email: this comes from a test version of Journear Passport. Don’t use it with real money.');
+      expect(m.html).not.toContain('[SANDBOX]');
       // Every line of the text part is in the HTML part, in the same order.
       const seen = visibleText(m.html);
       let at = 0;
@@ -176,7 +177,8 @@ describe('code mails: the designed HTML part', () => {
   });
 
   it('the look: the env banner only for a known label on testnet; the logo only with a files origin', () => {
-    expect(mailEnvNotice({ ENV_NAME: 'sandbox-dev', ENV_LABEL: '[SANDBOX]', NEAR_NETWORK: 'testnet' })).toBe('[SANDBOX] Not production: this email is from Journear Passport sandbox-dev (testnet), for testing.');
+    expect(mailEnvNotice({ ENV_NAME: 'sandbox-dev', ENV_LABEL: '[SANDBOX]', NEAR_NETWORK: 'testnet' })).toBe('Test email: this comes from a test version of Journear Passport. Don’t use it with real money.');
+    expect(mailEnvNotice({ ENV_NAME: 'staging', ENV_LABEL: '[STAGING]', NEAR_NETWORK: 'testnet' })).toBe(mailEnvNotice({ ENV_NAME: 'sandbox-dev', ENV_LABEL: '[SANDBOX]', NEAR_NETWORK: 'testnet' }));
     expect(mailEnvNotice({ ENV_NAME: 'x', ENV_LABEL: '[SANDBOX]', NEAR_NETWORK: 'mainnet' })).toBe('');
     expect(mailEnvNotice({ ENV_NAME: 'x', ENV_LABEL: '<b>[PROD]</b>', NEAR_NETWORK: 'testnet' })).toBe('');
     expect(mailEnvNotice({ ENV_NAME: 'x', NEAR_NETWORK: 'testnet' })).toBe('');
@@ -209,8 +211,8 @@ describe('the names (D765)', () => {
   it('every subject, heading and preview line is in the new names; no part of any user mail says "Hana"', () => {
     const mails = [
       ...PURPOSES.map((purpose) => codeMail({ to: 'a@example.com', code: '550046', appName: 'Sodax Demo', authOrigin: AUTH, purpose, look: LOOK })),
-      linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', authOrigin: AUTH, pending: true, look: LOOK }),
-      linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', authOrigin: AUTH, pending: false, look: LOOK }),
+      linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', pending: true, look: LOOK }),
+      linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', pending: false, look: LOOK }),
       unlockMail({ to: 'a@example.com', token: 'tok_abc', authOrigin: AUTH, look: LOOK }),
       confirmMail({ to: 'a@example.com', token: 'tok_def', authOrigin: AUTH, look: LOOK }),
     ];
@@ -225,7 +227,7 @@ describe('the names (D765)', () => {
       ['A sign-in method was added in Sodax Demo', 'A sign-in method was added', 'A sign-in method was added to a Journear wallet this email opens.'],
       ['A sign-in method was added in Sodax Demo', 'A sign-in method was added', 'A sign-in method was added to a Journear wallet this email opens.'],
       ['Your Journear sign-in is unlocked', 'Your Journear sign-in is unlocked', 'Journear support unlocked sign-in with this email, as you asked.'],
-      ['Confirm to receive Journear sign-in codes again', 'Confirm to receive Journear sign-in codes again', 'Journear stopped sending sign-in codes to this email after a bounce or a spam report.'],
+      ['Confirm to receive Journear sign-in codes again', 'Confirm to receive Journear sign-in codes again', 'Journear stopped sending sign-in codes to this email because an earlier email to you couldn’t be delivered or was marked as spam.'],
     ]);
     for (const m of mails) {
       // The auth origin's host keeps "hana" (an env's Worker name, not words): checked without it.
@@ -239,14 +241,29 @@ describe('the names (D765)', () => {
 describe('notices: the designed HTML part', () => {
   const hrefs = (html: string): string[] => [...html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1]!);
 
-  it('the link notice: one button to the cancel page on authOrigin, the URL also as text; the text part as before', () => {
-    const m = linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', authOrigin: `${AUTH}/`, pending: true, look: LOOK });
+  it('the link notice: no link (D862: the cancel page was never built); "Not you?" says where to cancel or remove', () => {
+    const m = linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', pending: true, look: LOOK });
     expect(m.text).toMatchSnapshot('text');
     expect(m.html).toMatchSnapshot('html');
-    expect(hrefs(m.html)).toEqual([`${AUTH}/link/cancel`]);
-    expect(visibleText(m.html)).toContain(`${AUTH}/link/cancel`);
-    expect(heading(m.html)).toBe('A sign-in method was added');
-    expectOnlyTheLogo(m.html);
+    expect(hrefs(m.html)).toEqual([]);
+    expect(m.text).toBe(
+      [
+        'This email is being linked with a Google account, so both will open the same Journear wallet in “Sodax Demo”. The link starts working after a waiting period (24 hours; shorter in a test version), and it can be cancelled until then.',
+        '',
+        'Not you? Change your email password. Then, before the waiting period ends, sign in to “Sodax Demo” with that Google account: the Journear Passport sign-in window shows this email with a button to cancel it. If that Google account isn’t yours, don’t sign in to “Sodax Demo” with this email, and tell the app’s support.',
+        '',
+      ].join('\n'),
+    );
+    const active = linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', pending: false, look: LOOK });
+    expect(active.text).toContain('This email and a Google account now both open the same Journear wallet in “Sodax Demo”.');
+    expect(active.text).toContain('Not you? Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Within 7 days, sign in to “Sodax Demo” the way you first signed in to this wallet: the Journear Passport sign-in window shows the new sign-in with a button to remove it. Then move what’s in this wallet to a new one.');
+    for (const n of [m, active]) {
+      expect(heading(n.html)).toBe('A sign-in method was added');
+      expectOnlyTheLogo(n.html);
+      for (const line of n.text.split('\n').filter(Boolean)) expect(visibleText(n.html)).toContain(line);
+    }
+    // An app name that isn't display-safe is "an app" in the advice too.
+    expect(linkNoticeMail({ to: 'a@example.com', appName: 'evil.com', pending: true }).text).toContain('sign in to an app with that Google account');
   });
 
   it('unlock and confirm: one button to their page with the token in the fragment', () => {

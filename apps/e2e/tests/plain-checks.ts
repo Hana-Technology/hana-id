@@ -4,7 +4,7 @@
 // (packages/core/test/plain-words.ts, packages/web/test/auth/plain-words.ts), here through the real flow.
 import { type Page } from '@playwright/test';
 import { shortId } from '@hana-id/core/decode';
-import { JARGON, ZERO_COST, ZERO_COST_ALLOWED } from '../../../packages/core/test/plain-words.ts';
+import { ZERO_COST, ZERO_COST_ALLOWED, jargonWords } from '../../../packages/core/test/plain-words.ts';
 import { expect } from './fixtures.ts';
 
 /** Checks the window on show; fails the test with what breaks the rules. */
@@ -27,8 +27,8 @@ export async function expectPlainWindow(popup: Page): Promise<void> {
   });
   if (!seen) return;
   const problems: string[] = [];
-  const j = JARGON.exec(seen.words);
-  if (j) problems.push(`jargon “${j[0]}”`);
+  const j = jargonWords(seen.words);
+  if (j.length > 0) problems.push(`jargon “${j.join('”, “')}”`);
   const z = ZERO_COST.exec(ZERO_COST_ALLOWED.reduce((t, a) => t.split(a).join(' '), seen.words));
   if (z) problems.push(`zero-cost claim “${z[0]}”`);
   const norm = (v: string) => (/^0x[0-9a-fA-F]{40}$/u.test(v) ? v.toLowerCase() : v);

@@ -1,14 +1,19 @@
 // The plain-wording rule's check (D853): no chain jargon in what the approval window says in Journear's own words.
-// The words are the plain-wording brief's "instead of" column (2026-11-18); a summary may use them only in the folded
-// details, which the summary never holds. Shared by every test file that builds summaries (core and web).
+// The words are the one shared list (`@hana-id/brand/plain-words`, which holds the plain-wording brief's "instead of"
+// column); a summary may use them only in the folded details, which the summary never holds. Shared by every test
+// file that builds summaries (core and web) and by the e2e checks.
 import type { ApprovalSummary, SummaryText } from './entries.ts';
 
+import { jargonIn as brandJargonIn } from '../../brand/src/plain-words.ts';
+
+/** Network names that hold a banned word as part of the name (BNB Smart Chain): names, not jargon. */
+const NETWORK_NAMES = /BNB Smart Chain|Avalanche C-Chain/gu;
+
 /**
- * Chain jargon a summary never uses. Network names that contain "Chain" (BNB Smart Chain, Avalanche C-Chain) are
- * names, not jargon.
+ * The banned words in `text`: the one shared list (`@hana-id/brand/plain-words`, every surface's check), network names
+ * aside.
  */
-export const JARGON =
-  /\b(gas|relayer|relay(ed)?|sponsor(ed|ship)?|testnet|sandbox|mainnet|public network|EVM|chain ?id|(?<!Smart |C-)chain|contracts?|allowance|spender|operator|revoke[ds]?|unlimited|full-access|function-call|access key|signers?|thresholds?|weights?|burn(t|ed|s)?|trust ?lines?|smallest units|decimals|g?wei|stroops|yocto\w*|NFTs?|block( hash)?|RPC|ledgers?|vault|decoder|API|nonce|(un)?verified|reviewed list|pinned|on chain|faucet|authori[sz]\w*|delegate|declined?|log in|technical details)\b/iu;
+export const jargonWords = (text: string): string[] => brandJargonIn(text.replace(NETWORK_NAMES, ' '));
 
 /** A summary text's own words: the app's name and code values (addresses, account ids, methods) left out. */
 export const plainWords = (t: SummaryText): string => t.map((p) => (typeof p === 'string' ? p : p.kind === 'strong' ? p.text : ' ')).join('');
@@ -29,4 +34,4 @@ export const zeroCostIn = (s: ApprovalSummary): string[] =>
 
 /** Every text of a summary a user reads (headline, lines, fee, network, warnings and their bullets) that uses jargon. */
 export const jargonIn = (s: ApprovalSummary): string[] =>
-  [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...(s.network ? [s.network] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => JARGON.test(w));
+  [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...(s.network ? [s.network] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => jargonWords(w).length > 0);

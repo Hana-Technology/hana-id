@@ -158,7 +158,7 @@ describe('case B: “Link and continue” (D139)', () => {
     await vi.waitFor(() => expect(s.page.stage).toBe('google_wallet'));
     expect(pageText()).toContain('Link and continue');
     expect(pageText()).toContain('Sign in with Google');
-    expect(pageText()).toContain('waits 24 hours');
+    expect(pageText()).toContain('If this isn’t a Gmail or Google Workspace address, the link starts working after a waiting period (24 hours; shorter in a test version), and you can cancel it until then.');
     click('email-link-google');
     await flush();
     const url = new URL(s.win.location.assigned[0]!);

@@ -213,13 +213,13 @@ export function parseTotals(value: unknown): { passports: number; stamps: number
 export const CONTRACT_ERRORS: Readonly<Record<string, string>> = {
   ERR_NO_ARRIVAL: 'Collect your Arrival stamp first: every passport starts with it.',
   ERR_ALREADY: 'You already hold this stamp: each one can be collected once.',
-  ERR_NOT_SPONSORED: 'This stamp must come through Journear’s relayer (a sponsored, gasless transaction), and this one didn’t.',
-  ERR_NOT_OWN_FARE: 'This stamp needs a transaction you sign and pay for yourself, and this one came through a relayer.',
-  ERR_BAD_PROOF: 'The contract couldn’t verify your signature for this stamp. Try again: a new signature is made each time.',
-  ERR_NOT_IMPLICIT: 'Only an account whose name is its own key (a Journear Passport NEAR account) can collect this stamp.',
+  ERR_NOT_SPONSORED: 'This stamp only counts when Journear pays for it, and this one wasn’t sent that way. Nothing was lost. Try again.',
+  ERR_NOT_OWN_FARE: 'This stamp only counts when you pay its network fee yourself, and Journear paid for this one. Nothing was lost. Try again.',
+  ERR_BAD_PROOF: 'The stamps program couldn’t check your signed message. Nothing was lost. Try again: a new one is made each time.',
+  ERR_NOT_IMPLICIT: 'Only a Journear Passport NEAR account can collect this stamp. Nothing was lost.',
   ERR_BAD_NOTE: 'The postcard needs a note of 1 to 140 characters.',
-  ERR_TOO_SOON: 'Not yet: the layover needs 2 minutes on NEAR’s clock after your Arrival. Try again in a moment.',
-  ERR_UNKNOWN_STAMP: 'The contract doesn’t know this stamp.',
+  ERR_TOO_SOON: 'Not yet: the Layover needs 2 minutes on NEAR’s clock after your Arrival. Nothing was lost. Try again in a moment.',
+  ERR_UNKNOWN_STAMP: 'The stamps program doesn’t know this stamp. Nothing was lost. Tell the Journear team.',
 };
 
 /** The first `ERR_*` code in a contract's panic text (the relay's or NEAR's error), or null. */

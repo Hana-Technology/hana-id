@@ -34,14 +34,15 @@ const hostOf = (origin: string): string => {
 };
 
 /**
- * The banner a non-production env's HTML part opens with (D419's label, D670): `ENV_LABEL` when it is one of the
- * labels and the network is testnet, else none. The text part and the subject stay as D419 left them (the sender's
- * name already says "(testnet)").
+ * The banner a non-production env's HTML part opens with (D419, D670), when `ENV_LABEL` is one of the labels and the
+ * network is testnet, else none. Since D853 its words are plain and the same in every test env (the label, "[SANDBOX]"
+ * and so on, is no longer in the text: it only switches the banner on). The text part and the subject stay as D419 left
+ * them (the sender's name already says "(testnet)").
  */
 export function mailEnvNotice(env: { ENV_NAME: string; ENV_LABEL?: string | undefined; NEAR_NETWORK?: string | undefined }): string {
   const label = env.ENV_LABEL ?? '';
   if (env.NEAR_NETWORK !== 'testnet' || !(MAIL_LABELS as readonly string[]).includes(label)) return '';
-  return `${label} Not production: this email is from ${BRAND.product} ${env.ENV_NAME} (testnet), for testing.`;
+  return `Test email: this comes from a test version of ${BRAND.product}. Don’t use it with real money.`;
 }
 
 /** How an env's mail looks: its env banner (`mailEnvNotice`) and its logo's URL (`mailLook`). */
@@ -166,24 +167,34 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
   };
 }
 
-/** The notice of a link that joins this email identity (spec "Notices"): the only link is to authOrigin. */
-export function linkNoticeMail(input: { to: string; appName: string; authOrigin: string; pending: boolean; appId?: string; look?: MailLook }): MailMessage {
+/**
+ * The notice of a link that joins this email identity (spec "Notices"). D862: it carries no link. The page it once
+ * linked to (`{authOrigin}/link/cancel`) was never built (D259), so "Not you?" says where a cancel or a removal really
+ * is today: the sign-in window's link banners (D259, `vault/login.ts` `Afterword`), shown when the wallet's other
+ * sign-in signs in to the app. A pending link (case B, not Google-hosted) is cancelled by the wallet's Google sign-in
+ * (any active identity may cancel); an active one is removed by the wallet's first sign-in method, its root, within the
+ * 7 days the banner offers it (`RECENT_LINK_MS`). An active link may already have let another sign-in open the wallet
+ * (and show its key), and removing it only stops it from now on: so "Not you?" also says to move what the wallet holds.
+ * "Google password" only as a Gmail or Workspace address's own: otherwise the Google account may be someone else's.
+ */
+export function linkNoticeMail(input: { to: string; appName: string; pending: boolean; appId?: string; look?: MailLook }): MailMessage {
   const app = displayAppName(input.appName);
   const appText = app ? `“${app}”` : 'an app';
-  const cancel = `${input.authOrigin.replace(/\/+$/u, '')}/link/cancel`;
   const what = input.pending
-    ? `This email is being linked to a ${BRAND.company} wallet in ${appText} together with a Google sign-in. The link takes effect after a waiting period (24 hours on ${BRAND.company}'s live network), and can be cancelled until then.`
-    : `This email now opens a ${BRAND.company} wallet in ${appText} together with a Google sign-in.`;
-  const notYou = `Not you? ${cancel}`;
+    ? `This email is being linked with a Google account, so both will open the same ${BRAND.company} wallet in ${appText}. The link starts working after a waiting period (24 hours; shorter in a test version), and it can be cancelled until then.`
+    : `This email and a Google account now both open the same ${BRAND.company} wallet in ${appText}.`;
+  const notYou = input.pending
+    ? `Change your email password. Then, before the waiting period ends, sign in to ${appText} with that Google account: the ${BRAND.product} sign-in window shows this email with a button to cancel it. If that Google account isn’t yours, don’t sign in to ${appText} with this email, and tell the app’s support.`
+    : `Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Within 7 days, sign in to ${appText} the way you first signed in to this wallet: the ${BRAND.product} sign-in window shows the new sign-in with a button to remove it. Then move what’s in this wallet to a new one.`;
   const subject = app ? `A sign-in method was added in ${app}` : 'A sign-in method was added';
   return {
     to: input.to,
     subject,
-    text: [what, '', notYou, ''].join('\n'),
+    text: [what, '', `Not you? ${notYou}`, ''].join('\n'),
     html: designed(
       'A sign-in method was added',
       `A sign-in method was added to a ${BRAND.company} wallet this email opens.`,
-      [{ kind: 'heading', text: 'A sign-in method was added' }, { kind: 'p', text: withApp(what, app ? appText : null) }, { kind: 'p', text: [{ strong: 'Not you?' }] }, { kind: 'button', label: 'Open the cancel page', url: cancel }],
+      [{ kind: 'heading', text: 'A sign-in method was added' }, { kind: 'p', text: withApp(what, app ? appText : null) }, { kind: 'p', text: [{ strong: 'Not you?' }, ' ', ...withApp(notYou, app ? appText : null)] }],
       input.look,
     ),
     kind: 'link_notice',
@@ -218,7 +229,7 @@ export function unlockMail(input: { to: string; token: string; authOrigin: strin
 /** A staff unsuppress's confirmation, mailed to the address (abuse review M3): mail resumes only once its holder confirms. */
 export function confirmMail(input: { to: string; token: string; authOrigin: string; look?: MailLook }): MailMessage {
   const link = `${input.authOrigin.replace(/\/+$/u, '')}/email/confirm#${input.token}`;
-  const what = `${BRAND.company} stopped sending sign-in codes to this email after a bounce or a spam report. To receive them again, open this link. It works once, within 24 hours.`;
+  const what = `${BRAND.company} stopped sending sign-in codes to this email because an earlier email to you couldn’t be delivered or was marked as spam. To receive them again, open this link. It works once, within 24 hours.`;
   const notYou = `Didn’t ask ${BRAND.company} support for this? Ignore this mail: nothing changes.`;
   const subject = `Confirm to receive ${BRAND.company} sign-in codes again`;
   return {
@@ -227,7 +238,7 @@ export function confirmMail(input: { to: string; token: string; authOrigin: stri
     text: [what, '', link, '', notYou, ''].join('\n'),
     html: designed(
       subject,
-      `${BRAND.company} stopped sending sign-in codes to this email after a bounce or a spam report.`,
+      `${BRAND.company} stopped sending sign-in codes to this email because an earlier email to you couldn’t be delivered or was marked as spam.`,
       [{ kind: 'heading', text: subject }, { kind: 'p', text: what }, { kind: 'button', label: 'Receive codes again', url: link }, { kind: 'p', text: notYou, muted: true }],
       input.look,
     ),

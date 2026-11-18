@@ -3,7 +3,7 @@
 // bytes of a message), a message's own text and the values a request names in bold (an asset code, a recipient).
 import { afterAll, expect } from 'vitest';
 import { shortId } from '@hana-id/core/decode';
-import { JARGON, ZERO_COST, ZERO_COST_ALLOWED } from '../../../core/test/plain-words.ts';
+import { ZERO_COST, ZERO_COST_ALLOWED, jargonWords } from '../../../core/test/plain-words.ts';
 
 /** The window's own words above the fold. */
 export function plainAboveFold(el: Element): string {
@@ -18,8 +18,8 @@ export function jargonWatch(): (el: Element) => Element {
   afterAll(() => expect(hits).toEqual([]));
   return (el) => {
     const words = plainAboveFold(el);
-    const m = JARGON.exec(words);
-    if (m) hits.push(`“${m[0]}” in: ${words}`);
+    const m = jargonWords(words);
+    if (m.length > 0) hits.push(`“${m.join('”, “')}” in: ${words}`);
     // The renderer's own fixed rows and notes too (review of PR 80): no claim that the request costs nothing, outside
     // the allowlist (the demo check-in's sentences).
     const z = ZERO_COST.exec(ZERO_COST_ALLOWED.reduce((t, a) => t.split(a).join(' '), words));

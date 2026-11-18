@@ -142,7 +142,7 @@ describe('/login/callback with the follow-up channel (batch 8b)', () => {
     const slot1 = followSlot(followKey, 1).id;
     expect(a.writeRelay.mock.calls[1]?.[0]).toBe(slot1);
     expect(await decrypt(relayKey, slot1, a, 1)).toEqual({ error: 'storage_unavailable' });
-    expect(document.body.textContent).toContain('blocked the storage');
+    expect(document.body.textContent).toContain('didn’t let this sign-in save what it needs');
     expect(document.body.textContent).not.toContain('Signed in');
     expect(win.location.assigned).toEqual([]);
   });
@@ -153,7 +153,7 @@ describe('/login/callback with the follow-up channel (batch 8b)', () => {
     blockWrites(win);
     expect(await runCallbackPage({ win, api: a, now: () => NOW, authOrigin: AUTH })).toBe('relay_failed');
     expect(await decrypt(relayKey, slot, a)).toEqual({ error: 'storage_unavailable' });
-    expect(document.body.textContent).toContain('blocked the storage');
+    expect(document.body.textContent).toContain('didn’t let this sign-in save what it needs');
   });
 
   it('case B’s “Link and continue” rides with the token (D139); a link task’s token gets no access leg', async () => {

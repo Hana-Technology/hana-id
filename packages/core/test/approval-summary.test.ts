@@ -35,7 +35,7 @@ import {
   summaryString,
   utf8,
 } from './entries.ts';
-import { JARGON, ZERO_COST, jargonIn, zeroCostIn } from './plain-words.ts';
+import { ZERO_COST, jargonIn, jargonWords, zeroCostIn } from './plain-words.ts';
 import { ATTACKER, ISSUER, OTHER, PASSPHRASE, TOKEN, ROUTER, USER, addSignerOp, addr, authPreimageBytes, feeBumpBytes, i128, invocation, invokeOp, mergeOp, paymentOp, sourceAuth, txBytes } from './stellar-fixtures.ts';
 
 /** A public key computed here (never a literal in the source), for the full-key assertions. */
@@ -69,9 +69,9 @@ afterAll(() => {
 afterAll(() => {
   expect(jargonHits).toEqual([]);
 });
-it('the jargon check catches the brief’s words and spares network names (D853)', () => {
-  for (const w of ['the relayer pays gas', 'a full-access key', 'your allowance', 'on testnet', 'EVM chain 1', 'burns NEAR', 'the NFT', 'verified by Journear', 'Technical details are below']) expect(JARGON.test(w), w).toBe(true);
-  for (const w of ['BNB Smart Chain (test network)', 'Avalanche C-Chain (real money)', 'checked by Journear', 'someone else pays the fee']) expect(JARGON.test(w), w).toBe(false);
+it('the jargon check (the one shared list) catches the brief’s words and spares network names (D853)', () => {
+  for (const w of ['the relayer pays gas', 'a full-access key', 'your allowance', 'on testnet', 'EVM chain 1', 'burns NEAR', 'the NFT', 'verified by Journear', 'Technical details are below']) expect(jargonWords(w).length, w).toBeGreaterThan(0);
+  for (const w of ['BNB Smart Chain (test network)', 'Avalanche C-Chain (real money)', 'checked by Journear', 'someone else pays the fee']) expect(jargonWords(w), w).toEqual([]);
 });
 it('the zero-cost check catches any claim that a request costs nothing (D858 as corrected); a fee statement passes', () => {
   for (const w of ['Cost to you: nothing.', 'This costs you nothing.', 'nothing. Someone else pays the fee.'.replace('nothing.', 'It costs nothing.'), 'It doesn’t move any money.']) expect(ZERO_COST.test(w), w).toBe(true);

@@ -780,6 +780,16 @@ describe('halt: rejected_unsent', () => {
     expect(await halted(stub)).toMatchObject({ reason: 'rejected_unsent', nonce: 0 });
   });
 
+  it('later, `nonce too low` for a record never accepted halts nothing by itself: receipts at confirmed depth decide', async () => {
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    await stub.send(request());
+    chain.onSend = () => ({ error: 'nonce too low' });
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toBeNull();
+    expect((await stored(stub)).recs[0]).toMatchObject({ accepted: false, rejected: null });
+  });
+
   it('a record never sent: staffClose(never_sent) after its deadline frees its share; the gap it leaves is adopted; staffResume', async () => {
     const stub = await fresh();
     chain.onSend = () => ({ error: 'insufficient funds' });

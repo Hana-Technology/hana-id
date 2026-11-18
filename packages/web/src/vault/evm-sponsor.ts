@@ -7,7 +7,9 @@
 //   preflight (no network)  → the build sponsors the chain (HanaEnv.evmSponsor, the pinned non-placeholder delegate,
 //                             never a local chain outside a local build, testnets only), the calls are well formed
 //   prepare (API)           → delegation, nonces, the API's clock, the gas window; checked, never trusted for the
-//                             delegate, the relayer, the chain or the account
+//                             delegate, the relayer, the chain, the account or the account's setup
+//   the account (chain)     → its code and transaction count, read by the vault itself from the build's endpoints:
+//                             the only source for whether to sign the one-time setup, and at which nonce
 //   subject                 → sponsoredApprovalContent: one approval (kind evm_sponsored, never auto-approved)
 //   approved                → the approved bytes decoded again and checked against the build and the request
 //   sign                    → one chain-key derivation: the authorization (iff the subject has an authorization nonce)
@@ -42,6 +44,7 @@ import {
   type EvmSponsorSubject,
   type SignedAuthorization,
   decodeSponsorSubject,
+  delegationTarget,
   signAuthorization,
   signExecute,
   sponsorDelegate,
@@ -51,6 +54,8 @@ import {
 } from '@hana-id/core/evm-sponsor';
 import { withChainKey } from '@hana-id/core/derivation';
 import type { HanaEnv } from '../hana-env.ts';
+import { isLoopbackHost } from '../client/urls.ts';
+import type { Timers } from './runtime.ts';
 import { VaultError } from './errors.ts';
 
 export type SponsoredRequest = Extract<PortRequest, { method: 'evm_sendSponsored' }>;
@@ -118,6 +123,21 @@ export interface SponsorChain {
   readonly delegate: `0x${string}`;
   /** The build's relayer, EIP-55. */
   readonly relayer: `0x${string}`;
+  /** The chain's public JSON-RPC endpoints in the build (manifest `rpc`, then `rpcFallback`): 1 or 2. */
+  readonly rpcs: readonly string[];
+}
+
+/** An RPC endpoint the vault may read: https, or http to a loopback host in a local build only. */
+function rpcUrlOrNull(v: unknown, local: boolean): string | null {
+  if (typeof v !== 'string') return null;
+  try {
+    const u = new URL(v);
+    if (u.username || u.password) return null;
+    if (u.protocol === 'https:') return v;
+    return u.protocol === 'http:' && local && isLoopbackHost(u.hostname) ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 const sameAddress = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
@@ -134,8 +154,9 @@ function evmAddressOrNull(v: unknown): `0x${string}` | null {
 
 /**
  * The chains this build sponsors, ascending: HanaEnv.evmSponsor's entries whose key is a canonical chain ID of a test
- * network (a local chain only in a `local*` build), whose delegate is the pinned, non-placeholder one for that chain
- * and whose relayer is a valid address. Anything else in the table is ignored (fail closed). At most 4 (the manifest's
+ * network (a local chain only in a `local*` build), whose delegate is the pinned, non-placeholder one for that chain,
+ * whose relayer is a valid address and whose `rpc` (and `rpcFallback`, when set) is an https URL (http to a loopback
+ * host in a local build). Anything else in the table is ignored (fail closed). At most 4 (the manifest's
  * bound, protocol SPONSORED_CHAINS_MAX).
  */
 export function sponsorChains(env: Pick<HanaEnv, 'name' | 'evmSponsor'>): SponsorChain[] {
@@ -154,7 +175,13 @@ export function sponsorChains(env: Pick<HanaEnv, 'name' | 'evmSponsor'>): Sponso
     const delegate = evmAddressOrNull(entry.delegate);
     const relayer = evmAddressOrNull(entry.relayer);
     if (!delegate || !relayer || !sameAddress(delegate, pinned.address) || sameAddress(relayer, delegate)) continue;
-    out.push(Object.freeze({ chainId, delegate, relayer }));
+    // The vault reads the account's setup itself (D855): no endpoint, no sponsorship.
+    const rpc = rpcUrlOrNull(entry.rpc, local);
+    if (!rpc) continue;
+    const fallback = entry.rpcFallback === undefined ? null : rpcUrlOrNull(entry.rpcFallback, local);
+    if (entry.rpcFallback !== undefined && !fallback) continue;
+    const rpcs = Object.freeze(fallback && fallback !== rpc ? [rpc, fallback] : [rpc]);
+    out.push(Object.freeze({ chainId, delegate, relayer, rpcs }));
   }
   return out.sort((a, b) => a.chainId - b.chainId).slice(0, 4);
 }
@@ -269,6 +296,108 @@ function notAllowed(reason: string): VaultError {
 
 const notReady = (why: string): VaultError => new VaultError('api_unavailable', SPONSOR_TEXT.notReady, { reason: 'bad_answer', detail: why });
 
+// ---- the account's setup, read by the vault itself (D855, after the review of PR 76) ----
+
+/** The account as the build's endpoints show it. */
+export interface AccountOnChain {
+  /** The account's code: empty, the EIP-7702 designator, or anything else. */
+  readonly code: string;
+  /** Its transaction count, latest and pending. */
+  readonly latest: bigint;
+  readonly pending: bigint;
+}
+
+/** How long one endpoint gets for its four reads. */
+export const SPONSOR_RPC_TIMEOUT_MS = 8_000;
+
+const QUANTITY = /^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/u;
+
+/**
+ * One endpoint's view (its chain checked first); `down` when it gives no answer (network, timeout, a JSON-RPC error), `bad`
+ * when it answers something unusable (another chain, a malformed value).
+ */
+async function readAt(url: string, chainId: number, account: string, fetchFn: typeof fetch, timers: Timers): Promise<AccountOnChain | 'down' | 'bad'> {
+  const ctl = new AbortController();
+  const timer = timers.setTimeout(() => ctl.abort(), SPONSOR_RPC_TIMEOUT_MS);
+  const call = async (method: string, params: unknown[], id: number): Promise<unknown> => {
+    const res = await fetchFn(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }), credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: ctl.signal });
+    const body = (await res.json()) as unknown;
+    if (!isObj(body) || body.id !== id || body.error !== undefined) throw new Error('rpc');
+    return body.result;
+  };
+  let answers: unknown[];
+  try {
+    answers = await Promise.all([
+      call('eth_chainId', [], 1),
+      call('eth_getCode', [account, 'latest'], 2),
+      call('eth_getTransactionCount', [account, 'latest'], 3),
+      call('eth_getTransactionCount', [account, 'pending'], 4),
+    ]);
+  } catch {
+    return 'down';
+  } finally {
+    timers.clearTimeout(timer);
+  }
+  const [chain, code, latest, pending] = answers;
+  if (typeof chain !== 'string' || !QUANTITY.test(chain.toLowerCase()) || BigInt(chain) !== BigInt(chainId)) return 'bad';
+  if (typeof code !== 'string' || !/^0x(?:[0-9a-fA-F]{2})*$/u.test(code) || code.length > 2 + 2 * 24_576) return 'bad';
+  if (typeof latest !== 'string' || typeof pending !== 'string' || !QUANTITY.test(latest.toLowerCase()) || !QUANTITY.test(pending.toLowerCase())) return 'bad';
+  return { code: code.toLowerCase(), latest: BigInt(latest), pending: BigInt(pending) };
+}
+
+/**
+ * The account's code and transaction count from the build's endpoints, each read alone (its chain ID checked). Every
+ * endpoint that answers must agree on all three; one down (no answer) is fine; none answering, an endpoint that answers
+ * something unusable (another chain, a malformed value) or a disagreement is unreadable (`bad_answer`): the API's word is
+ * never the fallback.
+ */
+export async function readAccount(chain: SponsorChain, account: string, fetchFn: typeof fetch, timers: Timers): Promise<AccountOnChain> {
+  const read = await Promise.all(chain.rpcs.map((url) => readAt(url, chain.chainId, account, fetchFn, timers)));
+  if (read.includes('bad')) throw notReady('chain_bad_answer');
+  const views = read.filter((v): v is AccountOnChain => typeof v === 'object');
+  const first = views[0];
+  if (!first) throw notReady('chain_unreadable');
+  if (views.some((v) => v.code !== first.code || v.latest !== first.latest || v.pending !== first.pending)) throw notReady('chain_disagrees');
+  return first;
+}
+
+/**
+ * Whether this action signs the one-time setup, and at which nonce, from the account as the vault read it (D855):
+ * - no code: the setup, only when the API said `none` and latest == pending == the API's `accountNonce` (else not ready:
+ *   a future nonce would make an authorization usable later, a pending one may not apply);
+ * - exactly the pinned delegate's designator: no setup, only when the API said `journear` (else not ready);
+ * - any other code: set up by another wallet app (D840), whatever the API said.
+ */
+export function setupNonce(onChain: AccountOnChain, answer: PrepareAnswer, chain: SponsorChain): bigint | null {
+  if (onChain.code === '0x') {
+    if (answer.delegation !== 'none') throw notReady('delegation');
+    if (onChain.latest !== onChain.pending || onChain.latest !== answer.accountNonce) throw notReady('account_nonce');
+    return onChain.latest;
+  }
+  let target: string | null = null;
+  try {
+    target = delegationTarget(Uint8Array.from(onChain.code.slice(2).match(/../gu) ?? [], (h) => Number.parseInt(h, 16)));
+  } catch {
+    target = null;
+  }
+  if (target !== null && sameAddress(target, chain.delegate)) {
+    if (answer.delegation !== 'journear') throw notReady('delegation');
+    return null;
+  }
+  throw notAllowed('delegated_elsewhere');
+}
+
+/**
+ * The checks of the prepare answer that need nothing else (before the vault reads the chain): the build's relayer and
+ * implementation, `delegation: 'other'` (D840) and `allowed: false`.
+ */
+export function precheckAnswer(plan: SponsorPlanInput, answer: PrepareAnswer): void {
+  if (!sameAddress(answer.relayer, plan.chain.relayer)) throw notReady('relayer');
+  if (!sameAddress(answer.implementation, plan.chain.delegate)) throw notReady('implementation');
+  if (answer.delegation === 'other') throw notAllowed('delegated_elsewhere');
+  if (!answer.allowed) throw notAllowed(answer.reason ?? 'not_available');
+}
+
 export interface SponsorClocks {
   /** The vault's server-corrected clock, ms (runtime.ts Clock). */
   vaultNowMs: number;
@@ -286,14 +415,12 @@ export interface SponsorClocks {
  * - the deadline: the vault's clock + min(5 min, deadlineMaxS − 60 s), refused below 2 minutes;
  * - minGas: the most the transaction cap leaves (`maxMinGas`, D855), refused unless floor ≤ max ≤ 2,000,000 and max ≥
  *   25,000 per call;
- * - the authorization nonce only for `delegation: 'none'` (the account's pending transaction count).
+ * - the authorization nonce only when the account as the vault read it has no code (setupNonce).
  */
-export function sponsorSubject(plan: SponsorPlanInput, answer: PrepareAnswer, clocks: SponsorClocks): EvmSponsorSubject {
+export function sponsorSubject(plan: SponsorPlanInput, answer: PrepareAnswer, onChain: AccountOnChain, clocks: SponsorClocks): EvmSponsorSubject {
   const { chain } = plan;
-  if (!sameAddress(answer.relayer, chain.relayer)) throw notReady('relayer');
-  if (!sameAddress(answer.implementation, chain.delegate)) throw notReady('implementation');
-  if (answer.delegation === 'other') throw notAllowed('delegated_elsewhere');
-  if (!answer.allowed) throw notAllowed(answer.reason ?? 'not_available');
+  precheckAnswer(plan, answer);
+  const authNonce = setupNonce(onChain, answer, chain);
   if (Math.abs(clocks.deviceNowMs / 1000 - answer.serverNow) > SPONSOR_DEVICE_SKEW_MAX_S) throw refusal(SPONSOR_TEXT.clockWrong, 'clock_wrong');
   if (Math.abs(clocks.vaultNowMs / 1000 - answer.serverNow) > SPONSOR_CLOCK_SKEW_MAX_S) throw notReady('clock');
   const [lo, hi] = SPONSOR_DEADLINE_MAX_BOUNDS;
@@ -309,7 +436,7 @@ export function sponsorSubject(plan: SponsorPlanInput, answer: PrepareAnswer, cl
     chainId: chain.chainId,
     account: plan.account,
     delegate: chain.delegate,
-    authNonce: answer.delegation === 'none' ? answer.accountNonce : null,
+    authNonce,
     calls: plan.calls,
     executeNonce: answer.executeNonce,
     deadline,

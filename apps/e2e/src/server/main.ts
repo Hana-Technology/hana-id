@@ -49,9 +49,9 @@ export async function startStack(fingerprint: string): Promise<void> {
   const google = await GoogleBackend.create();
   google.install();
   chain.googleKid = google.kid;
-  const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk() });
-  const issuer = await LocalIssuer.start(d1, issuerKey);
   const evm = new MockEvm();
+  const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk(), evmAccounts: evm.accounts });
+  const issuer = await LocalIssuer.start(d1, issuerKey);
   const loopback = ['127.0.0.1'];
 
   // Browsers resolve localhost and *.localhost to 127.0.0.1 or ::1; listen on both where the machine has IPv6 loopback.
@@ -66,7 +66,7 @@ export async function startStack(fingerprint: string): Promise<void> {
   await serve(PORTS.issuer, loopback, issuer.handler());
   // Live mode (LIVE_ENV): a second Worker and pair of page hosts for the https origins, on the same D1 and chain.
   const live: PagesEnv = { envName: LIVE_ENV_NAME, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, apiUrl: LIVE_API_URL, nearRpc: LIVE_NEAR_RPC };
-  const liveApi = new MockApi(d1, chain, modules, { serves: live });
+  const liveApi = new MockApi(d1, chain, modules, { serves: live, evmAccounts: evm.accounts });
   await serve(PORTS.liveVault, loopback, servedAt(LIVE_VAULT_ORIGIN, vaultHost(modules, d1, live)));
   await serve(PORTS.liveAuth, loopback, servedAt(LIVE_AUTH_ORIGIN, authHost(modules, live)));
   await serve(PORTS.liveApi, loopback, servedAt(LIVE_API_URL, (req) => liveApi.handle(req)));

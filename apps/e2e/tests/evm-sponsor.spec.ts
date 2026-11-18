@@ -57,9 +57,12 @@ async function sponsoredWindow(page: Page, name: string, calls: { to: string; da
   return popup;
 }
 
-/** Signs in to a new app (the stand-in keeps each app's accounts apart: every test signs in as the same user). */
+/**
+ * Signs in to a new app on a scope of its own, so each test (and each browser) has its own EVM account on the mocked
+ * chain: the stand-in and the vault read the account's setup there.
+ */
 async function freshSession(page: Page): Promise<{ evm: string; appId: string }> {
-  const app = await newApp();
+  const app = await newApp({ scopeId: `sp${Math.random().toString(36).slice(2, 12)}` });
   await openPartner(page, app);
   const { evm } = await login(page);
   return { evm, appId: app.appId };
@@ -137,8 +140,8 @@ test('a decline: 4001, nothing sent', async ({ page }) => {
 });
 
 test('an account set up by another app: the plain refusal, no approval screen (D840)', async ({ page }) => {
-  const { evm, appId } = await freshSession(page);
-  await sponsorControl({ appId, account: evm, delegation: 'other' });
+  const { evm } = await freshSession(page);
+  await sponsorControl({ account: evm, delegation: 'other' });
   const popupP = page.waitForEvent('popup');
   await clickAction(page, 'elsewhere', 'sendSponsored', [CHECK_IN_CALL]);
   const popup = await popupP;

@@ -45,12 +45,12 @@ import {
 } from '@hana-id/core';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { base58 } from '@scure/base';
-import { API_URL, AUTH_ORIGIN, E2E_ENV, ENV_NAME, LIVE_SCOPE_ID, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
+import { API_URL, AUTH_ORIGIN, E2E_ENV, E2E_EVM_SPONSOR_VAR, ENV_NAME, LIVE_SCOPE_ID, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
 import type { ApiApp, ApiCtx, ApiEnv, ApiModules } from './api-modules.ts';
 import { CHANGE_DELAY_MS, type Chain, type RelayedTx, mpcAnswer } from './chain.ts';
 import type { D1Shim } from './d1.ts';
 import { json } from './http.ts';
-import { SponsorStandIn } from './sponsor-standin.ts';
+import { type EvmAccounts, SponsorStandIn } from './sponsor-standin.ts';
 import { ExecContext, MemoryNamespace, allowAllLimiter, allowAllRateLimit } from './workers.ts';
 
 const KEY_INDEX_LIMIT = 0x8000_0000;
@@ -157,6 +157,8 @@ export interface MockApiOptions {
   email?: { iss: string; publicKeys: unknown[] };
   /** The stack's Google signing key, for `GET /__e2e/google-key` (google-backend.ts; the tests' stub signs with it). */
   googleKey?: () => Promise<unknown>;
+  /** The mocked EVM chain's accounts (partner.ts MockEvm), which the sponsorship stand-in sets up. */
+  evmAccounts?: EvmAccounts;
 }
 
 export class MockApi {
@@ -180,7 +182,7 @@ export class MockApi {
     this.control = opts.serves === undefined;
     this.googleKey = opts.googleKey ?? null;
     const serves = opts.serves ?? { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL };
-    this.sponsor = new SponsorStandIn(d1, serves.vaultOrigin);
+    this.sponsor = new SponsorStandIn(d1, serves.vaultOrigin, opts.evmAccounts);
     const env: ApiEnv = {
       DB: d1,
       ENV_NAME: serves.envName,
@@ -204,6 +206,8 @@ export class MockApi {
       ...identityBindings(serves.apiUrl),
       // The wallet directory's user ids (D312): a throwaway uid key, as usage-setup sets it on a real env.
       USER_ID_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
+      // Only the vault page's CSP reads it here (the sponsored chain's RPC, D855); the stand-in answers the routes.
+      EVM_SPONSOR: E2E_EVM_SPONSOR_VAR,
       ...(opts.email ? { EMAIL_ISS: opts.email.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(opts.email.publicKeys) } : {}),
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);

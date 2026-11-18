@@ -396,7 +396,14 @@ export function evmSponsorDelegateProblems(sponsor: Pick<EvmSponsor, 'chains'>, 
   return out;
 }
 
-/** What the vault build needs per chain (packages/web gen-envs): the delegate to authorize and the relayer to name. */
-export function evmSponsorPageChains(sponsor: EvmSponsor): Record<string, { delegate: string; relayer: string }> {
-  return Object.fromEntries(Object.entries(sponsor.chains).map(([id, c]) => [id, { delegate: c.delegate, relayer: sponsor.relayerAddress }]));
+/**
+ * What the vault build needs per chain (packages/web gen-envs): the delegate to authorize, the relayer to name, and the
+ * chain's public RPC endpoints (`rpc`, `rpcFallback`), from which the vault reads the account's code and transaction
+ * count itself before it signs an authorization (D855). They are the manifest's no-key URLs (sponsorRpcUrlProblem: no
+ * credentials, path or query); a keyed endpoint is the API's secret and never reaches a page.
+ */
+export function evmSponsorPageChains(sponsor: EvmSponsor): Record<string, { delegate: string; relayer: string; rpc: string; rpcFallback?: string }> {
+  return Object.fromEntries(
+    Object.entries(sponsor.chains).map(([id, c]) => [id, { delegate: c.delegate, relayer: sponsor.relayerAddress, rpc: c.rpc, ...(c.rpcFallback !== undefined ? { rpcFallback: c.rpcFallback } : {}) }]),
+  );
 }

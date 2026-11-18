@@ -16,15 +16,55 @@ const DELEGATE = (SPONSOR_DELEGATES[31337] as { address: `0x${string}` }).addres
 const RELAYER = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 const CHECK_IN = '0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e';
 const CALL = { to: CHECK_IN, value: '0x0', data: '0x183ff085' };
-const SPONSOR_ENV: HanaEnv = Object.freeze({ ...ENV, name: 'local-test', evmSponsor: Object.freeze({ '31337': Object.freeze({ delegate: DELEGATE, relayer: RELAYER }) }) });
+const RPC_A = 'https://evm-a.test/a';
+const RPC_B = 'https://evm-b.test/b';
+const SPONSOR_ENV: HanaEnv = Object.freeze({ ...ENV, name: 'local-test', evmSponsor: Object.freeze({ '31337': Object.freeze({ delegate: DELEGATE, relayer: RELAYER, rpc: RPC_A, rpcFallback: RPC_B }) }) });
+const DESIGNATOR = `0xef0100${DELEGATE.slice(2).toLowerCase()}`;
+const OTHER_DESIGNATOR = `0xef0100${'42'.repeat(20)}`;
+
+/**
+ * The chain as the build's two endpoints answer it (D855): the account's code and its latest and pending transaction
+ * counts. Each endpoint can lie (`lies`) or be down (`down`); `reads` counts what the vault asked.
+ */
+class FakeEvmChain {
+  code = '0x';
+  latest = 3n;
+  pending = 3n;
+  chainId = 31337;
+  readonly down = new Set<string>();
+  readonly lies = new Map<string, Partial<{ code: string; latest: bigint; pending: bigint; chainId: number }>>();
+  readonly reads: { endpoint: string; method: string }[] = [];
+
+  constructor(t: Tab) {
+    for (const [path, endpoint] of [['/a', RPC_A], ['/b', RPC_B]] as const) t.browser.backend.overrides.set(path, (call) => this.answer(endpoint, call));
+  }
+
+  private answer(endpoint: string, call: ApiCall): Response {
+    if (this.down.has(endpoint)) throw new TypeError('Failed to fetch');
+    const b = call.body as { id: unknown; method: string; params: unknown[] };
+    this.reads.push({ endpoint, method: b.method });
+    const v = { code: this.code, latest: this.latest, pending: this.pending, chainId: this.chainId, ...this.lies.get(endpoint) };
+    const result =
+      b.method === 'eth_chainId' ? `0x${v.chainId.toString(16)}` : b.method === 'eth_getCode' ? v.code : b.method === 'eth_getTransactionCount' ? `0x${(b.params[1] === 'pending' ? v.pending : v.latest).toString(16)}` : null;
+    return json(200, { jsonrpc: '2.0', id: b.id, result });
+  }
+
+  /** The account set up with the pinned delegate, as a send with an authorization leaves it. */
+  setUp(): void {
+    this.code = DESIGNATOR;
+    this.latest += 1n;
+    this.pending = this.latest;
+  }
+}
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 
 /** The sponsorship API as the vault meets it: prepare's hints, send's checks; each request's proof checked. */
 class FakeSponsorApi {
   delegation: 'none' | 'journear' | 'other' = 'none';
-  accountNonce = 3n;
   executeNonce = 0n;
+  /** An accountNonce for prepare to answer instead of the chain's (a lying API). */
+  lieNonce: bigint | null = null;
   /** Fields of prepare's answer to replace (a lying API). */
   lie: Record<string, unknown> = {};
   /** An answer to send instead of the normal one (a refusal, a network failure). */
@@ -36,7 +76,10 @@ class FakeSponsorApi {
   readonly proofRefusals: string[] = [];
   private seq = 0;
 
+  readonly chain: FakeEvmChain;
+
   constructor(private readonly t: Tab) {
+    this.chain = new FakeEvmChain(t);
     t.browser.backend.overrides.set('/v1/evm/sponsor/prepare', (call) => this.prepare(call));
     t.browser.backend.overrides.set('/v1/evm/sponsor/send', (call) => this.send(call));
   }
@@ -54,7 +97,7 @@ class FakeSponsorApi {
     if (refused) return refused;
     return json(200, {
       delegation: this.delegation,
-      accountNonce: this.accountNonce.toString(),
+      accountNonce: (this.lieNonce ?? this.chain.latest).toString(),
       executeNonce: this.delegation === 'other' ? null : this.executeNonce.toString(),
       serverNow: Math.floor(this.t.browser.backend.serverNow() / 1000),
       relayer: RELAYER,
@@ -83,6 +126,7 @@ class FakeSponsorApi {
     const a = b.authorization as Record<string, unknown> | undefined;
     if (this.delegation === 'none' && !a) return apiError(409, 'delegation_required');
     if (a && recoverAuthorization({ chainId: a.chainId as number, address: a.address as `0x${string}`, nonce: BigInt(a.nonce as string), yParity: a.yParity as 0 | 1, r: a.r as `0x${string}`, s: a.s as `0x${string}` }) !== b.account) return apiError(401, 'invalid_authorization_signature');
+    if (a) this.chain.setUp();
     this.delegation = 'journear';
     this.executeNonce += 1n;
     this.seq += 1;
@@ -152,7 +196,7 @@ describe('the build’s sponsored chains (status and ready, D855)', () => {
   });
 
   it('a local chain only in a local build; a delegate other than the pinned one, a bad relayer or a mainnet never', () => {
-    const entry = { delegate: DELEGATE, relayer: RELAYER };
+    const entry = { delegate: DELEGATE, relayer: RELAYER, rpc: RPC_A };
     expect(sponsorChains({ name: 'local-x', evmSponsor: { '31337': entry } }).map((c) => c.chainId)).toEqual([31337]);
     expect(sponsorChains({ name: 'sandbox-dev', evmSponsor: { '31337': entry } })).toEqual([]);
     expect(sponsorChains({ name: 'local-x', evmSponsor: { '31337': { ...entry, delegate: RELAYER } } })).toEqual([]);
@@ -243,6 +287,7 @@ describe('the first action: one window with the setup, then the authorization an
   it('a later action: no setup in the window and no authorization sent', async () => {
     const { t, api } = await session();
     api.delegation = 'journear';
+    api.chain.setUp();
     api.executeNonce = 4n;
     const reply = send(t);
     const { popup, m } = await windowOf(t);
@@ -427,6 +472,7 @@ describe('one action per account at a time; the clock after the approval (D855)'
     api.delegation = 'other';
     await send(t);
     api.delegation = 'journear';
+    api.chain.setUp();
     const reply = send(t);
     const w = await windowOf(t);
     answer(t, w.popup, w.m, false);
@@ -441,6 +487,92 @@ describe('one action per account at a time; the clock after the approval (D855)'
     answer(t, popup, m, true);
     expect((await reply).error).toMatchObject({ code: 4100, message: SPONSOR_TEXT.tooSlow, data: { reason: 'deadline_passed' } });
     expect(api.sends).toHaveLength(0);
+  });
+});
+
+describe('the vault reads the account itself, from the build’s endpoints (D855, after the review of PR 76)', () => {
+  it('a fresh account: both endpoints asked (chain, code, latest, pending), the authorization at their nonce', async () => {
+    const { t, api } = await session();
+    const reply = send(t);
+    const { popup, m } = await windowOf(t);
+    expect(decodeSponsorSubject(m.bytes as Uint8Array).authNonce).toBe(3n);
+    for (const endpoint of [RPC_A, RPC_B]) expect(api.chain.reads.filter((r) => r.endpoint === endpoint).map((r) => r.method).sort()).toEqual(['eth_chainId', 'eth_getCode', 'eth_getTransactionCount', 'eth_getTransactionCount']);
+    answer(t, popup, m, true);
+    expect((await reply).result).toMatchObject({ status: 'executed' });
+  });
+
+  it('a lying prepare says `none` for an account the chain shows set up with the pinned delegate: not ready, no window', async () => {
+    const { t, api } = await session();
+    api.chain.setUp();
+    expect((await send(t)).error).toMatchObject({ code: 'api_unavailable', message: SPONSOR_TEXT.notReady, data: { reason: 'bad_answer' } });
+    noWindow(t);
+  });
+
+  it('a lying prepare says `journear` for an account with no code: not ready (never a batch without its setup)', async () => {
+    const { t, api } = await session();
+    api.delegation = 'journear';
+    expect((await send(t)).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'bad_answer' } });
+    noWindow(t);
+  });
+
+  it.each([
+    ['says `none`', 'none'],
+    ['says `journear`', 'journear'],
+  ] as const)('an account set up by another app while the API %s: the D840 refusal, no window, nothing signed', async (_n, delegation) => {
+    const { t, api } = await session();
+    api.delegation = delegation;
+    api.chain.code = OTHER_DESIGNATOR;
+    expect((await send(t)).error).toMatchObject({ code: 4100, message: SPONSOR_TEXT.delegatedElsewhere, data: { reason: 'delegated_elsewhere' } });
+    noWindow(t);
+    // Contract code is "elsewhere" too.
+    api.chain.code = '0x6080604052';
+    expect((await send(t)).error).toMatchObject({ code: 4100, data: { reason: 'delegated_elsewhere' } });
+  });
+
+  it.each([
+    ['a future nonce from the API', (api: FakeSponsorApi) => (api.lieNonce = 9n)],
+    ['a pending transaction (latest ≠ pending)', (api: FakeSponsorApi) => (api.chain.pending = 4n)],
+  ])('%s: no authorization is signed (not ready)', async (_n, change) => {
+    const { t, api } = await session();
+    change(api);
+    expect((await send(t)).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'bad_answer' } });
+    noWindow(t);
+  });
+
+  it('one endpoint down: the other answers alone', async () => {
+    const { t, api } = await session();
+    api.chain.down.add(RPC_A);
+    const reply = send(t);
+    const { popup, m } = await windowOf(t);
+    answer(t, popup, m, false);
+    expect((await reply).error?.code).toBe(4001);
+  });
+
+  it('both endpoints down: not ready, never the API’s word', async () => {
+    const { t, api } = await session();
+    api.chain.down.add(RPC_A);
+    api.chain.down.add(RPC_B);
+    expect((await send(t)).error).toMatchObject({ code: 'api_unavailable', message: SPONSOR_TEXT.notReady, data: { reason: 'bad_answer' } });
+    noWindow(t);
+  });
+
+  it.each([
+    ['disagree on the code', (c: FakeEvmChain) => c.lies.set(RPC_B, { code: DESIGNATOR })],
+    ['disagree on the nonce', (c: FakeEvmChain) => c.lies.set(RPC_B, { latest: 5n, pending: 5n })],
+    ['one is on another chain', (c: FakeEvmChain) => c.lies.set(RPC_B, { chainId: 1 })],
+    ['answer garbage', (c: FakeEvmChain) => c.lies.set(RPC_A, { code: 'nope' })],
+  ])('the endpoints %s: unreadable, not ready', async (_n, lie) => {
+    const { t, api } = await session();
+    lie(api.chain);
+    expect((await send(t)).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'bad_answer' } });
+    noWindow(t);
+  });
+
+  it('a chain without an endpoint in the build is not sponsored', () => {
+    expect(sponsorChains({ name: 'local-x', evmSponsor: { '31337': { delegate: DELEGATE, relayer: RELAYER } } })).toEqual([]);
+    expect(sponsorChains({ name: 'local-x', evmSponsor: { '31337': { delegate: DELEGATE, relayer: RELAYER, rpc: 'ftp://x.test' } } })).toEqual([]);
+    expect(sponsorChains({ name: 'sandbox-x', evmSponsor: { '84532': { delegate: DELEGATE, relayer: RELAYER, rpc: 'http://127.0.0.1:8545' } } })).toEqual([]);
+    expect(sponsorChains({ name: 'local-x', evmSponsor: { '31337': { delegate: DELEGATE, relayer: RELAYER, rpc: 'http://127.0.0.1:8545' } } }).map((c) => c.rpcs)).toEqual([['http://127.0.0.1:8545']]);
   });
 });
 

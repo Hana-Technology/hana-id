@@ -10,13 +10,14 @@
 //   - send: strict body, value 0, the stack's relayer, the Execute signature over the pinned delegate recovering to the
 //     account, the authorization (pinned delegate, this chain, the account's) exactly when the account isn't set up,
 //     the account's execute nonce.
-// What it doesn't: the allowlist, budgets, gas, fees, the directory, a chain. Per account it keeps whether the account
-// is set up (`none`, `journear`, or `other` when a test says so) and its two nonces, per app as well (unlike a chain),
-// so tests that sign in as the same user in parallel, each with its own app, don't see each other's actions.
+// What it doesn't: the allowlist, budgets, gas, fees, the directory. The account's setup and transaction count live on
+// the stack's mocked EVM chain (partner.ts MockEvm `accounts`), which the vault reads itself (D855): a send with an
+// authorization sets the account's code to the pinned delegate's designator and bumps its count; prepare reports them.
+// The account's execute nonce is kept here. Tests each use their own scope, so each signs in with its own account.
 //
-// Control (no CORS; the default stack's API only): POST /__e2e/evm-sponsor {appId, account, delegation?} sets an account's
-// state; {appId, hold: true|false} holds the app's sends until released; GET /__e2e/evm-sponsor?appId= → the app's
-// {prepares, sends, executed, proofRefusals}.
+// Control (no CORS; the default stack's API only): POST /__e2e/evm-sponsor {account, delegation} sets an account's code
+// (`none`, `journear`, `other`); {appId, hold: true|false} holds the app's sends until released; GET
+// /__e2e/evm-sponsor?appId= → the app's {prepares, sends, executed, proofRefusals}.
 import { checkEvmSponsorSessionProof, toHex, sha256 } from '@hana-id/core';
 import { SPONSOR_DELEGATES, executeDigest, recoverAuthorization, recoverExecuteSigner } from '@hana-id/core/evm-sponsor';
 import { E2E_ENV, E2E_SPONSOR_RELAYER, EVM_CHAIN_ID } from '../stack.ts';
@@ -27,6 +28,10 @@ const DELEGATE = (SPONSOR_DELEGATES[EVM_CHAIN_ID] as { address: `0x${string}` })
 const ROUTES = new Set(['/v1/evm/sponsor/prepare', '/v1/evm/sponsor/send', '/v1/evm/sponsor/status']);
 
 type Body = Record<string, unknown>;
+/** The mocked chain's accounts (MockEvm `accounts`): lowercase address → code and transaction count. */
+export type EvmAccounts = Map<string, { code: `0x${string}`; nonce: number }>;
+const DESIGNATOR = `0xef0100${DELEGATE.slice(2).toLowerCase()}` as const;
+const OTHER_DESIGNATOR = `0xef0100${'42'.repeat(20)}` as const;
 interface AccountState {
   delegation: 'none' | 'journear' | 'other';
   accountNonce: bigint;
@@ -36,7 +41,7 @@ interface AccountState {
 const isObj = (v: unknown): v is Body => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 export class SponsorStandIn {
-  private readonly accounts = new Map<string, AccountState>();
+  private readonly executeNonces = new Map<string, bigint>();
   private readonly seenNonces = new Set<string>();
   private readonly held = new Map<string, { promise: Promise<void>; release: () => void }>();
   private readonly logs = new Map<string, { prepares: number; sends: number; executed: number; proofRefusals: string[] }>();
@@ -53,20 +58,24 @@ export class SponsorStandIn {
   constructor(
     private readonly d1: D1Shim,
     private readonly vaultOrigin: string,
+    private readonly chainAccounts: EvmAccounts = new Map(),
   ) {}
 
   static handles(pathname: string): boolean {
     return ROUTES.has(pathname);
   }
 
-  private state(appId: string, account: string): AccountState {
-    const key = `${appId}|${account.toLowerCase()}`;
-    let s = this.accounts.get(key);
-    if (!s) {
-      s = { delegation: 'none', accountNonce: 0n, executeNonce: 0n };
-      this.accounts.set(key, s);
-    }
-    return s;
+  /** The account as the mocked chain has it, and its execute nonce. */
+  private state(account: string): AccountState {
+    const on = this.chainAccounts.get(account.toLowerCase());
+    const delegation = !on || on.code === '0x' ? 'none' : on.code === DESIGNATOR ? 'journear' : 'other';
+    return { delegation, accountNonce: BigInt(on?.nonce ?? 0), executeNonce: this.executeNonces.get(account.toLowerCase()) ?? 0n };
+  }
+
+  /** What a type-4 transaction with the authorization does to the account: the designator, one more transaction. */
+  private setUp(account: string): void {
+    const key = account.toLowerCase();
+    this.chainAccounts.set(key, { code: DESIGNATOR, nonce: (this.chainAccounts.get(key)?.nonce ?? 0) + 1 });
   }
 
   private app(key: string | null): { id: string; origins: string[] } | null {
@@ -115,7 +124,7 @@ export class SponsorStandIn {
     if (this.seenNonces.has(marker)) return refuse(409, 'session_proof_used');
     this.seenNonces.add(marker);
     if (body.chainId !== EVM_CHAIN_ID) return refuse(400, 'chain_not_enabled');
-    const s = this.state(app.id, proof.account);
+    const s = this.state(proof.account);
     if (route === 'prepare') {
       this.log(app.id).prepares += 1;
       return answer(200, {
@@ -168,11 +177,10 @@ export class SponsorStandIn {
         return refuse(401, 'invalid_authorization_signature');
       }
       if (BigInt(String(a.nonce)) !== s.accountNonce) return refuse(409, 'authorization_nonce_stale', { accountNonce: s.accountNonce.toString() });
-      s.delegation = 'journear';
-      s.accountNonce += 1n;
     }
     if (input.nonce !== s.executeNonce) return refuse(409, 'nonce_stale', { executeNonce: s.executeNonce.toString() });
-    s.executeNonce += 1n;
+    if (s.delegation === 'none') this.setUp(account);
+    this.executeNonces.set(account.toLowerCase(), s.executeNonce + 1n);
     log.executed += 1;
     // Not a real transaction: a hash made from the batch's digest, so it is unique per batch.
     return answer(200, { transactionHash: `0x${toHex(sha256(executeDigest(input)))}`, status: 'executed' });
@@ -193,9 +201,10 @@ export class SponsorStandIn {
         this.held.delete(b.appId);
       }
     }
-    if (typeof b.account === 'string' && typeof b.appId === 'string') {
-      const s = this.state(b.appId, b.account);
-      if (b.delegation === 'none' || b.delegation === 'journear' || b.delegation === 'other') s.delegation = b.delegation;
+    if (typeof b.account === 'string' && (b.delegation === 'none' || b.delegation === 'journear' || b.delegation === 'other')) {
+      const key = b.account.toLowerCase();
+      const nonce = this.chainAccounts.get(key)?.nonce ?? 0;
+      this.chainAccounts.set(key, { code: b.delegation === 'none' ? '0x' : b.delegation === 'journear' ? DESIGNATOR : OTHER_DESIGNATOR, nonce });
     }
     return json(200, { ok: true });
   }

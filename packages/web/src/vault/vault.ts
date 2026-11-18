@@ -146,6 +146,8 @@ import {
   approvedSubject,
   parsePrepareAnswer,
   parseSendAnswer,
+  precheckAnswer,
+  readAccount,
   sendBody,
   signSponsored,
   sponsorApiError,
@@ -3298,7 +3300,11 @@ export class Vault {
       if (this.live() !== s) throw sessionEnded(s);
       const answer = parsePrepareAnswer(prepared);
       if (!answer) throw new VaultError('api_unavailable', SPONSOR_TEXT.notReady, { reason: 'bad_answer', detail: 'shape' }).fromRequest(typeof prepared.requestId === 'string' ? prepared.requestId : null);
-      const subject = sponsorSubject(plan, answer, { vaultNowMs: this.clock.now(), deviceNowMs: this.deviceNow() });
+      // The account's setup is read by the vault itself from the build's endpoints, never taken from the API (D855).
+      precheckAnswer(plan, answer);
+      const onChain = await readAccount(plan.chain, plan.account, this.o.fetch ?? ((...args) => fetch(...args)), this.timers);
+      if (this.live() !== s) throw sessionEnded(s);
+      const subject = sponsorSubject(plan, answer, onChain, { vaultNowMs: this.clock.now(), deviceNowMs: this.deviceNow() });
       const approval = sponsoredApproval(subject);
       // D682: a device signed out from Journear Passport Home completes no approval (as sign() checks).
       await this.shareConfirmed(s);

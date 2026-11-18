@@ -44,14 +44,20 @@ export const EVIL_ORIGIN = 'http://evil.e2e.test';
 export const EVM_CHAIN_ID = 31337;
 
 /**
- * Gas sponsorship on the mocked chain (HanaEnv.evmSponsor, D834): core's pinned local delegate and, as the relayer,
- * anvil's published second dev account's address (a public test vector). Only the approval popup reads it so far: it
- * decodes a sponsored action against these (D850). Nothing on the stack relays.
+ * Gas sponsorship on the mocked chain (HanaEnv.evmSponsor, D834): core's pinned local delegate, as the relayer anvil's
+ * published second dev account's address (a public test vector), and the mocked EVM RPC, from which the vault reads the
+ * account's setup itself (D855). The routes are a test-only stand-in (src/server/sponsor-standin.ts); nothing relays.
  */
 export const E2E_SPONSOR_RELAYER = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 export const E2E_EVM_SPONSOR: NonNullable<HanaEnv['evmSponsor']> = Object.freeze({
-  [String(EVM_CHAIN_ID)]: Object.freeze({ delegate: (SPONSOR_DELEGATES[EVM_CHAIN_ID] as { address: string }).address, relayer: E2E_SPONSOR_RELAYER }),
+  [String(EVM_CHAIN_ID)]: Object.freeze({ delegate: (SPONSOR_DELEGATES[EVM_CHAIN_ID] as { address: string }).address, relayer: E2E_SPONSOR_RELAYER, rpc: EVM_RPC }),
 });
+
+/**
+ * The API's EVM_SPONSOR var as far as the vault page reads it (its CSP connect-src names the sponsored chain's RPC, D855).
+ * Not a full manifest block: the stack's sponsorship routes are a test-only stand-in (src/server/sponsor-standin.ts).
+ */
+export const E2E_EVM_SPONSOR_VAR = JSON.stringify({ relayerAddress: E2E_SPONSOR_RELAYER, chains: { [String(EVM_CHAIN_ID)]: { rpc: EVM_RPC } } });
 
 /**
  * The test MPC's master secret. Test-only and public on purpose: the e2e env pins its public key, so the mock MPC can

@@ -407,7 +407,16 @@ describe('evmSponsorDelegateProblems: the pinned delegate table (D834)', () => {
 });
 
 describe('evmSponsorPageChains: what the vault build gets', () => {
-  it('is { chainId: { delegate, relayer } } for each chain', () => {
-    expect(evmSponsorPageChains(sponsorFixture())).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER } });
+  it('is { chainId: { delegate, relayer, rpc, rpcFallback? } } for each chain (the public manifest URLs, read by the vault, D855)', () => {
+    expect(evmSponsorPageChains(sponsorFixture())).toEqual({
+      '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER, rpc: 'https://sepolia.base.org', rpcFallback: 'https://base-sepolia-rpc.publicnode.com' },
+    });
+  });
+
+  it('leaves rpcFallback out when the chain has none', () => {
+    const s = sponsorFixture();
+    const c = { ...s.chains['84532']! };
+    delete (c as { rpcFallback?: string }).rpcFallback;
+    expect(evmSponsorPageChains({ ...s, chains: { '84532': c } })).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER, rpc: 'https://sepolia.base.org' } });
   });
 });

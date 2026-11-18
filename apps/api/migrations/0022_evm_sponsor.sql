@@ -115,7 +115,7 @@ CREATE INDEX evm_sponsor_billing_quarantined ON evm_sponsor_billing (settled_at)
 
 -- `security_events` gains `evm_relay_budget_high` (a chain's day spend reached 80% of `dailyBudgetEth`, once a day),
 -- `evm_relay_balance_low` (the relayer below `lowBalanceEth`, once a day), `evm_relay_stuck` (a relayer transaction
--- unmined over 10 minutes, the relayer halted, or a send unsettled over 10, once an hour) and `evm_relay_receipt_odd` (a receipt outside what
+-- unmined or unaccepted over 2 minutes, the relayer halted, or a send unsettled over 10, once an hour) and `evm_relay_receipt_odd` (a receipt outside what
 -- the reservation assumed, settled at the reservation; once an hour) and `evm_relay_nonce_taken` (the relayer's nonce for
 -- a batch went to something that is no version of it; the batch didn't run; once an hour) and `evm_billing_late` (a
 -- settled send without its billing record, or a record not yet copied to the usage ledger, an hour on; once an hour). SQLite can't alter a CHECK, so the table is rebuilt as 0020 did:

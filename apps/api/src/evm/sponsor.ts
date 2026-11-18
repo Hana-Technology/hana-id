@@ -1241,7 +1241,7 @@ async function anythingLeft(env: Env): Promise<boolean> {
 /**
  * Every cron run, per sponsored chain: the relayer's balance below `lowBalanceEth` writes `evm_relay_balance_low`
  * (once a UTC day); the relayer halted (it takes no new sends until staff resume it, D851), or its oldest unmined
- * transaction older than 10 minutes, writes `evm_relay_stuck` (once an hour); then the reconciler (sponsor-settle.ts)
+ * (or unaccepted) transaction older than 2 minutes, writes `evm_relay_stuck` (once an hour); then the reconciler (sponsor-settle.ts)
  * settles what requests couldn't. The audit rows' 24-month retention runs with or without the config. Never throws;
  * logs what it couldn't read.
  */

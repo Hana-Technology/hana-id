@@ -12957,7 +12957,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   from the first receipt of one of the row's own hashes with the account's `Executed(digest)`, before confirmed depth;
   a reorg in between could answer success for a batch that then doesn't run (on testnet, accepted; the money follows
   the receipt, and the relayer's own verdict at depth is what the reconciler uses when a receipt can't be read). (9)
-  `status().halted` and the relayer's oldest unmined transaction over 10 minutes (was 5) write `evm_relay_stuck`, its
+  `status().halted` and the relayer's oldest unmined transaction over 10 minutes (was 5; now 2, below) write `evm_relay_stuck`, its
   title now "Free network fees: paused or slow, needs a look". (10) The e2e stack runs these routes and the real relayer
   object over its mocked chain (the stand-in is deleted); `apps/api/test/evm-sponsor-relayer.test.ts` runs the routes
   against the real object over `test/evm-mock.ts`. Found while integrating: the relayer takes a second batch of one
@@ -13084,7 +13084,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   them from the cancel's receipt (any hash but the batch's) or at once from the relayer's `mined` verdict with
   `costWei`, billed `cancelled`. A rejected batch's copy is answered as its send was. The app's in-flight slot (D847)
   is given back by whoever moves the row to its outcome. `evm_relay_stuck` is also written for the relayer's oldest
-  unmined transaction over 10 minutes (was 5), with the halt's `haltCode`, and for a batch the relayer itself refused
+  unmined transaction over 10 minutes (was 5; now 2, below), with the halt's `haltCode`, and for a batch the relayer itself refused
   (`rejected`); `evm_relay_balance_low` also by a send the balance can't cover 3 times over (`neededWei`). Open: the
   billing record doesn't say whose doing a cancel was (the audit row's `rejection` does).
 - Address impact: none.

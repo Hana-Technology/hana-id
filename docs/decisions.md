@@ -13035,7 +13035,11 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   changed a fact the old fact was kept: a Stellar signer's weight is "strength" (a number the user may need), the NEAR
   network check's details (block hash, key, nonce and expiry) moved to the folded details row, "with no practical
   limit" reads "with no real limit" (not "no limit": the type's maximum and a merely huge amount stay told apart).
-  "Stop auto-approving" keeps Passport Home's word. An EVM network Journear doesn't know keeps its number in view, "a
+  One banned-word list for every surface (after merging PR 78): the approval window's words (chain, unlimited, revoke,
+  threshold, weight, burn, verified, authorization, delegate, sponsor, relayed, decimals, smallest units, …) joined
+  `@hana-id/brand/plain-words`, which the approval scans now use; bare "block" stays off it (a plain verb on the
+  sign-in pages: "settings block the window"; "block hash" and "block height" stay on), and a template's `${…}` names
+  are read as "…". "Stop auto-approving" keeps Passport Home's word. An EVM network Journear doesn't know keeps its number in view, "a
   network Journear doesn’t know (no. N)", so two of them never look the same (after the review of PR 80). Checked by tests: every summary the unit tests build, and every
   rendered window's words above the fold, carry none of the brief's jargon words (`packages/core/test/plain-words.ts`,
   `packages/web/test/auth/plain-words.ts`).

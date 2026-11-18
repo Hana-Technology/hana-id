@@ -21,17 +21,18 @@ function view(over: Partial<EvmRelayChainView> = {}, relayer: Record<string, unk
     readAt: NOW,
     relayerAddress: RELAYER,
     key: 'ok',
+    readEndpoint: 'keyed',
     lowBalanceWei: (50n * MILLI).toString(),
     dailyBudgetWei: (20n * MILLI).toString(),
     oneSendWorstWei: (6n * 10n ** 14n).toString(),
-    relayer: { ok: true, started: true, halted: null, waiting: 0, awaitingConfirmation: 0, oldestWaitingMs: null, oldestNotTakenMs: null, nextSlot: 12, spentTodayWei: (3n * MILLI).toString(), unconfirmedRefusals: null, lastStaffSeq: 0, staffLog: [], ...relayer } as EvmRelayChainView['relayer'],
+    relayer: { ok: true, started: true, signerAddress: RELAYER, halted: null, waiting: 0, awaitingConfirmation: 0, oldestWaitingMs: null, oldestNotTakenMs: null, nextSlot: 12, spentTodayWei: (3n * MILLI).toString(), unconfirmedRefusals: null, lastStaffSeq: 0, staffLog: [], ...relayer } as EvmRelayChainView['relayer'],
     budget: { ok: true, spentWei: (3n * MILLI).toString() },
     balance: { ok: true, wei: (112n * MILLI).toString() },
     helper: { address: '0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA', pinnedCodeHash: HASH, ok: true, codeHash: HASH, matches: true },
     ...over,
   };
 }
-const record = (slot: number, over: Partial<EvmRelayRecordView> = {}): EvmRelayRecordView => ({ slot, kind: 'action', onChain: false, taken: true, cancelling: false, sentAt: NOW - 60_000, deadlineAt: NOW + 240_000, copies: [{ hash: HASH, kind: 'action' }], refusedCode: null, app: { id: 'app_demo', name: 'Journear demo' }, ...over });
+const record = (slot: number, over: Partial<EvmRelayRecordView> = {}): EvmRelayRecordView => ({ slot, kind: 'action', onChain: false, taken: true, cancelling: false, sentAt: NOW - 600_000, deadlineAt: NOW - 86_400_000, copies: [{ hash: HASH, kind: 'action' }], refusedCode: null, app: { id: 'app_demo', name: 'Journear demo' }, ...over });
 const halt = (reason: string, slot: number | null = 7, code: string | null = null) => ({ halted: { reason, since: NOW - 600_000, slot, code } });
 
 describe('the words of each state', () => {
@@ -99,9 +100,32 @@ describe('the words of each state', () => {
     }
     // The two ways the key shows as used elsewhere share their words; every other case says something of its own.
     expect(whys.size).toBe(cases.length - 1);
-    expect(haltExplained({ reason: 'relayer_cannot_send', slot: 7, code: 'replacement_underpriced' }, w).steps[0]).toBe('Tell an engineer now: treat the relayer’s key as leaked.');
-    expect(haltExplained({ reason: 'foreign_transactions', slot: null, code: null }, w).steps).toContain('Under Advanced, use “Set the next slot number” with that number. It can only go up.');
-    expect(haltExplained({ reason: 'nonce_gap', slot: 41, code: null }, w).why).toBe('Slot 41 is empty and nothing is waiting to fill it, so every transaction after it is stuck.');
+    expect(haltExplained({ reason: 'nonce_gap', slot: 41, code: null }, w).why).toBe('Slot 41 is empty and nothing is waiting to fill it, so every transaction after it is stuck. Only someone else using the relayer’s key leaves a gap like this.');
+  });
+
+  it('every halt that means the key may be someone else’s: the engineer first, slot tools are the engineer’s, never a refill, Resume only on the engineer’s word', () => {
+    const w = { chain: 'Base Sepolia', faucet: 'a faucet', explorer: 'Basescan', refill: '0.07 test ETH' };
+    const leaks: [string, string | null][] = [['nonce_consumed_elsewhere', null], ['nonce_gap', null], ['foreign_transactions', null], ['relayer_cannot_send', 'replacement_underpriced'], ['relayer_cannot_send', 'sender_restricted'], ['relayer_cannot_send', 'nonce_too_low'], ['relayer_cannot_send', 'nonce_too_high']];
+    for (const [reason, code] of leaks) {
+      const e = haltExplained({ reason, slot: 7, code }, w);
+      expect(e.steps[0], reason).toBe('Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.');
+      expect(e.steps[1], reason).toMatch(/^The engineer follows “A relayer key leaked” in docs\/operations\.md: .*the key is replaced\.$/u);
+      expect(e.steps.at(-1), reason).toBe('Don’t press Resume until the engineer says the key is safe or replaced. Resume then asks you to confirm that.');
+      expect(e.steps.join(' '), reason).not.toMatch(/faucet|Send at least|press Resume on the Free/u);
+    }
+    expect(haltExplained({ reason: 'nonce_consumed_elsewhere', slot: 7, code: null }, w).steps[2]).toBe('After that, the engineer closes slot 7 as “used by something else” on the Free network fees page (under Advanced).');
+    expect(haltExplained({ reason: 'nonce_gap', slot: 7, code: null }, w).steps[2]).toBe('After that, the engineer uses “Fill a gap” (under Advanced) for each empty slot, lowest first; the box above updates after each.');
+    expect(haltExplained({ reason: 'foreign_transactions', slot: null, code: null }, w).steps[2]).toMatch(/“Set the next slot number” .* with the number the network gives/u);
+    // A leak pause with a low wallet: no refill problem is raised beside it.
+    const leak = explainChain(view({ balance: { ok: true, wei: '1000' } }, halt('foreign_transactions', null)), NOW);
+    expect(leak.extra).toEqual([]);
+    // The relayer can tell its key was replaced since the stop: its records' signer isn't the settings' wallet.
+    const replaced = explainChain(view({}, { ...halt('nonce_consumed_elsewhere', 7), signerAddress: '0x1111111111111111111111111111111111111111' }), NOW);
+    expect(replaced.explained!.why).toMatch(/The relayer’s key has been replaced since it stopped \(its transactions were signed by 0x1111…1111; the settings now name the wallet below\)\.$/u);
+    // stuck_past_deadline: the fee limit and the 8-copies case said.
+    const stuck = haltExplained({ reason: 'stuck_past_deadline', slot: 7, code: null }, w).steps;
+    expect(stuck).toContain('If Cancel is refused because network fees are above the relayer’s limit, ask an engineer to raise the fee limit.');
+    expect(stuck).toContain('If slot 7 has no Cancel button, it already has 8 copies and the relayer can’t send another: ask an engineer.');
   });
 
   it('the helper not the checked version, unreadable parts, the budget, the waiting time and backup-server refusals', () => {
@@ -129,36 +153,58 @@ describe('the words of each state', () => {
 
 describe('the waiting transactions and the tools offered', () => {
   it('each record in words, explorer links only for well-formed hashes, no cancel where the relayer would certainly refuse', () => {
-    const r = recordPlain(record(9, { cancelling: true, copies: [{ hash: HASH, kind: 'action' }, { hash: 'javascript:alert(1)', kind: 'cancel' }] }), 84532, true, 'recorded');
+    const r = recordPlain(record(9, { cancelling: true, copies: [{ hash: HASH, kind: 'action' }, { hash: 'javascript:alert(1)', kind: 'cancel' }] }), 84532, true, 'recorded', NOW, null);
     expect(r).toMatchObject({ slot: 9, app: 'Journear demo', state: 'cancelling', stateText: 'Being cancelled: the user’s action won’t happen', canCancel: true, canClose: true });
     expect(r.copies).toEqual([
       { hash: HASH, kind: 'action', url: `https://sepolia.basescan.org/tx/${HASH}` },
       { hash: 'unknown', kind: 'cancel', url: null },
     ]);
-    expect(recordPlain(record(9, { onChain: true }), 84532, true, 'recorded')).toMatchObject({ stateText: 'On the network, being confirmed', canCancel: false, canClose: false });
-    expect(recordPlain(record(9, { copies: Array.from({ length: 8 }, () => ({ hash: HASH, kind: 'action' as const })) }), 84532, true, 'recorded').canCancel).toBe(false);
-    expect(recordPlain(record(9), 84532, false, 'recorded').canCancel).toBe(false);
-    expect(recordPlain(record(9, { app: null }), 84532, true, 'unreadable').app).toBe('Can’t check right now');
-    expect(recordPlain(record(9, { app: null }), 84532, true, 'recorded').app).toBe('Unknown app');
-    expect(recordPlain(record(9, { kind: 'filler', app: null }), 84532, true, 'recorded').app).toBe('Staff gap filler');
-    expect(recordPlain(record(9, { taken: false }), 84532, true, 'recorded').stateText).toBe('Not yet picked up by the network');
+    expect(recordPlain(record(9, { onChain: true }), 84532, true, 'recorded', NOW, null)).toMatchObject({ stateText: 'On the network, being confirmed', canCancel: false, canClose: false });
+    expect(recordPlain(record(9, { copies: Array.from({ length: 8 }, () => ({ hash: HASH, kind: 'action' as const })) }), 84532, true, 'recorded', NOW, null).canCancel).toBe(false);
+    expect(recordPlain(record(9), 84532, false, 'recorded', NOW, null).canCancel).toBe(false);
+    expect(recordPlain(record(9, { app: null }), 84532, true, 'unreadable', NOW, null).app).toBe('Can’t check right now');
+    expect(recordPlain(record(9, { app: null }), 84532, true, 'recorded', NOW, null).app).toBe('Unknown app');
+    expect(recordPlain(record(9, { kind: 'filler', app: null }), 84532, true, 'recorded', NOW, null).app).toBe('Staff gap filler');
+    expect(recordPlain(record(9, { taken: false }), 84532, true, 'recorded', NOW, null).stateText).toBe('Not yet picked up by the network');
     // The local chain has no explorer: no link.
-    expect(recordPlain(record(9), 31337, true, 'recorded').copies[0]!.url).toBeNull();
+    expect(recordPlain(record(9), 31337, true, 'recorded', NOW, null).copies[0]!.url).toBeNull();
+  });
+
+  it('Cancel only once a slot’s time limit has passed, or during a stuck_past_deadline pause; else why in words', () => {
+    const early = record(9, { deadlineAt: NOW + 60_000 });
+    expect(recordPlain(early, 84532, true, 'recorded', NOW, null)).toMatchObject({ canCancel: false, noCancelBecause: 'Cancel shows once its time limit has passed.' });
+    expect(recordPlain(early, 84532, true, 'recorded', NOW, 'stuck_past_deadline')).toMatchObject({ canCancel: true, noCancelBecause: null });
+    expect(recordPlain(record(9), 84532, true, 'recorded', NOW, null)).toMatchObject({ canCancel: true, noCancelBecause: null });
+    expect(recordPlain(record(9, { copies: Array.from({ length: 8 }, () => ({ hash: HASH, kind: 'action' as const })) }), 84532, true, 'recorded', NOW, null).noCancelBecause).toBe('No Cancel: it already has 8 copies, the most the relayer sends. Ask an engineer.');
   });
 
   it('Resume only while paused; fill and the next slot only where they can apply; none on a fresh relayer or broken records', () => {
-    expect(toolsOffered(view(), [])).toEqual({ resume: false, fill: { suggested: null, max: 11 }, adopt: { min: 12 }, noneBecause: null });
-    expect(toolsOffered(view({}, { ...halt('nonce_gap', 9), waiting: 1 }), [record(10)])).toEqual({ resume: true, fill: { suggested: 9, max: 11 }, adopt: null, noneBecause: null });
-    expect(toolsOffered(view({ key: 'missing' }, halt('foreign_transactions', null)), []).fill).toBeNull();
-    expect(toolsOffered(view({}, { started: false, nextSlot: null }), []).noneBecause).toMatch(/hasn’t sent anything yet/u);
-    expect(toolsOffered(view({}, halt('storage_inconsistent', null)), []).noneBecause).toMatch(/ask an engineer/u);
-    expect(toolsOffered(view({ relayer: { ok: false, code: 'relayer_unavailable' } }), []).noneBecause).toMatch(/can’t be read/u);
+    const count = (latest: number, pending = latest) => ({ ok: true as const, latest, pending });
+    expect(toolsOffered(view(), [], count(14))).toEqual({ resume: false, resumeNeedsKeyConfirmation: false, fill: { suggested: null, max: 11 }, adopt: { suggested: 14, min: 12 }, adoptBecause: null, noneBecause: null });
+    expect(toolsOffered(view({}, { ...halt('nonce_gap', 9), waiting: 1 }), [record(10)], count(9))).toEqual({ resume: true, resumeNeedsKeyConfirmation: true, fill: { suggested: 9, max: 11 }, adopt: null, adoptBecause: 'Not possible now: wait until nothing is waiting.', noneBecause: null });
+    expect(toolsOffered(view({}, halt('relayer_cannot_send', 3, 'insufficient_funds')), [], count(12)).resumeNeedsKeyConfirmation).toBe(false);
+    expect(toolsOffered(view({ key: 'missing' }, halt('foreign_transactions', null)), [], count(12)).fill).toBeNull();
+    // The network's own count: read (never the explorer's list, which counts incoming transfers); unreadable or still moving: ask an engineer, or wait.
+    expect(toolsOffered(view(), [], { ok: false, code: 'rpc_unavailable' }).adoptBecause).toBe('The network’s count for the relayer wallet can’t be read right now: ask an engineer.');
+    expect(toolsOffered(view(), [], count(14, 15)).adoptBecause).toMatch(/still has transactions from the relayer wallet waiting/u);
+    expect(toolsOffered(view(), [], count(10)).adoptBecause).toMatch(/below the relayer’s next slot/u);
+    expect(toolsOffered(view({}, { started: false, nextSlot: null }), [], count(0)).noneBecause).toMatch(/hasn’t sent anything yet/u);
+    expect(toolsOffered(view({}, halt('storage_inconsistent', null)), [], count(0)).noneBecause).toMatch(/ask an engineer/u);
+    expect(toolsOffered(view({ relayer: { ok: false, code: 'relayer_unavailable' } }), [], count(0)).noneBecause).toMatch(/can’t be read/u);
   });
 
   it('every answer in words: done, each refusal, unknown', () => {
-    expect(actWords('resume', null, { done: true, refused: null }, 84532)).toEqual({ tone: 'ok', title: 'Resume: done', text: 'Free network fees are running again.', code: null });
-    expect(actWords('cancel', 42, { done: false, refused: 'nonce_mined' }, 84532)).toEqual({ tone: 'warn', title: 'Cancel this slot: the relayer said no. Nothing was changed.', text: 'Slot 42 is already used on the network. Wait: it finishes by itself.', code: 'nonce_mined' });
+    expect(actWords('resume', null, { done: true, refused: null }, 84532)).toEqual({ tone: 'ok', title: 'Resume: done', text: 'Free network fees are running again.', steps: [], code: null });
+    expect(actWords('cancel', 42, { done: false, refused: 'nonce_mined' }, 84532)).toEqual({ tone: 'warn', title: 'Cancel this slot: the relayer said no. Nothing was changed.', text: 'Slot 42 is already used on the network. Wait: it finishes by itself.', steps: [], code: 'nonce_mined' });
     expect(actWords('resume', null, { done: false, refused: 'relayer_cannot_send' }, 84532).text).toMatch(/^The problem is still there: the relayer’s wallet still can’t send transactions\./u);
+    // After a refused Resume, the relayer's latest condition and its steps (not the first halt's).
+    const later = actWords('resume', null, { done: false, refused: 'nonce_gap' }, 84532, { reason: 'nonce_gap', slot: 41, code: null });
+    expect(later).toMatchObject({ text: 'The problem is still there: slot 41 is empty and nothing is waiting to fill it, so every transaction after it is stuck. Only someone else using the relayer’s key leaves a gap like this.', code: 'nonce_gap · slot 41' });
+    expect(later.steps[0]).toMatch(/^Tell an engineer now/u);
+    expect(actWords('cancel', 9, { done: false, refused: 'not_past_deadline' }, 84532).text).toBe('Slot 9’s time limit hasn’t passed yet: it may still go through. Cancel is for a slot past its time limit.');
+    expect(actWords('resume', null, { done: false, refused: 'key_confirmation_required' }, 84532).text).toMatch(/confirm that an engineer said the key is safe or replaced/u);
+    // Closing a slot says exactly what happens to the books today.
+    expect(actWords('close', 7, { done: true, refused: null }, 84532).text).toBe('Slot 7 is closed as used by something else. The user’s action in it is marked as not done. The app is not charged: Journear covers it.');
     expect(actWords('resume', null, { done: false, refused: 'unknown' }, 84532)).toMatchObject({ tone: 'error', code: 'unknown' });
     expect(actWords('fill', 4, { done: false, refused: 'something_new' }, 84532).text).toMatch(/doesn’t know yet/u);
     for (const code of ['not_halted', 'incomplete_check', 'rpc_unavailable', 'no_record', 'nonce_not_consumed_at_confirmed_depth', 'receipt_found', 'key_mismatch', 'no_valid_replacement', 'fee_cap_too_low', 'record_exists', 'not_below_next_nonce', 'not_the_chains_next_nonce', 'below_next_nonce', 'unmined_records', 'chain_count_differs', 'no_state'])
@@ -168,7 +214,7 @@ describe('the waiting transactions and the tools offered', () => {
 
 // ---- the routes ----
 
-const DETAIL: EvmRelayDetail = { chain: view({}, halt('relayer_cannot_send', 42, 'insufficient_funds')), records: [record(42), record(43, { onChain: true })], apps: 'recorded' };
+const DETAIL: EvmRelayDetail = { chain: view({}, halt('relayer_cannot_send', 42, 'insufficient_funds')), records: [record(42), record(43, { onChain: true })], apps: 'recorded', chainCount: { ok: true, latest: 12, pending: 12 } };
 const staff = () => ({ actor: { kind: 'hana' as const, id: STAFF_SUB, email: STAFF_EMAIL }, requestId: `req_${uid()}`, clientIp: '198.51.100.9' });
 const ctx = (over: Partial<typeof env>, body: Record<string, unknown> = {}, chain = '84532', s = staff()): RouteCtx => ({
   request: new Request(`https://admin.test/api/evm-relay/${chain}/act`, { method: 'POST' }),
@@ -201,7 +247,7 @@ describe('GET /api/evm-relay/:chain', () => {
     const d = (await res.json()) as Record<string, unknown> & { records: { slot: number; canCancel: boolean }[]; plain: { label: string } };
     expect(res.status).toBe(200);
     expect(calls).toEqual([expect.objectContaining({ chainId: 84532, actor: expect.objectContaining({ kind: 'hana' }) })]);
-    expect(d).toMatchObject({ chainId: 84532, title: 'Free network fees (Base Sepolia)', seen: { haltSince: NOW - 600_000, lastStaffSeq: 0 }, tools: { resume: true }, apps: 'recorded' });
+    expect(d).toMatchObject({ chainId: 84532, title: 'Free network fees (Base Sepolia)', seen: { haltSince: NOW - 600_000, lastStaffSeq: 0 }, tools: { resume: true }, apps: 'recorded', token: expect.stringMatching(/^evmact_[A-Za-z0-9_-]{22}$/u) });
     expect(d.plain.label).toBe('Paused: needs a person');
     expect(d.records.map((r) => [r.slot, r.canCancel])).toEqual([
       [42, true],
@@ -220,61 +266,101 @@ describe('GET /api/evm-relay/:chain', () => {
 });
 
 describe('POST /api/evm-relay/:chain/act', () => {
-  const body = { tool: 'resume', note: 'Sent 0.1 test ETH from the faucet', seen: { haltSince: NOW - 600_000, lastStaffSeq: 4 } };
+  /** A detail page's one-time token (the audit rows' request id). */
+  const token = () => `evmact_${uid().replace(/[^A-Za-z0-9]/gu, 'x').padEnd(22, 'x').slice(0, 22)}`;
+  const body = (over: Record<string, unknown> = {}) => ({ token: token(), tool: 'resume', note: 'Sent 0.1 test ETH from the faucet', seen: { haltSince: NOW - 600_000, lastStaffSeq: 4 }, ...over });
+  const ok = { ok: true, result: { done: true, refused: null, relayer: null } };
 
-  it('records the action first, then runs the tool, then records the answer: who, when, what, the note', async () => {
+  it('records the action first (keyed by the page’s token), then runs the tool, then records the answer: who, when, what, the note', async () => {
     const calls: Record<string, unknown>[] = [];
-    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c as Record<string, unknown>), { ok: true, result: { done: true, refused: null, relayer: null } }) });
+    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c as Record<string, unknown>), ok) });
     const s = staff();
-    const res = await evmRelayActRoute(ctx({ API: api }, body, '84532', s));
+    const b = body();
+    const res = await evmRelayActRoute(ctx({ API: api }, b, '84532', s));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ result: { done: true, refused: null }, words: { tone: 'ok', title: 'Resume: done', text: 'Free network fees are running again.', code: null } });
-    expect(calls).toEqual([{ ...s, chainId: 84532, tool: 'resume', note: body.note, seen: body.seen }]);
-    expect(await audit(s.requestId)).toEqual([
-      { action: 'evm_relay.staff_action', org_id: null, actor_kind: 'hana', actor_email: STAFF_EMAIL, target: '84532', details_json: JSON.stringify({ tool: 'resume', chainId: 84532, slot: null, note: body.note }) },
+    expect(await res.json()).toEqual({ result: { done: true, refused: null }, words: { tone: 'ok', title: 'Resume: done', text: 'Free network fees are running again.', steps: [], code: null } });
+    expect(calls).toEqual([{ ...s, requestId: b.token, chainId: 84532, tool: 'resume', note: b.note, seen: b.seen }]);
+    expect(await audit(b.token)).toEqual([
+      { action: 'evm_relay.staff_action', org_id: null, actor_kind: 'hana', actor_email: STAFF_EMAIL, target: '84532', details_json: JSON.stringify({ tool: 'resume', chainId: 84532, slot: null, note: b.note }) },
       { action: 'evm_relay.staff_result', org_id: null, actor_kind: 'hana', actor_email: STAFF_EMAIL, target: '84532', details_json: JSON.stringify({ tool: 'resume', chainId: 84532, slot: null, result: 'done' }) },
     ]);
   });
 
-  it('checks the input before anything: no audit row and no call for a bad tool, slot, note, seen or an extra field', async () => {
+  it('a Resume confirmed by the engineer keeps that confirmation in the audit row', async () => {
+    const calls: Record<string, unknown>[] = [];
+    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c as Record<string, unknown>), ok) });
+    const b = body({ keyConfirmed: true });
+    expect((await evmRelayActRoute(ctx({ API: api }, b))).status).toBe(200);
+    expect(calls[0]).toMatchObject({ keyConfirmed: true });
+    expect(JSON.parse(String((await audit(b.token))[0]!.details_json))).toMatchObject({ keyConfirmed: true });
+    expect((await evmRelayActRoute(ctx({ API: api }, body({ tool: 'cancel', slot: 3, keyConfirmed: true })))).status).toBe(400);
+  });
+
+  it('checks the input before anything: no audit row and no call for a bad token, tool, slot, note, seen or an extra field', async () => {
     const calls: unknown[] = [];
-    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c), { ok: true, result: { done: true, refused: null, relayer: null } }) });
+    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c), ok) });
     const bad: Record<string, unknown>[] = [
-      { ...body, tool: 'drain' },
-      { ...body, slot: 3 },
-      { ...body, tool: 'cancel' },
-      { ...body, tool: 'cancel', slot: -1 },
-      { ...body, tool: 'cancel', slot: 2 ** 53 },
-      { ...body, tool: 'cancel', slot: '3' },
-      { ...body, note: 'too short' },
-      { ...body, note: `${'x'.repeat(20)}\n${'y'.repeat(20)}` },
-      { ...body, note: 'x'.repeat(301) },
-      { ...body, seen: undefined },
-      { ...body, actor: { kind: 'system', id: 'admin-cron' } },
-      { ...body, chainId: 1 },
+      body({ token: undefined }),
+      body({ token: 'req_not_a_page_token' }),
+      body({ tool: 'drain' }),
+      body({ slot: 3 }),
+      body({ tool: 'cancel' }),
+      body({ tool: 'cancel', slot: -1 }),
+      body({ tool: 'cancel', slot: 2 ** 53 }),
+      body({ tool: 'cancel', slot: '3' }),
+      body({ note: 'too short' }),
+      body({ note: `${'x'.repeat(20)}\n${'y'.repeat(20)}` }),
+      body({ note: `A note with a zero-width​join inside it` }),
+      body({ note: 'x'.repeat(301) }),
+      body({ seen: undefined }),
+      body({ keyConfirmed: false }),
+      body({ actor: { kind: 'system', id: 'admin-cron' } }),
+      body({ chainId: 1 }),
     ];
     for (const b of bad) {
-      const s = staff();
-      expect((await evmRelayActRoute(ctx({ API: api }, b, '84532', s))).status, JSON.stringify(b)).toBe(400);
-      expect(await audit(s.requestId)).toEqual([]);
+      expect((await evmRelayActRoute(ctx({ API: api }, b))).status, JSON.stringify(b)).toBe(400);
+      if (typeof b.token === 'string') expect(await audit(b.token)).toEqual([]);
     }
     expect(calls).toEqual([]);
   });
 
   it('no audit row, no action: the console down or refusing stops it before the API', async () => {
     const calls: unknown[] = [];
-    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c), { ok: true, result: { done: true, refused: null, relayer: null } }) });
-    expect((await evmRelayActRoute(ctx({ API: api, CONSOLE: downBinding() }, body))).status).toBe(503);
-    expect((await evmRelayActRoute(ctx({ API: api, CONSOLE: overrideBinding(env.CONSOLE, { recordStaffAction: async () => ({ ok: false, code: 'internal' }) }) }, body))).status).toBe(500);
+    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c), ok) });
+    expect((await evmRelayActRoute(ctx({ API: api, CONSOLE: downBinding() }, body()))).status).toBe(503);
+    expect((await evmRelayActRoute(ctx({ API: api, CONSOLE: overrideBinding(env.CONSOLE, { recordStaffAction: async () => ({ ok: false, code: 'internal' }) }) }, body()))).status).toBe(500);
     expect(calls).toEqual([]);
   });
 
-  it('a replayed request (the same request id) is refused by its audit row and does nothing', async () => {
+  it('an older API or console: the plain message, nothing recorded, nothing done', async () => {
     const calls: unknown[] = [];
-    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c), { ok: true, result: { done: true, refused: null, relayer: null } }) });
-    const s = staff();
-    expect((await evmRelayActRoute(ctx({ API: api }, body, '84532', s))).status).toBe(200);
-    expect((await evmRelayActRoute(ctx({ API: api }, body, '84532', s))).status).toBe(409);
+    // An API before this release has no evmRelayVersion (nor the tool): asked first, so no audit row is written.
+    const oldApi = { evmRelayAct: async (c: unknown) => (calls.push(c), ok) } as unknown as typeof env.API;
+    const b = body();
+    const res = await evmRelayActRoute(ctx({ API: oldApi }, b));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: { code: 'api_outdated', message: 'This page is newer than the API: deploy the API first (then this admin console). Nothing was done.' } });
+    expect(await audit(b.token)).toEqual([]);
+    // A console before this release refuses the new audit action (bad_request): nothing done.
+    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c), ok) });
+    const oldConsole = overrideBinding(env.CONSOLE, { recordStaffAction: async () => ({ ok: false, code: 'bad_request', error: 'action: Invalid enum value' }) });
+    expect(((await (await evmRelayActRoute(ctx({ API: api, CONSOLE: oldConsole }, body()))).json()) as { error: { code: string } }).error.code).toBe('console_outdated');
+    expect(calls).toEqual([]);
+    // The detail page on an older API: the same plain message.
+    const page = await evmRelayDetailRoute(ctx({ API: {} as typeof env.API }));
+    expect(page.status).toBe(503);
+    expect(((await page.json()) as { error: { code: string } }).error.code).toBe('api_outdated');
+  });
+
+  it('a re-submitted form (the same page token) is already_applied and does nothing a second time', async () => {
+    const calls: unknown[] = [];
+    const api = overrideBinding(env.API, { evmRelayAct: async (c: unknown) => (calls.push(c), ok) });
+    const b = body();
+    // Two requests (two cf-ray ids), one form: the second finds its audit row.
+    expect((await evmRelayActRoute(ctx({ API: api }, b, '84532', staff()))).status).toBe(200);
+    const again = await evmRelayActRoute(ctx({ API: api }, b, '84532', staff()));
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: { code: string; message: string } }).error).toMatchObject({ code: 'already_applied', message: expect.stringMatching(/^This form was already sent once/u) });
     expect(calls).toHaveLength(1);
   });
 
@@ -282,21 +368,22 @@ describe('POST /api/evm-relay/:chain/act', () => {
     let answer: () => Promise<unknown> = async () => ({ ok: false, code: 'version_conflict', error: 'stale' });
     let n = 0;
     const api = overrideBinding(env.API, { evmRelayAct: async () => (n++, answer()) });
-    let s = staff();
-    const stale = await evmRelayActRoute(ctx({ API: api }, body, '84532', s));
+    let b = body();
+    const stale = await evmRelayActRoute(ctx({ API: api }, b));
     expect(stale.status).toBe(409);
     expect(((await stale.json()) as { error: { message: string } }).error.message).toMatch(/^The relayer changed since you opened this page/u);
-    expect((await audit(s.requestId)).map((r) => JSON.parse(String(r.details_json)).result ?? 'before')).toEqual(['before', 'stale_page']);
-    answer = async () => ({ ok: true, result: { done: false, refused: 'relayer_cannot_send', relayer: null } });
-    s = staff();
-    const refused = await evmRelayActRoute(ctx({ API: api }, body, '84532', s));
-    expect(await refused.json()).toMatchObject({ result: { done: false, refused: 'relayer_cannot_send' }, words: { tone: 'warn', code: 'relayer_cannot_send' } });
-    expect((await audit(s.requestId)).map((r) => JSON.parse(String(r.details_json)).result ?? 'before')).toEqual(['before', 'relayer_cannot_send']);
+    expect((await audit(b.token)).map((r) => JSON.parse(String(r.details_json)).result ?? 'before')).toEqual(['before', 'stale_page']);
+    // A refused Resume: the words come from the relayer's condition now (its answer's halt), with its steps.
+    answer = async () => ({ ok: true, result: { done: false, refused: 'nonce_gap', relayer: { halted: { reason: 'nonce_gap', since: NOW, slot: 41, code: null } } } });
+    b = body();
+    const refused = await evmRelayActRoute(ctx({ API: api }, b));
+    expect(await refused.json()).toMatchObject({ result: { done: false, refused: 'nonce_gap' }, words: { tone: 'warn', code: 'nonce_gap · slot 41', steps: expect.arrayContaining([expect.stringMatching(/^Tell an engineer now/u)]) } });
+    expect((await audit(b.token)).map((r) => JSON.parse(String(r.details_json)).result ?? 'before')).toEqual(['before', 'nonce_gap']);
     answer = () => Promise.reject(new Error('Network connection lost.'));
-    s = staff();
-    const unknown = await evmRelayActRoute(ctx({ API: api }, body, '84532', s));
+    b = body();
+    const unknown = await evmRelayActRoute(ctx({ API: api }, b));
     expect(await unknown.json()).toMatchObject({ result: { done: false, refused: 'unknown' }, words: { tone: 'error' } });
-    expect((await audit(s.requestId)).map((r) => JSON.parse(String(r.details_json)).result ?? 'before')).toEqual(['before', 'unknown']);
+    expect((await audit(b.token)).map((r) => JSON.parse(String(r.details_json)).result ?? 'before')).toEqual(['before', 'unknown']);
     expect(n).toBe(3);
   });
 });

@@ -127,6 +127,7 @@ const apiAnswer = (over: Record<string, unknown> = {}) => ({
   ],
   governance: { ok: true, snapshot: snapshot() },
   nearRelay: nearRelay(),
+  evmRelay: { state: 'absent', chains: [] },
   ...over,
 });
 
@@ -990,10 +991,11 @@ describe('Free network fees (D843)', () => {
     readAt: NOW,
     relayerAddress: '0x7aD3c18E50fB2a6D9e4C31b0F5A7E8c2d1B9f640',
     key: 'ok',
+    readEndpoint: 'keyed',
     lowBalanceWei: (50n * MILLI).toString(),
     dailyBudgetWei: (20n * MILLI).toString(),
     oneSendWorstWei: (6n * 10n ** 14n).toString(),
-    relayer: { ok: true, started: true, halted: null, waiting: 0, awaitingConfirmation: 0, oldestWaitingMs: null, oldestNotTakenMs: null, nextSlot: 12, spentTodayWei: '0', unconfirmedRefusals: null, lastStaffSeq: 0, staffLog: [], ...relayer },
+    relayer: { ok: true, started: true, signerAddress: '0x7aD3c18E50fB2a6D9e4C31b0F5A7E8c2d1B9f640', halted: null, waiting: 0, awaitingConfirmation: 0, oldestWaitingMs: null, oldestNotTakenMs: null, nextSlot: 12, spentTodayWei: '0', unconfirmedRefusals: null, lastStaffSeq: 0, staffLog: [], ...relayer },
     budget: { ok: true, spentWei: '0' },
     balance: { ok: true, wei: (112n * MILLI).toString() },
     helper: { address: '0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA', pinnedCodeHash: HASH, ok: true, codeHash: HASH, matches: true },
@@ -1040,6 +1042,19 @@ describe('Free network fees (D843)', () => {
     a = await read();
     invariants(a);
     expect(tile(a, 'evm-relay-84532').state).toBe('unknown');
+    // An API older than this console sends no `evmRelay`: amber, "deploy the API first", never grey "Not set up".
+    const { evmRelay: _e, ...old } = apiAnswer();
+    world.api = old;
+    a = await read();
+    expect(tile(a, 'evm-relay')).toMatchObject({ state: 'warning', stateLabel: 'Needs a look', detail: 'This page is newer than the API: deploy the API first.' });
+    world.api = apiAnswer({ evmRelay: { state: 'timeout', chains: [] } });
+    a = await read();
+    expect(tile(a, 'evm-relay')).toMatchObject({ state: 'unknown', stateLabel: 'Can’t check right now' });
+    // The trusted read endpoint missing outside local* envs: sponsorship is off, its own Not set up case with the upload step.
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({}, { readEndpoint: 'missing' })] } });
+    a = await read();
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'warning', stateLabel: 'Not set up', explain: { code: 'read_endpoint_missing' } });
+    expect(tile(a, 'evm-relay-84532').explain!.steps[1]).toMatch(/EVM_SPONSOR_RPC_84532/u);
     // A worse second problem is said by the label too, not hidden behind "Working".
     world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({}, { budget: { ok: true, spentWei: (20n * MILLI).toString() } })] } });
     a = await read();

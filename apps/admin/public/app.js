@@ -429,6 +429,9 @@ const ERRORS = {
   already_acknowledged: ['Someone already acknowledged this alert', 'Reload the page to see who.'],
   directory_unavailable: ['The user directory isn’t available', 'The email issuer is missing in this environment or didn’t answer. Try again in a minute.'],
   directory_refused: ['The user directory refused your staff identity', 'Its admin Access settings differ from this console’s (docs/operations.md "Users screen").'],
+  api_outdated: ['This page is newer than the API', 'Nothing was done. Deploy the API first, then this admin console, and try again.'],
+  console_outdated: ['This page is newer than the partner console’s Worker', 'Nothing was done: that Worker keeps the audit log. Deploy it first, then try again.'],
+  key_confirmation_required: ['Confirm what the engineer said first', 'Tick “An engineer has confirmed the key is safe or replaced” only when an engineer has told you so. Nothing was done.'],
 };
 
 /** An error as {title, detail, hint, code, status}: plain words first, the server's own text and the code underneath. */
@@ -2586,7 +2589,9 @@ function evmToolForm(d, tool, label, fields, confirmText, opts = {}) {
     label,
     async (v) => {
       const slot = opts.slot !== undefined ? opts.slot : v.slot !== undefined ? Number(v.slot) : undefined;
-      const body = { tool, note: v.note, seen: d.seen, ...(slot !== undefined ? { slot } : {}) };
+      if (opts.keyConfirmation && v.keyConfirmed !== true) throw new ApiError(0, 'key_confirmation_required', '');
+      // The page's one-time token: the audit's key for this one use, so sending the same form twice does nothing twice.
+      const body = { token: d.token, tool, note: v.note, seen: d.seen, ...(slot !== undefined ? { slot } : {}), ...(opts.keyConfirmation ? { keyConfirmed: true } : {}) };
       return api('POST', `/api/evm-relay/${d.chainId}/act`, body);
     },
     {
@@ -2612,7 +2617,7 @@ function evmRecordsTable(d) {
   return table(
     ['Slot', 'App', 'Waiting for', 'Where it stands', 'Transactions on the block explorer', ''],
     d.records.map((r) => {
-      let cancel = '';
+      let cancel = r.noCancelBecause ? h('span', { class: 'hint' }, r.noCancelBecause) : '';
       if (r.canCancel) {
         const c = disclosure(
           'Cancel…',
@@ -2643,12 +2648,17 @@ function evmToolsPanel(d) {
       'div',
       { class: 'tool' },
       h('h3', {}, 'Resume'),
-      h('p', {}, 'Starts free network fees again. Use it once you have done what the box above says. The relayer checks the network first and says no if the problem is still there, so it is always safe to try.'),
-      t.resume
-        ? evmToolForm(d, 'resume', 'Resume', [noteField('Sent 0.1 test ETH from the faucet; balance now 0.12')], 'Resume free network fees? The relayer checks the network first, and says no if the problem is still there.', { primary: true })
-        : h('p', { class: 'hint' }, 'Not needed now: free network fees aren’t paused.'),
+      h('p', {}, 'Starts free network fees again. Use it once you have done what the box above says. The relayer checks the network first and says no if the numbers still disagree. It can’t tell whether its key is safe: if the box above says the key may be used by someone else, wait for the engineer.'),
+      !t.resume
+        ? h('p', { class: 'hint' }, 'Not needed now: free network fees aren’t paused.')
+        : t.resumeNeedsKeyConfirmation
+          ? [
+              note('error', 'Only after the engineer says so', 'This pause means the relayer’s key may be used by someone else. Resume only once an engineer has made the key safe or replaced it. Your confirmation is kept in the audit log.'),
+              evmToolForm(d, 'resume', 'Resume', [{ name: 'keyConfirmed', type: 'checkbox', label: 'An engineer has confirmed the key is safe or replaced' }, noteField('Ana (engineer) replaced the key at 14:20 UTC and moved the money out')], 'Resume free network fees on the engineer’s word that the key is safe or replaced? The relayer checks the network first, but it can’t tell whether its key is safe.', { danger: true, keyConfirmation: true }),
+            ]
+          : evmToolForm(d, 'resume', 'Resume', [noteField('Sent 0.1 test ETH from the faucet; balance now 0.12')], 'Resume free network fees? The relayer checks the network first, and says no if the problem is still there.', { primary: true }),
     ),
-    h('div', { class: 'tool' }, h('h3', {}, 'Cancel a slot'), h('p', {}, 'Sends a harmless empty transfer in a slot’s place, so a stuck transaction stops holding up the ones behind it. The user’s action in that slot then doesn’t happen. Use it when the steps above say so, or when a slot is still waiting long after its time limit. Press “Cancel…” on its row above.')),
+    h('div', { class: 'tool' }, h('h3', {}, 'Cancel a slot'), h('p', {}, 'Sends a harmless empty transfer in a slot’s place, so a stuck transaction stops holding up the ones behind it. The user’s action in that slot then doesn’t happen. It is offered only once a slot’s time limit has passed (or while the relayer is paused for a slot stuck past it). Press “Cancel…” on its row above.')),
   );
   const closable = d.records.filter((r) => r.canClose);
   const advanced = h(
@@ -2669,19 +2679,23 @@ function evmToolsPanel(d) {
       'div',
       { class: 'tool' },
       h('h3', {}, 'Close as “used by something else”'),
-      h('p', {}, 'Writes off a slot that the network shows was used by a transaction Journear didn’t send. The user’s action in it is marked as not done by Journear, and the money set aside for it stays counted. Use it only when the relayer is paused for that reason.'),
+      h('p', {}, 'Writes off a slot that the network shows was used by a transaction Journear didn’t send. Use it only when the relayer is paused for that reason, after the engineer has handled the key.'),
+      h('p', {}, d.closeBilling),
       closable.length
-        ? evmToolForm(d, 'close', 'Close the slot', [{ name: 'slot', type: 'select', label: 'Slot number', required: true, size: 'narrow', value: String(d.plain.explained && d.plain.code && /slot (\d+)/u.exec(d.plain.code) ? /slot (\d+)/u.exec(d.plain.code)[1] : closable[0].slot), options: closable.map((r) => ({ value: String(r.slot), label: `Slot ${r.slot}` })) }, noteField('The explorer shows slot 41 used by a transfer we did not send')], (n) => `Close slot ${n} as used by something else? The user’s action in it is marked as not done by Journear, and the money set aside for it stays counted. This can’t be undone.`, { danger: true })
+        ? evmToolForm(d, 'close', 'Close the slot', [{ name: 'slot', type: 'select', label: 'Slot number', required: true, size: 'narrow', value: String(d.plain.explained && d.plain.code && /slot (\d+)/u.exec(d.plain.code) ? /slot (\d+)/u.exec(d.plain.code)[1] : closable[0].slot), options: closable.map((r) => ({ value: String(r.slot), label: `Slot ${r.slot}` })) }, noteField('The explorer shows slot 41 used by a transfer we did not send')], (n) => `Close slot ${n} as used by something else? ${d.closeBilling} This can’t be undone.`, { danger: true })
         : h('p', { class: 'hint' }, 'Not possible now: no transaction is waiting.'),
     ),
     h(
       'div',
       { class: 'tool' },
       h('h3', {}, 'Set the next slot number'),
-      h('p', {}, 'Moves the relayer’s next slot number up to the network’s count of its transactions, after someone else used the key. It can only go up. Use it only when the relayer is paused because of transactions it didn’t send.'),
+      h('p', {}, 'Moves the relayer’s next slot number up to the network’s own count for its wallet, after someone else used the key. It can only go up. Use it only when the relayer is paused because of transactions it didn’t send, after the engineer has handled the key.'),
       t.adopt
-        ? evmToolForm(d, 'adopt_nonce', 'Set the number', [slotField({ label: 'Next slot number', min: t.adopt.min, help: `The relayer wallet’s number of transactions on the block explorer (at least ${t.adopt.min}).` }), noteField('The explorer shows 45 transactions from the relayer wallet')], (n) => `Set the relayer’s next slot number to ${n}? It can never go back down.`, { danger: true })
-        : h('p', { class: 'hint' }, 'Not possible now: wait until nothing is waiting.'),
+        ? [
+            h('p', {}, `The network says the next slot number is ${t.adopt.suggested}.`),
+            evmToolForm(d, 'adopt_nonce', 'Set the number', [slotField({ label: 'Next slot number', min: t.adopt.min, value: t.adopt.suggested ?? '', help: `The network’s own count for the relayer wallet (at least ${t.adopt.min}). The relayer checks it again and says no if it differs.` }), noteField('Engineer replaced the key; the network says the next slot is 45')], (n) => `Set the relayer’s next slot number to ${n}? It can never go back down.`, { danger: true }),
+          ]
+        : h('p', { class: 'hint' }, t.adoptBecause || 'Not possible now.'),
     ),
   );
   return panel('Staff tools', { hint: 'Safest first. Each asks for a note and says what it will do before it does it.' }, h('div', { class: 'stack' }, sections, advanced));
@@ -2701,7 +2715,8 @@ async function evmRelayPage(main, chainId) {
   if (evmRelayLast && evmRelayLast.chainId === chainId) {
     const w = evmRelayLast.words;
     evmRelayLast = null;
-    main.append(h('div', { class: 'act-result' }, note(w.tone, w.title, w.text, ...(w.code ? [engineerCode(w.code)] : []))));
+    const steps = Array.isArray(w.steps) && w.steps.length ? [h('ol', { class: 'explain-steps' }, w.steps.map((x) => h('li', {}, richText(x))))] : [];
+    main.append(h('div', { class: 'act-result' }, note(w.tone, w.title, w.text, ...steps, ...(w.code ? [engineerCode(w.code)] : []))));
   }
   main.append(
     panel(

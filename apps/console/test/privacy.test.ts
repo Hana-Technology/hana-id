@@ -57,6 +57,7 @@ describe('audit details', () => {
           "chainId",
           "slot",
           "note",
+          "keyConfirmed",
         ],
         "evm_relay.staff_result": [
           "tool",

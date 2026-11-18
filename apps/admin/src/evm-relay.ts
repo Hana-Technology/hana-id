@@ -10,7 +10,7 @@
 // and the relayer's own checks are final), and its answer recorded (`evm_relay.staff_result`). Nothing here retries a
 // refused or failed call. Every value from the API is shown as text (plainString); links are built here, only to the
 // chain's block explorer, only for well-formed hashes and addresses.
-import { type EvmRelayActInput, type EvmRelayChainView, type EvmRelayDetail, type EvmRelayHalt, type EvmRelayRecordView, type EvmRelayTool, evmRelayActInput } from '@hana-id/console-core';
+import { type EvmRelayActInput, type EvmRelayChainView, type EvmRelayDetail, type EvmRelayHalt, type EvmRelayRecordView, type EvmRelayTool, evmRelayActInput, isLeakHalt } from '@hana-id/console-core';
 import { errorResponse, json } from './http.ts';
 import { errorName, log } from './log.ts';
 import { plainString } from './plain.ts';
@@ -75,7 +75,17 @@ interface Words {
   refill: string;
 }
 
-const LEAK_STEPS = ['Tell an engineer now: treat the relayer’s key as leaked.', 'The engineer follows “A relayer key leaked” in docs/operations.md: free network fees are switched off and the money left in the wallet is moved out.', 'Don’t press Resume until the engineer says so.'];
+/**
+ * The steps of every halt that means the relayer's key may be used by someone else (console-core `isLeakHalt`): the
+ * engineer first, the slot tool (if any) is the engineer's after that, and Resume only when the engineer says so.
+ * Never a refill: money sent to a leaked key can be taken.
+ */
+const leakSteps = (engineerSlotStep: string | null): string[] => [
+  'Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.',
+  'The engineer follows “A relayer key leaked” in docs/operations.md: free network fees are switched off, the money left in the wallet is moved out, and the key is replaced.',
+  ...(engineerSlotStep ? [`After that, the engineer ${engineerSlotStep}`] : []),
+  'Don’t press Resume until the engineer says the key is safe or replaced. Resume then asks you to confirm that.',
+];
 
 /** The halt table of docs/operations.md, in plain words, per reason (and for `relayer_cannot_send`, per code). */
 export function haltExplained(h: Pick<EvmRelayHalt, 'reason' | 'slot' | 'code'>, w: Words): Explained {
@@ -92,37 +102,35 @@ export function haltExplained(h: Pick<EvmRelayHalt, 'reason' | 'slot' | 'code'>,
           why: 'Network fees are higher right now than the relayer is allowed to pay, so it can’t even send its own cancel.',
           steps: ['Wait: network fees usually fall again within an hour.', 'Then press Resume on the Free network fees page.', 'If it is still paused after a few hours, ask an engineer to raise the relayer’s fee limit (maxFeePerGasGwei in the settings).'],
         };
-      if (h.code === 'replacement_underpriced' || h.code === 'sender_restricted') return { why: `Another transaction is using the relayer wallet’s ${n}: the relayer’s key is being used somewhere else.`, steps: LEAK_STEPS };
+      if (h.code === 'replacement_underpriced' || h.code === 'sender_restricted') return { why: `Another transaction is using the relayer wallet’s ${n}: the relayer’s key is being used somewhere else.`, steps: leakSteps(null) };
       if (h.code === 'nonce_too_low' || h.code === 'nonce_too_high')
-        return {
-          why: 'The relayer’s slot numbers don’t match the network’s: someone else may be using its key.',
-          steps: [`Open the relayer wallet on ${w.explorer} (the link is below) and look for transactions nobody at Journear sent.`, 'If you find any, tell an engineer now: treat the relayer’s key as leaked.', 'If you find none, press Resume. If it pauses again, ask an engineer.'],
-        };
+        return { why: 'The relayer’s slot numbers don’t match the network’s: someone else may be using its key.', steps: leakSteps(`checks the relayer wallet on ${w.explorer} for transactions nobody at Journear sent.`) };
       return { why: 'The network refused a transaction the relayer built. This is probably a bug.', steps: ['Ask an engineer to look.', 'Don’t use the tools on the Free network fees page meanwhile.'] };
     case 'nonce_consumed_elsewhere':
       return {
         why: `${cap(n)} was used up on the network by a transaction the relayer didn’t send: someone else used the relayer’s key.`,
-        steps: [
-          'Tell an engineer now: treat the relayer’s key as leaked.',
-          `Open the relayer wallet on ${w.explorer} and find its transaction number ${h.slot ?? 'shown below'}: that shows what was sent.`,
-          `On the Free network fees page, under Advanced, close ${n} as “used by something else”. The user’s action is marked as not done, and the money set aside for it stays counted.`,
-          'Then press Resume.',
-        ],
+        steps: leakSteps(`closes ${n} as “used by something else” on the Free network fees page (under Advanced).`),
       };
     case 'nonce_gap':
       return {
-        why: `${cap(n)} is empty and nothing is waiting to fill it, so every transaction after it is stuck.`,
-        steps: [`On the Free network fees page, under Advanced, use “Fill a gap” for ${n}. It sends a harmless empty transfer.`, 'When that slot shows as on the network, press Resume.', 'Only someone else using the relayer’s key leaves a gap like this: tell an engineer too.'],
+        why: `${cap(n)} is empty and nothing is waiting to fill it, so every transaction after it is stuck. Only someone else using the relayer’s key leaves a gap like this.`,
+        steps: leakSteps('uses “Fill a gap” (under Advanced) for each empty slot, lowest first; the box above updates after each.'),
       };
     case 'foreign_transactions':
       return {
         why: 'The network shows more transactions from the relayer’s wallet than the relayer sent: someone else is using its key.',
-        steps: ['Tell an engineer now: treat the relayer’s key as leaked.', 'Wait until nothing is waiting on the Free network fees page.', `Open the relayer wallet on ${w.explorer} and read its number of transactions.`, 'Under Advanced, use “Set the next slot number” with that number. It can only go up.', 'Then press Resume.'],
+        steps: leakSteps('waits until nothing is waiting, then uses “Set the next slot number” (under Advanced) with the number the network gives, shown there.'),
       };
     case 'stuck_past_deadline':
       return {
         why: `${cap(n)} still isn’t on the network 30 minutes after the user’s time limit, although its cancel keeps being sent.`,
-        steps: ['Check the wallet’s balance below. If it is low, send test ETH to the relayer wallet.', `If the balance is fine, press Cancel on ${n} to send a cancel with a higher fee.`, 'Once the slot shows as on the network, press Resume.'],
+        steps: [
+          'Check the wallet’s balance below. If it is low, send test ETH to the relayer wallet.',
+          `If the balance is fine, press Cancel on ${n} to send a cancel with a higher fee.`,
+          'If Cancel is refused because network fees are above the relayer’s limit, ask an engineer to raise the fee limit.',
+          `If ${n} has no Cancel button, it already has 8 copies and the relayer can’t send another: ask an engineer.`,
+          'Once the slot shows as on the network, press Resume.',
+        ],
       };
     case 'key_mismatch':
       return { why: 'The relayer’s key changed while transactions signed with the old key were still waiting. It signs nothing new.', steps: ['Ask an engineer to put the old key back until nothing is waiting.', 'Then the engineer changes the key.', 'Then press Resume.'] };
@@ -266,8 +274,13 @@ export function explainChain(v: EvmRelayChainView, now: number): ChainPlain {
 
   // The main state, most urgent first.
   if (r?.halted) {
-    const e = haltExplained(r.halted, w);
-    if (balanceState === 'critical' || balanceState === 'warning') extra.push(lowProblem(balance!, low, w, balanceState));
+    const leak = isLeakHalt(r.halted);
+    let e = haltExplained(r.halted, w);
+    // A key replaced since the stop: the records' signer is no longer the settings' wallet (the relayer tells us so).
+    if (leak && ADDRESS.test(r.signerAddress) && r.signerAddress.toLowerCase() !== v.relayerAddress.toLowerCase())
+      e = { ...e, why: `${e.why} The relayer’s key has been replaced since it stopped (its transactions were signed by ${shortAddress(r.signerAddress)}; the settings now name the wallet below).` };
+    // Never a refill while the key may be someone else's: money sent to it can be taken.
+    if (!leak && (balanceState === 'critical' || balanceState === 'warning')) extra.push(lowProblem(balance!, low, w, balanceState));
     return out('paused', 'critical', `Paused since ${utc(r.halted.since)} (${ageText(Math.max(0, now - r.halted.since))}). Nobody gets free network fees until a person fixes it. Nothing is lost.`, e, haltCode(r.halted), 'evm-relay-paused', r.halted.since);
   }
   if (v.key === 'wrong')
@@ -279,6 +292,22 @@ export function explainChain(v: EvmRelayChainView, now: number): ChainPlain {
       'Switched off: the relayer’s key isn’t loaded.',
       { why: 'The relayer’s key isn’t loaded, so nobody gets free network fees. Removing the key is also how they are switched off on purpose.', steps: ['If someone switched free network fees off on purpose, leave it.', 'If not, ask an engineer to upload the relayer key again (docs/operations.md “EVM sponsorship relay”, step 9).'] },
       'key_missing',
+      'evm-relay-paused',
+    );
+  if (v.readEndpoint === 'missing')
+    return out(
+      'not_set_up',
+      'warning',
+      'Off: the relayer’s read endpoint isn’t set.',
+      {
+        why: `The relayer’s own read endpoint for ${info.name} isn’t set, so free network fees are off here. The public endpoint isn’t trusted for this outside local test setups.`,
+        steps: [
+          `Get the https address of a ${info.name} endpoint from a provider account (Alchemy, QuickNode, Infura or similar).`,
+          `Ask an engineer to upload it as the API’s secret EVM_SPONSOR_RPC_${v.chainId} (docs/operations.md “EVM sponsorship relay”, step 9). It is never shown anywhere.`,
+          'Press Check again: the tile says “Working” once it is in.',
+        ],
+      },
+      'read_endpoint_missing',
       'evm-relay-paused',
     );
   if (h.ok && !h.matches)
@@ -315,6 +344,9 @@ function lowProblem(balance: bigint, low: bigint, w: Words, s: Severity): ExtraP
 
 export const TOOL_NAMES: Readonly<Record<EvmRelayTool, string>> = Object.freeze({ resume: 'Resume', cancel: 'Cancel this slot', close: 'Close as “used by something else”', fill: 'Fill a gap', adopt_nonce: 'Set the next slot number' });
 
+/** What closing a slot does to the books (the founder's decision D869: the partner is not charged for a slot lost to Journear's own key). */
+export const CLOSE_BILLING = 'The user’s action in it is marked as not done. The app is not charged: Journear covers it.';
+
 export interface RecordPlain {
   slot: number;
   kind: 'action' | 'filler';
@@ -326,11 +358,17 @@ export interface RecordPlain {
   refusedCode: string | null;
   copies: { hash: string; kind: 'action' | 'cancel'; url: string | null }[];
   canCancel: boolean;
+  /** Why there is no Cancel button on a slot not yet on the network, in words; null otherwise. */
+  noCancelBecause: string | null;
   canClose: boolean;
 }
 
-/** One transaction in words. The app from the sponsorship's own records, when this API keeps them. */
-export function recordPlain(r: EvmRelayRecordView, chainId: number, keyOk: boolean, apps: EvmRelayDetail['apps']): RecordPlain {
+/**
+ * One transaction in words. The app from the sponsorship's own records. Cancel only once its time limit has passed (or
+ * during a `stuck_past_deadline` pause: the API refuses it otherwise, `not_past_deadline`), never on a slot already on
+ * the network, past 8 copies or without the key.
+ */
+export function recordPlain(r: EvmRelayRecordView, chainId: number, keyOk: boolean, apps: EvmRelayDetail['apps'], now: number, haltReason: string | null): RecordPlain {
   const ex = chainInfo(chainId).explorer;
   const state: RecordPlain['state'] = r.onChain ? 'on_chain' : r.cancelling ? 'cancelling' : r.refusedCode ? 'refused' : r.taken ? 'sent' : 'not_taken';
   const STATE: Record<RecordPlain['state'], string> = {
@@ -340,6 +378,8 @@ export function recordPlain(r: EvmRelayRecordView, chainId: number, keyOk: boole
     sent: 'Sent, waiting to go through',
     not_taken: 'Not yet picked up by the network',
   };
+  const past = r.deadlineAt <= now || haltReason === 'stuck_past_deadline';
+  const noCancelBecause = r.onChain ? null : r.copies.length >= 8 ? 'No Cancel: it already has 8 copies, the most the relayer sends. Ask an engineer.' : !keyOk ? 'No Cancel: the relayer’s key isn’t loaded.' : !past ? 'Cancel shows once its time limit has passed.' : null;
   return {
     slot: r.slot,
     kind: r.kind,
@@ -350,48 +390,64 @@ export function recordPlain(r: EvmRelayRecordView, chainId: number, keyOk: boole
     stateText: STATE[state],
     refusedCode: r.refusedCode ? code(r.refusedCode) : null,
     copies: r.copies.slice(0, 8).map((c) => ({ hash: HASH.test(c.hash) ? c.hash.toLowerCase() : 'unknown', kind: c.kind === 'cancel' ? 'cancel' : 'action', url: ex && HASH.test(c.hash) ? `${ex.tx}${c.hash.toLowerCase()}` : null })),
-    // Never a button the relayer would certainly refuse: a slot already on the network has its receipt; 8 copies is the
-    // most it signs; without its key it signs nothing.
-    canCancel: !r.onChain && r.copies.length < 8 && keyOk,
+    canCancel: !r.onChain && noCancelBecause === null,
+    noCancelBecause,
     canClose: !r.onChain,
   };
 }
 
 export interface ToolsOffered {
   resume: boolean;
+  /** The pause means the key may be someone else's: Resume isn't the primary action and needs the engineer's confirmation. */
+  resumeNeedsKeyConfirmation: boolean;
   /** "Fill a gap": the slot to suggest (the halt's), the highest allowed; null when it can't apply. */
   fill: { suggested: number | null; max: number } | null;
-  /** "Set the next slot number": the lowest allowed; null when it can't apply. */
-  adopt: { min: number } | null;
+  /**
+   * "Set the next slot number": the network's own next slot for the wallet (its count, as the relayer reads it) to
+   * pre-fill, the lowest allowed; null when it can't apply, with why in `adoptBecause`.
+   */
+  adopt: { suggested: number | null; min: number } | null;
+  adoptBecause: string | null;
   /** The reason every tool is hidden, in words, or null. */
   noneBecause: string | null;
 }
 
 /** Which tools may apply now (never one the relayer would certainly refuse: it still checks every one). */
-export function toolsOffered(v: EvmRelayChainView, records: EvmRelayRecordView[]): ToolsOffered {
-  const none = (why: string): ToolsOffered => ({ resume: false, fill: null, adopt: null, noneBecause: why });
+export function toolsOffered(v: EvmRelayChainView, records: EvmRelayRecordView[], chainCount: EvmRelayDetail['chainCount']): ToolsOffered {
+  const none = (why: string): ToolsOffered => ({ resume: false, resumeNeedsKeyConfirmation: false, fill: null, adopt: null, adoptBecause: null, noneBecause: why });
   if (!v.relayer.ok) return none('The relayer can’t be read right now, so no tool is offered. Reload the page in a minute.');
   const r = v.relayer;
   if (!r.started) return none('The relayer hasn’t sent anything yet, so there is nothing to fix.');
   if (r.halted?.reason === 'storage_inconsistent') return none('The relayer’s records disagree with each other (a bug): ask an engineer, and don’t use the tools.');
   const keyOk = v.key === 'ok';
   const unmined = records.some((x) => !x.onChain);
+  const min = r.nextSlot ?? 0;
+  let adopt: ToolsOffered['adopt'] = null;
+  let adoptBecause: string | null = null;
+  if (unmined || r.waiting > 0) adoptBecause = 'Not possible now: wait until nothing is waiting.';
+  else if (!chainCount.ok) adoptBecause = 'The network’s count for the relayer wallet can’t be read right now: ask an engineer.';
+  else if (chainCount.latest !== chainCount.pending) adoptBecause = 'The network still has transactions from the relayer wallet waiting: wait until they are on the network, then reload.';
+  else if (chainCount.latest < min) adoptBecause = `The network’s count (${chainCount.latest}) is below the relayer’s next slot (${min}): nothing to set. Ask an engineer.`;
+  else adopt = { suggested: chainCount.latest, min };
   return {
     resume: r.halted !== null,
+    resumeNeedsKeyConfirmation: isLeakHalt(r.halted),
     fill: keyOk && r.nextSlot !== null && r.nextSlot > 0 ? { suggested: r.halted?.reason === 'nonce_gap' ? r.halted.slot : null, max: r.nextSlot - 1 } : null,
-    adopt: !unmined && r.waiting === 0 ? { min: r.nextSlot ?? 0 } : null,
+    adopt,
+    adoptBecause,
     noneBecause: null,
   };
 }
 
 // ---- a tool's answer in words ----
 
+const HALT_CODES = ['nonce_consumed_elsewhere', 'nonce_gap', 'foreign_transactions', 'relayer_cannot_send', 'stuck_past_deadline', 'key_mismatch', 'storage_inconsistent'];
+
 /** What the relayer's (or the API's) refusal means, in words. Nothing was changed by a refusal. */
 export function refusalWords(refused: string, slot: number | null, w: Words): string {
   const n = slot === null ? 'that slot' : `slot ${slot}`;
-  const HALTS = ['nonce_consumed_elsewhere', 'nonce_gap', 'foreign_transactions', 'relayer_cannot_send', 'stuck_past_deadline', 'key_mismatch', 'storage_inconsistent'];
-  if (refused === 'relayer_cannot_send') return 'The problem is still there: the relayer’s wallet still can’t send transactions. Look at the box above: usually it still needs more money.';
-  if (HALTS.includes(refused)) return `The problem is still there: ${lowerFirst(haltExplained({ reason: refused, slot, code: null }, w).why)}`;
+  if (refused === 'relayer_cannot_send') return 'The problem is still there: the relayer’s wallet still can’t send transactions.';
+  if (HALT_CODES.includes(refused)) return `The problem is still there: ${lowerFirst(haltExplained({ reason: refused, slot, code: null }, w).why)}`;
   const WORDS: Record<string, string> = {
     not_halted: 'It wasn’t paused, so there was nothing to resume.',
     incomplete_check: 'It couldn’t finish checking the network this time. Try again in a minute.',
@@ -401,15 +457,17 @@ export function refusalWords(refused: string, slot: number | null, w: Words): st
     receipt_found: `${cap(n)}’s own transaction did reach the network. There is nothing to do: it finishes by itself.`,
     key_mismatch: 'The relayer’s key doesn’t match the one these transactions were signed with, so it can’t sign anything.',
     nonce_mined: `${cap(n)} is already used on the network. Wait: it finishes by itself.`,
-    no_valid_replacement: 'It can’t send another copy: it has already sent 8, or its fee limit leaves no room for a higher fee.',
-    fee_cap_too_low: 'Network fees are higher than the relayer may pay right now. Try again later.',
+    no_valid_replacement: 'It can’t send another copy: it has already sent 8, or its fee limit leaves no room for a higher fee. Ask an engineer.',
+    fee_cap_too_low: 'Network fees are above the relayer’s limit right now. Try again later, or ask an engineer to raise the fee limit.',
     record_exists: `${cap(n)} already has a transaction. Use Cancel on that slot instead.`,
     not_below_next_nonce: `${cap(n)} isn’t one of the relayer’s earlier slots, so there is no gap there.`,
-    not_the_chains_next_nonce: `The network’s next slot for the relayer isn’t ${slot ?? 'that number'}. Check the number on ${w.explorer}.`,
+    not_the_chains_next_nonce: `The network’s next slot for the relayer isn’t ${slot ?? 'that number'}. Fill the lowest empty slot first.`,
     below_next_nonce: `The relayer already counts past ${slot ?? 'that number'}. The number can only go up.`,
     unmined_records: 'Transactions are still waiting. Wait until none are waiting, then try again.',
-    chain_count_differs: `The network’s count of the relayer’s transactions isn’t ${slot ?? 'that number'}. Check the number on ${w.explorer}.`,
+    chain_count_differs: `The network’s own count for the relayer wallet isn’t ${slot ?? 'that number'}. Reload the page: it shows the network’s number.`,
     no_state: 'The relayer hasn’t sent anything yet, so there is nothing to do.',
+    not_past_deadline: `${cap(n)}’s time limit hasn’t passed yet: it may still go through. Cancel is for a slot past its time limit.`,
+    key_confirmation_required: 'This pause means the relayer’s key may be used by someone else. Resume needs you to confirm that an engineer said the key is safe or replaced.',
     invalid_request: 'The relayer refused the request as malformed. Reload the page and try again.',
     relayer_unbound: 'This API has no relayer for this network. Ask an engineer.',
     relayer_unavailable: 'The relayer didn’t answer. Try again in a minute.',
@@ -429,11 +487,11 @@ export function doneWords(tool: EvmRelayTool, slot: number | null): string {
     case 'cancel':
       return `A cancel for ${n} was sent. The user’s action in that slot won’t happen. Whichever copy the network takes first ends the slot.`;
     case 'close':
-      return `${cap(n)} is closed as used by something else. The user’s action is marked as not done by Journear, and the money set aside for it stays counted.`;
+      return `${cap(n)} is closed as used by something else. ${CLOSE_BILLING}`;
     case 'fill':
-      return `A harmless empty transfer was sent for ${n}. Once it is on the network, press Resume.`;
+      return `A harmless empty transfer was sent for ${n}. Once it is on the network, fill the next empty slot if there is one, then press Resume when the engineer says so.`;
     case 'adopt_nonce':
-      return `The relayer’s next slot is now ${slot ?? 'the number you gave'}. Press Resume when you’re ready.`;
+      return `The relayer’s next slot is now ${slot ?? 'the number you gave'}. Press Resume when the engineer says so.`;
   }
 }
 
@@ -441,25 +499,40 @@ export interface ActWords {
   tone: 'ok' | 'warn' | 'error';
   title: string;
   text: string;
+  /** What to do now, when the relayer is (still) paused: its latest condition's steps (L3). */
+  steps: string[];
   code: string | null;
 }
 
-export function actWords(tool: EvmRelayTool, slot: number | null, result: { done: boolean; refused: string | null }, chainId: number): ActWords {
+/** A tool's answer in words. After a refusal, the relayer's latest condition (`halt`, from its answer) says why and what to do. */
+export function actWords(tool: EvmRelayTool, slot: number | null, result: { done: boolean; refused: string | null }, chainId: number, halt: Pick<EvmRelayHalt, 'reason' | 'slot' | 'code'> | null = null, refill = 'the amount the box above names'): ActWords {
   const info = chainInfo(chainId);
-  const w: Words = { chain: info.name, faucet: info.faucet, explorer: info.explorer?.name ?? 'the block explorer', refill: '' };
-  if (result.done) return { tone: 'ok', title: `${TOOL_NAMES[tool]}: done`, text: doneWords(tool, slot), code: null };
+  const w: Words = { chain: info.name, faucet: info.faucet, explorer: info.explorer?.name ?? 'the block explorer', refill };
+  if (result.done) return { tone: 'ok', title: `${TOOL_NAMES[tool]}: done`, text: doneWords(tool, slot), steps: [], code: null };
   if (result.refused === 'unknown')
-    return { tone: 'error', title: `${TOOL_NAMES[tool]}: no clear answer`, text: 'The relayer didn’t answer clearly, so we can’t tell whether it did it. Look at “Recent staff actions” below before you try again.', code: 'unknown' };
+    return { tone: 'error', title: `${TOOL_NAMES[tool]}: no clear answer`, text: 'The relayer didn’t answer clearly, so we can’t tell whether it did it. Look at “Recent staff actions” below before you try again.', steps: [], code: 'unknown' };
   const refused = code(result.refused);
-  return { tone: 'warn', title: `${TOOL_NAMES[tool]}: the relayer said no. Nothing was changed.`, text: refusalWords(refused, slot, w), code: refused };
+  // A refused Resume names the condition that holds now, which may not be the first one (L3).
+  if (halt && HALT_CODES.includes(refused)) {
+    const e = haltExplained(halt, w);
+    return { tone: 'warn', title: `${TOOL_NAMES[tool]}: the relayer said no. Nothing was changed.`, text: `The problem is still there: ${lowerFirst(e.why)}`, steps: e.steps, code: haltCode(halt) };
+  }
+  return { tone: 'warn', title: `${TOOL_NAMES[tool]}: the relayer said no. Nothing was changed.`, text: refusalWords(refused, slot, w), steps: [], code: refused };
 }
 
 // ---- the routes ----
 
 const CHAIN_PARAM = /^[1-9]\d{0,15}$/u;
 const chainOf = (c: RouteCtx): number | null => (CHAIN_PARAM.test(c.params.chain ?? '') && Number.isSafeInteger(Number(c.params.chain)) ? Number(c.params.chain) : null);
+/** The one-time token a detail page carries for one tool use: the audit rows' request id, so a re-submitted form is `already_applied`. */
+const TOKEN = /^evmact_[A-Za-z0-9_-]{22}$/u;
+const newActToken = (): string => `evmact_${btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16)))).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')}`;
+/** An RPC method the other Worker doesn't have yet (it is older than this one). */
+const missingMethod = (err: unknown): boolean => /does not implement|is not a function|not a function|no such method|does not exist/iu.test(err instanceof Error ? err.message : String(err));
+export const API_OUTDATED = 'This page is newer than the API: deploy the API first (then this admin console). Nothing was done.';
+export const CONSOLE_OUTDATED = 'This page is newer than the partner console’s Worker, which keeps the audit log: deploy it first. Nothing was done.';
 
-/** `GET /api/evm-relay/:chain`: the detail page (the API's view, in words, with the tools that may apply). */
+/** `GET /api/evm-relay/:chain`: the detail page (the API's view, in words, with the tools that may apply and a one-time token for a tool). */
 export async function evmRelayDetailRoute(c: RouteCtx): Promise<Response> {
   const route = 'GET /api/evm-relay/:chain';
   const chainId = chainOf(c);
@@ -468,6 +541,7 @@ export async function evmRelayDetailRoute(c: RouteCtx): Promise<Response> {
   try {
     r = await c.env.API.evmRelayDetail({ ...staffCtx(c.staff), chainId });
   } catch (err) {
+    if (missingMethod(err)) return errorResponse('api_outdated', API_OUTDATED);
     log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'error', code: 'upstream_unavailable', error: errorName(err) }, 'error');
     return errorResponse('upstream_unavailable');
   }
@@ -479,6 +553,7 @@ export async function evmRelayDetailRoute(c: RouteCtx): Promise<Response> {
   const now = Date.now();
   log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'ok', count: d.records.length });
   const relayer = d.chain.relayer.ok ? d.chain.relayer : null;
+  const haltReason = relayer?.halted?.reason ?? null;
   return json(200, {
     chainId,
     title: evmRelayTitle(chainId),
@@ -488,41 +563,60 @@ export async function evmRelayDetailRoute(c: RouteCtx): Promise<Response> {
     relayerAddress: d.chain.relayerAddress,
     nextSlot: relayer?.nextSlot ?? null,
     seen: { haltSince: relayer?.halted?.since ?? null, lastStaffSeq: relayer?.lastStaffSeq ?? 0 },
+    token: newActToken(),
     apps: d.apps,
-    records: d.records.map((x) => recordPlain(x, chainId, d.chain.key === 'ok', d.apps)),
-    tools: toolsOffered(d.chain, d.records),
+    records: d.records.map((x) => recordPlain(x, chainId, d.chain.key === 'ok', d.apps, now, haltReason)),
+    tools: toolsOffered(d.chain, d.records, d.chainCount),
+    closeBilling: CLOSE_BILLING,
     staffLog: (relayer?.staffLog ?? []).map((e) => ({ seq: e.seq, at: e.at, who: plainString(e.who, 128), tool: TOOL_NAMES[e.tool] ?? 'A tool', slot: e.slot, note: plainString(e.note, 500), done: e.done, refused: e.refused ? code(e.refused) : null })),
   });
 }
 
 /**
- * `POST /api/evm-relay/:chain/act` `{tool, slot?, note, seen}`: one staff tool. Checked here with the API's schema, then
- * the audit row (no row, no action), then the API, then the result's row. The answer: the result and its words.
+ * `POST /api/evm-relay/:chain/act` `{token, tool, slot?, note, seen, keyConfirmed?}`: one staff tool. Checked here with
+ * the API's schema; then the API's capability (an older API: nothing done, no audit row); then the audit row, keyed by
+ * the page's one-time token (no row, no action; a re-submitted form is `already_applied`); then the API; then the
+ * result's row. The answer: the result and its words.
  */
 export async function evmRelayActRoute(c: RouteCtx): Promise<Response> {
   const route = 'POST /api/evm-relay/:chain/act';
   const chainId = chainOf(c);
   if (chainId === null) return errorResponse('not_found');
-  const ctx = staffCtx(c.staff);
   const b = c.body;
-  const parsed = evmRelayActInput.safeParse({ ...ctx, chainId, tool: b.tool, ...(b.slot !== undefined ? { slot: b.slot } : {}), note: b.note, seen: b.seen });
+  if (Object.keys(b).some((k) => !['token', 'tool', 'slot', 'note', 'seen', 'keyConfirmed'].includes(k))) return errorResponse('bad_request', 'body: only token, tool, slot, note, seen and keyConfirmed');
+  if (typeof b.token !== 'string' || !TOKEN.test(b.token)) return errorResponse('bad_request', 'token: the page’s one-time token (reload the page)');
+  // The token is this tool use's request id: the audit rows' idempotency key and the API call's id.
+  const ctx = { ...staffCtx(c.staff), requestId: b.token };
+  const parsed = evmRelayActInput.safeParse({ ...ctx, chainId, tool: b.tool, ...(b.slot !== undefined ? { slot: b.slot } : {}), note: b.note, seen: b.seen, ...(b.keyConfirmed !== undefined ? { keyConfirmed: b.keyConfirmed } : {}) });
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     return errorResponse('bad_request', issue ? `${issue.path.join('.') || 'body'}: ${issue.message}` : 'Invalid body');
   }
-  if (Object.keys(b).some((k) => !['tool', 'slot', 'note', 'seen'].includes(k))) return errorResponse('bad_request', 'body: only tool, slot, note and seen');
   const input: EvmRelayActInput = parsed.data;
   const slot = input.slot ?? null;
   const target = String(chainId);
 
+  // 0. The API must have the tool (an older API: nothing done, nothing recorded).
+  try {
+    const v = await c.env.API.evmRelayVersion({ ...staffCtx(c.staff) });
+    if (!v.ok) return errorResponse(v.code as Parameters<typeof errorResponse>[0], v.error);
+  } catch (err) {
+    if (missingMethod(err)) return errorResponse('api_outdated', API_OUTDATED);
+    log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'error', code: 'upstream_unavailable', error: errorName(err) }, 'error');
+    return errorResponse('upstream_unavailable', 'The API didn’t answer. Nothing was done.');
+  }
+
   // 1. The audit row first: no row, no action.
   try {
-    const a = await c.env.CONSOLE.recordStaffAction({ ...ctx, action: 'evm_relay.staff_action', target, details: { tool: input.tool, chainId, slot, note: input.note } });
+    const a = await c.env.CONSOLE.recordStaffAction({ ...ctx, action: 'evm_relay.staff_action', target, details: { tool: input.tool, chainId, slot, note: input.note, ...(input.keyConfirmed ? { keyConfirmed: true } : {}) } });
     if (!a.ok) {
       log({ event: 'audit_failed', route, requestId: c.staff.requestId, code: a.code }, 'error');
-      return errorResponse(a.code === 'already_applied' ? 'already_applied' : 'internal', 'The action could not be recorded, so nothing was done');
+      if (a.code === 'already_applied') return errorResponse('already_applied', 'This form was already sent once. Reload the page to see what happened, then act again if it is still needed.');
+      if (a.code === 'bad_request') return errorResponse('console_outdated', CONSOLE_OUTDATED);
+      return errorResponse('internal', 'The action could not be recorded, so nothing was done');
     }
   } catch (err) {
+    if (missingMethod(err)) return errorResponse('console_outdated', CONSOLE_OUTDATED);
     log({ event: 'audit_failed', route, requestId: c.staff.requestId, code: 'upstream_unavailable', error: errorName(err) }, 'error');
     return errorResponse('upstream_unavailable', 'The action could not be recorded, so nothing was done');
   }
@@ -540,7 +634,7 @@ export async function evmRelayActRoute(c: RouteCtx): Promise<Response> {
       const result = r.result;
       outcome = result.done ? 'done' : code(result.refused);
       log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'ok', code: outcome });
-      res = json(200, { result: { done: result.done, refused: result.refused ? code(result.refused) : null }, words: actWords(input.tool, slot, result, chainId) });
+      res = json(200, { result: { done: result.done, refused: result.refused ? code(result.refused) : null }, words: actWords(input.tool, slot, result, chainId, result.relayer?.halted ?? null) });
     }
   } catch (err) {
     outcome = 'unknown';

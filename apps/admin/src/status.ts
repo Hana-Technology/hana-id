@@ -661,7 +661,16 @@ function evmRelayTiles(r: Report, s: Sources): void {
   const base: TileInput = { id: 'evm-relay', group: 'funds', name: 'Free network fees', affects, detail: '' };
   if (!s.api.ok) return r.add({ ...base, detail: 'Can’t check right now: the API didn’t answer' }, [{ ...apiRpcProblem(s.api.code), issue: false }]);
   const evm = obj(s.api.value.evmRelay);
-  if (!evm) return r.add({ ...base, detail: 'Not set up in this environment (no evm.sponsor in its settings): nobody is offered free network fees.', notMeasured: true, stateLabel: STATE_LABELS.not_set_up });
+  // An API that knows free network fees always says (`absent` included): a missing field is an older API (D843 review M4).
+  if (!evm) {
+    const explain = { why: 'This page is newer than the API, so it can’t tell whether free network fees are set up.', steps: ['Deploy the API first, then this admin console (docs/operations.md “Free network fees in the admin portal”, deploy order).', 'Press Check again.'], code: 'api_outdated' };
+    return r.add({ ...base, detail: 'This page is newer than the API: deploy the API first.', stateLabel: 'Needs a look', explain }, [{ severity: 'warning', title: explain.why, action: '', steps: explain.steps, code: explain.code, key: 'outdated' }]);
+  }
+  if (evm.state === 'absent') return r.add({ ...base, detail: 'Not set up in this environment (no evm.sponsor in its settings): nobody is offered free network fees.', notMeasured: true, stateLabel: STATE_LABELS.not_set_up });
+  if (evm.state === 'timeout') {
+    const explain = { why: 'The API couldn’t read the relayer in time just now. That alone doesn’t stop free network fees.', steps: ['Press Check again in a minute.', 'If it stays like this for more than an hour, ask an engineer to look at the network provider.'], code: 'evm_relay_timeout' };
+    return r.add({ ...base, detail: 'Can’t check right now: the reads took too long.', stateLabel: STATE_LABELS.unknown, explain }, [{ severity: 'unknown', title: explain.why, action: '', steps: explain.steps, code: explain.code, key: 'timeout' }]);
+  }
   if (evm.state === 'bad_config') {
     const explain = { why: 'The API refuses this environment’s free-network-fee settings, so nobody gets free network fees.', steps: ['Ask an engineer to check the evm.sponsor settings (envs/README.md), run gen and deploy the API.'], code: 'bad_config' };
     return r.add({ ...base, detail: 'Not set up: the settings are refused.', stateLabel: STATE_LABELS.not_set_up, explain }, [{ severity: 'critical', title: explain.why, action: '', steps: explain.steps, code: explain.code, playbook: 'evm-relay-paused', key: 'config' }]);

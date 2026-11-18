@@ -11,7 +11,7 @@
 // `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D394);
 // the System status page (D425) `systemStatus` (staff only, read-only, no user data). D843 adds EVM gas sponsorship's
 // relayer: its view in `systemStatus`, `evmRelayDetail` and the staff tools `evmRelayAct` (staff only): this file is
-// the only one besides the relayer object and its staff module that may reach them (scripts/test/evm-relayer-staff.test.ts).
+// the only one besides the relayer object and its staff module that may reach them (a source test in scripts/test).
 import {
   adminAppNamesInput,
   adminProfileNamesInput,
@@ -255,6 +255,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** One sponsored chain: its view, every transaction the relayer holds (slots, hashes, apps) and its last 50 staff actions. */
   evmRelayDetail(c: unknown) {
     return runRpc(this.env, 'admin.evmRelayDetail', evmRelayDetailInput, c, { actors: HANA }, async ({ input }) => ({ detail: await evmRelayerStaffDetail(this.env, this.env.DB, input.chainId) }));
+  }
+
+  /** The relayer's staff tools' version (D843): the admin Worker asks before a tool's audit row (an older API lacks this method). */
+  evmRelayVersion(c: unknown) {
+    return runRpc(this.env, 'admin.evmRelayVersion', systemStatusInput, c, { actors: HANA }, async () => ({ version: 1 }));
   }
 
   /**

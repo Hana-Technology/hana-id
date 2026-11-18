@@ -26,7 +26,7 @@ import * as data from './preview-data.ts';
 // The status scenarios run the Worker's own src/status.ts (Workers types): loaded by a specifier TypeScript doesn't follow
 // here, typechecked with test-ops/ instead (its tsconfig has the Workers types; this one has the DOM's).
 const STATUS_MODULE = './preview-status.ts';
-type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down' | 'relay-low' | 'relay-budget' | 'relay-key-missing' | 'relay-off' | 'relay-stale' | 'fees-working' | 'fees-paused-money' | 'fees-paused-key' | 'fees-low' | 'fees-resumed';
+type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down' | 'relay-low' | 'relay-budget' | 'relay-key-missing' | 'relay-off' | 'relay-stale' | 'fees-working' | 'fees-paused-money' | 'fees-paused-key' | 'fees-low' | 'fees-no-endpoint' | 'fees-resumed';
 type Fake = { status: number; body: unknown };
 const { SCENARIOS, previewStatus, previewEvmDetail, previewEvmAct } = (await import(STATUS_MODULE)) as {
   SCENARIOS: readonly Scenario[];

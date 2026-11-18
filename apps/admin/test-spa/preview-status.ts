@@ -19,6 +19,7 @@
 //   fees-paused-money  paused: the relayer's wallet is out of money (`relayer_cannot_send` · `insufficient_funds`)
 //   fees-paused-key    paused: someone else used the relayer's key (`foreign_transactions`)
 //   fees-low       working, but the relayer's wallet under its low line
+//   fees-no-endpoint  set up, but the relayer's trusted read endpoint secret missing (sponsorship off: Not set up)
 // Every other scenario has no `evm.sponsor` (the API answers no `evmRelay`): the tile says "Not set up".
 // `previewEvmDetail` and `previewEvmAct` answer the "Free network fees" page and its tools through the Worker's own
 // routes (src/evm-relay.ts) over the same fake views.
@@ -31,7 +32,7 @@ import type { EvmRelayChainView, EvmRelayDetail, EvmRelayRecordView, EvmRelaySta
 import { evmRelayActRoute, evmRelayDetailRoute } from '../src/evm-relay.ts';
 import type { RouteCtx } from '../src/routes.ts';
 
-export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale', 'fees-working', 'fees-paused-money', 'fees-paused-key', 'fees-low'] as const;
+export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale', 'fees-working', 'fees-paused-money', 'fees-paused-key', 'fees-low', 'fees-no-endpoint'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 const BUILD = '8a797fe1c2d3';
@@ -122,6 +123,7 @@ function world(now: number, s: Scenario): World {
         keys: { configured: 2, missing: [] },
         spend: { ok: true, day: new Date(now).toISOString().slice(0, 10), spentYocto: `62${E24.slice(2)}` },
       },
+      evmRelay: { state: 'absent', chains: [] },
       governance: {
         ok: true,
         snapshot: {
@@ -195,12 +197,14 @@ export function evmView(now: number, s: Scenario | 'fees-resumed'): EvmRelayChai
     readAt: now,
     relayerAddress: EVM_RELAYER,
     key: 'ok',
+    readEndpoint: s === 'fees-no-endpoint' ? 'missing' : 'keyed',
     lowBalanceWei: (50n * MILLI).toString(),
     dailyBudgetWei: (20n * MILLI).toString(),
     oneSendWorstWei: (6n * 10n ** 14n).toString(),
     relayer: {
       ok: true,
       started: true,
+      signerAddress: EVM_RELAYER,
       halted: s === 'fees-paused-money' ? { reason: 'relayer_cannot_send', since: now - 12 * MIN, slot: 42, code: 'insufficient_funds' } : s === 'fees-paused-key' ? { reason: 'foreign_transactions', since: now - 4 * MIN, slot: null, code: null } : null,
       waiting: s === 'fees-paused-key' ? 0 : 2,
       awaitingConfirmation: s === 'fees-working' || s === 'fees-resumed' ? 1 : 0,
@@ -229,7 +233,7 @@ function evmRecords(now: number, s: Scenario | 'fees-resumed'): EvmRelayRecordVi
     ];
   return [
     { slot: 41, kind: 'action', onChain: true, taken: true, cancelling: false, sentAt: now - 70_000, deadlineAt: now + 230_000, copies: [{ hash: hashOf(41), kind: 'action' }], refusedCode: null, app },
-    { slot: 42, kind: 'action', onChain: false, taken: true, cancelling: false, sentAt: now - 40_000, deadlineAt: now + 260_000, copies: [{ hash: hashOf(42), kind: 'action' }], refusedCode: null, app: stamps },
+    { slot: 42, kind: 'action', onChain: false, taken: true, cancelling: false, sentAt: now - 6 * MIN, deadlineAt: now - 60_000, copies: [{ hash: hashOf(42), kind: 'action' }, { hash: hashOf(42, 'b'), kind: 'action' }], refusedCode: null, app: stamps },
     { slot: 43, kind: 'action', onChain: false, taken: false, cancelling: false, sentAt: now - 9_000, deadlineAt: now + 291_000, copies: [{ hash: hashOf(43), kind: 'action' }], refusedCode: null, app },
   ];
 }
@@ -239,7 +243,7 @@ const previewStaff = { actor: { kind: 'hana' as const, id: 'access-sub-1', email
 /** `GET /api/evm-relay/84532` for a fees scenario (any other scenario: the env has no sponsorship: not found). */
 export async function previewEvmDetail(s: Scenario | 'fees-resumed', now = Date.now()): Promise<{ status: number; body: unknown }> {
   const on = s.startsWith('fees-');
-  const detail: EvmRelayDetail = { chain: evmView(now, s), records: evmRecords(now, s), apps: 'recorded' };
+  const detail: EvmRelayDetail = { chain: evmView(now, s), records: evmRecords(now, s), apps: 'recorded', chainCount: s === 'fees-paused-key' ? { ok: true, latest: 47, pending: 47 } : { ok: true, latest: 41, pending: 44 } };
   const env = { API: { evmRelayDetail: async () => (on ? { ok: true, detail } : { ok: false, code: 'not_found', error: 'EVM sponsorship is not set up in this environment' }) } } as unknown as Env;
   const res = await evmRelayDetailRoute({ env, staff: previewStaff, params: { chain: '84532' }, body: {} } as unknown as RouteCtx);
   return { status: res.status, body: await res.json() };
@@ -247,11 +251,11 @@ export async function previewEvmDetail(s: Scenario | 'fees-resumed', now = Date.
 
 /** `POST /api/evm-relay/84532/act`: a resume is done (the scenario then shows it working); every other tool is refused as the relayer would. */
 export async function previewEvmAct(body: Record<string, unknown>, s: Scenario | 'fees-resumed', now = Date.now()): Promise<{ status: number; body: unknown; resumed: boolean }> {
-  const refused = body.tool === 'resume' ? (s === 'fees-paused-key' ? 'foreign_transactions' : null) : body.tool === 'cancel' ? 'nonce_mined' : body.tool === 'fill' ? 'not_the_chains_next_nonce' : body.tool === 'close' ? 'nonce_not_consumed_at_confirmed_depth' : 'unmined_records';
+  const refused = body.tool === 'resume' ? (s === 'fees-paused-key' && body.keyConfirmed !== true ? 'key_confirmation_required' : null) : body.tool === 'cancel' ? 'nonce_mined' : body.tool === 'fill' ? 'not_the_chains_next_nonce' : body.tool === 'close' ? 'nonce_not_consumed_at_confirmed_depth' : 'unmined_records';
   const view = evmView(now, refused === null ? 'fees-resumed' : s);
   const env = {
     CONSOLE: { recordStaffAction: async () => ({ ok: true }) },
-    API: { evmRelayAct: async () => ({ ok: true, result: { done: refused === null, refused, relayer: view.relayer.ok ? view.relayer : null } }) },
+    API: { evmRelayVersion: async () => ({ ok: true, version: 1 }), evmRelayAct: async () => ({ ok: true, result: { done: refused === null, refused, relayer: view.relayer.ok ? view.relayer : null } }) },
   } as unknown as Env;
   const res = await evmRelayActRoute({ env, staff: previewStaff, params: { chain: '84532' }, body } as unknown as RouteCtx);
   return { status: res.status, body: await res.json(), resumed: res.status === 200 && refused === null };

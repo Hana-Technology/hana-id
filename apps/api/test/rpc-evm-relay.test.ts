@@ -13,7 +13,7 @@ import artifact from '../../../contracts/evm-delegate/artifacts/HanaDelegateExec
 import type { Env } from '../src/env.ts';
 import type { EvmRelayerStaffEntry, EvmRelayerStaffResult, EvmRelayerStaffStatus } from '../src/evm-relayer.ts';
 import { evmRelayerName } from '../src/evm-relayer.ts';
-import { evmRelayerStaffTiming } from '../src/evm-relayer-staff.ts';
+import { evmRelayerStaffAct, evmRelayerStaffTiming, forgetHelperCodes } from '../src/evm-relayer-staff.ts';
 import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { checksumEvmAddress, evmSponsorVar } from '../src/evm/sponsor-config.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
@@ -153,10 +153,14 @@ function fakeRelayer(status: EvmRelayerStaffStatus | (() => EvmRelayerStaffStatu
 interface ChainFake {
   balance: bigint | 'down';
   code: Hex | 'down';
+  /** The relayer's transaction counts (latest, pending), or down. */
+  count: { latest: number; pending: number } | 'down';
+  /** Never answer the balance (a hanging endpoint). */
+  hang?: boolean;
   calls: string[];
 }
 function fakeChain(c: Partial<ChainFake> = {}): ChainFake {
-  const chain: ChainFake = { balance: 80_000_000_000_000_000n, code: CODE, calls: [], ...c };
+  const chain: ChainFake = { balance: 80_000_000_000_000_000n, code: CODE, count: { latest: 7, pending: 7 }, calls: [], ...c };
   const prev = vi.isMockFunction(globalThis.fetch) ? (globalThis.fetch as unknown as { getMockImplementation(): typeof fetch | undefined }).getMockImplementation() : undefined;
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
@@ -169,12 +173,18 @@ function fakeChain(c: Partial<ChainFake> = {}): ChainFake {
     const reply = (result: unknown) => Response.json({ jsonrpc: '2.0', id: body.id, result });
     if (body.method === 'eth_chainId') return reply(`0x${CHAIN.toString(16)}`);
     if (body.method === 'eth_getBalance') {
+      if (chain.hang) return new Promise<Response>(() => {});
       if (chain.balance === 'down') throw new TypeError('Network connection lost.');
       return reply(`0x${chain.balance.toString(16)}`);
     }
     if (body.method === 'eth_getCode') {
       if (chain.code === 'down') throw new TypeError('Network connection lost.');
       return reply(chain.code);
+    }
+    if (body.method === 'eth_getTransactionCount') {
+      if (chain.count === 'down') throw new TypeError('Network connection lost.');
+      const tag = (body as unknown as { params: [string, string] }).params[1];
+      return reply(`0x${(tag === 'pending' ? chain.count.pending : chain.count.latest).toString(16)}`);
     }
     return Response.json({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: 'no such method' } });
   });
@@ -187,6 +197,8 @@ const rpcOf = (e: Env) => new AdminRpc(createExecutionContext(), e);
 
 beforeEach(() => {
   forgetVerifiedChains();
+  forgetHelperCodes();
+  evmRelayerStaffTiming.overviewMs = 6_000;
   evmRelayerStaffTiming.relayerMs = 5_000;
   evmRelayerStaffTiming.chainMs = 5_000;
   evmRelayerStaffTiming.budgetMs = 2_500;
@@ -206,12 +218,12 @@ describe('AdminRpc.systemStatus evmRelay', () => {
     const chain = fakeChain();
     const relayer = fakeRelayer(staffStatus());
     const r = await status(sponsorEnv(relayer, { EVM_SPONSOR: undefined }));
-    expect(r).not.toHaveProperty('evmRelay');
+    expect(r.evmRelay).toEqual({ state: 'absent', chains: [] });
     expect(relayer.calls).toEqual([]);
     expect(relayer.names).toEqual([]);
     expect(chain.calls).toEqual([]);
     // The test Worker's own env has no block either.
-    expect(await status({ ...env, EVM_RELAYER: relayer.ns } as unknown as Env)).not.toHaveProperty('evmRelay');
+    expect((await status({ ...env, EVM_RELAYER: relayer.ns } as unknown as Env)).evmRelay).toEqual({ state: 'absent', chains: [] });
     expect(relayer.calls).toEqual([]);
   });
 
@@ -239,6 +251,8 @@ describe('AdminRpc.systemStatus evmRelay', () => {
       chainId: CHAIN,
       relayerAddress: RELAYER,
       key: 'ok',
+      // A local* env without the keyed secret reads the manifest's rpc (outside local* the API turns sponsorship off: `missing`).
+      readEndpoint: 'public',
       lowBalanceWei: (5n * ETH / 100n).toString(),
       dailyBudgetWei: (2n * ETH / 100n).toString(),
       // 300 000 gas × 1 gwei (not doubled: the local chain isn't an OP Stack chain).
@@ -248,6 +262,7 @@ describe('AdminRpc.systemStatus evmRelay', () => {
       relayer: {
         ok: true,
         started: true,
+        signerAddress: RELAYER,
         halted: null,
         waiting: 2,
         awaitingConfirmation: 1,
@@ -314,11 +329,13 @@ describe('AdminRpc.systemStatus evmRelay', () => {
     let c = (await status(sponsorEnv(fakeRelayer(staffStatus())))).evmRelay!.chains[0]!;
     expect(c.helper).toEqual({ address: DELEGATE, pinnedCodeHash: PINNED, ok: true, codeHash: hex(keccak_256(Uint8Array.of(0x60, 0x00))), matches: false });
     vi.restoreAllMocks();
+    forgetHelperCodes();
     governanceViews(ownerChain());
     chain = fakeChain({ code: '0x' });
     c = (await status(sponsorEnv(fakeRelayer(staffStatus())))).evmRelay!.chains[0]!;
     expect(c.helper).toMatchObject({ ok: true, codeHash: null, matches: false });
     vi.restoreAllMocks();
+    forgetHelperCodes();
     governanceViews(ownerChain());
     chain = fakeChain({ balance: 'down', code: 'down' });
     const broken = fakeRelayer(() => Promise.reject(new Error('object reset')));
@@ -351,6 +368,21 @@ describe('AdminRpc.systemStatus evmRelay', () => {
     const slow = { ...env.RATE_LIMITER, idFromName: () => ({}), get: () => ({ spent: () => new Promise(() => {}) }) } as unknown as Env['RATE_LIMITER'];
     expect((await status(sponsorEnv(fakeRelayer(staffStatus()), { RATE_LIMITER: slow }))).evmRelay!.chains[0]!.budget).toEqual({ ok: false, code: 'rate_limiter_unavailable' });
   });
+
+  it('only this part degrades: reads that hang give state timeout, the rest of the status stands; the helper’s code is read once per 10 minutes', async () => {
+    governanceViews(ownerChain());
+    const chain = fakeChain({ hang: true });
+    evmRelayerStaffTiming.overviewMs = 50;
+    const r = await status(sponsorEnv(fakeRelayer(staffStatus())));
+    expect(r.evmRelay).toEqual({ state: 'timeout', chains: [] });
+    expect(r.hotDb.ok).toBe(true);
+    evmRelayerStaffTiming.overviewMs = 6_000;
+    chain.hang = false;
+    await status(sponsorEnv(fakeRelayer(staffStatus())));
+    const codeReads = chain.calls.filter((m) => m === 'eth_getCode').length;
+    await status(sponsorEnv(fakeRelayer(staffStatus())));
+    expect(chain.calls.filter((m) => m === 'eth_getCode').length).toBe(codeReads);
+  });
 });
 
 describe('AdminRpc.evmRelayDetail', () => {
@@ -378,6 +410,8 @@ describe('AdminRpc.evmRelayDetail', () => {
       { hash: `0x${'c'.repeat(64)}`, kind: 'cancel' },
     ]);
     expect(d.records[0]!.deadlineAt).toBe(records[1]!.deadline * 1000);
+    // The network's own count for the relayer's address, as the relayer reads it (never an explorer's list).
+    expect(d.chainCount).toEqual({ ok: true, latest: 7, pending: 7 });
     expect(d.chain.relayer.ok && d.chain.relayer.staffLog.length).toBe(50);
     expect(JSON.stringify(d)).not.toMatch(/0x1111111111111111111111111111111111111111|account|digest|reservedWei|maxFeePerGas/u);
   });
@@ -419,6 +453,7 @@ describe('AdminRpc.evmRelayDetail', () => {
 
 describe('AdminRpc.evmRelayAct', () => {
   const result = (s: EvmRelayerStaffStatus, refused: string | null = null): EvmRelayerStaffResult => ({ done: refused === null, refused, status: s });
+  const SEEN = { haltSince: NOW - 300_000, lastStaffSeq: 2 };
   const act = (over: Record<string, unknown> = {}) => ({ ...hana(), chainId: CHAIN, tool: 'resume', note: 'Sent 0.1 test ETH from the faucet', seen: { haltSince: NOW - 300_000, lastStaffSeq: 2 }, ...over });
   const halted = staffStatus({ halted: { reason: 'relayer_cannot_send', since: NOW - 300_000, nonce: 3, code: 'insufficient_funds' }, staffLog: [entry(2), entry(1)] });
 
@@ -434,17 +469,18 @@ describe('AdminRpc.evmRelayAct', () => {
     const relayer = fakeRelayer(halted, tools);
     const rpc = rpcOf(sponsorEnv(relayer));
     const cases: [string, number | undefined, string, unknown[]][] = [
-      ['resume', undefined, 'staffResume', ['staff@hana.example', 'Sent 0.1 test ETH from the faucet']],
-      ['cancel', 3, 'staffCancel', ['staff@hana.example', 3, 'Sent 0.1 test ETH from the faucet']],
-      ['close', 4, 'staffClose', ['staff@hana.example', 4, 'consumed_elsewhere', 'Sent 0.1 test ETH from the faucet']],
-      ['fill', 5, 'staffFill', ['staff@hana.example', 5, 'Sent 0.1 test ETH from the faucet']],
-      ['adopt_nonce', 9, 'staffAdoptNonce', ['staff@hana.example', 9, 'Sent 0.1 test ETH from the faucet']],
+      ['resume', undefined, 'staffResume', ['staff@hana.example', 'Sent 0.1 test ETH from the faucet', SEEN]],
+      ['cancel', 3, 'staffCancel', ['staff@hana.example', 3, 'Sent 0.1 test ETH from the faucet', SEEN]],
+      ['close', 4, 'staffClose', ['staff@hana.example', 4, 'consumed_elsewhere', 'Sent 0.1 test ETH from the faucet', SEEN]],
+      ['fill', 5, 'staffFill', ['staff@hana.example', 5, 'Sent 0.1 test ETH from the faucet', SEEN]],
+      ['adopt_nonce', 9, 'staffAdoptNonce', ['staff@hana.example', 9, 'Sent 0.1 test ETH from the faucet', SEEN]],
     ];
     for (const [tool, slot, method, args] of cases) {
       relayer.calls.length = 0;
       const r = await rpc.evmRelayAct(act({ tool, ...(slot === undefined ? {} : { slot }) }));
       expect(r, tool).toMatchObject({ ok: true, result: { done: true, refused: null, relayer: { halted: null, lastStaffSeq: 3 } } });
-      // First the page's view is checked, then the one tool, with the guard, the staffer's email and the note.
+      // First the page's view is read, then the one tool, with the guard, the staffer's email, the note, and the view the
+      // page showed (checked again inside the relayer's queue).
       expect(relayer.calls.map((c) => c.method)).toEqual(['staffStatus', method]);
       expect(relayer.calls[1]!.args).toEqual(['hana-id/evm-relayer/staff/v1', ...args]);
     }
@@ -462,6 +498,48 @@ describe('AdminRpc.evmRelayAct', () => {
     expect(await rpc.evmRelayAct(act())).toMatchObject({ ok: true, result: { done: false, refused: 'invalid_request', relayer: null } });
     answer = () => Promise.reject(new Error('Network connection lost.'));
     expect(await rpc.evmRelayAct(act())).toMatchObject({ ok: true, result: { done: false, refused: 'unknown', relayer: null } });
+  });
+
+  it('the relayer’s own view check (inside its queue) answers version_conflict as the stale-page refusal', async () => {
+    const relayer = fakeRelayer(halted, { staffResume: async () => result(halted, 'version_conflict') });
+    expect(await rpcOf(sponsorEnv(relayer)).evmRelayAct(act())).toMatchObject({ ok: false, code: 'version_conflict' });
+  });
+
+  it('Cancel only past the slot’s time limit or in a stuck_past_deadline pause: else not_past_deadline, the relayer not called', async () => {
+    const rec = (deadline: number) => ({ ...(staffStatus().records[0] ?? {}), nonce: 3, digest: `0x${'d'.repeat(64)}`, account: null, deadline, reservedWei: '0', day: 0, worstWei: '0', gas: '0', sentAt: NOW, signedAt: NOW, versions: [{ hash: `0x${'a'.repeat(64)}`, kind: 'execute', maxFeePerGas: '1', maxPriorityFeePerGas: '1' }], accepted: true, batchRejected: null, cannotSend: null, seen: null });
+    const early = staffStatus({ halted: { reason: 'relayer_cannot_send', since: NOW - 300_000, nonce: 3, code: 'insufficient_funds' }, staffLog: [entry(2), entry(1)], records: [rec(Math.floor(Date.now() / 1000) + 600)] as never });
+    let relayer = fakeRelayer(early, { staffCancel: async () => result(early) });
+    expect(await rpcOf(sponsorEnv(relayer)).evmRelayAct(act({ tool: 'cancel', slot: 3 }))).toMatchObject({ ok: true, result: { done: false, refused: 'not_past_deadline', relayer: null } });
+    expect(relayer.calls.map((c) => c.method)).toEqual(['staffStatus']);
+    const stuck = staffStatus({ halted: { reason: 'stuck_past_deadline', since: NOW - 300_000, nonce: 3 }, staffLog: [entry(2), entry(1)], records: [rec(Math.floor(Date.now() / 1000) + 600)] as never });
+    relayer = fakeRelayer(stuck, { staffCancel: async () => result(stuck) });
+    expect(await rpcOf(sponsorEnv(relayer)).evmRelayAct(act({ tool: 'cancel', slot: 3 }))).toMatchObject({ ok: true, result: { done: true } });
+    const past = staffStatus({ halted: { reason: 'relayer_cannot_send', since: NOW - 300_000, nonce: 3, code: 'insufficient_funds' }, staffLog: [entry(2), entry(1)], records: [rec(Math.floor(Date.now() / 1000) - 10)] as never });
+    relayer = fakeRelayer(past, { staffCancel: async () => result(past) });
+    expect(await rpcOf(sponsorEnv(relayer)).evmRelayAct(act({ tool: 'cancel', slot: 3 }))).toMatchObject({ ok: true, result: { done: true } });
+  });
+
+  it('a pause that means the key may be someone else’s: Resume needs keyConfirmed (else refused, the relayer not called); the confirmation goes into the relayer’s note', async () => {
+    for (const h of [{ reason: 'foreign_transactions' }, { reason: 'nonce_consumed_elsewhere', nonce: 4 }, { reason: 'nonce_gap', nonce: 4 }, { reason: 'relayer_cannot_send', nonce: 4, code: 'sender_restricted' }]) {
+      const st = staffStatus({ halted: { ...h, since: NOW - 300_000 } as never, staffLog: [entry(2), entry(1)] });
+      const relayer = fakeRelayer(st, { staffResume: async () => result(staffStatus({ staffLog: [entry(3), entry(2), entry(1)] })) });
+      const rpc = rpcOf(sponsorEnv(relayer));
+      expect(await rpc.evmRelayAct(act()), h.reason).toMatchObject({ ok: true, result: { done: false, refused: 'key_confirmation_required' } });
+      expect(relayer.calls.map((c) => c.method)).toEqual(['staffStatus']);
+      expect(await rpc.evmRelayAct(act({ keyConfirmed: true }))).toMatchObject({ ok: true, result: { done: true } });
+      expect(relayer.calls.at(-1)!.args[2]).toBe('[An engineer confirmed the key is safe or replaced] Sent 0.1 test ETH from the faucet');
+    }
+    // Not a leak (out of money): no confirmation needed, none added.
+    const relayer = fakeRelayer(halted, { staffResume: async () => result(halted) });
+    await rpcOf(sponsorEnv(relayer)).evmRelayAct(act());
+    expect(relayer.calls.at(-1)!.args[2]).toBe('Sent 0.1 test ETH from the faucet');
+  });
+
+  it('a tool this code doesn’t know is refused, never mapped to another one', async () => {
+    const relayer = fakeRelayer(halted, { staffAdoptNonce: async () => result(halted) });
+    const r = await evmRelayerStaffAct(sponsorEnv(relayer), { ...act({ tool: 'drain', slot: 3 }) } as never, 'staff@hana.example');
+    expect(r).toEqual({ done: false, refused: 'invalid_request', relayer: null });
+    expect(relayer.calls.map((c) => c.method)).toEqual(['staffStatus']);
   });
 
   it('a stale page does nothing: another halt, a new halt, a resume elsewhere, or a staff action since it was read', async () => {
@@ -492,6 +570,12 @@ describe('AdminRpc.evmRelayAct', () => {
       { note: 'Two lines\nof a note here' },
       { note: 'A note with a ‮right-to-left override' },
       { note: 'A note with a \u0000 control character' },
+      { note: 'A note with a zero-width\u200bspace inside' },
+      { note: 'A note with an invisible\u2062times inside' },
+      { note: 'A note with a byte\ufefforder mark inside' },
+      { note: 'A note with an Arabic\u061cletter mark' },
+      { keyConfirmed: false },
+      { tool: 'cancel', slot: 3, keyConfirmed: true },
       { seen: { haltSince: null } },
       { seen: { haltSince: null, lastStaffSeq: -1 } },
       { seen: { haltSince: null, lastStaffSeq: 0, extra: 1 } },
@@ -501,7 +585,7 @@ describe('AdminRpc.evmRelayAct', () => {
     expect(relayer.calls).toEqual([]);
     // A note is trimmed before it is kept.
     await rpc.evmRelayAct(act({ note: '   Sent 0.1 test ETH from the faucet   ' }));
-    expect(relayer.calls.find((c) => c.method === 'staffResume')?.args.at(-1)).toBe('Sent 0.1 test ETH from the faucet');
+    expect(relayer.calls.find((c) => c.method === 'staffResume')?.args[2]).toBe('Sent 0.1 test ETH from the faucet');
   });
 
   it('an env without the block, or another chain, is not_found; nothing is called', async () => {

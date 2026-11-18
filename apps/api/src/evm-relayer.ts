@@ -42,7 +42,8 @@
 //   key_mismatch              records exist, the key isn't `relayerAddress` or their signer (a missing one: no halt).
 //   storage_inconsistent      a stored invariant broken (records vs `nextNonce`, a batch entry; also at send).
 // WHILE HALTED: new sends `relayer_halted`; replays answer; runs finalize, rebroadcast, bump, cancel. STAFF (recorded:
-// who, when, what, note, outcome; evm-relayer-staff.ts only; each re-reads the chain):
+// who, when, what, note, outcome; evm-relayer-staff.ts only; each re-reads the chain; given what the staffer saw, the
+// halt's start and the last staff action's number, it refuses `version_conflict` inside the queue when they changed):
 //   staffClose(n, consumed_elsewhere)  confirmed count > n, every version's receipt read: none. Reservation kept.
 //   staffCancel(n)      a record with no receipt, its nonce not mined at head: a cancel version (old ones kept).
 //   staffFill(n)        no record at n, n < nextNonce, n == the pending count and the latest count ≤ n.
@@ -193,6 +194,8 @@ export interface EvmRelayerStaffStatus extends EvmRelayerStatus {
   staffLog: EvmRelayerStaffEntry[];
 }
 export interface EvmRelayerStaffResult { done: boolean; refused: string | null; status: EvmRelayerStaffStatus }
+/** What the staffer's page showed (D843): the halt's start (null: running) and the newest staff action's number (0: none). */
+export interface EvmRelayerStaffExpect { haltSince: number | null; lastStaffSeq: number }
 
 /** `rejected` is reserved by the interface and never thrown: a refused batch is answered with `broadcast: 'rejected'`. */
 export type EvmRelayerErrorCode = 'relayer_unconfigured' | 'relayer_misconfigured' | 'invalid_request' | 'fees_too_high' | 'fees_too_low' | 'wrong_chain' | 'deadline_passed' | 'relayer_busy' | 'relayer_halted' | 'daily_cap' | 'rpc_unavailable' | 'rejected' | 'internal';
@@ -563,8 +566,8 @@ export class EvmRelayer extends DurableObject<Env> {
     return this.#staffView();
   }
 
-  async staffResume(guard: string, who: string, note: string): Promise<EvmRelayerStaffResult> {
-    return this.#staffAct(guard, who, note, { action: 'resume', nonce: null, verdict: null }, async (meta, c) => {
+  async staffResume(guard: string, who: string, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
+    return this.#staffAct(guard, who, note, expect, { action: 'resume', nonce: null, verdict: null }, async (meta, c) => {
       if (!meta.halted) return 'not_halted';
       // A new key with nothing in flight starts a new nonce life (read at the next send).
       if (this.#records().length === 0 && c.keyAddress && c.keyAddress !== meta.address) this.#putMeta({ ...meta, address: c.keyAddress, nextNonce: null });
@@ -576,9 +579,9 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  async staffClose(guard: string, who: string, nonce: number, verdict: 'consumed_elsewhere', note: string): Promise<EvmRelayerStaffResult> {
+  async staffClose(guard: string, who: string, nonce: number, verdict: 'consumed_elsewhere', note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
     if (verdict !== 'consumed_elsewhere') refuse('invalid_request');
-    return this.#staffAct(guard, who, note, { action: 'close', nonce, verdict }, async (meta, c) => {
+    return this.#staffAct(guard, who, note, expect, { action: 'close', nonce, verdict }, async (meta, c) => {
       const r = this.#rec(nonce);
       if (!r) return 'no_record';
       const rpc = this.#client(c);
@@ -592,8 +595,8 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  async staffCancel(guard: string, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> {
-    return this.#staffAct(guard, who, note, { action: 'cancel', nonce, verdict: null }, async (meta, c) => {
+  async staffCancel(guard: string, who: string, nonce: number, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
+    return this.#staffAct(guard, who, note, expect, { action: 'cancel', nonce, verdict: null }, async (meta, c) => {
       const r = this.#rec(nonce);
       if (!r) return 'no_record';
       if (!this.#canSign(c, meta)) return 'key_mismatch';
@@ -612,8 +615,8 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  async staffFill(guard: string, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> {
-    return this.#staffAct(guard, who, note, { action: 'fill', nonce, verdict: null }, async (meta, c) => {
+  async staffFill(guard: string, who: string, nonce: number, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
+    return this.#staffAct(guard, who, note, expect, { action: 'fill', nonce, verdict: null }, async (meta, c) => {
       if (!this.#canSign(c, meta)) return 'key_mismatch';
       if (meta.nextNonce === null || nonce >= meta.nextNonce) return 'not_below_next_nonce';
       if (this.#rec(nonce)) return 'record_exists';
@@ -632,8 +635,8 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  async staffAdoptNonce(guard: string, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> {
-    return this.#staffAct(guard, who, note, { action: 'adopt_nonce', nonce, verdict: null }, async (meta, c) => {
+  async staffAdoptNonce(guard: string, who: string, nonce: number, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
+    return this.#staffAct(guard, who, note, expect, { action: 'adopt_nonce', nonce, verdict: null }, async (meta, c) => {
       const records = this.#records();
       if (meta.nextNonce !== null && nonce < meta.nextNonce) return 'below_next_nonce';
       // Every record is below nextNonce, so n ≥ nextNonce is above them all.
@@ -1110,17 +1113,25 @@ export class EvmRelayer extends DurableObject<Env> {
 
   // ---- staff plumbing ----
 
-  /** Checks the caller's input, runs `fn` in the queue (null: done, else why refused) and records the action. */
-  async #staffAct(guard: string, who: string, note: string, what: Pick<EvmRelayerStaffEntry, 'action' | 'nonce' | 'verdict'>, fn: (meta: Meta, c: Ctx) => Promise<string | null>): Promise<EvmRelayerStaffResult> {
+  /**
+   * Checks the caller's input, runs `fn` in the queue (null: done, else why refused) and records the action. With
+   * `expect` (D843: what the staffer's page showed), the halt's start and the newest staff action's number must still
+   * be those inside the queue, else `version_conflict` and `fn` doesn't run: two staffers, or a double submit, never act
+   * on a state one of them didn't see.
+   */
+  async #staffAct(guard: string, who: string, note: string, expect: EvmRelayerStaffExpect | undefined, what: Pick<EvmRelayerStaffEntry, 'action' | 'nonce' | 'verdict'>, fn: (meta: Meta, c: Ctx) => Promise<string | null>): Promise<EvmRelayerStaffResult> {
     const text = (s: unknown, max: number): boolean => typeof s === 'string' && s.trim().length > 0 && s.length <= max && !/[\u0000-\u001f\u007f]/u.test(s);
-    if (guard !== EVM_RELAYER_STAFF_GUARD || !text(who, 128) || !text(note, 500) || (what.nonce !== null && (!Number.isSafeInteger(what.nonce) || what.nonce < 0))) refuse('invalid_request');
+    const seq = (n: unknown): boolean => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+    const expectOk = expect === undefined || (typeof expect === 'object' && expect !== null && Object.keys(expect).length === 2 && (expect.haltSince === null || seq(expect.haltSince)) && seq(expect.lastStaffSeq));
+    if (guard !== EVM_RELAYER_STAFF_GUARD || !text(who, 128) || !text(note, 500) || (what.nonce !== null && (!Number.isSafeInteger(what.nonce) || what.nonce < 0)) || !expectOk) refuse('invalid_request');
     return this.#exclusive(async () => {
       this.#ops = { signatures: 0, recoveries: 0, fetches: 0, keyDerivations: 0 };
       const meta = this.#meta();
       let refused: string | null = 'no_state';
       let c: Ctx | null = null;
       try {
-        if (meta) refused = await fn(meta, (c = this.#context(meta.chainId)));
+        if (expect && ((meta?.halted?.since ?? null) !== expect.haltSince || (meta?.staffSeq ?? 0) !== expect.lastStaffSeq)) refused = 'version_conflict';
+        else if (meta) refused = await fn(meta, (c = this.#context(meta.chainId)));
       } catch (e) {
         refused = evmRelayerError(e)?.code ?? (e instanceof EvmRpcError ? 'rpc_unavailable' : 'internal');
       } finally {

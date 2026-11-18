@@ -22,8 +22,9 @@ beforeAll(async () => {
     detail[s] = await m.previewEvmDetail(s);
   }
   const seen = (s: Scenario) => (detail[s].body as { seen: unknown }).seen;
-  acts.resume = await m.previewEvmAct({ tool: 'resume', note: 'Sent 0.1 test ETH from the faucet; balance now 0.1', seen: seen('fees-paused-money') }, 'fees-paused-money');
-  acts.cancel = await m.previewEvmAct({ tool: 'cancel', slot: 42, note: 'Its time limit passed and others wait behind it', seen: seen('fees-working') }, 'fees-working');
+  const token = (s: Scenario) => (detail[s].body as { token: string }).token;
+  acts.resume = await m.previewEvmAct({ token: token('fees-paused-money'), tool: 'resume', note: 'Sent 0.1 test ETH from the faucet; balance now 0.1', seen: seen('fees-paused-money') }, 'fees-paused-money');
+  acts.cancel = await m.previewEvmAct({ token: token('fees-working'), tool: 'cancel', slot: 42, note: 'Its time limit passed and others wait behind it', seen: seen('fees-working') }, 'fees-working');
 });
 
 const openStatus = async (s: Scenario) => {
@@ -80,7 +81,10 @@ describe('the System status tile', () => {
   it('paused because the key is used elsewhere: the engineer first', async () => {
     const t = feesTile(await openStatus('fees-paused-key'));
     expect(t.querySelector('.explain-why')!.textContent).toBe('The network shows more transactions from the relayer’s wallet than the relayer sent: someone else is using its key.');
-    expect(t.querySelector('.explain-steps li')!.textContent).toBe('Tell an engineer now: treat the relayer’s key as leaked.');
+    const steps = [...t.querySelectorAll('.explain-steps li')].map((li) => li.textContent);
+    expect(steps[0]).toBe('Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.');
+    expect(steps.at(-1)).toBe('Don’t press Resume until the engineer says the key is safe or replaced. Resume then asks you to confirm that.');
+    expect(steps.join(' ')).not.toMatch(/faucet/u);
   });
 });
 
@@ -114,7 +118,9 @@ describe('the Free network fees page', () => {
     expect(rows[0]!.textContent).toContain('On the network, being confirmed');
     expect(rows[2]!.textContent).toContain('Not yet picked up by the network');
     // A slot on the network has no Cancel; the others have one.
-    expect([...rows].map((r) => !!r.querySelector('button'))).toEqual([false, true, true]);
+    // Cancel only past the time limit: slot 42's has passed; slot 43's hasn't, and its row says when Cancel shows.
+    expect([...rows].map((r) => !!r.querySelector('button'))).toEqual([false, true, false]);
+    expect(rows[2]!.textContent).toContain('Cancel shows once its time limit has passed.');
     const links = [...p.main().querySelectorAll('a[target=_blank]')].map((a) => a.getAttribute('href'));
     expect(links[0]).toBe('https://sepolia.basescan.org/address/0x7aD3c18E50fB2a6D9e4C31b0F5A7E8c2d1B9f640');
     expect(links.slice(1).every((h) => /^https:\/\/sepolia\.basescan\.org\/tx\/0x[0-9a-f]{64}$/u.test(h!))).toBe(true);
@@ -148,7 +154,11 @@ describe('the Free network fees page', () => {
     expect(p.acts).toEqual([]);
     (confirm.querySelector('button') as unknown as HTMLButtonElement).click();
     await vi.waitFor(() => expect(p.acts).toHaveLength(1));
-    expect(p.acts[0]!.body).toEqual({ tool: 'resume', note: 'Sent 0.1 test ETH from the faucet; balance now 0.1', seen: (detail['fees-paused-money'].body as { seen: unknown }).seen });
+    const d = detail['fees-paused-money'].body as { seen: unknown; token: string };
+    expect(p.acts[0]!.body).toEqual({ token: d.token, tool: 'resume', note: 'Sent 0.1 test ETH from the faucet; balance now 0.1', seen: d.seen });
+    expect(d.token).toMatch(/^evmact_[A-Za-z0-9_-]{22}$/u);
+    // Resume is never "always safe": it says what it can't tell.
+    expect(tool.textContent).toContain('It can’t tell whether its key is safe');
     expect(p.acts[0]!.headers['x-hana-admin']).toBe('1');
     await vi.waitFor(() => expect(p.main().querySelector('.act-result')).not.toBeNull());
     expect(p.main().querySelector('.act-result')!.textContent).toContain('Resume: doneFree network fees are running again.');
@@ -182,6 +192,34 @@ describe('the Free network fees page', () => {
     await vi.waitFor(() => expect(tool.textContent).toContain('Someone changed this first'));
     expect(tool.textContent).toContain('Nothing was done. Reload the page and look again.');
     expect(p.acts).toHaveLength(1);
+  });
+
+  it('a pause that means the key may be someone else’s: Resume isn’t primary, needs the engineer’s confirmation, and says so', async () => {
+    const p = openDetail('fees-paused-key', () => ({ status: 500, body: {} }));
+    await ready(p);
+    const tool = [...p.main().querySelectorAll('.tool')].find((t) => t.querySelector('h3')!.textContent === 'Resume')!;
+    expect(tool.querySelector('.jp-btn-primary')).toBeNull();
+    expect(tool.textContent).toContain('Only after the engineer says so');
+    const box = tool.querySelector('input[name=keyConfirmed]') as unknown as HTMLInputElement;
+    expect(box).not.toBeNull();
+    (tool.querySelector('input[name=note]') as unknown as HTMLInputElement).value = 'Ana (engineer) replaced the key and moved the money';
+    // Not ticked: nothing is sent; the page says to confirm first.
+    p.submit(tool.querySelector('form'));
+    expect(tool.querySelector('.confirm')!.textContent).toContain('on the engineer’s word that the key is safe or replaced');
+    (tool.querySelector('.confirm .jp-btn-danger') as unknown as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(tool.textContent).toContain('Confirm what the engineer said first'));
+    expect(p.acts).toEqual([]);
+    // Ticked: sent with keyConfirmed.
+    box.checked = true;
+    p.submit(tool.querySelector('form'));
+    (tool.querySelector('.confirm .jp-btn-danger') as unknown as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(p.acts).toHaveLength(1));
+    expect(p.acts[0]!.body).toMatchObject({ tool: 'resume', keyConfirmed: true });
+    // "Set the next slot number": the network's own count, pre-filled and said.
+    const adopt = [...p.main().querySelectorAll('details.advanced .tool')].find((t) => t.querySelector('h3')!.textContent === 'Set the next slot number')!;
+    expect(adopt.textContent).toContain('The network says the next slot number is 47.');
+    expect((adopt.querySelector('input[name=slot]') as unknown as HTMLInputElement).value).toBe('47');
+    expect(adopt.textContent).not.toMatch(/block explorer/u);
   });
 
   it('the Advanced tools: each with its warning and its own confirmation; a tool that can’t apply says why instead', async () => {

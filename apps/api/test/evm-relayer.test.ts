@@ -1481,6 +1481,30 @@ describe('review M2/M3: a nonce is never freed', () => {
     expect(await halted(stub)).toBeNull();
   });
 
+  it('D843 review M1: what the staffer saw is checked inside the queue: two simultaneous Cancels on the same view, one runs, one is version_conflict', async () => {
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    await stub.send(request({ execute: { deadline: nowS() + 300n } }));
+    const seen = { haltSince: null, lastStaffSeq: 0 };
+    const [x, y] = await Promise.all([evmRelayerStaffCancel(stub, WHO, 0, 'first staffer', seen), evmRelayerStaffCancel(stub, WHO, 0, 'second staffer', seen)]);
+    expect([x.done, y.done].sort()).toEqual([false, true]);
+    expect([x.refused, y.refused].filter(Boolean)).toEqual(['version_conflict']);
+    // One cancel version, not two; both calls are in the staff log (the refused one with its reason).
+    expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+    const log = (await evmRelayerStaffStatus(stub)).staffLog;
+    expect(log.map((e) => [e.seq, e.done, e.refused])).toEqual([
+      [2, false, 'version_conflict'],
+      [1, true, null],
+    ]);
+    // A view that holds acts; a malformed one is refused before the queue.
+    expect(await evmRelayerStaffCancel(stub, WHO, 0, 'third, on the current view', { haltSince: null, lastStaffSeq: 2 })).toMatchObject({ done: true });
+    expect(await codeOf(evmRelayerStaffCancel(stub, WHO, 0, 'n', { haltSince: null } as never))).toBe('invalid_request');
+    expect(await codeOf(evmRelayerStaffCancel(stub, WHO, 0, 'n', { haltSince: -1, lastStaffSeq: 0 }))).toBe('invalid_request');
+    // A halt that started after the page was read: version_conflict for Resume too.
+    expect(await evmRelayerStaffResume(stub, WHO, 'resume', { haltSince: 123, lastStaffSeq: 3 })).toMatchObject({ done: false, refused: 'version_conflict' });
+    chain.onSend = undefined;
+  });
+
   it('staffCancel refuses: no record, a key that can’t sign, a nonce mined at head, a receipt of its own, no valid replacement left', async () => {
     const stub = await fresh();
     expect(await evmRelayerStaffCancel(stub, WHO, 0, 'n')).toMatchObject({ refused: 'no_state' });

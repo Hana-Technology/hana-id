@@ -13,14 +13,14 @@
 // check per isolate). Nothing is read without the block. The view holds public data
 // only: no key, raw transaction, calldata, signature or user's account (records are reduced to slots, hashes, times).
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
-import type { EvmRelayActInput, EvmRelayActResult, EvmRelayChainView, EvmRelayDetail, EvmRelayRecordView, EvmRelayRelayerView, EvmRelayStatus } from '@hana-id/console-core';
+import { type EvmRelayActInput, type EvmRelayActResult, type EvmRelayChainView, type EvmRelayDetail, type EvmRelayRecordView, type EvmRelayRelayerView, type EvmRelayStatus, isLeakHalt } from '@hana-id/console-core';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { RpcRefusal } from './changes/cas.ts';
 import type { Env } from './env.ts';
-import { EVM_RELAYER_STAFF_GUARD, type EvmRelayer, type EvmRelayerStaffResult, type EvmRelayerStaffStatus, evmRelayKeyAddress, evmRelayerError, evmRelayerName } from './evm-relayer.ts';
+import { EVM_RELAYER_STAFF_GUARD, type EvmRelayer, type EvmRelayerStaffExpect, type EvmRelayerStaffResult, type EvmRelayerStaffStatus, evmRelayKeyAddress, evmRelayerError, evmRelayerName } from './evm-relayer.ts';
 import { limiter } from './handlers.ts';
 import { log } from './log.ts';
-import { EvmRpcError, type Hex, sponsorChainFor } from './evm/sponsor-chain.ts';
+import { EvmRpcError, type Hex, keyedSponsorRpc, sponsorChainFor } from './evm/sponsor-chain.ts';
 import { DAY, budgetWindow, envBudgetSubject } from './evm/sponsor-settle.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, parseEvmSponsorConfig, sponsorChain } from './evm/sponsor-config.ts';
 
@@ -30,25 +30,30 @@ type Stub = DurableObjectStub<EvmRelayer>;
 export const evmRelayerStaffStatus = (stub: Stub): Promise<EvmRelayerStaffStatus> => stub.staffStatus(EVM_RELAYER_STAFF_GUARD) as Promise<EvmRelayerStaffStatus>;
 
 /** Clears the halt after a fresh check of the chain finds no halt condition; refused while one holds. */
-export const evmRelayerStaffResume = (stub: Stub, who: string, note: string): Promise<EvmRelayerStaffResult> => stub.staffResume(EVM_RELAYER_STAFF_GUARD, who, note) as Promise<EvmRelayerStaffResult>;
+export const evmRelayerStaffResume = (stub: Stub, who: string, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> => stub.staffResume(EVM_RELAYER_STAFF_GUARD, who, note, expect) as Promise<EvmRelayerStaffResult>;
 
 /** Closes the record at `nonce` as consumed elsewhere: only when the chain's confirmed count is past it and none of its versions has a receipt. */
-export const evmRelayerStaffClose = (stub: Stub, who: string, nonce: number, verdict: 'consumed_elsewhere', note: string): Promise<EvmRelayerStaffResult> =>
-  stub.staffClose(EVM_RELAYER_STAFF_GUARD, who, nonce, verdict, note) as Promise<EvmRelayerStaffResult>;
+export const evmRelayerStaffClose = (stub: Stub, who: string, nonce: number, verdict: 'consumed_elsewhere', note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> =>
+  stub.staffClose(EVM_RELAYER_STAFF_GUARD, who, nonce, verdict, note, expect) as Promise<EvmRelayerStaffResult>;
 
 /** Signs a 0-value self-transfer at the SAME nonce for a record with no receipt (its earlier versions kept; a nonce is never freed). */
-export const evmRelayerStaffCancel = (stub: Stub, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> => stub.staffCancel(EVM_RELAYER_STAFF_GUARD, who, nonce, note) as Promise<EvmRelayerStaffResult>;
+export const evmRelayerStaffCancel = (stub: Stub, who: string, nonce: number, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> => stub.staffCancel(EVM_RELAYER_STAFF_GUARD, who, nonce, note, expect) as Promise<EvmRelayerStaffResult>;
 
 /** Sends a 0-value self-transfer at a gap nonce (no record, below nextNonce, the chain's next nonce). */
-export const evmRelayerStaffFill = (stub: Stub, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> => stub.staffFill(EVM_RELAYER_STAFF_GUARD, who, nonce, note) as Promise<EvmRelayerStaffResult>;
+export const evmRelayerStaffFill = (stub: Stub, who: string, nonce: number, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> => stub.staffFill(EVM_RELAYER_STAFF_GUARD, who, nonce, note, expect) as Promise<EvmRelayerStaffResult>;
 
 /** Sets nextNonce to `nonce`, only with nothing unmined and the chain's latest and pending counts both `nonce`. */
-export const evmRelayerStaffAdoptNonce = (stub: Stub, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> => stub.staffAdoptNonce(EVM_RELAYER_STAFF_GUARD, who, nonce, note) as Promise<EvmRelayerStaffResult>;
+export const evmRelayerStaffAdoptNonce = (stub: Stub, who: string, nonce: number, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> => stub.staffAdoptNonce(EVM_RELAYER_STAFF_GUARD, who, nonce, note, expect) as Promise<EvmRelayerStaffResult>;
 
 // ---- the admin view (D843): AdminRpc's systemStatus, evmRelayDetail and evmRelayAct ----
 
 /** How long a status read waits for the object and for each chain read (the status page waits for the slowest part). Mutable for the tests. */
-export const evmRelayerStaffTiming = { relayerMs: 5_000, chainMs: 5_000, budgetMs: 2_500 };
+export const evmRelayerStaffTiming = { relayerMs: 4_000, chainMs: 4_000, budgetMs: 2_500, overviewMs: 6_000 };
+/** The account helper program's code hash, per isolate: it changes only by a deploy (D843 review L6). */
+const HELPER_TTL_MS = 10 * 60_000;
+const helperCache = new Map<string, { at: number; codeHash: string | null }>();
+/** Tests only. */
+export const forgetHelperCodes = (): void => helperCache.clear();
 /** Staff actions a status answer carries (the detail page carries the object's 50). */
 const STATUS_LOG = 5;
 const DAY_MS = DAY;
@@ -80,6 +85,7 @@ export function relayerViewOf(s: EvmRelayerStaffStatus, now: number, logLimit: n
   const u = s.unconfirmedRefusal;
   return {
     started: s.chainId !== null,
+    signerAddress: s.address,
     halted: s.halted ? { reason: s.halted.reason, since: s.halted.since, slot: s.halted.nonce ?? null, code: s.halted.code ?? null } : null,
     waiting: s.unmined,
     awaitingConfirmation: s.awaitingConfirmation,
@@ -120,27 +126,22 @@ async function chainViewOf(env: Env, config: EvmSponsorConfig, chain: Readonly<E
       (spent): EvmRelayChainView['budget'] => (typeof spent === 'string' && /^\d{1,78}$/u.test(spent) ? { ok: true, spentWei: spent } : { ok: false, code: 'rate_limiter_unavailable' }),
       (): EvmRelayChainView['budget'] => ({ ok: false, code: 'rate_limiter_unavailable' }),
     ),
-    within(evmRelayerStaffTiming.chainMs * 2, rpc.balance(config.relayerAddress as Hex)).then(
+    within(evmRelayerStaffTiming.chainMs, rpc.balance(config.relayerAddress as Hex)).then(
       (wei): EvmRelayChainView['balance'] => ({ ok: true, wei: wei.toString() }),
       (e: unknown): EvmRelayChainView['balance'] => ({ ok: false, code: rpcCode(e) }),
     ),
-    within(evmRelayerStaffTiming.chainMs * 2, rpc.code(chain.delegate as Hex)).then(
-      (c) => ({ ok: true as const, code: c }),
-      (e: unknown) => ({ ok: false as const, code: rpcCode(e) }),
-    ),
+    helperCode(rpc, chain, now),
   ]);
   if (!(r.ok && budget.ok && balance.ok && code.ok)) log({ event: 'system_status', outcome: 'error', code: 'evm_relay_unreadable', chainId: chain.chainId }, 'warn');
   let helper: EvmRelayChainView['helper'];
   if (!code.ok) helper = { address: chain.delegate, pinnedCodeHash, ok: false, code: code.code };
-  else {
-    const codeHash = code.code === EMPTY_CODE ? null : `0x${Array.from(keccak_256(hexBytes(code.code)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
-    helper = { address: chain.delegate, pinnedCodeHash, ok: true, codeHash, matches: codeHash !== null && codeHash === pinnedCodeHash };
-  }
+  else helper = { address: chain.delegate, pinnedCodeHash, ok: true, codeHash: code.codeHash, matches: code.codeHash !== null && code.codeHash === pinnedCodeHash };
   return {
     chainId: chain.chainId,
     readAt: now,
     relayerAddress: config.relayerAddress,
     key: !env.EVM_RELAY_KEYS ? 'missing' : keyAddress === config.relayerAddress ? 'ok' : 'wrong',
+    readEndpoint: keyedSponsorRpc(env, chain.chainId) !== null ? 'keyed' : /^local/u.test(env.ENV_NAME) ? 'public' : 'missing',
     lowBalanceWei: chain.lowBalanceWei.toString(),
     dailyBudgetWei: chain.dailyBudgetWei.toString(),
     // deploy-check's floor: one transaction's worst execution cost, doubled on an OP Stack chain for its L1 data fee.
@@ -152,6 +153,22 @@ async function chainViewOf(env: Env, config: EvmSponsorConfig, chain: Readonly<E
   };
 }
 
+/** The helper's code hash (null: no code), from the isolate's cache when read in the last 10 minutes. */
+async function helperCode(rpc: ReturnType<typeof sponsorChainFor>, chain: Readonly<EvmSponsorChainConfig>, now: number): Promise<{ ok: true; codeHash: string | null } | { ok: false; code: string }> {
+  const key = `${chain.chainId}:${chain.delegate.toLowerCase()}`;
+  const hit = helperCache.get(key);
+  if (hit && now - hit.at >= 0 && now - hit.at < HELPER_TTL_MS) return { ok: true, codeHash: hit.codeHash };
+  try {
+    const c = await within(evmRelayerStaffTiming.chainMs, rpc.code(chain.delegate as Hex));
+    const codeHash = c === EMPTY_CODE ? null : `0x${Array.from(keccak_256(hexBytes(c)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
+    if (helperCache.size > 16) helperCache.clear();
+    helperCache.set(key, { at: now, codeHash });
+    return { ok: true, codeHash };
+  } catch (e) {
+    return { ok: false, code: rpcCode(e) };
+  }
+}
+
 function hexBytes(h: string): Uint8Array {
   const out = new Uint8Array((h.length - 2) / 2);
   for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(h.slice(2 + 2 * i, 4 + 2 * i), 16);
@@ -159,15 +176,21 @@ function hexBytes(h: string): Uint8Array {
 }
 
 /**
- * `AdminRpc.systemStatus`'s `evmRelay`: undefined without `evm.sponsor` (nothing read), `bad_config` when the API
- * refuses the block (nothing read), else one view per sponsored chain. Never throws.
+ * `AdminRpc.systemStatus`'s `evmRelay`, always an explicit state: `absent` without `evm.sponsor` (nothing read),
+ * `bad_config` when the API refuses the block (nothing read), `timeout` when the reads didn't finish within
+ * `overviewMs` (only this part degrades), else one view per sponsored chain. Never throws.
  */
-export async function evmRelayerStaffOverview(env: Env, now: number = Date.now()): Promise<EvmRelayStatus | undefined> {
+export async function evmRelayerStaffOverview(env: Env, now: number = Date.now()): Promise<EvmRelayStatus> {
   const setup = setupOf(env);
-  if (setup.state === 'absent') return undefined;
+  if (setup.state === 'absent') return { state: 'absent', chains: [] };
   if (setup.state === 'bad_config') return { state: 'bad_config', chains: [] };
   const chains = Object.values(setup.config.chains).sort((a, b) => a.chainId - b.chainId);
-  return { state: 'on', chains: await Promise.all(chains.map((c) => chainViewOf(env, setup.config, c, now, STATUS_LOG))) };
+  try {
+    return { state: 'on', chains: await within(evmRelayerStaffTiming.overviewMs, Promise.all(chains.map((c) => chainViewOf(env, setup.config, c, now, STATUS_LOG)))) };
+  } catch {
+    log({ event: 'system_status', outcome: 'error', code: 'evm_relay_timeout' }, 'warn');
+    return { state: 'timeout', chains: [] };
+  }
 }
 
 function configuredChain(env: Env, chainId: number): { config: EvmSponsorConfig; chain: Readonly<EvmSponsorChainConfig> } {
@@ -220,16 +243,31 @@ export function recordsOf(s: EvmRelayerStaffStatus, apps: Map<string, { id: stri
 export async function evmRelayerStaffDetail(env: Env, db: D1Database, chainId: number, now: number = Date.now()): Promise<EvmRelayDetail> {
   const { config, chain } = configuredChain(env, chainId);
   const relayer = await readRelayer(env, chainId);
-  const [view, apps] = await Promise.all([chainViewOf(env, config, chain, now, 50, relayer), relayer.ok ? appsOf(db, chainId, relayer.status.records.flatMap((r) => (r.digest ? [r.digest] : []))) : Promise.resolve(null)]);
-  return { chain: view, records: relayer.ok ? recordsOf(relayer.status, apps) : [], apps: apps ? 'recorded' : 'unreadable' };
+  const rpc = sponsorChainFor(env, chain, { timeoutMs: evmRelayerStaffTiming.chainMs, maxRequests: 4 });
+  // The network's own count for the relayer's address (as the relayer reads it: the trusted endpoint), for "Set the next slot number".
+  const count = Promise.all([rpc.transactionCount(config.relayerAddress as Hex, 'latest'), rpc.transactionCount(config.relayerAddress as Hex, 'pending')]);
+  const [view, apps, chainCount] = await Promise.all([
+    chainViewOf(env, config, chain, now, 50, relayer),
+    relayer.ok ? appsOf(db, chainId, relayer.status.records.flatMap((r) => (r.digest ? [r.digest] : []))) : Promise.resolve(null),
+    within(evmRelayerStaffTiming.chainMs, count).then(
+      ([latest, pending]): EvmRelayDetail['chainCount'] => ({ ok: true, latest, pending }),
+      (e: unknown): EvmRelayDetail['chainCount'] => ({ ok: false, code: rpcCode(e) }),
+    ),
+  ]);
+  return { chain: view, records: relayer.ok ? recordsOf(relayer.status, apps) : [], apps: apps ? 'recorded' : 'unreadable', chainCount };
 }
 
+/** Prefixed to a Resume's note in the relayer's own log when the staffer confirmed the key (a leak-type halt). */
+export const KEY_CONFIRMED_NOTE = '[An engineer confirmed the key is safe or replaced] ';
+
 /**
- * `AdminRpc.evmRelayAct`: one staff tool, as `who` (the staff email). First the page's view must still hold (the halt's
- * start and the newest staff action, `seen`): else `version_conflict` and nothing is called. Then the tool: the
- * object checks the chain and refuses unsafe use itself, and its answer is final (never retried or worked around). A
- * coded error from the object: it refused before doing anything. Anything else thrown: unknown whether it acted
- * (`refused: 'unknown'`): the staff log on the detail page says.
+ * `AdminRpc.evmRelayAct`: one staff tool, as `who` (the staff email). Refused here before the relayer is called, as a
+ * value: a Cancel of a slot whose time limit hasn't passed outside a `stuck_past_deadline` halt (`not_past_deadline`),
+ * a Resume after a halt that means the key may be used by someone else without the staffer's confirmation that an
+ * engineer said it is safe or replaced (`key_confirmation_required`). Then the tool, given what the page showed
+ * (`seen`): the relayer checks it inside its queue (`version_conflict`, answered as RpcRefusal), checks the chain and
+ * refuses unsafe use itself, and its answer is final (never retried or worked around). A coded error from the object:
+ * it refused before doing anything. Anything else thrown: unknown whether it acted (`refused: 'unknown'`).
  */
 export async function evmRelayerStaffAct(env: Env, input: EvmRelayActInput, who: string, now: number = Date.now()): Promise<EvmRelayActResult> {
   configuredChain(env, input.chainId);
@@ -238,22 +276,49 @@ export async function evmRelayerStaffAct(env: Env, input: EvmRelayActInput, who:
   const before = await readRelayer(env, input.chainId);
   if (!before.ok) return { done: false, refused: before.code, relayer: null };
   const s = before.status;
+  // A cheap early answer for a stale page; the relayer checks the same again inside its queue (the one that counts).
   if ((s.halted?.since ?? null) !== input.seen.haltSince || (s.staffLog[0]?.seq ?? 0) !== input.seen.lastStaffSeq) {
     throw new RpcRefusal('version_conflict', 'The relayer changed since the page was read: nothing was done');
   }
   const slot = input.slot ?? 0;
+  if (input.tool === 'cancel') {
+    const rec = s.records.find((r) => r.nonce === slot);
+    if (rec && rec.deadline * 1000 > now && s.halted?.reason !== 'stuck_past_deadline') return { done: false, refused: 'not_past_deadline', relayer: null };
+  }
+  if (input.tool === 'resume' && isLeakHalt(s.halted) && input.keyConfirmed !== true) return { done: false, refused: 'key_confirmation_required', relayer: null };
+  const note = input.tool === 'resume' && input.keyConfirmed === true ? `${KEY_CONFIRMED_NOTE}${input.note}` : input.note;
+  const expect: EvmRelayerStaffExpect = { haltSince: input.seen.haltSince, lastStaffSeq: input.seen.lastStaffSeq };
   let r: EvmRelayerStaffResult;
   try {
-    if (input.tool === 'resume') r = await evmRelayerStaffResume(stub, who, input.note);
-    else if (input.tool === 'cancel') r = await evmRelayerStaffCancel(stub, who, slot, input.note);
-    else if (input.tool === 'close') r = await evmRelayerStaffClose(stub, who, slot, 'consumed_elsewhere', input.note);
-    else if (input.tool === 'fill') r = await evmRelayerStaffFill(stub, who, slot, input.note);
-    else r = await evmRelayerStaffAdoptNonce(stub, who, slot, input.note);
+    switch (input.tool) {
+      case 'resume':
+        r = await evmRelayerStaffResume(stub, who, note, expect);
+        break;
+      case 'cancel':
+        r = await evmRelayerStaffCancel(stub, who, slot, note, expect);
+        break;
+      case 'close':
+        r = await evmRelayerStaffClose(stub, who, slot, 'consumed_elsewhere', note, expect);
+        break;
+      case 'fill':
+        r = await evmRelayerStaffFill(stub, who, slot, note, expect);
+        break;
+      case 'adopt_nonce':
+        r = await evmRelayerStaffAdoptNonce(stub, who, slot, note, expect);
+        break;
+      default: {
+        // Exhaustive: a tool this code doesn't know is refused, never mapped to another one.
+        const unknownTool: never = input.tool;
+        void unknownTool;
+        return { done: false, refused: 'invalid_request', relayer: null };
+      }
+    }
   } catch (e) {
     const c = evmRelayerError(e);
     if (c) return { done: false, refused: c.code, relayer: null };
     log({ event: 'evm_relayer_staff_call', outcome: 'error', code: 'unknown', chainId: input.chainId }, 'error');
     return { done: false, refused: 'unknown', relayer: null };
   }
+  if (r.refused === 'version_conflict') throw new RpcRefusal('version_conflict', 'The relayer changed since the page was read: nothing was done');
   return { done: r.done, refused: r.refused, relayer: relayerViewOf(r.status, now, 50) };
 }

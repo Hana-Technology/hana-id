@@ -5,6 +5,7 @@
 import { z } from '@hana-id/env/zod';
 import { ACTOR_KINDS, ORG_KINDS, ctx, inviteView, ownerGrantView, requestId, role } from './types.ts';
 import { orgIdInput } from './rpc.ts';
+import { isPlainNote } from './evm-relay.ts';
 
 export const userIdInput = z.string().regex(/^usr_[A-Za-z0-9]{1,64}$/u);
 export const inviteIdInput = z.string().regex(/^inv_[A-Za-z0-9]{1,64}$/u);
@@ -128,6 +129,10 @@ export const recordStaffActionInput = ctx
   .strict()
   .refine((v) => Object.entries(v.details).every(([k, x]) => Array.isArray(x) === isListDetail(v.action, k)), {
     message: 'Only support.lookup’s requestIdList is a list (of request IDs), and it is always one',
+    path: ['details'],
+  })
+  .refine((v) => Object.entries(v.details).every(([k, x]) => !isNoteDetail(v.action, k) || (typeof x === 'string' && isPlainNote(x))), {
+    message: 'evm_relay.staff_action’s note is one line of plain text',
     path: ['details'],
   })
   .refine((v) => Object.entries(v.details).every(([k, x]) => typeof x !== 'string' || x.length <= STAFF_DETAIL_TEXT_MAX || isNoteDetail(v.action, k)), {

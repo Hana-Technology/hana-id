@@ -6,7 +6,7 @@
 // NEAR relay's state (near/relay-status.ts, D784: two NEAR reads of the relay account and one RateLimiter read when a
 // relay config is set, none otherwise), and EVM gas sponsorship's relayer per sponsored chain (D843: passed in by
 // rpc/admin.ts, the one caller allowed to reach the relayer's staff view; only with `evm.sponsor`, else nothing is read
-// and the answer has no `evmRelay`). Each part fails on its own: a D1 or NEAR failure leaves the others standing.
+// and `evmRelay` is `{ state: 'absent' }`). Each part fails on its own: a D1 or NEAR failure leaves the others standing.
 import { type ApiSystemStatus, type CronRunView, type DbProbe, type EvmRelayStatus, NOTICE_BACKLOG_LIMIT, type NoticeBacklog } from '@hana-id/console-core';
 import { deployedBuild } from './build.ts';
 import { relayerPools } from './changes/admin.ts';
@@ -72,9 +72,9 @@ async function governance(env: Env): Promise<ApiSystemStatus['governance']> {
   }
 }
 
-/** `evmRelay`: the relayer's view (undefined without `evm.sponsor`); a failure of it leaves the rest standing. */
-export async function systemStatus(env: Env, db: HotDb, evmRelay?: () => Promise<EvmRelayStatus | undefined>): Promise<ApiSystemStatus> {
-  const evm = evmRelay ? evmRelay().catch((): EvmRelayStatus => ({ state: 'on', chains: [] })) : Promise.resolve(undefined);
+/** `evmRelay`: the relayer's view (`absent` without `evm.sponsor`, nothing read); a failure of it leaves the rest standing. */
+export async function systemStatus(env: Env, db: HotDb, evmRelay?: () => Promise<EvmRelayStatus>): Promise<ApiSystemStatus> {
+  const evm = evmRelay ? evmRelay().catch((): EvmRelayStatus => ({ state: 'timeout', chains: [] })) : Promise.resolve(undefined);
   const [hotDb, sync, notices, gov, nearRelay, evmView] = await Promise.all([probe(env), jwksSync(db), noticeBacklog(db), governance(env), nearRelayStatus(env), evm]);
   return { build: deployedBuild(env.HANA_BUILD), hotDb, jwksSync: sync, notices, relayerKeys: poolKeys(env), usageCapture: env.USAGE_DB !== undefined, governance: gov, nearRelay, ...(evmView ? { evmRelay: evmView } : {}) };
 }

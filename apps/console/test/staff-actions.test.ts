@@ -86,6 +86,10 @@ describe('StaffRpc.recordStaffAction', () => {
     expect(await staffRpc().recordStaffAction({ ...before, ...hana(), details: { ...before.details, note: 'x'.repeat(301) } })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await staffRpc().recordStaffAction({ ...after, ...hana(), details: { ...after.details, result: 'x'.repeat(129) } })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await staffRpc().recordStaffAction({ ...after, ...hana(), details: { ...after.details, note } })).toMatchObject({ ok: false, code: 'bad_request' });
+    // The note is plain text here too (not only in the admin Worker): no line break, zero-width or bidirectional character.
+    for (const bad of ['two\nlines of a note', 'zero\u200bwidth inside a note', 'right\u202eto-left inside a note', 'byte\ufefforder mark in a note'])
+      expect(await staffRpc().recordStaffAction({ ...before, ...hana(), details: { ...before.details, note: bad } }), bad).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await staffRpc().recordStaffAction({ ...before, ...hana(), details: { ...before.details, keyConfirmed: true } })).toEqual({ ok: true });
     expect(await staffRpc().recordStaffAction({ ...hana(), action: 'users.find', details: { by: 'userId', ticket: 'x'.repeat(129) } })).toMatchObject({ ok: false, code: 'bad_request' });
   });
 });

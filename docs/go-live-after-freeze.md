@@ -672,8 +672,10 @@ the relayer address.
   "Watching it").
 - The relayer's state: System status's tile **Free network fees (Base Sepolia)** says "Working" (else why and what
   to do, as numbered steps); its link opens the Free network fees page, with what is waiting and the staff tools
-  (operations "Free network fees in the admin portal (D843)"). Deploy the console and the API before the admin Worker,
-  or the page's tools are refused (the audit actions and the API methods must exist first).
+  (operations "Free network fees in the admin portal (D843)"). The table in phase 3 already deploys the API (row 2)
+  and the console (row 5) before the admin portal (row 7), which this needs: with an older API the tile says "This page
+  is newer than the API: deploy the API first" and the tools do nothing; with an older console the tools say so and do
+  nothing. Without the read endpoint (4.12) the tile says "Not set up" with the upload step.
 
 ### 4.17 The free-plan CPU measurement (the assistant)
 

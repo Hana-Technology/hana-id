@@ -100,6 +100,8 @@ export interface AdminRpcClient {
   evmRelayDetail(c: unknown): Answer<{ detail: EvmRelayDetail }>;
   /** One relayer staff tool (D843): done, or the relayer's reason. */
   evmRelayAct(c: unknown): Answer<{ result: EvmRelayActResult }>;
+  /** Whether this API has the relayer's staff tools (D843): asked before a tool's audit row, so an older API records nothing. */
+  evmRelayVersion(c: unknown): Answer<{ version: number }>;
   /** Apps deleted 30 days ago or more, for the ledger's app_users purge. */
   deletedApps(c: unknown): Answer<DeletedAppsResult>;
   /** The wallet directory of scopes whose every app was deleted 30 days ago or more. */

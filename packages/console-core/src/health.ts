@@ -54,8 +54,8 @@ export interface ApiSystemStatus {
   /** The NEAR meta-transaction relay (D784). Absent from an API older than this field. */
   nearRelay?: NearRelayStatus;
   /**
-   * EVM gas sponsorship's relayer per sponsored chain (D843, D851): absent when the env has no `evm.sponsor` (and from
-   * an API older than this field), so nothing is read for it; see evm-relay.ts.
+   * EVM gas sponsorship's relayer per sponsored chain (D843, D851): always sent (`absent` when the env has no
+   * `evm.sponsor`, nothing read); missing only from an API older than this field; see evm-relay.ts.
    */
   evmRelay?: EvmRelayStatus;
 }

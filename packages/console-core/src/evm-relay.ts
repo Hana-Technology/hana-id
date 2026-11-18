@@ -15,10 +15,11 @@ export const EVM_RELAY_NOTE_MIN = 10;
 /** ...and at most this many (the relayer keeps 500, the audit row keeps this many). */
 export const EVM_RELAY_NOTE_MAX = 300;
 /**
- * Control characters (line breaks included), the C1 range, the line and paragraph separators and the bidirectional
- * overrides and isolates: a note is shown as text beside who wrote it, so nothing in it may move or hide other text.
+ * Control characters (line breaks included), the C1 range, the Arabic letter mark, the zero-width space, joiners and
+ * marks, the line and paragraph separators, the bidirectional overrides and isolates, the invisible operators and the
+ * byte-order mark: a note is shown as text beside who wrote it, so nothing in it may move, join or hide other text.
  */
-const NOT_PLAIN = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const NOT_PLAIN = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u;
 export const isPlainNote = (s: string): boolean => !NOT_PLAIN.test(s);
 
 const chainIdInput = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
@@ -47,15 +48,32 @@ export const evmRelayActInput = ctx
     slot: evmRelaySlot.optional(),
     note: evmRelayNote,
     seen: z.object({ haltSince: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(), lastStaffSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }).strict(),
+    /** Resume after a halt that means the key may be used by someone else: the staffer confirms an engineer said the key is safe or replaced. */
+    keyConfirmed: z.literal(true).optional(),
   })
   .strict()
-  .refine((v) => (v.tool === 'resume') === (v.slot === undefined), { message: 'resume takes no slot; every other tool takes one', path: ['slot'] });
+  .refine((v) => (v.tool === 'resume') === (v.slot === undefined), { message: 'resume takes no slot; every other tool takes one', path: ['slot'] })
+  .refine((v) => v.keyConfirmed === undefined || v.tool === 'resume', { message: 'keyConfirmed is for resume only', path: ['keyConfirmed'] });
 
 export type EvmRelayDetailInput = z.infer<typeof evmRelayDetailInput>;
 export type EvmRelayActInput = z.infer<typeof evmRelayActInput>;
 
 /** Why the relayer stopped (D851; the relayer's `EvmRelayerHaltReason`). An API newer than the admin may add one. */
 export const EVM_RELAY_HALT_REASONS = ['nonce_consumed_elsewhere', 'nonce_gap', 'foreign_transactions', 'relayer_cannot_send', 'stuck_past_deadline', 'key_mismatch', 'storage_inconsistent'] as const;
+
+/** `relayer_cannot_send` codes that mean another sender with the relayer's key (D851 items 16, 18). */
+const LEAK_CODES: ReadonlySet<string> = new Set(['replacement_underpriced', 'sender_restricted', 'nonce_too_low', 'nonce_too_high']);
+/**
+ * Whether a halt means the relayer's key may be used by someone else (D843 as amended after review): a slot used by a
+ * transaction it didn't send, a gap only another sender leaves, more transactions than it sent, or a refusal that says
+ * another sender holds its numbers. Such a halt is handled by an engineer first (the leaked-key runbook), and Resume
+ * needs the staffer to confirm an engineer said the key is safe or replaced.
+ */
+export function isLeakHalt(h: { reason: string; code?: string | null } | null | undefined): boolean {
+  if (!h) return false;
+  if (h.reason === 'nonce_consumed_elsewhere' || h.reason === 'nonce_gap' || h.reason === 'foreign_transactions') return true;
+  return h.reason === 'relayer_cannot_send' && typeof h.code === 'string' && LEAK_CODES.has(h.code);
+}
 
 export interface EvmRelayHalt {
   reason: string;
@@ -82,6 +100,8 @@ export interface EvmRelayStaffEntry {
 export interface EvmRelayRelayerView {
   /** It has sent something at least once (it keeps a slot count); before that every tool answers `no_state`. */
   started: boolean;
+  /** The address its records were signed by (the key it holds them for); differs from `relayerAddress` after a key change. */
+  signerAddress: string;
   halted: EvmRelayHalt | null;
   /** Transactions not yet on the chain, and those on it but not yet final (12 blocks or the `safe` block). */
   waiting: number;
@@ -110,6 +130,11 @@ export interface EvmRelayChainView {
   relayerAddress: string;
   /** EVM_RELAY_KEYS: set and the manifest's address (`ok`), unset (`missing`: the off switch), or unreadable or another address (`wrong`). */
   key: 'ok' | 'missing' | 'wrong';
+  /**
+   * The trusted read endpoint: the secret `EVM_SPONSOR_RPC_<chainId>` set (`keyed`), unset in a `local*` env (`public`:
+   * the manifest's `rpc`), or unset elsewhere (`missing`: sponsorship is off there, D851 as amended).
+   */
+  readEndpoint: 'keyed' | 'public' | 'missing';
   lowBalanceWei: string;
   dailyBudgetWei: string;
   /** One sponsored transaction's most it can cost (gas cap × fee cap, doubled on an OP Stack chain for the L1 data fee). */
@@ -126,10 +151,12 @@ export interface EvmRelayChainView {
 }
 
 /**
- * `ApiSystemStatus.evmRelay`: absent when the env has no `evm.sponsor` (nothing is read); `bad_config` when the API
- * refuses the block (sponsorship off; nothing is read); `on` with one view per sponsored chain.
+ * `ApiSystemStatus.evmRelay`, always present from an API that knows it (D843 as amended: a missing field means an API
+ * older than the admin): `absent` when the env has no `evm.sponsor` (nothing is read); `bad_config` when the API
+ * refuses the block (sponsorship off; nothing is read); `timeout` when the reads didn't finish in time (the rest of
+ * the status stands); `on` with one view per sponsored chain.
  */
-export type EvmRelayStatus = { state: 'bad_config'; chains: [] } | { state: 'on'; chains: EvmRelayChainView[] };
+export type EvmRelayStatus = { state: 'absent'; chains: [] } | { state: 'bad_config'; chains: [] } | { state: 'timeout'; chains: [] } | { state: 'on'; chains: EvmRelayChainView[] };
 
 /** One transaction the relayer holds. `app` comes from the sponsorship's own send records (null when unknown). */
 export interface EvmRelayRecordView {
@@ -160,6 +187,8 @@ export interface EvmRelayDetail {
   chain: EvmRelayChainView;
   records: EvmRelayRecordView[];
   apps: 'recorded' | 'unreadable';
+  /** The network's own count of the relayer's transactions (the trusted endpoint, as the relayer reads it): the next slot it expects. */
+  chainCount: { ok: true; latest: number; pending: number } | { ok: false; code: string };
 }
 
 /** `AdminRpc.evmRelayAct`: done, or the relayer's (or the API's) reason for doing nothing, and the relayer afterwards. */

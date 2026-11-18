@@ -34,6 +34,9 @@ describe('the EVM relayer’s staff tools', () => {
     const admin = readFileSync(join(src, 'rpc', 'admin.ts'), 'utf8');
     const imports = admin.split('\n').filter((l) => /^import\b/u.test(l) && /evm-relayer-staff/u.test(l));
     expect(imports).toEqual([ADMIN_IMPORT]);
+    // Exactly one mention of the module: no re-export (`export … from`), no dynamic import(), no second import.
+    expect(admin.match(/evm-relayer-staff/gu)?.length).toBe(1);
+    expect(admin).not.toMatch(/export\s*(?:\*|\{[^}]*\})\s*from\s*['"][^'"]*evm-relayer-staff|import\s*\(/u);
     expect(admin).not.toMatch(/EVM_RELAYER_STAFF_GUARD|\bstaff(?:Status|Resume|Close|Cancel|Fill|AdoptNonce)\b|evmRelayerStaff(?:Status|Resume|Close|Cancel|Fill|AdoptNonce)\b|EVM_RELAYER\b/u);
     // Each use sits in a method whose runRpc takes hana actors only (no system, member or link actor).
     const methods = admin.split(/\n  (?=[a-zA-Z]+\(c: unknown\) \{)/u);

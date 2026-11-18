@@ -1797,7 +1797,7 @@ describe('a batch no node took (broadcast: rejected)', () => {
 
   it('cause request (the batch’s own size or shape): answered at once 422 not_executed, a failure charged; the cancel’s cost settles from the relayer’s lookup', async () => {
     const s = await setup();
-    rejecting(s, 'request', 'gas_limit');
+    rejecting(s, 'request', 'oversized');
     sponsorTiming.receiptWaitMs = 30_000;
     const t0 = Date.now();
     const r = await send(s, signedSend(s.user).body);
@@ -1818,6 +1818,30 @@ describe('a batch no node took (broadcast: rejected)', () => {
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
     // A copy is answered the same from the row, the relayer not asked again.
     expect((await body(await send(s, { ...signedSend(s.user).body }))).code).toBeDefined();
+  });
+
+  it('cause request with code gas_limit (the gas Journear itself set, D847): 503 relayer_unavailable in neutral words, nothing charged to the user, evm_relay_stuck with gasModel raised; a copy the same', async () => {
+    const s = await setup();
+    await env.DB.exec("DELETE FROM security_events WHERE kind LIKE 'evm_relay_%'");
+    rejecting(s, 'request', 'gas_limit');
+    const signed = signedSend(s.user);
+    const r = await send(s, signed.body);
+    const b = await body(r);
+    expect([r.status, b.code, b.retryAfterS]).toEqual([503, 'relayer_unavailable', 60]);
+    expect(String(b.error)).not.toMatch(/refused|batch|request/iu);
+    // Not the user's doing: their failure slot, their attempts and the shared windows come back.
+    expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: 0, failures: 0n });
+    expect(await appMinute(s)).toBe(0);
+    // Staff see a gas-model problem: the hour's evm_relay_stuck says so.
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").all<{ detail_json: string }>();
+    expect(ev.results.map((e) => JSON.parse(e.detail_json))).toEqual([{ chainId: LOCAL_CHAIN, rejected: 'gas_limit', gasModel: true }]);
+    // The row keeps the relayer's own words; the money waits for the cancel, as for any rejected batch.
+    expect(await env.DB.prepare('SELECT status, rejection FROM evm_sponsor_sends WHERE account = ?1').bind(s.user.address).first()).toEqual({ status: 'rejected', rejection: 'request:gas_limit' });
+    expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
+    // A copy is answered the same from the row, the relayer not asked again.
+    const again = await send(s, signed.body);
+    expect([again.status, (await body(again)).code]).toEqual([503, 'relayer_unavailable']);
+    expect(s.relayer.sends).toHaveLength(1);
   });
 
   it('cause relayer (our side), and any cause not known yet: 503 sponsorship_paused, nothing charged to the user, evm_relay_stuck raised', async () => {

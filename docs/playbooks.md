@@ -1564,6 +1564,7 @@ An `evm_relay_stuck` security event, or the System status tile “Free network f
 
 - The tile “Free network fees (Base Sepolia)” on System status says “Paused: needs a person”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.
 - An `evm_relay_stuck` row in the admin's security events, emailed by the feed (at most one an hour per network), with one of: `halted` (the relayer stopped itself; `haltCode` the network's refusal), `rejected` (a refusal on our side turned a user's action away), `oldestPendingMs` or `oldestUnacceptedMs` over 2 minutes (the oldest transaction not on the network, or not taken by any node), or a send still unsettled after 10 minutes.
+- An `evm_relay_stuck` row with `rejected: gas_limit` and `gas model: yes` (its own row, at most one an hour per network): the network refused the gas Journear set for a user's action. The relayer does not pause for it and the user is not charged; it is a fault in Journear's gas settings or formula.
 
 **Impact**
 
@@ -1581,6 +1582,8 @@ An `evm_relay_stuck` security event, or the System status tile “Free network f
 4. **Ask an engineer when the steps say so** (who: a founder). If the records disagree (a bug), or Resume keeps being refused for the same reason, stop and ask an engineer. The relayer refuses anything unsafe itself; never work around a refusal.
 
 5. **Not paused, only slow or one refusal** (who: anyone). With no pause, a transaction waiting over 2 minutes usually means the network is busy: the relayer raises its fee every minute and it clears by itself. With `rejected` only, check the wallet's balance on the tile. If either lasts an hour, ask an engineer to look.
+
+6. **A gas refusal (`gas model: yes`)** (who: a founder). Nothing to fund and nothing to resume: give an engineer the time and the network. The engineer compares the refused transactions' gas (the relayer's records, `evm_sponsor_sends.gas_limit`) with the network's limits and the manifest's `maxGasPerTx`, and fixes the gas settings or the formula (apps/api/src/evm/op-fee.ts). Until then those actions keep being turned away with “couldn't send this right now”.
 
 **Verify**
 
@@ -1666,15 +1669,16 @@ An `evm_relay_budget_high` security event: today's reservations for sponsored ne
 
 `evm-relay-receipt-odd` · warning
 
-An `evm_relay_receipt_odd` security event: a confirmation from the network provider didn't fit what was reserved (a broken or lying provider), so the transaction was counted at the most it could cost.
+An `evm_relay_receipt_odd` security event: a confirmation from the network provider didn't fit what was reserved (a broken or lying provider), so the transaction was counted at the most it could cost. With `price above max fee: yes` in its details: the network reported a higher price than the relayer's own limit for that transaction; billing used the limit; likely a misreporting node.
 
 **Signals**
 
-- An `evm_relay_receipt_odd` row in the admin's security events, emailed by the feed (at most one an hour per network).
+- An `evm_relay_receipt_odd` row in the admin's security events, emailed by the feed (at most one an hour per network, and one more for the `price above max fee` kind).
 
 **Impact**
 
 - Nothing stops, and no money was lost because of it: the budget counts the most that transaction could have cost. Billing records show the counted amount.
+- With `price above max fee: yes`: no money was lost either. A transaction can never be charged more than the relayer's own limit for it, so billing used that limit; the provider (or the node behind it) reported the price wrong.
 - How urgent: this week. Once is a curiosity; many in a day is a problem for an engineer.
 
 **Steps**

@@ -547,8 +547,17 @@ export type RejectionKind = EvmRejectionCause;
 export const rejectionKind = (cause: string): RejectionKind => (cause === 'request' ? 'request' : cause === 'pricing' ? 'pricing' : 'relayer');
 const REJECTION_CAUSES: ReadonlySet<string> = new Set<EvmRejectionCause>(['request', 'pricing', 'relayer']);
 
+/**
+ * A refusal over the transaction's gas (`gas_limit`: below its intrinsic gas, above the block's): the relayer keeps it
+ * a batch's refusal (`request`: cancelled, never a halt, so no user can pause it), but the gas is Journear's own
+ * (sponsorGasLimit, bounded by the relayer), never the user's input: such a refusal is a gas-model or settings bug on
+ * our side, so the user is not charged a failure and is told so in neutral words (D847).
+ */
+const ourGas = (kind: RejectionKind, code: string): boolean => kind === 'request' && code === 'gas_limit';
+
 /** The answer to a batch no node took (its nonce went to the relayer's cancel at once): nothing ran. */
 function rejectionAnswer(ctx: Ctx, kind: RejectionKind, code = ''): Response {
+  if (ourGas(kind, code)) return done(ctx, 503, { error: 'This action couldn’t be sent right now: nothing ran. Try again later', code: 'relayer_unavailable', retryAfterS: 60 }, { 'retry-after': '60' });
   // The user's own account had other transactions waiting (the relayer's `authority_reserved`): nothing ran; a
   // failure, with its own plain sentence.
   if (code === 'authority_reserved') return done(ctx, 422, { error: 'The account has other transactions waiting: nothing ran', code: 'account_pending' });
@@ -1171,9 +1180,11 @@ async function afterReservation(
  * No node took the batch (`broadcast: 'rejected'`): the relayer gave its nonce to its own cancel at once, so this is
  * answered now, not after a 30 s wait. The row moves to `rejected` with the cause; the reconciler settles the money to
  * the cancel's cost once the relayer reports it mined. The user is charged a failure only when the batch itself was the
- * cause (`request`); for `pricing` (its fees) and `relayer` (our side, and any cause not known here) their attempts,
- * the shared windows and the failure slot come back, and `relayer` writes `evm_relay_stuck` (the relayer halts itself
- * on such a refusal). The mark stays: a copy is answered the same from the row.
+ * cause (`request`, but not `gas_limit`: the gas is ours, ourGas); for `pricing` (its fees), `relayer` (our side, and
+ * any cause not known here) and `gas_limit` their attempts, the shared windows and the failure slot come back;
+ * `relayer` writes `evm_relay_stuck` (the relayer halts itself on such a refusal), `gas_limit` the hour's
+ * `evm_relay_stuck` with `gasModel` (no halt: a gas-model bug for staff). The mark stays: a copy is answered the same
+ * from the row.
  */
 async function rejectedNow(env: Env, ctx: Ctx, row: SendRow, sent: EvmRelayerSent, undo: Undo): Promise<Response> {
   const cause = sent.rejection?.cause ?? 'relayer';
@@ -1182,10 +1193,15 @@ async function rejectedNow(env: Env, ctx: Ctx, row: SendRow, sent: EvmRelayerSen
   await persistHashes(env, row.id, [sent.transactionHash]);
   const moved = await moveRow(env, row.id, ['sending'], 'rejected', { txHash: sent.transactionHash, relayerNonce: sent.relayerNonce, replay: sent.replay, rejection: `${cause}:${code}` });
   if (moved && sent.replay) await undo.giveBackAll();
-  else if (moved && kind !== 'request') await undo.notTheUsers();
+  else if (moved && (kind !== 'request' || ourGas(kind, code))) await undo.notTheUsers();
   const now = Date.now();
   log({ event: 'evm_sponsor_rejected', requestId: ctx.requestId, endpoint: ctx.endpoint, code: `${kind}:${code}` }, kind === 'relayer' ? 'error' : 'warn');
   if (kind === 'relayer') await noteEvent(env, ctx, 'evm_relay_stuck', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId, rejected: code }, now);
+  if (ourGas(kind, code)) {
+    // Every one logged (`evm_sponsor_gas_refused`, counted in the logs); one event an hour per chain for staff.
+    log({ event: 'evm_sponsor_gas_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'gas_limit' }, 'error');
+    await noteEvent(env, ctx, 'evm_relay_stuck', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR), 'gas'], { chainId: row.chainId, rejected: code, gasModel: true }, now);
+  }
   return rejectionAnswer(ctx, kind, code);
 }
 

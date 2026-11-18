@@ -24,6 +24,7 @@ import {
   auditRows,
   automine,
   billingRows,
+  block,
   CHAIN,
   CHECK_IN,
   checkInCall,
@@ -210,8 +211,11 @@ describe.skipIf(SKIPPED !== null)('refused before any spend (anvil)', () => {
     const auth1 = rawAuthorization(w.user.key, { chainId: 1, address: DELEGATE, nonce: 0n });
     const r5 = await send(w, { ...base.body, authorization: { chainId: 1, address: DELEGATE, nonce: '0', yParity: auth1.yParity, r: auth1.r, s: auth1.s } });
     expect([r5.status, (await json(r5)).code]).toEqual([400, 'bad_authorization']);
-    // A deadline already past.
-    const late = vaultSign(w, [checkInCall], p.body, { deadline: BigInt(Math.floor(Date.now() / 1000) - 5) });
+    // A deadline already past, by the service's clock and by the chain's (anvil's latest block can lag the wall clock,
+    // e.g. after an evm_revert, so the deadline is before both).
+    const chainNow = BigInt((await block('latest')).timestamp);
+    const wallNow = BigInt(Math.floor(Date.now() / 1000));
+    const late = vaultSign(w, [checkInCall], p.body, { deadline: (chainNow < wallNow ? chainNow : wallNow) - 5n });
     const r4 = await send(w, late.body);
     expect([r4.status, (await json(r4)).code]).toEqual([400, 'deadline_out_of_range']);
     await nothingSpent(w);

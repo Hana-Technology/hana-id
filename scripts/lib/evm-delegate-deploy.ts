@@ -279,7 +279,7 @@ export function manifestTemplate(chainId: number, delegate: string, checkIn: str
     `    "rpc": "${r.rpc}", "rpcFallback": "${r.rpcFallback}",`,
     `    "delegate": "${delegate}", "opStack": ${OP_STACK_TEST_CHAIN_IDS.includes(chainId)},`,
     '    "maxGasPerTx": 300000, "maxFeePerGasGwei": 1, "maxPriorityFeePerGasGwei": 0.01,',
-    '    "maxCallsPerBatch": 4, "deadlineMaxS": 600, "minGas": 100000,',
+    '    "maxCallsPerBatch": 4, "deadlineMaxS": 300, "minGas": 100000,',
     '    "dailyBudgetEth": 0.02, "appDailyBudgetEth": 0.01, "lowBalanceEth": 0.05,',
     '    "perUserPerDay": 30, "perAppPerDay": 2000, "sendsPerDay": 5000, "sendsPerMinute": 60,',
     '    "requireKnownAccount": true } },',

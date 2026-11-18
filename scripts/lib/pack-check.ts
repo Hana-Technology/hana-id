@@ -225,7 +225,9 @@ export const GUIDE_PARTS = [
     prelude: [
       'declare const checkInButton: HTMLButtonElement;',
       'declare const sendButton: HTMLButtonElement;',
+      'declare const note: HTMLElement;',
       'declare function showDone(transactionHash: string): void;',
+      'declare function showQuiet(text: string): void;',
       'declare function showNote(text: string): void;',
       '/** Section 13. */',
       'declare function userText(e: unknown): string;',

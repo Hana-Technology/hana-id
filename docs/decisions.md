@@ -14426,7 +14426,7 @@ From `next` @ 0a636344; not merged, not deployed.
 From `next` @ 6d0c6800 (then `next` @ c0f14a8e, PR 88, merged in), not merged, not deployed. Docs, doc comments and
 tests only: no behaviour, endpoint, key or flow changes.
 
-### D868. The partner guide for SDK 0.5.0, held to the code: the upgrade note, gas-free actions, sign-in outcomes, what users see
+### D870. The partner guide for SDK 0.5.0, held to the code: the upgrade note, gas-free actions, sign-in outcomes, what users see
 - Date 2026-11-18 · Status: decided while building, to confirm · Built: `docs/integration.md` (section 2 "Upgrading
   from 0.4.x to 0.5.0"; section 4 "When sign-in doesn't finish"; section 8 "What your users see" and "Gas-free
   actions (not live)" rewritten; section 13's `userText` pattern and "A user who can't get an email code"),
@@ -14442,7 +14442,13 @@ tests only: no behaviour, endpoint, key or flow changes.
      declarations).
   2. **The gas-free error table is the SDK's**: every key of `SPONSOR_REASONS` once, with the very sentence
      `userMessage` gives (tested both ways, so a new reason or a reworded sentence fails until the guide follows). The
-     limits table gives D836's planned Base Sepolia values as planned (no env sets `evm.sponsor` yet).
+     limits table gives only what a partner designs around (Base Sepolia only, actions per user a day, calls per
+     action, time to approve), "planned for the first test period, and they may change" (D836's values; no env sets
+     `evm.sponsor` yet); the budgets in ETH are left out (amended 2026-11-18 at the coordinator's review).
+  5. **One copyable button**: the gas-free steps absorb PR 91's example (D867): set up after `hana.ready` and once
+     signed in, a disabled button with the reason for "offered, not right now", `say(e)` = `e.userMessage ??
+     userMessageFor(e?.code, e?.data)`, a `4001` shown quietly, the partner's own helpers marked, and a refusal with
+     `transactionHash` linked; so whichever of the two PRs merges second drops PR 91's block for this one.
   3. **The pack check type-checks four parts of the guide** (sections 4, 8 gas-free, 8 NEAR, 13), one module each,
      against the packed tarballs, with viem installed at `@hana-id/core`'s devDependency version for the EIP-5792
      sample. D778's rejected "every section" stays rejected: only parts written to compile are listed.

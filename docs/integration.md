@@ -944,21 +944,33 @@ Journear's reviewed account helper contract run the batches the user approves).
 - Allow Journear Passport's API origin in your CSP `connect-src` (sandbox-dev:
   `https://hana-id-api-sandbox-dev.tingtc.workers.dev`), for `sponsorship()` ([section 5](#5-your-page-origins-csp-popups)).
 
-**1. Ask whether it is available**, before you show a "free" button. `sponsorship(chainId)` needs no sign-in. Call it
-after `hana.ready`: before that, the SDK doesn't know the chains yet and answers `chain_not_enabled`.
+**1. Ask whether it is available**, and show the button only then. `sponsorship(chainId)` needs no sign-in, but the
+action does, so set the button up once the user is signed in. Call it after `hana.ready`: before that, the SDK doesn't
+know the chains yet and answers `chain_not_enabled`, so the button would never appear.
 
 ```ts
-const BASE_SEPOLIA = 84532;
+import { userMessageFor } from '@hana-id/web';
 
-async function freeToday(): Promise<boolean> {
-  await hana.ready; // sponsoredChains is known from here on
-  try {
-    const status = await hana.evm.sponsorship(BASE_SEPOLIA);
-    return status.available; // false: status.reason says why
-  } catch {
-    return false; // Journear couldn't be asked: treat it as not available
-  }
+const BASE_SEPOLIA = 84532;
+const MY_CONTRACT = '0x1111111111111111111111111111111111111111'; // a contract Journear added for your app
+const CHECK_IN = '0x183ff085'; // the call data: fixed in your code, never from user input or the URL
+
+/** The SDK's plain sentence for anything `hana.evm` rejected with. */
+const say = (e: any): string => e?.userMessage ?? userMessageFor(e?.code, e?.data);
+
+/** Offered to your app, but not right now: show the button disabled, with the reason. */
+const NOT_NOW = ['budget_exhausted', 'app_budget_exhausted', 'paused', 'sponsorship_paused', 'not_available'];
+
+async function setUpButton(): Promise<void> {
+  const s = await hana.evm.sponsorship(BASE_SEPOLIA).catch(() => null); // rejected: Journear couldn't be asked
+  checkInButton.hidden = !s || (!s.available && !NOT_NOW.includes(s.reason ?? '')); // not offered here: no button
+  checkInButton.disabled = !s?.available;
+  note.textContent = s && !s.available ? userMessageFor(4100, { reason: s.reason }) : ''; // "… used up for today …"
 }
+
+await hana.ready; // sponsoredChains is known from here on
+if (hana.status === 'logged_in') await setUpButton();
+hana.on('accountsChanged', (a) => (a ? void setUpButton() : (checkInButton.hidden = true)));
 ```
 
 It resolves `{ available, reason?, remainingToday? }`. `reason`, when `available` is false: `chain_not_enabled` (not
@@ -967,22 +979,22 @@ offered on this network), `app_not_sponsored` (not turned on for your app), `pau
 `remainingToday` is your app's own budget left today, in wei, as a decimal string. It rejects only when Journear can't
 be asked: `api_unavailable`, `rate_limited` (60 requests a minute per IP address, across every app) or `4100`.
 
-**2. Send it in the click**, like `login()`: the approval window opens in the click.
+**2. Send it in the click**, like `login()`: the approval window opens in the click. A rejection in the window (`4001`)
+is the user's choice, not an error.
 
 ```ts
-import { HanaError } from '@hana-id/web';
-
-const MY_CONTRACT = '0x1111111111111111111111111111111111111111'; // a contract Journear added for your app
-const CHECK_IN = '0x183ff085'; // the call data: here a function with no arguments
-
 checkInButton.addEventListener('click', () => {
+  checkInButton.disabled = true;
   // No await before sendSponsored: the approval window opens in this click.
-  hana.evm.sendSponsored({ chainId: BASE_SEPOLIA, calls: [{ to: MY_CONTRACT, data: CHECK_IN }] }).then(
-    ({ transactionHash }) => showDone(transactionHash),
-    (e: unknown) => showNote(e instanceof HanaError ? e.userMessage : 'Something went wrong. Try again.'),
-  );
+  hana.evm
+    .sendSponsored({ chainId: BASE_SEPOLIA, calls: [{ to: MY_CONTRACT, data: CHECK_IN }] })
+    .then(({ transactionHash }) => showDone(transactionHash)) // showDone, showQuiet, showNote: your own UI helpers
+    .catch((e: any) => (e?.code === 4001 ? showQuiet(say(e)) : showNote(say(e))))
+    .finally(() => (checkInButton.disabled = false));
 });
 ```
+
+A refusal with `data.transactionHash` may still have run: link it, so the user can look before trying again.
 
 - `calls`: 1 to 8 in the SDK (an environment may allow fewer: `too_many_calls`), run in order, all or nothing. Each
   has `to`, `data` (a function call, 4 to 8,192 bytes) and no ETH. The answer is `{ transactionHash, status:
@@ -993,18 +1005,18 @@ checkInButton.addEventListener('click', () => {
 - Privacy: while an action is prepared, the Journear Passport page asks the network's public endpoints about the user's
   account, so those providers see the account's address and the user's IP address.
 
-**Limits** (Journear sets them per environment; the planned values for Base Sepolia):
+**Limits** to design around (planned for the first test period, and they may change):
 
 | Limit | Planned | When it is reached |
 |---|---|---|
-| Per user | 30 actions a day | `rate_limited` |
-| Per app | 2,000 actions a day, and a budget of 0.01 test ETH of fees a day | `rate_limited`, `app_budget_exhausted` |
-| The environment | 0.02 test ETH of fees a day, across every app | `budget_exhausted` |
-| One action | at most 4 calls, and a cap on its fee | `too_many_calls`, `gas_too_high` |
+| Network | Base Sepolia only | `chain_not_sponsored`, `chain_not_enabled` |
+| Per user | 30 actions a day (UTC) | `rate_limited` |
+| One action | at most 4 calls | `too_many_calls` |
 | Time to approve | the approval is valid for at most 5 minutes; approve within about 4 | `deadline_passed` (nothing sent) |
-| At once | one action per user and network; a second is refused until the first ends | `busy` (`sponsor_in_flight`) |
 
-The days are UTC days. When a limit is reached, send the user's action the usual way, or ask them to try later.
+Also: one action at a time per user and network (a second is refused with `busy`, `sponsor_in_flight`, until the
+first ends), and a daily budget per app and per environment (`app_budget_exhausted`, `budget_exhausted`). When a limit
+is reached, send the user's action the usual way, or ask them to try later.
 
 **What users see:** Journear Passport's usual approval window, with the calls' own summary and warnings, "Network fee:
 none. Journear pays it for you." and, the first time only, "One-time setup: this also turns on free network fees for

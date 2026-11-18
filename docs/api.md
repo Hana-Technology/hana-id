@@ -1197,7 +1197,7 @@ directory key `503 directory_unavailable`.
 implementation, minGasFloor, maxMinGas, deadlineMaxS, allowed, reason?}`. Checks the chain, the app and every call as
 send does (steps 1 below, same codes), the session proof; then the account's prepare minute (10; only its own session
 reaches it), the app's (600) and the env's (2000) prepare minutes (`429 rate_limited`); then the account's code and
-pending transaction count, the relayer's balance (cached 30 s per isolate) and `nonce()` (run as the delegate through a
+pending transaction count, the relayer's balance (cached 3 s per isolate) and `nonce()` (run as the delegate through a
 state override when the account has no code; `502 evm_rpc_unavailable`). `allowed: false` with `reason`
 `delegated_elsewhere`, `paused` (the relayer is halted, D851, or its balance is under 3 × the cheapest batch's worst
 case), `not_available` (the user's failures for the day: never named), `budget_exhausted` (the app's or the env's day
@@ -1232,7 +1232,7 @@ step 12:
    after the chain reads keeps these, and only these, unless it is not the user's doing (the relayer's balance, halt,
    busy, fees: they come back too).
 7. The chain: the account's code, its latest and pending transaction counts, the latest base fee and the relayer's
-   balance (cached 30 s) (`502 evm_rpc_unavailable`). Code other than nothing or `0xef0100 ‖ the pinned delegate`: `409
+   balance (cached 3 s) (`502 evm_rpc_unavailable`). Code other than nothing or `0xef0100 ‖ the pinned delegate`: `409
    delegated_elsewhere` (D840). No code and no authorization: `409 delegation_required`. Delegated already: the
    authorization is left off (a type-2 send). The authorization is attached only when the account has no code and its
    pending and latest counts are both the authorization's nonce (nothing of the account's own in flight): else `409
@@ -1248,9 +1248,10 @@ step 12:
    Stack Isthmus: `getOperatorFee(gasLimit)`; a chain whose oracle reverts it has none, 0), any other failure `502
    evm_rpc_unavailable`. `executeNonce` is not `nonce()`: `409 nonce_stale {executeNonce: the chain's}` (below it, the
    floor rises past the request's nonce and the account's minute hit is given back).
-9. **The relayer's balance** covers 3 × this send's worst case (step 13), so no user can make the relayer itself run dry
-   (its own refusal halts it for staff): else `503 sponsorship_paused` (`retry-after: 300`), the day's
-   `evm_relay_balance_low` (with `neededWei`), the user's attempts back, nothing reserved or sent.
+9. **The relayer's balance, a first look** (read at step 7, cached 3 s per isolate and forgotten after each send): at
+   least `lowBalanceEth` (so the alert fires while in-flight work can still finish) and 3 × this send's worst case (step
+   13): else `503 sponsorship_paused` (`retry-after: 300`), the day's `evm_relay_balance_low` (with `neededWei`), the
+   user's attempts back, nothing reserved or sent. The binding check is step 15's.
 10. The digest is marked (atomic; a concurrent copy is `409 in_progress`).
 11. **The app's slot in flight:** at most 4 of an app's sends unsettled on a chain (the relayer takes 8 unmined across
     every app): else `429 relayer_busy` (`retry-after: 5`). A slot comes back when its send settles (whoever moves its
@@ -1268,8 +1269,12 @@ step 12:
     designator when the authorization is attached. A revert: `422 simulation_reverted` with `revertData` (well-formed
     hex, at most 2 KiB, else left out, never truncated) and `callIndex` (from a `CallFailed(index, reason)` naming a call
     of the batch); nothing is spent, the failure counts.
-15. The audit row (`evm_sponsor_sends`, status `sending`; `503 audit_unavailable` without it, nothing sent), then the
-    relayer object `evm-relayer-<chainId>-0` (`send`; it recomputes the digest and calldata and checks them itself; its
+15. The audit row (`evm_sponsor_sends`, status `sending`; `503 audit_unavailable` without it, nothing sent), written by
+    one `INSERT … SELECT … WHERE` only while the balance covers 3 × (the reserved worst cases of every send of the chain
+    already committed: rows `sending`, `sent`, `timeout`, `unknown`, `rejected`, not replays, plus this one's): D1
+    serializes concurrent requests from any isolate, so no more sends reach the relayer than its funds can pay for, and
+    it never meets an `insufficient_funds` refusal through a burst. Short: `503 sponsorship_paused`, everything given
+    back, `evm_relay_balance_low`. Then the relayer object `evm-relayer-<chainId>-0` (`send`; it recomputes the digest and calldata and checks them itself; its
     answer's digest must be the handler's, its `broadcast` one it knows, and its hash its raw transaction's keccak when
     the raw comes back). A coded refusal (`Error('evm_relayer:<code>[:<reason>]')`: it sent nothing) gives everything
     back, the row `refused`, the user's attempts too unless their input caused it (`invalid_request`,

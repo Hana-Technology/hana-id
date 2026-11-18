@@ -1706,14 +1706,53 @@ describe('the relayer’s balance covers the worst case (×3) before anything is
     expect((await send(s, signedSend(s.user).body)).status).toBe(200);
   });
 
-  it('is read once per 30 s per chain (cached), not per send', async () => {
+  it('is cached a few seconds per chain and forgotten after each send', async () => {
     const s = await setup();
     const { forgetRelayerBalances } = await import('../src/evm/sponsor.ts');
     forgetRelayerBalances();
-    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
-    s.chain.executeNonce.set(s.user.address.toLowerCase(), 1n);
-    expect((await send(s, signedSend(s.user, { executeNonce: 1n }).body)).status).toBe(200);
+    const p = { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] };
+    expect((await prepare(s, p)).status).toBe(200);
+    expect((await prepare(s, p)).status).toBe(200);
     expect(reads(s.chain).filter((m) => m === 'balance').length).toBe(1);
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    expect((await prepare(s, p)).status).toBe(200);
+    // One read for the prepares, the send's from the cache, then a fresh one after the send.
+    expect(reads(s.chain).filter((m) => m === 'balance').length).toBe(2);
+  });
+
+  it('covers every send already committed: of 4 at once with funds for about 2½, exactly 2 reach the relayer, the rest are paused, one alert', async () => {
+    const s = await setup({ lowBalanceEth: 0.000001 });
+    const { forgetRelayerBalances } = await import('../src/evm/sponsor.ts');
+    forgetRelayerBalances();
+    receiptKind = 'none';
+    const users = [s.user, testUser(), testUser(), testUser()];
+    for (const u of users.slice(1)) {
+      await rememberAccount(s.app.scope, u.address);
+      s.chain.codes.set(u.address.toLowerCase(), DESIGNATOR);
+    }
+    const signed = users.map((u) => signedSend(u));
+    const gas = sponsorGasLimit({ calldata: encodeExecuteCalldata(signed[0]!.input, signed[0]!.body.signature as Hex), callData: [CHECK_IN_DATA], minGas: 100_000n, authorizations: 0 });
+    const worst = gas * 1_000_000_000n;
+    s.chain.balanceWei = (EVM_SPONSOR_LIMITS.balanceMargin * worst * 5n) / 2n;
+    const answers = await Promise.all(signed.map(async (x) => body(await send(s, x.body))));
+    expect(answers.filter((b) => b.code === 'timeout').length).toBe(2);
+    expect(answers.filter((b) => b.code === 'sponsorship_paused').length).toBe(2);
+    expect(s.relayer.sends.length).toBe(2);
+    const ev = await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_balance_low'").first<{ n: number }>();
+    expect(ev?.n).toBe(1);
+    // The two refused gave everything back: only the two sent hold a reservation.
+    const sentRows = (await env.DB.prepare("SELECT reserved_wei FROM evm_sponsor_sends WHERE app_id = ?1 AND status IN ('sent', 'timeout')").bind(s.app.id).all<{ reserved_wei: string }>()).results;
+    expect(await appSpent(s.app)).toBe(sentRows.reduce((n, r) => n + BigInt(r.reserved_wei), 0n));
+  });
+
+  it('a balance below lowBalanceEth refuses whatever the send costs', async () => {
+    const s = await setup();
+    const { forgetRelayerBalances } = await import('../src/evm/sponsor.ts');
+    forgetRelayerBalances();
+    s.chain.balanceWei = 5n * 10n ** 16n - 1n;
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([503, 'sponsorship_paused']);
+    expect(s.relayer.sends).toEqual([]);
   });
 });
 

@@ -300,14 +300,19 @@ async function delegateNonce(chain: SponsorChainPort, account: Hex, delegation: 
   return n;
 }
 
-/** The relayer's balance, per isolate per chain for this long (a send needs it to cover its worst case, D847). */
-export const RELAYER_BALANCE_TTL_MS = 30_000;
+/**
+ * The relayer's balance, per isolate per chain for this long, and forgotten after each send (the audit row's insert
+ * compares it with every send already committed, D847).
+ */
+export const RELAYER_BALANCE_TTL_MS = 3_000;
 const balances = new Map<number, { wei: bigint; at: number }>();
 
 /** Forgets the cached balances (tests). */
 export function forgetRelayerBalances(): void {
   balances.clear();
 }
+
+const forgetRelayerBalance = (chainId: number): void => void balances.delete(chainId);
 
 /** The relayer's balance from the trusted endpoint, cached briefly. Throws when it can't be read. */
 async function relayerBalance(rpc: SponsorChainPort, chainId: number, relayer: Hex, now: number): Promise<bigint> {
@@ -380,19 +385,32 @@ interface BatchShape {
   withSetup: boolean;
 }
 
-async function insertAudit(env: Env, ctx: Ctx, r: SendRow, shape: BatchShape): Promise<boolean> {
+/** SQLite's largest integer: a balance above it is compared as this (a sum of reservations never comes near). */
+const INT64_MAX = (1n << 63n) - 1n;
+
+/**
+ * The audit row, written only if the relayer's balance still covers, `balanceMargin` times over, the worst cases of
+ * every send of this chain already committed (rows `sending`, `sent`, `timeout`, `unknown`, `rejected`, not a replay)
+ * plus this one's: one INSERT … SELECT … WHERE, so concurrent requests (any isolate) are serialized by D1 and no more of
+ * them reach the relayer than its funds can pay for. `short`: refused for funds; `failed`: the row couldn't be written.
+ */
+async function insertAudit(env: Env, ctx: Ctx, r: SendRow, shape: BatchShape, balanceWei: bigint): Promise<'ok' | 'short' | 'failed'> {
+  const balance = balanceWei > INT64_MAX ? INT64_MAX : balanceWei < 0n ? 0n : balanceWei;
   try {
-    await env.DB.prepare(
+    const res = await env.DB.prepare(
       `INSERT INTO evm_sponsor_sends (id, app_id, chain_id, account, user_id, digest, execute_nonce, reserved_wei, deadline, gas_limit, fee_cap_wei,
          l1_bound_wei, op_bound_wei, call_count, targets_json, with_setup, status, request_id, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'sending', ?17, ?18, ?18)`,
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'sending', ?17, ?18, ?18
+        WHERE (SELECT COALESCE(SUM(CAST(reserved_wei AS INTEGER)), 0) FROM evm_sponsor_sends
+                WHERE chain_id = ?3 AND replay = 0 AND status IN ('sending', 'sent', 'timeout', 'unknown', 'rejected'))
+              + CAST(?8 AS INTEGER) <= CAST(?19 AS INTEGER) / ?20`,
     )
-      .bind(r.id, r.appId, r.chainId, r.account, r.userId, r.digest, r.executeNonce.toString(), r.reserved.reservedWei.toString(), r.deadline, r.reserved.gasLimit.toString(), r.reserved.feeCap.toString(), r.reserved.l1Bound.toString(), r.reserved.operatorBound.toString(), shape.targets.length, JSON.stringify(shape.targets), shape.withSetup ? 1 : 0, ctx.requestId, r.createdAt)
+      .bind(r.id, r.appId, r.chainId, r.account, r.userId, r.digest, r.executeNonce.toString(), r.reserved.reservedWei.toString(), r.deadline, r.reserved.gasLimit.toString(), r.reserved.feeCap.toString(), r.reserved.l1Bound.toString(), r.reserved.operatorBound.toString(), shape.targets.length, JSON.stringify(shape.targets), shape.withSetup ? 1 : 0, ctx.requestId, r.createdAt, balance.toString(), Number(EVM_SPONSOR_LIMITS.balanceMargin))
       .run();
-    return true;
+    return (res.meta.changes ?? 0) === 1 ? 'ok' : 'short';
   } catch {
     log({ event: 'evm_sponsor_audit_failed', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'insert' }, 'error');
-    return false;
+    return 'failed';
   }
 }
 
@@ -813,10 +831,11 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   // plus the L1 data fee's and the operator fee's bounds.
   const reservedFor = { gasLimit, feeCap: chain.maxFeePerGasWei, l1Bound, operatorBound, reservedWei: worstCaseWei(gasLimit, chain.maxFeePerGasWei, l1Bound, operatorBound) };
   const reserved = reservedFor.reservedWei;
-  // 10. The relayer's balance covers the worst case with a margin: a user never makes the relayer itself run dry (its
-  //     own refusal halts it for staff). Short: `sponsorship_paused` and the day's low-balance alert.
+  // 10. The relayer's funds, a first look: at least `lowBalanceEth` (so the alert fires while in-flight work can still
+  //     finish) and this send's worst case with the margin. The binding check, against every send already committed,
+  //     is the audit row's insert (step 15). Short: `sponsorship_paused` and the day's low-balance alert.
   const need = reserved * EVM_SPONSOR_LIMITS.balanceMargin;
-  if (balance < need) {
+  if (balance < chain.lowBalanceWei || balance < need) {
     await Promise.all([balanceShort(env, ctx, chain, config.relayerAddress, balance, need, ownAt), giveBackOwn()]);
     return paused(ctx);
   }
@@ -898,7 +917,7 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
     targets: req.calls.map((c) => ({ address: (sponsoredTarget(config, app.id, chain.chainId, c.to, c.data)?.address ?? c.to).toLowerCase(), selector: c.data.slice(0, 10).toLowerCase() })),
     withSetup: authorization !== null,
   };
-  const tail = afterReservation(env, ctx, chain, relayerAddress, relayer, rpc, req, row, shape, calldata, authorization, fees, {
+  const tail = afterReservation(env, ctx, chain, relayerAddress, relayer, rpc, req, row, shape, calldata, authorization, fees, balance, {
     unmark,
     notSent,
     giveBackAll,
@@ -938,6 +957,7 @@ async function afterReservation(
   calldata: Hex,
   authorization: SignedAuthorization | null,
   fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+  balance: bigint,
   undo: Undo,
 ): Promise<Response> {
   // 14. The simulation: the exact call, from the relayer, with the account's code set to the delegation designator when
@@ -960,10 +980,16 @@ async function afterReservation(
   }
   lap(ctx, 'simulate');
 
-  // 15. The audit row, then the relayer. Without the row nothing is sent.
-  if (!(await insertAudit(env, ctx, row, shape))) {
+  // 15. The audit row, written only while the relayer's balance covers every committed send's worst case and this one's
+  //     (× the margin), then the relayer. Without the row nothing is sent.
+  const audit = await insertAudit(env, ctx, row, shape, balance);
+  if (audit === 'failed') {
     await undo.notSent();
     return reject(ctx, 503, 'audit_unavailable', 'Try again');
+  }
+  if (audit === 'short') {
+    await Promise.all([undo.notSent(), undo.giveBackOwn(), balanceShort(env, ctx, chain, relayerAddress, balance, row.reserved.reservedWei * EVM_SPONSOR_LIMITS.balanceMargin, Date.now())]);
+    return paused(ctx);
   }
   let sent: EvmRelayerSent | null;
   let refused: { code: string; reason: string | null } | null = null;
@@ -985,6 +1011,8 @@ async function afterReservation(
     sent = null;
     refused = relayerRefusal(e);
   }
+  // The balance moves with every send: the next request reads it afresh.
+  forgetRelayerBalance(chain.chainId);
   lap(ctx, 'relay');
   if (refused) {
     // A coded refusal: the relayer sent nothing. The row says so first; only if this request moved it does everything

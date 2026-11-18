@@ -12908,9 +12908,13 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   failure slot, attempts or shared windows. The relayer's coded `fees_too_low` (its follow-up) is `503
   gas_price_too_high` (15 s), read by string before its type lands; `relayer_busy` (also `:account`) is `429` with
   `retryAfterS` 2 (5 for `account`); a coded refusal not caused by the user's input gives their attempts back too. (4)
-  **The relayer's funds:** before each send its balance (cached 30 s per isolate) must cover 3 × the send's worst case,
-  else `503 sponsorship_paused` and the day's `evm_relay_balance_low` (with `neededWei`), so no user triggers the
-  relayer's own low-funds halt; prepare reports `paused` for that and for a halted relayer. (5) **One app can't fill the
+  **The relayer's funds:** before each send its balance (cached 3 s per isolate, forgotten after each send) must be at
+  least `lowBalanceEth` and cover 3 × this send's worst case; then, binding, the audit row is inserted by one `INSERT …
+  SELECT … WHERE` only while the balance covers 3 × (the reserved worst cases of every committed send of the chain plus
+  this one's), so a burst across isolates can't each pass alone (after the automated review of the first version,
+  which compared each request alone); else `503 sponsorship_paused` and the day's `evm_relay_balance_low` (with
+  `neededWei`), so no user triggers the relayer's own low-funds halt; prepare reports `paused` for that and for a halted
+  relayer. (5) **One app can't fill the
   relayer:** at most 4 of an app's sends unsettled per chain (an amount slot on `app:<id>`, a UTC-day window, given back
   by whoever settles the row), else `429 relayer_busy` (5 s). (6) **The authorization** is attached only when the account
   has no code and its pending and latest counts both equal its nonce (nothing of the account's own in flight). (7)

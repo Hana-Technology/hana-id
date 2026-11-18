@@ -807,6 +807,19 @@ describe('POST /v1/evm/sponsor/prepare', () => {
     expect(s.relayer.sends.length).toBe(1);
   });
 
+  it('maxMinGas is an upper bound for any real batch: at minGas = maxMinGas every deadline’s and signature’s calldata fits', async () => {
+    const s = await setup();
+    const b = await body(await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] }));
+    const maxMinGas = BigInt(b.maxMinGas as string);
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    for (let i = 0n; i < 300n; i++) {
+      // Deadlines across the window (some with a zero byte, some without), each with its own signature.
+      const signed = signedSend(s.user, { minGas: maxMinGas, deadline: now + 30n + i * 2n });
+      const limit = sponsorGasLimit({ calldata: encodeExecuteCalldata(signed.input, signed.body.signature as Hex), callData: [CHECK_IN_DATA], minGas: maxMinGas, authorizations: 0 });
+      expect(limit <= 300_000n, String(i)).toBe(true);
+    }
+  });
+
   it('an account without code: none, its delegate nonce read through the override; another delegate: other, not allowed', async () => {
     const s = await setup({}, { delegated: false });
     const b = await body(await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] }));

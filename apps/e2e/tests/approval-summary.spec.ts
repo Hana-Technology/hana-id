@@ -18,7 +18,7 @@
 // source the opener).
 import { type Page } from '@playwright/test';
 import { DEMO_CHECK_IN, type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey, nearPublicKeyString } from '@hana-id/core';
-import { parseFunctionSignature } from '@hana-id/core/decode';
+import { parseFunctionSignature, shortId } from '@hana-id/core/decode';
 import { Account, Address, Asset, Keypair, Networks, Operation, StrKey, TransactionBuilder, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
 import { e2eRelayer } from '../src/relayer-key.ts';
@@ -64,12 +64,16 @@ async function shot(popup: Page, name: string, browserName: string): Promise<voi
 }
 
 const details = (popup: Page) => popup.locator('details.request-details');
+/** A long value as a sentence shows it (D859): its short form, then the words screen readers get instead. */
+const short = (v: string) => `${shortId(v)} (written out below)`;
 
 test('an explainable request: details closed; the user opens them; the guard still holds and Approve signs', async ({ page }) => {
   await openPartner(page, await newApp());
   await login(page);
   const popup = await popupFor(page, 'send', 'ethSignTx', evmTx());
-  await expect(popup.locator('h2.summary-headline')).toHaveText(`E2E Partner wants to send 0.01 ETH to ${RECIPIENT}`);
+  await expect(popup.locator('h2.summary-headline')).toHaveText(`E2E Partner wants to send 0.01 ETH to ${short(RECIPIENT)}`);
+  // D859: the whole recipient once, in its own row right under the headline.
+  await expect(popup.locator('h2.summary-headline + dl.id-rows')).toHaveText(`To${RECIPIENT}`);
   await expect(popup.getByText('Network fee', { exact: true })).toBeVisible();
   await expect(details(popup)).not.toHaveAttribute('open', '');
   // The nonce is in the details: not visible until the user opens them.
@@ -93,7 +97,7 @@ test('a request Journear can’t explain: the red risk line in view, the details
   const popup = await popupFor(page, 'unknown', 'ethSignTx', evmTx({ to: TOKEN, value: 0n, data: '0xdeadbeef' }));
   const risk = popup.locator('.danger-box p.risk-lead.summary-warning.cannot-explain');
   await expect(risk).toBeVisible();
-  await expect(risk).toContainText('Journear can’t tell what this request does');
+  await expect(risk).toContainText('Journear can’t check what this does');
   await expect(details(popup)).not.toHaveAttribute('open', '');
   const raw = details(popup).getByText('0xdeadbeef', { exact: true });
   await expect(raw).toBeHidden();
@@ -107,7 +111,7 @@ test('warnings stay visible while the details are closed (an unlimited ERC-20 ap
   const popup = await popupFor(page, 'approve', 'ethSignTx', evmTx({ to: TOKEN, value: 0n, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) }));
   await expect(details(popup)).not.toHaveAttribute('open', '');
   await expect(popup.locator('p.summary-warning.unlimited-spend')).toBeVisible();
-  await expect(popup.locator('p.summary-warning.unlimited-spend')).toContainText(`This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN}, with no limit`);
+  await expect(popup.locator('p.summary-warning.unlimited-spend')).toContainText(`This lets ${short(SPENDER)} (not checked by Journear) take all your tokens from ${shortId(TOKEN)} (an unlisted token), now or later, with no limit`);
 });
 
 test('raw signing: folded like any other request, the red risk line in view (D810)', async ({ page, browserName }) => {
@@ -115,7 +119,7 @@ test('raw signing: folded like any other request, the red risk line in view (D81
   await login(page);
   await page.evaluate(() => (window as any).e2e.run('raw', 'signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(3) }));
   const popup = await clickLauncher(page, 'Review in Journear Passport');
-  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.raw-signing')).toHaveText('This asks you to sign something Journear can’t read at all. On EVM chains it could give away control of your account or your funds. Reject unless you are certain.');
+  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.raw-signing')).toHaveText('Signing this could hand over your whole account and everything in it. Reject it unless you know exactly why you’re signing.');
   await expect(details(popup)).not.toHaveAttribute('open', '');
   const hex = popup.getByText(`0x${'03'.repeat(32)}`, { exact: true });
   await expect(hex).toBeHidden();
@@ -164,10 +168,10 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
   });
   const headline = popup.locator('h2.summary-headline');
   const fee = popup.locator('.summary-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
-  const setup = 'One-time setup: this also turns on free network fees for your account on the local test chain 31337. Your address stays the same and you still approve every action.';
+  const setup = 'One-time setup: this also turns on free network fees for your account on the local test network. Your address stays the same and you still approve every action.';
 
   const checkIn = [{ to: CHECK_IN, value: 0n, data: '0x183ff085' as const }];
-  const checkInLines = ['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${CHECK_IN}, verified by Journear).`];
+  const checkInLines = ['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${short(CHECK_IN)}, checked by Journear).`];
 
   // First time: Journear's demo check-in (D854) and the account's setup: plain words, only the amber setup note.
   await injectSponsored(popup, subject({ authNonce: 0n, calls: checkIn }));
@@ -191,21 +195,21 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
 
   // A token transfer, first time and later.
   await injectSponsored(popup, subject({ authNonce: 0n }));
-  await expect(headline).toHaveText(`E2E Partner wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
+  await expect(headline).toHaveText(`E2E Partner wants to send 5,000,000 units of an unlisted token to ${short(RECIPIENT)}`);
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(setup);
   await expect(popup.locator('.danger-box')).toHaveCount(0);
   await injectSponsored(popup, subject({ executeNonce: 1n }));
-  await expect(headline).toHaveText(`E2E Partner wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
+  await expect(headline).toHaveText(`E2E Partner wants to send 5,000,000 units of an unlisted token to ${short(RECIPIENT)}`);
   await expect(popup.locator('.risk-box')).toHaveCount(0);
 
   // The check-in's selector on a contract Journear doesn't know: the same red line as unsponsored, no name.
   await injectSponsored(popup, subject({ executeNonce: 1n, calls: [{ to: UNKNOWN_CONTRACT, value: 0n, data: '0x183ff085' }] }));
-  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.cannot-explain')).toContainText('Journear can’t tell what this request does: it calls a function Journear doesn’t recognise.');
-  await expect(headline).toHaveText(`E2E Partner wants to use contract ${UNKNOWN_CONTRACT}`);
+  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.cannot-explain')).toContainText('Journear can’t check what this does (it asks for an action Journear doesn’t know).');
+  await expect(headline).toHaveText(`E2E Partner wants to use the program ${short(UNKNOWN_CONTRACT)}`);
 
   // An unlimited approve, first time: as alarming as unsponsored, plus the fee line and the setup note.
   await injectSponsored(popup, subject({ authNonce: 0n, calls: [{ to: TOKEN, value: 0n, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) as `0x${string}` }] }));
-  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.unlimited-spend')).toContainText(`This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN}, with no limit`);
+  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.unlimited-spend')).toContainText(`This lets ${short(SPENDER)} (not checked by Journear) take all your tokens from ${shortId(TOKEN)} (an unlisted token), now or later, with no limit`);
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(setup);
 
   // Another relayer than the build's: refused, no Approve.
@@ -265,7 +269,7 @@ test('screens for review', async ({ page, browserName }) => {
   const keyText = nearPublicKeyString(new Uint8Array(32).fill(9));
   const aboveFold = await popup.locator('div.request > :not(details)').allTextContents();
   expect(aboveFold.join('\n').split(keyText).length - 1).toBe(1);
-  await expect(popup.locator('p.summary-line')).toHaveText([/^Add the full-access key ed25519:[1-9A-HJ-NP-Za-km-z]{43,44} to your account$/u, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
+  await expect(popup.locator('p.summary-line')).toHaveText([/^Give full control of your account to another key, ed25519:[1-9A-HJ-NP-Za-km-z]{4}…[1-9A-HJ-NP-Za-km-z]{4} \(written out below\)$/u, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
   await shot(popup, 'near-many-actions-danger', browserName);
   await done(page, popup, 'many');
 
@@ -275,9 +279,10 @@ test('screens for review', async ({ page, browserName }) => {
   const mixed: NearAction[] = [ft('bob.testnet', '1000'), ft(near, '50'), ft('bob.testnet', '2000'), { type: 'functionCall', methodName: 'ping', args: new TextEncoder().encode('{}'), gas: 30_000_000_000_000n, deposit: 0n }, ft(near, '25'), ft('bob.testnet', '3000')];
   popup = await popupFor(page, 'mixed', 'nearSignTx', base64Encode(encodeNearTransaction({ signerId: near, publicKey: key, nonce: 12n, receiverId: 'usdc.testnet', blockHash: NEAR_BLOCK, actions: mixed })));
   await expect(popup.locator('p.summary-line')).toHaveText([
-    'Send 6,000 (smallest units) of the token usdc.testnet to bob.testnet in 3 transfers',
+    'Send 6,000 units of the unlisted token usdc.testnet to bob.testnet in 3 transfers',
     'Use usdc.testnet (ping)',
-    'Send 75 (smallest units) of the token usdc.testnet to your account in 2 transfers',
+    'Send 75 units of the unlisted token usdc.testnet to your account in 2 transfers',
+    'Journear doesn’t know this token (usdc.testnet), so it can’t tell what these units are worth. Check the amount in E2E Partner first.',
   ]);
   await shot(popup, 'near-mixed-recipients', browserName);
   await done(page, popup, 'mixed');
@@ -338,7 +343,8 @@ test('screens for review', async ({ page, browserName }) => {
   popup = await popupFor(page, 'control', 'stellarSignXdr', build(Operation.setOptions({ signer: { ed25519PublicKey: other, weight: 255 } })));
   // One step: the banner, and the headline naming the signer whole; no bullet repeats it.
   await expect(popup.locator('.danger-box li')).toHaveCount(0);
-  await expect(popup.locator('h2.summary-headline')).toContainText(`add ${other} as a signer with weight 255`);
+  await expect(popup.locator('h2.summary-headline')).toContainText(`let the key ${short(other)} act for the account (strength 255)`);
+  await expect(popup.locator('.danger-box + dl.id-rows')).toHaveText(`Key${other}`);
   await shot(popup, 'stellar-account-control', browserName);
   await done(page, popup, 'control');
   // Six steps that move nothing, then a payment: the payment is listed first, with the XLM leaving (review 2, N2).
@@ -346,7 +352,7 @@ test('screens for review', async ({ page, browserName }) => {
   for (let i = 0; i < 6; i++) manySteps.addOperation(Operation.bumpSequence({ bumpTo: '99' }));
   manySteps.addOperation(Operation.payment({ destination: other, asset: Asset.native(), amount: '1000000' }));
   popup = await popupFor(page, 'many-steps', 'stellarSignXdr', manySteps.setTimeout(300).build().toXDR());
-  await expect(popup.locator('p.summary-line').nth(1)).toHaveText(`Send 1,000,000 XLM to ${other}`);
+  await expect(popup.locator('p.summary-line').nth(1)).toHaveText(`Send 1,000,000 XLM to ${short(other)}`);
   await shot(popup, 'stellar-many-steps-payment', browserName);
   await done(page, popup, 'many-steps');
   const junk = new Asset('USDC', Keypair.random().publicKey());
@@ -377,7 +383,7 @@ test('screens for review: the mainnet demo', async ({ page, browserName }) => {
   await openPartner(page, await newApp({ mainnetDemo: true }));
   await login(page);
   const popup = await popupFor(page, 'pubnet', 'stellarSignPubnet', '2');
-  await expect(popup.getByText('Real funds, test custody: these funds may be lost')).toBeVisible();
+  await expect(popup.getByText('Real money, test system: you could lose it.')).toBeVisible();
   await shot(popup, 'mainnet-demo-stellar-payment', browserName);
   await done(page, popup, 'pubnet');
 });

@@ -86,12 +86,12 @@ describe('buildView', () => {
       layover: `locked: ${countdownText(120_000 + LAYOVER_MARGIN_MS - 20_000)}`,
     });
     // D807: the slot itself says what to do, with the faucet (one that takes implicit accounts) and Copy.
-    expect(v.stamps[2]).toEqual({ id: 'own_fare', status: 'locked', reason: LOCKED.needsNear, detail: OWN_FARE_HELP.detail, href: 'https://docs.near.org/getting-started/faucet', hrefLabel: 'Get testnet NEAR ↗', copyAccount: true });
-    expect(v.balanceLink).toEqual({ href: 'https://docs.near.org/getting-started/faucet', label: 'Get testnet NEAR ↗' });
+    expect(v.stamps[2]).toEqual({ id: 'own_fare', status: 'locked', reason: LOCKED.needsNear, detail: OWN_FARE_HELP.detail, href: 'https://docs.near.org/getting-started/faucet', hrefLabel: 'Get free test NEAR ↗', copyAccount: true });
+    expect(v.balanceLink).toEqual({ href: 'https://docs.near.org/getting-started/faucet', label: 'Get free test NEAR ↗' });
     // The notice says it too, while nothing else is said; with another notice up, the slot still has it all.
-    expect(v.notice).toEqual({ kind: 'info', text: FAUCET_NOTICE, href: 'https://docs.near.org/getting-started/faucet', hrefLabel: 'Get testnet NEAR' });
-    const busy = buildView(input({ passport: held(['arrival']), notice: { kind: 'info', text: 'Layover stamped on NEAR testnet. You paid no gas.' } }), NOW);
-    expect(busy.notice?.text).toBe('Layover stamped on NEAR testnet. You paid no gas.');
+    expect(v.notice).toEqual({ kind: 'info', text: FAUCET_NOTICE, href: 'https://docs.near.org/getting-started/faucet', hrefLabel: 'Get free test NEAR' });
+    const busy = buildView(input({ passport: held(['arrival']), notice: { kind: 'info', text: 'Layover stamped on NEAR’s test network. It was free for you.' } }), NOW);
+    expect(busy.notice?.text).toBe('Layover stamped on NEAR’s test network. It was free for you.');
     expect(busy.stamps[2]).toMatchObject({ status: 'locked', href: 'https://docs.near.org/getting-started/faucet', copyAccount: true });
     // Without a faucet (a local stack): the steps and Copy, no link.
     const local = buildView(input({ passport: held(['arrival']), faucet: null }), NOW);

@@ -154,10 +154,12 @@ describe('the four cases', () => {
     const eIk = identityKey(app.scope, 'email', eSub);
     const hash = sha256(sessionPreimage(env.SIGNER_ACCOUNT, commitment));
     expect(t.claims.nonce).toBe(nonceOf(autoLinkPreimage(env.SIGNER_ACCOUNT, app.scope, hash, gIk, { join: 1, joinerIk: gIk, targetRootIk: eIk, targetEpoch: 0, mode: 1 })));
-    // A notice to the address (spec "Notices"), linking only to authOrigin.
+    // A notice to the address (spec "Notices"), with no link (D862): it says where a removal is.
     const notice = h.sender.sent.slice(sentBefore).find((m) => m.kind === 'link_notice')!;
     expect(notice.to).toBe(email);
-    expect(notice.text).toContain('https://auth.test/link/cancel');
+    expect(notice.text).toContain('Not you? Then someone else may have been able to open this wallet.');
+    expect(notice.text).toContain('Then move what’s in this wallet to a new one.');
+    expect(notice.text).not.toContain('https://');
   });
 
   it('case A where E is a member: the target is E’s root, with that account’s epoch', async () => {
@@ -273,7 +275,7 @@ describe('the four cases', () => {
     const eIk = identityKey(app.scope, 'email', eSub);
     const hash = sha256(sessionPreimage(env.SIGNER_ACCOUNT, commitment));
     expect(t.claims.nonce).toBe(nonceOf(autoLinkPreimage(env.SIGNER_ACCOUNT, app.scope, hash, gIk, { join: 2, joinerIk: eIk, targetRootIk: gIk, targetEpoch: 0, mode: 1 })));
-    expect(h.sender.to(email).find((m) => m.kind === 'link_notice')!.text).toContain('now opens');
+    expect(h.sender.to(email).find((m) => m.kind === 'link_notice')!.text).toContain('now both open');
     // Single use.
     expect((await match(h, app, acc, { linkTicket: login.linkTicket! })).body.emailToken).toBeUndefined();
   });

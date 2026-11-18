@@ -117,6 +117,13 @@ describe('follow-up notices', () => {
       { t: 'stop', code: 'link_pending', effectiveAtMs: 9 },
       { t: 'email_consent', reason: 'declined', loginHint: '110248495921238986420' },
       { t: 'email_consent', reason: 'account_mismatch', loginHint: '1' },
+      // D864: the email that waits to join an account, and what became of its cancel.
+      { t: 'link_waiting', provider: 'google', effectiveAtMs: 9, prove: { method: 'email', purpose: 'link_change', commitment: { scopeId: 's1' } } },
+      { t: 'link_cancel', outcome: 'cancelled' },
+      { t: 'link_cancel', outcome: 'already_cancelled' },
+      { t: 'link_cancel', outcome: 'now_active' },
+      { t: 'link_cancel', outcome: 'not_cancelled', code: 'stale_epoch' },
+      { t: 'link_cancel', outcome: 'unknown', code: 'api_unavailable' },
     ]) {
       expect(isFollowNotice(n), JSON.stringify(n)).toBe(true);
     }
@@ -134,6 +141,13 @@ describe('follow-up notices', () => {
       { t: 'email_consent', reason: 'declined' },
       { t: 'email_consent', reason: 'declined', loginHint: 'a b' },
       { t: 'email_consent', reason: 'declined', loginHint: '1', extra: 1 },
+      { t: 'link_waiting', provider: 'apple', effectiveAtMs: 9, prove: { method: 'email', purpose: 'link_change', commitment: {} } },
+      { t: 'link_waiting', provider: 'google', effectiveAtMs: -1, prove: { method: 'email', purpose: 'link_change', commitment: {} } },
+      { t: 'link_waiting', provider: 'google', effectiveAtMs: 9 },
+      { t: 'link_waiting', provider: 'google', effectiveAtMs: 9, prove: { method: 'email', purpose: 'link_change', commitment: {} }, extra: 1 },
+      { t: 'link_cancel', outcome: 'removed' },
+      { t: 'link_cancel', outcome: 'cancelled', code: 'Bad Code' },
+      { t: 'link_cancel', outcome: 'cancelled', extra: 1 },
       { t: 'whatever' },
     ]) {
       expect(isFollowNotice(n), JSON.stringify(n)).toBe(false);

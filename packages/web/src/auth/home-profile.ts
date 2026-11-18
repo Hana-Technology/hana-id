@@ -17,7 +17,7 @@
 // markup, a heading or a link. The name is held in memory only, for this sign-in: nothing here writes it to storage, a
 // URL or a log, and `reset()` (sign-out, another account) drops it and the typed drafts with every view.
 import { PROFILE_NAME_MAX, normalizeProfileName } from '@hana-id/core/identity';
-import type { Child, Dom } from './dom.ts';
+import { type Child, type Dom, supportCode, supportRequest } from './dom.ts';
 import { type HomeIdentity, type HomeNameShare, type HomeProfileApi, type HomeProfileName, type HomeScope, HOME_MAX_APPS, HOME_NAME_SHARES_MAX } from './home-api.ts';
 import { type HomeProblem, homeProblem, plainProblem } from './home-problems.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
@@ -69,7 +69,7 @@ export const HOME_NAME_REMOVE_CONFIRM = Object.freeze({
   title: 'Remove your name?',
   points: Object.freeze([
     'Passport Home deletes your first and last name, and stops sharing your name with every app.',
-    'The apps’ new sign-ins don’t include it. Sign-in tokens they already received keep it for up to an hour.',
+    'The apps’ new sign-ins don’t include it. The apps may still see it for up to an hour.',
     'A copy an app already stored is the app’s own: Journear can’t delete it. Ask the app if you want it deleted.',
   ]),
   go: 'Remove my name',
@@ -442,7 +442,7 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
     if (out) {
       const stoppedNote = (changed: boolean): Note =>
         changed
-          ? { app: appName, before: 'Stopped sharing your name with ', after: '. Its new sign-ins don’t include it; sign-in tokens it already received keep it for up to an hour.' }
+          ? { app: appName, before: 'Stopped sharing your name with ', after: '. Its new sign-ins don’t include it. The app may still see it for up to an hour.' }
           : { app: appName, before: 'Your name was no longer shared with ', after: '.' };
       if (out.shared) {
         app.apps = app.apps.map((a) => (a.appId === appId ? { ...a, shared: true } : a));
@@ -473,8 +473,8 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
       'danger',
       { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id: `home-profile-problem-${where}`, tabindex: '-1' } },
       d.h('p', {}, p.text),
-      d.h('p', { class: 'code muted' }, `Code: ${p.code}`),
-      p.requestId ? d.h('p', { class: 'code muted' }, `Request: ${p.requestId}`) : null,
+      d.h('p', { class: 'code muted' }, supportCode(p.code)),
+      p.requestId ? d.h('p', { class: 'code muted' }, supportRequest(p.requestId)) : null,
     );
 
   /**

@@ -1000,7 +1000,9 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         path = loginPath(config.scopeId, judged.pathIdentity.provider as 'google' | 'email', judged.pathIdentity.sub, KEY_INDEX);
         linkedRef = judged.joiner;
       } else {
-        path = await this.ownPath(who.ref);
+        path = await this.ownPath(who.ref).catch((e: unknown) => {
+          throw this.linkWaiting(e, who);
+        });
       }
       // D263: a silent change of the root this device last opened for this identity, other than a link activating
       // (own → member, confirmed on both providers above), is confirmed on both providers again.
@@ -1501,6 +1503,19 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
   }
 
   /**
+   * D864: an email sign-in refused because this email is itself a pending member (`link_pending`): the login still ends
+   * with that error, and the follow-up channel goes to `LinkWaiting` instead of carrying the plain `stop`, so the popup
+   * can offer to cancel the link. Any other error (or a Google sign-in) passes through unchanged. Returns `e`.
+   */
+  private linkWaiting(e: unknown, who: Who): unknown {
+    const follow = this.follow;
+    if (!follow || !(e instanceof VaultError) || e.code !== 'link_pending' || who.ref.provider !== EMAIL_PROVIDER || this.aborted) return e;
+    this.follow = null;
+    void new LinkWaiting(this.ctx, follow, who, stopNotice(e)).run().finally(() => follow.close());
+    return e;
+  }
+
+  /**
    * The registry's view of the app's scope (Q7): 'mismatch' when the Google client the API named belongs to another
    * scope (own client), or, in shared mode, the scope can't take shared logins or the client isn't one of the
    * contract's shared clients in force (sweep VAUL-4), else null. Throws when the RPC can't answer.
@@ -1914,7 +1929,7 @@ class Afterword {
     } catch {
       return null;
     }
-    const check = new TokenCheck(ctx, app, who.ref.provider === 'email' ? this.emailChain() : null, () => undefined);
+    const check = new TokenCheck(ctx, app, who.ref.provider === 'email' ? emailChainOf(ctx) : null, () => undefined);
     for (const a of offered) {
       try {
         const got = who.ref.provider === 'google' ? await check.google(token, a.nonce) : await check.email(token, a.nonce);
@@ -1925,13 +1940,152 @@ class Afterword {
     }
     return null;
   }
+}
 
-  private emailChain(): Promise<EmailChain | 'unchecked'> {
-    const { near, config } = this.ctx;
-    return Promise.all([near.scopeForClient(EMAIL_PROVIDER, `email:${config.scopeId}`), near.issuerKeys(EMAIL_PROVIDER), near.selfIssued(EMAIL_PROVIDER)]).then(
-      ([scope, keys, policy]) => ({ scope, keys: keys ?? [], policy }),
-      () => 'unchecked' as const,
-    );
+/** The scope's email client, the on-chain email keys and the signer policy, read now (an email proof's check). */
+function emailChainOf(ctx: LoginContext): Promise<EmailChain | 'unchecked'> {
+  const { near, config } = ctx;
+  return Promise.all([near.scopeForClient(EMAIL_PROVIDER, `email:${config.scopeId}`), near.issuerKeys(EMAIL_PROVIDER), near.selfIssued(EMAIL_PROVIDER)]).then(
+    ([scope, keys, policy]) => ({ scope, keys: keys ?? [], policy }),
+    () => 'unchecked' as const,
+  );
+}
+
+/** The cancel `LinkWaiting` offered: the nonce its proof must carry, and what it commits to. */
+interface WaitingOffer {
+  rootProvider: string;
+  effectiveAtMs: number;
+  memberKey: string;
+  rootKey: string;
+  epoch: number;
+  salt: Uint8Array;
+  nonce: string;
+}
+
+/** Where this email stands now: as offered (still pending, same root and epoch), or why the offer no longer holds. */
+type WaitingStanding = 'pending' | 'own' | 'member' | 'changed' | 'unknown';
+
+/**
+ * D864 (the email-side cancel D259 left for later): an email sign-in refused `link_pending` because this very email is
+ * a pending member of an account (case B when Google doesn't host the mailbox: someone signed in with a Google account
+ * and proved this address with one code). The person at the keyboard has just proved the mailbox with a fresh code, so
+ * the popup may show the link and offer to cancel it, as cancel_link already allows the pending identity itself to do
+ * (links.rs). The login's own token can't be that proof: its nonce commits to the login's session, and cancel_link
+ * needs a `link_change` nonce. So Cancel asks for one more code to the same address over the `link_change` nonce the
+ * vault computes here for this member only (fresh salt, the account's epoch from a fresh `get_identity`); the vault
+ * checks the proof against the chain's email keys and that its `sub` is this login's, re-reads the identity, and only
+ * then relays POST /v1/link/cancel (whose precheck and the contract check it all again). The popup then hears the
+ * outcome (`link_cancel`). Nothing is offered for any other identity; the login has already ended `link_pending`, so
+ * the partner sees exactly what it saw before. Waits for the popup at most AFTERWORD_MS.
+ */
+class LinkWaiting {
+  private readonly signal = new AbortController();
+
+  constructor(
+    private readonly ctx: LoginContext,
+    private readonly follow: FollowChannel,
+    private readonly who: Who,
+    /** The `stop` the popup gets when no cancel can be offered (the identity can't be read, or isn't pending). */
+    private readonly fallback: FollowNotice,
+  ) {}
+
+  async run(): Promise<void> {
+    const timer = this.ctx.timers.setTimeout(() => this.signal.abort(), AFTERWORD_MS);
+    let offer: WaitingOffer | null = null;
+    try {
+      offer = await this.offer().catch(() => null);
+      if (!offer) {
+        await this.follow.notice(this.fallback);
+        return;
+      }
+      const { ctx } = this;
+      const scopeId = ctx.config.scopeId;
+      const prove: FollowProve = {
+        method: 'email',
+        purpose: 'link_change',
+        commitment: { scopeId, action: 'cancel', rootIk: offer.rootKey, memberIk: offer.memberKey, epoch: offer.epoch, salt: Array.from(offer.salt) },
+      };
+      const slot = await this.follow.notice({ t: 'link_waiting', provider: offer.rootProvider, effectiveAtMs: offer.effectiveAtMs, prove });
+      // "Keep the link" (or a closed window) writes nothing: the wait ends at its limit.
+      const answer = await this.follow.answer(slot, this.signal.signal).catch(() => null);
+      if (!answer || !isRelayToken(answer) || answer.as !== 'proof') return;
+      if (!(await this.proves(answer.idToken, offer.nonce))) {
+        await this.follow.notice({ t: 'stop', code: 'token_invalid' });
+        return;
+      }
+      // The link may have moved on while the user typed the code: tell them, and relay nothing bound to fail.
+      const before = await this.standing(offer);
+      if (before !== 'pending') {
+        const moved: Record<Exclude<WaitingStanding, 'pending'>, FollowNotice> = {
+          own: { t: 'link_cancel', outcome: 'already_cancelled' },
+          member: { t: 'link_cancel', outcome: 'now_active' },
+          changed: { t: 'link_cancel', outcome: 'not_cancelled', code: 'stale_epoch' },
+          unknown: { t: 'link_cancel', outcome: 'unknown', code: 'near_unavailable' },
+        };
+        await this.follow.notice(moved[before]);
+        return;
+      }
+      try {
+        await ctx.api.linkChange('cancel', { jwt: answer.idToken, memberKey: offer.memberKey, epoch: offer.epoch, salt: Array.from(offer.salt) });
+      } catch (e) {
+        const code = e instanceof ApiError && /^[a-z_]{1,64}$/u.test(e.code) ? (e.code === 'contract_rejected' ? 'link_refused' : e.code) : 'api_unavailable';
+        // A failure may still have landed (a lost answer), or the link activated meanwhile: the chain says which.
+        const after = await this.standing(offer);
+        const outcome = after === 'own' ? 'cancelled' : after === 'member' ? 'now_active' : after === 'unknown' ? 'unknown' : 'not_cancelled';
+        await this.follow.notice(outcome === 'cancelled' || outcome === 'now_active' ? { t: 'link_cancel', outcome } : { t: 'link_cancel', outcome, code });
+        return;
+      }
+      await this.follow.notice({ t: 'link_cancel', outcome: 'cancelled' });
+    } finally {
+      this.ctx.timers.clearTimeout(timer);
+      if (offer) zero(offer.salt);
+    }
+  }
+
+  /** The cancel for this email, from a fresh `get_identity` (its key checked against the one computed here). */
+  private async offer(): Promise<WaitingOffer | null> {
+    const { ctx, who } = this;
+    const scopeId = ctx.config.scopeId;
+    const view = await ctx.near.identity(scopeId, who.ref.provider, who.ref.sub);
+    const memberKey = identityKeyHex(scopeId, who.ref.provider, who.ref.sub);
+    if (view.key !== memberKey || view.status !== 'pending' || !view.root || view.effectiveAtMs === null) return null;
+    if (!PATH_PROVIDERS.includes(view.root.provider) || view.root.provider === who.ref.provider) return null;
+    const rootIk = identityKey(scopeId, view.root.provider, view.root.sub);
+    const salt = randomBytes(32);
+    const nonce = linkChangeNonce(ctx.env.signer, scopeId, 'cancel', rootIk, fromHex(memberKey), view.accountEpoch, salt);
+    return { rootProvider: view.root.provider, effectiveAtMs: view.effectiveAtMs, memberKey, rootKey: identityKeyHex(scopeId, view.root.provider, view.root.sub), epoch: view.accountEpoch, salt, nonce };
+  }
+
+  /** The proof is this email's, over exactly the offered nonce, signed by the chain's email keys. */
+  private async proves(token: string, nonce: string): Promise<boolean> {
+    let app: AppConfig;
+    try {
+      app = await this.ctx.appConfig();
+    } catch {
+      return false;
+    }
+    try {
+      const got = await new TokenCheck(this.ctx, app, emailChainOf(this.ctx), () => undefined).email(token, nonce);
+      return got.ref.sub === this.who.ref.sub;
+    } catch {
+      return false;
+    }
+  }
+
+  private async standing(offer: WaitingOffer): Promise<WaitingStanding> {
+    const { ctx, who } = this;
+    const scopeId = ctx.config.scopeId;
+    let view: IdentityView;
+    try {
+      view = await ctx.near.identity(scopeId, who.ref.provider, who.ref.sub);
+    } catch {
+      return 'unknown';
+    }
+    if (view.key !== offer.memberKey) return 'unknown';
+    if (view.status === 'own') return 'own';
+    const sameRoot = !!view.root && identityKeyHex(scopeId, view.root.provider, view.root.sub) === offer.rootKey;
+    if (view.status === 'member') return sameRoot ? 'member' : 'changed';
+    return sameRoot && view.accountEpoch === offer.epoch ? 'pending' : 'changed';
   }
 }
 

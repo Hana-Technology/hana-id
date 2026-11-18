@@ -80,11 +80,11 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await newApp({ name: 'Hana ID demo', origins: [DEMO_ORIGIN], publishableKey: DEMO_PK });
   await page.setViewportSize(VIEWPORTS.desktop);
   await page.goto(`${DEMO_ORIGIN}/`);
-  await expect(page.locator('#status')).toHaveText('Logged out.');
+  await expect(page.locator('#status')).toHaveText('Signed out.');
   await shots(page, '01-signed-out', { full: true });
 
   const popup = page.waitForEvent('popup');
-  await page.getByRole('button', { name: 'Log in with Google' }).click();
+  await page.getByRole('button', { name: 'Sign in with Google' }).click();
   await chooseAccount(await popup);
   await expect(page.locator('#near')).toBeVisible();
   await expect(page.locator('#near-messages li')).toHaveCount(3);

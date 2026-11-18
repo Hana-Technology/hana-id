@@ -69,7 +69,7 @@ import {
   uintReturn,
   verifiedDigest,
 } from './sponsor-checks.ts';
-import { type EvmRelayerPort, type EvmRelayerSent, EvmRpcError, type Hex, keccakHex, relayerBinding, relayerRefusal, revertOf, type SponsorChainPort, type SponsorReceipt, sponsorPorts } from './sponsor-ports.ts';
+import { type EvmRejectionCause, type EvmRelayerPort, type EvmRelayerSent, EvmRpcError, type Hex, keccakHex, relayerBinding, relayerRefusal, revertOf, type SponsorChainPort, type SponsorReceipt, sponsorPorts } from './sponsor-ports.ts';
 import {
   accountSubject,
   appSubjectOf,
@@ -454,12 +454,14 @@ function failed(ctx: Ctx, code: 'reverted' | 'not_executed', transactionHash: He
 // ---- the relayer ----
 
 /**
- * Whose doing a batch no node took was (the relayer's `rejection.cause`): `request` (its own size or shape: the user's
- * input), `pricing` (turned away over its fees: nobody's fault, try again shortly), anything else `relayer` (our side:
- * funds, nonce, signing, and any cause this API doesn't know yet: no charge to the user, an alert).
+ * Whose doing a batch no node took was (the relayer's `rejection.cause`, EvmRejectionCause): `request` (its own size or
+ * shape: the user's input), `pricing` (turned away over its fees: nobody's fault, try again shortly), `relayer` (our
+ * side: funds, nonce, signing). A cause this API doesn't know (a stored row, a newer relayer) is read as `relayer`: no
+ * charge to the user, an alert.
  */
-export type RejectionKind = 'request' | 'pricing' | 'relayer';
+export type RejectionKind = EvmRejectionCause;
 export const rejectionKind = (cause: string): RejectionKind => (cause === 'request' ? 'request' : cause === 'pricing' ? 'pricing' : 'relayer');
+const REJECTION_CAUSES: ReadonlySet<string> = new Set<EvmRejectionCause>(['request', 'pricing', 'relayer']);
 
 /** The answer to a batch no node took (its nonce went to the relayer's cancel at once): nothing ran. */
 function rejectionAnswer(ctx: Ctx, kind: RejectionKind): Response {
@@ -493,8 +495,8 @@ function checkedResult(r: unknown, digest: Hex): EvmRelayerSent | null {
   if (raw !== null && keccakHex(raw) !== hash) return null;
   const j = v.rejection as { cause?: unknown; code?: unknown } | null | undefined;
   const rejection =
-    v.broadcast !== 'rejected' ? null : { cause: typeof j?.cause === 'string' && WORD_RE.test(j.cause) ? j.cause : 'relayer', code: typeof j?.code === 'string' && WORD_RE.test(j.code) ? j.code : 'unknown' };
-  return { digest, transactionHash: hash, relayerNonce: v.relayerNonce, raw, replay: v.replay, broadcast: v.broadcast, rejection: rejection as EvmRelayerSent['rejection'] };
+    v.broadcast !== 'rejected' ? null : { cause: typeof j?.cause === 'string' && REJECTION_CAUSES.has(j.cause) ? (j.cause as EvmRejectionCause) : 'relayer', code: typeof j?.code === 'string' && WORD_RE.test(j.code) ? j.code : 'unknown' };
+  return { digest, transactionHash: hash, relayerNonce: v.relayerNonce, raw, replay: v.replay, broadcast: v.broadcast, rejection };
 }
 
 /**
@@ -645,9 +647,12 @@ export async function handleEvmSponsorPrepare(request: Request, env: Env, reques
           : !budgetLeft(chain, spent)
             ? 'budget_exhausted'
             : null;
-  // The largest minGas whose gas limit fits maxGasPerTx for these calls (with the authorization when one is needed).
+  // The largest minGas whose gas limit fits maxGasPerTx for these calls (with the authorization when one is needed). The
+  // vault sends exactly that minGas, so the calldata here must cost at least the real one's: the deadline, minGas and
+  // signature words get all their significant bytes non-zero (5 bytes outlast any deadline before the year 36812, 3 any
+  // minGas up to 16 777 215), where a real word may have a zero byte that costs less.
   const shapeCalldata = encodeExecuteCalldata(
-    { chainId: chain.chainId, account: req.account, implementation: chain.delegate as Hex, calls: req.calls, nonce: executeNonce ?? 0n, deadline: BigInt(Math.floor(now / 1000) + chain.deadlineMaxS), relayer: config.relayerAddress as Hex, minGas: chain.maxGasPerTx },
+    { chainId: chain.chainId, account: req.account, implementation: chain.delegate as Hex, calls: req.calls, nonce: executeNonce ?? 0n, deadline: 0xff_ffff_ffffn, relayer: config.relayerAddress as Hex, minGas: 0xff_ffffn },
     `0x${'11'.repeat(64)}1b`,
   );
   const maxMinGas = maxMinGasFor({ calldata: shapeCalldata, callData: req.calls.map((c) => c.data), authorizations: delegation === 'none' ? 1 : 0 }, chain.maxGasPerTx);

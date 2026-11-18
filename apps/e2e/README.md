@@ -51,6 +51,12 @@ account-control change, a payment after six steps that move nothing, an offer an
 with one full-access key, the mainnet demo's Stellar payment, and raw signing (from the live-mode test). It drives the partner app's `stellarSignXdr`, `ethSignTypedData`, `nearSignTx`,
 `nearSignDelegate` and `nearSignMessage` actions with requests the test builds.
 
+The plain-wording review (D853, D858–D860): `tests/approval-plain-shots.spec.ts` saves, with `HANA_SHOTS_DIR=<dir>`
+(Chromium only, skipped otherwise), the screens the founder reviews: the stamps demo's relayed NEAR call for a test app
+and a live app, an EVM transfer of a listed token (USDC on Base Sepolia, posted to the popup as its vault would: the
+partner page knows only the local chain) and of an unlisted one, an unlimited permission, an unknown call, a NEAR
+full-access key, a Stellar payment, the sponsored check-in and the screen after Reject. It checks nothing itself.
+
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown
 key is masked). Buttons behind the guard (Approve, the export's Continue and Show key) take `approve()` or

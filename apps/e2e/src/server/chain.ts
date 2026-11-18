@@ -99,7 +99,7 @@ export class Chain {
     const found = this.accountOf(key);
     const m = found?.account.members.find((x) => x.key === key);
     if (found && m) {
-      return { key, status: m.active ? 'member' : 'pending', opened: this.opened.has(key), root: found.account.root, effective_at_ms: m.effective_at_ms, account_epoch: found.account.epoch };
+      return { key, status: this.isActive(m) ? 'member' : 'pending', opened: this.opened.has(key), root: found.account.root, effective_at_ms: m.effective_at_ms, account_epoch: found.account.epoch };
     }
     return { key, status: 'own', opened: this.opened.has(key), account_epoch: found?.account.epoch ?? 0 };
   }
@@ -108,7 +108,29 @@ export class Chain {
     const found = this.accountOf(identityKeyHex(scopeId, provider, sub));
     if (!found) return null;
     const a = found.account;
-    return { root: a.root, members: a.members.map((m) => ({ key: m.key, provider: m.provider, effective_at_ms: m.effective_at_ms, active: m.active, auto: m.auto })), epoch: a.epoch, unlinked: a.unlinked };
+    return { root: a.root, members: a.members.map((m) => ({ key: m.key, provider: m.provider, effective_at_ms: m.effective_at_ms, active: this.isActive(m), auto: m.auto })), epoch: a.epoch, unlinked: a.unlinked };
+  }
+
+  /** A member is active once marked, or past its time (the contract's `member_active`: views count it at once). */
+  isActive(m: Member): boolean {
+    return m.active || m.effective_at_ms <= Date.now();
+  }
+
+  /**
+   * Tests only (`POST /__e2e/links/expire`): the waiting period of every pending member of the accounts whose root is
+   * `rootSub` ends now, as if `change_delay_ms` had passed. Returns how many members it moved.
+   */
+  expirePending(rootSub: string): number {
+    let moved = 0;
+    for (const a of this.accounts.values()) {
+      if (a.root.sub !== rootSub) continue;
+      for (const m of a.members) {
+        if (this.isActive(m)) continue;
+        m.effective_at_ms = Date.now() - 1;
+        moved += 1;
+      }
+    }
+    return moved;
   }
 
   /** Adds `member` to `root`'s account (creating it), bumping its epoch. */

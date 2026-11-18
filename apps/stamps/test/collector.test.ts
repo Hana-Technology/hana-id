@@ -132,7 +132,7 @@ describe('relayed stamps (arrival, sponsored, postcard, layover)', () => {
     await s.collector.refresh(NEAR_ACCOUNT);
     s.near.relay.mockRejectedValueOnce(hanaError('api_unavailable', { status: 504, reason: 'timeout' }));
     const e = await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'arrival' }, s.stage).catch((x: unknown) => x);
-    expect(plainMessage(e, 'collect')).toBe('NEAR testnet hasn’t confirmed the transaction yet: it may still land. Refresh in a moment to see.');
+    expect(plainMessage(e, 'collect')).toBe('NEAR hasn’t confirmed this stamp yet: it may still arrive. Refresh in a moment to see.');
   });
 
   it('a declined approval (4001) relays nothing', async () => {
@@ -141,7 +141,7 @@ describe('relayed stamps (arrival, sponsored, postcard, layover)', () => {
     s.near.signDelegateAction.mockRejectedValueOnce(hanaError(4001));
     const e = await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'arrival' }, s.stage).catch((x: unknown) => x);
     expect(s.near.relay).not.toHaveBeenCalled();
-    expect(plainMessage(e, 'collect')).toBe('Declined in the Journear Passport window: nothing was signed, no stamp was collected.');
+    expect(plainMessage(e, 'collect')).toBe('You rejected it in the Journear Passport window. Nothing was signed, and no stamp was collected.');
   });
 
   it('an expired delegate (the relayer’s delegate_expired) drops the read, so the next click reads afresh', async () => {
@@ -149,7 +149,7 @@ describe('relayed stamps (arrival, sponsored, postcard, layover)', () => {
     await s.collector.refresh(NEAR_ACCOUNT);
     s.near.relay.mockRejectedValueOnce(hanaError(4100, { status: 400, reason: 'delegate_expired' }));
     const e = await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'arrival' }, s.stage).catch((x: unknown) => x);
-    expect(plainMessage(e, 'collect')).toBe('The signed request expired before the relayer sent it. Try again.');
+    expect(plainMessage(e, 'collect')).toBe('Your approved request expired before Journear could send it. Nothing was sent. Try again.');
     void s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'arrival' }, s.stage).catch(() => {});
     // The background re-read may have landed; the dropped read itself is never reused for a synchronous sign.
     expect(s.near.signDelegateAction.mock.calls.length + s.client.prepareApproval.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -188,7 +188,7 @@ describe('relayed stamps (arrival, sponsored, postcard, layover)', () => {
     expect(plainMessage(e, 'collect')).toBe('Collect your Arrival stamp first: every passport starts with it.');
     await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'arrival' }, s.stage);
     const e2 = await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'layover' }, s.stage).catch((x: unknown) => x);
-    expect(plainMessage(e2, 'collect')).toMatch(/^Not yet: the layover needs 2 minutes/u);
+    expect(plainMessage(e2, 'collect')).toMatch(/^Not yet: the Layover needs 2 minutes/u);
   });
 
   it('a failed read cancels the window prepareApproval opened', async () => {
@@ -196,7 +196,7 @@ describe('relayed stamps (arrival, sponsored, postcard, layover)', () => {
     s.chain.down = true;
     const e = await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'arrival' }, s.stage).catch((x: unknown) => x);
     expect(s.ticket.cancel).toHaveBeenCalledTimes(1);
-    expect(plainMessage(e, 'collect')).toMatch(/couldn’t read NEAR testnet/u);
+    expect(plainMessage(e, 'collect')).toMatch(/couldn’t reach NEAR\. Nothing was lost/u);
   });
 });
 
@@ -236,7 +236,7 @@ describe('signature', () => {
   it('refuses a named account before any approval (its id is no public key)', async () => {
     const s = setup();
     const e = await s.collector.collect({ accountId: 'alice.testnet', stamp: 'signature' }, s.stage).catch((x: unknown) => x);
-    expect(plainMessage(e, 'collect')).toMatch(/Only an account whose name is its own key/u);
+    expect(plainMessage(e, 'collect')).toMatch(/Only a Journear Passport NEAR account can collect this stamp/u);
     expect(s.near.signMessage).not.toHaveBeenCalled();
   });
 });
@@ -378,7 +378,7 @@ describe('own_fare', () => {
     const e = await s.collector.collect({ accountId: NEAR_ACCOUNT, stamp: 'own_fare' }, s.stage).catch((x: unknown) => x);
     expect(s.near.signTransaction).not.toHaveBeenCalled();
     expect(s.ticket.cancel).toHaveBeenCalledTimes(1);
-    expect(plainMessage(e, 'collect')).toMatch(/enough testnet NEAR for the fee/u);
+    expect(plainMessage(e, 'collect')).toMatch(/enough test NEAR for the network fee/u);
   });
 
   it('maps NEAR’s failure to the contract’s ERR_* and an RPC with no answer to `sent`', async () => {
@@ -394,7 +394,7 @@ describe('own_fare', () => {
     await expect(sendOwnFare(rpc, 'AAAA')).rejects.toMatchObject({ code: 'near_not_enough_balance' });
     s.chain.sendTxAnswer = () => Response.json({ jsonrpc: '2.0', id: 'x', result: { status: { Failure: { ActionError: { kind: { FunctionCallError: { ExecutionError: 'Smart contract panicked: <script>ERR_NOPE' } } } } } } });
     const odd = await sendOwnFare(rpc, 'AAAA').catch((x: unknown) => x);
-    expect(plainMessage(odd, 'collect')).toBe('NEAR testnet refused or failed the transaction. Refresh to check, then try again.');
+    expect(plainMessage(odd, 'collect')).toBe('NEAR refused or failed this stamp. Refresh to check whether it went through, then try again.');
     // The contract's receipt out of storage balance: the storage notice, not "your account lacks NEAR".
     s.chain.sendTxAnswer = () => Response.json({ jsonrpc: '2.0', id: 'x', result: { status: { Failure: { ActionError: { index: 0, kind: { LackBalanceForState: { account_id: STAMPS, amount: '1' } } } } } } });
     await expect(sendOwnFare(rpc, 'AAAA')).rejects.toMatchObject({ code: 'stamps_contract_storage' });

@@ -82,6 +82,10 @@ export function maskedAddress(address: string): string {
   return `${shown}•••@${address.slice(at + 1)}`;
 }
 
+/** D853: how a page names an error's code and its request for support, below the plain sentence. */
+export const supportCode = (code: string): string => `Error code (for support): ${code}`;
+export const supportRequest = (id: string): string => `Request ID (for support): ${id}`;
+
 /** A titled error panel; `code` is the protocol error code, shown small for support. */
 export function errorView(d: Dom, title: string, message: string, code?: string): HTMLElement {
   return d.h(
@@ -89,7 +93,7 @@ export function errorView(d: Dom, title: string, message: string, code?: string)
     { class: 'panel error', attrs: { role: 'alert' } },
     d.h('h1', {}, title),
     d.h('p', {}, message),
-    code ? d.h('p', { class: 'code' }, `Code: ${code}`) : null,
+    code ? d.h('p', { class: 'code' }, supportCode(code)) : null,
   );
 }
 

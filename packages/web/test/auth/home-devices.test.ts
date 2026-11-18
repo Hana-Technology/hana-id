@@ -351,8 +351,8 @@ describe('the stops', () => {
     h.click(`home-stop-share-front-${ID(1)}-confirm-go`);
     await h.idle();
     expect(text('home-devices-problem-front')).toContain(sentence);
-    expect(text('home-devices-problem-front')).toContain(`Code: ${code}`);
-    expect(text('home-devices-problem-front')).toContain('Request: req_9');
+    expect(text('home-devices-problem-front')).toContain(`Error code (for support): ${code}`);
+    expect(text('home-devices-problem-front')).toContain('Request ID (for support): req_9');
     expect(pageText()).not.toContain('internal words');
     expect(h.devices.errorCode).toBe(code);
     // The device stays listed, and the page sends nothing more by itself.

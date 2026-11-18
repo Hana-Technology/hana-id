@@ -407,11 +407,11 @@ describe('raw signing', () => {
     expect(s.t.launcher.label).toBeNull();
   });
 
-  it('never signs raw bytes in a Hana signing domain, nor the session’s identity wallet-proof digest (D179)', async () => {
+  it('never signs raw bytes in a Journear Passport signing domain, nor the session’s identity wallet-proof digest (D179)', async () => {
     const s = await session({ config: makeConfig({ publishableKey: LIVE, settings: { rawSign: 'approval' } }) });
     for (const text of ['hana-id/identity-wallet/v1', 'hana-id-identity-v1:', 'hana-id-vault-v1:']) {
       const reply = await s.t.request('hana_signRaw', { chain: 'stellar', bytes: utf8(`${text}anything`) });
-      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'raw_reserved_domain' } });
+      expect(reply.error).toMatchObject({ code: 4100, message: 'This raw request is in one of Journear Passport’s own signing domains and is never signed', data: { reason: 'raw_reserved_domain' } });
     }
     const sessionPk = (s.t.vault as unknown as { session: { sessionPk: Uint8Array } }).session.sessionPk;
     const digest = sha256(walletProofMessage({ signer: ENV.signer, appId: APP_ID, sessionPublicKey: sessionPk }, 'evm', s.evm));

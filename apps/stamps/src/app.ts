@@ -303,7 +303,7 @@ export function startStamps(deps: StampsDeps): StampsApp {
     notice = null;
     c.logout().then(
       () => {
-        notice = { kind: 'info', text: 'Signed out. Your passport stays on NEAR testnet.' };
+        notice = { kind: 'info', text: 'Signed out. Your passport stays on NEAR’s test network.' };
         syncSession();
         render();
       },
@@ -319,7 +319,7 @@ export function startStamps(deps: StampsDeps): StampsApp {
     if (id === null) return;
     copy(id).then(
       () => {
-        notice = { kind: 'info', text: 'Account id copied.' };
+        notice = { kind: 'info', text: 'Account copied.' };
         render();
       },
       (e: unknown) => {
@@ -383,12 +383,12 @@ export function startStamps(deps: StampsDeps): StampsApp {
         if (r.status === 'sent') {
           // D788: sent, not confirmed: it may still land. The passport poll decides.
           sent.set(id, { txHash: r.txHash, at: clock() });
-          notice = { kind: 'info', text: `${STAMP_TITLES[id]}: sent, still confirming on NEAR testnet.`, ...(txUrl ? { href: txUrl, hrefLabel: 'View the transaction' } : {}) };
+          notice = { kind: 'info', text: `${STAMP_TITLES[id]}: sent, waiting for NEAR to confirm.`, ...(txUrl ? { href: txUrl, hrefLabel: 'See it on NEAR' } : {}) };
         } else {
           local.set(id, { stamp: id, atMs: clock(), sponsored: id !== 'own_fare', ...(r.note !== undefined ? { note: displayNote(r.note) } : {}) });
           fresh.add(id);
-          const how = id === 'own_fare' ? 'Your NEAR paid the fee.' : 'You paid no gas.';
-          notice = { kind: 'info', text: `${STAMP_TITLES[id]} stamped on NEAR testnet.${r.created ? ' Your NEAR account was created for it.' : ''} ${how}`, ...(txUrl ? { href: txUrl, hrefLabel: 'View the transaction' } : {}) };
+          const how = id === 'own_fare' ? 'Your NEAR paid the network fee.' : 'It was free for you.';
+          notice = { kind: 'info', text: `${STAMP_TITLES[id]} stamped on NEAR’s test network.${r.created ? ' Your NEAR account was created for it.' : ''} ${how}`, ...(txUrl ? { href: txUrl, hrefLabel: 'See it on NEAR' } : {}) };
         }
         render();
         void confirm(accountId, id);
@@ -430,7 +430,7 @@ export function startStamps(deps: StampsDeps): StampsApp {
   collector = createCollector({ config, client: c, rpc, clock, sleep, random });
   if (c.vaultOrigin !== config.vaultOrigin) {
     // The page's CSP frame-src is the configured vault: another one would be blocked.
-    notice = { kind: 'error', text: 'This build doesn’t match its Journear Passport environment. Tell the Journear team.' };
+    notice = { kind: 'error', text: 'This page doesn’t match its Journear Passport setup. Nothing was lost. Tell the Journear team.' };
   }
   c.on('statusChanged', () => {
     syncSession();

@@ -123,7 +123,7 @@ test('tokeninfo unreadable from the browser (no CORS): an app with email login e
   const app = await newApp({ loginMethods: 'google,email' });
   await openPartner(page, app);
   const popup = await googleLogin(page, 'login', { emailApp: true });
-  await expect(popup.locator('body')).toContainText('Code: tokeninfo_unavailable');
+  await expect(popup.locator('body')).toContainText('Error code (for support): tokeninfo_unavailable');
   expect(await settled(page, 'login')).toMatchObject({ state: 'error', code: 'google_error', data: { error: 'tokeninfo_unavailable' } });
   expect(await status(page)).toBe('logged_out');
   // Never a request without the hint: only Google's first screen was asked.

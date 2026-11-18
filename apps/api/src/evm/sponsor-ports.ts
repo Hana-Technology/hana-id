@@ -8,11 +8,11 @@
 // `502 evm_rpc_unavailable` and never echo a node's error text.
 import { keccak_256 } from '@noble/hashes/sha3';
 import type { Env } from '../env.ts';
-import { type EvmRelayerErrorCode, type EvmRelayerLookup, type EvmRelayerSendRequest, type EvmRelayerSent, type EvmRelayerStatus, evmRelayerName } from '../evm-relayer.ts';
+import { type EvmRejectionCause, type EvmRelayerErrorCode, type EvmRelayerLookup, type EvmRelayerSendRequest, type EvmRelayerSent, type EvmRelayerStatus, evmRelayerError, evmRelayerName } from '../evm-relayer.ts';
 import { type EvmReceipt, type Hex, type SponsorChain, sponsorChainFor } from './sponsor-chain.ts';
 import type { EvmSponsorChainConfig } from './sponsor-config.ts';
 
-export type { EvmRelayerLookup, EvmRelayerSendRequest, EvmRelayerSent, EvmRelayerStatus, Hex };
+export type { EvmRejectionCause, EvmRelayerLookup, EvmRelayerSendRequest, EvmRelayerSent, EvmRelayerStatus, Hex };
 export { EvmRpcError } from './sponsor-chain.ts';
 
 /** The relayer object's RPC methods the handlers call (nothing here reaches its staff tools). */
@@ -22,25 +22,14 @@ export interface EvmRelayerPort {
   lookup(digest: Hex): Promise<EvmRelayerLookup | null>;
 }
 
-/**
- * A refusal's code: the relayer's own (`EvmRelayerErrorCode`), and `fees_too_low` (nothing sent: the batch's fees were
- * below the current base fee with margin), which the relayer's follow-up adds; read here by string so the handlers
- * answer it before the type lands.
- */
-export type RelayerRefusalCode = EvmRelayerErrorCode | 'fees_too_low';
-const RELAYER_CODES: ReadonlySet<string> = new Set<RelayerRefusalCode>(['relayer_unconfigured', 'relayer_misconfigured', 'invalid_request', 'fees_too_high', 'fees_too_low', 'wrong_chain', 'deadline_passed', 'relayer_busy', 'relayer_halted', 'daily_cap', 'rpc_unavailable', 'rejected', 'internal']);
+export type RelayerRefusalCode = EvmRelayerErrorCode;
 
 /**
  * A relayer refusal's code and reason (`Error('evm_relayer:<code>[:<reason>]')`: this call sent nothing), or null for
  * any other failure (an object reset, an unreachable stub): then nothing is known about whether it sent. The relayer's
- * `evmRelayerError` rule, with `fees_too_low` known too.
+ * own `evmRelayerError`.
  */
-export function relayerRefusal(err: unknown): { code: RelayerRefusalCode; reason: string | null } | null {
-  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
-  const m = /^evm_relayer:([a-z_]+)(?::([a-z_]+))?$/u.exec(message);
-  if (!m || !RELAYER_CODES.has(m[1]!)) return null;
-  return { code: m[1] as RelayerRefusalCode, reason: m[2] ?? null };
-}
+export const relayerRefusal = (err: unknown): { code: RelayerRefusalCode; reason: string | null } | null => evmRelayerError(err);
 
 /**
  * The relayer for `chainId`, or null when the Worker has no EVM_RELAYER binding (sponsorship is then unconfigured).

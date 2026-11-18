@@ -137,6 +137,8 @@ export class EvmMock {
   safeDepth = 2;
   /** Whether endpoints answer the `safe` tag (else an error, as some nodes do). */
   supportsSafe = true;
+  /** Every block's base fee (wei). */
+  baseFee = 1n;
   /** A body this many bytes long for the next eth_getTransactionCount, then cleared. */
   hugeResponse = 0;
   /** Extra receipt fields (OP Stack: l1Fee, operatorFeeScalar, operatorFeeConstant), as hex strings. */
@@ -226,7 +228,7 @@ export class EvmMock {
       const tag = params[0] as string;
       if (tag === 'safe' && !this.supportsSafe) return reply({ error: { code: -32602, message: 'invalid block tag' } });
       const n = tag === 'safe' ? head - this.safeDepth : tag === 'latest' ? head : Number(BigInt(tag));
-      return reply({ result: { number: q(n), timestamp: '0x6553f100', baseFeePerGas: '0x1' } });
+      return reply({ result: { number: q(n), timestamp: '0x6553f100', baseFeePerGas: q(this.baseFee) } });
     }
     if (method === 'eth_getCode' || method === 'eth_call') return reply({ error: { code: 3, message: 'execution reverted', data: '0x08c379a0' } });
     if (method === 'eth_getBalance') return reply({ result: '0xde0b6b3a7640000' });

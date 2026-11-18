@@ -15,39 +15,39 @@ export const LOCKED = {
   signIn: 'Sign in to collect',
   reading: 'Reading your passport…',
   arrivalFirst: 'Collect Arrival first',
-  needsNear: 'The one stamp that needs your own testnet NEAR',
+  needsNear: 'The one stamp that needs your own test NEAR',
   checkingBalance: 'Checking your balance…',
   notImplicit: 'Needs a Journear Passport account',
   notCollected: 'Not collected yet',
 } as const;
 
-export const SENT_STAGE = 'Sent, still confirming on NEAR testnet…';
+export const SENT_STAGE = 'Sent, waiting for NEAR to confirm…';
 
 /**
  * D807: a step that needs the user's click: the signature's second approval (its message is signed and kept), or any
  * stamp's approval the browser wouldn't open by itself (it waits on the SDK's launcher).
  */
 export const CONTINUE = {
-  signature: 'Step 2 of 2: send your signed message to the contract.',
+  signature: 'Step 2 of 2: send your signed message to the stamps program.',
   waiting: 'Your approval is ready. Continue opens it in the Journear Passport window.',
   action: 'Continue',
 } as const;
 
 /** D807: Own fare's locked slot, which says how to unlock it, with the link and Copy (the full account id). */
 export const OWN_FARE_HELP = {
-  detail: 'Copy your account id, paste it into NEAR’s faucet (free, no sign-up), then come back: this unlocks when the NEAR arrives.',
-  hrefLabel: 'Get testnet NEAR ↗',
-  balanceLabel: 'Get testnet NEAR ↗',
+  detail: 'Copy your account, paste it into NEAR’s free test-money site (no sign-up), then come back. This unlocks when the NEAR arrives.',
+  hrefLabel: 'Get free test NEAR ↗',
+  balanceLabel: 'Get free test NEAR ↗',
 } as const;
 
 /** The notice for a NEAR account id this site can't show or link (neither a 64-hex implicit account nor `.testnet`). */
-export const UNVIEWABLE_NOTICE = 'This NEAR account id isn’t one this site can show. Sign out and in again; if it stays, tell the Journear team.';
+export const UNVIEWABLE_NOTICE = 'This site can’t show this NEAR account. Nothing was lost. Sign out and in again; if it stays, tell the Journear team.';
 
 /**
  * The faucet's notice, shown while Own fare waits for testnet NEAR and nothing else is said. The slot itself carries
  * the link, the steps and Copy too (D807), since another notice is usually up.
  */
-export const FAUCET_NOTICE = 'Own fare is a transaction you pay for yourself: it needs 0.01 testnet NEAR in your account. Get some free from NEAR’s faucet (paste your full account id), then come back.';
+export const FAUCET_NOTICE = 'Own fare is the stamp you pay for yourself: it needs 0.01 test NEAR in your account. Get some free from NEAR’s free test-money site (paste your whole account), then come back.';
 
 /** "In 1 min 40 s" / "In 45 s". */
 export function countdownText(ms: number): string {
@@ -175,7 +175,7 @@ export function buildView(v: ViewInput, now: number): PassportView {
   if (v.mode !== 'cover' && v.accountId !== null && !isViewableAccount(v.accountId)) view.notice = { kind: 'error', text: UNVIEWABLE_NOTICE };
   else if (v.notice) view.notice = { ...v.notice };
   else if (v.mode === 'mine' && v.faucet !== null && ownFareNeedsNear(view)) {
-    view.notice = { kind: 'info', text: FAUCET_NOTICE, href: v.faucet, hrefLabel: 'Get testnet NEAR' };
+    view.notice = { kind: 'info', text: FAUCET_NOTICE, href: v.faucet, hrefLabel: 'Get free test NEAR' };
   }
   if (v.busy) view.busy = true;
   return view;

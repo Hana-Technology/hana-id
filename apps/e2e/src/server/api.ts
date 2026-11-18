@@ -34,6 +34,8 @@
 //   POST /__e2e/evm-sponsor           {appId, hold: true|false} holds the app's sends before the Worker until released;
 //                                     {account, delegation: none|journear|other} sets the account's code on the EVM chain
 //   GET  /__e2e/evm-sponsor?appId=    {prepares, sends, executed, proofRefusals}: the routes' answers for that app
+//   POST /__e2e/links/expire          {rootSub}: the waiting period of the pending members of that root's accounts ends
+//                                     now (D864's "too late" path) → {moved}
 //   GET  /__e2e/wallets?address=<a>   [{userId, supportCode, internalId, scopeId, wallets: [{chain, address}],
 //                                     identities: [{provider, sub, role, status}]}]: the wallet directory's users listing
 //                                     that address (migration 0011, written by the Worker's own POST /v1/wallets/record;
@@ -521,6 +523,10 @@ export class MockApi {
     this.chain.relayed.push({ method: endpoint === '/v1/link/unlink' ? 'unlink_identity' : 'cancel_link', tokens: [relayedToken(t)] });
     const found = this.chain.accountOf(b.memberKey);
     if (!found || found.account.epoch !== b.epoch) throw new HttpError(422, 'contract_rejected', { reason: 'wrong_epoch' });
+    // cancel_link drops only a pending member; past its time it is active, and only unlink_identity removes it (as
+    // apps/api's precheck and links.rs refuse: no_such_member).
+    const member = found.account.members.find((m) => m.key === b.memberKey);
+    if (endpoint === '/v1/link/cancel' && member && this.chain.isActive(member)) throw new HttpError(422, 'link_refused', { reason: 'no_such_member' });
     if (!this.chain.unlink(b.memberKey, endpoint === '/v1/link/unlink')) throw new HttpError(422, 'contract_rejected', { reason: 'no_such_member' });
     return this.api.done(ctx, 200, { result: null, nearTx: this.chain.newTxHash() });
   }
@@ -573,6 +579,11 @@ export class MockApi {
     if (p === '/__e2e/evm-sponsor') return this.sponsorControl(req, url);
     if (p === '/__e2e/wallets' && req.method === 'GET') return json(200, this.walletUsers(url.searchParams.get('address') ?? ''));
     if (p === '/__e2e/apps' && req.method === 'POST') return json(201, this.createApp((await req.json()) as AppSpec));
+    if (p === '/__e2e/links/expire' && req.method === 'POST') {
+      const { rootSub } = (await req.json()) as { rootSub?: unknown };
+      if (typeof rootSub !== 'string') return json(400, { error: 'bad_request' });
+      return json(200, { moved: this.chain.expirePending(rootSub) });
+    }
     const m = /^\/__e2e\/apps\/(pk_(?:test|live)_[1-9A-HJ-NP-Za-km-z]+)\/(revoke|shares)$/u.exec(p);
     if (m?.[2] === 'revoke' && req.method === 'POST') return json(200, { revoked: this.revokeApp(m[1] as string) });
     if (m?.[2] === 'shares' && req.method === 'GET') return json(200, this.shares(m[1] as string));

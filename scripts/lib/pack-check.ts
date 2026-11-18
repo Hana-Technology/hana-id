@@ -204,3 +204,49 @@ export function sampleModule(blocks: readonly string[], prelude: string, prelude
     .map(([from, names]) => `import { ${[...names].sort((a, b) => a.replace(/^type /u, '').localeCompare(b.replace(/^type /u, ''))).join(', ')} } from '${from}';`);
   return `${importLines.join('\n')}\n\n${prelude.trim()}\n\n${bodies.join('\n\n')}\n`;
 }
+
+/**
+ * The partner guide's parts whose `ts` samples are type-checked, one module each (sampleModule): from the line `start`
+ * to the line `end` of docs/integration.md. Each prelude declares what the guide's earlier sections set up: the client
+ * (`hana`, section 3), a button and the page's own functions.
+ */
+export const GUIDE_CLIENT = "const hana = createHana({ publishableKey: 'pk_test_example', environment: 'sandbox-dev', evm: { chains: [{ id: 84532, rpcUrl: 'https://sepolia.base.org' }], defaultChainId: 84532 } });";
+export const GUIDE_PARTS = [
+  {
+    file: 'guide-login.ts',
+    start: "### When sign-in doesn't finish",
+    end: '## 5. Your page: origins, CSP, popups',
+    prelude: ['declare const signInButton: HTMLButtonElement;', 'declare function onSignedIn(addresses: unknown): void;', 'declare function showNote(text: string): void;'],
+  },
+  {
+    file: 'guide-gas-free.ts',
+    start: '### Gas-free actions (not live)',
+    end: '### NEAR',
+    prelude: [
+      'declare const checkInButton: HTMLButtonElement;',
+      'declare const sendButton: HTMLButtonElement;',
+      'declare function showDone(transactionHash: string): void;',
+      'declare function showNote(text: string): void;',
+      '/** Section 13. */',
+      'declare function userText(e: unknown): string;',
+    ],
+  },
+  {
+    file: 'guide-near.ts',
+    start: '### NEAR',
+    end: '### Raw signing',
+    prelude: ['declare const button: HTMLButtonElement;', 'declare function onSent(transactionHash: string): void;', 'declare function onError(error: unknown): void;'],
+  },
+  {
+    file: 'guide-errors.ts',
+    start: '## 13. Errors',
+    end: '## 14. Security notes for integrators',
+    prelude: ['declare const payButton: HTMLButtonElement;', 'declare const errorBox: HTMLElement;', 'declare const tx: { to: string; value: string };', 'declare function onSent(hash: unknown): void;'],
+  },
+] as const;
+
+/** One part of the guide (`guide`: docs/integration.md's text) as the module the pack check writes into its project. */
+export function guideModule(part: (typeof GUIDE_PARTS)[number], guide: string): string {
+  const prelude = [`// docs/integration.md "${part.start.replace(/^#+ /u, '')}": its \`ts\` samples, in order (scripts/pack-check.ts writes this file).`, GUIDE_CLIENT, ...part.prelude].join('\n');
+  return sampleModule(codeBlocks(guide, part.start, part.end), prelude, { '@hana-id/web': ['createHana'] });
+}

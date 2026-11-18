@@ -10,7 +10,7 @@ and every signature needs the user's Approve in a Journear Passport window. This
 > `hana.*`), error codes, event names and the addresses below keep their old names, so no code change is needed.
 > Match on error codes, never on messages.
 
-Last verified against code: 2026-11-17 (the Support ID under Show details); 2026-11-13 (email codes per day and per IP on sandbox-dev; the stamps relay).
+Last verified against code: 2026-11-18 (SDK 0.5.0: userMessage, gas-free actions, a stopped sign-in, email codes); 2026-11-17 (the Support ID under Show details).
 
 > **This environment, `sandbox-dev`, is testnet only.** Its wallets are test wallets: until Journear Passport's address
 > freeze, Journear may still change how keys are made, which gives every user new addresses. Never keep real funds in them. A test
@@ -66,6 +66,8 @@ Your own Google client is an option for later (guide section 6).
 - **The sample app** (Vite, React, TypeScript), on `http://localhost:5173`: ask for that origin. Its Connect, Wallet,
   Sign and Identity token pages work with your test key. Its mainnet steps (the USDC trustline, the Sodax swap) use a
   demo exception only Journear's own app has, so with your key they stop at "Mainnet signing is off for this app".
+  With SDK 0.5.0 its Sign page also has "Check in with no network fee", shown only once Journear turns free network
+  fees on for your app.
 
 ## Your first sign-in
 
@@ -80,6 +82,25 @@ Your own Google client is an option for later (guide section 6).
 
 If `hana.ready` rejects with `vault_unavailable` and `data.reason: 'no_answer'` (after about 3 seconds), the page's
 origin isn't exactly one of the app's active origins: compare `error.data.origin` with the **Origins** tab.
+
+## SDK 0.5.0: what changes for you
+
+0.5.0 isn't sent to partners yet: stay on 0.4.1 until Journear sends its files. Your 0.4.x code builds with it as it
+is. The guide's section 2 ("Upgrading from 0.4.x to 0.5.0") has the steps.
+
+- **Show `error.userMessage`** to your users, never `error.message`. It is one or two plain sentences: what happened,
+  whether anything was done, and what to do. Keep matching on `code` and `data.reason` (guide section 13).
+- **A stopped sign-in is not a failure.** `login()` rejects with `login_cancelled` when the user closes the window. With
+  `data.reason: 'link_remove'`, the user chose to remove a sign-in method that was linked to someone's wallet: show
+  `userMessage` as information (guide section 4, "When sign-in doesn't finish").
+- **Gas-free actions** (`hana.evm.sendSponsored`): Journear pays the network fee for contract calls your users approve.
+  Off by default, Base Sepolia only, and not live yet. Ask Journear to turn it on for your app and to add your
+  contract's functions. Check `hana.evm.sponsorship(84532)` before you show a "free" button (guide section 8).
+- **Batches with viem or wagmi** (`sendCalls`): on a network without gas-free actions they now fail with `5710`
+  instead of `4200`, so viem's `experimental_fallback` no longer sends ordinary transactions instead. Check
+  `getCapabilities` first.
+- **Journear Passport's windows** look the same in every app and you can't change them. The guide's section 8, "What
+  your users see", describes them for your support team.
 
 ## What to expect on testnet
 
@@ -156,3 +177,6 @@ holds your users' wallets and names your on-chain owners), sets your security co
   **Audit** page.
 - Send your Journear contact the Support ID, the request ID, the error `code` and `data.reason`, when it happened (with
   the time zone) and the app. Neither ID is a secret: nobody can act on a wallet with them.
+- **A user whose email code doesn't arrive**, or who sees "Too many attempts": the guide's section 13 ("A user who can't
+  get an email code") says what to tell them: the spam folder, Resend, waiting until 00:00 UTC, and when to contact
+  Journear. During the pilot Journear can't yet lift a block on one address.

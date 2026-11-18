@@ -9,10 +9,11 @@
 //   3. Installs the tarballs with plain npm into a fresh project in the system temp dir (outside the workspace), with
 //      the peer versions this repo tests (react, react-dom, @types/react*, @sodax/types).
 //   4. Type-checks pack-smoke/types.ts and app.tsx there (NodeNext and Bundler resolution, skipLibCheck off), and
-//      guide-near.ts: the partner guide's NEAR samples (docs/integration.md section 8, "NEAR", every `ts` block) in one
-//      module, with the @near-js packages one of them uses; then runs pack-smoke/run.mjs in Node: every exported
-//      subpath imports, createHana knows exactly the envs/*.json that set both Hana origins, HanaProvider
-//      server-renders.
+//      the partner guide's samples (docs/integration.md, every `ts` block of a part, one module per part; GUIDE_PARTS):
+//      guide-login.ts (section 4, "When sign-in doesn't finish"), guide-gas-free.ts (section 8, "Gas-free actions",
+//      with viem), guide-near.ts (section 8, "NEAR", with the @near-js packages one of them uses) and
+//      guide-errors.ts (section 13); then runs pack-smoke/run.mjs in Node: every exported subpath imports, createHana
+//      knows exactly the envs/*.json that set both Hana origins, HanaProvider server-renders.
 //
 //   pnpm run pack:check [--keep]      (--keep leaves the temp dir for inspection)
 //
@@ -24,7 +25,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnv } from '@hana-id/env';
-import { SDK_PACKAGES, codeBlocks, fileListProblems, localPathProblems, manifestProblems, sampleModule, sourceMapProblems, typeCommentProblems } from './lib/pack-check.ts';
+import { GUIDE_PARTS, SDK_PACKAGES, fileListProblems, guideModule, localPathProblems, manifestProblems, sourceMapProblems, typeCommentProblems } from './lib/pack-check.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -66,28 +67,13 @@ const expectedEnvs = readdirSync(join(repoRoot, 'envs'))
   .sort();
 
 /** The files tsc checks in the project. */
-const CHECKED = ['types.ts', 'app.tsx', 'guide-near.ts'];
-/** The registry packages the guide's NEAR samples import, besides Hana's. */
+const CHECKED = ['types.ts', 'app.tsx', ...GUIDE_PARTS.map((p) => p.file)];
+/** The registry packages the guide's samples import, besides Hana's: the NEAR samples' @near-js packages. */
 const GUIDE_NEAR_JS = ['@near-js/crypto', '@near-js/transactions', '@near-js/utils'] as const;
 
-/**
- * docs/integration.md's NEAR samples as one module. The prelude declares what the guide's earlier sections set up:
- * the client (`hana`, section 3), a button and the page's result handlers.
- */
-function guideNearModule(): string {
-  const guide = readFileSync(join(repoRoot, 'docs/integration.md'), 'utf8');
-  const prelude = [
-    '// docs/integration.md section 8, "NEAR": its `ts` samples, in order (scripts/pack-check.ts writes this file).',
-    "const hana = createHana({ publishableKey: 'pk_test_example', environment: 'sandbox-dev' });",
-    'declare const button: HTMLButtonElement;',
-    'declare function onSent(transactionHash: string): void;',
-    'declare function onError(error: unknown): void;',
-  ].join('\n');
-  return sampleModule(codeBlocks(guide, '### NEAR', '### Raw signing'), prelude, { '@hana-id/web': ['createHana'] });
-}
-
 // Read first, so a guide whose samples can't be extracted fails before anything is packed.
-const guideNear = guideNearModule();
+const guideText = readFileSync(join(repoRoot, 'docs/integration.md'), 'utf8');
+const guideModules = GUIDE_PARTS.map((part) => ({ file: part.file, text: guideModule(part, guideText) }));
 
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'hana-pack-check-')));
 if (tmp === repoRoot || tmp.startsWith(repoRoot + sep)) throw new Error(`The temp dir ${tmp} is inside the workspace; set TMPDIR elsewhere`);
@@ -155,6 +141,8 @@ try {
           react: pin(reactDev, 'react'),
           'react-dom': pin(reactDev, 'react-dom'),
           ...Object.fromEntries(GUIDE_NEAR_JS.map((name) => [name, pin(scriptsDeps, name)])),
+          // viem, for the gas-free section's EIP-5792 sample, at the version @hana-id/core's tests use.
+          viem: pin(coreDev, 'viem'),
         },
         // @types/node: @stellar/stellar-base's declarations (behind @hana-id/core/signers/stellar and /decode)
         // reference Node's Buffer without depending on it.
@@ -169,7 +157,7 @@ try {
     )}\n`,
   );
   for (const f of ['types.ts', 'app.tsx', 'run.mjs']) copyFileSync(join(here, 'pack-smoke', f), join(project, f));
-  writeFileSync(join(project, 'guide-near.ts'), guideNear);
+  for (const m of guideModules) writeFileSync(join(project, m.file), m.text);
   const compilerOptions = {
     target: 'ES2022',
     lib: ['ES2023', 'DOM', 'DOM.Iterable'],

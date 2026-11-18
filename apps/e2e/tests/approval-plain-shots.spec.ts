@@ -106,7 +106,7 @@ test.describe('plain-wording screens', () => {
     popup = await popupFor(page, 'send', 'ethSignTx', evmTx());
     const usdc = approvalContent({ v: 1, id: 'shot', method: 'eth_signTransaction', params: { tx: evmTx({ chainId: BASE_SEPOLIA, to: BASE_SEPOLIA_USDC, value: 0n, data: call('transfer(address,uint256)', RECIPIENT, 5_000_000n) }) as never } });
     await inject(popup, 'evm_tx', usdc.bytes, me, BASE_SEPOLIA);
-    await expect(popup.locator('h2.summary-headline')).toContainText(RECIPIENT);
+    await expect(popup.locator('h2.summary-headline')).toContainText('5 USDC');
     await shot(popup, 'evm-listed-token-transfer');
     await popup.close();
     await okValue(page, 'send').catch(() => undefined);

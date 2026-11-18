@@ -11,12 +11,13 @@
 // with no visible bound, amber otherwise (D810). The popup's technical details always start folded (the founder's
 // decision, D810); the user can always open them. Nothing here replaces a fact, it only says it plainly first.
 //
-// Token amounts: only a token on the pinned, reviewed list (MAINNET_DEMO: USDC and EURC on Base, XLM, USDC and EURC
-// on Stellar's public network) gets a symbol and decimals. Any other token's amount is shown as it is signed, in its
-// smallest units, and called "tokens of contract …": a contract's own symbol() or decimals() is the contract's claim.
+// Token amounts: only a token on Journear's reviewed list (known-tokens.ts, D860: Circle's USDC and EURC where Circle
+// lists them, wrapped NEAR, the Stellar asset contracts) gets a symbol and decimals, with a line saying it is the real
+// one. Any other token's amount is "N units of an unlisted token" with a line saying Journear can't tell what that is
+// worth: a contract's own symbol() or decimals() is the contract's claim, never read.
 import { isDisplaySafeLine } from '../display-safe.ts';
 import { toHex } from '../bytes.ts';
-import { MAINNET_DEMO } from '../mainnet-demo.ts';
+import { KNOWN_TOKENS, type KnownTokenList, type TokenNetwork, knownSymbolOn, knownToken } from '../known-tokens.ts';
 import { STELLAR_MAINNET_PASSPHRASE, evmChainInfo } from '../networks.ts';
 import type { NearAction } from '../near/codec.ts';
 import { isNearAccountId } from '../addresses.ts';
@@ -74,7 +75,9 @@ export type SummaryWarningCode =
   /** A sponsored EVM action that also sets the account up (its EIP-7702 authorization): the one-time setup note. */
   | 'account_setup'
   /** A relayed NEAR action that calls another account's contract: it acts as the user there (D858). */
-  | 'acts_as_you';
+  | 'acts_as_you'
+  /** A Stellar asset whose code is a listed token's (USDC) but whose issuer isn't the listed one: it may be a copy (D860). */
+  | 'token_lookalike';
 
 export interface SummaryWarning {
   /** `danger`: red, the popup's strongest style; `warning`: amber. Both always visible, never folded. */
@@ -270,22 +273,58 @@ interface KnownToken {
   readonly decimals: number;
 }
 
-/** A token on the pinned list for this EVM chain, by address (any case), or null. */
-export function knownEvmToken(chainId: number, address: string): KnownToken | null {
-  const chain = (MAINNET_DEMO.evm as Readonly<Record<number, { tokens: Readonly<Record<string, KnownToken>> }>>)[chainId];
-  if (!chain) return null;
-  const a = address.toLowerCase();
-  for (const [addr, t] of Object.entries(chain.tokens)) if (addr.toLowerCase() === a) return t;
-  return null;
-}
+/** A token (never a collectible) on Journear's reviewed list (known-tokens.ts, D860) for exactly this id there, or null. */
+const listedToken = (net: TokenNetwork, id: string, list: KnownTokenList = KNOWN_TOKENS): KnownToken | null => {
+  const t = knownToken(net, id, list);
+  return t && t.kind === 'token' ? t : null;
+};
 
-/** A Stellar asset contract on the pinned list (the public network only), by contract id, or null. */
-export function knownStellarToken(networkPassphrase: string, contract: string): KnownToken | null {
-  const s = MAINNET_DEMO.stellar;
-  if (networkPassphrase !== s.networkPassphrase) return null;
-  if (s.native.assetContract === contract) return s.native;
-  for (const t of Object.values(s.assets)) if (t.assetContract === contract) return t;
-  return null;
+/** A token on the reviewed list for this EVM chain, by address (any case), or null: never a collectible. `list` is for tests. */
+export const knownEvmToken = (chainId: number, address: string, list: KnownTokenList = KNOWN_TOKENS): KnownToken | null => listedToken({ kind: 'evm', chainId }, address, list);
+
+/** A Stellar asset (`CODE:ISSUER`) or asset contract (C…) on the reviewed list for this network, exactly, or null. */
+export const knownStellarToken = (networkPassphrase: string, id: string): KnownToken | null => listedToken({ kind: 'stellar', networkPassphrase }, id);
+
+/** A NEAR token contract on the reviewed list for this network, exactly, or null. */
+export const knownNearToken = (network: 'testnet' | 'mainnet', account: string): KnownToken | null => listedToken({ kind: 'near', network }, account);
+
+/**
+ * D860: the line beside an amount of a listed token, with the token's id (whole in its row, D859): the symbol is
+ * Journear's, from its reviewed list, never the token's own claim.
+ */
+export const realTokenLine = (id: string, token: KnownToken): SummaryText => [`This is the real ${token.symbol} (`, code(id, 'token'), '), checked by Journear.'];
+
+/**
+ * D860: a Stellar asset whose code is a listed token's on this network but whose issuer isn't the listed one. The code
+ * is the asset's own (in the signed request, as every wallet shows it), not something read from a contract.
+ */
+const lookalikeToken = (symbol: string, asset: string): SummaryWarning => ({
+  level: 'warning',
+  code: 'token_lookalike',
+  text: [`This is not the ${symbol} Journear knows (`, code(asset, 'token'), '). It may be a copy.'],
+  short: [`Not the ${symbol} Journear knows: it may be a copy`],
+});
+
+/** The token lines and warnings of the Stellar request being summarised (set by stellarTx and stellarAuth). */
+interface TokenNotes {
+  readonly passphrase: string;
+  readonly lines: SummaryText[];
+  readonly warnings: SummaryWarning[];
+}
+let tokenNotes: TokenNotes | null = null;
+const noteOnce = (into: SummaryText[], line: SummaryText): void => {
+  const k = JSON.stringify(line);
+  if (!into.some((x) => JSON.stringify(x) === k)) into.push(line);
+};
+/** Runs `f` with `notes` as the request's token notes (summaries are built synchronously, so one at a time). */
+function withTokenNotes<T>(notes: TokenNotes, f: () => T): T {
+  const before = tokenNotes;
+  tokenNotes = notes;
+  try {
+    return f();
+  } finally {
+    tokenNotes = before;
+  }
 }
 
 /** "5 USDC", or "1,000 units of an unlisted token" when the token isn't on the pinned list. */
@@ -300,11 +339,11 @@ const units = (n: bigint): string => (n === 1n ? 'unit' : 'units');
  * The line under an amount of a token Journear doesn't know (D853): it can't say what the units are worth, and what
  * to do. The token's address stays in view here.
  */
-const unlistedLine = (amount: bigint, contract: string, nft = false): SummaryText => [
+const unlistedLine = (amount: bigint | null, contract: string, nft = false): SummaryText => [
   'Journear doesn’t know this token (',
   code(contract, 'token'),
-  `), so it can’t tell what ${groupDigits(amount.toString())} ${units(amount)} ${amount === 1n ? 'is' : 'are'} worth.`,
-  ...(nft ? [` If it’s a collectible, this moves item no. ${amount} instead.`] : []),
+  amount === null ? '), so it can’t tell what these units are worth.' : `), so it can’t tell what ${groupDigits(amount.toString())} ${units(amount)} ${amount === 1n ? 'is' : 'are'} worth.`,
+  ...(nft && amount !== null ? [` If it’s a collectible, this moves item no. ${amount} instead.`] : []),
   ' Check the amount in ',
   APP,
   ' first.',
@@ -318,8 +357,8 @@ function tokenName(contract: string, token: KnownToken | null): SummaryText {
   return token ? [token.symbol] : ['tokens from ', code(contract, 'token'), ' (an unlisted token)'];
 }
 
-/** For a pinned token named by its symbol: which contract that is, so the contract is always in view. */
-const tokenContractLine = (contract: string, token: KnownToken): SummaryText => [`This ${token.symbol} is `, code(contract, 'token'), ' (checked by Journear).'];
+/** For a listed token named by its symbol: which contract that is, so the contract is always in view (D860). */
+const tokenContractLine = (contract: string, token: KnownToken): SummaryText => realTokenLine(contract, token);
 
 /** Who would be allowed to take: a verified contract by name, else its address, said to be unchecked. */
 function spenderOf(chain: ContractChain | null, address: string): SummaryText {
@@ -819,11 +858,33 @@ function stellarNetwork(passphrase: string): SummaryText {
 
 const xlm = (stroops: string | bigint, dir: AmountDirection = 'out'): string => `${displayUnits(BigInt(stroops), 7, dir)} XLM`;
 
-/** An amount of a Stellar asset (`native` or `CODE:ISSUER`): "1.5 XLM", or "2 of the asset USDC:G…" (a code is its issuer's choice). */
-function stellarAmount(stroops: string | bigint, asset: string, dir: AmountDirection = 'out'): SummaryText {
-  return asset === 'native' ? [strong(xlm(stroops, dir))] : [strong(displayUnits(BigInt(stroops), 7, dir)), ' of the asset ', code(asset, 'token')];
+/**
+ * A Stellar asset named in a sentence (D860): XLM; a listed asset by its symbol, with the real-token line; anything
+ * else as "the asset CODE:ISSUER" (a code is its issuer's choice), with the look-alike warning when its code is a listed
+ * token's symbol on this network.
+ */
+function stellarAsset(asset: string): { readonly listed: KnownToken | null } {
+  if (asset === 'native' || !tokenNotes) return { listed: null };
+  const listed = knownStellarToken(tokenNotes.passphrase, asset);
+  if (listed) noteOnce(tokenNotes.lines, realTokenLine(asset, listed));
+  else {
+    const symbol = asset.slice(0, asset.indexOf(':'));
+    if (knownSymbolOn({ kind: 'stellar', networkPassphrase: tokenNotes.passphrase }, symbol) && !tokenNotes.warnings.some((w) => w.code === 'token_lookalike' && JSON.stringify(w.text).includes(asset))) tokenNotes.warnings.push(lookalikeToken(symbol, asset));
+  }
+  return { listed };
 }
-const assetName = (asset: string): SummaryText => (asset === 'native' ? ['XLM'] : ['the asset ', code(asset, 'token')]);
+
+/** An amount of a Stellar asset (`native` or `CODE:ISSUER`): "1.5 XLM", "5 USDC" (listed), or "2 of the asset X:G…". */
+function stellarAmount(stroops: string | bigint, asset: string, dir: AmountDirection = 'out'): SummaryText {
+  if (asset === 'native') return [strong(xlm(stroops, dir))];
+  const { listed } = stellarAsset(asset);
+  return listed ? [strong(`${displayUnits(BigInt(stroops), listed.decimals, dir)} ${listed.symbol}`)] : [strong(displayUnits(BigInt(stroops), 7, dir)), ' of the asset ', code(asset, 'token')];
+}
+const assetName = (asset: string): SummaryText => {
+  if (asset === 'native') return ['XLM'];
+  const { listed } = stellarAsset(asset);
+  return listed ? [listed.symbol] : ['the asset ', code(asset, 'token')];
+};
 /**
  * A Stellar account's base account and muxed id: a muxed address (M…) is its base account (G…) with an id for the
  * account's own bookkeeping, and moves that base account's funds. Anything else is its own base.
@@ -869,7 +930,8 @@ function sorobanTokenCall(passphrase: string, c: StellarContractCall, me: string
     const from = scAddr(a[0]) as string;
     const verb = { send: 'send ', authorize: 'approve sending ', nested: 'It also approves sending ' }[mode];
     const toMe = isMeStellar(scAddr(a[1]) as string, me) && !isMeStellar(from, me);
-    const what: SummaryText = token ? [...amountOf(amount, token, toMe ? 'in' : 'out'), ' (', code(c.contract, 'token'), ')'] : [strong(groupDigits(amount.toString())), ` ${units(amount)} of the unlisted token `, code(c.contract, 'token')];
+    if (tokenNotes) noteOnce(tokenNotes.lines, token ? realTokenLine(c.contract, token) : unlistedLine(null, c.contract));
+    const what: SummaryText = token ? amountOf(amount, token, toMe ? 'in' : 'out') : [strong(groupDigits(amount.toString())), ` ${units(amount)} of the unlisted token `, code(c.contract, 'token')];
     return [verb, ...what, ...(from === me ? [] : [' from ', ...stellarWho(from, me, 'from')]), ' to ', ...stellarWho(scAddr(a[1]) as string, me), ...end];
   }
   if (c.function === 'approve' && a.length === 4 && scAddr(a[0]) && scAddr(a[1]) && a[2]?.type === 'i128' && a[3]?.type === 'u32') {
@@ -1284,9 +1346,16 @@ function xlmLeaving(tx: { readonly source: string; readonly operations: readonly
 }
 
 function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me: string): ApprovalSummary {
+  const warnings: SummaryWarning[] = [];
+  const notes: TokenNotes = { passphrase: decoded.networkPassphrase, lines: [], warnings };
+  const s = withTokenNotes(notes, () => stellarTxWith(decoded, me, warnings));
+  // The token lines (D860) after the request's own lines.
+  return notes.lines.length === 0 ? s : { ...s, lines: [...s.lines, ...notes.lines] };
+}
+
+function stellarTxWith(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me: string, warnings: SummaryWarning[]): ApprovalSummary {
   const env = decoded.envelope;
   const tx = env.tx;
-  const warnings: SummaryWarning[] = [];
   const extra: SummaryText[] = [];
   const ops = tx.operations.map((op) => {
     const o = stellarOp(decoded.networkPassphrase, op, me, warnings, extra);
@@ -1343,6 +1412,12 @@ function stellarTx(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>, me
 
 function stellarAuth(decoded: Extract<DecodedApproval, { kind: 'stellar_auth_entry' }>, me: string): ApprovalSummary {
   const warnings: SummaryWarning[] = [];
+  const notes: TokenNotes = { passphrase: decoded.networkPassphrase, lines: [], warnings };
+  const s = withTokenNotes(notes, () => stellarAuthWith(decoded, me, warnings));
+  return notes.lines.length === 0 ? s : { ...s, lines: [...s.lines, ...notes.lines] };
+}
+
+function stellarAuthWith(decoded: Extract<DecodedApproval, { kind: 'stellar_auth_entry' }>, me: string, warnings: SummaryWarning[]): ApprovalSummary {
   const extra: SummaryText[] = [];
   const inv = decoded.preimage.invocation;
   const f = inv.function;
@@ -1433,7 +1508,7 @@ const pushOnce = (warnings: SummaryWarning[], w: SummaryWarning): void => {
 };
 
 /** What one NEAR action does, in a few words, whether Journear can say that, and how it groups with others. */
-function nearAction(a: NearAction, receiver: string, me: string, warnings: SummaryWarning[]): { text: SummaryText; explainable: boolean; step: Step } {
+function nearAction(a: NearAction, receiver: string, me: string, warnings: SummaryWarning[], network: 'testnet' | 'mainnet', notes: SummaryText[], transfersOf: (token: string) => number): { text: SummaryText; explainable: boolean; step: Step } {
   // The account the actions run on: a program for a call, a recipient for a transfer, the account for key changes.
   const where = nearWho(receiver, me, a.type === 'transfer' ? 'to' : a.type === 'functionCall' ? 'program' : 'account');
   const value = nearMovesValue(a);
@@ -1459,11 +1534,16 @@ function nearAction(a: NearAction, receiver: string, me: string, warnings: Summa
       // NEP-141 fungible tokens and NEP-171/178 NFTs: their methods' meaning is the standard's (the contract can still lie).
       if ((method === 'ft_transfer' || method === 'ft_transfer_call') && typeof args.receiver_id === 'string' && isNearAccountId(args.receiver_id) && isAmount(args.amount)) {
         const to = args.receiver_id;
-        const text: SummaryText = ['send ', strong(groupDigits(args.amount)), ` ${units(BigInt(args.amount))} of the unlisted token `, code(receiver, 'token'), ' to ', ...nearWho(to, me)];
+        // D860: a listed token by its symbol and decimals (Journear's list, never the contract's own metadata).
+        const token = knownNearToken(network, receiver);
+        const sent = (n: bigint): SummaryText => (token ? amountOf(n, token, to === me ? 'in' : 'out') : [strong(groupDigits(n.toString())), ` ${units(n)} of the unlisted token `, code(receiver, 'token')]);
+        // One line per token: with its amount when the request moves it once, "these units" when more often.
+        noteOnce(notes, token ? realTokenLine(receiver, token) : unlistedLine(transfersOf(receiver) > 1 ? null : BigInt(args.amount), receiver));
+        const text: SummaryText = ['send ', ...sent(BigInt(args.amount)), ' to ', ...nearWho(to, me)];
         return {
           text,
           explainable: true,
-          step: { text, value, key: `ft|${receiver}|${method}|${to}`, order: to === me ? 5 : 1, sum: BigInt(args.amount), many: (n, sum) => ['send ', strong(groupDigits(sum.toString())), ` ${units(sum)} of the unlisted token `, code(receiver, 'token'), ' to ', ...nearWho(to, me), ` in ${n} transfers`] },
+          step: { text, value, key: `ft|${receiver}|${method}|${to}`, order: to === me ? 5 : 1, sum: BigInt(args.amount), many: (n, sum) => ['send ', ...sent(sum), ' to ', ...nearWho(to, me), ` in ${n} transfers`] },
         };
       }
       if ((method === 'nft_transfer' || method === 'nft_transfer_call') && typeof args.receiver_id === 'string' && isNearAccountId(args.receiver_id) && isTokenId(args.token_id)) {
@@ -1558,9 +1638,12 @@ export const actsAsYou = (receiver: string): SummaryWarning => ({
   short: ['Acts as you with ', code(receiver, 'program')],
 });
 
-function nearActions(actions: readonly NearAction[], receiver: string, me: string, relayed: boolean): ApprovalSummary {
+function nearActions(actions: readonly NearAction[], receiver: string, me: string, relayed: boolean, network: 'testnet' | 'mainnet'): ApprovalSummary {
   const warnings: SummaryWarning[] = [];
-  const done = actions.map((a) => nearAction(a, receiver, me, warnings));
+  const notes: SummaryText[] = [];
+  // How many token transfers the request makes (a NEAR transaction has one receiver: the token, for ft_transfer).
+  const ftCount = actions.filter((a) => a.type === 'functionCall' && (a.methodName === 'ft_transfer' || a.methodName === 'ft_transfer_call')).length;
+  const done = actions.map((a) => nearAction(a, receiver, me, warnings, network, notes, () => ftCount));
   let explainable = done.every((x) => x.explainable);
   const unreadable = !explainable;
   let hidden: { n: number; risk: RiskLevel } | null = null;
@@ -1601,7 +1684,8 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
   if (relayed && receiver !== me && actions.some((a) => a.type === 'functionCall')) warnings.push(actsAsYou(receiver));
   return {
     headline,
-    lines,
+    // The token lines (D860) after the grouped lines.
+    lines: [...lines, ...notes],
     fee: relayed ? RELAYED_FEE : ['a small amount of NEAR, from your account'],
     network: null,
     ...(noNearLeaves ? { noNearLeaves: true as const } : {}),
@@ -1660,9 +1744,9 @@ function summarize(decoded: DecodedApproval, ctx: SummaryContext): ApprovalSumma
         explainable: false,
       };
     case 'near_tx':
-      return nearActions(decoded.tx.actions, decoded.tx.receiverId, decoded.tx.signerId, false);
+      return nearActions(decoded.tx.actions, decoded.tx.receiverId, decoded.tx.signerId, false, decoded.network);
     case 'near_delegate':
-      return nearActions(decoded.delegate.actions, decoded.delegate.receiverId, decoded.delegate.senderId, true);
+      return nearActions(decoded.delegate.actions, decoded.delegate.receiverId, decoded.delegate.senderId, true, decoded.network);
     case 'near_message': {
       const readable = decoded.message.text !== null;
       return {

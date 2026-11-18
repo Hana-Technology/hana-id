@@ -287,6 +287,7 @@ test('screens for review', async ({ page, browserName }) => {
     'Send 6,000 units of the unlisted token usdc.testnet to bob.testnet in 3 transfers',
     'Use usdc.testnet (ping)',
     'Send 75 units of the unlisted token usdc.testnet to your account in 2 transfers',
+    'Journear doesn’t know this token (usdc.testnet), so it can’t tell what these units are worth. Check the amount in E2E Partner first.',
   ]);
   await shot(popup, 'near-mixed-recipients', browserName);
   await done(page, popup, 'mixed');

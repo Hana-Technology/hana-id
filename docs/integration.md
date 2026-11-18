@@ -707,7 +707,7 @@ it.", in red when what it can't read could move funds or control with no visible
 "Signing this could hand over your whole account and everything in it. Reject it unless you know exactly why you’re
 signing." The details stay folded in every case until the user opens them. Every word is plain, for people who don't
 know crypto: no "gas", "contract" or "testnet" outside the details. Token amounts carry a symbol only for the few
-tokens Journear has reviewed; anything else reads "N units of an unlisted token" with a line telling the user to check
+tokens Journear has reviewed (USDC and EURC where Circle publishes them, wrapped NEAR), with a line that it is the real one; anything else reads "N units of an unlisted token" with a line telling the user to check
 the amount in your app, so describe amounts in your own page too. **Reject** and **Approve** are below.
 The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
 re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Rejected" and counts down,

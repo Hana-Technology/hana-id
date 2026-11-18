@@ -144,7 +144,7 @@ describe('EVM transactions', () => {
     const s = tokenCall(calldata('transfer(address,uint256)', TO, 5_000_000n), 8453, BASE_USDC);
     expect(headline(s)).toBe(`${APP} wants to send 5 USDC to ${TO}`);
     // The contract stays in view next to the symbol.
-    expect(s.lines.map(text)).toEqual([`This USDC is ${BASE_USDC} (checked by Journear).`]);
+    expect(s.lines.map(text)).toEqual([`This is the real USDC (${BASE_USDC}), checked by Journear.`]);
     expect(text(s.fee!)).toBe('up to 0.000042 ETH');
   });
 
@@ -502,7 +502,8 @@ describe('Stellar', () => {
     expect(knownStellarToken(PASSPHRASE, usdc)).toBeNull();
     const bytes = authPreimageBytes(invocation(usdc, 'transfer', [addr(USER), addr(OTHER), i128(15_000_000n)]), STELLAR_MAINNET_PASSPHRASE);
     const s = summarizeApproval(decodeApprovalRequest({ kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: STELLAR_MAINNET_PASSPHRASE }, bytes }), { address: USER });
-    expect(headline(s)).toBe(`${APP} wants to approve sending 1.5 USDC (${usdc}) to ${OTHER}`);
+    expect(headline(s)).toBe(`${APP} wants to approve sending 1.5 USDC to ${OTHER}`);
+    expect(s.lines.map(text)).toEqual([`This is the real USDC (${usdc}), checked by Journear.`]);
     expect(text(s.network!)).toBe('Stellar (real money)');
     expect(s.fee).toBeNull();
     expect(s.explainable).toBe(true);
@@ -702,7 +703,7 @@ describe('NEAR standard calls: strict arguments, value-like names (review of the
   it('grouping: identical value-like calls group and say their amber line once; a malformed standard call stays its own red line; shownSteps cover the lines', () => {
     const s = near([call('withdraw', '{}'), call('withdraw', '{}'), call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5"}', 1n), call('ft_transfer', '{"receiver_id":"bob.testnet","amount":5}', 1n)], 'tok.testnet');
     expect(headline(s)).toBe(`${APP} wants to do 4 things with tok.testnet at once`);
-    expect(s.lines.map(text)).toEqual(['Send 5 units of the unlisted token tok.testnet to bob.testnet', 'Use tok.testnet (withdraw), 2 times', 'Use tok.testnet (ft_transfer) in a non-standard way']);
+    expect(s.lines.map(text)).toEqual(['Send 5 units of the unlisted token tok.testnet to bob.testnet', 'Use tok.testnet (withdraw), 2 times', 'Use tok.testnet (ft_transfer) in a non-standard way', `Journear doesn’t know this token (tok.testnet), so it can’t tell what these units are worth. Check the amount in ${APP} first.`]);
     // Their order in the box is the page's (red first); here each is said once.
     expect(s.warnings.map((w) => [w.level, w.code]).sort()).toEqual([['danger', 'cannot_explain'], ['warning', 'may_move_tokens']]);
     expect(s.explainable).toBe(false);
@@ -759,7 +760,7 @@ describe('review: Soroban authorizations (H1)', () => {
   it('a token transfer authorized exactly as called, with nothing under it, stays explainable', () => {
     const s = stellar([invokeOp(TOKEN, 'transfer', evilTransfer, [sourceAuth(invocation(TOKEN, 'transfer', evilTransfer))])]);
     expect(s.explainable).toBe(true);
-    expect(s.lines).toEqual([]);
+    expect(s.lines.map(text)).toEqual([`Journear doesn’t know this token (${TOKEN}), so it can’t tell what these units are worth. Check the amount in ${APP} first.`]);
   });
 
   it('an authorization entry with a sub-invocation is not explainable, and the nested send is said', () => {

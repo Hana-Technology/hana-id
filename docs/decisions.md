@@ -12977,3 +12977,43 @@ founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`pac
   ground short form; before D859 the same user saw the whole value in the sentence, but a 40-character value read in
   a sentence is no stronger a check for that user than the grouped row.
 - Address impact: none.
+
+### D860. A reviewed list of well-known tokens: "5 USDC" instead of units
+- Date 2026-11-18 · Status: **decided by the user 2026-11-18**; details decided while building, to confirm · Amends
+  D811 · Built on `feat/plain-approval-wording`: `packages/core/src/known-tokens.ts` (`KNOWN_TOKENS`, `knownToken`,
+  `knownSymbolOn`, `CIRCLE_STELLAR_ISSUERS`), `decode/summary.ts` (`knownEvmToken`, `knownStellarToken`,
+  `knownNearToken`, `realTokenLine`, the warning code `token_lookalike`); tests `packages/core/test/known-tokens.test.ts`
+  and additions to `approval-summary.test.ts`.
+- Decision: a pinned, reviewed list, by network (EVM chain ID, Stellar network passphrase, NEAR network) and exact id
+  (EVM address in any letter case, a Stellar classic asset `CODE:ISSUER` or asset contract `C…`, a NEAR account id), of
+  `{symbol, name, decimals, kind: 'token' | 'collectible', sources, read}`. It extends the mainnet demo's list without
+  replacing it: `MAINNET_DEMO` stays the source of the demo's amounts and caps, and a test checks every demo token is on
+  the new list with the same symbol and decimals. Nothing is ever read from the token itself.
+- Seeded conservatively, every id from the issuer's own page, read 2026-11-18: Circle's USDC on Ethereum, OP Mainnet,
+  Polygon PoS, Base, Arbitrum One, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, OP Sepolia and Polygon Amoy
+  (https://developers.circle.com/stablecoins/usdc-contract-addresses); Circle's EURC on Ethereum, Base, Ethereum
+  Sepolia and Base Sepolia (https://developers.circle.com/stablecoins/eurc-contract-addresses); 6 decimals as Circle
+  states (https://developers.circle.com/gateway/concepts/non-usdc-assets); on Stellar, Circle's USDC and EURC issuers on
+  the public network and testnet (the same pages), 7 decimals (https://developers.circle.com/cctp/references/stellar),
+  their asset contracts derived from the asset (`Asset.contractId`, derived again in the test; the testnet USDC one
+  also matches the constant in Circle's own quickstart) and XLM's on both; on NEAR, Circle's USDC accounts on mainnet
+  and testnet (Circle's USDC page; 6 decimals from NEAR's own SDK token list, as Circle states none for NEAR),
+  `wrap.near` (wNEAR, 24 decimals, NEAR's own `core-contracts` README) and `wrap.testnet` (NEAR's own SDK list; weaker
+  than the mainnet entry, which the README states). Left out (no official source found): Stellar mainnet USDC/EURC
+  contract ids as published ids (derived instead), EURC on Arbitrum, OP and Polygon, and every collectible.
+- What the window says: a listed token's amount "5 USDC" (its decimals, exact up to six places, otherwise rounded
+  against the user, D814), with the line "This is the real USDC (0x036C…CF7e), checked by Journear." (the id whole in
+  its row, D859); an unlisted one "5,000,000 units of an unlisted token" with "Journear doesn’t know this token (…),
+  so it can’t tell what 5,000,000 units are worth. Check the amount in {App} first." (now also on NEAR and Soroban
+  token calls, as "these units" when the request moves it more than once); a Stellar asset whose code is a listed
+  symbol on that network but whose issuer isn't the listed one: shown as "5 of the asset USDC:G…" with an amber "This
+  is not the USDC Journear knows (…). It may be a copy." The code is the asset's own identity in the signed request,
+  not a contract's claim; EVM and NEAR tokens carry no such trusted name, so they get no look-alike line (a token
+  calling itself USDC there is just unlisted). A collectible on the list never gives an amount a symbol (its numbers
+  are item ids); none is seeded.
+- Adversarial check (concluded): the symbol is earned by the exact id on the exact network, never by a name: a
+  look-alike address, the same address on another chain, an asset with the same code from another issuer, and a NEAR
+  account that merely contains the listed name are all unlisted (tested). Wrong decimals would misstate an amount by a
+  power of ten, so they come from the issuer or the standard, with the source beside each entry. The "real" line names
+  the id it vouches for, whole in its row, so a user comparing with their app sees the same contract.
+- Address impact: none.

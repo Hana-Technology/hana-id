@@ -405,7 +405,7 @@ export interface EvmSponsorCall {
   data: string;
 }
 
-/** `POST /v1/evm/sponsor/prepare`. `sessionProof` (D856, sponsor-session.ts) is required by the API; the vault adds it. */
+/** `POST /v1/evm/sponsor/prepare`. The API requires `sessionProof` (the session proof of the request); the vault adds it. */
 export interface EvmSponsorPrepareBody {
   chainId: number;
   account: string;

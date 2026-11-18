@@ -210,7 +210,7 @@ describe('AdminRpc.systemStatus evmRelay', () => {
     expect(relayer.names).toEqual([]);
     expect(chain.calls).toEqual([]);
     // The test Worker's own env has no block either.
-    expect(await status({ ...env, EVM_RELAYER: relayer.ns } as Env)).not.toHaveProperty('evmRelay');
+    expect(await status({ ...env, EVM_RELAYER: relayer.ns } as unknown as Env)).not.toHaveProperty('evmRelay');
     expect(relayer.calls).toEqual([]);
   });
 

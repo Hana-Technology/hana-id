@@ -219,7 +219,9 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   live)", D849).
 - `chains`: 1 to 4, by decimal chain ID. Each must be one of core's `TEST_EVM_CHAINS`; the local dev chains 31337 and
   1337 only in `local*` envs. `opStack` is true exactly for the OP Stack test chains (84532 Base Sepolia, 11155420 OP
-  Sepolia), which also charge an L1 data fee. `rpc` and the optional `rpcFallback` are https URLs of DNS names (no IP
+  Sepolia), which also charge an L1 data fee. `rpc` and `rpcFallback` (required outside `local*` envs: the vault signs a user's one-time setup only when both
+  answer and agree on the account, D855; optional in `local*` envs, where the setup may then rest on `rpc` alone) are
+  https URLs of DNS names (no IP
   literal, no loopback or link-local `.local` host, a dot and no trailing dot) with no credentials, path, query or
   fragment; a loopback host (http or https) only in `local*` envs; outside them the two are different providers
   (registrable domains). **No API keys in manifest URLs**: the manifest is committed, so a keyed RPC goes in a secret

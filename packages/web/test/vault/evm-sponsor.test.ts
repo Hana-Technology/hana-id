@@ -9,7 +9,7 @@ import { decodeSponsoredAction } from '@hana-id/core/decode';
 import { APP_ID, type ApiCall, Browser, apiError, persisted, ENV, type Google, PK, type Tab, START_MS, answer, google, login, makeConfig, openApproval, readyTab, waitLauncher } from './harness.ts';
 import { SPONSOR_DELEGATES, decodeSponsorSubject, recoverAuthorization, recoverExecuteSigner } from '@hana-id/core/evm-sponsor';
 import type { HanaEnv } from '../../src/hana-env.ts';
-import { SPONSOR_TEXT, approvedSubject, sponsorChains, sponsorPreflight, sponsoredApproval } from '../../src/vault/evm-sponsor.ts';
+import { SPONSOR_TEXT, approvedSubject, setupNonce, sponsorChains, sponsorPreflight, sponsoredApproval } from '../../src/vault/evm-sponsor.ts';
 
 /** A well-known test address (anvil's first published dev account). */
 const ACCOUNT = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as const;
@@ -37,6 +37,8 @@ class FakeEvmChain {
   readonly down = new Set<string>();
   readonly lies = new Map<string, Partial<{ code: string; latest: bigint; pending: bigint; chainId: number }>>();
   readonly reads: { endpoint: string; method: string }[] = [];
+  /** Turns an endpoint's honest JSON-RPC answer (its body text) into the HTTP answer it gives (an error status, padding). */
+  readonly raw = new Map<string, (body: string) => Response>();
 
   constructor(t: Tab) {
     for (const [path, endpoint] of [['/a', RPC_A], ['/b', RPC_B]] as const) t.browser.backend.overrides.set(path, (call) => this.answer(endpoint, call));
@@ -49,7 +51,9 @@ class FakeEvmChain {
     const v = { code: this.code, latest: this.latest, pending: this.pending, chainId: this.chainId, ...this.lies.get(endpoint) };
     const result =
       b.method === 'eth_chainId' ? `0x${v.chainId.toString(16)}` : b.method === 'eth_getCode' ? v.code : b.method === 'eth_getTransactionCount' ? `0x${(b.params[1] === 'pending' ? v.pending : v.latest).toString(16)}` : null;
-    return json(200, { jsonrpc: '2.0', id: b.id, result });
+    const raw = this.raw.get(endpoint);
+    const text = JSON.stringify({ jsonrpc: '2.0', id: b.id, result });
+    return raw ? raw(text) : new Response(text, { status: 200, headers: { 'content-type': 'application/json' } });
   }
 
   /** The account set up with the pinned delegate, as a send with an authorization leaves it. */
@@ -582,13 +586,38 @@ describe('the vault reads the account itself, from the build’s endpoints (D855
     noWindow(t);
   });
 
-  it('one endpoint down: the other answers alone', async () => {
+  it('the one-time setup needs both endpoints: one down refuses it (not ready), whichever is down', async () => {
+    for (const down of [RPC_A, RPC_B]) {
+      const { t, api } = await session();
+      api.chain.down.add(down);
+      expect((await send(t)).error).toMatchObject({ code: 'api_unavailable', message: SPONSOR_TEXT.notReady, data: { reason: 'bad_answer' } });
+      noWindow(t);
+    }
+  });
+
+  it('a later action (no setup): one endpoint down is fine, the other answers alone', async () => {
     const { t, api } = await session();
+    api.delegation = 'journear';
+    api.chain.setUp();
     api.chain.down.add(RPC_A);
     const reply = send(t);
     const { popup, m } = await windowOf(t);
     answer(t, popup, m, false);
     expect((await reply).error?.code).toBe(4001);
+  });
+
+  it('readAt: a non-OK HTTP answer is no answer, even with an honest body: so a setup refuses (both are needed)', async () => {
+    const { t, api } = await session();
+    api.chain.raw.set(RPC_A, (body) => new Response(body, { status: 500 }));
+    expect((await send(t)).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'bad_answer' } });
+    noWindow(t);
+  });
+
+  it('readAt: a body over 64 KiB is never parsed (not ready), even when it is valid JSON', async () => {
+    const { t, api } = await session();
+    api.chain.raw.set(RPC_B, (body) => new Response(`${' '.repeat(65_536)}${body}`, { status: 200 }));
+    expect((await send(t)).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'bad_answer' } });
+    noWindow(t);
   });
 
   it('both endpoints down: not ready, never the API’s word', async () => {
@@ -609,6 +638,19 @@ describe('the vault reads the account itself, from the build’s endpoints (D855
     lie(api.chain);
     expect((await send(t)).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'bad_answer' } });
     noWindow(t);
+  });
+
+  it('setupNonce: a setup on one endpoint’s word only in a local build with one endpoint configured', () => {
+    const answer = { delegation: 'none' as const, accountNonce: 3n, executeNonce: 0n, serverNow: START_MS / 1000, relayer: RELAYER, implementation: DELEGATE, minGasFloor: 100_000n, maxMinGas: 240_000n, deadlineMaxS: 600, allowed: true, reason: null };
+    const view = (answered: number) => ({ code: '0x', latest: 3n, pending: 3n, answered });
+    const chain = (local: boolean, rpcs: string[]) => ({ chainId: 31337, delegate: DELEGATE, relayer: RELAYER as `0x${string}`, rpcs, local });
+    expect(setupNonce(view(2), answer, chain(false, [RPC_A, RPC_B]))).toBe(3n);
+    expect(() => setupNonce(view(1), answer, chain(false, [RPC_A, RPC_B]))).toThrow(SPONSOR_TEXT.notReady);
+    expect(() => setupNonce(view(1), answer, chain(false, [RPC_A]))).toThrow(SPONSOR_TEXT.notReady);
+    expect(() => setupNonce(view(1), answer, chain(true, [RPC_A, RPC_B]))).toThrow(SPONSOR_TEXT.notReady);
+    expect(setupNonce(view(1), answer, chain(true, [RPC_A]))).toBe(3n);
+    // No setup: one answer is enough anywhere.
+    expect(setupNonce({ code: DESIGNATOR, latest: 4n, pending: 4n, answered: 1 }, { ...answer, delegation: 'journear' }, chain(false, [RPC_A, RPC_B]))).toBeNull();
   });
 
   it('a chain without an endpoint in the build is not sponsored', () => {

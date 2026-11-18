@@ -130,6 +130,8 @@ export interface SponsorChain {
   readonly relayer: `0x${string}`;
   /** The chain's public JSON-RPC endpoints in the build (manifest `rpc`, then `rpcFallback`): 1 or 2. */
   readonly rpcs: readonly string[];
+  /** A `local*` build: the only one where the one-time setup may rest on a single configured endpoint. */
+  readonly local: boolean;
 }
 
 /** An RPC endpoint the vault may read: https, or http to a loopback host in a local build only. */
@@ -186,7 +188,7 @@ export function sponsorChains(env: Pick<HanaEnv, 'name' | 'evmSponsor'>): Sponso
     const fallback = entry.rpcFallback === undefined ? null : rpcUrlOrNull(entry.rpcFallback, local);
     if (entry.rpcFallback !== undefined && !fallback) continue;
     const rpcs = Object.freeze(fallback && fallback !== rpc ? [rpc, fallback] : [rpc]);
-    out.push(Object.freeze({ chainId, delegate, relayer, rpcs }));
+    out.push(Object.freeze({ chainId, delegate, relayer, rpcs, local }));
   }
   return out.sort((a, b) => a.chainId - b.chainId).slice(0, 4);
 }
@@ -310,6 +312,8 @@ export interface AccountOnChain {
   /** Its transaction count, latest and pending. */
   readonly latest: bigint;
   readonly pending: bigint;
+  /** How many of the build's endpoints answered (and agreed). */
+  readonly answered: number;
 }
 
 /** How long one endpoint gets for its four reads. */
@@ -317,16 +321,52 @@ export const SPONSOR_RPC_TIMEOUT_MS = 8_000;
 
 const QUANTITY = /^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/u;
 
+/** The most of one endpoint answer the vault reads (a contract's code is at most 24 KiB, so 48 KiB of hex). */
+export const SPONSOR_RPC_MAX_BODY_BYTES = 64 * 1024;
+
+class TooLarge extends Error {}
+
+/** The body as text, read as a stream and given up past `max` bytes (never buffered whole first). */
+async function cappedText(res: Response, max: number): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    const text = await res.text();
+    if (new TextEncoder().encode(text).length > max) throw new TooLarge();
+    return text;
+  }
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new TooLarge();
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.length;
+  }
+  return new TextDecoder().decode(all);
+}
+
 /**
- * One endpoint's view (its chain checked first); `down` when it gives no answer (network, timeout, a JSON-RPC error), `bad`
- * when it answers something unusable (another chain, a malformed value).
+ * One endpoint's view (its chain checked first); `down` when it gives no answer (network, the 8 s timeout, a non-OK HTTP
+ * status, a JSON-RPC error), `bad` when it answers something unusable (another chain, a malformed value, a body over
+ * 64 KiB, which is never parsed).
  */
 async function readAt(url: string, chainId: number, account: string, fetchFn: typeof fetch, timers: Timers): Promise<AccountOnChain | 'down' | 'bad'> {
   const ctl = new AbortController();
   const timer = timers.setTimeout(() => ctl.abort(), SPONSOR_RPC_TIMEOUT_MS);
   const call = async (method: string, params: unknown[], id: number): Promise<unknown> => {
     const res = await fetchFn(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }), credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: ctl.signal });
-    const body = (await res.json()) as unknown;
+    if (!res.ok) throw new Error('rpc');
+    const body = JSON.parse(await cappedText(res, SPONSOR_RPC_MAX_BODY_BYTES)) as unknown;
     if (!isObj(body) || body.id !== id || body.error !== undefined) throw new Error('rpc');
     return body.result;
   };
@@ -338,8 +378,9 @@ async function readAt(url: string, chainId: number, account: string, fetchFn: ty
       call('eth_getTransactionCount', [account, 'latest'], 3),
       call('eth_getTransactionCount', [account, 'pending'], 4),
     ]);
-  } catch {
-    return 'down';
+  } catch (e) {
+    // An oversized answer is an endpoint answering something unusable, not one that is down.
+    return e instanceof TooLarge ? 'bad' : 'down';
   } finally {
     timers.clearTimeout(timer);
   }
@@ -347,7 +388,7 @@ async function readAt(url: string, chainId: number, account: string, fetchFn: ty
   if (typeof chain !== 'string' || !QUANTITY.test(chain.toLowerCase()) || BigInt(chain) !== BigInt(chainId)) return 'bad';
   if (typeof code !== 'string' || !/^0x(?:[0-9a-fA-F]{2})*$/u.test(code) || code.length > 2 + 2 * 24_576) return 'bad';
   if (typeof latest !== 'string' || typeof pending !== 'string' || !QUANTITY.test(latest.toLowerCase()) || !QUANTITY.test(pending.toLowerCase())) return 'bad';
-  return { code: code.toLowerCase(), latest: BigInt(latest), pending: BigInt(pending) };
+  return { code: code.toLowerCase(), latest: BigInt(latest), pending: BigInt(pending), answered: 1 };
 }
 
 /**
@@ -363,18 +404,23 @@ export async function readAccount(chain: SponsorChain, account: string, fetchFn:
   const first = views[0];
   if (!first) throw notReady('chain_unreadable');
   if (views.some((v) => v.code !== first.code || v.latest !== first.latest || v.pending !== first.pending)) throw notReady('chain_disagrees');
-  return first;
+  return { ...first, answered: views.length };
 }
 
 /**
  * Whether this action signs the one-time setup, and at which nonce, from the account as the vault read it (D855):
- * - no code: the setup, only when the API said `none` and latest == pending == the API's `accountNonce` (else not ready:
- *   a future nonce would make an authorization usable later, a pending one may not apply);
+ * - no code: the setup, only when two configured endpoints both answered and agreed (one endpoint's word only in a
+ *   `local*` build that configures one), the API said `none`, and latest == pending == the API's `accountNonce` (else
+ *   not ready: a future nonce would make an authorization usable later, a pending one may not apply);
  * - exactly the pinned delegate's designator: no setup, only when the API said `journear` (else not ready);
  * - any other code: set up by another wallet app (D840), whatever the API said.
  */
 export function setupNonce(onChain: AccountOnChain, answer: PrepareAnswer, chain: SponsorChain): bigint | null {
   if (onChain.code === '0x') {
+    // An authorization never rests on one provider's word (a lying endpoint and a lying API could otherwise get one
+    // signed for an account another wallet set up): both configured endpoints must have answered and agreed.
+    const oneAllowed = chain.local && chain.rpcs.length === 1;
+    if (!oneAllowed && (chain.rpcs.length < 2 || onChain.answered < 2)) throw notReady('setup_needs_two_endpoints');
     if (answer.delegation !== 'none') throw notReady('delegation');
     if (onChain.latest !== onChain.pending || onChain.latest !== answer.accountNonce) throw notReady('account_nonce');
     return onChain.latest;

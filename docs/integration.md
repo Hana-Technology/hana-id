@@ -857,6 +857,8 @@ button.onclick = () => {
   most wallets, it returns the `id` only **after** the user approved and the calls ran (seconds, or a rejection), not as
   soon as the request is accepted: don't put a short timeout on it. `getCallsStatus` reads the receipt from your chain's
   RPC (pending until it has it). `getCapabilities` shows `atomic: supported` on the chains it is offered on.
+- Privacy: when a gas-free action is prepared, the Journear Passport page asks the network's public endpoints about the
+  user's account, so those providers see the account's address and the user's IP address.
 - The `transactionHash` comes from Journear's API, which waited for the receipt; your own RPC
   (`eth_getTransactionReceipt`) or an explorer is where you confirm it independently.
 

@@ -55,8 +55,18 @@ describe('evm.sponsor: optional, off when absent (D834)', () => {
 
   it('accepts an empty allowlist (sponsorship configured, nothing sponsored) and optional fields left out', () => {
     expect(messages(withSponsor({ ...sponsorFixture(), apps: {} }))).toEqual([]);
-    const { rpcFallback: _f, requireKnownAccount: _r, ...bare } = sponsorFixture().chains['84532']!;
+    const { requireKnownAccount: _r, ...bare } = sponsorFixture().chains['84532']!;
     expect(messages(withSponsor({ ...sponsorFixture(), chains: { '84532': bare } }))).toEqual([]);
+  });
+
+  it('requires rpcFallback outside local* envs: the vault signs the one-time setup only when two providers agree (D855)', () => {
+    const { rpcFallback: _f, ...noFallback } = sponsorFixture().chains['84532']!;
+    expect(problems({ ...sponsorFixture(), chains: { '84532': noFallback } })).toContain(
+      'evm.sponsor.chains.84532.rpcFallback is required outside local* envs: the vault reads the account from two providers before it signs the one-time setup',
+    );
+    const s = sponsorFixture();
+    const local: EvmSponsor = { ...s, chains: { '31337': { ...s.chains['84532']!, opStack: false, rpc: 'http://127.0.0.1:8545', rpcFallback: undefined } }, apps: {} };
+    expect(problems(local, 'local-dev')).toEqual([]);
   });
 
   it('refuses null for the optional fields', () => {

@@ -12941,9 +12941,16 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   build (manifest `rpc` and `rpcFallback`, generated into `HanaEnv.evmSponsor` by `evmSponsorPageChains`; the vault
   page's CSP `connect-src` names them, `apps/api/src/vault/page.ts` `sponsorRpcOrigins`; keyed RPC URLs are the
   API's secrets and never reach a page; a chain without `rpc` is not sponsored by the vault). Each endpoint's chain ID is
-  checked; every endpoint that answers must agree on the code and both counts; one endpoint down is fine; none
-  answering, another chain, a malformed value or a disagreement refuses with "Journear couldn't get this action ready"
-  (`bad_answer`), never falling back to the API's word. `setupNonce`: no code → the authorization, only when the API said
+  checked; every endpoint that answers must agree on the code and both counts; none answering, another chain, a
+  malformed value or a disagreement refuses with "Journear couldn't get this action ready" (`bad_answer`), never falling
+  back to the API's word. **The one-time setup needs both endpoints** (the re-check of PR 76): an authorization is signed
+  only when two configured endpoints both answered and agree, so it never rests on one provider's word (a lying endpoint
+  with a lying API, the honest one unreachable, could otherwise get it signed for an account another wallet set up);
+  `rpcFallback` is therefore required outside `local*` envs in the manifest schema and the Worker parser (both refuse a
+  chain without it), and a `local*` build with only `rpc` may sign a setup on that one endpoint (local only). A later
+  action, which signs no authorization, may go ahead with one endpoint down. Each read checks `res.ok` and reads at
+  most 64 KiB of body as a stream before parsing (8 s each). Privacy: those providers see the account's address and the
+  user's IP address (security.md, beside the demo balance read). `setupNonce`: no code → the authorization, only when the API said
   `none` and latest == pending == its `accountNonce` (a future nonce would stay usable on a gasless account; a pending
   transaction may consume it); exactly `0xef0100 ‖ the pinned delegate` → no authorization, only when the API said
   `journear` (else `bad_answer`); any other code (another delegate, contract code) → the D840 refusal, whatever the API

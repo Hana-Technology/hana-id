@@ -321,6 +321,8 @@ export function evmSponsorProblems(m: { name: string; network: string; evm?: { s
     if (c.opStack !== OP_STACK_TEST_CHAIN_IDS.includes(n)) p('opStack', `must be ${String(OP_STACK_TEST_CHAIN_IDS.includes(n))} for chain ${id}`);
     const rpcProblem = sponsorRpcUrlProblem(c.rpc, isLocalEnv(m.name));
     if (rpcProblem) p('rpc', rpcProblem);
+    // D855: the vault signs the one-time setup only when two providers agree on the account (local* envs: one may do).
+    if (c.rpcFallback === undefined && !isLocalEnv(m.name)) p('rpcFallback', 'is required outside local* envs: the vault reads the account from two providers before it signs the one-time setup');
     if (c.rpcFallback !== undefined) {
       const fbProblem = sponsorRpcUrlProblem(c.rpcFallback, isLocalEnv(m.name));
       if (fbProblem) p('rpcFallback', fbProblem);

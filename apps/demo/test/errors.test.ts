@@ -63,7 +63,7 @@ describe('plainMessage', () => {
   });
 
   it('D695: a 4900 with reason signed_out is a sign-out (log in again, no reload); a 4900 without it is a lost vault', () => {
-    const signedOut = 'You were signed out on this device (from Passport Home, another tab or another device). Log in again.';
+    const signedOut = 'You were signed out on this device (from Passport Home, another tab or another device). Sign in again.';
     expect(SIGNED_OUT_MESSAGE).toBe(signedOut);
     // The refused signature (either error shape) and the disconnect event the page turns into one.
     for (const e of [new HanaError(4900, 'x', { reason: 'signed_out' }), new ProviderRpcError(4900, 'x', { reason: 'signed_out' }), { code: 4900, data: { reason: 'signed_out' } }]) {
@@ -113,11 +113,11 @@ describe('plainMessage', () => {
     expect(plainMessage(relayer('api_unavailable', 502, 'whatever'), 'near')).toBe('Journear’s relayer is unavailable right now. Try again in a minute. (whatever)');
     expect(plainMessage(relayer('rate_limited', 429, 'rate_limited'), 'near')).toMatch(/Too many guestbook writes/u);
     // Not from the relayer (no HTTP status): the usual texts.
-    expect(plainMessage(new HanaError(4100, 'x'), 'near')).toBe('Not allowed: you may have been logged out. Log in and try again.');
+    expect(plainMessage(new HanaError(4100, 'x'), 'near')).toBe('Not allowed: you may have been signed out. Sign in and try again.');
     expect(plainMessage(new HanaError('api_unavailable', 'x'), 'near')).toBe('Could not reach Journear’s service. Check your connection and try again.');
     expect(plainMessage(new HanaError(4001, 'x'), 'near')).toBe('Rejected in the Journear window: nothing was signed.');
     // The same reason outside the card is not the relayer's.
-    expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'sign')).toBe('Not allowed: you may have been logged out. Log in and try again.');
+    expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'sign')).toBe('Not allowed: you may have been signed out. Sign in and try again.');
   });
 
   it('D788: relayTransaction is the SDK’s data.transactionHash, only in base58’s shape', () => {

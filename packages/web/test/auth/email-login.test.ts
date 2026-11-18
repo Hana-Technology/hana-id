@@ -526,7 +526,7 @@ describe('/login/email', () => {
     submit('email-send');
     await flush();
     expect(s.page.notice).toBe('not_found');
-    expect(pageText()).toContain('Something went wrong (not_found)');
+    expect(pageText()).toContain('Something went wrong. Try again, or close this window and start again from the app. Error code (for support): not_found.');
     expect(pageText()).not.toContain('can’t be reached');
     expect(document.getElementById('email-retry')).toBeNull();
     await toCode(s);

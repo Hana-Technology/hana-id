@@ -27,6 +27,8 @@ import {
   thresholdsOp,
   txBytes,
 } from '../../../core/test/stellar-fixtures.ts';
+import { jargonWatch, shownText } from './plain-words.ts';
+import { shortId } from '@hana-id/core/decode';
 
 function render(ops: xdr.Operation[], bytes = txBytes(ops)): HTMLElement {
   const decoded = decodeApprovalRequest({
@@ -38,8 +40,11 @@ function render(ops: xdr.Operation[], bytes = txBytes(ops)): HTMLElement {
   });
   const el = renderApproval(dom(document), decoded, 'Partner App');
   document.body.replaceChildren(el);
+  plain(el);
   return el;
 }
+
+const plain = jargonWatch();
 
 /** The red box (D814): its lead in full, then each other red item's bullet. */
 const takeovers = (el: HTMLElement) => [...el.querySelectorAll('.danger-box .risk-lead, .danger-box li')].map((p) => p.textContent);
@@ -64,9 +69,12 @@ describe('renderApproval: Stellar account-control operations', () => {
     expect(el.querySelectorAll('.danger-box')).toHaveLength(1);
     // A single step: the headline names the signer whole, so the box keeps only its banner (no repeated bullet).
     expect(takeovers(el)).toEqual([ACCOUNT_CONTROL_BANNER]);
-    expect(el.querySelector('h2.summary-headline')?.textContent).toContain(`add ${ATTACKER} as a signer with weight 255`);
-    expect(accountControlShorts(decodedOps([addSignerOp(255)])[0]!).map((c) => c.join(''))).toEqual([`Adds ${short(ATTACKER)} as a signer (weight 255)`]);
-    expect(accountControlWarnings(decodedOps([addSignerOp(255)])[0]!)).toEqual([`This adds ${ATTACKER} as a signer with weight 255. Whoever holds that key can sign for the account and, with enough weight, move all its funds and lock you out.`]);
+    expect(shownText(el.querySelector('h2.summary-headline'))).toContain(`let the key ${shortId(ATTACKER)} act for the account (strength 255)`);
+    // D859: the whole key once, right under the red box (a control change's key row is never left out).
+    const keyRow = el.querySelector('.danger-box + dl.id-rows');
+    expect(keyRow?.textContent).toBe(`Key${ATTACKER}`);
+    expect(accountControlShorts(decodedOps([addSignerOp(255)])[0]!).map((c) => c.join(''))).toEqual([`Lets the key ${short(ATTACKER)} act for the account (strength 255)`]);
+    expect(accountControlWarnings(decodedOps([addSignerOp(255)])[0]!)).toEqual([`This lets another key, ${ATTACKER}, act for the account (strength 255). With enough strength, whoever holds that key can take everything in the account and lock you out.`]);
     expect(el.querySelector('li.op.takeover-op')).not.toBeNull();
     expect(el.textContent).toContain('Adds signer');
     expect(el.textContent).toContain(`${ATTACKER} (ed25519, weight 255)`);
@@ -79,8 +87,8 @@ describe('renderApproval: Stellar account-control operations', () => {
     const w = takeovers(el);
     // Three steps, each in its own line naming it whole: the banner, and only the bullets that say more than their
     // lines (thresholds can lock the user out; the user's own key at weight 0 does).
-    expect(w).toEqual([ACCOUNT_CONTROL_BANNER, 'Changes the signing thresholds: wrong values can lock you out of the account', 'Sets your own Journear Passport key’s weight to 0: you lose control of the account']);
-    expect([...el.querySelectorAll('p.summary-line')].map((p) => p.textContent).slice(0, 3)).toEqual([`Remove the signer ${ATTACKER}`, 'Change the signing thresholds', 'Set your own key’s weight to 0']);
+    expect(w).toEqual([ACCOUNT_CONTROL_BANNER, 'Changes how many approvals the account needs: wrong numbers can lock you out', 'Sets your own Journear Passport key’s strength to 0: you lose control of the account']);
+    expect([...el.querySelectorAll('p.summary-line')].map(shownText).slice(0, 3)).toEqual([`Stop the key ${shortId(ATTACKER)} acting for the account`, 'Change how many approvals the account needs', 'Set your own key’s strength to 0']);
     expect(el.textContent).toContain('Removes signer');
     expect(el.textContent).toContain('Low threshold0');
     expect(el.textContent).toContain('Medium threshold2');
@@ -92,7 +100,8 @@ describe('renderApproval: Stellar account-control operations', () => {
   it('shows the accountMerge destination in the warning and the rows', () => {
     const el = render([mergeOp(OTHER)]);
     expect(takeovers(el)).toEqual([ACCOUNT_CONTROL_BANNER]);
-    expect(el.querySelector('h2.summary-headline')?.textContent).toContain(`close the account and send all its XLM to ${OTHER}`);
+    expect(shownText(el.querySelector('h2.summary-headline'))).toContain(`close the account and send all its XLM to ${shortId(OTHER)}`);
+    expect(el.querySelector('.danger-box + dl.id-rows')?.textContent).toBe(`To${OTHER}`);
     expect(el.textContent).toContain(`Sends all XLM to${OTHER}`);
   });
 

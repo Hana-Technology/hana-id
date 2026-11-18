@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (gas-free EVM actions, not live; verified list: demo check-in; 0.5.0 not published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (an email can cancel its pending link; gas-free EVM actions, not live; 0.5.0 not published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -251,6 +251,10 @@ tarballs you use together (they depend on each other at `^0.5.0`).
   earlier say `UNLICENSED` and ship no licence). `@hana-id/core`'s licence is still being decided; until then its
   tarball carries Journear Passport's Business Source License 1.1, which allows testing, evaluation and development,
   and use on test networks. The names and logos of Journear and Journear Passport are not licensed.
+- New: errors carry a plain sentence to show your users, `error.userMessage`, on `HanaError`, `HanaSponsorError` and
+  the EIP-1193 provider's `ProviderRpcError`, and `userMessageFor(code, data)` for a code read elsewhere
+  ([section 13](#user-message)). `message` is unchanged. Journear Passport's own windows, Passport Home and its emails
+  use plainer words too; no code, `data.reason` or event changed.
 
 **0.4.1** (after 0.4.0; same environments: `sandbox-dev`). **Nothing to change** unless you find Journear Passport's
 wallet by its display name: code written for 0.4.0 builds and runs as it is. Replace all the tarballs you use together
@@ -569,7 +573,10 @@ button.addEventListener('click', async () => {
 
   Nobody ever gets a second wallet for the same verified address. While a link is pending, signing in with the
   pending method fails with `link_pending` (`data.effectiveAtMs`: when it opens the wallet). The user can cancel it
-  from the Journear Passport popup's banner at their next sign-in.
+  from the Journear Passport popup's banner at their next sign-in. An email that waits to join a Google wallet can
+  also cancel it itself: its refused sign-in leaves the popup open on the waiting link, with **Cancel this link** (one
+  more code to the address) and **Keep the link**. Your `login()` has already rejected with `link_pending` by then;
+  nothing else reaches your page.
   - `await hana.account()` → `{methods: [{provider: 'google' | 'email', status: 'active' | 'pending', effectiveAtMs,
     root}]}`: the wallet's own method (`root: true`) and the ones linked to it. No identifiers, no addresses. Calls
     within 5 s of a read share it (the vault reads afresh after a login, a link or a banner's action). **Show
@@ -702,7 +709,9 @@ Every signing request goes through the user. The Journear Passport popup decodes
 misdescribe them. It starts with one plain sentence built only from those bytes ("Your App wants to send 0.1 NEAR to
 bob.testnet", "Your App wants to use stamps.testnet (collect)", "Your App wants you to sign a message"), the network
 and the most the network fee can be; a plain transfer (EVM value with no call data on a chain it names, one native XLM
-payment or account creation, NEAR transfers only) also shows the amount large ("Sends 0.001 ETH"). Every warning is
+payment or account creation, NEAR transfers only) also shows the amount large ("Sends 0.001 ETH"). An address or key in a
+sentence is shortened (`0x3333…3333`) and written out whole once, in its own labelled row right under it (two that
+look alike are numbered "account 1", "account 2"). Every warning is
 always in view, the red ones right under that sentence: changes to who controls the account, raw signing, and any request that lets someone spend the
 user's tokens (an ERC-20 `approve` or `increaseAllowance`, `setApprovalForAll`, EIP-2612 and Permit2 signatures, a
 Soroban token `approve`, NEAR's `nft_approve`), red when the amount has no limit, with the spender named when Journear
@@ -711,13 +720,15 @@ actions, raw arguments, typed-data trees, the user's Support ID) are folded behi
 always open. When the popup can't explain a request in plain words (a function it doesn't recognise, typed data other
 than a permit it knows, a Soroban call that isn't a token transfer or approval or that authorizes anything else, a
 liquidity pool deposit or withdrawal, more steps than it lists, raw bytes) it says so above the details in plain words,
-for example "Journear can’t tell what this request does. It could move your money or tokens. Only approve if you fully
-trust Your App.", in red when what it can't read could move funds or control with no visible limit; for raw signing,
-"This asks you to sign something Journear can’t read at all. … Reject unless you are certain." The details stay
-folded in every case until the user opens them. Token amounts carry a symbol only for the few tokens Journear has reviewed; anything else shows the
-amount in the token's smallest units, so describe amounts in your own page too. **Reject** and **Approve** are below.
+for example "Journear can’t check what this does. It could take your money or tokens. If you’re not sure, reject
+it.", in red when what it can't read could move funds or control with no visible limit; for raw signing,
+"Signing this could hand over your whole account and everything in it. Reject it unless you know exactly why you’re
+signing." The details stay folded in every case until the user opens them. Every word is plain, for people who don't
+know crypto: no "gas", "contract" or "testnet" outside the details. Token amounts carry a symbol only for the few
+tokens Journear has reviewed (USDC and EURC where Circle publishes them, wrapped NEAR), with a line that it is the real one; anything else reads "N units of an unlisted token" with a line telling the user to check
+the amount in your app, so describe amounts in your own page too. **Reject** and **Approve** are below.
 The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
-re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Declined" and counts down,
+re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Rejected" and counts down,
 with a Close now button. Each follow-up still needs its own Approve. Reject, closing the
 popup, or 5 min without an answer gives `4001`.
 
@@ -765,8 +776,8 @@ clicking in place without moving the mouse, Enter and Space never arm it. That s
 tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) carry a line that the signature
 isn't tied to one network: they are valid wherever the key is. For a test app every request and consent screen also
 says that Journear Passport signs only for test networks (for a test app with Journear's mainnet demo on, it says what the demo signs
-instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (testnet)", with the chain ID beside it) and
-gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
+instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (test network)", with "network no.
+11155111" beside it) and gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
 
 ### Stellar
 
@@ -1065,7 +1076,10 @@ action fails its NEAR is refunded to the user's account. So the user's balance g
 account itself: deleting it (everything), staking (locked), publishing a global contract (burnt), a call to a contract
 on the user's own account (it decides what it moves: the popup says "Unknown") and fees spent through a function-call
 key the action adds (up to its allowance). The actions run as the user's account, so a contract they call acts in the
-user's name (it can move tokens the user holds there).
+user's name (it can move tokens the user holds there). The approval window says so: "Network fee: free for you.
+Someone else pays it.", and for every call an amber "This acts as you: {contract} can use anything you keep with
+it."; anything that can take the user's NEAR or tokens also shows a "NEAR leaving your account" row. For a live app it also says, in amber, that the approval could be used on the other NEAR
+network if the account exists there.
 
 <a id="near-relay"></a>**Journear Passport's relay** (`hana.near.relay`, `POST /v1/near/relay`; `hana.near.activate`,
 `POST /v1/near/activate`). Testnet only, and running on sandbox-dev. Both are checked against your publishable key and
@@ -1559,7 +1573,7 @@ Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze test
 
 **Journear's sandbox mainnet demo (not for partner apps).** Journear runs its own Sodax demo on sandbox under an internal
 exception: one Journear Passport test app may sign on Base (8453) and Stellar's public network, at most $9.99 per transaction (fee
-included), every request through Journear Passport's window with a red "Real funds, test custody" banner, the request's value and
+included), every request through Journear Passport's window with a red "Real money, test system" banner, the request's value and
 the wallet's balance. Partner apps can't get it, and in production it doesn't exist. What the SDK shows of it (SDK
 0.2.1; the `prices` field and `mainnetDemoKnown` need a current vault), so a page built on it knows where it stands:
 
@@ -1622,6 +1636,31 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 `hana.*` methods reject with a `HanaError {code, message, data?}`. The EIP-1193 provider maps string codes to numbers
 (the Journear Passport code stays in `data.code`), and the SWK module maps them to SWK's shape.
 
+<a id="user-message"></a>**What to show your user: `userMessage`** (SDK 0.5.0). `message` is for
+you: it names the CSP, origins, keys and reasons a developer needs, stays as it is, and is not meant for your users.
+Every `HanaError` and `ProviderRpcError` also has `userMessage`, one or two short plain sentences for the person using
+your app: what happened, whether anything was done, and what to do ("You rejected this in Journear Passport, or closed
+it. Nothing was approved."; "This app is a test version, so Journear Passport lets it use only test networks. Nothing
+was signed."). The SDK works it out from `code` and `data.reason` alone, never from `message` or other text that
+arrived, so it is safe to show as text; it holds no code and no chain words. A code it doesn't know gets "Something went
+wrong in Journear Passport. Try again." Match on `code` and `data.reason`, never on either text: both may be reworded.
+Libraries that wrap provider errors (viem, wagmi, ethers) may drop the field, and the SWK module's errors don't carry
+it: there, call `userMessageFor(code, data)` (exported by `@hana-id/web`) with the Journear Passport code (`data.code`,
+or SWK's `ext[0]`).
+
+```ts
+import { HanaError, userMessageFor } from '@hana-id/web';
+
+try {
+  await hana.login();
+} catch (e) {
+  const code = e instanceof HanaError ? e.code : (e as { data?: { code?: unknown } }).data?.code;
+  const text = e instanceof HanaError ? e.userMessage : userMessageFor(code, undefined);
+  errorBox.textContent = text; // text, never HTML, like any string you show
+  console.warn(e); // code, message and data, for your logs
+}
+```
+
 An error that came from an answer of Journear Passport's API (a refusal, or a sign-in that gave up after one: `rate_limited`,
 `api_unavailable`, `token_invalid`, `link_refused`, `identity_unavailable`, `session_ended`, `4900` from
 `revokeOtherDevices()`, …) carries that request's ID in `data.requestId` (SDK 0.2.0 or later):
@@ -1646,7 +1685,7 @@ window, not returned.
 | `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Journear Passport popup (`data.reason: 'popup_closed'`: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Journear Passport popup on the screen it went back to; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Journear Passport's explanation | offer email sign-in |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
-| `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; sign in with the wallet's other method meanwhile |
+| `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; the Journear Passport window says what to do (an email's window offers to cancel the link) |
 | `link_refused` | The sign-in methods can't be linked (`data.reason`); `login()` with the wallet's own method still works | offer the other method |
 | `google_error` | Google returned an error (`data.error`), or Journear Passport couldn't check Google's answer (`tokeninfo_unavailable`, `tokeninfo_client_mismatch`, `tokeninfo_invalid`, `google_account_mismatch`, `invalid_response`). The user cancelling Google's sign-in screen is not one: the popup goes back to its chooser, and closing it there is `login_cancelled`. `access_denied` remains only where Journear Passport has no screen to go back to (a login in an environment without Journear Passport's email service, or the fallback Google request a Google-only app makes when Google's tokeninfo can't be reached) | retry; with `access_denied`, the user declined |
 | `no_google_client` | Your scope has no usable Google client | ask Journear |

@@ -157,7 +157,7 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
   const coverBook = h(
     'div',
     { class: 'pp-coverbook', 'aria-hidden': 'true' },
-    h('div', { class: 'pp-cover-foil' }, markArt('pp-crest'), h('p', { class: 'pp-cover-name' }, 'JOURNEAR'), h('p', { class: 'pp-cover-kind' }, 'PASSPORT'), chipArt(), h('p', { class: 'pp-cover-net' }, 'NEAR TESTNET')),
+    h('div', { class: 'pp-cover-foil' }, markArt('pp-crest'), h('p', { class: 'pp-cover-name' }, 'JOURNEAR'), h('p', { class: 'pp-cover-kind' }, 'PASSPORT'), chipArt(), h('p', { class: 'pp-cover-net' }, 'NEAR TEST NETWORK')),
   );
   const cover = h(
     'section',
@@ -209,7 +209,7 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
   const mrz2 = h('span', {});
   const idTop = [
     guillocheArt(),
-    h('header', { class: 'pp-pagehead' }, markArt('pp-headmark'), h('span', { class: 'pp-headname' }, 'JOURNEAR PASSPORT'), h('span', { class: 'pp-headcode' }, 'NEAR · TESTNET')),
+    h('header', { class: 'pp-pagehead' }, markArt('pp-headmark'), h('span', { class: 'pp-headname' }, 'JOURNEAR PASSPORT'), h('span', { class: 'pp-headcode' }, 'NEAR · TEST NETWORK')),
     idHeading,
     h('div', { class: 'pp-idgrid' }, portraitBox, fields),
   ];
@@ -349,7 +349,7 @@ export function mountPassport(root: HTMLElement, handlers: PassportHandlers): { 
     const tx = h('a', { class: 'pp-link pp-tx' }, UI_TEXT.viewTx);
     const detail = h('p', { class: 'pp-detail' });
     const help = h('a', { class: 'pp-link pp-help', 'data-role': 'stamp-link' });
-    const copy = h('button', { type: 'button', class: 'jp-btn jp-btn-ghost jp-btn-sm pp-btn pp-slotcopy', 'data-action': 'copy-account', 'aria-label': `${UI_TEXT.copy} your full account id` }, icon(ICON_COPY, 'ic'), UI_TEXT.copyAccount);
+    const copy = h('button', { type: 'button', class: 'jp-btn jp-btn-ghost jp-btn-sm pp-btn pp-slotcopy', 'data-action': 'copy-account', 'aria-label': `${UI_TEXT.copy} your whole account` }, icon(ICON_COPY, 'ic'), UI_TEXT.copyAccount);
     let field: HTMLDivElement | null = null;
     let input: HTMLInputElement | null = null;
     let count: HTMLSpanElement | null = null;

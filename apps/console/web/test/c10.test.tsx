@@ -145,7 +145,7 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     at('/orgs/org_a/apps/app_1/signing');
     fireEvent.change(await screen.findByLabelText(/Policy \(JSON/u), { target: { value: JSON.stringify(policyJson()) } });
     fireEvent.click(screen.getByRole('button', { name: 'Check and preview' }));
-    expect(await screen.findByText('Allow automatic signing?')).toBeTruthy();
+    expect(await screen.findByText('Allow automatic approvals?')).toBeTruthy();
     expect(screen.getByText('“Swaps on Example”')).toBeTruthy();
     expect(bodyOf('/api/orgs/org_a/apps/app_1/policy/check')).toEqual({ policy: policyJson() });
     fireEvent.click(screen.getByRole('button', { name: /Propose this policy/u }));
@@ -164,7 +164,7 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     expect(alert.textContent).toContain('The policy has problems');
     expect(within(alert).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['label: required', 'v: must be 1']);
     expect(alert.textContent).toContain('policy_invalid');
-    expect(screen.queryByText('Allow automatic signing?')).toBeNull();
+    expect(screen.queryByText('Allow automatic approvals?')).toBeNull();
   });
 });
 

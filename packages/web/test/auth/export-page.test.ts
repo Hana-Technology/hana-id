@@ -739,7 +739,7 @@ describe('/export', () => {
     afterEach(() => vi.restoreAllMocks());
     it.each([
       ['NotSupportedError', 1, 'Update it, or use another browser.'],
-      ['OperationError', 4, 'couldn’t create the key the sign-in needs. Try again.'],
+      ['OperationError', 4, 'couldn’t finish setting up the sign-in. Try again.'],
     ] as const)('%s: derive_failed with its own text (asked %i time(s)), no sign-in params', async (name, calls, text) => {
       const spy = vi.spyOn(crypto.subtle, 'generateKey').mockImplementation((() => Promise.reject(new DOMException('a platform message', name))) as typeof crypto.subtle.generateKey);
       const r = run();

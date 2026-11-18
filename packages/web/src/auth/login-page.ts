@@ -31,7 +31,10 @@ import { type LoginMethod, type WindowMessage, homeNonce, isTestPublishableKey, 
 import type { HanaEnv } from '../hana-env.ts';
 import { BRAND } from '@hana-id/brand';
 import { type Dom, dom, errorView, originText } from './dom.ts';
-import { PageError } from './errors.ts';
+import { PageError, STORAGE_BLOCKED, safetyStop, uncheckedStop } from './errors.ts';
+
+/** Where a partner sign-in starts again (D853's stop sentences). */
+const FROM_APP = 'the app';
 import { type EmailContext, storeEmailContext } from './email-storage.ts';
 import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAuthUrl, loginGoogleRequest } from './google.ts';
 import { type FollowEntry, addLoginTimings, storeLoginEntry } from './login-storage.ts';
@@ -180,13 +183,13 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   function checkHome(msg: WindowMessage<'hana:home-params'>): void {
     state = { stage: 'checking', mode: 'home' };
     try {
-      if (msg.signer !== env.signer) throw new PageError('config_mismatch', `${BRAND.home} named another signer.`);
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', safetyStop(BRAND.home));
       const nonce = homeNonce({ signer: env.signer, homePublicKey: msg.homePublicKey, expiresAtMs: msg.expiresAtMs, salt: msg.salt });
-      if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its Home key.');
+      if (nonce !== msg.nonce) throw new PageError('config_mismatch', safetyStop(BRAND.home));
       try {
         storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now(), undefined, exitEntry(msg, nonce));
       } catch {
-        throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
+        throw new PageError('storage_unavailable', STORAGE_BLOCKED);
       }
       const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: false, exit: msg.exit === true });
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, `Signing in to ${BRAND.home}`), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
@@ -194,7 +197,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       finish(state);
       win.location.assign(url);
     } catch (err) {
-      const e = err instanceof PageError ? err : new PageError('config_mismatch', 'The sign-in request could not be checked.');
+      const e = err instanceof PageError ? err : new PageError('config_mismatch', uncheckedStop(BRAND.home));
       fail(e.code, 'Sign-in stopped', e.message);
     } finally {
       msg.relayKey.fill(0);
@@ -211,13 +214,13 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   function checkHomeDerive(msg: WindowMessage<'hana:home-derive-params'>): void {
     state = { stage: 'checking', mode: 'home' };
     try {
-      if (msg.signer !== env.signer) throw new PageError('config_mismatch', `${BRAND.home} named another signer.`);
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', safetyStop(BRAND.home));
       const nonce = sessionNonce({ signer: env.signer, scopeId: msg.scopeId, sessionPublicKey: msg.sessionPublicKey, expiresAtMs: msg.expiresAtMs, keyIndex: 0, maxUses: 1, salt: msg.salt });
-      if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its session.');
+      if (nonce !== msg.nonce) throw new PageError('config_mismatch', safetyStop(BRAND.home));
       try {
         storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now(), undefined, exitEntry(msg, nonce));
       } catch {
-        throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
+        throw new PageError('storage_unavailable', STORAGE_BLOCKED);
       }
       const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: true, exit: msg.exit === true });
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Choose your Google account again'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
@@ -225,7 +228,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       finish(state);
       win.location.assign(url);
     } catch (err) {
-      const e = err instanceof PageError ? err : new PageError('config_mismatch', 'The sign-in request could not be checked.');
+      const e = err instanceof PageError ? err : new PageError('config_mismatch', uncheckedStop(BRAND.home));
       fail(e.code, 'Sign-in stopped', e.message);
     } finally {
       msg.relayKey.fill(0);
@@ -235,12 +238,12 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   async function check(msg: WindowMessage<'hana:auth-params'>, mode: OpenerMode): Promise<void> {
     const checkStarted = perfNow();
     state = { stage: 'checking', mode };
-    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), d.h('p', { class: 'muted' }, 'Checking the sign-in request…')));
+    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), d.h('p', { class: 'muted' }, 'Checking the sign-in…')));
     try {
       // The preparer is Hana code on vaultOrigin (or this origin's /export), authenticated by event.origin and
       // event.source above; it read the app's scope and Google client from GET /v1/app and the registry. Only the
       // pinned SIGNER and the nonce's commitment are checked here: no second GET /v1/app (D77).
-      if (msg.signer !== env.signer) throw new PageError('config_mismatch', 'The vault named another signer.');
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', safetyStop(FROM_APP));
       const nonce = sessionNonce({
         signer: env.signer,
         scopeId: msg.scopeId,
@@ -250,7 +253,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         maxUses: msg.maxUses,
         salt: msg.salt,
       });
-      if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its session.');
+      if (nonce !== msg.nonce) throw new PageError('config_mismatch', safetyStop(FROM_APP));
       // A link task (`hana.linkAccount`, batch 8b) signs in the new method with the vault's proof nonce instead.
       const task = mode !== 'export' && msg.task && msg.followKey ? msg.task : null;
       const follow = mode !== 'export' && msg.followKey ? msg.followKey : null;
@@ -292,7 +295,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
             : {},
         );
       } catch {
-        throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
+        throw new PageError('storage_unavailable', STORAGE_BLOCKED);
       } finally {
         msg.relayKey.fill(0);
         msg.followKey?.fill(0);
@@ -338,7 +341,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
           );
           return true;
         } catch {
-          fail('storage_unavailable', 'Sign-in stopped', 'This browser blocked the storage the sign-in needs.');
+          fail('storage_unavailable', 'Sign-in stopped', STORAGE_BLOCKED);
           return false;
         }
       };
@@ -405,7 +408,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       finish(state);
     } catch (err) {
       msg.relayKey.fill(0);
-      const e = err instanceof PageError ? err : new PageError('config_mismatch', 'The sign-in request could not be checked.');
+      const e = err instanceof PageError ? err : new PageError('config_mismatch', uncheckedStop(FROM_APP));
       fail(e.code, 'Sign-in stopped', e.message);
     }
   }
@@ -417,7 +420,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   } else if (opener === null) {
     fail(
       'coop_blocks_popup',
-      `This site’s settings block the ${BRAND.product} window (COOP)`,
+      `This site’s settings block the ${BRAND.product} window`,
       'The site you came from cut this window off from it, so the sign-in can’t finish here. Close this window and let the site’s developers know.',
     );
   } else {

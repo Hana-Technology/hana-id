@@ -67,7 +67,8 @@ export type EvmRejection = 'nonce_too_low' | 'nonce_too_high' | 'replacement_und
 /** Every classified rejection (the relayer gives each its cause: evm-relayer.ts REJECTION_CAUSE). */
 export const EVM_REJECTIONS: readonly EvmRejection[] = Object.freeze(['nonce_too_low', 'nonce_too_high', 'replacement_underpriced', 'underpriced', 'insufficient_funds', 'fee_below_base_fee', 'gas_limit', 'oversized', 'invalid_transaction']);
 
-export type EvmBroadcast = { kind: 'accepted'; hash: Hex } | { kind: 'rejected'; reason: EvmRejection } | { kind: 'unknown' } | { kind: 'unsent' };
+/** `byRead`: the trusted read endpoint's own definite refusal, when it was reached and refused (else null). */
+export type EvmBroadcast = { kind: 'accepted'; hash: Hex } | { kind: 'rejected'; reason: EvmRejection; byRead: EvmRejection | null } | { kind: 'unknown' } | { kind: 'unsent' };
 
 export interface EvmLog {
   address: Hex;
@@ -295,6 +296,7 @@ export class SponsorChain {
     let reached = false;
     let uncertain = false;
     const rejections: EvmRejection[] = [];
+    let byRead: EvmRejection | null = null;
     for (const [i, url] of this.broadcastUrls.entries()) {
       if (this.remaining === 0) break;
       if (i > 0) log({ event: 'evm_rpc_broadcast_next', chainId: this.chainId, rpcEndpoint: i - 1, nextRpcEndpoint: i, code: 'broadcast_fallback' }, 'warn');
@@ -309,7 +311,10 @@ export class SponsorChain {
         const c = classifyRejection(answer.message);
         if (c === 'already_known') return { kind: 'accepted', hash: rawTxHash(raw) };
         if (c === null || transientRpcError(answer.code, answer.message)) uncertain = true;
-        else rejections.push(c);
+        else {
+          rejections.push(c);
+          if (url === this.readUrl) byRead = c;
+        }
       } else {
         // No answer (network, timeout, an HTTP error): it may have been forwarded.
         uncertain = true;
@@ -317,7 +322,7 @@ export class SponsorChain {
     }
     if (!reached) return { kind: 'unsent' };
     if (uncertain || rejections.length === 0) return { kind: 'unknown' };
-    return { kind: 'rejected', reason: rejections.includes('nonce_too_low') ? 'nonce_too_low' : rejections[0]! };
+    return { kind: 'rejected', reason: rejections.includes('nonce_too_low') ? 'nonce_too_low' : rejections[0]!, byRead };
   }
 
   // ---- transport ----

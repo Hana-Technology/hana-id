@@ -167,7 +167,7 @@ async function loginFlow(): Promise<void> {
 }
 
 describe('demo page', () => {
-  it('“Log in with Google” and “Log in with email” each open their own method (batch 8a)', async () => {
+  it('“Sign in with Google” and “Sign in with email” each open their own method (batch 8a)', async () => {
     boot();
     fake.readyWith(null);
     await flush();
@@ -192,7 +192,7 @@ describe('demo page', () => {
       stellar: { networkPassphrase: 'Test SDF Network ; September 2015' },
     });
     expect($('testnet-banner').textContent).toBe('Testnet demo: Stellar, EVM and NEAR test networks only, nothing here holds real funds.');
-    expect(document.querySelector('.lead')!.textContent).toMatch(/^\s*Log in with email \(we send a code to your inbox; Google sign-in works for listed testers\) to get\s+a Stellar, an EVM and a NEAR wallet/u);
+    expect(document.querySelector('.lead')!.textContent).toMatch(/^\s*Sign in with email \(we send a code to your inbox; Google sign-in works for listed testers\) to get\s+a Stellar, an EVM and a NEAR wallet/u);
     // One primary action per view: signed out, it is the email login.
     expect($('login-email').classList.contains('jp-btn-primary')).toBe(true);
     expect([...document.querySelectorAll('#h-account ~ .row .jp-btn-primary')].map((b) => b.id)).toEqual(['login-email']);
@@ -213,7 +213,7 @@ describe('demo page', () => {
     expect($('wallet').hidden).toBe(false);
     expect($('login').hidden).toBe(true);
     expect($('logout').hidden).toBe(false);
-    expect($('status').textContent).toMatch(/^Logged in · session ends by .* \(in 11 h 0 min\), or sooner if idle · persistence: session/u);
+    expect($('status').textContent).toMatch(/^Signed in · session ends by .* \(in 11 h 0 min\), or sooner if idle · persistence: session/u);
     const cells = [...$('timings').querySelectorAll('td')].map((td) => td.textContent);
     expect(cells.slice(1)).toEqual(['google', '120', '900', '4000', '15', '6200', '40', '7000']);
   });
@@ -329,7 +329,7 @@ describe('demo page', () => {
     fake.emit('accountsChanged', null);
     fake.emit('statusChanged', 'logged_out');
     fake.emit('disconnect', { code: 4900, reason: 'signed_out' });
-    const signedOut = 'You were signed out on this device (from Passport Home, another tab or another device). Log in again.';
+    const signedOut = 'You were signed out on this device (from Passport Home, another tab or another device). Sign in again.';
     expect($('notice').textContent).toBe(signedOut);
     expect($('notice').hidden).toBe(false);
     expect($('error').hidden).toBe(true);
@@ -384,7 +384,7 @@ describe('demo page', () => {
     expect(fake.logout).toHaveBeenCalled();
     expect($('wallet').hidden).toBe(true);
     expect($('login').hidden).toBe(false);
-    expect($('status').textContent).toBe('Logged out.');
+    expect($('status').textContent).toBe('Signed out.');
   });
 
   it('gets an identity token without a popup, shows its decoded claims and a verify snippet for its iss and aud', async () => {
@@ -495,7 +495,7 @@ describe('the design system’s patterns on the demo (D765)', () => {
     expect($('wallet-pill').hidden).toBe(true);
     expect($('status').dataset.state).toBe('logged_out');
     // The logout's outcome is a toast.
-    expect(toastTexts()).toEqual(['Logged out: On this device, in every tab of this site.']);
+    expect(toastTexts()).toEqual(['Signed out: On this device, in every tab of this site.']);
   });
 
   it('a signature is shown confirm-style: the outcome, the chain’s badge, then the signature as a mono row', async () => {
@@ -562,7 +562,7 @@ describe('status text', () => {
     expect(statusText(null, 0)).toBe('The Journear client could not start.');
     expect(statusText({ status: 'error', expiresAtMs: null, persistence: null, warning: null }, 0)).toMatch(/Reload/u);
     expect(statusText({ status: 'logged_in', expiresAtMs: null, persistence: 'none', warning: 'storage_unavailable' }, 0)).toBe(
-      'Logged in · persistence: none, every page load signs in again (your browser blocks storage here).',
+      'Signed in · persistence: none, every page load signs in again (your browser blocks storage here).',
     );
   });
 });

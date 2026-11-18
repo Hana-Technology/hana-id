@@ -78,7 +78,7 @@ describe('SendGrid sender', () => {
     expect(await new OutboxSender(undefined).send(mail)).toEqual({ ok: false, reason: 'misconfigured' });
   });
 
-  it('mail texts: the app named only when display-safe; the notice links only to authOrigin', () => {
+  it('mail texts: the app named only when display-safe; the notice links nowhere (D862)', () => {
     expect(displayAppName('Wallet')).toBe('Wallet');
     expect(displayAppName('Wal‮let')).toBeNull();
     expect(displayAppName('x'.repeat(65))).toBeNull();
@@ -87,8 +87,8 @@ describe('SendGrid sender', () => {
     expect(unsafe.text).toContain('sign in to an app');
     const html = codeMail({ to: 'a@example.com', code: '654321', appName: '<b>App</b>', authOrigin: 'https://auth.test', purpose: 'session' });
     expect(html.html).not.toContain('<b>App</b>');
-    const n = linkNoticeMail({ to: 'a@example.com', appName: 'Wallet', authOrigin: 'https://auth.test/', pending: false });
-    expect([...n.html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1])).toEqual(['https://auth.test/link/cancel']);
+    const n = linkNoticeMail({ to: 'a@example.com', appName: 'Wallet', pending: false });
+    expect([...n.html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1])).toEqual([]);
   });
 });
 

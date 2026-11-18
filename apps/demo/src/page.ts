@@ -187,11 +187,11 @@ export function statusText(c: Pick<DemoClient, 'status' | 'expiresAtMs' | 'persi
     case 'logging_in':
       return 'Signing in…';
     case 'logged_out':
-      return 'Logged out.';
+      return 'Signed out.';
     case 'error':
       return 'The Journear vault reported an error. Reload the page.';
     case 'logged_in': {
-      const parts = ['Logged in'];
+      const parts = ['Signed in'];
       if (c.expiresAtMs !== null) {
         const t = new Date(c.expiresAtMs);
         parts.push(`session ends by ${t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (${untilText(c.expiresAtMs - nowMs)}), or sooner if idle`);
@@ -416,7 +416,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     }
   });
   c.on('sessionExpired', () => {
-    notice('Your session ended. Log in again.');
+    notice('Your session ended. Sign in again.');
     render();
   });
   c.on('disconnect', ({ code, reason }) => {
@@ -518,7 +518,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     run('logout', async () => {
       await c.logout();
       el('results').replaceChildren();
-      toast('success', 'Logged out', 'On this device, in every tab of this site.');
+      toast('success', 'Signed out', 'On this device, in every tab of this site.');
     }),
   );
   el('revoke').addEventListener('click', () =>

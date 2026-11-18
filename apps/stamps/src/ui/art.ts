@@ -96,7 +96,7 @@ const DESIGNS: Record<StampId, Design> = {
         circle(100, 100, 84, { class: 'pp-line', 'stroke-width': 1.2 }),
         circle(100, 100, 53, { class: 'pp-line', 'stroke-width': 1.6 }),
         arcText(defs, `${uid}-t`, 'M37 100 A63 63 0 0 1 163 100', 'ARRIVAL', 'pp-t pp-t-arc'),
-        arcText(defs, `${uid}-b`, 'M26 100 A74 74 0 0 0 174 100', 'NEAR · TESTNET', 'pp-t pp-t-small'),
+        arcText(defs, `${uid}-b`, 'M26 100 A74 74 0 0 0 174 100', 'NEAR · TEST NETWORK', 'pp-t pp-t-small'),
         star(31, 100, 5.5),
         star(169, 100, 5.5),
         this.glyph(),
@@ -124,7 +124,7 @@ const DESIGNS: Record<StampId, Design> = {
       return [
         path(CUT_RECT(18, 42, 182, 158, 14), { class: 'pp-line', 'stroke-width': 4.5 }),
         path(CUT_RECT(24, 48, 176, 152, 11), { class: 'pp-line', 'stroke-width': 1.2 }),
-        text(100, 68, 'JOURNEAR RELAY', 'pp-t pp-t-small'),
+        text(100, 68, 'PAID BY JOURNEAR', 'pp-t pp-t-small'),
         this.glyph(),
         text(108.5, 105, 'FARE PAID', 'pp-t pp-t-ticket'),
         text(100, 142, d.day, 'pp-t pp-t-date'),
@@ -319,7 +319,7 @@ export function outlineArt(id: StampId): SVGElement {
   );
 }
 
-/** The relay's "no gas" chop, stamped over the corner of a sponsored stamp. */
+/** The "free" chop (Journear paid the network fee), stamped over the corner of a sponsored stamp (D853's words). */
 export function chopArt(prefix: string): SVGElement {
   return svg(
     'svg',
@@ -328,8 +328,8 @@ export function chopArt(prefix: string): SVGElement {
       { transform: 'rotate(-12 48 23)', filter: `url(#${prefix}-ink-chop)` },
       svg('rect', { x: 4, y: 5, width: 88, height: 36, rx: 5, class: 'pp-line', 'stroke-width': 2.6 }),
       svg('rect', { x: 8.5, y: 9.5, width: 79, height: 27, rx: 2.5, class: 'pp-line', 'stroke-width': 0.9 }),
-      text(48, 26.5, 'NO GAS', 'pp-t pp-t-chop'),
-      text(48, 34, 'RELAY PAID', 'pp-t pp-t-chop-sm'),
+      text(48, 26.5, 'FREE', 'pp-t pp-t-chop'),
+      text(48, 34, 'JOURNEAR PAID', 'pp-t pp-t-chop-sm'),
     ),
   );
 }

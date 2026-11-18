@@ -65,9 +65,11 @@ describe('the amount first (amountHeadline)', () => {
     expect(el.classList.contains('jp-confirm')).toBe(true);
     expect(el.children[0]?.tagName).toBe('H2');
     expect(el.children[0]?.className).toBe('summary-headline');
-    expect(el.children[1]?.className).toBe('headline');
+    // D859: the headline's long values have their rows right under it (here the recipient), then the amount.
+    expect(el.children[1]?.className).toBe('jp-kv id-rows');
+    expect(el.children[2]?.className).toBe('headline');
     expect(el.querySelector('.amt')?.textContent).toBe('1ETH');
-    expect(el.querySelector('dl.jp-kv.summary-facts')?.textContent).toBe('NetworkSepolia (testnet), chain 11155111Network feeless than 0.000001 ETH');
+    expect(el.querySelector('dl.jp-kv.summary-facts')?.textContent).toBe('NetworkSepolia (test network)Network feeless than 0.000001 ETH');
     expect(el.querySelector('details.request-details dl.jp-kv')?.textContent).toContain('1 (1000000000000000000 wei)');
     expect(renderApproval(dom(document), evm({ data: '0xa9059cbb' + '00'.repeat(64) }), 'Partner App').querySelector('.headline')).toBeNull();
   });

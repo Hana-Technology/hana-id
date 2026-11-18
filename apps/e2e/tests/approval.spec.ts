@@ -73,7 +73,7 @@ test('a Stellar payment is shown decoded and signed after a guarded Approve', as
   const { stellar } = await loggedIn(page);
   await runAction(page, 'sig', 'stellarSignTx');
   const popup = await clickLauncher(page, 'Review in Journear Passport');
-  await expect(popup.getByText('Request 1 of 1', { exact: false })).toBeVisible();
+  await expect(popup.locator('header.app p').first()).toHaveText('From E2E Partner');
   await expect(popup.getByText(stellar).first()).toBeVisible();
   await expect(popup.getByText('E2E Partner').first()).toBeVisible();
   await approve(popup);
@@ -87,7 +87,7 @@ test('Reject returns 4001, and so does closing the popup', async ({ page }) => {
   await expect(popup.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
   await reject(popup);
   expect(await errorCode(page, 'rejected')).toBe(4001);
-  await expect(popup.getByRole('heading', { name: 'Declined', exact: true })).toBeVisible();
+  await expect(popup.getByRole('heading', { name: 'Rejected', exact: true })).toBeVisible();
 
   // The popup now waits for a follow-up; a new request is shown there, and closing the window rejects it.
   await runAction(page, 'closed', 'stellarSignMessage', 'bye');
@@ -126,8 +126,8 @@ test('after an answer the popup says what happened, counts down, and Close now e
   await expect(popup.getByText('Request 2 of 2', { exact: false })).toBeVisible();
   await rawClick(popup, 'button.secondary', 2);
   expect(await errorCode(page, 'second')).toBe(4001);
-  await expect(popup.getByRole('heading', { name: 'Declined', exact: true })).toBeVisible();
-  await expect(popup.getByText('Nothing was signed.')).toBeVisible();
+  await expect(popup.getByRole('heading', { name: 'Rejected', exact: true })).toBeVisible();
+  await expect(popup.getByText('Nothing was sent or approved.')).toBeVisible();
   expect(popup.isClosed()).toBe(false);
   await shot(popup, 'declined-light', browserName);
   await popup.emulateMedia({ colorScheme: 'dark' });
@@ -139,7 +139,7 @@ test('after an answer the popup says what happened, counts down, and Close now e
   await clickClosing(popup, '#approve-close');
   await runAction(page, 'third', 'personalSign', 'three');
   const next = await clickLauncher(page, 'Review in Journear Passport');
-  await expect(next.getByText('Request 1 of 1', { exact: false })).toBeVisible();
+  await expect(next.locator('header.app p').first()).toHaveText('From E2E Partner');
   await reject(next);
   expect(await errorCode(page, 'third')).toBe(4001);
 });
@@ -313,12 +313,12 @@ test.describe('raw signing', () => {
     const { stellar } = await loggedInLive(page, await newLiveApp({ settings: { rawSign: 'approval' } }));
     const bytes = await runSignRaw(page, 'raw', 'stellar', 64, 2);
     const popup = await clickLauncher(page, 'Review in Journear Passport');
-    await expect(popup.getByText('This asks you to sign something Journear can’t read at all.', { exact: false })).toBeVisible();
+    await expect(popup.getByText('Signing this could hand over your whole account and everything in it.', { exact: false })).toBeVisible();
     await expect(popup.getByText('This signature isn’t tied to one network.', { exact: false })).toBeVisible();
     await expect(popup.getByText(stellar).first()).toBeVisible();
     await expect(popup.getByText(LIVE_PARTNER_ORIGIN, { exact: true })).toBeVisible();
     // A live app's popup has no test-network notice.
-    await expect(popup.getByText('test networks', { exact: false })).toHaveCount(0);
+    await expect(popup.getByText('test money', { exact: false })).toHaveCount(0);
     // A click within 1 s of rendering signs nothing.
     await rawClick(popup, 'button.primary');
     await stillPending(page, 'raw', 600);

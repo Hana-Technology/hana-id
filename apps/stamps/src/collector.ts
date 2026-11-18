@@ -45,14 +45,14 @@ export const BACKGROUND_GAP_MS = 5_000;
 
 /** What the UI shows while a stamp is being collected. */
 export const STAGES = {
-  reading: 'Reading your NEAR account on testnet…',
+  reading: 'Reading your NEAR account…',
   activating: 'Preparing your NEAR account…',
   signMessage: 'Approval 1 of 2: sign the message…',
-  sendProof: 'Approval 2 of 2: send it to the contract…',
+  sendProof: 'Approval 2 of 2: send it to the stamps program…',
   approving: 'Waiting for your approval in the Journear Passport window…',
-  relaying: 'Sending it through Journear’s relayer, which pays the fee…',
+  relaying: 'Sending it for free: Journear pays the network fee…',
   retrying: 'That request’s number was already used. Approve a fresh one in the Journear Passport window…',
-  sending: 'Sending your transaction to NEAR testnet (your NEAR pays the fee)…',
+  sending: 'Sending it to NEAR (your NEAR pays the network fee)…',
 } as const;
 
 /** What the collectors read from NEAR for one account. */

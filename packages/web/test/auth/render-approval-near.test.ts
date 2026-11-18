@@ -18,11 +18,13 @@ import {
   overflowNote,
   nearControlWarnings,
   nearMessageWarning,
+  nearNetworkDetail,
   nearNetworkLine,
   nearRecipientLookalike,
   nearRecipientMismatch,
   renderApproval,
 } from '../../src/auth/render-approval.ts';
+import { jargonWatch } from './plain-words.ts';
 
 const PUB = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
 const ME = nearImplicitAccountId(PUB);
@@ -30,10 +32,12 @@ const OTHER_KEY = { type: 'ed25519' as const, bytes: new Uint8Array(32).fill(9) 
 const BLOCK = sha256(utf8('block'));
 const TESTNET: NearRenderContext = { envNetwork: 'testnet', testApp: false };
 
+const plain = jargonWatch();
 function tx(actions: NearAction[], receiverId = ME): HTMLElement {
   const bytes = encodeNearTransaction({ signerId: ME, publicKey: { type: 'ed25519', bytes: PUB }, nonce: 3n, receiverId, blockHash: BLOCK, actions });
   const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: ME, context: { nearNetwork: 'testnet' }, bytes }), 'Partner App', TESTNET);
   document.body.replaceChildren(el);
+  plain(el);
   return el;
 }
 
@@ -54,7 +58,7 @@ describe('renderApproval: NEAR transactions', () => {
     expect(text).toContain('Attached deposit1 NEAR');
     expect(text).toContain('Gas30 Tgas');
     expect(el.querySelector('pre.message')?.textContent).toBe('{\n  "text": "gm\\u202e"\n}');
-    expect(text).toContain('NEAR leaving your account1 NEAR (plus the network fee for gas)');
+    expect(text).toContain('NEAR leaving your account1 NEAR (plus the network fee)');
     expect(text).toContain('Transaction hash');
     expect(takeovers(el)).toEqual([]);
   });
@@ -72,7 +76,7 @@ describe('renderApproval: NEAR transactions', () => {
     expect(el.querySelector('details.request-details pre.message')!.textContent!).toContain('"receiver_id": "attacker.testnet"');
     // ft_transfer's receiver and amount are read into the summary, outside the fold.
     const ft = tx([{ ...call('{"receiver_id":"attacker.testnet","amount":"5"}', 1n), methodName: 'ft_transfer' } as NearAction], 'usdc.testnet');
-    expect(ft.querySelector('h2.summary-headline')?.textContent).toBe('Partner App wants to send 5 (smallest units) of the token usdc.testnet to attacker.testnet');
+    expect(ft.querySelector('h2.summary-headline')?.textContent).toBe('Partner App wants to send 5 units of the unlisted token usdc.testnet to attacker.testnet');
     expect(tx([call(new Uint8Array(1000).fill(0xff))]).querySelector('pre.message')!.textContent).toBe('ff'.repeat(1000));
   });
 
@@ -134,22 +138,22 @@ describe('renderApproval: NEAR transactions', () => {
   it('a call to a contract on the user’s own account: the total is unknown and the red banner is up', () => {
     const el = tx([call('{}', 5n)]);
     expect(el.querySelector('p.takeover.banner')?.textContent).toBe(NEAR_ACCOUNT_CONTROL_BANNER);
-    expect(el.textContent).toContain(`NEAR leaving your account${NEAR_OWN_CONTRACT_TOTAL} (plus the network fee for gas)`);
+    expect(el.textContent).toContain(`NEAR leaving your account${NEAR_OWN_CONTRACT_TOTAL} (plus the network fee)`);
     // D814: shown conservatively, never as 0 (the exact figure is in the details).
-    expect(el.textContent).toContain('NEAR attached or sentless than 0.000001 NEAR');
+    expect(el.textContent).toContain('NEAR it sendsless than 0.000001 NEAR');
     expect(el.querySelector('details')?.textContent).toContain('0.000000000000000000000005 NEAR');
   });
 
   it('a call to a contract on the user’s own account carries a warning (it runs with the account’s full authority)', () => {
-    expect(takeovers(tx([call('{}')]))).toEqual([NEAR_ACCOUNT_CONTROL_BANNER, 'Calls a contract on your own account']);
+    expect(takeovers(tx([call('{}')]))).toEqual([NEAR_ACCOUNT_CONTROL_BANNER, 'Uses a program on your own account']);
     expect(takeovers(tx([call('{}')], 'guestbook.testnet'))).toEqual([]);
   });
 
   it('publishing a global contract shows its burn in the total and warns', () => {
     const el = tx([{ type: 'deployGlobalContract', code: new Uint8Array(1000), deployMode: 'codeHash' }]);
-    expect(el.textContent).toContain('NEAR leaving your account0.1 NEAR (plus the network fee for gas)');
-    expect(el.textContent).toContain('NEAR burnt0.1 NEAR (publishing a global contract)');
-    expect(takeovers(el)).toEqual(['This publishes a global contract and burns 0.1 NEAR from your account (0.0001 NEAR per byte of code). Burnt NEAR is gone for good.']);
+    expect(el.textContent).toContain('NEAR leaving your account0.1 NEAR (plus the network fee)');
+    expect(el.textContent).toContain('NEAR destroyed0.1 NEAR (gone for good: publishing a shared program)');
+    expect(takeovers(el)).toEqual(['This publishes a shared program. It destroys 0.1 NEAR from your account (0.0001 NEAR for each byte of the program). That NEAR is gone for good.']);
   });
 
   it('a transfer sends NEAR to the receiver', () => {
@@ -161,12 +165,12 @@ describe('renderApproval: NEAR transactions', () => {
   // The whole key, never cut (review of 5ef13452).
   const keyShort = (k: string) => k;
   it.each([
-    ['a full-access key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } } as NearAction, `This adds a full-access key to your account. Whoever holds ${nearPublicKeyString(OTHER_KEY.bytes)} can move all its NEAR and tokens and lock you out.`, `Adds a full-access key (${keyShort(nearPublicKeyString(OTHER_KEY.bytes))})`],
-    ['a function-call key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance: null, receiverId: 'x.testnet', methodNames: [] } } } as NearAction, 'This adds a key to your account that can call any method of x.testnet and spend NEAR on their fees.', `Adds a key (${keyShort(nearPublicKeyString(OTHER_KEY.bytes))}) that can use x.testnet`],
-    ['removing the Journear Passport key', { type: 'deleteKey', publicKey: { type: 'ed25519', bytes: PUB } } as NearAction, 'This removes your Journear Passport key from your account: Journear Passport can no longer sign for it, so you lose control of it.', 'Removes your Journear Passport key'],
+    ['a full-access key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } } as NearAction, `This gives full control of your account to another key, ${nearPublicKeyString(OTHER_KEY.bytes)}. Whoever holds that key can take all its NEAR and tokens and lock you out.`, `Gives full control to another key (${keyShort(nearPublicKeyString(OTHER_KEY.bytes))})`],
+    ['a function-call key', { type: 'addKey', publicKey: OTHER_KEY, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance: null, receiverId: 'x.testnet', methodNames: [] } } } as NearAction, 'This lets another device or app act for you on x.testnet without asking. It can do anything there and spend NEAR from your account on fees.', `Lets another device or app (key ${keyShort(nearPublicKeyString(OTHER_KEY.bytes))}) act for you on x.testnet`],
+    ['removing the Journear Passport key', { type: 'deleteKey', publicKey: { type: 'ed25519', bytes: PUB } } as NearAction, 'This removes your Journear Passport key from your account. Journear Passport can then no longer approve for it, so you lose control of it.', 'Removes your Journear Passport key'],
     ['deleting the account', { type: 'deleteAccount', beneficiaryId: 'bob.testnet' } as NearAction, 'This deletes your account and sends all of its NEAR to bob.testnet. It can’t be undone.', 'Deletes your account and sends all its NEAR to bob.testnet'],
-    ['deploying a contract', { type: 'deployContract', code: Uint8Array.of(0, 97, 115, 109) } as NearAction, 'This deploys a contract to your account. A contract runs with the account’s own authority: it can move everything in it.', 'Deploys a contract to your account'],
-    ['using a global contract', { type: 'useGlobalContract', contract: { type: 'accountId', accountId: 'g.testnet' } } as NearAction, 'This sets your account’s contract to a global contract. A contract runs with the account’s own authority: it can move everything in it.', 'Sets your account’s contract'],
+    ['deploying a contract', { type: 'deployContract', code: Uint8Array.of(0, 97, 115, 109) } as NearAction, 'This puts a program on your account. The program can do anything the account can, including moving everything in it.', 'Puts a program on your account'],
+    ['using a global contract', { type: 'useGlobalContract', contract: { type: 'accountId', accountId: 'g.testnet' } } as NearAction, 'This puts a shared program on your account. The program can do anything the account can, including moving everything in it.', 'Puts a shared program on your account'],
   ])('%s: one red box with the banner; the headline names the action (D814)', (_, action, warning, bullet) => {
     const el = tx([action]);
     const banner = el.querySelector('p.takeover.banner');
@@ -203,25 +207,78 @@ describe('renderApproval: NEAR transactions', () => {
 
 describe('renderApproval: NEAR network line (D726)', () => {
   it('says what Journear checked, and labels everything else as the app’s claim', () => {
-    expect(nearNetworkLine('near_tx', 'testnet', TESTNET)).toBe('NEAR testnet (Journear found its block hash on testnet)');
-    expect(nearNetworkLine('near_tx', 'mainnet', TESTNET)).toBe('NEAR mainnet, as the app says: Journear can’t check this');
-    expect(nearNetworkLine('near_delegate', 'testnet', { envNetwork: 'testnet', testApp: true })).toBe('NEAR testnet (Journear checked your key, nonce and expiry on testnet)');
-    expect(nearNetworkLine('near_delegate', 'testnet', TESTNET)).toBe('NEAR testnet, as the app says: Journear can’t check this');
-    expect(nearNetworkLine('near_delegate', 'mainnet', TESTNET)).toBe('NEAR mainnet, as the app says: Journear can’t check this');
+    expect(nearNetworkLine('near_tx', 'testnet', TESTNET)).toBe('NEAR test network (checked by Journear)');
+    expect(nearNetworkLine('near_tx', 'mainnet', TESTNET)).toBe('NEAR real network. Only the app says so; Journear couldn’t check.');
+    expect(nearNetworkLine('near_delegate', 'testnet', { envNetwork: 'testnet', testApp: true })).toBe('NEAR test network (checked by Journear)');
+    expect(nearNetworkLine('near_delegate', 'testnet', TESTNET)).toBe('NEAR test network. Only the app says so; Journear couldn’t check.');
+    // How it was checked stays in the details, in D726's words.
+    expect(nearNetworkDetail('near_tx', 'testnet', TESTNET)).toBe('testnet (Journear found its block hash on testnet)');
+    expect(nearNetworkDetail('near_delegate', 'testnet', { envNetwork: 'testnet', testApp: true })).toBe('testnet (Journear checked your key, nonce and expiry on testnet)');
+    expect(nearNetworkDetail('near_delegate', 'mainnet', TESTNET)).toBe('mainnet, as the app says (Journear can’t check this)');
+    expect(nearNetworkLine('near_delegate', 'mainnet', TESTNET)).toBe('NEAR real network. Only the app says so; Journear couldn’t check.');
   });
 });
 
 describe('renderApproval: NEAR delegate actions and messages', () => {
-  it('a delegate action: relayer and network notes, expiry, actions, total', () => {
-    const bytes = encodeNearDelegateAction({ senderId: ME, receiverId: 'guestbook.testnet', actions: [call('{"text":"hi"}')], nonce: 7n, maxBlockHeight: 277_000_600n, publicKey: { type: 'ed25519', bytes: PUB } });
-    const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_delegate', chain: 'near', address: ME, context: { nearNetwork: 'testnet' }, bytes }), 'Partner App', { envNetwork: 'testnet', testApp: true });
-    const text = el.textContent!;
-    expect(text).toContain('NEAR transaction, fee paid by a relayer');
-    expect(text).toContain(NEAR_DELEGATE_NOTES.relayer);
-    expect(text).toContain(NEAR_DELEGATE_NOTES.network);
-    expect(text).toContain('Valid until block277000600');
-    expect(text).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
-    expect(NEAR_DELEGATE_NONE).toBe('None of your NEAR (the relayer pays the fee and the NEAR attached). Tokens the calls move are yours.');
+  /** A relayed call to `receiverId` as the stamps demo sends it, for a test app or a live app. */
+  const relayed = (actions: NearAction[], testApp: boolean, receiverId = 'guestbook.testnet', network: 'testnet' | 'mainnet' = 'testnet'): HTMLElement => {
+    const bytes = encodeNearDelegateAction({ senderId: ME, receiverId, actions, nonce: 7n, maxBlockHeight: 277_000_600n, publicKey: { type: 'ed25519', bytes: PUB } });
+    const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_delegate', chain: 'near', address: ME, context: { nearNetwork: network }, bytes }), 'Partner App', { envNetwork: 'testnet', testApp });
+    document.body.replaceChildren(el);
+    plain(el);
+    return el;
+  };
+  const factRows = (el: Element) => [...el.querySelectorAll('dl.summary-facts dt')].map((dt) => `${dt.textContent}: ${dt.nextElementSibling?.textContent}`);
+  const aboveFold = (el: Element) => [...el.children].filter((c) => !c.matches('details')).map((c) => c.textContent).join('\n');
+
+  it('D858: the stamps demo’s relayed call for a test app: network, the fee row, the acts-as-you risk in amber, the test-app note only', () => {
+    const el = relayed([call('{"text":"hi"}')], true);
+    expect(factRows(el)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: free for you. Someone else pays it.']);
+    // No "NEAR leaving your account" row, no blue note: "someone else pays" is said once, and only about the fee.
+    const shown = aboveFold(el);
+    expect(shown).not.toContain('NEAR leaving your account');
+    // Never a claim that it costs nothing (as corrected 2026-11-18): a call can use what the user keeps there.
+    expect(shown).not.toMatch(/nothing|cost to you|costs? you/iu);
+    expect(el.querySelector('.request > .jp-alert-info, .request > .note')).toBeNull();
+    expect(shown.split('Someone else pays').length - 1).toBe(1);
+    // The one real risk, amber, naming the contract; the network sentence is dropped (the vault binds a test app's).
+    const amber = el.querySelector('.warning-box');
+    expect(amber?.querySelector('.risk-lead')?.textContent).toBe('This acts as you: guestbook.testnet can use anything you keep with it.');
+    expect(amber?.querySelectorAll('li')).toHaveLength(0);
+    expect(el.querySelector('.danger-box')).toBeNull();
+    expect(el.textContent).not.toContain('could also be used');
+    // Never "Journear pays": a partner may relay it itself.
+    expect(shown).not.toMatch(/Journear pays/u);
+    // Who pays, in technical words, and the expiry: in the details.
+    const details = el.querySelector('details.request-details')!;
+    expect(details.textContent).toContain('NEAR transaction, fee paid by a relayer');
+    expect(details.textContent).toContain(NEAR_DELEGATE_NOTES.relayer);
+    expect(details.textContent).toContain('Valid until block277000600');
+  });
+
+  it('D858: a live app’s relayed call also says, in amber, that it could be used on the other NEAR network', () => {
+    const el = relayed([call('{"text":"hi"}')], false);
+    const amber = el.querySelector('.warning-box')!;
+    expect(amber.querySelector('.risk-lead')?.textContent).toBe('This acts as you: guestbook.testnet can use anything you keep with it.');
+    expect([...amber.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['This approval could also be used on the real NEAR network if your account exists there.']);
+    expect(NEAR_DELEGATE_NOTES.network('mainnet')).toBe('This approval could also be used on the NEAR test network if your account exists there.');
+    // Not a blue box: a risk is never in an information box (D853).
+    expect(el.textContent).not.toContain('doesn’t name a network');
+    expect(factRows(el)).toEqual(['Network: NEAR test network. Only the app says so; Journear couldn’t check.', 'Network fee: free for you. Someone else pays it.']);
+  });
+
+  it('D858: NEAR attached to a free call is someone else’s, in its own row; tokens or NEAR of the user’s keep the fee and total rows', () => {
+    const attached = relayed([{ type: 'functionCall', methodName: 'collect', args: utf8('{}'), gas: 30_000_000_000_000n, deposit: 10n ** 24n }], true);
+    expect(factRows(attached)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: free for you. Someone else pays it.']);
+    expect(aboveFold(attached)).toContain('NEAR it sends, paid by someone else1 NEAR');
+    // A token transfer: the fee row and the NEAR-leaving row as decided (D723, D729).
+    const tokens = relayed([{ type: 'functionCall', methodName: 'ft_transfer', args: utf8('{"receiver_id":"bob.testnet","amount":"5"}'), gas: 30_000_000_000_000n, deposit: 1n }], true, 'usdc.testnet');
+    expect(factRows(tokens)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: free for you. Someone else pays it.']);
+    expect(aboveFold(tokens)).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
+    expect(aboveFold(tokens)).not.toMatch(/nothing\.|cost to you/iu);
+    // Every relayed call keeps the amber acts-as-you line in view.
+    for (const el of [attached, tokens]) expect(el.querySelector('.warning-box')?.textContent).toContain('This acts as you:');
+    expect(NEAR_DELEGATE_NONE).toBe('None of your NEAR (someone else pays the fee and any NEAR it sends). Tokens it moves are yours.');
   });
 
   it('a delegate action: what it sends is the relayer’s; a burn or a deleted account still leaves the user’s', () => {
@@ -230,7 +287,7 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
       return renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_delegate', chain: 'near', address: ME, context: { nearNetwork: 'testnet' }, bytes }), 'P', TESTNET).textContent!;
     };
     expect(NEAR_DELEGATE_NOTES.relayer).toBe(
-      'A relayer sends this for you: it pays the network fee and any NEAR this attaches or sends (if an action fails, that NEAR is refunded to your account). The actions run as your account: a contract they call acts in your name and can move tokens you hold with it.',
+      'Someone else (a relayer) sends this for you. They pay the network fee and prepay any NEAR it attaches or sends; if an action fails, that NEAR comes back to your account. The actions run as your account.',
     );
     const sends = render([{ type: 'transfer', deposit: 2n * 10n ** 24n }]);
     expect(sends).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
@@ -238,7 +295,7 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     const own = render([{ type: 'functionCall', methodName: 'm', args: new Uint8Array(0), gas: 1n, deposit: 0n }]);
     expect(own).toContain(`NEAR leaving your account${NEAR_OWN_CONTRACT_TOTAL}`);
     expect(own).toContain(NEAR_ACCOUNT_CONTROL_BANNER);
-    expect(sends).toContain('NEAR this sends, paid by the relayer2 NEAR');
+    expect(sends).toContain('NEAR it sends, paid by someone else2 NEAR');
     expect(render([{ type: 'deployGlobalContract', code: new Uint8Array(10), deployMode: 'accountId' }])).toContain('NEAR leaving your account0.001 NEAR');
     expect(render([{ type: 'deleteAccount', beneficiaryId: 'bob.testnet' }])).toContain('All of it (the account is deleted)');
   });
@@ -267,12 +324,12 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
       expect(mismatches(msg(recipient, 'https://guestbook.example'))).toEqual([['risk-lead warn recipient-mismatch', nearRecipientMismatch(recipient, 'guestbook.example')]]);
     }
     expect(dangers(msg('gооgle.com', 'https://gооgle.com'.normalize()))).toContain(nearRecipientLookalike('g\\u043e\\u043egle.com'));
-    expect(nearRecipientMismatch('bank.example', 'guestbook.example')).toBe('This app is at guestbook.example, but the signature is for bank.example. Sign only if you are signing in to bank.example on purpose.');
+    expect(nearRecipientMismatch('bank.example', 'guestbook.example')).toBe('This app is at guestbook.example, but the proof is for bank.example. Only sign if you expected that.');
   });
 
   it('a message with invisible characters is shown as hex', () => {
     const bytes = encodeNep413Message({ message: 'a‮b', nonce: new Uint8Array(32), recipient: 'r', callbackUrl: null });
     const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'Partner App');
-    expect(el.textContent).toContain('shown as hex');
+    expect(el.textContent).toContain('shown in its raw form');
   });
 });

@@ -79,6 +79,46 @@ p.summary-line {
   font-size: var(--jp-text-md);
 }
 
+/* ---- addresses and keys (D859): short in the sentence, whole once in their own row right under it ---- */
+dl.id-rows {
+  margin: 0;
+}
+
+.risk-box dl.id-rows {
+  margin-top: var(--jp-space-1);
+  color: var(--jp-fg);
+  font-weight: var(--jp-weight-regular);
+}
+
+/* The whole value, in groups of four for comparing: spaced by CSS (the text is the value exactly), wrapped between
+   groups, never folded or cut. */
+code.id-full {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.45em;
+  row-gap: 2px;
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg);
+  word-break: normal;
+}
+
+code.id-full > .grp {
+  white-space: nowrap;
+}
+
+/* Read to screen readers instead of a short form, which they skip (the row says the whole value). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ---- the technical details (D808, D810): always folded behind "Show details" at first, the user opens them ---- */
 .request-details {
   border: 1px solid var(--jp-border);

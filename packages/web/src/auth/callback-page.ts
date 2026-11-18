@@ -541,7 +541,7 @@ async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, {
   return 'relayed';
 }
 
-const STORAGE_TEXT = 'This browser blocked the storage the sign-in needs. Close this window and try again from the app.';
+const STORAGE_TEXT = 'Your browser didn’t let this sign-in save what it needs. Allow this site to store data, then close this window and try again from the app.';
 
 /** `{error: 'storage_unavailable'}` to a follow-up slot, best effort (the vault then stops instead of waiting). */
 async function tellStorageFailed(api: AuthApi, relayKey: Uint8Array, slotId: string): Promise<void> {

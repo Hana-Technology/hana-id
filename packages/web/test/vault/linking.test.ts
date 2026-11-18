@@ -17,6 +17,7 @@ import {
   identityKey,
   isFollowNotice,
   linkAccountNonce,
+  linkChangeNonce,
   linkNewNonce,
   linkedCkdPayload,
   newAppKey,
@@ -72,6 +73,7 @@ afterEach(() => {
 const G = { provider: 'google', sub: SUB };
 const E = { provider: 'email', sub: EMAIL_SUB };
 const ik = (r: { provider: string; sub: string }) => identityKey(SCOPE, r.provider, r.sub);
+const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const pathOf = (r: { provider: string; sub: string }) => `${SCOPE}#${r.provider}#${r.sub}#0`;
 
 /** The envs of these tests, with a second RPC provider: a member's path is confirmed on both (D263). */
@@ -397,7 +399,7 @@ describe('google-match and the four cases (batch 8b)', () => {
     expect(b.backend.sessions.has(pkHex)).toBe(false);
   });
 
-  it('an email login of a pending member: link_pending with when it activates, told to the popup', async () => {
+  it('an email login of a pending member: link_pending with when it activates; the popup is offered this email’s cancel (D864)', async () => {
     const b = emailBrowser();
     b.backend.link(G, E, { active: false, effectiveAtMs: 1_800_090_000_000 });
     const t = await tab(b);
@@ -405,7 +407,15 @@ describe('google-match and the four cases (batch 8b)', () => {
     const run = await popupHello(t);
     await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
     expect((await pending).error).toMatchObject({ code: 'link_pending', data: { effectiveAtMs: 1_800_090_000_000 } });
-    expect(await notice(t, run, 2)).toEqual({ t: 'stop', code: 'link_pending', effectiveAtMs: 1_800_090_000_000 });
+    const n = (await notice(t, run, 2)) as Extract<FollowNotice, { t: 'link_waiting' }>;
+    expect(n).toMatchObject({ t: 'link_waiting', provider: 'google', effectiveAtMs: 1_800_090_000_000 });
+    // The proof it asks for: an email code over the link_change nonce for this email only, at the account's epoch.
+    expect(n.prove).toMatchObject({ method: 'email', purpose: 'link_change', commitment: { scopeId: SCOPE, action: 'cancel', rootIk: hex(ik(G)), memberIk: hex(ik(E)), epoch: 1 } });
+    expect((n.prove as unknown as { commitment: { salt: number[] } }).commitment.salt).toHaveLength(32);
+    // No sub, address or key of either identity reaches the popup.
+    expect(JSON.stringify(n)).not.toContain(SUB);
+    expect(JSON.stringify(n)).not.toContain(EMAIL_SUB);
+    expect(b.backend.count('/v1/link/cancel')).toBe(0);
   });
 
   it('an email login of an active member opens the Google root’s wallet', async () => {
@@ -581,6 +591,142 @@ describe('the wallet’s sign-in methods', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('D864: the email that waits to join a wallet cancels the link itself', () => {
+  const PENDING_AT = 1_800_090_000_000;
+
+  /** An email login of E, a pending member of G's account: the login ends link_pending; the popup's link_waiting. */
+  async function waiting(o: { setup?: (b: Browser) => void } = {}) {
+    const b = emailBrowser();
+    b.backend.opened.add(hex(ik(G)));
+    b.backend.link(G, E, { active: false, effectiveAtMs: PENDING_AT });
+    o.setup?.(b);
+    const t = await tab(b);
+    const pending = t.request('hana_login', { method: 'email' });
+    const run = await popupHello(t);
+    const sessionToken = await issuer.token(emailClaims(run.params, {}, t.browser.timers.now));
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: sessionToken });
+    expect((await pending).error?.code).toBe('link_pending');
+    const n = (await notice(t, run, 2)) as Extract<FollowNotice, { t: 'link_waiting' }>;
+    expect(n.t).toBe('link_waiting');
+    const c = (n.prove as unknown as { commitment: { rootIk: string; memberIk: string; epoch: number; salt: number[] } }).commitment;
+    const nonce = linkChangeNonce(ENV.signer, SCOPE, 'cancel', fromHex(c.rootIk), fromHex(c.memberIk), c.epoch, Uint8Array.from(c.salt));
+    /** The issuer's token for the cancel code (this email, or another `sub`). */
+    const proof = (over: Record<string, unknown> = {}) => issuer.token(emailClaims(run.params, { nonce, jti: 'jti-email-2', ...over }, t.browser.timers.now));
+    return { b, t, run, n, nonce, proof, sessionToken };
+  }
+
+  const members = (b: Browser) => b.backend.accounts.get(hex(ik(G)))?.members ?? [];
+
+  it('the right proof: cancel_link for this email, relayed; the popup hears “cancelled”; the partner sees no linkChanged', async () => {
+    const { b, t, run, proof } = await waiting();
+    const jwt = await proof();
+    await answer(t, run, 2, { idToken: jwt, as: 'proof' });
+    expect(await notice(t, run, 4)).toEqual({ t: 'link_cancel', outcome: 'cancelled' });
+    const call = b.backend.calls.filter((c) => c.path === '/v1/link/cancel');
+    expect(call).toHaveLength(1);
+    expect(call[0]!.body).toMatchObject({ jwt, memberKey: hex(ik(E)), epoch: 1 });
+    expect(members(b)).toEqual([]);
+    expect(linkEvents(t)).toEqual([]);
+  });
+
+  it('the login’s own token (its nonce is the session’s), another email’s proof, or a Google token cancels nothing', async () => {
+    for (const bad of ['session', 'other', 'google'] as const) {
+      const { b, t, run, proof, sessionToken, nonce } = await waiting();
+      const idToken = bad === 'session' ? sessionToken : bad === 'other' ? await proof({ sub: 'e1.someone-else' }) : await g.token(tokenClaims({ nonce }, {}, t.browser.timers.now));
+      await answer(t, run, 2, { idToken, as: 'proof' });
+      expect(await notice(t, run, 4), bad).toEqual({ t: 'stop', code: 'token_invalid' });
+      expect(b.backend.count('/v1/link/cancel'), bad).toBe(0);
+      expect(members(b), bad).toHaveLength(1);
+    }
+  });
+
+  it('the waiting period ended while the code was typed: “now_active”, nothing relayed', async () => {
+    const { b, t, run, proof } = await waiting();
+    members(b)[0]!.active = true;
+    await answer(t, run, 2, { idToken: await proof(), as: 'proof' });
+    expect(await notice(t, run, 4)).toEqual({ t: 'link_cancel', outcome: 'now_active' });
+    expect(b.backend.count('/v1/link/cancel')).toBe(0);
+  });
+
+  it('already cancelled (by the Google side, or another window): “already_cancelled”, nothing relayed', async () => {
+    const { b, t, run, proof } = await waiting();
+    b.backend.accounts.get(hex(ik(G)))!.members.splice(0);
+    b.backend.accounts.get(hex(ik(G)))!.epoch += 1;
+    await answer(t, run, 2, { idToken: await proof(), as: 'proof' });
+    expect(await notice(t, run, 4)).toEqual({ t: 'link_cancel', outcome: 'already_cancelled' });
+    expect(b.backend.count('/v1/link/cancel')).toBe(0);
+  });
+
+  it('the account moved on (another epoch): “not_cancelled” (stale_epoch), nothing relayed', async () => {
+    const { b, t, run, proof } = await waiting();
+    b.backend.accounts.get(hex(ik(G)))!.epoch += 1;
+    await answer(t, run, 2, { idToken: await proof(), as: 'proof' });
+    expect(await notice(t, run, 4)).toEqual({ t: 'link_cancel', outcome: 'not_cancelled', code: 'stale_epoch' });
+    expect(b.backend.count('/v1/link/cancel')).toBe(0);
+  });
+
+  it('the API unreachable: the chain still shows the link waiting, so “not_cancelled” (api_unavailable)', async () => {
+    const { b, t, run, proof } = await waiting();
+    b.backend.overrides.set('/v1/link/cancel', () => {
+      throw new TypeError('Failed to fetch');
+    });
+    await answer(t, run, 2, { idToken: await proof(), as: 'proof' });
+    expect(await notice(t, run, 4)).toEqual({ t: 'link_cancel', outcome: 'not_cancelled', code: 'api_unavailable' });
+    expect(members(b)).toHaveLength(1);
+  });
+
+  it('an answer lost after the cancel landed: the chain shows it gone, so “cancelled”', async () => {
+    const { b, t, run, proof } = await waiting();
+    b.backend.overrides.set('/v1/link/cancel', () => {
+      b.backend.accounts.get(hex(ik(G)))!.members.splice(0);
+      return apiError(503, 'near_unavailable');
+    });
+    await answer(t, run, 2, { idToken: await proof(), as: 'proof' });
+    expect(await notice(t, run, 4)).toEqual({ t: 'link_cancel', outcome: 'cancelled' });
+  });
+
+  it('a refusal, then the chain can’t be read: “unknown” with the refusal’s code', async () => {
+    const { b, t, run, proof } = await waiting();
+    b.backend.overrides.set('/v1/link/cancel', () => {
+      // Both providers: the vault's view falls back to the second one.
+      b.backend.rpcDown.add(new URL(EMAIL_ENV2.rpc).origin);
+      b.backend.rpcDown.add(new URL(RPC_FALLBACK).origin);
+      return apiError(422, 'link_refused', { reason: 'no_such_member' });
+    });
+    await answer(t, run, 2, { idToken: await proof(), as: 'proof' });
+    expect(await notice(t, run, 4)).toEqual({ t: 'link_cancel', outcome: 'unknown', code: 'link_refused' });
+  });
+
+  it('“Keep the link” (no answer): the wait ends at AFTERWORD_MS, nothing relayed, no runaway read', async () => {
+    const { b, t, run } = await waiting();
+    const { id } = followSlot(run.params.followKey as Uint8Array, 3);
+    await t.waitUntil(() => b.backend.calls.some((c) => c.method === 'GET' && c.path === `/v1/login-relay/${id}`), 'the read of slot 3');
+    t.browser.timers.advance(AFTERWORD_MS);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(b.backend.abortedRelayReads).toBe(0);
+    expect(b.backend.count('/v1/link/cancel')).toBe(0);
+    expect(members(b)).toHaveLength(1);
+  });
+
+  it('an email no longer pending by the time of the offer gets the plain stop as before (nothing to cancel)', async () => {
+    const b = emailBrowser();
+    b.backend.link(G, E, { active: false, effectiveAtMs: PENDING_AT });
+    const t = await tab(b);
+    const pending = t.request('hana_login', { method: 'email' });
+    const run = await popupHello(t);
+    let reads = 0;
+    const original = b.backend.identityView.bind(b.backend);
+    b.backend.identityView = (provider: string, sub: string) => {
+      reads += 1;
+      // The login's read sees the pending member; the offer's read sees an identity that left the account.
+      return reads === 1 ? original(provider, sub) : { ...original(provider, sub), status: 'own', root: undefined };
+    };
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
+    expect((await pending).error?.code).toBe('link_pending');
+    expect(await notice(t, run, 2)).toEqual({ t: 'stop', code: 'link_pending', effectiveAtMs: PENDING_AT });
   });
 });
 

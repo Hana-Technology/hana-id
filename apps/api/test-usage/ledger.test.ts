@@ -43,7 +43,7 @@ const asWriter = <T>(fn: () => Promise<T>) => db.asRole('usage_writer', fn);
 const asAdmin = <T>(fn: () => Promise<T>) => db.asRole('usage_admin', fn);
 const count = async (sql: string, params: unknown[] = []) => Number((await db.query<{ n: string }>(sql, params))[0]!.n);
 
-const TABLES = ['usage.events', 'usage.app_users', 'usage.gas_settlements', 'usage.near_usd_rates', 'usage.statements', 'usage.identity_tokens', 'usage.email_counts', 'usage.rate_overrides', 'ops.state', 'ops.scope_snapshot', 'ops.scope_watch', 'ops.nonce_checks', 'ops.retention_runs', 'ops.rejection_alerts', 'ops.settlement_alerts', 'ops.settlement_tries', 'ops.statement_notices', 'ops.erasures'];
+const TABLES = ['usage.near_relayed_txs', 'usage.evm_sponsored_txs', 'usage.events', 'usage.app_users', 'usage.gas_settlements', 'usage.near_usd_rates', 'usage.statements', 'usage.identity_tokens', 'usage.email_counts', 'usage.rate_overrides', 'ops.state', 'ops.scope_snapshot', 'ops.scope_watch', 'ops.nonce_checks', 'ops.retention_runs', 'ops.rejection_alerts', 'ops.settlement_alerts', 'ops.settlement_tries', 'ops.statement_notices', 'ops.erasures'];
 
 describe('migrations-usage on an empty database', () => {
   it('creates the schemas, tables and the current month with the next 12 (0001 made 3, 0003 the rest)', async () => {
@@ -81,7 +81,8 @@ describe('migrations-usage on an empty database', () => {
       ).map((r) => r.f);
     // 0006 (batch C12) adds the report functions to both roles and the admin's own; `usage.classified` is nobody's.
     // 0007 (batch C13) adds the retention functions, the admin's only; the cutoffs and the trigger function are nobody's.
-    expect(await fns('usage_writer')).toEqual(['usage.ensure_partitions', 'usage.org_ledger', 'usage.org_report', 'usage.org_statements', 'usage.record_email_counts', 'usage.record_event', 'usage.record_identity_tokens']);
+    // 0009 (D852): the EVM sponsored transactions' copy, the writer's; its amount check is nobody's.
+    expect(await fns('usage_writer')).toEqual(['usage.ensure_partitions', 'usage.org_ledger', 'usage.org_report', 'usage.org_statements', 'usage.record_email_counts', 'usage.record_event', 'usage.record_evm_sponsored', 'usage.record_identity_tokens', 'usage.record_near_relayed']);
     expect(await fns('usage_admin')).toEqual([
       'ops.purge_expired',
       'usage.drop_expired_partitions',

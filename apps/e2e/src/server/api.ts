@@ -15,6 +15,12 @@
 // with the test MPC, instead of signing a NEAR transaction. HOME_RELAYER_KEYS holds one throwaway key per stack, which
 // only routes (relayer-pool.ts claimKeyIndex) and never signs.
 //
+// EVM gas sponsorship (/v1/evm/sponsor/*, D847, D851, D856) is the Worker's own: its routes, the session proof and the
+// real EvmRelayer object (EVM_RELAYER, in memory, its alarm run soon after a change), signing with the stack's relayer
+// key (src/relayer-key.ts) and broadcasting to the mocked EVM chain (partner.ts MockEvm), which mines each sponsored
+// transaction at once. Each request gets EVM_SPONSOR for its own app (a manifest lists at most 8). This file only
+// counts the routes' answers per app for the tests and can hold an app's sends; it never answers them.
+//
 // Control endpoints for the tests (`/__e2e/*`, no CORS, so no page can call them):
 //   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?, publishableKey?, live?, loginMethods?, launched?} → {appId, pk}
 //                                     (with publishableKey: created once, then the same app is returned; live: a
@@ -25,8 +31,9 @@
 //   GET  /__e2e/chain[?sub=<sub>]     {relayed: [{method, tokens: [{provider, sub, claims}]}], sessions}: the transactions
 //                                     the relayer sent that carried a token (of `sub`), and the live sessions on its
 //                                     path; claim names only, never a token
-//   POST /__e2e/evm-sponsor           {appId, account?, delegation?, hold?}: the sponsorship stand-in's state (sponsor-standin.ts);
-//   GET  /__e2e/evm-sponsor?appId=    its counts for that app
+//   POST /__e2e/evm-sponsor           {appId, hold: true|false} holds the app's sends before the Worker until released;
+//                                     {account, delegation: none|journear|other} sets the account's code on the EVM chain
+//   GET  /__e2e/evm-sponsor?appId=    {prepares, sends, executed, proofRefusals}: the routes' answers for that app
 //   POST /__e2e/links/expire          {rootSub}: the waiting period of the pending members of that root's accounts ends
 //                                     now (D864's "too late" path) → {moved}
 //   GET  /__e2e/wallets?address=<a>   [{userId, supportCode, internalId, scopeId, wallets: [{chain, address}],
@@ -47,12 +54,13 @@ import {
 } from '@hana-id/core';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { base58 } from '@scure/base';
-import { API_URL, AUTH_ORIGIN, E2E_ENV, E2E_EVM_SPONSOR_VAR, ENV_NAME, LIVE_SCOPE_ID, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
+import { e2eRelayer } from '../relayer-key.ts';
+import { API_URL, AUTH_ORIGIN, E2E_ENV, ENV_NAME, LIVE_SCOPE_ID, NEAR_RPC, VAULT_ORIGIN, e2eEvmSponsorVar } from '../stack.ts';
 import type { ApiApp, ApiCtx, ApiEnv, ApiModules } from './api-modules.ts';
 import { CHANGE_DELAY_MS, type Chain, type RelayedTx, mpcAnswer } from './chain.ts';
 import type { D1Shim } from './d1.ts';
 import { json } from './http.ts';
-import { type EvmAccounts, SponsorStandIn } from './sponsor-standin.ts';
+import type { MockEvm } from './partner.ts';
 import { ExecContext, MemoryNamespace, allowAllLimiter, allowAllRateLimit } from './workers.ts';
 
 const KEY_INDEX_LIMIT = 0x8000_0000;
@@ -159,9 +167,13 @@ export interface MockApiOptions {
   email?: { iss: string; publicKeys: unknown[] };
   /** The stack's Google signing key, for `GET /__e2e/google-key` (google-backend.ts; the tests' stub signs with it). */
   googleKey?: () => Promise<unknown>;
-  /** The mocked EVM chain's accounts (partner.ts MockEvm), which the sponsorship stand-in sets up. */
-  evmAccounts?: EvmAccounts;
+  /** The mocked EVM chain (partner.ts): sponsorship's relayer broadcasts there; `/__e2e/evm-sponsor` sets accounts on it. */
+  evm?: MockEvm;
 }
+
+/** The session proof's refusals (D856), counted apart for the tests. */
+const PROOF_CODES = new Set(['missing_session_proof', 'bad_session_proof', 'stale_session_proof', 'invalid_session_signature', 'bad_wallet_proof', 'proof_replayed']);
+const SPONSOR_ROUTES = new Set(['/v1/evm/sponsor/prepare', '/v1/evm/sponsor/send', '/v1/evm/sponsor/status']);
 
 export class MockApi {
   /** The Worker's bindings. */
@@ -171,8 +183,10 @@ export class MockApi {
   private readonly fingerprint: string;
   private readonly control: boolean;
   private readonly googleKey: (() => Promise<unknown>) | null;
-  /** TEST ONLY: the EVM gas sponsorship routes until the real ones are merged (sponsor-standin.ts). */
-  private readonly sponsor: SponsorStandIn;
+  private readonly evm: MockEvm | null;
+  /** The sponsorship routes' answers per app, and the apps whose sends are held. */
+  private readonly sponsorLog = new Map<string, { prepares: number; sends: number; executed: number; proofRefusals: string[] }>();
+  private readonly held = new Map<string, { promise: Promise<void>; release: () => void }>();
 
   constructor(
     private readonly d1: D1Shim,
@@ -184,7 +198,8 @@ export class MockApi {
     this.control = opts.serves === undefined;
     this.googleKey = opts.googleKey ?? null;
     const serves = opts.serves ?? { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL };
-    this.sponsor = new SponsorStandIn(d1, serves.vaultOrigin, opts.evmAccounts);
+    this.evm = opts.evm ?? null;
+    const relayer = e2eRelayer();
     const env: ApiEnv = {
       DB: d1,
       ENV_NAME: serves.envName,
@@ -208,11 +223,14 @@ export class MockApi {
       ...identityBindings(serves.apiUrl),
       // The wallet directory's user ids (D312): a throwaway uid key, as usage-setup sets it on a real env.
       USER_ID_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
-      // Only the vault page's CSP reads it here (the sponsored chain's RPC, D855); the stand-in answers the routes.
-      EVM_SPONSOR: E2E_EVM_SPONSOR_VAR,
+      // The mocked chain's sponsorship, no app yet (each request gets its own app's, sponsorRoute); the relayer object
+      // reads the chain's settings from it. Only the default Worker sponsors: live mode's has no relayer.
+      EVM_SPONSOR: e2eEvmSponsorVar(relayer.address),
+      ...(this.control && this.evm ? { EVM_RELAY_KEYS: relayer.keysVar } : {}),
       ...(opts.email ? { EMAIL_ISS: opts.email.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(opts.email.publicKeys) } : {}),
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);
+    if (this.control && this.evm) env.EVM_RELAYER = new MemoryNamespace(api.EvmRelayer, () => env, { soonAlarmMs: 250 });
     // The `home` pool (POST /v1/home/login, the Worker's own handler): one throwaway key, and the object that relays.
     env.HOME_RELAYER_KEYS = JSON.stringify([`ed25519:${base58.encode(crypto.getRandomValues(new Uint8Array(64)))}`]);
     env.RELAYER_KEY = {
@@ -232,7 +250,8 @@ export class MockApi {
       if (existing) return { appId: existing.id, pk: spec.publishableKey };
     }
     this.seq += 1;
-    const appId = `app_e2e_${this.seq}_${toHex(crypto.getRandomValues(new Uint8Array(4)))}`;
+    // `app_` and letters or digits only, as real app ids (the sponsorship manifest refuses any other key, D835).
+    const appId = `app_e2e${this.seq}x${toHex(crypto.getRandomValues(new Uint8Array(4)))}`;
     const pk = spec.publishableKey ?? `${spec.live ? 'pk_live_' : 'pk_test_'}${base58.encode(crypto.getRandomValues(new Uint8Array(16)))}`;
     const s = spec.settings ?? {};
     const scopeId = spec.scopeId ?? (spec.live ? LIVE_SCOPE_ID : 'e2e');
@@ -277,8 +296,56 @@ export class MockApi {
     const url = new URL(req.url);
     if (url.pathname.startsWith('/__e2e/')) return this.control ? this.controlEndpoint(req, url) : json(404, { error: 'not_found' });
     if (req.method === 'POST' && MOCKED.has(url.pathname)) return this.mocked(req, url.pathname);
-    if (SponsorStandIn.handles(url.pathname)) return this.sponsor.handle(req, url);
+    if (SPONSOR_ROUTES.has(url.pathname)) return this.sponsorRoute(req, url);
     return this.api.worker.fetch(req, this.env, this.exec);
+  }
+
+  /** A sponsorship route, answered by the Worker with this app's EVM_SPONSOR; counted, and held while the test asks. */
+  private async sponsorRoute(req: Request, url: URL): Promise<Response> {
+    const key = req.headers.get('x-hana-key') ?? '';
+    const app = this.d1.db.prepare('SELECT app_id AS id FROM app_keys WHERE key = ?').get(key) as { id: string } | undefined;
+    const env = app ? { ...this.env, EVM_SPONSOR: e2eEvmSponsorVar(e2eRelayer().address, [app.id]) } : this.env;
+    const route = url.pathname.slice('/v1/evm/sponsor/'.length);
+    if (!app || req.method !== 'POST') return this.api.worker.fetch(req, env, this.exec);
+    const log = this.logFor(app.id);
+    if (route === 'prepare') log.prepares += 1;
+    if (route === 'send') {
+      log.sends += 1;
+      await this.held.get(app.id)?.promise;
+    }
+    const res = await this.api.worker.fetch(req, env, this.exec);
+    const b = (await res.clone().json().catch(() => ({}))) as { code?: unknown; status?: unknown };
+    if (route === 'send' && res.status === 200 && b.status === 'executed') log.executed += 1;
+    if (typeof b.code === 'string' && PROOF_CODES.has(b.code)) log.proofRefusals.push(b.code);
+    return res;
+  }
+
+  private logFor(appId: string) {
+    let l = this.sponsorLog.get(appId);
+    if (!l) {
+      l = { prepares: 0, sends: 0, executed: 0, proofRefusals: [] };
+      this.sponsorLog.set(appId, l);
+    }
+    return l;
+  }
+
+  /** POST /__e2e/evm-sponsor and GET /__e2e/evm-sponsor?appId= (see the header). */
+  private async sponsorControl(req: Request, url: URL): Promise<Response> {
+    if (req.method === 'GET') return json(200, this.logFor(url.searchParams.get('appId') ?? ''));
+    const b = (await req.json()) as Body;
+    if (typeof b.hold === 'boolean' && typeof b.appId === 'string') {
+      const held = this.held.get(b.appId);
+      if (b.hold && !held) {
+        let release!: () => void;
+        const promise = new Promise<void>((r) => (release = r));
+        this.held.set(b.appId, { promise, release });
+      } else if (!b.hold && held) {
+        held.release();
+        this.held.delete(b.appId);
+      }
+    }
+    if (typeof b.account === 'string' && (b.delegation === 'none' || b.delegation === 'journear' || b.delegation === 'other')) this.evm?.setDelegation(b.account, b.delegation);
+    return json(200, { ok: true });
   }
 
   /** The mocked endpoints: the Worker's app gate (key, origin rule, CORS), then the mock. */
@@ -511,7 +578,7 @@ export class MockApi {
     if (p === '/__e2e/health') return json(200, { ok: true, fingerprint: this.fingerprint });
     if (p === '/__e2e/google-key' && req.method === 'GET' && this.googleKey) return json(200, await this.googleKey());
     if (p === '/__e2e/chain' && req.method === 'GET') return json(200, this.chainView(url.searchParams.get('sub')));
-    if (p === '/__e2e/evm-sponsor') return this.sponsor.control(req, url);
+    if (p === '/__e2e/evm-sponsor') return this.sponsorControl(req, url);
     if (p === '/__e2e/wallets' && req.method === 'GET') return json(200, this.walletUsers(url.searchParams.get('address') ?? ''));
     if (p === '/__e2e/apps' && req.method === 'POST') return json(201, this.createApp((await req.json()) as AppSpec));
     if (p === '/__e2e/links/expire' && req.method === 'POST') {

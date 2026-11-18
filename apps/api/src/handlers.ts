@@ -38,6 +38,7 @@ import { mainnetDemoPrices } from './mainnet-demo-prices.ts';
 import { fixedMainnetDemoPrices } from '@hana-id/core/mainnet-demo-prices';
 import { LINK_ADDS_PER_IP_MINUTE, LINK_CHANGES_PER_IP_MINUTE } from './links.ts';
 import { NEAR_RELAY_LIMITS } from './near/relay-config.ts';
+import { EVM_SPONSOR_LIMITS } from './evm/sponsor-checks.ts';
 import { TtlCache, effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isIssuerKeyActive, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
 const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}, ${CONSENT_HEADER}, ${SHARE_HEADER}`;
@@ -254,7 +255,7 @@ export type Gate = { ok: true; app: App; caller: Caller } | { ok: false; respons
  * every user of the app shares. `config` (GET /v1/app, no transaction) counts only against a per-IP window of its
  * own, so reading the config never uses up the app's relay quota.
  */
-export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'config' | 'link' | 'link-change' | 'near' | 'near-activate'): Promise<Gate> {
+export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'config' | 'link' | 'link-change' | 'near' | 'near-activate' | 'evm-sponsor' | 'evm-sponsor-status'): Promise<Gate> {
   const fail = (status: number, code: string, error: string, extra: Headers_ = {}): Gate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
   // 1. App exists and is active.
   const key = request.headers.get('x-hana-key');
@@ -284,10 +285,18 @@ export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay
   try {
     // The link relays (links.ts) count in windows of their own, with their own caps, adds and removals apart.
     // The NEAR relay's per-IP windows hold across every app (D736): one IP can't take 30 a minute from each of many keys.
-    const window = kind === 'relay' ? `${app.id}:minute` : kind === 'config' ? `${app.id}:config:minute` : kind === 'near' ? 'near-relay:minute' : kind === 'near-activate' ? 'near-activate:minute' : `${app.id}:${kind}:minute`;
+    // EVM sponsorship's (D847) the same way: one for prepare and send, one for status.
+    const window =
+      kind === 'relay' ? `${app.id}:minute` : kind === 'config' ? `${app.id}:config:minute` : kind === 'near' ? 'near-relay:minute' : kind === 'near-activate' ? 'near-activate:minute' : kind === 'evm-sponsor' ? 'evm-sponsor:minute' : kind === 'evm-sponsor-status' ? 'evm-sponsor:status:minute' : `${app.id}:${kind}:minute`;
     // The NEAR relay's own windows (near/relay-config.ts, D736): a relay or activation flood never uses up logins'.
     const max =
-      kind === 'link' ? LINK_ADDS_PER_IP_MINUTE : kind === 'link-change' ? LINK_CHANGES_PER_IP_MINUTE : kind === 'near' ? NEAR_RELAY_LIMITS.perIpPerMinute : kind === 'near-activate' ? NEAR_RELAY_LIMITS.activationsPerIpPerMinute : app.per_ip_minute;
+      kind === 'link' ? LINK_ADDS_PER_IP_MINUTE : kind === 'link-change' ? LINK_CHANGES_PER_IP_MINUTE : kind === 'near' ? NEAR_RELAY_LIMITS.perIpPerMinute : kind === 'near-activate'
+            ? NEAR_RELAY_LIMITS.activationsPerIpPerMinute
+            : kind === 'evm-sponsor'
+              ? EVM_SPONSOR_LIMITS.perIpPerMinute
+              : kind === 'evm-sponsor-status'
+                ? EVM_SPONSOR_LIMITS.statusPerIpPerMinute
+                : app.per_ip_minute;
     const ipHit = await limiter(env, ipKey(request)).hit([{ name: window, windowMs: MINUTE, max }]);
     if (!ipHit.ok) return fail(429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(ipHit.retryAfterS) });
   } catch {

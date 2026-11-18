@@ -339,6 +339,37 @@ export class RateLimiter extends DurableObject<Env> {
     if (BigInt(value) > BigInt(kv.get<string>(`floor:${name}`) ?? '0')) kv.put(`floor:${name}`, value);
   }
 
+  /**
+   * A small durable queue (the NEAR relay's billing records that D1 couldn't take, D863): `queuePush` keeps `item` unless
+   * `max` are already held (false then); `queuePeek` lists the oldest `n` with their keys; `queueAck` drops those keys.
+   */
+  queuePush(name: string, item: unknown, max: number, now: number = Date.now()): boolean {
+    const kv = this.ctx.storage.kv;
+    const countKey = `qn:${name}`;
+    const held = kv.get<number>(countKey) ?? 0;
+    if (held >= max) return false;
+    const seq = (kv.get<number>(`qs:${name}`) ?? 0) + 1;
+    kv.put(`qs:${name}`, seq);
+    kv.put(`q:${name}:${String(now).padStart(16, '0')}:${String(seq).padStart(10, '0')}`, item);
+    kv.put(countKey, held + 1);
+    return true;
+  }
+
+  queuePeek(name: string, n: number): [string, unknown][] {
+    return Array.from(this.ctx.storage.kv.list<unknown>({ prefix: `q:${name}:`, limit: n }));
+  }
+
+  queueLength(name: string): number {
+    return this.ctx.storage.kv.get<number>(`qn:${name}`) ?? 0;
+  }
+
+  queueAck(name: string, keys: string[]): void {
+    const kv = this.ctx.storage.kv;
+    let held = kv.get<number>(`qn:${name}`) ?? 0;
+    for (const k of keys) if (k.startsWith(`q:${name}:`) && kv.delete(k)) held--;
+    kv.put(`qn:${name}`, Math.max(0, held));
+  }
+
   /** Drops a marker (a reservation whose relay definitely did not execute). */
   release(key: string): void {
     this.ctx.storage.kv.delete(`mark:${key}`);

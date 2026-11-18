@@ -2198,9 +2198,11 @@ exceed a budget) and settled from the receipt. A base fee above the cap refuses 
 rather than raising it. The gas limit is computed (the relayer's own `intrinsicGas`, so the
 relayer's check can never refuse what the API reserved for, then the measured pre-loop overhead, `minGas`, the event, ×
 1.1), never taken from `eth_estimateGas`, and refused above `maxGasPerTx` before anything is reserved. **The relayer's
-own funds** are checked before every send: its balance (cached 30 s) must cover 3 × the send's worst case, else `503
-sponsorship_paused` and `evm_relay_balance_low`, so no user's batch can make the relayer's own broadcast fail for funds
-(which halts it for staff). **One app can't fill the relayer:** at most 4 of an app's sends are unsettled per chain at
+own funds** are checked before every send: its balance must be at least `lowBalanceEth` and cover 3 × the worst cases of
+every send of the chain already committed plus this one's, checked atomically by the audit row's insert (one D1
+statement, so a burst across isolates can't each pass alone), else `503 sponsorship_paused` and
+`evm_relay_balance_low`; no user's batch, nor a burst of them, can make the relayer's own broadcast fail for funds (which
+halts it for staff for every app). **One app can't fill the relayer:** at most 4 of an app's sends are unsettled per chain at
 once (the relayer takes 8 unmined in all), past that `429 relayer_busy`. Failures cost the sponsor
 and are charged: a revert or a transaction that ran nothing is settled from its receipt and counts as one of the user's
 3 failures; a simulation revert spends nothing but counts too. A relayer refusal with a code sent nothing and gives

@@ -418,7 +418,7 @@ describe('google-match and the four cases (batch 8b)', () => {
     expect(b.backend.count('/v1/link/cancel')).toBe(0);
   });
 
-  it('an email login of an active member opens the Google root’s wallet', async () => {
+  it('an email login of an active member opens the Google root’s wallet (after its own notice, D865: Keep it)', async () => {
     const b = emailBrowser();
     b.backend.opened.add(Buffer.from(ik(G)).toString('hex'));
     b.backend.link(G, E);
@@ -426,6 +426,9 @@ describe('google-match and the four cases (batch 8b)', () => {
     const pending = t.request('hana_login', { method: 'email' });
     const run = await popupHello(t);
     await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
+    expect((await notice(t, run, 2)).t).toBe('member_link');
+    expect(b.backend.count('/v1/login')).toBe(0);
+    await answer(t, run, 2, { choice: 'keep' });
     const reply = await pending;
     expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(G)));
   });
@@ -727,6 +730,167 @@ describe('D864: the email that waits to join a wallet cancels the link itself', 
     await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
     expect((await pending).error?.code).toBe('link_pending');
     expect(await notice(t, run, 2)).toEqual({ t: 'stop', code: 'link_pending', effectiveAtMs: PENDING_AT });
+  });
+});
+
+describe('D865: an active member’s own notice, and its removal of itself', () => {
+  const SINCE = 1_799_000_000_000;
+
+  /** An email login of E, an active member of G's account (since SINCE): the vault's member_link in slot 2. */
+  async function memberLogin() {
+    const b = emailBrowser();
+    b.backend.opened.add(hex(ik(G)));
+    b.backend.link(G, E, { active: true, effectiveAtMs: SINCE });
+    const t = await tab(b);
+    const pending = t.request('hana_login', { method: 'email' });
+    const run = await popupHello(t);
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
+    const n = (await notice(t, run, 2)) as Extract<FollowNotice, { t: 'member_link' }>;
+    return { b, t, run, pending, n };
+  }
+
+  const account = (b: Browser) => b.backend.accounts.get(hex(ik(G)))!;
+
+  /** Remove: the choice, then the vault's member_remove (slot 4) and the issuer's token over its nonce. */
+  async function toRemove(m: Awaited<ReturnType<typeof memberLogin>>) {
+    await answer(m.t, m.run, 2, { choice: 'remove' });
+    const reply = await m.pending;
+    const r = (await notice(m.t, m.run, 4)) as Extract<FollowNotice, { t: 'member_remove' }>;
+    const c = (r.prove as unknown as { commitment: { action: string; rootIk: string; memberIk: string; epoch: number; salt: number[] } }).commitment;
+    const nonce = linkChangeNonce(ENV.signer, SCOPE, 'unlink', fromHex(c.rootIk), fromHex(c.memberIk), c.epoch, Uint8Array.from(c.salt));
+    const proof = (over: Record<string, unknown> = {}) => issuer.token(emailClaims(m.run.params, { nonce, jti: 'jti-email-3', ...over }, m.t.browser.timers.now));
+    return { reply, r, c, nonce, proof };
+  }
+
+  it('asks before anything opens the shared wallet: the root’s method, since when, an opaque link id; nothing else', async () => {
+    const { b, n } = await memberLogin();
+    expect(n).toEqual({ t: 'member_link', method: 'email', rootProvider: 'google', sinceMs: SINCE, linkId: expect.stringMatching(/^[0-9a-f]{64}$/u) });
+    expect(JSON.stringify(n)).not.toContain(SUB);
+    expect(JSON.stringify(n)).not.toContain(EMAIL_SUB);
+    expect(b.backend.count('/v1/login')).toBe(0);
+  });
+
+  it('the same link gives the same id (a device that kept it isn’t asked again); another link another id', async () => {
+    const one = await memberLogin();
+    const two = await memberLogin();
+    expect(two.n.linkId).toBe(one.n.linkId);
+    const b = emailBrowser();
+    b.backend.opened.add(hex(ik(G)));
+    b.backend.link(G, E, { active: true, effectiveAtMs: SINCE + 1 });
+    const t = await tab(b);
+    void t.request('hana_login', { method: 'email' });
+    const run = await popupHello(t);
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
+    expect(((await notice(t, run, 2)) as Extract<FollowNotice, { t: 'member_link' }>).linkId).not.toBe(one.n.linkId);
+  });
+
+  it('Remove: the login ends login_cancelled (link_remove); an email code over the unlink nonce for this member; unlink_identity relayed; removed', async () => {
+    const m = await memberLogin();
+    const { reply, r, c, proof } = await toRemove(m);
+    expect(reply.error).toMatchObject({ code: 'login_cancelled', data: { reason: 'link_remove' } });
+    expect(m.b.backend.count('/v1/login')).toBe(0);
+    expect(r.prove).toMatchObject({ method: 'email', purpose: 'link_change' });
+    expect(c).toMatchObject({ action: 'unlink', rootIk: hex(ik(G)), memberIk: hex(ik(E)), epoch: 1 });
+    expect(c.salt).toHaveLength(32);
+    const jwt = await proof();
+    await answer(m.t, m.run, 4, { idToken: jwt, as: 'proof' });
+    expect(await notice(m.t, m.run, 6)).toEqual({ t: 'member_removed', outcome: 'removed' });
+    expect(m.b.backend.calls.filter((x) => x.path === '/v1/link/unlink').map((x) => x.body)).toEqual([expect.objectContaining({ jwt, memberKey: hex(ik(E)), epoch: 1 })]);
+    expect(account(m.b).members).toEqual([]);
+    expect(account(m.b).unlinked).toEqual([hex(ik(E))]);
+  });
+
+  it('a cancel nonce, the login’s own token, another email’s proof or a Google token removes nothing', async () => {
+    for (const bad of ['cancel', 'session', 'other', 'google'] as const) {
+      const m = await memberLogin();
+      const { c, proof, nonce } = await toRemove(m);
+      const cancelNonce = linkChangeNonce(ENV.signer, SCOPE, 'cancel', fromHex(c.rootIk), fromHex(c.memberIk), c.epoch, Uint8Array.from(c.salt));
+      const idToken =
+        bad === 'cancel'
+          ? await proof({ nonce: cancelNonce })
+          : bad === 'session'
+            ? await issuer.token(emailClaims(m.run.params, {}, m.t.browser.timers.now))
+            : bad === 'other'
+              ? await proof({ sub: 'e1.someone-else' })
+              : await g.token(tokenClaims({ nonce }, {}, m.t.browser.timers.now));
+      await answer(m.t, m.run, 4, { idToken, as: 'proof' });
+      expect(await notice(m.t, m.run, 6), bad).toEqual({ t: 'stop', code: 'token_invalid' });
+      expect(m.b.backend.count('/v1/link/unlink'), bad).toBe(0);
+      expect(account(m.b).members, bad).toHaveLength(1);
+    }
+  });
+
+  it('already removed (or the account moved on) before the relay: nothing relayed, said so', async () => {
+    for (const change of ['gone', 'epoch'] as const) {
+      const m = await memberLogin();
+      const { proof } = await toRemove(m);
+      if (change === 'gone') account(m.b).members.splice(0);
+      account(m.b).epoch += 1;
+      await answer(m.t, m.run, 4, { idToken: await proof(), as: 'proof' });
+      expect(await notice(m.t, m.run, 6), change).toEqual(change === 'gone' ? { t: 'member_removed', outcome: 'already_removed' } : { t: 'member_removed', outcome: 'not_removed', code: 'stale_epoch' });
+      expect(m.b.backend.count('/v1/link/unlink'), change).toBe(0);
+    }
+  });
+
+  it('the API unreachable: still linked on chain, so “not_removed” (api_unavailable); a lost answer that landed: “removed”', async () => {
+    const m = await memberLogin();
+    const { proof } = await toRemove(m);
+    m.b.backend.overrides.set('/v1/link/unlink', () => {
+      throw new TypeError('Failed to fetch');
+    });
+    await answer(m.t, m.run, 4, { idToken: await proof(), as: 'proof' });
+    expect(await notice(m.t, m.run, 6)).toEqual({ t: 'member_removed', outcome: 'not_removed', code: 'api_unavailable' });
+    expect(account(m.b).members).toHaveLength(1);
+
+    const l = await memberLogin();
+    const lost = await toRemove(l);
+    l.b.backend.overrides.set('/v1/link/unlink', () => {
+      account(l.b).members.splice(0);
+      return apiError(503, 'near_unavailable');
+    });
+    await answer(l.t, l.run, 4, { idToken: await lost.proof(), as: 'proof' });
+    expect(await notice(l.t, l.run, 6)).toEqual({ t: 'member_removed', outcome: 'removed' });
+  });
+
+  it('a refusal, then the chain can’t be read: “unknown” with the refusal’s code', async () => {
+    const m = await memberLogin();
+    const { proof } = await toRemove(m);
+    m.b.backend.overrides.set('/v1/link/unlink', () => {
+      m.b.backend.rpcDown.add(new URL(EMAIL_ENV2.rpc).origin);
+      m.b.backend.rpcDown.add(new URL(RPC_FALLBACK).origin);
+      return apiError(422, 'link_refused', { reason: 'no_such_member' });
+    });
+    await answer(m.t, m.run, 4, { idToken: await proof(), as: 'proof' });
+    expect(await notice(m.t, m.run, 6)).toEqual({ t: 'member_removed', outcome: 'unknown', code: 'link_refused' });
+  });
+
+  it('Remove, then no code: the removal’s wait ends at AFTERWORD_MS, nothing relayed, no runaway read', async () => {
+    const m = await memberLogin();
+    await toRemove(m);
+    const { id } = followSlot(m.run.params.followKey as Uint8Array, 5);
+    await m.t.waitUntil(() => m.b.backend.calls.some((c) => c.method === 'GET' && c.path === `/v1/login-relay/${id}`), 'the read of slot 5');
+    m.t.browser.timers.advance(AFTERWORD_MS);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(m.b.backend.abortedRelayReads).toBe(0);
+    expect(m.b.backend.count('/v1/link/unlink')).toBe(0);
+  });
+
+  it('a link older than 7 days is still offered (the contract sets no window on a member’s own removal)', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(hex(ik(G)));
+    b.backend.link(G, E, { active: true, effectiveAtMs: 1_000 });
+    const t = await tab(b);
+    void t.request('hana_login', { method: 'email' });
+    const run = await popupHello(t);
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
+    expect(await notice(t, run, 2)).toMatchObject({ t: 'member_link', sinceMs: 1_000 });
+  });
+
+  it('a popup cancel on the notice ends the login (login_cancelled), nothing opened', async () => {
+    const m = await memberLogin();
+    await answer(m.t, m.run, 2, { error: 'email_cancelled' });
+    expect((await m.pending).error?.code).toBe('login_cancelled');
+    expect(m.b.backend.count('/v1/login')).toBe(0);
   });
 });
 

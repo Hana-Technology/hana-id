@@ -61,6 +61,12 @@
 //   commitment for this email only, answered `as: 'proof'`) or "Keep the link" (closes; nothing changes). Then
 //   `link_cancel`: the link was cancelled, was already gone, can't be cancelled any more (the waiting period ended:
 //   the notice mail's stronger advice), or wasn't cancelled (what to do next, with the code for support).
+// - `member_link` (D865): before the sign-in goes on, this sign-in is an active member of a wallet another sign-in
+//   opens: "Remove this email" (a confirmation step that says what removing costs, then `{choice: 'remove'}`: the
+//   sign-in stops, and `member_remove` asks for one more code, or Google, over the vault's `link_change` "unlink"
+//   commitment) or "Keep it" (`{choice: 'keep'}`: the sign-in goes on, and this device isn't asked again about this
+//   link: `localStorage` on authOrigin, `hana.ml.<linkId>`). Then `member_removed`: removed, already removed, not
+//   removed or not known.
 //
 // - pk_test_ apps (the login entry carries /login's timings): this step's stages ride in the relay slot with the token
 //   (timings.ts `emailLoad` … `emailVerify`), each a sum of durations on this page's clock. Nothing else is measured.
@@ -137,7 +143,11 @@ export type EmailStage =
   /** D864: this email waits to join a wallet: Cancel this link, or Keep the link. */
   | 'link_waiting'
   /** D864: what became of that cancel. */
-  | 'link_cancelled';
+  | 'link_cancelled'
+  /** D865: an active member's own notice (Remove or Keep it), its confirmation step, and the removal's outcome. */
+  | 'member_link'
+  | 'member_confirm'
+  | 'member_removed';
 
 /** What the user saw last that the vault should hear if they cancel now (D245), or why the step can't go on. */
 type Reason = 'email_cancelled' | 'email_code_invalid' | 'email_challenge_expired' | 'email_rate_limited' | 'email_unavailable';
@@ -1067,6 +1077,12 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         return showLinkWaiting(n, slot);
       case 'link_cancel':
         return showLinkCancel(n);
+      case 'member_link':
+        return showMemberLink(n, slot);
+      case 'member_remove':
+        return proveMemberRemove(n.prove, slot);
+      case 'member_removed':
+        return showMemberRemoved(n);
     }
   }
 
@@ -1409,6 +1425,173 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     d.show(d.h('section', { class: 'panel', attrs: { id: 'link-cancel-result', 'data-outcome': n.outcome } }, d.h('h1', {}, title), header(), ...body, d.h('div', { class: 'actions' }, closeButton('link-cancel-close'))));
     notice = n.code ?? n.outcome;
     settle('link_cancelled');
+  }
+
+  // ---- D865: an active member's own notice ----
+
+  /** The device remembers that the user kept this link (D865): authOrigin's localStorage, the link's opaque id only. */
+  const KEPT_PREFIX = 'hana.ml.';
+  const keptHere = (linkId: string): boolean => {
+    try {
+      const v = deps.tickets?.getItem(KEPT_PREFIX + linkId);
+      return v !== null && v !== undefined;
+    } catch {
+      return false;
+    }
+  };
+  const keepHere = (linkId: string): void => {
+    try {
+      deps.tickets?.setItem(KEPT_PREFIX + linkId, String(now()));
+    } catch {
+      // Storage refused: the next sign-in on this device asks again.
+    }
+  };
+
+  /** The words for this sign-in and the other one, by method. */
+  const memberWords = (method: string, rootProvider: string) => {
+    const self = method === 'google' ? 'Google account' : 'email';
+    const other = rootProvider === 'google' ? 'Google account' : 'email';
+    const article = (w: string) => (w === 'email' ? 'an email' : 'a Google account');
+    return { self, other, otherA: article(other) };
+  };
+
+  /**
+   * This sign-in opens a wallet that another sign-in (the wallet's first) also opens: whoever holds that one can open it
+   * too. "Remove this email" goes to a confirmation that says what removing costs; "Keep it" goes on with the sign-in.
+   * A device that kept this link isn't asked again.
+   */
+  function showMemberLink(n: Extract<FollowNotice, { t: 'member_link' }>, slot: number): void {
+    if (keptHere(n.linkId)) {
+      void answer(slot, { choice: 'keep' });
+      return;
+    }
+    const w = memberWords(n.method, n.rootProvider);
+    memberMethod = n.method;
+    memberOther = w.other;
+    const since = dateText(n.sinceMs);
+    const removeB = d.h('button', { class: `${BTN.danger} jp-btn-lg`, attrs: { type: 'button', id: 'member-remove' } }, `Remove this ${w.self}`);
+    const keepB = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'member-keep' } }, 'Keep it');
+    let chosen = false;
+    removeB.addEventListener('click', () => {
+      if (chosen) return;
+      chosen = true;
+      showMemberConfirm(n, slot);
+    });
+    keepB.addEventListener('click', () => {
+      if (chosen) return;
+      chosen = true;
+      removeB.setAttribute('disabled', '');
+      keepB.setAttribute('disabled', '');
+      keepHere(n.linkId);
+      void answer(slot, { choice: 'keep' });
+    });
+    d.show(
+      d.h(
+        'section',
+        { class: 'panel', attrs: { id: 'member-link' } },
+        d.h('h1', {}, `This ${w.self} now also opens another wallet`),
+        header(),
+        alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'member-link-what' } }, `Since ${since}, this ${w.self} opens a wallet that ${w.otherA} also opens. Whoever holds that ${w.other} can open it too.`),
+        d.h('p', { attrs: { id: 'member-link-advice' } }, `If you didn’t set this up, remove this ${w.self} from it.`),
+        d.h('p', { class: 'muted', attrs: { id: 'member-link-keep' } }, 'If you set this up yourself, keep it. We won’t ask again on this device.'),
+        d.h('div', { class: 'actions stack' }, removeB, keepB),
+      ),
+    );
+    notice = 'member_link';
+    settle('member_link');
+  }
+
+  /** Before removing: what it costs (the one thing it can't undo for this user), then "Remove it" or "Go back". */
+  function showMemberConfirm(n: Extract<FollowNotice, { t: 'member_link' }>, slot: number): void {
+    const w = memberWords(n.method, n.rootProvider);
+    const go = d.h('button', { class: `${BTN.danger} jp-btn-lg`, attrs: { type: 'button', id: 'member-remove-confirm' } }, 'Remove it');
+    const back = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'member-remove-back' } }, 'Go back');
+    let chosen = false;
+    go.addEventListener('click', () => {
+      if (chosen) return;
+      chosen = true;
+      go.setAttribute('disabled', '');
+      back.setAttribute('disabled', '');
+      void answer(slot, { choice: 'remove' });
+    });
+    back.addEventListener('click', () => {
+      if (chosen) return;
+      chosen = true;
+      showMemberLink(n, slot);
+    });
+    d.show(
+      d.h(
+        'section',
+        { class: 'panel', attrs: { id: 'member-confirm' } },
+        d.h('h1', {}, `Remove this ${w.self} from that wallet?`),
+        header(),
+        alert(d, 'danger', { class: 'note', attrs: { role: 'alert', id: 'member-confirm-what' } }, `After you remove it, this ${w.self} can’t open that wallet any more. Anything in it stays there, and whoever holds that ${w.other} can still open it.`),
+        d.h('p', { attrs: { id: 'member-confirm-money' } }, `If you added money to that wallet, move it out first. Choose Go back, then Keep it, and sign in to move it.`),
+        d.h('p', { attrs: { id: 'member-confirm-next' } }, `If you sign in with this ${w.self} again afterwards, it opens a new, empty wallet of its own.`),
+        d.h('p', { class: 'muted', attrs: { id: 'member-confirm-check' } }, n.method === 'google' ? 'Google will ask you to sign in again to check it’s you.' : 'We’ll send one more code to this email to check it’s you.'),
+        d.h('div', { class: 'actions stack' }, go, back),
+      ),
+    );
+    notice = 'member_confirm';
+    settle('member_confirm');
+  }
+
+  /** The removal's proof: one more code to the address this window just proved, or Google with the account named. */
+  function proveMemberRemove(p: FollowProve, slot: number): void {
+    if (p.method === 'email' && p.purpose === 'link_change' && validAddress(address)) {
+      startAs = { kind: 'link', purpose: 'link_change', commitment: p.commitment };
+      sink = { kind: 'answer', slot, as: 'proof' };
+      void sendCode();
+      return;
+    }
+    prove(p, slot, 'Confirm it’s you');
+  }
+
+  let memberMethod = 'email';
+  let memberOther = 'Google account';
+
+  /** What became of the removal (the vault re-read the chain before it said so). */
+  function showMemberRemoved(n: Extract<FollowNotice, { t: 'member_removed' }>): void {
+    endFollow();
+    const app = () => d.h('strong', {}, ctx.appName);
+    const self = memberMethod === 'google' ? 'Google account' : 'email';
+    const codeLine = n.code ? d.h('p', { class: 'code' }, supportCode(n.code)) : null;
+    const fresh = d.h('p', { attrs: { id: 'member-removed-next' } }, `If you sign in with this ${self} again, it opens a new, empty wallet of its own.`);
+    let title: string;
+    let body: (HTMLElement | null)[];
+    switch (n.outcome) {
+      case 'removed':
+        title = `This ${self} was removed`;
+        body = [
+          alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'member-removed-what' } }, `This ${self} no longer opens that wallet. Anything in it stays there, with whoever holds that ${memberOther}. Anyone signed in to that wallet in this app will be asked to sign in again.`),
+          fresh,
+          d.h('p', { attrs: { id: 'member-removed-advice' } }, `If you didn’t set up the link, change your ${self === 'email' ? 'email' : 'Google'} password.`),
+        ];
+        break;
+      case 'already_removed':
+        title = `This ${self} was already removed`;
+        body = [alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'member-removed-what' } }, `This ${self} no longer opens that wallet. There’s nothing more to do.`), fresh];
+        break;
+      case 'not_removed':
+        title = `This ${self} wasn’t removed`;
+        body = [
+          alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'member-removed-what' } }, `Nothing changed: this ${self} still opens that wallet.`),
+          d.h('p', { attrs: { id: 'member-removed-advice' } }, 'Close this window, then sign in to ', app(), ` with this ${self} again to try again.`),
+          codeLine,
+        ];
+        break;
+      case 'unknown':
+        title = 'We couldn’t check the removal';
+        body = [
+          alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'member-removed-what' } }, `${BRAND.company} couldn’t be reached, so we can’t tell whether this ${self} was removed.`),
+          d.h('p', { attrs: { id: 'member-removed-advice' } }, 'Sign in to ', app(), ` with this ${self} again. If it still opens that wallet, you’ll be asked again.`),
+          codeLine,
+        ];
+        break;
+    }
+    d.show(d.h('section', { class: 'panel', attrs: { id: 'member-removed', 'data-outcome': n.outcome } }, d.h('h1', {}, title), header(), ...body, d.h('div', { class: 'actions' }, closeButton('member-removed-close'))));
+    notice = n.code ?? n.outcome;
+    settle('member_removed');
   }
 
   // ---- start ----

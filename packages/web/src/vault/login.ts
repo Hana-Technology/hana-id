@@ -116,11 +116,14 @@ import {
   relayIdFor,
   sessionHashOf,
   sessionNonce,
+  sha256,
   signCreate,
   signDerive,
   signDeriveLinked,
   signRevoke,
   supportIdFrom,
+  toHex,
+  utf8,
   verifyEmailIdToken,
   verifyGoogleIdToken,
   zero,
@@ -1003,6 +1006,8 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         path = await this.ownPath(who.ref).catch((e: unknown) => {
           throw this.linkWaiting(e, who);
         });
+        // D865: an active member's own notice, before anything opens the shared wallet.
+        await this.memberNotice(who, path);
       }
       // D263: a silent change of the root this device last opened for this identity, other than a link activating
       // (own → member, confirmed on both providers above), is confirmed on both providers again.
@@ -1500,6 +1505,42 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     this.follow = null;
     if (!follow) return;
     void new Afterword(this.ctx, follow, who, path, linked).run().finally(() => follow.close());
+  }
+
+  /**
+   * D865: a sign-in of an active member (it opens another identity's wallet, the account root's) asks the user first,
+   * through the follow-up channel: `member_link` names the root's method and since when; the popup answers `keep` (the
+   * login goes on; a device that kept this link answers at once) or `remove`: the login ends (`login_cancelled`,
+   * `data.reason: 'link_remove'`) and `MemberRemove` takes the channel for the removal's own proof, with its own wait.
+   * Nothing is asked of an identity on its own path, a login that just made its link (its banner says so), or a login
+   * without the channel. The root's own read can't be had: the notice is skipped (the login goes on as before).
+   */
+  private async memberNotice(who: Who, path: string): Promise<void> {
+    const follow = this.follow;
+    const root = pathOwner(path);
+    if (!follow || !root || sameRef(root, who.ref)) return;
+    const scopeId = this.ctx.config.scopeId;
+    let view: IdentityView;
+    try {
+      view = await this.identityOf(who.ref);
+    } catch {
+      this.check();
+      return;
+    }
+    if (view.status !== 'member' || !view.root || !sameRef(view.root, root) || view.effectiveAtMs === null) return;
+    const rootKey = identityKeyHex(scopeId, root.provider, root.sub);
+    const linkId = toHex(sha256(utf8(`hana-id/member-link/v1|${rootKey}|${view.key}|${view.effectiveAtMs}`)));
+    const slot = await follow.notice({ t: 'member_link', method: who.ref.provider, rootProvider: root.provider, sinceMs: view.effectiveAtMs, linkId }, true);
+    const answer = await this.popupWait(() => follow.answer(slot, this.abortCtl.signal, () => this.abortError));
+    this.check();
+    if ('choice' in answer && answer.choice === 'keep') return;
+    if ('choice' in answer && answer.choice === 'remove') {
+      this.follow = null;
+      void new MemberRemove(this.ctx, follow, who).run().finally(() => follow.close());
+      throw fail('login_cancelled', 'The sign-in was stopped to remove this sign-in method from the wallet', { reason: 'link_remove' });
+    }
+    if ('error' in answer) throw this.emailAnswerError(answer.error);
+    throw fail('token_invalid', 'The sign-in answer was refused');
   }
 
   /**
@@ -2086,6 +2127,125 @@ class LinkWaiting {
     const sameRoot = !!view.root && identityKeyHex(scopeId, view.root.provider, view.root.sub) === offer.rootKey;
     if (view.status === 'member') return sameRoot ? 'member' : 'changed';
     return sameRoot && view.accountEpoch === offer.epoch ? 'pending' : 'changed';
+  }
+}
+
+/** Where a removing member stands now: as offered (an active member of the same root at the same epoch), or not. */
+type MemberStanding = 'member' | 'own' | 'changed' | 'unknown';
+
+/**
+ * D865: an active member removes itself from the account (`unlink_identity` by the member itself, links.rs: no time
+ * limit, the pair remembered so automatic linking never re-adds it). The vault computes the `link_change` "unlink"
+ * nonce for this member only from a fresh `get_identity` (fresh salt, the account's epoch), asks the popup for a fresh
+ * sign-in of this method over it (`member_remove`: an email code, or Google with `login_hint`), checks the proof (the
+ * chain's keys, exactly that nonce, this login's `sub`), re-reads, relays POST /v1/link/unlink only while it is still
+ * that member at that epoch, and tells the popup the outcome (`member_removed`), from a read after the attempt. The
+ * login has already ended; this waits for the popup at most AFTERWORD_MS.
+ */
+class MemberRemove {
+  private readonly signal = new AbortController();
+
+  constructor(
+    private readonly ctx: LoginContext,
+    private readonly follow: FollowChannel,
+    private readonly who: Who,
+  ) {}
+
+  async run(): Promise<void> {
+    const timer = this.ctx.timers.setTimeout(() => this.signal.abort(), AFTERWORD_MS);
+    let salt: Uint8Array | null = null;
+    try {
+      const { ctx, who } = this;
+      const scopeId = ctx.config.scopeId;
+      const memberKey = identityKeyHex(scopeId, who.ref.provider, who.ref.sub);
+      let view: IdentityView;
+      try {
+        view = await ctx.near.identity(scopeId, who.ref.provider, who.ref.sub);
+      } catch {
+        await this.follow.notice({ t: 'member_removed', outcome: 'unknown', code: 'near_unavailable' });
+        return;
+      }
+      if (view.key !== memberKey || !view.root) {
+        await this.follow.notice(view.key === memberKey && view.status === 'own' ? { t: 'member_removed', outcome: 'already_removed' } : { t: 'member_removed', outcome: 'unknown', code: 'near_unavailable' });
+        return;
+      }
+      if (view.status !== 'member') {
+        await this.follow.notice({ t: 'member_removed', outcome: 'not_removed', code: 'link_pending' });
+        return;
+      }
+      const root = view.root;
+      const rootKey = identityKeyHex(scopeId, root.provider, root.sub);
+      const epoch = view.accountEpoch;
+      salt = randomBytes(32);
+      const nonce = linkChangeNonce(ctx.env.signer, scopeId, 'unlink', fromHex(rootKey), fromHex(memberKey), epoch, salt);
+      const prove: FollowProve =
+        who.ref.provider === 'google'
+          ? { method: 'google', nonce, loginHint: who.ref.sub }
+          : { method: 'email', purpose: 'link_change', commitment: { scopeId, action: 'unlink', rootIk: rootKey, memberIk: memberKey, epoch, salt: Array.from(salt) } };
+      const slot = await this.follow.notice({ t: 'member_remove', prove });
+      const answer = await this.follow.answer(slot, this.signal.signal).catch(() => null);
+      if (!answer || !isRelayToken(answer) || answer.as !== 'proof') return;
+      if (!(await this.proves(answer.idToken, nonce))) {
+        await this.follow.notice({ t: 'stop', code: 'token_invalid' });
+        return;
+      }
+      const before = await this.standing(rootKey, epoch);
+      if (before !== 'member') {
+        const moved: Record<Exclude<MemberStanding, 'member'>, FollowNotice> = {
+          own: { t: 'member_removed', outcome: 'already_removed' },
+          changed: { t: 'member_removed', outcome: 'not_removed', code: 'stale_epoch' },
+          unknown: { t: 'member_removed', outcome: 'unknown', code: 'near_unavailable' },
+        };
+        await this.follow.notice(moved[before]);
+        return;
+      }
+      try {
+        await ctx.api.linkChange('unlink', { jwt: answer.idToken, memberKey, epoch, salt: Array.from(salt) });
+      } catch (e) {
+        const code = e instanceof ApiError && /^[a-z_]{1,64}$/u.test(e.code) ? (e.code === 'contract_rejected' ? 'link_refused' : e.code) : 'api_unavailable';
+        // A failure may still have landed (a lost answer): the chain says which.
+        const after = await this.standing(rootKey, epoch);
+        await this.follow.notice(after === 'own' ? { t: 'member_removed', outcome: 'removed' } : { t: 'member_removed', outcome: after === 'unknown' ? 'unknown' : 'not_removed', code });
+        return;
+      }
+      await this.follow.notice({ t: 'member_removed', outcome: 'removed' });
+    } finally {
+      this.ctx.timers.clearTimeout(timer);
+      if (salt) zero(salt);
+    }
+  }
+
+  /** The proof is this sign-in's (Google or email), over exactly the offered nonce. */
+  private async proves(token: string, nonce: string): Promise<boolean> {
+    const { ctx, who } = this;
+    let app: AppConfig;
+    try {
+      app = await ctx.appConfig();
+    } catch {
+      return false;
+    }
+    try {
+      const check = new TokenCheck(ctx, app, who.ref.provider === 'email' ? emailChainOf(ctx) : null, () => undefined);
+      const got = who.ref.provider === 'google' ? await check.google(token, nonce) : await check.email(token, nonce);
+      return got.ref.provider === who.ref.provider && got.ref.sub === who.ref.sub;
+    } catch {
+      return false;
+    }
+  }
+
+  private async standing(rootKey: string, epoch: number): Promise<MemberStanding> {
+    const { ctx, who } = this;
+    const scopeId = ctx.config.scopeId;
+    let view: IdentityView;
+    try {
+      view = await ctx.near.identity(scopeId, who.ref.provider, who.ref.sub);
+    } catch {
+      return 'unknown';
+    }
+    if (view.key !== identityKeyHex(scopeId, who.ref.provider, who.ref.sub)) return 'unknown';
+    if (view.status === 'own') return 'own';
+    const sameRoot = !!view.root && identityKeyHex(scopeId, view.root.provider, view.root.sub) === rootKey;
+    return view.status === 'member' && sameRoot && view.accountEpoch === epoch ? 'member' : 'changed';
   }
 }
 

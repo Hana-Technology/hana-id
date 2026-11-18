@@ -37,7 +37,10 @@ const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
  * - `sealedEmail`: beside an email login's token, the issuer's `verify` answer's sealed address (opaque to the
  *   popup's relay and the vault; only the API opens it).
  */
-export type RelayPayload = RelayTokenPayload | (({ accessToken: string } | { error: string; claim?: string }) & { timings?: Record<string, number> });
+export type RelayPayload = RelayTokenPayload | (({ accessToken: string } | { error: string; claim?: string } | { choice: MemberChoice }) & { timings?: Record<string, number> });
+
+/** The popup's answer to `member_link`: go on with the sign-in, or stop it to remove this sign-in from the wallet. */
+export type MemberChoice = 'keep' | 'remove';
 
 /** A claim name the popup may name beside `{error: 'token_has_pii'}` (the first claim outside the allow-list). */
 export const RELAY_CLAIM_NAME = /^[A-Za-z0-9_.:-]{1,64}$/u;
@@ -109,6 +112,7 @@ export function isRelayPayload(v: unknown): v is RelayPayload {
   if (keys.length !== 1) return false;
   if (keys[0] === 'accessToken') return isAccessToken(v.accessToken);
   if (keys[0] === 'error') return typeof v.error === 'string' && GOOGLE_ERROR.test(v.error);
+  if (keys[0] === 'choice') return v.choice === 'keep' || v.choice === 'remove';
   return false;
 }
 
@@ -175,6 +179,11 @@ export interface LinkBanner {
  *   account whose root signs in with `provider`; the popup says so, with when the link starts working, and offers to
  *   cancel it with `prove` (an email code over the `link_change` nonce for this member) or to keep it.
  * - `link_cancel`: what became of that cancel (`code`, for support, when it wasn't made or can't be told).
+ * - `member_link`: before the sign-in goes on, this sign-in (`method`) is an active member of an account whose root
+ *   signs in with `rootProvider`, since `sinceMs`; the popup asks "Remove this email" or "Keep it" (answered
+ *   `{choice}`), and skips the question on a device that kept this link (`linkId`, an opaque hash of the link).
+ * - `member_remove`: the removal's proof (a fresh sign-in of this method over the `link_change` "unlink" nonce).
+ * - `member_removed`: what became of that removal (`code`, for support, when it wasn't made or can't be told).
  */
 export type FollowNotice =
   | { t: 'link_code'; challengeId: string; expiresAtMs: number; to: string }
@@ -184,7 +193,14 @@ export type FollowNotice =
   | { t: 'done'; banners: LinkBanner[] }
   | { t: 'stop'; code: string; effectiveAtMs?: number; banners?: LinkBanner[] }
   | { t: 'link_waiting'; provider: string; effectiveAtMs: number; prove: FollowProve }
-  | { t: 'link_cancel'; outcome: LinkCancelOutcome; code?: string };
+  | { t: 'link_cancel'; outcome: LinkCancelOutcome; code?: string }
+  | { t: 'member_link'; method: string; rootProvider: string; sinceMs: number; linkId: string }
+  | { t: 'member_remove'; prove: FollowProve }
+  | { t: 'member_removed'; outcome: MemberRemoveOutcome; code?: string };
+
+/** A member's removal of itself: made, already gone before it was sent, refused (still linked), or not known. */
+export type MemberRemoveOutcome = 'removed' | 'already_removed' | 'not_removed' | 'unknown';
+const MEMBER_REMOVE_OUTCOMES: readonly string[] = ['removed', 'already_removed', 'not_removed', 'unknown'];
 
 /**
  * A pending link's cancel from the email that is waiting to join: made (`cancelled`), already gone before it
@@ -245,6 +261,12 @@ export function isFollowNotice(v: unknown): v is FollowNotice {
       return keys.length === 4 && only('t', 'provider', 'effectiveAtMs', 'prove') && isProvider(v.provider) && isMsValue(v.effectiveAtMs) && isFollowProve(v.prove);
     case 'link_cancel':
       return only('t', 'outcome', 'code') && typeof v.outcome === 'string' && LINK_CANCEL_OUTCOMES.includes(v.outcome) && (v.code === undefined || (typeof v.code === 'string' && /^[a-z_]{1,64}$/u.test(v.code)));
+    case 'member_link':
+      return keys.length === 5 && only('t', 'method', 'rootProvider', 'sinceMs', 'linkId') && isProvider(v.method) && isProvider(v.rootProvider) && v.method !== v.rootProvider && isMsValue(v.sinceMs) && typeof v.linkId === 'string' && /^[0-9a-f]{64}$/u.test(v.linkId);
+    case 'member_remove':
+      return keys.length === 2 && only('t', 'prove') && isFollowProve(v.prove);
+    case 'member_removed':
+      return only('t', 'outcome', 'code') && typeof v.outcome === 'string' && MEMBER_REMOVE_OUTCOMES.includes(v.outcome) && (v.code === undefined || (typeof v.code === 'string' && /^[a-z_]{1,64}$/u.test(v.code)));
     default:
       return false;
   }

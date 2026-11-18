@@ -54,6 +54,47 @@ export const JARGON: readonly string[] = Object.freeze([
   'delegate action',
   'explorer',
   'Not production',
+  // The approval window's words (feat/plain-approval-wording): one list for every surface.
+  'chain',
+  'chains',
+  'contracts',
+  'operator',
+  'revoke',
+  'revoked',
+  'revokes',
+  'unlimited',
+  'signers',
+  'threshold',
+  'thresholds',
+  'weight',
+  'weights',
+  'burn',
+  'burnt',
+  'burned',
+  'burns',
+  'trust line',
+  'trust lines',
+  'trustline',
+  'trustlines',
+  'smallest units',
+  'decimals',
+  'gwei',
+  'NFTs',
+  'verified',
+  'unverified',
+  'reviewed list',
+  'pinned',
+  'authorization',
+  'authorize',
+  'authorizes',
+  'authorized',
+  'delegate',
+  'declined',
+  'log in',
+  'technical details',
+  'sponsor',
+  'sponsorship',
+  'relayed',
 ]);
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/ /gu, '\\s+');
@@ -62,19 +103,21 @@ const PATTERNS: readonly [string, RegExp][] = JARGON.map((w) => [w, new RegExp(`
 
 /** The banned words in `text`, in JARGON's order (empty when it is plain). */
 export function jargonIn(text: string): string[] {
-  return PATTERNS.filter(([, re]) => re.test(text)).map(([w]) => w);
+  const found = PATTERNS.filter(([, re]) => re.test(text)).map(([w]) => w);
+  // A word reported inside a banned phrase found too ("chain" in "on chain") is reported once, as the phrase.
+  return found.filter((w) => !found.some((p) => p !== w && p.includes(' ') && new RegExp(`(?<![\\w-])${escape(w)}(?![\\w-])`, 'iu').test(p)));
 }
 
 /**
  * The string literals of a TypeScript source that may be words for a person: outside comment lines, holding a space
  * and a letter, and not a URL (a class list or a selector holds no banned word as a whole word). A template literal is
- * taken whole, with its `${…}` placeholders left in (they are names, not words users read).
+ * taken whole, with its `${…}` placeholders read as "…" (they are names, not words users read: `${ctx.chain}`).
  */
 export function sentencesIn(source: string): string[] {
   const code = source
     .split('\n')
     .filter((l) => !/^\s*(\/\/|\*|\/\*)/u.test(l))
     .join('\n');
-  const literals = [...code.matchAll(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/gu)].map((m) => m[0].slice(1, -1));
+  const literals = [...code.matchAll(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/gu)].map((m) => m[0].slice(1, -1).replace(/\$\{[^}]*\}/gu, '…'));
   return literals.filter((s) => /\s/u.test(s) && /[A-Za-z]{2}/u.test(s) && !/^https?:\/\//u.test(s));
 }

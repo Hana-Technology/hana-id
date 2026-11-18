@@ -32,15 +32,15 @@ import {
   consentDigest,
   parseWindowMessage,
 } from '@hana-id/core';
-import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
+import { type DecodedApproval, decodeApprovalRequest, shortId } from '@hana-id/core/decode';
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './approve-guard.ts';
-import { type Dom, dom, errorView, originText } from './dom.ts';
+import { type Dom, dom, errorView, originText, row, rows } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
-import { renderApproval, watchOverflowing } from './render-approval.ts';
+import { fullId, renderApproval, watchOverflowing } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
 import { alert } from './ui.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
@@ -48,7 +48,14 @@ import { type DemoBridge, type DemoNetwork, type DemoSwap, MAINNET_DEMO, assessM
 
 /** How long the popup waits for a follow-up request after an answer before it closes. */
 /** The account line's chain names. */
-const ACCOUNT_CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM', near: 'NEAR' } as const;
+const ACCOUNT_CHAIN_NAMES = { stellar: 'Stellar', evm: 'Ethereum-style', near: 'NEAR' } as const;
+
+/**
+ * The account line (D859): "Your account: 6e5e4e…f350 (NEAR)", the short form only, hidden from screen readers, which
+ * read the whole account in the details' first row (where a sighted user finds it too).
+ */
+export const accountLine = (d: Dom, chain: keyof typeof ACCOUNT_CHAIN_NAMES, address: string): HTMLElement =>
+  d.h('p', { class: 'account' }, 'Your account: ', d.h('code', { class: 'mono short-id', attrs: { 'aria-hidden': 'true' } }, shortId(address)), d.h('span', { class: 'sr-only' }, ` ${address}`), ` (${ACCOUNT_CHAIN_NAMES[chain]})`);
 
 export const KEEP_OPEN_MS = 15_000;
 /** A partner-opened popup that no request reaches within this long says bye and closes (vault approvals.ts LATE_CLOSE_MS). */
@@ -68,35 +75,38 @@ export function approveOpenerMode(search: string): ApproveOpenerMode | null {
   return q.get('from') === 'partner' && VAULT_FRAME_NAME.test(v) ? { mode: 'partner', vaultFrame: v } : null;
 }
 
-/** Why the vault didn't auto-approve a request (the matcher's reason, policy/match.ts), in the popup's words. */
+/**
+ * Why the vault didn't approve a request automatically (the matcher's reason code, policy/match.ts, unchanged), in plain
+ * words (D853): one short reason after "Why: ".
+ */
 export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string>> = Object.freeze({
-  never_covered: 'this kind of request is never signed automatically',
-  no_policy_section: 'the rules don’t cover this chain',
-  decode_failed: `${BRAND.company} couldn’t fully read the request`,
-  network_not_listed: 'the network isn’t listed in the rules',
-  chain_not_listed: 'the chain isn’t listed in the rules',
-  fee_bump: 'fee-bump transactions are never signed automatically',
-  unsupported_envelope: 'this transaction format isn’t supported',
-  fee_too_high: 'the fee is over the rules’ limit',
-  source_not_self: 'the transaction’s source isn’t your account',
-  operation_not_allowed: 'it contains an operation the rules don’t allow',
-  account_control: 'it changes who controls your account, which is never signed automatically',
-  asset_not_listed: 'the asset isn’t listed in the rules',
-  contract_creation: 'it creates a contract',
-  contract_not_listed: 'the contract isn’t listed in the rules',
-  function_not_listed: 'the function isn’t listed in the rules',
-  selector_not_listed: 'the function isn’t listed in the rules',
-  calldata_mismatch: 'the call doesn’t match the listed function',
-  address_not_allowed: 'it involves an address the rules don’t allow',
-  opaque_bytes: `it carries data ${BRAND.company} can’t check`,
-  unsupported_argument: `it has an argument ${BRAND.company} can’t check`,
-  decoder_unavailable: `${BRAND.company} can’t decode this protocol yet`,
-  decoder_refused: 'the protocol check refused it',
-  typed_data_not_listed: 'this kind of signature isn’t listed in the rules',
-  value_too_high: 'the amount is over the per-transaction limit',
-  value_plus_fee_too_high: 'the amount plus the maximum network fee is over the per-transaction limit',
+  never_covered: 'this kind of request always needs your approval',
+  no_policy_section: 'what you allowed doesn’t cover this network',
+  decode_failed: `${BRAND.company} couldn’t fully read it`,
+  network_not_listed: 'what you allowed doesn’t cover this network',
+  chain_not_listed: 'what you allowed doesn’t cover this network',
+  fee_bump: 'it pays the network fee for something else, which always needs your approval',
+  unsupported_envelope: `${BRAND.company} can’t check this kind of request automatically`,
+  fee_too_high: 'the network fee is higher than you allowed',
+  source_not_self: 'it isn’t sent from your account',
+  operation_not_allowed: 'it does something you didn’t allow',
+  account_control: 'it changes who controls your account, which always needs your approval',
+  asset_not_listed: 'it uses money or a token you didn’t allow',
+  contract_creation: 'it creates a new program',
+  contract_not_listed: 'it uses a program you didn’t allow',
+  function_not_listed: 'it asks for an action you didn’t allow',
+  selector_not_listed: 'it asks for an action you didn’t allow',
+  calldata_mismatch: 'it doesn’t match the action you allowed',
+  address_not_allowed: 'it involves an account you didn’t allow',
+  opaque_bytes: `it carries information ${BRAND.company} can’t check`,
+  unsupported_argument: `it has a detail ${BRAND.company} can’t check`,
+  decoder_unavailable: `${BRAND.company} can’t check this app’s requests yet`,
+  decoder_refused: `${BRAND.company}’s check refused it`,
+  typed_data_not_listed: 'this kind of signature isn’t one you allowed',
+  value_too_high: 'the amount is more than you allowed each time',
+  value_plus_fee_too_high: 'the amount plus the network fee is more than you allowed each time',
   daily_value_exceeded: 'it would go over today’s amount limit',
-  daily_count_reached: 'today’s limit of automatic signatures is reached',
+  daily_count_reached: 'today’s limit of automatic approvals is reached',
 });
 
 /**
@@ -112,20 +122,26 @@ export const EMAIL_SHARED_TEXT = {
   failed: `${BRAND.company} couldn’t stop sharing. Try again.`,
 };
 /** The mainnet demo's banner headline (D428): every approval of a request for Base or Stellar's public network. */
-export const MAINNET_DEMO_BANNER = 'Real funds, test custody: these funds may be lost';
+export const MAINNET_DEMO_BANNER = 'Real money, test system: you could lose it.';
 /** Under the headline: why (the keys come from the testnet MPC). */
-export const MAINNET_DEMO_WHY = `This test app signs on a real network with keys from ${BRAND.company}’s test setup, which can be reset or broken. Use small amounts only.`;
+export const MAINNET_DEMO_WHY = `This test app uses real money with keys from ${BRAND.company}’s test system, which can be reset or broken. Use small amounts only.`;
 
-export const TEST_APP_NOTE = `Test app: ${BRAND.product} signs only for test networks here. Requests for Stellar, NEAR or EVM mainnets are refused, so don’t keep real funds at this account.`;
+// It claims no more than holds (review of PR 80): a test app's relayed NEAR approval could still run on the real
+// network if the account exists there with the same key (D729's accepted residual), and the advice covers that case.
+export const TEST_APP_NOTE = 'This app is a test version, so it works only with test money. Don’t keep real money in this account.';
 /**
  * The same note for a test app with the mainnet demo on (D428), where the first one would be false: what the demo
  * signs, that it always asks, and that the custody is still test custody.
  */
-export const TEST_APP_DEMO_NOTE = `Test app with ${BRAND.company}’s mainnet demo on: besides test networks, ${BRAND.product} signs real transactions on Base and Stellar’s public network here, up to ${formatUsd(MAINNET_DEMO.txCapUsdMicros)} each. Those always ask you first and are never signed automatically. Other mainnets are refused. The keys are test keys that can be reset or lost, so keep only small amounts at this account.`;
+export const TEST_APP_DEMO_NOTE = `This app is a test version with ${BRAND.company}’s real-money demo on. Besides test money, ${BRAND.product} approves real-money requests on Base and Stellar here, up to ${formatUsd(MAINNET_DEMO.txCapUsdMicros)} each. Those always ask you first and are never approved automatically. Other real networks are refused. The keys are test keys that can be reset or lost, so keep only small amounts in this account.`;
+/** The out-of-policy note's first sentence after the app's name (D853): its automatic approvals didn't cover this one. */
+export const OUT_OF_POLICY_TEXT = ' usually signs these without asking, but this one is outside what you allowed, so please check it yourself.';
+/** The second line of the screen for a request this window can't read (D853), around the app's name: what to do. */
+export const UNREADABLE_NEXT = ['Close this window and try again in ', '.'] as const;
 
 /** The text for a reason code (an unknown code, from a newer vault, is shown generically). */
 export function autoApproveReasonText(reason: string): string {
-  return Object.hasOwn(AUTO_APPROVE_REASON_TEXT, reason) ? AUTO_APPROVE_REASON_TEXT[reason as AutoApproveReason] : 'it doesn’t match the rules';
+  return Object.hasOwn(AUTO_APPROVE_REASON_TEXT, reason) ? AUTO_APPROVE_REASON_TEXT[reason as AutoApproveReason] : 'it doesn’t match what you allowed';
 }
 
 export interface ApprovePageDeps {
@@ -271,7 +287,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     return d.h(
       'header',
       { class: 'app' },
-      // The app's logo (batch C11), when the vault sent one on this build's files origin.
+      // The app's logo (batch C11), when the vault sent one on this build's files origin. "Request 2 of 3 from" only
+      // when more are waiting (D853); a single request reads "From {App}".
       d.h('p', {}, appLogo(d, env, msg.logoUrl), extra ? `${extra} from ` : 'From ', d.h('strong', {}, msg.appName)),
       originText(d, msg.parentOrigin, 'p'),
     );
@@ -339,6 +356,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   }
 
   function stopAutoApproveButton(label: string): HTMLElement {
+    // "Stop auto-approving" is Passport Home's word for the same stop (home-devices.ts): one word on both.
     const box = d.h('div', { class: 'auto-approve' }, d.h('p', {}, 'Auto-approving under ', d.h('strong', {}, label), ' is on.'));
     const btn = d.h('button', { class: 'link', attrs: { type: 'button' } }, 'Stop auto-approving');
     btn.addEventListener('click', (e) => {
@@ -364,20 +382,20 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     // a swap's other fields against that address itself, so a recipient appears only once they are verified.
     const assessed = assessMainnetDemo(input, now(), prices, 'shown');
     const value = assessed.ok
-      ? `This request can move about ${formatUsd(assessed.usdMicros)}, fee included. ${BRAND.company}’s limit is ${cap} per transaction.`
-      : `${BRAND.company}’s limit is ${cap} per transaction.`;
-    const balance = d.h('p', { class: 'muted demo-balance', attrs: { role: 'status' } }, 'Reading this wallet’s balance…');
+      ? `This can move about ${formatUsd(assessed.usdMicros)}, fees included. ${BRAND.company}’s limit is ${cap} each time.`
+      : `${BRAND.company}’s limit is ${cap} each time.`;
+    const balance = d.h('p', { class: 'muted demo-balance', attrs: { role: 'status' } }, 'Reading this account’s balance…');
     void readDemoBalance(network, input.address, balanceFetch, prices).then((b) => {
       if (current?.kind !== 'request' || current.msg.id !== id) return;
       if (b.kind === 'unknown') {
-        balance.textContent = 'Balance unknown.';
+        balance.textContent = 'Couldn’t read the balance.';
         return;
       }
       const held = formatUsd(b.usdMicros);
       if (b.usdMicros > MAINNET_DEMO.balanceWarnUsdMicros) {
         balance.className = 'danger demo-balance';
-        balance.textContent = `This wallet holds about ${held}: keep test funds under ${formatUsd(MAINNET_DEMO.balanceWarnUsdMicros)} — move the rest out.`;
-      } else balance.textContent = `This wallet holds about ${held}.`;
+        balance.textContent = `This account holds about ${held}. Keep less than ${formatUsd(MAINNET_DEMO.balanceWarnUsdMicros)} here and move the rest out.`;
+      } else balance.textContent = `This account holds about ${held}.`;
     });
     // One danger alert (the system's `.jp-alert-danger`): its icon, then the banner's lines.
     return alert(
@@ -396,12 +414,12 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
 
   /** What a Sodax bridge does (D476): the same amount arrives, on the other chain, at this recipient. */
   function bridgeLine(b: DemoBridge): HTMLElement {
-    return d.h('p', { class: 'demo-bridge' }, `Bridge ${b.amount} ${b.symbol} from ${b.fromChain} to ${b.toChain}, 1:1. Recipient on ${b.toChain}: `, d.h('code', { class: 'mono' }, b.recipient));
+    return d.h('p', { class: 'demo-bridge' }, `Moves ${b.amount} ${b.symbol} from ${b.fromChain} to ${b.toChain}. The same amount arrives. Receiver on ${b.toChain}: `, d.h('code', { class: 'mono' }, b.recipient));
   }
 
   /** Where a Sodax swap's output goes. */
   function swapLine(s: DemoSwap): HTMLElement {
-    return d.h('p', { class: 'demo-swap' }, `Swap on Sodax. Recipient on ${s.toChain}: `, d.h('code', { class: 'mono' }, s.recipient));
+    return d.h('p', { class: 'demo-swap' }, `Swaps on Sodax. Receiver on ${s.toChain}: `, d.h('code', { class: 'mono' }, s.recipient));
   }
 
   /** A new request replaces the one on screen: the unanswered one is rejected first. */
@@ -411,8 +429,15 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     primary = null;
   }
 
-  /** The refusal for a request this window can't read or show: no Approve. */
-  const unreadable = (problem: string): HTMLElement[] => [alert(d, 'danger', { class: 'danger' }, `${BRAND.company} can’t read this request, so it can’t be approved.`), d.h('p', { class: 'muted' }, problem)];
+  /**
+   * The refusal for a request this window can't read or show: no Approve. The plain line, what to do, and the reason
+   * (a developer's words) folded, for support (D853).
+   */
+  const unreadable = (problem: string, app: string, address?: string): HTMLElement[] => [
+    alert(d, 'danger', { class: 'danger' }, `${BRAND.company} can’t read this request, so it can’t be approved.`),
+    d.h('p', { class: 'unreadable-next' }, UNREADABLE_NEXT[0], d.h('strong', {}, app), UNREADABLE_NEXT[1]),
+    d.h('details', { class: 'request-details unreadable-reason' }, d.h('summary', { class: 'details-toggle' }, 'Show details'), address ? rows(d, [row(d, 'Your account', fullId(d, address))], 'jp-kv facts your-account') : null, d.h('p', { class: 'muted' }, 'Error (for support): ', d.h('code', { class: 'mono' }, problem))),
+  ];
 
   function showRequest(msg: WindowMessage<'hana:approve-request'>): void {
     replaceCurrent(msg.id);
@@ -447,25 +472,25 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       const notes = [
         demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
         // The out-of-policy case (the confirm pattern's warning alert): why the app's rules didn't sign this one.
-        auto?.reason ? alert(d, 'warning', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
+        auto?.reason ? alert(d, 'warning', { class: 'note out-of-policy' }, d.h('span', {}, d.h('strong', {}, msg.appName), OUT_OF_POLICY_TEXT), ' ', d.h('span', {}, `Why: ${autoApproveReasonText(auto.reason)}.`)) : null,
       ];
       screen = d.h(
         'section',
         { class: 'panel approve' },
-        header(msg, `Request ${msg.position} of ${msg.queued}`),
-        d.h('p', { class: 'account' }, `Your ${ACCOUNT_CHAIN_NAMES[msg.chain]} account `, d.h('code', { class: 'mono' }, msg.address)),
+        header(msg, msg.queued > 1 || msg.position > 1 ? `Request ${msg.position} of ${msg.queued}` : undefined),
+        accountLine(d, msg.chain, msg.address),
         msg.emailShared ? emailSharedLine(msg.appName) : null,
         // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
         // Support ID goes. An unreadable request keeps the Support ID and the notes in view.
         decoded
-          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [supportId], nowMs: now() })
-          : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem)),
+          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [rows(d, [row(d, 'Your account', fullId(d, msg.address))], 'jp-kv facts your-account'), supportId], nowMs: now() })
+          : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem, msg.appName, msg.address)),
         buttons('Approve', decoded !== null, msg.id),
         auto?.active ? stopAutoApproveButton(auto.label) : null,
       );
     } catch {
       approvable = false;
-      screen = d.h('section', { class: 'panel approve' }, d.h('div', { class: 'request' }, ...unreadable('The request could not be shown.')), buttons('Approve', false, msg.id));
+      screen = d.h('section', { class: 'panel approve' }, d.h('div', { class: 'request' }, ...unreadable('The request could not be shown.', msg.appName)), buttons('Approve', false, msg.id));
     }
     current = { kind: 'request', msg, input, decodable: approvable };
     state = 'request';
@@ -476,7 +501,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     stopWatching = watchOverflowing(win.document, win as unknown as Parameters<typeof watchOverflowing>[1]);
   }
 
-  const consentRefusal = (): HTMLElement => d.h('div', { class: 'consent' }, d.h('h1', {}, 'Automatic signing'), alert(d, 'danger', { class: 'danger' }, 'This app’s automatic-signing rules couldn’t be checked, so they can’t be allowed.'));
+  const consentRefusal = (): HTMLElement => d.h('div', { class: 'consent' }, d.h('h1', {}, 'Automatic approvals'), alert(d, 'danger', { class: 'danger' }, `${BRAND.company} couldn’t check this app’s rules for automatic approvals, so they can’t be allowed.`));
 
   function showConsent(msg: WindowMessage<'hana:consent-request'>): void {
     replaceCurrent(msg.id);
@@ -573,10 +598,10 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
    */
   function answeredView(c: Current, accepted: boolean, countdown: HTMLElement): HTMLElement {
     const consent = c.kind === 'consent';
-    const heading = accepted ? (consent ? 'Allowed' : 'Approved') : consent ? 'Not allowed' : 'Declined';
+    const heading = accepted ? (consent ? 'Allowed' : 'Approved') : consent ? 'Not allowed' : 'Rejected';
     const lines = accepted
       ? [d.h('p', {}, 'You can go back to ', d.h('strong', {}, c.msg.appName), '.'), d.h('p', { class: 'muted' }, 'If it needs another approval, it’ll appear here.')]
-      : [d.h('p', {}, consent ? 'Automatic signing wasn’t turned on.' : 'Nothing was signed.')];
+      : [d.h('p', {}, consent ? 'Automatic approvals weren’t turned on.' : 'Nothing was sent or approved.')];
     const closeNow = d.h('button', { class: 'secondary jp-btn jp-btn-secondary', attrs: { type: 'button', id: 'approve-close' } }, 'Close now');
     const shownAt = now();
     closeNow.addEventListener('click', (e) => {

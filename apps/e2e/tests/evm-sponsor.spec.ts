@@ -12,10 +12,11 @@
 // sponsored-later, sponsored-token-first-time, sponsored-token-later, sponsored-unknown-call and
 // sponsored-approve-warning.
 import { type Page } from '@playwright/test';
-import { parseFunctionSignature } from '@hana-id/core/decode';
+import { parseFunctionSignature, shortId } from '@hana-id/core/decode';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { API_URL, EVM_CHAIN_ID } from '../src/stack.ts';
 import { approve, clickAction, expect, login, newApp, okValue, openPartner, reject, settled, test } from './fixtures.ts';
+import { expectPlainWindow } from './plain-checks.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const POPUP = { width: 420, height: 680 } as const;
@@ -30,7 +31,9 @@ const call = (sig: string, ...args: (bigint | string)[]) => `${parseFunctionSign
 const CHECK_IN_CALL = { to: CHECK_IN, data: '0x183ff085' };
 const TRANSFER = { to: TOKEN, data: call('transfer(address,uint256)', RECIPIENT, 5_000_000n) };
 const UNLIMITED_APPROVE = { to: TOKEN, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) };
-const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test chain 31337. Your address stays the same and you still approve every action.';
+const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test network. Your address stays the same and you still approve every action.';
+/** A long value as a sentence shows it (D859): its short form, then the words screen readers get at its first mention. */
+const short = (v: string) => `${shortId(v)} (written out below)`;
 
 async function sponsorControl(body: Record<string, unknown>): Promise<void> {
   const res = await fetch(`${API_URL}/__e2e/evm-sponsor`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -56,6 +59,8 @@ async function sponsoredWindow(page: Page, name: string, calls: { to: string; da
     throw new Error(`no window for ${name}: ${JSON.stringify(await page.evaluate((n) => (window as any).e2e.results[n], name))}: ${String(e)}`);
   });
   await expect(popup.locator('.summary-failed')).toHaveCount(0);
+  // The plain-wording rule and D859's rules, on every window of the real flow.
+  await expectPlainWindow(popup);
   return popup;
 }
 
@@ -112,7 +117,7 @@ test('the demo check-in, first and later: one window, the setup note only the fi
 
   // The check-in's selector on a contract Journear doesn't know: the red "can't tell" line, no name.
   popup = await sponsoredWindow(page, 'unknown', [{ to: UNKNOWN_CONTRACT, data: '0x183ff085' }]);
-  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.cannot-explain')).toContainText('Journear can’t tell what this request does');
+  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.cannot-explain')).toContainText('Journear can’t check what this does (it asks for an action Journear doesn’t know).');
   await shot(popup, 'sponsored-unknown-call', browserName);
   expect(await approveAndWait(page, popup, 'unknown')).toMatchObject({ status: 'executed' });
 
@@ -126,7 +131,7 @@ test('the demo check-in, first and later: one window, the setup note only the fi
 test('a token transfer, first and later: the calls’ own summary, the setup note only the first time', async ({ page, browserName }) => {
   await freshSession(page);
   let popup = await sponsoredWindow(page, 'first', [TRANSFER]);
-  await expect(popup.locator('h2.summary-headline')).toHaveText(`E2E Partner wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
+  await expect(popup.locator('h2.summary-headline')).toHaveText(`E2E Partner wants to send 5,000,000 units of an unlisted token to ${short(RECIPIENT)}`);
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(SETUP);
   await expect(popup.locator('.danger-box')).toHaveCount(0);
   await shot(popup, 'sponsored-token-first-time', browserName);
@@ -140,7 +145,7 @@ test('a token transfer, first and later: the calls’ own summary, the setup not
 test('an unlimited approve on the first action: as alarming as unsponsored, plus the setup note', async ({ page, browserName }) => {
   await freshSession(page);
   const popup = await sponsoredWindow(page, 'approve', [UNLIMITED_APPROVE]);
-  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.unlimited-spend')).toContainText(`This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN}, with no limit`);
+  await expect(popup.locator('.danger-box p.risk-lead.summary-warning.unlimited-spend')).toContainText(`This lets ${short(SPENDER)} (not checked by Journear) take all your tokens from ${shortId(TOKEN)} (an unlisted token), now or later, with no limit`);
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(SETUP);
   await shot(popup, 'sponsored-approve-warning', browserName);
   await reject(popup);

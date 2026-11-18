@@ -62,8 +62,13 @@ const EVM_NATIVE_SYMBOLS: Readonly<Record<number, string>> = Object.freeze({
 });
 
 export interface EvmChainInfo {
-  /** Hana's own name for the chain, with "(testnet)" unless the name already says so: "Sepolia (testnet)", "Base". */
+  /**
+   * Hana's own name for the network as a user reads it: "Base Sepolia (test network)", "Base (real money)",
+   * "Local test network (Hardhat, Anvil)". The chain's number is never in it (it lives in the folded details).
+   */
   readonly label: string;
+  /** The plain name alone, for a sentence: "Base Sepolia", "Sonic" (a "testnet" suffix dropped), "the local test network". */
+  readonly name: string;
   readonly testnet: boolean;
   /** The native coin's symbol: "ETH". */
   readonly nativeSymbol: string;
@@ -78,8 +83,10 @@ export function evmChainInfo(chainId: number): EvmChainInfo | null {
   const testnet = Object.hasOwn(TEST_EVM_CHAINS, chainId);
   const name = testnet ? TEST_EVM_CHAINS[chainId] : Object.hasOwn(KNOWN_EVM_MAINNETS, chainId) ? KNOWN_EVM_MAINNETS[chainId] : undefined;
   if (name === undefined) return null;
-  const label = testnet && !/testnet|^Local/iu.test(name) ? `${name} (testnet)` : name;
-  return { label, testnet, nativeSymbol: Object.hasOwn(EVM_NATIVE_SYMBOLS, chainId) ? (EVM_NATIVE_SYMBOLS[chainId] as string) : 'ETH' };
+  const local = name.startsWith('Local');
+  const plain = local ? 'the local test network' : name.replace(/\s+testnet$/iu, '');
+  const label = local ? `Local test network ${name.slice('Local '.length)}` : testnet ? `${plain} (test network)` : `${plain} (real money)`;
+  return { label, name: plain, testnet, nativeSymbol: Object.hasOwn(EVM_NATIVE_SYMBOLS, chainId) ? (EVM_NATIVE_SYMBOLS[chainId] as string) : 'ETH' };
 }
 
 // The mainnet demo (D428): the mainnets a `pk_test_` app with Hana's demo on may sign for are Base (8453) and Stellar's

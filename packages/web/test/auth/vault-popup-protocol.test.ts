@@ -130,7 +130,7 @@ describe('vault-built messages in the approval popup', () => {
     deliver(vault.approveRequest(id, SUBJECT, { label: POLICY.label, active: true, reason: 'value_too_high' }));
     expect(page.state).toBe('request');
     expect(pageText()).toContain('Request 2 of 3');
-    expect(pageText()).toContain('the amount is over the per-transaction limit');
+    expect(pageText()).toContain('the amount is more than you allowed each time');
     expect(document.querySelector('button.link')?.textContent).toBe('Stop auto-approving');
     approveWithGuard();
     expect(vault.approved(answers()[0], id, SUBJECT)).toBe(true);
@@ -143,7 +143,7 @@ describe('vault-built messages in the approval popup', () => {
       deliver(vault.approveRequest(id, SUBJECT, { label: POLICY.label, active: true, reason }));
       // Each one replaces the last on screen (which is rejected), so each is shown with its own reason.
       expect(page.state).toBe('request');
-      expect(pageText()).toContain(`Not signed automatically under “${POLICY.label}”: ${autoApproveReasonText(reason)}.`);
+      expect(pageText()).toContain(`usually signs these without asking, but this one is outside what you allowed, so please check it yourself. Why: ${autoApproveReasonText(reason)}.`);
     }
   });
 

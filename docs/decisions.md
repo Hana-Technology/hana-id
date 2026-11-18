@@ -12147,17 +12147,30 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   it's better to hide and then clearly state the risks. If we just expand and show everything it makes the user even
   more confused."
 - Decision: the technical details always start folded, in every case, and the user can always open them ("Show
-  details"). Every case that used to open them carries a plain risk line above the fold instead, standing on its own:
-  - can't explain: "Journear can’t tell what this request does[: why]. It could move your money or tokens. Only
-    approve if you fully trust {App}. Technical details are below.";
-  - a message that isn't text: "Journear can’t read this message, so it can’t tell what signing it does. Only approve
-    if you fully trust {App}. Technical details are below." (amber);
-  - steps left out (D814): "This request does N things at once and not all are listed here. Only approve if you
-    fully trust {App}. Technical details are below." (amber), or, when a left-out step moves or grants value or
-    changes control, with "; some of those left out move money or tokens or change who controls your account" (red);
-  - raw signing: "This asks you to sign something Journear can’t read at all. On {EVM chains | Stellar} it could give
-    away control of your account or your funds. Reject unless you are certain." (red; it replaces the older raw
-    line in the window);
+  details"). Every case that used to open them carries a plain risk line above the fold instead, standing on its own
+  (texts reworded under D853 on 2026-11-18, branch `feat/plain-approval-wording`: one shape, "Journear can’t check
+  what this does[ (why)]. {the risk} {ending}", red ending "If you’re not sure, reject it.", amber ending "Approve only
+  if you expected this from {App}."; "Technical details are below" is no longer said as advice, the details stay one
+  tap away):
+  - can't explain: "Journear can’t check what this does[ (why)]. It could take your money or tokens. If you’re not
+    sure, reject it." (red), or the same with the amber ending;
+  - a message that isn't text: "Journear can’t check what this does (the message isn’t readable text). Approve only if
+    you expected this from {App}." (amber);
+  - steps left out (D814): "Journear can’t check everything this does (it does N things at once and not all are
+    listed here). Approve only if you expected this from {App}." (amber), or, when a left-out step moves or grants
+    value or changes control, "… Some of the steps left out move money or tokens, or change who controls your
+    account. If you’re not sure, reject it." (red);
+  - raw signing: headline "{App} wants you to sign something Journear can’t read", line "Signing this could hand over
+    your whole account and everything in it. Reject it unless you know exactly why you’re signing." (red; it replaces
+    the older raw line in the window);
+  - in the same family (reworded under D853): a malformed NEAR token call "Journear can’t check what this does (it
+    uses {method} on {contract} in a non-standard way). …" (red); typed data that calls itself Permit2 for another
+    contract "Journear can’t check what this does. It says it’s Permit2, a well-known way to let others take your
+    tokens, but it isn’t the real one. It may be a scam. Reject it unless you know exactly why {App} needs it." (red;
+    it keeps its own advice, after the review of PR 80); a possible permit
+    "Journear can’t check what this does (it may be a permission for someone else to take your tokens). Approve only
+    if you expected this from {App}." (amber); the internal fallback "Journear can’t check what this does (it couldn’t
+    read this request). It could take your money or tokens. If you’re not sure, reject it." (red);
   - an unreadable offer price, a pool deposit or withdrawal, a Soroban call's extra authorizations keep their own
     lines too.
 - Colours: red where the unreadable part could move value or control with no visible bound (raw signing; an unknown
@@ -12193,7 +12206,8 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   operations (D110); a NEAR function call with JSON arguments ("use {contract} ({method})", the founder's example), its
   arguments folded (an accepted trade-off). The summary is total: if building it fails on any value the decoders let
   through, the request gets "{App} wants you to approve a request Journear can't explain" with a red "Journear
-couldn’t read this request. Reject it unless you are certain.", not explainable. Every summary the unit, renderer and
+couldn’t read this request. Reject it unless you are certain.", not explainable (reworded under D853: "{App} wants you
+to approve something Journear can’t read", with the red fallback line above). Every summary the unit, renderer and
 e2e approval tests build is checked never to be that fallback, so the catch can't hide a bug.
 - Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, after an automated review; decided while building,
   **confirmed by the user 2026-11-18**): a NEAR call to a standard value-moving method (`ft_transfer`, `ft_transfer_call`, `nft_transfer`,
@@ -13022,6 +13036,27 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   details, never dropped. A wording that would make a risk sound smaller than it is never counts as plainer (D809).
 - Where it lives: `docs/security.md` "Browser" (the approval window's wording rules), and this entry for everything
   else. Reviews of user-visible text check against it.
+- Applied to the approval window on 2026-11-18 (branch `feat/plain-approval-wording`, from `next`; decided by the user
+  2026-11-18 when they approved rewording everything an end user reads; the texts decided while building, to
+  confirm): every string of `summary.ts`, `render-approval.ts`, `approve-page.ts` and `render-consent.ts` (words only
+  there) and the display labels of `networks.ts`; D810's texts reworded (above); the result after Reject reads
+  "Rejected" and "Nothing was sent or approved."; one request reads "From {App}" ("Request 2 of 3 from {App}" only when
+  more wait); the account line "Your Ethereum-style account"; the out-of-policy note "{App} usually signs these without
+  asking, but this one is outside what you allowed, so please check it yourself." with "Why: {one plain reason}" (the
+  policy's label, which the app chose, is no longer in that sentence; the matcher's reason codes are unchanged); a
+  request the window can't read keeps "Journear can’t read this request, so it can’t be approved.", then "Close this
+  window and try again in {App}.", the decoder's reason folded as "Error (for support)". Where a plainer word would have
+  changed a fact the old fact was kept: a Stellar signer's weight is "strength" (a number the user may need), the NEAR
+  network check's details (block hash, key, nonce and expiry) moved to the folded details row, "with no practical
+  limit" reads "with no real limit" (not "no limit": the type's maximum and a merely huge amount stay told apart).
+  One banned-word list for every surface (after merging PR 78): the approval window's words (chain, unlimited, revoke,
+  threshold, weight, burn, verified, authorization, delegate, sponsor, relayed, decimals, smallest units, …) joined
+  `@hana-id/brand/plain-words`, which the approval scans now use; bare "block" stays off it (a plain verb on the
+  sign-in pages: "settings block the window"; "block hash" and "block height" stay on), and a template's `${…}` names
+  are read as "…". "Stop auto-approving" keeps Passport Home's word. An EVM network Journear doesn't know keeps its number in view, "a
+  network Journear doesn’t know (no. N)", so two of them never look the same (after the review of PR 80). Checked by tests: every summary the unit tests build, and every
+  rendered window's words above the fold, carry none of the brief's jargon words (`packages/core/test/plain-words.ts`,
+  `packages/web/test/auth/plain-words.ts`).
 - Address impact: none.
 
 ### D854. Journear's demo check-in is on the verified list, and its one function reads in plain words
@@ -13250,6 +13285,158 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Rejected: a nightly on `next` (GitHub would ignore a `schedule` there); keeping `test-results/` in the artifact (it
   doubles the traces); `pull_request_target` for fork PRs (secrets and a write token next to fork code); a third-party
   paths-filter action (D383's reason stands).
+
+## The approval window in plain words, and three display changes (branch `feat/plain-approval-wording`), 2026-11-18
+
+The plain-wording pass of D853 over the approval window (recorded under D853 and D810), then three display changes the
+founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`packages/web`)".
+
+### D858. The relayed NEAR approval says "someone else pays" once, and its one real risk in amber
+- Date 2026-11-18 · Status: **decided by the user 2026-11-18**; corrected by the coordinator the same day after an
+  automated review (below); **confirmed by the user 2026-11-18** (PR 80 approved); the review amendments of PR 80
+  amended while building, to confirm · Amends D723, D729, D809, D813, D814 · Built on
+  `feat/plain-approval-wording` (from `next`), not merged, not deployed: `packages/core/src/decode/summary.ts`
+  (`RELAYED_FEE`, `ApprovalSummary.noNearLeaves`, `actsAsYou`, code `acts_as_you`, `nearActions`' `noNearLeaves`),
+  `packages/web/src/auth/render-approval.ts` (`nearDelegate`, `NEAR_DELEGATE_NOTES`); tests in
+  `packages/core/test/approval-summary.test.ts`, `packages/core/test/plain-words.ts` (`ZERO_COST`) and
+  `packages/web/test/auth/render-approval-near.test.ts` ("D858").
+- Cause: the public stamps demo's screen said "someone else pays" three times (a fee row "paid for you by a relayer", a
+  "NEAR leaving your account: None of your NEAR (the relayer pays…)" row, a blue relayer note), put the one real risk
+  (the call acts as the user) at the end of a blue information box, and added a blue "This authorization doesn't
+  name a network" note.
+- Decision: a relayed NEAR action shows its headline as before; the network row; the fee row "Network fee: free for
+  you. Someone else pays it." (it speaks about the fee only); when no NEAR of the user's leaves and Journear sees no
+  token of theirs move, no "NEAR leaving your account: None of your NEAR…" row (it only repeated the fee row; NEAR the
+  action attaches or sends is someone else's and keeps its own row, "NEAR it sends, paid by someone else"), otherwise
+  that total row exactly as decided; for every relayed call to another account's contract, the amber line "This acts
+  as you: {contract} can use anything you keep with it." ({contract} the receiver, an account id the decoder checked,
+  as code); for a live app only, an amber "This approval could also be used on the real NEAR network if your account
+  exists there." ("the NEAR test network" for a request that names mainnet); the test-app note as before. The blue
+  relayer note and the blue network note are gone; who pays and the refund rule are in the folded details, with the
+  expiry.
+- Corrected 2026-11-18 (the coordinator, after an automated review of the first build): the first build showed one row
+  "Cost to you: nothing. Someone else pays the fee." for a plain relayed call. A relayed call can move tokens the user
+  keeps with that contract, so "nothing" was a safety claim Journear can't back; the row now speaks only about the fee.
+  Rule: the window never says a request costs the user nothing, or moves none of their money, unless Journear fully
+  knows its effect; today that is only the pinned demo check-in on EVM (D854), and on NEAR, where there is no checked
+  list, never. A test scans every summary the unit tests build for such a claim against an explicit allowlist (the
+  check-in's two lines).
+- When the "None of your NEAR" row goes (`noNearLeaves`, computed in the summary, never by the page): relayed, on
+  another account than the user's, every step in a line, explainable, no warning at all, and every action a Transfer
+  (the relayer's NEAR, nearcore) or a FunctionCall that reads as a plain "use {contract} ({method})" (not a token
+  transfer, permission or value-like method, D810 as amended, D811). Anything else keeps the "NEAR leaving your
+  account" row exactly as decided (D723, D729): a token transfer or permission, a method whose name says it may move
+  value, unreadable or non-standard arguments, steps left out of the lines, a call to a contract on the user's own
+  account, account control, a stake or a burn.
+- Never "Journear pays": the popup can't know who relays it (a partner may relay it itself, D813).
+- Why the network line is dropped for test apps: the vault binds a test app's delegate action to testnet (D726, D729:
+  the user's key, nonce and expiry on testnet; only FunctionCall and Transfer to a `*.testnet` receiver other than the
+  user's own), so a copy run on mainnet calls an account that doesn't exist there and moves nothing (the residual is
+  `docs/security.md` "Known open issues"). A live app's isn't bound, so its line stays, amber (a risk is never in a blue
+  box, D853).
+- After the independent review of PR 80 (2026-11-18): D729's residual stays accepted (a test app's signed delegate
+  action could run on the real NEAR network about a year later if the user's implicit account exists there with the
+  same key and a lower nonce; the test-app rule makes such a run call an account that doesn't exist there). So the
+  test-app note no longer claims more than holds: it was "… Journear Passport won’t approve anything on a real network
+  here. …" and is now "This app is a test version, so it works only with test money. Don’t keep real money in this
+  account." That advice is what covers the user in the residual case: an account that holds no real money on the real
+  network has nothing a replayed approval could take there.
+- Adversarial check (concluded): the window makes no claim about what a relayed call does with the user's holdings;
+  the amber acts-as-you line, which now leads its box instead of ending a blue one, says that it can use anything the
+  user keeps with that contract, for every relayed call. A hostile page can't make the "None of your NEAR" row vanish
+  for a request that takes the user's NEAR or tokens Journear can see: the summary decides it from the decoded actions,
+  and every such case has a warning or a non-plain line. A transfer in a delegate action is the relayer's NEAR
+  (nearcore `apply_delegate_action`). No fact was dropped: the refund rule and who pays are in the details, and the
+  only row removed is the one that repeated the fee row.
+- Address impact: none.
+
+### D859. Addresses and keys in sentences: a name or a short form there, the whole value once in its own row
+- Date 2026-11-18 · Status: **decided by the user 2026-11-18**; details decided while building, **confirmed by the user 2026-11-18** (PR 80 approved); the review amendments of PR 80 amended while building, to confirm · Amends
+  D809, D811, D814 · Built on `feat/plain-approval-wording`: `packages/core/src/decode/summary.ts` (`IdRole`, a code
+  part's `role`, `isLongId`, `shortId`), `packages/web/src/auth/render-approval.ts` (`IdBook`, `ID_LABELS`, `fullId`,
+  `summaryNodes`, `riskBox`, `renderApproval`), `auth/approve-page.ts` (`accountLine`, the details' "Your account"
+  row), `auth/css/approval.css` (`dl.id-rows`, `code.id-full`, `.sr-only`); tests
+  `packages/web/test/auth/approval-summary.test.ts` ("D859"), `packages/web/test/auth/plain-words.ts` (`idProblems`, run
+  on every window the web tests render), `approve-page.test.ts`, `apps/e2e/tests/approval-summary.spec.ts`.
+- Decision: a headline, line or warning names a value by a name when it has one ("your account", a checked contract's
+  name, a readable NEAR name such as `stamps.testnet`, shown whole as it is) or by its short form (`shortId`: first 6
+  and last 4 characters, a key's prefix kept: `0x3333…3333`, `GCI2FC…UNWJ`, `ed25519:cGfH…izuN`). The whole value
+  appears once above the fold, in its own labelled row right under the first sentence that names it ("To", "From",
+  "Token", "Collection", "Who gets the permission", "Whose permission", "Owner", "Key", "Program", "Account", "Pool",
+  "Fee paid by"), as code in groups of four for comparing (spaced by CSS, so the text and a copy of it are the value
+  exactly), never folded or cut. The headline's rows come right after the red box (D809: nothing between the
+  headline and the red box), so a control change's key row is right under the danger box (D814); a warning's rows are
+  inside its box under its line or bullet. Which values are cut is decided by the summary (a code part's role), never
+  by the page's guess: a method name, a token id, a sign-in domain, a NEP-413 recipient, a network passphrase stay
+  whole in the sentence as before.
+- Two different values with the same short form in one request (compared without letter case, as EIP-55 spellings
+  differ only there), or one with the user's own address's short form (the account line shows it), are never told
+  apart by it: each is numbered in its sentence and row ("account 1", "account 2"; "key 1" for keys), both rows shown.
+- Screen readers: the short form is `aria-hidden` and followed by a spoken "(written out below)" at its first mention,
+  "(written out above)" once its row is on the page above, and nothing for a later mention before its row (after the
+  review of PR 80); they read the whole value in its row (`IdBook.hint`, the web tests check the pointer's direction).
+- The account line reads "Your account: 0x2c75…5c23 (Ethereum-style)" (Stellar, NEAR likewise), with the whole account
+  as the details' first row ("Your account"), before the Support ID; no copy button (kept simple, as decided). Screen
+  readers get the whole account on the line itself.
+- Tests: the short form and the row come from the same value (every rendered window in the web tests is checked: each
+  short form has a row whose value cuts to it, each value has exactly one row, a numbered value has a numbered row, no
+  sentence holds a whole value that has a row, every short form is hidden from screen readers); look-alike pairs on
+  EVM and against the user's own address; a NEAR readable name versus an implicit account.
+- Adversarial check (concluded): a short form is easy to grind (an EVM short form is 8 hex characters, about 32 bits),
+  so it is never the protection: the whole value is always in view, unfolded, labelled, grouped for comparing, and the
+  same value the decoder read (one source, tested). What the change could have made easier, and doesn't: a look-alike
+  of another address in the same request, or of the user's own address on the account line, can't hide behind a
+  matching short form (both are numbered, both rows shown); a look-alike of an address the user expects from outside
+  the request (a contract they know) shows a short form that matches what they remember, which is why the row stays
+  in view right under the sentence and not in the details, and the verified-contract names still come only from
+  Journear's list. Residual, accepted with D859: a user who reads only the sentence and not the row can be misled by a
+  ground short form; before D859 the same user saw the whole value in the sentence, but a 40-character value read in
+  a sentence is no stronger a check for that user than the grouped row.
+- Address impact: none.
+
+### D860. A reviewed list of well-known tokens: "5 USDC" instead of units
+- Date 2026-11-18 · Status: **decided by the user 2026-11-18**; details decided while building, **confirmed by the user 2026-11-18** (PR 80 approved); the review amendments of PR 80 amended while building, to confirm · Amends
+  D811 · Built on `feat/plain-approval-wording`: `packages/core/src/known-tokens.ts` (`KNOWN_TOKENS`, `knownToken`,
+  `knownSymbolOn`, `CIRCLE_STELLAR_ISSUERS`), `decode/summary.ts` (`knownEvmToken`, `knownStellarToken`,
+  `knownNearToken`, `realTokenLine`, the warning code `token_lookalike`); tests `packages/core/test/known-tokens.test.ts`
+  and additions to `approval-summary.test.ts`.
+- Decision: a pinned, reviewed list, by network (EVM chain ID, Stellar network passphrase, NEAR network) and exact id
+  (EVM address in any letter case, a Stellar classic asset `CODE:ISSUER` or asset contract `C…`, a NEAR account id), of
+  `{symbol, name, decimals, kind: 'token' | 'collectible', sources, read}`. It extends the mainnet demo's list without
+  replacing it: `MAINNET_DEMO` stays the source of the demo's amounts and caps, and a test checks every demo token is on
+  the new list with the same symbol and decimals. Nothing is ever read from the token itself.
+- Seeded conservatively, every id from the issuer's own page, read 2026-11-18: Circle's USDC on Ethereum, OP Mainnet,
+  Polygon PoS, Base, Arbitrum One, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, OP Sepolia and Polygon Amoy
+  (https://developers.circle.com/stablecoins/usdc-contract-addresses); Circle's EURC on Ethereum, Base, Ethereum
+  Sepolia and Base Sepolia (https://developers.circle.com/stablecoins/eurc-contract-addresses); 6 decimals as Circle
+  states (https://developers.circle.com/gateway/concepts/non-usdc-assets); on Stellar, Circle's USDC and EURC issuers on
+  the public network and testnet (the same pages), 7 decimals (https://developers.circle.com/cctp/references/stellar),
+  their asset contracts derived from the asset (`Asset.contractId`, derived again in the test; the testnet USDC one
+  also matches the constant in Circle's own quickstart) and XLM's on both; on NEAR, Circle's USDC accounts on mainnet
+  and testnet (Circle's USDC page; 6 decimals from NEAR's own SDK token list, as Circle states none for NEAR),
+  `wrap.near` (wNEAR, 24 decimals, NEAR's own `core-contracts` README) and `wrap.testnet` (NEAR's own SDK list; weaker
+  than the mainnet entry, which the README states). Left out (no official source found): Stellar mainnet USDC/EURC
+  contract ids as published ids (derived instead), EURC on Arbitrum, OP and Polygon, and every collectible.
+- What the window says: a listed token's amount "5 USDC" (its decimals, exact up to six places, otherwise rounded
+  against the user, D814), with the line "This is the real USDC token (0x036C…CF7e)." (the id whole in its row, D859;
+  first built as "…, checked by Journear.", reworded after the review of PR 80: under a red permission warning it read
+  as if the request was checked; "(checked by Journear)" now qualifies only who gets something); an unlisted one "5,000,000 units of an unlisted token" with "Journear doesn’t know this token (…),
+  so it can’t tell what 5,000,000 units are worth. Check the amount in {App} first." (now also on NEAR and Soroban
+  token calls, as "these units" when the request moves it more than once); a Stellar asset whose code is a listed
+  symbol on that network but whose issuer isn't the listed one: shown as "5 of the asset USDC:G…" with an amber "This
+  is not the USDC Journear knows (…). It may be a copy." The code is the asset's own identity in the signed request,
+  not a contract's claim. It matches the exact listed code from another issuer, and (after the review of PR 80) a code
+  of the same shape: letter case ignored, trailing digits dropped, and 0, 1, l, 5, 8 and 2 read as O, I, I, S, B and Z
+  (`codeShape`, `imitatedSymbolOn`): "usdc", "USDC2" and "U5DC" are flagged, "USDCX" and "XUSDC" are not (tested); a
+  wider look-alike (other scripts, a prefix or suffix) is only "the asset CODE:ISSUER", with its whole id in its row.
+  EVM and NEAR tokens carry no such trusted name, so they get no look-alike line (a token
+  calling itself USDC there is just unlisted). A collectible on the list never gives an amount a symbol (its numbers
+  are item ids); none is seeded.
+- Adversarial check (concluded): the symbol is earned by the exact id on the exact network, never by a name: a
+  look-alike address, the same address on another chain, an asset with the same code from another issuer, and a NEAR
+  account that merely contains the listed name are all unlisted (tested). Wrong decimals would misstate an amount by a
+  power of ten, so they come from the issuer or the standard, with the source beside each entry. The "real" line names
+  the id it vouches for, whole in its row, so a user comparing with their app sees the same contract.
 - Address impact: none.
 
 ## Plain words outside the approval window (branch `feat/plain-wording-other`), 2026-11-18

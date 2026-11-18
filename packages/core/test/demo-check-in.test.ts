@@ -18,13 +18,19 @@ import {
 } from './entries.ts';
 import { SPONSOR_CHAINS, SPONSOR_ME, SPONSOR_NOW_MS, sponsorSubject, sponsoredApproval, sponsoredCall } from './evm-sponsored-fixture.ts';
 
+import { jargonIn, zeroCostIn } from './plain-words.ts';
+
 const APP = 'Partner App';
 const fallbackHits: string[] = [];
 const summarizeApproval: typeof summarizeApprovalRaw = (d, ctx) => {
   const s = summarizeApprovalRaw(d, ctx);
   if (s === UNEXPLAINED_SUMMARY) fallbackHits.push(d.kind);
+  jargonHits.push(...jargonIn(s), ...zeroCostIn(s));
   return s;
 };
+// No chain jargon in what the user reads (D853).
+const jargonHits: string[] = [];
+afterAll(() => expect(jargonHits).toEqual([]));
 afterAll(() => expect(fallbackHits).toEqual([]));
 const text = (t: SummaryText) => summaryString(t, APP);
 
@@ -34,8 +40,8 @@ const LOOK_ALIKE = checksumAddress(parseHex0x(`${CHECK_IN.slice(0, -1).toLowerCa
 const OTHER = '0x1111111111111111111111111111111111111111';
 
 const HEADLINE = `${APP} wants to check you in`;
-const LINES = ['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${CHECK_IN}, verified by Journear).`];
-const CANT_TELL = `Journear can’t tell what this request does: it calls a function Journear doesn’t recognise. It could move your money or tokens. Only approve if you fully trust ${APP}. Technical details are below.`;
+const LINES = ['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${CHECK_IN}, checked by Journear).`];
+const CANT_TELL = `Journear can’t check what this does (it asks for an action Journear doesn’t know). It could take your money or tokens. If you’re not sure, reject it.`;
 
 function plain(to: string, data: string, value = 0n, chainId = 31337): ApprovalSummary {
   const tx = parseEvmTxRequest({ chainId: `0x${chainId.toString(16)}`, nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x2', maxPriorityFeePerGas: '0x1', to, value: `0x${value.toString(16)}`, data });
@@ -111,7 +117,7 @@ describe('the summary of a check-in', () => {
     ['a look-alike address', LOOK_ALIKE, '0x183ff085'],
   ] as const)('%s: the red "can’t tell" line, no name', (_name, to, data) => {
     for (const s of [plain(to, data), sponsored([sponsoredCall(to as `0x${string}`, data as `0x${string}`)])]) {
-      expect(text(s.headline)).toBe(`${APP} wants to use contract ${to}`);
+      expect(text(s.headline)).toBe(`${APP} wants to use the program ${to}`);
       expect(s.warnings.map((w) => text(w.text))).toEqual([CANT_TELL]);
       expect(s.explainable).toBe(false);
       expect(JSON.stringify(s)).not.toContain('check-in');
@@ -132,11 +138,11 @@ describe('the summary of a check-in', () => {
 
   it('several check-ins in a batch: one grouped line, nothing left out, no box', () => {
     const s = sponsored([sponsoredCall(CHECK_IN, '0x183ff085'), sponsoredCall(CHECK_IN, '0x183ff085')]);
-    expect(text(s.headline)).toBe(`${APP} wants to do 2 things in one transaction`);
+    expect(text(s.headline)).toBe(`${APP} wants to do 2 things at once`);
     // In a batch the reassurance is about the check-in alone, never the whole request.
     expect(s.lines.map(text)).toEqual([`2 times: check you in. This is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens. ${LINES[1]}`]);
     const mixed = sponsored([sponsoredCall(CHECK_IN, '0x183ff085'), sponsoredCall(OTHER, '0xdeadbeef')]);
-    expect(mixed.lines.map(text)).toContain(`Use contract ${OTHER}`);
+    expect(mixed.lines.map(text)).toContain(`Use the program ${OTHER}`);
     expect(mixed.lines.map(text).join('\n')).toContain('The check-in itself doesn’t move any money or tokens.');
     expect(JSON.stringify(mixed)).not.toContain('It doesn’t move any money');
     expect(s.warnings).toEqual([]);

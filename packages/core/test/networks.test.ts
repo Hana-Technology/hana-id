@@ -72,14 +72,15 @@ describe('test apps and mainnet chains (D39)', () => {
 });
 
 describe('chain names and native coins, from Hana’s own tables', () => {
-  it('names test chains with "(testnet)" once, mainnets plainly, and gives each its native coin', () => {
-    expect(evmChainInfo(11155111)).toEqual({ label: 'Sepolia (testnet)', testnet: true, nativeSymbol: 'ETH' });
-    expect(evmChainInfo(84532)).toEqual({ label: 'Base Sepolia (testnet)', testnet: true, nativeSymbol: 'ETH' });
-    expect(evmChainInfo(57054)).toEqual({ label: 'Sonic Blaze testnet', testnet: true, nativeSymbol: 'S' });
-    expect(evmChainInfo(97)).toEqual({ label: 'BNB Smart Chain testnet', testnet: true, nativeSymbol: 'tBNB' });
-    expect(evmChainInfo(31337)).toEqual({ label: 'Local (Hardhat, Anvil)', testnet: true, nativeSymbol: 'ETH' });
-    expect(evmChainInfo(8453)).toEqual({ label: 'Base', testnet: false, nativeSymbol: 'ETH' });
-    expect(evmChainInfo(137)).toEqual({ label: 'Polygon', testnet: false, nativeSymbol: 'POL' });
+  it('names networks plainly: test chains "(test network)" once, mainnets "(real money)", never the number (D853); each with its native coin', () => {
+    expect(evmChainInfo(11155111)).toEqual({ label: 'Sepolia (test network)', name: 'Sepolia', testnet: true, nativeSymbol: 'ETH' });
+    expect(evmChainInfo(84532)).toEqual({ label: 'Base Sepolia (test network)', name: 'Base Sepolia', testnet: true, nativeSymbol: 'ETH' });
+    expect(evmChainInfo(57054)).toEqual({ label: 'Sonic Blaze (test network)', name: 'Sonic Blaze', testnet: true, nativeSymbol: 'S' });
+    expect(evmChainInfo(97)).toEqual({ label: 'BNB Smart Chain (test network)', name: 'BNB Smart Chain', testnet: true, nativeSymbol: 'tBNB' });
+    expect(evmChainInfo(31337)).toEqual({ label: 'Local test network (Hardhat, Anvil)', name: 'the local test network', testnet: true, nativeSymbol: 'ETH' });
+    expect(evmChainInfo(8453)).toEqual({ label: 'Base (real money)', name: 'Base', testnet: false, nativeSymbol: 'ETH' });
+    expect(evmChainInfo(137)).toEqual({ label: 'Polygon (real money)', name: 'Polygon', testnet: false, nativeSymbol: 'POL' });
+    for (const id of [...Object.keys(TEST_EVM_CHAINS), ...Object.keys(KNOWN_EVM_MAINNETS)]) expect(evmChainInfo(Number(id))?.label).not.toMatch(/testnet|\d{3,}/iu);
     expect(evmChainInfo(43113)?.nativeSymbol).toBe('AVAX');
   });
 

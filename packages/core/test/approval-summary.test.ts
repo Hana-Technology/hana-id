@@ -35,6 +35,7 @@ import {
   summaryString,
   utf8,
 } from './entries.ts';
+import { ZERO_COST, jargonIn, jargonWords, zeroCostIn } from './plain-words.ts';
 import { ATTACKER, ISSUER, OTHER, PASSPHRASE, TOKEN, ROUTER, USER, addSignerOp, addr, authPreimageBytes, feeBumpBytes, i128, invocation, invokeOp, mergeOp, paymentOp, sourceAuth, txBytes } from './stellar-fixtures.ts';
 
 /** A public key computed here (never a literal in the source), for the full-key assertions. */
@@ -55,11 +56,26 @@ const summarizeApproval: typeof summarizeApprovalRaw = (d, ctx) => {
     const str = summaryString(t, APP);
     if (/\.\.|[^\S\n]{2}|\s[.,;:]|up to less than|up to about/u.test(str)) punctuationHits.push(str);
   }
+  // No chain jargon in what the user reads (D853), in Journear's own words (codes, the values a request names, are
+  // left out: an account may be "bob.testnet").
+  if (!allowFallback) jargonHits.push(...jargonIn(s), ...zeroCostIn(s));
   return s;
 };
 const punctuationHits: string[] = [];
+const jargonHits: string[] = [];
 afterAll(() => {
   expect(punctuationHits).toEqual([]);
+});
+afterAll(() => {
+  expect(jargonHits).toEqual([]);
+});
+it('the jargon check (the one shared list) catches the brief’s words and spares network names (D853)', () => {
+  for (const w of ['the relayer pays gas', 'a full-access key', 'your allowance', 'on testnet', 'EVM chain 1', 'burns NEAR', 'the NFT', 'verified by Journear', 'Technical details are below']) expect(jargonWords(w).length, w).toBeGreaterThan(0);
+  for (const w of ['BNB Smart Chain (test network)', 'Avalanche C-Chain (real money)', 'checked by Journear', 'someone else pays the fee']) expect(jargonWords(w), w).toEqual([]);
+});
+it('the zero-cost check catches any claim that a request costs nothing (D858 as corrected); a fee statement passes', () => {
+  for (const w of ['Cost to you: nothing.', 'This costs you nothing.', 'nothing. Someone else pays the fee.'.replace('nothing.', 'It costs nothing.'), 'It doesn’t move any money.']) expect(ZERO_COST.test(w), w).toBe(true);
+  for (const w of ['free for you. Someone else pays it.', 'none. Journear pays it for you.']) expect(ZERO_COST.test(w), w).toBe(false);
 });
 afterAll(() => {
   expect(fallbackHits).toEqual([]);
@@ -103,7 +119,7 @@ describe('EVM transactions', () => {
     const s = evmSummary({});
     expect(headline(s)).toBe(`${APP} wants to send 1 ETH to ${TO}`);
     expect(text(s.fee!)).toBe('up to 0.000042 ETH');
-    expect(text(s.network!)).toBe('Sepolia (testnet), chain 11155111');
+    expect(text(s.network!)).toBe('Sepolia (test network)');
     expect(s.warnings).toEqual([]);
     expect(s.explainable).toBe(true);
   });
@@ -111,14 +127,14 @@ describe('EVM transactions', () => {
   it('a send to the user’s own address says so; a chain Journear can’t name is said plainly, never given a coin', () => {
     expect(headline(evmSummary({ to: ME }))).toBe(`${APP} wants to send 1 ETH to your account`);
     const s = evmSummary({}, 987654321);
-    expect(headline(s)).toBe(`${APP} wants to send 1 of this chain’s coin to ${TO}`);
-    expect(text(s.network!)).toBe('chain 987654321, which Journear doesn’t know by name');
+    expect(headline(s)).toBe(`${APP} wants to send 1 of this network’s coin to ${TO}`);
+    expect(text(s.network!)).toBe('a network Journear doesn’t know (no. 987654321)');
   });
 
-  it('an ERC-20 transfer of a token Journear doesn’t know: "tokens of contract", the amount in smallest units, never a guessed symbol', () => {
+  it('an ERC-20 transfer of a token Journear doesn’t know: "units of an unlisted token", what to do, never a guessed symbol', () => {
     const s = tokenCall(calldata('transfer(address,uint256)', TO, 5_000_000n));
-    expect(headline(s)).toBe(`${APP} wants to send tokens of contract ${TOKEN_EVM} to ${TO}`);
-    expect(s.lines.map(text)).toEqual(['Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).']);
+    expect(headline(s)).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${TO}`);
+    expect(s.lines.map(text)).toEqual([`Journear doesn’t know this token (${TOKEN_EVM}), so it can’t tell what 5,000,000 units are worth. Check the amount in ${APP} first.`]);
     expect(s.explainable).toBe(true);
   });
 
@@ -128,50 +144,50 @@ describe('EVM transactions', () => {
     const s = tokenCall(calldata('transfer(address,uint256)', TO, 5_000_000n), 8453, BASE_USDC);
     expect(headline(s)).toBe(`${APP} wants to send 5 USDC to ${TO}`);
     // The contract stays in view next to the symbol.
-    expect(s.lines.map(text)).toEqual([`USDC here is the token contract ${BASE_USDC}, on Journear’s reviewed list.`]);
+    expect(s.lines.map(text)).toEqual([`This is the real USDC token (${BASE_USDC}).`]);
     expect(text(s.fee!)).toBe('up to 0.000042 ETH');
   });
 
   it('approve of a bounded amount: an amber warning naming the unverified spender and the amount (or an NFT’s item)', () => {
     const s = tokenCall(calldata('approve(address,uint256)', SPENDER, 1000n));
-    expect(headline(s)).toBe(`${APP} wants to let someone else spend your tokens of contract ${TOKEN_EVM}`);
+    expect(headline(s)).toBe(`${APP} wants you to let someone else spend your tokens from ${TOKEN_EVM} (an unlisted token)`);
     expect(warnings(s)).toEqual([
       [
         'warning',
         'spend_permission',
-        `This lets ${SPENDER}, an address Journear hasn’t verified, spend up to 1,000 (in the token’s smallest units) of your tokens of contract ${TOKEN_EVM}, until it is used up or you take the permission back. If the contract is an NFT collection, it lets them take your item 1000 instead.`,
+        `This lets ${SPENDER} (not checked by Journear) take up to 1,000 units of your tokens from ${TOKEN_EVM} (an unlisted token). The permission lasts until they’ve used it all or you cancel it elsewhere. If it’s a collectible, it lets them take your item no. 1000 instead.`,
       ],
     ]);
   });
 
   it('approve of the max uint256, or of a practically unlimited amount: the red warning', () => {
     const max = tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX));
-    expect(warnings(max)).toEqual([['danger', 'unlimited_spend', `This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN_EVM}, with no limit, until you take the permission back. Approve only if you trust it completely.`]]);
+    expect(warnings(max)).toEqual([['danger', 'unlimited_spend', `This lets ${SPENDER} (not checked by Journear) take all your tokens from ${TOKEN_EVM} (an unlisted token), now or later, with no limit. Approve only if you trust them completely.`]]);
     const huge = tokenCall(calldata('approve(address,uint256)', SPENDER, PRACTICALLY_UNLIMITED));
     expect(codes(huge)).toEqual(['unlimited_spend']);
-    expect(text(huge.warnings[0]!.text)).toContain('with no practical limit');
+    expect(text(huge.warnings[0]!.text)).toContain('with no real limit');
     expect(codes(tokenCall(calldata('approve(address,uint256)', SPENDER, PRACTICALLY_UNLIMITED - 1n)))).toEqual(['spend_permission']);
   });
 
   it('approve of 0 to the zero address is a revoke: no warning', () => {
     const s = tokenCall(calldata('approve(address,uint256)', `0x${'0'.repeat(40)}`, 0n));
-    expect(headline(s)).toBe(`${APP} wants to take back 0x${'0'.repeat(40)}’s permission to spend your tokens of contract ${TOKEN_EVM}`);
+    expect(headline(s)).toBe(`${APP} wants to cancel 0x${'0'.repeat(40)}’s permission to take your tokens from ${TOKEN_EVM} (an unlisted token)`);
     expect(s.warnings).toEqual([]);
   });
 
   it('a verified spender is named; the zero address is called that; a pinned token is named with its decimals', () => {
     const v = tokenCall(calldata('approve(address,uint256)', BASE_SODAX, 2_500_000n), 8453, BASE_USDC);
-    expect(text(v.warnings[0]!.text)).toBe(`This lets Sodax Asset Manager (${BASE_SODAX}, verified by Journear) spend up to 2.5 USDC from your account, until it is used up or you take the permission back.`);
-    expect(headline(v)).toBe(`${APP} wants to let someone else spend your USDC`);
+    expect(text(v.warnings[0]!.text)).toBe(`This lets Sodax Asset Manager (${BASE_SODAX}, checked by Journear) take up to 2.5 USDC from your account. The permission lasts until they’ve used it all or you cancel it elsewhere.`);
+    expect(headline(v)).toBe(`${APP} wants you to let someone else spend your USDC`);
     // The same address on another chain isn't the verified contract.
-    expect(text(tokenCall(calldata('approve(address,uint256)', BASE_SODAX, 1n)).warnings[0]!.text)).toContain('an address Journear hasn’t verified');
+    expect(text(tokenCall(calldata('approve(address,uint256)', BASE_SODAX, 1n)).warnings[0]!.text)).toContain('not checked by Journear');
     const zero = tokenCall(calldata('approve(address,uint256)', `0x${'0'.repeat(40)}`, UINT256_MAX));
-    expect(text(zero.warnings[0]!.text)).toContain(`0x${'0'.repeat(40)} (the zero address) spend all of`);
+    expect(text(zero.warnings[0]!.text)).toContain(`0x${'0'.repeat(40)} (an address no one controls) take all`);
   });
 
   it('increaseAllowance warns (a further amount, or no limit); decreaseAllowance doesn’t', () => {
     const inc = tokenCall(calldata('increaseAllowance(address,uint256)', SPENDER, 7n));
-    expect(text(inc.warnings[0]!.text)).toContain('spend a further 7 (in the token’s smallest units)');
+    expect(text(inc.warnings[0]!.text)).toContain('take a further 7 units');
     expect(codes(tokenCall(calldata('increaseAllowance(address,uint256)', SPENDER, UINT256_MAX)))).toEqual(['unlimited_spend']);
     const dec = tokenCall(calldata('decreaseAllowance(address,uint256)', SPENDER, 7n));
     expect(dec.warnings).toEqual([]);
@@ -180,10 +196,10 @@ describe('EVM transactions', () => {
 
   it('setApprovalForAll(true) is red; (false) is a revoke', () => {
     const on = tokenCall(calldata('setApprovalForAll(address,bool)', SPENDER, true));
-    expect(warnings(on)).toEqual([['danger', 'collection_operator', `This lets ${SPENDER}, an address Journear hasn’t verified, move every item you hold in collection ${TOKEN_EVM}, now and later, until you take the permission back. Approve only if you trust it completely.`]]);
+    expect(warnings(on)).toEqual([['danger', 'collection_operator', `This lets ${SPENDER} (not checked by Journear) take all your collectibles from ${TOKEN_EVM}, now or later, with no limit. Approve only if you trust them completely.`]]);
     const off = tokenCall(calldata('setApprovalForAll(address,bool)', SPENDER, false));
     expect(off.warnings).toEqual([]);
-    expect(headline(off)).toContain('take back');
+    expect(headline(off)).toContain('cancel');
   });
 
   it('permit as a transaction: the spend warning when the owner is the user', () => {
@@ -194,13 +210,13 @@ describe('EVM transactions', () => {
   });
 
   it('NFT transfers name the item and the collection', () => {
-    expect(headline(tokenCall(calldata('safeTransferFrom(address,address,uint256)', ME, TO, 42n)))).toBe(`${APP} wants to send item 42 of collection ${TOKEN_EVM} from your account to ${TO}`);
+    expect(headline(tokenCall(calldata('safeTransferFrom(address,address,uint256)', ME, TO, 42n)))).toBe(`${APP} wants to send collectible no. 42 from ${TOKEN_EVM} from your account to ${TO}`);
   });
 
-  it('an unknown function: Journear can’t tell what it does, in red (it could move value with no visible bound)', () => {
+  it('an unknown function: Journear can’t check what it does, in red (it could move value with no visible bound)', () => {
     const s = tokenCall('0xdeadbeef0000');
-    expect(headline(s)).toBe(`${APP} wants to use contract ${TOKEN_EVM}`);
-    expect(warnings(s)).toEqual([['danger', 'cannot_explain', `Journear can’t tell what this request does: it calls a function Journear doesn’t recognise. It could move your money or tokens. Only approve if you fully trust ${APP}. Technical details are below.`]]);
+    expect(headline(s)).toBe(`${APP} wants to use the program ${TOKEN_EVM}`);
+    expect(warnings(s)).toEqual([['danger', 'cannot_explain', `Journear can’t check what this does (it asks for an action Journear doesn’t know). It could take your money or tokens. If you’re not sure, reject it.`]]);
     expect(s.explainable).toBe(false);
     // Fewer than 4 bytes, and a known selector whose arguments don't decode: the same.
     expect(tokenCall('0x01').explainable).toBe(false);
@@ -214,10 +230,10 @@ describe('EVM transactions', () => {
 
   it('a value sent with a call is said; contract creation can’t be explained', () => {
     const s = evmSummary({ to: TOKEN_EVM, value: 10n ** 17n, data: parseFunctionSignature('deposit()').selector });
-    expect(headline(s)).toBe(`${APP} wants to use contract ${TOKEN_EVM} (deposit), sending it 0.1 ETH`);
+    expect(headline(s)).toBe(`${APP} wants to use the program ${TOKEN_EVM} (deposit), sending it 0.1 ETH`);
     expect(s.lines).toEqual([]);
     const c = evmSummary({ to: null, value: 0n, data: '0x6000' });
-    expect(headline(c)).toBe(`${APP} wants to create a new contract`);
+    expect(headline(c)).toBe(`${APP} wants to create a new program`);
     expect(codes(c)).toEqual(['contract_creation']);
     expect(c.explainable).toBe(false);
   });
@@ -279,19 +295,19 @@ const permitSingle = (amount: string, verifyingContract = PERMIT2_ADDRESS) => ({
 describe('EIP-712 typed data', () => {
   it('EIP-2612 Permit: the spend warning, amount, chain; summarised, so the tree folds', () => {
     const s = typed(permit('1000'));
-    expect(headline(s)).toBe(`${APP} wants your signature to let someone else spend your tokens of contract ${TOKEN_EVM}`);
+    expect(headline(s)).toBe(`${APP} wants you to let someone else spend your tokens from ${TOKEN_EVM} (an unlisted token)`);
     expect(codes(s)).toEqual(['spend_permission']);
-    expect(text(s.network!)).toBe('Sepolia (testnet), chain 11155111');
+    expect(text(s.network!)).toBe('Sepolia (test network)');
     expect(s.explainable).toBe(true);
     expect(codes(typed(permit(UINT256_MAX.toString())))).toEqual(['unlimited_spend']);
     const revoke = typed(permit('0'));
     expect(revoke.warnings).toEqual([]);
-    expect(headline(revoke)).toContain('take back');
+    expect(headline(revoke)).toContain('cancel');
   });
 
   it('a Permit for someone else’s tokens says whose', () => {
     const s = typed(permit('5', { message: { owner: TO, spender: SPENDER, value: '5', nonce: '0', deadline: '1' } }));
-    expect(s.lines.map(text)).toEqual([`The tokens’ owner it names is ${TO}, not your account.`]);
+    expect(s.lines.map(text)).toEqual([`The tokens it names belong to ${TO}, not to your account.`]);
   });
 
   it('DAI’s permit (allowed: true) has no limit', () => {
@@ -306,10 +322,10 @@ describe('EIP-712 typed data', () => {
 
   it('Permit2 PermitSingle: a pinned token’s amount, or no limit at uint160’s max', () => {
     const s = typed(permitSingle('2500000'));
-    expect(headline(s)).toBe(`${APP} wants your signature to let someone else spend your tokens through Permit2`);
-    expect(text(s.warnings[0]!.text)).toBe(`This lets ${SPENDER}, an address Journear hasn’t verified, spend up to 2.5 USDC from your account through Permit2, until it is used up or you take the permission back.`);
+    expect(headline(s)).toBe(`${APP} wants you to let someone else spend your tokens through Permit2`);
+    expect(text(s.warnings[0]!.text)).toBe(`This lets ${SPENDER} (not checked by Journear) take up to 2.5 USDC from your account through Permit2. The permission lasts until they’ve used it all or you cancel it elsewhere.`);
     const max = typed(permitSingle((2n ** 160n - 1n).toString()));
-    expect(text(max.warnings[0]!.text)).toContain('spend all of your USDC through Permit2, with no limit');
+    expect(text(max.warnings[0]!.text)).toContain('take all your USDC through Permit2, now or later, with no limit');
   });
 
   it('Permit2 PermitTransferFrom: a one-time transfer permission', () => {
@@ -338,6 +354,8 @@ describe('EIP-712 typed data', () => {
   it('typed data that calls itself Permit2 for another contract: red, and not explained', () => {
     const s = typed(permitSingle('1', TOKEN_EVM));
     expect(codes(s)).toEqual(['cannot_explain', 'permit_lookalike']);
+    // The fake-Permit2 line keeps its own advice after the scam warning (review of PR 80).
+    expect(text(s.warnings[1]!.text)).toBe(`Journear can’t check what this does. It says it’s Permit2, a well-known way to let others take your tokens, but it isn’t the real one. It may be a scam. Reject it unless you know exactly why ${APP} needs it.`);
     expect(s.explainable).toBe(false);
   });
 
@@ -353,7 +371,7 @@ describe('EIP-712 typed data', () => {
       expect(codes(s)[0]).toBe('cannot_explain');
       // Each one is still flagged as a possible spend permission.
       expect(codes(s)).toContain('spend_permission');
-      expect(headline(s)).toBe(`${APP} wants your signature on data Journear can’t explain`);
+      expect(headline(s)).toBe(`${APP} wants you to sign something Journear can’t check`);
     }
     // A Permit2 domain with a version is not Permit2's.
     const versioned = permitSingle('1');
@@ -412,9 +430,9 @@ describe('messages and raw signing', () => {
 
   it('raw signing: a red line that says what it risks and to reject (the details fold like any others)', () => {
     const s = summarizeApproval(decodeApprovalRequest({ kind: 'raw', chain: 'evm', address: ME, context: {}, bytes: new Uint8Array(32) }), { address: ME });
-    expect(headline(s)).toBe(`${APP} wants a raw signature that Journear can’t read`);
+    expect(headline(s)).toBe(`${APP} wants you to sign something Journear can’t read`);
     expect(s.explainable).toBe(false);
-    expect(warnings(s)).toEqual([['danger', 'raw_signing', 'This asks you to sign something Journear can’t read at all. On EVM chains it could give away control of your account or your funds. Reject unless you are certain.']]);
+    expect(warnings(s)).toEqual([['danger', 'raw_signing', 'Signing this could hand over your whole account and everything in it. Reject it unless you know exactly why you’re signing.']]);
     expect('detailsMustStayOpen' in s).toBe(false);
   });
 });
@@ -428,7 +446,7 @@ describe('Stellar', () => {
     const s = stellar([paymentOp()]);
     expect(headline(s)).toBe(`${APP} wants to send 1 XLM to ${OTHER}`);
     expect(text(s.fee!)).toBe('up to 0.00001 XLM');
-    expect(text(s.network!)).toBe('Stellar testnet');
+    expect(text(s.network!)).toBe('Stellar (test network)');
     expect(s.explainable).toBe(true);
   });
 
@@ -449,22 +467,22 @@ describe('Stellar', () => {
 
   it('a Soroban token transfer (SEP-41) is summarised; amounts of an unknown token in smallest units', () => {
     const s = stellar([invokeOp(TOKEN, 'transfer', [addr(USER), addr(OTHER), i128(15n)])]);
-    expect(headline(s)).toBe(`${APP} wants to send 15 (in the token’s smallest units) of the token contract ${TOKEN} to ${OTHER}`);
+    expect(headline(s)).toBe(`${APP} wants to send 15 units of the unlisted token ${TOKEN} to ${OTHER}`);
     expect(s.explainable).toBe(true);
   });
 
   it('a Soroban approve warns; 0 revokes; the i128 max has no limit', () => {
     const approve = (n: bigint) => stellar([invokeOp(TOKEN, 'approve', [addr(USER), addr(OTHER), i128(n), xdr.ScVal.scvU32(5000)])]);
     expect(codes(approve(10n))).toEqual(['spend_permission']);
-    expect(text(approve(10n).warnings[0]!.text)).toContain(`This lets ${OTHER}, an address Journear hasn’t verified, spend up to 10`);
+    expect(text(approve(10n).warnings[0]!.text)).toContain(`This lets ${OTHER} (not checked by Journear) take up to 10`);
     expect(approve(0n).warnings).toEqual([]);
-    expect(headline(approve(0n))).toContain('take back');
+    expect(headline(approve(0n))).toContain('cancel');
     expect(text(approve(2n ** 127n - 1n).warnings[0]!.text)).toContain('with no limit');
   });
 
   it('any other Soroban call can’t be explained; an approval deep in its authorizations still warns', () => {
     const plain = stellar([invokeOp(ROUTER, 'swap', [i128(1n)])]);
-    expect(headline(plain)).toBe(`${APP} wants to use contract ${ROUTER} (swap)`);
+    expect(headline(plain)).toBe(`${APP} wants to use the program ${ROUTER} (swap)`);
     expect(plain.explainable).toBe(false);
     expect(codes(plain)).toEqual(['cannot_explain']);
     const auth = sourceAuth(invocation(ROUTER, 'swap', [i128(1n)], [invocation(TOKEN, 'approve', [addr(USER), addr(OTHER), i128(2n ** 127n - 1n), xdr.ScVal.scvU32(1)])]));
@@ -486,8 +504,9 @@ describe('Stellar', () => {
     expect(knownStellarToken(PASSPHRASE, usdc)).toBeNull();
     const bytes = authPreimageBytes(invocation(usdc, 'transfer', [addr(USER), addr(OTHER), i128(15_000_000n)]), STELLAR_MAINNET_PASSPHRASE);
     const s = summarizeApproval(decodeApprovalRequest({ kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: STELLAR_MAINNET_PASSPHRASE }, bytes }), { address: USER });
-    expect(headline(s)).toBe(`${APP} wants to authorize sending 1.5 USDC (token contract ${usdc}) to ${OTHER}`);
-    expect(text(s.network!)).toBe('Stellar public network (real funds)');
+    expect(headline(s)).toBe(`${APP} wants to approve sending 1.5 USDC to ${OTHER}`);
+    expect(s.lines.map(text)).toEqual([`This is the real USDC token (${usdc}).`]);
+    expect(text(s.network!)).toBe('Stellar (real money)');
     expect(s.fee).toBeNull();
     expect(s.explainable).toBe(true);
   });
@@ -513,15 +532,64 @@ describe('NEAR', () => {
   it('a transfer, and several: the total', () => {
     expect(headline(near([{ type: 'transfer', deposit: 10n ** 23n }], 'bob.testnet'))).toBe(`${APP} wants to send 0.1 NEAR to bob.testnet`);
     expect(headline(near([{ type: 'transfer', deposit: 10n ** 24n }, { type: 'transfer', deposit: 5n * 10n ** 23n }], 'bob.testnet'))).toBe(`${APP} wants to send 1.5 NEAR to bob.testnet in 2 transfers`);
-    expect(text(near([{ type: 'transfer', deposit: 1n }]).fee!)).toBe('a small amount of NEAR for gas, from your account');
+    expect(text(near([{ type: 'transfer', deposit: 1n }]).fee!)).toBe('a small amount of NEAR, from your account');
   });
 
-  it('a relayed contract call (the stamps): contract and method; the relayer pays; explainable', () => {
+  it('a relayed contract call (the stamps): contract and method; the fee row speaks of the fee only; it acts as the user, in amber (D858)', () => {
     const s = delegate([call('collect', '{"stamp":"arrival"}')]);
     expect(headline(s)).toBe(`${APP} wants to use stamps.testnet (collect)`);
-    expect(text(s.fee!)).toBe('paid for you by a relayer, not from your account');
+    // Never "Journear pays" (a partner may relay it), never "costs nothing" (a call can use what the user keeps there).
+    expect(text(s.fee!)).toBe('free for you. Someone else pays it.');
+    expect(s.noNearLeaves).toBe(true);
     expect(s.explainable).toBe(true);
-    expect(s.warnings).toEqual([]);
+    expect(warnings(s)).toEqual([['warning', 'acts_as_you', 'This acts as you: stamps.testnet can use anything you keep with it.']]);
+  });
+
+  it('D858: every relayed function call carries the amber acts-as-you line; no relayed request claims to cost nothing', () => {
+    for (const [a, to] of [
+      [call('collect', '{}'), 'stamps.testnet'],
+      [call('collect', '{}', 10n ** 22n), 'stamps.testnet'],
+      [call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5"}', 1n), 'tok.testnet'],
+      [call('storage_withdraw', '{}'), 'tok.testnet'],
+      [call('add', Uint8Array.of(0xff)), 'tok.testnet'],
+    ] as const) {
+      const s = delegate([a], to);
+      expect(codes(s)).toContain('acts_as_you');
+      expect(zeroCostIn(s)).toEqual([]);
+    }
+  });
+
+  it('D858: the repeated "None of your NEAR" row goes only when no NEAR or tokens of the user’s can leave; the fee row always stays', () => {
+    const free = (s: ApprovalSummary) => [s.noNearLeaves === true, s.fee === null ? null : text(s.fee)];
+    const fee = 'free for you. Someone else pays it.';
+    // A transfer in a delegate action is the relayer's NEAR (nearcore); no call, so no acts-as-you.
+    const t = delegate([{ type: 'transfer', deposit: 10n ** 24n }], 'bob.testnet');
+    expect(free(t)).toEqual([true, fee]);
+    expect(codes(t)).toEqual([]);
+    // A deposit attached to a plain call is the relayer's too.
+    expect(free(delegate([call('collect', '{}', 10n ** 22n)]))).toEqual([true, fee]);
+    // Tokens the user holds: a token transfer, a permission, a value-like method, an unreadable or non-standard call.
+    for (const a of [
+      call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5"}', 1n),
+      call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7"}', 1n),
+      call('nft_approve', '{"token_id":"7","account_id":"m.testnet"}', 1n),
+      call('storage_withdraw', '{}'),
+      call('add', Uint8Array.of(0xff)),
+      call('ft_transfer', '{"receiver_id":"bob.testnet","amount":5}', 1n),
+    ]) {
+      const s = delegate([a], 'tok.testnet');
+      expect(free(s)).toEqual([false, fee]);
+      expect(codes(s)).toContain('acts_as_you');
+    }
+    // On the user's own account (its own contract runs as the account): never free, no acts-as-you (the red line says it).
+    const own = delegate([call('m', '{}')], NEAR_ME);
+    expect(free(own)).toEqual([false, fee]);
+    expect(codes(own)).not.toContain('acts_as_you');
+    // Steps left out of the lines: never free, even when each is a plain call.
+    const many = delegate(['a', 'b', 'c', 'd', 'e'].map((m) => call(m, '{}')), 'tok.testnet');
+    expect(free(many)).toEqual([false, fee]);
+    // The user's own transaction pays its own fee.
+    expect(near([call('collect', '{}')]).noNearLeaves).toBeUndefined();
   });
 
   it('arguments that aren’t JSON, or a method name that can’t be shown: not explainable', () => {
@@ -532,10 +600,10 @@ describe('NEAR', () => {
   });
 
   it('NEP-141 ft_transfer: the amount and receiver from the arguments; malformed ones are red and not explained', () => {
-    expect(headline(near([call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000"}', 1n)], 'usdc.testnet'))).toBe(`${APP} wants to send 1,000 (smallest units) of the token usdc.testnet to bob.testnet`);
+    expect(headline(near([call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"1000"}', 1n)], 'usdc.testnet'))).toBe(`${APP} wants to send 1,000 units of the unlisted token usdc.testnet to bob.testnet`);
     for (const args of ['{"receiver_id":"BОB.testnet","amount":"1"}', '{"receiver_id":"bob.testnet","amount":"01"}', '{"receiver_id":"bob.testnet","amount":1}', '{"receiver_id":"bob.testnet"}']) {
       const s = near([call('ft_transfer', args, 1n)], 'usdc.testnet');
-      expect(headline(s)).toBe(`${APP} wants to use usdc.testnet (ft_transfer) with arguments that don’t match the token standard`);
+      expect(headline(s)).toBe(`${APP} wants to use usdc.testnet (ft_transfer) in a non-standard way`);
       expect(s.explainable).toBe(false);
       expect(s.warnings.map((w) => [w.level, w.code])).toEqual([['danger', 'cannot_explain']]);
     }
@@ -543,10 +611,10 @@ describe('NEAR', () => {
 
   it('NEP-178 nft_approve warns; nft_transfer names the item', () => {
     const s = near([call('nft_approve', '{"token_id":"7","account_id":"market.testnet"}', 1n)], 'nft.testnet');
-    expect(warnings(s)).toEqual([['warning', 'spend_permission', 'This lets market.testnet move your item 7 of collection nft.testnet, until it is used or you take the permission back.']]);
-    expect(headline(near([call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7"}', 1n)], 'nft.testnet'))).toBe(`${APP} wants to send item 7 of collection nft.testnet to bob.testnet`);
+    expect(warnings(s)).toEqual([['warning', 'spend_permission', 'This lets market.testnet take your collectible 7 from nft.testnet. The permission lasts until they’ve used it or you cancel it elsewhere.']]);
+    expect(headline(near([call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7"}', 1n)], 'nft.testnet'))).toBe(`${APP} wants to send the collectible 7 from nft.testnet to bob.testnet`);
     // A token id with invisible characters isn't put in the summary.
-    expect(headline(near([call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7\\u202e"}', 1n)], 'nft.testnet'))).toBe(`${APP} wants to use nft.testnet (nft_transfer) with arguments that don’t match the token standard`);
+    expect(headline(near([call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7\\u202e"}', 1n)], 'nft.testnet'))).toBe(`${APP} wants to use nft.testnet (nft_transfer) in a non-standard way`);
   });
 
 
@@ -607,8 +675,8 @@ describe('NEAR standard calls: strict arguments, value-like names (review of the
   it.each(malformed)('%s with arguments that aren’t the standard’s exact shape is red and never a plain line: %s', (method, args) => {
     const s = near([call(method, args, 1n)], 'tok.testnet');
     expect(s.explainable).toBe(false);
-    expect(headline(s)).toBe(`${APP} wants to use tok.testnet (${method}) with arguments that don’t match the token standard`);
-    expect(warnings(s)).toEqual([['danger', 'cannot_explain', `Journear can’t tell what this request does: it calls ${method} on tok.testnet with arguments that don’t match the token standard exactly. It could move your money or tokens. Only approve if you fully trust ${APP}. Technical details are below.`]]);
+    expect(headline(s)).toBe(`${APP} wants to use tok.testnet (${method}) in a non-standard way`);
+    expect(warnings(s)).toEqual([['danger', 'cannot_explain', `Journear can’t check what this does (it uses ${method} on tok.testnet in a non-standard way). It could take your money or tokens. If you’re not sure, reject it.`]]);
   });
 
   it('duplicate keys are refused by the strict parser: red, as any arguments Journear can’t read', () => {
@@ -626,7 +694,7 @@ describe('NEAR standard calls: strict arguments, value-like names (review of the
     const s = near([call(method, '{}')], 'tok.testnet');
     expect(headline(s)).toBe(`${APP} wants to use tok.testnet (${method})`);
     expect(s.explainable).toBe(true);
-    expect(warnings(s)).toEqual([['warning', 'may_move_tokens', `This calls ${method} on tok.testnet: a call like this may move tokens or NEAR you hold with that contract. Approve only if you expected it.`]]);
+    expect(warnings(s)).toEqual([['warning', 'may_move_tokens', `This uses tok.testnet (${method}). It may move tokens or NEAR you keep with tok.testnet. Approve only if you expected this from ${APP}.`]]);
   });
 
   it.each(['collect', 'add_message', 'ping', 'storage_deposit', 'nft_mint', 'smt_x', 'get_stake', 'get_swap_quote', 'view_claimable', 'is_approved', 'has_claimed', 'add_liquidity'])('a call named %s gets no amber line', (method) => {
@@ -636,8 +704,8 @@ describe('NEAR standard calls: strict arguments, value-like names (review of the
 
   it('grouping: identical value-like calls group and say their amber line once; a malformed standard call stays its own red line; shownSteps cover the lines', () => {
     const s = near([call('withdraw', '{}'), call('withdraw', '{}'), call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5"}', 1n), call('ft_transfer', '{"receiver_id":"bob.testnet","amount":5}', 1n)], 'tok.testnet');
-    expect(headline(s)).toBe(`${APP} wants to do 4 things with tok.testnet in one transaction`);
-    expect(s.lines.map(text)).toEqual(['Send 5 (smallest units) of the token tok.testnet to bob.testnet', 'Use tok.testnet (withdraw), 2 times', 'Use tok.testnet (ft_transfer) with arguments that don’t match the token standard']);
+    expect(headline(s)).toBe(`${APP} wants to do 4 things with tok.testnet at once`);
+    expect(s.lines.map(text)).toEqual(['Send 5 units of the unlisted token tok.testnet to bob.testnet', 'Use tok.testnet (withdraw), 2 times', 'Use tok.testnet (ft_transfer) in a non-standard way', `Journear doesn’t know this token (tok.testnet), so it can’t tell what these units are worth. Check the amount in ${APP} first.`]);
     // Their order in the box is the page's (red first); here each is said once.
     expect(s.warnings.map((w) => [w.level, w.code]).sort()).toEqual([['danger', 'cannot_explain'], ['warning', 'may_move_tokens']]);
     expect(s.explainable).toBe(false);
@@ -647,8 +715,8 @@ describe('NEAR standard calls: strict arguments, value-like names (review of the
   it('a relayed (delegate) call is held to the same rules', () => {
     const s = delegate([call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"1","memo":{}}', 1n)], 'tok.testnet');
     expect(s.explainable).toBe(false);
-    expect(codes(s)).toEqual(['cannot_explain']);
-    expect(codes(delegate([call('storage_withdraw', '{}')], 'tok.testnet'))).toEqual(['may_move_tokens']);
+    expect(codes(s)).toEqual(['cannot_explain', 'acts_as_you']);
+    expect(codes(delegate([call('storage_withdraw', '{}')], 'tok.testnet'))).toEqual(['may_move_tokens', 'acts_as_you']);
   });
 });
 
@@ -677,7 +745,7 @@ describe('review: Soroban authorizations (H1)', () => {
     const s = stellar([invokeOp(ROUTER, 'transfer', evilTransfer, [sourceAuth(invocation(ROUTER, 'transfer', evilTransfer, [realTransfer]))])]);
     expect(s.explainable).toBe(false);
     expect(codes(s)[0]).toBe('cannot_explain');
-    expect(s.lines.map(text)).toContain(`It also authorizes sending 1,000,000,000,000,000 (in the token’s smallest units) of the token contract ${TOKEN} to ${ATTACKER}.`);
+    expect(s.lines.map(text)).toContain(`It also approves sending 1,000,000,000,000,000 units of the unlisted token ${TOKEN} to ${ATTACKER}.`);
   });
 
   it('a token call with a separate authorization root is not explainable', () => {
@@ -694,7 +762,7 @@ describe('review: Soroban authorizations (H1)', () => {
   it('a token transfer authorized exactly as called, with nothing under it, stays explainable', () => {
     const s = stellar([invokeOp(TOKEN, 'transfer', evilTransfer, [sourceAuth(invocation(TOKEN, 'transfer', evilTransfer))])]);
     expect(s.explainable).toBe(true);
-    expect(s.lines).toEqual([]);
+    expect(s.lines.map(text)).toEqual([`Journear doesn’t know this token (${TOKEN}), so it can’t tell what these units are worth. Check the amount in ${APP} first.`]);
   });
 
   it('an authorization entry with a sub-invocation is not explainable, and the nested send is said', () => {
@@ -706,8 +774,8 @@ describe('review: Soroban authorizations (H1)', () => {
 
   it('an approval for someone else’s tokens doesn’t call them yours', () => {
     const s = stellar([invokeOp(TOKEN, 'approve', [addr(OTHER), addr(ATTACKER), i128(5n), xdr.ScVal.scvU32(10)])]);
-    expect(headline(s)).toBe(`${APP} wants to let ${ATTACKER} spend tokens of contract ${TOKEN} held by ${OTHER}`);
-    expect(text(s.warnings[0]!.text)).toContain(`of the tokens of contract ${TOKEN} held by ${OTHER}`);
+    expect(headline(s)).toBe(`${APP} wants to let ${ATTACKER} take tokens from ${TOKEN} (an unlisted token) held by ${OTHER}`);
+    expect(text(s.warnings[0]!.text)).toContain(`of the tokens from ${TOKEN} (an unlisted token) held by ${OTHER}`);
     expect(text(s.warnings[0]!.text)).not.toContain('your');
   });
 });
@@ -759,7 +827,7 @@ describe('review: Stellar classic operations show their deciding terms (H2)', ()
 
   it('a fee-bump says who pays; the inner transaction’s source when it isn’t the user', () => {
     const fb = stellar([], feeBumpBytes(txBytes([paymentOp()], { source: OTHER }), USER));
-    expect(fb.lines.map(text)).toContain(`Your account pays the network fee for a transaction from ${OTHER}.`);
+    expect(fb.lines.map(text)).toContain(`Your account pays the network fee for something sent from ${OTHER}.`);
   });
 
   it('a network passphrase that isn’t display-safe is shown as hex, cut short', () => {
@@ -777,15 +845,15 @@ describe('review: EVM and typed data (M1, L2, I1)', () => {
   it('approve(spender, 0) on a token Journear doesn’t know may give away an NFT’s item 0', () => {
     const s = tokenCall(calldata('approve(address,uint256)', SPENDER, 0n));
     expect(codes(s)).toEqual(['spend_permission']);
-    expect(headline(s)).toBe(`${APP} wants to change ${SPENDER}’s permission for contract ${TOKEN_EVM}`);
-    expect(text(s.warnings[0]!.text)).toContain('item 0');
+    expect(headline(s)).toBe(`${APP} wants to change ${SPENDER}’s permission for ${TOKEN_EVM}`);
+    expect(text(s.warnings[0]!.text)).toContain('item no. 0');
     // The zero address as spender, or a pinned token: a plain revoke.
     expect(tokenCall(calldata('approve(address,uint256)', `0x${'0'.repeat(40)}`, 0n)).warnings).toEqual([]);
     expect(tokenCall(calldata('approve(address,uint256)', SPENDER, 0n), 8453, BASE_USDC).warnings).toEqual([]);
   });
 
   it('long raw amounts carry thousands separators; a pinned token over a trillion is no practical limit', () => {
-    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, 1234567n)).warnings[0]!.text)).toContain('1,234,567 (in the token’s smallest units)');
+    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, 1234567n)).warnings[0]!.text)).toContain('1,234,567 units');
     expect(codes(tokenCall(calldata('approve(address,uint256)', SPENDER, 10n ** 27n)))).toEqual(['unlimited_spend']);
     expect(codes(tokenCall(calldata('approve(address,uint256)', SPENDER, 10n ** 27n - 1n)))).toEqual(['spend_permission']);
     expect(codes(tokenCall(calldata('approve(address,uint256)', BASE_SODAX, 10n ** 18n + 1n), 8453, BASE_USDC))).toEqual(['unlimited_spend']);
@@ -820,7 +888,7 @@ describe('review: EVM and typed data (M1, L2, I1)', () => {
     });
     expect(s.explainable).toBe(false);
     expect(codes(s)).toEqual(['cannot_explain', 'spend_permission']);
-    expect(text(s.warnings[1]!.text)).toContain(`9,000 (in the token’s smallest units) of your tokens of contract ${TOKEN_EVM} through Permit2, once`);
+    expect(text(s.warnings[1]!.text)).toContain(`9,000 units of your tokens from ${TOKEN_EVM} (an unlisted token) through Permit2, once`);
   });
 });
 
@@ -876,7 +944,7 @@ describe('review 2: malformed values never throw (N1)', () => {
     expect(broken).toBe(UNEXPLAINED_SUMMARY);
     expect(broken.explainable).toBe(false);
     // Red, and says to reject (review 3).
-    expect(warnings(broken)).toEqual([['danger', 'summary_failed', 'Journear couldn’t read this request. Reject it unless you are certain.']]);
+    expect(warnings(broken)).toEqual([['danger', 'summary_failed', 'Journear can’t check what this does (it couldn’t read this request). It could take your money or tokens. If you’re not sure, reject it.']]);
     allowFallback = false;
   });
 });
@@ -906,15 +974,15 @@ describe('review 2: ERC-1155 batches and withdraw (N3, N4)', () => {
   };
   it('up to five kinds: each item and how many, item ids ungrouped, amounts grouped; more: not explainable', () => {
     const s = tokenCall(batch(2));
-    expect(s.lines.map(text)).toEqual(['Item 1: 1,234,567', 'Item 2: 1,234,567']);
+    expect(s.lines.map(text)).toEqual(['Collectible no. 1: 1,234,567', 'Collectible no. 2: 1,234,567']);
     expect(s.explainable).toBe(true);
     expect(tokenCall(batch(6)).explainable).toBe(false);
   });
 
   it('withdraw names its amount; deposit says what it sends in the headline', () => {
-    expect(headline(tokenCall(calldata('withdraw(uint256)', 1000n)))).toBe(`${APP} wants to withdraw 1,000 (smallest units) from contract ${TOKEN_EVM}`);
+    expect(headline(tokenCall(calldata('withdraw(uint256)', 1000n)))).toBe(`${APP} wants to withdraw 1,000 units from the program ${TOKEN_EVM}`);
     const dep = evmSummary({ to: TOKEN_EVM, value: 10n ** 17n, data: parseFunctionSignature('deposit()').selector });
-    expect(headline(dep)).toBe(`${APP} wants to use contract ${TOKEN_EVM} (deposit), sending it 0.1 ETH`);
+    expect(headline(dep)).toBe(`${APP} wants to use the program ${TOKEN_EVM} (deposit), sending it 0.1 ETH`);
     expect(dep.lines).toEqual([]);
   });
 });
@@ -933,13 +1001,13 @@ describe('review 3: the user’s account in muxed form is the user’s (1)', () 
     const s = stellar([], muxedTx([Operation.payment({ destination: ATTACKER, asset: Asset.native(), amount: '1000000' }), bump()]));
     const lines = s.lines.map(text);
     expect(lines[0]).toBe('XLM leaving your account: up to 1,000,000 XLM, plus the network fee.');
-    expect(lines).toContain('The transaction is from your account (muxed id 7).');
+    expect(lines).toContain('It is sent from your account (extra id 7).');
     expect(lines.join(' ')).not.toContain('from the account M');
   });
 
 
   it('a payment to the user’s muxed account is to the user; another account’s muxed form is not', () => {
-    expect(headline(stellar([Operation.payment({ destination: muxed.accountId(), asset: Asset.native(), amount: '1' })]))).toBe(`${APP} wants to send 1 XLM to your account (muxed id 7)`);
+    expect(headline(stellar([Operation.payment({ destination: muxed.accountId(), asset: Asset.native(), amount: '1' })]))).toBe(`${APP} wants to send 1 XLM to your account (extra id 7)`);
     const theirs = new MuxedAccount(new Account(OTHER, '1'), '9').accountId();
     expect(headline(stellar([Operation.payment({ destination: theirs, asset: Asset.native(), amount: '1' })]))).toBe(`${APP} wants to send 1 XLM to ${theirs}`);
   });
@@ -957,12 +1025,12 @@ describe('final review: contract creation on Stellar lists its authorizations; N
   it('a contract created with a constructor or with authorizations: red, every authorized call listed', () => {
     const s = stellar([Operation.createCustomContract({ address: new Address(USER), wasmHash: Buffer.alloc(32, 5), constructorArgs: [], salt: Buffer.alloc(32, 6), auth: [steal()] })]);
     expect(s.warnings.find((w) => w.code === 'cannot_explain')?.level).toBe('danger');
-    expect(s.lines.map(text)).toContain(`It also authorizes sending 1,000,000,000,000,000 (in the token’s smallest units) of the token contract ${TOKEN} to ${ATTACKER}.`);
+    expect(s.lines.map(text)).toContain(`It also approves sending 1,000,000,000,000,000 units of the unlisted token ${TOKEN} to ${ATTACKER}.`);
     expect(s.explainable).toBe(false);
     // A constructor alone (no authorizations) is red too.
     const ctor = stellar([Operation.createCustomContract({ address: new Address(USER), wasmHash: Buffer.alloc(32, 5), constructorArgs: [], salt: Buffer.alloc(32, 6) })]);
     expect(ctor.warnings.find((w) => w.code === 'cannot_explain')?.level).toBe('danger');
-    expect(headline(ctor)).toBe(`${APP} wants to create a contract and run its constructor`);
+    expect(headline(ctor)).toBe(`${APP} wants to create a program and run its setup`);
   });
 
   it('uploading contract code alone stays amber', () => {
@@ -973,8 +1041,8 @@ describe('final review: contract creation on Stellar lists its authorizations; N
 
   it('a NEAR function-call key says what it may spend on fees', () => {
     const key = (allowance: bigint | null): NearAction => ({ type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance, receiverId: 'app.testnet', methodNames: [] } } });
-    expect(headline(near([key(null)], NEAR_ME))).toBe(`${APP} wants to add the key ${KEY9} to your account that can use app.testnet, with no limit on the NEAR it spends on fees`);
-    expect(headline(near([key(25n * 10n ** 22n)], NEAR_ME))).toBe(`${APP} wants to add the key ${KEY9} to your account that can use app.testnet, spending up to 0.25 NEAR on fees`);
+    expect(headline(near([key(null)], NEAR_ME))).toBe(`${APP} wants to let another device or app act for you on app.testnet without asking (key ${KEY9}), with no limit on the NEAR it spends on fees`);
+    expect(headline(near([key(25n * 10n ** 22n)], NEAR_ME))).toBe(`${APP} wants to let another device or app act for you on app.testnet without asking (key ${KEY9}), spending up to 0.25 NEAR on fees`);
   });
 });
 
@@ -1009,20 +1077,20 @@ describe('D814: grouped lines', () => {
 
   it('100 actions (99 self-transfers and a full-access key): two lines, control first', () => {
     const s = near([...Array.from({ length: 99 }, (): NearAction => ({ type: 'transfer', deposit: 1n })), fullKey(9)], NEAR_ME);
-    expect(s.lines.map(text)).toEqual([`Add the full-access key ${KEY9} to your account`, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
+    expect(s.lines.map(text)).toEqual([`Give full control of your account to another key, ${KEY9}`, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
     expect(s.explainable).toBe(true);
   });
 
   it('mixed recipients: others before the user’s own account, contract calls between; totals per recipient', () => {
     const s = stellar([pay(OTHER, '1'), pay(USER, '0.5'), pay(OTHER, '2'), invokeOp(ROUTER, 'swap', [i128(1n)]), pay(USER, '0.25'), pay(OTHER, '3')]);
     const lines = s.lines.map(text);
-    expect(lines[0]).toBe('XLM leaving your account: up to 6.75 XLM, plus what its contract calls or pool deposits take, plus the network fee.');
-    expect(lines.slice(1)).toEqual([`Send 6 XLM to ${OTHER} in 3 payments`, `Use contract ${ROUTER} (swap)`, 'Send 0.75 XLM to your account in 2 payments']);
+    expect(lines[0]).toBe('XLM leaving your account: up to 6.75 XLM, plus what its programs or pool deposits take, plus the network fee.');
+    expect(lines.slice(1)).toEqual([`Send 6 XLM to ${OTHER} in 3 payments`, `Use the program ${ROUTER} (swap)`, 'Send 0.75 XLM to your account in 2 payments']);
   });
 
   it('value to others by descending total; control changes first', () => {
     const s = stellar([pay(OTHER, '5'), pay(ATTACKER, '10'), addSignerOp()]);
-    expect(s.lines.map(text).slice(1)).toEqual([`Add ${ATTACKER} as a signer with weight 255`, `Send 10 XLM to ${ATTACKER}`, `Send 5 XLM to ${OTHER}`]);
+    expect(s.lines.map(text).slice(1)).toEqual([`Let the key ${ATTACKER} act for the account (strength 255)`, `Send 10 XLM to ${ATTACKER}`, `Send 5 XLM to ${OTHER}`]);
   });
 
   it('never merges different recipients, assets or methods', () => {
@@ -1036,7 +1104,7 @@ describe('D814: grouped lines', () => {
   it('more than four groups: three lines, "…and N other steps", a red line when a left-out step moves value', () => {
     const s = stellar([pay(OTHER, '1'), pay(ATTACKER, '2'), pay(USER, '3'), invokeOp(ROUTER, 'swap', [i128(1n)]), bump(), bump()]);
     expect(s.lines).toHaveLength(1 + MAX_GROUP_LINES);
-    expect(text(s.lines.at(-1)!)).toBe('…and 3 other steps: see the details.');
+    expect(text(s.lines.at(-1)!)).toBe('…and 3 more steps (in the details).');
     const w = s.warnings.find((x) => x.code === 'steps_not_listed')!;
     expect(w.level).toBe('warning');
     const v = stellar([invokeOp(ROUTER, 'a', []), invokeOp(ROUTER, 'b', []), invokeOp(ROUTER, 'c', []), invokeOp(ROUTER, 'd', []), bump()]);
@@ -1054,12 +1122,12 @@ describe('D814: grouped lines', () => {
   it('a step on the user’s muxed account says so in its line', () => {
     const muxed = new MuxedAccount(new Account(USER, '41'), '7');
     const s = stellar([pay(ATTACKER, '500'), bump()].map((op, i) => (i === 0 ? Operation.payment({ destination: ATTACKER, asset: Asset.native(), amount: '500', source: muxed.accountId() }) : op)));
-    expect(text(s.lines[1]!)).toBe(`Send 500 XLM to ${ATTACKER} (on your account (muxed id 7))`);
+    expect(text(s.lines[1]!)).toBe(`Send 500 XLM to ${ATTACKER} (on your account (extra id 7))`);
   });
 
   it('other value (sponsorship, trust lines) before neutral steps', () => {
     const s = stellar([bump(), bump(), Operation.revokeAccountSponsorship({ account: USER }), Operation.changeTrust({ asset: new Asset('USDC', ISSUER) })]);
-    expect(s.lines.map(text)).toEqual(['End a reserve sponsorship', `Let your account hold the asset USDC:${ISSUER}`, '2 times: move the account’s sequence number forward']);
+    expect(s.lines.map(text)).toEqual(['Stop paying someone else’s minimum balance', `Let your account hold the asset USDC:${ISSUER}`, '2 times: move the account’s request counter forward']);
   });
 
   it('property: every (recipient, asset) is in a visible line with its exact total, or a warning says steps are left out', () => {
@@ -1117,14 +1185,14 @@ describe('D810 with D814: the risk lines of requests that leave things out, at t
   it('amber: bounded or not about value', () => {
     expect(level(evmSummary({ to: null, value: 0n, data: '0x6000' }), 'contract_creation')).toBe('warning');
     expect(level(stellar([Operation.createClaimableBalance({ asset: Asset.native(), amount: '1', claimants: [new Claimant(USER, Claimant.predicateBeforeRelativeTime('100'))] })]), 'cannot_explain')).toBe('warning');
-    expect(warnings(msg('personal_sign', 'a‮b'))).toEqual([['warning', 'cannot_explain', `Journear can’t read this message, so it can’t tell what signing it does. Only approve if you fully trust ${APP}. Technical details are below.`]]);
+    expect(warnings(msg('personal_sign', 'a‮b'))).toEqual([['warning', 'cannot_explain', `Journear can’t check what this does (the message isn’t readable text). Approve only if you expected this from ${APP}.`]]);
   });
 
   it('every red warning has a short bullet form', () => {
     for (const s of [tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)), tokenCall('0xdeadbeef'), summarizeApproval(decodeApprovalRequest({ kind: 'raw', chain: 'evm', address: ME, context: {}, bytes: new Uint8Array(32) }), { address: ME })]) {
       for (const w of s.warnings.filter((x) => x.level === 'danger')) expect(w.short?.length, w.code).toBeGreaterThan(0);
     }
-    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)).warnings[0]!.short!)).toBe(`Lets ${SPENDER} (unverified) spend all of your tokens of contract ${TOKEN_EVM}`);
+    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)).warnings[0]!.short!)).toBe(`Lets ${SPENDER} (not checked) take all your tokens from ${TOKEN_EVM} (an unlisted token)`);
   });
 });
 
@@ -1188,7 +1256,7 @@ describe('review of 5ef13452: control keys in full, spenders marked, sums, direc
   it('a NEAR key change names the whole key in its line and headline', () => {
     const pub = { type: 'ed25519' as const, bytes: new Uint8Array(32).fill(9) };
     const full = nearPublicKeyString(pub.bytes);
-    expect(headline(near([{ type: 'addKey', publicKey: pub, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }], NEAR_ME))).toBe(`${APP} wants to add the full-access key ${full} to your account`);
+    expect(headline(near([{ type: 'addKey', publicKey: pub, accessKey: { nonce: 0n, permission: { type: 'fullAccess' } } }], NEAR_ME))).toBe(`${APP} wants to give full control of your account to another key, ${full}`);
     expect(headline(near([{ type: 'deleteKey', publicKey: pub }], NEAR_ME))).toBe(`${APP} wants to remove the key ${full} from your account`);
   });
 
@@ -1198,7 +1266,7 @@ describe('review of 5ef13452: control keys in full, spenders marked, sums, direc
   });
 
   it('a spender bullet keeps the whole address and says when it isn’t verified', () => {
-    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)).warnings[0]!.short!)).toBe(`Lets ${SPENDER} (unverified) spend all of your tokens of contract ${TOKEN_EVM}`);
+    expect(text(tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX)).warnings[0]!.short!)).toBe(`Lets ${SPENDER} (not checked) take all your tokens from ${TOKEN_EVM} (an unlisted token)`);
   });
 
   it('a path payment’s coin counts toward the largest amount to others', () => {
@@ -1220,7 +1288,7 @@ describe('review of 5ef13452: control keys in full, spenders marked, sums, direc
   it('a left-out approval of 0 is said as taking a permission back', () => {
     const s = stellar([1, 2, 3, 4].map((i) => Operation.setOptions({ signer: { ed25519PublicKey: k(i), weight: 1 } })).concat([invokeOp(TOKEN, 'approve', [addr(USER), addr(ATTACKER), i128(0n), xdr.ScVal.scvU32(1)])]));
     const w = s.warnings.filter((x) => x.code === 'step_left_out').map((x) => text(x.text)).join(' ');
-    expect(w).toContain(`Take back ${ATTACKER}’s permission`);
+    expect(w).toContain(`Cancel ${ATTACKER}’s permission`);
     expect(w).not.toContain(`Let ${ATTACKER} spend`);
   });
 });

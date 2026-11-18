@@ -13364,7 +13364,7 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
   `packages/web/src/auth/email-page.ts` (`showLinkWaiting`, `showLinkCancel`), `apps/email-issuer/src/mail.ts`
   (`linkNoticeMail`, pending "Not you?"); tests `packages/web/test/vault/linking.test.ts`,
   `packages/web/test/auth/email-follow.test.ts`, `packages/core/test/linking-protocol.test.ts`,
-  `apps/api/test/email-login.test.ts`, `apps/email-issuer/test/mail-html.test.ts`, `apps/e2e/tests/linking.spec.ts`
+  `apps/api/test/email-login.test.ts`, `apps/email-issuer/test/mail-html.test.ts`, `apps/email-issuer/scripts/test/mail-links.test.ts`, `apps/e2e/tests/linking.spec.ts`
   (and the stack's chain: views count a pending member past its time as active, as the contract does; `cancel_link`
   refuses an active member; `POST /__e2e/links/expire`) · Amends D259 and D862, with a row of "Superseded or amended"
 - Context: a pending link is case B when Google doesn't host the mailbox (D119): someone signed in with a Google

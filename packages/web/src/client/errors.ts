@@ -52,7 +52,7 @@ export class HanaError extends Error {
   }
 
   /**
-   * D861: a plain sentence to show the user ("You rejected this in Journear Passport, or closed it. Nothing was
+   * A plain sentence to show the user ("You rejected this in Journear Passport, or closed it. Nothing was
    * approved."), worked out from `code` and `data.reason` alone; `message` stays the developer's. A getter, so the
    * error's own fields are as before.
    */
@@ -102,7 +102,7 @@ export class ProviderRpcError extends Error {
   }
 
   /**
-   * D861: the plain sentence for the user, as on a HanaError: from the Journear Passport code in `data.code` (and its
+   * The plain sentence for the user, as on a HanaError: from the Journear Passport code in `data.code` (and its
    * `data.data.reason`) when there is one, else from this numeric code and `data`.
    */
   get userMessage(): string {

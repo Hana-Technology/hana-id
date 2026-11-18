@@ -31,7 +31,7 @@ export type { AccountMethod, AccountResult, LinkChange } from '@hana-id/core';
 // `disconnect`'s `reason` (`signed_out`: Hana signed this device out).
 export type { DisconnectReason } from '@hana-id/core';
 export { HanaError, ProviderRpcError, RpcCode, type ClientErrorCode, type SwkError } from './client/errors.ts';
-// D861: the plain sentence for an error's code (`error.userMessage` on HanaError and ProviderRpcError), for a code read
+// The plain sentence for an error's code (`error.userMessage` on HanaError and ProviderRpcError), for a code read
 // elsewhere (the SWK module's `ext[0]`, a wrapped provider error's `data.code`).
 export { userMessageFor } from './client/user-messages.ts';
 export {

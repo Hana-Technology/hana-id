@@ -123,19 +123,26 @@ const QUANTITY_RE = /^0x(?:0|[1-9a-fA-F][0-9a-fA-F]{0,63})$/u;
 const DATA_RE = /^0x(?:[0-9a-fA-F]{2})*$/u;
 
 /**
+ * The usable keyed read endpoint in the secret `EVM_SPONSOR_RPC_<chainId>` (an https URL of at most 2048 characters),
+ * or null when it is unset, empty or not one. Outside `local*` envs sponsorship stays off without it (evmSponsorReady,
+ * D851 as amended), so the public `rpc` is the read endpoint only in a `local*` env. Never logged: it is a secret.
+ */
+export function keyedSponsorRpc(env: Partial<Record<string, unknown>> | Env, chainId: number): string | null {
+  const keyed = (env as Record<string, unknown>)[`EVM_SPONSOR_RPC_${chainId}`];
+  if (typeof keyed !== 'string' || keyed.length === 0 || keyed.length > 2048) return null;
+  try {
+    return new URL(keyed).protocol === 'https:' ? keyed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The chain's endpoints: `read`, the one trusted endpoint (the https URL in `EVM_SPONSOR_RPC_<chainId>` when set,
  * else `rpc`), and `broadcast`, `read` first and then every other configured URL, each once.
  */
 export function sponsorRpcEndpoints(env: Partial<Record<string, unknown>> | Env, chain: SponsorChainEndpoints): { read: string; broadcast: string[] } {
-  const keyed = (env as Record<string, unknown>)[`EVM_SPONSOR_RPC_${chain.chainId}`];
-  let read = chain.rpc;
-  if (typeof keyed === 'string' && keyed.length > 0 && keyed.length <= 2048) {
-    try {
-      if (new URL(keyed).protocol === 'https:') read = keyed;
-    } catch {
-      // Not a URL: ignored (never logged: it is a secret).
-    }
-  }
+  const read = keyedSponsorRpc(env, chain.chainId) ?? chain.rpc;
   const broadcast: string[] = [];
   for (const u of [read, chain.rpcFallback, chain.rpc]) if (u && !broadcast.includes(u)) broadcast.push(u);
   return { read, broadcast };

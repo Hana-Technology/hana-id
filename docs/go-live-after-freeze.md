@@ -1,6 +1,7 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
+Last verified against code: 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
 
@@ -632,6 +633,9 @@ corepack pnpm --dir apps/api exec wrangler secret put EVM_SPONSOR_RPC_84532
 
 wrangler asks for the value and doesn't show it: paste the URL from your password manager (0.6), then Enter.
 You see: a success line for `EVM_SPONSOR_RPC_84532`. Never type the URL anywhere else.
+Without this secret sandbox-dev keeps sponsorship off (every sponsorship request answers "not configured", and the
+API's log says `evm_sponsor_rpc_missing`), and 4.14's check fails until it is there: it never falls back to the public
+endpoint.
 
 ### 4.13 Deploy (the assistant, on "go ahead deploy")
 
@@ -648,9 +652,12 @@ corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --only watc
 ```
 
 You see: the `evm` group for 84532: both endpoints on the right chain, `delegate 0xfC5e… runs the artifact's code`,
-the relayer's balance against `lowBalanceEth`, `has code` for the check-in target; the last line is the `OK: …`
-line with `EVM sponsorship checked` in it. A `warning: … below lowBalanceEth`: fund the relayer (4.5). Any `FAIL:`: use the off switch
-(below) and ask.
+the relayer's balance against `lowBalanceEth`, `has code` for the check-in target, and
+`evm 84532  secret EVM_SPONSOR_RPC_84532 is set on hana-id-api-sandbox-dev (its name only: the value is never read)`;
+the last line is the `OK: …` line with `EVM sponsorship checked` in it. A `warning: … below lowBalanceEth`: fund the
+relayer (4.5). `FAIL: evm 84532: the API Worker hana-id-api-sandbox-dev has no secret EVM_SPONSOR_RPC_84532 …`: do
+4.12, then run the check again (sponsorship is still off meanwhile, nothing to switch off). Any other `FAIL:`: use the
+off switch (below) and ask.
 
 ### 4.15 The first gas-free action, by hand (you)
 

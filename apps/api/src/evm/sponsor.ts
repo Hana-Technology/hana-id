@@ -52,6 +52,7 @@ import { EVM_RELAYER_MAX_DATA_BYTES, feesTooLow } from '../evm-relayer.ts';
 import { AUTHORIZATION_GAS, L1FeeUnavailable, l1FeeUpperBound, maxMinGasFor, operatorFeeUpperBound, sponsorFees, sponsorGasLimit, unsignedTxSizeBound, worstCaseWei } from './op-fee.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, parseEvmSponsorConfig, type PinnedSponsorDelegates, sponsorChain, sponsoredTarget } from './sponsor-config.ts';
 import { lateBilling, mirrorEvmBilling } from './sponsor-billing.ts';
+import { keyedSponsorRpc } from './sponsor-chain.ts';
 import {
   appSponsoredOn,
   authorizationRefusal,
@@ -159,14 +160,30 @@ export function evmSponsorConfig(env: Env): EvmSponsorConfig | null {
   return parsed.config;
 }
 
+/** The configs whose missing read endpoint was already logged, per isolate (one error line, not one per request). */
+const rpcMissingLogged = new Set<string>();
+
 /**
  * Sponsorship is on when the config parses, the Worker has the relayer binding and the relayer key secret is set (the
- * relayer object checks the key itself; this only reads that it is present). Else every route is
- * `503 sponsorship_unconfigured`.
+ * relayer object checks the key itself; this only reads that it is present), and, outside `local*` envs, every
+ * sponsored chain has its trusted read endpoint secret `EVM_SPONSOR_RPC_<chainId>` (an https URL; D851 as amended:
+ * never the public `rpc` instead). Else every route is `503 sponsorship_unconfigured`, and a missing endpoint logs
+ * `evm_sponsor_rpc_missing` with the chain IDs (never a URL) once per isolate.
  */
 export function evmSponsorReady(env: Env): EvmSponsorConfig | null {
   if (!relayerBinding(env) || !env.EVM_RELAY_KEYS) return null;
-  return evmSponsorConfig(env);
+  const config = evmSponsorConfig(env);
+  if (!config || /^local/u.test(env.ENV_NAME)) return config;
+  const chainIds = Object.values(config.chains)
+    .map((c) => c.chainId)
+    .filter((id) => keyedSponsorRpc(env, id) === null);
+  if (chainIds.length === 0) return config;
+  const key = `${env.ENV_NAME}\u0000${env.EVM_SPONSOR ?? ''}\u0000${chainIds.join(',')}`;
+  if (!rpcMissingLogged.has(key)) {
+    rpcMissingLogged.add(key);
+    log({ event: 'evm_sponsor_config', outcome: 'error', code: 'evm_sponsor_rpc_missing', chainIds }, 'error');
+  }
+  return null;
 }
 
 export const unconfigured = (ctx: Ctx): Response => reject(ctx, 503, 'sponsorship_unconfigured', 'EVM gas sponsorship is not configured');

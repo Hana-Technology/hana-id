@@ -540,7 +540,8 @@ pnpm -r test
 cd contracts/hana-signer && cargo test
 ```
 
-CI is off while only testnet runs (D387): `pnpm verify` is the local gate (`docs/operations.md` "CI and git", D413).
+CI was turned off on 2026-11-05 (D387) and is ready to switch on at no cost while the repository is public (D857); the
+founder switches it on. Either way `pnpm verify` is the gate before a merge (`docs/operations.md` "CI and git", D413).
 `pnpm verify --quick` while working; `pnpm verify` before every merge into `develop`; `pnpm verify --full` before a
 deploy. `pnpm verify:install-hook` (optional) makes a push to `develop` or `main` run `--quick` first.
 

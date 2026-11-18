@@ -56,6 +56,11 @@ export interface LogFields {
    */
   rpcEndpoint?: number;
   nextRpcEndpoint?: number;
+  /** EVM gas sponsorship (evm/sponsor-chain.ts, evm-relayer.ts, D851): the chain, and a relayer transaction's public hash. */
+  chainId?: number;
+  evmTx?: string;
+  /** The relayer's CPU-relevant work in one send, alarm run or staff call (evm-relayer.ts, D851): counts, never timings. */
+  evmOps?: { signatures: number; recoveries: number; fetches: number; keyDerivations: number };
   /** The mainnet demo's price refresh (mainnet-demo-prices.ts, D436): which CoinGecko attempt. Never a URL or key. */
   priceSource?: 'pro' | 'demo' | 'public';
 }

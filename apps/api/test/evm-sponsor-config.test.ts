@@ -82,10 +82,15 @@ describe('parseEvmSponsorConfig', () => {
     expect(sponsorChain(c, Number.NaN)).toBeNull();
   });
 
-  it('defaults requireKnownAccount to true and rpcFallback to none', () => {
-    const { requireKnownAccount: _r, rpcFallback: _f, ...bare } = fixture().chains['84532']!;
+  it('defaults requireKnownAccount to true; rpcFallback is required outside local* envs (D855), none in a local env', () => {
+    const { requireKnownAccount: _r, ...bare } = fixture().chains['84532']!;
     const r = parse({ ...fixture(), chains: { '84532': bare } });
-    expect(r.status === 'configured' && sponsorChain(r.config, 84532)).toMatchObject({ requireKnownAccount: true, rpcFallback: null });
+    expect(r.status === 'configured' && sponsorChain(r.config, 84532)).toMatchObject({ requireKnownAccount: true });
+    const { rpcFallback: _f, ...noFallback } = fixture().chains['84532']!;
+    expect(problem({ ...fixture(), chains: { '84532': noFallback } })).toBe('chains.84532.rpcFallback is required outside local* envs');
+    const s = fixture();
+    const local = parse({ ...s, chains: { '31337': { ...s.chains['84532'], opStack: false, rpc: 'http://127.0.0.1:8545', rpcFallback: undefined } }, apps: {} }, LOCAL);
+    expect(local.status === 'configured' && sponsorChain(local.config, 31337)?.rpcFallback).toBeNull();
     const off = parse(chain({ requireKnownAccount: false }));
     expect(off.status === 'configured' && sponsorChain(off.config, 84532)?.requireKnownAccount).toBe(false);
   });

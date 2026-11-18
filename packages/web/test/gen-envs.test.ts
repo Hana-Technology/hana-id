@@ -188,7 +188,7 @@ describe('EVM gas sponsorship in the vault build (D834)', () => {
   });
 
   it('puts { chainId: { delegate, relayer } } into the env, and nothing without the block', () => {
-    expect(hanaEnv(sponsored)?.evmSponsor).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER } });
+    expect(hanaEnv(sponsored)?.evmSponsor).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER, rpc: 'https://sepolia.base.org', rpcFallback: 'https://base-sepolia-rpc.publicnode.com' } });
     expect(hanaEnv(sandbox)).not.toHaveProperty('evmSponsor');
   });
 
@@ -202,7 +202,7 @@ describe('EVM gas sponsorship in the vault build (D834)', () => {
     const out = join(dir, 'envs.generated.ts');
     main({ manifests: [sandbox, sponsored], out, sponsorDelegates: FIXTURE_PINNED_DELEGATES });
     const envs = ((await import(pathToFileURL(out).href)) as { HANA_ENVS: Readonly<Record<string, HanaEnv>> }).HANA_ENVS;
-    expect(envs['sandbox-evm']?.evmSponsor).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER } });
+    expect(envs['sandbox-evm']?.evmSponsor).toEqual({ '84532': { delegate: FIXTURE_DELEGATE, relayer: FIXTURE_RELAYER, rpc: 'https://sepolia.base.org', rpcFallback: 'https://base-sepolia-rpc.publicnode.com' } });
     expect(envs['sandbox-dev']).not.toHaveProperty('evmSponsor');
   });
 

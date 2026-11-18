@@ -78,6 +78,22 @@ describe('GET {vaultOrigin}/vault', () => {
     }
   });
 
+  it('adds the sponsored chains’ public RPC endpoints to connect-src (the vault reads the account’s setup itself, D855)', async () => {
+    const app = await seedApp();
+    const saved = env.EVM_SPONSOR;
+    try {
+      env.EVM_SPONSOR = JSON.stringify({ relayerAddress: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', chains: { '84532': { rpc: 'https://sepolia.base.test', rpcFallback: 'https://base-sepolia-rpc.fallback.test', delegate: '0x' } } });
+      expect(csp(await vaultPage(app.key))).toBe(`${BASE}; frame-ancestors ${ORIGIN}; connect-src https://api.test https://rpc.test.invalid https://www.googleapis.com https://sepolia.base.test https://base-sepolia-rpc.fallback.test`);
+      // Malformed or without a usable URL: nothing added, the page still serves (sponsorship alone can't read the chain).
+      for (const bad of ['not json', '{"chains":[]}', JSON.stringify({ chains: { '84532': { rpc: 'javascript:alert(1)' } } }), JSON.stringify({ chains: { '84532': { rpc: 'https://a.test x' } } })]) {
+        env.EVM_SPONSOR = bad;
+        expect(csp(await vaultPage(app.key))).toBe(`${BASE}; frame-ancestors ${ORIGIN}; connect-src https://api.test https://rpc.test.invalid https://www.googleapis.com`);
+      }
+    } finally {
+      env.EVM_SPONSOR = saved;
+    }
+  });
+
   it('adds the email issuer to connect-src when the env has one (the vault calls google-match, batch 8b)', async () => {
     const app = await seedApp();
     const saved = env.EMAIL_ISSUER_URL;

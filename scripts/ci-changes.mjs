@@ -4,17 +4,19 @@
 //
 //   rust             the Rust jobs (contract: cargo test + wasm; sandbox e2e) run
 //   web              the Playwright suite and the SDK pack check run
+//   evm              the EVM delegate job (forge fmt, forge test, the artifacts check; D841) runs
 //   playwright_args  the Playwright projects for this event ('' = all three browsers)
 //
-// gitleaks and the TypeScript job are not gated: they run on every push and PR (the TypeScript tests read docs/ and
-// contracts/, so no path is safe to skip there).
+// gitleaks, the dependency advisories and the TypeScript job are not gated: they run on every push and PR (the
+// TypeScript tests read docs/ and contracts/, so no path is safe to skip there).
 //
 //   node scripts/ci-changes.mjs                 (CI: reads CI_EVENT, CI_REF, CI_BASE; writes $GITHUB_OUTPUT)
 //   node scripts/ci-changes.mjs --classify <file>...   (prints the classification of a file list as JSON)
 //
 // CI_BASE is the commit the change is measured from: for a push, the head of the last successful push run of CI on
-// that branch (so a cancelled or failed run's changes are counted again by the next push); for a PR, its base; for
-// the nightly run, the head of the last successful nightly run. With no base, or one that is not an ancestor of HEAD
+// that branch (so a cancelled or failed run's changes are counted again by the next push); for a PR, its base. There
+// is no scheduled run since D857 (CI's minutes are free while the repository is public, so a push to `next`,
+// `develop` or `main` runs the three browsers itself). With no base, or one that is not an ancestor of HEAD
 // (a force push, say), everything runs. No dependencies beyond Node's standard library: the job runs it before any
 // install.
 import { spawnSync } from 'node:child_process';
@@ -34,8 +36,8 @@ export function isDocOnly(file) {
   return file.endsWith('.md') && !file.startsWith('packages/');
 }
 
-/** The EVM delegate contract (Foundry, D841): under contracts/ but not Rust. No CI job runs its tests while CI is off
- * (D387); `pnpm verify` does (its `evm` step, `evmChanged`). */
+/** The EVM delegate contract (Foundry, D841): under contracts/ but not Rust. CI's `evm` job (D857) and `pnpm verify`'s
+ * `evm` step run its checks when `evmChanged`. */
 export const EVM_DIR = 'contracts/evm-delegate';
 
 /** Files outside contracts/evm-delegate/ its checks read: the lockfile pins its Solidity dependencies, and its test
@@ -55,11 +57,10 @@ export function classify(files) {
   return { rust, web };
 }
 
-/** The Playwright projects per event: Chromium on PRs and develop pushes, WebKit and Firefox nightly, all on main. */
-export function playwrightArgs(event, ref) {
-  if (event === 'schedule') return '--project webkit --project firefox';
-  if (event === 'workflow_dispatch' || ref === 'refs/heads/main') return '';
-  return '--project chromium';
+/** The Playwright projects per event: Chromium on a PR; all three on a push (after a merge into `next`, `develop` or
+ * `main`) and on a manual run (D857, replacing D383's nightly WebKit and Firefox run). */
+export function playwrightArgs(event) {
+  return event === 'pull_request' ? '--project chromium' : '';
 }
 
 function git(args) {
@@ -68,7 +69,7 @@ function git(args) {
 
 /** The decision for one CI run. `files` is null when everything must run. */
 export function decide({ event, ref, base }) {
-  const all = { rust: event !== 'schedule', web: true };
+  const all = { rust: true, web: true, evm: true };
   if (event === 'workflow_dispatch' || ref === 'refs/heads/main') return { ...all, reason: `${event} on ${ref}: everything runs`, files: null };
   if (!/^[0-9a-f]{40}$/u.test(base ?? '')) return { ...all, reason: 'no base commit (first run of its kind): everything runs', files: null };
   if (git(['cat-file', '-e', `${base}^{commit}`]).status !== 0) return { ...all, reason: `base ${base} is not in this clone: everything runs`, files: null };
@@ -80,9 +81,7 @@ export function decide({ event, ref, base }) {
   const diff = git(['diff', '--name-only', '--no-renames', from, 'HEAD']);
   if (diff.status !== 0 || !from) return { ...all, reason: `git diff from ${base} failed: everything runs`, files: null };
   const files = diff.stdout.split('\n').filter(Boolean);
-  const c = classify(files);
-  // The nightly run only adds the browsers the pushes skipped; the Rust jobs already ran on each push.
-  return { rust: event === 'schedule' ? false : c.rust, web: c.web, reason: `${files.length} file(s) changed since ${base}`, files };
+  return { ...classify(files), evm: evmChanged(files), reason: `${files.length} file(s) changed since ${base}`, files };
 }
 
 function main() {
@@ -94,7 +93,7 @@ function main() {
   const event = process.env.CI_EVENT ?? '';
   const ref = process.env.CI_REF ?? '';
   const d = decide({ event, ref, base: process.env.CI_BASE });
-  const outputs = { rust: String(d.rust), web: String(d.web), playwright_args: playwrightArgs(event, ref) };
+  const outputs = { rust: String(d.rust), web: String(d.web), evm: String(d.evm), playwright_args: playwrightArgs(event) };
   console.log(d.reason);
   for (const f of d.files ?? []) console.log(`  ${f}`);
   for (const [k, v] of Object.entries(outputs)) console.log(`${k}=${v}`);

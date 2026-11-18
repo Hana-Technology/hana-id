@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it } from 'vitest';
+import { testTempDir } from './temp.ts';
 
 type Pkg = { name: string; dir: string; deps: string[] };
 type Reads = Map<string, { code: Set<string>; test: Set<string> }>;
@@ -233,7 +234,7 @@ describe('the plan', () => {
     for (const id of ['contract', 'evm', 'sandbox', 'pack', 'e2e']) expect(step(p, id).skip, id).toBe('not in --quick');
   });
 
-  it('default: what a develop push ran, by CI’s rules (scripts/ci-changes.mjs)', () => {
+  it('default: what CI runs on a PR, by CI’s rules (scripts/ci-changes.mjs)', () => {
     const web = plan('default', ['packages/web/src/index.ts']);
     expect(ran(web)).toEqual(['install', 'secrets', 'typecheck', 'unit', 'docs', 'pack', 'e2e']);
     expect(step(web, 'e2e').run.map(line)).toEqual(['pnpm --filter @hana-id/e2e run e2e --forbid-only --project chromium']);
@@ -371,7 +372,7 @@ describe('.github/workflows/ci.yml: every job has its step, with the same comman
   const cmds = (...ids: string[]) => p.steps.filter((s) => ids.includes(s.id)).flatMap((s) => s.run.map((c) => [c.cmd, ...c.args].join(' ')));
 
   it('knows every CI job (a new job needs a verify step, or a reason here)', () => {
-    const covered: Record<string, string[]> = { audit: ['audit'], changes: [], secrets: ['secrets'], contract: ['contract'], typescript: ['install', 'typecheck', 'unit'], packages: ['pack'], playwright: ['e2e'], e2e: ['sandbox'] };
+    const covered: Record<string, string[]> = { audit: ['audit'], changes: [], secrets: ['secrets'], contract: ['contract'], evm: ['evm'], typescript: ['install', 'typecheck', 'unit'], packages: ['pack'], playwright: ['e2e'], e2e: ['sandbox'] };
     expect(jobs.sort()).toEqual(Object.keys(covered).sort());
   });
 
@@ -384,8 +385,23 @@ describe('.github/workflows/ci.yml: every job has its step, with the same comman
       expect(yml, c).toContain(`run: ${c}`);
     }
     expect(cmds('contract')).toEqual(['cargo test --locked', 'cargo near build non-reproducible-wasm', 'cargo test --locked', 'cargo near build non-reproducible-wasm', 'cargo test --locked', 'cargo near build non-reproducible-wasm']);
-    // CI's e2e job runs the first; the second (the API's meta-transaction tests on the same binary) is local only while CI is off (D387).
+    // CI's e2e job runs both, the second required (HANA_SANDBOX_REQUIRED, D857).
     expect(cmds('sandbox')).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`, 'pnpm --filter @hana-id/api run test:sandbox']);
+    expect(yml).toContain('run: pnpm --filter @hana-id/api run test:sandbox');
+    expect(yml).toContain("HANA_SANDBOX_REQUIRED: '1'");
+    // The EVM delegate job (D841, D857): the same three commands, in its directory.
+    expect(cmds('evm')).toEqual(['forge fmt --check', 'forge test', 'node scripts/generate.mjs --check']);
+    for (const c of cmds('evm')) expect(yml, c).toContain(`run: ${c}`);
+    expect(yml).toContain(`working-directory: ${p.steps.find((s) => s.id === 'evm')!.run[0]!.cwd}`);
+    // Foundry at the version the delegate's README documents, the release tarball checksum-verified, in both jobs.
+    const foundry = /Foundry (\d+\.\d+\.\d+)/u.exec(readFileSync(join(repoRoot, 'contracts', 'evm-delegate', 'README.md'), 'utf8'))?.[1];
+    expect(foundry).toBeDefined();
+    expect(yml.split(`FOUNDRY_VERSION: ${foundry}\n`)).toHaveLength(3);
+    expect(yml.match(/FOUNDRY_SHA256: [0-9a-f]{64}\n/gu)).toHaveLength(2);
+    expect(yml).not.toContain('foundry-toolchain');
+    // Playwright with --forbid-only, as verify's e2e step.
+    expect(cmds('e2e')[0]).toContain('--forbid-only');
+    expect(yml).toContain('pnpm run e2e --forbid-only');
     expect(cmds('pack')).toEqual(['pnpm run pack:check']);
     expect(p.steps.find((s) => s.id === 'contract')!.run.map((c) => c.cwd)).toEqual(['contracts/hana-signer', 'contracts/hana-signer', 'contracts/hana-guestbook', 'contracts/hana-guestbook', 'contracts/hana-stamps', 'contracts/hana-stamps']);
     // CI's contract job runs every crate too (D744, D796).
@@ -455,7 +471,7 @@ describe('the run: phases in order, lanes side by side, a lane one step at a tim
   }
   const steps = [st('install', 0), st('unit', 1), st('docs', 1), st('sandbox', 2), st('pack', 2, 'web'), st('e2e', 2, 'web'), st('skipped', 2, 'web', 'not here')];
   // Never written (the fake runner ignores it), but a run's own directory, not the shared temp dir's fixed names.
-  const quiet = { log: () => {}, logDir: mkdtempSync(join(tmpdir(), 'hana-verify-test-')) };
+  const quiet = { log: () => {}, logDir: testTempDir('hana-verify-test-') };
 
   it('runs the lanes of a phase side by side and a lane in order; the next phase waits for every lane', async () => {
     const f = fake({ sandbox: 80, pack: 10, e2e: 10 });

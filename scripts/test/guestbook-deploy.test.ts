@@ -1,7 +1,6 @@
 // deploy-guestbook end to end against a stub chain and a temp keychain: the --yes gate (a dry run sends nothing), the
 // one deploy + new() transaction, the blockers, --lock, and that no secret key reaches the output.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type Manifest, loadEnv } from '@hana-id/env';
@@ -10,6 +9,7 @@ import type { Action } from '@near-js/transactions';
 import { CliError } from '../lib/cli.ts';
 import { GUESTBOOK_DRY_RUN_LINE, GUESTBOOK_INIT_GAS, GUESTBOOK_STATE_BYTES, type GuestbookRpc, guestbookMain, guestbookNeedYocto } from '../lib/guestbook-deploy.ts';
 import { type AccessKeyListEntry, type AccountView, codeHashOf, EMPTY_CODE_HASH, STORAGE_YOCTO_PER_BYTE, type TxSigner } from '../lib/near.ts';
+import { testTempDir } from './temp.ts';
 
 const env = loadEnv('sandbox-dev');
 const BOOK = env.near!.demoGuestbook!;
@@ -21,7 +21,7 @@ let wasm: string;
 let key: KeyPair;
 
 beforeEach(() => {
-  const root = mkdtempSync(join(tmpdir(), 'hana-id-guestbook-'));
+  const root = testTempDir('hana-id-guestbook-');
   home = join(root, 'home');
   wasm = join(root, 'hana_guestbook.wasm');
   writeFileSync(wasm, Buffer.alloc(WASM_BYTES, 7));

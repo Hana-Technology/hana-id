@@ -25,6 +25,7 @@ import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { ACCOUNT_CONTROL_BANNER, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NO_NETWORK_NOTE, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
 import { PASSPHRASE, USER, addSignerOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
+import { jargonWatch } from './plain-words.ts';
 import { ENV, FakeWindow, PARTNER, type RemoteWindow, asWindow, remoteWindow, resetDom } from './helpers.ts';
 
 /** A public key computed here (never a literal in the source), for the full-key assertions. */
@@ -38,11 +39,13 @@ const evmBytes = (over: Record<string, string> = {}) => evmTxSigningPayload(pars
 const evm = (over: Record<string, string> = {}) => decodeApprovalRequest({ kind: 'evm_tx', chain: 'evm', address: EVM, context: { chainId: 11155111 }, bytes: evmBytes(over) });
 const approveData = (amount: bigint) => `${parseFunctionSignature('approve(address,uint256)').selector}${word(SPENDER)}${word(amount)}`;
 
+const plain = jargonWatch();
 const render = (decoded: DecodedApproval, app = 'Partner App', address = EVM): HTMLElement => {
   const el = renderApproval(dom(document), decoded, app, { envNetwork: 'testnet', testApp: false, parentOrigin: PARTNER, address });
   document.body.replaceChildren(el);
   // A valid request never gets the catch-all summary (review 3).
   expect(el.querySelector('.summary-failed')).toBeNull();
+  plain(el);
   return el;
 };
 const details = (el: ParentNode) => el.querySelector<HTMLDetailsElement>('details.request-details');
@@ -84,7 +87,7 @@ describe('the summary first, the details folded', () => {
   it('a request Journear can’t explain: the red risk line outside, the details folded (the raw data in them) (D810)', () => {
     const el = render(evm({ to: TOKEN, value: '0x0', data: '0xdeadbeef00' }));
     const warn = el.querySelector('p.summary-warning.cannot-explain');
-    expect(warn?.textContent).toBe('Journear can’t tell what this request does: it calls a function Journear doesn’t recognise. It could move your money or tokens. Only approve if you fully trust Partner App. Technical details are below.');
+    expect(warn?.textContent).toBe('Journear can’t check what this does (it asks for an action Journear doesn’t know). It could take your money or tokens. If you’re not sure, reject it.');
     expect(warn?.closest('.danger-box')?.classList.contains('jp-alert-danger')).toBe(true);
     expect(folded(warn)).toBe(false);
     expect(details(el)?.open).toBe(false);
@@ -99,7 +102,7 @@ describe('the summary first, the details folded', () => {
     expect(details(el)?.open).toBe(false);
     expect(details(el)?.textContent).toContain(`0x${'01'.repeat(32)}`);
     const red = el.querySelector('p.summary-warning.raw-signing');
-    expect(red?.textContent).toBe('This asks you to sign something Journear can’t read at all. On EVM chains it could give away control of your account or your funds. Reject unless you are certain.');
+    expect(red?.textContent).toBe('Signing this could hand over your whole account and everything in it. Reject it unless you know exactly why you’re signing.');
     expect(red?.closest('.danger-box')?.classList.contains('jp-alert-danger')).toBe(true);
     expect(folded(red)).toBe(false);
     expect(el.textContent).toContain(NO_NETWORK_NOTE);
@@ -132,7 +135,7 @@ describe('warnings are never folded', () => {
     const el = render(evm({ to: TOKEN, value: '0x0', data: approveData(2n ** 256n - 1n) }));
     const w = el.querySelector('p.summary-warning.unlimited-spend');
     expect(w?.closest('.danger-box')?.classList.contains('jp-alert-danger')).toBe(true);
-    expect(w?.textContent).toContain(`This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN}, with no limit`);
+    expect(w?.textContent).toContain(`This lets ${SPENDER} (not checked by Journear) take all your tokens from ${TOKEN} (an unlisted token), now or later, with no limit`);
     expect(folded(w)).toBe(false);
     expect(details(el)?.open).toBe(false);
   });
@@ -140,9 +143,9 @@ describe('warnings are never folded', () => {
   it('approve(spender, 0) on a contract Journear doesn’t know: amber, it may be an NFT’s item 0 (review M1)', () => {
     const el = render(evm({ to: TOKEN, value: '0x0', data: approveData(0n) }));
     const w = el.querySelector('p.summary-warning.spend-permission');
-    expect(w?.textContent).toContain('item 0');
+    expect(w?.textContent).toContain('item no. 0');
     expect(folded(w)).toBe(false);
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`Partner App wants to change ${SPENDER}’s permission for contract ${TOKEN}`);
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`Partner App wants to change ${SPENDER}’s permission for ${TOKEN}`);
   });
 
   it('99 harmless actions and one full-access key: the red banner sits right under the headline; the details start open (review M2)', () => {
@@ -163,7 +166,7 @@ describe('warnings are never folded', () => {
     expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual([]);
     expect(aboveFold(el).split(KEY9).length - 1).toBe(1);
     expect(el.querySelectorAll('.jp-alert-danger')).toHaveLength(1);
-    expect([...el.querySelectorAll('p.summary-line')].map((p) => p.textContent)).toEqual([`Add the full-access key ${KEY9} to your account`, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
+    expect([...el.querySelectorAll('p.summary-line')].map((p) => p.textContent)).toEqual([`Give full control of your account to another key, ${KEY9}`, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
     expect(details(el)?.open).toBe(false);
   });
 
@@ -190,7 +193,7 @@ describe('warnings are never folded', () => {
     const leaving = [...el.querySelectorAll('dt')].find((x) => x.textContent === 'NEAR leaving your account');
     expect(folded(leaving ?? null)).toBe(false);
     const network = [...el.querySelectorAll('dl.summary-facts dt')].find((x) => x.textContent === 'Network');
-    expect(network?.nextElementSibling?.textContent).toBe('NEAR testnet (Journear found its block hash on testnet)');
+    expect(network?.nextElementSibling?.textContent).toBe('NEAR test network (checked by Journear)');
     expect(el.querySelector('h2.summary-headline')?.textContent).toBe('Partner App wants to use your account (m)');
   });
 
@@ -222,8 +225,12 @@ describe('hostile values stay text', () => {
     const name = '<img src=x onerror=alert(1)>';
     const el = render(evm({ to: TOKEN, value: '0x0', data: '0xdeadbeef' }), name);
     expect(el.querySelector('img')).toBeNull();
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${name} wants to use contract ${TOKEN}`);
-    expect(el.querySelector('p.cannot-explain')?.textContent).toContain(`trust ${name}.`);
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${name} wants to use the program ${TOKEN}`);
+    // The red line names no app (its ending is "If you’re not sure, reject it."); an amber one does, as text.
+    expect(el.querySelector('p.cannot-explain')?.textContent).toContain('If you’re not sure, reject it.');
+    const amber = render(decodeApprovalRequest({ kind: 'personal_sign', chain: 'evm', address: EVM, context: {}, bytes: new Uint8Array([0, 0xff]) }), name);
+    expect(amber.querySelector('img')).toBeNull();
+    expect(amber.querySelector('p.cannot-explain')?.textContent).toContain(`Approve only if you expected this from ${name}.`);
   });
 
   it('a typed-data type name never reaches the summary; the tree is in the (folded) details', () => {

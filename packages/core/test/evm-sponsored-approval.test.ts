@@ -71,13 +71,19 @@ import {
   sponsoredCall,
 } from './evm-sponsored-fixture.ts';
 
+import { jargonIn } from './plain-words.ts';
+
 const APP = 'Partner App';
 const fallbackHits: string[] = [];
 const summarizeApproval: typeof summarizeApprovalRaw = (d, ctx) => {
   const s = summarizeApprovalRaw(d, ctx);
   if (s === UNEXPLAINED_SUMMARY) fallbackHits.push(d.kind);
+  jargonHits.push(...jargonIn(s));
   return s;
 };
+// No chain jargon in what the user reads (D853).
+const jargonHits: string[] = [];
+afterAll(() => expect(jargonHits).toEqual([]));
 afterAll(() => {
   // A valid request never gets the catch-all summary (review 3).
   expect(fallbackHits).toEqual([]);
@@ -94,7 +100,7 @@ function plain(to: string, data: string): ApprovalSummary {
   return summarizeApproval(decodeApprovalRequest({ kind: 'evm_tx', chain: 'evm', address: SPONSOR_ME, context: { chainId: SPONSOR_CHAIN }, bytes: evmTxSigningPayload(tx) }), { address: SPONSOR_ME });
 }
 
-const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test chain 31337. Your address stays the same and you still approve every action.';
+const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test network. Your address stays the same and you still approve every action.';
 /** A contract Journear doesn't know, called with the check-in's selector (the pinned check-in reads plainly, D854). */
 const UNKNOWN = '0x4444444444444444444444444444444444444444' as const;
 const TRANSFER = calldata('transfer(address,uint256)', RECIPIENT, 5_000_000n);
@@ -347,11 +353,11 @@ describe('decoding a sponsored action (decode/evm-sponsored.ts)', () => {
 describe('the sponsored action’s summary (D831, D850)', () => {
   it('one known call: its own headline, the fee line, the network; no setup note when nothing is authorized', () => {
     const s = sponsored([sponsoredCall(TOKEN, TRANSFER)]);
-    expect(text(s.headline)).toBe(`${APP} wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
-    expect(s.lines.map(text)).toEqual(['Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).']);
+    expect(text(s.headline)).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${RECIPIENT}`);
+    expect(s.lines.map(text)).toEqual([`Journear doesn’t know this token (${TOKEN}), so it can’t tell what 5,000,000 units are worth. Check the amount in ${APP} first.`]);
     expect(text(s.fee!)).toBe('none. Journear pays it for you.');
     expect(s.fee).toBe(SPONSORED_FEE);
-    expect(text(s.network!)).toBe('Local (Hardhat, Anvil), chain 31337');
+    expect(text(s.network!)).toBe('Local test network (Hardhat, Anvil)');
     expect(s.warnings).toEqual([]);
     expect(s.explainable).toBe(true);
     expect(s.shownSteps).toEqual([0]);
@@ -360,7 +366,7 @@ describe('the sponsored action’s summary (D831, D850)', () => {
   it('first time (an authorization signed): the amber one-time setup note, never "upgrade" or "smart account"', () => {
     const s = sponsored([sponsoredCall(TOKEN, TRANSFER)], { authNonce: 0n });
     expect(warnings(s)).toEqual([['warning', 'account_setup', SETUP]]);
-    expect(text(s.warnings[0]!.short!)).toBe('One-time setup: it also turns on free network fees for your account on the local test chain 31337 (your address stays the same)');
+    expect(text(s.warnings[0]!.short!)).toBe('One-time setup: it also turns on free network fees for your account on the local test network (your address stays the same)');
     expect(s.explainable).toBe(true);
     const all = JSON.stringify(s);
     expect(all).not.toMatch(/upgrade|smart account|7702|delegat/iu);
@@ -373,16 +379,16 @@ describe('the sponsored action’s summary (D831, D850)', () => {
     const d = decode(sponsoredApproval(sponsorSubject({ authNonce: 0n }))) as Extract<DecodedApproval, { kind: 'evm_sponsored' }>;
     const s = summarizeApproval({ ...d, chainId: 84532 }, { address: SPONSOR_ME });
     expect(text(s.warnings.find((w) => w.code === 'account_setup')!.text)).toBe('One-time setup: this also turns on free network fees for your account on Base Sepolia. Your address stays the same and you still approve every action.');
-    expect(text(s.network!)).toBe('Base Sepolia (testnet), chain 84532');
+    expect(text(s.network!)).toBe('Base Sepolia (test network)');
   });
 
   it('an unknown call: the same red "can’t tell" line as the same call in an ordinary transaction; nothing about ETH leaving', () => {
     const s = sponsored([sponsoredCall(UNKNOWN, CHECK_IN_DATA)]);
     const p = plain(UNKNOWN, CHECK_IN_DATA);
     expect(text(s.headline)).toBe(text(p.headline));
-    expect(text(s.headline)).toBe(`${APP} wants to use contract ${UNKNOWN}`);
+    expect(text(s.headline)).toBe(`${APP} wants to use the program ${UNKNOWN}`);
     expect(warnings(s)).toEqual(warnings(p));
-    expect(warnings(s)).toEqual([['danger', 'cannot_explain', `Journear can’t tell what this request does: it calls a function Journear doesn’t recognise. It could move your money or tokens. Only approve if you fully trust ${APP}. Technical details are below.`]]);
+    expect(warnings(s)).toEqual([['danger', 'cannot_explain', `Journear can’t check what this does (it asks for an action Journear doesn’t know). It could take your money or tokens. If you’re not sure, reject it.`]]);
     expect(s.explainable).toBe(false);
     expect(JSON.stringify(s)).not.toMatch(/ETH|sends/u);
   });
@@ -393,7 +399,7 @@ describe('the sponsored action’s summary (D831, D850)', () => {
     expect(text(s.headline)).toBe(text(p.headline));
     expect(s.lines.map(text)).toEqual(p.lines.map(text));
     expect(warnings(s).filter((w) => w[1] !== 'account_setup')).toEqual(warnings(p));
-    expect(warnings(s)[0]).toEqual(['danger', 'unlimited_spend', `This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN}, with no limit, until you take the permission back. Approve only if you trust it completely.`]);
+    expect(warnings(s)[0]).toEqual(['danger', 'unlimited_spend', `This lets ${SPENDER} (not checked by Journear) take all your tokens from ${TOKEN} (an unlisted token), now or later, with no limit. Approve only if you trust them completely.`]);
     expect(warnings(s)[1]).toEqual(['warning', 'account_setup', SETUP]);
     expect(text(s.fee!)).toBe('none. Journear pays it for you.');
   });
@@ -425,10 +431,10 @@ describe('the sponsored action’s summary (D831, D850)', () => {
 
   it('several calls: one line each (at most four), grouped only when identical; every warning kept', () => {
     const s = sponsored([sponsoredCall(TOKEN, APPROVE_MAX), sponsoredCall(TOKEN, TRANSFER), sponsoredCall(TOKEN, TRANSFER)], { authNonce: 0n });
-    expect(text(s.headline)).toBe(`${APP} wants to do 3 things in one transaction`);
+    expect(text(s.headline)).toBe(`${APP} wants to do 3 things at once`);
     expect(s.lines.map(text)).toEqual([
-      `2 times: send tokens of contract ${TOKEN} to ${RECIPIENT}. Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).`,
-      `Lets ${SPENDER} (unverified) spend all of your tokens of contract ${TOKEN}`,
+      `2 times: send 5,000,000 units of an unlisted token to ${RECIPIENT}. Journear doesn’t know this token (${TOKEN}), so it can’t tell what 5,000,000 units are worth. Check the amount in ${APP} first.`,
+      `Lets ${SPENDER} (not checked) take all your tokens from ${TOKEN} (an unlisted token)`,
     ]);
     expect(warnings(s).map((w) => w[1])).toEqual(['unlimited_spend', 'account_setup']);
     expect(s.explainable).toBe(true);
@@ -439,30 +445,30 @@ describe('the sponsored action’s summary (D831, D850)', () => {
     const one = sponsored([sponsoredCall(TOKEN, TRANSFER), sponsoredCall(UNKNOWN, CHECK_IN_DATA)]);
     expect(warnings(one)).toEqual(warnings(plain(UNKNOWN, CHECK_IN_DATA)));
     expect(one.explainable).toBe(false);
-    expect(one.lines.map(text)).toEqual([`Send tokens of contract ${TOKEN} to ${RECIPIENT}. Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).`, `Use contract ${UNKNOWN}`]);
+    expect(one.lines.map(text)).toEqual([`Send 5,000,000 units of an unlisted token to ${RECIPIENT}. Journear doesn’t know this token (${TOKEN}), so it can’t tell what 5,000,000 units are worth. Check the amount in ${APP} first.`, `Use the program ${UNKNOWN}`]);
     const two = sponsored([sponsoredCall(UNKNOWN, CHECK_IN_DATA), sponsoredCall(TOKEN, calldata('multicall(bytes[])', 32n, 0n))]);
-    expect(warnings(two)).toEqual([['danger', 'cannot_explain', `Journear can’t tell what this request does: part of it is something Journear can’t summarise. It could move your money or tokens. Only approve if you fully trust ${APP}. Technical details are below.`]]);
+    expect(warnings(two)).toEqual([['danger', 'cannot_explain', `Journear can’t check what this does (Journear can’t read part of it). It could take your money or tokens. If you’re not sure, reject it.`]]);
   });
 
   it('more than four kinds of call: three lines, "…and N other steps", and a red line (calls can move tokens)', () => {
     const calls = [1n, 2n, 3n, 4n, 5n].map((n) => sponsoredCall(TOKEN, calldata('transfer(address,uint256)', RECIPIENT, n)));
     const s = sponsored(calls);
     expect(s.lines).toHaveLength(4);
-    expect(text(s.lines[3]!)).toBe('…and 2 other steps: see the details.');
+    expect(text(s.lines[3]!)).toBe('…and 2 more steps (in the details).');
     expect(s.explainable).toBe(false);
     expect(s.warnings.map((w) => [w.level, w.code])).toEqual([
       ['danger', 'step_left_out'],
       ['danger', 'step_left_out'],
       ['danger', 'steps_not_listed'],
     ]);
-    expect(text(s.warnings[2]!.text)).toBe(`This request does 5 things at once and not all are listed here; some of those left out move money or tokens or change who controls your account. Only approve if you fully trust ${APP}. Technical details are below.`);
+    expect(text(s.warnings[2]!.text)).toBe(`Journear can’t check everything this does (it does 5 things at once and not all are listed here). Some of the steps left out move money or tokens, or change who controls your account. If you’re not sure, reject it.`);
   });
 
   it('the largest amount to others is never left out; revokes rank last and move nothing', () => {
     const revoke = calldata('decreaseAllowance(address,uint256)', SPENDER, 1n);
     const calls = [sponsoredCall(TOKEN, revoke), sponsoredCall('0x2222222222222222222222222222222222222222', revoke), sponsoredCall('0x4444444444444444444444444444444444444444', revoke), sponsoredCall('0x5555555555555555555555555555555555555555', revoke), sponsoredCall(TOKEN, TRANSFER)];
     const s = sponsored(calls);
-    expect(text(s.lines[0]!)).toMatch(/^Send tokens of contract/u);
+    expect(text(s.lines[0]!)).toMatch(/^Send 5,000,000 units of an unlisted token/u);
     // Left out: only revokes, which move nothing: amber.
     expect(s.warnings.map((w) => [w.level, w.code])).toEqual([['warning', 'steps_not_listed']]);
   });

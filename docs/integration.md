@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (verified list: demo check-in; sponsored EVM actions, not live), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (approval window in plain words; verified list: demo check-in), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -700,13 +700,15 @@ actions, raw arguments, typed-data trees, the user's Support ID) are folded behi
 always open. When the popup can't explain a request in plain words (a function it doesn't recognise, typed data other
 than a permit it knows, a Soroban call that isn't a token transfer or approval or that authorizes anything else, a
 liquidity pool deposit or withdrawal, more steps than it lists, raw bytes) it says so above the details in plain words,
-for example "Journear can’t tell what this request does. It could move your money or tokens. Only approve if you fully
-trust Your App.", in red when what it can't read could move funds or control with no visible limit; for raw signing,
-"This asks you to sign something Journear can’t read at all. … Reject unless you are certain." The details stay
-folded in every case until the user opens them. Token amounts carry a symbol only for the few tokens Journear has reviewed; anything else shows the
-amount in the token's smallest units, so describe amounts in your own page too. **Reject** and **Approve** are below.
+for example "Journear can’t check what this does. It could take your money or tokens. If you’re not sure, reject
+it.", in red when what it can't read could move funds or control with no visible limit; for raw signing,
+"Signing this could hand over your whole account and everything in it. Reject it unless you know exactly why you’re
+signing." The details stay folded in every case until the user opens them. Every word is plain, for people who don't
+know crypto: no "gas", "contract" or "testnet" outside the details. Token amounts carry a symbol only for the few
+tokens Journear has reviewed; anything else reads "N units of an unlisted token" with a line telling the user to check
+the amount in your app, so describe amounts in your own page too. **Reject** and **Approve** are below.
 The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
-re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Declined" and counts down,
+re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Rejected" and counts down,
 with a Close now button. Each follow-up still needs its own Approve. Reject, closing the
 popup, or 5 min without an answer gives `4001`.
 
@@ -1491,7 +1493,7 @@ Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze test
 
 **Journear's sandbox mainnet demo (not for partner apps).** Journear runs its own Sodax demo on sandbox under an internal
 exception: one Journear Passport test app may sign on Base (8453) and Stellar's public network, at most $9.99 per transaction (fee
-included), every request through Journear Passport's window with a red "Real funds, test custody" banner, the request's value and
+included), every request through Journear Passport's window with a red "Real money, test system" banner, the request's value and
 the wallet's balance. Partner apps can't get it, and in production it doesn't exist. What the SDK shows of it (SDK
 0.2.1; the `prices` field and `mainnetDemoKnown` need a current vault), so a page built on it knows where it stands:
 

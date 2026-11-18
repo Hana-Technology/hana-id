@@ -12136,17 +12136,29 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   it's better to hide and then clearly state the risks. If we just expand and show everything it makes the user even
   more confused."
 - Decision: the technical details always start folded, in every case, and the user can always open them ("Show
-  details"). Every case that used to open them carries a plain risk line above the fold instead, standing on its own:
-  - can't explain: "Journear can’t tell what this request does[: why]. It could move your money or tokens. Only
-    approve if you fully trust {App}. Technical details are below.";
-  - a message that isn't text: "Journear can’t read this message, so it can’t tell what signing it does. Only approve
-    if you fully trust {App}. Technical details are below." (amber);
-  - steps left out (D814): "This request does N things at once and not all are listed here. Only approve if you
-    fully trust {App}. Technical details are below." (amber), or, when a left-out step moves or grants value or
-    changes control, with "; some of those left out move money or tokens or change who controls your account" (red);
-  - raw signing: "This asks you to sign something Journear can’t read at all. On {EVM chains | Stellar} it could give
-    away control of your account or your funds. Reject unless you are certain." (red; it replaces the older raw
-    line in the window);
+  details"). Every case that used to open them carries a plain risk line above the fold instead, standing on its own
+  (texts reworded under D853 on 2026-11-18, branch `feat/plain-approval-wording`: one shape, "Journear can’t check
+  what this does[ (why)]. {the risk} {ending}", red ending "If you’re not sure, reject it.", amber ending "Approve only
+  if you expected this from {App}."; "Technical details are below" is no longer said as advice, the details stay one
+  tap away):
+  - can't explain: "Journear can’t check what this does[ (why)]. It could take your money or tokens. If you’re not
+    sure, reject it." (red), or the same with the amber ending;
+  - a message that isn't text: "Journear can’t check what this does (the message isn’t readable text). Approve only if
+    you expected this from {App}." (amber);
+  - steps left out (D814): "Journear can’t check everything this does (it does N things at once and not all are
+    listed here). Approve only if you expected this from {App}." (amber), or, when a left-out step moves or grants
+    value or changes control, "… Some of the steps left out move money or tokens, or change who controls your
+    account. If you’re not sure, reject it." (red);
+  - raw signing: headline "{App} wants you to sign something Journear can’t read", line "Signing this could hand over
+    your whole account and everything in it. Reject it unless you know exactly why you’re signing." (red; it replaces
+    the older raw line in the window);
+  - in the same family (reworded under D853): a malformed NEAR token call "Journear can’t check what this does (it
+    uses {method} on {contract} in a non-standard way). …" (red); typed data that calls itself Permit2 for another
+    contract "Journear can’t check what this does. It says it’s Permit2, a well-known way to let others take your
+    tokens, but it isn’t the real one. It may be a scam. If you’re not sure, reject it." (red); a possible permit
+    "Journear can’t check what this does (it may be a permission for someone else to take your tokens). Approve only
+    if you expected this from {App}." (amber); the internal fallback "Journear can’t check what this does (it couldn’t
+    read this request). It could take your money or tokens. If you’re not sure, reject it." (red);
   - an unreadable offer price, a pool deposit or withdrawal, a Soroban call's extra authorizations keep their own
     lines too.
 - Colours: red where the unreadable part could move value or control with no visible bound (raw signing; an unknown
@@ -12182,7 +12194,8 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   operations (D110); a NEAR function call with JSON arguments ("use {contract} ({method})", the founder's example), its
   arguments folded (an accepted trade-off). The summary is total: if building it fails on any value the decoders let
   through, the request gets "{App} wants you to approve a request Journear can't explain" with a red "Journear
-couldn’t read this request. Reject it unless you are certain.", not explainable. Every summary the unit, renderer and
+couldn’t read this request. Reject it unless you are certain.", not explainable (reworded under D853: "{App} wants you
+to approve something Journear can’t read", with the red fallback line above). Every summary the unit, renderer and
 e2e approval tests build is checked never to be that fallback, so the catch can't hide a bug.
 - Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, after an automated review; decided while building,
   **confirmed by the user 2026-11-18**): a NEAR call to a standard value-moving method (`ft_transfer`, `ft_transfer_call`, `nft_transfer`,
@@ -12815,6 +12828,22 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   details, never dropped. A wording that would make a risk sound smaller than it is never counts as plainer (D809).
 - Where it lives: `docs/security.md` "Browser" (the approval window's wording rules), and this entry for everything
   else. Reviews of user-visible text check against it.
+- Applied to the approval window on 2026-11-18 (branch `feat/plain-approval-wording`, from `next`; decided by the user
+  2026-11-18 when they approved rewording everything an end user reads; the texts decided while building, to
+  confirm): every string of `summary.ts`, `render-approval.ts`, `approve-page.ts` and `render-consent.ts` (words only
+  there) and the display labels of `networks.ts`; D810's texts reworded (above); the result after Reject reads
+  "Rejected" and "Nothing was sent or approved."; one request reads "From {App}" ("Request 2 of 3 from {App}" only when
+  more wait); the account line "Your Ethereum-style account"; the out-of-policy note "{App} usually signs these without
+  asking, but this one is outside what you allowed, so please check it yourself." with "Why: {one plain reason}" (the
+  policy's label, which the app chose, is no longer in that sentence; the matcher's reason codes are unchanged); a
+  request the window can't read keeps "Journear can’t read this request, so it can’t be approved.", then "Close this
+  window and try again in {App}.", the decoder's reason folded as "Error (for support)". Where a plainer word would have
+  changed a fact the old fact was kept: a Stellar signer's weight is "strength" (a number the user may need), the NEAR
+  network check's details (block hash, key, nonce and expiry) moved to the folded details row, "with no practical
+  limit" reads "with no real limit" (not "no limit": the type's maximum and a merely huge amount stay told apart).
+  "Stop auto-approving" keeps Passport Home's word. Checked by tests: every summary the unit tests build, and every
+  rendered window's words above the fold, carry none of the brief's jargon words (`packages/core/test/plain-words.ts`,
+  `packages/web/test/auth/plain-words.ts`).
 - Address impact: none.
 
 ### D854. Journear's demo check-in is on the verified list, and its one function reads in plain words

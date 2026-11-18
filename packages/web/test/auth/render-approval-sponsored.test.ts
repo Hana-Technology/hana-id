@@ -35,20 +35,23 @@ import {
   sponsoredCall,
 } from '../../../core/test/evm-sponsored-fixture.ts';
 import { ENV, FakeWindow, PARTNER, type RemoteWindow, asWindow, remoteWindow, resetDom } from './helpers.ts';
+import { jargonWatch } from './plain-words.ts';
 
 const APP = 'Partner App';
 /** A contract Journear doesn't know, called with the check-in's selector. */
 const UNKNOWN = '0x4444444444444444444444444444444444444444' as const;
 const TRANSFER = calldata('transfer(address,uint256)', RECIPIENT, 5_000_000n);
 const APPROVE_MAX = calldata('approve(address,uint256)', SPENDER, UINT256_MAX);
-const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test chain 31337. Your address stays the same and you still approve every action.';
+const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test network. Your address stays the same and you still approve every action.';
 
 const decodeSponsored = (over: Parameters<typeof sponsorSubject>[0] = {}): DecodedApproval => decodeApprovalRequest(sponsoredApproval(sponsorSubject(over)), { sponsorChains: SPONSOR_CHAINS, nowMs: SPONSOR_NOW_MS });
+const plain = jargonWatch();
 const render = (decoded: DecodedApproval, nowMs?: number): HTMLElement => {
   const el = renderApproval(dom(document), decoded, APP, { envNetwork: 'testnet', testApp: false, parentOrigin: PARTNER, address: SPONSOR_ME, ...(nowMs === undefined ? {} : { nowMs }) });
   document.body.replaceChildren(el);
   // A valid request never gets the catch-all summary (review 3).
   expect(el.querySelector('.summary-failed')).toBeNull();
+  plain(el);
   return el;
 };
 const details = (el: ParentNode) => el.querySelector<HTMLDetailsElement>('details.request-details') as HTMLDetailsElement;
@@ -64,13 +67,13 @@ beforeEach(() => document.body.replaceChildren());
 describe('a sponsored action’s window', () => {
   it('first time, one known call: its headline, the fee line, the amber setup note (lead); the details folded with the setup row', () => {
     const el = render(decodeSponsored({ authNonce: 0n, calls: [sponsoredCall(TOKEN, TRANSFER)] }));
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${RECIPIENT}`);
     expect(el.dataset.explainable).toBe('true');
     expect(el.querySelector('.danger-box')).toBeNull();
     expect(el.querySelectorAll('.warning-box')).toHaveLength(1);
     expect(el.querySelector('.warning-box p.risk-lead.summary-warning.account-setup')?.textContent).toBe(SETUP);
     expect(fact(el, 'Network fee')).toBe('none. Journear pays it for you.');
-    expect(fact(el, 'Network')).toBe('Local (Hardhat, Anvil), chain 31337');
+    expect(fact(el, 'Network')).toBe('Local test network (Hardhat, Anvil)');
     // The technical facts are in the details, which start folded.
     const d = details(el);
     expect(d.open).toBe(false);
@@ -102,14 +105,14 @@ describe('a sponsored action’s window', () => {
   it('an unknown call: the red "can’t tell" line leads; its raw data is in the details', () => {
     const el = render(decodeSponsored({ calls: [sponsoredCall(UNKNOWN, CHECK_IN_DATA)] }));
     expect(el.dataset.explainable).toBe('false');
-    expect(el.querySelector('.danger-box p.risk-lead.summary-warning.cannot-explain')?.textContent).toContain('Journear can’t tell what this request does: it calls a function Journear doesn’t recognise.');
+    expect(el.querySelector('.danger-box p.risk-lead.summary-warning.cannot-explain')?.textContent).toContain('Journear can’t check what this does (it asks for an action Journear doesn’t know).');
     expect(details(el).textContent).toContain(`Unknown function ${CHECK_IN_DATA}. Its raw data:`);
   });
 
   it('an unlimited approve inside a sponsored batch: the red warning leads, the setup note in the amber box', () => {
     const el = render(decodeSponsored({ authNonce: 0n, calls: [sponsoredCall(TOKEN, APPROVE_MAX)] }));
     expect(el.querySelector('.danger-box p.risk-lead.summary-warning.unlimited-spend')?.textContent).toBe(
-      `This lets ${SPENDER}, an address Journear hasn’t verified, spend all of your tokens of contract ${TOKEN}, with no limit, until you take the permission back. Approve only if you trust it completely.`,
+      `This lets ${SPENDER} (not checked by Journear) take all your tokens from ${TOKEN} (an unlisted token), now or later, with no limit. Approve only if you trust them completely.`,
     );
     expect(el.querySelector('.warning-box p.risk-lead')?.textContent).toBe(SETUP);
     // The red box comes right under the headline, the amber one after the fee row.
@@ -120,8 +123,8 @@ describe('a sponsored action’s window', () => {
 
   it('several calls: grouped lines; every call in the details, numbered', () => {
     const el = render(decodeSponsored({ calls: [sponsoredCall(TOKEN, TRANSFER), sponsoredCall(TOKEN, TRANSFER), sponsoredCall(UNKNOWN, CHECK_IN_DATA)] }));
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to do 3 things in one transaction`);
-    expect(lines(el)).toEqual([`2 times: send tokens of contract ${TOKEN} to ${RECIPIENT}. Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).`, `Use contract ${UNKNOWN}`]);
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to do 3 things at once`);
+    expect(lines(el)).toEqual([`2 times: send 5,000,000 units of an unlisted token to ${RECIPIENT}. Journear doesn’t know this token (${TOKEN}), so it can’t tell what 5,000,000 units are worth. Check the amount in ${APP} first.`, `Use the program ${UNKNOWN}`]);
     expect([...details(el).querySelectorAll('ol.ops > li.op > h3')].map((h) => h.textContent)).toEqual(['1. Call', '2. Call', '3. Call']);
     expect(details(el).querySelector('h2')?.textContent).toBe('3 calls');
   });
@@ -140,7 +143,7 @@ describe('Journear’s demo check-in (D854)', () => {
   it('reads plainly with no box, its name and address in view; the details name its function', () => {
     const el = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
     expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to check you in`);
-    expect(lines(el)).toEqual(['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${CHECK_IN}, verified by Journear).`]);
+    expect(lines(el)).toEqual(['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${CHECK_IN}, checked by Journear).`]);
     expect(el.querySelector('.risk-box')).toBeNull();
     expect(el.dataset.explainable).toBe('true');
     expect(details(el).textContent).toContain('Function checkIn() 0x183ff085');
@@ -202,8 +205,8 @@ describe('/approve: a sponsored action is checked against this build', () => {
     start(SPONSOR_ENV);
     const m = request({ authNonce: 0n, calls: [sponsoredCall(TOKEN, TRANSFER)] });
     win.message(m, ENV.vaultOrigin, vault);
-    expect(document.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
-    expect(document.querySelector('p.account')?.textContent).toBe(`Your EVM account ${SPONSOR_ME}`);
+    expect(document.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${RECIPIENT}`);
+    expect(document.querySelector('p.account')?.textContent).toBe(`Your Ethereum-style account ${SPONSOR_ME}`);
     expect(approveButton()).not.toBeNull();
     vi.advanceTimersByTime(GUARD_DELAY_MS);
     win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1 });
@@ -269,9 +272,9 @@ describe('Stellar: the user’s own key set to weight 0 keeps its bullet (PR 65�
 
   it('the line says "set your own key’s weight to 0"; the bullet says the user loses control, and stays', () => {
     const el = renderStellar([Operation.setOptions({ masterWeight: 0 })]);
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to set your own key’s weight to 0`);
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to set your own key’s strength to 0`);
     expect(el.querySelector('.danger-box .risk-lead')?.textContent).toBe(ACCOUNT_CONTROL_BANNER);
-    expect([...el.querySelectorAll('.danger-box li')].map((li) => li.textContent)).toEqual(['Sets your own Journear Passport key’s weight to 0: you lose control of the account']);
+    expect([...el.querySelectorAll('.danger-box li')].map((li) => li.textContent)).toEqual(['Sets your own Journear Passport key’s strength to 0: you lose control of the account']);
   });
 
   it('a weight other than 0 still drops its bullet when its line is in view, and keeps the 0 one in a group', () => {
@@ -279,7 +282,7 @@ describe('Stellar: the user’s own key set to weight 0 keeps its bullet (PR 65�
     const other = Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(44) as never).publicKey();
     const el = renderStellar([Operation.setOptions({ masterWeight: 0 }), Operation.setOptions({ signer: { ed25519PublicKey: other, weight: 1 } })]);
     const bullets = [...el.querySelectorAll('.danger-box li')].map((li) => li.textContent);
-    expect(bullets).toContain('Sets your own Journear Passport key’s weight to 0: you lose control of the account');
+    expect(bullets).toContain('Sets your own Journear Passport key’s strength to 0: you lose control of the account');
     expect(bullets.join('\n')).not.toContain(other);
   });
 });
@@ -294,8 +297,8 @@ describe('Stellar: any signing-threshold change keeps its bullet (review, Low)',
   ] as const)('%s', (_name, opts) => {
     const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([Operation.setOptions(opts)]) }), APP, { envNetwork: 'testnet', testApp: false, address: USER });
     document.body.replaceChildren(el);
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to change the signing thresholds`);
-    expect([...el.querySelectorAll('.danger-box li')].map((li) => li.textContent)).toEqual(['Changes the signing thresholds: wrong values can lock you out of the account']);
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to change how many approvals the account needs`);
+    expect([...el.querySelectorAll('.danger-box li')].map((li) => li.textContent)).toEqual(['Changes how many approvals the account needs: wrong numbers can lock you out']);
   });
 });
 
@@ -307,8 +310,8 @@ describe('NEAR calls: a malformed standard call is red, a value-like name amber 
     const bytes = encodeNearTransaction({ signerId: me, publicKey: { type: 'ed25519', bytes: pub }, nonce: 1n, receiverId: 'tok.testnet', blockHash: new Uint8Array(32), actions: [fc('ft_transfer', '{"receiver_id":"bob.testnet","amount":5}'), fc('storage_withdraw', '{}')] });
     const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: me, context: { nearNetwork: 'testnet' }, bytes }), APP, { envNetwork: 'testnet', testApp: false, address: me });
     document.body.replaceChildren(el);
-    expect(el.querySelector('.danger-box p.risk-lead.cannot-explain')?.textContent).toContain('it calls ft_transfer on tok.testnet with arguments that don’t match the token standard exactly');
-    expect(el.querySelector('.warning-box p.risk-lead.may-move-tokens')?.textContent).toBe('This calls storage_withdraw on tok.testnet: a call like this may move tokens or NEAR you hold with that contract. Approve only if you expected it.');
+    expect(el.querySelector('.danger-box p.risk-lead.cannot-explain')?.textContent).toContain('it uses ft_transfer on tok.testnet in a non-standard way');
+    expect(el.querySelector('.warning-box p.risk-lead.may-move-tokens')?.textContent).toBe(`This uses tok.testnet (storage_withdraw). It may move tokens or NEAR you keep with tok.testnet. Approve only if you expected this from ${APP}.`);
     expect(details(el).open).toBe(false);
   });
 });

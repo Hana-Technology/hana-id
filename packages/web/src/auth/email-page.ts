@@ -1375,7 +1375,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     switch (n.outcome) {
       case 'cancelled':
         title = 'Link cancelled';
-        body = [alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'link-cancel-what' } }, `This email is no longer being linked with ${waitingOther}. Nothing else changed.`), passwordAdvice];
+        body = [alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'link-cancel-what' } }, `This email is no longer being linked with ${waitingOther}. Anyone signed in to that wallet in this app will be asked to sign in again.`), passwordAdvice];
         break;
       case 'already_cancelled':
         title = 'This link was already cancelled';
@@ -1385,7 +1385,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         title = 'This link can’t be cancelled any more';
         body = [
           alert(d, 'danger', { class: 'note', attrs: { role: 'alert', id: 'link-cancel-what' } }, `The waiting period has ended. This email and ${waitingOther} now open the same ${BRAND.company} wallet.`),
-          d.h('p', { attrs: { id: 'link-cancel-advice' } }, 'If you didn’t do this, someone else may be able to open that wallet. Change your email password. Don’t sign in to ', app(), ' with this email, don’t add money to that wallet, and tell the app’s support.'),
+          d.h('p', { attrs: { id: 'link-cancel-advice' } }, `This email now opens a wallet that belongs to whoever holds ${waitingOther}. Anything you add to it is theirs. If you didn’t do this, change your email password. Don’t sign in to `, app(), ' with this email, don’t add money to that wallet, and tell the app’s support.'),
           d.h('p', { class: 'muted', attrs: { id: 'link-cancel-remove' } }, 'Within 7 days, whoever signs in to ', app(), ` with ${waitingOther} can remove this email: the sign-in window shows them a button to remove it.`),
         ];
         break;

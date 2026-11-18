@@ -431,7 +431,10 @@ describe('D864: the email that waits to join a wallet', () => {
     await vi.waitFor(() => expect(s.page.stage).toBe('link_cancelled'));
     expect(document.querySelector('h1')?.textContent).toBe('Link cancelled');
     expect(document.getElementById('link-cancel-what')?.className).toContain('jp-alert-success');
-    expect(pageText()).toContain('This email is no longer being linked with that Google account. Nothing else changed.');
+    expect(pageText()).toContain('This email is no longer being linked with that Google account.');
+    expect(pageText()).not.toContain('Nothing else changed');
+    // The cancel signs that wallet's devices out in this app (the API revokes its shares): said plainly.
+    expect(pageText()).toContain('Anyone signed in to that wallet in this app will be asked to sign in again.');
     expect(pageText()).toContain('If you didn’t start this link, change your email password.');
     click('link-cancel-close');
     expect(s.win.closed).toBe(true);
@@ -474,8 +477,9 @@ describe('D864: the email that waits to join a wallet', () => {
     expect(document.getElementById('link-cancel-what')?.className).toContain('jp-alert-danger');
     expect(pageText()).toContain('The waiting period has ended. This email and that Google account now open the same Journear wallet.');
     expect(document.getElementById('link-cancel-advice')?.textContent).toBe(
-      'If you didn’t do this, someone else may be able to open that wallet. Change your email password. Don’t sign in to Partner App with this email, don’t add money to that wallet, and tell the app’s support.',
+      'This email now opens a wallet that belongs to whoever holds that Google account. Anything you add to it is theirs. If you didn’t do this, change your email password. Don’t sign in to Partner App with this email, don’t add money to that wallet, and tell the app’s support.',
     );
+    expect(pageText()).not.toContain('someone else may be able to open');
     expect(document.getElementById('link-cancel-remove')?.textContent).toContain('Within 7 days, whoever signs in to Partner App with that Google account can remove this email');
   });
 

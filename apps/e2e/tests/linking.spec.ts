@@ -328,6 +328,7 @@ test('D864: the email’s own sign-in during the wait cancels the link; the emai
   expect((await mails(to)).filter((m) => m.kind === 'code').at(-1)?.subject).toMatch(/^Your code to remove a sign-in method/u);
   await expect(popup.locator('#link-cancel-result')).toHaveAttribute('data-outcome', 'cancelled');
   await expect(popup.locator('h1')).toHaveText('Link cancelled');
+  await expect(popup.locator('#link-cancel-what')).toContainText('Anyone signed in to that wallet in this app will be asked to sign in again.');
   await shot(popup, 'cancelled-confirmation', browserName);
   // One cancel, from the vault (the stack's chain is shared by parallel tests: this context's requests only).
   expect(requests.count(`${API_URL}/v1/link/cancel`)).toBe(1);
@@ -369,7 +370,7 @@ test('D864: the waiting period ends before the code is typed: “can’t be canc
   await enterCode(popup, to, before);
   await expect(popup.locator('#link-cancel-result')).toHaveAttribute('data-outcome', 'now_active');
   await expect(popup.locator('h1')).toHaveText('This link can’t be cancelled any more');
-  await expect(popup.locator('#link-cancel-advice')).toContainText('Change your email password.');
+  await expect(popup.locator('#link-cancel-advice')).toContainText('This email now opens a wallet that belongs to whoever holds that Google account. Anything you add to it is theirs.');
   await shot(popup, 'already-active', browserName);
   expect(requests.count(`${API_URL}/v1/link/cancel`)).toBe(0);
 });

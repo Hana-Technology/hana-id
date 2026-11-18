@@ -13584,12 +13584,15 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
      link** (primary) and **Keep the link** (closes; "The link stays. Nothing changed. This email can sign in here
      from {date}."). The other sign-in is named only by its kind, as the banners do (no address, no `sub`).
   4. **Outcomes** (`link_cancel`), each after a fresh read: `cancelled` ("Link cancelled", green: "This email is no
-     longer being linked with that Google account. Nothing else changed." and "If you didn’t start this link, change
+     longer being linked with that Google account. Anyone signed in to that wallet in this app will be asked to sign in
+     again." (the cancel revokes that wallet's shares, D233) and "If you didn’t start this link, change
      your email password. Someone may have used a code from your mailbox."); `already_cancelled` (gone before the
      relay: "This link was already cancelled", the same advice); `now_active` (the waiting period ended meanwhile;
-     red: "The waiting period has ended. This email and that Google account now open the same Journear wallet.", "If
-     you didn’t do this, someone else may be able to open that wallet. Change your email password. Don’t sign in to
-     {app} with this email, don’t add money to that wallet, and tell the app’s support.", muted "Within 7 days,
+     red: "The waiting period has ended. This email and that Google account now open the same Journear wallet.", "This
+     email now opens a wallet that belongs to whoever holds that Google account. Anything you add to it is theirs. If
+     you didn’t do this, change your email password. Don’t sign in to {app} with this email, don’t add money to that
+     wallet, and tell the app’s support." (the risk for a reader who didn't link it is money put into someone else's
+     wallet), muted "Within 7 days,
      whoever signs in to {app} with that Google account can remove this email: the sign-in window shows them a button
      to remove it."); `not_cancelled` (still waiting: "The link wasn’t cancelled", "Nothing changed: the link is still
      waiting.", "Close this window, then sign in to {app} with this email again to try again.", and the code for
@@ -13617,8 +13620,14 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
   the contract allows `unlink_identity` by the member itself (the API too, tested); offering "Remove this email from
   that wallet" on the `now_active` screen would be one more branch of the same mechanism. (b) An email sign-in of an
   active member opens the root's wallet with no banner about its own recent link (D259 names the signing-in method
-  only when this login made it). (c) The SDK's `userMessage` for `link_pending` (D861) tells the partner's user to
-  "use the wallet’s other sign-in method", which fits the one who made the link, not a reader who didn't.
+  only when this login made it).
+- Amended after the PR's independent review (2026-11-18, to confirm): the `cancelled` and `now_active` words above
+  (the first said "Nothing else changed", untrue since the cancel signs that wallet's devices out in the app; the
+  second said "someone else may be able to open that wallet", naming the wrong party); and the SDK's `userMessage` for
+  `link_pending` (D861), which said "Use the wallet’s other sign-in method for now" (right only for the one who made
+  the link), is now "This email is waiting to be linked to a wallet. Sign in again and follow the steps in the
+  Journear Passport window." It is per code, so a Google sign-in waiting to join an email wallet (an explicit
+  `linkAccount`, rare) reads "This email" too.
 - Rejected: a `/link/cancel` page reached from the mail (a link in a security mail is what phishing copies, D862; it
   would need an issuer path for the identity key and a code anyway); accepting the sign-in's own token (needs a
   contract change: a session nonce isn't a `link_change` proof, and a founder decision and redeploy); continuing the

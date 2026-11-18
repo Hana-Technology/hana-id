@@ -22,6 +22,9 @@ const sandboxEnv = hanaEnv(loadEnv('sandbox-dev')) as HanaEnv;
 const { filesOrigin: _sandboxFiles, ...sandbox } = sandboxEnv;
 const BASE = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'";
 
+/** The pages that show no app, so load no image from the files origin: the callbacks, and D866's support pages. */
+const NO_LOGO: readonly string[] = ['callback', 'home-callback', 'unlock', 'confirm'];
+
 describe('auth page policies', () => {
   it('sets the spec’s CSP per page: base policy, connect-src and frame-ancestors none', () => {
     // The login popup fetches nothing (D77): no connect-src, so default-src 'none' applies.
@@ -98,9 +101,9 @@ describe('auth page policies', () => {
       const policy = authPageMetaCsp(files, p.name);
       // One img-src only: a browser ignores a repeated directive.
       expect(policy.match(/img-src/gu), p.name).toHaveLength(1);
-      expect(imgSources(files, p.name), p.name).toEqual((p.name === 'callback' || p.name === 'home-callback') ? ["'self'", 'data:'] : ["'self'", 'data:', 'https://files.example']);
+      expect(imgSources(files, p.name), p.name).toEqual(NO_LOGO.includes(p.name) ? ["'self'", 'data:'] : ["'self'", 'data:', 'https://files.example']);
       // Everything else is the policy without a files origin.
-      expect(policy, p.name).toBe((p.name === 'callback' || p.name === 'home-callback') ? authPageMetaCsp(sandbox, p.name) : authPageMetaCsp({ ...sandbox, filesOrigin: undefined }, p.name).replace("img-src 'self' data:", IMG));
+      expect(policy, p.name).toBe(NO_LOGO.includes(p.name) ? authPageMetaCsp(sandbox, p.name) : authPageMetaCsp({ ...sandbox, filesOrigin: undefined }, p.name).replace("img-src 'self' data:", IMG));
     }
     expect(authPageCsp(files, 'login')).toBe(`${BASE.replace("img-src 'self' data:", IMG)}; frame-ancestors 'none'`);
     expect(authPageMetaCsp(files, 'callback')).not.toContain('files.example');
@@ -110,7 +113,7 @@ describe('auth page policies', () => {
     for (const p of AUTH_PAGES) expect(authPageMetaCsp(noFiles, p.name), p.name).toContain("img-src 'self' data:;");
   });
 
-  it('serves the eight pages at the spec’s paths (D411 adds /share-email, Hana Home adds /home and /home/callback)', () => {
+  it('serves the ten pages at the spec’s paths (D411 adds /share-email, Hana Home /home and /home/callback, D866 the support pages)', () => {
     expect(AUTH_PAGES.map((p) => [p.path, p.file])).toEqual([
       ['/login', 'login.html'],
       ['/login/email', 'login/email.html'],
@@ -120,6 +123,8 @@ describe('auth page policies', () => {
       ['/share-email', 'share-email.html'],
       ['/home', 'home.html'],
       ['/home/callback', 'home/callback.html'],
+      ['/email/unlock', 'email/unlock.html'],
+      ['/email/confirm', 'email/confirm.html'],
     ]);
     // Hana Home: the API, Google's JWKS and the two NEAR providers (opening a wallet reads the chain, a linked identity's
     // path on both, D263): the export window's origins, plus the email issuer in an env with one (its email sign-in, H10).
@@ -133,6 +138,12 @@ describe('auth page policies', () => {
     expect(connectSources(withBoth, 'home-callback')).toEqual([new URL(sandbox.apiUrl).origin]);
     // D411: the sheet reads the address from the API, nothing else.
     expect(connectSources(sandbox, 'share')).toEqual([new URL(sandbox.apiUrl).origin]);
+    // D866: the support pages press the issuer, nothing else; without an issuer they fetch nothing.
+    for (const p of ['unlock', 'confirm'] as const) {
+      expect(connectSources(withBoth, p)).toEqual(['https://issuer.example']);
+      expect(connectSources(single, p)).toEqual([]);
+      expect(authPageCsp(single, p)).toBe(`${BASE}; frame-ancestors 'none'`);
+    }
   });
 
   it('page HTML escapes what it writes into attributes', () => {
@@ -312,13 +323,13 @@ describe('per-env build', () => {
     for (const page of AUTH_PAGES) {
       const html = readFileSync(join(builtProd.dir, page.file), 'utf8');
       expect(html, page.name).toContain(`<meta http-equiv="Content-Security-Policy" content="${authPageMetaCsp(prod, page.name)}">`);
-      expect(html.includes("img-src 'self' data: https://files.hana-prod.example;"), page.name).toBe(page.name !== 'callback' && page.name !== 'home-callback');
+      expect(html.includes("img-src 'self' data: https://files.hana-prod.example;"), page.name).toBe(!NO_LOGO.includes(page.name));
     }
     // sandbox-dev's manifest has its dashboard blocks (M4): its logo pages carry its files origin the same way.
     expect(sandboxEnv.filesOrigin).toBe(loadEnv('sandbox-dev').files!.origin);
     for (const page of AUTH_PAGES) {
       const html = readFileSync(join(built.dir, page.file), 'utf8');
-      expect(html.includes(`img-src 'self' data: ${sandboxEnv.filesOrigin};`), page.name).toBe(page.name !== 'callback' && page.name !== 'home-callback');
+      expect(html.includes(`img-src 'self' data: ${sandboxEnv.filesOrigin};`), page.name).toBe(!NO_LOGO.includes(page.name));
     }
   });
 
@@ -349,7 +360,8 @@ describe('per-env build', () => {
     for (const page of AUTH_PAGES) expect(existsSync(join(built.dir, `${page.path.slice(1)}.html`))).toBe(true);
     // Nothing is written next to the origin roots, so the vault root (<env>/vault) holds only the vault's files.
     expect(readdirSync(join(out, 'sandbox-dev'))).toEqual(['auth']);
-    expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'export.html', 'home', 'home.html', 'login', 'login.html', 'share-email.html'].sort());
+    expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'email', 'export.html', 'home', 'home.html', 'login', 'login.html', 'share-email.html'].sort());
+    expect(readdirSync(join(built.dir, 'email')).sort()).toEqual(['confirm.html', 'unlock.html']);
     expect(readdirSync(join(built.dir, 'login')).sort()).toEqual(['callback.html', 'email.html']);
     expect(readdirSync(join(built.dir, 'home'))).toEqual(['callback.html']);
   });

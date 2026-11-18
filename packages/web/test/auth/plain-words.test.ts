@@ -21,6 +21,8 @@ const FILES = [
   'auth/callback-page.ts',
   'auth/home-callback-page.ts',
   'auth/share-page.ts',
+  // D866: the staff unlock and confirm mails' pages.
+  'auth/support-page.ts',
   'auth/export-page.ts',
   'auth/key-reveal.ts',
   'auth/home-page.ts',

@@ -5,6 +5,7 @@ import { env } from 'cloudflare:workers';
 import { expect, vi } from 'vitest';
 import { base64UrlDecode, base64UrlEncode, fromUtf8, sha256, toHex, utf8 } from '../src/bytes.ts';
 import type { AccountView, Chain, IdentityView, ScopeView } from '../src/chain.ts';
+import { AccessVerifier } from '../src/access.ts';
 import type { Deps } from '../src/deps.ts';
 import { GOOGLE_TOKENINFO_URL, GOOGLE_USERINFO_URL, Google } from '../src/google.ts';
 
@@ -399,3 +400,37 @@ export function startOfMinuteClock(): void {
   const target = 3_600_000 - (minute % 3_600_000) < 60_000 ? minute + 60_000 : minute;
   vi.spyOn(Date, 'now').mockImplementation(() => real() - (t - target));
 }
+
+// ---- staff (admin/*) ----
+
+/** An RS256 JWT signed by `key`, for the Access tests. */
+export async function accessJwt(key: CryptoKey, kid: string, claims: Record<string, unknown>): Promise<string> {
+  const h = base64UrlEncode(utf8(JSON.stringify({ alg: 'RS256', kid })));
+  const c = base64UrlEncode(utf8(JSON.stringify(claims)));
+  return `${h}.${c}.${base64UrlEncode(new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, utf8(`${h}.${c}`))))}`;
+}
+
+/** A staff harness: Access with a throwaway team key, and a signed Access JWT for staff@example.com. */
+export async function staffHarness(over: Record<string, unknown> = {}) {
+  const pair = (await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+  const pub = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey;
+  const team = 'hana.cloudflareaccess.com';
+  const aud = 'a'.repeat(64);
+  let certFetches = 0;
+  const certs = (async (url: string) => {
+    certFetches++;
+    expect(url).toBe(`https://${team}/cdn-cgi/access/certs`);
+    return new Response(JSON.stringify({ keys: [{ ...pub, kid: 'acc-1', alg: 'RS256', use: 'sig' }] }));
+  }) as unknown as typeof fetch;
+  const verifier = new AccessVerifier({ teamDomain: team, aud, staffEmails: ['staff@example.com'] }, certs);
+  const h = await harness({ access: verifier, ...over });
+  const now = Math.floor(Date.now() / 1000);
+  const good = { iss: `https://${team}`, aud: [aud], sub: 'staff-sub', email: 'staff@example.com', exp: now + 600, iat: now };
+  const token = (claims: Record<string, unknown> = {}, kid = 'acc-1') => accessJwt(pair.privateKey, kid, { ...good, ...claims });
+  const ask = async (path: string, body: unknown, opts: { token?: string | null; origin?: string | null; contentType?: string | null } = {}) => {
+    const t = opts.token === undefined ? await token() : opts.token;
+    return h.call(path, body, { origin: opts.origin ?? null, contentType: opts.contentType, headers: t ? { 'cf-access-jwt-assertion': t } : {} });
+  };
+  return { h, ask, token, verifier, fetches: () => certFetches };
+}
+

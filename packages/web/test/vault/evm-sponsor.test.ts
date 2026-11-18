@@ -12,13 +12,13 @@ import type { HanaEnv } from '../../src/hana-env.ts';
 import { SPONSOR_TEXT, approvedSubject, sponsorChains, sponsorPreflight, sponsoredApproval } from '../../src/vault/evm-sponsor.ts';
 
 /** A well-known test address (anvil's first published dev account). */
-const ACCOUNT = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
+const ACCOUNT = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as const;
 
 const DELEGATE = (SPONSOR_DELEGATES[31337] as { address: `0x${string}` }).address;
 /** anvil's published second dev account's address (a public test vector), as the e2e stack's relayer. */
 const RELAYER = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 const CHECK_IN = '0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e';
-const CALL = { to: CHECK_IN, value: '0x0', data: '0x183ff085' };
+const CALL = { to: CHECK_IN, value: '0x0' as const, data: '0x183ff085' as const };
 const RPC_A = 'https://evm-a.test/a';
 const RPC_B = 'https://evm-b.test/b';
 const SPONSOR_ENV: HanaEnv = Object.freeze({ ...ENV, name: 'local-test', evmSponsor: Object.freeze({ '31337': Object.freeze({ delegate: DELEGATE, relayer: RELAYER, rpc: RPC_A, rpcFallback: RPC_B }) }) });
@@ -627,7 +627,7 @@ describe('approvedSubject compares the approved bytes with a copy taken when the
     const shown = Uint8Array.from(approval.bytes);
     expect(approvedSubject(approval.bytes, shown, plan, START_MS).executeNonce).toBe(0n);
     const changed = Uint8Array.from(approval.bytes);
-    changed[changed.length - 1] ^= 1;
+    changed[changed.length - 1] = (changed[changed.length - 1] as number) ^ 1;
     expect(() => approvedSubject(changed, shown, plan, START_MS)).toThrow(SPONSOR_TEXT.notReady);
   });
 });

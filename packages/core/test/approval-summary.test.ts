@@ -35,7 +35,7 @@ import {
   summaryString,
   utf8,
 } from './entries.ts';
-import { JARGON, jargonIn } from './plain-words.ts';
+import { JARGON, ZERO_COST, jargonIn, zeroCostIn } from './plain-words.ts';
 import { ATTACKER, ISSUER, OTHER, PASSPHRASE, TOKEN, ROUTER, USER, addSignerOp, addr, authPreimageBytes, feeBumpBytes, i128, invocation, invokeOp, mergeOp, paymentOp, sourceAuth, txBytes } from './stellar-fixtures.ts';
 
 /** A public key computed here (never a literal in the source), for the full-key assertions. */
@@ -58,7 +58,7 @@ const summarizeApproval: typeof summarizeApprovalRaw = (d, ctx) => {
   }
   // No chain jargon in what the user reads (D853), in Journear's own words (codes, the values a request names, are
   // left out: an account may be "bob.testnet").
-  if (!allowFallback) jargonHits.push(...jargonIn(s));
+  if (!allowFallback) jargonHits.push(...jargonIn(s), ...zeroCostIn(s));
   return s;
 };
 const punctuationHits: string[] = [];
@@ -72,6 +72,10 @@ afterAll(() => {
 it('the jargon check catches the brief’s words and spares network names (D853)', () => {
   for (const w of ['the relayer pays gas', 'a full-access key', 'your allowance', 'on testnet', 'EVM chain 1', 'burns NEAR', 'the NFT', 'verified by Journear', 'Technical details are below']) expect(JARGON.test(w), w).toBe(true);
   for (const w of ['BNB Smart Chain (test network)', 'Avalanche C-Chain (real money)', 'checked by Journear', 'someone else pays the fee']) expect(JARGON.test(w), w).toBe(false);
+});
+it('the zero-cost check catches any claim that a request costs nothing (D858 as corrected); a fee statement passes', () => {
+  for (const w of ['Cost to you: nothing.', 'This costs you nothing.', 'nothing. Someone else pays the fee.'.replace('nothing.', 'It costs nothing.'), 'It doesn’t move any money.']) expect(ZERO_COST.test(w), w).toBe(true);
+  for (const w of ['free for you. Someone else pays it.', 'none. Journear pays it for you.']) expect(ZERO_COST.test(w), w).toBe(false);
 });
 afterAll(() => {
   expect(fallbackHits).toEqual([]);
@@ -528,25 +532,39 @@ describe('NEAR', () => {
     expect(text(near([{ type: 'transfer', deposit: 1n }]).fee!)).toBe('a small amount of NEAR, from your account');
   });
 
-  it('a relayed contract call (the stamps): contract and method; it costs nothing; it acts as the user, in amber (D858)', () => {
+  it('a relayed contract call (the stamps): contract and method; the fee row speaks of the fee only; it acts as the user, in amber (D858)', () => {
     const s = delegate([call('collect', '{"stamp":"arrival"}')]);
     expect(headline(s)).toBe(`${APP} wants to use stamps.testnet (collect)`);
-    // One row replaces the fee row and the NEAR-leaving row: never "Journear pays" (a partner may relay it).
-    expect(s.fee).toBeNull();
-    expect(text(s.cost!)).toBe('nothing. Someone else pays the fee.');
+    // Never "Journear pays" (a partner may relay it), never "costs nothing" (a call can use what the user keeps there).
+    expect(text(s.fee!)).toBe('free for you. Someone else pays it.');
+    expect(s.noNearLeaves).toBe(true);
     expect(s.explainable).toBe(true);
     expect(warnings(s)).toEqual([['warning', 'acts_as_you', 'This acts as you: stamps.testnet can use anything you keep with it.']]);
   });
 
-  it('D858: "costs nothing" only when nothing of the user’s can leave; otherwise the fee row stays (the page keeps the total row)', () => {
-    const free = (s: ApprovalSummary) => [s.cost === undefined ? null : text(s.cost), s.fee === null ? null : text(s.fee)];
-    const fee = 'free for you: someone else pays it';
-    // A transfer in a delegate action is the relayer's NEAR (nearcore): nothing of the user's; no call, so no acts-as-you.
+  it('D858: every relayed function call carries the amber acts-as-you line; no relayed request claims to cost nothing', () => {
+    for (const [a, to] of [
+      [call('collect', '{}'), 'stamps.testnet'],
+      [call('collect', '{}', 10n ** 22n), 'stamps.testnet'],
+      [call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5"}', 1n), 'tok.testnet'],
+      [call('storage_withdraw', '{}'), 'tok.testnet'],
+      [call('add', Uint8Array.of(0xff)), 'tok.testnet'],
+    ] as const) {
+      const s = delegate([a], to);
+      expect(codes(s)).toContain('acts_as_you');
+      expect(zeroCostIn(s)).toEqual([]);
+    }
+  });
+
+  it('D858: the repeated "None of your NEAR" row goes only when no NEAR or tokens of the user’s can leave; the fee row always stays', () => {
+    const free = (s: ApprovalSummary) => [s.noNearLeaves === true, s.fee === null ? null : text(s.fee)];
+    const fee = 'free for you. Someone else pays it.';
+    // A transfer in a delegate action is the relayer's NEAR (nearcore); no call, so no acts-as-you.
     const t = delegate([{ type: 'transfer', deposit: 10n ** 24n }], 'bob.testnet');
-    expect(free(t)).toEqual(['nothing. Someone else pays the fee.', null]);
+    expect(free(t)).toEqual([true, fee]);
     expect(codes(t)).toEqual([]);
     // A deposit attached to a plain call is the relayer's too.
-    expect(free(delegate([call('collect', '{}', 10n ** 22n)]))).toEqual(['nothing. Someone else pays the fee.', null]);
+    expect(free(delegate([call('collect', '{}', 10n ** 22n)]))).toEqual([true, fee]);
     // Tokens the user holds: a token transfer, a permission, a value-like method, an unreadable or non-standard call.
     for (const a of [
       call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5"}', 1n),
@@ -557,18 +575,18 @@ describe('NEAR', () => {
       call('ft_transfer', '{"receiver_id":"bob.testnet","amount":5}', 1n),
     ]) {
       const s = delegate([a], 'tok.testnet');
-      expect(free(s)).toEqual([null, fee]);
+      expect(free(s)).toEqual([false, fee]);
       expect(codes(s)).toContain('acts_as_you');
     }
     // On the user's own account (its own contract runs as the account): never free, no acts-as-you (the red line says it).
     const own = delegate([call('m', '{}')], NEAR_ME);
-    expect(free(own)).toEqual([null, fee]);
+    expect(free(own)).toEqual([false, fee]);
     expect(codes(own)).not.toContain('acts_as_you');
     // Steps left out of the lines: never free, even when each is a plain call.
     const many = delegate(['a', 'b', 'c', 'd', 'e'].map((m) => call(m, '{}')), 'tok.testnet');
-    expect(free(many)).toEqual([null, fee]);
-    // The user's own transaction is never "free": it pays its fee.
-    expect(near([call('collect', '{}')]).cost).toBeUndefined();
+    expect(free(many)).toEqual([false, fee]);
+    // The user's own transaction pays its own fee.
+    expect(near([call('collect', '{}')]).noNearLeaves).toBeUndefined();
   });
 
   it('arguments that aren’t JSON, or a method name that can’t be shown: not explainable', () => {

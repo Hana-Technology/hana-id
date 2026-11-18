@@ -88,11 +88,12 @@ export interface ApprovalSummary {
   /** The network the request is bound to, as a value ("Sepolia (test network)"), when the request names one. NEAR's line is the page's. */
   readonly network: SummaryText | null;
   /**
-   * What the request costs the user, when it is nothing at all (D858): a relayed NEAR action that takes none of the
-   * user's NEAR and moves none of their tokens that Journear can see. It replaces the fee row and the "NEAR leaving
-   * your account" row; `fee` is then null. Absent whenever anything of the user's may leave.
+   * D858 (as corrected 2026-11-18): a relayed NEAR action that takes none of the user's NEAR and that Journear sees
+   * moving none of their tokens: the page then drops the "NEAR leaving your account: None of your NEAR…" row, which
+   * only repeated the fee row. It says nothing about what a call does with what the user keeps at the contract (the
+   * amber acts-as-you line does); the window never says such a request costs nothing.
    */
-  readonly cost?: SummaryText;
+  readonly noNearLeaves?: true;
   readonly warnings: readonly SummaryWarning[];
   /** False when Journear can't say what the request does: a risk warning says so (the details still start folded). */
   readonly explainable: boolean;
@@ -1523,8 +1524,11 @@ function nearMovesValue(a: NearAction): boolean {
   }
 }
 
-/** D858: the one row of a relayed NEAR action that costs the user nothing. Never "Journear pays": a partner may relay it. */
-export const RELAYED_COST_NOTHING: SummaryText = Object.freeze(['nothing. Someone else pays the fee.']) as SummaryText;
+/**
+ * D858 (as corrected 2026-11-18): the fee row of a relayed NEAR action. It speaks about the fee only, never about what
+ * the action costs. Never "Journear pays": a partner may relay it itself.
+ */
+export const RELAYED_FEE: SummaryText = Object.freeze(['free for you. Someone else pays it.']) as SummaryText;
 
 /**
  * D858: the risk that a relayed call acts as the user (it was half of the blue relayer note): the contract it calls can
@@ -1566,11 +1570,12 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
   // The generic red line, unless an action already said in red what Journear can't read (a malformed standard call).
   if (unreadable && !warnings.some((w) => w.code === 'cannot_explain')) warnings.unshift(cannotTell('danger'));
   if (hidden) warnings.push(stepsNotListed(done.length, hidden.n, hidden.risk));
-  // D858: nothing of the user's leaves when every action is a transfer (the relayer's NEAR, nearcore) or a plain call
-  // Journear reads as "use {contract} ({method})" on another account, every step is in a line, and no line warns of
-  // anything (no token transfer or permission, no value-like method, nothing unreadable or left out). Anything else
-  // keeps the fee row and the "NEAR leaving your account" row as decided (D723, D729).
-  const costsNothing =
+  // D858: no NEAR of the user's leaves, and no token move Journear can see, when every action is a transfer (the
+  // relayer's NEAR, nearcore) or a plain call Journear reads as "use {contract} ({method})" on another account, every
+  // step is in a line, and no line warns of anything. Then the page drops only the repeated "None of your NEAR" row;
+  // anything else keeps the "NEAR leaving your account" row as decided (D723, D729). Never a claim that it costs
+  // nothing: a call can still use what the user keeps with the contract (the amber acts-as-you line).
+  const noNearLeaves =
     relayed &&
     receiver !== me &&
     warnings.length === 0 &&
@@ -1580,9 +1585,9 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
   return {
     headline,
     lines,
-    fee: costsNothing ? null : relayed ? ['free for you: someone else pays it'] : ['a small amount of NEAR, from your account'],
+    fee: relayed ? RELAYED_FEE : ['a small amount of NEAR, from your account'],
     network: null,
-    ...(costsNothing ? { cost: RELAYED_COST_NOTHING } : {}),
+    ...(noNearLeaves ? { noNearLeaves: true as const } : {}),
     warnings,
     explainable,
     shownSteps,

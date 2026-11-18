@@ -13,6 +13,20 @@ export const JARGON =
 /** A summary text's own words: the app's name and code values (addresses, account ids, methods) left out. */
 export const plainWords = (t: SummaryText): string => t.map((p) => (typeof p === 'string' ? p : p.kind === 'strong' ? p.text : ' ')).join('');
 
+/**
+ * A claim that a request costs the user nothing, or moves none of their money (D858 as corrected 2026-11-18): only a
+ * request whose effect Journear fully knows may say so. Today that is Journear's pinned demo check-in alone (D854).
+ */
+export const ZERO_COST = /\b(costs? (you )?nothing|cost to you|nothing (of yours )?leaves|free of charge|doesn’t (move|cost) any|won’t cost|no cost)\b/iu;
+export const ZERO_COST_ALLOWED: readonly string[] = [
+  'This is Journear’s demo check-in. It doesn’t move any money or tokens.',
+  'This is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens.',
+];
+
+/** Every text of a summary that claims zero cost outside the allowlist. */
+export const zeroCostIn = (s: ApprovalSummary): string[] =>
+  [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => ZERO_COST.test(w) && !ZERO_COST_ALLOWED.includes(w));
+
 /** Every text of a summary a user reads (headline, lines, fee, network, warnings and their bullets) that uses jargon. */
 export const jargonIn = (s: ApprovalSummary): string[] =>
   [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...(s.network ? [s.network] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => JARGON.test(w));

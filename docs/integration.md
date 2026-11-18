@@ -999,10 +999,9 @@ action fails its NEAR is refunded to the user's account. So the user's balance g
 account itself: deleting it (everything), staking (locked), publishing a global contract (burnt), a call to a contract
 on the user's own account (it decides what it moves: the popup says "Unknown") and fees spent through a function-call
 key the action adds (up to its allowance). The actions run as the user's account, so a contract they call acts in the
-user's name (it can move tokens the user holds there). The approval window says so in that order: a plain call or a
-transfer reads "Cost to you: nothing. Someone else pays the fee." with an amber "This acts as you: {contract} can use
-anything you keep with it."; anything that can take the user's NEAR or tokens keeps the fee row and a "NEAR leaving
-your account" row instead. For a live app it also says, in amber, that the approval could be used on the other NEAR
+user's name (it can move tokens the user holds there). The approval window says so: "Network fee: free for you.
+Someone else pays it.", and for every call an amber "This acts as you: {contract} can use anything you keep with
+it."; anything that can take the user's NEAR or tokens also shows a "NEAR leaving your account" row. For a live app it also says, in amber, that the approval could be used on the other NEAR
 network if the account exists there.
 
 <a id="near-relay"></a>**Journear Passport's relay** (`hana.near.relay`, `POST /v1/near/relay`; `hana.near.activate`,

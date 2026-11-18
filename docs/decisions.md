@@ -12885,42 +12885,52 @@ The plain-wording pass of D853 over the approval window (recorded under D853 and
 founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`packages/web`)".
 
 ### D858. The relayed NEAR approval says "someone else pays" once, and its one real risk in amber
-- Date 2026-11-18 · Status: **decided by the user 2026-11-18**; details decided while building, to confirm · Amends
-  D723, D729, D809, D813, D814 · Built on `feat/plain-approval-wording` (from `next`), not merged, not deployed:
-  `packages/core/src/decode/summary.ts` (`ApprovalSummary.cost`, `RELAYED_COST_NOTHING`, `actsAsYou`, code
-  `acts_as_you`, `nearActions`' `costsNothing`), `packages/web/src/auth/render-approval.ts` (`nearDelegate`,
-  `NEAR_DELEGATE_NOTES`, the "Cost to you" row); tests in `packages/core/test/approval-summary.test.ts` and
+- Date 2026-11-18 · Status: **decided by the user 2026-11-18**; corrected by the coordinator the same day after an
+  automated review (below); details decided while building, to confirm · Amends D723, D729, D809, D813, D814 · Built on
+  `feat/plain-approval-wording` (from `next`), not merged, not deployed: `packages/core/src/decode/summary.ts`
+  (`RELAYED_FEE`, `ApprovalSummary.noNearLeaves`, `actsAsYou`, code `acts_as_you`, `nearActions`' `noNearLeaves`),
+  `packages/web/src/auth/render-approval.ts` (`nearDelegate`, `NEAR_DELEGATE_NOTES`); tests in
+  `packages/core/test/approval-summary.test.ts`, `packages/core/test/plain-words.ts` (`ZERO_COST`) and
   `packages/web/test/auth/render-approval-near.test.ts` ("D858").
 - Cause: the public stamps demo's screen said "someone else pays" three times (a fee row "paid for you by a relayer", a
   "NEAR leaving your account: None of your NEAR (the relayer pays…)" row, a blue relayer note), put the one real risk
   (the call acts as the user) at the end of a blue information box, and added a blue "This authorization doesn't
   name a network" note.
-- Decision: a relayed NEAR action shows its headline as before; the network row; then, when nothing of the user's can
-  leave, ONE row "Cost to you: nothing. Someone else pays the fee." in place of the fee row and the "NEAR leaving your
-  account" row (NEAR it attaches or sends is someone else's and keeps its own row, "NEAR it sends, paid by someone
-  else"); the acts-as-you risk as an amber line, "This acts as you: {contract} can use anything you keep with it."
-  ({contract} the receiver, an account id the decoder checked, as code); for a live app only, an amber "This approval
-  could also be used on the real NEAR network if your account exists there." ("the NEAR test network" for a request
-  that names mainnet); the test-app note as before. The blue relayer note and the blue network note are gone; who pays
-  and the refund rule are in the folded details, with the expiry.
-- "Nothing of the user's can leave" (`costsNothing`, computed in the summary, never by the page): relayed, on another
-  account than the user's, every step in a line, explainable, no warning at all, and every action a Transfer (the
-  relayer's NEAR, nearcore) or a FunctionCall that reads as a plain "use {contract} ({method})" (not a token transfer,
-  permission or value-like method, D810 as amended, D811). Anything else keeps the fee row ("free for you: someone else
-  pays it") and the "NEAR leaving your account" row exactly as decided (D723, D729): a token transfer or permission, a
-  method whose name says it may move value, unreadable or non-standard arguments, steps left out of the lines, a call
-  to a contract on the user's own account, account control, a stake or a burn.
+- Decision: a relayed NEAR action shows its headline as before; the network row; the fee row "Network fee: free for
+  you. Someone else pays it." (it speaks about the fee only); when no NEAR of the user's leaves and Journear sees no
+  token of theirs move, no "NEAR leaving your account: None of your NEAR…" row (it only repeated the fee row; NEAR the
+  action attaches or sends is someone else's and keeps its own row, "NEAR it sends, paid by someone else"), otherwise
+  that total row exactly as decided; for every relayed call to another account's contract, the amber line "This acts
+  as you: {contract} can use anything you keep with it." ({contract} the receiver, an account id the decoder checked,
+  as code); for a live app only, an amber "This approval could also be used on the real NEAR network if your account
+  exists there." ("the NEAR test network" for a request that names mainnet); the test-app note as before. The blue
+  relayer note and the blue network note are gone; who pays and the refund rule are in the folded details, with the
+  expiry.
+- Corrected 2026-11-18 (the coordinator, after an automated review of the first build): the first build showed one row
+  "Cost to you: nothing. Someone else pays the fee." for a plain relayed call. A relayed call can move tokens the user
+  keeps with that contract, so "nothing" was a safety claim Journear can't back; the row now speaks only about the fee.
+  Rule: the window never says a request costs the user nothing, or moves none of their money, unless Journear fully
+  knows its effect; today that is only the pinned demo check-in on EVM (D854), and on NEAR, where there is no checked
+  list, never. A test scans every summary the unit tests build for such a claim against an explicit allowlist (the
+  check-in's two lines).
+- When the "None of your NEAR" row goes (`noNearLeaves`, computed in the summary, never by the page): relayed, on
+  another account than the user's, every step in a line, explainable, no warning at all, and every action a Transfer
+  (the relayer's NEAR, nearcore) or a FunctionCall that reads as a plain "use {contract} ({method})" (not a token
+  transfer, permission or value-like method, D810 as amended, D811). Anything else keeps the "NEAR leaving your
+  account" row exactly as decided (D723, D729): a token transfer or permission, a method whose name says it may move
+  value, unreadable or non-standard arguments, steps left out of the lines, a call to a contract on the user's own
+  account, account control, a stake or a burn.
 - Never "Journear pays": the popup can't know who relays it (a partner may relay it itself, D813).
 - Why the network line is dropped for test apps: the vault binds a test app's delegate action to testnet (D726, D729:
   the user's key, nonce and expiry on testnet; only FunctionCall and Transfer to a `*.testnet` receiver other than the
   user's own), so a copy run on mainnet calls an account that doesn't exist there and moves nothing (the residual is
   `docs/security.md` "Known open issues"). A live app's isn't bound, so its line stays, amber (a risk is never in a blue
   box, D853).
-- Adversarial check (concluded): a hostile page can't make the cost row appear for a request that takes the user's
-  NEAR or tokens: the summary decides it from the decoded actions, and every case that can move the user's value has
-  a warning or a non-plain line, which turns it off. A transfer in a delegate action is the relayer's NEAR (nearcore
-  `apply_delegate_action`), so "nothing" is true for it. A plain call can still move tokens the user keeps with that
-  contract: that is exactly the amber line, which now leads its box instead of ending a blue one; no fact was dropped
-  (the refund rule and who pays are in the details). The screen is never calmer than before for anything of value: the
-  only rows removed are the two that said the same "someone else pays".
+- Adversarial check (concluded): the window makes no claim about what a relayed call does with the user's holdings;
+  the amber acts-as-you line, which now leads its box instead of ending a blue one, says that it can use anything the
+  user keeps with that contract, for every relayed call. A hostile page can't make the "None of your NEAR" row vanish
+  for a request that takes the user's NEAR or tokens Journear can see: the summary decides it from the decoded actions,
+  and every such case has a warning or a non-plain line. A transfer in a delegate action is the relayer's NEAR
+  (nearcore `apply_delegate_action`). No fact was dropped: the refund rule and who pays are in the details, and the
+  only row removed is the one that repeated the fee row.
 - Address impact: none.

@@ -18,14 +18,14 @@ import {
 } from './entries.ts';
 import { SPONSOR_CHAINS, SPONSOR_ME, SPONSOR_NOW_MS, sponsorSubject, sponsoredApproval, sponsoredCall } from './evm-sponsored-fixture.ts';
 
-import { jargonIn } from './plain-words.ts';
+import { jargonIn, zeroCostIn } from './plain-words.ts';
 
 const APP = 'Partner App';
 const fallbackHits: string[] = [];
 const summarizeApproval: typeof summarizeApprovalRaw = (d, ctx) => {
   const s = summarizeApprovalRaw(d, ctx);
   if (s === UNEXPLAINED_SUMMARY) fallbackHits.push(d.kind);
-  jargonHits.push(...jargonIn(s));
+  jargonHits.push(...jargonIn(s), ...zeroCostIn(s));
   return s;
 };
 // No chain jargon in what the user reads (D853).

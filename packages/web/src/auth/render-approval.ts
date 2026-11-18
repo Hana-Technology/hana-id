@@ -876,9 +876,10 @@ function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>, 
 }
 
 /**
- * D858: a relayed NEAR action. When it costs the user nothing (`summary.cost`), the cost row replaces the fee row and
- * the "NEAR leaving your account" row (what it sends is someone else's, said in its own row); otherwise both stay as
- * decided (D723, D729). The acts-as-you risk is the summary's amber line. For a live app only, the amber line that the
+ * D858 (as corrected 2026-11-18): a relayed NEAR action. The fee row says only that someone else pays the fee. When no
+ * NEAR of the user's leaves (`summary.noNearLeaves`), the "NEAR leaving your account: None of your NEAR…" row, which
+ * only repeated it, is dropped (NEAR it sends is someone else's, in its own row); otherwise the total stays as decided
+ * (D723, D729). The acts-as-you risk is the summary's amber line. For a live app only, the amber line that the
  * approval names no network; a test app's is bound to the test network by the vault (D726, D729).
  */
 function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>, ctx: NearRenderContext, summary: ApprovalSummary): Parts {
@@ -888,7 +889,7 @@ function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_de
   return {
     alerts: ctx.testApp ? alerts : { ...alerts, warnings: [...alerts.warnings, risk(5, 'warn no-network', [NEAR_DELEGATE_NOTES.network(decoded.network)], [])] },
     network: nearNetworkLine('near_delegate', decoded.network, ctx),
-    visible: summary.cost ? (sent > 0n ? [facts(d, [row(d, 'NEAR it sends, paid by someone else', nearDisplay(sent))])] : []) : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
+    visible: summary.noNearLeaves ? (sent > 0n ? [facts(d, [row(d, 'NEAR it sends, paid by someone else', nearDisplay(sent))])] : []) : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
     details: [
       d.h('h3', {}, 'NEAR transaction, fee paid by a relayer'),
       d.h('p', { class: 'muted relayer-note' }, NEAR_DELEGATE_NOTES.relayer),
@@ -1187,7 +1188,7 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
   const amberBox = riskBox(d, 'warning', [...summary.warnings.filter((w) => w.level === 'warning').map((w) => summaryItem(d, w, appName)), ...k.alerts.warnings]);
   const network = summary.network ? summaryNodes(d, summary.network, appName) : k.network ? [k.network] : null;
   const headline = amountHeadline(decoded);
-  const keyFacts = [network && row(d, 'Network', ...network), summary.fee && row(d, 'Network fee', ...summaryNodes(d, summary.fee, appName)), summary.cost && row(d, 'Cost to you', ...summaryNodes(d, summary.cost, appName))];
+  const keyFacts = [network && row(d, 'Network', ...network), summary.fee && row(d, 'Network fee', ...summaryNodes(d, summary.fee, appName))];
   return d.h(
     'div',
     { class: 'request jp-confirm', attrs: { 'data-explainable': String(summary.explainable) } },

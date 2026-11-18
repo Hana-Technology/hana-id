@@ -1,20 +1,18 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { KeyPair } from '@near-js/crypto';
 import { assertPrivate, readSecretJson, secretsDir, writeSecretJson } from '../lib/secrets.ts';
 import { findLegacyCredential, keysUpdaterFile, loadLegacyCredential, readKeysUpdater, readRelayerKeys, writeKeysUpdater, writeRelayerKeys } from '../lib/keys.ts';
+import { testTempDir } from './temp.ts';
 
 const mode = (p: string) => statSync(p).mode & 0o777;
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'hana-id-scripts-'));
+  root = testTempDir('hana-id-scripts-');
 });
-afterEach(() => {
-  // temp dirs are left to the OS; they contain only test keys
-});
+// Each test's directory is inside this file's private temp directory, removed after the file (test/temp.ts).
 
 describe('secret files', () => {
   it('creates .secrets/<env> as 0700 and files as 0600', () => {

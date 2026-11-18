@@ -77,6 +77,8 @@ export interface EvmDeployDeps {
   now?: () => Date;
   /** Waits between reads of a just-deployed address (default setTimeout; tests pass a no-op). */
   sleep?: (ms: number) => Promise<void>;
+  /** The directory the tools' empty working directory is made in (default the OS temp directory; tests pass their own). */
+  tmpRoot?: string;
   /** Where HANA_EVM_RPC_URL and ETHERSCAN_API_KEY are looked for (default process.env; forge reads the key itself). */
   env?: Readonly<Record<string, string | undefined>>;
 }
@@ -349,7 +351,7 @@ export async function evmDeployMain(argv: readonly string[], deps: EvmDeployDeps
   }
   // cast and forge run in an empty directory of their own, so no foundry.toml but contracts/evm-delegate's (named
   // with --root) can change who signs, where it sends or how it builds.
-  const toolCwd = mkdtempSync(join(tmpdir(), 'hana-evm-cwd-'));
+  const toolCwd = mkdtempSync(join(deps.tmpRoot ?? tmpdir(), 'hana-evm-cwd-'));
   try {
     if (plan.deploy.length > 0) {
       for (const [i, name] of plan.deploy.entries()) {

@@ -1,6 +1,6 @@
 {
   "name": "@hana-id/core",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Pure TypeScript core of Journear Passport (formerly Hana ID; no DOM): byte layouts, CKD, derivation v1, signers, decoders, token checks and protocol message schemas.",
   "private": true,
   "license": "BUSL-1.1",
@@ -28,7 +28,8 @@
     "./support-id": "./src/support-id.ts",
     "./home": "./src/home.ts",
     "./near": "./src/near/index.ts",
-    "./evm-sponsor": "./src/evm-sponsor/index.ts"
+    "./evm-sponsor": "./src/evm-sponsor/index.ts",
+    "./sponsor-session": "./src/sponsor-session.ts"
   },
   "files": [
     "dist",
@@ -91,6 +92,10 @@
       "./evm-sponsor": {
         "types": "./dist/evm-sponsor/index.d.ts",
         "import": "./dist/evm-sponsor/index.js"
+      },
+      "./sponsor-session": {
+        "types": "./dist/sponsor-session.d.ts",
+        "import": "./dist/sponsor-session.js"
       },
       "./package.json": "./package.json"
     },

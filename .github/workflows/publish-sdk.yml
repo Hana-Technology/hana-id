@@ -81,10 +81,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      # No pnpm cache: a release build installs from the registry against the lockfile's integrity hashes, never from a
+      # store a CI run saved (D857).
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          cache: pnpm
+          cache: ''
       - run: pnpm install --frozen-lockfile
       - name: The four packages are at the requested version
         run: |

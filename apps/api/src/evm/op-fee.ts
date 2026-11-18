@@ -1,19 +1,21 @@
 // A sponsored transaction's gas limit, fees, OP Stack L1 data fee and worst-case cost (D847, D836 addendum). Pure but
-// for `l1FeeUpperBound`, which reads the chain's GasPriceOracle through the chain port.
+// for `l1FeeUpperBound` and `operatorFeeUpperBound`, which read the chain's GasPriceOracle through the chain port.
 //
-// gasLimit = ceil((intrinsic + 25 000 per authorization + delegated-code access + pre-loop overhead + minGas + event)
-//            × 1.1), never from eth_estimateGas (contracts/evm-delegate/README.md "Duties", "Gas"). The intrinsic part is
-// 21 000 plus the calldata at EIP-7623's floor price (10 gas per token, a token being a zero byte or a quarter of a
-// non-zero one), which is above the standard price (4 per token), so the limit covers both of EIP-7623's sums. The
-// pre-loop overhead is the README's cold first-batch figure (29 719 for one call) plus 1 400 per further call (measured
-// 33 785 for four, about 1 360 each) plus 2 gas per byte of the calls' data (copying and hashing it; the measured
-// figures are for 4-byte calls). The worst case reserved is gasLimit × maxFeePerGas + the L1 data fee's upper bound.
+// gasLimit = ceil((intrinsic + delegated-code access + pre-loop overhead + minGas + event) × 1.1), never from
+// eth_estimateGas (contracts/evm-delegate/README.md "Duties", "Gas"). The intrinsic part is the relayer's own
+// `intrinsicGas` (evm-relayer.ts: 21 000, calldata at 4 gas a token and at least EIP-7623's floor of 10 a token, 25 000
+// per EIP-7702 authorization), the very figure the relayer checks a batch's gas against, so the two can never disagree.
+// The pre-loop overhead is the README's cold first-batch figure (29 719 for one call) plus 1 400 per further call
+// (measured 33 785 for four, about 1 360 each) plus 2 gas per byte of the calls' data (copying and hashing it; the
+// measured figures are for 4-byte calls). The worst case reserved is gasLimit × maxFeePerGas + the L1 data fee's and the
+// operator fee's upper bounds. The starting fees are the relayer's `maxStartingFees` edge at most (room for two bumps).
+import { intrinsicGas, maxStartingFees } from '../evm-relayer.ts';
 import { type Hex, revertOf, type SponsorChainPort } from './sponsor-ports.ts';
 
+export { maxStartingFees };
+
 export const TX_BASE_GAS = 21_000n;
-/** EIP-7623's floor price per calldata token. */
-export const FLOOR_GAS_PER_TOKEN = 10n;
-/** EIP-7702's PER_EMPTY_ACCOUNT_COST, charged per authorization in the list. */
+/** EIP-7702's PER_EMPTY_ACCOUNT_COST, charged per authorization in the list (inside intrinsicGas; eth_call has none). */
 export const AUTHORIZATION_GAS = 25_000n;
 /** Loading the delegate's code through the account's delegation designator (a cold account access). */
 export const DELEGATION_ACCESS_GAS = 2_600n;
@@ -24,12 +26,11 @@ export const PRE_LOOP_GAS_PER_DATA_BYTE = 2n;
 /** The `Executed` event and what follows the loop (README: about 1 700; the spec's 3 000). */
 export const EVENT_GAS = 3_000n;
 
-/** Calldata tokens: a zero byte is 1, a non-zero byte 4 (EIP-7623). */
-export function calldataTokens(data: Hex): bigint {
-  let tokens = 0n;
-  for (let i = 2; i < data.length; i += 2) tokens += data.slice(i, i + 2) === '00' ? 1n : 4n;
-  return tokens;
-}
+const bytesOf = (h: Hex): Uint8Array => {
+  const out = new Uint8Array((h.length - 2) / 2);
+  for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(h.slice(2 + 2 * i, 4 + 2 * i), 16);
+  return out;
+};
 
 export interface GasInput {
   /** The `execute(...)` calldata the transaction carries. */
@@ -43,10 +44,10 @@ export interface GasInput {
 
 /** The transaction's gas limit for a batch (see the file header). */
 export function sponsorGasLimit(i: GasInput): bigint {
-  const intrinsic = TX_BASE_GAS + FLOOR_GAS_PER_TOKEN * calldataTokens(i.calldata);
+  const intrinsic = intrinsicGas(bytesOf(i.calldata), i.authorizations);
   const dataBytes = i.callData.reduce((n, d) => n + BigInt((d.length - 2) / 2), 0n);
   const overhead = PRE_LOOP_GAS + PRE_LOOP_GAS_PER_EXTRA_CALL * BigInt(Math.max(0, i.callData.length - 1)) + PRE_LOOP_GAS_PER_DATA_BYTE * dataBytes;
-  const body = intrinsic + AUTHORIZATION_GAS * BigInt(i.authorizations) + DELEGATION_ACCESS_GAS + overhead + i.minGas + EVENT_GAS;
+  const body = intrinsic + DELEGATION_ACCESS_GAS + overhead + i.minGas + EVENT_GAS;
   return (body * 11n + 9n) / 10n;
 }
 
@@ -63,22 +64,6 @@ export function maxMinGasFor(i: Omit<GasInput, 'minGas'>, maxGasPerTx: bigint): 
 }
 
 export type FeeQuote = { ok: true; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } | { ok: false; baseFee: bigint };
-
-/** The relayer's replacement bump: × 9/8, rounded up (its EVM_RELAYER_FEE_BUMP). */
-const bump = (x: bigint): bigint => (x * 9n + 7n) / 8n;
-
-/**
- * The highest fees a send may start at so the relayer can still replace it twice (+12.5% each, rounded up) within the
- * chain's caps: the relayer's own `maxStartingFees` (it refuses a start above, `fees_too_high`), the same rule.
- */
-export function maxStartingFees(caps: { maxFeePerGasWei: bigint; maxPriorityFeePerGasWei: bigint }): { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } {
-  const highest = (cap: bigint): bigint => {
-    let x = (cap * 64n) / 81n;
-    while (x > 0n && bump(bump(x)) > cap) x--;
-    return x;
-  };
-  return { maxFeePerGas: highest(caps.maxFeePerGasWei), maxPriorityFeePerGas: highest(caps.maxPriorityFeePerGasWei) };
-}
 
 /**
  * maxFee = min(2 × baseFee + tip, the starting cap), the tip at most its starting cap and the max fee; a base fee above

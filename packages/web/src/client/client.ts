@@ -9,7 +9,7 @@
 //   hana.logout(); hana.exportKey(chain); hana.revokeOtherDevices();
 //   await hana.getIdentityToken();  // a short-lived JWT for the partner's backend, or null (no popup; any handler)
 //   await hana.getProfile();        // the name the user shared with this app, from that token, or null
-//   hana.stellar; hana.ethereum; hana.near; hana.signRaw(params);
+//   hana.stellar; hana.ethereum; hana.near; hana.evm (gas-free EVM actions, not live); hana.signRaw(params);
 //
 // The client holds no key material and no token: it mounts the vault iframe (vault-connection.ts), opens the login
 // popup (login.ts) and, inside the user's click, the approval popup for signing requests (approval-window.ts, D99),
@@ -50,6 +50,7 @@ import { type HanaProfile, profileFromIdentityToken, sameProfile } from './profi
 import { type FetchLike } from './rpc.ts';
 import { partnerPageIssues } from './requirements.ts';
 import { HanaNear } from './near.ts';
+import { HanaEvm } from './evm-sponsor.ts';
 import { HanaStellarSigner, type StellarConfig, validateStellarConfig } from './stellar.ts';
 import { type ReadyStatus, VaultConnection } from './vault-connection.ts';
 
@@ -221,6 +222,8 @@ export class HanaClient extends Emitter<HanaEvents> {
   readonly ethereum: HanaEthereumProvider;
   /** NEAR: the implicit account, transactions, delegate actions, NEP-413 messages and the relay. */
   readonly near: HanaNear;
+  /** Gas-free EVM actions (not live yet): `sendSponsored`, `sponsorship`, `sponsoredChains`. */
+  readonly evm: HanaEvm;
   readonly vaultOrigin: string;
   readonly authOrigin: string;
 
@@ -256,6 +259,8 @@ export class HanaClient extends Emitter<HanaEvents> {
   #disconnectReason: DisconnectReason | null = null;
   /** Whether `ready` resolved: the vault has said whatever it was going to say about the demo. */
   #mainnetDemoKnown = false;
+  /** The chains the vault's `ready` said it sponsors (`sponsoredChains`, a build property), or none. */
+  #sponsoredChains: readonly number[] = [];
   readonly #windows: ApprovalWindows;
 
   constructor(config: HanaConfig, deps: HanaClientDeps) {
@@ -277,9 +282,21 @@ export class HanaClient extends Emitter<HanaEvents> {
       { stellarAddress: () => this.#addresses?.stellar ?? null, login: () => this.login(), request: (m, p) => this.#request(m, p) },
       stellar,
     );
+    this.evm = new HanaEvm({
+      evmAddress: () => this.#addresses?.evm ?? null,
+      sponsoredChains: () => this.#sponsoredChains,
+      request: (m, p) => this.#request(m, p),
+      apiUrl: deps.origins.apiUrl ?? null,
+      publishableKey: config.publishableKey,
+      fetch: deps.fetch,
+    });
+
     this.ethereum = new HanaEthereumProvider(
       {
         evmAddress: () => this.#addresses?.evm ?? null,
+        // EIP-5792 (wallet_sendCalls): the same gas-free actions, never a transparent sponsoring of eth_sendTransaction.
+        sponsoredChains: () => this.#sponsoredChains,
+        sendSponsored: (p) => this.evm.sendSponsored(p),
         login: () => this.login(),
         request: (m, p) => this.#request(m, p),
         prepareApproval: () => this.prepareApproval(),
@@ -687,6 +704,7 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#readyTimings = this.#handshakeTimings(s);
     this.#persistence = s.persistence;
     this.#warning = s.warning ?? null;
+    this.#sponsoredChains = Object.freeze([...(s.sponsoredChains ?? [])]);
     if (s.status === 'logged_in' && s.addresses) {
       this.#expiresAtMs = s.expiresAtMs ?? null;
       this.#setSupportId(s.supportId ?? null);

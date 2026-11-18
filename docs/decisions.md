@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-11-18 (branch `feat/near-relay-billing`, not merged, not deployed: D863 new); 2026-11-18 (branch `feat/evm-sponsor-api`: D832, D840, D847, D848 confirmed by the user 2026-11-18; D847 and D848 amended for the simplified relayer (D851); D852 new, the billing records); 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review: D834, D836, D847 and D848 amended (M1–M3, L1–L5, the relayer's final interface), open items before mainnet recorded); 2026-11-17 (branch `feat/evm-sponsor-api`, not merged, not deployed: D832, D840, D847, D848 new and D836's addendum (the L1 fee in the reservation), decided while building, to confirm; the section heading and intro name them); 2026-11-17 (branch `feat/approval-plain-summary`: D814 amended by the founder (a control bullet whose step's line is in view is dropped)); 2026-11-17 (branch `feat/approval-plain-summary`, review of 5ef13452: D814 amended (whole control keys, spender markers, native sums, directions)); 2026-11-17 (branch `feat/approval-plain-summary`: D814 new, decided by the user, details to confirm, amending D809 and D813; D810's steps line); 2026-11-17 (branch `feat/approval-plain-summary`, final review: D810 and D811 notes on Soroban contract creation and NEAR key allowances); 2026-11-17 (branch `feat/approval-plain-summary`: D808–D813 confirmed by the user, D810 amended by the user (details always folded, risk lines in plain words, red or amber)); 2026-11-17 (branch `feat/approval-plain-summary`, after its third security review: D809, D810, D813 amended (muxed accounts, the red fallback and its test, the always-listed steps)); 2026-11-17 (branch `feat/approval-plain-summary`, after its second security review: D809, D810, D811, D813 amended (value steps always listed, the XLM leaving line, offer prices, a total summary, ERC-1155 batches, withdraw, the page's screen built before it switches)); 2026-11-17 (branch `feat/approval-plain-summary`, after its security review: D809–D813 amended (authorizations, offers, pools, claimants, caps, banners first, approve 0, thresholds, witness, NEP-413)); 2026-11-17 (branch `feat/approval-plain-summary`, from `next`, not merged, not deployed: D808–D811 decided by the user 2026-11-17, their details and D812–D813 decided while building, to confirm; three rows of "Superseded or amended" for D723, D110 and D765); 2026-11-17 (branch `feat/evm-deploy-scripts`, not merged, not deployed: D849, decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ 8d2c435b merged: D834's placeholder sentence after core's 31337 entry became the real pin, its rule tested with a fixture table; the EVM entries in number order under one heading); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ d39d1d69 merged: D841 and D845 confirmed by the user 2026-11-17; D846 amended: the 31337 pin is the delegate's deterministic deployment, the placeholder mechanism tested on a fixture table; the EVM section's heading and intro cover D833, D841, D845, D846); 2026-11-17 (branch `feat/evm-delegate-contract`, after its independent audit: D841 and D845 amended (ERC-1271's compact form and the new address, no fallback's consequences, explorer verification, the duties checklist, the gas numbers, more tests), details decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, not merged, not deployed: D841 and D845 new, the EVM delegate contract (WP0 of the EVM gas sponsorship builds); location, licence and a fresh self-hosted delegate decided by the user 2026-11-17, details decided while building, to confirm); 2026-11-17 (branch `feat/evm-sponsor-manifest`, after `next` @ d39d1d69 merged in: D833, D834, D835, D836 and D846 confirmed by the user 2026-11-17, open items kept; the entries in number order under one heading; D835 adds exact calldata and `maxDataBytes`; D834 wires core's pinned table and refuses its placeholder outside `local*` envs); 2026-11-17 (branch `feat/evm-sponsor-manifest`, not merged, not deployed: D834–D836 new, the founder's choices decided by the user 2026-11-17, the details decided while building, to confirm; the other numbers of D830–D846 are other packages'); 2026-11-17 (branch `feat/evm-sponsor-core`, not merged, not deployed: D833 and D846 new, details decided while building, to confirm; D846 after its independent review: the placeholder refused by default, read-once copies everywhere, call targets, deadline and minGas, key errors, the next layers' list); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: D31 and D765 reworded before the repository went public, the decisions unchanged); 2026-11-13 (branch `fix/stamps-signature-two-step`, not merged, not deployed: D807 new, found by the user's hand check 2026-11-13, details decided while building, to confirm); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: D793 new, asked for by the user, the SendGrid plan and its recent volume stated by the user (Essentials 50K, shared; sized to 30%, the user's choice), values and the two testnet overrides decided while building, confirmed by the user 2026-11-13, amended after its security review; D792 is another branch's); 2026-11-13 (branch `merge/stamps-all`, not merged, not deployed: D805 and D806 new, the app name chosen by the user 2026-11-13, the rest decided while integrating, to confirm; D794–D797 from `feat/stamps-contract`); 2026-11-13 (branch `feat/stamps-art`, not merged, not deployed: D803 and D804 new, decided while building the passport stamps demo's UI, to confirm); 2026-11-13 (branch `feat/stamps-site`, not merged, not deployed: D798–D802 new, asked for by the user 2026-11-13, details to confirm); 2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-122026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-12); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D786's note after the security review); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D784–D787 new, decided while building, to confirm); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: D789 new, asked for by the user, details decided while building, to confirm, amending D765, D770, D773 and D774, with a row of "Superseded or amended"); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-12 (branch `docs/near-partner-guide`: D778 new, decided while building, to confirm; numbered after the rebrand's D765–D777); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: D779–D783 new (first numbered D768–D774, renumbered after the rebrand took D765–D777); D781 corrected after the branch's security review, L1); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-11 (branch `feat/near-demo`, not merged, not deployed: D750–D754 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): D730–D739 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-directory`, after its security review, not merged, not deployed: D762 and D763 new, from the review, to confirm; D756 to D758 amended (the lookup never picks, "listed", the vault's SDK gate, the migration first); D764 reserved); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: D755–D761 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D762–D764 reserved); 2026-11-11 (branch `feat/near-core`, not merged, not deployed: D720–D728 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D726 after the branch's automated security review; D729 the full security review's fixes, amending D723 and D726); 2026-11-11 (branch `feat/near-guestbook`, not merged, not deployed: D740–D744 new, asked for by the user, details to confirm); 2026-11-11 (branch `merge/partner-start-and-email-flow`: D707, D711, D712 and D713 confirmed by the user 2026-11-11); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: D711 and D713 new, proposed; D712 taken by `test/flaky-pass-1111`, so the live state is D713; after review: the hostile-value tests attributed, Execute's line, "any owner"); 2026-11-11 (branch `docs/partner-start-here`, not merged, docs only: D707, the sign-in guidance decided by the user, the page asked for by the user, its wording to confirm); 2026-11-11 (branch `test/flaky-pass-1111`: D712 new, to confirm); 2026-11-11 (branch `docs/google-email-change-open-items`: D709 and D710 new, open items logged at the user's request: a changed Google address blocked from email sign-in by a full account, and a second wallet from an email login before the next Google login); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11; D708 new, decided by the user: auto-approved Sodax swaps deferred, with what they would take); 2026-11-11 (branch `release/sdk-0.3.1`, not merged: D705 SDK 0.3.1 decided by the user, amending D695's "no SDK version bump", with a row of "Superseded or amended"; D706, the user's 2026-11-10 "keep sending files", written down); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: D704 asked for by the user, details proposed, amending D700 with a row of "Superseded or amended"; after review: the HTML budget and row counts, well-formed cuts, the error-level log, the security digest's last line; the plain-word rows chosen and confirmed by the user, a second row of "Superseded or amended" for D697; after the re-review: D703 amended (null as "none", quoting, `…Start`/`asOf`, depth) with a row of "Superseded or amended", a title for every code, `APP_CHANGE_KINDS`); 2026-11-11 (branch `merge/dry-run-fixes`: D697, D699, D700, D701 and D703 confirmed by the user 2026-11-11; D700's digests to be designed, asked for by the user, on a later branch); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: D701 and D703 proposed, D702 confirmed by the user 2026-11-11, amending D357's setup; after review: D701's server clock and latest policy, D702's network refine and wording); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: D696 confirmed by the user; D697 proposed; D698 confirmed by the user, D242 amended for testnet only; D699 and D700 asked for by the user, D674 and D697 amended, two rows of "Superseded or amended"; after the branch's review D698 and D700 amended: the gate re-checked at acceptance, unlinked JSON, invalid times refused); 2026-11-11 (branch `fix/signed-out-reason`, not merged, not deployed: D695 new, confirmed by the user 2026-11-11); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: D680 confirmed by the user; after the security review D681, D683 confirmed, D682 amended (3-minute grace), D684 built (idle slow-down), D690–D694 new; after the re-review D681–D683, D690 and D693 amended; a row of "Superseded or amended" for D465 and D662); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D679 confirmed by the user, D673 superseded by D685 (decided by the user), D670 and D671 amended; D686–D689 from the security review, confirmed by the user 2026-11-10; two rows of "Superseded or amended"); 2026-11-10 (branch `feat/html-emails-ui`, not merged, not deployed: D689 from the security review, proposed, amending D678); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D675 (designed HTML emails: D670 and D672 asked for by the user, details proposed; D671, D673–D675 proposed), D419 amended with a row of "Superseded or amended"; D676–D678 asked for by the user, details proposed; D679 proposed, not built; D575 amended, D623 noted, a row of "Superseded or amended"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: D651–D652 confirmed by the user, D653–D655 declined for now, D656–D659 after the security review; D653–D659 confirmed by the user 2026-11-10); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: D570–D573; a row of "Superseded or amended" for D85); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: D585–D594 new; notes on D461 and D526; four rows of "Superseded or amended"; after the independent review: D595–D599 new; D587 and D591 corrected; four more rows of "Superseded or amended"; D585–D599 confirmed by the user 2026-11-10, D605 new and confirmed); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `docs/tidy-deployed-1110`: this header only, no entry changed: the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `feat/hana-home-h5`, not merged, not deployed: D537's exception worded for a session with no share, meaning unchanged); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D538 and the amendments confirmed by the user, D539 new and confirmed, D532 amended for the policy's check); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: H5's security review: D536–D538 new, D532, D534, D535 amended); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D535 new, with two rows of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: D520–D529 confirmed, D540–D543 decided by the user; open item 4 closed by D520; H3's security review: D524 corrected); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 amended (the per-app first-login marker, the exposure closed); D500–D503 and D510–D513 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 (exposure), D500 (staleness, overlay), D502, D510, D513: H2's and H4's security reviews; no new number); 2026-11-09 (branch `test/flake-fixes`, not merged, not deployed: D495 new, D493 and D494 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: H6's security review: D493, D494 amended with the combined alarm, the alarm's known limits, unreadable pins, the email Home audience on the exit list; D474's note and a row of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: D493, D494 new (decided while building, to confirm); H6 built: the exit client, D468, D480–D491); 2026-11-09 (branch `fix/demo-swap-hub-wallet`, not merged, not deployed: every Sodax deposit's spoke `to` and a swap's intent bound to the user's own addresses, the popup's swap line, `mainnet_demo_wrong_destination`, D492, amending D429 point 3 and D476's note, with a row of "Superseded or amended"); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `docs/hana-home-h6-design`, not merged: D480–D489 new, the rows for D460, D464 and D468, statuses confirmed by the user for D436, D445, D446, D448–D457, D470, D471, D473–D475; no code changed); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D436 (branch `feat/mainnet-demo-live-prices`, asked for by the user 2026-11-09, the mechanics to confirm, amending D429's price table, with a row of "Superseded or amended") on 2026-11-09; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-11-18 (branch `feat/near-relay-billing`, not merged, not deployed: D863 new); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ af938240 merged: D847 and D848 amended while integrating the relayer (D851) and the vault (D856), to confirm: the session proof checked, M2 closed, rejected batches by cause, the relayer's funds and the per-app slot, the authorization rule, gas from the relayer's intrinsic gas, success at head as an accepted risk, the e2e on the real routes); 2026-11-18 (branch `feat/evm-sponsor-api`: D832, D840, D847, D848 confirmed by the user 2026-11-18; D847 and D848 amended for the simplified relayer (D851); D852 new, the billing records); 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review: D834, D836, D847 and D848 amended (M1–M3, L1–L5, the relayer's final interface), open items before mainnet recorded); 2026-11-17 (branch `feat/evm-sponsor-api`, not merged, not deployed: D832, D840, D847, D848 new and D836's addendum (the L1 fee in the reservation), decided while building, to confirm; the section heading and intro name them); 2026-11-18 (branch `feat/evm-sponsor-vault`, with `next` @ e3b6b761 merged: D838, D855 and D856 confirmed by the user 2026-11-18, their review amendments to confirm; D838 moved into number order); 2026-11-18 (branch `chore/ci-on-next`, from `next`, not merged, CI not switched on: D857 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D387 and D383 with a row of "Superseded or amended"; D841's CI note done); 2026-11-18 (branch `feat/evm-relayer-simple`, after its re-review: D851 amended (each refusal's cause; `relayer_cannot_send` with the code replaces `rejected_unsent`; `rejection` in `send`'s answer)); 2026-11-18 (branch `feat/evm-relayer-simple`, after its independent review: D851 amended (no user-triggerable halt, the at-once cancel, intrinsic gas, `staffCancel` instead of `never_sent`, adopt only upwards, one batch per account, finality needs the confirmed count, hourly checks, hashes only after final, `evmOps`)); 2026-11-18 (branch `feat/evm-relayer-simple`, not merged, not deployed: D851 new, the simplified fail-stop relayer decided by the user 2026-11-18, details decided while building, to confirm; D837 (PR 70's self-repairing relayer, never merged) written down as superseded by D851, with a row of "Superseded or amended"); 2026-11-18 (branch `feat/evm-sponsor-vault`, re-check of PR 76: D855 amended (the setup needs both endpoints, `rpcFallback` required outside `local*` envs, the capped read, privacy)); 2026-11-18 (branch `chore/ci-on-next`, after its independent review: D857 confirmed by the user 2026-11-18, the review's changes under "Amended while building", to confirm (`develop`'s nightly until `next` merges, the existing $0 budget, the founder's settings, Foundry by checksum, no pnpm cache in the `evm` and publish builds, two residuals); D841's CI note); 2026-11-18 (branch `feat/evm-sponsor-vault`, after its independent review: D855 amended (the vault reads the account's setup itself, the setup's own failure text, the cross-tab slot, the floor and its open item), D856 with the API's five additions); 2026-11-18 (branch `feat/evm-sponsor-vault`, not merged, not deployed: D838 new (no transparent sponsoring decided by the user 2026-11-17, the rest to confirm), D855 and D856 new, decided while building, to confirm; D850's `SPONSORED_NOT_YET` replaced, D855); 2026-11-17 (branch `feat/approval-plain-summary`: D814 amended by the founder (a control bullet whose step's line is in view is dropped)); 2026-11-17 (branch `feat/approval-plain-summary`, review of 5ef13452: D814 amended (whole control keys, spender markers, native sums, directions)); 2026-11-17 (branch `feat/approval-plain-summary`: D814 new, decided by the user, details to confirm, amending D809 and D813; D810's steps line); 2026-11-17 (branch `feat/approval-plain-summary`, final review: D810 and D811 notes on Soroban contract creation and NEAR key allowances); 2026-11-17 (branch `feat/approval-plain-summary`: D808–D813 confirmed by the user, D810 amended by the user (details always folded, risk lines in plain words, red or amber)); 2026-11-17 (branch `feat/approval-plain-summary`, after its third security review: D809, D810, D813 amended (muxed accounts, the red fallback and its test, the always-listed steps)); 2026-11-17 (branch `feat/approval-plain-summary`, after its second security review: D809, D810, D811, D813 amended (value steps always listed, the XLM leaving line, offer prices, a total summary, ERC-1155 batches, withdraw, the page's screen built before it switches)); 2026-11-17 (branch `feat/approval-plain-summary`, after its security review: D809–D813 amended (authorizations, offers, pools, claimants, caps, banners first, approve 0, thresholds, witness, NEP-413)); 2026-11-17 (branch `feat/approval-plain-summary`, from `next`, not merged, not deployed: D808–D811 decided by the user 2026-11-17, their details and D812–D813 decided while building, to confirm; three rows of "Superseded or amended" for D723, D110 and D765); 2026-11-17 (branch `feat/evm-deploy-scripts`, not merged, not deployed: D849, decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ 8d2c435b merged: D834's placeholder sentence after core's 31337 entry became the real pin, its rule tested with a fixture table; the EVM entries in number order under one heading); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ d39d1d69 merged: D841 and D845 confirmed by the user 2026-11-17; D846 amended: the 31337 pin is the delegate's deterministic deployment, the placeholder mechanism tested on a fixture table; the EVM section's heading and intro cover D833, D841, D845, D846); 2026-11-17 (branch `feat/evm-delegate-contract`, after its independent audit: D841 and D845 amended (ERC-1271's compact form and the new address, no fallback's consequences, explorer verification, the duties checklist, the gas numbers, more tests), details decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, not merged, not deployed: D841 and D845 new, the EVM delegate contract (WP0 of the EVM gas sponsorship builds); location, licence and a fresh self-hosted delegate decided by the user 2026-11-17, details decided while building, to confirm); 2026-11-17 (branch `feat/evm-sponsor-manifest`, after `next` @ d39d1d69 merged in: D833, D834, D835, D836 and D846 confirmed by the user 2026-11-17, open items kept; the entries in number order under one heading; D835 adds exact calldata and `maxDataBytes`; D834 wires core's pinned table and refuses its placeholder outside `local*` envs); 2026-11-17 (branch `feat/evm-sponsor-manifest`, not merged, not deployed: D834–D836 new, the founder's choices decided by the user 2026-11-17, the details decided while building, to confirm; the other numbers of D830–D846 are other packages'); 2026-11-17 (branch `feat/evm-sponsor-core`, not merged, not deployed: D833 and D846 new, details decided while building, to confirm; D846 after its independent review: the placeholder refused by default, read-once copies everywhere, call targets, deadline and minGas, key errors, the next layers' list); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: D31 and D765 reworded before the repository went public, the decisions unchanged); 2026-11-13 (branch `fix/stamps-signature-two-step`, not merged, not deployed: D807 new, found by the user's hand check 2026-11-13, details decided while building, to confirm); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: D793 new, asked for by the user, the SendGrid plan and its recent volume stated by the user (Essentials 50K, shared; sized to 30%, the user's choice), values and the two testnet overrides decided while building, confirmed by the user 2026-11-13, amended after its security review; D792 is another branch's); 2026-11-13 (branch `merge/stamps-all`, not merged, not deployed: D805 and D806 new, the app name chosen by the user 2026-11-13, the rest decided while integrating, to confirm; D794–D797 from `feat/stamps-contract`); 2026-11-13 (branch `feat/stamps-art`, not merged, not deployed: D803 and D804 new, decided while building the passport stamps demo's UI, to confirm); 2026-11-13 (branch `feat/stamps-site`, not merged, not deployed: D798–D802 new, asked for by the user 2026-11-13, details to confirm); 2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-122026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-12); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D786's note after the security review); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D784–D787 new, decided while building, to confirm); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: D789 new, asked for by the user, details decided while building, to confirm, amending D765, D770, D773 and D774, with a row of "Superseded or amended"); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-12 (branch `docs/near-partner-guide`: D778 new, decided while building, to confirm; numbered after the rebrand's D765–D777); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: D779–D783 new (first numbered D768–D774, renumbered after the rebrand took D765–D777); D781 corrected after the branch's security review, L1); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-11 (branch `feat/near-demo`, not merged, not deployed: D750–D754 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): D730–D739 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-directory`, after its security review, not merged, not deployed: D762 and D763 new, from the review, to confirm; D756 to D758 amended (the lookup never picks, "listed", the vault's SDK gate, the migration first); D764 reserved); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: D755–D761 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D762–D764 reserved); 2026-11-11 (branch `feat/near-core`, not merged, not deployed: D720–D728 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D726 after the branch's automated security review; D729 the full security review's fixes, amending D723 and D726); 2026-11-11 (branch `feat/near-guestbook`, not merged, not deployed: D740–D744 new, asked for by the user, details to confirm); 2026-11-11 (branch `merge/partner-start-and-email-flow`: D707, D711, D712 and D713 confirmed by the user 2026-11-11); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: D711 and D713 new, proposed; D712 taken by `test/flaky-pass-1111`, so the live state is D713; after review: the hostile-value tests attributed, Execute's line, "any owner"); 2026-11-11 (branch `docs/partner-start-here`, not merged, docs only: D707, the sign-in guidance decided by the user, the page asked for by the user, its wording to confirm); 2026-11-11 (branch `test/flaky-pass-1111`: D712 new, to confirm); 2026-11-11 (branch `docs/google-email-change-open-items`: D709 and D710 new, open items logged at the user's request: a changed Google address blocked from email sign-in by a full account, and a second wallet from an email login before the next Google login); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11; D708 new, decided by the user: auto-approved Sodax swaps deferred, with what they would take); 2026-11-11 (branch `release/sdk-0.3.1`, not merged: D705 SDK 0.3.1 decided by the user, amending D695's "no SDK version bump", with a row of "Superseded or amended"; D706, the user's 2026-11-10 "keep sending files", written down); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: D704 asked for by the user, details proposed, amending D700 with a row of "Superseded or amended"; after review: the HTML budget and row counts, well-formed cuts, the error-level log, the security digest's last line; the plain-word rows chosen and confirmed by the user, a second row of "Superseded or amended" for D697; after the re-review: D703 amended (null as "none", quoting, `…Start`/`asOf`, depth) with a row of "Superseded or amended", a title for every code, `APP_CHANGE_KINDS`); 2026-11-11 (branch `merge/dry-run-fixes`: D697, D699, D700, D701 and D703 confirmed by the user 2026-11-11; D700's digests to be designed, asked for by the user, on a later branch); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: D701 and D703 proposed, D702 confirmed by the user 2026-11-11, amending D357's setup; after review: D701's server clock and latest policy, D702's network refine and wording); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: D696 confirmed by the user; D697 proposed; D698 confirmed by the user, D242 amended for testnet only; D699 and D700 asked for by the user, D674 and D697 amended, two rows of "Superseded or amended"; after the branch's review D698 and D700 amended: the gate re-checked at acceptance, unlinked JSON, invalid times refused); 2026-11-11 (branch `fix/signed-out-reason`, not merged, not deployed: D695 new, confirmed by the user 2026-11-11); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: D680 confirmed by the user; after the security review D681, D683 confirmed, D682 amended (3-minute grace), D684 built (idle slow-down), D690–D694 new; after the re-review D681–D683, D690 and D693 amended; a row of "Superseded or amended" for D465 and D662); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D679 confirmed by the user, D673 superseded by D685 (decided by the user), D670 and D671 amended; D686–D689 from the security review, confirmed by the user 2026-11-10; two rows of "Superseded or amended"); 2026-11-10 (branch `feat/html-emails-ui`, not merged, not deployed: D689 from the security review, proposed, amending D678); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D675 (designed HTML emails: D670 and D672 asked for by the user, details proposed; D671, D673–D675 proposed), D419 amended with a row of "Superseded or amended"; D676–D678 asked for by the user, details proposed; D679 proposed, not built; D575 amended, D623 noted, a row of "Superseded or amended"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: D651–D652 confirmed by the user, D653–D655 declined for now, D656–D659 after the security review; D653–D659 confirmed by the user 2026-11-10); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: D570–D573; a row of "Superseded or amended" for D85); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: D585–D594 new; notes on D461 and D526; four rows of "Superseded or amended"; after the independent review: D595–D599 new; D587 and D591 corrected; four more rows of "Superseded or amended"; D585–D599 confirmed by the user 2026-11-10, D605 new and confirmed); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `docs/tidy-deployed-1110`: this header only, no entry changed: the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `feat/hana-home-h5`, not merged, not deployed: D537's exception worded for a session with no share, meaning unchanged); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D538 and the amendments confirmed by the user, D539 new and confirmed, D532 amended for the policy's check); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: H5's security review: D536–D538 new, D532, D534, D535 amended); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D535 new, with two rows of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: D520–D529 confirmed, D540–D543 decided by the user; open item 4 closed by D520; H3's security review: D524 corrected); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 amended (the per-app first-login marker, the exposure closed); D500–D503 and D510–D513 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 (exposure), D500 (staleness, overlay), D502, D510, D513: H2's and H4's security reviews; no new number); 2026-11-09 (branch `test/flake-fixes`, not merged, not deployed: D495 new, D493 and D494 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: H6's security review: D493, D494 amended with the combined alarm, the alarm's known limits, unreadable pins, the email Home audience on the exit list; D474's note and a row of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: D493, D494 new (decided while building, to confirm); H6 built: the exit client, D468, D480–D491); 2026-11-09 (branch `fix/demo-swap-hub-wallet`, not merged, not deployed: every Sodax deposit's spoke `to` and a swap's intent bound to the user's own addresses, the popup's swap line, `mainnet_demo_wrong_destination`, D492, amending D429 point 3 and D476's note, with a row of "Superseded or amended"); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `docs/hana-home-h6-design`, not merged: D480–D489 new, the rows for D460, D464 and D468, statuses confirmed by the user for D436, D445, D446, D448–D457, D470, D471, D473–D475; no code changed); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D436 (branch `feat/mainnet-demo-live-prices`, asked for by the user 2026-11-09, the mechanics to confirm, amending D429's price table, with a row of "Superseded or amended") on 2026-11-09; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6460,6 +6460,8 @@ follow-up there.
 - Rejected: keeping the probe every 3 hours on GitHub (no testnet need for it; about 240 billed minutes a month); a
   separate public repo for the probe (it publishes what the probe looks like, and GitHub pauses scheduled workflows
   after 60 days without activity).
+- Amended 2026-11-18 by D857: with the repository public, CI comes back before mainnet, at no cost, for `next` as
+  well, when the founder switches it on; the probe stays off and still moves to Lambda.
 ## A quick close on Google's page (branch `fix/popup-early-close-deadline`), 2026-11-05
 
 ### D398. A close inside D347's COOP window ends the login after 90 s without an answer, not after 5 minutes
@@ -9610,6 +9612,7 @@ suspended app's Home logins (D586's `suspended` line, built as "Hana pays"), to 
 | D381: a session key WebCrypto can't make ends the login `api_unavailable` (a different code rejected) | `derive_failed` with `data.reason` `webcrypto_unsupported` / `webcrypto_failed` (D385) | `packages/web/src/vault/errors.ts` |
 | D347's assumption rechecked with `curl -sI` on the authorization URL before each release | `coop-canary <env>` before each release: every hop of the product's requests under six User-Agents, and Chromium, Firefox and WebKit, with positive controls (D386) | `scripts/lib/coop-canary.ts`; docs/operations.md "Before each release: the COOP canary" |
 | D276's code → user through the issuer's `user_email_apps.uid` (`IssuerRpc.uid`, `DirectoryRpc.byUid`) with a ledger-only fallback; the code from the uid; `user:erase` | Through the wallet directory's `end_users.support_code` / `token_sub` / `user_id` (no issuer uid, no `IssuerRpc.uid`, no `byUid`, no fallback); the code from the identity token's `sub` (D346); the lookup's hot-DB part in `AdminRpc`, its ledger part read as `usage_admin` (D394); erasure by `uid-erase` (D361) | `apps/api/src/directory/support.ts`, `apps/admin/src/support.ts`, `scripts/lib/admin-support.ts` |
+| D387: CI off while only testnet runs; D383: Playwright's WebKit and Firefox nightly on `develop`, CI on pushes to `develop` and `main` | CI ready to switch on at no cost while the repository is public (standard runners only, artifacts on failure, 3 days), on PRs and pushes to `develop`, `next` and `main`; all three browsers on each push, no nightly; the EVM delegate job; the probe still off (D857) | `.github/workflows/ci.yml`, `scripts/ci-changes.mjs`, `scripts/test/workflows.test.ts`; docs/operations.md "CI and git" |
 | The outside identity-JWKS probe runs every 3 hours on GitHub Actions (D383); CI runs on every push and PR (D383) | Both workflows disabled while only testnet runs; before mainnet CI back on and the probe on AWS Lambda + EventBridge (D387) | GitHub workflow settings; `docs/mainnet-readiness.md` 4.20, 5.10 |
 | A close within 8 s of the popup leaving for Google stops the watch; the login waits for its 5-minute limit (D347) | The login waits 90 s for the popup's answer, then ends with `login_cancelled` (`popup_closed`), as after any close (D398) | `packages/web/src/vault/login.ts` `POPUP_WATCH.earlyCloseDeadlineMs` |
 | The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
@@ -9678,6 +9681,7 @@ suspended app's Home logins (D586's `suspended` line, built as "Hana pays"), to 
 | D224: Hyperdrive configs by `wrangler hyperdrive create --connection-string` (the password a process argument) | Cloudflare's REST API, the password in the HTTPS body (D412) | security review 2026-11-05 |
 | D404: testnet moves to company accounts, timing open; the dashboard blocks held until the company account exists | sandbox-dev's M4 is set up on the personal Cloudflare account now; the move redoes it with the D404 runbook (D414) | branch `feat/m4-personal-account`; docs/operations.md "Moving an env to another Cloudflare account" |
 | After a close the watch has read, `relayed` changes nothing: the grace runs out and the login may end in `login_cancelled` (D347, D400) | A `relayed` taken after that clears the grace and the close; the login waits for the answer (5-minute limit only) (D495) | `packages/web/src/vault/login.ts` |
+| D837: the EVM relayer repairs itself (endpoints' agreement, verdicts from the user's account, moved records, timed gap fills); never merged (PR 70) | The relayer does only what is safe on its own evidence and stops for staff on anything odd only our side can cause; staff tools resolve it, and a nonce is never given up (D851) | `apps/api/src/evm-relayer.ts` |
 
 ## Proposed, not yet confirmed
 
@@ -12184,8 +12188,8 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   through, the request gets "{App} wants you to approve a request Journear can't explain" with a red "Journear
 couldn’t read this request. Reject it unless you are certain.", not explainable. Every summary the unit, renderer and
 e2e approval tests build is checked never to be that fallback, so the catch can't hide a bug.
-- Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, after an automated review; decided while building, to
-  confirm): a NEAR call to a standard value-moving method (`ft_transfer`, `ft_transfer_call`, `nft_transfer`,
+- Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, after an automated review; decided while building,
+  **confirmed by the user 2026-11-18**): a NEAR call to a standard value-moving method (`ft_transfer`, `ft_transfer_call`, `nft_transfer`,
   `nft_transfer_call`, `nft_approve`) whose arguments aren't exactly the standard's shape (its keys and no others, an
   amount a canonical decimal string, account ids valid, a memo or message a string or null as the standard has it, an
   `approval_id` a u64) is no longer the plain "Use tok.testnet (ft_transfer)" line: the contract may read such arguments
@@ -12203,7 +12207,7 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   `shownSteps`) and `render-approval-sponsored.test.ts`.
 - Why the NEAR/Soroban difference: a NEAR action carries the NEAR it moves in the action itself (the visible "NEAR
   leaving your account"), and its arguments are JSON the user can read when opened; a Soroban call's authorization tree
-  can move tokens the summary can't weigh. To confirm.
+  can move tokens the summary can't weigh. **confirmed by the user 2026-11-18 (with D808–D813)**.
 - Address impact: none.
 
 ### D811. Plain warnings for requests that let someone spend the user's tokens
@@ -12296,7 +12300,7 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
 
 ### D814. Multi-step requests: one box per colour, at most four grouped lines, amounts shown conservatively
 - Date 2026-11-17 · Status: **decided by the user 2026-11-17** (after seeing the 100-action screen: "this looks crazy
-  with so many rows, this will definitely confuse the user"); the details below decided while building, to confirm ·
+  with so many rows, this will definitely confuse the user"); the details below decided while building, **confirmed by the user 2026-11-18** ·
   Built on `feat/approval-plain-summary`: `packages/core/src/decode/summary.ts` (`groupSteps`, `stellarStep`,
   `nearAction`'s steps, `displayUnits`, `nearDisplay`, `shortId`, the warnings' `short` forms),
   `packages/web/src/auth/render-approval.ts` (`riskBox`, `RiskItem`, `accountControlShorts`, the NEAR bullet forms),
@@ -12354,7 +12358,7 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   The exact figure is in the details. The totals ("NEAR leaving your account", "XLM leaving your account") follow it,
   and per-step amounts appear only in the group lines.
 - Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, the leftover Low of PR 65's review), decided while
-  building, to confirm: a Stellar `setOptions` that sets the account's own key's weight to 0 keeps its bullet "Sets your
+  building, **confirmed by the user 2026-11-18**: a Stellar `setOptions` that sets the account's own key's weight to 0 keeps its bullet "Sets your
   own Journear Passport key’s weight to 0: you lose control of the account" even when its step's line is in view, as
   NEAR's removal of the user's own key does: the line ("set your own key’s weight to 0") doesn't say the user loses
   control (`render-approval.ts` `accountControlItems`' `keep`; test `render-approval-sponsored.test.ts`). Any other
@@ -12374,7 +12378,7 @@ deployed), D849 from `feat/evm-deploy-scripts` (the deploy and key scripts, merg
 (the manifest block, its generation and the API's config parser; from `next` @ 7243d2af, `next` merged in; not
 deployed), D841 and D845 from `feat/evm-delegate-contract` (the delegate contract, MIT, in `contracts/evm-delegate`;
 from `next` @ 7243d2af, `next` merged in; not deployed), D831, D839 and D850 from `feat/evm-sponsored-approval` (the
-approval kind, its decoder, summary and window; from `next` @ e4ee9762; not merged, not deployed). Decided by the user 2026-11-17: non-Web3 users who don't know what gas is; EVM first, Base Sepolia (84532)
+approval kind, its decoder, summary and window; from `next` @ e4ee9762; not merged, not deployed), D851 from `feat/evm-relayer-simple` (the relayer object, from `next` @ c6b434f4; not merged, not deployed), superseding D837 (PR 70's first relayer, never merged). Decided by the user 2026-11-17: non-Web3 users who don't know what gas is; EVM first, Base Sepolia (84532)
 only for now; a self-hosted relayer with an EIP-7702 delegate behind an API gate (no third-party bundler or
 paymaster); Journear absorbs the fees within daily budgets, 0.02 test ETH a day overall and 0.01 per app; the user's
 address never changes; testnet only; free tiers; a staff-only allowlist in the manifest.
@@ -12383,7 +12387,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 
 ### D831. One approval for the one-time setup and the first batch; the window's words
 - Date 2026-11-17 · Status: **decided by the user 2026-11-17** (one approval, the wording, never "upgrade" or "smart
-  account") · Built on `feat/evm-sponsored-approval`, not merged, not deployed: `packages/core/src/decode/summary.ts`
+  account"), **confirmed by the user 2026-11-18** (the setup note keeps its wording) · Built on `feat/evm-sponsored-approval`, not merged, not deployed: `packages/core/src/decode/summary.ts`
   (`SPONSORED_FEE`, `accountSetupNote`), `packages/web/src/auth/render-approval.ts` (`sponsoredDetails`, `validUntil`);
   tests `packages/core/test/evm-sponsored-approval.test.ts`, `packages/web/test/auth/render-approval-sponsored.test.ts`,
   `apps/e2e/tests/approval-summary.spec.ts`.
@@ -12498,7 +12502,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   `gen --dev-vars` writes it only when the key's address is `relayerAddress`, refuses the file for an env without the
   block, and never shows the key. The secret-scan rules catch the file and a pasted `EVM_RELAY_KEYS=` line (self-test
   cases added).
-- Vault build: `HanaEnv.evmSponsor = { "<chainId>": { delegate, relayer } }`, only after the same delegate check.
+- Vault build: `HanaEnv.evmSponsor = { "<chainId>": { delegate, relayer } }`, only after the same delegate check (D855 adds the chain's public `rpc` and `rpcFallback`).
 - Not in this package: routes, the relayer, the vault's signing, `env-secrets` and deploy steps for the new secret
   (later packages).
 - Rejected: importing core into `packages/env` (a new dependency edge for one list); a check at schema time with a
@@ -12582,9 +12586,70 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   (`gasUsed × operatorFeeScalar ÷ 10^6 + operatorFeeConstant`), or its bound when the receipt doesn't report one.
 - Address impact: none.
 
+### D837. The EVM relayer object, first design (self-repairing): superseded by D851
+- Date 2026-11-17 · Status: the object as first built confirmed by the user 2026-11-17, amended after two independent
+  reviews; **superseded by D851 (decided by the user 2026-11-18)**. Never merged: PR 70 (branch `feat/evm-relayer-do`)
+  is closed unmerged and kept as reference only; nothing of it is on `next`.
+- What it was: the same object as D851 (`EvmRelayer`, one per chain and key, the Execute checked and built inside it,
+  idempotent by digest, persisted before the broadcast, fee bumps and a deadline self-transfer), but built to repair
+  itself: it read every configured endpoint and acted only when they agreed at a common block, decided that a nonce
+  was "taken" by something else from the user's account (its delegate nonce and `Executed` log), moved a record that
+  could no longer land to a new nonce, filled a nonce gap by itself after 5 minutes, and spread its checks over runs
+  with per-run budgets.
+- Why it was replaced: each review round's fixes opened new edge cases (which endpoint's word counts, evidence read
+  from an account the user controls, a record moved while an older copy could still land, gap fills racing late
+  transactions, budgets leaving records unchecked). The founder chose a design that does only what is safe on its own
+  evidence and stops for a person otherwise (D851).
+- Kept in D851: the serialised critical section, persist (and `storage.sync()`) before every broadcast, the
+  in-object check of the Execute and the authorization, the fee headroom rule, the fake chain and a trimmed RPC client.
+
+### D838. The SDK's gas-free actions: `hana.evm.sendSponsored` by name, EIP-5792 over the same, never transparent sponsoring
+- Date 2026-11-18 · Status: no transparent sponsoring of `eth_sendTransaction` **decided by the user 2026-11-17** (the
+  founder agreed to this design point); the rest decided while building, **confirmed by the user 2026-11-18** · Built on `feat/evm-sponsor-vault`
+  (from `next` @ c6b434f4), not merged, not deployed: `packages/web/src/client/evm-sponsor.ts` (`HanaEvm`,
+  `HanaSponsorError`, `isHanaSponsorError`, `EvmSponsorErrorData`, `sponsoredCalls`, `NOT_OFFERED`), `client.ts`
+  (`hana.evm`, `sponsoredChains` from `ready`), `ethereum.ts` (`wallet_getCapabilities`, `wallet_sendCalls`,
+  `wallet_getCallsStatus`, `EIP5792`, `CALLS_VERSION`), `index.ts`; SDK 0.5.0 (`sdk-version`, the four packages, their
+  READMEs and the guide's release notes; **not published**); tests `packages/web/test/client/evm-sponsor.test.ts`,
+  `test/client/ethereum.test.ts`; `apps/e2e/tests/evm-sponsor.spec.ts`; docs `docs/integration.md` "Gas-free actions
+  (not live)", `docs/architecture.md`.
+- Decision: a page asks for a gas-free action by name. `hana.evm.sendSponsored({chainId, calls})` → `{transactionHash,
+  status: 'executed'}`: 1 to 8 calls, each copied into a fresh `{to, value: '0x0', data}` (the caller's objects are never
+  sent: they could change after the check, and the port refuses shared objects), `value` left out or 0 (`0`, `0n`,
+  `'0'`, `'0x0'`), `data` a function call of 4 to 8192 bytes; checked synchronously and sent in the same tick, so the
+  approval window opens in the click (D99). Refused before anything is sent: a malformed call (-32602), logged out
+  (4100), a chain the vault didn't report (4100 `chain_not_sponsored`, the plain sentence). `hana.evm.sponsorship(chainId)`
+  → `{available, reason?, remainingToday?}` from `GET /v1/evm/sponsor/status` (a chain the vault didn't report answers
+  `chain_not_enabled` with no request). `hana.evm.sponsoredChains`: the vault's `ready` list (a build property). Errors
+  are `HanaSponsorError` (a `HanaError`) whose `data` keeps only exact-shape fields (`status`, `reason`, `requestId`,
+  `retryAfterS`, `transactionHash`, `callIndex`, `retryable`, `chainId`), D788's style.
+- EIP-5792 (checked against the EIP's current text, 2026-11-18: version "2.0.0", `wallet_sendCalls` params `{version,
+  id?, from?, chainId, atomicRequired, calls, capabilities?}` → `{id, capabilities?}`, `wallet_getCallsStatus` → `{version,
+  id, chainId, status, atomic, receipts?}` with 100 pending, 200 confirmed, 400 offchain failure, 500 reverted, 600
+  partial; `wallet_getCapabilities([address, chainIds?])` keyed by hex chain id, `atomic.status` `supported` | `ready` |
+  `unsupported`; errors 5700 unsupported non-optional capability, 5710 unsupported chain, 5720 duplicate id, 5730 unknown
+  bundle, 5740 bundle too large; a capability is optional only with `optional: true`): `wallet_sendCalls` runs the batch
+  as one `sendSponsored` (atomic: the delegate reverts the whole batch on any failed call), only on a configured chain
+  the vault sponsors (5710 otherwise), honours an app's own `id` (5720 for a repeat) or makes a random one, refuses any
+  capability not marked optional (5700), more than 8 calls (5740), value, a contract creation; resolves once the batch
+  ran. `wallet_getCallsStatus` reads the receipt from the page's own RPC for that chain: 100 until it has it, then 200 (or
+  500 for status 0) with `{logs, status, blockHash, blockNumber, gasUsed, transactionHash}`; 5730 for an id this page
+  didn't send (256 remembered). `wallet_getCapabilities`: `{atomic: {status: 'supported'}}` on those chains, nothing
+  elsewhere (unsupported chains omitted, as the EIP says). No `paymasterService` (ERC-7677) is offered: Journear's relayer
+  is not an app-chosen paymaster. viem 2.57.7's own `sendCalls`, `getCapabilities` and `getCallsStatus` run against it in
+  the e2e suite.
+- Never transparent: `eth_sendTransaction` stays the ordinary path (the user's own fee). Why (the founder's point): a
+  sponsored action is a different thing for the user (one approval that may set up the account, Journear pays) and
+  for the page (allowlisted calls only, no value); silently turning a transaction into one would change what the user
+  approves and what the page gets back (a relayer's hash, not the user's own transaction).
+- Not mirrored in `@hana-id/react` (its hooks don't mirror `hana.near` either): `useHana().client?.evm`.
+- Version: 0.5.0 (a minor: new API), the version `EVM_SPONSOR_SDK_MIN` names. The guide's install lines and the READMEs
+  name the 0.5.0 tarballs (the doc test asks for the package version); the release notes say it isn't published yet.
+- Address impact: none.
+
 ### D839. A sponsored action is never auto-approved
 - Date 2026-11-17 · Status: **decided by the user 2026-11-17** (the setup note's promise, D831: "you still approve
-  every action") · Built on `feat/evm-sponsored-approval`: `evm_sponsored` in `NEVER_AUTO_APPROVED_KINDS`
+  every action"), **confirmed by the user 2026-11-18** · Built on `feat/evm-sponsored-approval`: `evm_sponsored` in `NEVER_AUTO_APPROVED_KINDS`
   (`packages/core/src/approval.ts`); the matcher answers `never_covered` (tested).
 - Decision: every sponsored action shows the approval popup with its guarded Approve (D36), whatever policy the app
   has: its first one also sets up the account, and each one spends Journear's fee budget. No policy format covers it.
@@ -12598,7 +12663,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Deployment (not done here): the deterministic deployment proxy `0x4e59b44847b379578588920cA78FbF26c0B4956C` (CREATE2), salt `keccak256("hana-id/evm-delegate/HanaDelegateExecutor/v1")` → `0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA`, runtime code hash `0xfcc832fe6c7167e0d45589881b103fed92b3a44fe3dd5d489f43e9d44b1e5fd2`; `CheckIn` with `keccak256("hana-id/evm-delegate/CheckIn/v1")` → `0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e`, `0x807946bfc8ed8e9b3fe9ef6bdeed6c9dfa519084bcda4a5b17c2059c96d0bb56`. Anyone can deploy the same code to the same address on any chain and check it from the source. **Any change to the code, the compiler settings or OpenZeppelin moves the implementation's address and hash**: say so on the branch, and update every pinned copy (the core signer's table, the manifest's `delegate`).
 - Checked-in outputs: `artifacts/<name>.json` (`contractName`, `source`, `license`, `compiler`, `create2` {deployer, saltLabel, salt, initCodeHash, address}, `runtimeCodeHash` (of the code at that address, the immutable filled in), `eip712` (the delegate's name, version, salt and type strings), `abi`, `bytecode`, `deployedBytecode`, `immutableReferences`), written by `pnpm --filter @hana-id/evm-delegate run generate`. `test/Artifacts.t.sol` fails when they are stale and deploys both through the proxy (Foundry's test chain has its canonical code; the test checks it) to prove the address, the code hash and that the deployed code is the artifact's with only the immutable filled; `generate.mjs --check` compares every byte (the ABI too) and that the README's table quotes both addresses and hashes.
 - The test vector: `test/vectors/execute-v1.json` is a byte-for-byte copy of the TypeScript signer's `packages/core/test/vectors/evm-sponsor-v1.json` (WP1, branch `feat/evm-sponsor-core`, generated there with viem only): **the core file is the source**. `test/Vectors.t.sol` checks the `contract` block against the contract (type hashes, function, selector), recomputes each case's domain separator, struct hash, digest, RFC 6979 signature and calldata, and runs the calldata from the vector's relayer against the contract deployed at the case's implementation (`deployCodeTo`, so the immutable salt is that address), CheckIn where a call is `checkIn()`, the value case funded. `test_vector_isTheCoreFile` and `generate.mjs --check` fail if the copies differ or the core file is missing (`generate` copies the core file over).
-- Verify: a new step `evm` in phase 1, a lane of its own beside the typecheck and the Rust contract: `forge fmt --check`, `forge test`, `node scripts/generate.mjs --check`, in `contracts/evm-delegate`. It runs when a file there, the lockfile, the core vector or the CI and verify definitions change, never in `--quick`; without `forge` on the PATH, or before `pnpm install`, it is skipped and the summary says why (the browsers and cargo-near are the other optional toolchains). `classify` no longer counts `contracts/evm-delegate/` as Rust or web, so an EVM-only change doesn't run the Rust lanes. CI is off (D387): there is no CI job for it; add one (Foundry's toolchain action pinned to a commit) when CI is turned back on, before mainnet.
+- Verify: a new step `evm` in phase 1, a lane of its own beside the typecheck and the Rust contract: `forge fmt --check`, `forge test`, `node scripts/generate.mjs --check`, in `contracts/evm-delegate`. It runs when a file there, the lockfile, the core vector or the CI and verify definitions change, never in `--quick`; without `forge` on the PATH, or before `pnpm install`, it is skipped and the summary says why (the browsers and cargo-near are the other optional toolchains). `classify` no longer counts `contracts/evm-delegate/` as Rust or web, so an EVM-only change doesn't run the Rust lanes. CI is off (D387): there is no CI job for it; add one (Foundry's toolchain action pinned to a commit) when CI is turned back on, before mainnet. Done 2026-11-18 (D857, branch `chore/ci-on-next`): CI's `evm` job, gated on `evmChanged`, runs the same three commands with Foundry 1.5.1 from its release tarball, checksum-verified against a sha256 pinned in the workflow; it runs once the founder switches CI on.
 - Why: pnpm over git submodules (an extra init in every clone and worktree, gitlinks in `git ls-files`), soldeer (a second registry and lock that `pnpm audit` doesn't see) or vendoring (forge-std is about 1 MB); the npm package named `forge-std` is not its authors', hence GitHub. CREATE2 through the standard proxy, so the address is predictable, the same on every chain and checkable by anyone. MIT so that the code holding authority over a user's account can be read, verified and reused.
 - Explorer verification: the metadata is stripped, so a Sourcify exact (full) match is not available; verify with the standard-JSON input (`forge verify-contract`, or `forge build --build-info`) and the settings above (README "Deployment").
 - After the independent audit (2026-11-17, no Critical or High; fit to merge and to deploy on Base Sepolia for testing): `isValidSignature` also accepts the 64-byte ERC-2098 compact form (D845), which changed the bytecode, so the address and code hash above are the new ones (the first build's were `0x9Da1…b762` / `0x710d…26ba`, pinned nowhere). More tests (the gas floor at its exact boundary, a target that swallows an inner out-of-gas, the authorization in the same transaction, 1 to 8 calls of any data length, value running out partway, a failing call after others with the cap), measured gas numbers in the README for the relayer's budget, and the duties checklist.
@@ -12693,7 +12758,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   refuses an account delegated elsewhere (`delegationTarget`, D840); it never auto-approves (D839). The relayer
   re-verifies both signatures, pins the authorization's address to the table, sends with `to` = the account and value
   0, enforces its caps, simulates before sending, keeps the budgets (the OP-stack L1 data fee included) and is
-  idempotent per request (D837).
+  idempotent per request (D837, superseded by D851).
 - Rejected: viem or another EVM library at runtime (the vault's bundle and the repo's single EIP-712 hasher); a
   second EIP-712 hasher for the Execute; an authorization signer that takes any address (the pinned table is the
   safety property); a bare scalar for the subject's authorization nonce (ambiguous at 0).
@@ -12812,7 +12877,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   directory user of the account: a protocol addition across core, the vault and the API, so not done here. Until then a
   holder of the publishable key can still learn from prepare whether an address is a user of the scope, and can fill the
   app's or the env's prepare minute from about 20 or 70 IPs; send is bounded by the account's own signature.
-  Before mainnet.
+  Before mainnet. **Done 2026-11-18** (the amendment below: D856's proof is checked on both routes).
 - **Open, before mainnet:** a per-user ETH budget (today counts per user, money per app and env); sliding (not fixed
   UTC-day) windows; a review of the sybil and IPv6 limits (a /64 is one IP subject); a fork test of the gas constants
   (pre-loop overhead, the 2 600 access, the event) on Base.
@@ -12824,6 +12889,43 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   relayer makes `GET /v1/evm/sponsor/status` answer `available: false, reason: "paused"` (a 2-second bounded read of
   `status()`). The `taken` state is gone, and so is every handling that existed only for it. In the request, a send
   settles only from a receipt for one of its own hashes.
+- **Amended 2026-11-18 while integrating the relayer (D851) and the vault (D856)** (amended while building, to
+  confirm). (1) The ports are the real modules: the chain is the relayer's own client (`sponsorChainFor`: ONE trusted
+  read endpoint, no read failover; the minimal client is gone), the relayer stub is typed from `evm-relayer.ts`; the
+  receipt's operator fee is the client's. (2) **The session proof (D856) is checked** on prepare and send, as
+  `docs/api.md` specifies, before any window, replay check, directory read or chain read: core's
+  `checkEvmSponsorSessionProof` (method from the path, the hash over the one parsed body, `chainId` a safe positive
+  integer first), the single-use `identity-proof:` marker to `issuedAtMs + 120 s`, the share in `session` mode, the
+  session on chain with one read (`singleRead`, D513: a session not visible yet is `503 session_not_visible`, not `410`,
+  so a lagging node ends nothing), and with `requireKnownAccount` the account's directory user must be the session's
+  account root's (`403 account_mismatch`). This closes M2's open item: prepare's `account_unrecorded` answers only the
+  account's own session, and its per-account minute is keyed by the account alone (the (account, IP) keying is gone).
+  The open item "the session binding (M2)" above is done. (3) **A batch no node took** (`broadcast: rejected`) is
+  answered at once (no 30 s wait), the row `rejected` with `rejection` `<cause>:<code>`, the money settled later to the
+  cancel's cost from the relayer's `lookup` (`outcome: cancel`, `costWei`) or the cancel's receipt. `request` charges a
+  failure (`422 not_executed`); `pricing` (the relayer's follow-up) is `503 gas_price_too_high` (15 s); `relayer` and any
+  cause not known yet are `503 sponsorship_paused` and `evm_relay_stuck`; neither of the last two charges the user's
+  failure slot, attempts or shared windows. The relayer's coded `fees_too_low` (its follow-up) is `503
+  gas_price_too_high` (15 s), read by string before its type lands; `relayer_busy` (also `:account`) is `429` with
+  `retryAfterS` 2 (5 for `account`); a coded refusal not caused by the user's input gives their attempts back too. (4)
+  **The relayer's funds:** before each send its balance (cached 30 s per isolate) must cover 3 × the send's worst case,
+  else `503 sponsorship_paused` and the day's `evm_relay_balance_low` (with `neededWei`), so no user triggers the
+  relayer's own low-funds halt; prepare reports `paused` for that and for a halted relayer. (5) **One app can't fill the
+  relayer:** at most 4 of an app's sends unsettled per chain (an amount slot on `app:<id>`, a UTC-day window, given back
+  by whoever settles the row), else `429 relayer_busy` (5 s). (6) **The authorization** is attached only when the account
+  has no code and its pending and latest counts both equal its nonce (nothing of the account's own in flight). (7)
+  **Gas** uses the relayer's own `intrinsicGas` (imported, not re-implemented: 4 a token, EIP-7623's floor of 10 a
+  token, 25 000 per authorization) plus the README overhead and minGas, refused above `maxGasPerTx` before reserving;
+  fees start at the relayer's own `maxStartingFees`. (8) **Success at head (an accepted risk):** the user's 200 comes
+  from the first receipt of one of the row's own hashes with the account's `Executed(digest)`, before confirmed depth;
+  a reorg in between could answer success for a batch that then doesn't run (on testnet, accepted; the money follows
+  the receipt, and the relayer's own verdict at depth is what the reconciler uses when a receipt can't be read). (9)
+  `status().halted` and the relayer's oldest unmined transaction over 10 minutes (was 5) write `evm_relay_stuck`, its
+  title now "Free network fees: paused or slow, needs a look". (10) The e2e stack runs these routes and the real relayer
+  object over its mocked chain (the stand-in is deleted); `apps/api/test/evm-sponsor-relayer.test.ts` runs the routes
+  against the real object over `test/evm-mock.ts`. Found while integrating: the relayer takes a second batch of one
+  account only after its own run saw the first mined (its alarm, 15 s after a change), so a user's next action within
+  about that long is `429 relayer_busy` (retry in 5 s).
 - Address impact: none.
 
 ### D848. The sponsorship audit table and its security events
@@ -12898,11 +13000,21 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   writes `evm_relay_stuck`, titled in plain words "Sponsored transactions are paused"; the other event titles are
   plain words too. New statuses `mined` and `consumed_elsewhere`; the row keeps the batch's shape (call count, each
   call's allowlisted target and selector, whether it carried the one-time setup) for its billing record.
+- **Amended 2026-11-18 while integrating the relayer (D851)** (amended while building, to confirm): `never_sent` is
+  gone from the relayer (staff cancel instead), and with it the reconciler's refund (`ReconcileCounts.refused`). New
+  status `rejected` (open: a batch no node took, its nonce given to the relayer's own cancel) and column `rejection`
+  (`<cause>:<code>`; migration 0022 edited, never applied anywhere); the reconciler takes `rejected` rows and settles
+  them from the cancel's receipt (any hash but the batch's) or at once from the relayer's `mined` verdict with
+  `costWei`, billed `cancelled`. A rejected batch's copy is answered as its send was. The app's in-flight slot (D847)
+  is given back by whoever moves the row to its outcome. `evm_relay_stuck` is also written for the relayer's oldest
+  unmined transaction over 10 minutes (was 5), with the halt's `haltCode`, and for a batch the relayer itself refused
+  (`rejected`); `evm_relay_balance_low` also by a send the balance can't cover 3 times over (`neededWei`). Open: the
+  billing record doesn't say whose doing a cancel was (the audit row's `rejection` does).
 - Address impact: none.
 ### D849. The EVM delegate's deploy and the relayer key: plan by default, a Foundry keystore signs, artifacts and core's pin checked on chain
 - Date 2026-11-17 · Status: testnet only, Base Sepolia first, the contract deployed fresh through the deterministic
   deployer after 2026-11-25 and nothing run against a public network by an agent: decided by the user 2026-11-17;
-  the rest decided while building, to confirm · Built: `scripts/deploy-evm-delegate.ts`,
+  the rest decided while building, **confirmed by the user 2026-11-18** · Built: `scripts/deploy-evm-delegate.ts`,
   `scripts/lib/evm-delegate-deploy.ts`, `scripts/lib/evm-delegate-artifacts.ts`, `scripts/lib/evm-rpc.ts`,
   `scripts/evm-relay-keys.ts`, `scripts/lib/evm-relay-keys.ts`, `scripts/lib/deploy-check-evm.ts` (and the `evm`
   group in `scripts/lib/deploy-check.ts`), `EVM_RELAY_KEYS` in `scripts/lib/env-secrets.ts`; tests
@@ -12987,7 +13099,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Address impact: none for users (no derivation input changes). The contracts' addresses are the ones D841 predicts.
 
 ### D850. The sponsored action's approval: kind `evm_sponsored`, a subject the popup decodes and checks itself, the calls' own summary
-- Date 2026-11-17 · Status: decided while building, to confirm · Built on `feat/evm-sponsored-approval` (from `next` @
+- Date 2026-11-17 · Status: decided while building, **confirmed by the user 2026-11-18** · Built on `feat/evm-sponsored-approval` (from `next` @
   e4ee9762), not merged, not deployed: `packages/core/src/approval.ts` (`evm_sponsored`), `protocol.ts`
   (`evm_sendSponsored`, `SponsoredCallRequest`, `SPONSORED_MAX_CALLS`, `SPONSORED_MAX_CALL_DATA_BYTES`,
   `StatusResult.sponsoredChains`, `SPONSORED_CHAINS_MAX`, `EVM_SPONSOR_SDK_MIN`), `networks.ts` (`mainnetOfRequest`),
@@ -13010,7 +13122,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   `sponsoredApprovalContent`. `StatusResult` (and `ready`) may carry `sponsoredChains`: 1 to 4 ascending distinct chain
   IDs, sent only to an SDK of `EVM_SPONSOR_SDK_MIN` (0.5.0) or later. The limits are copied in `protocol.ts` (the root
   entry must not reach `@hana-id/core/evm-sponsor`) and a test keeps them equal. Until the vault's handler exists, the
-  vault answers it 4200 (`SPONSORED_NOT_YET`) before anything else.
+  vault answers it 4200 (`SPONSORED_NOT_YET`) before anything else. (Replaced by the vault's flow, D855.)
 - The popup trusts neither the page nor the vault's framing: it decodes the subject bytes itself
   (`decodeApprovalRequest(subject, { sponsorChains: env.evmSponsor })`, the build's own manifest) and offers no Approve
   ("Journear can’t read this request, so it can’t be approved.") unless the subject decodes strictly (D846: value 0,
@@ -13056,7 +13168,358 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   a known signature is already "can't tell" (red).
 - Known effect: the demo's `checkIn()` is not a selector Journear knows, so its approval carries the red "can't tell"
   line, as the same call unsponsored would. Making it calm is a separate decision (the CheckIn contract and its
-  function on Journear's verified list, the demo card's package).
+  function on Journear's verified list, the demo card's package): made by the user 2026-11-18, D854.
+- Address impact: none.
+
+### D851. The EVM relayer object: simplified and fail-stop (on anything odd it stops and waits for staff)
+- Date 2026-11-18 · Status: the simplified fail-stop relayer replacing D837's self-repairing design **decided by the
+  user 2026-11-18**; the details below decided while building and amended after its independent review the same day
+  (marked "Review"), to confirm · Built (not deployed; nothing calls it yet: the handlers are PR 71's):
+  `apps/api/src/evm-relayer.ts` (`EvmRelayer`; its header states the whole design), `apps/api/src/evm-relayer-staff.ts`
+  (the staff tools, for the admin package), `apps/api/src/evm/sponsor-chain.ts` (`SponsorChain`), `apps/api/src/env.ts`
+  (`EVM_RELAYER`, `EVM_SPONSOR_RPC_<chainId>`), `apps/api/src/index.ts` (the export), `apps/api/src/log.ts` (`chainId`,
+  `evmTx`, `evmOps`), `apps/api/scripts/gen-wrangler.ts` (`durableObjectsConfig`); tests
+  `apps/api/test/evm-relayer.test.ts` (the review's probes ported as tests), `evm-sponsor-chain.test.ts`, `evm-mock.ts`,
+  `apps/api/scripts/test/evm-relayer-staff.test.ts`, `gen-evm-sponsor.test.ts`, `gen-wrangler.test.ts`. Current state:
+  `docs/architecture.md` "EVM sponsored actions: the relayer object", `docs/security.md` "The EVM relayer object",
+  `docs/operations.md` "EVM sponsorship relay (not live)".
+- Principle (the user's): do the few things that are safe on our own evidence; on anything odd STOP, raise it in
+  `status()`, wait for staff. When unsure whether money was spent, keep the reservation. Nothing in the user's account
+  (its code, storage, or logs not from our own transaction hashes) is evidence. Review: no halt may be triggerable by
+  a user's request; a nonce, once signed, is never given up.
+- Interface (pinned; the handlers code against it; bigints as bigints over Workers RPC): `send({ chainId, execute,
+  signature, authorization?, gas, maxFeePerGas, maxPriorityFeePerGas, reservedWei })` → `{ digest, transactionHash,
+  relayerNonce, raw: Hex | null, replay, broadcast: 'accepted'|'rejected'|'unknown', rejection: null | { cause:
+  'request'|'relayer', code } }` (`raw` null on a replay of a final batch; `broadcast: 'rejected'`: no endpoint took
+  the batch and its cancel took the nonce, so don't wait for its receipt; `rejection.cause: 'relayer'`: our fault, don't
+  charge the user a failure); `lookup(digest)` → `{ digest, relayerNonce, transactionHash, hashes, state:
+  'pending'|'cancelling'|'mined'|'closed', minedHash, outcome: 'execute'|'cancel'|'consumed_elsewhere'|null, costWei,
+  reservedWei } | null` (kept 7 days after a record is final); `status()` → `{ address, unmined, awaitingConfirmation,
+  oldestUnminedMs, nextNonce, halted: null | { reason, since, nonce?, code? } }` (`code` for `relayer_cannot_send`). Errors `Error('evm_relayer:<code>[:<reason>]')`
+  (`evmRelayerError`), `relayer_busy:account` for a second unmined batch of one account; a coded error means that call
+  sent nothing.
+- Evidence: ONE trusted read endpoint (the secret `EVM_SPONSOR_RPC_<chainId>` when set, else the manifest's `rpc`) for
+  counts, receipts and blocks; `rpcFallback` (and `rpc`, when the keyed URL is the read one) receive the same raw
+  transactions only. No voting, no cross-checks. Confirmed depth: the `safe` block, else head − 12.
+- A record is final only by a receipt of ONE OF ITS OWN versions at confirmed depth with the confirmed count past its
+  nonce (`mined`, with `minedHash`, `outcome` and the receipt's cost, L1 and operator fees included), or by
+  `staffClose(consumed_elsewhere)` (`closed`). A receipt short of that is only `seen`; a reorg (the latest count falls
+  to its nonce) un-sees it and the stored raw goes out again. Each unmined record is re-broadcast, bumped after 60 s
+  (× 1.125 within the caps, at most 7 batch versions) or replaced by a 0-value self-transfer (the cancel, the 8th
+  version) past its deadline or once the batch is definitely refused; every version's hash and raw kept until final.
+- Halts (state `halted`, a reason; new sends `relayer_halted`; everything above continues): `nonce_consumed_elsewhere`,
+  `nonce_gap`, `foreign_transactions`, `relayer_cannot_send` (a refusal only we can cause, with its code), `stuck_past_deadline`,
+  `key_mismatch`, `storage_inconsistent` (the header has each rule, its evidence and why no user can cause it). Nothing
+  clears a halt by itself; `staffResume` clears it only after a fresh run finds none of them.
+- Staff tools (on the object, reached only through `evm-relayer-staff.ts`; a source test keeps every other file in
+  `apps/api/src`, the handlers under `src/evm/` and the routes included, from naming them): `staffStatus`,
+  `staffResume`, `staffClose(nonce, 'consumed_elsewhere')`, `staffCancel(nonce)`, `staffFill(nonce)`,
+  `staffAdoptNonce(n)`; each acting one takes `who` and a note, re-reads the chain, refuses unsafe use, and is recorded
+  (who, when, what, note, done or why refused). They return `{ done, refused, status }`.
+- Details decided while building (to confirm):
+  1. Review (H1): the object computes the transaction's intrinsic gas (21 000, calldata at 4 a token and at least
+     EIP-7623's 10 a token, 25 000 per authorization; no access list is ever sent) and refuses (`invalid_request`) a
+     gas below it plus `minGas`, and a raw transaction over 128 KiB, before anything is stored. Not checked here: the
+     fee against the current base fee (it needs a fresh read; the handlers set the fee from one, and a fee refusal is
+     covered by the next item).
+  2. Review (H1): a definite refusal of the batch at send gets its cancel signed at the same nonce at once (persisted
+     first), both versions kept, and the caller is told `broadcast: 'rejected'` and `rejection: { cause, code }`. A
+     batch refused later (never accepted) gets its cancel on the next run. Re-review (N1): each classified refusal has
+     an explicit cause (`REJECTION_CAUSE`; a test enumerates every code): `request` (`gas_limit`, `oversized`: the
+     batch's own size or shape) only cancels, so no user can halt the relayer; `relayer` (`insufficient_funds`,
+     `nonce_too_low`, `nonce_too_high`, `replacement_underpriced`, `underpriced`, `fee_below_base_fee`,
+     `invalid_transaction`) cancels AND halts `relayer_cannot_send` with the code, as does any refusal of our own
+     cancel; otherwise a short-funded relayer would fail every user quietly. An unclassified error is not a refusal
+     (`unknown`: the node may hold it). `relayer_cannot_send` replaces the first review's `rejected_unsent`. The
+     `rejected` error code stays in the type and is never thrown.
+  3. Later, `nonce too low` for a record never accepted does not count as a refusal (it can be our own copy mined
+     between the count read and the broadcast); the receipt rule settles it at confirmed depth.
+  4. "Stays so" for `nonce_gap` is the same gap seen on two alarm runs in a row (a counter, no clock).
+  5. A missing key halts nothing (it is the off switch): nothing is signed, stored transactions are still broadcast and
+     checked. A key whose address is not `relayerAddress`, or not the address the records were signed by, halts
+     (`key_mismatch`) while records exist. With no records, a new key starts a new nonce life by itself: its own
+     pending count, read once.
+  6. Review (M2, M3): `staffClose(never_sent)` is removed (closing, adopting and resuming could sign a second batch at
+     a nonce whose old raw could still land). In its place `staffCancel(n)`: a record with no receipt whose nonce
+     isn't mined at head gets a cancel version (bumped fees), old versions kept; it then resolves by receipt like any
+     other. A nonce is never freed. `staffAdoptNonce(n)` refuses n below `nextNonce` (so it is always above every
+     record) and needs no unmined record and the chain's latest and pending counts both n.
+  7. `staffFill(n)` only at the chain's next nonce (pending count == n, latest ≤ n), with no record at n and n below
+     `nextNonce`; the filler is an ordinary record (bumped, checked) with no batch.
+  8. `staffResume` also refuses while a record past the confirmed count could not be fully checked (`incomplete_check`).
+     `staffStatus` is not recorded (it takes no `who`); refusals are. The last 200 staff actions are kept, 50 shown.
+  9. The daily backstop counts each send's reservation with its gas at the fee cap (so a bump never needs
+     accounting), settles it to the receipt's cost at confirmation; `consumed_elsewhere` keeps it. 2 × `dailyBudgetEth`
+     a UTC day.
+  10. `lookup` gives `minedHash`, `outcome` and `costWei` only once `mined`; before that its `transactionHash` is the
+      version seen mined, else the latest. Review (storage): a final batch keeps hashes only, never a raw transaction.
+  11. The object's internals are JavaScript-private (`#`), so a Workers RPC stub reaches only the public methods; the
+      staff methods also need the guard held by the staff module.
+  12. Bounds: 8 unmined and 64 records (`relayer_busy`), one unmined batch per account (review M1: the delegate's
+      batch nonce is sequential, so a second one can only revert or stall; the handlers add per-app caps and the
+      type-4 checks), 16 sends waiting, 8 versions, 45 fetches, 20 receipt reads and 4 signatures a run, 50 000
+      remembered batches; the alarm 15 s after a change, doubling to 5 minutes, and review (L3) hourly with no records,
+      so `foreign_transactions` surfaces before the next send.
+  13. Review (L1): finality needs the confirmed count past the nonce as well as a receipt at confirmed depth, so a
+      fabricated receipt alone finalizes nothing. Known limit: an endpoint lying about both the receipt and the counts
+      can still finalize a transaction that never landed; the honest counts later halt the relayer (`nonce_gap`), and
+      the wrongly settled cost stays wrong (a test shows it).
+  14. Review (M4): the relayer's address is derived once per isolate (cached under sha256 of the key, never the key).
+      Each send, run and staff call logs `evmOps` (signatures, recoveries, fetches, key derivations: counts, no
+      timings). Whether a cold first send stays under the free plan's 10 ms CPU is to be measured at deploy, from those
+      counts and Cloudflare's own CPU time per invocation.
+  15. Out of scope here (the handlers', PR 71): the account's code check, the simulation, the `Executed` check, the
+      L1-fee reservation, the allowlist and per-app caps. The object re-checks the Execute itself (`verifySend`,
+      exported and tested as a table).
+- Rejected: everything D837 used to repair itself (several endpoints' agreement, verdicts from the user's account, a
+  record moved to a new nonce, gap fills on a timer, per-run budgets that defer a verdict); a stored halt for an RPC
+  outage (the run just tries later); review: freeing a nonce by any staff tool, and halting on a refusal the user's
+  input could have caused; re-review: treating every refusal alike (either users can halt it, or our own faults go
+  unnoticed).
+- Address impact: none.
+
+## Plain words and the demo check-in, 2026-11-18
+
+### D853. Every user-visible text is written in plain, everyday words (standing rule)
+- Date 2026-11-18 · Status: **decided by the user 2026-11-18** · Applies to every text a user sees: the approval
+  window, Passport Home, the login and email pages, the launcher, errors shown to users, the demo sites, the partner
+  SDK's default texts.
+- Decision, in the founder's words: "our audience is not native Web3 users and might be very non-technical savvy so we
+  want to keep it as simple and as layman as possible (remember this style for all future wordings)". So: say what
+  happens to the user's money, tokens or account in everyday words; no chain jargon above the fold (gas, nonce,
+  calldata, selector, contract call, EIP numbers, "upgrade", "smart account"), which may appear only in the folded
+  details; short sentences; name the app and what it wants first. Technical precision is kept, one tap away in the
+  details, never dropped. A wording that would make a risk sound smaller than it is never counts as plainer (D809).
+- Where it lives: `docs/security.md` "Browser" (the approval window's wording rules), and this entry for everything
+  else. Reviews of user-visible text check against it.
+- Address impact: none.
+
+### D854. Journear's demo check-in is on the verified list, and its one function reads in plain words
+- Date 2026-11-18 · Status: putting the demo `CheckIn` contract on the wallet's verified list so the demo's sponsored
+  action reads plainly with no red box: **decided by the user 2026-11-18**; the details below decided while building,
+  to confirm · Built on `feat/evm-demo-verified` (from `next` @ c6b434f4), not merged, not deployed:
+  `packages/core/src/demo-check-in.ts` (`DEMO_CHECK_IN`, `DEMO_CHECK_IN_CALLDATA`, `isDemoCheckInCall`),
+  `verified-contracts.ts` (`DEMO_CHECK_IN_NAME`, an entry per pinned chain), `decode/summary.ts` (`demoCheckIn`),
+  `packages/web/src/auth/render-approval.ts` (`evmCallData` names `checkIn()`), `scripts/lib/evm-delegate-deploy.ts`
+  (`checkInEntry`, printed in the deploy's follow-up); tests `packages/core/test/demo-check-in.test.ts`,
+  `verified-contracts.test.ts`, `evm-sponsored-approval.test.ts`, `packages/web/test/auth/render-approval-sponsored.test.ts`,
+  `scripts/test/evm-delegate-deploy.test.ts`, `apps/e2e/tests/approval-summary.spec.ts`.
+- The pin: `DEMO_CHECK_IN`, by chain, the contract's deterministic CREATE2 address and runtime code hash from
+  `contracts/evm-delegate/artifacts/CheckIn.json` (a test ties every entry to the artifact). Today 31337 only (the
+  local chain); Base Sepolia's line is added by the deploy's follow-up PR with the delegate's (`deploy-evm-delegate`
+  prints it), once the code hash is read on chain. On the verified list as "Journear demo check-in" (protocol
+  Journear, its source the artifact at the pinning commit) for each pinned chain; a local chain has no explorer.
+- The summary, sponsored or not, only when the call is exactly the pinned contract on that chain (any letter case),
+  calldata exactly `0x183ff085` (no trailing bytes) and value 0: headline "{App} wants to check you in"; lines "This is
+  Journear’s demo check-in. It doesn’t move any money or tokens." and "It uses Journear demo check-in (0x…, verified
+  by Journear)." (the name and whole address in view, as a verified spender is shown); explainable; no red or amber
+  box (the one-time setup note still appears when the authorization is signed). The details name the function:
+  "Function checkIn() 0x183ff085". Anything else keeps the red "can't tell" line and gets no name: another contract
+  with the same selector, a look-alike address, extra calldata, any value, a chain where it isn't pinned (tested).
+  In a batch it groups like any call and counts as moving nothing, and its reassurance is about itself alone: "This
+  is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens." (after PR 73's review).
+- Also after PR 73's review (decided while building, to confirm): a bound below the shown precision reads "less than
+  0.000001 ETH", never "up to less than …", and a rounded-up one "up to {the rounded-up figure}", never "up to about"
+  (`upTo` in `summary.ts`: the network fee, "XLM leaving your account", a spend permission's amount); composed risk
+  texts end with one full stop (`sentence`: "Not in the lines above: …" no longer doubles it), and a test checks every
+  summary the unit tests build for doubled punctuation or spacing.
+- Why not add `checkIn()` to the known selectors: a selector names a standard's function, and any contract can have a
+  `checkIn()` that does anything; the plain reading is earned by the reviewed contract, not the name.
+- Address impact: none.
+
+## EVM gas sponsorship: the vault and the SDK (branch `feat/evm-sponsor-vault`), 2026-11-18
+
+### D855. The vault's sponsored action: the build decides, prepare's answer is checked hints, one approval, the vault sends
+- Date 2026-11-18 · Status: the vault submits (D832), one approval (D831), never auto-approved (D839), delegated
+  elsewhere refused (D840) decided by the user earlier; everything below decided while building, **confirmed by the
+  user 2026-11-18**; the amendments after the independent review of PR 76 and its re-check (the account's setup read by
+  the vault, both endpoints for a setup and `rpcFallback` required outside `local*` envs, the setup's own failure text,
+  the cross-tab slot, the 50,000-per-call floor, the copied bytes, the capped read) amended while building, to confirm · Built on
+  `feat/evm-sponsor-vault`, not merged, not deployed: `packages/web/src/vault/evm-sponsor.ts` (`sponsorChains`,
+  `sponsorPreflight`, `parsePrepareAnswer`, `sponsorSubject`, `sponsoredApproval`, `approvedSubject`, `signSponsored`,
+  `sendBody`, `parseSendAnswer`, `withSessionProof`, `sponsorApiError`, `SponsorFlights`, `SPONSOR_TEXT`), `vault.ts`
+  (`sponsorEarly`, `sendSponsored`, `sponsoredField`), `api.ts` (`evmSponsor`), `signing.ts` (`SPONSORED_ELSEWHERE`,
+  replacing D850's `SPONSORED_NOT_YET`); tests `packages/web/test/vault/evm-sponsor.test.ts`; e2e
+  `apps/e2e/tests/evm-sponsor.spec.ts` against the TEST-ONLY stand-in `apps/e2e/src/server/sponsor-standin.ts`.
+- The chains: only the build's (`HanaEnv.evmSponsor`), each checked again at start (`sponsorChains`: a canonical chain
+  ID of a test network, a local chain only in a `local*` build, the pinned non-placeholder delegate, a valid relayer
+  that isn't the delegate). They are the signers' `enabledChains` and the status's `sponsoredChains`, sent only to an
+  SDK of 0.5.0 or later.
+- Before any window or API call: a test app on a mainnet (`mainnet_not_allowed`), a chain not in the list, a call to the
+  account, the delegate or the relayer, another action of the account in flight.
+- Prepare's answer is hints: read strictly; its relayer and implementation must equal the build's or nothing is shown
+  (the subject always names the build's); `delegation: 'other'` refused even with `allowed: true`; `allowed: false`
+  refused with its reason (unknown reasons read as `not_available`), all before any window.
+- minGas (the spec's open question): the vault signs `maxMinGas`, the highest floor the transaction cap leaves, bounded
+  `minGasFloor ≤ maxMinGas ≤ 2,000,000` and at least 50,000 per call (raised from 25,000 after the review of PR 76:
+  about twice a first check-in, 23,899 measured, D845). Rejected: simulating in the vault through the
+  partner's RPC (untrusted: a low answer would let a call that swallows an inner out-of-gas run degraded, the only
+  harm being the user's; a high one would waste budget, and the vault would need a second RPC trust story); asking the
+  API for a measured figure (the API has no gas measurement today, `eth_call` gives none without tracing, and the API
+  simulates at the final limit anyway). Why the highest floor is sound: the floor only makes the relayer provide gas
+  (D845); the API sets the gas limit from it and simulates at exactly that limit, so a batch that can't run is refused
+  before sending; the sponsor pays only the gas used, so a high floor only holds more of the day's budget in reserve
+  until the receipt settles; and a lying low `maxMinGas` is refused below the per-call floor. To revisit if budgets get
+  tight: the API could return a measured `suggestedMinGas` the vault takes within the same bounds. **Before mainnet
+  (open):** the floor should come from the vault's own estimate through the build's endpoints. Not built now: before
+  the account is set up, a call can't be estimated as the account runs it through the delegate without a state
+  override (`eth_estimateGas` with overrides isn't on every node, and `eth_call` measures no gas); after it, `eth_estimateGas`
+  of each call from the account works but is a second gas model beside the API's. Decide with the relayer's gas model.
+- Clocks: the deadline comes from the vault's server-corrected clock (`Clock`, anchored on the API's time at render
+  and every `GET /v1/app`) + min(5 minutes, `deadlineMaxS` − 60 s); refused below 2 minutes. Prepare's `serverNow` is
+  used only to detect a wrong clock: the device's own (the popup's) more than 240 s off is "Your device's clock is
+  wrong…" (the popup allows 5 minutes past, 2 hours ahead); the vault's more than 60 s off is `bad_answer`. After the
+  approval, under 45 s left signs nothing (`deadline_passed`). A lying `serverNow` can only cause a refusal.
+- **The account's setup is read by the vault, not taken from the API** (after the independent review of PR 76, its
+  Medium): the API is no longer trusted for delegation state. Before building a subject the vault reads the account's
+  code and its latest and pending transaction counts itself (`readAccount`) from the chain's public endpoints in the
+  build (manifest `rpc` and `rpcFallback`, generated into `HanaEnv.evmSponsor` by `evmSponsorPageChains`; the vault
+  page's CSP `connect-src` names them, `apps/api/src/vault/page.ts` `sponsorRpcOrigins`; keyed RPC URLs are the
+  API's secrets and never reach a page; a chain without `rpc` is not sponsored by the vault). Each endpoint's chain ID is
+  checked; every endpoint that answers must agree on the code and both counts; none answering, another chain, a
+  malformed value or a disagreement refuses with "Journear couldn't get this action ready" (`bad_answer`), never falling
+  back to the API's word. **The one-time setup needs both endpoints** (the re-check of PR 76): an authorization is signed
+  only when two configured endpoints both answered and agree, so it never rests on one provider's word (a lying endpoint
+  with a lying API, the honest one unreachable, could otherwise get it signed for an account another wallet set up);
+  `rpcFallback` is therefore required outside `local*` envs in the manifest schema and the Worker parser (both refuse a
+  chain without it), and a `local*` build with only `rpc` may sign a setup on that one endpoint (local only). A later
+  action, which signs no authorization, may go ahead with one endpoint down. Each read checks `res.ok` and reads at
+  most 64 KiB of body as a stream before parsing (8 s each). Privacy: those providers see the account's address and the
+  user's IP address (security.md, beside the demo balance read). `setupNonce`: no code → the authorization, only when the API said
+  `none` and latest == pending == its `accountNonce` (a future nonce would stay usable on a gasless account; a pending
+  transaction may consume it); exactly `0xef0100 ‖ the pinned delegate` → no authorization, only when the API said
+  `journear` (else `bad_answer`); any other code (another delegate, contract code) → the D840 refusal, whatever the API
+  said. Why: a lying or buggy API could otherwise get an authorization signed for an account another wallet set up
+  (applying it would silently replace that setup) or for a future nonce.
+- Signing: the approved bytes decoded again (`approvedSubject`: compared first with a copy taken when the window was
+  built, then chain, pinned delegate, relayer, account, the calls exactly, the time left); one `withChainKey` for the EVM
+  key: the authorization only when the subject has an authorization nonce (from `setupNonce`), then the Execute; both
+  through core's guarded signers. The send body is built from the decoded subject only.
+- A failed batch that carried the setup: "The action didn’t go through. Your account’s one-time setup may still have
+  been done. Nothing else changed." (`failedAfterSetup`; an applied authorization stays applied when the batch
+  reverts); without the setup: "The action didn’t go through, so nothing changed."
+- The answer to the page: exactly `{transactionHash (lowercase), status: 'executed'}`; any other 200 or no answer is
+  `api_unavailable` `unknown_outcome`. Errors: 429 `rate_limited`, 410 `session_ended`, other 4xx 4100, 5xx and network
+  `api_unavailable`; `data` = `status`, `reason`, and only exact-shape `retryAfterS` (body or header), `transactionHash`,
+  `callIndex`, `retryable`; the request ID through D405.
+- Concurrency: one action per account and chain, refused (`busy`, `sponsor_in_flight`), not queued: the batch nonce is
+  sequential, a queued batch would be built on a nonce the first is about to use, and queueing would let a page line up
+  approvals. Held across the vault origin's tabs and frames by the shared Web Lock `hana-evm-sponsor:<chain>:<account>`
+  taken with `ifAvailable` (`Locks.requestIfAvailable`; after the review of PR 76), and by a set in the vault first.
+  Without the Web Locks API (old browsers: `localLocks`) the slot is per frame, and the API's `nonce_stale` refuses a
+  racing tab ("Your account changed…").
+- The words (the founder's plain-wording rule, 2026-11-18): every refusal a page may show is one plain sentence from
+  `SPONSOR_TEXT` (no gas, nonce, relayer, contract or delegate; tested), e.g. "Your account was set up by another wallet
+  app, so Journear can’t pay network fees for it. Nothing was sent." (D840), "Your last action is still going through.
+  Wait for it to finish, then try again.", "Your device’s clock is wrong. Set it to the right time, then try again."
+- The e2e stand-in (test only, `apps/e2e`): the three routes with the vault-origin rule, the session proof (core's
+  check, each nonce once), the Execute and authorization signatures, nonces; a made-up hash for `executed`; per app and
+  account state, a hold switch for the concurrency test. Never in a deployed Worker.
+- Address impact: none.
+
+### D856. The sponsorship calls prove the user's session: a new identityMessage payload with the body's hash and the wallet proof
+- Date 2026-11-18 · Status: required before sponsorship is enabled anywhere (the API review's open item, D847 M2);
+  the design decided while building, **confirmed by the user 2026-11-18**; the API's five additions from the review of
+  PR 76 amended while building, to confirm · Built on `feat/evm-sponsor-vault`: `packages/core/src/sponsor-session.ts`
+  (`evmSponsorRequestHash`, `evmSponsorRequestPayload`, `evmSponsorSessionMessage`, `isEvmSponsorSessionProof`,
+  `checkEvmSponsorSessionProof`, root export), the vault's `withSessionProof`; tests `packages/core/test/sponsor-session.test.ts`;
+  the API's part specified in `docs/api.md` "EVM gas sponsorship: the session proof of prepare and send", not built
+  (the API is PR #71's branch).
+- Decision: reuse what exists rather than a new proof type: the session key's Ed25519 signature over `identityMessage`
+  (signer, app, session key, `issuedAtMs`, a 16-byte nonce; ±60 s; the `identity-proof:` single-use markers;
+  `checkChainSession`), with a new payload `"evm-sponsor-request"` ‖ method ‖ parent origin ‖ chain ‖ account ‖ the
+  body's hash ‖ the session's EVM wallet proof (the identity token's, made at login with PRK, so no extra key use), as
+  `sessionProof` in the body. The body hash is over the body's own values in a fixed JSON array (no canonicalisation
+  question: the API hashes what it parsed), so a proof is for one route, one body, one origin, one app.
+- Why the wallet proof: the session signature alone says "this session asked"; the wallet proof (the account's own key
+  over this session key and app) says the account is the session's, without a directory read, so the API can refuse
+  any other address before any window or chain read. The directory rule (`requireKnownAccount`) adds that the
+  account's directory user is the session's path's root.
+- The API's check, with the independent review of PR 76's additions (docs/api.md has them): the method from the route
+  path, never the body; act only on the parsed object that was hashed (duplicate JSON keys refused, never re-reading the
+  raw body); `chainId` a safe positive integer before hashing; the single-use marker kept at least the whole ±60 s
+  window either side; for send, the Execute and authorization signers recovered against the body's account and an
+  authorization to anything but the pinned delegate refused, as before (the proof binds the session to the body, the
+  signatures the account's key to the batch).
+- Rejected: a header (`x-hana-session-proof`) with a hash of the raw body (a CORS change on every route, and the other
+  proofs are in bodies); a separate signature per field; the EVM key signing each request (a key use per call).
+- Address impact: none.
+
+## CI back on for `next`, at no cost (branch `chore/ci-on-next`), 2026-11-18
+
+### D857. CI ready to switch on for `next`, free while the repository is public; the founder switches it on
+- Date 2026-11-18 · Status: **confirmed by the user 2026-11-18** (decided by the user 2026-11-18: CI back on for
+  `next`; it must cost nothing; `next` among the branches checked after a merge; saved test reports expire after 3
+  days; the founder enables the workflow; the details below confirmed 2026-11-18, "confirm D857"; the changes after
+  the branch's independent review, under "Amended while building", to confirm) · Built:
+  `.github/workflows/ci.yml`, `scripts/ci-changes.mjs` (`evm` output, no schedule), `scripts/test/workflows.test.ts`
+  (new; `yaml` 2.9.1 as a dev dependency of `@hana-id/scripts`), `scripts/test/ci-changes.test.ts`,
+  `scripts/test/verify.test.ts`, `scripts/verify.mjs` (header), `.github/workflows/publish-sdk.yml` (no pnpm cache in
+  its build job), docs/operations.md "CI and git" · Amends D387 and D383;
+  completes D841's CI note
+- Context: D387 turned CI off on 2026-11-05 because the org's included minutes were used up while the repository was
+  private. It is public since 2026-11-13. GitHub's billing docs (read 2026-11-18): standard GitHub-hosted runners in
+  public repositories are free and don't use the included minutes; larger runners are billed even for public
+  repositories; artifacts share the plan's storage allowance with Packages (the docs don't say public repositories
+  are exempt); 10 GB of cache per repository, billed only when the limit is raised above it. `develop` is frozen for
+  judging and `next` holds the work.
+- Decision: (1) `push.branches` is `develop`, `next`, `main`; PRs as before (`pull_request`). (2) Every job on
+  `ubuntu-latest`, with a `timeout-minutes`; a test fails on any other runner, an unpinned action, `pull_request_target`
+  or `workflow_run`, top-level permissions other than read, an artifact without `retention-days` ≤ 3. (3) The only
+  artifact is the Playwright HTML report with the failed tests' traces, on a failure only, kept 3 days, its traces
+  dropped above 25 MB (about 1 MB plus a few MB per failed attempt; no video or screenshots are recorded);
+  `test-results/` is no longer uploaded (the same traces again); was 7 days and every failure. (4) Rust caches saved by
+  pushes only, so PRs fill none of the 10 GB. (5) No `schedule`: GitHub runs one only on the default branch, `develop`,
+  frozen; instead every push (after a merge into `next`, `develop` or `main`) runs Playwright on all three browsers,
+  PRs Chromium. GitHub reads the schedule from `develop`'s copy, so until `next` merges into `develop` enabling CI
+  also runs `develop`'s old nightly (see "Amended while building"); once it merges nothing runs nightly, and a
+  WebKit- or Firefox-only regression is caught on the merge's push rather than overnight. (6) A new `evm` job (D841)
+  gated on `evmChanged`; the sandbox job also runs the API's `test:sandbox` with `HANA_SANDBOX_REQUIRED=1`, as
+  verify's sandbox lane; Playwright runs with `--forbid-only`; Foundry in the TypeScript job, so the EVM deploy tests
+  on anvil (D849) run as on a machine with Foundry. (7) Every checkout with `persist-credentials: false`; no job
+  reads a secret; permissions `contents: read`, the `changes` job adding `actions: read`. (8) `concurrency` unchanged
+  (a newer push to the same branch or PR cancels the older run). (9) The identity probe stays disabled (D387; Lambda
+  before mainnet). (10) `pnpm verify` stays the gate before a merge, CI on or not; its default tier is what CI runs on
+  a PR.
+- Who does what: the founder checks the organisation's $0 Actions budget is in place (it already is) and changes the
+  repository settings listed in docs/operations.md "CI and git", then switches CI on (`gh workflow enable CI -R
+  Hana-Technology/hana-id`, or Actions → CI → Enable workflow). Assistants never enable, run or disable a workflow,
+  nor change repository or organisation settings.
+- Amended while building (after the branch's independent review, 2026-11-18; to confirm): (a) **`develop`'s nightly
+  runs once CI is enabled**: GitHub runs a `schedule` from the default branch's copy, and `develop`'s `ci.yml` still
+  has D383's `41 3 * * *`, so until `next` merges into `develop` each night runs `develop`'s old jobs (the first night
+  Playwright on WebKit and Firefox, about 10–15 min, since there is no good nightly to measure from; then only
+  `changes` and the advisories while `develop` stays frozen). A failure uploads `develop`'s old artifact (the report
+  and `test-results/`, no cap, 7 days, or 3 once the repository's retention is 3): about 10–40 MB for one or two
+  failing tests, up to several hundred MB if a whole browser fails. Free compute, nothing deployed, no secret read.
+  (b) **The $0 budget already exists**: organisation scope, Actions, $0, stop usage on, alerts to two members (read
+  through the API 2026-11-18), beside $0 stop budgets for Packages, Codespaces and Git LFS; the founder's step became
+  checking it. Open point, settled by the first run: whether a $0 stop budget blocks free public-repository runs; if
+  it does (every job fails at once without a runner, a billing annotation), untick "stop usage" on it and keep the
+  alerts. (c) Settings for the founder before switching on: artifact and log retention 3 days (caps every
+  workflow's `retention-days`, a fork PR's edited copy and `develop`'s nightly included); fork PR approval for all
+  external contributors; the default `GITHUB_TOKEN` read-only; optionally an allowed-actions list and SHA pinning
+  required. (d) Foundry from its release tarball (`foundry_v1.5.1_linux_amd64.tar.gz`), checked against a sha256
+  pinned in the workflow (GitHub's asset digest, re-computed on download), in the `evm` and TypeScript jobs, instead
+  of `foundry-rs/foundry-toolchain` (which downloads without a pinned hash); `scripts/test/workflows.test.ts` now
+  fails on any `curl`/`wget` download without a pinned `*_SHA256` and a `sha256sum -c` per download, and on a
+  download piped into a shell. (e) `cache: ''` for setup-node in the `evm` job (its filtered install must not save a
+  partial pnpm store under the lockfile's shared key) and in `publish-sdk.yml`'s build job (a release build installs
+  from the registry, never from a store a CI run saved). (f) Residuals: a fork's PR runs its own `ci.yml` and can name
+  `next`'s push concurrency group to cancel its runs (CI disruption only; the next push re-tests; approval for all
+  external contributors closes it); advisories are re-checked only on pushes and PRs now that no nightly runs on
+  `next` (Dependabot alerts are on, read 2026-11-18).
+- Not verified: that free public-repository minutes never count against the $0 stop budget (they are not billed, so
+  they shouldn't; the first run shows it); whether artifact storage is free for public repositories (assumed not:
+  hence the size cap and 3 days); the jobs' durations on a runner (estimated from the 2026-11-04 runs, the last before
+  D387); the exact label of the read-only token option and of a blocked run's annotation.
+- Trade-offs: CI is free only while the repository stays public: making it private again bills every minute from the
+  shared allowance (D383's numbers), so switch CI off first. Pushes to `next` and `develop` now take longer (three
+  browsers), which nobody waits on. A fork's PR runs its own version of `ci.yml`, with a read-only token and no
+  secrets, and a first-time contributor's waits for approval (the repository's policy, read 2026-11-18).
+- Rejected: a nightly on `next` (GitHub would ignore a `schedule` there); keeping `test-results/` in the artifact (it
+  doubles the traces); `pull_request_target` for fork PRs (secrets and a write token next to fork code); a third-party
+  paths-filter action (D383's reason stands).
 - Address impact: none.
 
 ### D852. Every sponsored transaction leaves a permanent billing record, in D1 and copied to the usage ledger

@@ -25,6 +25,22 @@ as on chain) and the test-only `e2e_stamps_collect` the relayer routes call. Sig
 window with no launcher; a second test holds the vault's key check, closes the window after the first approval and
 collects through the slot's Continue (D807).
 
+Gas-free EVM actions (D838, D847, D851, D855, D856): `tests/evm-sponsor.spec.ts` runs `hana.evm.sendSponsored` from a
+click through the vault's prepare, one approval and send against apps/api's **own** sponsorship routes (the session
+proof, the allowlist and every check) and the **real relayer object** (`EvmRelayer`, in memory), which signs with the
+stack's relayer key (`src/relayer-key.ts`: made at the first run, kept in `.build/`, never committed; the bundles pin
+its address) and broadcasts to the mocked EVM chain (`src/server/partner.ts` `MockEvm`: each sender's own count, each
+sponsored transaction mined at once and run as the delegate would: the setup's designator, the delegate nonce,
+`Executed(digest)`). Chain 31337 has ONE endpoint (allowed only in a `local*` env) and `requireKnownAccount: false`
+(the session's wallet proof ties the account to the user). The stack's API only counts the routes' answers and can hold
+an app's sends: `POST /__e2e/evm-sponsor {account, delegation}` sets an account's code on the mocked chain ("set up by
+another app" is `other`); `{appId, hold}` holds its sends; `GET /__e2e/evm-sponsor?appId=` counts. Covered: the first
+action and its setup note, a later one, a decline, the D840 refusal, a second action while one is in flight, viem's
+EIP-5792 `sendCalls`, the D833 typed-data refusal. With `HANA_SHOTS_DIR=<dir>` (Chromium) it saves
+`sponsored-first-time(-details)`, `sponsored-later` (the demo check-in), `sponsored-token-first-time`,
+`sponsored-token-later`, `sponsored-unknown-call` and `sponsored-approve-warning`. Each test uses a scope of its own,
+so each has its own account.
+
 The approval window's plain summary (D808–D813): `tests/approval-summary.spec.ts` checks the details always start closed
 and the user opens them (mouse and keyboard), for a request the summary explains, one it can't (its red risk line in
 view) and raw signing (live mode), and that a warning stays in view while they are closed. With

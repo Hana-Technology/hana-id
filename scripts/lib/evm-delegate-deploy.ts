@@ -77,6 +77,8 @@ export interface EvmDeployDeps {
   now?: () => Date;
   /** Waits between reads of a just-deployed address (default setTimeout; tests pass a no-op). */
   sleep?: (ms: number) => Promise<void>;
+  /** The directory the tools' empty working directory is made in (default the OS temp directory; tests pass their own). */
+  tmpRoot?: string;
   /** Where HANA_EVM_RPC_URL and ETHERSCAN_API_KEY are looked for (default process.env; forge reads the key itself). */
   env?: Readonly<Record<string, string | undefined>>;
 }
@@ -262,6 +264,11 @@ export function delegatesEntry(chainId: number, delegate: Pick<DelegateArtifact,
   ].join('\n');
 }
 
+/** The demo check-in's line for DEMO_CHECK_IN (packages/core/src/demo-check-in.ts, D854), exactly as the follow-up PR adds it. */
+export function checkInEntry(chainId: number, checkIn: Pick<DelegateArtifact, 'address' | 'runtimeCodeHash'>, today: string): string {
+  return `  ${chainId}: Object.freeze({ address: '${checkIn.address}', runtimeCodeHash: '${checkIn.runtimeCodeHash}' }), // ${chainName(chainId)}, code hash checked on ${today}`;
+}
+
 /** The manifest block with the real addresses; `<…>` marks what the founder fills in. The numbers are D836's. */
 export function manifestTemplate(chainId: number, delegate: string, checkIn: string, rpc: { rpc: string; rpcFallback: string } | undefined): string {
   const r = rpc ?? { rpc: '<https RPC of a DNS name, no path, no API key>', rpcFallback: '<another provider, same rules>' };
@@ -287,6 +294,8 @@ function printFollowUp(m: Manifest, chainId: number, artifacts: readonly Delegat
   log('\nThe follow-up PR (base next). 1) Add this entry to SPONSOR_DELEGATES in packages/core/src/evm-sponsor/delegates.ts,');
   log('   and update the comment above the table ("Today: …") to say the chain has it:');
   log(delegatesEntry(chainId, delegate, today));
+  log('   and this line to DEMO_CHECK_IN in packages/core/src/demo-check-in.ts (the check-in reads plainly and is on the verified list there, D854):');
+  log(checkInEntry(chainId, checkIn, today));
   log(`2) Add the block to envs/${m.name}.json (the relayer's address from \`evm-relay-keys ${m.name}\`; the app id of the demo app):`);
   log(manifestTemplate(chainId, delegate.address, checkIn.address, TEMPLATE_RPCS[chainId]));
   log('3) Update the docs that say the chain has no pinned delegate yet: envs/README.md "evm.sponsor", docs/operations.md');
@@ -342,7 +351,7 @@ export async function evmDeployMain(argv: readonly string[], deps: EvmDeployDeps
   }
   // cast and forge run in an empty directory of their own, so no foundry.toml but contracts/evm-delegate's (named
   // with --root) can change who signs, where it sends or how it builds.
-  const toolCwd = mkdtempSync(join(tmpdir(), 'hana-evm-cwd-'));
+  const toolCwd = mkdtempSync(join(deps.tmpRoot ?? tmpdir(), 'hana-evm-cwd-'));
   try {
     if (plan.deploy.length > 0) {
       for (const [i, name] of plan.deploy.entries()) {

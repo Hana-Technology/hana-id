@@ -37,6 +37,7 @@ import { stampsHost } from './stamps.ts';
 import { authHost, type PagesEnv, vaultHost } from './hosts.ts';
 import { serve, servedAt } from './http.ts';
 import { MockEvm, partnerHost } from './partner.ts';
+import { e2eRelayer } from '../relayer-key.ts';
 
 export async function startStack(fingerprint: string): Promise<void> {
   const modules = await loadApiModules();
@@ -49,9 +50,9 @@ export async function startStack(fingerprint: string): Promise<void> {
   const google = await GoogleBackend.create();
   google.install();
   chain.googleKid = google.kid;
-  const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk() });
+  const evm = new MockEvm(e2eRelayer().address);
+  const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk(), evm });
   const issuer = await LocalIssuer.start(d1, issuerKey);
-  const evm = new MockEvm();
   const loopback = ['127.0.0.1'];
 
   // Browsers resolve localhost and *.localhost to 127.0.0.1 or ::1; listen on both where the machine has IPv6 loopback.

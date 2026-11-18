@@ -147,7 +147,7 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   near_relay_balance_low: 'NEAR relay account running low',
   evm_relay_budget_high: "Free network fees: today's budget is nearly used up",
   evm_relay_balance_low: 'Free network fees: the paying account is running low',
-  evm_relay_stuck: 'Sponsored transactions are paused',
+  evm_relay_stuck: 'Free network fees: paused or slow, needs a look',
   evm_relay_receipt_odd: 'Free network fees: a payment looked wrong and was counted at the most it could cost',
   evm_billing_late: 'Free network fees: a billing record is late',
   near_billing_late: 'NEAR relay: a billing record is late',

@@ -158,7 +158,7 @@ Apache License 2.0 as the Change License. [`LICENSING.md`](../LICENSING.md) list
 `@hana-id/react` and `@hana-id/sodax` under Apache-2.0 (their own `LICENSE`), and third-party material. Still open:
 
 - [x] `@hana-id/core`'s licence: it stays `BUSL-1.1` (decided by the user 2026-11-13, D747); its tarball carries the root `LICENSE`.
-- [ ] Partners get the licences only from the next SDK release (0.4.2): the 0.4.1 tarballs say `UNLICENSED`.
+- [ ] Partners get the licences only from the next SDK release (0.5.0, not yet published): the 0.4.1 tarballs say `UNLICENSED`.
 
 ## 8. The placeholders
 

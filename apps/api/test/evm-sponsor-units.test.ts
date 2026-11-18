@@ -1,12 +1,13 @@
-// EVM gas sponsorship's pure parts (D847, D836 addendum): the gas limit and fee formulas, the L1 bound's encoding, the
-// strict bodies, the revert data and success rules, and the minimal RPC client behind the chain port (failover, the
-// chain ID check, reverts, malformed answers, nothing of a URL in a log or an error).
+// EVM gas sponsorship's pure parts (D847, D836 addendum): the gas limit (the relayer's own intrinsic gas) and fee
+// formulas, the L1 bound's encoding, the strict bodies, the revert data and success rules, the relayer's refusal codes,
+// and the chain port (the real SponsorChain client, evm/sponsor-chain.ts, tested in evm-sponsor-chain.test.ts).
 import { env } from 'cloudflare:workers';
 import { keccak_256 } from '@noble/hashes/sha3';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { intrinsicGas, maxStartingFees as relayerStartingFees } from '../src/evm-relayer.ts';
+import { SponsorChain } from '../src/evm/sponsor-chain.ts';
 import {
   AUTHORIZATION_GAS,
-  calldataTokens,
   DELEGATION_ACCESS_GAS,
   EVENT_GAS,
   L1_FEE_UPPER_BOUND_SELECTOR,
@@ -22,7 +23,7 @@ import {
   worstCaseWei,
 } from '../src/evm/op-fee.ts';
 import { classifyDelegation, EXECUTED_TOPIC, executedIn, parseAddress, parseUint, revertDetails, toPrepareRequest, toSendRequest, toStatusQuery, U256_MAX } from '../src/evm/sponsor-checks.ts';
-import { forgetSponsorChainChecks, minimalSponsorChain, parseReceipt, pendingAgeMs, relayerRefusal, revertOf, SponsorRpcError, sponsorRpcTiming, sponsorRpcUrls } from '../src/evm/sponsor-ports.ts';
+import { blockTimestamp, DEFAULT_SPONSOR_PORTS, EvmRpcError, relayerRefusal, revertOf } from '../src/evm/sponsor-ports.ts';
 import { CHECK_IN, CHECK_IN_DATA, DELEGATE, RELAYER, signedSend, testUser } from './evm-sponsor-helpers.ts';
 
 const kHex = (s: string) => `0x${Array.from(keccak_256(new TextEncoder().encode(s)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
@@ -37,23 +38,30 @@ describe('constants', () => {
   });
 });
 
+const bytes = (h: string): Uint8Array => Uint8Array.from(h.slice(2).match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
+
 describe('sponsorGasLimit', () => {
-  it('is (21 000 + 10 per calldata token + 25 000 per authorization + delegated access + pre-loop + minGas + event) × 1.1, rounded up', () => {
-    // 4 zero bytes and 2 non-zero: 4 + 8 tokens.
+  it('is (the relayer’s intrinsicGas + delegated access + pre-loop + minGas + event) × 1.1, rounded up: the relayer’s own figure', () => {
+    // 4 zero bytes and 2 non-zero: 12 tokens. Without an authorization EIP-7623's floor (10 a token) is the larger sum.
     const calldata = '0x00000000ffff';
-    expect(calldataTokens(calldata)).toBe(12n);
-    const body = 21_000n + 120n + DELEGATION_ACCESS_GAS + PRE_LOOP_GAS + 8n + 100_000n + EVENT_GAS;
-    expect(sponsorGasLimit({ calldata, callData: ['0x183ff085'], minGas: 100_000n, authorizations: 0 })).toBe((body * 11n + 9n) / 10n);
-    expect(sponsorGasLimit({ calldata, callData: ['0x183ff085'], minGas: 100_000n, authorizations: 1 })).toBe(((body + AUTHORIZATION_GAS) * 11n + 9n) / 10n);
+    expect(intrinsicGas(bytes(calldata), 0)).toBe(21_000n + 120n);
+    const rest = DELEGATION_ACCESS_GAS + PRE_LOOP_GAS + 8n + 100_000n + EVENT_GAS;
+    expect(sponsorGasLimit({ calldata, callData: ['0x183ff085'], minGas: 100_000n, authorizations: 0 })).toBe(((21_120n + rest) * 11n + 9n) / 10n);
+    // With one: the standard sum (4 a token + 25 000), as nodes check it, not the floor plus 25 000.
+    expect(intrinsicGas(bytes(calldata), 1)).toBe(21_000n + 48n + AUTHORIZATION_GAS);
+    expect(sponsorGasLimit({ calldata, callData: ['0x183ff085'], minGas: 100_000n, authorizations: 1 })).toBe(((21_048n + AUTHORIZATION_GAS + rest) * 11n + 9n) / 10n);
     // Per extra call and per byte of the calls' data.
     const two = sponsorGasLimit({ calldata, callData: ['0x183ff085', '0x183ff085'], minGas: 100_000n, authorizations: 0 });
-    expect(two).toBe(((body + 1_400n + 8n) * 11n + 9n) / 10n);
+    expect(two).toBe(((21_120n + rest + 1_400n + 8n) * 11n + 9n) / 10n);
   });
 
-  it('covers EIP-7623’s floor: the limit is never below 21 000 + 10 per token', () => {
-    const calldata = `0x${'ff'.repeat(8000)}` as const;
-    const limit = sponsorGasLimit({ calldata, callData: [`0x${'ff'.repeat(4)}`], minGas: 10_000n, authorizations: 0 });
-    expect(limit >= 21_000n + 10n * calldataTokens(calldata)).toBe(true);
+  it('is always above the relayer’s own minimum (intrinsicGas + minGas), whatever the calldata and authorizations', () => {
+    for (const calldata of [`0x${'ff'.repeat(8000)}`, `0x${'00'.repeat(8000)}`, '0x183ff085'] as const) {
+      for (const authorizations of [0, 1]) {
+        const limit = sponsorGasLimit({ calldata, callData: ['0x183ff085'], minGas: 10_000n, authorizations });
+        expect(limit > intrinsicGas(bytes(calldata), authorizations) + 10_000n).toBe(true);
+      }
+    }
   });
 
   it('maxMinGasFor is the largest minGas that fits, exactly', () => {
@@ -68,6 +76,8 @@ describe('sponsorGasLimit', () => {
 describe('fees and the worst case', () => {
   it('fees start at most at maxStartingFees (two × 9/8 bumps fit the caps); a base above it is refused; the tip never above maxFee', () => {
     const caps = { maxFeePerGasWei: 1_000_000_000n, maxPriorityFeePerGasWei: 10_000_000n };
+    // The relayer's own function, not a copy.
+    expect(maxStartingFees).toBe(relayerStartingFees);
     const start = maxStartingFees(caps);
     const bump = (x: bigint) => (x * 9n + 7n) / 8n;
     expect(bump(bump(start.maxFeePerGas)) <= caps.maxFeePerGasWei && bump(bump(start.maxFeePerGas + 1n)) > caps.maxFeePerGasWei).toBe(true);
@@ -102,9 +112,9 @@ describe('fees and the worst case', () => {
   it('the operator fee bound: 0 off the OP Stack; a revert (before Isthmus) is 0; a value is the bound; anything else fails closed', async () => {
     const port = (answer: () => Promise<string>) => ({ call: answer }) as unknown as Parameters<typeof operatorFeeUpperBound>[0];
     expect(await operatorFeeUpperBound(port(async () => '0x'), false, RELAYER, 1n)).toBe(0n);
-    expect(await operatorFeeUpperBound(port(async () => Promise.reject(new SponsorRpcError('rpc_error', { rpcCode: 3, nodeMessage: 'execution reverted' }))), true, RELAYER, 1n)).toBe(0n);
+    expect(await operatorFeeUpperBound(port(async () => Promise.reject(new EvmRpcError('rpc_error', { rpcCode: 3, nodeMessage: 'execution reverted' }))), true, RELAYER, 1n)).toBe(0n);
     expect(await operatorFeeUpperBound(port(async () => `0x${(42n).toString(16).padStart(64, '0')}`), true, RELAYER, 1n)).toBe(42n);
-    await expect(operatorFeeUpperBound(port(async () => Promise.reject(new SponsorRpcError('unavailable'))), true, RELAYER, 1n)).rejects.toThrow();
+    await expect(operatorFeeUpperBound(port(async () => Promise.reject(new EvmRpcError('unavailable'))), true, RELAYER, 1n)).rejects.toThrow();
     await expect(operatorFeeUpperBound(port(async () => '0x12'), true, RELAYER, 1n)).rejects.toThrow();
   });
 
@@ -184,7 +194,7 @@ describe('delegation, revert data, success', () => {
     const account = RELAYER;
     const digest = `0x${'ab'.repeat(32)}` as const;
     const log = { address: account.toLowerCase() as `0x${string}`, topics: [EXECUTED_TOPIC, digest], data: '0x' as const };
-    const r = { transactionHash: digest, status: 1 as const, gasUsed: 1n, effectiveGasPrice: 1n, l1Fee: null, logs: [log] };
+    const r = { transactionHash: digest, status: 1 as const, blockNumber: 1n, gasUsed: 1n, effectiveGasPrice: 1n, l1Fee: null, operatorFee: null, logs: [log] };
     expect(executedIn(r, account, digest)).toBe(true);
     expect(executedIn({ ...r, status: 0 }, account, digest)).toBe(false);
     expect(executedIn({ ...r, logs: [{ ...log, address: CHECK_IN.toLowerCase() as `0x${string}` }] }, account, digest)).toBe(false);
@@ -193,110 +203,35 @@ describe('delegation, revert data, success', () => {
     expect(executedIn({ ...r, logs: [] }, account, digest)).toBe(false);
   });
 
-  it('relayerRefusal reads the relayer’s coded errors only (anything else is unknown)', () => {
+  it('relayerRefusal reads the relayer’s coded errors only, fees_too_low among them before its type lands (anything else is unknown)', () => {
     expect(relayerRefusal(new Error('evm_relayer:relayer_busy'))).toEqual({ code: 'relayer_busy', reason: null });
-    expect(relayerRefusal(new Error('evm_relayer:rejected:insufficient_funds'))).toEqual({ code: 'rejected', reason: 'insufficient_funds' });
+    expect(relayerRefusal(new Error('evm_relayer:relayer_busy:account'))).toEqual({ code: 'relayer_busy', reason: 'account' });
+    expect(relayerRefusal(new Error('evm_relayer:fees_too_low'))).toEqual({ code: 'fees_too_low', reason: null });
+    expect(relayerRefusal(new Error('evm_relayer:relayer_halted'))).toEqual({ code: 'relayer_halted', reason: null });
     for (const e of [new Error('evm_relayer:made_up'), new Error('boom'), new Error('evm_relayer:relayer_busy '), 'x', null]) expect(relayerRefusal(e)).toBeNull();
   });
-
-  it('pendingAgeMs reads an age or an epoch timestamp', () => {
-    expect(pendingAgeMs(null, 5)).toBeNull();
-    expect(pendingAgeMs(300_001, Date.now())).toBe(300_001);
-    expect(pendingAgeMs(Date.now() - 400_000, Date.now())).toBeGreaterThanOrEqual(400_000);
-  });
 });
 
-describe('parseReceipt', () => {
-  const ok = { transactionHash: `0x${'aa'.repeat(32)}`, status: '0x1', gasUsed: '0x5208', effectiveGasPrice: '0x3b9aca00', logs: [{ address: RELAYER, topics: [EXECUTED_TOPIC], data: '0x' }] };
-  it('reads a receipt, with l1Fee when the node gives it', () => {
-    expect(parseReceipt(ok)).toEqual({ transactionHash: ok.transactionHash, status: 1, gasUsed: 21_000n, effectiveGasPrice: 1_000_000_000n, l1Fee: null, blockNumber: null, operatorFee: null, logs: [{ address: RELAYER.toLowerCase(), topics: [EXECUTED_TOPIC], data: '0x' }] });
-    expect(parseReceipt({ ...ok, l1Fee: '0x10' })?.l1Fee).toBe(16n);
-    // Isthmus: gasUsed × operatorFeeScalar ÷ 10^6 + operatorFeeConstant.
-    expect(parseReceipt({ ...ok, operatorFeeScalar: '0xf4240', operatorFeeConstant: '0x5' })?.operatorFee).toBe(21_005n);
-    expect(parseReceipt(ok)?.operatorFee).toBeNull();
-    expect(parseReceipt({ ...ok, blockNumber: '0x7b' })?.blockNumber).toBe(123n);
-    expect(parseReceipt(null)).toBeNull();
-  });
-  it('refuses anything malformed', () => {
-    for (const bad of [{ ...ok, status: '0x2' }, { ...ok, gasUsed: 21000 }, { ...ok, transactionHash: '0x12' }, { ...ok, logs: 'x' }, { ...ok, logs: [{ address: 'x', topics: [], data: '0x' }] }, { ...ok, logs: Array(65).fill(ok.logs[0]) }, 'receipt']) {
-      expect(() => parseReceipt(bad)).toThrow(SponsorRpcError);
-    }
-  });
-});
-
-describe('minimalSponsorChain (the handlers’ RPC reads)', () => {
-  const cfg = { chainId: 84532, rpc: 'https://primary.example', rpcFallback: 'https://fallback.example' };
-  let replies: Map<string, (method: string, params: unknown[]) => unknown>;
-  let asked: { url: string; method: string }[];
-  beforeEach(() => {
-    forgetSponsorChainChecks();
-    asked = [];
-    replies = new Map();
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input).replace(/\/$/u, '');
-      const { method, params } = JSON.parse(String(init?.body)) as { method: string; params: unknown[] };
-      asked.push({ url, method });
-      const reply = replies.get(url);
-      if (!reply) return new Response('down', { status: 502 });
-      const out = reply(method, params);
-      return new Response(JSON.stringify(out), { status: 200 });
-    });
-  });
-  afterEach(() => vi.restoreAllMocks());
-
-  const node = (chainId: number, extra: (method: string, params: unknown[]) => unknown = () => ({ jsonrpc: '2.0', id: 1, result: '0x' })) => (method: string, params: unknown[]) =>
-    method === 'eth_chainId' ? { jsonrpc: '2.0', id: 1, result: `0x${chainId.toString(16)}` } : extra(method, params);
-
-  it('checks eth_chainId once per endpoint, fails over to the fallback, and refuses an endpoint on another chain', async () => {
-    replies.set('https://primary.example', node(1));
-    replies.set('https://fallback.example', node(84532, () => ({ jsonrpc: '2.0', id: 1, result: '0x7' })));
-    const port = minimalSponsorChain(env, cfg);
-    expect(await port.transactionCount(RELAYER, 'pending')).toBe(7);
-    expect(await port.transactionCount(RELAYER, 'pending')).toBe(7);
-    // The primary was asked its chain each time (it never matched); the fallback once.
-    expect(asked.filter((a) => a.url === 'https://fallback.example' && a.method === 'eth_chainId').length).toBe(1);
-    expect(asked.filter((a) => a.url === 'https://primary.example' && a.method !== 'eth_chainId').length).toBe(0);
+describe('the chain port', () => {
+  it('is the relayer’s own client (sponsorChainFor): one trusted endpoint, the keyed secret first', () => {
+    const cfg = { chainId: 84532, rpc: 'https://primary.example', rpcFallback: 'https://fallback.example' };
+    const port = DEFAULT_SPONSOR_PORTS.chain(env, cfg as never);
+    expect(port).toBeInstanceOf(SponsorChain);
+    expect((port as SponsorChain).chainId).toBe(84532);
   });
 
-  it('a JSON-RPC error is an answer (rpc_error, not a failover): a revert with its data, anything else a node failure; messages carry no URL', async () => {
-    replies.set('https://primary.example', node(84532, () => ({ jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted', data: '0x756688fe' } })));
-    const port = minimalSponsorChain(env, cfg);
-    const reverted = await port.call({ from: RELAYER, to: RELAYER, data: '0x' }).then(() => null, (e: unknown) => e);
-    expect(revertOf(reverted)).toEqual({ revertData: '0x756688fe' });
-    expect(asked.some((a) => a.url === 'https://fallback.example')).toBe(false);
-    replies.set('https://primary.example', node(84532, () => ({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'header not found at https://primary.example' } })));
-    const err = await port.code(RELAYER).then(() => null, (e: unknown) => e);
-    expect(err).toBeInstanceOf(SponsorRpcError);
-    expect(revertOf(err)).toBeNull();
-    expect(String((err as Error).message)).not.toContain('example');
-    // Out of gas has no data; an unavailable chain is no revert.
-    expect(revertOf(new SponsorRpcError('rpc_error', { rpcCode: -32000, nodeMessage: 'out of gas' }))).toEqual({ revertData: null });
-    expect(revertOf(new SponsorRpcError('unavailable'))).toBeNull();
+  it('a revert is an rpc_error with its data; out of gas has none; any other failure is no revert', () => {
+    expect(revertOf(new EvmRpcError('rpc_error', { rpcCode: 3, nodeMessage: 'execution reverted', data: '0x756688fe' }))).toEqual({ revertData: '0x756688fe' });
+    expect(revertOf(new EvmRpcError('rpc_error', { rpcCode: -32000, nodeMessage: 'out of gas' }))).toEqual({ revertData: null });
+    expect(revertOf(new EvmRpcError('rpc_error', { rpcCode: -32000, nodeMessage: 'header not found' }))).toBeNull();
+    expect(revertOf(new EvmRpcError('unavailable'))).toBeNull();
+    expect(revertOf(new Error('x'))).toBeNull();
   });
 
-  it('sends the state override and the gas as eth_call takes them; reads the base fee', async () => {
-    const params: unknown[][] = [];
-    replies.set('https://primary.example', node(84532, (method, p) => {
-      params.push(p);
-      return method === 'eth_getBlockByNumber' ? { jsonrpc: '2.0', id: 1, result: { baseFeePerGas: '0x5f5e100' } } : { jsonrpc: '2.0', id: 1, result: '0x' };
-    }));
-    const port = minimalSponsorChain(env, cfg);
-    await port.call({ from: RELAYER, to: DELEGATE, data: '0x00', gas: 300_000n }, { stateOverride: { [DELEGATE]: { code: '0xef01' } } });
-    expect(params[0]).toEqual([{ to: DELEGATE, data: '0x00', from: RELAYER, gas: '0x493e0' }, 'latest', { [DELEGATE]: { code: '0xef01' } }]);
-    expect((await port.latestBlock()).baseFeePerGas).toBe(100_000_000n);
-  });
-
-  it('a keyed RPC secret comes first; the URLs are never logged', async () => {
-    const lines: string[] = [];
-    vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void lines.push(a.join(' ')));
-    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void lines.push(a.join(' ')));
-    const keyed = { ...env, 'EVM_SPONSOR_RPC_84532': 'https://keyed.example/secret-key' } as typeof env;
-    expect(sponsorRpcUrls(keyed, cfg)).toEqual(['https://keyed.example/secret-key', 'https://primary.example', 'https://fallback.example']);
-    sponsorRpcTiming.timeoutMs = 1000;
-    replies.set('https://fallback.example', node(84532, () => ({ jsonrpc: '2.0', id: 1, result: '0x1' })));
-    expect(await minimalSponsorChain(keyed, cfg).balance(RELAYER)).toBe(1n);
-    sponsorRpcTiming.timeoutMs = 5000;
-    expect(lines.length).toBeGreaterThan(0);
-    for (const l of lines) expect(/example|secret-key/u.test(l), l).toBe(false);
+  it('a block’s timestamp for the billing record, through the client’s read; a malformed one throws', async () => {
+    const port = { read: async (_m: string, _p: unknown[], parse: (r: unknown) => unknown) => parse({ timestamp: '0x6553f100' }) } as never;
+    expect(await blockTimestamp(port, 7n)).toBe(0x6553f100n);
+    const bad = { read: async (_m: string, _p: unknown[], parse: (r: unknown) => unknown) => parse({ timestamp: 12 }) } as never;
+    await expect(blockTimestamp(bad, 7n)).rejects.toThrow();
   });
 });

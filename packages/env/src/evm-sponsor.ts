@@ -321,6 +321,8 @@ export function evmSponsorProblems(m: { name: string; network: string; evm?: { s
     if (c.opStack !== OP_STACK_TEST_CHAIN_IDS.includes(n)) p('opStack', `must be ${String(OP_STACK_TEST_CHAIN_IDS.includes(n))} for chain ${id}`);
     const rpcProblem = sponsorRpcUrlProblem(c.rpc, isLocalEnv(m.name));
     if (rpcProblem) p('rpc', rpcProblem);
+    // D855: the vault signs the one-time setup only when two providers agree on the account (local* envs: one may do).
+    if (c.rpcFallback === undefined && !isLocalEnv(m.name)) p('rpcFallback', 'is required outside local* envs: the vault reads the account from two providers before it signs the one-time setup');
     if (c.rpcFallback !== undefined) {
       const fbProblem = sponsorRpcUrlProblem(c.rpcFallback, isLocalEnv(m.name));
       if (fbProblem) p('rpcFallback', fbProblem);
@@ -398,7 +400,14 @@ export function evmSponsorDelegateProblems(sponsor: Pick<EvmSponsor, 'chains'>, 
   return out;
 }
 
-/** What the vault build needs per chain (packages/web gen-envs): the delegate to authorize and the relayer to name. */
-export function evmSponsorPageChains(sponsor: EvmSponsor): Record<string, { delegate: string; relayer: string }> {
-  return Object.fromEntries(Object.entries(sponsor.chains).map(([id, c]) => [id, { delegate: c.delegate, relayer: sponsor.relayerAddress }]));
+/**
+ * What the vault build needs per chain (packages/web gen-envs): the delegate to authorize, the relayer to name, and the
+ * chain's public RPC endpoints (`rpc`, `rpcFallback`), from which the vault reads the account's code and transaction
+ * count itself before it signs an authorization (D855). They are the manifest's no-key URLs (sponsorRpcUrlProblem: no
+ * credentials, path or query); a keyed endpoint is the API's secret and never reaches a page.
+ */
+export function evmSponsorPageChains(sponsor: EvmSponsor): Record<string, { delegate: string; relayer: string; rpc: string; rpcFallback?: string }> {
+  return Object.fromEntries(
+    Object.entries(sponsor.chains).map(([id, c]) => [id, { delegate: c.delegate, relayer: sponsor.relayerAddress, rpc: c.rpc, ...(c.rpcFallback !== undefined ? { rpcFallback: c.rpcFallback } : {}) }]),
+  );
 }

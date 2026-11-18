@@ -340,9 +340,11 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
     const chain = { ...sponsor.chains['84532']!, rpc: anvil.url, rpcFallback: anvil.url, delegate: DELEGATE!.address };
     const m = { ...sandbox, evm: { sponsor: { ...sponsor, relayerAddress: relayer, chains: { '84532': chain }, apps: { [FIXTURE_APP]: { '84532': [{ ...sponsor.apps[FIXTURE_APP]!['84532']![0]!, address: CHECK_IN!.address }] } } } } } as Manifest;
     const pinned = { 84532: { address: DELEGATE!.address, runtimeCodeHash: DELEGATE!.runtimeCodeHash, placeholder: false } };
+    // The API Worker's secret names, as wrangler lists them (never a real wrangler run here): the read endpoint is set.
+    const secretNames = { hasWranglerConfig: () => true, pnpm: () => ({ status: 0, output: JSON.stringify([{ name: 'EVM_SPONSOR_RPC_84532', type: 'secret_text' }]) }) };
     const check = async (over: Partial<Parameters<typeof deployCheck>[1]> = {}, manifest: Manifest = m) => {
       const lines: string[] = [];
-      const code = await deployCheck(['sandbox-dev', '--only', 'evm'], { loadManifest: () => manifest, localBuild: () => ({ id: 'abc', commit: 'abc', dirty: false, head: 'abc' }), log: (l) => lines.push(l), pinnedDelegates: pinned, ...over });
+      const code = await deployCheck(['sandbox-dev', '--only', 'evm'], { loadManifest: () => manifest, localBuild: () => ({ id: 'abc', commit: 'abc', dirty: false, head: 'abc' }), log: (l) => lines.push(l), pinnedDelegates: pinned, ...secretNames, ...over });
       return { code, out: lines.join('\n') };
     };
     await anvil.rpc('anvil_setBalance', [relayer, '0x16345785d8a0000']); // 0.1 ETH

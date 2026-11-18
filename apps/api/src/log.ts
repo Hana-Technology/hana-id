@@ -58,6 +58,8 @@ export interface LogFields {
   nextRpcEndpoint?: number;
   /** EVM gas sponsorship (evm/sponsor-chain.ts, evm-relayer.ts, D851): the chain, and a relayer transaction's public hash. */
   chainId?: number;
+  /** `evm_sponsor_rpc_missing` (evm/sponsor.ts): the sponsored chains without their trusted read endpoint secret. */
+  chainIds?: number[];
   evmTx?: string;
   /** The relayer's CPU-relevant work in one send, alarm run or staff call (evm-relayer.ts, D851): counts, never timings. */
   evmOps?: { signatures: number; recoveries: number; fetches: number; keyDerivations: number };

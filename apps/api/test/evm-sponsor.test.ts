@@ -2241,3 +2241,98 @@ describe('the relayer’s oldest unaccepted transaction (PR 86’s status field)
     expect(JSON.parse(ev!.detail_json)).toMatchObject({ oldestUnacceptedMs: 3 * 60_000 });
   });
 });
+
+describe('D869 after its review: every path to “not charged”, each returning everything exactly once', () => {
+  const counts = async (s: Setup) => ({
+    userDay: await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:day`),
+    appDay: await hits(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:day`),
+    envDay: await hits(`evm-sponsor:global:${LOCAL_CHAIN}`, 'evm-sponsor:day'),
+    attempts: await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:attempts`),
+    failures: await failuresSpent(`evm-sponsor:failures:${s.userId}`),
+  });
+  const closed = (s: Setup) => {
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'closed', minedHash: null, outcome: 'consumed_elsewhere', costWei: null, reservedWei: 1n });
+  };
+  const rowOfDb = async (s: Setup): Promise<SendRow> => {
+    const c = await env.DB.prepare('SELECT * FROM evm_sponsor_sends WHERE account = ?1').bind(s.user.address).first<Record<string, unknown>>();
+    return { id: String(c!.id), appId: String(c!.app_id), chainId: Number(c!.chain_id), account: c!.account as Hex, userId: (c!.user_id as string) ?? null, digest: c!.digest as Hex, executeNonce: BigInt(String(c!.execute_nonce)), txHash: null, hashes: [], deadline: Number(c!.deadline), reserved: { gasLimit: 0n, feeCap: 0n, l1Bound: 0n, operatorBound: 0n, reservedWei: BigInt(String(c!.reserved_wei)) }, replay: false, createdAt: Number(c!.created_at) };
+  };
+  const inflight = async (s: Setup) => (await env.DB.prepare("SELECT COUNT(*) AS n FROM evm_sponsor_sends WHERE app_id = ?1 AND replay = 0 AND status IN ('sending', 'sent', 'timeout', 'unknown', 'rejected')").bind(s.app.id).first<{ n: number }>())!.n;
+
+  for (const prior of ['sending', 'sent', 'timeout', 'unknown'] as const) {
+    it(`an open row in ${prior}: money, day counts, attempts and the failure slot back exactly once; its in-flight place freed`, async () => {
+      const s = await setup();
+      receiptKind = 'none';
+      expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+      await env.DB.prepare('UPDATE evm_sponsor_sends SET status = ?1').bind(prior).run();
+      const open = await counts(s);
+      expect(open).toMatchObject({ userDay: 1, appDay: 1, envDay: 1, failures: 1n });
+      expect(await inflight(s)).toBe(1);
+      const row = await rowOfDb(s);
+      // The status read must match: a stale read moves nothing.
+      expect(await settleNotCharged(cronEnv(s), row, prior === 'timeout' ? 'unknown' : 'timeout')).toBe(false);
+      expect(await settleNotCharged(cronEnv(s), row, prior)).toBe(true);
+      expect(await settleNotCharged(cronEnv(s), row, prior)).toBe(false);
+      expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: open.attempts - 1, failures: 0n });
+      expect(await appSpent(s.app)).toBe(0n);
+      expect(await inflight(s)).toBe(0);
+    });
+  }
+
+  it('L1: settled executed at head, reorged out, its slot closed as used elsewhere: corrected to not charged once (a fix record at 0), everything back once', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    const req = s.relayer.sends[0]!;
+    const first = keccakHex(rawFor(req));
+    const atHead = await counts(s);
+    // Executed: the failure slot was freed then; the budgets hold the receipt's cost.
+    expect(atHead).toMatchObject({ userDay: 1, appDay: 1, envDay: 1, failures: 0n });
+    expect(await appSpent(s.app)).toBeGreaterThan(0n);
+    closed(s);
+    await ageRows();
+    // Two cron runs at once: one moves the row.
+    const [a, b] = await Promise.all([reconcile(s), reconcile(s)]);
+    expect(a.corrected + b.corrected).toBe(1);
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+    const records = await billingRows();
+    expect(records.map((r) => [r.record_key, r.corrects, r.outcome, r.settled_wei, r.tx_hash])).toEqual([
+      [first, null, 'executed', records[0]!.settled_wei, first],
+      [`fix:${records[0]!.send_id}`, first, 'consumed_elsewhere', '0', null],
+    ]);
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await envSpent()).toBe(0n);
+    expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: atHead.attempts - 1, failures: 0n });
+    // Final: later runs change nothing.
+    await ageRows(60 * 60_000);
+    expect(await reconcile(s)).toMatchObject({ corrected: 0, confirmed: 0, settled: 0 });
+    expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: atHead.attempts - 1, failures: 0n });
+    expect(await billingRows()).toHaveLength(2);
+  });
+
+  it('L2: a closed slot whose own transaction later mines: an alert for staff once, nothing charged', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    closed(s);
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 1 });
+    expect(await reconcile(s)).toMatchObject({ closedMined: 0 });
+    // The mistaken close: the batch's own transaction is on the chain after all.
+    const req = s.relayer.sends[0]!;
+    const own = keccakHex(rawFor(req));
+    s.chain.receipts.set(own, receiptFor(req, own, 'executed', { gasUsed: 60_000n, price: 100_000_000n }));
+    const r1 = await reconcile(s);
+    expect(r1.closedMined).toBe(1);
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_closed_slot_mined'").all<{ detail_json: string }>();
+    expect(ev.results.map((e) => JSON.parse(e.detail_json))).toEqual([{ chainId: LOCAL_CHAIN, sendId: (await rowOfDb(s)).id }]);
+    // Once per row, never charged.
+    expect((await reconcile(s)).closedMined).toBe(0);
+    expect(await appSpent(s.app)).toBe(0n);
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+    expect(await billingRows()).toMatchObject([{ outcome: 'consumed_elsewhere', settled_wei: '0' }]);
+    // Past 7 days the watch stops reading it.
+    await env.DB.prepare('DELETE FROM security_events WHERE kind = ?1').bind('evm_relay_closed_slot_mined').run();
+    await env.DB.prepare('UPDATE evm_sponsor_sends SET created_at = created_at - ?1, updated_at = updated_at - ?1').bind(8 * 86_400_000).run();
+    expect((await reconcile(s)).closedMined).toBe(0);
+  });
+});

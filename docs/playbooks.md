@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: `near-relay-budget-high` and `near-relay-balance-low` quote sandbox-dev's 6 NEAR and 9 NEAR, D793); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: `exit-client-unpinned`: the combined alarm, unreadable pins, the alarm's limits and the threshold, D493); 2026-11-09 (branch `feat/test-page-command`: `watchdog-first-run` with the test page, `watchdog-compromised` with what the status token can do, D449, D450); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-18 (branch `fix/evm-sponsor-consumed-elsewhere-not-charged`, not merged, not deployed: the new `evm-relay-closed-slot-mined`, D869); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: `near-relay-budget-high` and `near-relay-balance-low` quote sandbox-dev's 6 NEAR and 9 NEAR, D793); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: `exit-client-unpinned`: the combined alarm, unreadable pins, the alarm's limits and the threshold, D493); 2026-11-09 (branch `feat/test-page-command`: `watchdog-first-run` with the test page, `watchdog-compromised` with what the status token can do, D449, D450); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -73,6 +73,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Email-login issuer key compromised (planned)](#email-issuer-key-compromised) | critical (planned) | — |
 | [Identity token signing key compromised (testnet Worker-secret key)](#identity-signing-key-compromised) | critical | — |
 | [Identity token KMS signer misused (planned: staging and mainnet)](#identity-kms-signer-compromised) | critical (planned) | — |
+| [Free network fees: a slot staff closed went through after all](#evm-relay-closed-slot-mined) | warning | — |
 
 ## Alert playbooks
 
@@ -2656,3 +2657,36 @@ No env signs with AWS KMS yet (the adapter is built, the AWS account isn't: docs
 - Build the CloudTrail reconciliation and alarms before mainnet (docs/operations.md "Identity token keys on AWS KMS").
 
 **Refs:** [`docs/operations.md#identity-token-keys-on-aws-kms`](operations.md#identity-token-keys-on-aws-kms), D215 (`docs/decisions.md`), D219 (`docs/decisions.md`) · **See also:** [identity-signing-key-compromised](#identity-signing-key-compromised), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
+
+<a id="evm-relay-closed-slot-mined"></a>
+
+### Free network fees: a slot staff closed went through after all
+
+`evm-relay-closed-slot-mined` · warning
+
+An `evm_relay_closed_slot_mined` security event: within 7 days of staff closing a relayer slot as “used by something else”, one of that slot's own transactions was found on the network. The close was mistaken: the user's action ran, for free.
+
+**Signals**
+
+- An `evm_relay_closed_slot_mined` row in the admin's security events, emailed by the feed (once per slot: the network and the send's id).
+
+**Impact**
+
+- The user's action happened, but it was recorded as not done and not charged (D869): the partner wasn't billed for it, and nothing will charge it now. Nothing else is affected.
+- How urgent: this week. It means the slot was closed on wrong evidence: check how, so it doesn't happen again.
+
+**Steps**
+
+1. **Tell an engineer** (who: anyone). Give an engineer the event's details (the network and the send id). The engineer looks up the send's transactions on the block explorer and the relayer's staff log for who closed the slot and why.
+
+2. **Find why the close looked right** (who: a founder). With the engineer: a slot is closed only when the relayer stopped because its number was used by something else. If the read endpoint gave wrong answers, replace it (the secret `EVM_SPONSOR_RPC_<chainId>`). Nothing is charged afterwards: the record stays at 0, Journear's own cost.
+
+**Verify**
+
+- No further events of this kind after the cause is fixed.
+
+**Follow-ups**
+
+- Note the case in the decision log if the read endpoint was at fault.
+
+**Refs:** [`docs/operations.md#evm-gas-sponsorship-not-live-yet-d834d836-d847-d848-d851-d856`](operations.md#evm-gas-sponsorship-not-live-yet-d834d836-d847-d848-d851-d856), D869 (`docs/decisions.md`), D851 (`docs/decisions.md`)

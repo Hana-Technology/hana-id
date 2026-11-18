@@ -42,7 +42,8 @@ CREATE TABLE usage.evm_sponsored_txs (
   corrects                text           CHECK (corrects IS NULL OR length(corrects) BETWEEN 1 AND 80),
   PRIMARY KEY (chain_id, record_key),
   CHECK ((tx_hash IS NOT NULL AND corrects IS NULL AND record_key = tx_hash) OR (tx_hash IS NOT NULL AND corrects IS NOT NULL AND record_key LIKE 'fix:%')
-         OR (tx_hash IS NULL AND corrects IS NULL AND outcome IN ('lost', 'consumed_elsewhere') AND record_key LIKE 'send:%'))
+         OR (tx_hash IS NULL AND corrects IS NULL AND outcome IN ('lost', 'consumed_elsewhere') AND record_key LIKE 'send:%')
+         OR (tx_hash IS NULL AND corrects IS NOT NULL AND outcome = 'consumed_elsewhere' AND record_key LIKE 'fix:%'))
 );
 CREATE INDEX evm_sponsored_txs_org ON usage.evm_sponsored_txs (org_id, settled_at);
 CREATE INDEX evm_sponsored_txs_app ON usage.evm_sponsored_txs (app_id, settled_at);

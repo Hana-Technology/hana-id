@@ -25,6 +25,14 @@ export const HOUR = 60 * MINUTE;
 
 export const accountSubject = (chainId: number, account: string) => `evm-sponsor:account:${chainId}:${account.toLowerCase()}`;
 export const appSubjectOf = (appId: string) => `app:${appId}`;
+/** The user's day of sends and attempts (with a directory user). */
+export const userSubjectOf = (userId: string) => `evm-sponsor:user:${userId}`;
+/** The env's minute and day of sends. */
+export const envSubjectOf = (chainId: number) => `evm-sponsor:global:${chainId}`;
+/** The day windows a send counts in (its name on each subject), given back when it was not the user's or the partner's doing. */
+export const dayWindowName = (chainId: number) => `evm-sponsor:${chainId}:day`;
+export const ENV_DAY_WINDOW = 'evm-sponsor:day';
+export const attemptsWindowName = (chainId: number) => `evm-sponsor:${chainId}:attempts`;
 /** The env's day budget lives on its own object (read by the status route). */
 export const envBudgetSubject = (chainId: number) => `evm-sponsor:budget:${chainId}`;
 /** The day budget's window, on `app:<id>` and on the env's budget object. */
@@ -288,15 +296,41 @@ export async function settleFromRelayerCost(env: Env, row: SendRow, minedHash: H
 }
 
 /**
- * A charge with no mined transaction of its own, kept as the reservation: `lost` (nothing proved nothing was spent) or
- * `consumed_elsewhere` (staff closed the relayer's record: its nonce went to something else; `evm_relay_nonce_taken`).
+ * A charge with no mined transaction of its own, kept as the reservation: `lost` (nothing proved nothing was spent).
  * The row moves with its billing record (the reservation as the amount); no budget moves.
  */
-export async function settleAsCharge(env: Env, row: SendRow, status: 'lost' | 'consumed_elsewhere'): Promise<boolean> {
+export async function settleAsCharge(env: Env, row: SendRow, status: 'lost'): Promise<boolean> {
   const now = Date.now();
   const amount = row.replay ? 0n : row.reserved.reservedWei;
-  if (!(await moveRow(env, row.id, OPEN_STATUSES, status, { settledWei: amount }, (st) => billingStatement(env, row.id, st, status, amount, null, now)))) return false;
-  if (status === 'consumed_elsewhere') await noteEvent(env, null, 'evm_relay_nonce_taken', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId }, now);
+  return moveRow(env, row.id, OPEN_STATUSES, status, { settledWei: amount }, (st) => billingStatement(env, row.id, st, status, amount, null, now));
+}
+
+/**
+ * A slot used up by a transaction Journear's relayer did not send (`consumed_elsewhere`: staff closed the relayer's
+ * record after the relayer itself stopped on it; a leaked or misused relayer key), so the user's action never ran.
+ * Journear's own loss, not the partner's (D869, the founder's decision): the row settles at 0 with its billing record
+ * (outcome `consumed_elsewhere`, settled 0, no cost figures: a billing job never bills it, the monthly view shows it
+ * apart, counted), the amount set aside goes back to the app's and the env's day budgets, and the user's and the app's
+ * day counts, the user's attempts and failure slot are given back (none of it was their doing). Once: only the caller
+ * that moved the row gives anything back; the row is final, so no later receipt or correction can charge it.
+ * `evm_relay_nonce_taken` is written for staff. Never throws.
+ */
+export async function settleNotCharged(env: Env, row: SendRow): Promise<boolean> {
+  const now = Date.now();
+  if (!(await moveRow(env, row.id, OPEN_STATUSES, 'consumed_elsewhere', { settledWei: 0n }, (st) => billingStatement(env, row.id, st, 'consumed_elsewhere', 0n, null, now)))) return false;
+  if (!row.replay) {
+    const at = row.createdAt;
+    const unhit = (subject: string, name: string) => limiter(env, subject).unhit([{ name, windowMs: DAY, max: 1 }], at).catch(() => undefined);
+    await Promise.all([
+      settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, 0n, at),
+      limiter(env, failureSubject(row.chainId, row.account, row.userId)).giveBack(FAILURES, DAY, '1', at).catch(() => undefined),
+      unhit(appSubjectOf(row.appId), dayWindowName(row.chainId)),
+      unhit(envSubjectOf(row.chainId), ENV_DAY_WINDOW),
+      ...(row.userId ? [unhit(userSubjectOf(row.userId), dayWindowName(row.chainId))] : []),
+      unhit(row.userId ? userSubjectOf(row.userId) : accountSubject(row.chainId, row.account), attemptsWindowName(row.chainId)),
+    ]);
+  }
+  await noteEvent(env, null, 'evm_relay_nonce_taken', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId, charged: false }, now);
   return true;
 }
 
@@ -390,7 +424,7 @@ export interface ReconcileScope {
  * A row settles ONLY from (a) a receipt for one of its own hashes (every hash the relayer ever reported, persisted on
  * the row, and the ones its lookup lists now), or (b) the relayer's lookup: `mined` (at confirmed depth) with its cost
  * (for a `rejected` row at once: its cancel; for any other when the receipt itself still can't be read an hour past
- * the deadline) or `closed` `consumed_elsewhere` (the reservation kept as the cost, an event for staff). Anything else
+ * the deadline) or `closed` `consumed_elsewhere` (not charged: Journear's loss, everything given back, D869; an event for staff). Anything else
  * stays open, and an hour past the deadline becomes `lost` with the reservation kept (and a billing record of that
  * amount). A `rejected` row's receipt of any hash but its batch's is the cancel's. Never throws.
  */
@@ -445,7 +479,7 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
       continue;
     }
     if (v?.state === 'closed' && v.outcome === 'consumed_elsewhere') {
-      if (await settleAsCharge(env, row, 'consumed_elsewhere')) counts.settled++;
+      if (await settleNotCharged(env, row)) counts.settled++;
       continue;
     }
     if (v?.state === 'mined' && v.minedHash && own.has(v.minedHash.toLowerCase() as Hex) && typeof v.costWei === 'bigint' && (v.outcome === 'execute' || v.outcome === 'cancel') && (rejected || pastDeadline >= GIVE_UP_AFTER_MS)) {

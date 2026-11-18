@@ -76,7 +76,12 @@ import { type EvmRejectionCause, type EvmRelayerPort, type EvmRelayerSent, EvmRp
 import {
   accountSubject,
   appSubjectOf,
+  attemptsWindowName,
   budgetWindow,
+  dayWindowName,
+  ENV_DAY_WINDOW,
+  envSubjectOf,
+  userSubjectOf,
   DAY,
   envBudgetSubject,
   FAILURES,
@@ -191,8 +196,8 @@ export const unconfigured = (ctx: Ctx): Response => reject(ctx, 503, 'sponsorshi
 // ---- limiter subjects ----
 
 const appSubject = (app: App) => appSubjectOf(app.id);
-const envSubject = (chainId: number) => `evm-sponsor:global:${chainId}`;
-const userSubject = (userId: string) => `evm-sponsor:user:${userId}`;
+const envSubject = envSubjectOf;
+const userSubject = userSubjectOf;
 
 interface Window {
   subject: string;
@@ -862,7 +867,7 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   //    short of funds, halted or busy, the network's fees) gives these back too.
   const own: Window[] = [
     { subject: account, limits: [{ name: 'evm-sponsor:send:minute', windowMs: MINUTE, max: EVM_SPONSOR_LIMITS.sendsPerAccountPerMinute }], what: 'per account per minute' },
-    { subject: userId ? userSubject(userId) : account, limits: [{ name: `evm-sponsor:${chain.chainId}:attempts`, windowMs: DAY, max: chain.perUserPerDay * EVM_SPONSOR_LIMITS.attemptsPerSend }], what: 'attempts per user' },
+    { subject: userId ? userSubject(userId) : account, limits: [{ name: attemptsWindowName(chain.chainId), windowMs: DAY, max: chain.perUserPerDay * EVM_SPONSOR_LIMITS.attemptsPerSend }], what: 'attempts per user' },
   ];
   const ownAt = Date.now();
   const o = await quota(env, ctx, own, ownAt);
@@ -966,9 +971,9 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   const shared: Window[] = [
     { subject: appSubject(app), limits: [{ name: `evm-sponsor:${chain.chainId}:minute`, windowMs: MINUTE, max: EVM_SPONSOR_LIMITS.sendsPerAppPerMinute }], what: 'per app per minute' },
     { subject: envSubject(chain.chainId), limits: [{ name: 'evm-sponsor:minute', windowMs: MINUTE, max: chain.sendsPerMinute }], what: 'across the env per minute' },
-    ...(userId ? [{ subject: userSubject(userId), limits: [{ name: `evm-sponsor:${chain.chainId}:day`, windowMs: DAY, max: chain.perUserPerDay }], what: 'per user' }] : []),
-    { subject: appSubject(app), limits: [{ name: `evm-sponsor:${chain.chainId}:day`, windowMs: DAY, max: chain.perAppPerDay }], what: 'per app' },
-    { subject: envSubject(chain.chainId), limits: [{ name: 'evm-sponsor:day', windowMs: DAY, max: chain.sendsPerDay }], what: 'across the env' },
+    ...(userId ? [{ subject: userSubject(userId), limits: [{ name: dayWindowName(chain.chainId), windowMs: DAY, max: chain.perUserPerDay }], what: 'per user' }] : []),
+    { subject: appSubject(app), limits: [{ name: dayWindowName(chain.chainId), windowMs: DAY, max: chain.perAppPerDay }], what: 'per app' },
+    { subject: envSubject(chain.chainId), limits: [{ name: ENV_DAY_WINDOW, windowMs: DAY, max: chain.sendsPerDay }], what: 'across the env' },
   ];
   const d = await quota(env, ctx, shared, sharedAt);
   if (d) {

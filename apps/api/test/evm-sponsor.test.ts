@@ -1198,19 +1198,56 @@ describe('the relayer’s final interface (PR #70)', () => {
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
 
-  it('the relayer’s staff closed it as consumed elsewhere: the reservation kept as the cost, billed, an event for staff', async () => {
+  it('D869: a slot the relayer’s staff closed as used by something else is not charged: every budget and count given back, the record kept at 0, final', async () => {
     const s = await setup();
     receiptKind = 'none';
+    const day = (sub: string, name: string) => hits(sub, name);
     expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    const row = await env.DB.prepare('SELECT user_id, account FROM evm_sponsor_sends').first<{ user_id: string | null; account: string }>();
+    const reserved = s.relayer.sends[0]!.reservedWei;
+    // While open: the budgets carry the reservation; the day counts and the failure slot are taken.
+    expect(await appSpent(s.app)).toBe(reserved);
+    expect(await envSpent()).toBe(reserved);
+    const userSub = row!.user_id ? `evm-sponsor:user:${row!.user_id}` : null;
+    const failureSub = row!.user_id ? `evm-sponsor:failures:${row!.user_id}` : `evm-sponsor:failures:${LOCAL_CHAIN}:${row!.account}`;
+    const before = { app: await day(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:day`), env: await day(`evm-sponsor:global:${LOCAL_CHAIN}`, 'evm-sponsor:day'), user: userSub ? await day(userSub, `evm-sponsor:${LOCAL_CHAIN}:day`) : 0, failures: await failuresSpent(failureSub) };
+    expect([before.app, before.env, before.failures]).toEqual([1, 1, 1n]);
     s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'closed', minedHash: null, outcome: 'consumed_elsewhere', costWei: null, reservedWei: 1n });
     await ageRows();
     expect(await reconcile(s)).toMatchObject({ settled: 1 });
+    // Not charged: both budgets back to nothing, the day counts and the failure slot given back.
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await envSpent()).toBe(0n);
+    expect(await day(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:day`)).toBe(0);
+    expect(await day(`evm-sponsor:global:${LOCAL_CHAIN}`, 'evm-sponsor:day')).toBe(0);
+    if (userSub) expect(await day(userSub, `evm-sponsor:${LOCAL_CHAIN}:day`)).toBe(0);
+    expect(await failuresSpent(failureSub)).toBe(0n);
+    // The row and the record are kept, marked: consumed elsewhere, settled 0, no cost figures for a billing job to add.
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+    expect(await billingRows()).toMatchObject([{ outcome: 'consumed_elsewhere', tx_hash: null, settled_wei: '0', total_cost_wei: null, record_key: expect.stringMatching(/^send:es_/u) }]);
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_nonce_taken'").all<{ detail_json: string }>();
+    expect(ev.results.map((e) => JSON.parse(e.detail_json))).toEqual([{ chainId: LOCAL_CHAIN, charged: false }]);
+    // Final: a later reconcile, even with a receipt or a mined verdict for one of its hashes, can't charge it again.
+    receiptKind = 'executed';
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [`0x${'aa'.repeat(32)}`], state: 'mined', minedHash: `0x${'aa'.repeat(32)}`, outcome: 'execute', costWei: 5n, reservedWei: 1n });
+    await ageRows(60 * 60_000);
+    expect(await reconcile(s)).toMatchObject({ settled: 0, corrected: 0 });
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await billingRows()).toHaveLength(1);
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+  });
+
+  it('D869: a relayer replay row closed as consumed elsewhere gives nothing back twice (its first send carries the counts)', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    await env.DB.prepare('UPDATE evm_sponsor_sends SET replay = 1').run();
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'closed', minedHash: null, outcome: 'consumed_elsewhere', costWei: null, reservedWei: 1n });
     const reserved = s.relayer.sends[0]!.reservedWei;
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 1 });
     expect(await appSpent(s.app)).toBe(reserved);
-    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: reserved.toString() });
-    expect(await billingRows()).toMatchObject([{ outcome: 'consumed_elsewhere', tx_hash: null, settled_wei: reserved.toString() }]);
-    const ev = await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_nonce_taken'").first<{ n: number }>();
-    expect(ev?.n).toBe(1);
+    expect(await billingRows()).toEqual([]);
   });
 
   it('a halted relayer: evm_relay_stuck (“Free network fees: paused or slow, needs a look”), status answers paused, a send is 503 sponsorship_paused with everything back', async () => {

@@ -13,8 +13,12 @@ import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { EXECUTED_TOPIC } from '../src/evm/sponsor-checks.ts';
 import { DEFAULT_SPONSOR_PORTS, type EvmRelayerPort, sponsorPorts } from '../src/evm/sponsor-ports.ts';
 import { EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, forgetRelayerBalances, forgetRelayerStatus, sponsorTiming } from '../src/evm/sponsor.ts';
-import { EvmMock, type Hex, type MockTx, PRIMARY_RPC } from './evm-mock.ts';
-import { DELEGATE, LOCAL_CHAIN, RELAYER, nearMock, rememberAccount, sessionsInMemory, signedSend, sponsorCall, sponsorEnv, sponsorVar, testUser, type TestUser } from './evm-sponsor-helpers.ts';
+import { EvmMock, type Hex, type MockTx, PRIMARY_RPC, decodeRawTx } from './evm-mock.ts';
+import { signSponsorTx } from '@hana-id/core/evm-sponsor';
+import { evmRelayerStaffClose } from '../src/evm-relayer-staff.ts';
+import { evmSponsorConfig } from '../src/evm/sponsor.ts';
+import { reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
+import { DELEGATE, LOCAL_CHAIN, RELAYER, nearMock, testKey, rememberAccount, sessionsInMemory, signedSend, sponsorCall, sponsorEnv, sponsorVar, testUser, type TestUser } from './evm-sponsor-helpers.ts';
 import { seedApp, type SeededApp, uid } from './helpers.ts';
 
 type Stub = DurableObjectStub<EvmRelayer>;
@@ -171,5 +175,32 @@ describe('the routes and the relayer object, end to end over the fake chain', ()
     const again = await sendFor(w, signedSend(w.user, { minGas: 100_001n }));
     expect([again.status, (await body(again)).code]).toEqual([503, 'sponsorship_paused']);
     expect(w.chain.broadcasts.length).toBe(before);
+  });
+
+  it('D869: the relayer’s own detection, then staff closing the slot, leads to “not charged”: the app’s and the env’s budgets back, the record at 0', async () => {
+    const w = await setup({ delegated: true });
+    sponsorTiming.receiptWaitMs = 200;
+    w.chain.onSend = () => 'accept';
+    const r = await sendFor(w, signedSend(w.user));
+    expect([r.status, (await body(r)).code]).toEqual([504, 'timeout']);
+    const spent = async (subject: string) => BigInt(await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject)).spent(`evm-sponsor:${LOCAL_CHAIN}:wei`, 86_400_000));
+    expect(await spent(`app:${w.app.id}`)).toBeGreaterThan(0n);
+    // Someone else uses the relayer's key: their transaction takes slot 0 instead of ours.
+    w.chain.pool.get(RELAYER.toLowerCase())?.clear();
+    const foreign = signSponsorTx(testKey('relayer'), { type: 'eip1559', chainId: BigInt(LOCAL_CHAIN), nonce: 0n, maxFeePerGas: 10n ** 9n, maxPriorityFeePerGas: 10n ** 7n, gas: 21_000n, to: new Uint8Array(20).fill(0xee), value: 0n, data: new Uint8Array(), accessList: [] });
+    w.chain.admit(decodeRawTx(foreign));
+    w.chain.mine(RELAYER, 1);
+    w.chain.blockNumber += 20;
+    await runDurableObjectAlarm(w.stub);
+    expect((await w.stub.status()).halted).toMatchObject({ reason: 'nonce_consumed_elsewhere', nonce: 0 });
+    // Staff close the slot (the admin portal's Close, through the staff module).
+    expect(await evmRelayerStaffClose(w.stub as never, 'staff@hana.example', 0, 'consumed_elsewhere', 'a foreign transaction took slot 0')).toMatchObject({ done: true });
+    await env.DB.prepare('UPDATE evm_sponsor_sends SET updated_at = created_at - 120000, created_at = created_at - 120000').run();
+    const cron = { ...env, ...w.bindings } as Env;
+    expect(await reconcileEvmSends(cron, evmSponsorConfig(cron)!)).toMatchObject({ settled: 1 });
+    expect(await spent(`app:${w.app.id}`)).toBe(0n);
+    expect(await spent(`evm-sponsor:budget:${LOCAL_CHAIN}`)).toBe(0n);
+    expect(await env.DB.prepare('SELECT status, settled_wei FROM evm_sponsor_sends WHERE account = ?1').bind(w.user.address).first()).toEqual({ status: 'consumed_elsewhere', settled_wei: '0' });
+    expect(await env.DB.prepare('SELECT outcome, settled_wei, total_cost_wei FROM evm_sponsor_billing').first()).toEqual({ outcome: 'consumed_elsewhere', settled_wei: '0', total_cost_wei: null });
   });
 });

@@ -1,7 +1,7 @@
 // EVM gas sponsorship's billing records (D852): one permanent record per sponsored transaction that reached the chain
 // (the batch, executed or reverted or run without effect, or the deadline's self-transfer), and one per charge that has
 // no mined transaction of its own (`lost`: the reservation kept because nobody could prove nothing was spent;
-// `consumed_elsewhere`: the relayer's nonce went to something else, its reservation kept), so the books add up.
+// `consumed_elsewhere`: the relayer's nonce went to something else: settled at 0, not charged, D869), so the books add up.
 //
 // Where: the API's D1 table `evm_sponsor_billing` (migration 0022) is the record of truth, written in the same D1 batch
 // as the audit row's final move (so a settled send can't exist without its record), and copied by the cron into the

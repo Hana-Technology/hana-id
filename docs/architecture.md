@@ -950,7 +950,7 @@ A batch no endpoint takes is replaced at once by its 0-value self-transfer at th
 `broadcast: 'rejected'` and the refusal's cause: one the batch's own size or shape explains (`request`), or its fees
 (`pricing`: the handler reprices), only cancels (so no user's input or market move can stop the relayer); any other
 is ours and also halts it (`relayer_cannot_send`). A send priced below the latest base fee × 1.125 is refused
-`fees_too_low`. It never waits for a receipt; `lookup(digest)` and
+`fees_too_low`; the relayer prices its own cancels from a fresh base fee and reprices one the pool turns away. It never waits for a receipt; `lookup(digest)` and
 `status()` read storage only.
 
 Its design is fail-stop: it believes ONE read endpoint (the secret `EVM_SPONSOR_RPC_<chainId>`, else `rpc`;

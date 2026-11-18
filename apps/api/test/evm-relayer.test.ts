@@ -1145,7 +1145,6 @@ describe('review H1: no user can halt sponsorship', () => {
     for (const [message, code] of [
       ['transaction underpriced', 'underpriced'],
       ['max fee per gas less than block base fee', 'fee_below_base_fee'],
-      ['replacement transaction underpriced', 'replacement_underpriced'],
     ] as const) {
       chain = new EvmMock({ chainId: CHAIN }).install();
       const stub = await fresh();
@@ -1165,11 +1164,92 @@ describe('review H1: no user can halt sponsorship', () => {
     }
   });
 
-  it('our own cancel refused over its fees halts (we priced it): relayer_cannot_send', async () => {
+  it('our own cancel refused over its price retries with a fresh price on the next run: no halt', async () => {
     const stub = await fresh();
-    chain.onSend = (tx) => (tx.to === RELAYER.toLowerCase() ? { error: 'transaction underpriced' } : { error: 'intrinsic gas too low' });
+    let refuseCancels = true;
+    chain.onSend = (tx) => (tx.to === RELAYER.toLowerCase() ? (refuseCancels ? { error: 'transaction underpriced' } : undefined) : { error: 'intrinsic gas too low' });
     await stub.send(request());
-    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'underpriced' });
+    expect(await halted(stub)).toBeNull();
+    refuseCancels = false;
+    await runDurableObjectAlarm(stub);
+    const rec = (await stored(stub)).recs[0]!;
+    expect(rec.versions.map((v) => v.kind)).toEqual(['execute', 'cancel', 'cancel']);
+    expect(chain.pooled(RELAYER, 0)?.hash).toBe(rec.versions[2]!.hash);
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('a base-fee jump of more than 12.5%: the cancel is priced from a FRESH base fee (2 × base + tip), not from the refused batch; if that too is overtaken, the next run reprices; no halt', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    // The pool refuses anything below the current base fee; each refusal of ours is followed by a jump.
+    // The base fee jumps as each new transaction reaches the read endpoint (to 0.25 gwei for the batch, 0.6 for its
+    // first cancel, priced at 2 × 0.25 + tip).
+    let jumps = [GWEI / 4n, (GWEI * 6n) / 10n];
+    chain.onSend = (tx, endpoint) => {
+      const next = endpoint === 0 ? jumps.shift() : undefined;
+      if (next !== undefined) chain.baseFee = next;
+      return tx.maxFeePerGas < chain.baseFee ? { error: 'max fee per gas less than block base fee' } : undefined;
+    };
+    chain.baseFee = GWEI / 8n;
+    const sent = await stub.send(reqFor('jumped', { maxFeePerGas: GWEI / 10n }));
+    expect(sent).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'pricing', code: 'fee_below_base_fee' } });
+    expect(await halted(stub)).toBeNull();
+    expect((await stored(stub)).recs.find((r) => r.nonce === 1)!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+    expect(chain.pooled(RELAYER, 1)).toBeUndefined();
+    jumps = [];
+    await runDurableObjectAlarm(stub);
+    const rec = (await stored(stub)).recs.find((r) => r.nonce === 1)!;
+    expect(rec.versions.map((v) => v.kind)).toEqual(['execute', 'cancel', 'cancel']);
+    const last = rec.versions.at(-1)!;
+    expect(last.kind).toBe('cancel');
+    // 2 × 0.6 gwei + tip, capped at the chain's 1 gwei: still above the base fee × 1.125.
+    expect(BigInt(last.maxFeePerGas)).toBe(GWEI);
+    expect(chain.pooled(RELAYER, 1)?.hash).toBe(last.hash);
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('a stale base-fee cache (the base fee rose within 5 s): the send passes our floor, the pool turns it away over its price, its cancel is priced fresh; no halt', async () => {
+    const stub = await fresh();
+    chain.onSend = (tx) => (tx.maxFeePerGas < chain.baseFee ? { error: 'max fee per gas less than block base fee' } : undefined);
+    await stub.send(request());
+    chain.baseFee = GWEI / 5n;
+    advance(EVM_RELAYER_BASE_FEE_TTL_MS - 1);
+    const sent = await stub.send(request());
+    expect(sent).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'pricing', code: 'fee_below_base_fee' } });
+    expect(chain.pooled(RELAYER, 1)).toMatchObject({ to: RELAYER.toLowerCase() });
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('fee caps too low for any valid cancel (the base fee above the cap): halt, relayer_cannot_send with code fee_cap_too_low', async () => {
+    const stub = await fresh();
+    chain.onSend = (tx) => (tx.maxFeePerGas < chain.baseFee ? { error: 'max fee per gas less than block base fee' } : undefined);
+    await stub.send(request());
+    chain.baseFee = 2n * GWEI;
+    await stub.send(request());
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', nonce: 1, code: 'fee_cap_too_low' });
+  });
+
+  it('replacement_underpriced on a batch\'s FIRST version is no pricing problem: a foreign transaction from our key holds the nonce: halt', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    // Someone else, with the relayer's key, has a transaction waiting at our next nonce (fees just under our cancel's).
+    chain.admit(foreign(1, GWEI / 9n));
+    const sent = await stub.send(request());
+    expect(sent).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'relayer', code: 'replacement_underpriced' } });
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', nonce: 1, code: 'replacement_underpriced' });
+  });
+
+  it('replacement_underpriced of a batch\'s own later bump is pricing: no halt', async () => {
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    await stub.send(request());
+    advance(EVM_RELAYER_BUMP_AFTER_MS);
+    chain.onSend = (tx) => (tx.to === RELAYER.toLowerCase() ? undefined : { error: 'replacement transaction underpriced' });
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toBeNull();
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'execute', 'cancel']);
+    expect(await halted(stub)).toBeNull();
   });
 
   it('fees_too_low before anything is stored: a max fee below the latest base fee × 1.125, or no tip at all', async () => {
@@ -1264,9 +1344,15 @@ describe('review M2/M3: a nonce is never freed', () => {
     await configure(stub);
     chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
     expect(await evmRelayerStaffCancel(stub, WHO, 0, 'n')).toMatchObject({ refused: 'nonce_mined' });
+    // Started at the fee caps' edge: a few cancels later the caps leave no valid one.
     await stub.send(reqFor('b', { maxFeePerGas: maxStartingFees({ maxFeePerGasWei: GWEI, maxPriorityFeePerGasWei: GWEI / 100n }).maxFeePerGas, reservedWei: ETH / 100n }));
-    for (let i = 0; i < 9; i++) await evmRelayerStaffCancel(stub, WHO, 1, 'again');
-    expect(await evmRelayerStaffCancel(stub, WHO, 1, 'n')).toMatchObject({ refused: 'no_valid_replacement' });
+    for (let i = 0; i < 3; i++) await evmRelayerStaffCancel(stub, WHO, 1, 'again');
+    expect(await evmRelayerStaffCancel(stub, WHO, 1, 'n')).toMatchObject({ refused: 'fee_cap_too_low' });
+    // Started low: 8 versions come first.
+    await stub.send(reqFor('c', { maxFeePerGas: 1_000_000n, maxPriorityFeePerGas: 1_000n }));
+    for (let i = 0; i < 7; i++) await evmRelayerStaffCancel(stub, WHO, 2, 'again');
+    expect((await stored(stub)).recs.find((r) => r.nonce === 2)!.versions).toHaveLength(EVM_RELAYER_MAX_VERSIONS);
+    expect(await evmRelayerStaffCancel(stub, WHO, 2, 'n')).toMatchObject({ refused: 'no_valid_replacement' });
   });
 
   it('staffCancel on a staff filler: a bumped self-transfer at the same nonce, earlier versions kept', async () => {

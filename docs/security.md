@@ -2124,8 +2124,11 @@ stands between a request and the key:
 - **No user can stop it.** A batch every endpoint refuses is replaced at once by its cancel (which takes no user
   input) and answered `broadcast: 'rejected'` with the refusal's cause; a batch refused later is cancelled on the next
   run. A refusal the batch's own size or shape explains (`gas_limit`, `oversized`) or its pricing, which the
-  handlers set (`underpriced`, `fee_below_base_fee`, `replacement_underpriced`), stops there; every other classified
-  refusal is ours (funds, nonce, signing), as is any refusal of our own cancel, and also halts it
+  handlers set (`underpriced`, `fee_below_base_fee`, and `replacement_underpriced` of the batch's own bump), stops
+  there; `replacement_underpriced` on a batch's first version means another sender with our key and halts; every other classified
+  refusal is ours (funds, nonce, signing), as is any refusal of our own cancel other than over its price (cancels
+  are priced from a fresh base fee and repriced after a price refusal; caps too low for one: `fee_cap_too_low`), and
+  also halts it
   (`relayer_cannot_send`), so our faults aren't billed to users or left unnoticed. A send priced below the latest base
   fee × 1.125 is refused (`fees_too_low`) before anything is stored. A halt needs a cause only our side can produce: another sender with the
   relayer key, a refusal of ours, a stuck cancel (fees, funds), a key change or a bug. One unmined batch per account (`relayer_busy:account`); the handlers add the

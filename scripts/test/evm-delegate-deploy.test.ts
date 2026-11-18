@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { CliError } from '../lib/cli.ts';
 import { deployCheck } from '../lib/deploy-check.ts';
 import { DETERMINISTIC_DEPLOYER, create2Address, deployCalldata, keccakHex, loadDelegateArtifacts } from '../lib/evm-delegate-artifacts.ts';
-import { type EvmDeployDeps, type EvmDeployPlan, type RunTool, checkChain, delegatesEntry, evmDeployMain, foundryEnv, manifestTemplate } from '../lib/evm-delegate-deploy.ts';
+import { type EvmDeployDeps, type EvmDeployPlan, type RunTool, checkChain, checkInEntry, delegatesEntry, evmDeployMain, foundryEnv, manifestTemplate } from '../lib/evm-delegate-deploy.ts';
 import { rpcLabel, rpcUrlProblem } from '../lib/evm-rpc.ts';
 import { FIXTURE_APP, sponsorFixture } from '../../packages/env/src/evm-sponsor.fixture.ts';
 import { ANVIL_DEV_ADDRESS, type Anvil, FOUNDRY_MISSING, devKeystore, leftoverTempDirs, startAnvil } from './anvil.ts';
@@ -56,6 +56,8 @@ describe('the artifacts and the pure parts (no chain)', () => {
     const entry = delegatesEntry(84532, DELEGATE!, '2026-11-26');
     expect(entry).toContain(`  84532: Object.freeze({\n    address: '${DELEGATE!.address}',\n    runtimeCodeHash: '${DELEGATE!.runtimeCodeHash}',\n    domain: SPONSOR_DELEGATE_DOMAIN,\n    abiVersion: SPONSOR_ABI_VERSION,\n    placeholder: false,\n  }),`);
     expect(entry).toContain('2026-11-26');
+    // The demo check-in's pin: one line for DEMO_CHECK_IN (packages/core/src/demo-check-in.ts, D854).
+    expect(checkInEntry(84532, CHECK_IN!, '2026-11-26')).toBe(`  84532: Object.freeze({ address: '${CHECK_IN!.address}', runtimeCodeHash: '${CHECK_IN!.runtimeCodeHash}' }), // Base Sepolia, code hash checked on 2026-11-26`);
     const block = manifestTemplate(84532, DELEGATE!.address, CHECK_IN!.address, { rpc: 'https://sepolia.base.org', rpcFallback: 'https://base-sepolia-rpc.publicnode.com' });
     expect(block).toContain(`"delegate": "${DELEGATE!.address}", "opStack": true`);
     expect(block).toContain(`"address": "${CHECK_IN!.address}", "selectors": ["0x183ff085"], "exactCalldata": ["0x183ff085"]`);
@@ -160,6 +162,8 @@ describe.skipIf(FOUNDRY_MISSING !== null)('deploy-evm-delegate on a local anvil 
     expect(out).toContain(`forge verify-contract ${CHECK_IN!.address} src/demo/CheckIn.sol:CheckIn --root contracts/evm-delegate --chain 84532 --compiler-version 0.8.28+commit.7893614a --verifier etherscan --watch`);
     expect(out).toContain('--show-standard-json-input > HanaDelegateExecutor.standard-input.json');
     expect(out).toContain(delegatesEntry(84532, DELEGATE!, '2026-11-26'));
+    expect(out).toContain(checkInEntry(84532, CHECK_IN!, '2026-11-26'));
+    expect(out).toContain('DEMO_CHECK_IN in packages/core/src/demo-check-in.ts');
     expect(out).toContain(`"delegate": "${DELEGATE!.address}"`);
     expect(out).toContain('"rpc": "https://sepolia.base.org"');
 

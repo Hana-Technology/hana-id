@@ -20,7 +20,8 @@ import { MAINNET_DEMO } from '../mainnet-demo.ts';
 import { KNOWN_EVM_MAINNETS, STELLAR_MAINNET_PASSPHRASE, TEST_EVM_CHAINS, evmChainInfo } from '../networks.ts';
 import type { NearAction } from '../near/codec.ts';
 import { isNearAccountId } from '../addresses.ts';
-import { type ContractChain, STELLAR_TESTNET_PASSPHRASE, verifiedContract } from '../verified-contracts.ts';
+import { type ContractChain, DEMO_CHECK_IN_NAME, STELLAR_TESTNET_PASSPHRASE, verifiedContract } from '../verified-contracts.ts';
+import { isDemoCheckInCall } from '../demo-check-in.ts';
 import type { AbiValue } from './abi.ts';
 import type { DecodedApproval } from './request.ts';
 import type { DecodedEvmCall, DecodedEvmCallSite, DecodedEvmTx } from './evm.ts';
@@ -308,7 +309,18 @@ interface Draft {
 }
 
 /** What evmCall reads of a call: an EVM transaction's (DecodedEvmTx) or a sponsored batch's (DecodedEvmCallSite). */
-type EvmCallInput = { readonly to: string | null; readonly value: bigint; readonly selector: string | null; readonly call: DecodedEvmCall | null };
+type EvmCallInput = { readonly to: string | null; readonly value: bigint; readonly data: string; readonly selector: string | null; readonly call: DecodedEvmCall | null };
+
+/**
+ * Journear's demo check-in (D854), in plain words: only for exactly the pinned contract on this chain, exactly
+ * `checkIn()` and no value (isDemoCheckInCall); its name and address stay in view, as a verified contract's do.
+ */
+const demoCheckIn = (to: string): Draft => ({
+  headline: [APP, ' wants to check you in'],
+  lines: [['This is Journear’s demo check-in. It doesn’t move any money or tokens.'], ['It uses ', strong(DEMO_CHECK_IN_NAME), ' (', code(to), ', verified by Journear).']],
+  warnings: [],
+  explainable: true,
+});
 
 function evmCall(chainId: number, tx: EvmCallInput, me: string): Draft {
   const to = tx.to as string;
@@ -322,6 +334,7 @@ function evmCall(chainId: number, tx: EvmCallInput, me: string): Draft {
   const withoutValueLine = () => lines.filter((l) => l !== valueLine);
   const unknown = (reason: string): Draft => ({ headline: [APP, ' wants to use contract ', contract, ...sending], lines: withoutValueLine(), warnings: [cannotTell('danger', reason), ...warnings], explainable: false });
   if (valueLine) lines.push(valueLine);
+  if (isDemoCheckInCall(chainId, to, tx.data, tx.value)) return demoCheckIn(to);
   const call = tx.call;
   if (!call) return unknown(tx.selector ? 'it calls a function Journear doesn’t recognise' : 'it sends data Journear can’t read');
   const a = call.args;
@@ -480,12 +493,13 @@ const GRANTS: ReadonlySet<SummaryWarningCode> = new Set(['spend_permission', 'un
  * smallest units), and two calls group only when their target and calldata are equal too. Order: value to others,
  * grants, contract calls (and every call Journear can't read), other value, moves to the user's own account, revokes.
  */
-function sponsoredStep(c: DecodedEvmCallSite, d: Draft, me: string): Step {
+function sponsoredStep(chainId: number, c: DecodedEvmCallSite, d: Draft, me: string): Step {
   const grant = d.explainable ? d.warnings.find((w) => GRANTS.has(w.code)) : undefined;
   const head = grant?.short ?? callLine(d.headline);
   const text: SummaryText = d.lines.length === 0 ? head : [...head, '. ', ...d.lines.flatMap((l, i) => [...(i > 0 ? [' '] : []), ...sentence(l)])];
   const key = `${JSON.stringify(text)}|${c.to.toLowerCase()}|${c.data}`;
   const step = (order: number, value = true): Step => ({ text, value, order, key });
+  if (isDemoCheckInCall(chainId, c.to, c.data, c.value)) return step(3, false);
   if (!d.explainable || !c.call) return step(3);
   if (grant) return step(2);
   const a = c.call.args;
@@ -536,7 +550,7 @@ function sponsoredAction(decoded: Extract<DecodedApproval, { kind: 'evm_sponsore
     const distinct = new Set(tells.map((w) => JSON.stringify(w.text)));
     if (tells.length > 0) warnings.push(distinct.size === 1 ? (tells[0] as SummaryWarning) : cannotTell(tells.reduce<RiskLevel | null>((l, w) => worse(l, w.level), null) as RiskLevel, 'part of it is something Journear can’t summarise'));
     warnings.push(...drafts.flatMap((d) => d.warnings.filter((w) => w.code !== 'cannot_explain')));
-    const g = groupSteps(calls.map((c, i) => sponsoredStep(c, drafts[i] as Draft, me)));
+    const g = groupSteps(calls.map((c, i) => sponsoredStep(chainId, c, drafts[i] as Draft, me)));
     shownSteps = g.shown;
     lines.push(...g.lines);
     warnings.push(...g.leftOut);

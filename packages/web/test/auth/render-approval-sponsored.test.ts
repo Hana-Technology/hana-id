@@ -37,6 +37,8 @@ import {
 import { ENV, FakeWindow, PARTNER, type RemoteWindow, asWindow, remoteWindow, resetDom } from './helpers.ts';
 
 const APP = 'Partner App';
+/** A contract Journear doesn't know, called with the check-in's selector. */
+const UNKNOWN = '0x4444444444444444444444444444444444444444' as const;
 const TRANSFER = calldata('transfer(address,uint256)', RECIPIENT, 5_000_000n);
 const APPROVE_MAX = calldata('approve(address,uint256)', SPENDER, UINT256_MAX);
 const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test chain 31337. Your address stays the same and you still approve every action.';
@@ -98,7 +100,7 @@ describe('a sponsored action’s window', () => {
   });
 
   it('an unknown call: the red "can’t tell" line leads; its raw data is in the details', () => {
-    const el = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
+    const el = render(decodeSponsored({ calls: [sponsoredCall(UNKNOWN, CHECK_IN_DATA)] }));
     expect(el.dataset.explainable).toBe('false');
     expect(el.querySelector('.danger-box p.risk-lead.summary-warning.cannot-explain')?.textContent).toContain('Journear can’t tell what this request does: it calls a function Journear doesn’t recognise.');
     expect(details(el).textContent).toContain(`Unknown function ${CHECK_IN_DATA}. Its raw data:`);
@@ -117,9 +119,9 @@ describe('a sponsored action’s window', () => {
   });
 
   it('several calls: grouped lines; every call in the details, numbered', () => {
-    const el = render(decodeSponsored({ calls: [sponsoredCall(TOKEN, TRANSFER), sponsoredCall(TOKEN, TRANSFER), sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
+    const el = render(decodeSponsored({ calls: [sponsoredCall(TOKEN, TRANSFER), sponsoredCall(TOKEN, TRANSFER), sponsoredCall(UNKNOWN, CHECK_IN_DATA)] }));
     expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to do 3 things in one transaction`);
-    expect(lines(el)).toEqual([`2 times: send tokens of contract ${TOKEN} to ${RECIPIENT}. Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).`, `Use contract ${CHECK_IN}`]);
+    expect(lines(el)).toEqual([`2 times: send tokens of contract ${TOKEN} to ${RECIPIENT}. Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).`, `Use contract ${UNKNOWN}`]);
     expect([...details(el).querySelectorAll('ol.ops > li.op > h3')].map((h) => h.textContent)).toEqual(['1. Call', '2. Call', '3. Call']);
     expect(details(el).querySelector('h2')?.textContent).toBe('3 calls');
   });
@@ -131,6 +133,30 @@ describe('a sponsored action’s window', () => {
     expect(validUntil(s, at - 86_400_000)).toBe(`09:05 on 2030-01-02 (your time; unix ${s})`);
     expect(validUntil(s)).toBe(`09:05 on 2030-01-02 (your time; unix ${s})`);
     expect(validUntil(2n ** 64n - 1n)).toBe(`${2n ** 64n - 1n} (unix seconds)`);
+  });
+});
+
+describe('Journear’s demo check-in (D854)', () => {
+  it('reads plainly with no box, its name and address in view; the details name its function', () => {
+    const el = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
+    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to check you in`);
+    expect(lines(el)).toEqual(['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${CHECK_IN}, verified by Journear).`]);
+    expect(el.querySelector('.risk-box')).toBeNull();
+    expect(el.dataset.explainable).toBe('true');
+    expect(details(el).textContent).toContain('Function checkIn() 0x183ff085');
+    expect(details(el).textContent).not.toContain('Unknown function');
+  });
+
+  it('the first time: only the amber setup note', () => {
+    const el = render(decodeSponsored({ authNonce: 0n, calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
+    expect(el.querySelector('.danger-box')).toBeNull();
+    expect(el.querySelector('.warning-box p.risk-lead')?.textContent).toBe(SETUP);
+  });
+
+  it('the same selector on another contract: red, "Unknown function" in the details', () => {
+    const el = render(decodeSponsored({ calls: [sponsoredCall(UNKNOWN, CHECK_IN_DATA)] }));
+    expect(el.querySelector('.danger-box .cannot-explain')).not.toBeNull();
+    expect(details(el).textContent).toContain('Unknown function 0x183ff085');
   });
 });
 

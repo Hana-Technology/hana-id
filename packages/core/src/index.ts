@@ -39,6 +39,7 @@ export * from './near/index.ts';
 // entry, which the partner client imports, never pulls in @stellar/stellar-base (test/index.test.ts checks).
 export * from './approval.ts';
 export * from './typed-data.ts';
+export * from './demo-check-in.ts';
 export * from './verified-contracts.ts';
 export * from './decode/errors.ts';
 export * from './decode/json.ts';

@@ -186,7 +186,11 @@ describe('explorers', () => {
   });
 
   it('has an https explorer for every chain on the verified list, and every explorer URL is https and ends in /', () => {
-    for (const e of VERIFIED_CONTRACTS) expect(explorerContractUrl(e.chain, e.address), verifiedContractKey(e.chain, e.address)).not.toBeNull();
+    // A local test chain (31337, 1337: Journear's demo check-in, D854) has no public explorer.
+    for (const e of VERIFIED_CONTRACTS) {
+      if (e.chain.kind === 'evm' && (e.chain.chainId === 31337 || e.chain.chainId === 1337)) continue;
+      expect(explorerContractUrl(e.chain, e.address), verifiedContractKey(e.chain, e.address)).not.toBeNull();
+    }
     for (const x of [...Object.values(EVM_EXPLORERS), ...Object.values(STELLAR_EXPLORERS)]) {
       expect(new URL(x.contractUrl).protocol).toBe('https:');
       expect(x.contractUrl.endsWith('/')).toBe(true);

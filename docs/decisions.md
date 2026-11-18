@@ -12187,8 +12187,8 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   through, the request gets "{App} wants you to approve a request Journear can't explain" with a red "Journear
 couldn’t read this request. Reject it unless you are certain.", not explainable. Every summary the unit, renderer and
 e2e approval tests build is checked never to be that fallback, so the catch can't hide a bug.
-- Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, after an automated review; decided while building, to
-  confirm): a NEAR call to a standard value-moving method (`ft_transfer`, `ft_transfer_call`, `nft_transfer`,
+- Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, after an automated review; decided while building,
+  **confirmed by the user 2026-11-18**): a NEAR call to a standard value-moving method (`ft_transfer`, `ft_transfer_call`, `nft_transfer`,
   `nft_transfer_call`, `nft_approve`) whose arguments aren't exactly the standard's shape (its keys and no others, an
   amount a canonical decimal string, account ids valid, a memo or message a string or null as the standard has it, an
   `approval_id` a u64) is no longer the plain "Use tok.testnet (ft_transfer)" line: the contract may read such arguments
@@ -12206,7 +12206,7 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   `shownSteps`) and `render-approval-sponsored.test.ts`.
 - Why the NEAR/Soroban difference: a NEAR action carries the NEAR it moves in the action itself (the visible "NEAR
   leaving your account"), and its arguments are JSON the user can read when opened; a Soroban call's authorization tree
-  can move tokens the summary can't weigh. To confirm.
+  can move tokens the summary can't weigh. **confirmed by the user 2026-11-18 (with D808–D813)**.
 - Address impact: none.
 
 ### D811. Plain warnings for requests that let someone spend the user's tokens
@@ -12299,7 +12299,7 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
 
 ### D814. Multi-step requests: one box per colour, at most four grouped lines, amounts shown conservatively
 - Date 2026-11-17 · Status: **decided by the user 2026-11-17** (after seeing the 100-action screen: "this looks crazy
-  with so many rows, this will definitely confuse the user"); the details below decided while building, to confirm ·
+  with so many rows, this will definitely confuse the user"); the details below decided while building, **confirmed by the user 2026-11-18** ·
   Built on `feat/approval-plain-summary`: `packages/core/src/decode/summary.ts` (`groupSteps`, `stellarStep`,
   `nearAction`'s steps, `displayUnits`, `nearDisplay`, `shortId`, the warnings' `short` forms),
   `packages/web/src/auth/render-approval.ts` (`riskBox`, `RiskItem`, `accountControlShorts`, the NEAR bullet forms),
@@ -12357,7 +12357,7 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   The exact figure is in the details. The totals ("NEAR leaving your account", "XLM leaving your account") follow it,
   and per-step amounts appear only in the group lines.
 - Amended 2026-11-17 (branch `feat/evm-sponsored-approval`, the leftover Low of PR 65's review), decided while
-  building, to confirm: a Stellar `setOptions` that sets the account's own key's weight to 0 keeps its bullet "Sets your
+  building, **confirmed by the user 2026-11-18**: a Stellar `setOptions` that sets the account's own key's weight to 0 keeps its bullet "Sets your
   own Journear Passport key’s weight to 0: you lose control of the account" even when its step's line is in view, as
   NEAR's removal of the user's own key does: the line ("set your own key’s weight to 0") doesn't say the user loses
   control (`render-approval.ts` `accountControlItems`' `keep`; test `render-approval-sponsored.test.ts`). Any other
@@ -12384,7 +12384,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 
 ### D831. One approval for the one-time setup and the first batch; the window's words
 - Date 2026-11-17 · Status: **decided by the user 2026-11-17** (one approval, the wording, never "upgrade" or "smart
-  account") · Built on `feat/evm-sponsored-approval`, not merged, not deployed: `packages/core/src/decode/summary.ts`
+  account"), **confirmed by the user 2026-11-18** (the setup note keeps its wording) · Built on `feat/evm-sponsored-approval`, not merged, not deployed: `packages/core/src/decode/summary.ts`
   (`SPONSORED_FEE`, `accountSetupNote`), `packages/web/src/auth/render-approval.ts` (`sponsoredDetails`, `validUntil`);
   tests `packages/core/test/evm-sponsored-approval.test.ts`, `packages/web/test/auth/render-approval-sponsored.test.ts`,
   `apps/e2e/tests/approval-summary.spec.ts`.
@@ -12529,7 +12529,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 
 ### D839. A sponsored action is never auto-approved
 - Date 2026-11-17 · Status: **decided by the user 2026-11-17** (the setup note's promise, D831: "you still approve
-  every action") · Built on `feat/evm-sponsored-approval`: `evm_sponsored` in `NEVER_AUTO_APPROVED_KINDS`
+  every action"), **confirmed by the user 2026-11-18** · Built on `feat/evm-sponsored-approval`: `evm_sponsored` in `NEVER_AUTO_APPROVED_KINDS`
   (`packages/core/src/approval.ts`); the matcher answers `never_covered` (tested).
 - Decision: every sponsored action shows the approval popup with its guarded Approve (D36), whatever policy the app
   has: its first one also sets up the account, and each one spends Journear's fee budget. No policy format covers it.
@@ -12647,7 +12647,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 ### D849. The EVM delegate's deploy and the relayer key: plan by default, a Foundry keystore signs, artifacts and core's pin checked on chain
 - Date 2026-11-17 · Status: testnet only, Base Sepolia first, the contract deployed fresh through the deterministic
   deployer after 2026-11-25 and nothing run against a public network by an agent: decided by the user 2026-11-17;
-  the rest decided while building, to confirm · Built: `scripts/deploy-evm-delegate.ts`,
+  the rest decided while building, **confirmed by the user 2026-11-18** · Built: `scripts/deploy-evm-delegate.ts`,
   `scripts/lib/evm-delegate-deploy.ts`, `scripts/lib/evm-delegate-artifacts.ts`, `scripts/lib/evm-rpc.ts`,
   `scripts/evm-relay-keys.ts`, `scripts/lib/evm-relay-keys.ts`, `scripts/lib/deploy-check-evm.ts` (and the `evm`
   group in `scripts/lib/deploy-check.ts`), `EVM_RELAY_KEYS` in `scripts/lib/env-secrets.ts`; tests
@@ -12732,7 +12732,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Address impact: none for users (no derivation input changes). The contracts' addresses are the ones D841 predicts.
 
 ### D850. The sponsored action's approval: kind `evm_sponsored`, a subject the popup decodes and checks itself, the calls' own summary
-- Date 2026-11-17 · Status: decided while building, to confirm · Built on `feat/evm-sponsored-approval` (from `next` @
+- Date 2026-11-17 · Status: decided while building, **confirmed by the user 2026-11-18** · Built on `feat/evm-sponsored-approval` (from `next` @
   e4ee9762), not merged, not deployed: `packages/core/src/approval.ts` (`evm_sponsored`), `protocol.ts`
   (`evm_sendSponsored`, `SponsoredCallRequest`, `SPONSORED_MAX_CALLS`, `SPONSORED_MAX_CALL_DATA_BYTES`,
   `StatusResult.sponsoredChains`, `SPONSORED_CHAINS_MAX`, `EVM_SPONSOR_SDK_MIN`), `networks.ts` (`mainnetOfRequest`),
@@ -12801,7 +12801,56 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   a known signature is already "can't tell" (red).
 - Known effect: the demo's `checkIn()` is not a selector Journear knows, so its approval carries the red "can't tell"
   line, as the same call unsponsored would. Making it calm is a separate decision (the CheckIn contract and its
-  function on Journear's verified list, the demo card's package).
+  function on Journear's verified list, the demo card's package): made by the user 2026-11-18, D854.
+- Address impact: none.
+
+## Plain words and the demo check-in, 2026-11-18
+
+### D853. Every user-visible text is written in plain, everyday words (standing rule)
+- Date 2026-11-18 · Status: **decided by the user 2026-11-18** · Applies to every text a user sees: the approval
+  window, Passport Home, the login and email pages, the launcher, errors shown to users, the demo sites, the partner
+  SDK's default texts.
+- Decision, in the founder's words: "our audience is not native Web3 users and might be very non-technical savvy so we
+  want to keep it as simple and as layman as possible (remember this style for all future wordings)". So: say what
+  happens to the user's money, tokens or account in everyday words; no chain jargon above the fold (gas, nonce,
+  calldata, selector, contract call, EIP numbers, "upgrade", "smart account"), which may appear only in the folded
+  details; short sentences; name the app and what it wants first. Technical precision is kept, one tap away in the
+  details, never dropped. A wording that would make a risk sound smaller than it is never counts as plainer (D809).
+- Where it lives: `docs/security.md` "Browser" (the approval window's wording rules), and this entry for everything
+  else. Reviews of user-visible text check against it.
+- Address impact: none.
+
+### D854. Journear's demo check-in is on the verified list, and its one function reads in plain words
+- Date 2026-11-18 · Status: putting the demo `CheckIn` contract on the wallet's verified list so the demo's sponsored
+  action reads plainly with no red box: **decided by the user 2026-11-18**; the details below decided while building,
+  to confirm · Built on `feat/evm-demo-verified` (from `next` @ c6b434f4), not merged, not deployed:
+  `packages/core/src/demo-check-in.ts` (`DEMO_CHECK_IN`, `DEMO_CHECK_IN_CALLDATA`, `isDemoCheckInCall`),
+  `verified-contracts.ts` (`DEMO_CHECK_IN_NAME`, an entry per pinned chain), `decode/summary.ts` (`demoCheckIn`),
+  `packages/web/src/auth/render-approval.ts` (`evmCallData` names `checkIn()`), `scripts/lib/evm-delegate-deploy.ts`
+  (`checkInEntry`, printed in the deploy's follow-up); tests `packages/core/test/demo-check-in.test.ts`,
+  `verified-contracts.test.ts`, `evm-sponsored-approval.test.ts`, `packages/web/test/auth/render-approval-sponsored.test.ts`,
+  `scripts/test/evm-delegate-deploy.test.ts`, `apps/e2e/tests/approval-summary.spec.ts`.
+- The pin: `DEMO_CHECK_IN`, by chain, the contract's deterministic CREATE2 address and runtime code hash from
+  `contracts/evm-delegate/artifacts/CheckIn.json` (a test ties every entry to the artifact). Today 31337 only (the
+  local chain); Base Sepolia's line is added by the deploy's follow-up PR with the delegate's (`deploy-evm-delegate`
+  prints it), once the code hash is read on chain. On the verified list as "Journear demo check-in" (protocol
+  Journear, its source the artifact at the pinning commit) for each pinned chain; a local chain has no explorer.
+- The summary, sponsored or not, only when the call is exactly the pinned contract on that chain (any letter case),
+  calldata exactly `0x183ff085` (no trailing bytes) and value 0: headline "{App} wants to check you in"; lines "This is
+  Journear’s demo check-in. It doesn’t move any money or tokens." and "It uses Journear demo check-in (0x…, verified
+  by Journear)." (the name and whole address in view, as a verified spender is shown); explainable; no red or amber
+  box (the one-time setup note still appears when the authorization is signed). The details name the function:
+  "Function checkIn() 0x183ff085". Anything else keeps the red "can't tell" line and gets no name: another contract
+  with the same selector, a look-alike address, extra calldata, any value, a chain where it isn't pinned (tested).
+  In a batch it groups like any call and counts as moving nothing, and its reassurance is about itself alone: "This
+  is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens." (after PR 73's review).
+- Also after PR 73's review (decided while building, to confirm): a bound below the shown precision reads "less than
+  0.000001 ETH", never "up to less than …", and a rounded-up one "up to {the rounded-up figure}", never "up to about"
+  (`upTo` in `summary.ts`: the network fee, "XLM leaving your account", a spend permission's amount); composed risk
+  texts end with one full stop (`sentence`: "Not in the lines above: …" no longer doubles it), and a test checks every
+  summary the unit tests build for doubled punctuation or spacing.
+- Why not add `checkIn()` to the known selectors: a selector names a standard's function, and any contract can have a
+  `checkIn()` that does anything; the plain reading is earned by the reviewed contract, not the name.
 - Address impact: none.
 
 

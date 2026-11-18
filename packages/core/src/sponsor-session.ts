@@ -170,7 +170,7 @@ export function evmSponsorSessionMessage(
   return identityMessage({ signer: ctx.signer, appId: ctx.appId, sessionPublicKey: i.sessionPublicKey, issuedAtMs: i.issuedAtMs, nonce: i.nonce, payload });
 }
 
-/** Why a sponsor request's session proof was refused (each a distinct API code, docs/api.md). */
+/** Why a sponsor request's session proof was refused (each a distinct API code). */
 export type EvmSponsorProofRefusal = 'missing_session_proof' | 'bad_session_proof' | 'stale_session_proof' | 'invalid_session_signature' | 'bad_wallet_proof';
 
 export type EvmSponsorProofCheck =
@@ -178,11 +178,11 @@ export type EvmSponsorProofCheck =
   | { ok: false; reason: EvmSponsorProofRefusal };
 
 /**
- * The stateless part of the API's check of a sponsor request (D856 steps 1 to 4): the proof's shape, its time
+ * The stateless part of the API's check of a sponsor request (its first four steps): the proof's shape, its time
  * (IDENTITY_PROOF_WINDOW_MS of `nowMs`), the session key's signature over this route, origin, app and body, and the wallet
  * proof naming the body's account (EIP-55 compared) for this session. `body` is the whole parsed request body, with its
  * `sessionProof`. On success the API still has to apply the single-use marker (`identity-proof:<session key>` and the
- * nonce) and check the session on chain, then the directory rule (D856).
+ * nonce) and check the session on chain, then the directory rule.
  */
 export function checkEvmSponsorSessionProof(i: { method: EvmSponsorRequestMethod; body: Record<string, unknown>; ctx: EvmSponsorSessionContext; nowMs: number }): EvmSponsorProofCheck {
   if (!isObj(i.body) || !Object.hasOwn(i.body, EVM_SPONSOR_PROOF_KEY)) return { ok: false, reason: 'missing_session_proof' };

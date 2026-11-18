@@ -222,7 +222,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   readonly ethereum: HanaEthereumProvider;
   /** NEAR: the implicit account, transactions, delegate actions, NEP-413 messages and the relay. */
   readonly near: HanaNear;
-  /** Gas-free EVM actions (D838, not live): `sendSponsored`, `sponsorship`, `sponsoredChains`. */
+  /** Gas-free EVM actions (not live yet): `sendSponsored`, `sponsorship`, `sponsoredChains`. */
   readonly evm: HanaEvm;
   readonly vaultOrigin: string;
   readonly authOrigin: string;

@@ -181,9 +181,11 @@ describe('the routes and the relayer object, end to end over the fake chain', ()
     const w = await setup({ delegated: true });
     sponsorTiming.receiptWaitMs = 200;
     w.chain.onSend = () => 'accept';
+    const spent = async (subject: string) => BigInt(await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject)).spent(`evm-sponsor:${LOCAL_CHAIN}:wei`, 86_400_000));
+    // The env's budget object is shared by this file's tests: measured from here.
+    const envBefore = await spent(`evm-sponsor:budget:${LOCAL_CHAIN}`);
     const r = await sendFor(w, signedSend(w.user));
     expect([r.status, (await body(r)).code]).toEqual([504, 'timeout']);
-    const spent = async (subject: string) => BigInt(await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject)).spent(`evm-sponsor:${LOCAL_CHAIN}:wei`, 86_400_000));
     expect(await spent(`app:${w.app.id}`)).toBeGreaterThan(0n);
     // Someone else uses the relayer's key: their transaction takes slot 0 instead of ours.
     w.chain.pool.get(RELAYER.toLowerCase())?.clear();
@@ -199,8 +201,8 @@ describe('the routes and the relayer object, end to end over the fake chain', ()
     const cron = { ...env, ...w.bindings } as Env;
     expect(await reconcileEvmSends(cron, evmSponsorConfig(cron)!)).toMatchObject({ settled: 1 });
     expect(await spent(`app:${w.app.id}`)).toBe(0n);
-    expect(await spent(`evm-sponsor:budget:${LOCAL_CHAIN}`)).toBe(0n);
+    expect(await spent(`evm-sponsor:budget:${LOCAL_CHAIN}`)).toBe(envBefore);
     expect(await env.DB.prepare('SELECT status, settled_wei FROM evm_sponsor_sends WHERE account = ?1').bind(w.user.address).first()).toEqual({ status: 'consumed_elsewhere', settled_wei: '0' });
-    expect(await env.DB.prepare('SELECT outcome, settled_wei, total_cost_wei FROM evm_sponsor_billing').first()).toEqual({ outcome: 'consumed_elsewhere', settled_wei: '0', total_cost_wei: null });
+    expect(await env.DB.prepare('SELECT outcome, settled_wei, total_cost_wei FROM evm_sponsor_billing WHERE app_id = ?1').bind(w.app.id).first()).toEqual({ outcome: 'consumed_elsewhere', settled_wei: '0', total_cost_wei: null });
   });
 });

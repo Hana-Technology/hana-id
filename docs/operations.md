@@ -1263,9 +1263,9 @@ each one's "transaction fee" (tokens burnt); which app each belonged to can only
 2. Apply the ledger migration `apps/api/migrations-usage/0010_near_relayed.sql` (after 0009) with
    `scripts/usage-migrate.ts`.
 3. Deploy the API as usual. The order of 1 and 3 doesn't matter for the relay: without the table it keeps working and
-   only the alert "NEAR relay: a billing record is late" (`near_billing_late`) says records are being missed.
+   only the alert "Free NEAR transactions: a billing record is late" (`near_billing_late`) says records are being missed.
 
-**Watching it.** "NEAR relay: a billing record is late" means records couldn't be written today (the migration isn't
+**Watching it.** "Free NEAR transactions: a billing record is late" means records couldn't be written today (the migration isn't
 applied, or D1 had a problem), or a record hasn't been read back from the chain or copied to the usage ledger within an
 hour. Monthly sums per org and app: `SELECT * FROM usage.near_relayed_monthly` as staff. No new binding or secret.
 

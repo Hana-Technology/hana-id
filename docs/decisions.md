@@ -14029,7 +14029,7 @@ deployed. The founder, 2026-11-18: "go ahead with NEAR billing records".
   0), the contract a delegate called and its method names, created and final times.
 - Fail open for the relay: a write that fails (migration 0023 not applied yet, D1 unreachable) never fails or delays a
   relay; it is counted on a RateLimiter object (`near-relay:billing`, which needs no migration) and the cron writes
-  `near_billing_late` ("NEAR relay: a billing record is late") once an hour while writes fail, a record isn't final an
+  `near_billing_late` ("Free NEAR transactions: a billing record is late") once an hour while writes fail, a record isn't final an
   hour on, or (with the ledger bound) isn't copied an hour on. Safe to deploy onto the running relay in either order with
   the migration; additive migrations only (a new table; `security_events` rebuilt to widen its CHECK, as 0020 and 0022
   did). `gen sandbox-dev` is unchanged: no new binding, var or secret.

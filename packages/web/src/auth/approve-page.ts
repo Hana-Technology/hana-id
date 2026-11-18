@@ -126,7 +126,9 @@ export const MAINNET_DEMO_BANNER = 'Real money, test system: you could lose it.'
 /** Under the headline: why (the keys come from the testnet MPC). */
 export const MAINNET_DEMO_WHY = `This test app uses real money with keys from ${BRAND.company}’s test system, which can be reset or broken. Use small amounts only.`;
 
-export const TEST_APP_NOTE = `This app is a test version, so it works only with test money. ${BRAND.product} won’t approve anything on a real network here. Don’t keep real money in this account.`;
+// It claims no more than holds (review of PR 80): a test app's relayed NEAR approval could still run on the real
+// network if the account exists there with the same key (D729's accepted residual), and the advice covers that case.
+export const TEST_APP_NOTE = 'This app is a test version, so it works only with test money. Don’t keep real money in this account.';
 /**
  * The same note for a test app with the mainnet demo on (D428), where the first one would be false: what the demo
  * signs, that it always asks, and that the custody is still test custody.

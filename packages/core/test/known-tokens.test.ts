@@ -5,6 +5,9 @@
 import { Asset, StrKey } from '@stellar/stellar-base';
 import { describe, expect, it } from 'vitest';
 import { MAINNET_DEMO } from '../src/mainnet-demo.ts';
+import { codeShape, imitatedSymbolOn } from '../src/known-tokens.ts';
+
+const OTHER_EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 import { CIRCLE_STELLAR_ISSUERS, KNOWN_TOKENS, type KnownTokenList, STELLAR_MAINNET_PASSPHRASE, STELLAR_TESTNET_PASSPHRASE, checksumAddress, isNearAccountId, knownToken, parseHex0x } from '../src/index.ts';
 import { decodeApprovalRequest, evmTxSigningPayload, knownEvmToken, knownNearToken, knownStellarToken, parseEvmTxRequest, parseFunctionSignature, summarizeApproval, summaryString, type ApprovalSummary, encodeNearTransaction, utf8, sha256 } from './entries.ts';
 import { Operation } from '@stellar/stellar-base';
@@ -109,7 +112,7 @@ describe('what the window says for a listed token (D860)', () => {
   it('EVM: "5 USDC" and the real-token line naming the contract; the same address on another chain is unlisted', () => {
     const s = evm(transfer(5_000_000n));
     expect(text(s.headline)).toBe(`${APP} wants to send 5 USDC to ${TO}`);
-    expect(s.lines.map(text)).toEqual([`This is the real USDC (${USDC}), checked by Journear.`]);
+    expect(s.lines.map(text)).toEqual([`This is the real USDC token (${USDC}).`]);
     expect(text(evm(transfer(5_000_000n), 11155111).headline)).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${TO}`);
   });
 
@@ -139,7 +142,7 @@ describe('what the window says for a listed token (D860)', () => {
       );
     const out = ft('bob.testnet', '1000000500000000000000000');
     expect(text(out.headline)).toBe(`${APP} wants to send about 1.000001 wNEAR to bob.testnet`);
-    expect(out.lines.map(text)).toEqual(['This is the real wNEAR (wrap.testnet), checked by Journear.']);
+    expect(out.lines.map(text)).toEqual(['This is the real wNEAR token (wrap.testnet).']);
     expect(text(ft('bob.testnet', '1').headline)).toBe(`${APP} wants to send less than 0.000001 wNEAR to bob.testnet`);
     // On mainnet, wrap.testnet is unlisted (the wrong network).
     expect(text(ft(me, '1000000500000000000000000').headline)).toBe(`${APP} wants to send about 1 wNEAR to your account`);
@@ -151,7 +154,7 @@ describe('what the window says for a listed token (D860)', () => {
       summarizeApproval(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([Operation.payment({ destination: OTHER, asset: new Asset(asset.split(':')[0] as string, asset.split(':')[1] as string), amount: '5' })]) }), { address: USER });
     const real = pay(usdcTest);
     expect(text(real.headline)).toBe(`${APP} wants to send 5 USDC to ${OTHER}`);
-    expect(real.lines.map(text)).toEqual([`This is the real USDC (${usdcTest}), checked by Journear.`]);
+    expect(real.lines.map(text)).toEqual([`This is the real USDC token (${usdcTest}).`]);
     expect(real.warnings).toEqual([]);
     const copy = pay(`USDC:${OTHER}`);
     expect(text(copy.headline)).toBe(`${APP} wants to send 5 of the asset USDC:${OTHER} to ${OTHER}`);
@@ -160,5 +163,28 @@ describe('what the window says for a listed token (D860)', () => {
     const other = pay(`ABC:${OTHER}`);
     expect(other.warnings).toEqual([]);
     expect(other.lines).toEqual([]);
+  });
+
+  it('the possible-copy line: the listed code from another issuer, and codes that only look like it (case, trailing digits, 0/O-style characters)', () => {
+    const net = { kind: 'stellar', networkPassphrase: PASSPHRASE } as const;
+    for (const c of ['USDC', 'usdc', 'USDC2', 'U5DC', 'usdc10', 'EURC1', 'XLM']) expect(imitatedSymbolOn(net, c), c).not.toBeNull();
+    for (const c of ['USDCX', 'XUSDC', 'USD', 'ABC', '123', 'EUR']) expect(imitatedSymbolOn(net, c), c).toBeNull();
+    expect(codeShape('u5dc1')).toBe('USDC');
+    const pay = (code: string) =>
+      summarizeApproval(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([Operation.payment({ destination: OTHER, asset: new Asset(code, OTHER), amount: '5' })]) }), { address: USER });
+    expect(pay('U5DC').warnings.map((w) => text(w.text))).toEqual([`This is not the USDC Journear knows (U5DC:${OTHER}). It may be a copy.`]);
+    expect(pay('usdc').warnings.map((w) => w.code)).toEqual(['token_lookalike']);
+    expect(pay('USDCX').warnings).toEqual([]);
+  });
+
+  it('the real-token line speaks about the token only, never the request', () => {
+    const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+    const approve = `${parseFunctionSignature('approve(address,uint256)').selector}${'0'.repeat(24)}${'3'.repeat(40)}${'f'.repeat(64)}`;
+    const tx = { chainId: '0x14a34', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x1', maxPriorityFeePerGas: '0x1', to: USDC, value: '0x0', data: approve };
+    const s = summarizeApproval(decodeApprovalRequest({ kind: 'evm_tx', chain: 'evm', address: OTHER_EVM, context: { chainId: 84532 }, bytes: evmTxSigningPayload(parseEvmTxRequest(tx)) }), { address: OTHER_EVM });
+    // Under a red unlimited-permission warning, the line must not read as if the request was checked.
+    expect(s.warnings.map((w) => w.code)).toEqual(['unlimited_spend']);
+    expect(s.lines.map(text)).toEqual([`This is the real USDC token (${USDC}).`]);
+    for (const l of s.lines) expect(text(l)).not.toMatch(/checked/u);
   });
 });

@@ -1568,9 +1568,12 @@ handshake removes the frame and closes its port, as `destroy()` does.
   visible bound, amber otherwise. A user who approves without opening them relies on that line alone. A Soroban contract creation lists every call its authorizations hold and is red when it has any or runs a constructor; a NEAR function-call key states its fee allowance. A token gets a symbol and decimals only from Journear's reviewed list
   (`known-tokens.ts`, D860: issuer-published ids only, each with its source and date; the mainnet demo's tokens on it,
   tested), matched exactly per network (EVM addresses in any letter case), never from a contract's own claim; a
-  collectible on the list never gives an amount a symbol; a Stellar asset whose code is a listed symbol but whose
-  issuer isn't the listed one gets an amber "This is not the USDC Journear knows (…). It may be a copy." (EVM and NEAR
-  tokens carry no trusted name, so no such line there). Opening or closing the details is ordinary content: the Approve guard is neither
+  collectible on the list never gives an amount a symbol; the line beside a listed token, "This is the real USDC token
+  (…).", speaks about the token only, never the request; a Stellar asset whose code is a listed symbol, or has its
+  shape (case, trailing digits, 0/O-style characters), but whose issuer isn't the listed one gets an amber "This is
+  not the USDC Journear knows (…). It may be a copy." (EVM and NEAR tokens carry no trusted name, so no such line
+  there). The test-app note claims only "works only with test money. Don’t keep real money in this account.": a test
+  app's relayed NEAR approval stays the accepted residual of D729 (Known open issues), which that advice covers. Opening or closing the details is ordinary content: the Approve guard is neither
   armed nor reset by it (a unit test and an e2e test check), and a box inside closed details is measured again on
   toggle (`watchOverflowing`). A Stellar passphrase that isn't display-safe is shown as hex. Residual: a spend shape the summary doesn't recognise (a router call, Permit2's witness
   variants, Permit2's `approve` transaction) gets no spend warning; an EVM call it does name (`deposit`, `withdraw`) or a

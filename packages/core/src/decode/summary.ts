@@ -17,7 +17,7 @@
 // worth: a contract's own symbol() or decimals() is the contract's claim, never read.
 import { isDisplaySafeLine } from '../display-safe.ts';
 import { toHex } from '../bytes.ts';
-import { KNOWN_TOKENS, type KnownTokenList, type TokenNetwork, knownSymbolOn, knownToken } from '../known-tokens.ts';
+import { KNOWN_TOKENS, type KnownTokenList, type TokenNetwork, imitatedSymbolOn, knownToken } from '../known-tokens.ts';
 import { STELLAR_MAINNET_PASSPHRASE, evmChainInfo } from '../networks.ts';
 import type { NearAction } from '../near/codec.ts';
 import { isNearAccountId } from '../addresses.ts';
@@ -163,10 +163,10 @@ export type RiskLevel = 'danger' | 'warning';
  */
 export const RISK_END: Readonly<Record<RiskLevel, SummaryText>> = Object.freeze({ danger: ['If you’re not sure, reject it.'], warning: ['Approve only if you expected this from ', APP, '.'] });
 const because = (reason?: string | SummaryText): SummaryText => (reason === undefined ? [] : [' (', ...(typeof reason === 'string' ? [reason] : reason), ')']);
-const cannotCheck = (level: RiskLevel, code: SummaryWarningCode, reason: string | SummaryText | undefined, risk: string | null, short: SummaryText, what = 'Journear can’t check what this does'): SummaryWarning => ({
+const cannotCheck = (level: RiskLevel, code: SummaryWarningCode, reason: string | SummaryText | undefined, risk: string | null, short: SummaryText, what = 'Journear can’t check what this does', end: SummaryText = RISK_END[level]): SummaryWarning => ({
   level,
   code,
-  text: [what, ...because(reason), '.', ...(risk ? [` ${risk}`] : []), ' ', ...RISK_END[level]],
+  text: [what, ...because(reason), '.', ...(risk ? [` ${risk}`] : []), ' ', ...end],
   short,
 });
 
@@ -292,7 +292,9 @@ export const knownNearToken = (network: 'testnet' | 'mainnet', account: string):
  * The line beside an amount of a listed token, with the token's id (whole in its row): the symbol is
  * Journear's, from its reviewed list, never the token's own claim.
  */
-export const realTokenLine = (id: string, token: KnownToken): SummaryText => [`This is the real ${token.symbol} (`, code(id, 'token'), '), checked by Journear.'];
+// It speaks about the token only, never the request (a reviewer's point: under a red permission warning, "checked by
+// Journear" read as if the request was checked).
+export const realTokenLine = (id: string, token: KnownToken): SummaryText => [`This is the real ${token.symbol} token (`, code(id, 'token'), ').'];
 
 /**
  * A Stellar asset whose code is a listed token's on this network but whose issuer isn't the listed one. The code
@@ -410,7 +412,8 @@ function evmNative(chainId: number, wei: bigint): string {
 /** The network by its plain name ("Base Sepolia (test network)"); its number is in the details only. */
 function evmNetwork(chainId: number): SummaryText {
   const info = evmChainInfo(chainId);
-  return info ? [info.label] : ['a network Journear doesn’t know'];
+  // An unknown network keeps its number in view, so two of them never look the same.
+  return info ? [info.label] : [`a network Journear doesn’t know (no. ${chainId})`];
 }
 
 /** "your account" when `address` is the user's, else the address as code. */
@@ -808,7 +811,7 @@ function typedData(decoded: Extract<DecodedApproval, { kind: 'eip712' }>, me: st
   // Anything else: Journear can't explain it. Say so louder when it imitates a permit.
   if (domain.name === 'Permit2' && !isPermit2Domain) {
     warnings.push(
-      cannotCheck('danger', 'permit_lookalike', undefined, 'It says it’s Permit2, a well-known way to let others take your tokens, but it isn’t the real one. It may be a scam.', ['Pretends to be Permit2: it may be a scam']),
+      cannotCheck('danger', 'permit_lookalike', undefined, 'It says it’s Permit2, a well-known way to let others take your tokens, but it isn’t the real one. It may be a scam.', ['Pretends to be Permit2: it may be a scam'], undefined, ['Reject it unless you know exactly why ', APP, ' needs it.']),
     );
   } else if (mayGrantSpending(td.types, pt, str(domain.name))) {
     warnings.push(cannotCheck('warning', 'spend_permission', 'it may be a permission for someone else to take your tokens', null, ['May let someone take your tokens']));
@@ -868,8 +871,10 @@ function stellarAsset(asset: string): { readonly listed: KnownToken | null } {
   const listed = knownStellarToken(tokenNotes.passphrase, asset);
   if (listed) noteOnce(tokenNotes.lines, realTokenLine(asset, listed));
   else {
-    const symbol = asset.slice(0, asset.indexOf(':'));
-    if (knownSymbolOn({ kind: 'stellar', networkPassphrase: tokenNotes.passphrase }, symbol) && !tokenNotes.warnings.some((w) => w.code === 'token_lookalike' && JSON.stringify(w.text).includes(asset))) tokenNotes.warnings.push(lookalikeToken(symbol, asset));
+    // The exact listed code from another issuer, or one that only looks like it (letter case, trailing digits, 0/O-style
+    // characters: codeShape): never a listed asset itself, which is handled above.
+    const symbol = imitatedSymbolOn({ kind: 'stellar', networkPassphrase: tokenNotes.passphrase }, asset.slice(0, asset.indexOf(':')));
+    if (symbol && !tokenNotes.warnings.some((w) => w.code === 'token_lookalike' && JSON.stringify(w.text).includes(asset))) tokenNotes.warnings.push(lookalikeToken(symbol, asset));
   }
   return { listed };
 }

@@ -143,8 +143,26 @@ export function knownToken(net: TokenNetwork, id: string, list: KnownTokenList =
   return Object.hasOwn(table, id) ? (table[id] as KnownTokenEntry) : null;
 }
 
-/** Whether a token symbol is one of the list's on this network: a look-alike's code ("USDC" from another issuer). */
-export function knownSymbolOn(net: TokenNetwork, symbol: string, list: KnownTokenList = KNOWN_TOKENS): boolean {
+/** Characters people read as others in a code: each to the letter it imitates. */
+const CONFUSABLE: Readonly<Record<string, string>> = Object.freeze({ '0': 'O', '1': 'I', L: 'I', '5': 'S', '8': 'B', '2': 'Z' });
+
+/**
+ * A code's shape for comparing: upper case, trailing digits dropped, each confusable character (0, 1, l, 5, 8, 2) read
+ * as the letter it imitates. "usdc", "USDC2", "U5DC" and "USDC" have one shape; "USDCX" and "XUSDC" don't share it.
+ */
+export const codeShape = (code: string): string =>
+  Array.from(code.toUpperCase().replace(/[0-9]+$/u, ''), (ch) => CONFUSABLE[ch] ?? ch).join('');
+
+/**
+ * The listed token symbol a code on this network imitates, or null: an exact listed symbol, or one with the same
+ * shape (codeShape). Only for Stellar, whose asset code is part of the asset's identity in the request; the caller
+ * asks only for an asset that isn't itself listed, so a listed asset never gets here.
+ */
+export function imitatedSymbolOn(net: TokenNetwork, code: string, list: KnownTokenList = KNOWN_TOKENS): string | null {
   const table = net.kind === 'stellar' && Object.hasOwn(list.stellar, net.networkPassphrase) ? list.stellar[net.networkPassphrase] : undefined;
-  return table !== undefined && Object.values(table).some((t) => t.kind === 'token' && t.symbol === symbol);
+  if (!table) return null;
+  const shape = codeShape(code);
+  if (shape === '') return null;
+  for (const t of Object.values(table)) if (t.kind === 'token' && codeShape(t.symbol) === shape) return t.symbol;
+  return null;
 }

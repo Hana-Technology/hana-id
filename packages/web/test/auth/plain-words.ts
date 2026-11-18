@@ -3,7 +3,7 @@
 // bytes of a message), a message's own text and the values a request names in bold (an asset code, a recipient).
 import { afterAll, expect } from 'vitest';
 import { shortId } from '@hana-id/core/decode';
-import { JARGON } from '../../../core/test/plain-words.ts';
+import { JARGON, ZERO_COST, ZERO_COST_ALLOWED } from '../../../core/test/plain-words.ts';
 
 /** The window's own words above the fold. */
 export function plainAboveFold(el: Element): string {
@@ -20,6 +20,10 @@ export function jargonWatch(): (el: Element) => Element {
     const words = plainAboveFold(el);
     const m = JARGON.exec(words);
     if (m) hits.push(`“${m[0]}” in: ${words}`);
+    // The renderer's own fixed rows and notes too (review of PR 80): no claim that the request costs nothing, outside
+    // the allowlist (the demo check-in's sentences).
+    const z = ZERO_COST.exec(ZERO_COST_ALLOWED.reduce((t, a) => t.split(a).join(' '), words));
+    if (z) hits.push(`zero-cost claim “${z[0]}” in: ${words}`);
     hits.push(...idProblems(el));
     return el;
   };
@@ -44,7 +48,14 @@ export function idProblems(el: Element): string[] {
     if (s.closest('p.account')) continue;
     const short = s.textContent ?? '';
     if (!fulls.some((f) => shortId(f) === short)) out.push(`short form ${short} has no row with its whole value`);
-    if (s.getAttribute('aria-hidden') !== 'true' || !s.nextElementSibling?.matches('.sr-only')) out.push(`short form ${short} is read aloud`);
+    if (s.getAttribute('aria-hidden') !== 'true') out.push(`short form ${short} is read aloud`);
+    // The spoken pointer, when there is one, points the right way: to its row below, or above.
+    const hint = s.nextElementSibling?.matches('.sr-only') ? s.nextElementSibling.textContent : null;
+    const row = q('dl.id-rows dd').find((dd) => shortId(dd.textContent ?? '') === short);
+    if (hint && row) {
+      const below = (s.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+      if (hint !== (below ? ' (written out below)' : ' (written out above)')) out.push(`short form ${short} says “${hint}” but its row is ${below ? 'below' : 'above'}`);
+    }
   }
   const labels = q('dl.id-rows dt').map((dt) => dt.textContent ?? '');
   for (const n of q('.id-number')) if (!labels.some((l) => l.endsWith(`(${n.textContent})`))) out.push(`${n.textContent} has no row`);

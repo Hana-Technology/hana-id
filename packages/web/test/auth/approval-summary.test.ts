@@ -19,11 +19,12 @@ import { type DecodedApproval, decodeApprovalRequest, parseFunctionSignature } f
 import { Asset, Keypair, Operation, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
-import { TEST_APP_NOTE, startApprovePage } from '../../src/auth/approve-page.ts';
+import { MAINNET_DEMO_BANNER, MAINNET_DEMO_WHY, OUT_OF_POLICY_TEXT, TEST_APP_DEMO_NOTE, TEST_APP_NOTE, startApprovePage } from '../../src/auth/approve-page.ts';
+import { ZERO_COST } from '../../../core/test/plain-words.ts';
 import { dom } from '../../src/auth/dom.ts';
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
-import { ACCOUNT_CONTROL_BANNER, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NO_NETWORK_NOTE, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
+import { ACCOUNT_CONTROL_BANNER, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NEAR_DELEGATE_NONE, NEAR_DELEGATE_NOTES, NEAR_OWN_CONTRACT_TOTAL, NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, overflowNote, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
 import { PASSPHRASE, USER, addSignerOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { idProblems, jargonWatch, shownText } from './plain-words.ts';
 import { shortId } from '@hana-id/core/decode';
@@ -544,4 +545,23 @@ describe('D859: addresses and keys in sentences: short there, whole once in thei
     expect(shownText(implicit.querySelector('h2.summary-headline'))).toBe(`Partner App wants to send 1 NEAR to ${shortId(other)}`);
     expect(idRows(implicit)).toEqual([['To', other]]);
   });
+
+  it('screen readers: "(written out below)" at the first mention, "(written out above)" once the row is above, nothing in between', () => {
+    const el = render(evm({ to: TOKEN, value: '0x0', data: approveData(0n) }));
+    const hints = (sel: string) => [...el.querySelectorAll(`${sel} code.short-id`)].map((c) => (c.nextElementSibling?.matches('.sr-only') ? c.nextElementSibling.textContent : null));
+    expect(hints('h2.summary-headline')).toEqual([' (written out below)', ' (written out below)']);
+    // The amber line names both again, after their rows.
+    expect(hints('.warning-box .risk-lead')).toEqual([' (written out above)', ' (written out above)', ' (written out above)']);
+    expect(idProblems(el)).toEqual([]);
+  });
 });
+
+describe('the renderer’s own fixed texts claim no zero cost (review of PR 80)', () => {
+  it('every fixed note, row and banner passes the zero-cost scan', () => {
+    const fixed = [NEAR_DELEGATE_NONE, NEAR_OWN_CONTRACT_TOTAL, NEAR_DELEGATE_NOTES.relayer, NEAR_DELEGATE_NOTES.network('testnet'), NEAR_DELEGATE_NOTES.network('mainnet'), NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, ACCOUNT_CONTROL_BANNER, NEAR_ACCOUNT_CONTROL_BANNER, TEST_APP_NOTE, TEST_APP_DEMO_NOTE, MAINNET_DEMO_BANNER, MAINNET_DEMO_WHY, OUT_OF_POLICY_TEXT, overflowNote(10)];
+    for (const t of fixed) expect(ZERO_COST.test(t), t).toBe(false);
+    // The test-app note claims no more than holds: it doesn't promise nothing is approved on a real network.
+    expect(TEST_APP_NOTE).toBe('This app is a test version, so it works only with test money. Don’t keep real money in this account.');
+  });
+});
+

@@ -12155,7 +12155,8 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   - in the same family (reworded under D853): a malformed NEAR token call "Journear can’t check what this does (it
     uses {method} on {contract} in a non-standard way). …" (red); typed data that calls itself Permit2 for another
     contract "Journear can’t check what this does. It says it’s Permit2, a well-known way to let others take your
-    tokens, but it isn’t the real one. It may be a scam. If you’re not sure, reject it." (red); a possible permit
+    tokens, but it isn’t the real one. It may be a scam. Reject it unless you know exactly why {App} needs it." (red;
+    it keeps its own advice, after the review of PR 80); a possible permit
     "Journear can’t check what this does (it may be a permission for someone else to take your tokens). Approve only
     if you expected this from {App}." (amber); the internal fallback "Journear can’t check what this does (it couldn’t
     read this request). It could take your money or tokens. If you’re not sure, reject it." (red);
@@ -12841,7 +12842,8 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   changed a fact the old fact was kept: a Stellar signer's weight is "strength" (a number the user may need), the NEAR
   network check's details (block hash, key, nonce and expiry) moved to the folded details row, "with no practical
   limit" reads "with no real limit" (not "no limit": the type's maximum and a merely huge amount stay told apart).
-  "Stop auto-approving" keeps Passport Home's word. Checked by tests: every summary the unit tests build, and every
+  "Stop auto-approving" keeps Passport Home's word. An EVM network Journear doesn't know keeps its number in view, "a
+  network Journear doesn’t know (no. N)", so two of them never look the same (after the review of PR 80). Checked by tests: every summary the unit tests build, and every
   rendered window's words above the fold, carry none of the brief's jargon words (`packages/core/test/plain-words.ts`,
   `packages/web/test/auth/plain-words.ts`).
 - Address impact: none.
@@ -12926,6 +12928,13 @@ founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`pac
   user's own), so a copy run on mainnet calls an account that doesn't exist there and moves nothing (the residual is
   `docs/security.md` "Known open issues"). A live app's isn't bound, so its line stays, amber (a risk is never in a blue
   box, D853).
+- After the independent review of PR 80 (2026-11-18): D729's residual stays accepted (a test app's signed delegate
+  action could run on the real NEAR network about a year later if the user's implicit account exists there with the
+  same key and a lower nonce; the test-app rule makes such a run call an account that doesn't exist there). So the
+  test-app note no longer claims more than holds: it was "… Journear Passport won’t approve anything on a real network
+  here. …" and is now "This app is a test version, so it works only with test money. Don’t keep real money in this
+  account." That advice is what covers the user in the residual case: an account that holds no real money on the real
+  network has nothing a replayed approval could take there.
 - Adversarial check (concluded): the window makes no claim about what a relayed call does with the user's holdings;
   the amber acts-as-you line, which now leads its box instead of ending a blue one, says that it can use anything the
   user keeps with that contract, for every relayed call. A hostile page can't make the "None of your NEAR" row vanish
@@ -12957,8 +12966,9 @@ founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`pac
 - Two different values with the same short form in one request (compared without letter case, as EIP-55 spellings
   differ only there), or one with the user's own address's short form (the account line shows it), are never told
   apart by it: each is numbered in its sentence and row ("account 1", "account 2"; "key 1" for keys), both rows shown.
-- Screen readers: the short form is `aria-hidden` and followed by a spoken "(written out below)"; they read the whole
-  value in its row.
+- Screen readers: the short form is `aria-hidden` and followed by a spoken "(written out below)" at its first mention,
+  "(written out above)" once its row is on the page above, and nothing for a later mention before its row (after the
+  review of PR 80); they read the whole value in its row (`IdBook.hint`, the web tests check the pointer's direction).
 - The account line reads "Your account: 0x2c75…5c23 (Ethereum-style)" (Stellar, NEAR likewise), with the whole account
   as the details' first row ("Your account"), before the Support ID; no copy button (kept simple, as decided). Screen
   readers get the whole account on the line itself.
@@ -13002,13 +13012,18 @@ founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`pac
   than the mainnet entry, which the README states). Left out (no official source found): Stellar mainnet USDC/EURC
   contract ids as published ids (derived instead), EURC on Arbitrum, OP and Polygon, and every collectible.
 - What the window says: a listed token's amount "5 USDC" (its decimals, exact up to six places, otherwise rounded
-  against the user, D814), with the line "This is the real USDC (0x036C…CF7e), checked by Journear." (the id whole in
-  its row, D859); an unlisted one "5,000,000 units of an unlisted token" with "Journear doesn’t know this token (…),
+  against the user, D814), with the line "This is the real USDC token (0x036C…CF7e)." (the id whole in its row, D859;
+  first built as "…, checked by Journear.", reworded after the review of PR 80: under a red permission warning it read
+  as if the request was checked; "(checked by Journear)" now qualifies only who gets something); an unlisted one "5,000,000 units of an unlisted token" with "Journear doesn’t know this token (…),
   so it can’t tell what 5,000,000 units are worth. Check the amount in {App} first." (now also on NEAR and Soroban
   token calls, as "these units" when the request moves it more than once); a Stellar asset whose code is a listed
   symbol on that network but whose issuer isn't the listed one: shown as "5 of the asset USDC:G…" with an amber "This
   is not the USDC Journear knows (…). It may be a copy." The code is the asset's own identity in the signed request,
-  not a contract's claim; EVM and NEAR tokens carry no such trusted name, so they get no look-alike line (a token
+  not a contract's claim. It matches the exact listed code from another issuer, and (after the review of PR 80) a code
+  of the same shape: letter case ignored, trailing digits dropped, and 0, 1, l, 5, 8 and 2 read as O, I, I, S, B and Z
+  (`codeShape`, `imitatedSymbolOn`): "usdc", "USDC2" and "U5DC" are flagged, "USDCX" and "XUSDC" are not (tested); a
+  wider look-alike (other scripts, a prefix or suffix) is only "the asset CODE:ISSUER", with its whole id in its row.
+  EVM and NEAR tokens carry no such trusted name, so they get no look-alike line (a token
   calling itself USDC there is just unlisted). A collectible on the list never gives an amount a symbol (its numbers
   are item ids); none is seeded.
 - Adversarial check (concluded): the symbol is earned by the exact id on the exact network, never by a name: a

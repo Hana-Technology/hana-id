@@ -128,7 +128,7 @@ describe('EVM transactions', () => {
     expect(headline(evmSummary({ to: ME }))).toBe(`${APP} wants to send 1 ETH to your account`);
     const s = evmSummary({}, 987654321);
     expect(headline(s)).toBe(`${APP} wants to send 1 of this network’s coin to ${TO}`);
-    expect(text(s.network!)).toBe('a network Journear doesn’t know');
+    expect(text(s.network!)).toBe('a network Journear doesn’t know (no. 987654321)');
   });
 
   it('an ERC-20 transfer of a token Journear doesn’t know: "units of an unlisted token", what to do, never a guessed symbol', () => {
@@ -144,7 +144,7 @@ describe('EVM transactions', () => {
     const s = tokenCall(calldata('transfer(address,uint256)', TO, 5_000_000n), 8453, BASE_USDC);
     expect(headline(s)).toBe(`${APP} wants to send 5 USDC to ${TO}`);
     // The contract stays in view next to the symbol.
-    expect(s.lines.map(text)).toEqual([`This is the real USDC (${BASE_USDC}), checked by Journear.`]);
+    expect(s.lines.map(text)).toEqual([`This is the real USDC token (${BASE_USDC}).`]);
     expect(text(s.fee!)).toBe('up to 0.000042 ETH');
   });
 
@@ -354,6 +354,8 @@ describe('EIP-712 typed data', () => {
   it('typed data that calls itself Permit2 for another contract: red, and not explained', () => {
     const s = typed(permitSingle('1', TOKEN_EVM));
     expect(codes(s)).toEqual(['cannot_explain', 'permit_lookalike']);
+    // The fake-Permit2 line keeps its own advice after the scam warning (review of PR 80).
+    expect(text(s.warnings[1]!.text)).toBe(`Journear can’t check what this does. It says it’s Permit2, a well-known way to let others take your tokens, but it isn’t the real one. It may be a scam. Reject it unless you know exactly why ${APP} needs it.`);
     expect(s.explainable).toBe(false);
   });
 
@@ -503,7 +505,7 @@ describe('Stellar', () => {
     const bytes = authPreimageBytes(invocation(usdc, 'transfer', [addr(USER), addr(OTHER), i128(15_000_000n)]), STELLAR_MAINNET_PASSPHRASE);
     const s = summarizeApproval(decodeApprovalRequest({ kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: STELLAR_MAINNET_PASSPHRASE }, bytes }), { address: USER });
     expect(headline(s)).toBe(`${APP} wants to approve sending 1.5 USDC to ${OTHER}`);
-    expect(s.lines.map(text)).toEqual([`This is the real USDC (${usdc}), checked by Journear.`]);
+    expect(s.lines.map(text)).toEqual([`This is the real USDC token (${usdc}).`]);
     expect(text(s.network!)).toBe('Stellar (real money)');
     expect(s.fee).toBeNull();
     expect(s.explainable).toBe(true);

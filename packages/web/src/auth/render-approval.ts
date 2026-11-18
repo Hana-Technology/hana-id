@@ -1076,6 +1076,10 @@ const idKey = (v: string): string => (/^0x[0-9a-fA-F]{40}$/u.test(v) ? v.toLower
  */
 class IdBook {
   private readonly seen = new Set<string>();
+  /** Values whose row is already on the page above the sentence being built. */
+  private readonly placed = new Set<string>();
+  /** Values a sentence has already named. */
+  private readonly mentioned = new Set<string>();
   private readonly numbers = new Map<string, string>();
 
   constructor(texts: readonly SummaryText[], me: string) {
@@ -1103,6 +1107,23 @@ class IdBook {
       const noun = role.get(k) === 'key' ? 'key' : 'account';
       this.numbers.set(k, `${noun} ${++count[noun]}`);
     }
+  }
+
+  /**
+   * What screen readers hear after a short form: "(written out below)" at the first mention, "(written out above)" once
+   * its row is on the page above, nothing for a later mention before its row.
+   */
+  hint(full: string): string | null {
+    const k = idKey(full);
+    const first = !this.mentioned.has(k);
+    this.mentioned.add(k);
+    if (this.placed.has(k)) return ' (written out above)';
+    return first ? ' (written out below)' : null;
+  }
+
+  /** The rows of `refs` are now on the page: later sentences come after them. */
+  place(refs: readonly IdRef[]): void {
+    for (const r of refs) this.placed.add(idKey(r.full));
   }
 
   /** "account 1" when the value is numbered, else null (it is shown by its short form). */
@@ -1156,13 +1177,15 @@ function summaryNodes(d: Dom, t: SummaryText, appName: string, book?: IdBook, re
     refs?.push({ role: p.role, full: p.text });
     const n = book.number(p.text);
     if (n) return [d.h('span', { class: 'id-number' }, n)];
-    return [d.h('code', { class: 'mono short-id', attrs: { 'aria-hidden': 'true' } }, shortId(p.text)), d.h('span', { class: 'sr-only' }, ' (written out below)')];
+    const hint = book.hint(p.text);
+    return [d.h('code', { class: 'mono short-id', attrs: { 'aria-hidden': 'true' } }, shortId(p.text)), ...(hint ? [d.h('span', { class: 'sr-only' }, hint)] : [])];
   });
 }
 
 /** A sentence and, right under it, the rows of the long values it names first (D859). */
 function withRows(d: Dom, book: IdBook, el: HTMLElement, refs: readonly IdRef[]): HTMLElement[] {
   const r = book.rows(d, refs);
+  book.place(refs);
   return r ? [el, r] : [el];
 }
 
@@ -1197,10 +1220,12 @@ function riskBox(d: Dom, tone: 'danger' | 'warning', items: readonly RiskItem[],
   const leadRefs: IdRef[] = [];
   const leadEl = d.h('p', { class: `risk-lead ${lead.cls}` }, ...summaryNodes(d, lead.full, appName, book, leadRefs));
   const leadRows = book.rows(d, leadRefs);
+  book.place(leadRefs);
   const lis = bullets.map((b) => {
     const refs: IdRef[] = [];
     const li = d.h('li', { class: b.item.cls }, ...summaryNodes(d, b.item.short, appName, book, refs), b.count > 1 ? ` (${b.count} times)` : '');
     const r = book.rows(d, refs);
+    book.place(refs);
     if (r) li.append(r);
     return li;
   });
@@ -1338,6 +1363,8 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
   const headlineEl = d.h('h2', { class: 'summary-headline' }, ...summaryNodes(d, summary.headline, appName, book, headRefs));
   const headRows = book.rows(d, headRefs);
   const redBox = riskBox(d, 'danger', red, appName, book);
+  // The headline's rows are placed now, after the red box: only later sentences see them above.
+  book.place(headRefs);
   const network = summary.network ? summaryNodes(d, summary.network, appName) : k.network ? [k.network] : null;
   const headline = amountHeadline(decoded);
   const keyFacts = [network && row(d, 'Network', ...network), summary.fee && row(d, 'Network fee', ...summaryNodes(d, summary.fee, appName))];

@@ -787,7 +787,7 @@ risk in a plain line above them, red where what can't be read could move value o
 (raw signing, unknown contract calls, unexplained typed data, extra authorizations, left-out value steps), amber
 otherwise. A token's symbol and decimals come only from Journear's reviewed list (`packages/core/src/known-tokens.ts`,
 D860: Circle's USDC and EURC where Circle lists them, wrapped NEAR, the Stellar asset contracts), with the line "This
-is the real USDC (…), checked by Journear."; any other amount reads "N units of an unlisted token" with a line that
+is the real USDC token (…)."; any other amount reads "N units of an unlisted token" with a line that
 Journear can't tell what it is worth. Addresses and keys in sentences are short, each written out once in its own
 labelled row (D859); the relayed NEAR approval says "someone else pays" once, in the fee row (D858). Reject (secondary) and Approve (primary) side by side. Opening or closing the details doesn't
 touch the guard; the overflow note is measured again when they toggle.

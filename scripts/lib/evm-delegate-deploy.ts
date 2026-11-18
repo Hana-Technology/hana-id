@@ -262,6 +262,11 @@ export function delegatesEntry(chainId: number, delegate: Pick<DelegateArtifact,
   ].join('\n');
 }
 
+/** The demo check-in's line for DEMO_CHECK_IN (packages/core/src/demo-check-in.ts, D854), exactly as the follow-up PR adds it. */
+export function checkInEntry(chainId: number, checkIn: Pick<DelegateArtifact, 'address' | 'runtimeCodeHash'>, today: string): string {
+  return `  ${chainId}: Object.freeze({ address: '${checkIn.address}', runtimeCodeHash: '${checkIn.runtimeCodeHash}' }), // ${chainName(chainId)}, code hash checked on ${today}`;
+}
+
 /** The manifest block with the real addresses; `<…>` marks what the founder fills in. The numbers are D836's. */
 export function manifestTemplate(chainId: number, delegate: string, checkIn: string, rpc: { rpc: string; rpcFallback: string } | undefined): string {
   const r = rpc ?? { rpc: '<https RPC of a DNS name, no path, no API key>', rpcFallback: '<another provider, same rules>' };
@@ -287,6 +292,8 @@ function printFollowUp(m: Manifest, chainId: number, artifacts: readonly Delegat
   log('\nThe follow-up PR (base next). 1) Add this entry to SPONSOR_DELEGATES in packages/core/src/evm-sponsor/delegates.ts,');
   log('   and update the comment above the table ("Today: …") to say the chain has it:');
   log(delegatesEntry(chainId, delegate, today));
+  log('   and this line to DEMO_CHECK_IN in packages/core/src/demo-check-in.ts (the check-in reads plainly and is on the verified list there, D854):');
+  log(checkInEntry(chainId, checkIn, today));
   log(`2) Add the block to envs/${m.name}.json (the relayer's address from \`evm-relay-keys ${m.name}\`; the app id of the demo app):`);
   log(manifestTemplate(chainId, delegate.address, checkIn.address, TEMPLATE_RPCS[chainId]));
   log('3) Update the docs that say the chain has no pinned delegate yet: envs/README.md "evm.sponsor", docs/operations.md');

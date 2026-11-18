@@ -32,10 +32,11 @@ import {
   evmRelayerName,
   hasFeeHeadroom,
   maxStartingFees,
+  REJECTION_CAUSE,
   verifySend,
 } from '../src/evm-relayer.ts';
 import { evmRelayerStaffAdoptNonce, evmRelayerStaffCancel, evmRelayerStaffClose, evmRelayerStaffFill, evmRelayerStaffResume, evmRelayerStaffStatus } from '../src/evm-relayer-staff.ts';
-import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
+import { EVM_REJECTIONS, classifyRejection, forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { checksumEvmAddress, evmSponsorVar, parseEvmSponsorConfig, sponsorChain } from '../src/evm/sponsor-config.ts';
 import { uid } from './helpers.ts';
 import { EvmMock, FALLBACK_RPC, type Hex, PRIMARY_RPC, addressOf, decodeRawTx } from './evm-mock.ts';
@@ -763,16 +764,16 @@ describe('halt: foreign_transactions', () => {
   });
 });
 
-describe('halt: rejected_unsent', () => {
+describe('halt: relayer_cannot_send', () => {
   it('at send: answered (not coded: the record may still land), halted; rebroadcasts go on; once accepted, staffResume', async () => {
     const stub = await fresh();
     chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
     const sent = await stub.send(request());
     expect(sent.replay).toBe(false);
-    expect(await halted(stub)).toMatchObject({ reason: 'rejected_unsent', nonce: 0 });
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', nonce: 0, code: 'insufficient_funds' });
     expect(await codeOf(stub.send(request()))).toBe('relayer_halted');
     await runDurableObjectAlarm(stub);
-    expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ refused: 'rejected_unsent' });
+    expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ refused: 'relayer_cannot_send' });
     expect(sent.broadcast).toBe('rejected');
     chain.onSend = undefined;
     await runDurableObjectAlarm(stub);
@@ -789,10 +790,9 @@ describe('halt: rejected_unsent', () => {
     expect(await halted(stub)).toBeNull();
     chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
     await runDurableObjectAlarm(stub);
-    expect(await halted(stub)).toBeNull();
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', nonce: 0, code: 'insufficient_funds' });
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
-    expect(await halted(stub)).toMatchObject({ reason: 'rejected_unsent', nonce: 0 });
   });
 
   it('later, `nonce too low` for a record never accepted halts nothing by itself: receipts at confirmed depth decide', async () => {
@@ -802,7 +802,7 @@ describe('halt: rejected_unsent', () => {
     chain.onSend = () => ({ error: 'nonce too low' });
     await runDurableObjectAlarm(stub);
     expect(await halted(stub)).toBeNull();
-    expect((await stored(stub)).recs[0]).toMatchObject({ accepted: false, batchRejected: null, cancelRejected: null });
+    expect((await stored(stub)).recs[0]).toMatchObject({ accepted: false, batchRejected: null, cannotSend: null });
   });
 
   it('a cancel that never goes out: staffCancel bumps it (the nonce is never freed); once one is taken and mined, staffResume', async () => {
@@ -810,7 +810,7 @@ describe('halt: rejected_unsent', () => {
     chain.onSend = () => ({ error: 'insufficient funds' });
     const req = request();
     await stub.send(req);
-    expect(await halted(stub)).toMatchObject({ reason: 'rejected_unsent' });
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send' });
     chain.onSend = undefined;
     expect(await evmRelayerStaffCancel(stub, WHO, 0, 'funded, send the cancel again')).toMatchObject({ done: true });
     expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel', 'cancel']);
@@ -919,7 +919,7 @@ describe('staff tools: input and records', () => {
     expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ done: false, refused: 'not_halted' });
     const s = await evmRelayerStaffStatus(stub);
     expect(s).toMatchObject({ chainId: CHAIN, address: RELAYER, nextNonce: 1, halted: null, gapSeen: null });
-    expect(s.records[0]).toMatchObject({ nonce: 0, accepted: true, batchRejected: null, cancelRejected: null, seen: null });
+    expect(s.records[0]).toMatchObject({ nonce: 0, accepted: true, batchRejected: null, cannotSend: null, seen: null });
     expect(JSON.stringify(s, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v))).not.toMatch(/"raw"|"data"/u);
     expect(s.staffLog[0]).toMatchObject({ seq: 1, at: now, who: WHO, action: 'resume', note: 'n', done: false, refused: 'not_halted' });
   });
@@ -1062,26 +1062,27 @@ describe('review H1: no user can halt sponsorship', () => {
     expect(await stub.lookup(sent.digest)).toMatchObject({ state: 'mined', outcome: 'cancel' });
   });
 
-  it('(b) only when our own cancel is ALSO definitely refused does it halt (rejected_unsent: funds or key, our causes)', async () => {
+  it('(b) our own cancel refused (for a request-caused batch refusal) halts too: relayer_cannot_send with the cancel\'s code', async () => {
     const stub = await fresh();
-    chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
-    expect(await stub.send(request())).toMatchObject({ broadcast: 'rejected' });
-    expect(await halted(stub)).toMatchObject({ reason: 'rejected_unsent', nonce: 0 });
+    chain.onSend = (tx) => (tx.to === RELAYER.toLowerCase() ? { error: 'insufficient funds for gas * price + value' } : { error: 'intrinsic gas too low' });
+    expect(await stub.send(request())).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'request', code: 'gas_limit' } });
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', nonce: 0, code: 'insufficient_funds' });
   });
 
-  it('no request-shaped input causes a halt: every definite rejection of the batch, at send or later, ends in its cancel', async () => {
-    const messages = ['nonce too high', 'replacement transaction underpriced', 'transaction underpriced', 'max fee per gas less than block base fee', 'intrinsic gas too low', 'invalid sender', 'insufficient funds for gas * price + value', 'authority already reserved', 'something unknown'];
+  it('no request-shaped input causes a halt: a refusal caused by the batch itself (or an unclassified error) only cancels it, at send or later', async () => {
+    const messages = ['intrinsic gas too low', 'transaction too large', 'oversized data', 'authority already reserved', 'something unknown'];
     for (const [i, message] of messages.entries()) {
       const stub = await fresh();
       chain.onSend = rejectBatches(message);
-      await stub.send(reqFor(`shaper ${i}`, { authorization: i % 2 ? authorization({}, userKeyFor(`shaper ${i}`).key) : undefined }));
+      const sent = await stub.send(reqFor(`shaper ${i}`, { authorization: i % 2 ? authorization({}, userKeyFor(`shaper ${i}`).key) : undefined }));
+      if (i < 3) expect(sent).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'request' } });
       chain.onSend = (tx) => (i % 2 && tx.to !== RELAYER.toLowerCase() ? 'network' : rejectBatches(message)(tx));
       advance(EVM_RELAYER_BUMP_AFTER_MS);
       await runDurableObjectAlarm(stub);
       expect([message, await halted(stub)]).toEqual([message, null]);
       chain.onSend = undefined;
     }
-    // Later: a first broadcast with no answer, then a definite refusal of the batch: the next version is its cancel.
+    // Later: a first broadcast with no answer, then a refusal caused by the batch: the next version is its cancel.
     const stub = await fresh();
     chain.onSend = () => 'network';
     await stub.send(request());
@@ -1090,6 +1091,66 @@ describe('review H1: no user can halt sponsorship', () => {
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
     expect(await halted(stub)).toBeNull();
+  });
+
+  it('a refusal only our side can cause (funds, our nonce, fees, our signature) cancels the batch AND halts: relayer_cannot_send with its code', async () => {
+    const ours: [string, string][] = [
+      ['insufficient funds for gas * price + value', 'insufficient_funds'],
+      ['nonce too low', 'nonce_too_low'],
+      ['nonce too high', 'nonce_too_high'],
+      ['replacement transaction underpriced', 'replacement_underpriced'],
+      ['transaction underpriced', 'underpriced'],
+      ['max fee per gas less than block base fee', 'fee_below_base_fee'],
+      ['invalid sender', 'invalid_transaction'],
+    ];
+    for (const [i, [message, code]] of ours.entries()) {
+      chain = new EvmMock({ chainId: CHAIN }).install();
+      const stub = await fresh();
+      chain.onSend = rejectBatches(message);
+      const sent = await stub.send(reqFor(`ours ${i}`));
+      expect([code, sent.broadcast, sent.rejection]).toEqual([code, 'rejected', { cause: 'relayer', code }]);
+      expect([code, await halted(stub)]).toEqual([code, { reason: 'relayer_cannot_send', since: now, nonce: 0, code }]);
+      expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+      chain.onSend = undefined;
+    }
+  });
+
+  it('every classified refusal code has an explicit cause (adding a code forces a decision)', () => {
+    const samples: Record<string, string> = {
+      nonce_too_low: 'nonce too low',
+      nonce_too_high: 'nonce too high',
+      replacement_underpriced: 'replacement transaction underpriced',
+      underpriced: 'transaction underpriced',
+      insufficient_funds: 'insufficient funds for gas * price + value',
+      fee_below_base_fee: 'max fee per gas less than block base fee',
+      gas_limit: 'intrinsic gas too low',
+      oversized: 'transaction too large',
+      invalid_transaction: 'invalid sender',
+    };
+    expect([...EVM_REJECTIONS].sort()).toEqual(Object.keys(samples).sort());
+    for (const code of EVM_REJECTIONS) expect(classifyRejection(samples[code]!)).toBe(code);
+    expect(REJECTION_CAUSE).toEqual({ gas_limit: 'request', oversized: 'request', nonce_too_low: 'relayer', nonce_too_high: 'relayer', replacement_underpriced: 'relayer', underpriced: 'relayer', insufficient_funds: 'relayer', fee_below_base_fee: 'relayer', invalid_transaction: 'relayer' });
+  });
+
+  it('probe N1: the relayer short of funds for batches but not for cancels halts at the first send, the user is not blamed', async () => {
+    const stub = await fresh();
+    chain.onSend = (tx) => (tx.gas > 21_000n ? { error: 'insufficient funds for gas * price + value' } : undefined);
+    expect(await stub.send(reqFor('first'))).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'relayer', code: 'insufficient_funds' } });
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds' });
+    expect(await codeOf(stub.send(reqFor('second')))).toBe('relayer_halted');
+  });
+
+  it('probe: refused at send (ours), then the original lands anyway: outcome execute with its own hash', async () => {
+    const stub = await fresh();
+    chain.onSend = () => ({ error: 'transaction underpriced' });
+    const a = await stub.send(request());
+    chain.onSend = undefined;
+    chain.drop(RELAYER, 0);
+    chain.admit(decodeRawTx(a.raw!));
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined', outcome: 'execute', minedHash: a.transactionHash });
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'underpriced' });
   });
 
   it('probe L3: accounts whose type-4 batches no pool takes fill the unmined cap only until their deadline; nothing halts', async () => {
@@ -1157,6 +1218,22 @@ describe('review M2/M3: a nonce is never freed', () => {
     expect(await evmRelayerStaffCancel(stub, WHO, 1, 'n')).toMatchObject({ refused: 'no_valid_replacement' });
   });
 
+  it('staffCancel on a staff filler: a bumped self-transfer at the same nonce, earlier versions kept', async () => {
+    chain.admit(foreign(0));
+    const stub = await fresh();
+    await stub.send(request());
+    chain.drop(RELAYER, 0);
+    expect(await evmRelayerStaffFill(stub, WHO, 0, 'fill')).toMatchObject({ done: true });
+    const before = (await stored(stub)).recs.find((r) => r.nonce === 0)!;
+    expect(await evmRelayerStaffCancel(stub, WHO, 0, 'bump the filler')).toMatchObject({ done: true });
+    const after = (await stored(stub)).recs.find((r) => r.nonce === 0)!;
+    expect(after.digest).toBeNull();
+    expect(after.versions.map((v) => v.kind)).toEqual(['cancel', 'cancel']);
+    expect(after.versions[0]!.hash).toBe(before.versions[0]!.hash);
+    expect(BigInt(after.versions[1]!.maxFeePerGas)).toBeGreaterThan(BigInt(before.versions[0]!.maxFeePerGas));
+    expect(chain.pooled(RELAYER, 0)?.hash).toBe(after.versions[1]!.hash);
+  });
+
   it('probe L6: staffAdoptNonce never lowers nextNonce', async () => {
     const stub = await fresh();
     await stub.send(request());
@@ -1207,6 +1284,22 @@ describe('review L1, L3 and storage', () => {
     chain.mine(RELAYER);
     await runDurableObjectAlarm(stub);
     expect(await halted(stub)).toMatchObject({ reason: 'foreign_transactions', nonce: 1 });
+  });
+
+  it('with no records, a nonce_gap seen on two hourly runs in a row halts', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).recs).toEqual([]);
+    intercept((m, p) => (m === 'eth_getTransactionCount' && p[1] === 'pending' ? '0x0' : undefined));
+    advance(EVM_RELAYER_IDLE_CHECK_MS);
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toBeNull();
+    expect((await stored(stub)).meta!.gapSeen).toBe(0);
+    advance(EVM_RELAYER_IDLE_CHECK_MS);
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'nonce_gap', nonce: 0 });
   });
 
   it('a final batch keeps only hashes, no raw transaction; its replay answers raw null', async () => {

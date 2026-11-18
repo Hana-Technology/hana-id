@@ -906,7 +906,8 @@ transaction's intrinsic gas plus `minGas`, the authorization; one unmined batch 
 the next nonce (a fresh object reads the pending count once), signs a type-2 transaction to the account (type 4 with
 the authorization) with core's `signSponsorTx`, stores it, waits for storage to confirm, and only then broadcasts it.
 A batch no endpoint takes is replaced at once by its 0-value self-transfer at the same nonce and answered with
-`broadcast: 'rejected'`, so no user's input can stop the relayer. It never waits for a receipt; `lookup(digest)` and
+`broadcast: 'rejected'` and the refusal's cause: one the batch's own size or shape explains only cancels (so no
+user's input can stop the relayer); any other is ours and also halts it (`relayer_cannot_send`). It never waits for a receipt; `lookup(digest)` and
 `status()` read storage only.
 
 Its design is fail-stop: it believes ONE read endpoint (the secret `EVM_SPONSOR_RPC_<chainId>`, else `rpc`;
@@ -916,7 +917,7 @@ confirmed count past its nonce), broadcasts
 again what dropped out (also after a reorg), bumps a transaction pending 60 s, and replaces one past its batch's
 deadline with a 0-value self-transfer; with no records it still checks the chain hourly. A nonce is never given up.
 On anything odd that only our side can cause (a nonce used by something else, a gap, foreign transactions from the
-key, our own cancel refused, a record stuck 30 minutes past its deadline, a key mismatch, inconsistent storage) it
+key, a refusal only we can cause, a record stuck 30 minutes past its deadline, a key mismatch, inconsistent storage) it
 halts: new sends get `relayer_halted`, the safe work above goes on, `status().halted` says
 why, and only `staffResume` (after a fresh check) clears it. The staff tools (`apps/api/src/evm-relayer-staff.ts`:
 `staffStatus`, `staffResume`, `staffClose`, `staffCancel`, `staffFill`, `staffAdoptNonce`) are for the admin package to expose;

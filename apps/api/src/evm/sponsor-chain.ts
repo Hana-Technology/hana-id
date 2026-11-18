@@ -63,7 +63,9 @@ export class EvmRpcError extends Error {
 }
 
 /** A definite pool rejection of a raw transaction (the node did not take it). */
-export type EvmRejection = 'nonce_too_low' | 'nonce_too_high' | 'replacement_underpriced' | 'underpriced' | 'insufficient_funds' | 'fee_below_base_fee' | 'gas_limit' | 'invalid_transaction';
+export type EvmRejection = 'nonce_too_low' | 'nonce_too_high' | 'replacement_underpriced' | 'underpriced' | 'insufficient_funds' | 'fee_below_base_fee' | 'gas_limit' | 'oversized' | 'invalid_transaction';
+/** Every classified rejection (the relayer gives each its cause: evm-relayer.ts REJECTION_CAUSE). */
+export const EVM_REJECTIONS: readonly EvmRejection[] = Object.freeze(['nonce_too_low', 'nonce_too_high', 'replacement_underpriced', 'underpriced', 'insufficient_funds', 'fee_below_base_fee', 'gas_limit', 'oversized', 'invalid_transaction']);
 
 export type EvmBroadcast = { kind: 'accepted'; hash: Hex } | { kind: 'rejected'; reason: EvmRejection } | { kind: 'unknown' } | { kind: 'unsent' };
 
@@ -166,7 +168,8 @@ export function classifyRejection(message: string): EvmRejection | 'already_know
   if (/less than block base fee|fee cap less than block base fee|feecaptoolow|feecaptoolowtocompete/u.test(m)) return 'fee_below_base_fee';
   if (/transaction underpriced|feetoolow|underpriced/u.test(m)) return 'underpriced';
   if (/intrinsic gas too low|exceeds block gas limit|gas limit reached|gas too low|gaslimit/u.test(m)) return 'gas_limit';
-  if (/invalid sender|invalid chain id|chain id mismatch|rlp|oversized data|tx type not supported|transaction type not supported|invalid transaction|invalid signature|tip higher than fee cap|max priority fee per gas higher/u.test(m)) return 'invalid_transaction';
+  if (/oversized data|transaction too large|tx too large|exceeds the maximum.*size|tx size/u.test(m)) return 'oversized';
+  if (/invalid sender|invalid chain id|chain id mismatch|rlp|tx type not supported|transaction type not supported|invalid transaction|invalid signature|tip higher than fee cap|max priority fee per gas higher/u.test(m)) return 'invalid_transaction';
   return null;
 }
 

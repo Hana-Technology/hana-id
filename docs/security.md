@@ -2081,9 +2081,11 @@ stands between a request and the key:
   account with value 0. Its own signatures are only that, a same-nonce fee bump, a same-nonce 0-value self-transfer
   (the cancel), or a staff filler (a 0-value self-transfer).
 - **No user can stop it.** A batch every endpoint refuses is replaced at once by its cancel (which takes no user
-  input) and answered `broadcast: 'rejected'`; a batch refused later is cancelled on the next run. A halt needs a cause
-  only our side can produce: another sender with the relayer key, our own cancel refused (no funds), a stuck cancel
-  (fees, funds), a key change or a bug. One unmined batch per account (`relayer_busy:account`); the handlers add the
+  input) and answered `broadcast: 'rejected'` with the refusal's cause; a batch refused later is cancelled on the next
+  run. Only a refusal the batch's own size or shape explains (`gas_limit`, `oversized`) stops there; every other
+  classified refusal is ours (funds, nonce, fees, signing) and also halts it (`relayer_cannot_send`), so our faults
+  aren't billed to users or left unnoticed. A halt needs a cause only our side can produce: another sender with the
+  relayer key, a refusal of ours, a stuck cancel (fees, funds), a key change or a bug. One unmined batch per account (`relayer_busy:account`); the handlers add the
   per-app caps.
 - **One transaction per batch, no nonce used twice.** Idempotent by digest, checked first in a critical section that
   runs one operation at a time; each transaction is stored with the next nonce in one transaction and confirmed

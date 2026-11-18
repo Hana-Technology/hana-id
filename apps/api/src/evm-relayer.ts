@@ -17,8 +17,11 @@
 // Each run, for each record unmined at head (nonce ≥ latest count), ONE of (a new version is signed, persisted, synced,
 // then broadcast; ≤ 8 versions, every hash and raw kept until final), else a rebroadcast of the latest raw:
 //   cancel    a 0-value self-transfer at the same nonce, fees bumped, when the batch's deadline passed, or when the
-//             batch was definitely refused and never accepted (at send this happens at once: the caller is told
-//             `broadcast: 'rejected'`), or by staffCancel. A cancel has no input from the user.
+//             batch was definitely refused and never accepted (at send at once: the caller gets `broadcast: 'rejected'`
+//             and `rejection: { cause, code }`), or by staffCancel. A cancel has no input from the user.
+// A definite refusal's CAUSE (REJECTION_CAUSE): `request` (A: the batch's own size or shape: intrinsic gas, too
+// large) only cancels; `relayer` (B: funds, our nonce too low or high, replacement or fee too low, our signature or
+// encoding; any classified code not attributable to the batch) cancels AND halts. Unclassified errors are `unknown`.
 //   bump      the latest version was signed ≥ 60 s ago: both fees × 1.125 within the caps (7 batch versions, the 8th
 //             for the cancel). Sends must start with room for two bumps (`maxStartingFees`).
 //   (filler)  staffFill: a 0-value self-transfer at a gap nonce, a record with no batch.
@@ -32,8 +35,8 @@
 //   nonce_gap                 the pending count is below the lowest record unmined at head (or `nextNonce`), on two
 //                             runs in a row (needs a nonce with no record: from our key, not ours).
 //   foreign_transactions      the latest or pending count is above `nextNonce` (another sender with our key).
-//   rejected_unsent           our own cancel (or filler) definitely refused while no version was ever accepted (no
-//                             funds, our nonce stale: our causes; at send too; `nonce too low` later: receipts decide).
+//   relayer_cannot_send       a class-B refusal of a version, or any of our own cancel or filler, none accepted
+//                             (`code`; at send too; `nonce too low` later: receipts decide). Persists until accepted.
 //   stuck_past_deadline       unmined at head 30 minutes after the deadline although its cancel goes out (fees, funds).
 //   key_mismatch              records exist and the key's address isn't `relayerAddress` or the records' signer (also
 //                             at send). A missing key halts nothing: it only stops signing (the off switch).
@@ -61,7 +64,7 @@ import { keccak_256 } from '@noble/hashes/sha3';
 import { sha256 } from '@noble/hashes/sha256';
 import type { Env } from './env.ts';
 import { log } from './log.ts';
-import { type EvmBroadcast, type EvmReceipt, EvmRpcError, type Hex, type SponsorChain, receiptCostWei, sponsorChainFor } from './evm/sponsor-chain.ts';
+import { type EvmBroadcast, type EvmReceipt, type EvmRejection, EvmRpcError, type Hex, type SponsorChain, receiptCostWei, sponsorChainFor } from './evm/sponsor-chain.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, checksumEvmAddress, parseEvmSponsorConfig, sponsorChain } from './evm/sponsor-config.ts';
 
 export type { Hex };
@@ -98,8 +101,24 @@ const PRUNE_PER_RUN = 256;
 const DAY_MS = 24 * 60 * 60_000;
 const SCHEMA = 1;
 
-export type EvmRelayerHaltReason = 'nonce_consumed_elsewhere' | 'nonce_gap' | 'foreign_transactions' | 'rejected_unsent' | 'stuck_past_deadline' | 'key_mismatch' | 'storage_inconsistent';
-export type EvmRelayerHalt = { reason: EvmRelayerHaltReason; since: number; nonce?: number };
+export type EvmRelayerHaltReason = 'nonce_consumed_elsewhere' | 'nonce_gap' | 'foreign_transactions' | 'relayer_cannot_send' | 'stuck_past_deadline' | 'key_mismatch' | 'storage_inconsistent';
+/** `code`: for `relayer_cannot_send`, the pool's refusal (an EvmRejection, e.g. `insufficient_funds`). */
+export type EvmRelayerHalt = { reason: EvmRelayerHaltReason; since: number; nonce?: number; code?: string };
+/** Who a definite refusal is down to: the batch itself (its size or shape: the user's input) or the relayer (funds, nonce, fees, signing). */
+export type EvmRejectionCause = 'request' | 'relayer';
+/** Each classified refusal's cause. A refusal the relayer can't attribute to the batch is the relayer's (fail-stop). */
+export const REJECTION_CAUSE: Readonly<Record<EvmRejection, EvmRejectionCause>> = Object.freeze({
+  gas_limit: 'request',
+  oversized: 'request',
+  nonce_too_low: 'relayer',
+  nonce_too_high: 'relayer',
+  replacement_underpriced: 'relayer',
+  underpriced: 'relayer',
+  insufficient_funds: 'relayer',
+  fee_below_base_fee: 'relayer',
+  invalid_transaction: 'relayer',
+});
+const causeOf = (code: string): EvmRejectionCause => (Object.hasOwn(REJECTION_CAUSE, code) ? REJECTION_CAUSE[code as EvmRejection] : 'relayer');
 export type EvmRelayerOutcome = 'execute' | 'cancel' | 'consumed_elsewhere';
 /** What the batch's broadcast came to: taken by an endpoint, definitely refused (its cancel then took the nonce), or not known. */
 export type EvmRelayerBroadcast = 'accepted' | 'rejected' | 'unknown';
@@ -116,8 +135,12 @@ export interface EvmRelayerSendRequest {
   /** The handler's worst-case reservation (at least gas × maxFeePerGas). */
   reservedWei: bigint;
 }
-/** `transactionHash`/`raw`: the version seen mined, else the latest (`raw` null once the batch is final). */
-export interface EvmRelayerSent { digest: Hex; transactionHash: Hex; relayerNonce: number; raw: Hex | null; replay: boolean; broadcast: EvmRelayerBroadcast }
+/**
+ * `transactionHash`/`raw`: the version seen mined, else the latest (`raw` null once the batch is final). `rejection`
+ * (with `broadcast: 'rejected'`): why no endpoint took the batch, and whose doing it was (don't charge the user a
+ * failure for `cause: 'relayer'`); null otherwise.
+ */
+export interface EvmRelayerSent { digest: Hex; transactionHash: Hex; relayerNonce: number; raw: Hex | null; replay: boolean; broadcast: EvmRelayerBroadcast; rejection: null | { cause: EvmRejectionCause; code: string } }
 /** `minedHash`, `outcome` and `costWei` only once mined at confirmed depth; `closed` only by staff. */
 export interface EvmRelayerLookup {
   digest: Hex;
@@ -362,8 +385,8 @@ interface Rec {
   accepted: boolean;
   /** A definite refusal of a batch version while none was accepted (its cancel follows), or null. */
   batchRejected: string | null;
-  /** A definite refusal of our own cancel or filler while none was accepted (rejected_unsent), or null. */
-  cancelRejected: string | null;
+  /** A refusal only our side causes (relayer-caused, or of our own cancel or filler) while none was accepted, or null. */
+  cannotSend: string | null;
   /** A receipt of one of its versions, not yet final. */
   seen: { hash: Hex; block: number } | null;
 }
@@ -377,7 +400,7 @@ interface Dig {
   minedHash?: Hex | null;
   outcome?: EvmRelayerOutcome;
   costWei?: string | null;
-  batchRejected?: boolean;
+  batchRejected?: string;
   resolvedAt?: number;
 }
 const pad = (n: number): string => String(n).padStart(16, '0');
@@ -389,7 +412,8 @@ const latestOf = (r: Rec): Version => r.versions[r.versions.length - 1]!;
 const feesOf = (v: Version): Fees => ({ maxFeePerGas: BigInt(v.maxFeePerGas), maxPriorityFeePerGas: BigInt(v.maxPriorityFeePerGas) });
 const selfTransfer = (address: Hex): Payload => ({ to: address.toLowerCase() as Hex, data: '0x', gas: CANCEL_GAS, authorization: null });
 const version = (raw: Hex, kind: Version['kind'], f: Fees): Version => ({ hash: sponsorTxHash(raw), raw, kind, maxFeePerGas: f.maxFeePerGas.toString(), maxPriorityFeePerGas: f.maxPriorityFeePerGas.toString() });
-const broadcastOf = (r: Rec): EvmRelayerBroadcast => (r.batchRejected !== null ? 'rejected' : r.accepted ? 'accepted' : 'unknown');
+const broadcastOf = (r: Pick<Rec, 'batchRejected' | 'accepted'>): EvmRelayerBroadcast => (r.batchRejected !== null ? 'rejected' : r.accepted ? 'accepted' : 'unknown');
+const rejectionOf = (code: string | null | undefined): EvmRelayerSent['rejection'] => (code ? { cause: causeOf(code), code } : null);
 
 interface Ctx {
   chain: Readonly<EvmSponsorChainConfig>;
@@ -400,7 +424,7 @@ interface Ctx {
   keyWrong: boolean;
 }
 type Counts = { head: number; confirmedBlock: number; latest: number; confirmed: number; pending: number };
-type Condition = { reason: EvmRelayerHaltReason; nonce?: number };
+type Condition = { reason: EvmRelayerHaltReason; nonce?: number; code?: string };
 /** `incomplete`: a record past the confirmed count could not be fully checked this run (budget or a failed read). */
 type RunResult = { conditions: Condition[]; changed: boolean; incomplete: boolean; gap: number | null };
 /** What a section did that costs CPU: logged as `evmOps` (cold-isolate CPU on the free plan is measured at deploy). */
@@ -538,7 +562,7 @@ export class EvmRelayer extends DurableObject<Env> {
       const t = selfTransfer(meta.address);
       const fees = maxStartingFees(c.chain);
       const worst = CANCEL_GAS * c.chain.maxFeePerGasWei;
-      const r: Rec = { nonce, digest: null, account: null, deadline: Math.floor(now / 1000), reservedWei: '0', day: Math.floor(now / DAY_MS), worstWei: worst.toString(), ...t, gas: t.gas.toString(), sentAt: now, signedAt: now, versions: [version(this.#sign(c, nonce, t, fees), 'cancel', fees)], accepted: false, batchRejected: null, cancelRejected: null, seen: null };
+      const r: Rec = { nonce, digest: null, account: null, deadline: Math.floor(now / 1000), reservedWei: '0', day: Math.floor(now / DAY_MS), worstWei: worst.toString(), ...t, gas: t.gas.toString(), sentAt: now, signedAt: now, versions: [version(this.#sign(c, nonce, t, fees), 'cancel', fees)], accepted: false, batchRejected: null, cannotSend: null, seen: null };
       await this.#persist(r, worst);
       this.#afterBroadcast(r, await rpc.broadcast(r.versions[0]!.raw), false);
       return null;
@@ -602,34 +626,39 @@ export class EvmRelayer extends DurableObject<Env> {
     const nonce = meta.nextNonce!;
     const raw = this.#sign(c, nonce, v, v.fees);
     if (raw.length > 2 + 2 * MAX_RAW_BYTES) refuse('invalid_request');
-    let r: Rec = { nonce, digest, account: v.to, deadline: v.deadline, reservedWei: v.reservedWei.toString(), day, worstWei: worst.toString(), to: v.to, data: v.data, gas: v.gas.toString(), authorization: v.authorization, sentAt: now, signedAt: now, versions: [version(raw, 'execute', v.fees)], accepted: false, batchRejected: null, cancelRejected: null, seen: null };
+    let r: Rec = { nonce, digest, account: v.to, deadline: v.deadline, reservedWei: v.reservedWei.toString(), day, worstWei: worst.toString(), to: v.to, data: v.data, gas: v.gas.toString(), authorization: v.authorization, sentAt: now, signedAt: now, versions: [version(raw, 'execute', v.fees)], accepted: false, batchRejected: null, cannotSend: null, seen: null };
     await this.#persist(r, worst);
     const hash = r.versions[0]!.hash;
     const sent = await rpc.broadcast(raw);
     r = this.#afterBroadcast(r, sent, true);
     if (r.batchRejected !== null) {
-      // No node took the batch, and its refusal may be the user's doing: its nonce goes to our own cancel, at once.
+      // No node took the batch: its nonce goes to our own cancel, at once. A refusal the relayer caused also halts it
+      // (whatever the cancel does), as does our cancel refused; one the batch caused (its size or shape) does not.
+      let code = r.cannotSend;
       const next = this.#nextVersion(c, r, now, true);
       if (next) {
         await this.#store(next);
-        if (this.#afterBroadcast(next, await rpc.broadcast(latestOf(next).raw), true).cancelRejected !== null) this.#halt({ reason: 'rejected_unsent', nonce }, Date.now());
+        const cancelSent = await rpc.broadcast(latestOf(next).raw);
+        this.#afterBroadcast(next, cancelSent, true);
+        if (cancelSent.kind === 'rejected') code ??= cancelSent.reason;
       }
+      if (code) this.#halt({ reason: 'relayer_cannot_send', nonce, code }, Date.now());
     }
     this.#ops.fetches = rpc.requestsUsed;
     log({ event: 'evm_relay_sent', chainId: c.chain.chainId, nonce: String(nonce), evmTx: hash, code: sent.kind === 'rejected' ? sent.reason : sent.kind, evmOps: this.#ops }, sent.kind === 'accepted' ? 'info' : 'warn');
     // Answered whatever the broadcast said: the record exists and every run broadcasts it (or its cancel) again.
-    return { digest, transactionHash: hash, relayerNonce: nonce, raw, replay: false, broadcast: broadcastOf(r) };
+    return { digest, transactionHash: hash, relayerNonce: nonce, raw, replay: false, broadcast: broadcastOf(r), rejection: rejectionOf(r.batchRejected) };
   }
 
   #replay(digest: Hex, dig: Dig): EvmRelayerSent {
-    if (dig.state !== 'pending') return { digest, transactionHash: dig.hash!, relayerNonce: dig.nonce, raw: null, replay: true, broadcast: dig.batchRejected ? 'rejected' : dig.outcome === 'consumed_elsewhere' ? 'unknown' : 'accepted' };
+    if (dig.state !== 'pending') return { digest, transactionHash: dig.hash!, relayerNonce: dig.nonce, raw: null, replay: true, broadcast: dig.batchRejected ? 'rejected' : dig.outcome === 'consumed_elsewhere' ? 'unknown' : 'accepted', rejection: rejectionOf(dig.batchRejected) };
     const r = this.#rec(dig.nonce);
     if (!r || r.digest !== digest) {
       this.#halt({ reason: 'storage_inconsistent', nonce: dig.nonce }, Date.now());
       return refuse('internal');
     }
     const v = r.versions.find((x) => x.hash === r.seen?.hash) ?? latestOf(r);
-    return { digest, transactionHash: v.hash, relayerNonce: r.nonce, raw: v.raw, replay: true, broadcast: broadcastOf(r) };
+    return { digest, transactionHash: v.hash, relayerNonce: r.nonce, raw: v.raw, replay: true, broadcast: broadcastOf(r), rejection: rejectionOf(r.batchRejected) };
   }
 
   #sign(c: Ctx, nonce: number, t: Payload, fees: Fees): Hex {
@@ -669,13 +698,17 @@ export class EvmRelayer extends DurableObject<Env> {
 
   /**
    * Notes a broadcast's answer on the stored record and returns it: accepted, or (none ever accepted) a definite
-   * refusal of the batch version or of our own cancel. `nonce too low` counts only at send (later, receipts decide).
+   * refusal: of a batch version (`batchRejected`; also `cannotSend` when the relayer caused it), or of our own cancel or
+   * filler (`cannotSend`). `nonce too low` counts only at send (later, receipts decide).
    */
   #afterBroadcast(r: Rec, sent: EvmBroadcast, atSend: boolean): Rec {
     const cur = this.#rec(r.nonce) ?? r;
     let next = cur;
-    if (sent.kind === 'accepted') next = { ...cur, accepted: true, cancelRejected: null };
-    else if (sent.kind === 'rejected' && !cur.accepted && (atSend || sent.reason !== 'nonce_too_low')) next = latestOf(cur).kind === 'execute' ? { ...cur, batchRejected: sent.reason } : { ...cur, cancelRejected: sent.reason };
+    if (sent.kind === 'accepted') next = { ...cur, accepted: true, cannotSend: null };
+    else if (sent.kind === 'rejected' && !cur.accepted && (atSend || sent.reason !== 'nonce_too_low')) {
+      const batch = latestOf(cur).kind === 'execute';
+      next = { ...cur, ...(batch ? { batchRejected: sent.reason } : {}), ...(!batch || causeOf(sent.reason) === 'relayer' ? { cannotSend: sent.reason } : {}) };
+    }
     if (next !== cur && this.#rec(r.nonce)) this.#putRec(next);
     return next;
   }
@@ -781,8 +814,10 @@ export class EvmRelayer extends DurableObject<Env> {
       const after = this.#afterBroadcast(next ?? r, sent, false);
       // A batch just refused (its cancel is due) or newly accepted: run again soon.
       out.changed ||= (after.accepted && !r.accepted) || (after.batchRejected !== null && r.batchRejected === null);
+      if (after.cannotSend !== null && sent.kind === 'rejected') out.conditions.push({ reason: 'relayer_cannot_send', nonce: r.nonce, code: after.cannotSend });
     }
-    for (const r of this.#records()) if (r.nonce >= n.latest && r.cancelRejected !== null && !r.accepted) out.conditions.push({ reason: 'rejected_unsent', nonce: r.nonce });
+    // Still refused for a reason of ours, and nothing accepted since: the cause persists (staffResume refuses).
+    for (const r of this.#records()) if (r.nonce >= n.latest && r.cannotSend !== null && !r.accepted && !out.conditions.some((x) => x.reason === 'relayer_cannot_send' && x.nonce === r.nonce)) out.conditions.push({ reason: 'relayer_cannot_send', nonce: r.nonce, code: r.cannotSend });
     this.#ops.fetches = rpc.requestsUsed;
     return out;
   }
@@ -826,7 +861,7 @@ export class EvmRelayer extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       kv.delete(recKey(r.nonce));
       if (r.digest) {
-        kv.put(digKey(r.digest), { nonce: r.nonce, reservedWei: r.reservedWei, ...d, hashes: r.versions.map((x) => x.hash), ...(r.batchRejected !== null ? { batchRejected: true } : {}), resolvedAt: now } satisfies Dig);
+        kv.put(digKey(r.digest), { nonce: r.nonce, reservedWei: r.reservedWei, ...d, hashes: r.versions.map((x) => x.hash), ...(r.batchRejected !== null ? { batchRejected: r.batchRejected } : {}), resolvedAt: now } satisfies Dig);
         kv.put(forgetKey(now + EVM_RELAYER_REMEMBER_MS, r.digest), 1);
       }
       const m = this.#meta()!;
@@ -880,8 +915,8 @@ export class EvmRelayer extends DurableObject<Env> {
   #halt(h: Condition, now: number): void {
     const m = this.#meta();
     if (!m || m.halted) return;
-    this.#putMeta({ ...m, halted: { reason: h.reason, since: now, ...(h.nonce !== undefined ? { nonce: h.nonce } : {}) } });
-    log({ event: 'evm_relayer_halted', chainId: m.chainId, code: h.reason, ...(h.nonce !== undefined ? { nonce: String(h.nonce) } : {}) }, 'error');
+    this.#putMeta({ ...m, halted: { reason: h.reason, since: now, ...(h.nonce !== undefined ? { nonce: h.nonce } : {}), ...(h.code !== undefined ? { code: h.code } : {}) } });
+    log({ event: 'evm_relayer_halted', chainId: m.chainId, code: h.code ? `${h.reason}:${h.code}` : h.reason, ...(h.nonce !== undefined ? { nonce: String(h.nonce) } : {}) }, 'error');
   }
 
   #meta(): Meta | undefined {

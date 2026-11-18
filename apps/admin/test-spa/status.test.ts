@@ -23,7 +23,10 @@ const open = async (body: unknown, path = '/') => {
   await vi.waitFor(() => expect(s.main().querySelector('.verdict')).not.toBeNull());
   return s;
 };
-const tiles = (s: Awaited<ReturnType<typeof open>>) => [...s.main().querySelectorAll('.tile')].map((t) => ({ cls: t.className, chip: t.querySelector('.state-chip')!.textContent, name: t.querySelector('h3')!.textContent }));
+/** The state's own name by the tile's class (a tile may show its state in its own words, D843: `label`). */
+const STATE_OF: Record<string, string> = { ok: 'OK', warning: 'Warning', critical: 'Critical', unknown: 'Unknown', off: 'Not measured' };
+const tiles = (s: Awaited<ReturnType<typeof open>>) =>
+  [...s.main().querySelectorAll('.tile')].map((t) => ({ cls: t.className, chip: STATE_OF[t.className.split(' ')[1]!]!, label: t.querySelector('.state-chip')!.textContent, name: t.querySelector('h3')!.textContent }));
 
 describe('the landing page', () => {
   it('is the System status page at /, with Status first in the nav and marked current', async () => {

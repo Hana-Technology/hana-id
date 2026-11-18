@@ -113,6 +113,152 @@ const nearRelayBalanceLow: Playbook = {
   related: ['near-relay-budget-high'],
 };
 
+// Free network fees (EVM gas sponsorship, D843, D851): one playbook per security event kind, written for a founder or a
+// support person (D853: plain words; technical names only where an engineer acts). The events are the sponsorship
+// handlers' (D848, D852; docs/operations.md's alert table); sponsorship isn't switched on in any env yet.
+const evmRelayPaused: Playbook = {
+  id: 'evm-relay-paused',
+  title: 'Free network fees are paused or slow',
+  kind: 'incident',
+  severity: 'critical',
+  status: 'live',
+  summary: "An `evm_relay_stuck` security event, or the System status tile “Free network fees” saying “Paused: needs a person”: the relayer that pays users' network fees stopped, turned a user's action away for a reason on our side, or has a transaction waiting too long.",
+  signals: [
+    "The tile “Free network fees (Base Sepolia)” on System status says “Paused: needs a person”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.",
+    "An `evm_relay_stuck` row in the admin's security events, emailed by the feed (at most one an hour per network), with one of: `halted` (the relayer stopped itself; `haltCode` the network's refusal), `rejected` (a refusal on our side turned a user's action away), `oldestPendingMs` or `oldestUnacceptedMs` over 2 minutes (the oldest transaction not on the network, or not taken by any node), or a send still unsettled after 10 minutes.",
+  ],
+  impact: [
+    "While it is paused nobody gets free network fees: apps tell their users the offer is paused. Nothing is lost and no money moves by itself; transactions already sent are still looked after.",
+    "How urgent: soon, not an emergency, unless the reason says the relayer's key is being used somewhere else: then at once.",
+  ],
+  steps: [
+    { title: 'Read the tile', who: 'anyone', detail: "Open System status. The tile says why in one sentence and what to do as numbered steps. The code for engineers under it (for example `relayer_cannot_send · insufficient_funds`) is what to quote to an engineer." },
+    { title: 'Do the steps', who: 'a founder', detail: "Follow the numbered steps on the tile. Most often the relayer's wallet is out of test ETH: first open the wallet on the block explorer, and if money went out in transfers nobody at Journear made, stop and tell an engineer now (the next step); otherwise send test ETH to its address from a Base Sepolia faucet, then press Resume on the Free network fees page. Every tool there asks for a note, says what it will do before it does it, and is recorded in the audit log." },
+    { title: 'If the key may be someone else’s, the engineer first', who: 'a founder', detail: "If the box says the key may be used by someone else (a slot used by a transaction Journear didn't send, a gap, more transactions than the relayer sent, or the network saying another sender holds its numbers): don't send money to the wallet; tell an engineer now. The engineer follows “A relayer key leaked” in the runbook (free network fees off, the money moved out, the key replaced), then uses the slot tools under Advanced. Press Resume only when the engineer says the key is safe or replaced: the page asks you to confirm that, also when such a sign was seen after a pause that started for another reason. Your tick is your own recorded statement, not a second person's approval." },
+    { title: 'Ask an engineer when the steps say so', who: 'a founder', detail: "If the records disagree (a bug), or Resume keeps being refused for the same reason, stop and ask an engineer. The relayer refuses anything unsafe itself; never work around a refusal." },
+    { title: 'Not paused, only slow or one refusal', who: 'anyone', detail: "With no pause, a transaction waiting over 2 minutes usually means the network is busy: the relayer raises its fee every minute and it clears by itself. With `rejected` only, check the wallet's balance on the tile. If either lasts an hour, ask an engineer to look." },
+  ],
+  verify: ['The tile says “Working”, and the next sponsored action goes through.'],
+  followUps: ["If the wallet ran out of money, check whether the daily budget or the low-balance line in the settings should be higher."],
+  refs: ['docs/operations.md#free-network-fees-in-the-admin-portal-d843', 'docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live', 'D843', 'D851'],
+  related: ['evm-relay-balance-low', 'evm-relay-slot-taken'],
+};
+
+const evmRelayBalanceLow: Playbook = {
+  id: 'evm-relay-balance-low',
+  title: "The free network fees wallet is running low",
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "An `evm_relay_balance_low` security event, or the tile saying “Low on money”: the relayer's wallet holds less than `lowBalanceEth` (sandbox-dev 0.05 test ETH), or too little to cover three times over everything in flight plus the next action.",
+  signals: ["The tile “Free network fees” says “Low on money”.", "An `evm_relay_balance_low` row in the admin's security events, emailed by the feed (one a day per network: the wallet, its balance, the low line, and `neededWei` when it fired at a send)."],
+  impact: ["Below the cover for what is in flight, new actions are already turned away (users read “paused”), so the wallet never runs dry by itself. Above it, nothing stops yet.", "How urgent: today."],
+  steps: [
+    { title: 'Check it is ordinary use', who: 'anyone', detail: "On the Free network fees page, open the relayer wallet on the block explorer. Many small transactions to users' accounts is ordinary use. A large transfer out that nobody at Journear made means the key leaked: tell an engineer at once." },
+    { title: 'Add test ETH', who: 'a founder', detail: "Send test ETH from a Base Sepolia faucet (docs.base.org, “Network faucets”) to the relayer wallet's address shown on the tile: at least the low line plus a day's budget (sandbox-dev: 0.07 test ETH). Never send real money." },
+  ],
+  verify: ["The tile's “Money in the wallet” line shows the new amount and the state is “Working”; sends go through again within 30 seconds."],
+  followUps: ['If it runs low every day, raise the amount you keep in it, or ask whether the daily budget is right.'],
+  refs: ['docs/operations.md#free-network-fees-in-the-admin-portal-d843', 'D843', 'D836'],
+  related: ['evm-relay-paused', 'evm-relay-budget-high'],
+};
+
+const evmRelayBudgetHigh: Playbook = {
+  id: 'evm-relay-budget-high',
+  title: "Free network fees: today's budget is nearly used up",
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "An `evm_relay_budget_high` security event: today's reservations for sponsored network fees reached 80% of `dailyBudgetEth` on a network (sandbox-dev 0.02 test ETH).",
+  signals: ["An `evm_relay_budget_high` row in the admin's security events, emailed by the feed (one a day per network).", "The tile's “Spent today” line in amber (80%) or red (all of it)."],
+  impact: ["At the budget, new sponsored actions are turned away until 00:00 UTC; an app at its own day budget is turned away before that. Nothing else is affected.", "How urgent: today, if users need it today."],
+  steps: [
+    { title: 'Tell real use from abuse', who: 'anyone', detail: "On the Free network fees page, look at which app the waiting transactions belong to. A demo or a busy day is real use. One app far ahead of the others, or many users nobody knows, points at a leaked publishable key." },
+    { title: 'Raise it or stop it', who: 'a founder', detail: "Real use: it starts again at 00:00 UTC; to raise it, an engineer changes `dailyBudgetEth` in the settings and deploys (keep the wallet funded to match). Abuse: ask an engineer to take the app off the free-fee list, or suspend the app." },
+  ],
+  verify: ["The next day's spend stays under 80%, or sponsored actions go through again after the change."],
+  followUps: ['If one app keeps causing it, talk to the partner.'],
+  refs: ['docs/operations.md#free-network-fees-in-the-admin-portal-d843', 'D843', 'D836'],
+  related: ['evm-relay-balance-low'],
+};
+
+const evmRelayReceiptOdd: Playbook = {
+  id: 'evm-relay-receipt-odd',
+  title: 'Free network fees: a payment looked wrong',
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "An `evm_relay_receipt_odd` security event: a confirmation from the network provider didn't fit what was reserved (a broken or lying provider), so the transaction was counted at the most it could cost.",
+  signals: ["An `evm_relay_receipt_odd` row in the admin's security events, emailed by the feed (at most one an hour per network)."],
+  impact: ["Nothing stops, and no money was lost because of it: the budget counts the most that transaction could have cost. Billing records show the counted amount.", "How urgent: this week. Once is a curiosity; many in a day is a problem for an engineer."],
+  steps: [
+    { title: 'Note when and how often', who: 'anyone', detail: "Look at the event's details (network, hour) and whether more arrive. Note the time." },
+    { title: 'Ask an engineer', who: 'a founder', detail: "Give an engineer the time and the network. The engineer compares the transaction on the block explorer with the API's records (`evm_sponsor_sends`) and checks the network provider (the secret `EVM_SPONSOR_RPC_<chainId>`), replacing it if it misbehaves." },
+  ],
+  verify: ['No further events of this kind after the engineer’s fix.'],
+  followUps: ['If the network provider gave wrong answers, the engineer may change the read provider (docs/operations.md, step 9).'],
+  refs: ['docs/operations.md#free-network-fees-in-the-admin-portal-d843', 'D843', 'D847', 'D848'],
+  related: ['evm-billing-late'],
+};
+
+const evmBillingLate: Playbook = {
+  id: 'evm-billing-late',
+  title: 'Free network fees: a billing record is late',
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "An `evm_billing_late` security event: a finished sponsored send has no billing record, or records haven't reached the usage ledger, after an hour; or (`quarantined`) the ledger refused a record on its own, which is set aside so the others still copy.",
+  signals: ["An `evm_billing_late` row in the admin's security events, emailed by the feed, with its counts (`quarantined`: records the ledger refused, set aside)."],
+  impact: ["Users are not affected. Until it is fixed, that transaction is missing from the records partners could later be billed from; it is kept in the API and copied again.", "How urgent: before the next monthly statement."],
+  steps: [
+    { title: 'Check the ledger is reachable', who: 'anyone', detail: "Open System status: the usage ledger tiles under Data should be OK. If the ledger is down, the records go through once it is back." },
+    { title: 'Ask an engineer for a set-aside record', who: 'a founder', detail: "With `quarantined` above 0, or when the event repeats with the ledger working, give an engineer the event's details. The engineer looks at the set-aside rows in `evm_sponsor_billing` (`quarantined_at`) and why the ledger refused them." },
+  ],
+  verify: ['No new events of this kind, and the record shows in the ledger.'],
+  followUps: ['None.'],
+  refs: ['docs/operations.md#free-network-fees-in-the-admin-portal-d843', 'D843', 'D852'],
+  related: ['evm-relay-receipt-odd'],
+};
+
+const evmRelaySlotTaken: Playbook = {
+  id: 'evm-relay-slot-taken',
+  title: 'Free network fees: a payment slot was used by another transaction',
+  kind: 'incident',
+  severity: 'critical',
+  status: 'live',
+  summary: "An `evm_relay_nonce_taken` security event: a slot (the relayer's transaction number) was closed as “used by something else”: a transaction the relayer didn't send used it, so someone else has used the relayer's key; the user's action didn't run and its reservation was kept as the cost.",
+  signals: ["An `evm_relay_nonce_taken` row in the admin's security events, emailed by the feed.", "Before it, the tile “Free network fees” paused with “used up on the network by a transaction the relayer didn't send”, and a staff member closed that slot."],
+  impact: ["The relayer's key is in someone else's hands: they can spend what is in the relayer's wallet (test ETH only). Users' own accounts are not at risk: the key can only pay fees.", "How urgent: at once."],
+  steps: [
+    { title: 'Treat the key as leaked', who: 'a founder', detail: "Ask an engineer to follow “A relayer key leaked” in docs/operations.md now: free network fees are switched off, the money left in the wallet is moved out, and a new key is made." },
+    { title: 'Find out how it leaked', who: 'a founder', detail: "With the engineer: where was the key kept or copied (the `.secrets` folder, the API Worker's secrets, a log or a paste)? Close that first, or the new key leaks the same way." },
+  ],
+  verify: ['With the new key in place, the tile says “Working” and no new event of this kind arrives.'],
+  followUps: ['Record what happened and when in the decision log.'],
+  refs: ['docs/operations.md#free-network-fees-in-the-admin-portal-d843', 'docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live', 'D843', 'D851'],
+  related: ['evm-relay-paused', 'relayer-key-stolen'],
+};
+
+const nearBillingLate: Playbook = {
+  id: 'near-billing-late',
+  title: 'Free NEAR transactions: a billing record is late',
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "A `near_billing_late` security event (once a day, with counts): the NEAR relay's billing records are missing, waiting or not yet copied to the usage ledger.",
+  signals: ["A `near_billing_late` row in the admin's security events, emailed by the feed, with its counts: `misses`, `parked`, `notFinal`, `unmirrored`, `unrecordedLast`."],
+  impact: ["Users are not affected: relays go on. The records a later bill to partners would come from may be missing or late.", "How urgent: before the next monthly statement; `misses` and `unrecordedLast` sooner."],
+  steps: [
+    { title: 'Read the counts', who: 'anyone', detail: "`parked`: records waiting for D1, written by the cron once it works. `unmirrored`: records not copied to the usage ledger an hour on. `notFinal`: records not read back from the chain six hours on. `misses`: a relay may have gone out without a record. `unrecordedLast`: for that many relay keys, the day's last transaction on chain has no record." },
+    { title: 'Usually wait', who: 'anyone', detail: "For `parked` and `unmirrored`, check that the usage ledger tiles on System status are OK; they catch up by themselves. For `notFinal`, check the NEAR RPC tile." },
+    { title: 'Tell an engineer about misses', who: 'a founder', detail: "For `misses` or `unrecordedLast`, tell the developer team with the day: something was sent without a record. `unrecordedLast` checks only the last transaction per key per day, so it is a sign, not a count." },
+  ],
+  verify: ['The next day’s event is gone, or shows only `parked` or `unmirrored` going down.'],
+  followUps: ['None.'],
+  refs: ['docs/operations.md#near-relay-billing-records-d863-built-not-deployed', 'D863'],
+  related: ['near-relay-balance-low'],
+};
+
 const relayerKeyStolen: Playbook = {
   id: 'relayer-key-stolen',
   title: 'A relayer key stolen (session pool or owner pool)',
@@ -986,6 +1132,13 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   homeBudgetHigh,
   nearRelayBudgetHigh,
   nearRelayBalanceLow,
+  evmRelayPaused,
+  evmRelayBalanceLow,
+  evmRelayBudgetHigh,
+  evmRelayReceiptOdd,
+  evmBillingLate,
+  evmRelaySlotTaken,
+  nearBillingLate,
   updaterKeyStolen,
   relayerKeyStolen,
   vaultKekLeaked,

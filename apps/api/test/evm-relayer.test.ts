@@ -666,23 +666,25 @@ describe('halt: nonce_consumed_elsewhere', () => {
     chain.admit(foreign(0));
     chain.mine(RELAYER, 1);
     await runDurableObjectAlarm(stub);
-    expect(await halted(stub)).toEqual({ reason: 'nonce_consumed_elsewhere', since: now, nonce: 0 });
+    expect(await halted(stub)).toEqual({ reason: 'nonce_consumed_elsewhere', since: now, nonce: 0, leakSeen: true });
     expect(await codeOf(stub.send(request()))).toBe('relayer_halted');
     expect(await stub.send(a)).toMatchObject({ relayerNonce: 0, replay: true });
     advance(EVM_RELAYER_BUMP_AFTER_MS);
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs.find((r) => r.nonce === 1)!.versions).toHaveLength(2);
-    expect(await evmRelayerStaffResume(stub, WHO, 'try')).toMatchObject({ done: false, refused: 'nonce_consumed_elsewhere' });
+    expect(await evmRelayerStaffResume(stub, WHO, 'try')).toMatchObject({ done: false, refused: 'key_confirmation_required' });
+    expect(await evmRelayerStaffResume(stub, WHO, 'try', undefined, true)).toMatchObject({ done: false, refused: 'nonce_consumed_elsewhere' });
     const before = (await stored(stub)).meta!.dayWei;
     expect(await evmRelayerStaffClose(stub, WHO, 0, 'consumed_elsewhere', 'a foreign transaction took nonce 0')).toMatchObject({ done: true, refused: null });
     expect(await stub.lookup(digestOf(a))).toMatchObject({ state: 'closed', outcome: 'consumed_elsewhere', minedHash: null, costWei: null });
     expect((await stored(stub)).meta!.dayWei).toBe(before);
-    const resumed = await evmRelayerStaffResume(stub, WHO, 'cause gone');
+    const resumed = await evmRelayerStaffResume(stub, WHO, 'cause gone', undefined, true);
     expect(resumed).toMatchObject({ done: true, status: { halted: null } });
     expect(resumed.status.staffLog.map((e) => [e.action, e.done, e.refused, e.who])).toEqual([
       ['resume', true, null, WHO],
       ['close', true, null, WHO],
       ['resume', false, 'nonce_consumed_elsewhere', WHO],
+      ['resume', false, 'key_confirmation_required', WHO],
     ]);
     expect((await stub.send(request())).relayerNonce).toBe(2);
   });
@@ -714,12 +716,12 @@ describe('halt: nonce_gap', () => {
     advance(EVM_RELAYER_BUMP_AFTER_MS);
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs[0]!.versions).toHaveLength(2);
-    expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ refused: 'nonce_gap' });
+    expect(await evmRelayerStaffResume(stub, WHO, 'n', undefined, true)).toMatchObject({ refused: 'nonce_gap' });
     expect(await evmRelayerStaffFill(stub, WHO, 1, 'n')).toMatchObject({ refused: 'record_exists' });
     expect(await evmRelayerStaffFill(stub, WHO, 2, 'n')).toMatchObject({ refused: 'not_below_next_nonce' });
     expect(await evmRelayerStaffFill(stub, WHO, 0, 'fill the gap')).toMatchObject({ done: true });
     expect(chain.pooled(RELAYER, 0)).toMatchObject({ to: RELAYER.toLowerCase(), value: 0n, gas: 21_000n });
-    expect(await evmRelayerStaffResume(stub, WHO, 'filled')).toMatchObject({ done: true });
+    expect(await evmRelayerStaffResume(stub, WHO, 'filled', undefined, true)).toMatchObject({ done: true });
     chain.mine(RELAYER);
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs).toEqual([]);
@@ -769,13 +771,13 @@ describe('halt: foreign_transactions', () => {
     chain.addBlocks(5);
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs).toEqual([]);
-    expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ refused: 'foreign_transactions' });
+    expect(await evmRelayerStaffResume(stub, WHO, 'n', undefined, true)).toMatchObject({ refused: 'foreign_transactions' });
     expect(await evmRelayerStaffAdoptNonce(stub, WHO, 2, 'n')).toMatchObject({ refused: 'chain_count_differs' });
     chain.admit(foreign(3));
     expect(await evmRelayerStaffAdoptNonce(stub, WHO, 3, 'n')).toMatchObject({ refused: 'chain_count_differs' });
     chain.mine(RELAYER);
     expect(await evmRelayerStaffAdoptNonce(stub, WHO, 4, 'the chain’s count')).toMatchObject({ done: true, status: { nextNonce: 4 } });
-    expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ done: true });
+    expect(await evmRelayerStaffResume(stub, WHO, 'n', undefined, true)).toMatchObject({ done: true });
     expect((await stub.send(request())).relayerNonce).toBe(4);
   });
 });
@@ -1123,7 +1125,8 @@ describe('review H1: no user can halt sponsorship', () => {
       chain.onSend = rejectBatches(message);
       const sent = await stub.send(reqFor(`ours ${i}`));
       expect([code, sent.broadcast, sent.rejection]).toEqual([code, 'rejected', { cause: 'relayer', code }]);
-      expect([code, await halted(stub)]).toEqual([code, { reason: 'relayer_cannot_send', since: now, nonce: 0, code }]);
+      const leak = ['replacement_underpriced', 'sender_restricted', 'nonce_too_low', 'nonce_too_high'].includes(code);
+      expect([code, await halted(stub)]).toEqual([code, { reason: 'relayer_cannot_send', since: now, nonce: 0, code, ...(leak ? { leakSeen: true } : {}) }]);
       expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
       chain.onSend = undefined;
     }
@@ -1481,6 +1484,30 @@ describe('review M2/M3: a nonce is never freed', () => {
     expect(await halted(stub)).toBeNull();
   });
 
+  it('D843 review M1: what the staffer saw is checked inside the queue: two simultaneous Cancels on the same view, one runs, one is version_conflict', async () => {
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    await stub.send(request({ execute: { deadline: nowS() + 300n } }));
+    const seen = { haltSince: null, lastStaffSeq: 0 };
+    const [x, y] = await Promise.all([evmRelayerStaffCancel(stub, WHO, 0, 'first staffer', seen), evmRelayerStaffCancel(stub, WHO, 0, 'second staffer', seen)]);
+    expect([x.done, y.done].sort()).toEqual([false, true]);
+    expect([x.refused, y.refused].filter(Boolean)).toEqual(['version_conflict']);
+    // One cancel version, not two; both calls are in the staff log (the refused one with its reason).
+    expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+    const log = (await evmRelayerStaffStatus(stub)).staffLog;
+    expect(log.map((e) => [e.seq, e.done, e.refused])).toEqual([
+      [2, false, 'version_conflict'],
+      [1, true, null],
+    ]);
+    // A view that holds acts; a malformed one is refused before the queue.
+    expect(await evmRelayerStaffCancel(stub, WHO, 0, 'third, on the current view', { haltSince: null, lastStaffSeq: 2 })).toMatchObject({ done: true });
+    expect(await codeOf(evmRelayerStaffCancel(stub, WHO, 0, 'n', { haltSince: null } as never))).toBe('invalid_request');
+    expect(await codeOf(evmRelayerStaffCancel(stub, WHO, 0, 'n', { haltSince: -1, lastStaffSeq: 0 }))).toBe('invalid_request');
+    // A halt that started after the page was read: version_conflict for Resume too.
+    expect(await evmRelayerStaffResume(stub, WHO, 'resume', { haltSince: 123, lastStaffSeq: 3 })).toMatchObject({ done: false, refused: 'version_conflict' });
+    chain.onSend = undefined;
+  });
+
   it('staffCancel refuses: no record, a key that can’t sign, a nonce mined at head, a receipt of its own, no valid replacement left', async () => {
     const stub = await fresh();
     expect(await evmRelayerStaffCancel(stub, WHO, 0, 'n')).toMatchObject({ refused: 'no_state' });
@@ -1719,5 +1746,76 @@ describe('review H1 (API + relayer): one user can\'t stall the relayer with an u
     await stub.send(request({}, USER_KEY));
     expect(await stub.send(request({}, USER_KEY))).toEqual({ ok: false, refused: 'relayer_busy', reason: 'account' });
     expect(await stub.send(request())).toMatchObject({ ok: true, relayerNonce: 1 });
+  });
+});
+
+describe('D843 re-check M: a sign of a leaked key seen during any pause makes Resume need the key confirmed', () => {
+  const resume = (stub: Stub, note: string, keyConfirmed?: boolean) => evmRelayerStaffResume(stub, WHO, note, undefined, keyConfirmed);
+
+  it('the thief: paused for money, then the key used elsewhere (slots taken past ours): marked; Resume refused until the key is confirmed', async () => {
+    const stub = await fresh();
+    chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
+    await stub.send(request());
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds' });
+    expect((await halted(stub))!.leakSeen).toBeUndefined();
+    // Someone with the key empties the wallet: two transfers of their own (slots 0 and 1, past our next slot 1).
+    chain.onSend = undefined;
+    chain.drop(RELAYER, 0);
+    chain.admit(foreign(0));
+    chain.admit(foreign(1));
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    // The pause keeps its first reason (what the page leads with); the mark says what was seen since.
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds', leakSeen: true });
+    expect(await resume(stub, 'topped up')).toMatchObject({ done: false, refused: 'key_confirmation_required' });
+    expect((await evmRelayerStaffStatus(stub)).staffLog[0]).toMatchObject({ action: 'resume', done: false, refused: 'key_confirmation_required' });
+    // Confirmed: the relayer's own checks still decide (the foreign slots are still there).
+    expect(await resume(stub, 'key replaced', true)).toMatchObject({ done: false, refused: 'foreign_transactions' });
+    expect(await halted(stub)).toMatchObject({ leakSeen: true });
+  });
+
+  it('a staff Close, Fill or Set the next slot number done during a pause marks it too; a refused one doesn’t', async () => {
+    const stub = await fresh();
+    chain.onSend = () => ({ error: 'insufficient funds' });
+    await stub.send(request());
+    chain.onSend = undefined;
+    await runDurableObjectAlarm(stub);
+    chain.mine(RELAYER);
+    chain.addBlocks(20);
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).recs).toEqual([]);
+    expect(await evmRelayerStaffAdoptNonce(stub, WHO, 5, 'refused: the chain says 1')).toMatchObject({ refused: 'chain_count_differs' });
+    expect((await halted(stub))!.leakSeen).toBeUndefined();
+    expect(await evmRelayerStaffAdoptNonce(stub, WHO, 1, 'the chain’s count')).toMatchObject({ done: true });
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', leakSeen: true });
+    expect(await resume(stub, 'funded')).toMatchObject({ refused: 'key_confirmation_required' });
+    expect(await resume(stub, 'funded; the key checked', true)).toMatchObject({ done: true });
+    // The mark goes with the pause: the next pause starts clear.
+    chain.onSend = () => ({ error: 'insufficient funds' });
+    await stub.send(request());
+    expect((await halted(stub))!.leakSeen).toBeUndefined();
+  });
+
+  it('a pause whose own reason is a leak is marked from its start; one with nothing seen resumes without a confirmation', async () => {
+    const stub = await fresh();
+    await stub.send(request());
+    await stub.send(request());
+    chain.admit(foreign(2));
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'foreign_transactions', leakSeen: true });
+    expect(await resume(stub, 'n')).toMatchObject({ refused: 'key_confirmation_required' });
+    const other = await fresh();
+    chain.onSend = () => ({ error: 'insufficient funds' });
+    await other.send(request());
+    chain.onSend = undefined;
+    await runDurableObjectAlarm(other);
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(other);
+    expect(await resume(other, 'funded')).toMatchObject({ done: true });
+  });
+
+  it('keyConfirmed is a boolean or absent', async () => {
+    const stub = await fresh();
+    expect(await codeOf(evmRelayerStaffResume(stub, WHO, 'n', undefined, 'yes' as never))).toBe('invalid_request');
   });
 });

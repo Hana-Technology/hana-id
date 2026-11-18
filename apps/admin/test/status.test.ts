@@ -127,6 +127,7 @@ const apiAnswer = (over: Record<string, unknown> = {}) => ({
   ],
   governance: { ok: true, snapshot: snapshot() },
   nearRelay: nearRelay(),
+  evmRelay: { state: 'absent', chains: [] },
   ...over,
 });
 
@@ -266,7 +267,9 @@ describe('all green', () => {
     expect(a.issues).toEqual([]);
     expect(a.verdict).toEqual({ state: 'ok', title: 'All systems operational', critical: 0, warning: 0 });
     const notOk = tiles(a).filter((t) => t.state !== 'ok');
-    expect(notOk.map((t) => [t.id, t.state])).toEqual([['usage-limits', 'not_measured']]);
+    // Free network fees aren't set up in this env (no `evmRelay` in the API's answer): grey, never an issue (D843).
+    expect(notOk.map((t) => [t.id, t.state])).toEqual([['evm-relay', 'not_measured'], ['usage-limits', 'not_measured']]);
+    expect(tile(a, 'evm-relay')).toMatchObject({ name: 'Free network fees', stateLabel: 'Not set up' });
     expect(a.builds).toMatchObject({ majority: BUILD, mixed: false });
     expect(tile(a, 'builds').detail).toContain(`All 12 stamped pieces on ${BUILD}`);
     expect(tile(a, 'cron-triggers').detail).toContain('5 of 5 (full');
@@ -977,5 +980,86 @@ describe('the route', () => {
     // The test API's own NEAR RPC is an invalid host: its governance read fails, honestly unknown.
     expect(tile(a, 'contract').state).toBe('unknown');
     invariants(a);
+  });
+});
+
+describe('Free network fees (D843)', () => {
+  const MILLI = 10n ** 15n;
+  const HASH = `0x${'ab'.repeat(32)}`;
+  const chain = (relayer: Record<string, unknown> = {}, over: Record<string, unknown> = {}) => ({
+    chainId: 84532,
+    readAt: NOW,
+    relayerAddress: '0x7aD3c18E50fB2a6D9e4C31b0F5A7E8c2d1B9f640',
+    key: 'ok',
+    readEndpoint: 'keyed',
+    lowBalanceWei: (50n * MILLI).toString(),
+    dailyBudgetWei: (20n * MILLI).toString(),
+    oneSendWorstWei: (6n * 10n ** 14n).toString(),
+    relayer: { ok: true, started: true, signerAddress: '0x7aD3c18E50fB2a6D9e4C31b0F5A7E8c2d1B9f640', halted: null, waiting: 0, awaitingConfirmation: 0, oldestWaitingMs: null, oldestNotTakenMs: null, nextSlot: 12, spentTodayWei: '0', unconfirmedRefusals: null, lastStaffSeq: 0, staffLog: [], ...relayer },
+    budget: { ok: true, spentWei: '0' },
+    balance: { ok: true, wei: (112n * MILLI).toString() },
+    helper: { address: '0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA', pinnedCodeHash: HASH, ok: true, codeHash: HASH, matches: true },
+    ...over,
+  });
+
+  it('working: one tile per sponsored chain after the NEAR relay tile, in plain words, no issue', async () => {
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain()] } });
+    const a = await read();
+    invariants(a);
+    const funds = a.groups.find((g) => g.id === 'funds')!.tiles.map((t) => t.id);
+    expect(funds.indexOf('evm-relay-84532')).toBe(funds.indexOf('near-relay') + 1);
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'ok', name: 'Free network fees (Base Sepolia)', stateLabel: 'Working', link: { path: '/free-network-fees/84532', label: 'Free network fees' } });
+    expect(issuesOf(a, 'evm-relay-84532')).toEqual([]);
+  });
+
+  it('paused: red, why in a sentence and numbered steps on the tile and its issue, the code for engineers apart, its playbook', async () => {
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({ halted: { reason: 'relayer_cannot_send', since: NOW - 600_000, slot: 42, code: 'insufficient_funds' } }, { balance: { ok: true, wei: '1000' } })] } });
+    const a = await read();
+    invariants(a);
+    const t = tile(a, 'evm-relay-84532');
+    expect(t).toMatchObject({ state: 'critical', stateLabel: 'Paused: needs a person', explain: { why: 'The relayer’s wallet can’t send transactions: it is out of money.', code: 'relayer_cannot_send · insufficient_funds · slot 42' } });
+    expect(t.explain!.steps).toHaveLength(5);
+    // First: look for money that went out without Journear (a thief), before sending more.
+    expect(t.explain!.steps[0]).toMatch(/^Open the relayer wallet on Basescan .*If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money\.$/u);
+    const [main, low] = issuesOf(a, 'evm-relay-84532');
+    expect(main).toMatchObject({ severity: 'critical', title: 'The relayer’s wallet can’t send transactions: it is out of money.', since: NOW - 600_000, sinceSource: 'source', code: 'relayer_cannot_send · insufficient_funds · slot 42', playbook: { id: 'evm-relay-paused' } });
+    expect(main!.steps).toEqual(t.explain!.steps);
+    expect(low).toMatchObject({ severity: 'critical', playbook: { id: 'evm-relay-balance-low' } });
+  });
+
+  it('low on money, the key used elsewhere, not set up, refused settings, an unreadable answer', async () => {
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({}, { balance: { ok: true, wei: (31n * MILLI).toString() } })] } });
+    let a = await read();
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'warning', stateLabel: 'Low on money' });
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({ halted: { reason: 'foreign_transactions', since: NOW - 60_000, slot: null, code: null } })] } });
+    a = await read();
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'critical', stateLabel: 'Paused: needs a person', explain: { code: 'foreign_transactions' } });
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({}, { key: 'missing' })] } });
+    a = await read();
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'warning', stateLabel: 'Not set up' });
+    world.api = apiAnswer({ evmRelay: { state: 'bad_config', chains: [] } });
+    a = await read();
+    expect(tile(a, 'evm-relay')).toMatchObject({ state: 'critical', stateLabel: 'Not set up' });
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [{ chainId: 84532 }] } });
+    a = await read();
+    invariants(a);
+    expect(tile(a, 'evm-relay-84532').state).toBe('unknown');
+    // An API older than this console sends no `evmRelay`: amber, "deploy the API first", never grey "Not set up".
+    const { evmRelay: _e, ...old } = apiAnswer();
+    world.api = old;
+    a = await read();
+    expect(tile(a, 'evm-relay')).toMatchObject({ state: 'warning', stateLabel: 'Needs a look', detail: 'This page is newer than the API: deploy the API first.' });
+    world.api = apiAnswer({ evmRelay: { state: 'timeout', chains: [] } });
+    a = await read();
+    expect(tile(a, 'evm-relay')).toMatchObject({ state: 'unknown', stateLabel: 'Can’t check right now' });
+    // The trusted read endpoint missing outside local* envs: sponsorship is off, its own Not set up case with the upload step.
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({}, { readEndpoint: 'missing' })] } });
+    a = await read();
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'warning', stateLabel: 'Not set up', explain: { code: 'read_endpoint_missing' } });
+    expect(tile(a, 'evm-relay-84532').explain!.steps[1]).toMatch(/EVM_SPONSOR_RPC_84532/u);
+    // A worse second problem is said by the label too, not hidden behind "Working".
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({}, { budget: { ok: true, spentWei: (20n * MILLI).toString() } })] } });
+    a = await read();
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'critical', stateLabel: 'Needs a person' });
   });
 });

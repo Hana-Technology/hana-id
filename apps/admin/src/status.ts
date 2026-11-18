@@ -12,7 +12,7 @@
 // any cron.
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
 import { getPlaybook } from '@hana-id/playbooks';
-import type { ApiSystemStatus, ConsoleHealth, CronRunView } from '@hana-id/console-core';
+import type { ApiSystemStatus, ConsoleHealth, CronRunView, EvmRelayChainView } from '@hana-id/console-core';
 import { BUILD_ID_RE, parseBuildId } from '@hana-id/env/build-id';
 import { CRON_LAST_RUN } from './cron.ts';
 import type { Env } from './env.ts';
@@ -25,6 +25,7 @@ import { type WatchdogStatusView, findingsOf, statusView } from './monitoring.ts
 import { arr, num, obj, plainString, str } from './plain.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 import { MIN_PARTITIONS_AHEAD } from './security.ts';
+import { type ChainPlain, LINE_LABELS, STATE_LABELS, evmRelayPath, evmRelayTitle, explainChain } from './evm-relay.ts';
 import { type BuildRead, CallCount, type NearEndpoint, type NearRead, SLOW_MS, buildTargets, nearEndpoints, readBuild, readNear } from './status-probes.ts';
 import { callWatchdog, watchdogConfigured } from './watchdog.ts';
 
@@ -77,12 +78,18 @@ export interface Tile {
   link: Link | null;
   /** One line per part of the component when it has several: the NEAR RPC tile's endpoints. Never a URL. */
   lines?: TileLine[];
+  /** The state in the component's own plain words ("Working", "Paused: needs a person"), shown instead of OK/Critical. */
+  stateLabel?: string;
+  /** What is wrong in a sentence, what to do as numbered steps, and the code for engineers (Free network fees, D843). */
+  explain?: { why: string; steps: string[]; code: string | null };
 }
 
 export interface TileLine {
   label: string;
   state: TileState;
   detail: string;
+  /** The state in plain words ("Problem", "Needs a look"), shown instead of Critical/Warning (Free network fees, D843). */
+  stateLabel?: string;
 }
 
 export interface Issue {
@@ -100,6 +107,10 @@ export interface Issue {
   sinceSource: 'source' | 'first_seen';
   link: Link | null;
   playbook: { id: string; title: string } | null;
+  /** What to do as numbered steps, when the action is more than one (Free network fees, D843). */
+  steps?: string[];
+  /** The code for engineers (a small detail under the steps). */
+  code?: string;
 }
 
 export const GROUPS = [
@@ -139,6 +150,8 @@ interface Problem {
   link?: Link | null;
   playbook?: string;
   key?: string;
+  steps?: string[];
+  code?: string | null;
 }
 
 interface TileInput {
@@ -152,6 +165,8 @@ interface TileInput {
   link?: Link | null;
   notMeasured?: boolean;
   lines?: TileLine[];
+  stateLabel?: string;
+  explain?: Tile['explain'];
 }
 
 const RANK: Record<TileState, number> = { critical: 4, warning: 3, unknown: 2, ok: 1, not_measured: 0 };
@@ -167,7 +182,7 @@ class Report {
   add(t: TileInput, problems: Problem[] = []): void {
     let state: TileState = t.notMeasured ? 'not_measured' : 'ok';
     for (const p of problems) if (RANK[p.severity] > RANK[state]) state = p.severity;
-    this.tiles.push({ id: t.id, group: t.group, name: t.name, state, detail: t.detail, affects: t.affects, latencyMs: t.latencyMs ?? null, build: t.build ?? null, link: t.link ?? null, ...(t.lines ? { lines: t.lines } : {}) });
+    this.tiles.push({ id: t.id, group: t.group, name: t.name, state, detail: t.detail, affects: t.affects, latencyMs: t.latencyMs ?? null, build: t.build ?? null, link: t.link ?? null, ...(t.lines ? { lines: t.lines } : {}), ...(t.stateLabel ? { stateLabel: t.stateLabel } : {}), ...(t.explain ? { explain: t.explain } : {}) });
     for (const p of problems) {
       if (p.issue === false) continue;
       const pb = p.playbook ? getPlaybook(p.playbook) : undefined;
@@ -184,6 +199,8 @@ class Report {
         sinceSource: typeof p.since === 'number' && Number.isFinite(p.since) ? 'source' : 'first_seen',
         link: p.link ?? t.link ?? null,
         playbook: pb ? { id: pb.id, title: pb.title } : null,
+        ...(p.steps?.length ? { steps: p.steps } : {}),
+        ...(p.code ? { code: p.code } : {}),
       });
     }
   }
@@ -633,6 +650,55 @@ function nearRelayTile(r: Report, s: Sources): void {
   r.add({ ...base, detail: `${head} · ${bal} · ${today}`, lines }, problems);
 }
 
+/**
+ * Free network fees (D843): EVM gas sponsorship's relayer per sponsored chain, from `AdminRpc.systemStatus`'s
+ * `evmRelay` (read live by the API; absent when the env has no `evm.sponsor`: then one grey "Not set up" tile, never an
+ * issue, and nothing was read). In plain words (evm-relay.ts): Working, Paused: needs a person, Low on money, Not set
+ * up; when it isn't working, why in a sentence and what to do as numbered steps, with the code for engineers.
+ */
+function evmRelayTiles(r: Report, s: Sources): void {
+  const affects = 'Users’ free network fees on EVM test networks (Journear pays their fees): while it is paused, nobody gets them';
+  const base: TileInput = { id: 'evm-relay', group: 'funds', name: 'Free network fees', affects, detail: '' };
+  if (!s.api.ok) return r.add({ ...base, detail: 'Can’t check right now: the API didn’t answer' }, [{ ...apiRpcProblem(s.api.code), issue: false }]);
+  const evm = obj(s.api.value.evmRelay);
+  // An API that knows free network fees always says (`absent` included): a missing field is an older API (D843 review M4).
+  if (!evm) {
+    const explain = { why: 'This page is newer than the API, so it can’t tell whether free network fees are set up.', steps: ['Deploy the API first, then this admin console (docs/operations.md “Free network fees in the admin portal”, deploy order).', 'Press Check again.'], code: 'api_outdated' };
+    return r.add({ ...base, detail: 'This page is newer than the API: deploy the API first.', stateLabel: 'Needs a look', explain }, [{ severity: 'warning', title: explain.why, action: '', steps: explain.steps, code: explain.code, key: 'outdated' }]);
+  }
+  if (evm.state === 'absent') return r.add({ ...base, detail: 'Not set up in this environment (no evm.sponsor in its settings): nobody is offered free network fees.', notMeasured: true, stateLabel: STATE_LABELS.not_set_up });
+  if (evm.state === 'timeout') {
+    const explain = { why: 'The API couldn’t read the relayer in time just now. That alone doesn’t stop free network fees.', steps: ['Press Check again in a minute.', 'If it stays like this for more than an hour, ask an engineer to look at the network provider.'], code: 'evm_relay_timeout' };
+    return r.add({ ...base, detail: 'Can’t check right now: the reads took too long.', stateLabel: STATE_LABELS.unknown, explain }, [{ severity: 'unknown', title: explain.why, action: '', steps: explain.steps, code: explain.code, key: 'timeout' }]);
+  }
+  if (evm.state === 'bad_config') {
+    const explain = { why: 'The API refuses this environment’s free-network-fee settings, so nobody gets free network fees.', steps: ['Ask an engineer to check the evm.sponsor settings (envs/README.md), run gen and deploy the API.'], code: 'bad_config' };
+    return r.add({ ...base, detail: 'Not set up: the settings are refused.', stateLabel: STATE_LABELS.not_set_up, explain }, [{ severity: 'critical', title: explain.why, action: '', steps: explain.steps, code: explain.code, playbook: 'evm-relay-paused', key: 'config' }]);
+  }
+  const chains = arr(evm.chains).filter((c): c is EvmRelayChainView => obj(c) !== null && typeof (c as { chainId?: unknown }).chainId === 'number');
+  if (evm.state !== 'on' || chains.length === 0) return r.add({ ...base, detail: 'Can’t check right now: the API’s answer isn’t one this console knows.' }, [{ severity: 'unknown', title: 'The API reports free network fees in a way this console doesn’t know', action: 'Deploy the API and this console from the same checkout.', key: 'state' }]);
+  for (const v of chains) {
+    const id = `evm-relay-${v.chainId}`;
+    const link = { path: evmRelayPath(v.chainId), label: 'Free network fees' };
+    let p: ChainPlain;
+    try {
+      p = explainChain(v, r.now);
+    } catch {
+      r.add({ ...base, id, name: evmRelayTitle(v.chainId), link, detail: 'Can’t check right now: the API’s answer can’t be read.' }, [{ severity: 'unknown', title: 'The API’s answer about free network fees can’t be read', action: 'Deploy the API and this console from the same checkout.', key: 'unparsed' }]);
+      continue;
+    }
+    const problems: Problem[] = [];
+    if (p.severity !== 'ok' && p.severity !== 'not_measured' && p.explained) {
+      problems.push({ severity: p.severity, title: p.explained.why, action: '', steps: p.explained.steps, code: p.code, playbook: p.playbook ?? undefined, since: p.since, link, key: p.state });
+    }
+    for (const x of p.extra) problems.push({ severity: x.severity, title: x.title, action: '', steps: x.steps, playbook: x.playbook, link, key: x.key });
+    // The plain label names the main state; a second problem that is worse says so instead of hiding behind it.
+    const top = problems.reduce<TileState>((a, x) => (RANK[x.severity] > RANK[a] ? x.severity : a), p.severity);
+    const label = RANK[top] > RANK[p.severity] ? (top === 'critical' ? STATE_LABELS.needs_person : 'Needs a look') : p.label;
+    r.add({ ...base, id, name: p.title, link, detail: p.detail, stateLabel: label, ...(p.explained ? { explain: { why: p.explained.why, steps: p.explained.steps, code: p.code } } : {}), lines: p.lines.map((l) => ({ label: l.label, state: l.state, detail: l.detail, ...(Object.hasOwn(LINE_LABELS, l.state) ? { stateLabel: LINE_LABELS[l.state] } : {}) })) }, problems);
+  }
+}
+
 /** The daily nonce check: it measures only while the API writes usage events (D596). */
 function nonceTile(r: Report, s: Sources): void {
   const base: TileInput = { id: 'nonce-check', group: 'funds', name: 'Relayer nonce check', affects: 'Seeing a relayer key (session, owner or Home) used outside the API', detail: '', link: L.feed };
@@ -917,6 +983,7 @@ export async function buildStatus(env: Env, staff: StaffRequest, accessJwt: stri
   fundsTiles(r, s);
   nonceTile(r, s);
   nearRelayTile(r, s);
+  evmRelayTiles(r, s);
   dataTiles(r, s);
   jobTiles(r, s);
   externalTiles(r, env, s);

@@ -36,6 +36,9 @@ export const ADMIN_ERROR_STATUS = {
   directory_unavailable: 503,
   /** The issuer refused a staff identity this Worker accepted: its ADMIN_ACCESS_AUD or staff list differs from this one's. */
   directory_refused: 502,
+  /** The API (or the console) is older than this Worker: it lacks the RPC method a page needs (D843; deploy it first). */
+  api_outdated: 503,
+  console_outdated: 503,
 } as const;
 export type AdminErrorCode = keyof typeof ADMIN_ERROR_STATUS;
 export type ErrorCode = RpcCode | AdminErrorCode;

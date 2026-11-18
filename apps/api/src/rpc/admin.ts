@@ -9,7 +9,9 @@
 // admin Worker's monthly job only: a `system` actor, D360), with `purgeUserEvents` for migration 0013's events (readiness
 // 7.17); batch C15 the Support ID lookup's hot-DB part,
 // `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D394);
-// the System status page (D425) `systemStatus` (staff only, read-only, no user data).
+// the System status page (D425) `systemStatus` (staff only, read-only, no user data). D843 adds EVM gas sponsorship's
+// relayer: its view in `systemStatus`, `evmRelayDetail` and the staff tools `evmRelayAct` (staff only): this file is
+// the only one besides the relayer object and its staff module that may reach them (a source test in scripts/test).
 import {
   adminAppNamesInput,
   adminProfileNamesInput,
@@ -56,6 +58,8 @@ import {
   setMainnetDemoInput,
   updateSettingsInput,
   userSharesInput,
+  evmRelayActInput,
+  evmRelayDetailInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -78,6 +82,7 @@ import { proposeSetting, setLogo, setMainnetDemo, turnOff, updateSettings } from
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
 import { systemStatus } from '../system-status.ts';
+import { evmRelayerStaffAct, evmRelayerStaffDetail, evmRelayerStaffOverview } from '../evm-relayer-staff.ts';
 import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers, adminProfileNames } from '../directory/read.ts';
 import { supportLookup, userShares } from '../directory/support.ts';
 import { linkStats } from '../link-usage.ts';
@@ -242,7 +247,30 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
    * no user data.
    */
   systemStatus(c: unknown) {
-    return runRpc(this.env, 'admin.systemStatus', systemStatusInput, c, { actors: HANA }, ({ db }) => systemStatus(this.env, db));
+    return runRpc(this.env, 'admin.systemStatus', systemStatusInput, c, { actors: HANA }, ({ db }) => systemStatus(this.env, db, () => evmRelayerStaffOverview(this.env)));
+  }
+
+  // ---- EVM gas sponsorship's relayer (D843, D851): staff only; the admin Worker audits each tool call before and after ----
+
+  /** One sponsored chain: its view, every transaction the relayer holds (slots, hashes, apps) and its last 50 staff actions. */
+  evmRelayDetail(c: unknown) {
+    return runRpc(this.env, 'admin.evmRelayDetail', evmRelayDetailInput, c, { actors: HANA }, async ({ input }) => ({ detail: await evmRelayerStaffDetail(this.env, this.env.DB, input.chainId) }));
+  }
+
+  /** The relayer's staff tools' version (D843): the admin Worker asks before a tool's audit row (an older API lacks this method). */
+  evmRelayVersion(c: unknown) {
+    return runRpc(this.env, 'admin.evmRelayVersion', systemStatusInput, c, { actors: HANA }, async () => ({ version: 1 }));
+  }
+
+  /**
+   * One staff tool (resume, cancel, close, fill, adopt_nonce) as the staffer (their email is the relayer's `who`), only
+   * while the relayer still shows what the page did (`seen`, else version_conflict). The relayer's refusal is the answer.
+   */
+  evmRelayAct(c: unknown) {
+    return runRpc(this.env, 'admin.evmRelayAct', evmRelayActInput, c, { actors: HANA }, async ({ input }) => {
+      if (input.actor.kind !== 'hana') throw new Error('unreachable: a hana actor only');
+      return { result: await evmRelayerStaffAct(this.env, input, input.actor.email) };
+    });
   }
 
   // ---- retention (batch C13, D90): the admin Worker's monthly job only ----

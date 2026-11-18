@@ -286,6 +286,8 @@ export class HanaClient extends Emitter<HanaEvents> {
       evmAddress: () => this.#addresses?.evm ?? null,
       sponsoredChains: () => this.#sponsoredChains,
       request: (m, p) => this.#request(m, p),
+      // `sponsorship()` before `ready` waits for it (D871): the chains come with it.
+      ready: () => this.ready,
       apiUrl: deps.origins.apiUrl ?? null,
       publishableKey: config.publishableKey,
       fetch: deps.fetch,
@@ -297,6 +299,7 @@ export class HanaClient extends Emitter<HanaEvents> {
         // EIP-5792 (wallet_sendCalls): the same gas-free actions, never a transparent sponsoring of eth_sendTransaction.
         sponsoredChains: () => this.#sponsoredChains,
         sendSponsored: (p) => this.evm.sendSponsored(p),
+        ready: () => this.ready,
         login: () => this.login(),
         request: (m, p) => this.#request(m, p),
         prepareApproval: () => this.prepareApproval(),

@@ -63,7 +63,7 @@ CREATE INDEX near_relay_billing_nonce ON near_relay_billing (relayer_pk, relayer
 CREATE TABLE security_events_new (
   id          TEXT PRIMARY KEY,
   detected_at INTEGER NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'near_billing_late')),
+  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'evm_relay_closed_slot_mined', 'near_billing_late')),
   org_id      TEXT,
   app_id      TEXT,
   scope_id    TEXT,

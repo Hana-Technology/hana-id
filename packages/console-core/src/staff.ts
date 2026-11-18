@@ -5,6 +5,7 @@
 import { z } from '@hana-id/env/zod';
 import { ACTOR_KINDS, ORG_KINDS, ctx, inviteView, ownerGrantView, requestId, role } from './types.ts';
 import { orgIdInput } from './rpc.ts';
+import { isPlainNote } from './evm-relay.ts';
 
 export const userIdInput = z.string().regex(/^usr_[A-Za-z0-9]{1,64}$/u);
 export const inviteIdInput = z.string().regex(/^inv_[A-Za-z0-9]{1,64}$/u);
@@ -99,26 +100,43 @@ export const queryAuditInput = ctx.extend({ filters: auditFilters, cursor: z.str
  * SUPPORT_REQUEST_IDS_MAX in the request-ID form: the only list a detail may hold, D410) and the window, and its target
  * is the query as given (a Support ID, User ID or internal id: never an address or a sub). A `users.find` (the Users
  * screen's wallet-directory find, D410) is org-less too: the query's kind and the ticket, the target the id or wallet
- * address looked up (never a sub).
+ * address looked up (never a sub). The EVM relayer's staff tools (D843): `evm_relay.staff_action` before the tool runs
+ * (the tool, the chain, the slot and the staffer's note: no row, no action) and `evm_relay.staff_result` after it (done,
+ * or the relayer's reason), both org-less, the target the chain id.
  */
-export const STAFF_ACTIONS = ['statement.issued', 'ledger.exported', 'rate.overridden', 'support.lookup', 'users.find'] as const;
-/** Staff actions about an end user, not an org's act: recorded without an org, so no partner's view or feed shows them. */
-export const ORGLESS_STAFF_ACTIONS: ReadonlySet<string> = new Set(['support.lookup', 'users.find']);
+export const STAFF_ACTIONS = ['statement.issued', 'ledger.exported', 'rate.overridden', 'support.lookup', 'users.find', 'evm_relay.staff_action', 'evm_relay.staff_result'] as const;
+/**
+ * Staff actions about an end user, not an org's act: recorded without an org, so no partner's view or feed shows them.
+ * The EVM relayer's staff tools (D843) are org-less too: the relayer is the env's, not a partner's.
+ */
+export const ORGLESS_STAFF_ACTIONS: ReadonlySet<string> = new Set(['support.lookup', 'users.find', 'evm_relay.staff_action', 'evm_relay.staff_result']);
 /** The one detail that is a list: a lookup's request IDs (at most 20, each in the request-ID form). */
 export const STAFF_DETAIL_LIST_MAX = 20;
 const isListDetail = (action: string, key: string) => action === 'support.lookup' && key === 'requestIdList';
+/** A detail string's length, except the one longer text: a relayer staff tool's note (D843, plain text, EVM_RELAY_NOTE_MAX). */
+export const STAFF_DETAIL_TEXT_MAX = 128;
+export const STAFF_NOTE_MAX = 300;
+const isNoteDetail = (action: string, key: string) => action === 'evm_relay.staff_action' && key === 'note';
 export const recordStaffActionInput = ctx
   .extend({
     orgId: orgIdInput.optional(),
     action: z.enum(STAFF_ACTIONS),
     target: z.string().min(1).max(128).optional(),
     details: z
-      .record(z.string().max(32), z.union([z.string().max(128), z.number(), z.boolean(), z.null(), z.array(requestId).max(STAFF_DETAIL_LIST_MAX)]))
+      .record(z.string().max(32), z.union([z.string().max(STAFF_NOTE_MAX), z.number(), z.boolean(), z.null(), z.array(requestId).max(STAFF_DETAIL_LIST_MAX)]))
       .refine((d) => Object.keys(d).length <= 16, 'At most 16 details'),
   })
   .strict()
   .refine((v) => Object.entries(v.details).every(([k, x]) => Array.isArray(x) === isListDetail(v.action, k)), {
     message: 'Only support.lookup’s requestIdList is a list (of request IDs), and it is always one',
+    path: ['details'],
+  })
+  .refine((v) => Object.entries(v.details).every(([k, x]) => !isNoteDetail(v.action, k) || (typeof x === 'string' && isPlainNote(x))), {
+    message: 'evm_relay.staff_action’s note is one line of plain text',
+    path: ['details'],
+  })
+  .refine((v) => Object.entries(v.details).every(([k, x]) => typeof x !== 'string' || x.length <= STAFF_DETAIL_TEXT_MAX || isNoteDetail(v.action, k)), {
+    message: `A detail is at most ${STAFF_DETAIL_TEXT_MAX} characters; only evm_relay.staff_action’s note may be longer (${STAFF_NOTE_MAX})`,
     path: ['details'],
   });
 export type RecordStaffActionInput = z.infer<typeof recordStaffActionInput>;

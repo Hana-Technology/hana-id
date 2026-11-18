@@ -52,6 +52,19 @@ describe('audit details', () => {
         "change.link_cancel": [
           "code",
         ],
+        "evm_relay.staff_action": [
+          "tool",
+          "chainId",
+          "slot",
+          "note",
+          "keyConfirmed",
+        ],
+        "evm_relay.staff_result": [
+          "tool",
+          "chainId",
+          "slot",
+          "result",
+        ],
         "invite.accepted": [
           "role",
           "newOrg",

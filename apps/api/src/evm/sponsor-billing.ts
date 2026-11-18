@@ -1,7 +1,7 @@
 // EVM gas sponsorship's billing records (D852): one permanent record per sponsored transaction that reached the chain
 // (the batch, executed or reverted or run without effect, or the deadline's self-transfer), and one per charge that has
 // no mined transaction of its own (`lost`: the reservation kept because nobody could prove nothing was spent;
-// `consumed_elsewhere`: the relayer's nonce went to something else, its reservation kept), so the books add up.
+// `consumed_elsewhere`: the relayer's nonce went to something else: settled at 0, not charged, D869), so the books add up.
 //
 // Where: the API's D1 table `evm_sponsor_billing` (migration 0022) is the record of truth, written in the same D1 batch
 // as the audit row's final move (so a settled send can't exist without its record), and copied by the cron into the
@@ -106,6 +106,22 @@ export function correctionStatement(env: Env, sendId: string, corrects: string, 
     now,
     corrects,
   );
+}
+
+/**
+ * A correction to "not charged" (D869): a send settled at head, then reorged out, whose slot staff closed as used by
+ * something else. 'fix:<send>', outcome `consumed_elsewhere`, settled 0, no transaction and no figures; it names the
+ * record it supersedes. INSERT OR IGNORE: one correction per send; never for a replay.
+ */
+export function notChargedCorrectionStatement(env: Env, sendId: string, corrects: string, now: number): D1PreparedStatement {
+  return env.DB.prepare(
+    `INSERT OR IGNORE INTO evm_sponsor_billing (chain_id, record_key, send_id, org_id, app_id, environment, tx_hash, outcome,
+       settled_wei, call_count, targets_json, with_setup, created_at, settled_at, corrects)
+     SELECT s.chain_id, 'fix:' || s.id, s.id, a.org_id, s.app_id, ?2, NULL, 'consumed_elsewhere', '0', s.call_count, s.targets_json, s.with_setup,
+            s.created_at, ?3, ?4
+       FROM evm_sponsor_sends s JOIN apps a ON a.id = s.app_id
+      WHERE s.id = ?1 AND s.replay = 0`,
+  ).bind(sendId, env.ENV_NAME, now, corrects);
 }
 
 // ---- the ledger copy (every cron run) ----

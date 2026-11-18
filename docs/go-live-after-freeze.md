@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -679,8 +679,12 @@ the relayer address.
 
 - **Security & monitoring**: no "Free network fees: …" alert (their meanings: operations "EVM gas sponsorship",
   "Watching it").
-- The relayer's state: the admin portal has no sponsorship page yet (it is being built). Until it exists, an engineer
-  reads the relayer's status (`halted: null` means running) and runs its staff tools for you.
+- The relayer's state: System status's tile **Free network fees (Base Sepolia)** says "Working" (else why and what
+  to do, as numbered steps); its link opens the Free network fees page, with what is waiting and the staff tools
+  (operations "Free network fees in the admin portal (D843)"). The table in phase 3 already deploys the API (row 2)
+  and the console (row 5) before the admin portal (row 7), which this needs: with an older API the tile says "This page
+  is newer than the API: deploy the API first" and the tools do nothing; with an older console the tools say so and do
+  nothing. Without the read endpoint (4.12) the tile says "Not set up" with the upload step.
 
 ### 4.17 The free-plan CPU measurement (the assistant)
 

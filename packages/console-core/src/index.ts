@@ -2,6 +2,7 @@
 // (docs/batch-c-spec.md "Repo layout": packages/console-core).
 export * from './bytes.ts';
 export * from './directory.ts';
+export * from './evm-relay.ts';
 export * from './governance.ts';
 export * from './health.ts';
 export * from './ids.ts';

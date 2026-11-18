@@ -15,7 +15,8 @@
 // fields of exact shapes (D788). Ordinary `eth_sendTransaction` is never sponsored:
 // a page asks for a gas-free action by name (D838).
 import { ErrorCode, type PortMethod, type PortParamsMap, type PortResultMap, isApiRequestId, isEvmAddress } from '@hana-id/core';
-import { HanaError, RpcCode, asHanaError } from './errors.ts';
+import { HanaError, RpcCode, asHanaError, markSponsored } from './errors.ts';
+import { type SponsorReason, type SponsorshipReason } from './user-messages.ts';
 import type { FetchLike } from './rpc.ts';
 
 export interface EvmSponsorHost {
@@ -24,6 +25,8 @@ export interface EvmSponsorHost {
   /** The chains the vault reported in `sponsoredChains`, or [] (an older vault, a build without sponsorship). */
   sponsoredChains(): readonly number[];
   request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]>;
+  /** The client's `ready` (it rejects as `hana.ready` does, after the client's own timeouts), for `sponsorship`. */
+  ready?(): Promise<unknown>;
   /** The Journear API of this env (`apiUrl`), for `sponsorship`; null when the build doesn't know it. */
   apiUrl: string | null;
   publishableKey: string;
@@ -52,7 +55,7 @@ export interface SendSponsoredResult {
 export interface SponsorshipStatus {
   available: boolean;
   /** Why not, when `available` is false: `chain_not_enabled`, `app_not_sponsored`, `paused`, `budget_exhausted`, `not_available`. */
-  reason?: string;
+  reason?: SponsorshipReason;
   /** This app's own budget left today, in wei (decimal), when the API says. */
   remainingToday?: string;
 }
@@ -64,7 +67,7 @@ export interface EvmSponsorErrorData {
   /** The HTTP status of Journear's API answer, when the refusal came from it. */
   status?: number;
   /** Why (`delegated_elsewhere`, `sponsor_in_flight`, `reverted`, `budget_exhausted`, …), at most 64 characters. */
-  reason?: string;
+  reason?: SponsorReason;
   /** The API's request ID: quote it to Journear with the user's Support ID. */
   requestId?: string;
   /** Wait at least this long (seconds, 0 to 86,400) before asking again. */
@@ -82,7 +85,19 @@ export interface EvmSponsorErrorData {
 /** What `hana.evm.sendSponsored` and `sponsorship` reject with: a HanaError with typed `data`. Show `userMessage`. */
 export class HanaSponsorError extends HanaError {
   declare readonly data?: EvmSponsorErrorData;
+
+  constructor(code: ConstructorParameters<typeof HanaError>[0], message: string, data?: unknown) {
+    super(code, message, data);
+    markSponsored(this);
+  }
 }
+
+/**
+ * `data` of the `ProviderRpcError` that `hana.ethereum`'s `wallet_sendCalls` rejects with when the gas-free action
+ * fails: the HanaSponsorError's own `data` for a numeric code (4001, 4100), or, for a string code (`busy`,
+ * `rate_limited`, `session_ended`, `api_unavailable`), that code with the request ID and the `data` inside.
+ */
+export type EvmSponsorProviderErrorData = EvmSponsorErrorData | { code: string; requestId?: string; data?: EvmSponsorErrorData };
 
 export const isHanaSponsorError = (e: unknown): e is HanaSponsorError => e instanceof HanaSponsorError;
 
@@ -140,6 +155,8 @@ export function sponsoredCalls(calls: unknown): PortParamsMap['evm_sendSponsored
 
 export class HanaEvm {
   readonly #host: EvmSponsorHost;
+  /** The host's `ready`, asked once: every `sponsorship()` before it shares the one wait. */
+  #ready: Promise<unknown> | null = null;
 
   constructor(host: EvmSponsorHost) {
     this.#host = host;
@@ -180,11 +197,19 @@ export class HanaEvm {
   /**
    * Whether Journear pays network fees for this app on `chainId` right now (GET /v1/evm/sponsor/status): `{ available,
    * reason?, remainingToday? }`. A chain the vault didn't report answers `{ available: false, reason:
-   * 'chain_not_enabled' }` without a request, and so does any chain before `hana.ready` resolved (the vault reports its
-   * chains in `ready`): await it first. Rejects with HanaSponsorError (`api_unavailable`, `rate_limited`, 4100).
+   * 'chain_not_enabled' }` without a request. Called before `hana.ready`, it waits for it first (the vault reports its
+   * chains there; bounded by the client's own ready timeouts). Rejects with HanaSponsorError (`api_unavailable`,
+   * `rate_limited`, 4100, or `hana.ready`'s `vault_unavailable`).
    */
   async sponsorship(chainId: number): Promise<SponsorshipStatus> {
     if (typeof chainId !== 'number' || !Number.isSafeInteger(chainId) || chainId <= 0) throw invalid('chainId must be a positive integer');
+    if (this.#host.ready) {
+      try {
+        await (this.#ready ??= this.#host.ready());
+      } catch (e) {
+        throw asSponsorError(e);
+      }
+    }
     if (!this.#host.sponsoredChains().includes(chainId)) return { available: false, reason: 'chain_not_enabled' };
     const apiUrl = this.#host.apiUrl;
     if (!apiUrl) throw new HanaSponsorError('api_unavailable', 'This build of the Journear Passport SDK has no API URL for its environment');

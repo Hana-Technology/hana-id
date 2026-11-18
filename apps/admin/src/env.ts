@@ -7,6 +7,8 @@ import type {
   LinkStatsRow,
   ApiPurgeAuditResult,
   ApiSystemStatus,
+  EvmRelayActResult,
+  EvmRelayDetail,
   ConsoleHealth,
   AppNameView,
   ProfileNameRow,
@@ -94,6 +96,12 @@ export interface AdminRpcClient {
   purgeAudit(c: unknown): Answer<ApiPurgeAuditResult>;
   /** The System status page (D425): the API's build, hot DB, crons, notice backlog, pool keys and governance. */
   systemStatus(c: unknown): Answer<ApiSystemStatus>;
+  /** "Free network fees" (D843): one sponsored chain's relayer, its waiting transactions and staff log. */
+  evmRelayDetail(c: unknown): Answer<{ detail: EvmRelayDetail }>;
+  /** One relayer staff tool (D843): done, or the relayer's reason. */
+  evmRelayAct(c: unknown): Answer<{ result: EvmRelayActResult }>;
+  /** Whether this API has the relayer's staff tools (D843): asked before a tool's audit row, so an older API records nothing. */
+  evmRelayVersion(c: unknown): Answer<{ version: number }>;
   /** Apps deleted 30 days ago or more, for the ledger's app_users purge. */
   deletedApps(c: unknown): Answer<DeletedAppsResult>;
   /** The wallet directory of scopes whose every app was deleted 30 days ago or more. */

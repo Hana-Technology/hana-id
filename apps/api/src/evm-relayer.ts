@@ -42,11 +42,14 @@
 //   key_mismatch              records exist, the key isn't `relayerAddress` or their signer (a missing one: no halt).
 //   storage_inconsistent      a stored invariant broken (records vs `nextNonce`, a batch entry; also at send).
 // WHILE HALTED: new sends `relayer_halted`; replays answer; runs finalize, rebroadcast, bump, cancel. STAFF (recorded:
-// who, when, what, note, outcome; evm-relayer-staff.ts only; each re-reads the chain):
+// who, when, what, note, outcome; evm-relayer-staff.ts only; each re-reads the chain; given what the staffer saw, the
+// halt's start and the last staff action's number, it refuses `version_conflict` inside the queue when they changed):
 //   staffClose(n, consumed_elsewhere)  confirmed count > n, every version's receipt read: none. Reservation kept.
 //   staffCancel(n)      a record with no receipt, its nonce not mined at head: a cancel version (old ones kept).
 //   staffFill(n)        no record at n, n < nextNonce, n == the pending count and the latest count ≤ n.
 //   staffAdoptNonce(n)  no unmined record, n ≥ nextNonce (so above every record), latest == pending == n.
+//   staffResume         only with `keyConfirmed` once the pause is marked `leakSeen` (a leak-type reason or condition
+//                       seen during it, or a staff Close/Fill/AdoptNonce done during it): `key_confirmation_required`.
 //
 // Concurrency: send, the alarm and the staff tools run through one FIFO queue (`exclusive`) across their RPC awaits;
 // each storage change is one `transactionSync`. `status`, `lookup`, `staffStatus` read storage only. Bounded: ≤ 45
@@ -62,6 +65,7 @@ import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { sha256 } from '@noble/hashes/sha256';
 import type { Env } from './env.ts';
+import { isLeakHalt } from '@hana-id/console-core';
 import { log } from './log.ts';
 import { type EvmBroadcast, type EvmReceipt, type EvmRejection, EvmRpcError, type Hex, type SponsorChain, receiptCostWei, sponsorChainFor } from './evm/sponsor-chain.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, checksumEvmAddress, parseEvmSponsorConfig, sponsorChain } from './evm/sponsor-config.ts';
@@ -109,8 +113,12 @@ const DAY_MS = 24 * 60 * 60_000;
 const SCHEMA = 1;
 
 export type EvmRelayerHaltReason = 'nonce_consumed_elsewhere' | 'nonce_gap' | 'foreign_transactions' | 'relayer_cannot_send' | 'stuck_past_deadline' | 'key_mismatch' | 'storage_inconsistent';
-/** `code`: for `relayer_cannot_send`, the pool's refusal (an EvmRejection, e.g. `insufficient_funds`). */
-export type EvmRelayerHalt = { reason: EvmRelayerHaltReason; since: number; nonce?: number; code?: string };
+/**
+ * `code`: for `relayer_cannot_send`, the pool's refusal (an EvmRejection, e.g. `insufficient_funds`). `leakSeen` (D843):
+ * during this pause something was seen that means the key may be used by someone else (the pause's own reason, or a
+ * later condition: console-core `isLeakHalt`), or staff closed, filled or set a slot; Resume then needs `keyConfirmed`.
+ */
+export type EvmRelayerHalt = { reason: EvmRelayerHaltReason; since: number; nonce?: number; code?: string; leakSeen?: true };
 /** Who a definite refusal of a batch is down to: its size or shape (the user's input), its pricing (the handler's), or the relayer (funds, nonce, signing). */
 export type EvmRejectionCause = 'request' | 'pricing' | 'relayer';
 /**
@@ -186,6 +194,8 @@ export interface EvmRelayerStaffEntry {
 /** Every record as stored (no raw transactions), the day's backstop and the last 50 staff actions. */
 export interface EvmRelayerStaffStatus extends EvmRelayerStatus {
   chainId: number | null;
+  /** The UTC day (ms ÷ 1 day) `dayWei` counts; null before the first send. An earlier day's `dayWei` isn't today's spend. */
+  day: number | null;
   dayWei: bigint;
   gapSeen: number | null;
   unconfirmedRefusal: null | { count: number; lastAt: number; nonce: number; code: string };
@@ -193,6 +203,8 @@ export interface EvmRelayerStaffStatus extends EvmRelayerStatus {
   staffLog: EvmRelayerStaffEntry[];
 }
 export interface EvmRelayerStaffResult { done: boolean; refused: string | null; status: EvmRelayerStaffStatus }
+/** What the staffer's page showed (D843): the halt's start (null: running) and the newest staff action's number (0: none). */
+export interface EvmRelayerStaffExpect { haltSince: number | null; lastStaffSeq: number }
 
 /** `rejected` is reserved by the interface and never thrown: a refused batch is answered with `broadcast: 'rejected'`. */
 export type EvmRelayerErrorCode = 'relayer_unconfigured' | 'relayer_misconfigured' | 'invalid_request' | 'fees_too_high' | 'fees_too_low' | 'wrong_chain' | 'deadline_passed' | 'relayer_busy' | 'relayer_halted' | 'daily_cap' | 'rpc_unavailable' | 'rejected' | 'internal';
@@ -566,12 +578,15 @@ export class EvmRelayer extends DurableObject<Env> {
     return this.#staffView();
   }
 
-  async staffResume(guard: string, who: string, note: string): Promise<EvmRelayerStaffResult> {
-    return this.#staffAct(guard, who, note, { action: 'resume', nonce: null, verdict: null }, async (meta, c) => {
+  async staffResume(guard: string, who: string, note: string, expect?: EvmRelayerStaffExpect, keyConfirmed?: boolean): Promise<EvmRelayerStaffResult> {
+    if (keyConfirmed !== undefined && typeof keyConfirmed !== 'boolean') refuse('invalid_request');
+    return this.#staffAct(guard, who, note, expect, { action: 'resume', nonce: null, verdict: null }, async (meta, c) => {
       if (!meta.halted) return 'not_halted';
+      if (meta.halted.leakSeen && keyConfirmed !== true) return 'key_confirmation_required';
       // A new key with nothing in flight starts a new nonce life (read at the next send).
       if (this.#records().length === 0 && c.keyAddress && c.keyAddress !== meta.address) this.#putMeta({ ...meta, address: c.keyAddress, nextNonce: null });
       const out = await this.#run(c, Date.now());
+      this.#markLeak(out.conditions.filter((x) => x.reason !== 'nonce_gap' || meta.gapSeen === x.nonce));
       if (out.conditions.length > 0) return out.conditions[0]!.reason;
       if (out.incomplete) return 'incomplete_check';
       this.#putMeta({ ...this.#meta()!, halted: null, gapSeen: null });
@@ -579,9 +594,9 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  async staffClose(guard: string, who: string, nonce: number, verdict: 'consumed_elsewhere', note: string): Promise<EvmRelayerStaffResult> {
+  async staffClose(guard: string, who: string, nonce: number, verdict: 'consumed_elsewhere', note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
     if (verdict !== 'consumed_elsewhere') refuse('invalid_request');
-    return this.#staffAct(guard, who, note, { action: 'close', nonce, verdict }, async (meta, c) => {
+    return this.#staffAct(guard, who, note, expect, { action: 'close', nonce, verdict }, async (meta, c) => {
       const r = this.#rec(nonce);
       if (!r) return 'no_record';
       const rpc = this.#client(c);
@@ -595,8 +610,8 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  async staffCancel(guard: string, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> {
-    return this.#staffAct(guard, who, note, { action: 'cancel', nonce, verdict: null }, async (meta, c) => {
+  async staffCancel(guard: string, who: string, nonce: number, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
+    return this.#staffAct(guard, who, note, expect, { action: 'cancel', nonce, verdict: null }, async (meta, c) => {
       const r = this.#rec(nonce);
       if (!r) return 'no_record';
       if (!this.#canSign(c, meta)) return 'key_mismatch';
@@ -615,8 +630,8 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  async staffFill(guard: string, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> {
-    return this.#staffAct(guard, who, note, { action: 'fill', nonce, verdict: null }, async (meta, c) => {
+  async staffFill(guard: string, who: string, nonce: number, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
+    return this.#staffAct(guard, who, note, expect, { action: 'fill', nonce, verdict: null }, async (meta, c) => {
       if (!this.#canSign(c, meta)) return 'key_mismatch';
       if (meta.nextNonce === null || nonce >= meta.nextNonce) return 'not_below_next_nonce';
       if (this.#rec(nonce)) return 'record_exists';
@@ -635,8 +650,8 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  async staffAdoptNonce(guard: string, who: string, nonce: number, note: string): Promise<EvmRelayerStaffResult> {
-    return this.#staffAct(guard, who, note, { action: 'adopt_nonce', nonce, verdict: null }, async (meta, c) => {
+  async staffAdoptNonce(guard: string, who: string, nonce: number, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
+    return this.#staffAct(guard, who, note, expect, { action: 'adopt_nonce', nonce, verdict: null }, async (meta, c) => {
       const records = this.#records();
       if (meta.nextNonce !== null && nonce < meta.nextNonce) return 'below_next_nonce';
       // Every record is below nextNonce, so n ≥ nextNonce is above them all.
@@ -829,8 +844,9 @@ export class EvmRelayer extends DurableObject<Env> {
       if (!out) return this.#schedule(now, false);
       const m = this.#meta()!;
       // nonce_gap halts only when the same gap was seen on the previous run too.
-      const first = out.conditions.find((x) => x.reason !== 'nonce_gap' || m.gapSeen === x.nonce);
-      if (first) this.#halt(first, now);
+      const counted = out.conditions.filter((x) => x.reason !== 'nonce_gap' || m.gapSeen === x.nonce);
+      if (counted[0]) this.#halt(counted[0], now);
+      this.#markLeak(counted);
       for (const x of out.conditions) log({ event: 'evm_relayer_condition', chainId: meta.chainId, code: x.reason, ...(x.nonce !== undefined ? { nonce: String(x.nonce) } : {}) }, 'warn');
       if (this.#meta()!.gapSeen !== out.gap) this.#putMeta({ ...this.#meta()!, gapSeen: out.gap });
       log({ event: 'evm_relayer_run', chainId: meta.chainId, evmOps: this.#ops });
@@ -1063,9 +1079,21 @@ export class EvmRelayer extends DurableObject<Env> {
 
   #halt(h: Condition, now: number): void {
     const m = this.#meta();
-    if (!m || m.halted) return;
-    this.#putMeta({ ...m, halted: { reason: h.reason, since: now, ...(h.nonce !== undefined ? { nonce: h.nonce } : {}), ...(h.code !== undefined ? { code: h.code } : {}) } });
+    if (!m) return;
+    if (m.halted) return this.#markLeak([h]);
+    this.#putMeta({ ...m, halted: { reason: h.reason, since: now, ...(h.nonce !== undefined ? { nonce: h.nonce } : {}), ...(h.code !== undefined ? { code: h.code } : {}), ...(isLeakHalt(h) ? { leakSeen: true as const } : {}) } });
     log({ event: 'evm_relayer_halted', chainId: m.chainId, code: h.code ? `${h.reason}:${h.code}` : h.reason, ...(h.nonce !== undefined ? { nonce: String(h.nonce) } : {}) }, 'error');
+  }
+
+  /**
+   * Marks the current pause `leakSeen` (D843) when any of `conds` means the key may be someone else's (console-core
+   * `isLeakHalt`), or with `staff` (a Close, Fill or AdoptNonce done during it). Running, or already marked: nothing.
+   */
+  #markLeak(conds: readonly Condition[], staff = false): void {
+    const m = this.#meta();
+    if (!m?.halted || m.halted.leakSeen || !(staff || conds.some((x) => isLeakHalt(x)))) return;
+    this.#putMeta({ ...m, halted: { ...m.halted, leakSeen: true } });
+    log({ event: 'evm_relayer_leak_seen', chainId: m.chainId, code: staff ? 'staff_tool' : conds.find((x) => isLeakHalt(x))!.reason }, 'error');
   }
 
   #meta(): Meta | undefined {
@@ -1114,17 +1142,27 @@ export class EvmRelayer extends DurableObject<Env> {
 
   // ---- staff plumbing ----
 
-  /** Checks the caller's input, runs `fn` in the queue (null: done, else why refused) and records the action. */
-  async #staffAct(guard: string, who: string, note: string, what: Pick<EvmRelayerStaffEntry, 'action' | 'nonce' | 'verdict'>, fn: (meta: Meta, c: Ctx) => Promise<string | null>): Promise<EvmRelayerStaffResult> {
+  /**
+   * Checks the caller's input, runs `fn` in the queue (null: done, else why refused) and records the action. With
+   * `expect` (D843: what the staffer's page showed), the halt's start and the newest staff action's number must still
+   * be those inside the queue, else `version_conflict` and `fn` doesn't run: two staffers, or a double submit, never act
+   * on a state one of them didn't see.
+   */
+  async #staffAct(guard: string, who: string, note: string, expect: EvmRelayerStaffExpect | undefined, what: Pick<EvmRelayerStaffEntry, 'action' | 'nonce' | 'verdict'>, fn: (meta: Meta, c: Ctx) => Promise<string | null>): Promise<EvmRelayerStaffResult> {
     const text = (s: unknown, max: number): boolean => typeof s === 'string' && s.trim().length > 0 && s.length <= max && !/[\u0000-\u001f\u007f]/u.test(s);
-    if (guard !== EVM_RELAYER_STAFF_GUARD || !text(who, 128) || !text(note, 500) || (what.nonce !== null && (!Number.isSafeInteger(what.nonce) || what.nonce < 0))) refuse('invalid_request');
+    const seq = (n: unknown): boolean => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+    const expectOk = expect === undefined || (typeof expect === 'object' && expect !== null && Object.keys(expect).length === 2 && (expect.haltSince === null || seq(expect.haltSince)) && seq(expect.lastStaffSeq));
+    if (guard !== EVM_RELAYER_STAFF_GUARD || !text(who, 128) || !text(note, 500) || (what.nonce !== null && (!Number.isSafeInteger(what.nonce) || what.nonce < 0)) || !expectOk) refuse('invalid_request');
     return this.#exclusive(async () => {
       this.#ops = { signatures: 0, recoveries: 0, fetches: 0, keyDerivations: 0 };
       const meta = this.#meta();
       let refused: string | null = 'no_state';
       let c: Ctx | null = null;
       try {
-        if (meta) refused = await fn(meta, (c = this.#context(meta.chainId)));
+        if (expect && ((meta?.halted?.since ?? null) !== expect.haltSince || (meta?.staffSeq ?? 0) !== expect.lastStaffSeq)) refused = 'version_conflict';
+        else if (meta) refused = await fn(meta, (c = this.#context(meta.chainId)));
+        // A slot closed, filled or set by hand during a pause: Resume then needs the key confirmed (D843).
+        if (refused === null && meta?.halted && what.action !== 'resume' && what.action !== 'cancel') this.#markLeak([], true);
       } catch (e) {
         refused = evmRelayerError(e)?.code ?? (e instanceof EvmRpcError ? 'rpc_unavailable' : 'internal');
       } finally {
@@ -1150,6 +1188,6 @@ export class EvmRelayer extends DurableObject<Env> {
     const s = await this.status().catch(() => ({ address: '0x' as Hex, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, oldestUnacceptedMs: null, nextNonce: null, halted: null }));
     const records = this.#records().map(({ versions, to: _t, data: _d, authorization: _a, ...r }) => ({ ...r, versions: versions.map(({ raw: _r, ...v }) => v) }));
     const staffLog = Array.from(this.ctx.storage.kv.list<EvmRelayerStaffEntry>({ prefix: 'staff:', reverse: true, limit: 50 }), ([, v]) => v);
-    return { ...s, chainId: meta?.chainId ?? null, dayWei: BigInt(meta?.dayWei ?? '0'), gapSeen: meta?.gapSeen ?? null, unconfirmedRefusal: meta?.unconfirmedRefusal ?? null, records, staffLog };
+    return { ...s, chainId: meta?.chainId ?? null, day: meta?.day ?? null, dayWei: BigInt(meta?.dayWei ?? '0'), gapSeen: meta?.gapSeen ?? null, unconfirmedRefusal: meta?.unconfirmedRefusal ?? null, records, staffLog };
   }
 }

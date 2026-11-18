@@ -66,6 +66,10 @@ export const AUDIT_DETAIL_KEYS = {
   // D410: the Users screen's wallet-directory find (a wallet, User ID, internal id or Support ID), org-less, recorded
   // before it reads: the query's kind and the ticket.
   'users.find': ['by', 'ticket'],
+  // D843: the EVM relayer's staff tools from the admin portal, org-less (the relayer is the env's): before the tool runs,
+  // which tool, the chain, the slot and the staffer's note; after it, the relayer's answer (`done`, or its reason).
+  'evm_relay.staff_action': ['tool', 'chainId', 'slot', 'note', 'keyConfirmed'],
+  'evm_relay.staff_result': ['tool', 'chainId', 'slot', 'result'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;

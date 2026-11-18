@@ -13,8 +13,12 @@ import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { EXECUTED_TOPIC } from '../src/evm/sponsor-checks.ts';
 import { DEFAULT_SPONSOR_PORTS, type EvmRelayerPort, sponsorPorts } from '../src/evm/sponsor-ports.ts';
 import { EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, forgetRelayerBalances, forgetRelayerStatus, sponsorTiming } from '../src/evm/sponsor.ts';
-import { EvmMock, type Hex, type MockTx, PRIMARY_RPC } from './evm-mock.ts';
-import { DELEGATE, LOCAL_CHAIN, RELAYER, nearMock, rememberAccount, sessionsInMemory, signedSend, sponsorCall, sponsorEnv, sponsorVar, testUser, type TestUser } from './evm-sponsor-helpers.ts';
+import { EvmMock, type Hex, type MockTx, PRIMARY_RPC, decodeRawTx } from './evm-mock.ts';
+import { signSponsorTx } from '@hana-id/core/evm-sponsor';
+import { evmRelayerStaffAct, evmRelayerStaffClose, evmRelayerStaffDetail, evmRelayerStaffResume } from '../src/evm-relayer-staff.ts';
+import { evmSponsorConfig } from '../src/evm/sponsor.ts';
+import { reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
+import { DELEGATE, LOCAL_CHAIN, RELAYER, nearMock, testKey, rememberAccount, sessionsInMemory, signedSend, sponsorCall, sponsorEnv, sponsorVar, testUser, type TestUser } from './evm-sponsor-helpers.ts';
 import { seedApp, type SeededApp, uid } from './helpers.ts';
 
 type Stub = DurableObjectStub<EvmRelayer>;
@@ -173,4 +177,69 @@ describe('the routes and the relayer object, end to end over the fake chain', ()
     expect([again.status, (await body(again)).code]).toEqual([503, 'sponsorship_paused']);
     expect(w.chain.broadcasts.length).toBe(before);
   });
+
+  it('D843 re-check M, the thief: paused for money, then the wallet emptied with the relayer’s key: the page and the API ask for the key to be confirmed, and the relayer refuses Resume without it', async () => {
+    const w = await setup({ delegated: true });
+    w.chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
+    const r = await sendFor(w, signedSend(w.user));
+    expect([r.status, (await body(r)).code]).toEqual([503, 'sponsorship_paused']);
+    expect((await w.stub.status()).halted).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds' });
+    // Someone with the key sends the wallet's money away: slots 0 and 1 (our next slot is 1).
+    w.chain.onSend = undefined;
+    w.chain.pool.get(RELAYER.toLowerCase())?.clear();
+    for (const nonce of [0n, 1n]) w.chain.admit(decodeRawTx(signSponsorTx(testKey('relayer'), { type: 'eip1559', chainId: BigInt(LOCAL_CHAIN), nonce, maxFeePerGas: 10n ** 9n, maxPriorityFeePerGas: 10n ** 7n, gas: 21_000n, to: new Uint8Array(20).fill(0xee), value: 0n, data: new Uint8Array(), accessList: [] })));
+    w.chain.mine(RELAYER);
+    w.chain.blockNumber += 20;
+    await runDurableObjectAlarm(w.stub);
+    // The pause still leads with "out of money"; the mark says a leak was seen.
+    expect((await w.stub.status()).halted).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds', leakSeen: true });
+    // The admin path: the API's own view and its Resume, as the portal calls them (the relayer namespace pointed at this object).
+    const id = w.stub.id;
+    const api = { ...env, ...w.bindings, EVM_RELAYER: { idFromName: () => id, get: () => w.stub } } as unknown as Env;
+    const view = await evmRelayerStaffDetail(api, env.DB, LOCAL_CHAIN);
+    const relayer = view.chain.relayer;
+    expect(relayer).toMatchObject({ ok: true, halted: { reason: 'relayer_cannot_send', leakSeen: true } });
+    if (!relayer.ok || !relayer.halted) throw new Error('unreachable');
+    const seen = { haltSince: relayer.halted.since, lastStaffSeq: relayer.lastStaffSeq };
+    expect(await evmRelayerStaffAct(api, { chainId: LOCAL_CHAIN, tool: 'resume', note: 'Topped up from the faucet', seen } as Parameters<typeof evmRelayerStaffAct>[1], 'staff@hana.example')).toMatchObject({ done: false, refused: 'key_confirmation_required' });
+    // Past the API (a caller that skips its check): the relayer refuses on its own and records it.
+    const direct = await evmRelayerStaffResume(w.stub as never, 'staff@hana.example', 'Topped up from the faucet');
+    expect(direct).toMatchObject({ done: false, refused: 'key_confirmation_required' });
+    expect(direct.status.staffLog[0]).toMatchObject({ action: 'resume', done: false, refused: 'key_confirmation_required' });
+    expect((await w.stub.status()).halted).toMatchObject({ leakSeen: true });
+    expect(await codeOfSend(w)).toBe('sponsorship_paused');
+  });
+
+  it('D869: the relayer’s own detection, then staff closing the slot, leads to “not charged”: the app’s and the env’s budgets back, the record at 0', async () => {
+    const w = await setup({ delegated: true });
+    sponsorTiming.receiptWaitMs = 200;
+    w.chain.onSend = () => 'accept';
+    const spent = async (subject: string) => BigInt(await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject)).spent(`evm-sponsor:${LOCAL_CHAIN}:wei`, 86_400_000));
+    // The env's budget object is shared by this file's tests: measured from here.
+    const envBefore = await spent(`evm-sponsor:budget:${LOCAL_CHAIN}`);
+    const r = await sendFor(w, signedSend(w.user));
+    expect([r.status, (await body(r)).code]).toEqual([504, 'timeout']);
+    expect(await spent(`app:${w.app.id}`)).toBeGreaterThan(0n);
+    // Someone else uses the relayer's key: their transaction takes slot 0 instead of ours.
+    w.chain.pool.get(RELAYER.toLowerCase())?.clear();
+    const foreign = signSponsorTx(testKey('relayer'), { type: 'eip1559', chainId: BigInt(LOCAL_CHAIN), nonce: 0n, maxFeePerGas: 10n ** 9n, maxPriorityFeePerGas: 10n ** 7n, gas: 21_000n, to: new Uint8Array(20).fill(0xee), value: 0n, data: new Uint8Array(), accessList: [] });
+    w.chain.admit(decodeRawTx(foreign));
+    w.chain.mine(RELAYER, 1);
+    w.chain.blockNumber += 20;
+    await runDurableObjectAlarm(w.stub);
+    expect((await w.stub.status()).halted).toMatchObject({ reason: 'nonce_consumed_elsewhere', nonce: 0 });
+    // Staff close the slot (the admin portal's Close, through the staff module).
+    expect(await evmRelayerStaffClose(w.stub as never, 'staff@hana.example', 0, 'consumed_elsewhere', 'a foreign transaction took slot 0')).toMatchObject({ done: true });
+    await env.DB.prepare('UPDATE evm_sponsor_sends SET updated_at = created_at - 120000, created_at = created_at - 120000').run();
+    const cron = { ...env, ...w.bindings } as Env;
+    expect(await reconcileEvmSends(cron, evmSponsorConfig(cron)!)).toMatchObject({ settled: 1 });
+    expect(await spent(`app:${w.app.id}`)).toBe(0n);
+    expect(await spent(`evm-sponsor:budget:${LOCAL_CHAIN}`)).toBe(envBefore);
+    expect(await env.DB.prepare('SELECT status, settled_wei FROM evm_sponsor_sends WHERE account = ?1').bind(w.user.address).first()).toEqual({ status: 'consumed_elsewhere', settled_wei: '0' });
+    expect(await env.DB.prepare('SELECT outcome, settled_wei, total_cost_wei FROM evm_sponsor_billing WHERE app_id = ?1').bind(w.app.id).first()).toEqual({ outcome: 'consumed_elsewhere', settled_wei: '0', total_cost_wei: null });
+  });
 });
+
+async function codeOfSend(w: World): Promise<unknown> {
+  return (await body(await sendFor(w, signedSend(w.user, { minGas: 100_002n })))).code;
+}

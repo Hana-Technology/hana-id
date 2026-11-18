@@ -5,6 +5,7 @@
 // ids, timings, counts and timestamps only. Nothing here is a secret.
 import { z } from '@hana-id/env/zod';
 import { staffCall } from './directory.ts';
+import type { EvmRelayStatus } from './evm-relay.ts';
 import { ctx } from './types.ts';
 
 /** `AdminRpc.systemStatus` and `StaffRpc.health`: no fields beyond the call's context. */
@@ -52,6 +53,11 @@ export interface ApiSystemStatus {
   governance: { ok: true; snapshot: Record<string, unknown> } | { ok: false; code: string };
   /** The NEAR meta-transaction relay (D784). Absent from an API older than this field. */
   nearRelay?: NearRelayStatus;
+  /**
+   * EVM gas sponsorship's relayer per sponsored chain (D843, D851): always sent (`absent` when the env has no
+   * `evm.sponsor`, nothing read); missing only from an API older than this field; see evm-relay.ts.
+   */
+  evmRelay?: EvmRelayStatus;
 }
 
 /**

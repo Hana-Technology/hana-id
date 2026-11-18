@@ -853,6 +853,22 @@ details.raw > summary { font-size: var(--jp-text-xs); color: var(--jp-link); fon
 .tile-lines { list-style: none; margin: var(--jp-space-1) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--jp-space-1); font-size: var(--jp-text-sm); }
 .tile-lines li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--jp-space-1) var(--jp-space-2); overflow-wrap: anywhere; }
 .tile-line-label { font-weight: 600; }
+.tile.wide { grid-column: span 2; }
+@media (max-width: 40rem) { .tile.wide { grid-column: auto; } }
+.explain { display: flex; flex-direction: column; gap: var(--jp-space-1); margin: var(--jp-space-1) 0; font-size: var(--jp-text-sm); }
+.explain-why { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.explain-steps, .issue-steps { margin: 0; padding-left: var(--jp-space-5); display: flex; flex-direction: column; gap: 2px; font-size: var(--jp-text-sm); overflow-wrap: anywhere; }
+.issue-steps { margin-top: var(--jp-space-2); }
+.engineer-code { margin: 0; font-size: var(--jp-text-xs); color: var(--jp-fg-muted); }
+.engineer-code code { white-space: normal; overflow-wrap: anywhere; }
+.evm-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--jp-space-2); }
+.copies { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.tool > h3 { margin: 0 0 var(--jp-space-1); font-size: var(--jp-text-md); }
+.tool > p { margin: 0 0 var(--jp-space-2); max-width: 46rem; }
+details.advanced { border-top: 1px solid var(--jp-border); padding-top: var(--jp-space-3); display: flex; flex-direction: column; gap: var(--jp-space-4); }
+details.advanced > summary { font-weight: 600; color: var(--jp-danger); }
+details.advanced[open] > * + * { margin-top: var(--jp-space-4); }
+.act-result { margin-bottom: var(--jp-space-4); }
 .tile-meta { margin: auto 0 0; padding-top: var(--jp-space-1); font-size: var(--jp-text-xs); color: var(--jp-fg-muted); }
 .state-chip.unknown { border-style: dashed; }
 .state-chip.off { background: transparent; }

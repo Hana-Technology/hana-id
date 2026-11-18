@@ -12,8 +12,10 @@
 // `PREVIEW_SESSION_MIN=4` shows the warning at once and the expired banner 4 minutes later; `0.2` after 12 s.
 //
 // The System status page (D425): `/api/status` is the real `buildStatus` over the fake sources of one scenario
-// (test-spa/preview-status.ts: green, warnings, critical, mixed-build, watchdog-down, and the NEAR relay's relay-low,
-// relay-budget, relay-key-missing, relay-off and relay-stale). `PREVIEW_STATUS=<scenario>` picks
+// (test-spa/preview-status.ts: green, warnings, critical, mixed-build, watchdog-down, the NEAR relay's relay-low,
+// relay-budget, relay-key-missing, relay-off and relay-stale, and free network fees' fees-working, fees-paused-money, fees-paused-money-leak,
+// fees-paused-key and fees-low, whose "Free network fees" page and tools answer here too; a done Resume there switches
+// the page to working). `PREVIEW_STATUS=<scenario>` picks
 // it at start (green by default); opening /preview/status/<scenario> switches it and goes to the page.
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -24,8 +26,16 @@ import * as data from './preview-data.ts';
 // The status scenarios run the Worker's own src/status.ts (Workers types): loaded by a specifier TypeScript doesn't follow
 // here, typechecked with test-ops/ instead (its tsconfig has the Workers types; this one has the DOM's).
 const STATUS_MODULE = './preview-status.ts';
-type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down' | 'relay-low' | 'relay-budget' | 'relay-key-missing' | 'relay-off' | 'relay-stale';
-const { SCENARIOS, previewStatus } = (await import(STATUS_MODULE)) as { SCENARIOS: readonly Scenario[]; previewStatus: (s: Scenario) => Promise<unknown> };
+type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down' | 'relay-low' | 'relay-budget' | 'relay-key-missing' | 'relay-off' | 'relay-stale' | 'fees-working' | 'fees-paused-money' | 'fees-paused-money-leak' | 'fees-paused-key' | 'fees-low' | 'fees-no-endpoint' | 'fees-resumed';
+type Fake = { status: number; body: unknown };
+const { SCENARIOS, previewStatus, previewEvmDetail, previewEvmAct } = (await import(STATUS_MODULE)) as {
+  SCENARIOS: readonly Scenario[];
+  previewStatus: (s: Scenario) => Promise<unknown>;
+  previewEvmDetail: (s: Scenario) => Promise<Fake>;
+  previewEvmAct: (body: Record<string, unknown>, s: Scenario) => Promise<Fake & { resumed: boolean }>;
+};
+/** The "Free network fees" page's scenario: the status one, until a resume there is done (then it shows working). */
+let feesResumed = false;
 
 const PUBLIC = new URL('../public/', import.meta.url);
 const PORT = Number(process.env.PORT ?? 8788);
@@ -57,7 +67,8 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
   let m: RegExpExecArray | null;
   if (method === 'GET') {
     if (p === '/api/me') return ok({ ...data.me, accessExp: Math.floor(sessionEndsAt / 1000) });
-    if (p === '/api/status') return ok(await previewStatus(statusScenario));
+    if (p === '/api/status') return ok(await previewStatus(feesResumed ? 'fees-working' : statusScenario));
+    if (p === '/api/evm-relay/84532') return previewEvmDetail(feesResumed ? 'fees-resumed' : statusScenario);
     if (p === '/api/orgs') return ok({ orgs: data.orgs });
     if (p === '/api/invites/new-orgs') return ok(data.newOrgInvites);
     if ((m = /^\/api\/orgs\/([^/]+)\/changes$/u.exec(p))) return ok(data.orgChanges(decodeURIComponent(m[1]!)));
@@ -88,6 +99,11 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
   if (p === '/api/orgs/org_legacy/freeze') return refuse(403, 'forbidden', "org_legacy can't be frozen");
   if (/^\/api\/orgs\/org_legacy\/members\//u.test(p)) return refuse(403, 'forbidden', 'org_legacy has no members');
   if ((m = /^\/api\/scopes\/[^/]+\/assign$/u.exec(p)) && body.orgId === 'org_legacy') return refuse(400, 'bad_request', "A scope can't be assigned to org_legacy");
+  if (p === '/api/evm-relay/84532/act') {
+    const a = await previewEvmAct(body, statusScenario);
+    if (a.resumed) feesResumed = true;
+    return a;
+  }
   if (p === '/api/users/search') return ok(data.userSearch);
   if (p === '/api/users/find') return body.ticket ? ok({ users: [data.walletUser] }) : refuse(400, 'bad_request', 'A support reference (ticket: 1–64 letters, digits or ._#:-) is required to find a user');
   if (p === '/api/users/get') return body.ticket ? ok(data.userGet(String(body.provider), String(body.sub))) : refuse(400, 'bad_request', 'A support reference (ticket: 1–64 letters, digits or ._#:-) is required to open a user');
@@ -123,6 +139,7 @@ const server = createServer((req, res) => {
     const pick = /^\/preview\/status\/([a-z-]+)$/u.exec(url.pathname);
     if (pick && (SCENARIOS as readonly string[]).includes(pick[1]!)) {
       statusScenario = pick[1] as Scenario;
+      feesResumed = false;
       res.writeHead(302, { ...securityHeaders('https://files.preview.invalid'), location: '/' });
       res.end();
       return;

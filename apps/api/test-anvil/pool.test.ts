@@ -173,22 +173,18 @@ describe.skipIf(SKIPPED !== null)('the relayer against a real pool (anvil, autom
     await relayerRun(w);
     expect(await w.stub.lookup(digest as `0x${string}`)).toMatchObject({ state: 'mined', minedHash: versions[2]!.hash, outcome: 'execute' });
     await reconcileEvmSends({ ...env, ...w.bindings } as Env, cfgOf(w), Date.now() + 61_000);
-    // The settlement follows the receipt (gasUsed × effectiveGasPrice, D847). anvil 1.5.1's receipt reports base + tip
-    // even when the max fee binds (see the it.fails below), so here the billed cost is above what was paid.
-    const billed = BigInt(mined.gasUsed) * BigInt(mined.effectiveGasPrice);
+    // The settlement never bills more than could have been paid (D868): the receipt's gas price is bounded by the mined
+    // version's own max fee, which the relayer's lookup reports. anvil 1.5.1's receipt still says base fee + tip here
+    // (above the max fee it charged), so the billed amount is checked against the relayer's balance, not the receipt.
+    expect(BigInt(mined.effectiveGasPrice)).toBeGreaterThan(versions[2]!.maxFeePerGas);
     const [row] = await auditRows(w.user.address);
-    expect(row).toMatchObject({ status: 'executed', tx_hash: versions[2]!.hash, settled_wei: billed.toString() });
-    expect((await billingRows(row!.id))[0]).toMatchObject({ outcome: 'executed', tx_hash: versions[2]!.hash, total_cost_wei: billed.toString(), effective_gas_price_wei: BigInt(mined.effectiveGasPrice).toString() });
-    bound.push({ reported: BigInt(mined.effectiveGasPrice), charged: paid / BigInt(mined.gasUsed), maxFee: versions[2]!.maxFeePerGas });
-  });
-
-  // FINDING (anvil, not the product): when a transaction's max fee binds (base fee + tip above it), anvil 1.5.1 charges
-  // the max fee per gas but its receipt's effectiveGasPrice says base fee + tip. EIP-1559 nodes report min(max fee,
-  // base + tip); the settlement (receiptCost) trusts the field, bounded only by the chain's fee cap. Passes while anvil
-  // misreports; fails (remove `.fails`) once it doesn't.
-  it.fails('6 (anvil receipt). the receipt’s effectiveGasPrice is the price the node charged when the max fee binds', () => {
-    expect(bound.length).toBe(1);
-    expect(bound[0]!.reported).toBe(bound[0]!.charged);
+    expect(row).toMatchObject({ status: 'executed', tx_hash: versions[2]!.hash, settled_wei: paid.toString() });
+    expect((await billingRows(row!.id))[0]).toMatchObject({ outcome: 'executed', tx_hash: versions[2]!.hash, total_cost_wei: paid.toString(), effective_gas_price_wei: versions[2]!.maxFeePerGas.toString() });
+    expect((await spent(w.app.id, Date.now())).app).toBe(paid);
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_receipt_odd'").all<{ detail_json: string }>();
+    expect(ev.results.map((e) => JSON.parse(e.detail_json))).toContainEqual({ chainId: CHAIN, priceAboveMaxFee: true });
+    // The relayer's own cost (its lookup's costWei, the daily backstop's give-back) is bounded the same way.
+    expect((await w.stub.lookup(digest as `0x${string}`))!.costWei).toBe(paid);
   });
 
   it('6b. a base fee above the fee cap with the batch in the pool: bumps stop at the cap, no cancel is possible past the deadline, so it waits (no halt) until 30 minutes past the deadline → stuck_past_deadline; once fees fall the cancel lands and staffResume works', async () => {
@@ -373,4 +369,3 @@ function printRefusals(): void {
 }
 
 const captured: { case: string; code: number | null; message: string }[] = [];
-const bound: { reported: bigint; charged: bigint; maxFee: bigint }[] = [];

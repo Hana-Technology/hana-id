@@ -155,18 +155,35 @@ export interface ReservedFor {
 export const L1_FEE_SLACK = 2n;
 
 /**
- * What a mined transaction cost the relayer: gasUsed × effectiveGasPrice + its L1 fee + its operator fee, each checked
+ * The gas price a mined transaction can have been charged: its receipt's effectiveGasPrice, but never above the max fee
+ * per gas the relayer signed for that very version (`maxFeePerGas`, from its own record; null when not known). An
+ * EIP-1559 node charges min(max fee, base fee + tip), so a receipt reporting more misreports (anvil 1.5.1 reports base
+ * fee + tip when the max fee binds, D868).
+ */
+export const paidGasPrice = (effectiveGasPrice: bigint, maxFeePerGas: bigint | null | undefined): bigint =>
+  typeof maxFeePerGas === 'bigint' && maxFeePerGas > 0n && effectiveGasPrice > maxFeePerGas ? maxFeePerGas : effectiveGasPrice;
+
+/**
+ * What a mined transaction cost the relayer: gasUsed × its gas price + its L1 fee + its operator fee, each checked
  * against what the reservation assumed: 21 000 ≤ gasUsed ≤ the gas limit, effectiveGasPrice ≤ the fee cap, l1Fee ≤ 2 ×
  * the bound, operatorFee ≤ its bound (or 2 × the L1 bound when the oracle had none). A receipt outside that (a lying or
  * broken RPC) is settled at the reservation and reported `odd`. On the OP Stack a receipt without `l1Fee` is charged
- * the bound.
+ * the bound. Within those bounds the gas price is also bounded by the mined version's own max fee (`maxFeePerGas`,
+ * paidGasPrice): a receipt reporting more is billed at that max fee and reported `priceCapped` (never more than could
+ * have been paid, D868).
  */
-export function receiptCost(r: { gasUsed: bigint; effectiveGasPrice: bigint; l1Fee: bigint | null; operatorFee?: bigint | null }, opStack: boolean, f: ReservedFor): { cost: bigint; odd: boolean } {
+export function receiptCost(
+  r: { gasUsed: bigint; effectiveGasPrice: bigint; l1Fee: bigint | null; operatorFee?: bigint | null },
+  opStack: boolean,
+  f: ReservedFor,
+  maxFeePerGas: bigint | null = null,
+): { cost: bigint; odd: boolean; priceCapped?: true } {
   const l1 = opStack ? (r.l1Fee ?? f.l1Bound) : 0n;
   // A receipt that doesn't report the operator fee (a client that doesn't read it) is charged its bound.
   const op = opStack ? (r.operatorFee ?? f.operatorBound) : 0n;
   const opCap = f.operatorBound > 0n ? f.operatorBound : f.l1Bound * L1_FEE_SLACK;
   const odd = r.gasUsed < TX_BASE_GAS || r.gasUsed > f.gasLimit || r.effectiveGasPrice > f.feeCap || l1 > f.l1Bound * L1_FEE_SLACK || l1 < 0n || op > opCap;
   if (odd) return { cost: f.reservedWei, odd: true };
-  return { cost: r.gasUsed * r.effectiveGasPrice + l1 + op, odd: false };
+  const price = paidGasPrice(r.effectiveGasPrice, maxFeePerGas);
+  return { cost: r.gasUsed * price + l1 + op, odd: false, ...(price !== r.effectiveGasPrice ? { priceCapped: true as const } : {}) };
 }

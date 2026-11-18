@@ -366,7 +366,8 @@ describe('send: new records', () => {
     expect((await stored(stub)).meta?.dayWei).toBe((2n * worst).toString());
     chain.mine(RELAYER, 1);
     await runDurableObjectAlarm(stub);
-    expect((await stored(stub)).meta?.dayWei).toBe((worst + 21_000n * GWEI).toString());
+    // The fake chain's receipt says 1 gwei a gas, above the version's own max fee (0.1 gwei): the cost is bounded by it (D868).
+    expect((await stored(stub)).meta?.dayWei).toBe((worst + 21_000n * (GWEI / 10n)).toString());
     await stub.send(big());
     advance(24 * 60 * 60_000);
     expect(await codeOf(stub.send(big()))).toBe('no error');
@@ -521,7 +522,8 @@ describe('record transitions', () => {
     expect(chain.calls.filter((c) => c.method === 'eth_getTransactionReceipt').length).toBe(reads);
     chain.addBlocks(chain.safeDepth);
     await runDurableObjectAlarm(stub);
-    expect(await stub.lookup(digestOf(req))).toEqual({ digest: digestOf(req), relayerNonce: 0, transactionHash: sent.transactionHash, hashes: [sent.transactionHash], state: 'mined', minedHash: sent.transactionHash, outcome: 'execute', costWei: 21_000n * GWEI + 1000n + 7n, reservedWei: req.reservedWei });
+    // The receipt's 1 gwei a gas is above the version's max fee (0.1 gwei): the cost uses the max fee (D868).
+    expect(await stub.lookup(digestOf(req))).toEqual({ digest: digestOf(req), relayerNonce: 0, transactionHash: sent.transactionHash, hashes: [sent.transactionHash], state: 'mined', minedHash: sent.transactionHash, outcome: 'execute', costWei: 21_000n * req.maxFeePerGas + 1000n + 7n, reservedWei: req.reservedWei, versionFees: [{ hash: sent.transactionHash, maxFeePerGas: req.maxFeePerGas }] });
     expect(await stub.status()).toMatchObject({ unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, nextNonce: 1, halted: null });
   });
 

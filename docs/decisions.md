@@ -14534,7 +14534,8 @@ tests only: no behaviour, endpoint, key or flow changes.
 - Address impact: none.
 ## The anvil lane (branch `test/evm-sponsor-anvil-lane`), 2026-11-18
 
-From `next` @ 6d0c6800, not merged, nothing deployed. Tests and docs, two classifier variants in product code.
+From `next` @ 6d0c6800 (then `next` @ bbf139fb merged in), not merged, nothing deployed. Tests and docs; in product
+code two classifier variants and the settlement's bound on a receipt's gas price (item 6).
 
 ### D868. The anvil lane: EVM sponsorship's real code on a real local node
 - Date 2026-11-18 · Status: the requirement decided by the user 2026-11-18 ("build a real-chain local test"); the
@@ -14570,11 +14571,21 @@ From `next` @ 6d0c6800, not merged, nothing deployed. Tests and docs, two classi
   5. **Discrepancies are findings, not adapted tests.** Two anvil wordings the classifier did not recognise were the
      same conditions as geth's and are now read as such (`intrinsic gas too high -- tx.gas_limit > env.block.gas_limit`
      → `gas_limit`; `Failed to decode transaction` → `invalid_transaction`). anvil's receipt quirk (effectiveGasPrice
-     base fee + tip when the max fee binds, while it charges the max fee) is kept as an `it.fails` test, not adapted.
+     base fee + tip when the max fee binds, while it charges the max fee) was first kept as an `it.fails` test, then
+     closed in the product (item 6), not by adapting the test.
      The pool rules anvil lacks (+10% replacement, 128 KiB, `authority already reserved`) stay owed to Base Sepolia.
+  6. **Settlement never bills more than could have been paid** (asked by the coordinator 2026-11-18, after the lane
+     showed anvil's receipt quirk). A receipt's gas price is bounded by the max fee per gas the relayer signed for the
+     version that was mined, besides the existing fee-cap bound: `receiptCost(…, maxFeePerGas)` and `paidGasPrice`
+     (`apps/api/src/evm/op-fee.ts`). The relayer's `lookup` returns every version's max fee (`versionFees`; a resolved
+     batch keeps them beside its hashes, `fees`; a batch resolved before this has none: the cap alone bounds it); the
+     handler and the reconciler pass the mined version's, and for a first version that isn't a replay the handler uses
+     the fee it set itself. Above it: billed at the max fee (the billing record's gas price and execution cost too),
+     logged `evm_sponsor_receipt_price_capped`, and the hour's `evm_relay_receipt_odd` with `priceAboveMaxFee`; never
+     thrown. The relayer's own `costWei` (and the daily backstop's give-back) is bounded the same way. Tests: unit
+     (`test/evm-sponsor-units.test.ts`, `test/evm-sponsor.test.ts`, the fake chain's 1 gwei receipts in
+     `test/evm-relayer.test.ts`), and the lane's fee-bump scenario now asserts the bill equals the relayer's balance
+     change (the `it.fails` is gone).
 - Measured: the formula bounds the gas spent before the delegate's `minGas` check on its own, before its × 1.1, for
   1, 3 and 8 calls, first and later batches; the tightest is a first batch (2,689 gas). Table and texts:
   `docs/operations.md` "The anvil lane".
-- Not built (reported for a later decision): bounding a receipt's effectiveGasPrice by the mined version's own max fee
-  (the relayer knows it) rather than only by the chain's fee cap, so a node that misreports the field, as anvil does,
-  can't settle above what was paid.

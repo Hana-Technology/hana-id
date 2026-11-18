@@ -165,6 +165,8 @@ export interface EvmRelayerLookup {
   outcome: EvmRelayerOutcome | null;
   costWei: bigint | null;
   reservedWei: bigint;
+  /** Every version's own max fee per gas, as signed (what a receipt's gas price can't exceed); empty for a batch resolved before it was kept. */
+  versionFees?: { hash: Hex; maxFeePerGas: bigint }[];
 }
 /** `oldestUnacceptedMs`: the age of the oldest record no endpoint has taken any version of (for an alert), or null. */
 export interface EvmRelayerStatus { address: Hex; unmined: number; awaitingConfirmation: number; oldestUnminedMs: number | null; oldestUnacceptedMs: number | null; nextNonce: number | null; halted: null | EvmRelayerHalt }
@@ -437,6 +439,8 @@ interface Dig {
   /** Once final (hashes only): the hash answered (the mined one, else the latest), every version, the outcome. */
   hash?: Hex;
   hashes?: Hex[];
+  /** Each version's max fee per gas (decimal), in `hashes`' order. */
+  fees?: string[];
   minedHash?: Hex | null;
   outcome?: EvmRelayerOutcome;
   costWei?: string | null;
@@ -541,8 +545,9 @@ export class EvmRelayer extends DurableObject<Env> {
     const r = dig?.state === 'pending' ? this.#rec(dig.nonce) : undefined;
     if (!dig || (dig.state === 'pending' && !r)) return null;
     const base = { digest: d, relayerNonce: dig.nonce, reservedWei: BigInt(dig.reservedWei) };
-    if (r) return { ...base, transactionHash: r.seen?.hash ?? latestOf(r).hash, hashes: r.versions.map((v) => v.hash), state: latestOf(r).kind === 'cancel' ? 'cancelling' : 'pending', minedHash: null, outcome: null, costWei: null };
-    return { ...base, transactionHash: dig.hash!, hashes: [...dig.hashes!], state: dig.state as 'mined' | 'closed', minedHash: dig.minedHash ?? null, outcome: dig.outcome ?? null, costWei: dig.costWei ? BigInt(dig.costWei) : null };
+    if (r) return { ...base, transactionHash: r.seen?.hash ?? latestOf(r).hash, hashes: r.versions.map((v) => v.hash), state: latestOf(r).kind === 'cancel' ? 'cancelling' : 'pending', minedHash: null, outcome: null, costWei: null, versionFees: r.versions.map((v) => ({ hash: v.hash, maxFeePerGas: BigInt(v.maxFeePerGas) })) };
+    const fees = Array.isArray(dig.fees) && dig.fees.length === dig.hashes!.length ? dig.fees : null;
+    return { ...base, transactionHash: dig.hash!, hashes: [...dig.hashes!], state: dig.state as 'mined' | 'closed', minedHash: dig.minedHash ?? null, outcome: dig.outcome ?? null, costWei: dig.costWei ? BigInt(dig.costWei) : null, versionFees: fees ? dig.hashes!.map((hash, i) => ({ hash, maxFeePerGas: BigInt(fees[i]!) })) : [] };
   }
 
   override async alarm(): Promise<void> {
@@ -865,7 +870,8 @@ export class EvmRelayer extends DurableObject<Env> {
       const found = await this.#findReceipt(rpc, r, budget);
       if (found.found) {
         const { version: v, receipt } = found.found;
-        const cost = receiptCostWei(receipt);
+        // Never above what this version could have been charged: its own max fee per gas (a receipt can misreport).
+        const cost = receiptCostWei({ ...receipt, effectiveGasPrice: receipt.effectiveGasPrice > BigInt(v.maxFeePerGas) ? BigInt(v.maxFeePerGas) : receipt.effectiveGasPrice });
         // Final only with both: the receipt at confirmed depth AND the confirmed count past the nonce.
         if (receipt.blockNumber <= BigInt(n.confirmedBlock) && r.nonce < n.confirmed) {
           this.#resolve(r, { state: 'mined', hash: v.hash, minedHash: v.hash, outcome: v.kind, costWei: cost.toString() }, BigInt(r.worstWei) - cost);
@@ -984,7 +990,7 @@ export class EvmRelayer extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       kv.delete(recKey(r.nonce));
       if (r.digest) {
-        kv.put(digKey(r.digest), { nonce: r.nonce, reservedWei: r.reservedWei, ...d, hashes: r.versions.map((x) => x.hash), ...(r.batchRejected !== null ? { batchRejected: r.batchRejected, ...(r.batchCause ? { batchCause: r.batchCause } : {}) } : {}), resolvedAt: now } satisfies Dig);
+        kv.put(digKey(r.digest), { nonce: r.nonce, reservedWei: r.reservedWei, ...d, hashes: r.versions.map((x) => x.hash), fees: r.versions.map((x) => x.maxFeePerGas), ...(r.batchRejected !== null ? { batchRejected: r.batchRejected, ...(r.batchCause ? { batchCause: r.batchCause } : {}) } : {}), resolvedAt: now } satisfies Dig);
         kv.put(forgetKey(now + EVM_RELAYER_REMEMBER_MS, r.digest), 1);
       }
       const m = this.#meta()!;

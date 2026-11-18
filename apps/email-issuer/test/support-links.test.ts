@@ -152,6 +152,23 @@ describe('POST /v1/email/unlock (the unlock page’s button, D866)', () => {
     expect(await press({ token })).toEqual([400, 'link_invalid']);
   });
 
+  it('an audit row that can’t be written on the first press changes nothing; the next press writes it and unlocks', async () => {
+    const { h, ask } = await staffHarness();
+    const app = await seedApp(h);
+    const a = fresh('ua');
+    await lockOut(h, app, a);
+    await ask('/v1/email/admin/unlock', { email: a, ticket: 'SUP-109' });
+    const token = unlockTokenIn(h.sender.to(a).at(-1)!.text);
+    const db = h.deps.env.DB;
+    h.deps.env = { ...h.deps.env, DB: { prepare: () => ({ bind: () => ({ run: async () => Promise.reject(new Error('d1 down')) }) }) } as unknown as typeof db };
+    expect((await h.call('/v1/email/unlock', { token })).status).toBe(500);
+    h.deps.env = { ...h.deps.env, DB: db };
+    // The grant is still only mailed: a start with the token gets nothing.
+    expect((await startAs(h, app, a, { unlockToken: token })).status).toBe(429);
+    expect((await h.call('/v1/email/unlock', { token })).status).toBe(200);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM email_admin_audit WHERE ticket = 'SUP-109' AND staff = ?1").bind(LINK_PRESS_STAFF).first('n')).toBe(1);
+  });
+
   it('limited per IP and per token (the token’s window counts every presser)', async () => {
     const { h, ask } = await staffHarness();
     const app = await seedApp(h);

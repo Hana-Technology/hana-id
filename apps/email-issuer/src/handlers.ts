@@ -1335,7 +1335,10 @@ export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response
   const token = newSupportToken('unlock');
   await box.issueGrant(tokenHash(token), emailKey, at);
   const mailed = await mailSupportLink(ctx, 'unlock', { email: r.email, emailKey, mailboxKey: mbx, ticket, token, now: at });
-  if (mailed === null) return fail(ctx, 500, 'internal', 'Could not store the unlock');
+  if (mailed === null) {
+    await box.unstaffAction('unlock', at);
+    return fail(ctx, 500, 'internal', 'Could not store the unlock');
+  }
   if (!mailed) await box.unstaffAction('unlock', at);
   log({ event: 'mailbox_unlocked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: mailed ? 'ok' : 'error', subject: mbx.slice(0, 12) }, 'warn');
   return ok(ctx, 200, { mailed, note: mailed ? STAFF_NOTES.unlockMailed : STAFF_NOTES.notMailed }, { code: mailed ? 'mailed' : 'not_mailed' });
@@ -1364,7 +1367,10 @@ export async function handleUnsuppress(request: Request, ctx: Ctx): Promise<Resp
   const at = deps.now();
   if (!(await box.staffAction('unsuppress', at))) return fail(ctx, 429, 'staff_cap', 'This mailbox was unsuppressed already today, or 3 times in 30 days');
   const mailed = await mailSupportLink(ctx, 'unsuppress', { email: r.email, emailKey: key, mailboxKey: null, ticket, token: newSupportToken('unsuppress'), now: at });
-  if (mailed === null) return fail(ctx, 500, 'internal', 'Could not store the confirmation');
+  if (mailed === null) {
+    await box.unstaffAction('unsuppress', at);
+    return fail(ctx, 500, 'internal', 'Could not store the confirmation');
+  }
   if (!mailed) await box.unstaffAction('unsuppress', at);
   return ok(ctx, 200, { mailed, note: mailed ? STAFF_NOTES.unsuppressMailed : STAFF_NOTES.notMailed }, { code: mailed ? 'mailed' : 'not_mailed' });
 }
@@ -1437,7 +1443,15 @@ export async function handleUnlockLink(request: Request, ctx: Ctx): Promise<Resp
   const rec = link.record;
   const email = rec.action === 'unlock' && rec.mailboxKey ? await openLinkEmail('unlock', p.token, rec.emailEnc) : null;
   if (email === null || !rec.mailboxKey) return linkInvalid(ctx);
-  if (link.firstPress) await audit(deps, { staff: LINK_PRESS_STAFF, action: 'unlock', ticket: rec.ticket, subject: rec.mailboxKey.slice(0, 12), detail: { step: 'link_pressed' } });
+  // The press's audit row before the grant changes; if it can't be written, nothing changed and the next press retries.
+  if (link.firstPress) {
+    try {
+      await audit(deps, { staff: LINK_PRESS_STAFF, action: 'unlock', ticket: rec.ticket, subject: rec.mailboxKey.slice(0, 12), detail: { step: 'link_pressed' } });
+    } catch (err) {
+      await stub.unpressSupportLink();
+      throw err;
+    }
+  }
   const g = await mailboxLimiter(deps, rec.mailboxKey).activateGrant(tokenHash(p.token), rec.emailKey, now);
   if (g === 'used') {
     await stub.markSupportUsed(now);

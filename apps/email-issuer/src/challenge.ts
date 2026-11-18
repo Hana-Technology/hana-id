@@ -272,6 +272,12 @@ export class Challenge extends DurableObject<Env> {
     if (v && !('emailEnc' in v) && v.usedAtMs !== null) this.ctx.storage.kv.put(SUPPORT, c);
   }
 
+  /** A first press whose audit row couldn't be written: it counts as not pressed, so the next press writes it. */
+  unpressSupportLink(): void {
+    const v = this.ctx.storage.kv.get<SupportLinkRecord | SupportTombstone>(SUPPORT);
+    if (v && 'emailEnc' in v) this.ctx.storage.kv.put(SUPPORT, { ...v, pressedAtMs: null });
+  }
+
   /** The link was used (an unlock's grant was spent): only its tombstone stays. */
   markSupportUsed(now: number = Date.now()): void {
     const v = this.ctx.storage.kv.get<SupportLinkRecord | SupportTombstone>(SUPPORT);

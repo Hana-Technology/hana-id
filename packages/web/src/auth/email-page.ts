@@ -576,7 +576,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       const ticket = deviceTicketFor(deps.tickets, address, now());
       // D866: a staff unlock this browser's support page pressed rides along while it lasts.
       const unlock = liveUnlockToken(deps.tickets, now());
-      const c = startAs.kind === 'link' ? await issuer.startLink(ctx.pk, address, startAs.purpose, startAs.commitment, ticket, unlock) : await issuer.start(ctx.pk, address, commitment, ticket, unlock);
+      const extra: [string] | [] = unlock ? [unlock] : [];
+      const c = startAs.kind === 'link' ? await issuer.startLink(ctx.pk, address, startAs.purpose, startAs.commitment, ticket, ...extra) : await issuer.start(ctx.pk, address, commitment, ticket, ...extra);
       remember({ challengeId: c.challengeId });
       notice = null;
       reason = 'email_cancelled';

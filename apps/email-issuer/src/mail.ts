@@ -170,9 +170,11 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
 /**
  * The notice of a link that joins this email identity (spec "Notices"). D862: it carries no link. The page it once
  * linked to (`{authOrigin}/link/cancel`) was never built (D259), so "Not you?" says where a cancel or a removal really
- * is today: the sign-in window's link banners (D259, `vault/login.ts` `Afterword`), shown when the wallet's other
- * sign-in signs in to the app. A pending link (case B, not Google-hosted) is cancelled by the wallet's Google sign-in
- * (any active identity may cancel); an active one is removed by the wallet's first sign-in method, its root, within the
+ * is today. A pending link (case B, not Google-hosted) is cancelled from this email's own sign-in (D864): while it
+ * waits, an email sign-in to the app is refused and the sign-in window shows the waiting link with "Cancel this link"
+ * (one more code to this address; `vault/login.ts` `LinkWaiting`). Once the waiting period is over that sign-in would
+ * open the Google account's wallet, so the mail says not to sign in with this email then. An active link is removed
+ * by the wallet's first sign-in method, its root, from the sign-in window's link banners (D259, `Afterword`), within the
  * 7 days the banner offers it (`RECENT_LINK_MS`). An active link may already have let another sign-in open the wallet
  * (and show its key), and removing it only stops it from now on: so "Not you?" also says to move what the wallet holds.
  * "Google password" only as a Gmail or Workspace address's own: otherwise the Google account may be someone else's.
@@ -184,7 +186,7 @@ export function linkNoticeMail(input: { to: string; appName: string; pending: bo
     ? `This email is being linked with a Google account, so both will open the same ${BRAND.company} wallet in ${appText}. The link starts working after a waiting period (24 hours; shorter in a test version), and it can be cancelled until then.`
     : `This email and a Google account now both open the same ${BRAND.company} wallet in ${appText}.`;
   const notYou = input.pending
-    ? `Change your email password. Then, before the waiting period ends, sign in to ${appText} with that Google account: the ${BRAND.product} sign-in window shows this email with a button to cancel it. If that Google account isn’t yours, don’t sign in to ${appText} with this email, and tell the app’s support.`
+    ? `Change your email password. Then sign in to ${appText} with this email before the waiting period ends: ${BRAND.product} will show the new sign-in with a button to cancel it. Once the waiting period has ended, don’t sign in to ${appText} with this email, and tell the app’s support.`
     : `Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Within 7 days, sign in to ${appText} the way you first signed in to this wallet: the ${BRAND.product} sign-in window shows the new sign-in with a button to remove it. Then move what’s in this wallet to a new one.`;
   const subject = app ? `A sign-in method was added in ${app}` : 'A sign-in method was added';
   return {

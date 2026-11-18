@@ -411,7 +411,7 @@ describe('google-match and the four cases (batch 8b)', () => {
     expect(n).toMatchObject({ t: 'link_waiting', provider: 'google', effectiveAtMs: 1_800_090_000_000 });
     // The proof it asks for: an email code over the link_change nonce for this email only, at the account's epoch.
     expect(n.prove).toMatchObject({ method: 'email', purpose: 'link_change', commitment: { scopeId: SCOPE, action: 'cancel', rootIk: hex(ik(G)), memberIk: hex(ik(E)), epoch: 1 } });
-    expect(((n.prove as { commitment: { salt: number[] } }).commitment.salt)).toHaveLength(32);
+    expect((n.prove as unknown as { commitment: { salt: number[] } }).commitment.salt).toHaveLength(32);
     // No sub, address or key of either identity reaches the popup.
     expect(JSON.stringify(n)).not.toContain(SUB);
     expect(JSON.stringify(n)).not.toContain(EMAIL_SUB);
@@ -611,7 +611,7 @@ describe('D864: the email that waits to join a wallet cancels the link itself', 
     expect((await pending).error?.code).toBe('link_pending');
     const n = (await notice(t, run, 2)) as Extract<FollowNotice, { t: 'link_waiting' }>;
     expect(n.t).toBe('link_waiting');
-    const c = (n.prove as { commitment: { rootIk: string; memberIk: string; epoch: number; salt: number[] } }).commitment;
+    const c = (n.prove as unknown as { commitment: { rootIk: string; memberIk: string; epoch: number; salt: number[] } }).commitment;
     const nonce = linkChangeNonce(ENV.signer, SCOPE, 'cancel', fromHex(c.rootIk), fromHex(c.memberIk), c.epoch, Uint8Array.from(c.salt));
     /** The issuer's token for the cancel code (this email, or another `sub`). */
     const proof = (over: Record<string, unknown> = {}) => issuer.token(emailClaims(run.params, { nonce, jti: 'jti-email-2', ...over }, t.browser.timers.now));

@@ -88,7 +88,7 @@ import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { appLogo } from './logo.ts';
 import type { AuthApi } from './api.ts';
-import { type Dom, dom, errorView, originText } from './dom.ts';
+import { type Dom, dom, errorView, originText, supportCode } from './dom.ts';
 import { STORAGE_BLOCKED } from './errors.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { issuerDetail } from './email-api.ts';
@@ -1368,7 +1368,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   function showLinkCancel(n: Extract<FollowNotice, { t: 'link_cancel' }>): void {
     endFollow();
     const app = () => d.h('strong', {}, ctx.appName);
-    const codeLine = n.code ? d.h('p', { class: 'code' }, `Error code (for support): ${n.code}`) : null;
+    const codeLine = n.code ? d.h('p', { class: 'code' }, supportCode(n.code)) : null;
     const passwordAdvice = d.h('p', { attrs: { id: 'link-cancel-advice' } }, 'If you didn’t start this link, change your email password. Someone may have used a code from your mailbox.');
     let body: (HTMLElement | null)[];
     let title: string;

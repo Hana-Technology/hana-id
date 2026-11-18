@@ -5,7 +5,7 @@
 import { type Page } from '@playwright/test';
 import { base64Decode, decodeNearSignedDelegateAction } from '@hana-id/core';
 import { API_URL, DEMO_ORIGIN, DEMO_PK, E2E_GUESTBOOK, NEAR_RPC, VAULT_ORIGIN } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, LOGIN_PENDING_MS, VAULT_FRAME, approve, chooseAccount, clickLauncher, expect, newApp, responsive, test, vaultFrame, walletDirectory } from './fixtures.ts';
+import { DEMO_APP, LOGIN_ENDPOINT, LOGIN_PENDING_MS, VAULT_FRAME, approve, chooseAccount, clickLauncher, expect, newApp, responsive, test, vaultFrame, walletDirectory } from './fixtures.ts';
 
 /** Records every CSP violation on the demo's own document (the page CSP must allow everything the page does). */
 async function recordCspViolations(page: Page): Promise<void> {
@@ -20,7 +20,7 @@ async function recordCspViolations(page: Page): Promise<void> {
 const cspViolations = (page: Page): Promise<string[]> => page.evaluate(() => (window as any).__cspViolations as string[]);
 
 async function openDemo(page: Page): Promise<void> {
-  await newApp({ name: 'Hana ID demo', origins: [DEMO_ORIGIN], publishableKey: DEMO_PK });
+  await newApp(DEMO_APP);
   await recordCspViolations(page);
   const res = await page.goto(`${DEMO_ORIGIN}/`);
   expect(res?.status()).toBe(200);

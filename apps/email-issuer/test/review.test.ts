@@ -493,8 +493,10 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
     }
     expect(owners).toBe(30);
     // The mailbox's 30 are used by +tags, but an unlock grant and the untagged address are never blocked by them.
-    await box2.issueGrant('g-1', morning);
-    const g = await box2.admit('q-grant', morning + 600_000, false, morning, { kind: 'grant', hash: 'g-1' });
+    await box2.issueGrant('g-1', 'addr-g', morning);
+    // D866: the grant counts only once its holder pressed the support page's button.
+    expect(await box2.activateGrant('g-1', 'addr-g', morning)).toBe('active');
+    const g = await box2.admit('q-grant', morning + 600_000, false, morning, { kind: 'grant', hash: 'g-1', addrKey: 'addr-g' });
     expect(g.ok && g.owner?.kind).toBe('grant');
     const bareKey = await suppressionKey(keys, `${base}2@gmail.com`);
     await box2.registerTicket(bareKey, 'u-bare', morning, morning);
@@ -577,8 +579,12 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
       state.storage.kv.put(`${MAILBOX_TICKET_SLOT.name}@${day}`, MAILBOX_TICKET_SLOT.max);
     });
     expect((await box.admit('attacker', morning + 600_000, false, morning)).ok).toBe(false);
-    await box.issueGrant('hash-1', morning);
-    const adm = await box.admit('owner', morning + 600_000, false, morning, { kind: 'grant', hash: 'hash-1' });
+    await box.issueGrant('hash-1', 'addr-1', morning);
+    // D866: a grant not yet pressed on the support page counts as nothing, nor one for another address.
+    expect((await box.admit('owner', morning + 600_000, false, morning, { kind: 'grant', hash: 'hash-1', addrKey: 'addr-1' })).ok).toBe(false);
+    expect(await box.activateGrant('hash-1', 'addr-1', morning)).toBe('active');
+    expect((await box.admit('owner', morning + 600_000, false, morning, { kind: 'grant', hash: 'hash-1', addrKey: 'addr-2' })).ok).toBe(false);
+    const adm = await box.admit('owner', morning + 600_000, false, morning, { kind: 'grant', hash: 'hash-1', addrKey: 'addr-1' });
     expect(adm.ok).toBe(true);
     if (!adm.ok) return;
     let checks = 0;
@@ -586,7 +592,8 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
     expect(checks).toBe(MAILBOX_GRANT_SLOT.max);
     expect(await runInDurableObject(box, (_o, state) => state.storage.kv.get<number>(`${MAILBOX_WRONG_CEILING.name}@${day}`))).toBe(MAILBOX_WRONG_CEILING.max);
     // A second start with the same grant: used up.
-    expect((await box.admit('owner', morning + 600_000, false, morning, { kind: 'grant', hash: 'hash-1' })).ok).toBe(false);
+    expect((await box.admit('owner', morning + 600_000, false, morning, { kind: 'grant', hash: 'hash-1', addrKey: 'addr-1' })).ok).toBe(false);
+    expect(await box.activateGrant('hash-1', 'addr-1', morning)).toBe('used');
     // The bound: the ceiling every day plus each unlock's own checks (at most 3 unlocks in 30 days).
     expect(MAILBOX_WRONG_CEILING.max).toBe(MAILBOX_WRONG_BACKSTOP.max + MAILBOX_OWNER_SLOT.max + MAILBOX_TICKET_SLOT.max);
     const unlocksPerYear = Math.ceil((365 / 30) * 3);

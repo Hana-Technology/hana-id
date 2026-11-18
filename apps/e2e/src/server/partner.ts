@@ -2,6 +2,7 @@
 // it signs against (the SDK fills fees and nonces and broadcasts through the partner's RPC), which the API's
 // sponsorship relayer (apps/api evm-relayer.ts) also reads and broadcasts to.
 import { readFile } from 'node:fs/promises';
+import { DEMO_CHECK_IN, DEMO_CHECK_IN_CALLDATA } from '@hana-id/core';
 import { type ExecuteInput, executeDigest, recoverAuthorization } from '@hana-id/core/evm-sponsor';
 import { decodeFunctionData, keccak256, parseAbi, parseTransaction, recoverTransactionAddress } from 'viem';
 import { PARTNER_DIR } from '../build.ts';
@@ -38,6 +39,10 @@ const EXECUTE_ABI = parseAbi(['function execute((address to, uint256 value, byte
 /** keccak256("Executed(bytes32,uint256,uint256)"): the delegate's success event. */
 const EXECUTED_TOPIC = '0xfe95c3832c12555e6bdb94254f0062f3fef9fb21554e39a02734ac465105930b';
 const NONCE_CALL = '0xaffed0e0';
+/** Journear's demo check-in on the mocked chain (contracts/evm-delegate CheckIn.sol, D854): `checkIns(address)`, its event. */
+const CHECK_IN = (DEMO_CHECK_IN[EVM_CHAIN_ID] as { address: string }).address.toLowerCase();
+/** keccak256("CheckedIn(address,uint256)"). */
+const CHECKED_IN_TOPIC = '0xdddb6e14f7f2101397a6526aab95e964de7f1f44ed06aa47a1c9a0e6b9924456';
 const DESIGNATOR = `0xef0100${E2E_SPONSOR_DELEGATE.slice(2).toLowerCase()}` as Hex;
 const OTHER_DESIGNATOR = `0xef0100${'42'.repeat(20)}` as Hex;
 const word = (n: bigint): Hex => `0x${n.toString(16).padStart(64, '0')}`;
@@ -48,7 +53,10 @@ const word = (n: bigint): Hex => `0x${n.toString(16).padStart(64, '0')}`;
  * transactions (`relayer`) are also run as the delegate would: a type-4 authorization sets the account's code to its
  * delegation designator and uses the account's nonce, an `execute` uses the account's delegate nonce (`nonce()`
  * answers it) and its receipt carries `Executed(digest)` from the account; the relayer's own cancel (a 0-value
- * self-transfer) runs nothing. No gas is metered: every receipt says 21 000 at the base fee.
+ * self-transfer) runs nothing. Of the calls in a batch only Journear's demo check-in runs (exactly `checkIn()` to the
+ * pinned CheckIn): it counts the account's check-ins as CheckIn.sol does, logs `CheckedIn`, and `checkIns(address)`
+ * answers the count (the hosted demo's gas-free card, D867); any other call does nothing. No gas is metered: every
+ * receipt says 21 000 at the base fee.
  */
 export class MockEvm {
   /** Raw signed transactions as broadcast by partner pages (not the relayer's), in order. */
@@ -59,6 +67,8 @@ export class MockEvm {
   private readonly counts = new Map<string, number>();
   /** The delegate nonce per account (lowercase). */
   private readonly executeNonces = new Map<string, bigint>();
+  /** The demo check-in's count per account (lowercase), as CheckIn.sol's `checkIns` mapping. */
+  private readonly checkIns = new Map<string, bigint>();
   /** Receipts by hash: the relayer's transactions (with their logs) and the partner pages'. */
   private readonly receipts = new Map<string, { logs: { address: string; topics: string[]; data: string }[]; type: string }>();
 
@@ -106,6 +116,12 @@ export class MockEvm {
         const input: ExecuteInput = { chainId: EVM_CHAIN_ID, account: tx.to, implementation: E2E_SPONSOR_DELEGATE as Hex, calls: calls.map((c) => ({ to: c.to, value: c.value, data: c.data })), nonce, deadline, relayer, minGas };
         const digest = `0x${Buffer.from(executeDigest(input)).toString('hex')}`;
         this.executeNonces.set(account, (this.executeNonces.get(account) ?? 0n) + 1n);
+        for (const c of calls) {
+          if (c.to.toLowerCase() !== CHECK_IN || c.data.toLowerCase() !== DEMO_CHECK_IN_CALLDATA || c.value !== 0n) continue;
+          const n = (this.checkIns.get(account) ?? 0n) + 1n;
+          this.checkIns.set(account, n);
+          logs.push({ address: CHECK_IN, topics: [CHECKED_IN_TOPIC, word(BigInt(account))], data: word(n) });
+        }
         logs.push({ address: account, topics: [EXECUTED_TOPIC, digest], data: `${word(nonce)}${'00'.repeat(32)}` });
       }
     }
@@ -146,6 +162,10 @@ export class MockEvm {
           // The delegate's nonce() on an account; any other call (the sponsorship's simulation) succeeds.
           const c = body.params?.[0] as { to?: string; data?: string } | undefined;
           if (c?.data === NONCE_CALL && typeof c.to === 'string') return ok(word(this.executeNonces.get(c.to.toLowerCase()) ?? 0n));
+          // The demo check-in's `checkIns(address)`.
+          if (typeof c?.to === 'string' && c.to.toLowerCase() === CHECK_IN && typeof c.data === 'string' && /^0x1acc9b62[0-9a-f]{64}$/iu.test(c.data)) {
+            return ok(word(this.checkIns.get(`0x${c.data.slice(-40).toLowerCase()}`) ?? 0n));
+          }
           return ok('0x');
         }
         case 'eth_sendRawTransaction': {

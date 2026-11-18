@@ -25,6 +25,18 @@ as on chain) and the test-only `e2e_stamps_collect` the relayer routes call. Sig
 window with no launcher; a second test holds the vault's key check, closes the window after the first approval and
 collects through the slot's Continue (D807).
 
+The support pages (D866): `tests/support-pages.spec.ts` locks an address with wrong codes (the dev envs' backstop),
+sees the sign-in window refuse it, has staff unlock it, opens the mailed link, checks nothing happens before the
+button (the token can't be used), presses it once (a double click is one request), and signs in; and bounces an
+address, sees no code sent, has staff unsuppress it, presses the confirm page's button, and signs in. Staff calls and
+bounces go through the issuer's real routes: `POST {ISSUER}/__e2e/staff {action: 'unlock' | 'unsuppress', email,
+ticket?}` (a Cloudflare Access JWT the stack signs with a throwaway key; the issuer's Access check fetches the certs
+from `e2e-access.invalid`, answered in the stack's process) and `POST {ISSUER}/__e2e/bounce {email, event?}` (a
+SendGrid event signed with a throwaway P-256 key). Both no CORS, refused with an `Origin`. With `HANA_SHOTS_DIR=<dir>`
+(Chromium) it saves each page at phone width before the button, after it and expired (the issuer's `410 link_expired`
+routed in the browser), and the two mails. The in-memory Durable Object alarm waits past Node's longest timer (24.8
+days) instead of firing at once (a staff action's 30-day log).
+
 Gas-free EVM actions (D838, D847, D851, D855, D856): `tests/evm-sponsor.spec.ts` runs `hana.evm.sendSponsored` from a
 click through the vault's prepare, one approval and send against apps/api's **own** sponsorship routes (the session
 proof, the allowlist and every check) and the **real relayer object** (`EvmRelayer`, in memory), which signs with the
@@ -40,6 +52,16 @@ EIP-5792 `sendCalls`, the D833 typed-data refusal. With `HANA_SHOTS_DIR=<dir>` (
 `sponsored-first-time(-details)`, `sponsored-later` (the demo check-in), `sponsored-token-first-time`,
 `sponsored-token-later`, `sponsored-unknown-call` and `sponsored-approve-warning`. Each test uses a scope of its own,
 so each has its own account.
+
+The hosted demo's gas-free check-in card (D867): `tests/demo-gas-free.spec.ts`. The demo's build carries the stack's
+sponsored chain (`DEMO_CONFIG.evmSponsor`), the API sponsors the demo's app (`DEMO_PK`) for exactly the check-in
+(`E2E_DEMO_SPONSOR_TARGETS`: `exactCalldata` `0x183ff085`; every other app keeps `E2E_SPONSOR_TARGETS`), and `MockEvm`
+runs a batch's exact check-in as `CheckIn.sol` does (the per-account count, `CheckedIn`, `checkIns(address)` for
+`eth_call`). Each test signs in with a Google account of its own. Covered: the first check-in (setup note) and the
+second (none) with the count, a rejection, the day's budget used up and paused (prepare's and status's answers changed
+by a route in that test's browser context only), and no card for an app that isn't sponsored. With
+`HANA_SHOTS_DIR=<dir>` (Chromium) it saves `card-{idle,in-progress,done,refused-budget,paused}-{phone,desktop}` and
+`window-first-time-{phone,desktop}`.
 
 The approval window's plain summary (D808–D813): `tests/approval-summary.spec.ts` checks the details always start closed
 and the user opens them (mouse and keyboard), for a request the summary explains, one it can't (its red risk line in
@@ -130,9 +152,10 @@ and `get_issuer("google")` (the stack's Google kid). `POST /__e2e/apps` takes `l
 a user the wallet directory has no row for (a linked member's row is also written by the Worker's own login only).
 
 The demo (`apps/demo`) is bundled by esbuild from its own `index.html` and `src/main.ts` with a configuration for the
-stack (`DEMO_CONFIG` in `src/build.ts`: the e2e env, the mocked EVM chain). It bakes its key in at build time, as the
+stack (`DEMO_CONFIG` in `src/build.ts`: the e2e env, the mocked EVM chain, its sponsorship). It bakes its key in at build time, as the
 deployed demo does, so its app has a fixed key (`DEMO_PK`): `POST /__e2e/apps` with `publishableKey` creates it once
-and returns it after that, and every demo test and browser shares it (each test still has its own browser context).
+and returns it after that, and every demo test and browser shares it (each test still has its own browser context);
+every demo spec creates it with `DEMO_APP` (`tests/fixtures.ts`, named "Journear demo").
 The stamps site is built the same way (`STAMPS_CONFIG`, its fixed key `STAMPS_PK`, the contract `e2e-stamps.testnet`).
 
 The bundles are built by `@hana-id/web`'s own per-env build scripts for `local-e2e`, an env defined in `src/stack.ts`

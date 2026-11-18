@@ -5,7 +5,8 @@
 //   HANA_DEMO_ENV               envs/<name>.json, default sandbox-dev
 //   HANA_DEMO_PUBLISHABLE_KEY   the app's pk_test_ key; default: the Smoke B app's key, for sandbox-dev only
 //
-// Everything here is public: publishable keys ship in partner pages, and the origins are in the manifest. This module
+// Everything here is public: publishable keys ship in partner pages, and the origins and the sponsored chains' IDs are
+// in the manifest. This module
 // runs in the browser too, so it takes the manifest as data (loading it needs Node).
 import { STELLAR_MAINNET_PASSPHRASE, TEST_EVM_CHAINS, isNearAccountId, isPublishableKey, isTestEvmChain, isTestPublishableKey } from '@hana-id/core';
 
@@ -44,6 +45,18 @@ export interface DemoConfig {
   /** The env's Hana API (manifest `apiUrl`): `hana.near.relay` and `hana.near.activate` call it from this page. */
   apiUrl: string;
   near: DemoNear;
+  /**
+   * The chains the manifest's `evm.sponsor` block names (D867): the gas-free check-in card (gas-free-card.ts) can
+   * appear only on one of them. Absent when the manifest has no block: the key is then left out altogether, so the
+   * baked configuration of an env without sponsorship (sandbox-dev today) is exactly what it was before the card.
+   */
+  evmSponsor?: DemoEvmSponsor;
+}
+
+/** The manifest's `evm.sponsor` block, as far as the demo needs it: only which chains it names. */
+export interface DemoEvmSponsor {
+  /** Test chains only, ascending, each once (1 to 4, the manifest's own bound). */
+  chainIds: readonly number[];
 }
 
 /** NEAR testnet, as the manifest names it (the env's own RPCs and the demo guestbook's account). */
@@ -83,6 +96,8 @@ export interface ManifestSlice {
   rpc: string;
   rpcFallback?: string | undefined;
   near?: { demoGuestbook?: string | undefined } | undefined;
+  /** Only the block's presence and its chains' IDs are read (`evm.sponsor.chains`, keyed by decimal chain ID). */
+  evm?: { sponsor?: { chains: Readonly<Record<string, unknown>> } | undefined } | undefined;
 }
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -129,8 +144,38 @@ export function validateDemoConfig(c: DemoConfig): DemoConfig {
   if (c.near.explorer !== null) check(() => webOrigin(c.near.explorer!, 'near.explorer'));
   // A testnet guestbook only (the manifest's rule too): the demo never writes to a mainnet account.
   if (c.near.guestbook !== null && (!isNearAccountId(c.near.guestbook) || !c.near.guestbook.endsWith('.testnet'))) problems.push(`near.guestbook ${JSON.stringify(c.near.guestbook)} is not a .testnet account`);
+  if (c.evmSponsor !== undefined) {
+    const ids = c.evmSponsor.chainIds;
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 4) problems.push('evmSponsor.chainIds lists 1 to 4 chains');
+    else {
+      for (const id of ids) if (!isTestEvmChain(id)) problems.push(`evmSponsor: chain ${String(id)} is not a test chain Journear Passport signs for`);
+      if (ids.some((id, i) => i > 0 && id <= (ids[i - 1] as number))) problems.push('evmSponsor.chainIds must be ascending, each once');
+    }
+  }
   if (problems.length) throw new Error(`Invalid demo configuration:\n- ${problems.join('\n- ')}`);
-  return Object.freeze({ ...c, evm: Object.freeze({ ...c.evm }), stellar: Object.freeze({ ...c.stellar }), near: Object.freeze({ ...c.near }) });
+  const { evmSponsor, ...rest } = c;
+  return Object.freeze({
+    ...rest,
+    evm: Object.freeze({ ...c.evm }),
+    stellar: Object.freeze({ ...c.stellar }),
+    near: Object.freeze({ ...c.near }),
+    ...(evmSponsor !== undefined ? { evmSponsor: Object.freeze({ chainIds: Object.freeze([...evmSponsor.chainIds]) }) } : {}),
+  });
+}
+
+/**
+ * The `evmSponsor` field for a manifest: its block's chain IDs, or undefined when it has none (or names none). Throws for a chain key
+ * that isn't a decimal chain ID (the manifest schema already refuses one).
+ */
+export function demoEvmSponsor(m: Pick<ManifestSlice, 'evm'>): DemoEvmSponsor | undefined {
+  const chains = m.evm?.sponsor?.chains;
+  if (chains === undefined) return undefined;
+  const ids = Object.keys(chains).map((k) => {
+    if (!/^[1-9][0-9]{0,15}$/u.test(k)) throw new Error(`evm.sponsor.chains key ${JSON.stringify(k)} is not a chain ID`);
+    return Number(k);
+  });
+  // A block that names no chain sponsors nothing: no card, as without a block.
+  return ids.length === 0 ? undefined : { chainIds: [...new Set(ids)].sort((a, b) => a - b) };
 }
 
 export type DemoVars = Readonly<Record<string, string | undefined>>;
@@ -148,6 +193,7 @@ export function demoConfigFromVars(vars: DemoVars, loadManifest: (name: string) 
   if (m.name !== environment) throw new Error(`envs/${environment}.json is named ${m.name}`);
   if (m.network !== 'testnet') throw new Error(`envs/${environment}.json is not a testnet env`);
   if (!m.vaultOrigin) throw new Error(`envs/${environment}.json sets no vaultOrigin: there is no vault to demo`);
+  const evmSponsor = demoEvmSponsor(m);
   return validateDemoConfig({
     environment,
     publishableKey: pk || DEFAULT_PUBLISHABLE_KEY,
@@ -156,5 +202,7 @@ export function demoConfigFromVars(vars: DemoVars, loadManifest: (name: string) 
     stellar: DEFAULT_STELLAR,
     apiUrl: m.apiUrl,
     near: { rpcUrl: m.rpc, rpcFallbackUrl: m.rpcFallback ?? null, guestbook: m.near?.demoGuestbook ?? null, explorer: NEAR_TESTNET_EXPLORER },
+    // Only when the manifest has the block: without it the key doesn't exist (the baked JSON is unchanged).
+    ...(evmSponsor !== undefined ? { evmSponsor } : {}),
   });
 }

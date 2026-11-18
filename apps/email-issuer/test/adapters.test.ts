@@ -3,8 +3,7 @@
 import { createExecutionContext, runDurableObjectAlarm, runInDurableObject, waitOnExecutionContext } from 'cloudflare:test';
 import worker from '../src/index.ts';
 import { describe, expect, it } from 'vitest';
-import { AccessVerifier } from '../src/access.ts';
-import { base64Encode, base64UrlEncode, fromUtf8, utf8 } from '../src/bytes.ts';
+import { base64Encode, fromUtf8, utf8 } from '../src/bytes.ts';
 import { NearChain } from '../src/chain.ts';
 import { senderFor } from '../src/deps.ts';
 import { readDeviceTicket, suppressionKey } from '../src/keys.ts';
@@ -14,7 +13,8 @@ import { codeMail, displayAppName, linkNoticeMail } from '../src/mail.ts';
 import { OutboxSender } from '../src/outbox.ts';
 import { SENDGRID_URL, SendGridSender, issuerCategory, parseFrom } from '../src/sendgrid.ts';
 import { ISSUER_CATEGORIES, derToP1363 } from '../src/webhook.ts';
-import { captureLogs, decodeToken, env, harness, mailboxObject, seedApp, sessionCommitment, uid } from './helpers.ts';
+import { STAFF_NOTES } from '../src/handlers.ts';
+import { captureLogs, decodeToken, env, harness, mailboxObject, seedApp, sessionCommitment, staffHarness, uid } from './helpers.ts';
 
 const mail = codeMail({ to: 'a@example.com', code: '123456', appName: 'Wallet', authOrigin: 'https://auth.test', purpose: 'session' });
 
@@ -92,37 +92,6 @@ describe('SendGrid sender', () => {
   });
 });
 
-/** An RS256 JWT signed by `key`, for the Access tests. */
-async function jwt(key: CryptoKey, kid: string, claims: Record<string, unknown>): Promise<string> {
-  const h = base64UrlEncode(utf8(JSON.stringify({ alg: 'RS256', kid })));
-  const c = base64UrlEncode(utf8(JSON.stringify(claims)));
-  return `${h}.${c}.${base64UrlEncode(new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, utf8(`${h}.${c}`))))}`;
-}
-
-/** A staff harness: Access with a throwaway team key, and a signed Access JWT for staff@example.com. */
-async function staffHarness(over: Record<string, unknown> = {}) {
-  const pair = (await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
-  const pub = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey;
-  const team = 'hana.cloudflareaccess.com';
-  const aud = 'a'.repeat(64);
-  let certFetches = 0;
-  const certs = (async (url: string) => {
-    certFetches++;
-    expect(url).toBe(`https://${team}/cdn-cgi/access/certs`);
-    return new Response(JSON.stringify({ keys: [{ ...pub, kid: 'acc-1', alg: 'RS256', use: 'sig' }] }));
-  }) as unknown as typeof fetch;
-  const verifier = new AccessVerifier({ teamDomain: team, aud, staffEmails: ['staff@example.com'] }, certs);
-  const h = await harness({ access: verifier, ...over });
-  const now = Math.floor(Date.now() / 1000);
-  const good = { iss: `https://${team}`, aud: [aud], sub: 'staff-sub', email: 'staff@example.com', exp: now + 600, iat: now };
-  const token = (claims: Record<string, unknown> = {}, kid = 'acc-1') => jwt(pair.privateKey, kid, { ...good, ...claims });
-  const ask = async (path: string, body: unknown, opts: { token?: string | null; origin?: string | null; contentType?: string | null } = {}) => {
-    const t = opts.token === undefined ? await token() : opts.token;
-    return h.call(path, body, { origin: opts.origin ?? null, contentType: opts.contentType, headers: t ? { 'cf-access-jwt-assertion': t } : {} });
-  };
-  return { h, ask, token, verifier, fetches: () => certFetches };
-}
-
 describe('staff routes (admin/*) behind Cloudflare Access', () => {
   it('client-proof: refuses bad Access JWTs; needs the scope’s current action_nonce, an email app and a ticket; audits first', async () => {
     const { h, ask, token } = await staffHarness();
@@ -184,8 +153,8 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     expect((await ask('/v1/email/admin/unlock', { email: victim })).status).toBe(400);
     const { result, lines } = await captureLogs(() => ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-77' }));
     expect(result.status).toBe(200);
-    // Staff get no token: only the mailbox's holder does.
-    expect(await result.json()).toEqual({ mailed: true });
+    // Staff get no token: only the mailbox's holder does; the note says what the user gets and does (D866).
+    expect(await result.json()).toEqual({ mailed: true, note: STAFF_NOTES.unlockMailed });
     const mail = h.sender.to(victim).at(-1)!;
     expect(mail.kind).toBe('unlock');
     const unlockToken = /#(ug1\.[A-Za-z0-9_-]{43})/u.exec(mail.text)![1]!;
@@ -198,8 +167,11 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     expect(row).toMatchObject({ staff: 'staff@example.com', action: 'unlock', ticket: 'SUP-77' });
     expect(row!.subject).toHaveLength(12);
     expect(JSON.stringify(row)).not.toContain(victim);
-    // The shared guess counters stay: anyone without the token is still refused; the token's start passes.
+    // The shared guess counters stay: anyone without the token is still refused. The token's start passes once its
+    // holder pressed the support page's button (D866), not before.
     expect((await h.call('/v1/email/start', body(), { ip: '198.18.0.9' })).status).toBe(429);
+    expect((await h.call('/v1/email/start', body({ unlockToken }), { ip: '198.18.0.9' })).status).toBe(429);
+    expect((await h.call('/v1/email/unlock', { token: unlockToken })).status).toBe(200);
     const s = await h.call('/v1/email/start', body({ unlockToken }), { ip: '198.18.0.9' });
     expect(s.status).toBe(202);
     const cid = ((await s.json()) as { challengeId: string }).challengeId;
@@ -236,6 +208,7 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     expect((await start(owner)).status).toBe(429);
     expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-1' })).status).toBe(200);
     const unlockToken = /#(ug1\.[A-Za-z0-9_-]{43})/u.exec(h.sender.to(victim).at(-1)!.text)![1]!;
+    expect((await h.call('/v1/email/unlock', { token: unlockToken })).status).toBe(200);
     // The attacker (any requester without the token, or with a forged one) can't use the grant.
     expect((await start('198.51.7.7')).status).toBe(429);
     expect((await start('198.51.7.8', { unlockToken: `ug1.${'A'.repeat(43)}` })).status).toBe(429);
@@ -247,8 +220,11 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     expect(s.status).toBe(202);
     const cid = ((await s.json()) as { challengeId: string }).challengeId;
     expect((await h.call('/v1/email/verify', { challengeId: cid, code: h.sender.codeFor(victim) }, { ip: owner })).status).toBe(200);
-    // One-time: used up.
+    // One-time: used up, and the page says so.
     expect((await start(owner, { unlockToken })).status).toBe(429);
+    const again = await h.call('/v1/email/unlock', { token: unlockToken });
+    expect(again.status).toBe(410);
+    expect(((await again.json()) as { code: string }).code).toBe('link_used');
   });
 
   it('unsuppress: mails a confirmation; the suppression goes only when the mailbox’s holder confirms; capped; audited first (M3)', async () => {
@@ -261,7 +237,7 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     expect(h.sender.to(a)).toHaveLength(0);
     expect((await ask('/v1/email/admin/unsuppress', { email: a })).status).toBe(400);
     const r = await ask('/v1/email/admin/unsuppress', { email: a, ticket: 'SUP-5' });
-    expect(await r.json()).toEqual({ mailed: true });
+    expect(await r.json()).toEqual({ mailed: true, note: STAFF_NOTES.unsuppressMailed });
     expect(await env.DB.prepare("SELECT ticket FROM email_admin_audit WHERE action = 'unsuppress'").first('ticket')).toBe('SUP-5');
     const mail = h.sender.to(a).at(-1)!;
     expect(mail.kind).toBe('confirm');
@@ -269,15 +245,17 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     // Still suppressed until confirmed.
     expect((await start()).status).toBe(202);
     expect(h.sender.to(a).filter((m) => m.kind === 'code')).toHaveLength(0);
-    expect((await h.call('/v1/email/confirm', { token: `uc1.${'B'.repeat(43)}` })).status).toBe(410);
+    expect((await h.call('/v1/email/confirm', { token: `uc1.${'B'.repeat(43)}` })).status).toBe(400);
     const c = await h.call('/v1/email/confirm', { token });
-    expect(await c.json()).toEqual({ confirmed: 'unsuppress' });
+    expect(await c.json()).toEqual({ confirmed: 'unsuppress', email: a });
     expect((await h.call('/v1/email/confirm', { token })).status).toBe(410);
     expect((await start()).status).toBe(202);
     expect(h.sender.to(a).filter((m) => m.kind === 'code')).toHaveLength(1);
+    // Suppressed again the same day: the cap (1 a day) refuses a second confirmation mail.
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await suppressionKey(await h.deps.keys(), a), 'bounce', h.clock.now).run();
     expect((await ask('/v1/email/admin/unsuppress', { email: a, ticket: 'SUP-6' })).status).toBe(429);
     const other = `n${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
-    expect(await (await ask('/v1/email/admin/unsuppress', { email: other, ticket: 'SUP-7' })).json()).toEqual({ mailed: false, reason: 'not_suppressed' });
+    expect(await (await ask('/v1/email/admin/unsuppress', { email: other, ticket: 'SUP-7' })).json()).toEqual({ mailed: false, reason: 'not_suppressed', note: STAFF_NOTES.notSuppressed });
   });
 
   it('revoke-tickets: an address’s device tickets stop counting; capped; audited first', async () => {

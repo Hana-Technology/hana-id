@@ -13,9 +13,19 @@
 // issuer's per-IP and per-requester limits are its own tests' concern (apps/email-issuer), and every page in the suite
 // is one client, so a fixed address would make the three browsers' runs fail each other's limits. The per-address
 // limits still apply, which is why each test uses its own address.
-import { createHash, generateKeyPairSync } from 'node:crypto';
+//
+// Staff calls and bounces (D866, `tests/support-pages.spec.ts`): the issuer's real staff routes and SendGrid webhook,
+// reached through two control endpoints. `POST /__e2e/staff {action: 'unlock' | 'unsuppress', email, ticket?}` calls
+// `/v1/email/admin/<action>` with a Cloudflare Access JWT this stack signs (a throwaway RS256 key; the issuer's Access
+// check fetches its certs from ACCESS_TEAM_DOMAIN, answered in this process) for the one staff address on its
+// allowlist. `POST /__e2e/bounce {email, event?: 'bounce' | 'spamreport'}` posts one SendGrid event for a code mail
+// to the webhook, signed with a throwaway P-256 key whose public half is the issuer's SENDGRID_WEBHOOK_PUBLIC_KEY.
+// Both: tests only, no CORS, refused with an Origin.
+import { createHash, createPrivateKey, generateKeyPairSync, sign } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { AUTH_ORIGIN, E2E_ENV, EMAIL_ISS, ENV_NAME, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
+import { AUTH_ORIGIN, E2E_ENV, EMAIL_ISS, ENV_NAME, ISSUER_URL, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
+
+const ISSUER_ORIGIN = new URL(ISSUER_URL).origin;
 import { D1Shim } from './d1.ts';
 import { type Handler, json } from './http.ts';
 import { ExecContext, MemoryNamespace, registerCloudflareModule } from './workers.ts';
@@ -62,6 +72,47 @@ export function newIssuerKey(): { privateJwk: string; publicJwk: EmailChainKey &
 
 const key32 = (): string => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64');
 
+/** The stack's Cloudflare Access stand-in: its team domain (answered in this process only), audience and staff. */
+export const ACCESS_TEAM = 'e2e-access.invalid';
+const ACCESS_AUD = 'e2e'.padEnd(64, '0');
+export const E2E_STAFF = 'staff@e2e.invalid';
+
+/** An Access team key (RS256) and a webhook key (P-256), new per stack, never written anywhere. */
+function staffKeys() {
+  const access = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 65537 });
+  const jwk = access.publicKey.export({ format: 'jwk' }) as Record<string, string>;
+  const webhook = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  return {
+    accessPrivate: access.privateKey.export({ format: 'pem', type: 'pkcs8' }) as string,
+    accessCerts: JSON.stringify({ keys: [{ kty: 'RSA', n: jwk.n, e: jwk.e, kid: 'e2e-access-1', alg: 'RS256', use: 'sig' }] }),
+    webhookPrivate: webhook.privateKey.export({ format: 'pem', type: 'pkcs8' }) as string,
+    webhookPublic: (webhook.publicKey.export({ format: 'der', type: 'spki' }) as Buffer).toString('base64'),
+  };
+}
+
+const b64url = (b: Buffer | string): string => Buffer.from(b).toString('base64url');
+
+/** An Access JWT for E2E_STAFF, as Cloudflare Access would put in `Cf-Access-Jwt-Assertion`. */
+function accessJwt(privatePem: string): string {
+  const now = Math.floor(Date.now() / 1000);
+  const head = b64url(JSON.stringify({ alg: 'RS256', kid: 'e2e-access-1' }));
+  const body = b64url(JSON.stringify({ iss: `https://${ACCESS_TEAM}`, aud: [ACCESS_AUD], sub: 'e2e-staff', email: E2E_STAFF, iat: now, exp: now + 300 }));
+  return `${head}.${body}.${b64url(sign('sha256', Buffer.from(`${head}.${body}`), createPrivateKey(privatePem)))}`;
+}
+
+let accessInstalled = false;
+/** Answers the Access certs URL in this process (the issuer's AccessVerifier fetches it); everything else as before. */
+function installAccessCerts(certs: string): void {
+  if (accessInstalled) return;
+  accessInstalled = true;
+  const real = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url === `https://${ACCESS_TEAM}/cdn-cgi/access/certs`) return new Response(certs, { headers: { 'content-type': 'application/json' } });
+    return real(input, init);
+  }) as typeof fetch;
+}
+
 /** A client address from 198.18.0.0/15 (RFC 2544), new per request. */
 function benchmarkIp(): string {
   const b = crypto.getRandomValues(new Uint8Array(3));
@@ -72,6 +123,7 @@ export class LocalIssuer {
   private readonly env: Record<string, unknown>;
   private readonly exec = new ExecContext();
   private outbox: { list(): OutboxMessage[] } | null = null;
+  private readonly staff = staffKeys();
 
   private constructor(
     private readonly modules: IssuerModules,
@@ -96,7 +148,13 @@ export class LocalIssuer {
       EMAIL_SUB_KEY: key32(),
       EMAIL_CODE_KEY: key32(),
       EMAIL_RL_KEY: key32(),
+      // D866: the staff routes and the webhook, for the support pages' tests (above).
+      ACCESS_TEAM_DOMAIN: ACCESS_TEAM,
+      ACCESS_AUD,
+      ACCESS_STAFF_EMAILS: JSON.stringify([E2E_STAFF]),
+      SENDGRID_WEBHOOK_PUBLIC_KEY: this.staff.webhookPublic,
     };
+    installAccessCerts(this.staff.accessCerts);
     env.EMAIL_CHALLENGE = new MemoryNamespace(modules.Challenge, () => env);
     env.RATE_LIMITER = new MemoryNamespace(modules.RateLimiter, () => env);
     const outbox = new MemoryNamespace(modules.Outbox, () => env);
@@ -142,6 +200,19 @@ export class LocalIssuer {
         if (!sub) return json(400, { error: 'sub_required' });
         return json(200, await this.directory(sub));
       }
+      if (url.pathname === '/__e2e/staff' || url.pathname === '/__e2e/bounce') {
+        if (request.headers.get('origin') !== null) return json(403, { error: 'forbidden' });
+        const b = (await request.json()) as { action?: string; email?: string; ticket?: string; event?: string };
+        if (typeof b.email !== 'string') return json(400, { error: 'email_required' });
+        if (url.pathname === '/__e2e/staff') {
+          if (b.action !== 'unlock' && b.action !== 'unsuppress') return json(400, { error: 'action' });
+          return this.call(`/v1/email/admin/${b.action}`, JSON.stringify({ email: b.email, ticket: b.ticket ?? 'E2E-1' }), { 'cf-access-jwt-assertion': accessJwt(this.staff.accessPrivate) });
+        }
+        const ts = String(Math.floor(Date.now() / 1000));
+        const events = JSON.stringify([{ event: b.event === 'spamreport' ? 'spamreport' : 'bounce', type: 'bounce', email: b.email, category: ['hana-id-code'], sg_event_id: crypto.randomUUID() }]);
+        const signature = sign('sha256', Buffer.from(ts + events), createPrivateKey(this.staff.webhookPrivate)).toString('base64');
+        return this.call('/v1/email/webhooks/sendgrid', events, { 'x-twilio-email-event-webhook-signature': signature, 'x-twilio-email-event-webhook-timestamp': ts });
+      }
       const headers = new Headers(request.headers);
       headers.set('cf-connecting-ip', benchmarkIp());
       const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers };
@@ -150,5 +221,11 @@ export class LocalIssuer {
       }
       return this.modules.default.fetch(new Request(request.url, init), this.env, this.exec);
     };
+  }
+
+  /** One request to the issuer's own route, as its caller (staff tooling, SendGrid) would send it: no Origin. */
+  private call(path: string, body: string, headers: Record<string, string>): Promise<Response> {
+    const h = new Headers({ 'content-type': 'application/json', 'cf-connecting-ip': benchmarkIp(), ...headers });
+    return this.modules.default.fetch(new Request(`${ISSUER_ORIGIN}${path}`, { method: 'POST', headers: h, body }), this.env, this.exec);
   }
 }

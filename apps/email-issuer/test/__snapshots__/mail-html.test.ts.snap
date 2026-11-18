@@ -857,19 +857,27 @@ Not you? Change your email password, then sign in to “Sodax Demo” with this 
 `;
 
 exports[`notices: the designed HTML part > unlock and confirm: one button to their page with the token in the fragment > confirm text 1`] = `
-"Journear stopped sending sign-in codes to this email because an earlier email to you couldn’t be delivered or was marked as spam. To receive them again, open this link. It works once, within 24 hours.
+"Journear stopped sending sign-in codes to this email. An earlier email to you couldn’t be delivered, or was marked as spam.
+
+To get codes again, open the link and press “Yes, this is my email”.
 
 https://hana-id-auth-sandbox-dev.example.workers.dev/email/confirm#tok_def
 
-Didn’t ask Journear support for this? Ignore this mail: nothing changes.
+The link works once, within 24 hours of this email.
+
+Didn’t ask for this? Ignore this email. Nothing changes.
 "
 `;
 
 exports[`notices: the designed HTML part > unlock and confirm: one button to their page with the token in the fragment > unlock text 1`] = `
-"Journear support unlocked sign-in with this email, as you asked. To sign in, open this link in the browser where you use the app. It works once, within 24 hours.
+"Sign-in with this email was paused after too many wrong codes. You asked for help, so here is a link to unlock it.
+
+Open the link in the browser where you use the app, and press “Unlock my email”. Then sign in with this email again.
 
 https://hana-id-auth-sandbox-dev.example.workers.dev/email/unlock#tok_abc
 
-Didn’t ask Journear support for this? Ignore this mail: nothing changes.
+The link works once, within 24 hours of this email.
+
+Didn’t ask for this? Ignore this email. Nothing changes.
 "
 `;

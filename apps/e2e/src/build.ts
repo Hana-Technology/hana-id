@@ -6,7 +6,7 @@
 //   partner/app.js, partner/index.html            the partner test app (partner/app.ts): createHana from @hana-id/web,
 //                                                 with the two e2e envs as its only known environments
 //   demo/                                         the hosted demo (apps/demo): its page and src/main.ts, configured
-//                                                 for the e2e env (DEMO_PK, the mocked EVM chain)
+//                                                 for the e2e env (DEMO_PK, the mocked EVM chain, its sponsorship)
 //   stamps/                                       the stamps site (apps/stamps): its page and src/main.ts, configured
 //                                                 for the e2e env (STAMPS_PK, the mocked stamps contract)
 //
@@ -20,10 +20,10 @@ import { type Plugin, build } from 'esbuild';
 import type { HanaEnv } from '@hana-id/web';
 import { buildAuthPages } from '../../../packages/web/scripts/build-auth-pages.ts';
 import { buildVault } from '../../../packages/web/scripts/build-vault.ts';
-import { DEFAULT_STELLAR, type DemoConfig, validateDemoConfig } from '../../demo/src/config.ts';
+import { DEFAULT_STELLAR, type DemoConfig, demoEvmSponsor, validateDemoConfig } from '../../demo/src/config.ts';
 import { type StampsConfig, validateStampsConfig } from '../../stamps/src/config.ts';
 import { e2eRelayer } from './relayer-key.ts';
-import { BUILD_DIR, DEMO_PK, E2E_ENV as E2E_ENV_BASE, E2E_GUESTBOOK, E2E_STAMPS, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV as LIVE_ENV_BASE, STAMPS_PK, VAULT_ORIGIN, e2eEvmSponsor, portBase } from './stack.ts';
+import { BUILD_DIR, DEMO_PK, E2E_ENV as E2E_ENV_BASE, E2E_GUESTBOOK, E2E_STAMPS, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV as LIVE_ENV_BASE, STAMPS_PK, VAULT_ORIGIN, e2eEvmSponsor, e2eEvmSponsorVar, portBase } from './stack.ts';
 
 /** An env with gas sponsorship on the mocked chain, its relayer the stack's own (src/relayer-key.ts, D834). */
 const sponsored = (e: HanaEnv): HanaEnv => Object.freeze({ ...e, evmSponsor: e2eEvmSponsor(e2eRelayer().address) });
@@ -38,7 +38,12 @@ const demoRoot = fileURLToPath(new URL('../../demo/', import.meta.url));
 export const STAMPS_DIR = fileURLToPath(new URL('stamps/', BUILD_DIR));
 const stampsRoot = fileURLToPath(new URL('../../stamps/', import.meta.url));
 
-/** The demo's configuration on the stack: the e2e env, its app key and the mocked EVM chain (no explorer). */
+/**
+ * The demo's configuration on the stack: the e2e env, its app key and the mocked EVM chain (no explorer), and the
+ * chains of the env's sponsorship block, taken as a deploy takes them from a manifest's `evm.sponsor` (the stack's env
+ * is no manifest: its block is the API's EVM_SPONSOR, the mocked chain), so the gas-free check-in card can appear (D867).
+ */
+const E2E_SPONSOR_BLOCK = JSON.parse(e2eEvmSponsorVar(e2eRelayer().address)) as { chains: Record<string, unknown> };
 export const DEMO_CONFIG: DemoConfig = validateDemoConfig({
   environment: ENV_NAME,
   publishableKey: DEMO_PK,
@@ -47,6 +52,7 @@ export const DEMO_CONFIG: DemoConfig = validateDemoConfig({
   stellar: DEFAULT_STELLAR,
   apiUrl: E2E_ENV.apiUrl,
   near: { rpcUrl: E2E_ENV.rpc, rpcFallbackUrl: E2E_ENV.rpcFallback ?? null, guestbook: E2E_GUESTBOOK, explorer: null },
+  evmSponsor: demoEvmSponsor({ evm: { sponsor: E2E_SPONSOR_BLOCK } })!,
 });
 
 /** The stamps site's configuration on the stack: the e2e env, its app key, the mocked stamps contract (no explorer or faucet). */

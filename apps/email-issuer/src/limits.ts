@@ -174,6 +174,19 @@ export const UNLOCK_GRANT_TTL_MS = DAY;
 /** A staff unsuppress's mailed confirmation: valid 24 h, single use. */
 export const CONFIRM_TTL_MS = DAY;
 /**
+ * The support pages' presses (D866: `POST /v1/email/unlock` and `/v1/email/confirm`, from `{authOrigin}/email/unlock`
+ * and `/email/confirm`) per IP, in every env (a mailed link's button, not the login flow): 10 per 10 min, a window of
+ * their own.
+ */
+export const IP_LINK_LIMITS: Limit[] = [{ name: 'ip:link:10m', windowMs: 10 * MIN, max: 10 }];
+/** And per token (a `link:` object named by the token's sha256): 10 presses an hour, whoever presses. */
+export const LINK_TOKEN_LIMITS: Limit[] = [{ name: 'link:1h', windowMs: HOUR, max: 10 }];
+/**
+ * How long a support link's record outlives its 24 h, without the address (a tombstone: the action, expiry and use
+ * time only), so its page can say "expired" or "already used" rather than "not valid" for a week (D866).
+ */
+export const LINK_TOMBSTONE_MS = 7 * DAY;
+/**
  * A hint for a non-Google-hosted address counts only while its Google identity logged in with that address within the
  * last 180 days (D199): a stale Google account still holding an old address can't steer the address's new owner for
  * ever. Older ones are pruned. Hosted hints don't lapse (Google, or the domain's admin, controls the mailbox, D158).

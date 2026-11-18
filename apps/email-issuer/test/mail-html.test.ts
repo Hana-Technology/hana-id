@@ -226,8 +226,8 @@ describe('the names (D765)', () => {
       ['Your code to open a wallet in Passport Home', 'Your code to open a wallet in Passport Home', 'Your code to open a wallet in Passport Home. It expires in 10 minutes.'],
       ['A sign-in method was added in Sodax Demo', 'A sign-in method was added', 'A sign-in method was added to a Journear wallet this email opens.'],
       ['A sign-in method was added in Sodax Demo', 'A sign-in method was added', 'A sign-in method was added to a Journear wallet this email opens.'],
-      ['Your Journear sign-in is unlocked', 'Your Journear sign-in is unlocked', 'Journear support unlocked sign-in with this email, as you asked.'],
-      ['Confirm to receive Journear sign-in codes again', 'Confirm to receive Journear sign-in codes again', 'Journear stopped sending sign-in codes to this email because an earlier email to you couldn’t be delivered or was marked as spam.'],
+      ['Unlock your Journear sign-in', 'Unlock your Journear sign-in', 'Sign-in with this email was paused after too many wrong codes. Here is a link to unlock it.'],
+      ['Confirm your email to get Journear sign-in codes again', 'Confirm your email to get Journear sign-in codes again', 'Journear stopped sending sign-in codes to this email. Confirm it to get them again.'],
     ]);
     for (const m of mails) {
       // The auth origin's host keeps "hana" (an env's Worker name, not words): checked without it.

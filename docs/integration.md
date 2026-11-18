@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (a linked sign-in can remove itself; gas-free EVM actions, not live; 0.5.0 not published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (0.5.0 upgrade, gas-free, `userMessage`, sign-in outcomes, users' view, email codes), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -235,26 +235,48 @@ at the top). A new environment means a new release.
 ### Release notes
 
 **0.5.0** (after 0.4.1, **not yet published**: until Journear sends you its tarballs, stay on 0.4.1; same environments:
-`sandbox-dev`). **Nothing to change** in your code: code written for 0.4.x builds and runs as it is. Replace all the
-tarballs you use together (they depend on each other at `^0.5.0`).
+`sandbox-dev`). Code written for 0.4.x builds as it is: every change to the types is an addition. One behaviour
+changed, for EIP-5792 batches (step 3 below). Replace all the tarballs you use together (they depend on each other
+at `^0.5.0`).
 
+- New: errors carry a plain sentence to show your users, `error.userMessage`, on `HanaError`, `HanaSponsorError` and
+  the EIP-1193 provider's `ProviderRpcError`, and `userMessageFor(code, data)` for a code read elsewhere
+  ([section 13](#user-message)). `message` is unchanged and stays for you and your logs.
 - New, **not live yet**: gas-free EVM actions. `hana.evm.sendSponsored({ chainId, calls })` runs contract calls with
   Journear paying the network fee, after the user approves them; `hana.evm.sponsorship(chainId)` and
   `hana.evm.sponsoredChains` say where and whether it is offered; EIP-5792 `wallet_sendCalls`,
   `wallet_getCallsStatus` and `wallet_getCapabilities` on `hana.ethereum` do the same for viem and wagmi. No environment
-  offers it yet, so `sponsoredChains` is empty ([section 8, Gas-free actions](#gas-free-actions-not-live)). New types:
-  `HanaSponsorError`, `EvmSponsorErrorData`, `SendSponsoredParams`, `SendSponsoredResult`, `SponsoredCall`,
-  `SponsorshipStatus`.
-- `wallet_sendCalls` is no longer `4200`: see above. `eth_sendTransaction` is unchanged (never gas-free).
+  offers it yet, so `sponsoredChains` is empty ([section 8, Gas-free actions](#gas-free-actions-not-live)). New
+  exports: `HanaEvm`, `HanaSponsorError`, `isHanaSponsorError`, `EvmSponsorErrorData`, `SendSponsoredParams`,
+  `SendSponsoredResult`, `SponsoredCall`, `SponsorshipStatus`, `EIP5792` (its error codes) and `CALLS_VERSION`.
+- `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` are no longer `4200`. On a chain without
+  gas-free actions, `wallet_getCapabilities` answers no capabilities and `wallet_sendCalls` is `5710` (unsupported
+  chain). `eth_sendTransaction` is unchanged (never gas-free).
 - The packages carry a licence: `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` are under the Apache License 2.0,
   each with the licence text as `LICENSE` in its tarball and `"license": "Apache-2.0"` in its `package.json` (0.4.1 and
   earlier say `UNLICENSED` and ship no licence). `@hana-id/core`'s licence is still being decided; until then its
   tarball carries Journear Passport's Business Source License 1.1, which allows testing, evaluation and development,
   and use on test networks. The names and logos of Journear and Journear Passport are not licensed.
-- New: errors carry a plain sentence to show your users, `error.userMessage`, on `HanaError`, `HanaSponsorError` and
-  the EIP-1193 provider's `ProviderRpcError`, and `userMessageFor(code, data)` for a code read elsewhere
-  ([section 13](#user-message)). `message` is unchanged. Journear Passport's own windows, Passport Home and its emails
-  use plainer words too; no code, `data.reason` or event changed.
+- From Journear Passport's side, with every SDK version (no upgrade needed): the approval window's new layout (one
+  plain sentence first, warnings always in view, the technical details folded; [What your users
+  see](#what-your-users-see)); a sign-in method linked to someone's wallet can remove itself during sign-in
+  (`login_cancelled`, `data.reason: 'link_remove'`, [section 4](#when-sign-in-doesnt-finish)); an email that waits
+  to join a wallet can cancel the link from its own sign-in window (your page still sees `link_pending`). Journear
+  Passport's windows, Passport Home and its emails use plainer words; no code, `data.reason` or event changed.
+
+**Upgrading from 0.4.x to 0.5.0:**
+
+1. Replace the four tarballs (or the ones you use) together, check them against the new `SHA256SUMS`, reinstall, and
+   clear your bundler's cache (Vite: delete `node_modules/.vite`), or it keeps serving the old SDK.
+2. Show `error.userMessage` to your users where you showed `error.message` (the pattern in
+   [section 13](#user-message)). Keep matching on `code` and `data.reason`, never on either text.
+3. If you call viem's `sendCalls` (or wagmi's, which uses it) with `experimental_fallback: true`: with 0.4.x Journear
+   Passport answered `4200`, and viem fell back to one `eth_sendTransaction` per call. With 0.5.0 a chain without
+   gas-free actions answers `5710`, and viem doesn't fall back on it. Ask `getCapabilities` first, and send ordinary
+   transactions when it shows nothing for the chain ([Gas-free actions](#gas-free-actions-not-live)).
+4. Handle `login_cancelled` with `data.reason: 'link_remove'` as the user's choice, not a failure
+   ([section 4](#when-sign-in-doesnt-finish)). Your 0.4.x code already receives it.
+5. Nothing else: sign-in, Stellar, EVM, NEAR, the policies and the identity token behave as in 0.4.1.
 
 **0.4.1** (after 0.4.0; same environments: `sandbox-dev`). **Nothing to change** unless you find Journear Passport's
 wallet by its display name: code written for 0.4.0 builds and runs as it is. Replace all the tarballs you use together
@@ -623,6 +645,33 @@ button.addEventListener('click', async () => {
   Offer an "Export private key" entry in your account screen that calls `exportKey`: export is how users keep their
   funds if Journear Passport's key service ever can't derive their key, so don't hide it. No SDK method returns a key.
 
+### When sign-in doesn't finish
+
+`login()` rejects with a `HanaError`. Most of these are the user's own choice, so don't show them as a failure. Show
+`userMessage` where you show something (SDK 0.5.0; [section 13](#user-message)), and keep the sign-in buttons.
+
+| `code` (`data.reason`) | What happened | What your page does |
+|---|---|---|
+| `login_cancelled` (none, or `popup_closed`) | The user closed the Journear Passport window, or your page called `cancelLogin()` or a newer `login()` | nothing, or a quiet "Sign-in cancelled" |
+| `login_cancelled` (`link_remove`) | This sign-in method was linked to someone's wallet, and the user chose to remove it. The window finishes the removal | show `userMessage` as information. Next time this method opens a new wallet of its own |
+| `login_cancelled` (`email_consent_declined`, `google_account_mismatch`) | A new Google user didn't share their email address with Journear Passport, then cancelled | offer email sign-in |
+| `link_pending` (`data.effectiveAtMs`) | This method waits to join a wallet. For an email, the window offers to cancel the link | say when it can open the wallet; until then the user signs in the other way |
+| `popup_blocked`, `coop_blocks_popup`, `login_timeout` | The window didn't open or connect, or the sign-in was left unfinished | `userMessage`, and a way to try again |
+| anything else | | `userMessage` |
+
+```ts
+import { HanaError } from '@hana-id/web';
+
+signInButton.addEventListener('click', () => {
+  // No await before login(): the Journear Passport window opens in this click.
+  hana.login().then(onSignedIn, (e: unknown) => {
+    const reason = e instanceof HanaError ? (e.data as { reason?: unknown } | undefined)?.reason : undefined;
+    if (e instanceof HanaError && e.code === 'login_cancelled' && reason !== 'link_remove') return; // the user stopped
+    showNote(e instanceof HanaError ? e.userMessage : 'Something went wrong. Try again.');
+  });
+});
+```
+
 ## 5. Your page: origins, CSP, popups
 
 | Requirement | If not met |
@@ -784,6 +833,30 @@ says that Journear Passport signs only for test networks (for a test app with Jo
 instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (test network)", with "network no.
 11155111" beside it) and gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
 
+### What your users see
+
+Journear Passport's windows are the same in every app, so your support team can describe them. You can't change them,
+and you don't need to: your app's name and logo (**Branding**, [section 1](#your-apps-page)) are the only parts that
+are yours.
+
+- **The sign-in window** asks how to sign in (Google or email), then shows its progress. A sign-in method linked to
+  someone's wallet is first asked whether to keep the link (**Not now**, **Don't ask again on this device**, or
+  **Remove this …**, which names the email or the Google sign-in); a pending link shows a banner with **Cancel this
+  link**.
+- **The approval window** starts with one plain sentence about what your app asks for ("Your App wants to send 0.1
+  NEAR to bob.testnet"), the network, and the most the network fee can be. A risk is always in view, in red or amber,
+  right under that sentence. The technical details are folded under **Show details**. When Journear Passport can't
+  tell what a request does, it says so and advises: "If you're not sure, reject it."
+- **Reject** and **Approve** sit at the bottom. Approve works only after the window has been on screen and in focus for
+  a moment, then a mouse move, a tap or a key press, so a stray double-click can't approve. After an answer the window
+  says "Approved" or "Rejected" and stays open 15 seconds for a follow-up request.
+- **A gas-free action** reads "Network fee: none. Journear pays it for you." The user's first one also says that it
+  turns on free network fees for their account, that their address stays the same, and that they still approve every
+  action ([Gas-free actions](#gas-free-actions-not-live)).
+- **A test app** says, on every request, that Journear Passport signs only for test networks.
+- **When something fails** inside a Journear Passport window, it says what happened and what to do, with "Error code
+  (for support): …" at the end. Your page gets the same `code` in the error.
+
 ### Stellar
 
 ```ts
@@ -834,6 +907,7 @@ const provider = new BrowserProvider(hana.ethereum);
 | `eth_sendTransaction` | the SDK fills nonce, gas and fees from your RPC, the user approves, and the SDK broadcasts through the RPC of the chain it was filled on (even if the chain is switched during the approval). Sends run one at a time per chain, and a filled nonce is never below one past the last one this page broadcast, so back-to-back sends get consecutive nonces |
 | `eth_signTransaction` | the SDK fills a missing nonce, gas and fees from your RPC as for `eth_sendTransaction` (fields you set are kept as given; a `chainId` must be the current chain), the user approves, and you get the signed raw transaction; nothing is broadcast. It isn't queued with sends, and its nonce comes from the RPC's `pending` count (never below one past this page's last `eth_sendTransaction`), so set `nonce` yourself when you sign several before broadcasting them |
 | `personal_sign`, `eth_signTypedData_v4` | approval |
+| `wallet_getCapabilities`, `wallet_sendCalls`, `wallet_getCallsStatus` | EIP-5792, for gas-free actions only (SDK 0.5.0; [Gas-free actions](#gas-free-actions-not-live)); `5710` on a chain without them |
 | `eth_sign` and other signing or wallet methods | `4200` |
 | read-only methods (`eth_call`, `eth_getBalance`, …) | forwarded to the current chain's `rpcUrl` |
 | `eth_sendRawTransaction` | forwarded to the current chain's `rpcUrl` (it broadcasts a transaction you already hold signed; Journear Passport signs nothing) |
@@ -851,63 +925,181 @@ Journear Passport code is in `error.data.code`. Logging out emits `accountsChang
 
 ### Gas-free actions (not live)
 
-SDK 0.5.0 or later. **Not live:** no environment offers it yet (`hana.evm.sponsoredChains` is `[]`); Base Sepolia
-first. Journear pays the network fee for contract calls Journear staff allowlist for your app (each contract and
-function, value 0), within daily limits. Your users need no ETH. Ask Journear to allowlist your calls.
+SDK 0.5.0 or later. **Not live:** no environment offers it yet; Base Sepolia (84532) comes first. Until Journear turns
+it on, `hana.evm.sponsoredChains` is `[]`, `sponsorship()` answers `{ available: false, reason: 'chain_not_enabled' }`
+without asking anyone, and `sendSponsored()` refuses with `4100` (`chain_not_sponsored`) before any window. So you can
+ship the code now, behind `sponsorship()`, and keep your usual path for everyone else.
 
-**Call it in the click**, like `login()`: the approval window opens in the click.
+**What it is.** A gas-free action runs contract calls from the user's own EVM address, and Journear pays the network
+fee (the "gas" a network charges to run a transaction). Your users need no ETH. The first action also sets the account
+up for it, in the same approval: an EIP-7702 authorization (the account keeps its address and its key, and lets
+Journear's reviewed account helper contract run the batches the user approves).
+
+**Off by default.** Before it works for your app:
+
+- Ask Journear to turn it on for your app, and to add each contract and function your app will call (the contract's
+  address, the function's 4-byte selector, and if you like the exact call data). Journear staff keep this list; there is
+  no portal setting. A call that isn't on it is refused (`call_not_sponsored`, `target_not_allowed`).
+- Base Sepolia only, for test apps. Calls send no ETH (`value` left out or 0).
+- Allow Journear Passport's API origin in your CSP `connect-src` (sandbox-dev:
+  `https://hana-id-api-sandbox-dev.tingtc.workers.dev`), for `sponsorship()` ([section 5](#5-your-page-origins-csp-popups)).
+
+**1. Ask whether it is available**, and show the button only then. `sponsorship(chainId)` needs no sign-in, but the
+action does, so set the button up once the user is signed in. Call it after `hana.ready`: before that, the SDK doesn't
+know the chains yet and answers `chain_not_enabled`, so the button would never appear.
 
 ```ts
-button.onclick = () => {
-  hana.evm
-    .sendSponsored({ chainId: 84532, calls: [{ to: '0xYourContract', data: '0x183ff085' }] })
-    .then(({ transactionHash }) => showDone(transactionHash))
-    .catch((e) => showError(e.message)); // a HanaSponsorError: the message is plain words your users can read
-};
+import { userMessageFor } from '@hana-id/web';
+
+const BASE_SEPOLIA = 84532;
+const MY_CONTRACT = '0x1111111111111111111111111111111111111111'; // a contract Journear added for your app
+const CHECK_IN = '0x183ff085'; // the call data: fixed in your code, never from user input or the URL
+
+/** The SDK's plain sentence for anything `hana.evm` rejected with. */
+const say = (e: any): string => e?.userMessage ?? userMessageFor(e?.code, e?.data);
+
+/** Offered to your app, but not right now: show the button disabled, with the reason. */
+const NOT_NOW = ['budget_exhausted', 'app_budget_exhausted', 'paused', 'sponsorship_paused', 'not_available'];
+
+async function setUpButton(): Promise<void> {
+  const s = await hana.evm.sponsorship(BASE_SEPOLIA).catch(() => null); // rejected: Journear couldn't be asked
+  checkInButton.hidden = !s || (!s.available && !NOT_NOW.includes(s.reason ?? '')); // not offered here: no button
+  checkInButton.disabled = !s?.available;
+  note.textContent = s && !s.available ? userMessageFor(4100, { reason: s.reason }) : ''; // "… used up for today …"
+}
+
+await hana.ready; // sponsoredChains is known from here on
+if (hana.status === 'logged_in') await setUpButton();
+hana.on('accountsChanged', (a) => (a ? void setUpButton() : (checkInButton.hidden = true)));
 ```
 
-- `calls`: 1 to 8, run in order, all or nothing. Each has `to`, `data` (a function call, at least 4 bytes) and no ETH
-  (`value` left out or 0). The answer is `{ transactionHash, status: 'executed' }` once the calls ran.
-- `hana.evm.sponsorship(chainId)` → `{ available, reason?, remainingToday? }`: check before showing a "free" button.
-- viem and wagmi: `sendCalls` (EIP-5792, version 2.0.0) on `hana.ethereum` does the same and returns an `id`. Unlike
-  most wallets, it returns the `id` only **after** the user approved and the calls ran (seconds, or a rejection), not as
-  soon as the request is accepted: don't put a short timeout on it. `getCallsStatus` reads the receipt from your chain's
-  RPC (pending until it has it). `getCapabilities` shows `atomic: supported` on the chains it is offered on.
-- Privacy: when a gas-free action is prepared, the Journear Passport page asks the network's public endpoints about the
-  user's account, so those providers see the account's address and the user's IP address.
-- The `transactionHash` comes from Journear's API, which waited for the receipt; your own RPC
-  (`eth_getTransactionReceipt`) or an explorer is where you confirm it independently.
+It resolves `{ available, reason?, remainingToday? }`. `reason`, when `available` is false: `chain_not_enabled` (not
+offered on this network), `app_not_sponsored` (not turned on for your app), `paused` (Journear paused it),
+`budget_exhausted` (today's budget, your app's or the environment's, is used up) or `not_available` (no reason given).
+`remainingToday` is your app's own budget left today, in wei, as a decimal string. It rejects only when Journear can't
+be asked: `api_unavailable`, `rate_limited` (60 requests a minute per IP address, across every app) or `4100`.
+
+**2. Send it in the click**, like `login()`: the approval window opens in the click. A rejection in the window (`4001`)
+is the user's choice, not an error.
+
+```ts
+checkInButton.addEventListener('click', () => {
+  checkInButton.disabled = true;
+  // No await before sendSponsored: the approval window opens in this click.
+  hana.evm
+    .sendSponsored({ chainId: BASE_SEPOLIA, calls: [{ to: MY_CONTRACT, data: CHECK_IN }] })
+    .then(({ transactionHash }) => showDone(transactionHash)) // showDone, showQuiet, showNote: your own UI helpers
+    .catch((e: any) => (e?.code === 4001 ? showQuiet(say(e)) : showNote(say(e))))
+    .finally(() => (checkInButton.disabled = false));
+});
+```
+
+A refusal with `data.transactionHash` may still have run: link it, so the user can look before trying again.
+
+- `calls`: 1 to 8 in the SDK (an environment may allow fewer: `too_many_calls`), run in order, all or nothing. Each
+  has `to`, `data` (a function call, 4 to 8,192 bytes) and no ETH. The answer is `{ transactionHash, status:
+  'executed' }` once the calls ran on the chain: seconds after the user's Approve, so don't put a short timeout on it.
+- The `transactionHash` is Journear's relayer's transaction, which came back from Journear's API after it waited for
+  the receipt. Confirm it yourself on your own RPC (`eth_getTransactionReceipt`) or an explorer.
+- Every action asks the user. No auto-approve policy covers it.
+- Privacy: while an action is prepared, the Journear Passport page asks the network's public endpoints about the user's
+  account, so those providers see the account's address and the user's IP address.
+
+**Limits** to design around (planned for the first test period, and they may change):
+
+| Limit | Planned | When it is reached |
+|---|---|---|
+| Network | Base Sepolia only | `chain_not_sponsored`, `chain_not_enabled` |
+| Per user | 30 actions a day (UTC) | `rate_limited` |
+| One action | at most 4 calls | `too_many_calls` |
+| Time to approve | the approval is valid for at most 5 minutes; approve within about 4 | `deadline_passed` (nothing sent) |
+
+Also: one action at a time per user and network (a second is refused with `busy`, `sponsor_in_flight`, until the
+first ends), and a daily budget per app and per environment (`app_budget_exhausted`, `budget_exhausted`). When a limit
+is reached, send the user's action the usual way, or ask them to try later.
 
 **What users see:** Journear Passport's usual approval window, with the calls' own summary and warnings, "Network fee:
 none. Journear pays it for you." and, the first time only, "One-time setup: this also turns on free network fees for
-your account on Base Sepolia. Your address stays the same and you still approve every action." Every action asks the
-user; none is approved automatically.
+your account on Base Sepolia. Your address stays the same and you still approve every action." The details (folded)
+name the account helper, the relayer and the time the approval is valid until.
 
-<a id="gas-free-errors"></a>**Errors** (`HanaSponsorError`, a `HanaError`; `data` is `EvmSponsorErrorData`, each field
-only in its exact shape: `status`, `reason`, `requestId`, `retryAfterS`, `transactionHash`, `callIndex`, `retryable`):
+**EIP-5792 with viem** (or wagmi): `sendCalls` on `hana.ethereum` sends the same gas-free action. Put the chain in
+`createHana({ evm: { chains } })`. `getCapabilities` shows `atomic: supported` on the chains Journear sponsors, and
+nothing elsewhere. It doesn't know about your app's list or today's budget: ask `hana.evm.sponsorship()` for that.
 
-| Code | `data.reason` | Message (show it as it is) |
+```ts
+import { createWalletClient, custom } from 'viem';
+import { baseSepolia } from 'viem/chains';
+
+const wallet = createWalletClient({ chain: baseSepolia, transport: custom(hana.ethereum) });
+
+async function batchesOffered(account: `0x${string}`): Promise<boolean> {
+  const capabilities = await wallet.getCapabilities({ account, chainId: baseSepolia.id });
+  return capabilities?.atomic?.status === 'supported';
+}
+
+sendButton.addEventListener('click', () => {
+  const account = hana.addresses?.evm as `0x${string}` | undefined;
+  if (!account) return;
+  // sendCalls resolves once the user approved and the calls ran (not as soon as the request is accepted).
+  wallet
+    .sendCalls({ account, calls: [{ to: MY_CONTRACT, data: CHECK_IN }] })
+    .then(({ id }) => wallet.waitForCallsStatus({ id }))
+    .then((result) => showDone(result.receipts?.[0]?.transactionHash ?? ''), (e: unknown) => showNote(userText(e)));
+});
+```
+
+- Version `2.0.0` only. `atomic: true`: the delegate reverts the whole batch if any call fails. Your own batch `id` is
+  kept (`5720` if you send it twice); without one the SDK makes a random one.
+- `getCallsStatus` reads the receipt from your chain's RPC: `100` (pending) until it has it, then `200`, or `500` for a
+  failed batch. `5730` for an id this page didn't send (it remembers the last 256).
+- Refused before any window: `5700` for a capability not marked `optional`, `5710` for a chain without gas-free
+  actions, `5740` for more than 8 calls; `-32602` for a call with ETH or a contract creation. A refusal after that is
+  the same error as `sendSponsored`'s, as a `ProviderRpcError` (numeric code; Journear Passport's string code, when it
+  has one, in `data.code`). viem wraps it: `userText` in [section 13](#user-message) finds the sentence.
+
+<a id="gas-free-errors"></a>**Errors.** `sendSponsored` and `sponsorship` reject with a `HanaSponsorError` (a
+`HanaError`). Show `userMessage`. `code` is `4001` (the user rejected), `4100` (refused), `busy`, `rate_limited`,
+`session_ended` or `api_unavailable`, and `data` is `EvmSponsorErrorData`, each field only in its exact shape:
+`reason`, `status` (the HTTP status of Journear's answer), `requestId`, `retryAfterS` (wait at least this long),
+`transactionHash` (a batch was sent), `callIndex` (the call that would fail, from 0), `retryable`, `chainId`. Match on
+`code` and `data.reason`:
+
+| `data.reason` | What happened | `userMessage` |
 |---|---|---|
-| `4001` | | the user declined |
-| `4100` | `chain_not_sponsored`, `chain_not_enabled` | Free network fees aren’t offered on this network. |
-| `4100` | `delegated_elsewhere` | Your account was set up by another wallet app, so Journear can’t pay network fees for it. Nothing was sent. |
-| `4100` | `call_not_sponsored`, `app_not_sponsored`, `target_not_allowed` | Journear doesn’t pay network fees for this action. |
-| `4100` | `gas_too_high` | This action is too big for free network fees. |
-| `4100` | `not_available` | Free network fees aren’t available for your account right now. Try again later. |
-| `4100` | `budget_exhausted` | Journear’s free network fees for this app are used up for today. Try again tomorrow. |
-| `4100` | `clock_wrong` | Your device’s clock is wrong. Set it to the right time, then try again. |
-| `4100` | `deadline_passed` | This took too long, so nothing was sent. Please try again. |
-| `4100` | `reverted`, `not_executed` (with `transactionHash`) | The action didn’t go through, so nothing changed. (On a first action: The action didn’t go through. Your account’s one-time setup may still have been done. Nothing else changed.) |
-| `4100` | `simulation_reverted` (`callIndex`) | This action would fail, so it wasn’t sent. Nothing changed. |
-| `4100` | `nonce_stale`, `authorization_nonce_stale` | Your account changed while this was getting ready. Nothing was sent. Please try again. |
-| `busy` | `sponsor_in_flight` | Your last action is still going through. Wait for it to finish, then try again. |
-| `rate_limited` | `rate_limited`, `app_budget_exhausted`, `too_many_failures` (`retryAfterS`) | Too many actions right now… / …used up for today… |
-| `session_ended` | | Your sign-in has ended. Sign in again, then try again. |
-| `api_unavailable` | `timeout` (with `transactionHash`) | Your action was sent but isn’t confirmed yet. Check again in a minute before you try again. |
-| `api_unavailable` | `unknown_outcome` | Journear couldn’t tell whether your action went through. Check before you try again. |
-| `api_unavailable` | `bad_answer`, others | Journear couldn’t get this action ready (or send it) right now. |
+| `chain_not_sponsored`, `chain_not_enabled`, `sponsorship_unconfigured` | Not offered on this network | Free network fees aren’t offered on this network. |
+| `app_not_sponsored`, `call_not_sponsored`, `target_not_allowed`, `value_not_allowed`, `too_many_calls` | Not turned on for your app, or a call that isn't on your app's list | Journear doesn’t pay network fees for this action. |
+| `delegated_elsewhere` | Another wallet app set the account up with its own helper | Your account was set up by another wallet app, so Journear can’t pay network fees for it. Nothing was sent. |
+| `budget_exhausted`, `app_budget_exhausted` | Today's budget is used up | Journear’s free network fees for this app are used up for today. Try again tomorrow. |
+| `not_available` | Journear said no, without a reason | Free network fees aren’t available for your account right now. Try again later. |
+| `gas_too_high`, `batch_too_large` | The action costs more than Journear pays for one | This action is too big for free network fees. |
+| `sponsor_in_flight`, `account_busy` | Another action of this user is still going through | Your last action is still going through. Wait for it to finish, then try again. |
+| `clock_wrong` | The device's clock is too far off | Your device’s clock is wrong. Set it to the right time, then try again. |
+| `bad_answer` | Journear's answer failed the vault's checks | Journear couldn’t get this action ready. Nothing was sent. Try again later. |
+| `deadline_passed`, `deadline_out_of_range`, `stale_session_proof` | The approval took too long | This took too long, so nothing was sent. Please try again. |
+| `no_evm_account` | The session has no EVM address | Journear can’t do this with your current sign-in. Sign in again, then try again. |
+| `session_ended` | The session ended | Your sign-in has ended. Sign in again, then try again. |
+| `reverted`, `not_executed` (`transactionHash`) | Sent, but a call failed, so the calls changed nothing | The action didn’t go through. Your account’s one-time setup may still have been done. Nothing else changed. |
+| `simulation_reverted` (`callIndex`) | A call would fail: check that call | This action would fail, so it wasn’t sent. Nothing changed. |
+| `timeout` (`transactionHash`) | Sent, not confirmed yet | Your action was sent but isn’t confirmed yet. Check again in a minute before you try again. |
+| `unknown_outcome`, `outcome_unknown` | Journear can't tell whether it was sent | Journear couldn’t tell whether your action went through. Check before you try again. |
+| `nonce_stale`, `authorization_nonce_stale`, `delegation_required` | The account changed while the action was prepared | Your account changed while this was getting ready. Nothing was sent. Please try again. |
+| `in_progress`, `proof_replayed` | The same action is already being sent | This action is already being sent. Wait a moment, then check before you try again. |
+| `account_unrecorded` | Journear is still recording the account (just after sign-in) | Journear is still setting up your account. Try again in a few seconds. |
+| `rate_limited` | Too many actions (`retryAfterS`) | Too many actions right now. Wait a moment and try again. |
+| `too_many_failures` | Too many failed actions today | Too many actions failed today. Try again tomorrow. |
+| `api_unavailable`, `relayer_unavailable`, `evm_rpc_unavailable`, `near_unavailable`, `audit_unavailable`, `directory_unavailable`, `rate_limiter_unavailable`, `config_unavailable`, `internal_error` | Journear's side can't send it now | Journear couldn’t send this action right now. Try again later. |
+| `paused`, `sponsorship_paused` | Journear paused it | Free network fees are paused right now. Try again later. |
+| `gas_price_too_high` | The network's fees are above Journear's cap | Network fees are too high right now. Nothing was sent. Try again in a few minutes. |
+| `relayer_busy` | Journear's relayer is busy | Journear is busy with other actions right now. Nothing was sent. Try again in a few seconds. |
+| `account_mismatch` | Not the signed-in account | This isn’t the account you’re signed in with. Nothing was sent. Sign in again, then try again. |
+| `session_not_visible` | The sign-in isn't recorded yet | Journear is still finishing your sign-in. Try again in a few seconds. |
+| `missing_session_proof`, `bad_session_proof`, `invalid_session_signature`, `bad_wallet_proof`, `scope_mismatch` | The sign-in couldn't be checked | Journear couldn’t check your sign-in, so nothing was sent. Sign in again, then try again. |
+| `account_pending` | The account has other transactions waiting on the network | Your account has other actions waiting on the network, so this one couldn’t go through. Wait a moment, then try again. |
 
-With a `transactionHash`, look the transaction up before asking the user to try again.
+A rejection (`4001`) and an error without a sponsorship reason get the usual sentences (section 13). With a
+`transactionHash`, look the transaction up before asking the user to try again. When a refusal says the action isn't
+offered or the budget is used up, the user can still do the same thing the usual way, paying the fee themselves.
 
 ### NEAR
 
@@ -1653,17 +1845,29 @@ Libraries that wrap provider errors (viem, wagmi, ethers) may drop the field, an
 it: there, call `userMessageFor(code, data)` (exported by `@hana-id/web`) with the Journear Passport code (`data.code`,
 or SWK's `ext[0]`).
 
-```ts
-import { HanaError, userMessageFor } from '@hana-id/web';
+One function covers every case: Journear Passport's own errors, the provider's, one that viem, wagmi or ethers wrapped
+(they keep the original as `cause`), and the SWK module's:
 
-try {
-  await hana.login();
-} catch (e) {
-  const code = e instanceof HanaError ? e.code : (e as { data?: { code?: unknown } }).data?.code;
-  const text = e instanceof HanaError ? e.userMessage : userMessageFor(code, undefined);
-  errorBox.textContent = text; // text, never HTML, like any string you show
-  console.warn(e); // code, message and data, for your logs
+```ts
+import { HanaError, ProviderRpcError, userMessageFor } from '@hana-id/web';
+
+/** The sentence to show your user for anything a Journear Passport call rejected with. */
+function userText(e: unknown): string {
+  for (let x: unknown = e, depth = 0; typeof x === 'object' && x !== null && depth < 5; depth++) {
+    if (x instanceof HanaError || x instanceof ProviderRpcError) return x.userMessage;
+    const ext = (x as { ext?: unknown }).ext; // the SWK module's { code, message, ext: [code, requestId?] }
+    if (Array.isArray(ext) && typeof ext[0] === 'string') return userMessageFor(ext[0], undefined);
+    x = (x as { cause?: unknown }).cause;
+  }
+  return 'Something went wrong. Try again.';
 }
+
+payButton.addEventListener('click', () => {
+  hana.ethereum.request({ method: 'eth_sendTransaction', params: [tx] }).then(onSent, (e: unknown) => {
+    errorBox.textContent = userText(e); // as text, never as HTML
+    console.warn(e); // code, message and data, for your logs
+  });
+});
 ```
 
 An error that came from an answer of Journear Passport's API (a refusal, or a sign-in that gave up after one: `rate_limited`,
@@ -1687,7 +1891,7 @@ window, not returned.
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s, `data.stage: 'connect'`), or the sign-in was left unfinished for 5 min (`data.stage: 'pending'`: the popup left open, or closed within a few seconds of reaching Google's page) | retry |
-| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Journear Passport popup (`data.reason: 'popup_closed'`: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Journear Passport popup on the screen it went back to; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Journear Passport's explanation; `data.reason: 'link_remove'`: the user chose to remove this sign-in method from the wallet it was linked to (it will open a wallet of its own next time) | offer email sign-in; for `link_remove`, offer to sign in again |
+| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Journear Passport popup (`data.reason: 'popup_closed'`: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Journear Passport popup on the screen it went back to; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Journear Passport's explanation; `data.reason: 'link_remove'`: the user chose to remove this sign-in method from the wallet it was linked to (it will open a wallet of its own next time) | don't show it as a failure; for the consent reasons offer email sign-in; for `link_remove` show `userMessage` ([section 4](#when-sign-in-doesnt-finish)) |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
 | `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; the Journear Passport window says what to do (an email's window offers to cancel the link) |
@@ -1711,6 +1915,31 @@ diagnostics, as the hosted demo's "Copy diagnostics" does), with the error `code
 zone) and the app. The Support ID finds the user, their logins and sessions; the request ID finds the failed request
 itself, which Journear can't find from the user alone. Neither is a credential: no one can act on the user's wallet with
 them.
+
+<a id="email-codes"></a>**A user who can't get an email code.** What your support team can tell them:
+
+- **"The code never arrived."** Look in the spam or junk folder for mail from Journear Passport
+  (`team@hanawallet.io`; on testnet "Journear Passport (testnet)"). Wait 30 seconds, then choose **Resend code** (2
+  resends at most). A code works for 10 minutes. If it still doesn't come, Journear may have stopped mailing that
+  address: after a bounce (a full or closed mailbox) or after its mail was marked as spam. The sign-in window doesn't
+  say so, so nobody can find out from it which addresses are stopped.
+- **"Too many attempts."** The address had too many codes or wrong tries. It works again after 00:00 UTC at the latest.
+- **Meanwhile** the user can sign in another way only if their wallet has one (Google, when they linked it). Another
+  email address opens a different wallet.
+- **Ask Journear for help**: send the app, when it happened (with the time zone), what the user saw, your support case
+  reference, and the user's email address, privately (never in a shared channel), once the user agrees. Journear then
+  mails that address one of two emails, and only whoever reads that mailbox can use it:
+  - "Unlock your Journear sign-in", for too many attempts. The user opens its link **in the browser where they use your
+    app**, presses **Unlock my email**, then signs in to your app with that email in the same browser within 24
+    hours. It doesn't cover Passport Home yet.
+  - "Confirm your email to get Journear sign-in codes again", when codes never arrive. The user presses **Yes, this is
+    my email**, then signs in as usual.
+
+  Each link works once, within 24 hours, and nothing happens until the user presses the button. A user who didn't ask
+  for it can ignore it. The pages tell the user to "ask the app's support to send a new email" when a link was used or
+  expired, or when the user still can't sign in: that is you, so ask Journear again. The unlock needs private
+  browsing off. Journear can send each at most once a day and 3 times in 30 days for one address. These pages
+  are new and not on sandbox-dev yet; until they are, a lock ends at 00:00 UTC by itself.
 
 ## 14. Security notes for integrators
 

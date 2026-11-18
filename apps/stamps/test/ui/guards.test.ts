@@ -43,7 +43,7 @@ describe('the words', () => {
       expect(STAMP_LABELS[id].blurb.length).toBeLessThanOrEqual(80);
       expect(STAMP_PROOFS[id].length).toBeGreaterThan(0);
     }
-    expect(STAMP_LABELS.sponsored.blurb).toBe('Journear’s relay paid the fee. You hold no NEAR.');
+    expect(STAMP_LABELS.sponsored.blurb).toBe('Free for you: Journear pays the network fee, so you need no NEAR.');
   });
 
   it('say Journear or Journear Passport, never the code name', () => {

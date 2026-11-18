@@ -183,10 +183,10 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
   // Arrival: the account is created for it (activate), then the relayed collect.
   let window = await collectWith(page, 'arrival', null);
   await expect(stampEl(page, 'arrival')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });
-  await expect(page.locator('[data-role="notice"]')).toContainText('Arrival stamped on NEAR testnet.');
+  await expect(page.locator('[data-role="notice"]')).toContainText('Arrival stamped on NEAR’s test network.');
   await expect(stampEl(page, 'sponsored')).toHaveAttribute('data-status', 'available');
   await expect(stampEl(page, 'own_fare')).toHaveAttribute('data-status', 'locked');
-  await expect(stampEl(page, 'own_fare')).toContainText('The one stamp that needs your own testnet NEAR');
+  await expect(stampEl(page, 'own_fare')).toContainText('The one stamp that needs your own test NEAR');
   // D807: Copy beside it (the full id; the local stack has no faucet to link).
   await expect(stampEl(page, 'own_fare').locator('[data-action="copy-account"]')).toBeVisible();
   await expect(stampEl(page, 'layover')).toContainText(/In \d+ (min|s)/u);
@@ -218,7 +218,7 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
   );
   await approve(sigWindow);
   await expect(sigWindow.getByText('collect').first()).toBeVisible();
-  await expect(stampEl(page, 'signature')).toContainText('Approval 2 of 2: send it to the contract');
+  await expect(stampEl(page, 'signature')).toContainText('Approval 2 of 2: send it to the stamps program');
   expect(sigWindow.isClosed()).toBe(false);
   await approve(sigWindow);
   await expect(stampEl(page, 'signature')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });
@@ -299,14 +299,14 @@ test('the Signature stamp’s second step after its window was closed in between
       { timeout: 20_000 },
     )
     .toBe('continue');
-  await expect(stampEl(page, 'signature')).toContainText('Step 2 of 2: send your signed message to the contract.');
+  await expect(stampEl(page, 'signature')).toContainText('Step 2 of 2: send your signed message to the stamps program.');
   hold = false;
   const nextP = page.waitForEvent('popup', { timeout: 8_000 });
   await stampEl(page, 'signature').locator('[data-action="collect"]', { hasText: 'Continue' }).click();
   const next = await nextP;
   // The waiting request, the relayed collect (its args carry the signed proof): not the message to sign again.
   await expect(next.getByText('collect').first()).toBeVisible();
-  await expect(stampEl(page, 'signature')).toContainText('Approval 2 of 2: send it to the contract');
+  await expect(stampEl(page, 'signature')).toContainText('Approval 2 of 2: send it to the stamps program');
   await approve(next);
   await expect(stampEl(page, 'signature')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });
   expect(relayer.relayed.map((a) => a.stamp)).toEqual(['arrival', 'signature']);

@@ -45,7 +45,7 @@ test('lists the app the user signed in to, with its addresses and Support ID, fr
   await expect(home.getByText('Signed in with Google')).toBeVisible();
   const card = home.locator(`.home-card[data-scope="${scopeId}"]`);
   await expect(card).toContainText(name);
-  await expect(card.locator('.home-card-foot .badge')).toHaveText('Stays reachable');
+  await expect(card.locator('.home-card-foot .badge')).toHaveText('Safe if the app closes');
   // It is one of the user's own: listed under "Your apps", before the search.
   expect(await card.evaluate((el) => el.closest('ul')?.previousElementSibling?.textContent)).toBe('Your apps');
   await card.getByRole('button', { name: `View ${name}` }).click();
@@ -123,7 +123,7 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   // The list: the user's own apps first, then the others, each with its badge.
   await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
   await expect(page.locator('.home-card')).toHaveCount(6);
-  await expect(page.locator('.home-card .home-card-foot .badge')).toHaveText(['Stays reachable', 'Stays reachable', 'Depends on the app', 'Out of reach', 'Not checked yet', 'Supported']);
+  await expect(page.locator('.home-card .home-card-foot .badge')).toHaveText(['Safe if the app closes', 'Safe if the app closes', 'Needs the app', 'Can’t be opened here', 'Not checked yet', 'Safe if the app closes']);
   await shots(page, '03-app-list', browserName);
 
   // An app's page.
@@ -131,7 +131,7 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   await expect(page.getByRole('heading', { name: 'App details' })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Apps that share one wallet' })).toBeVisible();
   await expect(page.locator('#home-address-stellar')).toHaveText(G);
-  await expect(page.getByRole('link', { name: 'View on StellarExpert (testnet)' })).toHaveAttribute('href', `https://stellar.expert/explorer/testnet/account/${G}`);
+  await expect(page.getByRole('link', { name: 'View on StellarExpert (test network)' })).toHaveAttribute('href', `https://stellar.expert/explorer/testnet/account/${G}`);
   await shots(page, '04-app-page', browserName);
   await page.getByRole('button', { name: 'Back to all apps' }).click();
 
@@ -141,11 +141,11 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   await expect(page.getByRole('heading', { name: 'App details' })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Atlas Markets' })).toHaveCount(0);
   await expect(page.getByRole('group', { name: 'App' })).toContainText('Atlas Markets');
-  await expect(page.locator('#home-coverage')).toContainText('no longer works');
+  await expect(page.locator('#home-coverage')).toContainText('the sign-in it used is gone');
   await shots(page, '05-app-not-available', browserName);
   await page.getByRole('button', { name: 'Back to all apps' }).click();
   await page.getByRole('button', { name: 'View Nova Earn' }).click();
-  await expect(page.locator('#home-coverage .badge')).toHaveText('Supported');
+  await expect(page.locator('#home-coverage .badge')).toHaveText('Safe if the app closes');
   expect(requests.at(-1)).toBe('?appId=app_nova01');
   await page.getByRole('button', { name: 'Back to all apps' }).click();
 
@@ -187,8 +187,8 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   mode = 'error';
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Passport Home is not reachable right now.');
-  await expect(page.getByRole('alert')).toContainText('Code: home_directory_unavailable');
-  await expect(page.getByRole('alert')).toContainText('Request: req_e2e');
+  await expect(page.getByRole('alert')).toContainText('Error code (for support): home_directory_unavailable');
+  await expect(page.getByRole('alert')).toContainText('Request ID (for support): req_e2e');
   await expect(page.locator('.home-card')).toHaveCount(7);
   await shots(page, '09-error-with-list', browserName);
 

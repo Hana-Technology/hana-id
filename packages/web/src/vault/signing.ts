@@ -93,7 +93,7 @@ function refuseReservedRaw(request: SignRequest, rules: SubjectRules): void {
     p.chain === 'stellar'
       ? p.bytes.length >= RESERVED_RAW_PREFIX_BYTES.length && bytesEqual(p.bytes.subarray(0, RESERVED_RAW_PREFIX_BYTES.length), RESERVED_RAW_PREFIX_BYTES)
       : (rules.reservedEvmDigests ?? []).some((d) => bytesEqual(d, p.digest));
-  if (reserved) throw new VaultError(ErrorCode.unauthorized, 'This raw request is a Hana signing domain and is never signed', { reason: 'raw_reserved_domain' });
+  if (reserved) throw new VaultError(ErrorCode.unauthorized, 'This raw request is in one of Journear Passport’s own signing domains and is never signed', { reason: 'raw_reserved_domain' });
 }
 
 /**

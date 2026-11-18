@@ -99,7 +99,7 @@ describe('the open passport', () => {
     expect(art.getAttribute('role')).toBe('img');
     expect(art.textContent).toContain('13 NOV 2026');
     expect(art.textContent).toContain('ARRIVAL');
-    expect(s.querySelector('.pp-nogas')!.textContent).toBe('No gas');
+    expect(s.querySelector('.pp-nogas')!.textContent).toBe('Free');
     expect(s.querySelector('time')!.getAttribute('datetime')).toBe(new Date(AT).toISOString());
     const tx = s.querySelector<HTMLAnchorElement>('a.pp-tx')!;
     expect(tx.getAttribute('href')).toBe('https://testnet.nearblocks.io/txns/abc');
@@ -120,7 +120,7 @@ describe('the open passport', () => {
     ui.update(view());
     const s = slot('sponsored');
     expect(s.textContent).toContain('Fare paid');
-    expect(s.textContent).toContain('Journear’s relay paid the fee. You hold no NEAR.');
+    expect(s.textContent).toContain('Free for you: Journear pays the network fee, so you need no NEAR.');
     const b = s.querySelector<HTMLButtonElement>('[data-action="collect"]')!;
     expect(b.tagName).toBe('BUTTON');
     expect(b.disabled).toBe(false);
@@ -153,11 +153,11 @@ describe('the open passport', () => {
 
   it('continue (D807): the step in plain words and an enabled primary button with its label, even while busy; the click calls collect(id)', () => {
     ui.update(view({ busy: true }));
-    ui.update(view({ busy: true }, { signature: { id: 'signature', status: 'continue', stage: 'Step 2 of 2: send your signed message to the contract.', action: 'Continue' } }));
+    ui.update(view({ busy: true }, { signature: { id: 'signature', status: 'continue', stage: 'Step 2 of 2: send your signed message to the stamps program.', action: 'Continue' } }));
     const c = slot('signature');
     expect(c.getAttribute('data-status')).toBe('continue');
     expect(c.getAttribute('aria-busy')).toBeNull();
-    expect(c.textContent).toContain('Step 2 of 2: send your signed message to the contract.');
+    expect(c.textContent).toContain('Step 2 of 2: send your signed message to the stamps program.');
     const b = c.querySelector<HTMLButtonElement>('[data-action="collect"]')!;
     expect(b.disabled).toBe(false);
     expect(b.className).toContain('jp-btn-primary');
@@ -179,13 +179,13 @@ describe('the open passport', () => {
   });
 
   it('locked with help (D807): the reason, a line of what to do, the link in a new tab, and Copy (the copy-account action)', () => {
-    const own: StampState = { id: 'own_fare', status: 'locked', reason: 'Needs testnet NEAR', detail: 'Send testnet NEAR to your account.', href: 'https://faucet.example/', hrefLabel: 'Get testnet NEAR ↗', copyAccount: true };
+    const own: StampState = { id: 'own_fare', status: 'locked', reason: 'Needs testnet NEAR', detail: 'Send testnet NEAR to your account.', href: 'https://faucet.example/', hrefLabel: 'Get free test NEAR ↗', copyAccount: true };
     ui.update(view({}, { own_fare: own }));
     const o = slot('own_fare');
     expect(o.textContent).toContain('Needs testnet NEAR');
     expect(o.querySelector('.pp-detail')!.textContent).toBe('Send testnet NEAR to your account.');
     const a = o.querySelector<HTMLAnchorElement>('[data-role="stamp-link"]')!;
-    expect([a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel'), a.textContent]).toEqual(['https://faucet.example/', '_blank', 'noopener noreferrer', 'Get testnet NEAR ↗']);
+    expect([a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel'), a.textContent]).toEqual(['https://faucet.example/', '_blank', 'noopener noreferrer', 'Get free test NEAR ↗']);
     expect(o.querySelector('[data-action="collect"]')).toBeNull();
     click(o.querySelector('[data-action="copy-account"]'));
     expect(handlers.copyAccount).toHaveBeenCalledTimes(1);
@@ -197,11 +197,11 @@ describe('the open passport', () => {
   });
 
   it('the balance link (D807): beside the balance in mine mode, http(s) only', () => {
-    ui.update(view({ balanceNear: '0', balanceLink: { href: 'https://faucet.example/', label: 'Get testnet NEAR ↗' } }));
+    ui.update(view({ balanceNear: '0', balanceLink: { href: 'https://faucet.example/', label: 'Get free test NEAR ↗' } }));
     const a = $<HTMLAnchorElement>('[data-role="balance-link"]')!;
     expect(a.getAttribute('href')).toBe('https://faucet.example/');
     expect(a.getAttribute('target')).toBe('_blank');
-    expect($('[data-role="balance"]')!.textContent).toBe('0 NEARGet testnet NEAR ↗');
+    expect($('[data-role="balance"]')!.textContent).toBe('0 NEARGet free test NEAR ↗');
     ui.update(view({ balanceNear: '0', balanceLink: { href: 'data:text/html,x', label: 'x' } }));
     expect($('[data-role="balance-link"]')).toBeNull();
     expect($('[data-role="balance"]')!.textContent).toBe('0 NEAR');

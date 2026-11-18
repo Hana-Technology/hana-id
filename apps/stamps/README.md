@@ -32,7 +32,7 @@ the page.
   |---|---|---|
   | Arrival | relayed (gasless): `hana.near.activate()` for a new account, a NEP-366 delegate action, `signDelegateAction`, `hana.near.relay` | always first |
   | Sponsored | relayed | after Arrival |
-  | Own fare | `hana.near.signTransaction` of an ordinary `collect` transaction, sent with the RPC's `send_tx`: the user's own NEAR pays | after Arrival, once the account holds 0.01 testnet NEAR. Until then the slot itself says "The one stamp that needs your own testnet NEAR", one line of what to do, a "Get testnet NEAR" link to NEAR's docs faucet (it funds 64-hex implicit accounts: 5 NEAR, no sign-up) and Copy for the full account id; the balance has the same link beside it, and the notice repeats it when nothing else is said (D807) |
+  | Own fare | `hana.near.signTransaction` of an ordinary `collect` transaction, sent with the RPC's `send_tx`: the user's own NEAR pays | after Arrival, once the account holds 0.01 testnet NEAR. Until then the slot itself says "The one stamp that needs your own test NEAR", one line of what to do, a "Get free test NEAR" link to NEAR's docs faucet (it funds 64-hex implicit accounts: 5 NEAR, no sign-up) and Copy for the full account id; the balance has the same link beside it, and the notice repeats it when nothing else is said (D807) |
   | Signature | `hana.near.signMessage` (NEP-413, message `Stamp my passport: <account_id>`, recipient the contract's account, a fresh 32-byte nonce), then the relayed `collect` with the proof: two approvals in one window (D807, below) | after Arrival, implicit accounts only |
   | Postcard | relayed, with a note of 1 to 140 characters (Rust's `trim`, Unicode scalar values, as the contract counts) | after Arrival |
   | Layover | relayed | 2 minutes (block time) after Arrival: a countdown, from the Arrival's `block_timestamp_ms` |
@@ -87,7 +87,10 @@ hooks the site uses: [`UI-CONTRACT.md`](UI-CONTRACT.md)). The rest (`src/app.ts`
   has one, while anyone can make named accounts and flood the list with names of their choosing (a named passport is
   still viewable at `/p/<id>`), and an `0x…` NEAR account would read as another chain's. Only an `ERR_*` code is ever
   matched from a contract's or NEAR's error text, never shown raw; the contract's storage running out
-  (`LackBalanceForState`) is one fixed notice ("The stamps contract is out of storage balance …").
+  (`LackBalanceForState`) is one fixed notice ("The stamps program is full right now …"). Every error the site shows says
+  what happened, whether anything was lost, and what to do, with no chain words (D853; the deployed judging site still
+  has the earlier words): `src/messages.ts`, and `test/ui/plain-words.test.ts` checks the words people read, the
+  judges' legend of what each stamp proves allowed by name under its "The technical explanation" heading.
 - Every response carries the demo's headers (`src/csp.ts`). The page's CSP:
 
   ```text

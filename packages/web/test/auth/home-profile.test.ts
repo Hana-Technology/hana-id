@@ -650,8 +650,8 @@ describe('refusals and the end of the sign-in', () => {
     h.submit();
     await h.idle();
     expect(text('home-profile-problem-front')).toContain(sentence);
-    expect(text('home-profile-problem-front')).toContain(`Code: ${code}`);
-    expect(text('home-profile-problem-front')).toContain('Request: req_9');
+    expect(text('home-profile-problem-front')).toContain(`Error code (for support): ${code}`);
+    expect(text('home-profile-problem-front')).toContain('Request ID (for support): req_9');
     expect(pageText()).not.toContain('internal words');
     expect(h.section.errorCode).toBe(code);
     expect(input('home-name-given').value).toBe('Augusta');

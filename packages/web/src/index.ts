@@ -32,6 +32,8 @@ export type { AccountMethod, AccountResult, LinkChange } from '@hana-id/core';
 export type { DisconnectReason } from '@hana-id/core';
 export { HanaError, ProviderRpcError, RpcCode, type ClientErrorCode, type SwkError } from './client/errors.ts';
 export {
+  CALLS_VERSION,
+  EIP5792,
   HanaEthereumProvider,
   READ_ONLY_METHODS,
   type Eip6963ProviderInfo,
@@ -58,6 +60,17 @@ export {
   type NearSignTransactionResult,
 } from './client/near.ts';
 export type { NearNetwork } from '@hana-id/core';
+// `hana.evm`: gas-free EVM actions (D838; not live: no environment sponsors a chain yet).
+export {
+  HanaEvm,
+  HanaSponsorError,
+  isHanaSponsorError,
+  type EvmSponsorErrorData,
+  type SendSponsoredParams,
+  type SendSponsoredResult,
+  type SponsoredCall,
+  type SponsorshipStatus,
+} from './client/evm-sponsor.ts';
 export { isInAppWebView, partnerPageIssues, type PartnerIssue, type PartnerIssueCode } from './client/requirements.ts';
 export { HANA_ID_ICON, HANA_ID_NAME } from './client/icon.ts';
 export { isLoopbackHost, serviceUrl } from './client/urls.ts';

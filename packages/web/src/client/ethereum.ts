@@ -7,6 +7,7 @@
 // | eth_chainId, wallet_switchEthereumChain | among `evm.chains`, answered here; an unknown chain is 4902; a test app (pk_test_) switching to a chain outside the testnet list (except a mainnet its vault said the app's demo allows, D428) is 4100 `mainnet_not_allowed` (D39) |
 // | eth_sendTransaction | fill (evm-tx.ts) from the current chain's RPC → vault eth_signTransaction (approval) → eth_sendRawTransaction, one at a time per chain; a filled nonce is never below one past the last one broadcast here. A test app on a mainnet chain is refused before anything is filled (4100 `mainnet_not_allowed`; the vault refuses it too) |
 // | eth_signTransaction, personal_sign, eth_signTypedData_v4 | the vault, with approval (the transaction is filled first) |
+// | wallet_getCapabilities, wallet_sendCalls, wallet_getCallsStatus | EIP-5792 (version 2.0.0) over the gas-free actions only (`hana.evm.sendSponsored`, D838): `atomic: supported` on the configured chains the vault sponsors; a batch on any other chain is 5710. `eth_sendTransaction` is never sponsored |
 // | eth_sign and other signing or wallet methods | 4200 |
 // | read-only methods (READ_ONLY_METHODS) | forwarded to the current chain's rpcUrl |
 // | eth_sendRawTransaction | forwarded to the current chain's rpcUrl: it broadcasts what the dapp already signed |
@@ -26,6 +27,8 @@ import type { ApprovalTicket } from './approval-window.ts';
 import { HANA_ID_ICON, HANA_ID_NAME } from './icon.ts';
 import { type FetchLike, jsonRpc } from './rpc.ts';
 import { serviceUrl } from './urls.ts';
+import { randomHex } from './random.ts';
+import { type SendSponsoredParams, type SendSponsoredResult, sponsoredCalls } from './evm-sponsor.ts';
 
 type Hex = `0x${string}`;
 
@@ -72,7 +75,26 @@ export interface EthereumHost {
    * through the early check too; the vault still decides each request.
    */
   demoEvmChains?: () => readonly number[];
+  /** The chains the vault sponsors (`hana.evm.sponsoredChains`), for EIP-5792. */
+  sponsoredChains?: () => readonly number[];
+  /** hana.evm.sendSponsored: called synchronously, so its approval window opens in the caller's click. */
+  sendSponsored?: (p: SendSponsoredParams) => Promise<SendSponsoredResult>;
 }
+
+/** EIP-5792's error codes this provider uses. */
+export const EIP5792 = Object.freeze({
+  unsupportedCapability: 5700,
+  unsupportedChain: 5710,
+  duplicateId: 5720,
+  unknownBundle: 5730,
+  bundleTooLarge: 5740,
+});
+
+/** The EIP-5792 version this provider speaks (the request's `version` must be it). */
+export const CALLS_VERSION = '2.0.0';
+
+/** At most this many batch ids are remembered for wallet_getCallsStatus (oldest forgotten first). */
+export const CALLS_REMEMBERED = 256;
 
 /** Methods with no side effect on the user's account, forwarded to the chain RPC as they are. */
 export const READ_ONLY_METHODS: ReadonlySet<string> = new Set([
@@ -166,6 +188,8 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
    * a load-balanced RPC can answer the next 'pending' count from a node that hasn't seen the last broadcast yet.
    */
   readonly #nextNonce = new Map<string, bigint>();
+  /** EIP-5792 batches sent from this page: id → chain and the relayer's transaction (CALLS_REMEMBERED at most). */
+  readonly #batches = new Map<string, { chainId: number; transactionHash: Hex | null }>();
 
   constructor(host: EthereumHost, evm: EvmConfig | undefined) {
     super();
@@ -237,6 +261,12 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
         if (typed === null) throw err(RpcCode.invalidParams, 'typedData must be a JSON string or object');
         return this.#host.request('eth_signTypedData_v4', [address, typed]);
       }
+      case 'wallet_getCapabilities':
+        return this.#capabilities(params);
+      case 'wallet_sendCalls':
+        return this.#sendCalls(params);
+      case 'wallet_getCallsStatus':
+        return this.#callsStatus(params);
       case 'eth_sendRawTransaction':
         // Not a read (sweep PART-6): it broadcasts a transaction the dapp already holds signed, on the current chain.
         // Hana signs nothing here, so it is passed to the RPC as is.
@@ -361,6 +391,112 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
     const next = nonce + 1n;
     if ((this.#nextNonce.get(key) ?? 0n) < next) this.#nextNonce.set(key, next);
     return hash as Hex;
+  }
+
+  // ---- EIP-5792: the gas-free actions as batches (D838) ----
+
+  /** The configured chains the vault sponsors (a batch can be sent, and its receipt read, only there). */
+  #batchChains(): number[] {
+    const sponsored = this.#host.sponsoredChains?.() ?? [];
+    return [...this.#chains.keys()].filter((id) => sponsored.includes(id) && !(this.#host.testApp && !isTestEvmChain(id)));
+  }
+
+  /** wallet_getCapabilities([address, chainIds?]): `{ "<chain hex>": { atomic: { status: "supported" } } }`. */
+  #capabilities(params: unknown): Record<Hex, { atomic: { status: 'supported' } }> {
+    const p = Array.isArray(params) ? params : [];
+    if (p.length > 2 || (p.length > 0 && typeof p[0] !== 'string')) throw err(RpcCode.invalidParams, 'wallet_getCapabilities takes [address, chainIds?]');
+    if (p.length > 0) this.#own(p[0]);
+    let wanted: number[] | null = null;
+    if (p[1] !== undefined) {
+      if (!Array.isArray(p[1]) || !p[1].every((c) => typeof c === 'string' && /^0x[0-9a-fA-F]{1,16}$/u.test(c))) throw err(RpcCode.invalidParams, 'chainIds must be 0x hex chain IDs');
+      wanted = (p[1] as string[]).map((c) => Number(BigInt(c)));
+    }
+    const out: Record<Hex, { atomic: { status: 'supported' } }> = {};
+    for (const id of this.#batchChains()) if (wanted === null || wanted.includes(id)) out[chainHex(id)] = { atomic: { status: 'supported' } };
+    return out;
+  }
+
+  /**
+   * wallet_sendCalls([{version: "2.0.0", id?, from?, chainId, atomicRequired, calls, capabilities?}]) → `{id}`: the
+   * calls as one gas-free action (hana.evm.sendSponsored: the approval window, then Journear's relayer). Resolves once
+   * the batch ran. Value must be 0 on every call; a capability the provider doesn't have is 5700 unless `optional`.
+   */
+  #sendCalls(params: unknown): Promise<{ id: string }> {
+    const p = Array.isArray(params) && params.length === 1 ? params[0] : undefined;
+    if (!isObject(p)) throw err(RpcCode.invalidParams, 'wallet_sendCalls takes [{version, chainId, atomicRequired, calls}]');
+    if (p.version !== CALLS_VERSION) throw err(RpcCode.invalidParams, `Only EIP-5792 version ${CALLS_VERSION} is supported`);
+    if (typeof p.atomicRequired !== 'boolean') throw err(RpcCode.invalidParams, 'atomicRequired must be a boolean');
+    if (p.from !== undefined) this.#own(p.from);
+    else if (this.#host.evmAddress() === null) throw err(ErrorCode.unauthorized, 'Not logged in to Journear Passport');
+    if (p.id !== undefined && (typeof p.id !== 'string' || p.id.length === 0 || p.id.length > 4096)) throw err(RpcCode.invalidParams, 'id must be a string of up to 4096 characters');
+    const id = typeof p.id === 'string' ? p.id : `0x${randomHex(32)}`;
+    if (this.#batches.has(id)) throw err(EIP5792.duplicateId, 'A batch with this id was already sent');
+    if (typeof p.chainId !== 'string' || !/^0x[0-9a-fA-F]{1,16}$/u.test(p.chainId)) throw err(RpcCode.invalidParams, 'chainId must be a 0x hex chain ID');
+    const chainId = Number(BigInt(p.chainId));
+    this.#unsupportedCapability(p.capabilities);
+    const calls = Array.isArray(p.calls) ? p.calls : null;
+    if (calls === null || calls.length === 0) throw err(RpcCode.invalidParams, 'calls must be a non-empty array');
+    if (calls.length > 8) throw err(EIP5792.bundleTooLarge, 'At most 8 calls in one batch');
+    for (const c of calls) if (isObject(c)) this.#unsupportedCapability(c.capabilities);
+    // Our own copies, without the per-call capabilities just checked (sponsoredCalls refuses unknown fields).
+    const plain = calls.map((c: unknown) => (isObject(c) ? { to: c.to, data: c.data, ...(c.value !== undefined ? { value: c.value } : {}) } : c));
+    let checked: ReturnType<typeof sponsoredCalls>;
+    try {
+      checked = sponsoredCalls(plain);
+    } catch (e) {
+      throw err(RpcCode.invalidParams, e instanceof Error ? e.message : 'Malformed calls');
+    }
+    if (!this.#batchChains().includes(chainId) || !this.#host.sendSponsored) throw err(EIP5792.unsupportedChain, `Journear Passport can't send batches on chain ${p.chainId}`, { chainId: p.chainId });
+    // Synchronously, before any await: the approval window opens in the caller's click (D99).
+    const sent = this.#host.sendSponsored({ chainId, calls: checked });
+    this.#remember(id, { chainId, transactionHash: null });
+    return sent.then(
+      (r) => {
+        this.#remember(id, { chainId, transactionHash: r.transactionHash });
+        return { id };
+      },
+      (e: unknown) => {
+        this.#batches.delete(id);
+        throw e;
+      },
+    );
+  }
+
+  /** 5700 for a capability that isn't marked `optional: true` (this provider has none to offer on a request). */
+  #unsupportedCapability(capabilities: unknown): void {
+    if (capabilities === undefined) return;
+    if (!isObject(capabilities)) throw err(RpcCode.invalidParams, 'capabilities must be an object');
+    for (const [name, value] of Object.entries(capabilities)) {
+      if (!(isObject(value) && value.optional === true)) throw err(EIP5792.unsupportedCapability, `Unsupported capability: ${name.slice(0, 64)}`);
+    }
+  }
+
+  #remember(id: string, batch: { chainId: number; transactionHash: Hex | null }): void {
+    this.#batches.delete(id);
+    this.#batches.set(id, batch);
+    while (this.#batches.size > CALLS_REMEMBERED) this.#batches.delete(this.#batches.keys().next().value as string);
+  }
+
+  /**
+   * wallet_getCallsStatus([id]): 100 while the page waits for the batch or the chain's RPC has no receipt yet; 200
+   * with the receipt once it has (500 if it shows a revert). `atomic: true`. An id this page didn't send is 5730.
+   */
+  async #callsStatus(params: unknown): Promise<Record<string, unknown>> {
+    const id = Array.isArray(params) && params.length === 1 && typeof params[0] === 'string' ? params[0] : null;
+    if (id === null) throw err(RpcCode.invalidParams, 'wallet_getCallsStatus takes [id]');
+    const batch = this.#batches.get(id);
+    if (!batch) throw err(EIP5792.unknownBundle, 'Unknown batch id');
+    const base = { version: CALLS_VERSION, id, chainId: chainHex(batch.chainId), atomic: true };
+    const chain = this.#chains.get(batch.chainId);
+    if (batch.transactionHash === null || !chain) return { ...base, status: 100 };
+    const receipt = await jsonRpc(this.#host.fetch, chain.rpcUrl, 'eth_getTransactionReceipt', [batch.transactionHash]);
+    if (!isObject(receipt)) return { ...base, status: 100 };
+    const logs = Array.isArray(receipt.logs) ? receipt.logs.filter(isObject).map((l) => ({ address: l.address, data: l.data, topics: l.topics })) : [];
+    return {
+      ...base,
+      status: receipt.status === '0x1' ? 200 : 500,
+      receipts: [{ logs, status: receipt.status, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber, gasUsed: receipt.gasUsed, transactionHash: batch.transactionHash }],
+    };
   }
 
   #prepare(): ApprovalTicket {

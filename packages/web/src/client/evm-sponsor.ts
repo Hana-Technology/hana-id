@@ -9,9 +9,10 @@
 // - sponsorship(chainId): `{ available, reason?, remainingToday? }` from GET {apiUrl}/v1/evm/sponsor/status, so a page
 //   can say before the click whether the action is free today.
 //
-// A refusal is a HanaSponsorError: the vault's code (4001 the user declined, 4100 refused, `busy`, `rate_limited`,
-// `session_ended`, `api_unavailable`), a message in plain words a page may show its users as it is, and `data`
-// (EvmSponsorErrorData) with only fields of exact shapes (D788). Ordinary `eth_sendTransaction` is never sponsored:
+// A refusal is a HanaSponsorError: the vault's code (4001 the user rejected, 4100 refused, `busy`, `rate_limited`,
+// `session_ended`, `api_unavailable`), the developer's `message`, `userMessage` (the plain sentence a page shows its
+// users, from `code` and `data.reason`: user-messages.ts SPONSOR_REASONS), and `data` (EvmSponsorErrorData) with only
+// fields of exact shapes (D788). Ordinary `eth_sendTransaction` is never sponsored:
 // a page asks for a gas-free action by name (D838).
 import { ErrorCode, type PortMethod, type PortParamsMap, type PortResultMap, isApiRequestId, isEvmAddress } from '@hana-id/core';
 import { HanaError, RpcCode, asHanaError } from './errors.ts';
@@ -50,7 +51,7 @@ export interface SendSponsoredResult {
 
 export interface SponsorshipStatus {
   available: boolean;
-  /** Why not (`chain_not_enabled`, `app_not_sponsored`, `budget_exhausted`, …), when `available` is false. */
+  /** Why not, when `available` is false: `chain_not_enabled`, `app_not_sponsored`, `paused`, `budget_exhausted`, `not_available`. */
   reason?: string;
   /** This app's own budget left today, in wei (decimal), when the API says. */
   remainingToday?: string;
@@ -62,7 +63,7 @@ export interface SponsorshipStatus {
 export interface EvmSponsorErrorData {
   /** The HTTP status of Journear's API answer, when the refusal came from it. */
   status?: number;
-  /** The code (`delegated_elsewhere`, `busy`, `reverted`, `budget_exhausted`, …), at most 64 characters. */
+  /** Why (`delegated_elsewhere`, `sponsor_in_flight`, `reverted`, `budget_exhausted`, …), at most 64 characters. */
   reason?: string;
   /** The API's request ID: quote it to Journear with the user's Support ID. */
   requestId?: string;
@@ -78,7 +79,7 @@ export interface EvmSponsorErrorData {
   chainId?: number;
 }
 
-/** What `hana.evm.sendSponsored` and `sponsorship` reject with: a HanaError with typed `data`. */
+/** What `hana.evm.sendSponsored` and `sponsorship` reject with: a HanaError with typed `data`. Show `userMessage`. */
 export class HanaSponsorError extends HanaError {
   declare readonly data?: EvmSponsorErrorData;
 }
@@ -153,7 +154,7 @@ export class HanaEvm {
    * Runs `calls` on `chainId` with Journear paying the network fee, after the user approves them in Journear
    * Passport's window. Resolves `{ transactionHash, status: 'executed' }` once the batch ran on the chain. Call it
    * synchronously in a click handler (the window opens in the click). Rejects with HanaSponsorError: 4001 when the user
-   * declines, 4100 when Journear refuses (`data.reason`), `busy` while another of the user's actions is still going
+   * rejects, 4100 when Journear refuses (`data.reason`), `busy` while another of the user's actions is still going
    * through, `rate_limited`, `session_ended` or `api_unavailable` (with `data.transactionHash` when a batch was sent).
    */
   sendSponsored(p: SendSponsoredParams): Promise<SendSponsoredResult> {
@@ -179,7 +180,8 @@ export class HanaEvm {
   /**
    * Whether Journear pays network fees for this app on `chainId` right now (GET /v1/evm/sponsor/status): `{ available,
    * reason?, remainingToday? }`. A chain the vault didn't report answers `{ available: false, reason:
-   * 'chain_not_enabled' }` without a request. Rejects with HanaSponsorError (`api_unavailable`, `rate_limited`, 4100).
+   * 'chain_not_enabled' }` without a request, and so does any chain before `hana.ready` resolved (the vault reports its
+   * chains in `ready`): await it first. Rejects with HanaSponsorError (`api_unavailable`, `rate_limited`, 4100).
    */
   async sponsorship(chainId: number): Promise<SponsorshipStatus> {
     if (typeof chainId !== 'number' || !Number.isSafeInteger(chainId) || chainId <= 0) throw invalid('chainId must be a positive integer');

@@ -14496,3 +14496,39 @@ From `next` @ 9a4db48f, then `next` @ 25aaada3 and c0f14a8e merged in; not merge
   an SDK that sponsors the chains and allows the app, and checks there is no card and `hana.evm` is never read; it
   fails on purpose the day sandbox-dev gets a block (every e2e build carries one, so the e2e suite can't cover this).
 - Address impact: none.
+
+## The partner guide for SDK 0.5.0 (branch `docs/partner-guide-0-5-0`), 2026-11-18
+
+From `next` @ 6d0c6800 (then `next` @ c0f14a8e, PR 88, merged in), not merged, not deployed. Docs, doc comments and
+tests only: no behaviour, endpoint, key or flow changes.
+
+### D870. The partner guide for SDK 0.5.0, held to the code: the upgrade note, gas-free actions, sign-in outcomes, what users see
+- Date 2026-11-18 · Status: decided while building, to confirm · Built: `docs/integration.md` (section 2 "Upgrading
+  from 0.4.x to 0.5.0"; section 4 "When sign-in doesn't finish"; section 8 "What your users see" and "Gas-free
+  actions (not live)" rewritten; section 13's `userText` pattern and "A user who can't get an email code"),
+  `docs/partner-start-here.md` ("SDK 0.5.0: what changes for you"), the four package READMEs, doc comments in
+  `packages/web/src/client/evm-sponsor.ts`; `scripts/lib/pack-check.ts` (`GUIDE_PARTS`, `GUIDE_CLIENT`,
+  `guideModule`), `scripts/pack-check.ts` (viem in the project); tests `packages/web/test/client/guide-gas-free.test.ts`
+  (new), `scripts/test/sdk-pack.test.ts`. Widens D778.
+- Decisions:
+  1. **The upgrade note names the one behaviour change**: `wallet_sendCalls` answered `4200` through 0.4.x, which viem's
+     `sendCalls({ experimental_fallback: true })` turns into one `eth_sendTransaction` per call; 0.5.0 answers `5710` on
+     a chain without gas-free actions, which viem 2.57.7 doesn't fall back on. Partners are told to ask
+     `getCapabilities` first. Everything else in 0.5.0's types is an addition (checked against the 0.4.1 tarballs'
+     declarations).
+  2. **The gas-free error table is the SDK's**: every key of `SPONSOR_REASONS` once, with the very sentence
+     `userMessage` gives (tested both ways, so a new reason or a reworded sentence fails until the guide follows). The
+     limits table gives only what a partner designs around (Base Sepolia only, actions per user a day, calls per
+     action, time to approve), "planned for the first test period, and they may change" (D836's values; no env sets
+     `evm.sponsor` yet); the budgets in ETH are left out (amended 2026-11-18 at the coordinator's review).
+  5. **One copyable button**: the gas-free steps absorb PR 91's example (D867): set up after `hana.ready` and once
+     signed in, a disabled button with the reason for "offered, not right now", `say(e)` = `e.userMessage ??
+     userMessageFor(e?.code, e?.data)`, a `4001` shown quietly, the partner's own helpers marked, and a refusal with
+     `transactionHash` linked; so whichever of the two PRs merges second drops PR 91's block for this one.
+  3. **The pack check type-checks four parts of the guide** (sections 4, 8 gas-free, 8 NEAR, 13), one module each,
+     against the packed tarballs, with viem installed at `@hana-id/core`'s devDependency version for the EIP-5792
+     sample. D778's rejected "every section" stays rejected: only parts written to compile are listed.
+  4. **Email-code support for partners** follows D866: what the partner's support tells the user (spam folder, Resend,
+     00:00 UTC), what it sends Journear (the address only privately, with the user's agreement), and the two one-time
+     emails Journear can then send. The guide says these pages aren't on sandbox-dev yet.
+- Address impact: none.

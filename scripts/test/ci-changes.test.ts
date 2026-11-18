@@ -105,13 +105,13 @@ describe('base commit', () => {
     const good = repo();
     commit('contracts/hana-signer/src/lib.rs'); // its run was cancelled by the next push
     commit('docs/b.md');
-    expect(run({ ...push, CI_BASE: good }).outputs).toEqual({ rust: 'true', web: 'false', playwright_args: '--project chromium' });
+    expect(run({ ...push, CI_BASE: good }).outputs).toEqual({ rust: 'true', web: 'false', evm: 'false', playwright_args: '' });
   });
 
   it('a develop push of docs only, measured from the last good run, skips both', () => {
     const good = repo();
     commit('docs/b.md');
-    expect(run({ ...push, CI_BASE: good }).outputs).toEqual({ rust: 'false', web: 'false', playwright_args: '--project chromium' });
+    expect(run({ ...push, CI_BASE: good }).outputs).toEqual({ rust: 'false', web: 'false', evm: 'false', playwright_args: '' });
   });
 
   it('runs everything with no base, a malformed one, an unknown one, or one that is not an ancestor', () => {
@@ -121,7 +121,7 @@ describe('base commit', () => {
     commit('docs/c.md');
     for (const base of ['', 'HEAD~1', 'f'.repeat(40), side]) {
       const { outputs, log } = run({ ...push, CI_BASE: base });
-      expect(outputs, base).toEqual({ rust: 'true', web: 'true', playwright_args: '--project chromium' });
+      expect(outputs, base).toEqual({ rust: 'true', web: 'true', evm: 'true', playwright_args: '' });
       expect(log).toMatch(/everything runs/u);
     }
   });
@@ -129,8 +129,8 @@ describe('base commit', () => {
   it('main and a manual run: everything, all three browsers', () => {
     const good = repo();
     commit('docs/b.md');
-    expect(run({ CI_EVENT: 'push', CI_REF: 'refs/heads/main', CI_BASE: good }).outputs).toEqual({ rust: 'true', web: 'true', playwright_args: '' });
-    expect(run({ CI_EVENT: 'workflow_dispatch', CI_REF: 'refs/heads/develop', CI_BASE: good }).outputs).toEqual({ rust: 'true', web: 'true', playwright_args: '' });
+    expect(run({ CI_EVENT: 'push', CI_REF: 'refs/heads/main', CI_BASE: good }).outputs).toEqual({ rust: 'true', web: 'true', evm: 'true', playwright_args: '' });
+    expect(run({ CI_EVENT: 'workflow_dispatch', CI_REF: 'refs/heads/develop', CI_BASE: good }).outputs).toEqual({ rust: 'true', web: 'true', evm: 'true', playwright_args: '' });
   });
 
   it('a PR is measured from where it branched, not from its base branch’s newer commits', () => {
@@ -141,18 +141,26 @@ describe('base commit', () => {
     git('checkout', '-q', 'develop');
     const baseHead = commit('contracts/x.rs'); // on develop after the fork, not part of the PR
     git('checkout', '-q', 'feature');
-    expect(run({ CI_EVENT: 'pull_request', CI_REF: 'refs/pull/1/merge', CI_BASE: baseHead }).outputs).toEqual({ rust: 'false', web: 'false', playwright_args: '--project chromium' });
+    expect(run({ CI_EVENT: 'pull_request', CI_REF: 'refs/pull/1/merge', CI_BASE: baseHead }).outputs).toEqual({ rust: 'false', web: 'false', evm: 'false', playwright_args: '--project chromium' });
     expect(fork).toMatch(/^[0-9a-f]{40}$/u);
   });
 
-  it('nightly: WebKit and Firefox when web code changed since the last good nightly run, never the Rust jobs', () => {
+  it('a push to next measures from its own last good run; all three browsers after a merge, Chromium on a PR (D857)', () => {
     const good = repo();
-    commit('contracts/x.rs');
-    const n = { CI_EVENT: 'schedule', CI_REF: 'refs/heads/develop' };
-    expect(run({ ...n, CI_BASE: good }).outputs).toEqual({ rust: 'false', web: 'false', playwright_args: '--project webkit --project firefox' });
     commit('apps/api/src/login.ts');
-    expect(run({ ...n, CI_BASE: good }).outputs).toEqual({ rust: 'false', web: 'true', playwright_args: '--project webkit --project firefox' });
-    expect(run({ ...n, CI_BASE: '' }).outputs).toEqual({ rust: 'false', web: 'true', playwright_args: '--project webkit --project firefox' });
+    const next = { CI_EVENT: 'push', CI_REF: 'refs/heads/next' };
+    expect(run({ ...next, CI_BASE: good }).outputs).toEqual({ rust: 'false', web: 'true', evm: 'false', playwright_args: '' });
+    expect(run({ CI_EVENT: 'pull_request', CI_REF: 'refs/pull/2/merge', CI_BASE: good }).outputs).toEqual({ rust: 'false', web: 'true', evm: 'false', playwright_args: '--project chromium' });
+  });
+
+  it('the EVM delegate job: a change under contracts/evm-delegate/ or one of its outside inputs, measured like the rest', () => {
+    const good = repo();
+    commit('contracts/evm-delegate/src/HanaDelegateExecutor.sol');
+    expect(run({ ...push, CI_BASE: good }).outputs).toEqual({ rust: 'false', web: 'false', evm: 'true', playwright_args: '' });
+    const after = commit('docs/d.md');
+    expect(run({ ...push, CI_BASE: after }).outputs.evm).toBe('false');
+    commit('packages/core/test/vectors/evm-sponsor-v1.json');
+    expect(run({ ...push, CI_BASE: after }).outputs).toEqual({ rust: 'false', web: 'true', evm: 'true', playwright_args: '' });
   });
 });
 
@@ -201,16 +209,20 @@ describe('.github/workflows/ci.yml', () => {
     return next < 0 ? yml.slice(start) : yml.slice(start, start + 1 + next);
   };
 
-  it('gates the Rust jobs on `rust` and the web jobs on `web`', () => {
+  it('gates the Rust jobs on `rust`, the web jobs on `web` and the EVM delegate job on `evm`', () => {
     for (const id of ['contract', 'e2e']) expect(job(id), id).toContain("needs.changes.outputs.rust == 'true'");
     for (const id of ['playwright', 'packages']) expect(job(id), id).toContain("needs.changes.outputs.web == 'true'");
+    expect(job('evm')).toContain("needs.changes.outputs.evm == 'true'");
+    expect(job('changes')).toContain('evm: ${{ steps.changes.outputs.evm }}');
   });
 
-  it('runs gitleaks and the TypeScript job on every push and PR, not on the nightly run', () => {
-    for (const id of ['secrets', 'typescript']) {
+  it('runs gitleaks, the advisories and the TypeScript job on every push and PR, ungated; no schedule (D857)', () => {
+    for (const id of ['secrets', 'audit', 'typescript']) {
       expect(job(id), id).not.toContain('needs.changes');
-      expect(job(id), id).toContain("github.event_name != 'schedule'");
+      expect(job(id), id).not.toMatch(/\n {4}if:/u);
     }
+    expect(yml.split('\njobs:\n')[0]).not.toMatch(/^\s+schedule:/mu);
+    expect(yml).not.toContain("'schedule'");
   });
 
   it('passes the Playwright projects through and runs the changes script', () => {

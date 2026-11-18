@@ -171,6 +171,10 @@ export interface LinkBanner {
  * - `prove`: a link method's proof (`hana.linkAccount`'s two sign-ins).
  * - `done`: the vault's last word: close, or show these banners first.
  * - `stop`: the login ended with `code` (`link_pending`: this method's link activates at `effectiveAtMs`).
+ * - `link_waiting` (D864): the login ended `link_pending` because this email sign-in is itself a pending member of an
+ *   account whose root signs in with `provider`; the popup says so, with when the link starts working, and offers to
+ *   cancel it with `prove` (an email code over the `link_change` nonce for this member) or to keep it.
+ * - `link_cancel` (D864): what became of that cancel (`code`, for support, when it wasn't made or can't be told).
  */
 export type FollowNotice =
   | { t: 'link_code'; challengeId: string; expiresAtMs: number; to: string }
@@ -178,7 +182,17 @@ export type FollowNotice =
   | { t: 'email_consent'; reason: 'declined' | 'account_mismatch'; loginHint: string }
   | { t: 'prove'; why: 'link_new' | 'link_account'; prove: FollowProve; provider: string }
   | { t: 'done'; banners: LinkBanner[] }
-  | { t: 'stop'; code: string; effectiveAtMs?: number; banners?: LinkBanner[] };
+  | { t: 'stop'; code: string; effectiveAtMs?: number; banners?: LinkBanner[] }
+  | { t: 'link_waiting'; provider: string; effectiveAtMs: number; prove: FollowProve }
+  | { t: 'link_cancel'; outcome: LinkCancelOutcome; code?: string };
+
+/**
+ * D864: a pending link's cancel from the email that is waiting to join: made (`cancelled`), already gone before it
+ * was sent (`already_cancelled`), too late because the waiting period ended (`now_active`), refused with the link
+ * still waiting (`not_cancelled`), or not known because the chain couldn't be read after a failure (`unknown`).
+ */
+export type LinkCancelOutcome = 'cancelled' | 'already_cancelled' | 'now_active' | 'not_cancelled' | 'unknown';
+const LINK_CANCEL_OUTCOMES: readonly string[] = ['cancelled', 'already_cancelled', 'now_active', 'not_cancelled', 'unknown'];
 
 const isMsValue = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 const isShortText = (v: unknown, max: number): v is string => typeof v === 'string' && v.length >= 1 && v.length <= max && !/[\u0000-\u001f\u007f]/u.test(v);
@@ -227,6 +241,10 @@ export function isFollowNotice(v: unknown): v is FollowNotice {
       return only('t', 'banners') && isBanners(v.banners);
     case 'stop':
       return only('t', 'code', 'effectiveAtMs', 'banners') && typeof v.code === 'string' && /^[a-z_]{1,64}$/u.test(v.code) && (v.effectiveAtMs === undefined || isMsValue(v.effectiveAtMs)) && (v.banners === undefined || isBanners(v.banners));
+    case 'link_waiting':
+      return keys.length === 4 && only('t', 'provider', 'effectiveAtMs', 'prove') && isProvider(v.provider) && isMsValue(v.effectiveAtMs) && isFollowProve(v.prove);
+    case 'link_cancel':
+      return only('t', 'outcome', 'code') && typeof v.outcome === 'string' && LINK_CANCEL_OUTCOMES.includes(v.outcome) && (v.code === undefined || (typeof v.code === 'string' && /^[a-z_]{1,64}$/u.test(v.code)));
     default:
       return false;
   }

@@ -6,7 +6,7 @@
 // address (links are per scope, and the stack's apps share scope `e2e`).
 import type { Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
-import { ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
+import { API_URL, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { addressOfExport, base64Decode, fromUtf8 } from '@hana-id/core';
 import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickClosing, clickLauncher, clickMayClose, clickUntilTaken, closeOf, errorOf, expect, guardedClick, newApp, okValue, openPartner, peek, responsive, runAction, status, test, vaultFrame, waitPersisted } from './fixtures.ts';
 
@@ -256,7 +256,122 @@ test('case B, not hosted: while the link is pending, an email login of that addr
   const second = await p2;
   await emailCode(second, to);
   expect((await errorOf(page, 'pending')).code).toBe('link_pending');
-  await expect(second.getByText(/It can open the wallet from/u)).toBeVisible();
+  // D864: the popup says the email waits to join a wallet, from when, and offers to cancel it.
+  await expect(second.locator('#link-waiting-what')).toContainText('The link starts working on');
+  await expect(second.locator('#link-cancel')).toHaveText('Cancel this link');
+});
+
+// D864: the email that waits to join a Google wallet (case B, not hosted) cancels the link from its own sign-in. The
+// person who holds the mailbox signs in with the email during the wait: the login still ends `link_pending`, and the
+// popup shows the waiting link with "Cancel this link" (one more code to the address, then cancel_link by the pending
+// identity itself) or "Keep the link". With HANA_SHOTS_DIR (Chromium) the screens are saved at phone width.
+const SHOTS = process.env.HANA_SHOTS_DIR;
+/** A phone's width; the popup's own height. */
+const PHONE = { width: 390, height: 760 };
+async function shot(popup: Page, name: string, browser: string): Promise<void> {
+  if (!SHOTS || browser !== 'chromium') return;
+  await popup.setViewportSize(PHONE);
+  await popup.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
+}
+
+/**
+ * Case B, not hosted, up to the email login during the wait: a Google wallet, the email linked to it pending
+ * ("Link and continue"), logged out, then an email login of that address. Returns the popup on the waiting screen.
+ */
+async function waitingLink(page: Page, info: TestInfo, google: GoogleStub, tag: string): Promise<{ popup: Page; to: string; sub: string; wallet: { stellar: string; evm: string } }> {
+  const to = outside(info, tag);
+  const sub = newSub();
+  google.accounts = [{ sub, label: tag.toUpperCase(), email: to, emailVerified: true }];
+  await emailApp(page);
+  const first = await googleStart(page, 'google');
+  await closeOf(first);
+  const wallet = await okValue<{ stellar: string; evm: string }>(page, 'google');
+  await waitPersisted(page, wallet.evm);
+  await logout(page, 'out');
+  const linkP = page.waitForEvent('popup');
+  await clickAction(page, 'link', 'loginWith', { method: 'email' });
+  const linking = await linkP;
+  await emailCode(linking, to);
+  await linking.click('#email-link-google');
+  await linking.waitForURL(/accounts\.google\.com/u);
+  await linking.click('#account-0');
+  expect(await okValue(page, 'link')).toEqual(wallet);
+  await clickClosing(linking, '#banner-done');
+  await logout(page, 'out2');
+
+  const p2 = page.waitForEvent('popup');
+  await clickAction(page, 'pending', 'loginWith', { method: 'email' });
+  const popup = await p2;
+  await emailCode(popup, to);
+  // The partner sees exactly what it saw before D864.
+  expect((await errorOf(page, 'pending')).code).toBe('link_pending');
+  await expect(popup.locator('#link-waiting')).toBeVisible();
+  return { popup, to, sub, wallet };
+}
+
+/** The Google root's sign-in methods, read by a Google login (the stub's one account). */
+async function googleMethods(page: Page, name: string): Promise<unknown> {
+  await googleStart(page, name);
+  await okValue(page, name);
+  return runAccount(page, `${name}-acct`);
+}
+
+test('D864: the email’s own sign-in during the wait cancels the link; the email then never opens the Google wallet', async ({ page, google, requests, browserName }, info) => {
+  const { popup, to, wallet } = await waitingLink(page, info, google, 'lc');
+  await expect(popup.locator('h1')).toHaveText('A Google account is being linked to this email');
+  await expect(popup.locator('#link-waiting-what')).toContainText('The link starts working on');
+  await shot(popup, 'pending-screen', browserName);
+  const before = await codeCount(to);
+  await popup.click('#link-cancel');
+  // One more code, to the same address, for removing a sign-in method (its own subject).
+  await enterCode(popup, to, before);
+  expect((await mails(to)).filter((m) => m.kind === 'code').at(-1)?.subject).toMatch(/^Your code to remove a sign-in method/u);
+  await expect(popup.locator('#link-cancel-result')).toHaveAttribute('data-outcome', 'cancelled');
+  await expect(popup.locator('h1')).toHaveText('Link cancelled');
+  await shot(popup, 'cancelled-confirmation', browserName);
+  // One cancel, from the vault (the stack's chain is shared by parallel tests: this context's requests only).
+  expect(requests.count(`${API_URL}/v1/link/cancel`)).toBe(1);
+  await clickClosing(popup, '#link-cancel-close');
+
+  // The Google wallet has no email member left, and nothing is waiting to activate.
+  expect(await googleMethods(page, 'g2')).toEqual({ methods: [{ provider: 'google', status: 'active', effectiveAtMs: null, root: true }] });
+  await logout(page, 'out3');
+  // Past where the waiting period would have ended: still nothing to activate, and an email login never opens it.
+  const sub = google.accounts[0]!.sub;
+  expect((await (await fetch(`${API_URL}/__e2e/links/expire`, { method: 'POST', body: JSON.stringify({ rootSub: sub }) })).json()) as unknown).toEqual({ moved: 0 });
+  const p3 = page.waitForEvent('popup');
+  await clickAction(page, 'after', 'loginWith', { method: 'email' });
+  const after = await p3;
+  await emailCode(after, to);
+  // The address still belongs to the Google wallet's account in the directory: the case-B choice again, never a login.
+  await expect(after.locator('#email-google')).toBeVisible();
+  expect(await peek(page, 'after')).toMatchObject({ state: 'pending' });
+  expect(await peek(page, 'after')).not.toMatchObject({ value: wallet });
+});
+
+test('D864: “Keep the link” closes the window and the link stays pending', async ({ page, google, requests }, info) => {
+  const { popup } = await waitingLink(page, info, google, 'lk');
+  await clickClosing(popup, '#link-keep');
+  const methods = (await googleMethods(page, 'g2')) as { methods: { provider: string; status: string }[] };
+  expect(methods.methods.map((m) => [m.provider, m.status])).toEqual([
+    ['google', 'active'],
+    ['email', 'pending'],
+  ]);
+  expect(requests.count(`${API_URL}/v1/link/cancel`)).toBe(0);
+});
+
+test('D864: the waiting period ends before the code is typed: “can’t be cancelled any more”, nothing relayed', async ({ page, google, requests, browserName }, info) => {
+  const { popup, to, sub } = await waitingLink(page, info, google, 'le');
+  const before = await codeCount(to);
+  await popup.click('#link-cancel');
+  await expect(popup.locator('#email-code')).toBeVisible();
+  expect((await (await fetch(`${API_URL}/__e2e/links/expire`, { method: 'POST', body: JSON.stringify({ rootSub: sub }) })).json()) as unknown).toEqual({ moved: 1 });
+  await enterCode(popup, to, before);
+  await expect(popup.locator('#link-cancel-result')).toHaveAttribute('data-outcome', 'now_active');
+  await expect(popup.locator('h1')).toHaveText('This link can’t be cancelled any more');
+  await expect(popup.locator('#link-cancel-advice')).toContainText('Change your email password.');
+  await shot(popup, 'already-active', browserName);
+  expect(requests.count(`${API_URL}/v1/link/cancel`)).toBe(0);
 });
 
 test('an email wallet’s key export: the export window’s child popup takes an email code, and the key is that wallet’s', async ({ page }, info) => {

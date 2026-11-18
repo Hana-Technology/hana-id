@@ -6,8 +6,8 @@
 //
 // A RECORD is one nonce (`rec:<nonce>` until final; its batch `dig:<digest>`, hashes only, 7 days after final). A nonce
 // is never freed: once signed it ends only by a receipt, or by staffClose when the chain shows it consumed elsewhere.
-//   new         send(): a verified Execute (gas ≥ its intrinsic gas + minGas, one unmined batch per account) gets
-//               `nextNonce`, is signed, persisted (sync) BEFORE its broadcast.
+//   new         send(): a verified Execute (gas ≥ intrinsic + minGas; one unmined batch per account, the account's
+//               last checked on demand: `seen`) gets `nextNonce`, is signed, persisted (sync) BEFORE its broadcast.
 //   → seen      a receipt of one of ITS OWN versions (the trusted endpoint), its nonce below the latest count.
 //   → mined     that receipt's block ≤ confirmed (`safe`, else head − 12) AND the confirmed count past the nonce: final,
 //               with minedHash, outcome (`execute`/`cancel`) and cost.
@@ -644,8 +644,16 @@ export class EvmRelayer extends DurableObject<Env> {
       this.#halt({ reason: 'storage_inconsistent' }, now);
       refuse('relayer_halted');
     }
-    // The delegate's batch nonce is sequential: a second batch of an account while one is unmined can only stall.
-    if (records.some((r) => r.seen === null && r.account === v.to)) refuse('relayer_busy', 'account');
+    // The delegate's batch nonce is sequential: a second batch of an account while one is unmined can only stall. One
+    // on-demand check of that record (the evidence a run's `seen` uses) lets an action right after a mined one through.
+    const rpc = this.#client(c);
+    const prev = records.find((r) => r.seen === null && r.account === v.to);
+    if (prev) {
+      const seen = await this.#seenNow(rpc, prev);
+      if (!seen) refuse('relayer_busy', 'account');
+      this.#putRec({ ...prev, seen });
+      records.splice(records.indexOf(prev), 1, { ...prev, seen });
+    }
     if (records.filter((r) => r.seen === null).length >= EVM_RELAYER_MAX_UNMINED || records.length >= EVM_RELAYER_MAX_RECORDS || (meta?.remembered ?? 0) >= EVM_RELAYER_MAX_REMEMBERED) refuse('relayer_busy');
     const day = Math.floor(now / DAY_MS);
     // The most any version can cost: the reservation with its gas at the fee cap (bumps and the cancel stay below).
@@ -654,7 +662,6 @@ export class EvmRelayer extends DurableObject<Env> {
       log({ event: 'evm_relay_daily_cap', chainId: c.chain.chainId, code: 'daily_cap' }, 'error');
       refuse('daily_cap');
     }
-    const rpc = this.#client(c);
     // The pool's fee floor, checked here so a batch priced too low is refused with nothing sent (not stored, cancelled).
     if (!this.#baseFee || now - this.#baseFee.at >= EVM_RELAYER_BASE_FEE_TTL_MS) {
       const block = await rpc.latestBlock().catch(() => refuse('rpc_unavailable'));
@@ -900,6 +907,17 @@ export class EvmRelayer extends DurableObject<Env> {
     if (!fees) return kind === 'cancel' && (cancel || ((toCancel || reprice) && !r.accepted)) ? 'fee_cap_too_low' : null;
     const t: Payload = kind === 'cancel' ? selfTransfer(this.#meta()!.address) : { to: r.to, data: r.data, gas: BigInt(r.gas), authorization: r.authorization };
     return { ...r, to: t.to, data: t.data, gas: t.gas.toString(), authorization: t.authorization, signedAt: now, priceRefused: false, versions: [...r.versions, version(this.#sign(c, r.nonce, t, fees), kind, fees)] };
+  }
+
+  /**
+   * A record's `seen` now, on the run's own evidence (a receipt of one of its versions, the latest count past its
+   * nonce), or null when not shown, or when a read fails. At most 1 + its versions' count fetches.
+   */
+  async #seenNow(rpc: SponsorChain, r: Rec): Promise<Rec['seen']> {
+    const latest = await rpc.transactionCount(this.#meta()!.address, 'latest').catch(() => null);
+    if (latest === null || latest <= r.nonce) return null;
+    const found = await this.#findReceipt(rpc, r, { left: EVM_RELAYER_MAX_VERSIONS });
+    return found.found ? { hash: found.found.version.hash, block: Number(found.found.receipt.blockNumber) } : null;
   }
 
   /** Receipts of the record's versions (the one seen mined, then newest first) until one is found. */

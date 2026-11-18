@@ -12,6 +12,10 @@ const NOTHING_SIGNED = 'Nothing was signed.';
 const WALLET_NOT_OPENED = 'We couldn’t open your wallet. Try again.';
 const CHECK_STOP = `This didn’t pass ${P}’s safety check, so it was stopped. Nothing was signed. Try again.`;
 const TEST_APP = `This app is a test version, so ${P} lets it use only test networks. ${NOTHING_SIGNED}`;
+const TEST_APP_KIND = `This app is a test version, and ${P} doesn’t sign this kind of request for it. ${NOTHING_SIGNED}`;
+const OUT_OF_DATE_SIGNED = 'This request is out of date, so nothing was signed. Try again.';
+const CANT_CHECK = `${P} couldn’t check this request right now, so nothing was signed. Try again later.`;
+const APP_SETUP = `This app isn’t set up correctly with ${P}. Tell the app’s team.`;
 
 /** The sentence for a code, when `data.reason` doesn't pick a closer one. */
 const BY_CODE: Readonly<Record<string, string>> = Object.freeze({
@@ -62,7 +66,13 @@ const BY_CODE: Readonly<Record<string, string>> = Object.freeze({
 const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
   // D865: the user chose to remove this sign-in from the wallet it was linked to; the window finishes the removal (its
   // code may still be to come), so the sentence is true either way.
-  login_cancelled: { link_remove: `You chose to remove this sign-in from that wallet. Finish it in the ${P} window. Then sign in again when you’re ready.` },
+  login_cancelled: {
+    link_remove: `You chose to remove this sign-in from that wallet. Finish it in the ${P} window. Then sign in again when you’re ready.`,
+    // D871: the window closed by the user, and a new Google user who didn't share their email address.
+    popup_closed: `You closed the ${P} window, so nothing changed. Sign in again when you’re ready.`,
+    email_consent_declined: 'Google didn’t share your email address, so nothing changed. You can sign in with email instead.',
+    google_account_mismatch: 'Google answered for a different account, so nothing changed. Try again, or sign in with email instead.',
+  },
   [ErrorCode.unauthorized]: {
     mainnet_not_allowed: TEST_APP,
     raw_not_allowed_for_test_apps: TEST_APP,
@@ -73,6 +83,33 @@ const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Ob
     near_network_mismatch: CHECK_STOP,
     near_block_unknown: `${P} couldn’t check this request, so it wasn’t signed. Try again.`,
     near_relayed_delegate: CHECK_STOP,
+    // D871: the vault's other NEAR refusals (before its window, nothing signed).
+    near_key_unknown: 'Your account isn’t set up yet, so nothing was signed. Try again in a moment.',
+    near_delegate_nonce_used: 'This request was already used, perhaps in another tab. Nothing was signed. Try again.',
+    near_delegate_nonce_stale: OUT_OF_DATE_SIGNED,
+    near_delegate_nonce_too_large: 'This request can’t be checked yet, so nothing was signed. Wait a few seconds and try again.',
+    near_delegate_expiry: OUT_OF_DATE_SIGNED,
+    near_delegate_test_app_action: TEST_APP_KIND,
+    near_delegate_test_app_receiver: TEST_APP_KIND,
+    // D871: Journear's sandbox mainnet demo (Journear's own app; partner apps never see these).
+    mainnet_demo_over_cap: 'This is over the limit for one payment in this test version. Nothing was signed. Try a smaller amount.',
+    mainnet_demo_unknown_call: `${P} can’t tell how much this could move, so nothing was signed.`,
+    mainnet_demo_wrong_destination: 'This would send money to a wallet that isn’t yours, so it was stopped. Nothing was signed.',
+    mainnet_demo_unpriced: 'Journear has no price for this token, so nothing was signed.',
+    mainnet_demo_prices_stale: 'Journear’s prices for this test version are out of date, so nothing was signed. Try again later.',
+    // D871: the app's setup with Journear Passport, from any call to Journear's service.
+    missing_key: APP_SETUP,
+    unknown_app: APP_SETUP,
+    scope_conflict: APP_SETUP,
+  },
+  api_unavailable: {
+    near_rpc_unavailable: CANT_CHECK,
+    near_rpc_single_provider: CANT_CHECK,
+    mainnet_demo_unconfirmed: 'Journear couldn’t check this just now, so nothing was signed. Try again in a few seconds.',
+  },
+  email_sharing_unavailable: {
+    off: 'This app doesn’t ask for your email address yet. Nothing was shared.',
+    no_address: `${P} has no email address for this sign-in. Sign in again, then try again.`,
   },
   [ErrorCode.disconnected]: {
     signed_out: `You were signed out of ${P} on this device. Sign in again.`,
@@ -131,7 +168,11 @@ const SPONSOR = Object.freeze({
   accountPending: 'Your account has other actions waiting on the network, so this one couldn’t go through. Wait a moment, then try again.',
 });
 
-export const SPONSOR_REASONS: Readonly<Record<string, string>> = Object.freeze({
+/**
+ * Every `data.reason` a sponsored action's error can carry (`HanaSponsorError`), with the sentence `userMessage` gives
+ * for it, so a page can branch on the known reasons; new ones may come, so keep a default.
+ */
+const SPONSOR_REASON_TEXT = {
   // The vault's own refusals.
   chain_not_sponsored: SPONSOR.notOffered,
   no_evm_account: SPONSOR.noSignIn,
@@ -193,7 +234,80 @@ export const SPONSOR_REASONS: Readonly<Record<string, string>> = Object.freeze({
   account_pending: SPONSOR.accountPending,
   account_busy: SPONSOR.busy,
   batch_too_large: SPONSOR.tooBig,
-});
+  // D871: the vault's own refusal of calls it can't use (sponsorPreflight): the vault's words.
+  invalid_request: SPONSOR.notForThis,
+} satisfies Record<string, string>;
+
+/** A sponsored action's known reason (SPONSOR_REASONS). */
+export type KnownSponsorReason = keyof typeof SPONSOR_REASON_TEXT;
+export const SPONSOR_REASONS: Readonly<Record<KnownSponsorReason, string>> = Object.freeze(SPONSOR_REASON_TEXT);
+/** `data.reason` of a HanaSponsorError: a known reason, or one a later release adds (keep a default branch). */
+export type SponsorReason = KnownSponsorReason | (string & {});
+
+/** The reasons `hana.evm.sponsorship()` answers with when `available` is false. */
+export const SPONSORSHIP_REASONS = Object.freeze(['chain_not_enabled', 'app_not_sponsored', 'paused', 'budget_exhausted', 'not_available'] as const);
+/** A reason `hana.evm.sponsorship()` knows. */
+export type KnownSponsorshipReason = (typeof SPONSORSHIP_REASONS)[number];
+/** `SponsorshipStatus.reason`: a known reason, or one a later release adds. */
+export type SponsorshipReason = KnownSponsorshipReason | (string & {});
+
+const table = (t: object): Readonly<Record<string, string>> => t as Readonly<Record<string, string>>;
+
+// D871. The reasons of Journear Passport's NEAR relay (below).
+/**
+ * The reasons of Journear Passport's NEAR relay (`hana.near.relay`, `activate`: the API's codes it passes on as
+ * `data.reason` with 4100, `rate_limited` or `api_unavailable`). Some names are also a sponsored action's
+ * (`gas_too_high`, `app_budget_exhausted`, `timeout`, `relayer_busy`, …): which sentence is meant depends on the error's
+ * source (`userMessageFor`'s third argument), never on the name alone.
+ */
+const NEAR_OUT_OF_DATE = 'This request is out of date, so nothing was sent. Try again.';
+const NEAR_NOT_PAID = 'Journear doesn’t pay the fee for this kind of request. Nothing was sent.';
+const NEAR_UNUSABLE = 'Journear couldn’t use this request, so nothing was sent. Try again, or tell the app’s team.';
+const NEAR_UNAVAILABLE = 'Journear couldn’t send this right now. Try again later.';
+const NEAR_UNKNOWN = 'Journear couldn’t tell whether your request went through. Check before you try again.';
+const NEAR_RELAY_REASON_TEXT = {
+  near_account_unrecorded: 'Journear is still setting up your account for this app. Try again in a few seconds.',
+  delegate_nonce_used: 'This request was already sent, perhaps in another tab. Check whether it went through before you try again.',
+  delegate_nonce_too_large: NEAR_OUT_OF_DATE,
+  delegate_expired: NEAR_OUT_OF_DATE,
+  block_height_too_far: NEAR_OUT_OF_DATE,
+  action_not_allowed: NEAR_NOT_PAID,
+  deposit_not_allowed: NEAR_NOT_PAID,
+  receiver_not_allowed: NEAR_NOT_PAID,
+  gas_too_high: NEAR_NOT_PAID,
+  bad_request: NEAR_UNUSABLE,
+  bad_delegate: NEAR_UNUSABLE,
+  bad_delegate_signature: NEAR_UNUSABLE,
+  sender_not_implicit: NEAR_UNUSABLE,
+  account_not_activated: 'Your account isn’t set up yet, so nothing was sent. Try again in a moment.',
+  access_key_missing: `${P} can’t act for this account any more, so nothing was sent. Tell the app’s support.`,
+  already_relayed: 'This request is already being sent. Wait a moment, then check before you try again.',
+  contract_rejected: 'The request ran but didn’t work, so nothing changed. Try again, or tell the app’s team.',
+  delegate_rejected: 'The network refused this request, so it didn’t go through. Try again.',
+  rate_limited: 'Too many requests right now. Wait a moment and try again.',
+  app_budget_exhausted: 'Journear’s free requests for this app are used up for today. Try again tomorrow.',
+  relay_budget_exhausted: 'Journear’s free requests are used up for today. Try again tomorrow.',
+  timeout: 'Your request was sent but isn’t confirmed yet. Check again in a minute before you try again.',
+  relayer_busy: 'Journear is busy right now. Wait a few seconds, then try again.',
+  relayer_unavailable: NEAR_UNAVAILABLE,
+  near_unavailable: NEAR_UNAVAILABLE,
+  directory_unavailable: NEAR_UNAVAILABLE,
+  rate_limiter_unavailable: NEAR_UNAVAILABLE,
+  near_rejected: NEAR_UNKNOWN,
+  near_error: NEAR_UNKNOWN,
+  relayer_unconfigured: 'Free requests aren’t available here right now. Nothing was sent.',
+} satisfies Record<string, string>;
+
+/** A NEAR relay reason. */
+export type NearRelayReason = keyof typeof NEAR_RELAY_REASON_TEXT;
+export const NEAR_RELAY_REASONS: Readonly<Record<NearRelayReason, string>> = Object.freeze(NEAR_RELAY_REASON_TEXT);
+
+/**
+ * Where an error came from, when a reason's name alone can't say (`userMessageFor`'s third argument): a sponsored EVM
+ * action (`HanaSponsorError`, and the EIP-1193 provider's error for one), or a call that isn't one (any other
+ * `HanaError`: a shared name there is the NEAR relay's). Without it, a shared name reads as the sponsored action's.
+ */
+export type UserMessageSource = 'sponsored_action' | 'near_relay';
 
 /** The codes a sponsored action's errors come with. */
 const SPONSOR_CODES: ReadonlySet<string> = new Set([String(ErrorCode.unauthorized), 'rate_limited', 'api_unavailable', 'session_ended', 'busy']);
@@ -211,12 +325,22 @@ function reasonOf(data: unknown): string[] {
 /**
  * The plain sentence for an error of `code` with `data` (a HanaError's, or a ProviderRpcError's inner `data` with the
  * Journear Passport code): from these two only, a closer one for a known `data.reason`, else the code's, else a generic one.
+ * `source` says where it came from when a reason's name is shared (UserMessageSource); a HanaError's and a
+ * HanaSponsorError's own `userMessage` pass it.
  */
-export function userMessageFor(code: unknown, data: unknown): string {
+export function userMessageFor(code: unknown, data: unknown, source?: UserMessageSource): string {
   const key = String(code);
-  const closer = Object.hasOwn(BY_REASON, key) ? BY_REASON[key] : undefined;
   const reasons = reasonOf(data);
+  const actionCode = SPONSOR_CODES.has(key);
+  const sponsor = table(SPONSOR_REASONS);
+  const near = table(NEAR_RELAY_REASONS);
+  // A sponsored action's reasons are the vault's words, first (`invalid_request` reads as the vault says).
+  if (source === 'sponsored_action' && actionCode) for (const r of reasons) if (Object.hasOwn(sponsor, r)) return sponsor[r] as string;
+  const closer = Object.hasOwn(BY_REASON, key) ? BY_REASON[key] : undefined;
   if (closer) for (const r of reasons) if (Object.hasOwn(closer, r)) return closer[r] as string;
-  if (SPONSOR_CODES.has(key)) for (const r of reasons) if (Object.hasOwn(SPONSOR_REASONS, r)) return SPONSOR_REASONS[r] as string;
+  if (actionCode) {
+    if (source !== 'sponsored_action') for (const r of reasons) if (Object.hasOwn(near, r) && (source === 'near_relay' || !Object.hasOwn(sponsor, r))) return near[r] as string;
+    for (const r of reasons) if (Object.hasOwn(sponsor, r)) return sponsor[r] as string;
+  }
   return Object.hasOwn(BY_CODE, key) ? (BY_CODE[key] as string) : DEFAULT_USER_MESSAGE;
 }

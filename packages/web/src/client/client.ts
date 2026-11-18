@@ -286,6 +286,8 @@ export class HanaClient extends Emitter<HanaEvents> {
       evmAddress: () => this.#addresses?.evm ?? null,
       sponsoredChains: () => this.#sponsoredChains,
       request: (m, p) => this.#request(m, p),
+      // `sponsorship()` before `ready` waits for it (D871): the chains come with it.
+      ready: () => this.ready,
       apiUrl: deps.origins.apiUrl ?? null,
       publishableKey: config.publishableKey,
       fetch: deps.fetch,

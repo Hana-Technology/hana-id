@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (0.5.0 upgrade, gas-free, `userMessage`, sign-in outcomes, users' view, email codes), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (0.5.0: reason types, `userMessage` by source, `sponsorship()` waits for ready), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -241,14 +241,18 @@ at `^0.5.0`).
 
 - New: errors carry a plain sentence to show your users, `error.userMessage`, on `HanaError`, `HanaSponsorError` and
   the EIP-1193 provider's `ProviderRpcError`, and `userMessageFor(code, data)` for a code read elsewhere
-  ([section 13](#user-message)). `message` is unchanged and stays for you and your logs.
+  ([section 13](#user-message)). `message` is unchanged and stays for you and your logs. `userMessageFor` takes an
+  optional third argument, `'sponsored_action'` or `'near_relay'`, for a reason name the two share.
 - New, **not live yet**: gas-free EVM actions. `hana.evm.sendSponsored({ chainId, calls })` runs contract calls with
   Journear paying the network fee, after the user approves them; `hana.evm.sponsorship(chainId)` and
   `hana.evm.sponsoredChains` say where and whether it is offered; EIP-5792 `wallet_sendCalls`,
   `wallet_getCallsStatus` and `wallet_getCapabilities` on `hana.ethereum` do the same for viem and wagmi. No environment
   offers it yet, so `sponsoredChains` is empty ([section 8, Gas-free actions](#gas-free-actions-not-live)). New
-  exports: `HanaEvm`, `HanaSponsorError`, `isHanaSponsorError`, `EvmSponsorErrorData`, `SendSponsoredParams`,
-  `SendSponsoredResult`, `SponsoredCall`, `SponsorshipStatus`, `EIP5792` (its error codes) and `CALLS_VERSION`.
+  exports: `HanaEvm`, `HanaSponsorError`, `isHanaSponsorError`, `EvmSponsorErrorData`, `EvmSponsorProviderErrorData`
+  (the EIP-5792 error's `data`), `SendSponsoredParams`, `SendSponsoredResult`, `SponsoredCall`, `SponsorshipStatus`,
+  `EIP5792` (its error codes), `CALLS_VERSION`, and the reasons: `SPONSOR_REASONS` (each with its `userMessage`),
+  `SPONSORSHIP_REASONS`, the types `SponsorReason`, `KnownSponsorReason`, `SponsorshipReason` and
+  `KnownSponsorshipReason` (a known reason, or any string, so a new reason never breaks your build).
 - `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` are no longer `4200`. On a chain without
   gas-free actions, `wallet_getCapabilities` answers no capabilities and `wallet_sendCalls` is `5710` (unsupported
   chain). `eth_sendTransaction` is unchanged (never gas-free).
@@ -945,8 +949,8 @@ Journear's reviewed account helper contract run the batches the user approves).
   `https://hana-id-api-sandbox-dev.tingtc.workers.dev`), for `sponsorship()` ([section 5](#5-your-page-origins-csp-popups)).
 
 **1. Ask whether it is available**, and show the button only then. `sponsorship(chainId)` needs no sign-in, but the
-action does, so set the button up once the user is signed in. Call it after `hana.ready`: before that, the SDK doesn't
-know the chains yet and answers `chain_not_enabled`, so the button would never appear.
+action does, so set the button up once the user is signed in. Called before `hana.ready`, it waits for it: the SDK
+learns the chains there. If `hana.ready` fails, it rejects with the same code (`vault_unavailable`).
 
 ```ts
 import { userMessageFor } from '@hana-id/web';
@@ -973,7 +977,8 @@ if (hana.status === 'logged_in') await setUpButton();
 hana.on('accountsChanged', (a) => (a ? void setUpButton() : (checkInButton.hidden = true)));
 ```
 
-It resolves `{ available, reason?, remainingToday? }`. `reason`, when `available` is false: `chain_not_enabled` (not
+It resolves `{ available, reason?, remainingToday? }`. `reason` (type `SponsorshipReason`; the known ones are
+`SPONSORSHIP_REASONS`), when `available` is false: `chain_not_enabled` (not
 offered on this network), `app_not_sponsored` (not turned on for your app), `paused` (Journear paused it),
 `budget_exhausted` (today's budget, your app's or the environment's, is used up) or `not_available` (no reason given).
 `remainingToday` is your app's own budget left today, in wei, as a decimal string. It rejects only when Journear can't
@@ -1062,13 +1067,14 @@ sendButton.addEventListener('click', () => {
 `HanaError`). Show `userMessage`. `code` is `4001` (the user rejected), `4100` (refused), `busy`, `rate_limited`,
 `session_ended` or `api_unavailable`, and `data` is `EvmSponsorErrorData`, each field only in its exact shape:
 `reason`, `status` (the HTTP status of Journear's answer), `requestId`, `retryAfterS` (wait at least this long),
-`transactionHash` (a batch was sent), `callIndex` (the call that would fail, from 0), `retryable`, `chainId`. Match on
-`code` and `data.reason`:
+`transactionHash` (a batch was sent), `callIndex` (the call that would fail, from 0), `retryable`, `chainId`.
+`data.reason` is typed `SponsorReason`, and `SPONSOR_REASONS` maps each known one to its sentence. Through EIP-5792
+the error is a `ProviderRpcError` whose `data` is `EvmSponsorProviderErrorData`. Match on `code` and `data.reason`:
 
 | `data.reason` | What happened | `userMessage` |
 |---|---|---|
 | `chain_not_sponsored`, `chain_not_enabled`, `sponsorship_unconfigured` | Not offered on this network | Free network fees aren’t offered on this network. |
-| `app_not_sponsored`, `call_not_sponsored`, `target_not_allowed`, `value_not_allowed`, `too_many_calls` | Not turned on for your app, or a call that isn't on your app's list | Journear doesn’t pay network fees for this action. |
+| `app_not_sponsored`, `call_not_sponsored`, `target_not_allowed`, `value_not_allowed`, `too_many_calls`, `invalid_request` | Not turned on for your app, a call that isn't on your app's list, or calls Journear Passport can't use | Journear doesn’t pay network fees for this action. |
 | `delegated_elsewhere` | Another wallet app set the account up with its own helper | Your account was set up by another wallet app, so Journear can’t pay network fees for it. Nothing was sent. |
 | `budget_exhausted`, `app_budget_exhausted` | Today's budget is used up | Journear’s free network fees for this app are used up for today. Try again tomorrow. |
 | `not_available` | Journear said no, without a reason | Free network fees aren’t available for your account right now. Try again later. |
@@ -1843,7 +1849,10 @@ arrived, so it is safe to show as text; it holds no code and no chain words. A c
 wrong in Journear Passport. Try again." Match on `code` and `data.reason`, never on either text: both may be reworded.
 Libraries that wrap provider errors (viem, wagmi, ethers) may drop the field, and the SWK module's errors don't carry
 it: there, call `userMessageFor(code, data)` (exported by `@hana-id/web`) with the Journear Passport code (`data.code`,
-or SWK's `ext[0]`).
+or SWK's `ext[0]`). A few reason names are both a NEAR relay's and a gas-free action's (`gas_too_high`,
+`app_budget_exhausted`, `timeout`, `relayer_busy`, …). The errors' own `userMessage` knows which; `userMessageFor`
+reads them as the gas-free action's unless you pass `'near_relay'` as its third argument. The NEAR relay's reasons,
+the NEAR refusals and a stopped sign-in have sentences of their own.
 
 One function covers every case: Journear Passport's own errors, the provider's, one that viem, wagmi or ethers wrapped
 (they keep the original as `cause`), and the SWK module's:

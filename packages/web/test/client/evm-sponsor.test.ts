@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HanaError, ProviderRpcError } from '../../src/client/errors.ts';
 import { CALLS_VERSION, EIP5792 } from '../../src/client/ethereum.ts';
-import { HanaSponsorError, NOT_OFFERED, sponsoredCalls } from '../../src/client/evm-sponsor.ts';
+import { HanaEvm, HanaSponsorError, NOT_OFFERED, sponsoredCalls } from '../../src/client/evm-sponsor.ts';
 import { EVM, LOGGED_IN, LOGGED_OUT, type Setup, flush, rpcFetch, setup } from './harness.ts';
 
 const API = 'https://api.hana.test';
@@ -144,6 +144,36 @@ describe('hana.evm.sponsorship', () => {
     const [url, init] = s.fetch.mock.calls.at(-1) as [string, RequestInit];
     expect(url).toBe(`${API}/v1/evm/sponsor/status?chainId=${CHAIN}`);
     expect(init).toMatchObject({ method: 'GET', credentials: 'omit', headers: { 'x-hana-key': expect.stringMatching(/^pk_test_/u) } });
+  });
+
+  it('called before ready, it waits for ready and its chains (D871), not answering chain_not_enabled early', async () => {
+    s = setup({ apiUrl: API, config: { evm: EVM_CONFIG }, fetch: async () => new Response(JSON.stringify({ available: true })) });
+    const early = s.client.evm.sponsorship(CHAIN);
+    let settled = false;
+    void early.then(() => (settled = true));
+    await flush();
+    expect(settled).toBe(false);
+    expect(s.fetch).not.toHaveBeenCalled();
+    await s.vault.connect(SPONSORED);
+    await expect(early).resolves.toEqual({ available: true });
+    expect(s.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a ready that fails rejects it with ready’s code, as a HanaSponsorError', async () => {
+    const down = new HanaEvm({
+      evmAddress: () => null,
+      sponsoredChains: () => [],
+      request: () => Promise.reject(new Error('unused')),
+      ready: () => Promise.reject(new HanaError('vault_unavailable', 'The vault didn’t load', { reason: 'ready_timeout' })),
+      apiUrl: API,
+      publishableKey: 'pk_test_x',
+      fetch: vi.fn(),
+    });
+    const e = await rejection(down.sponsorship(CHAIN));
+    expect(e).toBeInstanceOf(HanaSponsorError);
+    expect(e.code).toBe('vault_unavailable');
+    // A malformed chain is still refused at once, before any wait.
+    expect((await rejection(down.sponsorship(0))).code).toBe(-32602);
   });
 
   it('a chain the vault didn’t report: not available, with no request', async () => {

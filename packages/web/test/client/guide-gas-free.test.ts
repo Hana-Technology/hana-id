@@ -45,7 +45,7 @@ describe('docs/integration.md "Gas-free actions"', () => {
     for (const [reasons, , sentence] of rows) {
       for (const reason of codesIn(reasons!)) {
         listed.push(reason);
-        expect(SPONSOR_REASONS[reason], reason).toBe(sentence);
+        expect((SPONSOR_REASONS as Record<string, string>)[reason], reason).toBe(sentence);
         // What a partner shows: the getter on the error it gets, for each code such an error comes with.
         expect(new HanaSponsorError(4100, 'x', { reason }).userMessage, reason).toBe(sentence);
         expect(userMessageFor('api_unavailable', { reason }), reason).toBe(sentence);

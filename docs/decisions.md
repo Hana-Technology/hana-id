@@ -14456,3 +14456,48 @@ tests only: no behaviour, endpoint, key or flow changes.
      00:00 UTC), what it sends Journear (the address only privately, with the user's agreement), and the two one-time
      emails Journear can then send. The guide says these pages aren't on sandbox-dev yet.
 - Address impact: none.
+
+## SDK 0.5.0's partner polish (branch `feat/sdk-0-5-0-partner-polish`), 2026-11-18
+
+From `docs/partner-guide-0-5-0` @ a8d74f8e (PR 92, not merged yet; it holds `next` @ c0f14a8e), not merged, not
+deployed. SDK 0.5.0 has never been sent to a partner (its commits are on `next` only; `develop` and `main` are at
+0.4.1; no release tag), so it stays 0.5.0.
+
+### D871. SDK 0.5.0's partner polish: typed reasons, `sponsorship()` waits for ready, `userMessage` by the error's source, closer sentences
+- Date 2026-11-18 · Status: decided while building, to confirm · Built: `packages/web/src/client/user-messages.ts`
+  (`SPONSOR_REASONS` exported and typed, `invalid_request` added; `SPONSORSHIP_REASONS`; `NEAR_RELAY_REASONS`; the
+  types `KnownSponsorReason`, `SponsorReason`, `KnownSponsorshipReason`, `SponsorshipReason`, `NearRelayReason`,
+  `UserMessageSource`; `userMessageFor`'s third argument; the new sentences in `BY_REASON`), `client/errors.ts`
+  (`markSponsored`, the getters' source), `client/evm-sponsor.ts` (`HanaSponsorError` marks itself; the typed
+  `reason`s; `EvmSponsorProviderErrorData`; `sponsorship()` awaits the host's `ready`), `client/client.ts`
+  (`ready` for `hana.evm`), `src/index.ts`, `vault/evm-sponsor.ts` (comment only); tests
+  `test/client/user-messages.test.ts`, `test/client/evm-sponsor.test.ts`, `test/client/guide-gas-free.test.ts`; docs
+  `docs/integration.md` (sections 2, 8 and 13), `packages/web/README.md`. Amends D838 (`sponsorship()` before ready) and
+  D861 (the sentences, by source).
+- Decisions:
+  1. **Typed reasons**: `SponsorshipStatus.reason` is `SponsorshipReason` and `EvmSponsorErrorData.reason` is
+     `SponsorReason`, each a string-literal union of the known reasons plus `(string & {})`, so a reason a later
+     release adds never breaks a partner's build. `SPONSOR_REASONS` (reason → sentence) and `SPONSORSHIP_REASONS` are
+     exported, frozen; `EvmSponsorProviderErrorData` types the EIP-5792 `ProviderRpcError`'s `data`. No code or reason
+     string changed.
+  2. **`sponsorship()` before `ready` waits for it** (the client's `hana.ready`, so bounded by its own timeouts)
+     instead of answering `chain_not_enabled` from a list that isn't known yet; a failed `ready` rejects with its code
+     as a `HanaSponsorError` (`vault_unavailable`). A malformed `chainId` is still refused at once. `sendSponsored` is
+     unchanged (synchronous, for the window in the click).
+  3. **`userMessage` by the error's source**: the NEAR relay and a sponsored action share reason names (`gas_too_high`,
+     `app_budget_exhausted`, `timeout`, `relayer_busy`, `relayer_unavailable`, `near_unavailable`,
+     `directory_unavailable`, `rate_limiter_unavailable`, `rate_limited`). A `HanaSponsorError` marks itself (a module
+     `WeakSet`, so no field, equality or JSON changes), `toProviderRpcError` carries the mark, and the getters pass
+     `'sponsored_action'` or, for any other `HanaError`, `'near_relay'`. A `ProviderRpcError` without the mark and a
+     partner's own `userMessageFor` call without the argument read a shared name as the sponsored action's (the EVM
+     side's, and 0.5.0's sentence until now). On a sponsored action its own table comes first, so `invalid_request`
+     reads as the vault says ("Journear doesn’t pay network fees for this action.").
+  4. **Closer sentences** for what fell to the generic 4100 ("…didn’t allow this. You may need to sign in again."):
+     the NEAR relay's reasons, the vault's other NEAR refusals, the sandbox mainnet demo's reasons, the API's app-setup
+     refusals (`missing_key`, `unknown_app`, `scope_conflict`), `email_sharing_unavailable` (`off`, `no_address`), and
+     `login_cancelled`'s `popup_closed`, `email_consent_declined` and `google_account_mismatch`. Plain by D853 and the
+     shared word list (tested); the sentences are listed for the founder in the PR.
+  5. The vault's comment that a partner may show a refusal's `message` as it is now says to show `userMessage` (D861).
+- Not done, for a decision: `wallet_getCapabilities` reports `atomic: supported` from the build's chain list, whatever
+  the app's allowlist or budget (options in the PR); no Base Sepolia `DEMO_CHECK_IN` pin (it comes with the deploy).
+- Address impact: none.

@@ -129,8 +129,7 @@ Sepolia only, and no environment offers it yet (`hana.evm.sponsoredChains` is `[
 your app and to add each contract and function you call; a call that isn't on that list is refused.
 
 ```ts
-await hana.ready;                                                 // the chains are known from here on
-const { available, reason } = await hana.evm.sponsorship(84532);  // show a "free" button only when available
+const { available, reason } = await hana.evm.sponsorship(84532);  // waits for hana.ready; a "free" button only when available
 
 button.onclick = () =>                                            // in the click: the approval window opens now
   hana.evm.sendSponsored({ chainId: 84532, calls: [{ to: contract, data }] }) // value 0, 1 to 8 calls, all or nothing
@@ -141,7 +140,9 @@ Every action shows Journear Passport's window ("Network fee: none. Journear pays
 automatically. The first one also sets the account up (an EIP-7702 authorization: the address stays the same).
 EIP-5792 `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` on `hana.ethereum` do the same for
 viem and wagmi (`5710` on a chain without it, where 0.4.x answered `4200`). `eth_sendTransaction` is never gas-free.
-Refusals are `HanaSponsorError` with `data.reason`; the partner guide's section 8 lists every reason and the limits.
+Refusals are `HanaSponsorError` with `data.reason` (type `SponsorReason`: the known reasons, or any string, so a new
+one never breaks your build). `SPONSOR_REASONS` maps each known reason to its `userMessage`, and `SPONSORSHIP_REASONS`
+lists `sponsorship()`'s. The partner guide's section 8 lists every reason and the limits.
 
 ### Sign-in methods (apps with email)
 
@@ -242,7 +243,8 @@ To show an error to your user, use `error.userMessage` (SDK 0.5.0) on a `HanaErr
 `ProviderRpcError`: a plain sentence worked out from `code` and `data.reason` alone ("You rejected this in Journear
 Passport, or closed it. Nothing was approved."), safe to show as text. `message` is for you and your logs. viem,
 wagmi and ethers keep the provider's error as `cause`; for a code read elsewhere (SWK's `ext[0]`), call
-`userMessageFor(code, data)`. Match on `code` and `data.reason`, never on either text.
+`userMessageFor(code, data)` (a third argument, `'near_relay'`, for a NEAR relay reason that a gas-free action
+shares). Match on `code` and `data.reason`, never on either text.
 
 ## More
 

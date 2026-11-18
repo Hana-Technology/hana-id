@@ -21,7 +21,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { HanaNear, type NearHost } from '../../../packages/web/src/client/near.ts';
 import { DESERIALIZE_PANIC, StampsContract } from '../../e2e/src/server/stamps-contract.ts';
-import { type CollectorClient, createCollector, newRpc } from '../../stamps/src/collector.ts';
+import { type CollectorClient, STAGES, createCollector, newRpc } from '../../stamps/src/collector.ts';
 import type { StampsConfig } from '../../stamps/src/config.ts';
 import { errorInfo, plainMessage, relayTransaction } from '../../stamps/src/messages.ts';
 import { CONTRACT_ERRORS, STAMP_IDS, isImplicitAccount, parsePassport, parseRecent, parseTotals } from '../../stamps/src/stamps.ts';
@@ -189,7 +189,8 @@ describe.skipIf(!bin || !wasm)('the stamps site against the real contract on nea
     await advanceTo(raw.stamps[0]!.block_timestamp_ms + 120_000);
     await collector.refresh(accountId);
     expect(await collect('layover')).toMatchObject({ status: 'done' });
-    expect(stages).toContain('Sending it through Journear’s relayer, which pays the fee…');
+    // The site's own words for the relayed send (reworded in plain language by D853; read from the site, not copied).
+    expect(stages).toContain(STAGES.relaying);
 
     // The real answers: stamps in the order collected, `note` only on the postcard, `sponsored` on every stamp.
     const value = (await rpc.view(stamps.accountId, 'get_passport', { account_id: accountId })) as { account_id: string; stamps: Record<string, unknown>[] };

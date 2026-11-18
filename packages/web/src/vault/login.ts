@@ -567,6 +567,8 @@ abstract class PopupTask<T> {
   protected readonly progressed = new Set<string>();
   /** The follow-up channel (a login that offers email). Survives the login for its banners (`afterword`). */
   protected follow: FollowChannel | null = null;
+  /** D865: google-match's answer for this login (its decision and whether Google hosts the address), if it gave one. */
+  protected matched: { decision: string; googleHosted: boolean } | null = null;
   /** When the vault took the request (perfNow), for the `vault` total. */
   readonly startedAt: number;
   // D347's watch on the popup's window.
@@ -934,7 +936,9 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         // the address: an env with an email issuer).
         ...(this.emailShareOffered ? { emailShare: true as const } : {}),
       };
-      if (followKey && emailOn) this.follow = new FollowChannel(ctx.api, ctx.timers, Uint8Array.from(relayKey), Uint8Array.from(followKey));
+      // Every login with the follow-up key has the channel (D865): an app without email login (record) too, since a
+      // member of an account another app of the scope linked must be asked before its wallet opens.
+      if (followKey) this.follow = new FollowChannel(ctx.api, ctx.timers, Uint8Array.from(relayKey), Uint8Array.from(followKey));
       mark('keygen');
 
       // Step 3: wait for the popup.
@@ -1167,6 +1171,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     if (!match) throw fail('api_unavailable', 'Journear could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
     // D438: google-match's sealed address is the Google identity's: it goes with a session that identity opens.
     const sealed = match.sealedEmail;
+    this.matched = { decision: match.decision, googleHosted: match.googleHosted };
 
     if (match.decision === 'case_a') {
       if (match.emailToken) {
@@ -1529,8 +1534,10 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     }
     if (view.status !== 'member' || !view.root || !sameRef(view.root, root) || view.effectiveAtMs === null) return;
     const rootKey = identityKeyHex(scopeId, root.provider, root.sub);
+    const how = await this.memberLinkHow(who, root, view.key);
+    if (how === 'silent') return;
     const linkId = toHex(sha256(utf8(`hana-id/member-link/v1|${rootKey}|${view.key}|${view.effectiveAtMs}`)));
-    const slot = await follow.notice({ t: 'member_link', method: who.ref.provider, rootProvider: root.provider, sinceMs: view.effectiveAtMs, linkId }, true);
+    const slot = await follow.notice({ t: 'member_link', method: who.ref.provider, rootProvider: root.provider, sinceMs: view.effectiveAtMs, linkId, how }, true);
     const answer = await this.popupWait(() => follow.answer(slot, this.abortCtl.signal, () => this.abortError));
     this.check();
     if ('choice' in answer && answer.choice === 'keep') return;
@@ -1541,6 +1548,33 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     }
     if ('error' in answer) throw this.emailAnswerError(answer.error);
     throw fail('token_invalid', 'The sign-in answer was refused');
+  }
+
+  /**
+   * D865 (decided by the user): how the link was made, from what the chain and the issuer record, never from the
+   * partner. An email member joined by a choice in a sign-in window (case B's "Link and continue", or an app's
+   * add-a-sign-in): `chosen`. A Google member of an email account: `auto` (the contract's `Member.auto`, made by
+   * automatic linking, read with `get_account` on the vault's RPC) and google-match's answer for this very login (the
+   * issuer, from Google's own userinfo with this login's access token): `linked` (this Google account's verified address
+   * is in this account) and Google-hosted means the same person's Gmail or Workspace address joined silently (case A,
+   * D119): `silent`, no notice. `linked` and not hosted: case A after "Link and continue": `chosen`. `auto` false (an
+   * explicit link): `chosen`. Anything that can't be told (no google-match in this app, the issuer down, another
+   * answer, the account unreadable): `automatic`, shown with words that don't push removal.
+   */
+  private async memberLinkHow(who: Who, root: IdentityRef, memberKey: string): Promise<'chosen' | 'automatic' | 'silent'> {
+    if (who.ref.provider !== 'google' || root.provider !== EMAIL_PROVIDER) return 'chosen';
+    let auto: boolean | null = null;
+    try {
+      const account = await this.ctx.near.account(this.ctx.config.scopeId, who.ref.provider, who.ref.sub);
+      const m = account?.members.find((x) => x.key === memberKey);
+      auto = m ? m.auto : null;
+    } catch {
+      this.check();
+    }
+    if (auto === false) return 'chosen';
+    const match = this.matched;
+    if (auto === true && match?.decision === 'linked') return match.googleHosted ? 'silent' : 'chosen';
+    return 'automatic';
   }
 
   /**
@@ -2063,7 +2097,8 @@ class LinkWaiting {
           changed: { t: 'link_cancel', outcome: 'not_cancelled', code: 'stale_epoch' },
           unknown: { t: 'link_cancel', outcome: 'unknown', code: 'near_unavailable' },
         };
-        await this.follow.notice(moved[before]);
+        const slot = await this.follow.notice(moved[before]);
+        if (before === 'member') await this.removeInstead(slot);
         return;
       }
       try {
@@ -2073,7 +2108,8 @@ class LinkWaiting {
         // A failure may still have landed (a lost answer), or the link activated meanwhile: the chain says which.
         const after = await this.standing(offer);
         const outcome = after === 'own' ? 'cancelled' : after === 'member' ? 'now_active' : after === 'unknown' ? 'unknown' : 'not_cancelled';
-        await this.follow.notice(outcome === 'cancelled' || outcome === 'now_active' ? { t: 'link_cancel', outcome } : { t: 'link_cancel', outcome, code });
+        const slot = await this.follow.notice(outcome === 'cancelled' || outcome === 'now_active' ? { t: 'link_cancel', outcome } : { t: 'link_cancel', outcome, code });
+        if (outcome === 'now_active') await this.removeInstead(slot);
         return;
       }
       await this.follow.notice({ t: 'link_cancel', outcome: 'cancelled' });
@@ -2081,6 +2117,17 @@ class LinkWaiting {
       this.ctx.timers.clearTimeout(timer);
       if (offer) zero(offer.salt);
     }
+  }
+
+  /**
+   * D865 (decided by the user): the waiting period ended while the user was cancelling, so this email is now an active
+   * member: the popup's "Remove this email" (after its confirmation) answers `{choice: 'remove'}`, and the member's own
+   * removal runs from here, with its own proof and checks (`MemberRemove`). Anything else ends the wait.
+   */
+  private async removeInstead(slot: number): Promise<void> {
+    const answer = await this.follow.answer(slot, this.signal.signal).catch(() => null);
+    if (!answer || !('choice' in answer) || answer.choice !== 'remove') return;
+    await new MemberRemove(this.ctx, this.follow, this.who).run();
   }
 
   /** The cancel for this email, from a fresh `get_identity` (its key checked against the one computed here). */

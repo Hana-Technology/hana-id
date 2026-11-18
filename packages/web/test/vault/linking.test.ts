@@ -654,6 +654,23 @@ describe('D864: the email that waits to join a wallet cancels the link itself', 
     expect(b.backend.count('/v1/link/cancel')).toBe(0);
   });
 
+  it('now_active offers the member’s own removal right there (D865): remove → an unlink proof for this member → unlink_identity', async () => {
+    const { b, t, run, proof } = await waiting();
+    members(b)[0]!.active = true;
+    await answer(t, run, 2, { idToken: await proof(), as: 'proof' });
+    expect(await notice(t, run, 4)).toEqual({ t: 'link_cancel', outcome: 'now_active' });
+    await answer(t, run, 4, { choice: 'remove' });
+    const r = (await notice(t, run, 6)) as Extract<FollowNotice, { t: 'member_remove' }>;
+    const c = (r.prove as unknown as { commitment: { action: string; rootIk: string; memberIk: string; epoch: number; salt: number[] } }).commitment;
+    expect(c).toMatchObject({ action: 'unlink', rootIk: hex(ik(G)), memberIk: hex(ik(E)), epoch: 1 });
+    const nonce = linkChangeNonce(ENV.signer, SCOPE, 'unlink', fromHex(c.rootIk), fromHex(c.memberIk), c.epoch, Uint8Array.from(c.salt));
+    const jwt = await issuer.token(emailClaims(run.params, { nonce, jti: 'jti-email-9' }, t.browser.timers.now));
+    await answer(t, run, 6, { idToken: jwt, as: 'proof' });
+    expect(await notice(t, run, 8)).toEqual({ t: 'member_removed', outcome: 'removed' });
+    expect(b.backend.calls.filter((x) => x.path === '/v1/link/unlink')).toHaveLength(1);
+    expect(b.backend.count('/v1/link/cancel')).toBe(0);
+  });
+
   it('already cancelled (by the Google side, or another window): “already_cancelled”, nothing relayed', async () => {
     const { b, t, run, proof } = await waiting();
     b.backend.accounts.get(hex(ik(G)))!.members.splice(0);
@@ -764,7 +781,8 @@ describe('D865: an active member’s own notice, and its removal of itself', () 
 
   it('asks before anything opens the shared wallet: the root’s method, since when, an opaque link id; nothing else', async () => {
     const { b, n } = await memberLogin();
-    expect(n).toEqual({ t: 'member_link', method: 'email', rootProvider: 'google', sinceMs: SINCE, linkId: expect.stringMatching(/^[0-9a-f]{64}$/u) });
+    // An email member joined by a choice (case B's "Link and continue", or an app's add-a-sign-in): `chosen`.
+    expect(n).toEqual({ t: 'member_link', method: 'email', rootProvider: 'google', sinceMs: SINCE, linkId: expect.stringMatching(/^[0-9a-f]{64}$/u), how: 'chosen' });
     expect(JSON.stringify(n)).not.toContain(SUB);
     expect(JSON.stringify(n)).not.toContain(EMAIL_SUB);
     expect(b.backend.count('/v1/login')).toBe(0);
@@ -884,6 +902,67 @@ describe('D865: an active member’s own notice, and its removal of itself', () 
     const run = await popupHello(t);
     await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
     expect(await notice(t, run, 2)).toMatchObject({ t: 'member_link', sinceMs: 1_000 });
+  });
+
+  /**
+   * A Google login of G, an active member of E's account (case A: `auto` as given), with google-match's answer for this
+   * login (or none: the issuer down); returns the vault's slot-2 notice.
+   */
+  async function googleMember(o: { auto: boolean; match: Record<string, unknown> | null }) {
+    const b = emailBrowser();
+    b.backend.opened.add(hex(ik(E)));
+    b.backend.link(E, G, { active: true, effectiveAtMs: SINCE, auto: o.auto });
+    b.backend.googleMatch = o.match ? () => o.match as Record<string, unknown> : () => apiError(500, 'internal');
+    const t = await tab(b);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    await googleAnswer(t, run);
+    return { b, t, run, pending, n: await notice(t, run, 2) };
+  }
+
+  it('item 2: an automatic link of the same person’s Google-hosted address (google-match: linked, hosted) asks nothing', async () => {
+    const { n, pending } = await googleMember({ auto: true, match: { decision: 'linked', googleHosted: true, linkable: false } });
+    expect(n.t).toBe('done');
+    expect((await pending).error).toBeUndefined();
+  });
+
+  it('item 2: an automatic link whose address Google doesn’t host was made after “Link and continue”: chosen', async () => {
+    const { n } = await googleMember({ auto: true, match: { decision: 'linked', googleHosted: false, linkable: false } });
+    expect(n).toMatchObject({ t: 'member_link', method: 'google', rootProvider: 'email', how: 'chosen' });
+  });
+
+  it('item 2: an explicit link (not auto) is chosen, even for a Google-hosted address', async () => {
+    const { n } = await googleMember({ auto: false, match: { decision: 'linked', googleHosted: true, linkable: false } });
+    expect(n).toMatchObject({ t: 'member_link', how: 'chosen' });
+  });
+
+  it('item 2: can’t tell (google-match down, or its answer isn’t this link’s): shown, with the automatic wording', async () => {
+    for (const match of [null, { decision: 'none', googleHosted: true, linkable: false }]) {
+      const { n } = await googleMember({ auto: true, match });
+      expect(n, JSON.stringify(match)).toMatchObject({ t: 'member_link', how: 'automatic' });
+    }
+  });
+
+  it('every interactive sign-in that can open a member path has the channel: an app without email login (record) asks too', async () => {
+    // A Google member of an email wallet signs in through another app of the scope that offers Google only.
+    const b = new Browser();
+    b.backend.opened.add(hex(ik(E)));
+    b.backend.link(E, G, { active: true, effectiveAtMs: SINCE, auto: true });
+    const t = await readyTab(b, { googleJwk: g.jwk, env: EMAIL_ENV2, options: { googleEmailFlow: 'token_first' } });
+    tabs.push(t);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    expect(run.params.emailRecord).toBe(true);
+    const relayKey = run.params.relayKey as Uint8Array;
+    const one = followSlot(run.params.followKey as Uint8Array, 1).id;
+    b.backend.writeRelayRaw(one, await encryptRelayPayload(relayKey, one, { accessToken: 'ya29.record' }));
+    await b.backend.writeRelay(run.params.relayId as string, relayKey, { idToken: await g.token(tokenClaims(run.params, {}, t.browser.timers.now)), access: 'follow' } as RelayPayload);
+    // No google-match in such an app, so how the link was made can't be told: shown, automatic wording.
+    expect(await notice(t, run, 2)).toMatchObject({ t: 'member_link', method: 'google', how: 'automatic' });
+    await answer(t, run, 2, { choice: 'keep' });
+    expect((await pending).error).toBeUndefined();
+    // And its last word, so the popup that waited for it closes.
+    expect((await notice(t, run, 4)).t).toBe('done');
   });
 
   it('a popup cancel on the notice ends the login (login_cancelled), nothing opened', async () => {

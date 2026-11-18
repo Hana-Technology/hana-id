@@ -577,10 +577,11 @@ button.addEventListener('click', async () => {
   also cancel it itself: its refused sign-in leaves the popup open on the waiting link, with **Cancel this link** (one
   more code to the address) and **Keep the link**. Your `login()` has already rejected with `link_pending` by then;
   nothing else reaches your page. A method linked to someone's wallet (it opens that wallet but isn't its first
-  sign-in) is asked, before its sign-in opens the wallet, whether to keep the link or remove itself (once per device,
-  unless it removes). **Keep it**: `login()` goes on as usual. **Remove**: `login()` rejects with `login_cancelled`
-  and `data.reason: 'link_remove'`, and the popup finishes the removal (one more code, or Google); a later sign-in
-  with that method opens a new wallet of its own.
+  sign-in) is asked, before its sign-in opens the wallet, whether to keep the link or remove itself (not for a Gmail
+  address linked automatically to its own Google account). **Not now** or **Don't ask again on this device**:
+  `login()` goes on as usual. **Remove**: `login()` rejects with `login_cancelled` and `data.reason: 'link_remove'`,
+  and the popup finishes the removal (one more code, or Google); a later sign-in with that method opens a new wallet
+  of its own. In an app without email login the popup also stays open until Journear Passport's last word.
   - `await hana.account()` → `{methods: [{provider: 'google' | 'email', status: 'active' | 'pending', effectiveAtMs,
     root}]}`: the wallet's own method (`root: true`) and the ones linked to it. No identifiers, no addresses. Calls
     within 5 s of a read share it (the vault reads afresh after a login, a link or a banner's action). **Show

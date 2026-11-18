@@ -386,13 +386,13 @@ describe('/login/callback, token_first’s access leg', () => {
     expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: 'access_denied' });
     // An app with email login hears the vault's last word in the follow-up mode.
     expect(s.win.location.assigned).toEqual([`/login/email#${s.state}`]);
-    // A record-only login closes.
+    // A record-only login too since D865 (it hears the vault's stop there).
     resetDom();
     const r = started((st) => `#error=access_denied&state=${st}`, { record: true });
     const b = api();
     await run(r.win, b);
     expect(await decrypt(r.relayKey, r.state, b)).toEqual({ error: 'access_denied' });
-    expect(r.win.closed).toBe(true);
+    expect(r.win.location.assigned).toEqual([`/login/email#${r.state}`]);
   });
 
   it('slot 1 can’t be written: the login’s slot says so, nothing else is asked of Google', async () => {
@@ -418,13 +418,13 @@ describe('/login/callback, token_first’s ID leg', () => {
     expect(JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.state)!)).toMatchObject({ next: 2 });
   });
 
-  it('a record-only login: relays the same, then closes (no follow-up mode); case B’s proof rides in an email app', async () => {
+  it('a record-only login: relays the same, then the follow-up mode too (D865: a member is asked before its wallet opens); case B’s proof rides in an email app', async () => {
     const r = idLeg((st) => `#id_token=${GTOKEN}&state=${st}`, { record: true });
     const a = api();
     expect(await run(r.win, a)).toBe('relayed');
     expect(await decrypt(r.relayKey, r.state, a)).toEqual({ idToken: GTOKEN, access: 'follow' });
-    expect(r.win.closed).toBe(true);
-    expect(r.win.location.assigned).toEqual([]);
+    expect(r.win.location.assigned).toEqual([`/login/email#${r.state}`]);
+    expect(JSON.parse(r.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + r.state)!)).toMatchObject({ next: 2 });
     resetDom();
     const caseB = { linkTicket: 'T'.repeat(43), emailSub: `e1.${'Q'.repeat(43)}` };
     const b = idLeg((st) => `#id_token=${GTOKEN}&state=${st}`, { caseB });

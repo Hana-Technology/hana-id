@@ -116,6 +116,12 @@ test('case A, Google-hosted: an email wallet, then Google with that Gmail addres
   await expect.poll(() => linkEvents(page)).toContainEqual(expect.objectContaining({ provider: 'google', status: 'active' }));
   // A link notice went to the address.
   await expect.poll(async () => (await mails(to)).some((m) => m.kind === 'link_notice')).toBe(true);
+  // D865: the link was automatic for the same person's Gmail (on chain `auto`; google-match: linked, Google-hosted), so
+  // the next Google sign-in asks nothing and opens the wallet.
+  await logout(page, 'out2');
+  const again = await googleStart(page, 'again');
+  await closeOf(again);
+  expect(await okValue(page, 'again')).toEqual(wallet);
 });
 
 test('case A, not hosted: “Link and continue” sends a code to the address first, then opens the email wallet', async ({ page, google }, info) => {
@@ -140,7 +146,7 @@ test('case A, not hosted: “Link and continue” sends a code to the address fi
   await logout(page, 'out2');
   const again = await googleStart(page, 'again');
   await expect(again.locator('h1')).toHaveText('This Google account now also opens another wallet');
-  await again.click('#member-keep');
+  await again.click('#member-dont-ask');
   expect(await okValue(page, 'again')).toEqual(wallet);
   await logout(page, 'out3');
   const third = await googleStart(page, 'third');
@@ -200,7 +206,7 @@ test('case B, Google-hosted: a Google wallet, then the same Gmail by email: “L
   await clickAction(page, 'again', 'loginWith', { method: 'email' });
   const second = await p2;
   await emailCode(second, to);
-  await second.click('#member-keep');
+  await second.click('#member-dont-ask');
   expect(await okValue(page, 'again')).toEqual(wallet);
   await logout(page, 'out3');
   expect(await emailLogin(page, to, 'third')).toEqual(wallet);
@@ -374,7 +380,7 @@ test('D864: “Keep the link” closes the window and the link stays pending', a
   expect(requests.count(`${API_URL}/v1/link/cancel`)).toBe(0);
 });
 
-test('D864: the waiting period ends before the code is typed: “can’t be cancelled any more”, nothing relayed', async ({ page, google, requests, browserName }, info) => {
+test('D864/D865: the waiting period ends before the code is typed: “can’t be cancelled any more”, nothing cancelled; Remove this email right there', async ({ page, google, requests, browserName }, info) => {
   const { popup, to, sub } = await waitingLink(page, info, google, 'le');
   const before = await codeCount(to);
   await popup.click('#link-cancel');
@@ -383,9 +389,18 @@ test('D864: the waiting period ends before the code is typed: “can’t be canc
   await enterCode(popup, to, before);
   await expect(popup.locator('#link-cancel-result')).toHaveAttribute('data-outcome', 'now_active');
   await expect(popup.locator('h1')).toHaveText('This link can’t be cancelled any more');
-  await expect(popup.locator('#link-cancel-advice')).toContainText('This email now opens a wallet that belongs to whoever holds that Google account. Anything you add to it is theirs.');
+  await expect(popup.locator('#link-cancel-what')).toHaveText('The waiting period has ended: this email and that Google account now open the same wallet.');
+  await expect(popup.locator('#link-cancel-advice')).toHaveText('If you didn’t set this up, don’t add money to it. Choose Remove this email below, and change your email password.');
   await shot(popup, 'already-active', browserName);
   expect(requests.count(`${API_URL}/v1/link/cancel`)).toBe(0);
+  // The member's own removal from here: its confirmation, one more code, unlink_identity.
+  await popup.click('#link-active-remove');
+  await expect(popup.locator('h1')).toHaveText('Remove this email from that wallet?');
+  const again = await codeCount(to);
+  await popup.click('#member-remove-confirm');
+  await enterCode(popup, to, again);
+  await expect(popup.locator('#member-removed')).toHaveAttribute('data-outcome', 'removed');
+  expect(requests.count(`${API_URL}/v1/link/unlink`)).toBe(1);
 });
 
 // D865: an email that is an active member of a Google wallet is asked, before its sign-in opens that wallet, whether
@@ -426,16 +441,22 @@ async function toMemberNotice(page: Page, to: string, name: string): Promise<Pag
   return popup;
 }
 
-test('D865: an active email member is asked first; Keep it opens the shared wallet, and this device isn’t asked again', async ({ page, google, browserName }, info) => {
+test('D865: an active email member is asked first; Not now opens the shared wallet and asks again next time; Don’t ask again doesn’t', async ({ page, google, browserName }, info) => {
   const { to, wallet } = await activeMember(page, info, google, 'mk');
   const popup = await toMemberNotice(page, to, 'member');
   await expect(popup.locator('h1')).toHaveText('This email now also opens another wallet');
   await expect(popup.locator('#member-link-what')).toContainText('this email opens a wallet that a Google account also opens. Whoever holds that Google account can open it too.');
+  await expect(popup.locator('#member-dont-ask')).toHaveText('Don’t ask again on this device');
   await shot(popup, 'member-notice', browserName);
-  await popup.click('#member-keep');
+  await popup.click('#member-not-now');
   expect(await okValue(page, 'member')).toEqual(wallet);
   await logout(page, 'out3');
-  // The same device: no question, the shared wallet as before.
+  // Not now stored nothing: asked again.
+  const second = await toMemberNotice(page, to, 'member2');
+  await second.click('#member-dont-ask');
+  expect(await okValue(page, 'member2')).toEqual(wallet);
+  await logout(page, 'out4');
+  // The same device after "Don't ask again": no question, the shared wallet as before.
   expect(await emailLogin(page, to, 'again')).toEqual(wallet);
 });
 

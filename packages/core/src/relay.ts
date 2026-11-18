@@ -180,8 +180,9 @@ export interface LinkBanner {
  *   cancel it with `prove` (an email code over the `link_change` nonce for this member) or to keep it.
  * - `link_cancel`: what became of that cancel (`code`, for support, when it wasn't made or can't be told).
  * - `member_link`: before the sign-in goes on, this sign-in (`method`) is an active member of an account whose root
- *   signs in with `rootProvider`, since `sinceMs`; the popup asks "Remove this email" or "Keep it" (answered
- *   `{choice}`), and skips the question on a device that kept this link (`linkId`, an opaque hash of the link).
+ *   signs in with `rootProvider`, since `sinceMs`, made as `how` says; the popup asks "Remove this email" or "Not
+ *   now" (answered `{choice}`), and skips the question on a device where the user chose "Don't ask again on this
+ *   device" for this link (`linkId`, an opaque hash of the link).
  * - `member_remove`: the removal's proof (a fresh sign-in of this method over the `link_change` "unlink" nonce).
  * - `member_removed`: what became of that removal (`code`, for support, when it wasn't made or can't be told).
  */
@@ -194,9 +195,16 @@ export type FollowNotice =
   | { t: 'stop'; code: string; effectiveAtMs?: number; banners?: LinkBanner[] }
   | { t: 'link_waiting'; provider: string; effectiveAtMs: number; prove: FollowProve }
   | { t: 'link_cancel'; outcome: LinkCancelOutcome; code?: string }
-  | { t: 'member_link'; method: string; rootProvider: string; sinceMs: number; linkId: string }
+  | { t: 'member_link'; method: string; rootProvider: string; sinceMs: number; linkId: string; how: MemberLinkHow }
   | { t: 'member_remove'; prove: FollowProve }
   | { t: 'member_removed'; outcome: MemberRemoveOutcome; code?: string };
+
+/**
+ * How the link was made, as far as the chain and the issuer say: by a choice the user made in a sign-in window
+ * (`chosen`: "Link and continue", or an app's add-a-sign-in), or possibly automatically for the same person's Gmail or
+ * Google Workspace address, which the vault couldn't rule out (`automatic`: the words then don't push removal).
+ */
+export type MemberLinkHow = 'chosen' | 'automatic';
 
 /** A member's removal of itself: made, already gone before it was sent, refused (still linked), or not known. */
 export type MemberRemoveOutcome = 'removed' | 'already_removed' | 'not_removed' | 'unknown';
@@ -262,7 +270,17 @@ export function isFollowNotice(v: unknown): v is FollowNotice {
     case 'link_cancel':
       return only('t', 'outcome', 'code') && typeof v.outcome === 'string' && LINK_CANCEL_OUTCOMES.includes(v.outcome) && (v.code === undefined || (typeof v.code === 'string' && /^[a-z_]{1,64}$/u.test(v.code)));
     case 'member_link':
-      return keys.length === 5 && only('t', 'method', 'rootProvider', 'sinceMs', 'linkId') && isProvider(v.method) && isProvider(v.rootProvider) && v.method !== v.rootProvider && isMsValue(v.sinceMs) && typeof v.linkId === 'string' && /^[0-9a-f]{64}$/u.test(v.linkId);
+      return (
+        keys.length === 6 &&
+        only('t', 'method', 'rootProvider', 'sinceMs', 'linkId', 'how') &&
+        isProvider(v.method) &&
+        isProvider(v.rootProvider) &&
+        v.method !== v.rootProvider &&
+        isMsValue(v.sinceMs) &&
+        typeof v.linkId === 'string' &&
+        /^[0-9a-f]{64}$/u.test(v.linkId) &&
+        (v.how === 'chosen' || v.how === 'automatic')
+      );
     case 'member_remove':
       return keys.length === 2 && only('t', 'prove') && isFollowProve(v.prove);
     case 'member_removed':

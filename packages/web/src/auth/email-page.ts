@@ -64,9 +64,9 @@
 // - `member_link` (D865): before the sign-in goes on, this sign-in is an active member of a wallet another sign-in
 //   opens: "Remove this email" (a confirmation step that says what removing costs, then `{choice: 'remove'}`: the
 //   sign-in stops, and `member_remove` asks for one more code, or Google, over the vault's `link_change` "unlink"
-//   commitment) or "Keep it" (`{choice: 'keep'}`: the sign-in goes on, and this device isn't asked again about this
-//   link: `localStorage` on authOrigin, `hana.ml.<linkId>`). Then `member_removed`: removed, already removed, not
-//   removed or not known.
+//   commitment), "Not now" (`{choice: 'keep'}`: the sign-in goes on; asked again next time) or the smaller "Don't ask
+//   again on this device" (the same, and this device isn't asked again about this link: `localStorage` on
+//   authOrigin, `hana.ml.<linkId>`). Then `member_removed`: removed, already removed, not removed or not known.
 //
 // - pk_test_ apps (the login entry carries /login's timings): this step's stages ride in the relay slot with the token
 //   (timings.ts `emailLoad` … `emailVerify`), each a sum of durations on this page's clock. Nothing else is measured.
@@ -1076,7 +1076,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       case 'link_waiting':
         return showLinkWaiting(n, slot);
       case 'link_cancel':
-        return showLinkCancel(n);
+        return showLinkCancel(n, slot);
       case 'member_link':
         return showMemberLink(n, slot);
       case 'member_remove':
@@ -1381,8 +1381,9 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   }
 
   /** What became of the cancel (the vault re-read the chain before it said so). */
-  function showLinkCancel(n: Extract<FollowNotice, { t: 'link_cancel' }>): void {
-    endFollow();
+  function showLinkCancel(n: Extract<FollowNotice, { t: 'link_cancel' }>, slot: number): void {
+    // Too late to cancel: the member's own removal is offered here (D865), so the channel stays open for it.
+    if (n.outcome !== 'now_active') endFollow();
     const app = () => d.h('strong', {}, ctx.appName);
     const codeLine = n.code ? d.h('p', { class: 'code' }, supportCode(n.code)) : null;
     const passwordAdvice = d.h('p', { attrs: { id: 'link-cancel-advice' } }, 'If you didn’t start this link, change your email password. Someone may have used a code from your mailbox.');
@@ -1400,9 +1401,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       case 'now_active':
         title = 'This link can’t be cancelled any more';
         body = [
-          alert(d, 'danger', { class: 'note', attrs: { role: 'alert', id: 'link-cancel-what' } }, `The waiting period has ended. This email and ${waitingOther} now open the same ${BRAND.company} wallet.`),
-          d.h('p', { attrs: { id: 'link-cancel-advice' } }, `This email now opens a wallet that belongs to whoever holds ${waitingOther}. Anything you add to it is theirs. If you didn’t do this, change your email password. Don’t sign in to `, app(), ' with this email, don’t add money to that wallet, and tell the app’s support.'),
-          d.h('p', { class: 'muted', attrs: { id: 'link-cancel-remove' } }, 'Within 7 days, whoever signs in to ', app(), ` with ${waitingOther} can remove this email: the sign-in window shows them a button to remove it.`),
+          alert(d, 'danger', { class: 'note', attrs: { role: 'alert', id: 'link-cancel-what' } }, `The waiting period has ended: this email and ${waitingOther} now open the same wallet.`),
+          d.h('p', { attrs: { id: 'link-cancel-advice' } }, 'If you didn’t set this up, don’t add money to it. Choose Remove this email below, and change your email password.'),
         ];
         break;
       case 'not_cancelled':
@@ -1422,7 +1422,30 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         ];
         break;
     }
-    d.show(d.h('section', { class: 'panel', attrs: { id: 'link-cancel-result', 'data-outcome': n.outcome } }, d.h('h1', {}, title), header(), ...body, d.h('div', { class: 'actions' }, closeButton('link-cancel-close'))));
+    let actions: HTMLElement[] = [closeButton('link-cancel-close')];
+    if (n.outcome === 'now_active') {
+      const removeB = d.h('button', { class: `${BTN.danger} jp-btn-lg`, attrs: { type: 'button', id: 'link-active-remove' } }, 'Remove this email');
+      const closeB = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'link-cancel-close' } }, 'Close');
+      closeB.addEventListener('click', () => {
+        endFollow();
+        settle('done');
+        win.close();
+      });
+      memberMethod = 'email';
+      memberOther = waitingOther.replace(/^that /u, '');
+      removeB.addEventListener('click', () => showMemberConfirm({ method: 'email', otherAccount: memberOther }, slot, () => showLinkCancel(n, slot)));
+      actions = [removeB, closeB];
+    }
+    d.show(
+      d.h(
+        'section',
+        { class: 'panel', attrs: { id: 'link-cancel-result', 'data-outcome': n.outcome } },
+        d.h('h1', {}, title),
+        header(),
+        ...body,
+        d.h('div', { class: n.outcome === 'now_active' ? 'actions stack' : 'actions' }, ...actions),
+      ),
+    );
     notice = n.code ?? n.outcome;
     settle('link_cancelled');
   }
@@ -1457,8 +1480,10 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   /**
    * This sign-in opens a wallet that another sign-in (the wallet's first) also opens: whoever holds that one can open it
-   * too. "Remove this email" goes to a confirmation that says what removing costs; "Keep it" goes on with the sign-in.
-   * A device that kept this link isn't asked again.
+   * too. "Remove this email" goes to a confirmation that says what removing costs; "Not now" goes on with the sign-in
+   * and stores nothing (asked again next time); the smaller "Don't ask again on this device" goes on and stores the
+   * link's id. A link that may have been made automatically (`how: 'automatic'`) is told in words that don't push
+   * removal, in a blue box, with Not now first and Remove not in red.
    */
   function showMemberLink(n: Extract<FollowNotice, { t: 'member_link' }>, slot: number): void {
     if (keptHere(n.linkId)) {
@@ -1469,32 +1494,44 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     memberMethod = n.method;
     memberOther = w.other;
     const since = dateText(n.sinceMs);
-    const removeB = d.h('button', { class: `${BTN.danger} jp-btn-lg`, attrs: { type: 'button', id: 'member-remove' } }, `Remove this ${w.self}`);
-    const keepB = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'member-keep' } }, 'Keep it');
+    const automatic = n.how === 'automatic';
+    const removeB = d.h('button', { class: `${automatic ? BTN.secondary : BTN.danger} jp-btn-lg`, attrs: { type: 'button', id: 'member-remove' } }, `Remove this ${w.self}`);
+    const notNowB = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'member-not-now' } }, 'Not now');
+    const dontAskB = d.h('button', { class: 'link', attrs: { type: 'button', id: 'member-dont-ask' } }, 'Don’t ask again on this device');
+    const all = [removeB, notNowB, dontAskB];
     let chosen = false;
-    removeB.addEventListener('click', () => {
+    const go = (f: () => void) => () => {
       if (chosen) return;
       chosen = true;
-      showMemberConfirm(n, slot);
-    });
-    keepB.addEventListener('click', () => {
-      if (chosen) return;
-      chosen = true;
-      removeB.setAttribute('disabled', '');
-      keepB.setAttribute('disabled', '');
-      keepHere(n.linkId);
-      void answer(slot, { choice: 'keep' });
-    });
+      for (const b of all) b.setAttribute('disabled', '');
+      f();
+    };
+    removeB.addEventListener('click', go(() => showMemberConfirm({ method: n.method, otherAccount: w.other }, slot, () => showMemberLink(n, slot))));
+    notNowB.addEventListener('click', go(() => void answer(slot, { choice: 'keep' })));
+    dontAskB.addEventListener(
+      'click',
+      go(() => {
+        keepHere(n.linkId);
+        void answer(slot, { choice: 'keep' });
+      }),
+    );
     d.show(
       d.h(
         'section',
-        { class: 'panel', attrs: { id: 'member-link' } },
+        { class: 'panel', attrs: { id: 'member-link', 'data-how': n.how } },
         d.h('h1', {}, `This ${w.self} now also opens another wallet`),
         header(),
-        alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'member-link-what' } }, `Since ${since}, this ${w.self} opens a wallet that ${w.otherA} also opens. Whoever holds that ${w.other} can open it too.`),
-        d.h('p', { attrs: { id: 'member-link-advice' } }, `If you didn’t set this up, remove this ${w.self} from it.`),
-        d.h('p', { class: 'muted', attrs: { id: 'member-link-keep' } }, 'If you set this up yourself, keep it. We won’t ask again on this device.'),
-        d.h('div', { class: 'actions stack' }, removeB, keepB),
+        alert(d, automatic ? 'info' : 'warning', { class: 'note', attrs: { role: automatic ? 'status' : 'alert', id: 'member-link-what' } }, `Since ${since}, this ${w.self} opens a wallet that ${w.otherA} also opens. Whoever holds that ${w.other} can open it too.`),
+        d.h(
+          'p',
+          { attrs: { id: 'member-link-advice' } },
+          automatic
+            ? `This usually happens when that ${w.other} is your own Gmail or Google Workspace address. If you don’t recognise it, remove this ${w.self} from it.`
+            : `If you didn’t set this up, remove this ${w.self} from it.`,
+        ),
+        d.h('div', { class: 'actions stack' }, ...(automatic ? [notNowB, removeB] : [removeB, notNowB])),
+        d.h('p', { class: 'muted', attrs: { id: 'member-link-keep' } }, 'If you set this up yourself, you can choose Don’t ask again on this device.'),
+        d.h('p', { class: 'muted links' }, dontAskB),
       ),
     );
     notice = 'member_link';
@@ -1502,8 +1539,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   }
 
   /** Before removing: what it costs (the one thing it can't undo for this user), then "Remove it" or "Go back". */
-  function showMemberConfirm(n: Extract<FollowNotice, { t: 'member_link' }>, slot: number): void {
-    const w = memberWords(n.method, n.rootProvider);
+  function showMemberConfirm(c: { method: string; otherAccount: string }, slot: number, onBack: () => void): void {
+    const w = { self: c.method === 'google' ? 'Google account' : 'email', other: c.otherAccount };
     const go = d.h('button', { class: `${BTN.danger} jp-btn-lg`, attrs: { type: 'button', id: 'member-remove-confirm' } }, 'Remove it');
     const back = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'member-remove-back' } }, 'Go back');
     let chosen = false;
@@ -1517,7 +1554,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     back.addEventListener('click', () => {
       if (chosen) return;
       chosen = true;
-      showMemberLink(n, slot);
+      onBack();
     });
     d.show(
       d.h(
@@ -1526,9 +1563,9 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         d.h('h1', {}, `Remove this ${w.self} from that wallet?`),
         header(),
         alert(d, 'danger', { class: 'note', attrs: { role: 'alert', id: 'member-confirm-what' } }, `After you remove it, this ${w.self} can’t open that wallet any more. Anything in it stays there, and whoever holds that ${w.other} can still open it.`),
-        d.h('p', { attrs: { id: 'member-confirm-money' } }, `If you added money to that wallet, move it out first. Choose Go back, then Keep it, and sign in to move it.`),
+        d.h('p', { attrs: { id: 'member-confirm-money' } }, 'If you added money to that wallet, move it out first. Choose Go back, then Not now, and sign in to move it. You’ll be asked again next time.'),
         d.h('p', { attrs: { id: 'member-confirm-next' } }, `If you sign in with this ${w.self} again afterwards, it opens a new, empty wallet of its own.`),
-        d.h('p', { class: 'muted', attrs: { id: 'member-confirm-check' } }, n.method === 'google' ? 'Google will ask you to sign in again to check it’s you.' : 'We’ll send one more code to this email to check it’s you.'),
+        d.h('p', { class: 'muted', attrs: { id: 'member-confirm-check' } }, c.method === 'google' ? 'Google will ask you to sign in again to check it’s you.' : 'We’ll send one more code to this email to check it’s you.'),
         d.h('div', { class: 'actions stack' }, go, back),
       ),
     );

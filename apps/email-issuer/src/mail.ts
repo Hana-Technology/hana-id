@@ -173,7 +173,8 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
  * is today. A pending link (case B, not Google-hosted) is cancelled from this email's own sign-in (D864): while it
  * waits, an email sign-in to the app is refused and the sign-in window shows the waiting link with "Cancel this link"
  * (one more code to this address; `vault/login.ts` `LinkWaiting`). Once the waiting period is over that sign-in would
- * open the Google account's wallet, so the mail says not to sign in with this email then. An active link is removed
+ * open the Google account's wallet, but it asks first and offers to remove this email (D865), so the mail sends the
+ * reader there in both cases (the issuer doesn't know the link's date: "during the waiting period"). An active link is removed
  * by the wallet's first sign-in method, its root, from the sign-in window's link banners (D259, `Afterword`), within the
  * 7 days the banner offers it (`RECENT_LINK_MS`). An active link may already have let another sign-in open the wallet
  * (and show its key), and removing it only stops it from now on: so "Not you?" also says to move what the wallet holds.
@@ -186,7 +187,7 @@ export function linkNoticeMail(input: { to: string; appName: string; pending: bo
     ? `This email is being linked with a Google account, so both will open the same ${BRAND.company} wallet in ${appText}. The link starts working after a waiting period (24 hours; shorter in a test version), and it can be cancelled until then.`
     : `This email and a Google account now both open the same ${BRAND.company} wallet in ${appText}.`;
   const notYou = input.pending
-    ? `Change your email password. Then sign in to ${appText} with this email before the waiting period ends: ${BRAND.product} will show the new sign-in with a button to cancel it. Once the waiting period has ended, don’t sign in to ${appText} with this email, and tell the app’s support.`
+    ? `Change your email password, then sign in to ${appText} with this email. During the waiting period you can cancel the link there. After it, the ${BRAND.product} sign-in window lets you remove this email from that wallet. Don’t add money to that wallet.`
     : `Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Within 7 days, sign in to ${appText} the way you first signed in to this wallet: the ${BRAND.product} sign-in window shows the new sign-in with a button to remove it. Then move what’s in this wallet to a new one.`;
   const subject = app ? `A sign-in method was added in ${app}` : 'A sign-in method was added';
   return {

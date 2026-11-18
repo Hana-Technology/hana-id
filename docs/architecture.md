@@ -505,9 +505,17 @@ message.
    the wait ends at `AFTERWORD_MS`.
    An active member's own sign-in (D865; no link made by this login, the follow-up channel open): after step 5 and
    before the chain step, the vault re-reads `get_identity` and sends `member_link {method, rootProvider, sinceMs,
-   linkId}` (`linkId` = sha256 of the root's and the member's keys and `sinceMs`). The popup answers `{choice: 'keep'}`
-   (at once when its `localStorage` on `authOrigin` holds `hana.ml.<linkId>`; else after "Keep it", which stores it):
-   the login goes on as before. `{choice: 'remove'}` (after a confirmation step): the login ends `login_cancelled`
+   linkId, how}` (`linkId` = sha256 of the root's and the member's keys and `sinceMs`; `how`, below). The popup answers
+   `{choice: 'keep'}` (at once when its `localStorage` on `authOrigin` holds `hana.ml.<linkId>`; else after "Not now",
+   which stores nothing, or "Don't ask again on this device", which stores it): the login goes on as before. `how`
+   (`memberLinkHow`): an email member is `chosen` (case B's "Link and continue", or `linkAccount`); a Google member of
+   an email root reads `Member.auto` from `get_account` and google-match's answer for this login: `auto` and `linked`
+   and Google-hosted → no notice at all (case A's silent link of the same person's Gmail or Workspace address);
+   `linked` and not hosted, or `auto` false → `chosen`; anything else (no google-match in the app, the issuer down,
+   another decision, the account unreadable) → `automatic`, shown with words that don't push removal. Every login with
+   the follow-up key has the channel, an app without email login (record) too: its callback goes to the follow-up
+   mode, and the vault always sends its last word. On the D864 "can't be cancelled any more" screen the popup offers
+   the same removal: its `{choice: 'remove'}` starts `MemberRemove` from `LinkWaiting`. `{choice: 'remove'}` (after a confirmation step): the login ends `login_cancelled`
    (`data.reason: 'link_remove'`) and `MemberRemove` takes the channel: from a fresh `get_identity` it sends
    `member_remove {prove}` (an email code over a `link_change` "unlink" nonce for this member only, or Google with its
    nonce and `login_hint`), checks the proof (the chain's keys, that nonce, the signed-in `sub`), re-reads (still an

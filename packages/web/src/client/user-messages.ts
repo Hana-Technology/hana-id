@@ -60,6 +60,8 @@ const BY_CODE: Readonly<Record<string, string>> = Object.freeze({
 
 /** Closer sentences for some `data.reason` values, by code. */
 const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
+  // D865: the user chose to remove this sign-in from the wallet it was linked to; the window finished the removal.
+  login_cancelled: { link_remove: 'You removed this sign-in from that wallet. Sign in again when you’re ready.' },
   [ErrorCode.unauthorized]: {
     mainnet_not_allowed: TEST_APP,
     raw_not_allowed_for_test_apps: TEST_APP,

@@ -5253,8 +5253,10 @@ Checklist, in order (each check before the next):
    7 days, and the email's holder should not sign in with it (the notice mail says the same). Then (D865) an email
    login of an active member (B hosted above, or B not hosted after the wait): "This email now also opens another
    wallet" before anything opens, **Remove this email** (a confirmation, a second code, then `unlink_identity`) or
-   **Keep it** (not asked again in that browser). Support: someone whose email opens a wallet they don't recognise
-   should sign in with that email in a browser where they haven't chosen Keep it and use **Remove this email**; their
+   **Not now** (asked again next time), or the smaller **Don't ask again on this device**; none for a Gmail address
+   linked automatically to its own Google account (case A hosted). Support: someone whose email opens a wallet they
+   don't recognise should sign in with that email (in a browser where they didn't choose Don't ask again) and use
+   **Remove this email**; after a D864 cancel came too late, the "can't be cancelled any more" screen offers it too; their
    next email sign-in opens a new, empty wallet of their own. What is in the shared wallet stays with the Google
    account's holder: Journear can't move it.
 6. **Watch**: the watchdog's link alarms (`link_threshold_reached`, `link_volume_high`, D200) count these links; a

@@ -1873,8 +1873,15 @@ providers; a linked member's export on both is e2e-tested, `apps/e2e/tests/linki
   contents stay with the root, and the pair can't be re-linked automatically (`unlinked`). The cost falls on a
   legitimate member who removes by mistake (undone only by an explicit link, and only before that method opens a wallet
   of its own); the confirmation step says what removing costs first.
-  "Keep it" is remembered per browser in `localStorage` on `authOrigin` (`hana.ml.<linkId>`, an opaque hash): anyone
-  with script there could set or clear it, which only hides or shows the question.
+  "Don't ask again on this device" is remembered per browser in `localStorage` on `authOrigin` (`hana.ml.<linkId>`,
+  an opaque hash; "Not now" stores nothing): anyone with script there could set or clear it, which only hides or shows
+  the question. No notice for case A's silent link of the same person's Google-hosted address, judged only from the
+  contract's `Member.auto` (`get_account` on the vault's RPC) and google-match's `decision: 'linked'` and
+  `googleHosted` for this very login (the issuer, from Google's userinfo with this login's access token): never from the
+  partner. A lying primary RPC could claim `auto`, but google-match must also say this Google account's own hosted
+  address is in the account; when either can't be had the notice is shown (with words that don't push removal).
+  Every login with the follow-up key has the channel (a record-only app too), so the notice is never skipped in an
+  interactive sign-in; an env without an email issuer has no email identities and so no links.
 - **`hana.linkAccount`**: two fresh sign-ins (the new method over `link_new`, the account root over `link_account`,
   one salt and the epoch the vault read), the new identity checked to have no wallet and no account before the second;
   pending for `change_delay_ms` on chain.

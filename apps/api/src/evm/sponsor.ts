@@ -647,9 +647,12 @@ export async function handleEvmSponsorPrepare(request: Request, env: Env, reques
           : !budgetLeft(chain, spent)
             ? 'budget_exhausted'
             : null;
-  // The largest minGas whose gas limit fits maxGasPerTx for these calls (with the authorization when one is needed).
+  // The largest minGas whose gas limit fits maxGasPerTx for these calls (with the authorization when one is needed). The
+  // vault sends exactly that minGas, so the calldata here must cost at least the real one's: the deadline, minGas and
+  // signature words get all their significant bytes non-zero (5 bytes outlast any deadline before the year 36812, 3 any
+  // minGas up to 16 777 215), where a real word may have a zero byte that costs less.
   const shapeCalldata = encodeExecuteCalldata(
-    { chainId: chain.chainId, account: req.account, implementation: chain.delegate as Hex, calls: req.calls, nonce: executeNonce ?? 0n, deadline: BigInt(Math.floor(now / 1000) + chain.deadlineMaxS), relayer: config.relayerAddress as Hex, minGas: chain.maxGasPerTx },
+    { chainId: chain.chainId, account: req.account, implementation: chain.delegate as Hex, calls: req.calls, nonce: executeNonce ?? 0n, deadline: 0xff_ffff_ffffn, relayer: config.relayerAddress as Hex, minGas: 0xff_ffffn },
     `0x${'11'.repeat(64)}1b`,
   );
   const maxMinGas = maxMinGasFor({ calldata: shapeCalldata, callData: req.calls.map((c) => c.data), authorizations: delegation === 'none' ? 1 : 0 }, chain.maxGasPerTx);

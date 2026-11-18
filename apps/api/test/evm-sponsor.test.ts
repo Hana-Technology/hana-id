@@ -1063,10 +1063,14 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
   });
 
-  it('a timeout reconciled to executed: settled into the reservation’s day, the failure slot freed, the floor raised; idempotent', async () => {
+  it('a timeout reconciled to executed: settled into the reservation’s day, the failure slot freed; idempotent: the same signed batch again is answered from its row, nothing sent', async () => {
     const s = await setup();
     receiptKind = 'none';
-    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    // The one signed batch, kept: signedSend's default deadline is the wall clock's second + 300, so signing again a
+    // second later would be ANOTHER batch (a new digest: sent, never mined here, 504), which made this test fail
+    // whenever the machine was slow enough for the reconcile steps to cross a second.
+    const batch = signedSend(s.user);
+    expect((await send(s, batch.body)).status).toBe(504);
     const req = s.relayer.sends[0]!;
     expect(await appSpent(s.app)).toBe(req.reservedWei);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
@@ -1078,8 +1082,9 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'executed', settled_wei: '9000000000000' });
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
-    const copy = await body(await send(s, signedSend(s.user).body));
-    expect(copy.status === 'executed' || copy.code === 'nonce_stale', JSON.stringify(copy)).toBe(true);
+    const copy = await body(await send(s, batch.body));
+    expect(copy).toMatchObject({ status: 'executed', transactionHash: hash, replay: true });
+    expect(s.relayer.sends).toHaveLength(1);
   });
 
   it('a timeout reconciled to reverted (charged, a failure) and to the deadline cancel (the lookup’s mined hash: not_executed)', async () => {

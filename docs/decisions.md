@@ -14842,6 +14842,14 @@ code two classifier variants and the settlement's bound on a receipt's gas price
      (`test/evm-sponsor-units.test.ts`, `test/evm-sponsor.test.ts`, the fake chain's 1 gwei receipts in
      `test/evm-relayer.test.ts`), and the lane's fee-bump scenario now asserts the bill equals the relayer's balance
      change (the `it.fails` is gone).
+  7. **Two tests that verify kept failing on, fixed in the same branch** (the coordinator, 2026-11-18). `apps/api/test/
+     evm-sponsor.test.ts` "a timeout reconciled to executed" signed its batch twice; `signedSend`'s default deadline is
+     the wall clock's second + 300, so on a slow machine the second signing was another batch (a new digest: sent, never
+     mined by the fake chain, 504) instead of a copy. It now keeps the one signed batch and asserts the copy's answer
+     from its row (`executed`, `replay: true`, nothing sent): no wall-clock dependence. `apps/api/test-sandbox/
+     stamps-site.test.ts` still expected the stamps site's relaying stage in its words before D853's rewording; it now
+     reads the site's own `STAGES.relaying`. And the lane follows `next`'s D843 change: Resume after a leak-type pause
+     (foreign transactions, a gap, a staff Fill or Set during it) is asked with `keyConfirmed`.
 - Measured: the formula bounds the gas spent before the delegate's `minGas` check on its own, before its × 1.1, for
   1, 3 and 8 calls, first and later batches; the tightest is a first batch (2,689 gas). Table and texts:
   `docs/operations.md` "The anvil lane".

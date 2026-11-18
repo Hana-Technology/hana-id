@@ -54,10 +54,12 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
     const refused = await send(w, vaultSign(w, [checkInCall], p.body).body);
     expect([refused.status, (await json(refused)).code]).toEqual([503, 'sponsorship_paused']);
     expect(await txCount(w.relayer, 'pending')).toBe(2);
-    expect((await evmRelayerStaffResume(w.stub, WHO, 'too early')).refused).toBe('foreign_transactions');
+    // A leak-type pause (D843): Resume needs staff to confirm the key is ours again, then the cause must be gone.
+    expect((await evmRelayerStaffResume(w.stub, WHO, 'not confirmed')).refused).toBe('key_confirmation_required');
+    expect((await evmRelayerStaffResume(w.stub, WHO, 'too early', undefined, true)).refused).toBe('foreign_transactions');
     expect((await evmRelayerStaffAdoptNonce(w.stub, WHO, 3, 'not the chain’s count')).refused).toBe('chain_count_differs');
     expect((await evmRelayerStaffAdoptNonce(w.stub, WHO, 2, 'explorer shows nonce 1 was not ours')).done).toBe(true);
-    const resumed = await evmRelayerStaffResume(w.stub, WHO, 'key rotated');
+    const resumed = await evmRelayerStaffResume(w.stub, WHO, 'key rotated', undefined, true);
     expect([resumed.done, resumed.status.nextNonce, resumed.status.halted]).toEqual([true, 2, null]);
     forgetRelayerStatus();
     const again = await act(w, [checkInCall]);
@@ -69,6 +71,7 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
       ['adopt_nonce', true, null, WHO],
       ['adopt_nonce', false, 'chain_count_differs', WHO],
       ['resume', false, 'foreign_transactions', WHO],
+      ['resume', false, 'key_confirmation_required', WHO],
     ]);
   });
 
@@ -104,7 +107,9 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
     await relayerRun(w);
     expect(await w.stub.lookup(signed.digest)).toMatchObject({ state: 'mined', outcome: 'execute' });
     expect(await w.stub.status()).toMatchObject({ unmined: 0, awaitingConfirmation: 0 });
-    const resumed = await evmRelayerStaffResume(w.stub, WHO, 'gap filled');
+    // A gap is leak-type and staff filled a slot during the pause (D843): Resume needs the key confirmed.
+    expect((await evmRelayerStaffResume(w.stub, WHO, 'gap filled')).refused).toBe('key_confirmation_required');
+    const resumed = await evmRelayerStaffResume(w.stub, WHO, 'gap filled, key checked', undefined, true);
     expect([resumed.done, resumed.status.halted]).toEqual([true, null]);
     // The batch's row settles from its own receipt (the reconciler: the request had timed out).
     await reconcileEvmSends({ ...env, ...w.bindings } as Env, cfgOf(w), Date.now() + 61_000);

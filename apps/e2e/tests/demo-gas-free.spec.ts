@@ -23,9 +23,9 @@ const VIEWPORTS = { phone: { width: 390, height: 844 }, desktop: { width: 1100, 
 const POPUP = { phone: { width: 390, height: 760 }, desktop: { width: 420, height: 680 } } as const;
 const CHECK_IN = (DEMO_CHECK_IN[EVM_CHAIN_ID] as { address: string }).address;
 const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test network. Your address stays the same and you still approve every action.';
-const DONE = 'Done. You checked in. The network fee was paid for you: you paid nothing.';
+const DONE = 'Done. You checked in. Journear paid the network fee, so it cost you nothing.';
 const APPROVING = 'Approve the check-in in the Journear Passport window.';
-const FINISHING = 'Checking you in. This takes a few seconds. If you haven’t approved it yet, go back to the Journear Passport window.';
+const FINISHING = 'If you approved it, your check-in takes a few seconds. If not, go back to the Journear Passport window.';
 
 function freshAccount(): { sub: string; label: string; email: string; emailVerified: boolean } {
   const digits = Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => String(b % 10)).join('');

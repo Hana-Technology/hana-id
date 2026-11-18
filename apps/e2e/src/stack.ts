@@ -10,6 +10,7 @@
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import type { HanaEnv } from '@hana-id/web';
+import { DEMO_CHECK_IN, DEMO_CHECK_IN_CALLDATA } from '@hana-id/core';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { portBase, portsFrom } from './ports.ts';
 
@@ -54,9 +55,12 @@ export const E2E_SPONSOR_DELEGATE = (SPONSOR_DELEGATES[EVM_CHAIN_ID] as { addres
 export const e2eEvmSponsor = (relayer: string): NonNullable<HanaEnv['evmSponsor']> =>
   Object.freeze({ [String(EVM_CHAIN_ID)]: Object.freeze({ delegate: E2E_SPONSOR_DELEGATE, relayer, rpc: EVM_RPC }) });
 
+/** Journear's demo check-in on the mocked chain: core's pin (D854), never a copy of its address. */
+export const E2E_CHECK_IN = (DEMO_CHECK_IN[EVM_CHAIN_ID] as { address: string }).address;
+
 /** The CheckIn demo (contracts/evm-delegate) and the two made-up contracts the sponsorship tests call. */
 export const E2E_SPONSOR_TARGETS = Object.freeze([
-  { address: '0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e', selectors: ['0x183ff085'], maxDataBytes: 4, label: 'Check-in' },
+  { address: E2E_CHECK_IN, selectors: [DEMO_CHECK_IN_CALLDATA], maxDataBytes: 4, label: 'Check-in' },
   { address: '0x4444444444444444444444444444444444444444', selectors: ['0x183ff085'], maxDataBytes: 4, label: 'Unknown' },
   { address: '0x1111111111111111111111111111111111111111', selectors: ['0xa9059cbb', '0x095ea7b3'], maxDataBytes: 68, label: 'Token' },
 ]);
@@ -65,7 +69,7 @@ export const E2E_SPONSOR_TARGETS = Object.freeze([
  * The hosted demo's app (DEMO_PK) on the stack's allowlist: Journear's demo check-in only, and only its exact call data
  * (`exactCalldata`, D835: no trailing bytes), as a deployed env would list the demo app for the gas-free card (D867).
  */
-export const E2E_DEMO_SPONSOR_TARGETS = Object.freeze([{ address: '0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e', selectors: ['0x183ff085'], exactCalldata: ['0x183ff085'], maxDataBytes: 4, label: 'Demo check-in' }]);
+export const E2E_DEMO_SPONSOR_TARGETS = Object.freeze([{ address: E2E_CHECK_IN, selectors: [DEMO_CHECK_IN_CALLDATA], exactCalldata: [DEMO_CHECK_IN_CALLDATA], maxDataBytes: 4, label: 'Demo check-in' }]);
 
 /**
  * The API's EVM_SPONSOR (D836) for the mocked chain in this local env, sponsoring `appIds` (the API answers each

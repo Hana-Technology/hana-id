@@ -13,6 +13,7 @@ import type { DemoConfig } from '../src/config.ts';
 import { type DemoAction, plainMessage } from '../src/errors.ts';
 import {
   CHECK_INS_SELECTOR,
+  GAS_FREE_RECOUNT_MS,
   GAS_FREE_TEXT,
   RECHECK_MS,
   availabilityOf,
@@ -69,6 +70,12 @@ let wall: number;
 let card: ReturnType<typeof startGasFreeCard>;
 /** This test's window and document events (a card of an earlier test never hears them). */
 let win: EventTarget;
+/** This test's timers (the card's delayed re-read of the count). */
+let timers: { fn: () => void; ms: number }[];
+const runTimers = () => {
+  const due = timers.splice(0);
+  for (const t of due) t.fn();
+};
 let doc: EventTarget & { visibilityState: DocumentVisibilityState };
 const focusBack = () => win.dispatchEvent(new Event('focus'));
 
@@ -99,7 +106,7 @@ function boot(config: DemoConfig = LOCAL): void {
         card?.render(addresses !== null, false);
       });
   };
-  card = startGasFreeCard({ config, client: client as never, after: $('wallet')!, run, clock: () => wall, win: win as never, doc: doc as never });
+  card = startGasFreeCard({ config, client: client as never, after: $('wallet')!, run, clock: () => wall, win: win as never, doc: doc as never, setTimeout: (fn: () => void, ms: number) => void timers.push({ fn, ms }) });
 }
 
 async function signIn(config: DemoConfig = LOCAL): Promise<void> {
@@ -123,6 +130,7 @@ beforeEach(() => {
   pending = false;
   wall = Date.UTC(2026, 10, 18, 12);
   card = null;
+  timers = [];
   win = new EventTarget();
   doc = Object.assign(new EventTarget(), { visibilityState: 'visible' as DocumentVisibilityState });
 });
@@ -174,8 +182,11 @@ describe('the pure parts', () => {
       expect(t).not.toMatch(/\bHana\b|gas|relayer|sponsor|contract|chain/iu);
     }
     expect(GAS_FREE_TEXT.title).toBe('Try an action with no network fee');
-    expect(GAS_FREE_TEXT.done).toBe('Done. You checked in. The network fee was paid for you: you paid nothing.');
+    expect(GAS_FREE_TEXT.done).toBe('Done. You checked in. Journear paid the network fee, so it cost you nothing.');
     expect(GAS_FREE_TEXT.link).toBe('See it on the public record ↗');
+    // The first check-in also does the one-time setup: the intro says so in the approval window's own words.
+    expect(GAS_FREE_TEXT.intro).toBe('Check in to Journear’s demo. It counts your check-ins and doesn’t move any money. The first time, it also turns on free network fees for your account. You approve it in the Journear Passport window first. Journear pays the network fee, so it costs you nothing.');
+    expect(GAS_FREE_TEXT.finishing).toBe('If you approved it, your check-in takes a few seconds. If not, go back to the Journear Passport window.');
   });
 
   it('reads nothing from the URL: no location, query or hash in its code', () => {
@@ -301,13 +312,13 @@ describe('Check in', () => {
     expect(evm.sendSponsored).toHaveBeenCalledTimes(1);
     // The user comes back to the page.
     focusBack();
-    expect($('gas-free-stage')!.textContent).toBe('Checking you in. This takes a few seconds. If you haven’t approved it yet, go back to the Journear Passport window.');
+    expect($('gas-free-stage')!.textContent).toBe('If you approved it, your check-in takes a few seconds. If not, go back to the Journear Passport window.');
     count = 5;
     evm.settle!.resolve({ transactionHash: HASH as `0x${string}`, status: 'executed' });
     await flush();
     expect(visible('gas-free-stage')).toBe(false);
     expect(visible('gas-free-done')).toBe(true);
-    expect($('gas-free-done-text')!.textContent).toBe('Done. You checked in. The network fee was paid for you: you paid nothing.');
+    expect($('gas-free-done-text')!.textContent).toBe('Done. You checked in. Journear paid the network fee, so it cost you nothing.');
     const link = $('gas-free-link') as HTMLAnchorElement;
     expect(link.hidden).toBe(false);
     expect(link.textContent).toBe('See it on the public record ↗');
@@ -317,6 +328,54 @@ describe('Check in', () => {
     expect($('gas-free-count')!.textContent).toBe('You’ve checked in 5 times so far.');
     expect(button().disabled).toBe(false);
     expect(errors).toEqual([]);
+  });
+
+  it('the count after Done: read at once, again after a short delay and on the next return, never lower than before', async () => {
+    count = 4;
+    await signIn();
+    expect($('gas-free-count')!.textContent).toBe('You’ve checked in 4 times so far.');
+    button().click();
+    // The node behind the page hasn't seen the check-in yet: it still says 4, then (wrongly) 3.
+    count = 3;
+    evm.settle!.resolve({ transactionHash: HASH as `0x${string}`, status: 'executed' });
+    await flush();
+    expect($('gas-free-count')!.textContent).toBe('You’ve checked in 4 times so far.');
+    expect(timers.map((t) => t.ms)).toEqual([GAS_FREE_RECOUNT_MS]);
+    const reads = ethereum.request.mock.calls.length;
+    count = 5;
+    runTimers();
+    await flush();
+    expect(ethereum.request.mock.calls.length).toBe(reads + 1);
+    expect($('gas-free-count')!.textContent).toBe('You’ve checked in 5 times so far.');
+    // The next return to the page reads it once more (within the minute: no new sponsorship question).
+    count = 6;
+    focusBack();
+    await flush();
+    expect($('gas-free-count')!.textContent).toBe('You’ve checked in 6 times so far.');
+    expect(evm.sponsorship).toHaveBeenCalledTimes(2);
+    // Only once: a later return within the minute reads nothing.
+    focusBack();
+    await flush();
+    expect(ethereum.request.mock.calls.length).toBe(reads + 2);
+  });
+
+  it('a delayed re-read for an account that has since changed is dropped', async () => {
+    count = 1;
+    await signIn();
+    button().click();
+    evm.settle!.resolve({ transactionHash: HASH as `0x${string}`, status: 'executed' });
+    await flush();
+    addresses = { evm: OTHER };
+    card!.render(true, false);
+    await flush();
+    // The new account's own read (its own call data).
+    expect(ethereum.request.mock.calls.at(-1)![0]).toEqual({ method: 'eth_call', params: [{ to: PINNED, data: checkInsCalldata(OTHER) }, 'latest'] });
+    const reads = ethereum.request.mock.calls.length;
+    count = 9;
+    runTimers();
+    await flush();
+    expect(ethereum.request.mock.calls.length).toBe(reads);
+    expect($('gas-free-count')!.textContent).toBe('You’ve checked in once so far.');
   });
 
   it('no link without an explorer (the local stack)', async () => {

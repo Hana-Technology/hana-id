@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type LoginResult, decodeNearDelegateAction, decodeNearTransaction, utf8 } from '@hana-id/core';
 import { base58 } from '@scure/base';
 import type { HanaAddresses, HanaConfig, HanaStatus } from '@hana-id/web';
+import { loadEnv } from '@hana-id/env';
+import { demoConfigFromVars } from '../src/config.ts';
 import { type DemoClient, startDemo, statusText, untilText } from '../src/page.ts';
 import { TEST_MESSAGE, utf8Hex } from '../src/requests.ts';
 import { ADDRESSES, CONFIG, NEAR_ACCOUNT } from './fixtures.ts';
@@ -1152,6 +1154,25 @@ describe('the gas-free check-in card (D867)', () => {
     expect(document.querySelectorAll('main > section').length).toBe(new DOMParser().parseFromString(html, 'text/html').querySelectorAll('main > section').length);
     expect(fake.evmReads).toBe(0);
     expect(fake.ethereum.request.mock.calls.some(([a]) => a.method === 'eth_call')).toBe(false);
+  });
+
+  it('the deployed sandbox-dev demo: the configuration its build bakes from envs/sandbox-dev.json gives no card, even when the SDK would offer one', async () => {
+    // Exactly what vite.config.ts and gen-wrangler.ts compute for the deployed demo (no variables: sandbox-dev, its key).
+    const deployed = demoConfigFromVars({}, loadEnv);
+    // If sandbox-dev gets an evm.sponsor block, its deployed demo starts showing the card: this test then needs the
+    // new expectation (and D867's rollout steps), on purpose.
+    expect(deployed, 'envs/sandbox-dev.json has an evm.sponsor block now').not.toHaveProperty('evmSponsor');
+    boot(deployed);
+    // An SDK that sponsors the demo's chain and the local one, and says the app is allowed: only the manifest gate is left.
+    fake.fakeEvm.sponsoredChains = [84532, 31337];
+    await loginFlow();
+    await settle();
+    window.dispatchEvent(new Event('focus'));
+    await settle();
+    expect($('gas-free')).toBeNull();
+    expect(document.body.textContent).not.toContain('Check in');
+    expect(fake.evmReads).toBe(0);
+    expect(fake.fakeEvm.sponsorship).not.toHaveBeenCalled();
   });
 
   it('with the block and the app sponsored: the card after the addresses; a refusal in its own box, in the SDK’s words, in diagnostics', async () => {

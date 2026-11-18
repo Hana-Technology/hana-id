@@ -60,11 +60,13 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
   day's budget used up, paused, not available for this account: the SDK's sentence in a blue note, the button off,
   asked again when the user comes back after a minute). Otherwise there is no card at all. It sends exactly
   `{ to: <pinned check-in>, data: '0x183ff085' }` (checked with `isDemoCheckInCall`), in the click. The stages: "Approve
-  the check-in in the Journear Passport window." and, once the user is back on the page, "Checking you in. This takes a
-  few seconds. If you haven’t approved it yet, go back to the Journear Passport window."; then "Done. You checked in.
-  The network fee was paid for you: you paid nothing." with *See it on the public record ↗* (`<explorer>/tx/<hash>`)
+  the check-in in the Journear Passport window." and, once the user is back on the page, "If you approved it, your
+  check-in takes a few seconds. If not, go back to the Journear Passport window."; then "Done. You checked in. Journear
+  paid the network fee, so it cost you nothing." with *See it on the public record ↗* (`<explorer>/tx/<hash>`)
   when the sponsored chain is the demo's own and has an explorer, and "You’ve checked in N times so far." read from
-  the program's `checkIns(address)` through the page's EVM provider (same condition: its RPC is already in the CSP).
+  the program's `checkIns(address)` through the page's EVM provider (same condition: its RPC is already in the CSP),
+  read again 4 s after Done and on the next return to the page, never shown lower than before. The intro says the first
+  check-in also turns on free network fees for the account (the window's one-time setup).
   Every refusal is the SDK's own `userMessage` (D861) in the card's red box (and in the diagnostics as `gasFree`); a
   rejection in the window is a quiet line. sandbox-dev has no block today, so its demo has no card;
 - **Sign**: an EVM `personal_sign` message, a Stellar (SEP-53) message, and a Base Sepolia test transaction (a 0-value

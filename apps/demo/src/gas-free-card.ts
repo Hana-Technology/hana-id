@@ -29,12 +29,14 @@ import { icon } from './toast.ts';
 /** Every word the card shows (D853: plain words; the refusals are the SDK's own). */
 export const GAS_FREE_TEXT = Object.freeze({
   title: 'Try an action with no network fee',
+  // The first check-in also does the account's one-time setup: said as the approval window's setup note says it.
   intro:
-    'Check in to Journear’s demo. It only counts your check-ins and doesn’t move any money. You approve it in the Journear Passport window first. The network fee is paid for you, so it costs you nothing.',
+    'Check in to Journear’s demo. It counts your check-ins and doesn’t move any money. The first time, it also turns on free network fees for your account. You approve it in the Journear Passport window first. Journear pays the network fee, so it costs you nothing.',
   button: 'Check in',
   approving: 'Approve the check-in in the Journear Passport window.',
-  finishing: 'Checking you in. This takes a few seconds. If you haven’t approved it yet, go back to the Journear Passport window.',
-  done: 'Done. You checked in. The network fee was paid for you: you paid nothing.',
+  // Shown once the user is back on the page, approved or not (the SDK reports no approval): true either way.
+  finishing: 'If you approved it, your check-in takes a few seconds. If not, go back to the Journear Passport window.',
+  done: 'Done. You checked in. Journear paid the network fee, so it cost you nothing.',
   link: 'See it on the public record ↗',
 });
 
@@ -43,6 +45,12 @@ export const countText = (n: bigint): string => (n === 1n ? 'You’ve checked in
 
 /** `checkIns(address)`'s selector (the public counter of contracts/evm-delegate/src/demo/CheckIn.sol). */
 export const CHECK_INS_SELECTOR = '0x1acc9b62';
+
+/**
+ * After Done, the count is read once more this long after (and on the next return to the page): the page's RPC node
+ * may not have seen the block of the check-in yet.
+ */
+export const GAS_FREE_RECOUNT_MS = 4_000;
 
 /** How long a sponsorship answer is trusted before the card asks again (on focus). */
 export const RECHECK_MS = 60_000;
@@ -111,6 +119,8 @@ export interface GasFreeCardDeps {
   /** Where focus and visibility come from (window and document by default). */
   win?: Pick<Window, 'addEventListener'>;
   doc?: Pick<Document, 'addEventListener' | 'visibilityState'>;
+  /** The delayed re-read's timer (setTimeout by default). */
+  setTimeout?: (fn: () => void, ms: number) => void;
 }
 
 export interface GasFreeCard {
@@ -135,6 +145,7 @@ export function startGasFreeCard(deps: GasFreeCardDeps): GasFreeCard | null {
   const manifestChains: readonly number[] = config.evmSponsor.chainIds;
   const win = deps.win ?? window;
   const doc = deps.doc ?? document;
+  const later = deps.setTimeout ?? ((fn: () => void, ms: number) => void setTimeout(fn, ms));
 
   let account: string | null = null;
   let chainId: number | null = null;
@@ -143,7 +154,10 @@ export function startGasFreeCard(deps: GasFreeCardDeps): GasFreeCard | null {
   let checking: { account: string | null; promise: Promise<void> } | null = null;
   let phase: Phase = 'idle';
   let outcome: Outcome = null;
+  /** The account's check-ins: only ever raised (a node behind the last one may answer less). */
   let count: bigint | null = null;
+  /** Read the count again on the next return to the page (set by a Done). */
+  let recountOnReturn = false;
   let loggedIn = false;
   let pending = false;
   let card: HTMLElement | null = null;
@@ -249,7 +263,7 @@ export function startGasFreeCard(deps: GasFreeCardDeps): GasFreeCard | null {
       const v = await c.ethereum.request({ method: 'eth_call', params: [{ to: pinned.address, data: checkInsCalldata(forAccount) }, 'latest'] });
       if (account !== forAccount) return;
       const n = parseCount(v);
-      if (n !== null) count = n;
+      if (n !== null && (count === null || n > count)) count = n;
       draw();
     } catch {
       // The count is a nice-to-have: without it the card says nothing about it.
@@ -272,6 +286,12 @@ export function startGasFreeCard(deps: GasFreeCardDeps): GasFreeCard | null {
         try {
           const r = await c.evm.sendSponsored({ chainId: chain, calls: [call] });
           outcome = { kind: 'done', hash: r.transactionHash };
+          // The count once more after a moment, and on the next return, for the account it was for.
+          recountOnReturn = true;
+          const forAccount = account;
+          later(() => {
+            if (account === forAccount) void readCount();
+          }, GAS_FREE_RECOUNT_MS);
         } catch (e) {
           // A rejection in the window is the user's choice: said quietly, not as an error.
           if (isObj(e) && e.code === 4001) {
@@ -297,7 +317,14 @@ export function startGasFreeCard(deps: GasFreeCardDeps): GasFreeCard | null {
     if (phase === 'approving') {
       phase = 'finishing';
       draw();
-    } else if (phase === 'idle' && loggedIn && account !== null && !pending && clock() - checkedAt >= RECHECK_MS) void check();
+      return;
+    }
+    if (phase !== 'idle' || !loggedIn || account === null || pending) return;
+    if (recountOnReturn) {
+      recountOnReturn = false;
+      void readCount();
+    }
+    if (clock() - checkedAt >= RECHECK_MS) void check();
   }
   win.addEventListener('focus', back);
   doc.addEventListener('visibilitychange', () => {
@@ -318,6 +345,7 @@ export function startGasFreeCard(deps: GasFreeCardDeps): GasFreeCard | null {
         phase = 'idle';
         outcome = null;
         count = null;
+        recountOnReturn = false;
         if (a !== null) void check();
       }
       draw();

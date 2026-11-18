@@ -25,6 +25,7 @@ function view(over: Partial<EvmRelayChainView> = {}, relayer: Record<string, unk
     dailyBudgetWei: (20n * MILLI).toString(),
     oneSendWorstWei: (6n * 10n ** 14n).toString(),
     relayer: { ok: true, started: true, halted: null, waiting: 0, awaitingConfirmation: 0, oldestWaitingMs: null, oldestNotTakenMs: null, nextSlot: 12, spentTodayWei: (3n * MILLI).toString(), unconfirmedRefusals: null, lastStaffSeq: 0, staffLog: [], ...relayer } as EvmRelayChainView['relayer'],
+    budget: { ok: true, spentWei: (3n * MILLI).toString() },
     balance: { ok: true, wei: (112n * MILLI).toString() },
     helper: { address: '0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA', pinnedCodeHash: HASH, ok: true, codeHash: HASH, matches: true },
     ...over,
@@ -108,12 +109,16 @@ describe('the words of each state', () => {
     expect(explainChain(view({ helper: { address: '0x1', pinnedCodeHash: HASH, ok: true, codeHash: null, matches: false } }), NOW)).toMatchObject({ code: 'helper_missing' });
     expect(explainChain(view({ balance: { ok: false, code: 'rpc_unavailable' } }), NOW)).toMatchObject({ label: 'Can’t check right now', severity: 'unknown' });
     expect(explainChain(view({ relayer: { ok: false, code: 'relayer_timeout' } }), NOW)).toMatchObject({ label: 'Can’t check right now', code: 'relayer_timeout' });
-    const busy = explainChain(view({}, { spentTodayWei: (17n * MILLI).toString(), waiting: 2, oldestWaitingMs: 11 * 60_000, oldestNotTakenMs: 30_000, unconfirmedRefusals: { count: 3, lastAt: NOW - 600_000, slot: 5, code: 'insufficient_funds' } }), NOW);
+    const busy = explainChain(view({ budget: { ok: true, spentWei: (17n * MILLI).toString() } }, { waiting: 2, oldestWaitingMs: 11 * 60_000, oldestNotTakenMs: 30_000, unconfirmedRefusals: { count: 3, lastAt: NOW - 600_000, slot: 5, code: 'insufficient_funds' } }), NOW);
     expect(busy.label).toBe('Working');
     expect(busy.extra.map((x) => [x.key, x.severity])).toEqual([['budget', 'warning']]);
     expect(busy.lines.find((l) => l.label === 'Waiting to go through')).toEqual({ label: 'Waiting to go through', state: 'warning', detail: '2 · the oldest for 11 min · not yet picked up by the network: the oldest for 30 s' });
     expect(busy.lines.find((l) => l.label === 'Send problems a backup server reported')?.detail).toBe('3 (the last 10 min ago). These don’t pause it. If the number keeps rising, ask an engineer.');
-    const used = explainChain(view({}, { spentTodayWei: (20n * MILLI).toString() }), NOW);
+    const used = explainChain(view({ budget: { ok: true, spentWei: (20n * MILLI).toString() } }), NOW);
+    expect(explainChain(view({ budget: { ok: false, code: 'rate_limiter_unavailable' } }), NOW).lines.find((l) => l.label === 'Spent today')).toEqual({ label: 'Spent today', state: 'unknown', detail: 'Can’t check right now (rate_limiter_unavailable)' });
+    // The API's stuck alert fires at 2 minutes: so does the line, for the oldest waiting or the oldest not taken.
+    expect(explainChain(view({}, { waiting: 1, oldestWaitingMs: 150_000, oldestNotTakenMs: null }), NOW).lines.find((l) => l.label === 'Waiting to go through')!.state).toBe('warning');
+    expect(explainChain(view({}, { waiting: 1, oldestWaitingMs: 90_000, oldestNotTakenMs: 90_000 }), NOW).lines.find((l) => l.label === 'Waiting to go through')!.state).toBe('ok');
     expect(used.extra[0]).toMatchObject({ severity: 'critical', title: 'Free network fees have used up today’s budget (0.02 test ETH): new requests are turned away until 00:00 UTC' });
   });
 
@@ -133,7 +138,8 @@ describe('the waiting transactions and the tools offered', () => {
     expect(recordPlain(record(9, { onChain: true }), 84532, true, 'recorded')).toMatchObject({ stateText: 'On the network, being confirmed', canCancel: false, canClose: false });
     expect(recordPlain(record(9, { copies: Array.from({ length: 8 }, () => ({ hash: HASH, kind: 'action' as const })) }), 84532, true, 'recorded').canCancel).toBe(false);
     expect(recordPlain(record(9), 84532, false, 'recorded').canCancel).toBe(false);
-    expect(recordPlain(record(9, { app: null }), 84532, true, 'not_recorded').app).toBe('Not recorded yet');
+    expect(recordPlain(record(9, { app: null }), 84532, true, 'unreadable').app).toBe('Can’t check right now');
+    expect(recordPlain(record(9, { app: null }), 84532, true, 'recorded').app).toBe('Unknown app');
     expect(recordPlain(record(9, { kind: 'filler', app: null }), 84532, true, 'recorded').app).toBe('Staff gap filler');
     expect(recordPlain(record(9, { taken: false }), 84532, true, 'recorded').stateText).toBe('Not yet picked up by the network');
     // The local chain has no explorer: no link.

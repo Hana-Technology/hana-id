@@ -115,6 +115,11 @@ export interface EvmRelayChainView {
   /** One sponsored transaction's most it can cost (gas cap × fee cap, doubled on an OP Stack chain for the L1 data fee). */
   oneSendWorstWei: string;
   relayer: ({ ok: true } & EvmRelayRelayerView) | { ok: false; code: string };
+  /**
+   * Today's reservations against `dailyBudgetWei` as the sponsorship handlers count them (the env's day budget, D836;
+   * the same count `evm_relay_budget_high` fires on at 80%): worst cases reserved, settled to the real cost once mined.
+   */
+  budget: { ok: true; spentWei: string } | { ok: false; code: string };
   balance: { ok: true; wei: string } | { ok: false; code: string };
   /** The account helper program (the pinned EIP-7702 delegate): its code on the chain against the pinned hash. */
   helper: { address: string; pinnedCodeHash: string | null } & ({ ok: true; codeHash: string | null; matches: boolean } | { ok: false; code: string });
@@ -148,13 +153,13 @@ export interface EvmRelayRecordView {
 }
 
 /**
- * `AdminRpc.evmRelayDetail`. `apps`: `recorded` when the sponsorship's send records exist in this API (the app of each
- * user action comes from them), `not_recorded` when they don't yet (PR 71's migration not applied).
+ * `AdminRpc.evmRelayDetail`. `apps`: `recorded` when the app of each user action was read from the sponsorship's send
+ * records (`evm_sponsor_sends`, by chain and digest), `unreadable` when that read failed (the records still show).
  */
 export interface EvmRelayDetail {
   chain: EvmRelayChainView;
   records: EvmRelayRecordView[];
-  apps: 'recorded' | 'not_recorded';
+  apps: 'recorded' | 'unreadable';
 }
 
 /** `AdminRpc.evmRelayAct`: done, or the relayer's (or the API's) reason for doing nothing, and the relayer afterwards. */

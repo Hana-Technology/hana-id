@@ -187,8 +187,8 @@ export interface ChainPlain {
 
 /** At this share of today's budget an amber issue (the API's alert uses the same share). */
 export const BUDGET_WARN_PCT = 80;
-/** Waiting longer than this is amber (the API's `evm_relay_stuck` alert after 10 minutes). */
-export const WAITING_WARN_MS = 10 * MIN;
+/** Waiting longer than this is amber: the API's `evm_relay_stuck` alert fires when the oldest unmined or untaken one passes it. */
+export const WAITING_WARN_MS = 2 * MIN;
 const pct = (part: bigint, whole: bigint): number => (whole > 0n ? Number((part * 1000n) / whole) / 10 : 0);
 
 /** The tile's words for one chain's view: its plain state, why and what to do, and a line per part. */
@@ -224,10 +224,10 @@ export function explainChain(v: EvmRelayChainView, now: number): ChainPlain {
   lines.push({ label: 'Relayer wallet', state: 'ok', detail: address });
   lines.push({ label: 'Money in the wallet', state: balanceState, detail: balance === null ? `Can’t check right now (${v.balance.ok ? 'unreadable' : code(v.balance.code)})` : `${testEth(balance)} · low below ${testEth(low)}` });
 
-  // The relayer object.
-  const r = v.relayer.ok ? v.relayer : null;
-  if (r) {
-    const spent = wei(r.spentTodayWei) ?? 0n;
+  // Today's spend: the handlers' own count on the env's day budget (the one the budget alert and the refusals use).
+  const spent = v.budget?.ok ? wei(v.budget.spentWei) : null;
+  if (spent === null) lines.push({ label: 'Spent today', state: 'unknown', detail: `Can’t check right now (${v.budget && !v.budget.ok ? code(v.budget.code) : 'unreadable'})` });
+  else {
     const share = pct(spent, budget);
     const spentState: Severity = spent >= budget ? 'critical' : share >= BUDGET_WARN_PCT ? 'warning' : 'ok';
     lines.push({ label: 'Spent today', state: spentState, detail: `${testEth(spent)} of the ${testEth(budget)} daily budget (${share}%), counting the most each waiting one can cost` });
@@ -239,7 +239,12 @@ export function explainChain(v: EvmRelayChainView, now: number): ChainPlain {
         steps: ['If this is real use (a demo, a busy day), it is fine: the budget starts again at 00:00 UTC.', 'If you can’t explain it, follow the playbook to find which app is using it.'],
         playbook: 'evm-relay-budget-high',
       });
-    const waitingState: Severity = r.oldestWaitingMs !== null && r.oldestWaitingMs > WAITING_WARN_MS ? 'warning' : 'ok';
+  }
+
+  // The relayer object.
+  const r = v.relayer.ok ? v.relayer : null;
+  if (r) {
+    const waitingState: Severity = Math.max(r.oldestWaitingMs ?? 0, r.oldestNotTakenMs ?? 0) > WAITING_WARN_MS ? 'warning' : 'ok';
     const waiting = r.waiting === 0 ? 'None' : `${r.waiting} · the oldest for ${ageText(r.oldestWaitingMs ?? 0)}${r.oldestNotTakenMs !== null ? ` · not yet picked up by the network: the oldest for ${ageText(r.oldestNotTakenMs)}` : ''}`;
     lines.push({ label: 'Waiting to go through', state: waitingState, detail: `${waiting}${r.awaitingConfirmation ? ` · ${r.awaitingConfirmation} on the network, being confirmed` : ''}` });
     if (r.unconfirmedRefusals) {
@@ -338,7 +343,7 @@ export function recordPlain(r: EvmRelayRecordView, chainId: number, keyOk: boole
   return {
     slot: r.slot,
     kind: r.kind,
-    app: r.kind === 'filler' ? 'Staff gap filler' : r.app ? plainString(r.app.name ?? r.app.id, 128) : apps === 'recorded' ? 'Unknown app' : 'Not recorded yet',
+    app: r.kind === 'filler' ? 'Staff gap filler' : r.app ? plainString(r.app.name ?? r.app.id, 128) : apps === 'recorded' ? 'Unknown app' : 'Can’t check right now',
     sentAt: r.sentAt,
     deadlineAt: r.deadlineAt,
     state,

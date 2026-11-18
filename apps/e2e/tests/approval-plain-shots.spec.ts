@@ -9,7 +9,8 @@ import { DEMO_CHECK_IN, type NearAction, approvalContent, base64Encode, encodeNe
 import { parseFunctionSignature } from '@hana-id/core/decode';
 import { Account, Asset, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-base';
 import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
-import { E2E_SPONSOR_RELAYER, E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import { e2eRelayer } from '../src/relayer-key.ts';
+import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { approve, clickLauncher, expect, login, newApp, newLiveApp, okValue, openPartner, reject, runAction, test } from './fixtures.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
@@ -137,7 +138,7 @@ test.describe('plain-wording screens', () => {
       calls: [{ to: (DEMO_CHECK_IN[EVM_CHAIN_ID] as { address: `0x${string}` }).address, value: 0n, data: '0x183ff085' }],
       executeNonce: 0n,
       deadline: BigInt(Math.floor(Date.now() / 1000) + 600),
-      relayer: E2E_SPONSOR_RELAYER,
+      relayer: e2eRelayer().address,
       minGas: 100_000n,
     };
     await inject(popup, 'evm_sponsored', encodeSponsorSubject(subject), me, EVM_CHAIN_ID);

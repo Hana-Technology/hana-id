@@ -19,7 +19,7 @@ import { WATCH_CURSOR } from './watcher.ts';
 
 /**
  * The playbook of each security event kind that has one (docs/playbooks.md): what it means, how urgent, what to do.
- * The free-network-fee kinds (D843) arrive with the sponsorship handlers (PR 71); their playbooks are here already.
+ * The free-network-fee kinds (D848, D852) and the NEAR relay's billing kind (D863) included (D843).
  */
 export const SECURITY_EVENT_PLAYBOOKS: Readonly<Record<string, string>> = Object.freeze({
   home_budget_high: 'home-budget-high',
@@ -31,6 +31,7 @@ export const SECURITY_EVENT_PLAYBOOKS: Readonly<Record<string, string>> = Object
   evm_relay_receipt_odd: 'evm-relay-receipt-odd',
   evm_relay_nonce_taken: 'evm-relay-slot-taken',
   evm_billing_late: 'evm-billing-late',
+  near_billing_late: 'near-billing-late',
 });
 
 export function withWords(e: SecurityEvent): SecurityEvent & { title: string; playbook: { id: string; title: string } | null } {

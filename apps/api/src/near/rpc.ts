@@ -173,6 +173,13 @@ function isHttpUrl(value: string): boolean {
 export const nearRpc = (env: RpcEnv): Rpc => new Rpc(rpcEndpoints(env));
 
 /**
+ * One endpoint of rpcEndpoints(env) alone, with its own health record: for a caller that counts every fetch and moves
+ * through the env's endpoints itself (the NEAR relay billing cron, near/relay-billing.ts BudgetedRpc), so it never
+ * fails over inside a call and never marks an endpoint down for the isolate's other clients.
+ */
+export const nearRpcEndpoint = (url: string, opts: RpcOptions): Rpc => new Rpc(url, opts);
+
+/**
  * Which endpoints failed lately, per isolate: one that failed within RPC_DOWN_MS is asked after the others, so an
  * outage of the primary costs one timeout per isolate every RPC_DOWN_MS rather than one per call. It never drops an
  * endpoint: when every endpoint is down they are asked in the configured order.

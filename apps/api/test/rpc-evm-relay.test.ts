@@ -189,6 +189,7 @@ beforeEach(() => {
   forgetVerifiedChains();
   evmRelayerStaffTiming.relayerMs = 5_000;
   evmRelayerStaffTiming.chainMs = 5_000;
+  evmRelayerStaffTiming.budgetMs = 2_500;
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -259,6 +260,8 @@ describe('AdminRpc.systemStatus evmRelay', () => {
       },
     });
     if (!c.relayer.ok) throw new Error('relayer');
+    // Nothing reserved on the env's day budget yet in this test's clock window.
+    expect(c.budget).toEqual({ ok: true, spentWei: '0' });
     expect(c.relayer.staffLog.map((e) => e.seq)).toEqual([7, 6, 5, 4, 3]);
     expect(c.relayer.staffLog[0]).toEqual({ seq: 7, at: NOW - 420_000, who: 'staff@hana.example', tool: 'cancel', slot: 6, note: 'Topped up from the faucet', done: false, refused: 'nonce_mined' });
     // One object, by its name; the guard passed; two chain reads after the endpoint's chain check (the two reads run
@@ -332,6 +335,22 @@ describe('AdminRpc.systemStatus evmRelay', () => {
     expect((await status(sponsorEnv(slow))).evmRelay!.chains[0]!.relayer).toEqual({ ok: false, code: 'relayer_timeout' });
     expect((await status(sponsorEnv(null))).evmRelay!.chains[0]!.relayer).toEqual({ ok: false, code: 'relayer_unbound' });
   });
+
+  it('today’s spend is the handlers’ own count on the env’s day budget (the budget alert’s), read only; its failure is said', async () => {
+    governanceViews(ownerChain());
+    fakeChain();
+    const chainId = CHAIN;
+    // Reserve on the env's budget exactly as the send handler does (sponsor.ts reserveBudgets).
+    const lim = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`evm-sponsor:budget:${chainId}`)) as unknown as { spend(n: string, w: number, max: string, amount: string, now?: number): Promise<{ ok: boolean }> };
+    const before = (await status(sponsorEnv(fakeRelayer(staffStatus())))).evmRelay!.chains[0]!.budget;
+    expect(before.ok).toBe(true);
+    const base = before.ok ? BigInt(before.spentWei) : 0n;
+    expect(await lim.spend(`evm-sponsor:${chainId}:wei`, 86_400_000, (2n * ETH / 100n).toString(), '4000000000000000')).toMatchObject({ ok: true });
+    expect((await status(sponsorEnv(fakeRelayer(staffStatus())))).evmRelay!.chains[0]!.budget).toEqual({ ok: true, spentWei: (base + 4_000_000_000_000_000n).toString() });
+    evmRelayerStaffTiming.budgetMs = 1;
+    const slow = { ...env.RATE_LIMITER, idFromName: () => ({}), get: () => ({ spent: () => new Promise(() => {}) }) } as unknown as Env['RATE_LIMITER'];
+    expect((await status(sponsorEnv(fakeRelayer(staffStatus()), { RATE_LIMITER: slow }))).evmRelay!.chains[0]!.budget).toEqual({ ok: false, code: 'rate_limiter_unavailable' });
+  });
 });
 
 describe('AdminRpc.evmRelayDetail', () => {
@@ -346,8 +365,9 @@ describe('AdminRpc.evmRelayDetail', () => {
     const r = await rpcOf(sponsorEnv(relayer)).evmRelayDetail({ ...hana(), chainId: CHAIN });
     if (!r.ok) throw new Error(r.code);
     const d = (r as unknown as { detail: import('@hana-id/console-core').EvmRelayDetail }).detail;
-    // This API has no sponsorship send records yet (PR 71's table): the app is unknown, and said so.
-    expect(d.apps).toBe('not_recorded');
+    // No send record names these digests: the app is unknown, and said so.
+    expect(d.apps).toBe('recorded');
+    expect(d.records.map((x) => x.app)).toEqual([null, null, null]);
     expect(d.records.map((x) => [x.slot, x.kind, x.onChain, x.taken, x.cancelling, x.refusedCode, x.copies.length])).toEqual([
       [6, 'action', false, false, true, 'gas_limit', 2],
       [7, 'filler', false, true, false, null, 1],
@@ -362,22 +382,25 @@ describe('AdminRpc.evmRelayDetail', () => {
     expect(JSON.stringify(d)).not.toMatch(/0x1111111111111111111111111111111111111111|account|digest|reservedWei|maxFeePerGas/u);
   });
 
-  it('with the sponsorship’s send records (as PR 71 makes them), each user action names its app', async () => {
+  it('each user action names its app from the sponsorship’s send records (evm_sponsor_sends, by chain and digest)', async () => {
     fakeChain();
     const app = await orgApp();
-    // A stand-in with the columns this reads, until PR 71's migration is on this branch.
-    await env.DB.prepare('CREATE TABLE IF NOT EXISTS evm_sponsor_sends (id TEXT PRIMARY KEY, app_id TEXT NOT NULL, chain_id INTEGER NOT NULL, digest TEXT NOT NULL, created_at INTEGER NOT NULL)').run();
-    try {
-      await env.DB.prepare('INSERT INTO evm_sponsor_sends (id, app_id, chain_id, digest, created_at) VALUES (?1, ?2, ?3, ?4, ?5)').bind('es_test_1', app.id, CHAIN, record(6).digest, NOW).run();
-      const relayer = fakeRelayer(staffStatus({ records: [record(6), record(7, { digest: `0x${'e'.repeat(64)}` })] as never }));
-      const r = await rpcOf(sponsorEnv(relayer)).evmRelayDetail({ ...hana(), chainId: CHAIN });
-      if (!r.ok) throw new Error(r.code);
-      const d = (r as unknown as { detail: import('@hana-id/console-core').EvmRelayDetail }).detail;
-      expect(d.apps).toBe('recorded');
-      expect(d.records.map((x) => x.app)).toEqual([{ id: app.id, name: expect.any(String) }, null]);
-    } finally {
-      await env.DB.prepare('DROP TABLE evm_sponsor_sends').run();
-    }
+    const id = `es_${'r'.repeat(29)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
+    await env.DB.prepare(
+      `INSERT INTO evm_sponsor_sends (id, app_id, chain_id, account, digest, execute_nonce, reserved_wei, deadline, gas_limit, fee_cap_wei, l1_bound_wei, op_bound_wei,
+         call_count, targets_json, with_setup, status, request_id, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, '0', '1000', ?6, '200000', '1000000000', '0', '0', 1, '[]', 0, 'sent', 'req_test_apps', ?7, ?7)`,
+    )
+      .bind(id, app.id, CHAIN, '0x1111111111111111111111111111111111111111', record(6).digest, Math.floor(NOW / 1000) + 120, NOW)
+      .run();
+    const relayer = fakeRelayer(staffStatus({ records: [record(6), record(7, { digest: `0x${'e'.repeat(64)}` })] as never }));
+    const r = await rpcOf(sponsorEnv(relayer)).evmRelayDetail({ ...hana(), chainId: CHAIN });
+    if (!r.ok) throw new Error(r.code);
+    const d = (r as unknown as { detail: import('@hana-id/console-core').EvmRelayDetail }).detail;
+    expect(d.apps).toBe('recorded');
+    expect(d.records.map((x) => x.app)).toEqual([{ id: app.id, name: expect.any(String) }, null]);
+    // The send record's account stays out of the answer.
+    expect(JSON.stringify(d)).not.toContain('0x1111111111111111111111111111111111111111');
   });
 
   it('is staff only, takes a sponsored chain only, and refuses an env without the block', async () => {

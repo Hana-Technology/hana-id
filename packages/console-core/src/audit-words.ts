@@ -126,8 +126,6 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
   'rate.overridden': 'Rate overridden',
   'support.lookup': 'Support ID looked up',
   'users.find': 'Wallet directory searched',
-  'evm_relay.staff_action': 'Network fee relayer tool used',
-  'evm_relay.staff_result': 'Network fee relayer tool result',
 };
 
 /** An action or change code in words: its title from `ACTION_TITLES`, else its own words (`some_new.kind` → "Some new kind"). */
@@ -152,6 +150,7 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   evm_relay_stuck: 'Free network fees: paused or slow, needs a look',
   evm_relay_receipt_odd: 'Free network fees: a payment looked wrong and was counted at the most it could cost',
   evm_billing_late: 'Free network fees: a billing record is late',
+  near_billing_late: 'Free NEAR transactions: a billing record is late',
   evm_relay_nonce_taken: 'Free network fees: a payment slot was used by another transaction',
 };
 

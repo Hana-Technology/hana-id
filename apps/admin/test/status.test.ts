@@ -994,6 +994,7 @@ describe('Free network fees (D843)', () => {
     dailyBudgetWei: (20n * MILLI).toString(),
     oneSendWorstWei: (6n * 10n ** 14n).toString(),
     relayer: { ok: true, started: true, halted: null, waiting: 0, awaitingConfirmation: 0, oldestWaitingMs: null, oldestNotTakenMs: null, nextSlot: 12, spentTodayWei: '0', unconfirmedRefusals: null, lastStaffSeq: 0, staffLog: [], ...relayer },
+    budget: { ok: true, spentWei: '0' },
     balance: { ok: true, wei: (112n * MILLI).toString() },
     helper: { address: '0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA', pinnedCodeHash: HASH, ok: true, codeHash: HASH, matches: true },
     ...over,
@@ -1040,7 +1041,7 @@ describe('Free network fees (D843)', () => {
     invariants(a);
     expect(tile(a, 'evm-relay-84532').state).toBe('unknown');
     // A worse second problem is said by the label too, not hidden behind "Working".
-    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({ spentTodayWei: (20n * MILLI).toString() })] } });
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({}, { budget: { ok: true, spentWei: (20n * MILLI).toString() } })] } });
     a = await read();
     expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'critical', stateLabel: 'Needs a person' });
   });

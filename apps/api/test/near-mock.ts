@@ -59,6 +59,10 @@ export class NearMock {
   finalBlockHash = this.blockHash;
   /** `wait_until` of every send_tx and tx call, in order. */
   readonly waitUntil: { method: 'send_tx' | 'tx'; waitUntil: unknown }[] = [];
+  /** `tx` answers as a node does once the transaction is final (final_execution_status FINAL, the outcome's block hash). */
+  txFinal = false;
+  /** Replaces a transaction's outcome for `tx` (a test's own nearcore-shaped answer). */
+  readonly txOverride = new Map<string, unknown>();
   defaultNonce = 100n;
   /** `block` answers this height and gas price (yocto per gas). */
   height = 1000;
@@ -184,8 +188,11 @@ export class NearMock {
       case 'tx': {
         this.waitUntil.push({ method, waitUntil: params.wait_until });
         const sender = this.txSender.get(params.tx_hash as string);
-        const outcome = sender === undefined || sender === params.sender_account_id ? this.outcomes.get(params.tx_hash as string) : undefined;
-        return Promise.resolve(outcome ? { result: outcome } : { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_TRANSACTION' }, message: 'UNKNOWN_TRANSACTION' } });
+        const over = this.txOverride.get(params.tx_hash as string);
+        if (over) return Promise.resolve({ result: over });
+        const outcome = sender === undefined || sender === params.sender_account_id ? (this.outcomes.get(params.tx_hash as string) as Record<string, unknown> | undefined) : undefined;
+        const shown = outcome && this.txFinal ? { ...outcome, final_execution_status: 'FINAL', transaction_outcome: { ...(outcome.transaction_outcome as object), block_hash: this.blockHash } } : outcome;
+        return Promise.resolve(shown ? { result: shown } : { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_TRANSACTION' }, message: 'UNKNOWN_TRANSACTION' } });
       }
       default:
         return Promise.resolve({ error: { name: 'REQUEST_VALIDATION_ERROR', cause: { name: 'METHOD_NOT_FOUND' } } });

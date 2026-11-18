@@ -8,8 +8,9 @@
 // resolves it: docs/operations.md "EVM sponsorship relay".
 //
 // The admin view reads, per sponsored chain and only when the env has `evm.sponsor`: the object's staff status (its
-// storage, no chain read), the relayer's balance and the account helper program's code (two reads of the trusted read
-// endpoint, plus its one chain-id check per isolate). Nothing is read without the block. The view holds public data
+// storage, no chain read), today's reservations on the env's day budget (the handlers' RateLimiter, read only), the
+// relayer's balance and the account helper program's code (two reads of the trusted read endpoint, plus its chain-id
+// check per isolate). Nothing is read without the block. The view holds public data
 // only: no key, raw transaction, calldata, signature or user's account (records are reduced to slots, hashes, times).
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import type { EvmRelayActInput, EvmRelayActResult, EvmRelayChainView, EvmRelayDetail, EvmRelayRecordView, EvmRelayRelayerView, EvmRelayStatus } from '@hana-id/console-core';
@@ -17,8 +18,10 @@ import { keccak_256 } from '@noble/hashes/sha3';
 import { RpcRefusal } from './changes/cas.ts';
 import type { Env } from './env.ts';
 import { EVM_RELAYER_STAFF_GUARD, type EvmRelayer, type EvmRelayerStaffResult, type EvmRelayerStaffStatus, evmRelayKeyAddress, evmRelayerError, evmRelayerName } from './evm-relayer.ts';
+import { limiter } from './handlers.ts';
 import { log } from './log.ts';
 import { EvmRpcError, type Hex, sponsorChainFor } from './evm/sponsor-chain.ts';
+import { DAY, budgetWindow, envBudgetSubject } from './evm/sponsor-settle.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, parseEvmSponsorConfig, sponsorChain } from './evm/sponsor-config.ts';
 
 type Stub = DurableObjectStub<EvmRelayer>;
@@ -45,10 +48,10 @@ export const evmRelayerStaffAdoptNonce = (stub: Stub, who: string, nonce: number
 // ---- the admin view (D843): AdminRpc's systemStatus, evmRelayDetail and evmRelayAct ----
 
 /** How long a status read waits for the object and for each chain read (the status page waits for the slowest part). Mutable for the tests. */
-export const evmRelayerStaffTiming = { relayerMs: 5_000, chainMs: 5_000 };
+export const evmRelayerStaffTiming = { relayerMs: 5_000, chainMs: 5_000, budgetMs: 2_500 };
 /** Staff actions a status answer carries (the detail page carries the object's 50). */
 const STATUS_LOG = 5;
-const DAY_MS = 24 * 60 * 60_000;
+const DAY_MS = DAY;
 const EMPTY_CODE = '0x';
 
 type Setup = { state: 'absent' } | { state: 'bad_config' } | { state: 'on'; config: EvmSponsorConfig };
@@ -111,8 +114,12 @@ async function chainViewOf(env: Env, config: EvmSponsorConfig, chain: Readonly<E
   const pinned = Object.hasOwn(SPONSOR_DELEGATES, chain.chainId) ? SPONSOR_DELEGATES[chain.chainId]! : null;
   const pinnedCodeHash = pinned && !pinned.placeholder ? pinned.runtimeCodeHash.toLowerCase() : null;
   const rpc = sponsorChainFor(env, chain, { timeoutMs: evmRelayerStaffTiming.chainMs, maxRequests: 4 });
-  const [r, balance, code] = await Promise.all([
+  const [r, budget, balance, code] = await Promise.all([
     relayer ? Promise.resolve(relayer) : readRelayer(env, chain.chainId),
+    within(evmRelayerStaffTiming.budgetMs, Promise.resolve().then(() => limiter(env, envBudgetSubject(chain.chainId)).spent(budgetWindow(chain.chainId), DAY, now))).then(
+      (spent): EvmRelayChainView['budget'] => (typeof spent === 'string' && /^\d{1,78}$/u.test(spent) ? { ok: true, spentWei: spent } : { ok: false, code: 'rate_limiter_unavailable' }),
+      (): EvmRelayChainView['budget'] => ({ ok: false, code: 'rate_limiter_unavailable' }),
+    ),
     within(evmRelayerStaffTiming.chainMs * 2, rpc.balance(config.relayerAddress as Hex)).then(
       (wei): EvmRelayChainView['balance'] => ({ ok: true, wei: wei.toString() }),
       (e: unknown): EvmRelayChainView['balance'] => ({ ok: false, code: rpcCode(e) }),
@@ -122,7 +129,7 @@ async function chainViewOf(env: Env, config: EvmSponsorConfig, chain: Readonly<E
       (e: unknown) => ({ ok: false as const, code: rpcCode(e) }),
     ),
   ]);
-  if (!(r.ok && balance.ok && code.ok)) log({ event: 'system_status', outcome: 'error', code: 'evm_relay_unreadable', chainId: chain.chainId }, 'warn');
+  if (!(r.ok && budget.ok && balance.ok && code.ok)) log({ event: 'system_status', outcome: 'error', code: 'evm_relay_unreadable', chainId: chain.chainId }, 'warn');
   let helper: EvmRelayChainView['helper'];
   if (!code.ok) helper = { address: chain.delegate, pinnedCodeHash, ok: false, code: code.code };
   else {
@@ -139,6 +146,7 @@ async function chainViewOf(env: Env, config: EvmSponsorConfig, chain: Readonly<E
     // deploy-check's floor: one transaction's worst execution cost, doubled on an OP Stack chain for its L1 data fee.
     oneSendWorstWei: (chain.maxGasPerTx * chain.maxFeePerGasWei * (chain.opStack ? 2n : 1n)).toString(),
     relayer: r.ok ? { ok: true, ...relayerViewOf(r.status, now, logLimit) } : r,
+    budget,
     balance,
     helper,
   };
@@ -170,10 +178,7 @@ function configuredChain(env: Env, chainId: number): { config: EvmSponsorConfig;
   return { config: setup.config, chain };
 }
 
-/**
- * The app of each user action, from the sponsorship's send records (`evm_sponsor_sends`, by chain and digest), or
- * null when this API has no such table yet (it arrives with the sponsorship handlers' migration, PR 71).
- */
+/** The app of each user action, from the sponsorship's send records (`evm_sponsor_sends`, by chain and digest), or null when the read failed. */
 async function appsOf(db: D1Database, chainId: number, digests: string[]): Promise<Map<string, { id: string; name: string | null }> | null> {
   const list = digests.map((d) => d.toLowerCase()).slice(0, 64);
   const marks = list.map((_d, i) => `?${i + 2}`).join(', ');
@@ -187,8 +192,8 @@ async function appsOf(db: D1Database, chainId: number, digests: string[]): Promi
       .all<{ digest: string; app_id: string; name: string | null }>();
     // The newest row per digest wins (a replay row names the same app).
     return new Map(rows.results.map((r) => [r.digest.toLowerCase(), { id: r.app_id, name: r.name ?? null }]));
-  } catch (e) {
-    if (!/no such table/iu.test(e instanceof Error ? e.message : String(e))) log({ event: 'evm_relay_detail', outcome: 'error', code: 'apps_unreadable' }, 'warn');
+  } catch {
+    log({ event: 'evm_relay_detail', outcome: 'error', code: 'apps_unreadable' }, 'warn');
     return null;
   }
 }
@@ -216,7 +221,7 @@ export async function evmRelayerStaffDetail(env: Env, db: D1Database, chainId: n
   const { config, chain } = configuredChain(env, chainId);
   const relayer = await readRelayer(env, chainId);
   const [view, apps] = await Promise.all([chainViewOf(env, config, chain, now, 50, relayer), relayer.ok ? appsOf(db, chainId, relayer.status.records.flatMap((r) => (r.digest ? [r.digest] : []))) : Promise.resolve(null)]);
-  return { chain: view, records: relayer.ok ? recordsOf(relayer.status, apps) : [], apps: apps ? 'recorded' : 'not_recorded' };
+  return { chain: view, records: relayer.ok ? recordsOf(relayer.status, apps) : [], apps: apps ? 'recorded' : 'unreadable' };
 }
 
 /**

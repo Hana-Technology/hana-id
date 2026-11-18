@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-18 (branch `feat/admin-evm-sponsor`, not merged, not deployed: the six free-network-fee playbooks `evm-relay-paused`, `evm-relay-balance-low`, `evm-relay-budget-high`, `evm-relay-receipt-odd`, `evm-billing-late` and `evm-relay-slot-taken`, planned until sponsorship is live, D843); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: `near-relay-budget-high` and `near-relay-balance-low` quote sandbox-dev's 6 NEAR and 9 NEAR, D793); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: `exit-client-unpinned`: the combined alarm, unreadable pins, the alarm's limits and the threshold, D493); 2026-11-09 (branch `feat/test-page-command`: `watchdog-first-run` with the test page, `watchdog-compromised` with what the status token can do, D449, D450); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-18 (branch `feat/admin-evm-sponsor`, not merged, not deployed: the six free-network-fee playbooks `evm-relay-paused`, `evm-relay-balance-low`, `evm-relay-budget-high`, `evm-relay-receipt-odd`, `evm-billing-late` and `evm-relay-slot-taken` for the sponsorship’s events as merged (the stuck alert at 2 minutes, `quarantined`), and `near-billing-late` (its five counts), D843); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: `near-relay-budget-high` and `near-relay-balance-low` quote sandbox-dev's 6 NEAR and 9 NEAR, D793); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: `exit-client-unpinned`: the combined alarm, unreadable pins, the alarm's limits and the threshold, D493); 2026-11-09 (branch `feat/test-page-command`: `watchdog-first-run` with the test page, `watchdog-compromised` with what the status token can do, D449, D450); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -52,12 +52,13 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Passport Home's daily derive budget reached 80%](#home-budget-high) | warning | — |
 | [The NEAR relay's daily budget reached 80%](#near-relay-budget-high) | warning | — |
 | [The NEAR relay account is running low](#near-relay-balance-low) | warning | — |
-| [Free network fees are paused or slow](#evm-relay-paused) | critical (planned) | — |
-| [The free network fees wallet is running low](#evm-relay-balance-low) | warning (planned) | — |
-| [Free network fees: today's budget is nearly used up](#evm-relay-budget-high) | warning (planned) | — |
-| [Free network fees: a payment looked wrong](#evm-relay-receipt-odd) | warning (planned) | — |
-| [Free network fees: a billing record is late](#evm-billing-late) | warning (planned) | — |
-| [Free network fees: a payment slot was used by another transaction](#evm-relay-slot-taken) | critical (planned) | — |
+| [Free network fees are paused or slow](#evm-relay-paused) | critical | — |
+| [The free network fees wallet is running low](#evm-relay-balance-low) | warning | — |
+| [Free network fees: today's budget is nearly used up](#evm-relay-budget-high) | warning | — |
+| [Free network fees: a payment looked wrong](#evm-relay-receipt-odd) | warning | — |
+| [Free network fees: a billing record is late](#evm-billing-late) | warning | — |
+| [Free network fees: a payment slot was used by another transaction](#evm-relay-slot-taken) | critical | — |
+| [Free NEAR transactions: a billing record is late](#near-billing-late) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -1554,14 +1555,14 @@ A `near_relay_balance_low` security event: the hourly check found `near.relay.ac
 
 ### Free network fees are paused or slow
 
-`evm-relay-paused` · critical · **planned: not built yet**
+`evm-relay-paused` · critical
 
-An `evm_relay_stuck` security event, or the System status tile “Free network fees” saying “Paused: needs a person”: the relayer that pays users' network fees stopped, or a transaction has waited more than 10 minutes. Not live yet.
+An `evm_relay_stuck` security event, or the System status tile “Free network fees” saying “Paused: needs a person”: the relayer that pays users' network fees stopped, turned a user's action away for a reason on our side, or has a transaction waiting too long.
 
 **Signals**
 
-- The tile “Free network fees (Base Sepolia)” on System status says “Paused: needs a person”, with why in one sentence and numbered steps.
-- An `evm_relay_stuck` row in the admin's security events, emailed by the feed (at most one an hour per network): a transaction waiting more than 10 minutes, or the relayer paused (`halted`, with its reason).
+- The tile “Free network fees (Base Sepolia)” on System status says “Paused: needs a person”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.
+- An `evm_relay_stuck` row in the admin's security events, emailed by the feed (at most one an hour per network), with one of: `halted` (the relayer stopped itself; `haltCode` the network's refusal), `rejected` (a refusal on our side turned a user's action away), `oldestPendingMs` or `oldestUnacceptedMs` over 2 minutes (the oldest transaction not on the network, or not taken by any node), or a send still unsettled after 10 minutes.
 
 **Impact**
 
@@ -1575,6 +1576,8 @@ An `evm_relay_stuck` security event, or the System status tile “Free network f
 2. **Do the steps** (who: a founder). Follow the numbered steps on the tile. Most often the relayer's wallet is out of test ETH: send test ETH to its address from a Base Sepolia faucet, then press Resume on the Free network fees page. Every tool there asks for a note, says what it will do before it does it, and is recorded in the audit log.
 
 3. **Ask an engineer when the steps say so** (who: a founder). If the reason says the key is being used somewhere else, the records disagree (a bug), or Resume keeps being refused for the same reason, stop and ask an engineer. The relayer refuses anything unsafe itself; never work around a refusal.
+
+4. **Not paused, only slow or one refusal** (who: anyone). With no pause, a transaction waiting over 2 minutes usually means the network is busy: the relayer raises its fee every minute and it clears by itself. With `rejected` only, check the wallet's balance on the tile. If either lasts an hour, ask an engineer to look.
 
 **Verify**
 
@@ -1590,18 +1593,18 @@ An `evm_relay_stuck` security event, or the System status tile “Free network f
 
 ### The free network fees wallet is running low
 
-`evm-relay-balance-low` · warning · **planned: not built yet**
+`evm-relay-balance-low` · warning
 
-An `evm_relay_balance_low` security event, or the tile saying “Low on money”: the relayer's wallet holds less than `lowBalanceEth` (sandbox-dev 0.05 test ETH). Not live yet.
+An `evm_relay_balance_low` security event, or the tile saying “Low on money”: the relayer's wallet holds less than `lowBalanceEth` (sandbox-dev 0.05 test ETH), or too little to cover three times over everything in flight plus the next action.
 
 **Signals**
 
 - The tile “Free network fees” says “Low on money”.
-- An `evm_relay_balance_low` row in the admin's security events, emailed by the feed (one a day per network: the wallet and its balance).
+- An `evm_relay_balance_low` row in the admin's security events, emailed by the feed (one a day per network: the wallet, its balance, the low line, and `neededWei` when it fired at a send).
 
 **Impact**
 
-- Nothing stops yet. When the wallet can no longer pay for a transaction, free network fees pause (the tile then says “Paused: needs a person”).
+- Below the cover for what is in flight, new actions are already turned away (users read “paused”), so the wallet never runs dry by itself. Above it, nothing stops yet.
 - How urgent: today.
 
 **Steps**
@@ -1612,7 +1615,7 @@ An `evm_relay_balance_low` security event, or the tile saying “Low on money”
 
 **Verify**
 
-- The tile's “Money in the wallet” line shows the new amount and the state is “Working”.
+- The tile's “Money in the wallet” line shows the new amount and the state is “Working”; sends go through again within 30 seconds.
 
 **Follow-ups**
 
@@ -1624,9 +1627,9 @@ An `evm_relay_balance_low` security event, or the tile saying “Low on money”
 
 ### Free network fees: today's budget is nearly used up
 
-`evm-relay-budget-high` · warning · **planned: not built yet**
+`evm-relay-budget-high` · warning
 
-An `evm_relay_budget_high` security event: today's sponsored network fees reached 80% of `dailyBudgetEth` (sandbox-dev 0.02 test ETH). Not live yet.
+An `evm_relay_budget_high` security event: today's reservations for sponsored network fees reached 80% of `dailyBudgetEth` on a network (sandbox-dev 0.02 test ETH).
 
 **Signals**
 
@@ -1658,9 +1661,9 @@ An `evm_relay_budget_high` security event: today's sponsored network fees reache
 
 ### Free network fees: a payment looked wrong
 
-`evm-relay-receipt-odd` · warning · **planned: not built yet**
+`evm-relay-receipt-odd` · warning
 
-An `evm_relay_receipt_odd` security event: a sponsored transaction's receipt didn't add up (its cost, or the user's action not showing in it), so it was counted at the most it could cost. Not live yet.
+An `evm_relay_receipt_odd` security event: a confirmation from the network provider didn't fit what was reserved (a broken or lying provider), so the transaction was counted at the most it could cost.
 
 **Signals**
 
@@ -1675,7 +1678,7 @@ An `evm_relay_receipt_odd` security event: a sponsored transaction's receipt did
 
 1. **Note when and how often** (who: anyone). Look at the event's details (network, hour) and whether more arrive. Note the time.
 
-2. **Ask an engineer** (who: a founder). Give an engineer the time and the network. The engineer compares the transaction on the block explorer with the API's records (`evm_sponsor_sends`) and the network provider's answers.
+2. **Ask an engineer** (who: a founder). Give an engineer the time and the network. The engineer compares the transaction on the block explorer with the API's records (`evm_sponsor_sends`) and checks the network provider (the secret `EVM_SPONSOR_RPC_<chainId>`), replacing it if it misbehaves.
 
 **Verify**
 
@@ -1685,19 +1688,19 @@ An `evm_relay_receipt_odd` security event: a sponsored transaction's receipt did
 
 - If the network provider gave wrong answers, the engineer may change the read provider (docs/operations.md, step 9).
 
-**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-billing-late](#evm-billing-late)
+**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D847 (`docs/decisions.md`), D848 (`docs/decisions.md`) · **See also:** [evm-billing-late](#evm-billing-late)
 
 <a id="evm-billing-late"></a>
 
 ### Free network fees: a billing record is late
 
-`evm-billing-late` · warning · **planned: not built yet**
+`evm-billing-late` · warning
 
-An `evm_billing_late` security event: a sponsored transaction's billing record didn't reach the usage ledger in time, or the ledger refused it and it was set aside. Not live yet.
+An `evm_billing_late` security event: a finished sponsored send has no billing record, or records haven't reached the usage ledger, after an hour; or (`quarantined`) the ledger refused a record on its own, which is set aside so the others still copy.
 
 **Signals**
 
-- An `evm_billing_late` row in the admin's security events, emailed by the feed.
+- An `evm_billing_late` row in the admin's security events, emailed by the feed, with its counts (`quarantined`: records the ledger refused, set aside).
 
 **Impact**
 
@@ -1708,7 +1711,7 @@ An `evm_billing_late` security event: a sponsored transaction's billing record d
 
 1. **Check the ledger is reachable** (who: anyone). Open System status: the usage ledger tiles under Data should be OK. If the ledger is down, the records go through once it is back.
 
-2. **Ask an engineer for one that stays late** (who: a founder). If the event repeats for the same record, give an engineer the event's details. The engineer looks at the set-aside record in `evm_sponsor_billing` and why the ledger refused it.
+2. **Ask an engineer for a set-aside record** (who: a founder). With `quarantined` above 0, or when the event repeats with the ledger working, give an engineer the event's details. The engineer looks at the set-aside rows in `evm_sponsor_billing` (`quarantined_at`) and why the ledger refused them.
 
 **Verify**
 
@@ -1718,15 +1721,15 @@ An `evm_billing_late` security event: a sponsored transaction's billing record d
 
 - None.
 
-**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-relay-receipt-odd](#evm-relay-receipt-odd)
+**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D852 (`docs/decisions.md`) · **See also:** [evm-relay-receipt-odd](#evm-relay-receipt-odd)
 
 <a id="evm-relay-slot-taken"></a>
 
 ### Free network fees: a payment slot was used by another transaction
 
-`evm-relay-slot-taken` · critical · **planned: not built yet**
+`evm-relay-slot-taken` · critical
 
-An `evm_relay_nonce_taken` security event: a slot (the relayer's transaction number) was closed as “used by something else”: a transaction the relayer didn't send used it, so someone else has used the relayer's key. Not live yet.
+An `evm_relay_nonce_taken` security event: a slot (the relayer's transaction number) was closed as “used by something else”: a transaction the relayer didn't send used it, so someone else has used the relayer's key; the user's action didn't run and its reservation was kept as the cost.
 
 **Signals**
 
@@ -1753,6 +1756,41 @@ An `evm_relay_nonce_taken` security event: a slot (the relayer's transaction num
 - Record what happened and when in the decision log.
 
 **Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), [`docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live`](operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live), D843 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-relay-paused](#evm-relay-paused), [relayer-key-stolen](#relayer-key-stolen)
+
+<a id="near-billing-late"></a>
+
+### Free NEAR transactions: a billing record is late
+
+`near-billing-late` · warning
+
+A `near_billing_late` security event (once a day, with counts): the NEAR relay's billing records are missing, waiting or not yet copied to the usage ledger.
+
+**Signals**
+
+- A `near_billing_late` row in the admin's security events, emailed by the feed, with its counts: `misses`, `parked`, `notFinal`, `unmirrored`, `unrecordedLast`.
+
+**Impact**
+
+- Users are not affected: relays go on. The records a later bill to partners would come from may be missing or late.
+- How urgent: before the next monthly statement; `misses` and `unrecordedLast` sooner.
+
+**Steps**
+
+1. **Read the counts** (who: anyone). `parked`: records waiting for D1, written by the cron once it works. `unmirrored`: records not copied to the usage ledger an hour on. `notFinal`: records not read back from the chain six hours on. `misses`: a relay may have gone out without a record. `unrecordedLast`: for that many relay keys, the day's last transaction on chain has no record.
+
+2. **Usually wait** (who: anyone). For `parked` and `unmirrored`, check that the usage ledger tiles on System status are OK; they catch up by themselves. For `notFinal`, check the NEAR RPC tile.
+
+3. **Tell an engineer about misses** (who: a founder). For `misses` or `unrecordedLast`, tell the developer team with the day: something was sent without a record. `unrecordedLast` checks only the last transaction per key per day, so it is a sign, not a count.
+
+**Verify**
+
+- The next day’s event is gone, or shows only `parked` or `unmirrored` going down.
+
+**Follow-ups**
+
+- None.
+
+**Refs:** [`docs/operations.md#near-relay-billing-records-d863-built-not-deployed`](operations.md#near-relay-billing-records-d863-built-not-deployed), D863 (`docs/decisions.md`) · **See also:** [near-relay-balance-low](#near-relay-balance-low)
 
 <a id="updater-key-stolen"></a>
 

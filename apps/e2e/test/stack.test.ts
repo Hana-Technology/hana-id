@@ -38,6 +38,9 @@ import { D1Shim } from '../src/server/d1.ts';
 import { LocalIssuer, newIssuerKey } from '../src/server/issuer.ts';
 import { serve, servedAt } from '../src/server/http.ts';
 import { MemoryNamespace, type MemoryStorage } from '../src/server/workers.ts';
+import { parseEvmSponsorConfig } from '../../api/src/evm/sponsor-config.ts';
+import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
+import { e2eRelayer } from '../src/relayer-key.ts';
 import {
   API_URL,
   AUTH_ORIGIN,
@@ -68,6 +71,9 @@ import {
   VAULT_ORIGIN,
   portBase,
   portsFrom,
+  ENV_NAME,
+  EVM_CHAIN_ID,
+  e2eEvmSponsorVar,
 } from '../src/stack.ts';
 
 let modules: ApiModules;
@@ -639,5 +645,27 @@ describe('the email issuer: apps/email-issuer’s Worker, its app lookups throug
     expect(await start('pk_test_1111111111111111111111111111111z')).toEqual([401, 'invalid_key']);
     const suspended = api.createApp({ origins: [PARTNER_ORIGIN], status: 'suspended', loginMethods: 'google,email' });
     expect(await start(suspended.pk)).toEqual([403, 'app_suspended']);
+  });
+});
+
+describe('gas sponsorship on the stack (the real routes and relayer, src/server/api.ts)', () => {
+  it('the API’s EVM_SPONSOR for one app is a manifest the Worker accepts in a local* env: one endpoint, the stack’s relayer', () => {
+    const relayer = e2eRelayer();
+    expect(relayer.address).toMatch(/^0x[0-9a-fA-F]{40}$/u);
+    // (partner.ts's MockEvm itself is not imported here: it loads build.ts, which sets the port base after stack.ts read it.)
+    const api = new MockApi(new D1Shim(), new Chain(), modules, { evm: { setDelegation: () => undefined } as never });
+    const { appId } = api.createApp({ origins: [PARTNER_ORIGIN] });
+    expect(appId).toMatch(/^app_[A-Za-z0-9]{1,64}$/u);
+    const parsed = parseEvmSponsorConfig(e2eEvmSponsorVar(relayer.address, [appId]), { network: 'testnet', envName: ENV_NAME, pinnedDelegates: SPONSOR_DELEGATES });
+    expect(parsed.status).toBe('configured');
+    const config = (parsed as { config: { relayerAddress: string; chains: Record<string, { rpcFallback: string | null }> } }).config;
+    expect(config.relayerAddress).toBe(relayer.address);
+    expect(config.chains[String(EVM_CHAIN_ID)]!.rpcFallback).toBeNull();
+    // The relayer object and its key are the default Worker's only; the key is in EVM_RELAY_KEYS, nowhere else.
+    expect(api.env.EVM_RELAYER).toBeDefined();
+    expect(api.env.EVM_RELAY_KEYS).toBe(relayer.keysVar);
+    const live = new MockApi(new D1Shim(), new Chain(), modules, { serves: { envName: LIVE_ENV_NAME, vaultOrigin: 'https://v.test', authOrigin: 'https://a.test', apiUrl: 'https://api.test' } });
+    expect(live.env.EVM_RELAYER).toBeUndefined();
+    expect(live.env.EVM_RELAY_KEYS).toBeUndefined();
   });
 });

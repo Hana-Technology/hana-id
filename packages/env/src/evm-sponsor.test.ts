@@ -112,11 +112,13 @@ describe('evm.sponsor: testnet only', () => {
     expect(manifestSchema.safeParse({ ...withSponsor(sponsorFixture()), network: 'mainnet' }).success).toBe(false);
   });
 
-  it('requireKnownAccount: a boolean, default on; false only on testnet', () => {
-    expect(messages(withSponsor(chain({ requireKnownAccount: false })))).toEqual([]);
+  it('requireKnownAccount: a boolean, default on; false only in local* envs', () => {
+    const msg = 'evm.sponsor.chains.84532.requireKnownAccount false is only for local* envs (the relayer then pays for anyone holding a publishable key)';
+    expect(messages(withSponsor(chain({ requireKnownAccount: false }))).some((m) => m.includes('false is only for local* envs'))).toBe(true);
     expect(refused(chain({ requireKnownAccount: 'no' }))).toBe(true);
     const off = chain({ requireKnownAccount: false }) as EvmSponsor;
-    expect(problems(off, 'prod', 'mainnet')).toContain('evm.sponsor.chains.84532.requireKnownAccount false is testnet only (the relayer then pays for anyone holding a publishable key)');
+    expect(problems(off, 'prod', 'mainnet')).toContain(msg);
+    expect(problems(off, 'local-dev', 'testnet')).not.toContain(msg);
   });
 });
 

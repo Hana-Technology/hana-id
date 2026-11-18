@@ -212,6 +212,7 @@ export function evmView(now: number, s: Scenario | 'fees-resumed'): EvmRelayChai
       lastStaffSeq: 3,
       staffLog: log,
     },
+    budget: { ok: true, spentWei: (s === 'fees-paused-money' ? 7n * MILLI : 3n * MILLI).toString() },
     balance: { ok: true, wei: balance.toString() },
     helper: { address: EVM_HELPER, pinnedCodeHash: EVM_HELPER_HASH, ok: true, codeHash: EVM_HELPER_HASH, matches: true },
   };

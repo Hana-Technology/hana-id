@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (an email can cancel its pending link; gas-free EVM actions, not live; 0.5.0 not published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (a linked sign-in can remove itself; gas-free EVM actions, not live; 0.5.0 not published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -576,7 +576,12 @@ button.addEventListener('click', async () => {
   from the Journear Passport popup's banner at their next sign-in. An email that waits to join a Google wallet can
   also cancel it itself: its refused sign-in leaves the popup open on the waiting link, with **Cancel this link** (one
   more code to the address) and **Keep the link**. Your `login()` has already rejected with `link_pending` by then;
-  nothing else reaches your page.
+  nothing else reaches your page. A method linked to someone's wallet (it opens that wallet but isn't its first
+  sign-in) is asked, before its sign-in opens the wallet, whether to keep the link or remove itself (not for a Gmail
+  address linked automatically to its own Google account). **Not now** or **Don't ask again on this device**:
+  `login()` goes on as usual. **Remove**: `login()` rejects with `login_cancelled` and `data.reason: 'link_remove'`,
+  and the popup finishes the removal (one more code, or Google); a later sign-in with that method opens a new wallet
+  of its own. In an app without email login the popup also stays open until Journear Passport's last word.
   - `await hana.account()` → `{methods: [{provider: 'google' | 'email', status: 'active' | 'pending', effectiveAtMs,
     root}]}`: the wallet's own method (`root: true`) and the ones linked to it. No identifiers, no addresses. Calls
     within 5 s of a read share it (the vault reads afresh after a login, a link or a banner's action). **Show
@@ -1682,7 +1687,7 @@ window, not returned.
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s, `data.stage: 'connect'`), or the sign-in was left unfinished for 5 min (`data.stage: 'pending'`: the popup left open, or closed within a few seconds of reaching Google's page) | retry |
-| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Journear Passport popup (`data.reason: 'popup_closed'`: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Journear Passport popup on the screen it went back to; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Journear Passport's explanation | offer email sign-in |
+| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Journear Passport popup (`data.reason: 'popup_closed'`: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Journear Passport popup on the screen it went back to; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Journear Passport's explanation; `data.reason: 'link_remove'`: the user chose to remove this sign-in method from the wallet it was linked to (it will open a wallet of its own next time) | offer email sign-in; for `link_remove`, offer to sign in again |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
 | `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; the Journear Passport window says what to do (an email's window offers to cancel the link) |

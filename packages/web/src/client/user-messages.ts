@@ -60,6 +60,9 @@ const BY_CODE: Readonly<Record<string, string>> = Object.freeze({
 
 /** Closer sentences for some `data.reason` values, by code. */
 const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
+  // D865: the user chose to remove this sign-in from the wallet it was linked to; the window finishes the removal (its
+  // code may still be to come), so the sentence is true either way.
+  login_cancelled: { link_remove: `You chose to remove this sign-in from that wallet. Finish it in the ${P} window. Then sign in again when you’re ready.` },
   [ErrorCode.unauthorized]: {
     mainnet_not_allowed: TEST_APP,
     raw_not_allowed_for_test_apps: TEST_APP,
@@ -119,6 +122,13 @@ const SPONSOR = Object.freeze({
   tooMany: 'Too many actions right now. Wait a moment and try again.',
   tooManyFailed: 'Too many actions failed today. Try again tomorrow.',
   unavailable: 'Journear couldn’t send this action right now. Try again later.',
+  paused: 'Free network fees are paused right now. Try again later.',
+  feesHigh: 'Network fees are too high right now. Nothing was sent. Try again in a few minutes.',
+  busyNow: 'Journear is busy with other actions right now. Nothing was sent. Try again in a few seconds.',
+  wrongAccount: 'This isn’t the account you’re signed in with. Nothing was sent. Sign in again, then try again.',
+  signInNotReady: 'Journear is still finishing your sign-in. Try again in a few seconds.',
+  signInUnchecked: 'Journear couldn’t check your sign-in, so nothing was sent. Sign in again, then try again.',
+  accountPending: 'Your account has other actions waiting on the network, so this one couldn’t go through. Wait a moment, then try again.',
 });
 
 export const SPONSOR_REASONS: Readonly<Record<string, string>> = Object.freeze({
@@ -156,6 +166,33 @@ export const SPONSOR_REASONS: Readonly<Record<string, string>> = Object.freeze({
   deadline_out_of_range: SPONSOR.tooSlow,
   session_ended: SPONSOR.signInEnded,
   api_unavailable: SPONSOR.unavailable,
+  // The API's codes for what isn't the user's doing, and the session check's (D856).
+  paused: SPONSOR.paused,
+  sponsorship_paused: SPONSOR.paused,
+  gas_price_too_high: SPONSOR.feesHigh,
+  relayer_busy: SPONSOR.busyNow,
+  account_mismatch: SPONSOR.wrongAccount,
+  session_not_visible: SPONSOR.signInNotReady,
+  stale_session_proof: SPONSOR.tooSlow,
+  proof_replayed: SPONSOR.alreadySending,
+  missing_session_proof: SPONSOR.signInUnchecked,
+  bad_session_proof: SPONSOR.signInUnchecked,
+  invalid_session_signature: SPONSOR.signInUnchecked,
+  bad_wallet_proof: SPONSOR.signInUnchecked,
+  scope_mismatch: SPONSOR.signInUnchecked,
+  sponsorship_unconfigured: SPONSOR.notOffered,
+  relayer_unavailable: SPONSOR.unavailable,
+  evm_rpc_unavailable: SPONSOR.unavailable,
+  near_unavailable: SPONSOR.unavailable,
+  audit_unavailable: SPONSOR.unavailable,
+  directory_unavailable: SPONSOR.unavailable,
+  rate_limiter_unavailable: SPONSOR.unavailable,
+  config_unavailable: SPONSOR.unavailable,
+  internal_error: SPONSOR.unavailable,
+  outcome_unknown: SPONSOR.unknownOutcome,
+  account_pending: SPONSOR.accountPending,
+  account_busy: SPONSOR.busy,
+  batch_too_large: SPONSOR.tooBig,
 });
 
 /** The codes a sponsored action's errors come with. */

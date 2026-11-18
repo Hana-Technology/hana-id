@@ -539,6 +539,37 @@ describe('POST /v1/link/cancel and /v1/link/unlink', () => {
     expect(refused.reason).toBe('not_allowed');
   });
 
+  it('D865: the member’s own unlink: only its own email token over the unlink nonce, at the current epoch, while active', async () => {
+    const { app, near, e, root, member } = await account(true);
+    const tok = async (action: 'cancel' | 'unlink', epoch = 1, sub = e) =>
+      emailToken({ aud: emailAud(app.scope), sub, nonce: await linkChangeNonce(env.SIGNER_ACCOUNT, app.scope, action, root, fromHex(member), epoch, Uint8Array.from(salt)) });
+    const refusal = async (jwt: string, epoch = 1) => body(await linkCall('/v1/link/unlink', app, { jwt, memberKey: member, epoch, salt }));
+    // The cancel nonce isn't an unlink proof; nor is a stale epoch's.
+    expect((await refusal(await tok('cancel'))).reason).toBe('link_mismatch');
+    expect((await refusal(await tok('unlink', 0), 0)).reason).toBe('stale_epoch');
+    // An email outside the account, with the right nonce: it isn't in this account.
+    expect((await refusal(await tok('unlink', 1, 'e1.outsider'))).reason).toBe('no_such_member');
+    // Another member of the account can't remove this one.
+    const other = 'e1.other';
+    near.identities.set(`email#${other}`, { status: 'member', opened: false, root: { provider: 'google', sub: G_SUB } });
+    near.accounts.set(`google#${G_SUB}`, { root: { provider: 'google', sub: G_SUB }, members: [{ provider: 'email', sub: e, active: true }, { provider: 'email', sub: other, active: true }], epoch: 1 });
+    expect((await refusal(await tok('unlink', 1, other))).reason).toBe('not_allowed');
+    expect(near.sent).toHaveLength(0);
+    // The member itself: relayed.
+    near.accounts.set(`google#${G_SUB}`, { root: { provider: 'google', sub: G_SUB }, members: [{ provider: 'email', sub: e, active: true }], epoch: 1 });
+    const jwt = await tok('unlink');
+    const res = await linkCall('/v1/link/unlink', app, { jwt, memberKey: member, epoch: 1, salt });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    expect([near.sent[0]!.method, near.sent[0]!.args]).toEqual(['unlink_identity', { scope_id: app.scope, jwt, member_key: member, epoch: 1, salt }]);
+  });
+
+  it('D865: a pending member can’t unlink (it cancels instead)', async () => {
+    const { app, near, e, root, member } = await account(false);
+    const jwt = await emailToken({ aud: emailAud(app.scope), sub: e, nonce: await linkChangeNonce(env.SIGNER_ACCOUNT, app.scope, 'unlink', root, fromHex(member), 1, Uint8Array.from(salt)) });
+    expect((await body(await linkCall('/v1/link/unlink', app, { jwt, memberKey: member, epoch: 1, salt }))).reason).toBe('no_such_member');
+    expect(near.sent).toHaveLength(0);
+  });
+
   it('an app that turned email off still takes an email token to remove a link (review L6), never to add one', async () => {
     const { app, e, root, member } = await account(true);
     await setLoginMethods(app.id, 'google');

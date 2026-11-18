@@ -763,6 +763,8 @@ describe('D865: an active member’s own notice, and its removal of itself', () 
     const run = await popupHello(t);
     await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
     const n = (await notice(t, run, 2)) as Extract<FollowNotice, { t: 'member_link' }>;
+    // Some tests never await the reply: never an unhandled rejection when the tab closes first.
+    pending.catch(() => undefined);
     return { b, t, run, pending, n };
   }
 
@@ -796,7 +798,8 @@ describe('D865: an active member’s own notice, and its removal of itself', () 
     b.backend.opened.add(hex(ik(G)));
     b.backend.link(G, E, { active: true, effectiveAtMs: SINCE + 1 });
     const t = await tab(b);
-    void t.request('hana_login', { method: 'email' });
+    // The reply isn't awaited here: never an unhandled rejection when the tab closes first.
+    t.request('hana_login', { method: 'email' }).catch(() => undefined);
     const run = await popupHello(t);
     await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
     expect(((await notice(t, run, 2)) as Extract<FollowNotice, { t: 'member_link' }>).linkId).not.toBe(one.n.linkId);
@@ -898,7 +901,8 @@ describe('D865: an active member’s own notice, and its removal of itself', () 
     b.backend.opened.add(hex(ik(G)));
     b.backend.link(G, E, { active: true, effectiveAtMs: 1_000 });
     const t = await tab(b);
-    void t.request('hana_login', { method: 'email' });
+    // The reply isn't awaited here: never an unhandled rejection when the tab closes first.
+    t.request('hana_login', { method: 'email' }).catch(() => undefined);
     const run = await popupHello(t);
     await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
     expect(await notice(t, run, 2)).toMatchObject({ t: 'member_link', sinceMs: 1_000 });
@@ -917,6 +921,7 @@ describe('D865: an active member’s own notice, and its removal of itself', () 
     const pending = t.request('hana_login');
     const run = await popupHello(t);
     await googleAnswer(t, run);
+    pending.catch(() => undefined);
     return { b, t, run, pending, n: await notice(t, run, 2) };
   }
 

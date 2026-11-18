@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { checkEvmSponsorRelay, evmSponsorConfig, sponsorFaults, EVM_SPONSOR_PREPARE_ENDPOINT as PREPARE, EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, sponsorPins, sponsorTiming } from '../src/evm/sponsor.ts';
 import { DEFAULT_SPONSOR_PORTS, type Hex, keccakHex, sponsorPorts } from '../src/evm/sponsor-ports.ts';
-import { pruneEvmSponsorSends, reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
+import { type SendRow, pruneEvmSponsorSends, reconcileEvmSends, settleNotCharged } from '../src/evm/sponsor-settle.ts';
 import { checksumEvmAddress } from '../src/evm/sponsor-config.ts';
 import { BILLING_LATE_MS, mirrorEvmBilling, RECORD_EVM_SPONSORED_SQL } from '../src/evm/sponsor-billing.ts';
 import { usageTransport } from '../src/usage/record.ts';
@@ -1051,7 +1051,7 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
     const copy = await body(await send(s, signedSend(s.user).body));
-    expect(copy.status === 'executed' || copy.code === 'nonce_stale').toBe(true);
+    expect(copy.status === 'executed' || copy.code === 'nonce_stale', JSON.stringify(copy)).toBe(true);
   });
 
   it('a timeout reconciled to reverted (charged, a failure) and to the deadline cancel (the lookup’s mined hash: not_executed)', async () => {
@@ -1198,19 +1198,56 @@ describe('the relayer’s final interface (PR #70)', () => {
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
 
-  it('the relayer’s staff closed it as consumed elsewhere: the reservation kept as the cost, billed, an event for staff', async () => {
+  it('D869: a slot the relayer’s staff closed as used by something else is not charged: every budget and count given back, the record kept at 0, final', async () => {
     const s = await setup();
     receiptKind = 'none';
+    const day = (sub: string, name: string) => hits(sub, name);
     expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    const row = await env.DB.prepare('SELECT user_id, account FROM evm_sponsor_sends').first<{ user_id: string | null; account: string }>();
+    const reserved = s.relayer.sends[0]!.reservedWei;
+    // While open: the budgets carry the reservation; the day counts and the failure slot are taken.
+    expect(await appSpent(s.app)).toBe(reserved);
+    expect(await envSpent()).toBe(reserved);
+    const userSub = row!.user_id ? `evm-sponsor:user:${row!.user_id}` : null;
+    const failureSub = row!.user_id ? `evm-sponsor:failures:${row!.user_id}` : `evm-sponsor:failures:${LOCAL_CHAIN}:${row!.account}`;
+    const before = { app: await day(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:day`), env: await day(`evm-sponsor:global:${LOCAL_CHAIN}`, 'evm-sponsor:day'), user: userSub ? await day(userSub, `evm-sponsor:${LOCAL_CHAIN}:day`) : 0, failures: await failuresSpent(failureSub) };
+    expect([before.app, before.env, before.failures]).toEqual([1, 1, 1n]);
     s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'closed', minedHash: null, outcome: 'consumed_elsewhere', costWei: null, reservedWei: 1n });
     await ageRows();
     expect(await reconcile(s)).toMatchObject({ settled: 1 });
+    // Not charged: both budgets back to nothing, the day counts and the failure slot given back.
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await envSpent()).toBe(0n);
+    expect(await day(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:day`)).toBe(0);
+    expect(await day(`evm-sponsor:global:${LOCAL_CHAIN}`, 'evm-sponsor:day')).toBe(0);
+    if (userSub) expect(await day(userSub, `evm-sponsor:${LOCAL_CHAIN}:day`)).toBe(0);
+    expect(await failuresSpent(failureSub)).toBe(0n);
+    // The row and the record are kept, marked: consumed elsewhere, settled 0, no cost figures for a billing job to add.
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+    expect(await billingRows()).toMatchObject([{ outcome: 'consumed_elsewhere', tx_hash: null, settled_wei: '0', total_cost_wei: null, record_key: expect.stringMatching(/^send:es_/u) }]);
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_nonce_taken'").all<{ detail_json: string }>();
+    expect(ev.results.map((e) => JSON.parse(e.detail_json))).toEqual([{ chainId: LOCAL_CHAIN, charged: false }]);
+    // Final: a later reconcile, even with a receipt or a mined verdict for one of its hashes, can't charge it again.
+    receiptKind = 'executed';
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [`0x${'aa'.repeat(32)}`], state: 'mined', minedHash: `0x${'aa'.repeat(32)}`, outcome: 'execute', costWei: 5n, reservedWei: 1n });
+    await ageRows(60 * 60_000);
+    expect(await reconcile(s)).toMatchObject({ settled: 0, corrected: 0 });
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await billingRows()).toHaveLength(1);
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+  });
+
+  it('D869: a relayer replay row closed as consumed elsewhere gives nothing back twice (its first send carries the counts)', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    await env.DB.prepare('UPDATE evm_sponsor_sends SET replay = 1').run();
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'closed', minedHash: null, outcome: 'consumed_elsewhere', costWei: null, reservedWei: 1n });
     const reserved = s.relayer.sends[0]!.reservedWei;
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 1 });
     expect(await appSpent(s.app)).toBe(reserved);
-    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: reserved.toString() });
-    expect(await billingRows()).toMatchObject([{ outcome: 'consumed_elsewhere', tx_hash: null, settled_wei: reserved.toString() }]);
-    const ev = await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_nonce_taken'").first<{ n: number }>();
-    expect(ev?.n).toBe(1);
+    expect(await billingRows()).toEqual([]);
   });
 
   it('a halted relayer: evm_relay_stuck (“Free network fees: paused or slow, needs a look”), status answers paused, a send is 503 sponsorship_paused with everything back', async () => {
@@ -1667,6 +1704,63 @@ describe('a batch no node took (broadcast: rejected)', () => {
   };
   const attempts = (s: Setup) => hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:attempts`);
   const appMinute = (s: Setup) => hits(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:minute`, 60_000);
+
+  /** Every count a send takes: the user's, the app's and the env's day, the user's attempts, the failure slot. */
+  const counts = async (s: Setup) => ({
+    userDay: await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:day`),
+    appDay: await hits(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:day`),
+    envDay: await hits(`evm-sponsor:global:${LOCAL_CHAIN}`, 'evm-sponsor:day'),
+    attempts: await attempts(s),
+    failures: await failuresSpent(`evm-sponsor:failures:${s.userId}`),
+  });
+  const closedElsewhere = (s: Setup) => {
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'closed', minedHash: null, outcome: 'consumed_elsewhere', costWei: null, reservedWei: 1n });
+  };
+
+  for (const [cause, code] of [['relayer', 'insufficient_funds'], ['pricing', 'underpriced'], ['request', 'gas_limit']] as const) {
+    it(`D869: a rejected batch (cause ${cause}) later closed as used elsewhere: its money comes back, its counts are not returned a second time`, async () => {
+      const s = await setup();
+      // Another action of the same user and app earlier today: a second give-back would eat into its counts.
+      const rl = (sub: string) => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(sub));
+      await rl(`evm-sponsor:user:${s.userId}`).hit([{ name: `evm-sponsor:${LOCAL_CHAIN}:day`, windowMs: 86_400_000, max: 100 }, { name: `evm-sponsor:${LOCAL_CHAIN}:attempts`, windowMs: 86_400_000, max: 100 }]);
+      await rl(`app:${s.app.id}`).hit([{ name: `evm-sponsor:${LOCAL_CHAIN}:day`, windowMs: 86_400_000, max: 100 }]);
+      await rl(`evm-sponsor:global:${LOCAL_CHAIN}`).hit([{ name: 'evm-sponsor:day', windowMs: 86_400_000, max: 100 }]);
+      await rl(`evm-sponsor:failures:${s.userId}`).spend('evm-sponsor:failures', 86_400_000, '10', '1');
+      rejecting(s, cause, code);
+      await send(s, signedSend(s.user).body);
+      expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'rejected' });
+      // What the rejection itself settled (given back for a cause not the user's; kept for the user's own).
+      const afterRejection = await counts(s);
+      expect(await appSpent(s.app)).toBeGreaterThan(0n);
+      closedElsewhere(s);
+      await ageRows();
+      expect(await reconcile(s)).toMatchObject({ settled: 1 });
+      expect(await counts(s)).toEqual(afterRejection);
+      expect(await appSpent(s.app)).toBe(0n);
+      expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+      await ageRows(60 * 60_000);
+      await reconcile(s);
+      expect(await counts(s)).toEqual(afterRejection);
+    });
+  }
+
+  it('D869: two settlements of one row at once: one moves it, the counts and the money come back exactly once', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    const open = await counts(s);
+    expect(open).toMatchObject({ userDay: 1, appDay: 1, envDay: 1, failures: 1n });
+    const c = await env.DB.prepare('SELECT * FROM evm_sponsor_sends WHERE account = ?1').bind(s.user.address).first<Record<string, unknown>>();
+    const row: SendRow = { id: String(c!.id), appId: String(c!.app_id), chainId: Number(c!.chain_id), account: c!.account as Hex, userId: (c!.user_id as string) ?? null, digest: c!.digest as Hex, executeNonce: BigInt(String(c!.execute_nonce)), txHash: null, hashes: [], deadline: Number(c!.deadline), reserved: { gasLimit: 0n, feeCap: 0n, l1Bound: 0n, operatorBound: 0n, reservedWei: BigInt(String(c!.reserved_wei)) }, replay: false, createdAt: Number(c!.created_at) };
+    const both = await Promise.all([settleNotCharged(cronEnv(s), row, 'timeout'), settleNotCharged(cronEnv(s), row, 'timeout')]);
+    expect(both.filter(Boolean)).toHaveLength(1);
+    expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: open.attempts - 1, failures: 0n });
+    expect(await appSpent(s.app)).toBe(0n);
+    // A third, later attempt (the reconciler again, or a status read before the move): nothing moves, nothing comes back.
+    expect(await settleNotCharged(cronEnv(s), row, 'timeout')).toBe(false);
+    expect(await settleNotCharged(cronEnv(s), row, 'consumed_elsewhere')).toBe(false);
+    expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: open.attempts - 1, failures: 0n });
+  });
 
   it('cause request (the batch’s own size or shape): answered at once 422 not_executed, a failure charged; the cancel’s cost settles from the relayer’s lookup', async () => {
     const s = await setup();
@@ -2145,5 +2239,100 @@ describe('the relayer’s oldest unaccepted transaction (PR 86’s status field)
     await checkEvmSponsorRelay(cronEnv(s));
     const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ detail_json: string }>();
     expect(JSON.parse(ev!.detail_json)).toMatchObject({ oldestUnacceptedMs: 3 * 60_000 });
+  });
+});
+
+describe('D869 after its review: every path to “not charged”, each returning everything exactly once', () => {
+  const counts = async (s: Setup) => ({
+    userDay: await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:day`),
+    appDay: await hits(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:day`),
+    envDay: await hits(`evm-sponsor:global:${LOCAL_CHAIN}`, 'evm-sponsor:day'),
+    attempts: await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:attempts`),
+    failures: await failuresSpent(`evm-sponsor:failures:${s.userId}`),
+  });
+  const closed = (s: Setup) => {
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [], state: 'closed', minedHash: null, outcome: 'consumed_elsewhere', costWei: null, reservedWei: 1n });
+  };
+  const rowOfDb = async (s: Setup): Promise<SendRow> => {
+    const c = await env.DB.prepare('SELECT * FROM evm_sponsor_sends WHERE account = ?1').bind(s.user.address).first<Record<string, unknown>>();
+    return { id: String(c!.id), appId: String(c!.app_id), chainId: Number(c!.chain_id), account: c!.account as Hex, userId: (c!.user_id as string) ?? null, digest: c!.digest as Hex, executeNonce: BigInt(String(c!.execute_nonce)), txHash: null, hashes: [], deadline: Number(c!.deadline), reserved: { gasLimit: 0n, feeCap: 0n, l1Bound: 0n, operatorBound: 0n, reservedWei: BigInt(String(c!.reserved_wei)) }, replay: false, createdAt: Number(c!.created_at) };
+  };
+  const inflight = async (s: Setup) => (await env.DB.prepare("SELECT COUNT(*) AS n FROM evm_sponsor_sends WHERE app_id = ?1 AND replay = 0 AND status IN ('sending', 'sent', 'timeout', 'unknown', 'rejected')").bind(s.app.id).first<{ n: number }>())!.n;
+
+  for (const prior of ['sending', 'sent', 'timeout', 'unknown'] as const) {
+    it(`an open row in ${prior}: money, day counts, attempts and the failure slot back exactly once; its in-flight place freed`, async () => {
+      const s = await setup();
+      receiptKind = 'none';
+      expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+      await env.DB.prepare('UPDATE evm_sponsor_sends SET status = ?1').bind(prior).run();
+      const open = await counts(s);
+      expect(open).toMatchObject({ userDay: 1, appDay: 1, envDay: 1, failures: 1n });
+      expect(await inflight(s)).toBe(1);
+      const row = await rowOfDb(s);
+      // The status read must match: a stale read moves nothing.
+      expect(await settleNotCharged(cronEnv(s), row, prior === 'timeout' ? 'unknown' : 'timeout')).toBe(false);
+      expect(await settleNotCharged(cronEnv(s), row, prior)).toBe(true);
+      expect(await settleNotCharged(cronEnv(s), row, prior)).toBe(false);
+      expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: open.attempts - 1, failures: 0n });
+      expect(await appSpent(s.app)).toBe(0n);
+      expect(await inflight(s)).toBe(0);
+    });
+  }
+
+  it('L1: settled executed at head, reorged out, its slot closed as used elsewhere: corrected to not charged once (a fix record at 0), everything back once', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    const req = s.relayer.sends[0]!;
+    const first = keccakHex(rawFor(req));
+    const atHead = await counts(s);
+    // Executed: the failure slot was freed then; the budgets hold the receipt's cost.
+    expect(atHead).toMatchObject({ userDay: 1, appDay: 1, envDay: 1, failures: 0n });
+    expect(await appSpent(s.app)).toBeGreaterThan(0n);
+    closed(s);
+    await ageRows();
+    // Two cron runs at once: one moves the row.
+    const [a, b] = await Promise.all([reconcile(s), reconcile(s)]);
+    expect(a.corrected + b.corrected).toBe(1);
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+    const records = await billingRows();
+    expect(records.map((r) => [r.record_key, r.corrects, r.outcome, r.settled_wei, r.tx_hash])).toEqual([
+      [first, null, 'executed', records[0]!.settled_wei, first],
+      [`fix:${records[0]!.send_id}`, first, 'consumed_elsewhere', '0', null],
+    ]);
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await envSpent()).toBe(0n);
+    expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: atHead.attempts - 1, failures: 0n });
+    // Final: later runs change nothing.
+    await ageRows(60 * 60_000);
+    expect(await reconcile(s)).toMatchObject({ corrected: 0, confirmed: 0, settled: 0 });
+    expect(await counts(s)).toEqual({ userDay: 0, appDay: 0, envDay: 0, attempts: atHead.attempts - 1, failures: 0n });
+    expect(await billingRows()).toHaveLength(2);
+  });
+
+  it('L2: a closed slot whose own transaction later mines: an alert for staff once, nothing charged', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    closed(s);
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 1 });
+    expect(await reconcile(s)).toMatchObject({ closedMined: 0 });
+    // The mistaken close: the batch's own transaction is on the chain after all.
+    const req = s.relayer.sends[0]!;
+    const own = keccakHex(rawFor(req));
+    s.chain.receipts.set(own, receiptFor(req, own, 'executed', { gasUsed: 60_000n, price: 100_000_000n }));
+    const r1 = await reconcile(s);
+    expect(r1.closedMined).toBe(1);
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_closed_slot_mined'").all<{ detail_json: string }>();
+    expect(ev.results.map((e) => JSON.parse(e.detail_json))).toEqual([{ chainId: LOCAL_CHAIN, sendId: (await rowOfDb(s)).id }]);
+    // Once per row, never charged.
+    expect((await reconcile(s)).closedMined).toBe(0);
+    expect(await appSpent(s.app)).toBe(0n);
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'consumed_elsewhere', settled_wei: '0' });
+    expect(await billingRows()).toMatchObject([{ outcome: 'consumed_elsewhere', settled_wei: '0' }]);
+    // Past 7 days the watch stops reading it.
+    await env.DB.prepare('DELETE FROM security_events WHERE kind = ?1').bind('evm_relay_closed_slot_mined').run();
+    await env.DB.prepare('UPDATE evm_sponsor_sends SET created_at = created_at - ?1, updated_at = updated_at - ?1').bind(8 * 86_400_000).run();
+    expect((await reconcile(s)).closedMined).toBe(0);
   });
 });

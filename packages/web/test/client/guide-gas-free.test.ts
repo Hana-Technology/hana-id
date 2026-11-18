@@ -4,7 +4,7 @@
 // packed tarballs by the pack check: scripts/pack-check.ts, GUIDE_PARTS.)
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { SPONSOR_REASONS, userMessageFor } from '../../src/client/user-messages.ts';
+import { SPONSOR_REASONS, SPONSOR_REASON_NAMES, userMessageFor } from '../../src/client/user-messages.ts';
 import { HanaSponsorError, NOT_OFFERED } from '../../src/client/evm-sponsor.ts';
 import { CALLS_VERSION, EIP5792 } from '../../src/client/ethereum.ts';
 
@@ -45,13 +45,15 @@ describe('docs/integration.md "Gas-free actions"', () => {
     for (const [reasons, , sentence] of rows) {
       for (const reason of codesIn(reasons!)) {
         listed.push(reason);
-        expect(SPONSOR_REASONS[reason], reason).toBe(sentence);
+        expect((SPONSOR_REASONS as Record<string, string>)[reason], reason).toBe(sentence);
         // What a partner shows: the getter on the error it gets, for each code such an error comes with.
         expect(new HanaSponsorError(4100, 'x', { reason }).userMessage, reason).toBe(sentence);
         expect(userMessageFor('api_unavailable', { reason }), reason).toBe(sentence);
       }
     }
-    expect([...listed].sort()).toEqual(Object.keys(SPONSOR_REASONS).sort());
+    expect([...listed].sort()).toEqual([...SPONSOR_REASON_NAMES].sort());
+    // The guide says the sentences may be reworded at any time, and to branch on code and reason only.
+    expect(gasFree).toContain('may be reworded at any time');
     expect(new Set(listed).size).toBe(listed.length);
   });
 

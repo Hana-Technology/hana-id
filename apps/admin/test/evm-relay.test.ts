@@ -3,11 +3,13 @@
 // relayer would certainly refuse), and the staff tools' route over the real console (the audit row before the tool, no
 // row no action, the result's row after, the input checked first, a stale page, a refusal and an unknown answer in
 // plain words, never retried). The API side is AdminRpc's (apps/api/test/rpc-evm-relay.test.ts), stubbed here.
-import type { EvmRelayChainView, EvmRelayDetail, EvmRelayRecordView } from '@hana-id/console-core';
+import { type EvmRelayChainView, type EvmRelayDetail, type EvmRelayRecordView, SECURITY_EVENT_KINDS } from '@hana-id/console-core';
+import { PLAYBOOKS } from '@hana-id/playbooks';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STATE_LABELS, actWords, evmRelayActRoute, evmRelayDetailRoute, explainChain, haltExplained, recordPlain, testEth, toolsOffered } from '../src/evm-relay.ts';
 import type { RouteCtx } from '../src/routes.ts';
+import { SECURITY_EVENT_PLAYBOOKS, withWords } from '../src/security.ts';
 import { STAFF_EMAIL, STAFF_SUB, adminRequest, downBinding, envWith, overrideBinding, stubNetwork, uid } from './helpers.ts';
 
 const NOW = Date.UTC(2026, 10, 18, 9, 0);
@@ -419,5 +421,19 @@ describe('POST /api/evm-relay/:chain/act', () => {
     expect(await unknown.json()).toMatchObject({ result: { done: false, refused: 'unknown' }, words: { tone: 'error' } });
     expect((await audit(b.token)).map((r) => JSON.parse(String(r.details_json)).result ?? 'before')).toEqual(['before', 'unknown']);
     expect(n).toBe(3);
+  });
+});
+
+describe('the security page’s events', () => {
+  it('every free-network-fees and billing-late event kind links to a playbook that exists (D843; D869’s evm_relay_closed_slot_mined included)', () => {
+    const kinds = SECURITY_EVENT_KINDS.filter((k) => k.startsWith('evm_') || k.endsWith('_billing_late'));
+    expect(kinds).toEqual(expect.arrayContaining(['evm_relay_nonce_taken', 'evm_relay_closed_slot_mined', 'evm_billing_late', 'near_billing_late']));
+    const ids = new Set(PLAYBOOKS.map((p) => p.id));
+    for (const k of kinds) {
+      expect(Object.hasOwn(SECURITY_EVENT_PLAYBOOKS, k), k).toBe(true);
+      expect(ids.has(SECURITY_EVENT_PLAYBOOKS[k]!), k).toBe(true);
+      expect(withWords({ kind: k } as never).playbook?.id, k).toBe(SECURITY_EVENT_PLAYBOOKS[k]);
+    }
+    expect(withWords({ kind: 'evm_relay_closed_slot_mined' } as never)).toMatchObject({ title: 'Free network fees: a slot staff closed went through after all', playbook: { id: 'evm-relay-closed-slot-mined' } });
   });
 });

@@ -77,6 +77,8 @@ export interface EthereumHost {
   demoEvmChains?: () => readonly number[];
   /** The chains the vault sponsors (`hana.evm.sponsoredChains`), for EIP-5792. */
   sponsoredChains?: () => readonly number[];
+  /** The client's `ready` (as `hana.ready`), for `wallet_getCapabilities` before it: the sponsored chains come with it. */
+  ready?(): Promise<unknown>;
   /** hana.evm.sendSponsored: called synchronously, so its approval window opens in the caller's click. */
   sendSponsored?: (p: SendSponsoredParams) => Promise<SendSponsoredResult>;
 }
@@ -262,6 +264,9 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
         return this.#host.request('eth_signTypedData_v4', [address, typed]);
       }
       case 'wallet_getCapabilities':
+        // Before `ready` the sponsored chains aren't known: wait for it (bounded by the client's timeouts), as
+        // hana.evm.sponsorship() does, rather than answer no capabilities.
+        if (this.#host.ready) await this.#host.ready();
         return this.#capabilities(params);
       case 'wallet_sendCalls':
         return this.#sendCalls(params);

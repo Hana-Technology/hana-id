@@ -103,7 +103,9 @@ CREATE TABLE evm_sponsor_billing (
   PRIMARY KEY (chain_id, record_key),
   -- A mined transaction has its hash as its key; a charge without one has the send as its key.
   CHECK ((tx_hash IS NOT NULL AND corrects IS NULL AND record_key = tx_hash) OR (tx_hash IS NOT NULL AND corrects IS NOT NULL AND record_key = 'fix:' || send_id)
-         OR (tx_hash IS NULL AND corrects IS NULL AND outcome IN ('lost', 'consumed_elsewhere') AND record_key = 'send:' || send_id))
+         OR (tx_hash IS NULL AND corrects IS NULL AND outcome IN ('lost', 'consumed_elsewhere') AND record_key = 'send:' || send_id)
+         -- D869: a send settled at head, reorged out, whose slot staff closed as used elsewhere: corrected to not charged.
+         OR (tx_hash IS NULL AND corrects IS NOT NULL AND outcome = 'consumed_elsewhere' AND record_key = 'fix:' || send_id))
 );
 -- One record per send, and at most one correction of it.
 CREATE UNIQUE INDEX evm_sponsor_billing_send ON evm_sponsor_billing (send_id) WHERE corrects IS NULL;
@@ -123,7 +125,7 @@ CREATE INDEX evm_sponsor_billing_quarantined ON evm_sponsor_billing (settled_at)
 CREATE TABLE security_events_new (
   id          TEXT PRIMARY KEY,
   detected_at INTEGER NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late')),
+  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'evm_relay_closed_slot_mined')),
   org_id      TEXT,
   app_id      TEXT,
   scope_id    TEXT,

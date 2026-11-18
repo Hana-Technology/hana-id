@@ -297,6 +297,9 @@ async function checkNonces(env: Env, rpc: BudgetedRpc, now: number): Promise<num
   const store = limiter(env, BILLING_SUBJECT);
   let gaps = 0;
   try {
+    // Nothing recorded yet (or no table before migration 0023): nothing to compare, no chain read.
+    const any = await env.DB.prepare('SELECT EXISTS (SELECT 1 FROM near_relay_billing) AS n').first<{ n: number }>();
+    if (any?.n !== 1) return 0;
     if (!(await store.reserve(`near-billing-nonces:${day}`, (day + 2) * DAY, now))) return 0;
   } catch {
     return 0;

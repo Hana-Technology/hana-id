@@ -14,7 +14,7 @@ import { usageTransport } from '../src/usage/record.ts';
 import { EVM_SPONSOR_LIMITS } from '../src/evm/sponsor-checks.ts';
 import { maxStartingFees, sponsorGasLimit } from '../src/evm/op-fee.ts';
 import { encodeExecuteCalldata } from '@hana-id/core/evm-sponsor';
-import { appHeaders, ORIGIN, seedApp, type SeededApp, startOfMinuteClock } from './helpers.ts';
+import { appHeaders, call, ORIGIN, seedApp, type SeededApp, startOfMinuteClock } from './helpers.ts';
 import { vaultHeaders } from './vault-helpers.ts';
 import { isEvmSponsorPrepareResponse, isEvmSponsorSendResponse, isEvmSponsorStatusResponse } from '../../../packages/core/src/api-types.ts';
 import {
@@ -30,6 +30,9 @@ import {
   RELAYER,
   rememberAccount,
   revert as revertErr,
+  sessionFor,
+  sessionsInMemory,
+  withProof,
   digestOf,
   rawFor,
   receiptFor,
@@ -66,11 +69,19 @@ interface Setup {
 
 let receiptKind: ReceiptKind = 'executed';
 
+/** A seeded app whose sessions live in the vault's memory (no share: the chain alone decides, D856's step 3). */
+async function sponsorApp(o?: Parameters<typeof seedApp>[0]): Promise<SeededApp> {
+  const a = await seedApp(o);
+  await sessionsInMemory(a.id);
+  return a;
+}
+
 async function setup(fields: ChainFields = {}, o: { chainId?: number; delegated?: boolean; known?: boolean; extraApps?: string[] } = {}): Promise<Setup> {
-  const app = await seedApp();
+  const app = await sponsorApp();
   const chain = fakeChain();
   const relayer = fakeRelayer(chain, () => receiptKind);
   const user = testUser();
+  sessionFor(app.scope, user.address);
   const userId = o.known === false ? '' : await rememberAccount(app.scope, user.address);
   if (o.delegated !== false) chain.codes.set(user.address.toLowerCase(), o.chainId === OP_CHAIN ? (`0xef0100${OP_DELEGATE.slice(2).toLowerCase()}` as Hex) : DESIGNATOR);
   sponsorPorts.chain = () => chain;
@@ -250,7 +261,7 @@ describe('POST /v1/evm/sponsor/send: refusals before any chain read', () => {
 
   it('an app with no targets on the chain: 403 app_not_sponsored', async () => {
     const s = await setup();
-    const other = await seedApp();
+    const other = await sponsorApp();
     const res = await send({ app: other, bindings: s.bindings }, signedSend(s.user).body);
     expect([res.status, (await body(res)).code]).toEqual([403, 'app_not_sponsored']);
     expect(s.chain.calls).toEqual([]);
@@ -258,7 +269,7 @@ describe('POST /v1/evm/sponsor/send: refusals before any chain read', () => {
 
   it('an account the directory does not hold for this app’s scope: 409 account_unrecorded (retryable), also when another scope holds it', async () => {
     const s = await setup({}, { known: false });
-    const elsewhere = await seedApp();
+    const elsewhere = await sponsorApp();
     await rememberAccount(elsewhere.scope, s.user.address);
     const res = await send(s, signedSend(s.user).body);
     const b = await body(res);
@@ -417,7 +428,8 @@ describe('POST /v1/evm/sponsor/send: an account not yet delegated (the one-time 
     expect(req.authorization).toMatchObject({ chainId: LOCAL_CHAIN, address: DELEGATE, nonce: 7n });
     const calldata = encodeExecuteCalldata(signed.input, signed.body.signature as Hex);
     expect(req.gas).toBe(sponsorGasLimit({ calldata, callData: [CHECK_IN_DATA], minGas: 100_000n, authorizations: 1 }));
-    expect(req.gas - sponsorGasLimit({ calldata, callData: [CHECK_IN_DATA], minGas: 100_000n, authorizations: 0 })).toBe(27_500n);
+    // The authorization's 25 000 is inside the relayer's own intrinsicGas (the units test has the figures).
+    expect(req.gas > sponsorGasLimit({ calldata, callData: [CHECK_IN_DATA], minGas: 100_000n, authorizations: 0 })).toBe(true);
     const sim = s.chain.calls.find((c) => c.method === 'call' && (c.args as { data: string }).data === calldata)!.args as { stateOverride: Record<string, unknown> };
     expect(sim.stateOverride).toEqual({ [s.user.address]: { code: DESIGNATOR } });
     // eth_call has no authorization list: it runs with 25 000 less, the gas the batch will have in the real type-4 send.
@@ -535,25 +547,32 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
   });
 
   it('a coded relayer refusal sent nothing: everything comes back, the row says refused, the code is answered', async () => {
-    const cases: [string, number, string][] = [
-      ['evm_relayer:relayer_busy', 503, 'relayer_busy'],
-      ['evm_relayer:relayer_misconfigured', 503, 'sponsorship_unconfigured'],
-      ['evm_relayer:rpc_unavailable', 502, 'evm_rpc_unavailable'],
-      ['evm_relayer:rejected:insufficient_funds', 503, 'relayer_rejected'],
-      ['evm_relayer:deadline_passed', 400, 'deadline_out_of_range'],
-      ['evm_relayer:invalid_request', 503, 'relayer_unavailable'],
-      ['evm_relayer:fees_too_high', 503, 'gas_price_too_high'],
-      ['evm_relayer:daily_cap', 429, 'budget_exhausted'],
+    // [message, status, code, retryAfterS, the user's own attempts come back]
+    const cases: [string, number, string, number | undefined, boolean][] = [
+      ['evm_relayer:relayer_busy', 429, 'relayer_busy', 2, true],
+      ['evm_relayer:relayer_busy:account', 429, 'relayer_busy', 5, true],
+      ['evm_relayer:relayer_misconfigured', 503, 'sponsorship_unconfigured', undefined, true],
+      ['evm_relayer:rpc_unavailable', 502, 'evm_rpc_unavailable', undefined, true],
+      ['evm_relayer:rejected:insufficient_funds', 503, 'relayer_unavailable', undefined, true],
+      ['evm_relayer:deadline_passed', 400, 'deadline_out_of_range', undefined, false],
+      ['evm_relayer:invalid_request', 503, 'relayer_unavailable', undefined, false],
+      ['evm_relayer:fees_too_high', 503, 'gas_price_too_high', 30, true],
+      ['evm_relayer:fees_too_low', 503, 'gas_price_too_high', 15, true],
+      ['evm_relayer:daily_cap', 429, 'budget_exhausted', 3600, true],
     ];
-    for (const [message, statusCode, code] of cases) {
+    for (const [message, statusCode, code, retry, ownBack] of cases) {
       const s = await setup();
       s.relayer.onSend = async () => {
         throw new Error(message);
       };
       const signed = signedSend(s.user);
       const res = await send(s, signed.body);
-      expect([res.status, (await body(res)).code], message).toEqual([statusCode, code]);
+      const b = await body(res);
+      expect([res.status, b.code], message).toEqual([statusCode, code]);
+      if (retry !== undefined) expect(b.retryAfterS, message).toBe(retry);
       expect(await appSpent(s.app), message).toBe(0n);
+      expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`), message).toBe(0n);
+      expect(await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:attempts`), message).toBe(ownBack ? 0 : 1);
       expect((await auditRows(s.user.address))[0]?.status).toBe('refused');
       // Nothing was sent: the same batch goes through once the relayer takes it.
       s.relayer.onSend = fakeRelayer(s.chain).onSend;
@@ -571,7 +590,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
       s.relayer.replaced.set(digestOf(req), [bumped]);
       // Only the replacement is mined, dearer than the reservation.
       s.chain.receipts.set(bumped, receiptFor(req, bumped, 'executed', { gasUsed: req.gas, price: req.maxFeePerGas * 2n }));
-      return { transactionHash: keccakHex(raw), relayerNonce: 0, raw, replay: false, digest: digestOf(req) };
+      return { transactionHash: keccakHex(raw), relayerNonce: 0, raw, replay: false, digest: digestOf(req), broadcast: "accepted" as const, rejection: null };
     };
     const res = await send(s, signedSend(s.user).body);
     expect(res.status).toBe(200);
@@ -589,7 +608,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
 
   it('a relayer answer whose hash is not its raw transaction’s is not trusted', async () => {
     const s = await setup();
-    s.relayer.onSend = async (req) => ({ transactionHash: `0x${'ab'.repeat(32)}`, relayerNonce: 0, raw: `0x02${digestOf(req).slice(2)}`, replay: false, digest: digestOf(req) });
+    s.relayer.onSend = async (req) => ({ transactionHash: `0x${'ab'.repeat(32)}`, relayerNonce: 0, raw: `0x02${digestOf(req).slice(2)}`, replay: false, digest: digestOf(req), broadcast: "accepted" as const, rejection: null });
     expect((await body(await send(s, signedSend(s.user).body))).code).toBe('relayer_unavailable');
   });
 
@@ -601,7 +620,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
       const raw = rawFor(req);
       const hash = keccakHex(raw);
       s.chain.receipts.set(hash, (await import('./evm-sponsor-helpers.ts')).receiptFor(req, hash, 'executed'));
-      return { transactionHash: hash, relayerNonce: 4, raw, replay: true, digest: digestOf(req) };
+      return { transactionHash: hash, relayerNonce: 4, raw, replay: true, digest: digestOf(req), broadcast: "accepted" as const, rejection: null };
     };
     const res = await send(s, signedSend(s.user).body);
     expect(res.status).toBe(200);
@@ -616,7 +635,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
       const raw = rawFor(req);
       const hash = keccakHex(raw);
       s.chain.receipts.set(hash, receiptFor(req, hash, 'executed', { gasUsed: req.gas, price: req.maxFeePerGas + 1n }));
-      return { transactionHash: hash, relayerNonce: 0, raw, replay: false, digest: digestOf(req) };
+      return { transactionHash: hash, relayerNonce: 0, raw, replay: false, digest: digestOf(req), broadcast: "accepted" as const, rejection: null };
     };
     expect((await send(s, signedSend(s.user).body)).status).toBe(200);
     const req = s.relayer.sends[0]!;
@@ -706,7 +725,7 @@ describe('budgets: the worst case reserved atomically before sending', () => {
     const s = await setup();
     s.chain.baseFeeWei = 600_000_000n;
     receiptKind = 'none';
-    const other = await seedApp();
+    const other = await sponsorApp();
     const bindings = sponsorEnv(sponsorVar([s.app.id, other.id], LOCAL_CHAIN, { sendsPerMinute: 100_000, appDailyBudgetEth: 0.0003, dailyBudgetEth: 0.00031 }), s.relayer);
     expect((await send({ app: s.app, bindings }, signedSend(s.user, { minGas: 200_000n }).body)).status).toBe(504);
     const u2 = testUser();
@@ -834,7 +853,7 @@ describe('GET /v1/evm/sponsor/status', () => {
   it('chain_not_enabled, app_not_sponsored, a strict query', async () => {
     const s = await setup();
     expect(await body(await status(s, '?chainId=1'))).toMatchObject({ available: false, reason: 'chain_not_enabled' });
-    const other = await seedApp();
+    const other = await sponsorApp();
     expect(await body(await status({ app: other, bindings: s.bindings }, '?chainId=31337'))).toMatchObject({ available: false, reason: 'app_not_sponsored' });
     for (const q of ['', '?chainId=', '?chainId=0x7a69', '?chainId=31337&x=1', '?chainId=031337']) expect((await status(s, q)).status, q).toBe(400);
     expect(s.chain.calls).toEqual([]);
@@ -874,7 +893,7 @@ describe('the relayer checks (cron): balance and stuck transactions', () => {
   it('writes evm_relay_balance_low once a day and evm_relay_stuck once an hour; nothing without the config', async () => {
     const s = await setup();
     s.chain.balanceWei = 10n ** 15n;
-    s.relayer.statusValue = { address: RELAYER, unmined: 2, awaitingConfirmation: 0, oldestUnminedMs: 6 * 60_000, nextNonce: 5, halted: null };
+    s.relayer.statusValue = { address: RELAYER, unmined: 2, awaitingConfirmation: 0, oldestUnminedMs: 11 * 60_000, nextNonce: 5, halted: null };
     sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => s.relayer.statusValue, lookup: async () => null });
     const e = { ...env, ...s.bindings } as typeof env;
     await checkEvmSponsorRelay(e);
@@ -882,7 +901,7 @@ describe('the relayer checks (cron): balance and stuck transactions', () => {
     const kinds = (await env.DB.prepare("SELECT kind, detail_json FROM security_events WHERE kind LIKE 'evm_relay_%' ORDER BY kind").all<{ kind: string; detail_json: string }>()).results;
     expect(kinds.map((k) => k.kind)).toEqual(['evm_relay_balance_low', 'evm_relay_stuck']);
     expect(JSON.parse(kinds[0]!.detail_json)).toMatchObject({ chainId: LOCAL_CHAIN, balanceWei: '1000000000000000', lowBalanceWei: (5n * 10n ** 16n).toString() });
-    expect(JSON.parse(kinds[1]!.detail_json)).toEqual({ chainId: LOCAL_CHAIN, pending: 2, oldestPendingMs: 6 * 60_000 });
+    expect(JSON.parse(kinds[1]!.detail_json)).toEqual({ chainId: LOCAL_CHAIN, pending: 2, oldestPendingMs: 11 * 60_000 });
     s.chain.calls.length = 0;
     await checkEvmSponsorRelay({ ...e, EVM_SPONSOR: undefined } as typeof env);
     expect(s.chain.calls).toEqual([]);
@@ -897,6 +916,9 @@ const cronEnv = (s: Pick<Setup, 'bindings'>) => ({ ...env, ...s.bindings }) as t
 const ageRows = (ms = 2 * 60_000) => env.DB.prepare('UPDATE evm_sponsor_sends SET updated_at = created_at - ?1, created_at = created_at - ?1').bind(ms).run();
 const reconcile = async (s: Pick<Setup, 'bindings'>, now = Date.now()) => reconcileEvmSends(cronEnv(s), evmSponsorConfig(cronEnv(s))!, now);
 const billingRows = async () => (await env.DB.prepare('SELECT * FROM evm_sponsor_billing ORDER BY settled_at, record_key').all<Record<string, unknown>>()).results;
+/** A fixed window's count on a limiter subject (RateLimiter.hit's own storage key). */
+const hits = async (subject: string, name: string, windowMs = 86_400_000): Promise<number> =>
+  runInDurableObject(env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject)), async (_i, state) => state.storage.kv.get<number>(`${name}@${Math.floor(Date.now() / windowMs) * windowMs}`) ?? 0);
 const failuresSpent = async (subject: string) => BigInt(await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject)).spent('evm-sponsor:failures', 86_400_000));
 
 describe('M1: shared windows are counted only once the chain checks passed', () => {
@@ -934,14 +956,20 @@ describe('M1: shared windows are counted only once the chain checks passed', () 
   });
 });
 
-describe('M2: prepare without a signature', () => {
-  it('the per-account window is keyed by (account, IP): one IP can’t use up a chosen user’s prepares for others', async () => {
+describe('M2, closed by the session proof (D856)', () => {
+  it('the account’s prepare minute is reached only by its own session: another session’s proof for the account is refused first, counting nothing', async () => {
     const s = await setup();
     const b = { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] };
-    const from = (ip: string) => ({ ...vaultHeaders(s.app), 'cf-connecting-ip': ip });
-    for (let i = 0; i < EVM_SPONSOR_LIMITS.preparesPerAccountIpPerMinute; i++) expect((await prepare(s, b, from('10.1.1.1'))).status).toBe(200);
-    expect((await prepare(s, b, from('10.1.1.1'))).status).toBe(429);
-    expect((await prepare(s, b, from('10.2.2.2'))).status).toBe(200);
+    // A stranger with a live session of their own can't name this account: the wallet proof must be the account's.
+    const stranger = testUser();
+    const theirs = sessionFor(s.app.scope, stranger.address);
+    for (let i = 0; i < EVM_SPONSOR_LIMITS.preparesPerAccountPerMinute + 2; i++) {
+      const r = await prepare(s, withProof(s.app, b, 'prepare', { spk: theirs.spk, walletAddress: stranger.address }), undefined);
+      expect((await body(r)).code).toBe('bad_wallet_proof');
+    }
+    expect(s.chain.calls).toEqual([]);
+    for (let i = 0; i < EVM_SPONSOR_LIMITS.preparesPerAccountPerMinute; i++) expect((await prepare(s, b)).status).toBe(200);
+    expect((await prepare(s, b)).status).toBe(429);
   });
 
   it('a user’s failure count is never disclosed: a generic not_available', async () => {
@@ -962,7 +990,7 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     const exec = { waitUntil: (p: Promise<unknown>) => void held.push(p), passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
     const { call } = await import('./helpers.ts');
     // The client never reads the answer: only the waitUntil promise is awaited.
-    void call(SEND, { headers: vaultHeaders(s.app), body: signedSend(s.user).body, env: s.bindings, exec });
+    void call(SEND, { headers: vaultHeaders(s.app), body: withProof(s.app, signedSend(s.user).body, 'send'), env: s.bindings, exec });
     await new Promise((r) => setTimeout(r, 20));
     while (held.length === 0) await new Promise((r) => setTimeout(r, 10));
     await Promise.all(held);
@@ -1042,25 +1070,10 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     await ageRows();
     const deadlineMs = Number(signed.body.deadline) * 1000;
     const reserved = s.relayer.sends[0]!.reservedWei;
-    expect(await reconcile(s, deadlineMs + 3 * 60_000)).toMatchObject({ open: 1, refused: 0 });
+    expect(await reconcile(s, deadlineMs + 3 * 60_000)).toMatchObject({ open: 1 });
     expect(await reconcile(s, deadlineMs + 61 * 60_000)).toMatchObject({ lost: 1 });
     expect(await appSpent(s.app)).toBe(reserved);
     expect(await billingRows()).toMatchObject([{ outcome: 'lost', tx_hash: null, settled_wei: reserved.toString(), total_cost_wei: null }]);
-  });
-
-  it('the relayer’s staff closed it as never sent: everything back, refused, no billing record', async () => {
-    const s = await setup();
-    s.relayer.onSend = async () => {
-      throw new Error('the object was reset');
-    };
-    const signed = signedSend(s.user);
-    expect((await send(s, signed.body)).status).toBe(503);
-    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: `0x${'aa'.repeat(32)}`, hashes: [`0x${'aa'.repeat(32)}`], state: 'closed', minedHash: null, outcome: 'never_sent', costWei: null, reservedWei: 1n });
-    await ageRows();
-    expect(await reconcile(s)).toMatchObject({ refused: 1 });
-    expect(await appSpent(s.app)).toBe(0n);
-    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
-    expect(await billingRows()).toEqual([]);
   });
 
   it('a row left open over 10 minutes writes evm_relay_stuck', async () => {
@@ -1087,7 +1100,7 @@ describe('L2: a receipt outside what was reserved is settled at the reservation'
         const raw = rawFor(req);
         const hash = keccakHex(raw);
         s.chain.receipts.set(hash, receiptFor(req, hash, 'executed', cost(req.gas, req.maxFeePerGas)));
-        return { transactionHash: hash, relayerNonce: 0, raw, replay: false, digest: digestOf(req) };
+        return { transactionHash: hash, relayerNonce: 0, raw, replay: false, digest: digestOf(req), broadcast: "accepted" as const, rejection: null };
       };
       expect((await send(s, signedSend(s.user).body)).status).toBe(200);
       expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
@@ -1107,7 +1120,7 @@ describe('L3: the OP Stack operator fee', () => {
       const raw = rawFor(req);
       const hash = keccakHex(raw);
       s.chain.receipts.set(hash, receiptFor(req, hash, 'executed', { gasUsed: 60_000n, price: 150_000_000n, l1Fee: 500n, operatorFee: 3_000_000_000_000n }));
-      return { transactionHash: hash, relayerNonce: 0, raw, replay: false, digest: digestOf(req) };
+      return { transactionHash: hash, relayerNonce: 0, raw, replay: false, digest: digestOf(req), broadcast: "accepted" as const, rejection: null };
     };
     expect((await send(s, signedSend(s.user, { chainId: OP_CHAIN }).body)).status).toBe(200);
     const req = s.relayer.sends[0]!;
@@ -1163,9 +1176,9 @@ describe('the relayer’s final interface (PR #70)', () => {
     expect(ev?.n).toBe(1);
   });
 
-  it('a halted relayer: evm_relay_stuck (“Sponsored transactions are paused”), status answers paused, a send is 503 sponsorship_paused with everything back', async () => {
+  it('a halted relayer: evm_relay_stuck (“Free network fees: paused or slow, needs a look”), status answers paused, a send is 503 sponsorship_paused with everything back', async () => {
     const s = await setup();
-    const halted = { reason: 'nonce_gap', since: Date.now(), nonce: 3 };
+    const halted = { reason: 'nonce_gap' as const, since: Date.now(), nonce: 3 };
     s.relayer.statusValue = { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, nextNonce: 3, halted };
     await checkEvmSponsorRelay(cronEnv(s));
     const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").all<{ detail_json: string }>();
@@ -1195,8 +1208,8 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
 
   it('a row with a hash the relayer forgot is never refunded: clean empty reads and an untouched nonce still leave it lost, the reservation kept', async () => {
     const s = await forgottenTimeout();
-    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ open: 1, refused: 0 });
-    expect(await reconcile(s, s.deadlineMs + 61 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
+    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ open: 1 });
+    expect(await reconcile(s, s.deadlineMs + 61 * 60_000)).toMatchObject({ lost: 1 });
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
   });
@@ -1212,7 +1225,7 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     s.chain.codes.set(s.user.address.toLowerCase(), `0xef0100${'66'.repeat(20)}` as Hex);
     s.chain.executeNonce.set(s.user.address.toLowerCase(), 0n);
     await ageRows();
-    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 61 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
+    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 61 * 60_000)).toMatchObject({ lost: 1 });
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
 
@@ -1241,8 +1254,8 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
   it('… and a receipt read that fails decides nothing: open, then lost an hour past the deadline, never refunded', async () => {
     const s = await forgottenTimeout();
     s.chain.receiptDown = true;
-    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ open: 1, refused: 0, lost: 0 });
-    expect(await reconcile(s, s.deadlineMs + 61 * 60_000)).toMatchObject({ lost: 1, refused: 0 });
+    expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ open: 1, lost: 0 });
+    expect(await reconcile(s, s.deadlineMs + 61 * 60_000)).toMatchObject({ lost: 1 });
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
 
@@ -1255,7 +1268,7 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     expect((await send(s, signed.body)).status).toBe(503);
     s.relayer.lookupOverride = async () => Promise.reject(new Error('unreachable'));
     await ageRows();
-    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 3 * 60_000)).toMatchObject({ open: 1, refused: 0 });
+    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 3 * 60_000)).toMatchObject({ open: 1 });
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
 
@@ -1328,7 +1341,7 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     const pending = send(s, signedSend(s.user).body);
     await atRelayer;
     // Two minutes on, the row is still `sending` and the request alive: untouched.
-    expect(await reconcile(s, Date.now() + 2 * 60_000)).toEqual({ settled: 0, refused: 0, lost: 0, open: 0 });
+    expect(await reconcile(s, Date.now() + 2 * 60_000)).toEqual({ settled: 0, lost: 0, open: 0 });
     release();
     expect((await pending).status).toBe(200);
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
@@ -1440,5 +1453,336 @@ describe('billing records (D852): one permanent record per sponsored transaction
     await env.DB.prepare('UPDATE evm_sponsor_sends SET updated_at = updated_at - ?1, created_at = created_at - ?1').bind(BILLING_LATE_MS + 1).run();
     await checkEvmSponsorRelay(cronEnv(s));
     expect(await late()).toEqual([{ missing: 1, unmirrored: 0 }]);
+  });
+});
+
+// ---- the session proof (D856), before any window, replay check, directory read or chain read ----
+
+describe('the session proof of prepare and send (D856)', () => {
+  const prepBody = (s: Setup) => ({ chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] });
+  /** Nothing counted and nothing read: no EVM read, no relayer send, no account window. */
+  const untouched = async (s: Setup) => {
+    expect(s.chain.calls).toEqual([]);
+    expect(s.relayer.sends).toEqual([]);
+    expect(await hits(`evm-sponsor:account:${LOCAL_CHAIN}:${s.user.address.toLowerCase()}`, 'evm-sponsor:send:minute', 60_000)).toBe(0);
+    expect(await hits(`evm-sponsor:account:${LOCAL_CHAIN}:${s.user.address.toLowerCase()}`, 'evm-sponsor:prepare:minute', 60_000)).toBe(0);
+  };
+  const routes = [
+    ['prepare', PREPARE, (s: Setup) => prepBody(s)],
+    ['send', SEND, (s: Setup) => signedSend(s.user).body],
+  ] as const;
+
+  for (const [method, path, make] of routes) {
+    describe(method, () => {
+      const go = (s: Setup, b: unknown, o: { proof?: false; headers?: Record<string, string> } = {}) => sponsorCall(path, s.app, s.bindings, { body: b, ...o });
+      const code = async (r: Response) => [r.status, (await body(r)).code];
+
+      it('with a valid proof it passes; without one: 401 missing_session_proof; a malformed one: 400 bad_session_proof', async () => {
+        const s = await setup();
+        expect((await go(s, make(s))).status).toBe(method === 'prepare' ? 200 : 200);
+        const t = await setup();
+        expect(await code(await go(t, make(t), { proof: false }))).toEqual([401, 'missing_session_proof']);
+        const proof = (await import('./evm-sponsor-helpers.ts')).sessionProof(t.app, make(t), method);
+        for (const bad of [{ ...proof, extra: 1 }, { ...proof, nonce: [1, 2, 3] }, { ...proof, walletProof: { ...proof.walletProof, signature: [1] } }, 'proof', null]) {
+          expect(await code(await go(t, { ...make(t), sessionProof: bad }))).toEqual([400, 'bad_session_proof']);
+        }
+        await untouched(t);
+      });
+
+      it('a stale or future proof: 400 stale_session_proof with serverTimeMs (±60 s)', async () => {
+        const s = await setup();
+        for (const issuedAtMs of [Date.now() - 61_000, Date.now() + 61_000]) {
+          const r = await go(s, withProof(s.app, make(s), method, { issuedAtMs }));
+          const b = await body(r);
+          expect([r.status, b.code]).toEqual([400, 'stale_session_proof']);
+          expect(typeof b.serverTimeMs).toBe('number');
+        }
+        await untouched(s);
+      });
+
+      it('signed by another key, for another app, origin, route or body: 401 invalid_session_signature', async () => {
+        const s = await setup();
+        const other = sessionFor(s.app.scope, testUser().address);
+        const b = make(s);
+        const variants: [string, Record<string, unknown>][] = [
+          ['another session key signed it', withProof(s.app, b, method, { signWith: other.spk })],
+          ['for another app', withProof(s.app, b, method, { appId: 'app_someone_else' })],
+          ['for another partner origin', withProof(s.app, b, method, { parentOrigin: 'https://other.example.com' })],
+          ['for the other route', withProof(s.app, b, method, method === 'prepare' ? { method: 'send', signedBody: signedSend(s.user).body } : { method: 'prepare', signedBody: prepBody(s) })],
+          ['for another chain', { ...withProof(s.app, { ...b, chainId: 1 }, method), chainId: LOCAL_CHAIN }],
+          ['for other calls', { ...withProof(s.app, { ...b, calls: [{ to: TOKEN, value: '0', data: transferData(RELAYER, 1n) }] }, method), calls: b.calls }],
+        ];
+        for (const [what, sent] of variants) {
+          const r = await go(s, sent);
+          const got = await code(r);
+          expect(got, what).toEqual([401, 'invalid_session_signature']);
+        }
+        await untouched(s);
+      });
+
+      it('a proof for prepare reused on send (and the reverse) is refused', async () => {
+        const s = await setup();
+        const sendBody = signedSend(s.user).body;
+        const p = withProof(s.app, prepBody(s), 'prepare');
+        expect(await code(await sponsorCall(SEND, s.app, s.bindings, { body: { ...sendBody, sessionProof: p.sessionProof } }))).toEqual([401, 'invalid_session_signature']);
+        const sp = withProof(s.app, sendBody, 'send');
+        expect(await code(await sponsorCall(PREPARE, s.app, s.bindings, { body: { ...prepBody(s), sessionProof: sp.sessionProof } }))).toEqual([401, 'invalid_session_signature']);
+        await untouched(s);
+      });
+
+      it('a wallet proof not the account’s (another key, another session or app): 400 bad_wallet_proof', async () => {
+        const s = await setup();
+        const mallory = testUser();
+        const b = make(s);
+        expect(await code(await go(s, withProof(s.app, b, method, { walletAddress: mallory.address })))).toEqual([400, 'bad_wallet_proof']);
+        expect(await code(await go(s, withProof(s.app, b, method, { walletKey: mallory.key })))).toEqual([400, 'bad_wallet_proof']);
+        await untouched(s);
+      });
+
+      it('a replayed proof: 409 proof_replayed, the marker kept for the whole window', async () => {
+        const s = await setup();
+        const sent = withProof(s.app, make(s), method);
+        const first = await go(s, sent);
+        expect(first.status).toBeLessThan(500);
+        const before = s.chain.calls.length;
+        expect(await code(await go(s, sent))).toEqual([409, 'proof_replayed']);
+        expect(s.chain.calls.length).toBe(before);
+      });
+
+      it('the session: not visible on chain 503 session_not_visible; expired 410 session_ended; another scope 403 scope_mismatch', async () => {
+        const s = await setup();
+        const { nearMock } = await import('./evm-sponsor-helpers.ts');
+        const near = nearMock();
+        const mine = sessionFor(s.app.scope, s.user.address);
+        const key = JSON.stringify(mine.spk);
+        const live = near.sessions.get(key)!;
+        near.sessions.delete(key);
+        const missing = await go(s, make(s));
+        expect([missing.status, (await body(missing)).code, missing.headers.get('retry-after')]).toEqual([503, 'session_not_visible', '1']);
+        near.sessions.set(key, { ...live, expires_at_ms: Date.now() - 1 });
+        expect(await code(await go(s, make(s)))).toEqual([410, 'session_ended']);
+        near.sessions.set(key, { ...live, scope_id: 'scope_elsewhere', path: `scope_elsewhere#google#${mine.sub}#0` });
+        expect(await code(await go(s, make(s)))).toEqual([403, 'scope_mismatch']);
+        await untouched(s);
+      });
+
+      it('in `session` mode the share must be live: none for this session 410 session_ended', async () => {
+        const s = await setup();
+        await (await import('./vault-helpers.ts')).setSettings(s.app.id, { persistence: 'session' });
+        const r = await go(s, make(s));
+        expect([r.status, (await body(r)).code]).toEqual([410, 'session_ended']);
+        await untouched(s);
+      });
+
+      it('requireKnownAccount: the account’s directory user must be the session’s own (403 account_mismatch); none yet 409 account_unrecorded', async () => {
+        const s = await setup({}, { known: false });
+        expect(await code(await go(s, make(s)))).toEqual([409, 'account_unrecorded']);
+        // Recorded for another user of the scope: this session can't act for it.
+        await rememberAccount(s.app.scope, s.user.address, `hu_${Array.from({ length: 26 }, () => '0123456789abcdefghjkmnpqrstvwxyz'[Math.floor(Math.random() * 32)]).join('')}`);
+        expect(await code(await go(s, make(s)))).toEqual([403, 'account_mismatch']);
+        await untouched(s);
+      });
+
+      it('hashes the very object it acts on: of two copies of a key the parsed (last) one is both signed and used', async () => {
+        const s = await setup();
+        const b = make(s);
+        const proofed = withProof(s.app, b, method);
+        // The raw text repeats `account` first with a stranger's address; JSON.parse keeps the last, which the proof covers.
+        const text = JSON.stringify(proofed).replace('{', `{"account":"${testUser().address}",`);
+        const r = await call(path, { headers: vaultHeaders(s.app), rawBody: text, env: s.bindings });
+        expect(r.status).toBe(200);
+        if (method === 'send') expect(s.relayer.sends[0]!.execute.account).toBe(s.user.address);
+      });
+    });
+  }
+
+  it('without requireKnownAccount (local envs only) the wallet proof alone ties the account to the session', async () => {
+    const s = await setup({ requireKnownAccount: false }, { known: false });
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+  });
+});
+
+// ---- the relayer's verdicts the handlers must act on (its reviews' list) ----
+
+describe('a batch no node took (broadcast: rejected)', () => {
+  const rejecting = (s: Setup, cause: string, code: string) => {
+    const inner = fakeRelayer(s.chain, () => 'none').onSend;
+    s.relayer.onSend = async (req) => ({ ...(await inner(req)), broadcast: 'rejected', rejection: { cause, code } as never });
+  };
+  /** The relayer's lookup once the cancel at the batch's nonce is mined: outcome cancel, its cost. */
+  const cancelMined = (s: Setup, costWei: bigint) => {
+    s.relayer.lookupOverride = async (digest) => {
+      const req = s.relayer.sends.find((x) => digestOf(x) === digest)!;
+      const batch = keccakHex(rawFor(req));
+      const cancel = keccakHex(rawFor(req, 'cancel'));
+      return { digest, relayerNonce: 0, transactionHash: cancel, hashes: [batch, cancel], state: 'mined', minedHash: cancel, outcome: 'cancel', costWei, reservedWei: req.reservedWei };
+    };
+  };
+  const attempts = (s: Setup) => hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:attempts`);
+  const appMinute = (s: Setup) => hits(`app:${s.app.id}`, `evm-sponsor:${LOCAL_CHAIN}:minute`, 60_000);
+
+  it('cause request (the batch’s own size or shape): answered at once 422 not_executed, a failure charged; the cancel’s cost settles from the relayer’s lookup', async () => {
+    const s = await setup();
+    rejecting(s, 'request', 'gas_limit');
+    sponsorTiming.receiptWaitMs = 30_000;
+    const t0 = Date.now();
+    const r = await send(s, signedSend(s.user).body);
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect([r.status, (await body(r)).code]).toEqual([422, 'not_executed']);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
+    expect(await attempts(s)).toBe(1);
+    const req = s.relayer.sends[0]!;
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'rejected' });
+    expect(await appSpent(s.app)).toBe(req.reservedWei);
+    // The cancel mined: the money settles to its cost, the record says cancelled.
+    cancelMined(s, 21_000n * 1_000_000n);
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ settled: 1 });
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'not_executed', settled_wei: String(21_000n * 1_000_000n) });
+    expect(await billingRows()).toMatchObject([{ outcome: 'cancelled', settled_wei: String(21_000n * 1_000_000n) }]);
+    expect(await appSpent(s.app)).toBe(21_000n * 1_000_000n);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
+    // A copy is answered the same from the row, the relayer not asked again.
+    expect((await body(await send(s, { ...signedSend(s.user).body }))).code).toBeDefined();
+  });
+
+  it('cause relayer (our side), and any cause not known yet: 503 sponsorship_paused, nothing charged to the user, evm_relay_stuck raised', async () => {
+    for (const cause of ['relayer', 'something_new']) {
+      const s = await setup();
+      await env.DB.exec("DELETE FROM security_events WHERE kind LIKE 'evm_relay_%'");
+      rejecting(s, cause, 'insufficient_funds');
+      const r = await send(s, signedSend(s.user).body);
+      expect([r.status, (await body(r)).code], cause).toEqual([503, 'sponsorship_paused']);
+      expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`), cause).toBe(0n);
+      expect(await attempts(s), cause).toBe(0);
+      expect(await appMinute(s), cause).toBe(0);
+      const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").all<{ detail_json: string }>();
+      expect(JSON.parse(ev.results[0]!.detail_json), cause).toMatchObject({ chainId: LOCAL_CHAIN, rejected: 'insufficient_funds' });
+      // The money waits for the cancel's cost (the reservation stays until the relayer reports it).
+      expect(await appSpent(s.app), cause).toBe(s.relayer.sends[0]!.reservedWei);
+      expect((await auditRows(s.user.address))[0]?.status).toBe('rejected');
+    }
+  });
+
+  it('cause pricing (turned away over its fees, the relayer’s follow-up): 503 gas_price_too_high with a short retry, nothing charged, no alert', async () => {
+    const s = await setup();
+    rejecting(s, 'pricing', 'underpriced');
+    const r = await send(s, signedSend(s.user).body);
+    const b = await body(r);
+    expect([r.status, b.code, b.retryAfterS]).toEqual([503, 'gas_price_too_high', 15]);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
+    expect(await attempts(s)).toBe(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it('a malformed rejection is read as the relayer’s (no charge to the user)', async () => {
+    const s = await setup();
+    const inner = fakeRelayer(s.chain, () => 'none').onSend;
+    s.relayer.onSend = async (req) => ({ ...(await inner(req)), broadcast: 'rejected', rejection: { cause: 'Not A Word!', code: 7 } as never });
+    expect((await body(await send(s, signedSend(s.user).body))).code).toBe('sponsorship_paused');
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
+  });
+});
+
+describe('the relayer’s balance covers the worst case (×3) before anything is sent', () => {
+  it('short: 503 sponsorship_paused, evm_relay_balance_low raised, the user’s attempts back, nothing reserved or sent; prepare says paused', async () => {
+    const s = await setup();
+    const { forgetRelayerBalances } = await import('../src/evm/sponsor.ts');
+    forgetRelayerBalances();
+    s.chain.balanceWei = 1n;
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([503, 'sponsorship_paused']);
+    expect(s.relayer.sends).toEqual([]);
+    expect(await appSpent(s.app)).toBe(0n);
+    expect(await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:attempts`)).toBe(0);
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_balance_low'").first<{ detail_json: string }>();
+    expect(JSON.parse(ev!.detail_json)).toMatchObject({ chainId: LOCAL_CHAIN, balanceWei: '1' });
+    expect(JSON.parse(ev!.detail_json).neededWei).toMatch(/^[1-9][0-9]*$/u);
+    const p = await body(await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] }));
+    expect([p.allowed, p.reason]).toEqual([false, 'paused']);
+    // Funded again: once the cached figure is gone (30 s), sends go through.
+    s.chain.balanceWei = 10n ** 18n;
+    forgetRelayerBalances();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+  });
+
+  it('is read once per 30 s per chain (cached), not per send', async () => {
+    const s = await setup();
+    const { forgetRelayerBalances } = await import('../src/evm/sponsor.ts');
+    forgetRelayerBalances();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    s.chain.executeNonce.set(s.user.address.toLowerCase(), 1n);
+    expect((await send(s, signedSend(s.user, { executeNonce: 1n }).body)).status).toBe(200);
+    expect(reads(s.chain).filter((m) => m === 'balance').length).toBe(1);
+  });
+});
+
+describe('an app’s sends in flight (at most 4 of the relayer’s 8 unmined)', () => {
+  it('a fifth while four are unconfirmed: 429 relayer_busy, retry in 5 s; a settled one frees its slot', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    const users = [s.user, testUser(), testUser(), testUser(), testUser()];
+    for (const u of users.slice(1)) {
+      await rememberAccount(s.app.scope, u.address);
+      s.chain.codes.set(u.address.toLowerCase(), DESIGNATOR);
+    }
+    for (const u of users.slice(0, 4)) expect((await send(s, signedSend(u).body)).status).toBe(504);
+    const r = await send(s, signedSend(users[4]!).body);
+    const b = await body(r);
+    expect([r.status, b.code, b.retryAfterS]).toEqual([429, 'relayer_busy', 5]);
+    expect(s.relayer.sends.length).toBe(4);
+    // One of them lands: its settlement gives the slot back.
+    const req = s.relayer.sends[0]!;
+    const hash = keccakHex(rawFor(req));
+    s.chain.receipts.set(hash, receiptFor(req, hash, 'executed'));
+    await ageRows();
+    await reconcile(s);
+    receiptKind = 'executed';
+    expect((await send(s, signedSend(users[4]!).body)).status).toBe(200);
+  });
+
+  it('the relayer’s own busy refusals are 429 with a short retry (its unmined cap 2 s, one unmined batch per account 5 s)', async () => {
+    const s = await setup();
+    s.relayer.onSend = async () => {
+      throw new Error('evm_relayer:relayer_busy:account');
+    };
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).retryAfterS, r.headers.get('retry-after')]).toEqual([429, 5, '5']);
+  });
+});
+
+describe('the one-time setup’s authorization is attached only when nothing of the account’s own is in flight', () => {
+  it('pending above latest (a transaction of the account in the pool): 409 authorization_nonce_stale; equal and the nonce: sent', async () => {
+    const s = await setup({}, { delegated: false });
+    const a = s.user.address.toLowerCase();
+    s.chain.pending.set(a, 3n);
+    s.chain.latest.set(a, 2n);
+    const r = await send(s, signedSend(s.user, { authNonce: 3n }).body);
+    expect([r.status, (await body(r)).code]).toEqual([409, 'authorization_nonce_stale']);
+    expect(s.relayer.sends).toEqual([]);
+    s.chain.latest.set(a, 3n);
+    expect((await send(s, signedSend(s.user, { authNonce: 3n }).body)).status).toBe(200);
+    expect(s.relayer.sends[0]!.authorization).toMatchObject({ nonce: 3n });
+  });
+
+  it('an account already delegated to the pinned delegate: the authorization is left off (a type-2 send)', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user, { authNonce: 0n }).body)).status).toBe(200);
+    expect(s.relayer.sends[0]!.authorization).toBeUndefined();
+  });
+});
+
+describe('the relayer halted or slow (cron and prepare)', () => {
+  it('a halt with its refusal code is raised with it; prepare answers paused; an unmined transaction under 10 minutes raises nothing', async () => {
+    const s = await setup();
+    s.relayer.statusValue = { address: RELAYER, unmined: 1, awaitingConfirmation: 0, oldestUnminedMs: 9 * 60_000, nextNonce: 3, halted: null };
+    await checkEvmSponsorRelay(cronEnv(s));
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ n: number }>())?.n).toBe(0);
+    s.relayer.statusValue = { ...s.relayer.statusValue, halted: { reason: 'relayer_cannot_send', since: Date.now(), nonce: 2, code: 'insufficient_funds' } };
+    await checkEvmSponsorRelay(cronEnv(s));
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ detail_json: string }>();
+    expect(JSON.parse(ev!.detail_json)).toMatchObject({ halted: 'relayer_cannot_send', haltCode: 'insufficient_funds' });
+    const p = await body(await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] }));
+    expect([p.allowed, p.reason]).toEqual([false, 'paused']);
   });
 });

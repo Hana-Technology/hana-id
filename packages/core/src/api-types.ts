@@ -3,6 +3,7 @@
 // Request bodies are camelCase JSON with bytes as number arrays; errors are `{error, code, ...details}` plus
 // `requestId`.
 import { isDisplaySafeLine } from './display-safe.ts';
+import type { EvmSponsorSessionProof } from './sponsor-session.ts';
 
 export type GoogleMode = 'own' | 'shared';
 
@@ -404,11 +405,12 @@ export interface EvmSponsorCall {
   data: string;
 }
 
-/** `POST /v1/evm/sponsor/prepare`. */
+/** `POST /v1/evm/sponsor/prepare`. `sessionProof` (D856, sponsor-session.ts) is required by the API; the vault adds it. */
 export interface EvmSponsorPrepareBody {
   chainId: number;
   account: string;
   calls: EvmSponsorCall[];
+  sessionProof?: EvmSponsorSessionProof;
 }
 
 /** Why sponsorship is not offered for a batch or an app right now (prepare's and status's `reason`). */
@@ -477,6 +479,17 @@ export interface EvmSponsorStatusResponse {
 /** The sponsorship routes' error codes (besides the app gate's and `bad_request`). */
 export type EvmSponsorErrorCode =
   | 'sponsorship_unconfigured'
+  | 'missing_session_proof'
+  | 'bad_session_proof'
+  | 'stale_session_proof'
+  | 'invalid_session_signature'
+  | 'bad_wallet_proof'
+  | 'proof_replayed'
+  | 'session_ended'
+  | 'session_not_visible'
+  | 'scope_mismatch'
+  | 'near_unavailable'
+  | 'account_mismatch'
   | 'chain_not_enabled'
   | 'app_not_sponsored'
   | 'too_many_calls'
@@ -509,7 +522,6 @@ export type EvmSponsorErrorCode =
   | 'audit_unavailable'
   | 'relayer_unavailable'
   | 'relayer_busy'
-  | 'relayer_rejected'
   | 'sponsorship_paused'
   | 'reverted'
   | 'not_executed'

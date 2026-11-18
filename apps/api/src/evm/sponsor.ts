@@ -1,39 +1,51 @@
-// EVM gas sponsorship (D830–D848; docs/api.md "EVM gas sponsorship"): a Journear user's EVM account runs a batch of
-// allowlisted calls through the EIP-7702 delegate (contracts/evm-delegate) while Journear's relayer pays the network
+// EVM gas sponsorship (D830–D848, D856; docs/api.md "EVM gas sponsorship"): a Journear user's EVM account runs a batch
+// of allowlisted calls through the EIP-7702 delegate (contracts/evm-delegate) while Journear's relayer pays the network
 // fee, within daily budgets. Base Sepolia only for now, testnet only, not live until the founder deploys it.
 //
 // - POST /v1/evm/sponsor/prepare reads what the vault needs to sign: the account's delegation, its transaction nonce
 //   and its delegate nonce, the relayer and implementation, the gas floor and deadline window. No signing here.
 // - POST /v1/evm/sponsor/send takes the signed batch (and, for an account not yet delegated, its EIP-7702
 //   authorization), checks everything in the order below, reserves the worst case, simulates, has the relayer Durable
-//   Object send it and waits up to 30 s for the receipt. Everything from the reservation on runs inside the request's
-//   `waitUntil`, so a client that goes away doesn't stop the settlement; the cron's reconciler settles what a request
-//   still couldn't (sponsor-settle.ts).
+//   Object (evm-relayer.ts, D851) send it and waits up to 30 s for the receipt. Everything from the reservation on runs
+//   inside the request's `waitUntil`, so a client that goes away doesn't stop the settlement; the cron's reconciler
+//   settles what a request still couldn't (sponsor-settle.ts).
 //
 // Both are the vault's only (D832: the vault submits; the signatures never reach the partner page), through the app
 // gate `evm-sponsor` (publishable key, VAULT_ORIGIN acting for an allowed `x-hana-parent-origin`, the cross-app per-IP
-// window). Without a readable EVM_SPONSOR, the EVM_RELAYER binding and EVM_RELAY_KEYS every route answers
-// `503 sponsorship_unconfigured` before anything else is read (fail closed).
+// window), and both carry the user's session proof (D856, core sponsor-session.ts): before any window, replay check,
+// directory read or chain read, the session key's signature over the route, the partner origin, the app and this very
+// body, the session's wallet proof of the account, the proof's single use, and the session live on chain in the app's
+// scope; with requireKnownAccount the account's directory user must be the session's own. Without a readable
+// EVM_SPONSOR, the EVM_RELAYER binding and EVM_RELAY_KEYS every route answers `503 sponsorship_unconfigured` before
+// anything else is read (fail closed).
 //
-// send's order (stop at the first failure; cheap before chain reads, D847): the config and chain; the app has targets
-// there; every call allowlisted (value 0, never the account, delegate, relayer or zero address, at most
-// maxCallsPerBatch); relayer; minGas window; deadline window; the Execute signature recovers to the account; the
-// authorization (chain, pinned delegate, signed by the account); the account's nonce floor and the digest's replay mark
-// (a replay is answered from the audit row, never with a chain read); the directory (requireKnownAccount); the account's
-// minute and the user's day of attempts (only the key's holder gets here, and only these windows are counted before
-// the chain); the chain (code, pending nonce, base fee; then nonce(), the L1 and operator fee bounds); the delegation and
-// both nonces; the gas limit; the fee; the digest's mark; the shared windows (app and env minute, then the user's, app's
-// and env's day), counted only now; the user's failure slot; the worst case reserved from the app's and the env's day
-// budget; the simulation; the audit row; the relayer; the receipt; the settlement.
+// send's order (stop at the first failure; cheap before chain reads, D847): the body; the session proof's own checks;
+// the config and chain; the app has targets there; every call allowlisted (value 0, never the account, delegate,
+// relayer or zero address, at most maxCallsPerBatch); relayer; minGas window; deadline window; the Execute signature
+// recovers to the account; the authorization (chain, pinned delegate, signed by the account); the proof's single use;
+// the session (share and chain); the directory; the account's nonce floor and the digest's replay mark (a replay is
+// answered from the audit row, never with a chain read); the account's minute and the user's day of attempts (only
+// the session's holder gets here, and only these windows are counted before the chain); the chain (code, both counts,
+// base fee, the relayer's balance; then nonce(), the L1 and operator fee bounds); the delegation and both nonces; the
+// gas limit; the fee; the relayer's balance against the worst case; the digest's mark; the app's in-flight slot; the
+// shared windows (app and env minute, then the user's, app's and env's day), counted only now; the user's failure
+// slot; the worst case reserved from the app's and the env's day budget; the simulation; the audit row; the relayer;
+// the receipt; the settlement.
 //
-// SECURITY: nothing here logs an address, a signature, a digest, an authorization or an RPC URL (log() has no field
-// for them); the request log has the app, the outcome, the code and phase times. An RPC's own error text is never
-// echoed. A response carries only this app's own figures, never another app's or the env's spend.
+// SECURITY: nothing here logs an address, a signature, a digest, an authorization, a session key or an RPC URL (log()
+// has no field for them); the request log has the app, the outcome, the code and phase times. An RPC's own error text
+// is never echoed. A response carries only this app's own figures, never another app's or the env's spend.
+import { IDENTITY_PROOF_MARKER_MS, identityRoot } from '@hana-id/core/identity';
 import { SPONSOR_DELEGATES, type SignedAuthorization, encodeExecuteCalldata } from '@hana-id/core/evm-sponsor';
+import { type EvmSponsorRequestMethod, checkEvmSponsorSessionProof } from '@hana-id/core/sponsor-session';
 import type { App } from '../apps.ts';
+import { hex } from '../bytes.ts';
+import { directoryUser } from '../directory/store.ts';
 import type { Env } from '../env.ts';
-import { appGate, type Ctx, done, ipKey, lap, limiter, newCtx, reject } from '../handlers.ts';
+import { appGate, type Ctx, done, lap, limiter, newCtx, reject } from '../handlers.ts';
 import { readJson } from '../http.ts';
+import { identityProofLimiter } from '../identity/limits.ts';
+import { checkChainSession, checkShare, proofMarker } from '../identity/token.ts';
 import { log } from '../log.ts';
 import type { Limit } from '../rate-limiter.ts';
 import { AUTHORIZATION_GAS, L1FeeUnavailable, l1FeeUpperBound, maxMinGasFor, operatorFeeUpperBound, sponsorFees, sponsorGasLimit, unsignedTxSizeBound, worstCaseWei } from './op-fee.ts';
@@ -57,7 +69,7 @@ import {
   uintReturn,
   verifiedDigest,
 } from './sponsor-checks.ts';
-import { type EvmRelayerPort, type EvmRelayerSendResult, type Hex, keccakHex, pendingAgeMs, relayerBinding, relayerRefusal, revertOf, type SponsorChainPort, type SponsorReceipt, SponsorRpcError, sponsorPorts } from './sponsor-ports.ts';
+import { type EvmRelayerPort, type EvmRelayerSent, EvmRpcError, type Hex, keccakHex, relayerBinding, relayerRefusal, revertOf, type SponsorChainPort, type SponsorReceipt, sponsorPorts } from './sponsor-ports.ts';
 import {
   accountSubject,
   appSubjectOf,
@@ -66,7 +78,9 @@ import {
   envBudgetSubject,
   FAILURES,
   failureSubject,
+  freeInflight,
   hashesToPoll,
+  inflightWindow,
   lookupHashes,
   persistHashes,
   HOUR,
@@ -200,18 +214,77 @@ export const evmDirectory: { lookup: typeof evmAccountUser } = { lookup: evmAcco
 const unrecorded = (ctx: Ctx): Response =>
   done(ctx, 409, { error: 'This account is not recorded for a user of this app (yet): sign in, then retry', code: 'account_unrecorded', retryable: true, retryAfterS: 2 }, { 'retry-after': '2' });
 
-/** With requireKnownAccount: the account's user, or `409 account_unrecorded` (retryable) / `503 directory_unavailable`. */
-async function knownUser(env: Env, ctx: Ctx, app: App, chain: Readonly<EvmSponsorChainConfig>, account: Hex): Promise<Step<string | null>> {
-  if (!chain.requireKnownAccount) return { ok: true, value: null };
-  let userId: string | null;
+// ---- the session proof (D856; docs/api.md "EVM gas sponsorship: the session proof of prepare and send") ----
+
+/** What a checked session proof gives the rest of the route: the session's directory user (requireKnownAccount), or null. */
+type Session = { userId: string | null };
+
+/**
+ * The stateless part of the session proof (core checkEvmSponsorSessionProof): the proof's shape, its time (±60 s of
+ * the API's clock), the session key's Ed25519 signature over this route (`method` from the path, never the body), the
+ * partner origin in force, the app and this body, and the session's wallet proof naming the body's account. `body` is
+ * the one object parsed from the request: the hash covers exactly what every later check acts on (it is never re-read).
+ */
+function proofRefusal(ctx: Ctx, method: EvmSponsorRequestMethod, env: Env, app: App, parentOrigin: string, body: Record<string, unknown>, now: number): { ok: true; sessionPk: Uint8Array; nonce: Uint8Array; issuedAtMs: number } | { ok: false; response: Response } {
+  const r = checkEvmSponsorSessionProof({ method, body, ctx: { signer: env.SIGNER_ACCOUNT, appId: app.id, parentOrigin }, nowMs: now });
+  if (r.ok) return { ok: true, sessionPk: r.sessionPublicKey, nonce: r.nonce, issuedAtMs: r.issuedAtMs };
+  const fail = (response: Response) => ({ ok: false as const, response });
+  switch (r.reason) {
+    case 'missing_session_proof':
+      return fail(reject(ctx, 401, 'missing_session_proof', 'The session proof is required'));
+    case 'bad_session_proof':
+      return fail(reject(ctx, 400, 'bad_session_proof', 'The session proof is malformed'));
+    case 'stale_session_proof':
+      return fail(done(ctx, 400, { error: 'The session proof is too old or too new', code: 'stale_session_proof', serverTimeMs: now }));
+    case 'invalid_session_signature':
+      return fail(reject(ctx, 401, 'invalid_session_signature', 'Invalid session signature'));
+    case 'bad_wallet_proof':
+      return fail(reject(ctx, 400, 'bad_wallet_proof', "The wallet proof is not the account's for this session"));
+  }
+}
+
+/**
+ * The proof's stateful part, in D856's order: its single use (the identity token's marker, `identity-proof:<session
+ * key>`, kept until issuedAtMs + 120 s: past the whole ±60 s window), the session (its share in `session` mode, then
+ * live on chain in the app's scope: one chain read, D513, as any throwaway key reaches it), then with
+ * requireKnownAccount the account's directory user, which must be the session's account root's (`403
+ * account_mismatch`). Without requireKnownAccount (local envs only) the wallet proof alone ties the account to the
+ * session, and no user is named.
+ */
+async function sessionBound(env: Env, ctx: Ctx, app: App, parentOrigin: string, chain: Readonly<EvmSponsorChainConfig>, account: Hex, p: { sessionPk: Uint8Array; nonce: Uint8Array; issuedAtMs: number }, now: number): Promise<Step<Session>> {
   try {
-    userId = await evmDirectory.lookup(env.DB, app.scope_id, account);
+    if (!(await limiter(env, identityProofLimiter(hex(p.sessionPk))).reserve(await proofMarker({ sessionPk: p.sessionPk, issuedAtMs: p.issuedAtMs, nonce: p.nonce }), p.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now))) {
+      return { ok: false, response: reject(ctx, 409, 'proof_replayed', 'This session proof was already used') };
+    }
+  } catch {
+    return { ok: false, response: reject(ctx, 503, 'rate_limiter_unavailable', 'Try again') };
+  }
+  const share = await checkShare(env, ctx, app, parentOrigin, p.sessionPk, now);
+  if (!share.ok) return share;
+  const session = await checkChainSession(env, ctx, app, p.sessionPk, now, { singleRead: true });
+  if (!session.ok) return session;
+  lap(ctx, 'session');
+  if (!chain.requireKnownAccount) return { ok: true, value: { userId: null } };
+  const root = identityRoot(session.session.path, app.scope_id);
+  if (!root) {
+    log({ event: 'evm_sponsor_bad_session_path', requestId: ctx.requestId, appId: app.id }, 'error');
+    return { ok: false, response: reject(ctx, 502, 'bad_contract_result', 'The session path is not one this API can read') };
+  }
+  let listed: string | null;
+  let own: Awaited<ReturnType<typeof directoryUser>>;
+  try {
+    [listed, own] = await Promise.all([evmDirectory.lookup(env.DB, app.scope_id, account), directoryUser(env, app.scope_id, root)]);
   } catch {
     return { ok: false, response: reject(ctx, 503, 'directory_unavailable', 'The wallet directory is unavailable, try again') };
   }
   lap(ctx, 'directory');
-  if (!userId) return { ok: false, response: unrecorded(ctx) };
-  return { ok: true, value: userId };
+  if (typeof own === 'string') {
+    log({ event: 'evm_sponsor_directory', requestId: ctx.requestId, appId: app.id, code: own }, 'error');
+    return { ok: false, response: reject(ctx, 503, 'directory_unavailable', 'The wallet directory is unavailable, try again') };
+  }
+  if (!listed) return { ok: false, response: unrecorded(ctx) };
+  if (listed !== own.internalId) return { ok: false, response: reject(ctx, 403, 'account_mismatch', "This account is not the signed-in user's") };
+  return { ok: true, value: { userId: listed } };
 }
 
 // ---- chain reads ----
@@ -223,8 +296,36 @@ async function delegateNonce(chain: SponsorChainPort, account: Hex, delegation: 
   if (delegation === 'other') return null;
   const r = await chain.call({ from: account, to: account, data: NONCE_CALLDATA }, delegation === 'none' ? { stateOverride: { [account]: { code: designatorHex(cfg.delegate) } } } : {});
   const n = uintReturn(r.toLowerCase() as Hex);
-  if (n === null) throw new SponsorRpcError('bad_response');
+  if (n === null) throw new EvmRpcError('bad_response');
   return n;
+}
+
+/** The relayer's balance, per isolate per chain for this long (a send needs it to cover its worst case, D847). */
+export const RELAYER_BALANCE_TTL_MS = 30_000;
+const balances = new Map<number, { wei: bigint; at: number }>();
+
+/** Forgets the cached balances (tests). */
+export function forgetRelayerBalances(): void {
+  balances.clear();
+}
+
+/** The relayer's balance from the trusted endpoint, cached briefly. Throws when it can't be read. */
+async function relayerBalance(rpc: SponsorChainPort, chainId: number, relayer: Hex, now: number): Promise<bigint> {
+  const c = balances.get(chainId);
+  if (c && now - c.at < RELAYER_BALANCE_TTL_MS && now >= c.at) return c.wei;
+  const wei = await rpc.balance(relayer);
+  balances.set(chainId, { wei, at: now });
+  return wei;
+}
+
+/** The relayer is paused for new sends (halted, or short of funds): the same plain answer for both. */
+const paused = (ctx: Ctx): Response => done(ctx, 503, { error: 'Free network fees are paused for now, try again later', code: 'sponsorship_paused', retryAfterS: 300 }, { 'retry-after': '300' });
+
+/** The relayer can't cover `need` (wei): the day's `evm_relay_balance_low` (the cron's event), so staff top it up before the relayer itself runs dry. */
+async function balanceShort(env: Env, ctx: Ctx, chain: Readonly<EvmSponsorChainConfig>, relayer: string, balance: bigint, need: bigint, now: number): Promise<void> {
+  balances.delete(chain.chainId);
+  log({ event: 'evm_sponsor_relayer_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'relayer_balance_short' }, 'error');
+  await noteEvent(env, ctx, 'evm_relay_balance_low', [String(chain.chainId), utcDay(now)], { day: utcDay(now), chainId: chain.chainId, relayer, balanceWei: balance.toString(), lowBalanceWei: chain.lowBalanceWei.toString(), neededWei: need.toString() }, now);
 }
 
 // ---- budgets ----
@@ -300,16 +401,24 @@ async function insertAudit(env: Env, ctx: Ctx, r: SendRow, shape: BatchShape): P
  * is the same 200 (idempotent), a mined failure the same 422, a send still waiting its 504 with the hash, one in flight
  * `409 in_progress`. Null when there is no row (or it can't be read): the caller answers as a stale nonce.
  */
+
+/**
+ * A replay's answer from its audit row (this app's, this chain's, this digest's latest), never from the chain: executed
+ * is the same 200 (idempotent), a mined failure the same 422, a batch no node took the same answer as its send, a send
+ * still waiting its 504 with the hash, one in flight `409 in_progress`. Null when there is no row (or it can't be
+ * read): the caller answers as a stale nonce.
+ */
 async function replayAnswer(env: Env, ctx: Ctx, app: App, chainId: number, digest: Hex): Promise<Response | null> {
-  let row: { status: SendStatus; tx_hash: string | null } | null;
+  let row: { status: SendStatus; tx_hash: string | null; rejection: string | null } | null;
   try {
-    row = await env.DB.prepare('SELECT status, tx_hash FROM evm_sponsor_sends WHERE chain_id = ?1 AND digest = ?2 AND app_id = ?3 ORDER BY created_at DESC LIMIT 1')
+    row = await env.DB.prepare('SELECT status, tx_hash, rejection FROM evm_sponsor_sends WHERE chain_id = ?1 AND digest = ?2 AND app_id = ?3 ORDER BY created_at DESC LIMIT 1')
       .bind(chainId, digest, app.id)
-      .first<{ status: SendStatus; tx_hash: string | null }>();
+      .first<{ status: SendStatus; tx_hash: string | null; rejection: string | null }>();
   } catch {
     return null;
   }
   if (!row) return null;
+  if (row.rejection) return rejectionAnswer(ctx, rejectionKind(row.rejection.split(':')[0] ?? ''));
   const hash = row.tx_hash && /^0x[0-9a-f]{64}$/u.test(row.tx_hash) ? (row.tx_hash as Hex) : null;
   if (row.status === 'executed' && hash) return done(ctx, 200, { transactionHash: hash, status: 'executed', replay: true });
   if ((row.status === 'reverted' || row.status === 'not_executed') && hash) return failed(ctx, row.status, hash);
@@ -327,30 +436,56 @@ function failed(ctx: Ctx, code: 'reverted' | 'not_executed', transactionHash: He
 // ---- the relayer ----
 
 /**
- * A send result the handler can use: a 32-byte hash that is the raw transaction's keccak, a nonce, and (when the
- * relayer reports it) the same digest the handler computed. Else null (treated as unknown).
+ * Whose doing a batch no node took was (the relayer's `rejection.cause`): `request` (its own size or shape: the user's
+ * input), `pricing` (turned away over its fees: nobody's fault, try again shortly), anything else `relayer` (our side:
+ * funds, nonce, signing, and any cause this API doesn't know yet: no charge to the user, an alert).
  */
-function checkedResult(r: unknown, digest: Hex): EvmRelayerSendResult | null {
+export type RejectionKind = 'request' | 'pricing' | 'relayer';
+export const rejectionKind = (cause: string): RejectionKind => (cause === 'request' ? 'request' : cause === 'pricing' ? 'pricing' : 'relayer');
+
+/** The answer to a batch no node took (its nonce went to the relayer's cancel at once): nothing ran. */
+function rejectionAnswer(ctx: Ctx, kind: RejectionKind): Response {
+  if (kind === 'request') return done(ctx, 422, { error: 'The network refused this batch: nothing ran', code: 'not_executed' });
+  if (kind === 'pricing') return done(ctx, 503, { error: 'Network fees are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
+  return paused(ctx);
+}
+
+const HASH_RE = /^0x[0-9a-fA-F]{64}$/u;
+const WORD_RE = /^[a-z][a-z_]{0,31}$/u;
+
+/**
+ * A send result the handler can use: a 32-byte hash (the raw transaction's keccak when the raw comes back), a nonce, the
+ * same digest the handler computed, a known `broadcast` and, for `rejected`, its `rejection` (a missing or malformed one
+ * is read as the relayer's: no charge to the user). Else null (treated as unknown).
+ */
+function checkedResult(r: unknown, digest: Hex): EvmRelayerSent | null {
   if (typeof r !== 'object' || r === null) return null;
   const v = r as Record<string, unknown>;
-  if (typeof v.transactionHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/u.test(v.transactionHash)) return null;
-  if (typeof v.raw !== 'string' || v.raw.length > 2 + 2 * 200_000 || !/^0x([0-9a-fA-F]{2})+$/u.test(v.raw)) return null;
+  if (typeof v.transactionHash !== 'string' || !HASH_RE.test(v.transactionHash)) return null;
+  if (v.raw !== null && (typeof v.raw !== 'string' || v.raw.length > 2 + 2 * 200_000 || !/^0x([0-9a-fA-F]{2})+$/u.test(v.raw))) return null;
   if (typeof v.relayerNonce !== 'number' || !Number.isSafeInteger(v.relayerNonce) || v.relayerNonce < 0 || typeof v.replay !== 'boolean') return null;
+  if (v.broadcast !== 'accepted' && v.broadcast !== 'rejected' && v.broadcast !== 'unknown') return null;
   // The relayer computes the digest itself; one that differs from the handler's is an internal error (kept as unknown).
   if (typeof v.digest !== 'string' || v.digest.toLowerCase() !== digest) {
     log({ event: 'evm_sponsor_relayer_refused', code: 'digest_mismatch' }, 'error');
     return null;
   }
   const hash = v.transactionHash.toLowerCase() as Hex;
-  if (keccakHex(v.raw.toLowerCase() as Hex) !== hash) return null;
-  return { transactionHash: hash, relayerNonce: v.relayerNonce, raw: v.raw as Hex, replay: v.replay, digest };
+  const raw = typeof v.raw === 'string' ? (v.raw.toLowerCase() as Hex) : null;
+  if (raw !== null && keccakHex(raw) !== hash) return null;
+  const j = v.rejection as { cause?: unknown; code?: unknown } | null | undefined;
+  const rejection =
+    v.broadcast !== 'rejected' ? null : { cause: typeof j?.cause === 'string' && WORD_RE.test(j.cause) ? j.cause : 'relayer', code: typeof j?.code === 'string' && WORD_RE.test(j.code) ? j.code : 'unknown' };
+  return { digest, transactionHash: hash, relayerNonce: v.relayerNonce, raw, replay: v.replay, broadcast: v.broadcast, rejection: rejection as EvmRelayerSent['rejection'] };
 }
 
 /**
  * Polls for up to `sponsorTiming.receiptWaitMs` for the receipt of any transaction the relayer signed for this digest:
  * the mined one when its lookup says so, else every hash it lists (a fee bump or a deadline cancel replaces the
  * transaction at the same nonce) and the one it answered. RPC and lookup failures in between are retried. Null on
- * timeout.
+ * timeout. The first receipt of one of its own hashes answers the user (an `Executed(digest)` log at head: a reorg
+ * before confirmed depth is the accepted risk of D847; the money follows the receipt, as the relayer's own verdict
+ * would).
  */
 async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, relayer: EvmRelayerPort, digest: Hex, first: Hex): Promise<{ receipt: SponsorReceipt; cancelled: boolean } | null> {
   const end = Date.now() + sponsorTiming.receiptWaitMs;
@@ -374,6 +509,9 @@ async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, 
   }
 }
 
+/** A coded refusal the user's own input caused: their attempts stay counted. Any other gives them back. */
+const userCaused = (code: string): boolean => code === 'invalid_request' || code === 'deadline_passed';
+
 /** The answer to a relayer refusal (it sent nothing): its code, never its reason text but a known one. */
 function refusalAnswer(ctx: Ctx, code: string, reason: string | null): Response {
   switch (code) {
@@ -381,13 +519,18 @@ function refusalAnswer(ctx: Ctx, code: string, reason: string | null): Response 
     case 'relayer_misconfigured':
       log({ event: 'evm_sponsor_relayer_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code }, 'error');
       return unconfigured(ctx);
-    case 'relayer_busy':
-      return done(ctx, 503, { error: 'The relayer is busy, try again', code: 'relayer_busy', retryAfterS: 2 }, { 'retry-after': '2' });
+    case 'relayer_busy': {
+      // `account`: this account's previous batch isn't mined yet (one at a time per account); else the relayer is full.
+      const retry = reason === 'account' ? 5 : 2;
+      return done(ctx, 429, { error: 'Too many actions are being sent right now, try again in a few seconds', code: 'relayer_busy', retryAfterS: retry }, { 'retry-after': String(retry) });
+    }
     case 'relayer_halted':
       log({ event: 'evm_sponsor_relayer_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'relayer_halted' }, 'error');
-      return done(ctx, 503, { error: 'Free network fees are paused for now, try again later', code: 'sponsorship_paused', retryAfterS: 300 }, { 'retry-after': '300' });
+      return paused(ctx);
     case 'fees_too_high':
       return done(ctx, 503, { error: 'Network fees are too high right now, try again later', code: 'gas_price_too_high', retryAfterS: 30 }, { 'retry-after': '30' });
+    case 'fees_too_low':
+      return done(ctx, 503, { error: 'Network fees are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
     case 'daily_cap':
       log({ event: 'evm_sponsor_relayer_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'daily_cap' }, 'error');
       return done(ctx, 429, { error: 'The daily sponsorship budget is used up, try again later', code: 'budget_exhausted', retryAfterS: 3600 }, { 'retry-after': '3600' });
@@ -395,10 +538,6 @@ function refusalAnswer(ctx: Ctx, code: string, reason: string | null): Response 
       return rpcDown(ctx);
     case 'deadline_passed':
       return reject(ctx, 400, 'deadline_out_of_range', 'deadline is out of range');
-    case 'rejected':
-      // insufficient_funds is the relayer's balance: logged for the operator, answered as the relayer's problem.
-      log({ event: 'evm_sponsor_relayer_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code: reason === 'insufficient_funds' ? 'relayer_balance_short' : 'rejected' }, 'error');
-      return done(ctx, 503, { error: 'The network refused the transaction, try again later', code: 'relayer_rejected', retryAfterS: 30 }, { 'retry-after': '30' });
     default:
       log({ event: 'evm_sponsor_relayer_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'relayer_error' }, 'error');
       return reject(ctx, 503, 'relayer_unavailable', 'The relayer is unavailable, try again', { 'retry-after': '2' });
@@ -408,11 +547,10 @@ function refusalAnswer(ctx: Ctx, code: string, reason: string | null): Response 
 // ---- POST /v1/evm/sponsor/prepare ----
 
 /**
- * Prepare carries no signature (D847's open item: a session proof), so it reveals and spends as little as it can: with
- * requireKnownAccount an account outside the directory is `409 account_unrecorded` before any window or chain read; the
- * per-account window is keyed by (account, IP), so no one can use up a chosen user's prepares from elsewhere; then the
- * app's and the env's prepare minutes; then three chain reads. A user's failure count is never disclosed here (a
- * generic `not_available`).
+ * Prepare carries the session proof (D856), so only the signed-in session whose wallet proof is the account can read
+ * it: the proof first, then the account's prepare minute (per account: only its session reaches it), the app's and
+ * the env's prepare minutes, then the chain reads. A user's failure count is never disclosed here (a generic
+ * `not_available`); a halted or underfunded relayer is `paused`.
  */
 export async function handleEvmSponsorPrepare(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, EVM_SPONSOR_PREPARE_ENDPOINT, request);
@@ -421,10 +559,17 @@ export async function handleEvmSponsorPrepare(request: Request, env: Env, reques
   const gate = await appGate(request, env, ctx, 'evm-sponsor');
   if (!gate.ok) return gate.response;
   const { app } = gate;
+  const parentOrigin = gate.caller.parentOrigin;
+  if (!parentOrigin) return reject(ctx, 403, 'origin_not_allowed', 'Origin not allowed for this app');
   const body = await readJson(request, MAX_BODY);
   if (!body.ok) return reject(ctx, body.status, 'bad_request', body.error);
+  // One parse: the strict shape (a safe positive chainId among it) and the session proof's hash read the same object.
   const req = toPrepareRequest(body.body);
   if (!req) return reject(ctx, 400, 'bad_request', 'Not a sponsorship prepare request');
+  const now = Date.now();
+  const proof = proofRefusal(ctx, 'prepare', env, app, parentOrigin, body.body as Record<string, unknown>, now);
+  if (!proof.ok) return proof.response;
+  lap(ctx, 'proof');
   const chain = sponsorChain(config, req.chainId);
   if (!chain) return reject(ctx, 400, 'chain_not_enabled', 'Sponsorship is not enabled on this chain');
   if (!appSponsoredOn(config, app.id, chain.chainId)) return reject(ctx, 403, 'app_not_sponsored', 'This app has no sponsored calls on this chain');
@@ -432,15 +577,14 @@ export async function handleEvmSponsorPrepare(request: Request, env: Env, reques
   if (refusal) return callRefusalAnswer(ctx, refusal);
   lap(ctx, 'checks');
 
-  const known = await knownUser(env, ctx, app, chain, req.account);
-  if (!known.ok) return known.response;
-  const userId = known.value;
-  const now = Date.now();
+  const session = await sessionBound(env, ctx, app, parentOrigin, chain, req.account, proof, now);
+  if (!session.ok) return session.response;
+  const { userId } = session.value;
   const pre = await quota(
     env,
     ctx,
     [
-      { subject: ipKey(request), limits: [{ name: `evm-sponsor:prepare:${chain.chainId}:${req.account.toLowerCase()}`, windowMs: MINUTE, max: EVM_SPONSOR_LIMITS.preparesPerAccountIpPerMinute }], what: 'per account per minute' },
+      { subject: accountSubject(chain.chainId, req.account), limits: [{ name: 'evm-sponsor:prepare:minute', windowMs: MINUTE, max: EVM_SPONSOR_LIMITS.preparesPerAccountPerMinute }], what: 'per account per minute' },
       { subject: appSubject(app), limits: [{ name: `evm-sponsor:${chain.chainId}:prepare:minute`, windowMs: MINUTE, max: EVM_SPONSOR_LIMITS.preparesPerAppPerMinute }], what: 'per app' },
       { subject: envSubject(chain.chainId), limits: [{ name: 'evm-sponsor:prepare:minute', windowMs: MINUTE, max: EVM_SPONSOR_LIMITS.preparesPerEnvPerMinute }], what: 'across the env' },
     ],
@@ -452,10 +596,12 @@ export async function handleEvmSponsorPrepare(request: Request, env: Env, reques
   let delegation: Delegation;
   let accountNonce: bigint;
   let executeNonce: bigint | null;
+  let balance: bigint;
   try {
-    const [code, pending] = await Promise.all([rpc.code(req.account), rpc.transactionCount(req.account, 'pending')]);
+    const [code, pending, b] = await Promise.all([rpc.code(req.account), rpc.transactionCount(req.account, 'pending'), relayerBalance(rpc, chain.chainId, config.relayerAddress as Hex, now)]);
     delegation = classifyDelegation(code.toLowerCase() as Hex, chain.delegate);
     accountNonce = BigInt(pending);
+    balance = b;
     executeNonce = await delegateNonce(rpc, req.account, delegation, chain);
   } catch {
     return rpcDown(ctx);
@@ -469,7 +615,18 @@ export async function handleEvmSponsorPrepare(request: Request, env: Env, reques
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
-  const reason = delegation === 'other' ? 'delegated_elsewhere' : failures >= BigInt(EVM_SPONSOR_LIMITS.failuresPerUserPerDay) ? 'not_available' : !budgetLeft(chain, spent) ? 'budget_exhausted' : null;
+  const halted = delegation === 'other' ? false : await relayerHalted(env, chain.chainId);
+  const short = balance < floorWorstCase(chain) * EVM_SPONSOR_LIMITS.balanceMargin;
+  const reason =
+    delegation === 'other'
+      ? 'delegated_elsewhere'
+      : halted === true || short
+        ? 'paused'
+        : failures >= BigInt(EVM_SPONSOR_LIMITS.failuresPerUserPerDay)
+          ? 'not_available'
+          : !budgetLeft(chain, spent)
+            ? 'budget_exhausted'
+            : null;
   // The largest minGas whose gas limit fits maxGasPerTx for these calls (with the authorization when one is needed).
   const shapeCalldata = encodeExecuteCalldata(
     { chainId: chain.chainId, account: req.account, implementation: chain.delegate as Hex, calls: req.calls, nonce: executeNonce ?? 0n, deadline: BigInt(Math.floor(now / 1000) + chain.deadlineMaxS), relayer: config.relayerAddress as Hex, minGas: chain.maxGasPerTx },
@@ -504,6 +661,7 @@ function callRefusalAnswer(ctx: Ctx, r: NonNullable<ReturnType<typeof callRefusa
   }
 }
 
+
 // ---- POST /v1/evm/sponsor/send ----
 
 /**
@@ -517,10 +675,17 @@ export async function handleEvmSponsorSend(request: Request, env: Env, requestId
   const gate = await appGate(request, env, ctx, 'evm-sponsor');
   if (!gate.ok) return gate.response;
   const { app } = gate;
+  const parentOrigin = gate.caller.parentOrigin;
+  if (!parentOrigin) return reject(ctx, 403, 'origin_not_allowed', 'Origin not allowed for this app');
   const body = await readJson(request, MAX_BODY);
   if (!body.ok) return reject(ctx, body.status, 'bad_request', body.error);
+  // One parse: the strict shape and the session proof's hash read the same object, and every later check acts on it.
   const req = toSendRequest(body.body);
   if (!req) return reject(ctx, 400, 'bad_request', 'Not a sponsorship send request');
+  const now = Date.now();
+  const proof = proofRefusal(ctx, 'send', env, app, parentOrigin, body.body as Record<string, unknown>, now);
+  if (!proof.ok) return proof.response;
+  lap(ctx, 'proof');
 
   // 1. The chain, the app and every call (the allowlist).
   const chain = sponsorChain(config, req.chainId);
@@ -529,12 +694,13 @@ export async function handleEvmSponsorSend(request: Request, env: Env, requestId
   const refusal = callRefusal(config, chain, app.id, req.account, req.calls);
   if (refusal) return callRefusalAnswer(ctx, refusal);
   // 2. The relayer, the gas floor, the deadline.
-  const nowS = BigInt(Math.floor(Date.now() / 1000));
+  const nowS = BigInt(Math.floor(now / 1000));
   const batch = batchRefusal(config, chain, req, nowS);
   if (batch?.code === 'wrong_relayer') return reject(ctx, 400, 'wrong_relayer', "relayer must be the sponsorship's relayer");
   if (batch?.code === 'min_gas_out_of_range') return done(ctx, 400, { error: 'minGas is out of range', code: 'min_gas_out_of_range', minGasFloor: batch.minGasFloor.toString(), maxGas: batch.maxGas.toString() });
   if (batch?.code === 'deadline_out_of_range') return done(ctx, 400, { error: 'deadline is out of range', code: 'deadline_out_of_range', serverNow: Number(batch.serverNow), deadlineMaxS: batch.deadlineMaxS });
-  // 3. The signatures: the Execute by the account, over the pinned implementation; the authorization, if any.
+  // 3. The signatures: the Execute by the account, over the pinned implementation; the authorization, if any, to the
+  //    pinned delegate only. The session proof binds the session to this body; these bind the account's key to it.
   const input = executeInput(chain, req);
   const digest = verifiedDigest(input, req.signature);
   if (!digest) return reject(ctx, 401, 'invalid_signature', "The batch's signature is not the account's");
@@ -545,14 +711,17 @@ export async function handleEvmSponsorSend(request: Request, env: Env, requestId
     if (a?.code === 'invalid_authorization_signature') return reject(ctx, 401, 'invalid_authorization_signature', "The authorization's signature is not the account's");
   }
   lap(ctx, 'checks');
-  return sendChecked(env, ctx, app, config, chain, req, digest, exec);
+  // 4. The proof's single use, the session, the directory.
+  const session = await sessionBound(env, ctx, app, parentOrigin, chain, req.account, proof, now);
+  if (!session.ok) return session.response;
+  return sendChecked(env, ctx, app, config, chain, req, digest, session.value.userId, exec);
 }
 
-async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfig, chain: Readonly<EvmSponsorChainConfig>, req: SendRequest, digest: Hex, exec?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
+async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfig, chain: Readonly<EvmSponsorChainConfig>, req: SendRequest, digest: Hex, userId: string | null, exec?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
   const relayer = sponsorPorts.relayer(env, chain.chainId);
   if (!relayer) return unconfigured(ctx);
   const account = accountSubject(chain.chainId, req.account);
-  // 4. Replays, before any count or chain read: an executeNonce below the account's floor, or a digest marked as sent,
+  // 5. Replays, before any count or chain read: an executeNonce below the account's floor, or a digest marked as sent,
   //    is answered from its audit row (or as stale). A signed batch is public once on chain; re-posting it costs nothing.
   try {
     const floor = BigInt(await limiter(env, account).floor(NONCE_FLOOR));
@@ -562,14 +731,11 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
-  // 5. The directory.
-  const known = await knownUser(env, ctx, app, chain, req.account);
-  if (!known.ok) return known.response;
-  const userId = known.value;
-  // 6. Before the chain, only what the account's own key holder pays for (M1 of the review): the account's minute and the
+  // 6. Before the chain, only what the session's holder pays for (M1 of the review): the account's minute and the
   //    user's (or, without a directory user, the account's) day of attempts. Nothing shared is counted until the chain
   //    checks pass, so refusals after the reads (a future nonce, no delegation, a stale authorization, too much gas, an
-  //    RPC failure) never use up the app's or the env's windows.
+  //    RPC failure) never use up the app's or the env's windows; a refusal that is not the user's doing (the relayer
+  //    short of funds, halted or busy, the network's fees) gives these back too.
   const own: Window[] = [
     { subject: account, limits: [{ name: 'evm-sponsor:send:minute', windowMs: MINUTE, max: EVM_SPONSOR_LIMITS.sendsPerAccountPerMinute }], what: 'per account per minute' },
     { subject: userId ? userSubject(userId) : account, limits: [{ name: `evm-sponsor:${chain.chainId}:attempts`, windowMs: DAY, max: chain.perUserPerDay * EVM_SPONSOR_LIMITS.attemptsPerSend }], what: 'attempts per user' },
@@ -577,40 +743,52 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   const ownAt = Date.now();
   const o = await quota(env, ctx, own, ownAt);
   if (o) return o;
+  const giveBackOwn = () => giveBack(env, own, ownAt);
 
-  // 7. The chain: the account's code and pending nonce and the base fee; then its delegate nonce and the fee bounds.
+  // 7. The chain: the account's code, its latest and pending counts, the base fee and the relayer's balance; then its
+  //    delegate nonce and the fee bounds.
   const rpc = sponsorPorts.chain(env, chain);
+  const relayerAddress = config.relayerAddress as Hex;
   let delegation: Delegation;
   let pending: bigint;
+  let latest: bigint;
   let baseFee: bigint;
+  let balance: bigint;
   try {
-    const [code, p, b] = await Promise.all([rpc.code(req.account), rpc.transactionCount(req.account, 'pending'), rpc.latestBlock()]);
+    const [code, p, l, b, wei] = await Promise.all([rpc.code(req.account), rpc.transactionCount(req.account, 'pending'), rpc.transactionCount(req.account, 'latest'), rpc.latestBlock(), relayerBalance(rpc, chain.chainId, relayerAddress, ownAt)]);
     delegation = classifyDelegation(code.toLowerCase() as Hex, chain.delegate);
     pending = BigInt(p);
+    latest = BigInt(l);
     baseFee = b.baseFeePerGas;
+    balance = wei;
   } catch {
     return rpcDown(ctx);
   }
-  // 8. The delegation (D840: delegated elsewhere is refused) and the authorization's place.
+  // 8. The delegation (D840: delegated elsewhere is refused) and the authorization's place: attached only to an account
+  //    with no code, whose pending and latest counts are both its nonce (nothing of the account's own in flight that
+  //    would use the nonce first). On an account already delegated to the pinned delegate it is left off.
   if (delegation === 'other') return reject(ctx, 409, 'delegated_elsewhere', 'This account is delegated to another contract: sponsorship is not available for it');
   if (delegation === 'none' && !req.authorization) return reject(ctx, 409, 'delegation_required', 'This account needs the one-time setup: sign the authorization too');
   const authorization: SignedAuthorization | null = delegation === 'journear' ? null : req.authorization;
-  if (authorization && authorization.nonce !== pending) return done(ctx, 409, { error: "The authorization's nonce is not the account's", code: 'authorization_nonce_stale', accountNonce: pending.toString() });
+  if (authorization && (authorization.nonce !== pending || pending !== latest)) return done(ctx, 409, { error: "The authorization's nonce is not the account's", code: 'authorization_nonce_stale', accountNonce: pending.toString() });
   const calldata = encodeExecuteCalldata(executeInput(chain, req), req.signature);
   const authorizations = authorization ? 1 : 0;
-  // 9. Gas (needed for the operator fee's bound) and fees.
+  // 9. Gas (the relayer's own intrinsic gas plus the delegate's overhead and minGas) and fees, before anything is reserved.
   const gasLimit = sponsorGasLimit({ calldata, callData: req.calls.map((c) => c.data), minGas: req.minGas, authorizations });
   if (gasLimit > chain.maxGasPerTx) return done(ctx, 403, { error: 'The batch needs more gas than one sponsored transaction may use', code: 'gas_too_high', maxGas: chain.maxGasPerTx.toString() });
   const fees = sponsorFees(baseFee, chain);
-  if (!fees.ok) return done(ctx, 503, { error: 'Network fees are too high right now, try again later', code: 'gas_price_too_high', retryAfterS: 30 }, { 'retry-after': '30' });
+  if (!fees.ok) {
+    await giveBackOwn();
+    return done(ctx, 503, { error: 'Network fees are too high right now, try again later', code: 'gas_price_too_high', retryAfterS: 30 }, { 'retry-after': '30' });
+  }
   let chainNonce: bigint | null;
   let l1Bound: bigint;
   let operatorBound: bigint;
   try {
     [chainNonce, l1Bound, operatorBound] = await Promise.all([
       delegateNonce(rpc, req.account, delegation, chain),
-      l1FeeUpperBound(rpc, chain.opStack, config.relayerAddress as Hex, unsignedTxSizeBound((calldata.length - 2) / 2, authorizations)),
-      operatorFeeUpperBound(rpc, chain.opStack, config.relayerAddress as Hex, gasLimit),
+      l1FeeUpperBound(rpc, chain.opStack, relayerAddress, unsignedTxSizeBound((calldata.length - 2) / 2, authorizations)),
+      operatorFeeUpperBound(rpc, chain.opStack, relayerAddress, gasLimit),
     ]);
   } catch (e) {
     if (e instanceof L1FeeUnavailable) log({ event: 'evm_sponsor_l1_fee', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'l1_fee_unavailable' }, 'error');
@@ -635,8 +813,15 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   // plus the L1 data fee's and the operator fee's bounds.
   const reservedFor = { gasLimit, feeCap: chain.maxFeePerGasWei, l1Bound, operatorBound, reservedWei: worstCaseWei(gasLimit, chain.maxFeePerGasWei, l1Bound, operatorBound) };
   const reserved = reservedFor.reservedWei;
+  // 10. The relayer's balance covers the worst case with a margin: a user never makes the relayer itself run dry (its
+  //     own refusal halts it for staff). Short: `sponsorship_paused` and the day's low-balance alert.
+  const need = reserved * EVM_SPONSOR_LIMITS.balanceMargin;
+  if (balance < need) {
+    await Promise.all([balanceShort(env, ctx, chain, config.relayerAddress, balance, need, ownAt), giveBackOwn()]);
+    return paused(ctx);
+  }
 
-  // 10. The digest's mark: from here on a copy (concurrent or later) is answered from the audit row, never counted twice.
+  // 11. The digest's mark: from here on a copy (concurrent or later) is answered from the audit row, never counted twice.
   const markedAt = Date.now();
   const markUntil = Number(req.deadline) * 1000 + 2 * MINUTE;
   try {
@@ -645,7 +830,21 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
   const unmark = () => limiter(env, account).release(digest).catch(() => undefined);
-  // 11. The shared windows, only now: the app's and the env's minute, then the user's, the app's and the env's day.
+  // 12. The app's in-flight slot (at most inflightPerApp of the relayer's 8 unmined), then the shared windows, only now:
+  //     the app's and the env's minute, then the user's, the app's and the env's day.
+  const sharedAt = Date.now();
+  const inflight = { appId: app.id, chainId: chain.chainId, createdAt: sharedAt };
+  let slotTaken;
+  try {
+    slotTaken = await limiter(env, appSubject(app)).spend(inflightWindow(chain.chainId), DAY, String(EVM_SPONSOR_LIMITS.inflightPerApp), '1', sharedAt);
+  } catch {
+    await unmark();
+    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+  }
+  if (!slotTaken.ok) {
+    await Promise.all([unmark(), giveBackOwn()]);
+    return done(ctx, 429, { error: 'Too many of this app’s actions are being sent right now, try again in a few seconds', code: 'relayer_busy', retryAfterS: 5 }, { 'retry-after': '5' });
+  }
   const shared: Window[] = [
     { subject: appSubject(app), limits: [{ name: `evm-sponsor:${chain.chainId}:minute`, windowMs: MINUTE, max: EVM_SPONSOR_LIMITS.sendsPerAppPerMinute }], what: 'per app per minute' },
     { subject: envSubject(chain.chainId), limits: [{ name: 'evm-sponsor:minute', windowMs: MINUTE, max: chain.sendsPerMinute }], what: 'across the env per minute' },
@@ -653,10 +852,9 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
     { subject: appSubject(app), limits: [{ name: `evm-sponsor:${chain.chainId}:day`, windowMs: DAY, max: chain.perAppPerDay }], what: 'per app' },
     { subject: envSubject(chain.chainId), limits: [{ name: 'evm-sponsor:day', windowMs: DAY, max: chain.sendsPerDay }], what: 'across the env' },
   ];
-  const sharedAt = Date.now();
   const d = await quota(env, ctx, shared, sharedAt);
   if (d) {
-    await unmark();
+    await Promise.all([unmark(), freeInflight(env, inflight)]);
     return d;
   }
   const failures = failureSubject(chain.chainId, req.account, userId);
@@ -664,18 +862,18 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   try {
     slot = await limiter(env, failures).spend(FAILURES, DAY, String(EVM_SPONSOR_LIMITS.failuresPerUserPerDay), '1', sharedAt);
   } catch {
-    await Promise.all([unmark(), giveBack(env, shared, sharedAt)]);
+    await Promise.all([unmark(), freeInflight(env, inflight), giveBack(env, shared, sharedAt)]);
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
   if (!slot.ok) {
-    await Promise.all([unmark(), giveBack(env, shared, sharedAt)]);
+    await Promise.all([unmark(), freeInflight(env, inflight), giveBack(env, shared, sharedAt)]);
     return done(ctx, 429, { error: 'Too many failed sponsored actions today, try again tomorrow', code: 'too_many_failures', retryAfterS: slot.retryAfterS }, { 'retry-after': String(slot.retryAfterS) });
   }
   const freeSlot = () => limiter(env, failures).giveBack(FAILURES, DAY, '1', sharedAt).catch(() => undefined);
-  // 12. The worst case, reserved before anything is sent; from here on the rest runs inside waitUntil.
+  // 13. The worst case, reserved before anything is sent; from here on the rest runs inside waitUntil.
   const budget = await reserveBudget(env, ctx, app, chain, reserved, sharedAt);
   if (!budget.ok) {
-    await Promise.all([unmark(), giveBack(env, shared, sharedAt), freeSlot()]);
+    await Promise.all([unmark(), freeInflight(env, inflight), giveBack(env, shared, sharedAt), freeSlot()]);
     return budget.response;
   }
   lap(ctx, 'limits');
@@ -694,18 +892,36 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
     replay: false,
     createdAt: sharedAt,
   };
-  const giveBackAll = () => Promise.all([giveBack(env, shared, sharedAt), freeSlot(), settleBudget(env, app.id, chain.chainId, reserved, 0n, sharedAt)]);
+  const giveBackAll = () => Promise.all([giveBack(env, shared, sharedAt), freeSlot(), freeInflight(env, inflight), settleBudget(env, app.id, chain.chainId, reserved, 0n, sharedAt)]);
   const notSent = () => Promise.all([unmark(), giveBackAll()]);
   const shape: BatchShape = {
     targets: req.calls.map((c) => ({ address: (sponsoredTarget(config, app.id, chain.chainId, c.to, c.data)?.address ?? c.to).toLowerCase(), selector: c.data.slice(0, 10).toLowerCase() })),
     withSetup: authorization !== null,
   };
-  const tail = afterReservation(env, ctx, chain, config.relayerAddress as Hex, relayer, rpc, req, row, shape, calldata, authorization, fees, { unmark, notSent, giveBackAll });
+  const tail = afterReservation(env, ctx, chain, relayerAddress, relayer, rpc, req, row, shape, calldata, authorization, fees, {
+    unmark,
+    notSent,
+    giveBackAll,
+    giveBackOwn,
+    notTheUsers: () => Promise.all([giveBackOwn(), giveBack(env, shared, sharedAt), freeSlot()]),
+  });
   exec?.waitUntil(tail.then(
     () => undefined,
     () => undefined,
   ));
   return tail;
+}
+
+interface Undo {
+  unmark: () => Promise<unknown>;
+  /** Nothing was sent: the mark, the windows, the failure slot, the in-flight slot and the reservation come back. */
+  notSent: () => Promise<unknown>;
+  /** A replay: this copy's counts, slots and reservation come back (the first send carries them). */
+  giveBackAll: () => Promise<unknown>;
+  /** The user's own attempts (the account's minute and the user's day of attempts) come back. */
+  giveBackOwn: () => Promise<unknown>;
+  /** Not the user's doing: their attempts, the shared windows and the failure slot come back (the money settles later). */
+  notTheUsers: () => Promise<unknown>;
 }
 
 /** Everything after the reservation (inside the request's waitUntil): the simulation, the row, the relayer, the receipt. */
@@ -722,9 +938,9 @@ async function afterReservation(
   calldata: Hex,
   authorization: SignedAuthorization | null,
   fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
-  undo: { unmark: () => Promise<unknown>; notSent: () => Promise<unknown>; giveBackAll: () => Promise<unknown> },
+  undo: Undo,
 ): Promise<Response> {
-  // 13. The simulation: the exact call, from the relayer, with the account's code set to the delegation designator when
+  // 14. The simulation: the exact call, from the relayer, with the account's code set to the delegation designator when
   //     the authorization is to be attached. eth_call carries no authorization list, so its intrinsic cost is 25 000
   //     per authorization lower than the real transaction's: it runs with that much less gas, which leaves the batch
   //     exactly the gas it will have. Success means the delegate ran the whole batch (its only successful path emits
@@ -739,17 +955,17 @@ async function afterReservation(
       await undo.notSent();
       return rpcDown(ctx);
     }
-    await Promise.all([undo.unmark(), settleBudget(env, row.appId, chain.chainId, row.reserved.reservedWei, 0n, row.createdAt)]);
+    await Promise.all([undo.unmark(), freeInflight(env, row), settleBudget(env, row.appId, chain.chainId, row.reserved.reservedWei, 0n, row.createdAt)]);
     return done(ctx, 422, { error: 'The batch would revert', code: 'simulation_reverted', ...revertDetails(revert.revertData, req.calls.length) });
   }
   lap(ctx, 'simulate');
 
-  // 14. The audit row, then the relayer. Without the row nothing is sent.
+  // 15. The audit row, then the relayer. Without the row nothing is sent.
   if (!(await insertAudit(env, ctx, row, shape))) {
     await undo.notSent();
     return reject(ctx, 503, 'audit_unavailable', 'Try again');
   }
-  let sent: EvmRelayerSendResult | null;
+  let sent: EvmRelayerSent | null;
   let refused: { code: string; reason: string | null } | null = null;
   try {
     sent = checkedResult(
@@ -772,8 +988,8 @@ async function afterReservation(
   lap(ctx, 'relay');
   if (refused) {
     // A coded refusal: the relayer sent nothing. The row says so first; only if this request moved it does everything
-    // come back (the caller that moves a row owns its give-back).
-    if (await moveRow(env, row.id, ['sending'], 'refused', { settledWei: 0n })) await undo.notSent();
+    // come back (the caller that moves a row owns its give-back), the user's attempts too unless their input caused it.
+    if (await moveRow(env, row.id, ['sending'], 'refused', { settledWei: 0n })) await Promise.all([undo.notSent(), userCaused(refused.code) ? null : undo.giveBackOwn()]);
     else await undo.unmark();
     return refusalAnswer(ctx, refused.code, refused.reason);
   }
@@ -784,6 +1000,7 @@ async function afterReservation(
     await Promise.all([moveRow(env, row.id, ['sending'], 'unknown'), undo.unmark()]);
     return reject(ctx, 503, 'relayer_unavailable', 'The relayer is unavailable, try again', { 'retry-after': '2' });
   }
+  if (sent.broadcast === 'rejected') return rejectedNow(env, ctx, row, sent, undo);
   // The row records the hash (and, for a replay, that its reservation is given back) before anything is given back: a
   // crash in between leaves a row whose settlement gives nothing back (errs high), never twice. A replay (the relayer
   // had sent this digest already: no second transaction; that send carries its own reservation and counts) gives this
@@ -793,7 +1010,7 @@ async function afterReservation(
   await sponsorFaults.afterSentPersisted?.();
   if (sent.replay && moved) await undo.giveBackAll();
 
-  // 15. The receipt (no lock is held while waiting), the success rule, the settlement (once: the row moves first).
+  // 16. The receipt (no lock is held while waiting), the success rule, the settlement (once: the row moves first).
   await persistHashes(env, row.id, [sent.transactionHash]);
   const receipt = await waitForReceipt(env, row.id, rpc, relayer, row.digest, sent.transactionHash);
   lap(ctx, 'receipt');
@@ -809,7 +1026,28 @@ async function afterReservation(
   return failed(ctx, outcome === 'reverted' ? 'reverted' : 'not_executed', hash);
 }
 
-/** A row the reconciler settled first: its outcome as stored. */
+/**
+ * No node took the batch (`broadcast: 'rejected'`): the relayer gave its nonce to its own cancel at once, so this is
+ * answered now, not after a 30 s wait. The row moves to `rejected` with the cause; the reconciler settles the money to
+ * the cancel's cost once the relayer reports it mined. The user is charged a failure only when the batch itself was the
+ * cause (`request`); for `pricing` (its fees) and `relayer` (our side, and any cause not known here) their attempts,
+ * the shared windows and the failure slot come back, and `relayer` writes `evm_relay_stuck` (the relayer halts itself
+ * on such a refusal). The mark stays: a copy is answered the same from the row.
+ */
+async function rejectedNow(env: Env, ctx: Ctx, row: SendRow, sent: EvmRelayerSent, undo: Undo): Promise<Response> {
+  const cause = sent.rejection?.cause ?? 'relayer';
+  const code = sent.rejection?.code ?? 'unknown';
+  const kind = rejectionKind(cause);
+  await persistHashes(env, row.id, [sent.transactionHash]);
+  const moved = await moveRow(env, row.id, ['sending'], 'rejected', { txHash: sent.transactionHash, relayerNonce: sent.relayerNonce, replay: sent.replay, rejection: `${cause}:${code}` });
+  if (moved && sent.replay) await undo.giveBackAll();
+  else if (moved && kind !== 'request') await undo.notTheUsers();
+  const now = Date.now();
+  log({ event: 'evm_sponsor_rejected', requestId: ctx.requestId, endpoint: ctx.endpoint, code: `${kind}:${code}` }, kind === 'relayer' ? 'error' : 'warn');
+  if (kind === 'relayer') await noteEvent(env, ctx, 'evm_relay_stuck', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId, rejected: code }, now);
+  return rejectionAnswer(ctx, kind);
+}
+
 async function settledOutcome(env: Env, id: string): Promise<'executed' | 'reverted' | 'not_executed'> {
   try {
     const r = await env.DB.prepare('SELECT status FROM evm_sponsor_sends WHERE id = ?1').bind(id).first<{ status: SendStatus }>();
@@ -819,6 +1057,7 @@ async function settledOutcome(env: Env, id: string): Promise<'executed' | 'rever
   }
 }
 
+
 /** The relayer's halt reason as plain data (lowercase words and underscores), or null when it isn't halted. */
 export function haltedReason(h: unknown): string | null {
   if (typeof h !== 'object' || h === null) return null;
@@ -826,7 +1065,13 @@ export function haltedReason(h: unknown): string | null {
   return typeof r === 'string' && /^[a-z_]{1,40}$/u.test(r) ? r : 'halted';
 }
 
-/** Whether the chain's relayer is halted (for status's `paused`); null when it can't be asked. Bounded to 2 s. */
+/** The halt's refusal code (`relayer_cannot_send`'s pool refusal), when it is plain data. */
+const haltCode = (h: unknown): string | null => {
+  const c = typeof h === 'object' && h !== null ? (h as { code?: unknown }).code : undefined;
+  return typeof c === 'string' && /^[a-z_]{1,40}$/u.test(c) ? c : null;
+};
+
+/** Whether the chain's relayer is halted (for status's and prepare's `paused`); null when it can't be asked. Bounded to 2 s. */
 export async function relayerHalted(env: Env, chainId: number): Promise<boolean | null> {
   const relayer = sponsorPorts.relayer(env, chainId);
   if (!relayer) return null;
@@ -845,9 +1090,10 @@ export async function relayerHalted(env: Env, chainId: number): Promise<boolean 
 
 /**
  * Every cron run, per sponsored chain: the relayer's balance below `lowBalanceEth` writes `evm_relay_balance_low`
- * (once a UTC day), a pending transaction older than 5 min `evm_relay_stuck` (once an hour); then the reconciler
- * (sponsor-settle.ts) settles what requests couldn't. The audit rows' 24-month retention runs with or without the
- * config. Never throws; logs what it couldn't read.
+ * (once a UTC day); the relayer halted (it takes no new sends until staff resume it, D851), or its oldest unmined
+ * transaction older than 10 minutes, writes `evm_relay_stuck` (once an hour); then the reconciler (sponsor-settle.ts)
+ * settles what requests couldn't. The audit rows' 24-month retention runs with or without the config. Never throws;
+ * logs what it couldn't read.
  */
 export async function checkEvmSponsorRelay(env: Env, now: number = Date.now()): Promise<void> {
   await pruneEvmSponsorSends(env, now);
@@ -868,11 +1114,12 @@ export async function checkEvmSponsorRelay(env: Env, now: number = Date.now()): 
     try {
       const relayer = sponsorPorts.relayer(env, chain.chainId);
       const s = relayer ? await relayer.status() : null;
-      const age = s ? pendingAgeMs(s.oldestUnminedMs, now) : null;
+      const age = s && typeof s.oldestUnminedMs === 'number' && Number.isFinite(s.oldestUnminedMs) && s.oldestUnminedMs >= 0 ? s.oldestUnminedMs : null;
       const halted = s ? haltedReason(s.halted) : null;
       if (s && ((age !== null && age > EVM_SPONSOR_LIMITS.stuckAfterMs) || halted)) {
         const hour = String(Math.floor(now / HOUR) * HOUR);
-        await noteEvent(env, null, 'evm_relay_stuck', [String(chain.chainId), hour], { chainId: chain.chainId, pending: s.unmined, oldestPendingMs: age, ...(halted ? { halted } : {}) }, now);
+        const code = halted ? haltCode(s.halted) : null;
+        await noteEvent(env, null, 'evm_relay_stuck', [String(chain.chainId), hour], { chainId: chain.chainId, pending: s.unmined, oldestPendingMs: age, ...(halted ? { halted } : {}), ...(code ? { haltCode: code } : {}) }, now);
       }
     } catch {
       log({ event: 'evm_sponsor_relay_check', outcome: 'error', code: 'relayer_unavailable' }, 'warn');

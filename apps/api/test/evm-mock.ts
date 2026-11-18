@@ -158,6 +158,13 @@ export class EvmMock {
   onSend?: (tx: MockTx, endpoint: number) => SendHook | Promise<SendHook>;
   /** Awaited when a read arrives, before it is answered (to hold or crash mid-read). */
   onRead?: (method: string, endpoint: number) => Promise<void> | void;
+  /**
+   * Answers a read before the mock's own (the sponsorship handlers' account reads: eth_getCode, eth_call), or undefined
+   * for the mock's answer.
+   */
+  answer?: (method: string, params: unknown[]) => { result: unknown } | { error: { code: number; message: string; data?: string } } | undefined;
+  /** A mined transaction's receipt logs (the delegate's Executed event), none by default. */
+  receiptLogs?: (tx: MockTx) => { address: string; topics: string[]; data: string }[];
   private readonly receipts = new Map<string, { tx: MockTx; block: number }>();
 
   constructor(opts: { chainId?: number; urls?: string[] } = {}) {
@@ -166,10 +173,13 @@ export class EvmMock {
     this.modes = this.urls.map(() => 'up');
   }
 
+  /** Stubs fetch; a URL that is none of this chain's goes to a fetch stub installed before (e.g. the NEAR mock), if any. */
   install(): this {
+    const before = vi.isMockFunction(globalThis.fetch) ? (globalThis.fetch as unknown as { getMockImplementation(): ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) | undefined }).getMockImplementation() : undefined;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
       const endpoint = this.urls.findIndex((u) => url === u || url === `${u}/`);
+      if (endpoint < 0 && before) return before(input, init);
       if (endpoint < 0) throw new Error('Unexpected fetch');
       const body = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
       this.calls.push({ endpoint, method: body.method });
@@ -189,6 +199,8 @@ export class EvmMock {
 
   private read(method: string, params: unknown[], reply: Reply): Response {
     const head = this.blockNumber;
+    const own = this.answer?.(method, params);
+    if (own) return reply(own as Parameters<Reply>[0]);
     if (method === 'eth_blockNumber') return reply({ result: q(head) });
     if (method === 'eth_getTransactionCount') {
       const [address, tag] = params as [string, string];
@@ -208,7 +220,7 @@ export class EvmMock {
       }
       const got = this.hideReceipts ? undefined : this.receipts.get((params[0] as string).toLowerCase());
       if (!got || got.block > head) return reply({ result: null });
-      return reply({ result: { transactionHash: got.tx.hash, status: '0x1', blockNumber: q(got.block), gasUsed: '0x5208', effectiveGasPrice: '0x3b9aca00', logs: [], ...this.receiptExtras } });
+      return reply({ result: { transactionHash: got.tx.hash, status: '0x1', blockNumber: q(got.block), gasUsed: '0x5208', effectiveGasPrice: '0x3b9aca00', logs: this.receiptLogs?.(got.tx) ?? [], ...this.receiptExtras } });
     }
     if (method === 'eth_getBlockByNumber') {
       const tag = params[0] as string;

@@ -12,7 +12,7 @@ import {
   recoverExecuteSigner,
 } from '@hana-id/core/evm-sponsor';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, checksumEvmAddress, sponsoredTarget } from './sponsor-config.ts';
-import type { Hex, SponsorLog, SponsorReceipt } from './sponsor-ports.ts';
+import type { Hex, SponsorReceipt } from './sponsor-ports.ts';
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -34,8 +34,8 @@ export const EVM_SPONSOR_LIMITS = Object.freeze({
   attemptsPerSend: 3,
   /** Sends per app per minute, counted once the chain checks passed (the day's count and budget are the manifest's). */
   sendsPerAppPerMinute: 120,
-  /** Prepares per (account, IP) per minute: one IP can't use up a chosen account's prepares for everyone else. */
-  preparesPerAccountIpPerMinute: 10,
+  /** Prepares per account per minute (only the account's own session gets this far: D856's proof comes first). */
+  preparesPerAccountPerMinute: 10,
   /** Prepares per app and across the env per minute, counted before prepare's chain reads. */
   preparesPerAppPerMinute: 600,
   preparesPerEnvPerMinute: 2000,
@@ -43,8 +43,12 @@ export const EVM_SPONSOR_LIMITS = Object.freeze({
   failuresPerUserPerDay: 3,
   /** The day's spend at which `evm_relay_budget_high` is written (once a UTC day per chain). */
   budgetAlertPct: 80,
-  /** A relayer transaction pending longer than this writes `evm_relay_stuck` (once an hour per chain). */
-  stuckAfterMs: 5 * 60_000,
+  /** The relayer's oldest unmined transaction older than this writes `evm_relay_stuck` (once an hour per chain). */
+  stuckAfterMs: 10 * 60_000,
+  /** A send needs the relayer's balance to cover this many times its worst case (else `sponsorship_paused`). */
+  balanceMargin: 3n,
+  /** An app's sends in flight per chain (the relayer takes at most 8 unmined across every app). */
+  inflightPerApp: 4,
 });
 
 export const U256_MAX = (1n << 256n) - 1n;
@@ -115,16 +119,22 @@ function parseCalls(v: unknown): SponsorCall[] | null {
   return out;
 }
 
-/** POST /v1/evm/sponsor/prepare's body: exactly `{ chainId, account, calls: [{ to, value, data }] }`. */
+/** The body key of the session proof (core EVM_SPONSOR_PROOF_KEY; its shape is core's check, D856). */
+export const SESSION_PROOF_KEY = 'sessionProof';
+
+/**
+ * POST /v1/evm/sponsor/prepare's body: exactly `{ chainId, account, calls: [{ to, value, data }] }`, plus the session
+ * proof (`sessionProof`, checked by the handler).
+ */
 export function toPrepareRequest(body: unknown): PrepareRequest | null {
-  if (!isObj(body) || !onlyKeys(body, ['chainId', 'account', 'calls'])) return null;
+  if (!isObj(body) || !onlyKeys(body, ['chainId', 'account', 'calls', SESSION_PROOF_KEY])) return null;
   const chainId = parseChainId(body.chainId);
   const account = parseAddress(body.account);
   const calls = parseCalls(body.calls);
   return chainId && account && calls ? { chainId, account, calls } : null;
 }
 
-const SEND_KEYS = ['chainId', 'account', 'calls', 'executeNonce', 'deadline', 'relayer', 'minGas', 'signature', 'authorization'];
+const SEND_KEYS = ['chainId', 'account', 'calls', 'executeNonce', 'deadline', 'relayer', 'minGas', 'signature', 'authorization', SESSION_PROOF_KEY];
 
 function parseAuthorization(v: unknown): SignedAuthorization | null {
   if (!isObj(v) || !onlyKeys(v, ['chainId', 'address', 'nonce', 'yParity', 'r', 's'])) return null;
@@ -138,7 +148,7 @@ function parseAuthorization(v: unknown): SignedAuthorization | null {
   return { chainId, address, nonce, yParity: v.yParity, r, s };
 }
 
-/** POST /v1/evm/sponsor/send's body: the prepare fields and the signed batch's, nothing else. */
+/** POST /v1/evm/sponsor/send's body: the prepare fields and the signed batch's, the session proof, nothing else. */
 export function toSendRequest(body: unknown): SendRequest | null {
   if (!isObj(body) || !onlyKeys(body, SEND_KEYS)) return null;
   const base = toPrepareRequest({ chainId: body.chainId, account: body.account, calls: body.calls });
@@ -300,5 +310,5 @@ export function revertDetails(revertData: Hex | null, callCount: number): { reve
 
 /** Success (D847): status 1 and an `Executed(digest, …)` log emitted by the account itself. */
 export function executedIn(receipt: SponsorReceipt, account: Hex, digest: Hex): boolean {
-  return receipt.status === 1 && receipt.logs.some((l: SponsorLog) => l.address.toLowerCase() === account.toLowerCase() && l.topics[0] === EXECUTED_TOPIC && l.topics[1] === digest.toLowerCase());
+  return receipt.status === 1 && receipt.logs.some((l) => l.address.toLowerCase() === account.toLowerCase() && l.topics[0] === EXECUTED_TOPIC && l.topics[1] === digest.toLowerCase());
 }

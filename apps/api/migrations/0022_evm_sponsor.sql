@@ -5,11 +5,13 @@
 -- configured never touches either. Applied by the founder (docs/operations.md "Migrations").
 
 -- One row per send that reached the reservation (`sending`), updated as it goes: `sent` (the relayer gave its hash),
--- then `executed`, `reverted` or `not_executed` from the receipt, `timeout` (no receipt within 30 s), `refused` (nothing
--- was sent: a simulation revert, a coded relayer refusal, or the reconciler finding the relayer never had it past the
--- deadline), `unknown` (the relayer failed: it may or may not have broadcast) or `lost` (the reconciler gave up: no
--- receipt and the relayer no longer remembers it; the reservation is kept). `sending`, `sent`, `timeout` and `unknown`
--- are settled by the request or, failing that, by the cron's reconciler (D848); the reservation's parts are kept for it. Amounts in wei as decimal strings (they exceed 2^53). The
+-- then `executed`, `reverted` or `not_executed` from the receipt, `timeout` (no receipt within 30 s), `rejected` (no
+-- node took the batch: the relayer gave its nonce to its own cancel at once; `rejection` says whose doing it was),
+-- `refused` (nothing was sent: a coded relayer refusal), `unknown` (the relayer failed: it may or may not have
+-- broadcast), `mined` (the relayer saw it mined, its receipt unreadable), `consumed_elsewhere` (staff closed the
+-- relayer's record) or `lost` (the reconciler gave up: no receipt and the relayer no longer remembers it; the
+-- reservation is kept). `sending`, `sent`, `timeout`, `unknown` and `rejected` are settled by the request or, failing
+-- that, by the cron's reconciler (D848); the reservation's parts are kept for it. Amounts in wei as decimal strings (they exceed 2^53). The
 -- user's rows go with the user (`ON DELETE CASCADE` from the directory's `end_users`, and `scripts/lib/uid-erase.ts`
 -- deletes by the user's wallet addresses too, for rows written without a directory user).
 CREATE TABLE evm_sponsor_sends (
@@ -38,7 +40,10 @@ CREATE TABLE evm_sponsor_sends (
   targets_json  TEXT NOT NULL CHECK (json_valid(targets_json)),
   with_setup    INTEGER NOT NULL CHECK (with_setup IN (0, 1)),
   settled_wei   TEXT CHECK (settled_wei IS NULL OR length(settled_wei) BETWEEN 1 AND 78),
-  status        TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'executed', 'reverted', 'not_executed', 'mined', 'timeout', 'unknown', 'refused', 'lost', 'consumed_elsewhere')),
+  -- A rejected batch's `<cause>:<code>` as the relayer gave it (`request:gas_limit`, `relayer:insufficient_funds`,
+  -- `pricing:…`): whose doing it was decides whether the user's failure slot was charged.
+  rejection     TEXT CHECK (rejection IS NULL OR (length(rejection) BETWEEN 3 AND 65 AND rejection NOT GLOB '*[^a-z_:]*')),
+  status        TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'executed', 'reverted', 'not_executed', 'mined', 'timeout', 'unknown', 'rejected', 'refused', 'lost', 'consumed_elsewhere')),
   request_id    TEXT NOT NULL,
   created_at    INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at    INTEGER NOT NULL CHECK (updated_at >= created_at)
@@ -49,7 +54,7 @@ CREATE INDEX evm_sponsor_sends_digest ON evm_sponsor_sends (chain_id, digest, cr
 CREATE INDEX evm_sponsor_sends_account ON evm_sponsor_sends (account);
 CREATE INDEX evm_sponsor_sends_user ON evm_sponsor_sends (user_id);
 CREATE INDEX evm_sponsor_sends_app ON evm_sponsor_sends (app_id, created_at DESC);
-CREATE INDEX evm_sponsor_sends_open ON evm_sponsor_sends (status, updated_at) WHERE status IN ('sending', 'sent', 'timeout', 'unknown');
+CREATE INDEX evm_sponsor_sends_open ON evm_sponsor_sends (status, updated_at) WHERE status IN ('sending', 'sent', 'timeout', 'unknown', 'rejected');
 CREATE INDEX evm_sponsor_sends_created ON evm_sponsor_sends (created_at);
 
 -- The billing record (D852): one per sponsored transaction that reached the chain (the batch: executed, reverted or run
@@ -94,7 +99,7 @@ CREATE INDEX evm_sponsor_billing_unmirrored ON evm_sponsor_billing (settled_at) 
 
 -- `security_events` gains `evm_relay_budget_high` (a chain's day spend reached 80% of `dailyBudgetEth`, once a day),
 -- `evm_relay_balance_low` (the relayer below `lowBalanceEth`, once a day), `evm_relay_stuck` (a relayer transaction
--- pending over 5 minutes, or a send unsettled over 10, once an hour) and `evm_relay_receipt_odd` (a receipt outside what
+-- unmined over 10 minutes, the relayer halted, or a send unsettled over 10, once an hour) and `evm_relay_receipt_odd` (a receipt outside what
 -- the reservation assumed, settled at the reservation; once an hour) and `evm_relay_nonce_taken` (the relayer's nonce for
 -- a batch went to something that is no version of it; the batch didn't run; once an hour) and `evm_billing_late` (a
 -- settled send without its billing record, or a record not yet copied to the usage ledger, an hour on; once an hour). SQLite can't alter a CHECK, so the table is rebuilt as 0020 did:

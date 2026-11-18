@@ -141,7 +141,7 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   await expect(page.getByRole('heading', { name: 'App details' })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Atlas Markets' })).toHaveCount(0);
   await expect(page.getByRole('group', { name: 'App' })).toContainText('Atlas Markets');
-  await expect(page.locator('#home-coverage')).toContainText('no longer works');
+  await expect(page.locator('#home-coverage')).toContainText('the sign-in it used is gone');
   await shots(page, '05-app-not-available', browserName);
   await page.getByRole('button', { name: 'Back to all apps' }).click();
   await page.getByRole('button', { name: 'View Nova Earn' }).click();

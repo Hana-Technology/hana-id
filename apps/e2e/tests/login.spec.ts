@@ -195,7 +195,7 @@ test.describe('partner COOP', () => {
     const popup = await popupP;
     expect(await errorCode(page, 'login')).toBe('coop_blocks_popup');
     // The popup, cut off from its opener, says why (unless the SDK already closed it).
-    if (!popup.isClosed()) await expect(popup.getByRole('heading')).toContainText(/COOP/u);
+    if (!popup.isClosed()) await expect(popup.getByRole('heading')).toContainText('This site’s settings block the Journear Passport window');
   });
 
   test('same-origin-allow-popups works', async ({ page }) => {

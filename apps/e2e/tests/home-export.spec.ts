@@ -422,7 +422,7 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
   await home.locator('#home-export-near').click();
   await expect(s.title).toHaveText('Your NEAR key');
   await expect(home.locator('#home-export-near-notes li')).toHaveCount(3);
-  await expect(home.locator('#home-export-near-notes')).toContainText('Choose NEAR testnet in the other wallet app');
+  await expect(home.locator('#home-export-near-notes')).toContainText('Choose NEAR’s test network (“testnet”) in the other wallet app');
   await expect(home.locator('#home-export-continue')).toBeDisabled();
   await shots(home, 'h8-13b-confirm-near', browserName);
   await confirm(home);
@@ -584,7 +584,7 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
   await signInAgain(home, 1);
   await expect(s.problem).toContainText('Error code (for support): home_account_mismatch');
   await expect(s.problem).toContainText('Sign in as the same account you used in Passport Home.');
-  await expect(s.problem).not.toContainText('Request:');
+  await expect(s.problem).not.toContainText('Request ID');
   await shots(home, 'h8-22-refused-other-google-account', browserName);
   await home.locator('#home-export-again').click();
 

@@ -137,6 +137,28 @@ describe('broadcast', () => {
     expect(await client().broadcast(r)).toEqual({ kind: 'unsent' });
   });
 
+  it('a classified refusal whose text says "limit" is still definite (only unclassified texts can be transient)', async () => {
+    const r = await raw();
+    for (const [message, reason] of [
+      ['exceeds block gas limit', 'gas_limit'],
+      ['in-flight transaction limit reached for delegated accounts', 'sender_restricted'],
+    ] as const) {
+      chain.onSend = () => ({ error: message });
+      expect(await client().broadcast(r)).toEqual({ kind: 'rejected', reason, byRead: reason });
+    }
+    chain.onSend = () => ({ error: 'rate limit exceeded' });
+    expect(await client().broadcast(r)).toEqual({ kind: 'unknown' });
+  });
+
+  it('classifies the pools\' 7702 texts (go-ethereum and op-geth txpool)', () => {
+    expect(classifyRejection('authority already reserved')).toBe('authority_reserved');
+    expect(classifyRejection('in-flight transaction limit reached for delegated accounts')).toBe('sender_restricted');
+    expect(classifyRejection('gapped-nonce tx from delegated accounts')).toBe('sender_restricted');
+    expect(classifyRejection('address already reserved')).toBe('sender_restricted');
+    expect(classifyRejection('transaction gas price below minimum')).toBe('underpriced');
+    expect(classifyRejection('exceeds maximum per-transaction gas limit')).toBe('gas_limit');
+  });
+
   it('classifies the nodes’ pool messages', () => {
     expect(classifyRejection('nonce too low: next nonce 5, tx nonce 4')).toBe('nonce_too_low');
     expect(classifyRejection('already known')).toBe('already_known');

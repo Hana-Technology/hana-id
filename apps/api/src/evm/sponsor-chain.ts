@@ -63,9 +63,9 @@ export class EvmRpcError extends Error {
 }
 
 /** A definite pool rejection of a raw transaction (the node did not take it). */
-export type EvmRejection = 'nonce_too_low' | 'nonce_too_high' | 'replacement_underpriced' | 'underpriced' | 'insufficient_funds' | 'fee_below_base_fee' | 'gas_limit' | 'oversized' | 'invalid_transaction';
+export type EvmRejection = 'nonce_too_low' | 'nonce_too_high' | 'replacement_underpriced' | 'underpriced' | 'insufficient_funds' | 'fee_below_base_fee' | 'gas_limit' | 'oversized' | 'invalid_transaction' | 'authority_reserved' | 'sender_restricted';
 /** Every classified rejection (the relayer gives each its cause: evm-relayer.ts REJECTION_CAUSE). */
-export const EVM_REJECTIONS: readonly EvmRejection[] = Object.freeze(['nonce_too_low', 'nonce_too_high', 'replacement_underpriced', 'underpriced', 'insufficient_funds', 'fee_below_base_fee', 'gas_limit', 'oversized', 'invalid_transaction']);
+export const EVM_REJECTIONS: readonly EvmRejection[] = Object.freeze(['nonce_too_low', 'nonce_too_high', 'replacement_underpriced', 'underpriced', 'insufficient_funds', 'fee_below_base_fee', 'gas_limit', 'oversized', 'invalid_transaction', 'authority_reserved', 'sender_restricted']);
 
 /** `byRead`: the trusted read endpoint's own definite refusal, when it was reached and refused (else null). */
 export type EvmBroadcast = { kind: 'accepted'; hash: Hex } | { kind: 'rejected'; reason: EvmRejection; byRead: EvmRejection | null } | { kind: 'unknown' } | { kind: 'unsent' };
@@ -162,13 +162,18 @@ function transientRpcError(code: number | null, message: string): boolean {
 export function classifyRejection(message: string): EvmRejection | 'already_known' | null {
   const m = message.toLowerCase();
   if (/already known|known transaction|alreadyknown|already imported|already exists in the pool/u.test(m)) return 'already_known';
+  // EIP-7702 pool rules (go-ethereum and op-geth txpool, legacypool.validateAuth / checkDelegationLimit, errors.go):
+  // an AUTHORITY (the user's account) with other transactions waiting; the SENDER (the relayer) delegated, an
+  // authority elsewhere, or held by another subpool.
+  if (/authority already reserved/u.test(m)) return 'authority_reserved';
+  if (/in-flight transaction limit reached for delegated accounts|gapped-nonce tx from delegated accounts|address already reserved/u.test(m)) return 'sender_restricted';
   if (/nonce too low|noncetoolow|oldnonce|nonce has already been used|invalid nonce.*low/u.test(m)) return 'nonce_too_low';
   if (/nonce too high|noncetoohigh|nonce gap/u.test(m)) return 'nonce_too_high';
   if (/replacement transaction underpriced|replacement fee too low|replacementnotallowed|replacement.*underpriced/u.test(m)) return 'replacement_underpriced';
   if (/insufficient funds|insufficientfunds|insufficient balance/u.test(m)) return 'insufficient_funds';
   if (/less than block base fee|fee cap less than block base fee|feecaptoolow|feecaptoolowtocompete/u.test(m)) return 'fee_below_base_fee';
-  if (/transaction underpriced|feetoolow|underpriced/u.test(m)) return 'underpriced';
-  if (/intrinsic gas too low|exceeds block gas limit|gas limit reached|gas too low|gaslimit/u.test(m)) return 'gas_limit';
+  if (/transaction underpriced|feetoolow|underpriced|gas price below minimum/u.test(m)) return 'underpriced';
+  if (/intrinsic gas too low|exceeds block gas limit|exceeds maximum per-transaction gas limit|gas limit reached|gas too low|gaslimit/u.test(m)) return 'gas_limit';
   if (/oversized data|transaction too large|tx too large|exceeds the maximum.*size|tx size/u.test(m)) return 'oversized';
   if (/invalid sender|invalid chain id|chain id mismatch|rlp|tx type not supported|transaction type not supported|invalid transaction|invalid signature|tip higher than fee cap|max priority fee per gas higher/u.test(m)) return 'invalid_transaction';
   return null;
@@ -310,7 +315,8 @@ export class SponsorChain {
       } else if (answer.kind === 'error') {
         const c = classifyRejection(answer.message);
         if (c === 'already_known') return { kind: 'accepted', hash: rawTxHash(raw) };
-        if (c === null || transientRpcError(answer.code, answer.message)) uncertain = true;
+        // A classified refusal is definite whatever else its text says ("exceeds block gas limit" is no rate limit).
+        if (c === null) uncertain = true;
         else {
           rejections.push(c);
           if (url === this.readUrl) byRead = c;

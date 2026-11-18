@@ -27,12 +27,15 @@ export async function freePort(): Promise<number> {
 
 export interface Anvil {
   url: string;
+  /** The anvil process (for a synchronous kill when the test runner exits early). */
+  pid: number | undefined;
   rpc: <T = unknown>(method: string, params?: unknown[]) => Promise<T>;
   stop: () => Promise<void>;
 }
 
 /** Starts anvil (Prague) on a free port and waits until it answers eth_chainId; another port if that one was taken. */
-export async function startAnvil(opts: { chainId?: number; noCreate2Deployer?: boolean } = {}): Promise<Anvil> {
+/** `args`: further anvil flags (e.g. `--base-fee`, `--slots-in-an-epoch`). */
+export async function startAnvil(opts: { chainId?: number; noCreate2Deployer?: boolean; args?: readonly string[] } = {}): Promise<Anvil> {
   let last: unknown;
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
@@ -44,8 +47,8 @@ export async function startAnvil(opts: { chainId?: number; noCreate2Deployer?: b
   throw last;
 }
 
-async function startAnvilOnce(port: number, opts: { chainId?: number; noCreate2Deployer?: boolean }): Promise<Anvil> {
-  const args = ['--hardfork', 'prague', '--host', '127.0.0.1', '--port', String(port), '--silent', ...(opts.chainId ? ['--chain-id', String(opts.chainId)] : []), ...(opts.noCreate2Deployer ? ['--disable-default-create2-deployer'] : [])];
+async function startAnvilOnce(port: number, opts: { chainId?: number; noCreate2Deployer?: boolean; args?: readonly string[] }): Promise<Anvil> {
+  const args = ['--hardfork', 'prague', '--host', '127.0.0.1', '--port', String(port), '--silent', ...(opts.chainId ? ['--chain-id', String(opts.chainId)] : []), ...(opts.noCreate2Deployer ? ['--disable-default-create2-deployer'] : []), ...(opts.args ?? [])];
   const child: ChildProcess = spawn('anvil', args, { stdio: 'ignore' });
   const url = `http://127.0.0.1:${port}`;
   let id = 0;
@@ -77,7 +80,7 @@ async function startAnvilOnce(port: number, opts: { chainId?: number; noCreate2D
       child.once('exit', () => resolve());
       child.kill('SIGTERM');
     });
-  return { url, rpc, stop };
+  return { url, pid: child.pid, rpc, stop };
 }
 
 /** anvil's published development mnemonic (its default accounts: public test keys, never funded anywhere real). */

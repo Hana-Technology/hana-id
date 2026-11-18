@@ -180,9 +180,12 @@ export function classifyRejection(message: string): EvmRejection | 'already_know
   if (/insufficient funds|insufficientfunds|insufficient balance/u.test(m)) return 'insufficient_funds';
   if (/less than block base fee|fee cap less than block base fee|feecaptoolow|feecaptoolowtocompete/u.test(m)) return 'fee_below_base_fee';
   if (/transaction underpriced|feetoolow|underpriced|gas price below minimum/u.test(m)) return 'underpriced';
-  if (/intrinsic gas too low|exceeds block gas limit|exceeds maximum per-transaction gas limit|gas limit reached|gas too low|gaslimit/u.test(m)) return 'gas_limit';
+  // anvil (revm) words a gas limit above the block's "intrinsic gas too high -- tx.gas_limit > env.block.gas_limit"
+  // (captured by the anvil lane, D868): the same condition as geth's "exceeds block gas limit".
+  if (/intrinsic gas too low|intrinsic gas too high|exceeds block gas limit|exceeds maximum per-transaction gas limit|gas limit reached|gas too low|gaslimit/u.test(m)) return 'gas_limit';
   if (/oversized data|transaction too large|tx too large|exceeds the maximum.*size|tx size/u.test(m)) return 'oversized';
-  if (/invalid sender|invalid chain id|chain id mismatch|rlp|tx type not supported|transaction type not supported|invalid transaction|invalid signature|tip higher than fee cap|max priority fee per gas higher/u.test(m)) return 'invalid_transaction';
+  // anvil's "Failed to decode transaction" (-32602, the anvil lane) is geth's "rlp: …": bytes that are no transaction.
+  if (/invalid sender|invalid chain id|chain id mismatch|rlp|failed to decode transaction|tx type not supported|transaction type not supported|invalid transaction|invalid signature|tip higher than fee cap|max priority fee per gas higher/u.test(m)) return 'invalid_transaction';
   return null;
 }
 

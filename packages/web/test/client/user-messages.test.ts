@@ -62,8 +62,8 @@ describe('userMessage (D861)', () => {
     expect(userMessageFor('link_pending', { effectiveAtMs: 1 })).toBe('This email is waiting to be linked to a wallet. Sign in again and follow the steps in the Journear Passport window.');
   });
 
-  it('login_cancelled after the user removed this sign-in from a wallet (D865): says so, not "Nothing was changed"', () => {
-    expect(userMessageFor('login_cancelled', { reason: 'link_remove' })).toBe('You removed this sign-in from that wallet. Sign in again when you’re ready.');
+  it('login_cancelled when the user chose to remove this sign-in from a wallet (D865): true before and after the removal is confirmed', () => {
+    expect(userMessageFor('login_cancelled', { reason: 'link_remove' })).toBe('You chose to remove this sign-in from that wallet. Finish it in the Journear Passport window. Then sign in again when you’re ready.');
     expect(userMessageFor('login_cancelled', { reason: 'popup_closed' })).toBe('The sign-in was cancelled. Nothing was changed.');
   });
 

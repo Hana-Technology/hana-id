@@ -1879,7 +1879,9 @@ providers; a linked member's export on both is e2e-tested, `apps/e2e/tests/linki
   contract's `Member.auto` (`get_account` on the vault's RPC) and google-match's `decision: 'linked'` and
   `googleHosted` for this very login (the issuer, from Google's userinfo with this login's access token): never from the
   partner. A lying primary RPC could claim `auto`, but google-match must also say this Google account's own hosted
-  address is in the account; when either can't be had the notice is shown (with words that don't push removal).
+  address is in the account; when either can't be had the notice is shown (with words that don't push removal). It
+  inherits D158's residual: a Workspace or Cloud Identity domain whose mail isn't on Google still reports `hd` equal
+  to its domain, so its admin-made accounts count as Google-hosted (the domain's admin controls that mailbox anyway).
   Every login with the follow-up key has the channel (a record-only app too), so the notice is never skipped in an
   interactive sign-in; an env without an email issuer has no email identities and so no links.
 - **`hana.linkAccount`**: two fresh sign-ins (the new method over `link_new`, the account root over `link_account`,

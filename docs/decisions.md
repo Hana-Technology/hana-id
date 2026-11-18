@@ -13747,7 +13747,9 @@ From `feat/link-cancel-by-email` (PR 83) @ 88104036, then `next` @ 6db2bb8b merg
      "This usually happens when that email is your own Gmail or Google Workspace address. If you don’t recognise it,
      remove this Google account from it.", **Not now** first and **Remove this Google account** not in red. The
      chain doesn't record whether a link had a code step or whether the address is hosted; `auto` and google-match
-     are what is recorded.
+     are what is recorded. The rule inherits D158's accepted residual: a Workspace or Cloud Identity domain whose mail
+     isn't on Google still reports `hd` equal to its domain, so its admin-made accounts count as Google-hosted and get
+     no notice; the domain's admin controls that mailbox anyway.
   3. **D864's texts corrected** (amends D864): the pending notice mail's "Not you?" is "Change your email password,
      then sign in to “{app}” with this email. During the waiting period you can cancel the link there. After it, the
      Journear Passport sign-in window lets you remove this email from that wallet. Don’t add money to that wallet."
@@ -13756,10 +13758,11 @@ From `feat/link-cancel-by-email` (PR 83) @ 88104036, then `next` @ 6db2bb8b merg
      up, don’t add money to it. Choose Remove this email below, and change your email password."; buttons **Remove
      this email** (red) and **Close**. Remove goes through the same confirmation, then the member's own removal
      (`MemberRemove`, started by `LinkWaiting` on `{choice: 'remove'}`), so there is no "sign in again" step.
-  4. **The partner's message** for `login_cancelled` with `link_remove`: "You removed this sign-in from that wallet.
-     Sign in again when you’re ready." (the reason picks it; other `login_cancelled` keep "The sign-in was cancelled.
-     Nothing was changed."). At that moment the removal still waits for its code in the window; if the user abandons
-     it, nothing was removed.
+  4. **The partner's message** for `login_cancelled` with `link_remove`: "You chose to remove this sign-in from that
+     wallet. Finish it in the Journear Passport window. Then sign in again when you’re ready." (the reason picks it;
+     other `login_cancelled` keep "The sign-in was cancelled. Nothing was changed."). It is true either way: at that
+     moment the removal still waits for its code in the window (first built as "You removed …", corrected after the
+     re-check of PR 85).
   5. **Every interactive sign-in has the channel**: an app without email login (record, D269) now gets the follow-up
      channel too (its callback goes to the follow-up mode, the vault always sends its last word), so a member signing
      in through any app of the scope is asked. Its login reads NEAR once more (the last word's `get_account`). An env

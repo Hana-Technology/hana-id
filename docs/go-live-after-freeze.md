@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -543,9 +543,9 @@ They are measured once before switching on (D851 item 18; runbook "The relayer",
 - Send from the **deployer** keystore, **never** from the relayer key: a transaction the relayer didn't send makes
   it stop as if its key had leaked (`foreign_transactions`).
 - The keyed URL goes into the shell without echo (`read -rs`), never on a command line.
-- The runbook names the two checks but not their `cast` commands: the assistant gives you each command on the day
-  (you type the keystore password), and a last one that replaces the waiting test transaction so the deployer has
-  nothing pending.
+- The exact `cast` commands are in the runbook ("The relayer", "Two checks owed"), rehearsed on a local anvil by the
+  anvil lane (D868): you paste the keyed URL once and type the keystore password at each `cast`; the last command
+  replaces the waiting test transaction so the deployer has nothing pending.
 
 1. A test transaction with a very low tip, so it waits. Ask the endpoint for the deployer's pending transaction count
    (`eth_getTransactionCount` with `pending`) before and after.
@@ -554,6 +554,15 @@ They are measured once before switching on (D851 item 18; runbook "The relayer",
    **Good**: the endpoint answers "already known" (or the same words). **Bad**: any other answer.
 
 If either is bad: don't switch on. Tell engineering; the rule has to be revisited or another provider chosen.
+
+What the anvil lane already rehearsed on a real (local) node, so it is not owed here: both checks' behaviour as the
+relayer assumes it (anvil: the count rises; the same bytes again answer `transaction already imported`), every
+scenario of the relayer's rules (bumps, deadline cancels, halts and staff tools, a reorg's correction) and the gas
+formula against the real delegate (`docs/operations.md` "The anvil lane"). What still needs Base Sepolia, and goes into
+the follow-up PR with the two answers above: the receipts' OP Stack L1 data fee and operator fee against the
+GasPriceOracle bounds (the first real sponsored action's receipt, 4.15); the provider's wording of its refusals
+(recorded as they occur in the relayer's logs and `evmRelayerStaffStatus`'s `unconfirmedRefusal`); and the pool rules
+anvil lacks (+10% replacement, the 128 KiB limit, `authority already reserved`): nothing to send for these on the day.
 
 ### 4.7 The follow-up PR (the assistant; you review the numbers)
 

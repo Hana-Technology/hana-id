@@ -92,6 +92,7 @@ import {
   persistHashes,
   HOUR,
   lookupDigest,
+  versionMaxFee,
   MINUTE,
   moveRow,
   NONCE_FLOOR,
@@ -593,7 +594,7 @@ function checkedResult(r: unknown, digest: Hex): EvmRelayerSent | null {
  * before confirmed depth is the accepted risk of D847; the money follows the receipt, as the relayer's own verdict
  * would).
  */
-async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, relayer: EvmRelayerPort, digest: Hex, first: Hex): Promise<{ receipt: SponsorReceipt; cancelled: boolean; confirmed: boolean } | null> {
+async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, relayer: EvmRelayerPort, digest: Hex, first: Hex): Promise<{ receipt: SponsorReceipt; cancelled: boolean; confirmed: boolean; maxFeePerGas: bigint | null } | null> {
   const end = Date.now() + sponsorTiming.receiptWaitMs;
   const known = new Set<Hex>([first]);
   for (;;) {
@@ -609,7 +610,7 @@ async function waitForReceipt(env: Env, rowId: string, chain: SponsorChainPort, 
     if (read.kind === 'mined') {
       const v = l.value;
       const atDepth = v?.state === 'mined' && v.minedHash?.toLowerCase() === read.receipt.transactionHash.toLowerCase();
-      return { receipt: read.receipt, cancelled: atDepth && v?.outcome === 'cancel', confirmed: atDepth && v?.outcome === 'execute' };
+      return { receipt: read.receipt, cancelled: atDepth && v?.outcome === 'cancel', confirmed: atDepth && v?.outcome === 'execute', maxFeePerGas: versionMaxFee(v, read.receipt.transactionHash) };
     }
     if (Date.now() + sponsorTiming.receiptPollMs > end) return null;
     await new Promise((resolve) => setTimeout(resolve, sponsorTiming.receiptPollMs));
@@ -1154,7 +1155,11 @@ async function afterReservation(
     await moveRow(env, row.id, ['sent'], 'timeout');
     return done(ctx, 504, { error: 'Sent, not confirmed within 30 s: look the transaction up by its hash', code: 'timeout', transactionHash: sent.transactionHash });
   }
-  const result = await settleFromReceipt(env, chain, settled, receipt.receipt, ['sent'], { cancelled: receipt.cancelled, confirmed: receipt.confirmed, chain: rpc });
+  // The receipt's gas price is bounded by the mined version's own max fee (D868): the relayer's lookup says it; for the
+  // first version of a send that isn't a replay, the handler set it itself.
+  const mined = receipt.receipt.transactionHash.toLowerCase();
+  const maxFeePerGas = receipt.maxFeePerGas ?? (!sent.replay && mined === sent.transactionHash.toLowerCase() ? fees.maxFeePerGas : null);
+  const result = await settleFromReceipt(env, chain, settled, receipt.receipt, ['sent'], { cancelled: receipt.cancelled, confirmed: receipt.confirmed, chain: rpc, maxFeePerGas });
   const outcome = result?.outcome ?? (await settledOutcome(env, row.id));
   const hash = receipt.receipt.transactionHash.toLowerCase() as Hex;
   if (outcome === 'executed') return done(ctx, 200, { transactionHash: hash, status: 'executed' });

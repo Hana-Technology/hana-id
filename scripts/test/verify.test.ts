@@ -33,8 +33,9 @@ interface VerifyModule {
   selectPackages(files: string[] | null, pkgs: Pkg[], reads: Reads): Selection;
   changedFiles(base: string, cwd?: string): { files: string[] | null; reason: string };
   hasForge(): boolean;
+  hasAnvil(): boolean;
   hasEvmDeps(root?: string): boolean;
-  plan(o: { mode: Mode; files: string[] | null; pkgs: Pkg[]; reads: Reads; dirty?: boolean; cpus?: number; forge?: boolean; evmDeps?: boolean }): Plan;
+  plan(o: { mode: Mode; files: string[] | null; pkgs: Pkg[]; reads: Reads; dirty?: boolean; cpus?: number; forge?: boolean; evmDeps?: boolean; anvil?: boolean }): Plan;
   parseArgs(argv: string[]): { mode: Mode; all: boolean; base: string; plan: boolean; json: boolean; files: string[] | null };
   summaryTable(rows: string[][]): string;
   summaryRows(steps: Step[], results: Map<string, Result>, failed: object | null, wallMs: number): string[][];
@@ -218,8 +219,8 @@ describe("package selection (this repo's workspace)", () => {
 describe('the plan', () => {
   const pkgs = V.workspacePackages();
   const reads = V.scanReads(pkgs);
-  const plan = (mode: Mode, files: string[] | null, dirty = false, tools = { forge: true, evmDeps: true }) =>
-    V.plan({ mode, files, pkgs, reads, dirty, cpus: 8, ...tools });
+  const plan = (mode: Mode, files: string[] | null, dirty = false, tools: { forge: boolean; evmDeps: boolean; anvil?: boolean } = { forge: true, evmDeps: true }) =>
+    V.plan({ mode, files, pkgs, reads, dirty, cpus: 8, anvil: true, ...tools });
   const step = (p: Plan, id: string) => {
     const s = p.steps.find((x) => x.id === id);
     if (!s) throw new Error(`no step ${id}`);
@@ -231,7 +232,7 @@ describe('the plan', () => {
   it('--quick: lockfile, gitleaks, typecheck, unit tests and docs checks, never the Rust, pack or browser jobs', () => {
     const p = plan('quick', ['packages/web/src/index.ts', 'contracts/hana-signer/src/lib.rs']);
     expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'unit', 'docs']);
-    for (const id of ['contract', 'evm', 'sandbox', 'pack', 'e2e']) expect(step(p, id).skip, id).toBe('not in --quick');
+    for (const id of ['contract', 'evm', 'sandbox', 'anvil', 'pack', 'e2e']) expect(step(p, id).skip, id).toBe('not in --quick');
   });
 
   it('default: what CI runs on a PR, by CI’s rules (scripts/ci-changes.mjs)', () => {
@@ -261,7 +262,8 @@ describe('the plan', () => {
 
   it('the EVM delegate (D841): its change runs forge and the artifacts check, not the Rust lanes', () => {
     const evm = plan('default', ['contracts/evm-delegate/src/HanaDelegateExecutor.sol']);
-    expect(ran(evm)).toEqual(['install', 'secrets', 'typecheck', 'evm', 'unit', 'docs']);
+    // The anvil lane deploys the delegate's artifacts, so it runs too (D868).
+    expect(ran(evm)).toEqual(['install', 'secrets', 'typecheck', 'evm', 'unit', 'docs', 'anvil']);
     expect(step(evm, 'contract').skip).toBe('no Rust change');
     expect(step(evm, 'evm').run.map((c) => [c.cwd, line(c)])).toEqual([
       ['contracts/evm-delegate', 'forge fmt --check'],
@@ -281,6 +283,20 @@ describe('the plan', () => {
     expect(V.hasEvmDeps('/nonexistent')).toBe(false);
   });
 
+  it('the anvil lane (D868): a change to EVM sponsorship code runs it (anvil on PATH), required; anything else skips it, saying why', () => {
+    for (const f of ['apps/api/src/evm/sponsor.ts', 'apps/api/src/evm-relayer.ts', 'packages/core/src/evm-sponsor/tx.ts', 'contracts/evm-delegate/artifacts/HanaDelegateExecutor.json', 'apps/api/test-anvil/lane.ts', 'apps/api/migrations/0022_evm_sponsor.sql', 'scripts/test/anvil.ts']) {
+      const p = plan('default', [f]);
+      expect(ran(p), f).toContain('anvil');
+      expect(step(p, 'anvil').run.map((c) => [line(c), c.env])).toEqual([['pnpm --filter @hana-id/api run test:anvil', { HANA_ANVIL_REQUIRED: '1' }]]);
+    }
+    expect(step(plan('default', ['apps/api/src/gas.ts']), 'anvil').skip).toBe('no EVM sponsorship change');
+    expect(step(plan('default', ['docs/operations.md']), 'anvil').skip).toBe('no EVM sponsorship change');
+    expect(step(plan('default', ['apps/api/src/evm/sponsor.ts'], false, { forge: true, evmDeps: true, anvil: false }), 'anvil').skip).toMatch(/^anvil not installed \(no `anvil`\/`cast` on PATH/u);
+    expect(step(plan('full', ['docs/operations.md'], false, { forge: true, evmDeps: true, anvil: true }), 'anvil').skip).toBeNull();
+    expect(step(plan('full', null, false, { forge: true, evmDeps: true, anvil: false }), 'anvil').skip).toMatch(/^anvil not installed/u);
+    expect(typeof V.hasAnvil()).toBe('boolean');
+  });
+
   it('a change to the verify or CI definitions runs every job', () => {
     for (const f of ['scripts/verify.mjs', '.githooks/pre-push', '.github/workflows/ci.yml']) {
       const p = plan('default', [f]);
@@ -291,7 +307,7 @@ describe('the plan', () => {
 
   it('--full: every package and job whatever changed, Playwright on all three browsers', () => {
     const p = plan('full', ['docs/operations.md']);
-    expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'pack', 'e2e']);
+    expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'anvil', 'pack', 'e2e']);
     expect(p.selection.all).toBe(true);
     expect(step(p, 'typecheck').run.map(line)).toEqual(['pnpm -r --workspace-concurrency=4 --reporter=append-only typecheck']);
     expect(step(p, 'e2e').run.map(line)).toEqual(['pnpm --filter @hana-id/e2e run e2e --forbid-only --project chromium --project firefox --project webkit']);
@@ -299,15 +315,15 @@ describe('the plan', () => {
 
   it('cheapest first: lockfile; gitleaks + typecheck + contract; unit + docs; sandbox beside pack then browsers (D423)', () => {
     const p = plan('full', null);
-    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, contract: 1, evm: 1, audit: 1, unit: 2, docs: 2, sandbox: 3, pack: 3, e2e: 4 });
+    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, contract: 1, evm: 1, audit: 1, unit: 2, docs: 2, sandbox: 3, anvil: 3, pack: 3, e2e: 4 });
     const laneIds = (ph: number) => V.lanes(p.steps, ph).map(([lane, steps]) => [lane, steps.map((s) => s.id)]);
     expect(laneIds(1)).toEqual([['secrets', ['secrets']], ['typecheck', ['typecheck']], ['contract', ['contract']], ['evm', ['evm']], ['audit', ['audit']]]);
     // The pack check and Playwright one after the other (both build @hana-id/web), beside the sandbox nodes.
-    expect(laneIds(3)).toEqual([['sandbox', ['sandbox']], ['web', ['pack']]]);
+    expect(laneIds(3)).toEqual([['sandbox', ['sandbox']], ['anvil', ['anvil']], ['web', ['pack']]]);
     // Playwright alone, after the sandbox nodes are gone (Firefox timed out beside them, 2026-11-06).
     expect(laneIds(4)).toEqual([['e2e', ['e2e']]]);
     // The table lists the steps in the order they start.
-    expect(p.steps.map((s) => s.id)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'pack', 'e2e']);
+    expect(p.steps.map((s) => s.id)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'anvil', 'pack', 'e2e']);
   });
 
   it('the unit tests share their phase with the docs checks only, in every tier (D140: PGlite and workerd time out under load)', () => {
@@ -372,7 +388,7 @@ describe('.github/workflows/ci.yml: every job has its step, with the same comman
   const cmds = (...ids: string[]) => p.steps.filter((s) => ids.includes(s.id)).flatMap((s) => s.run.map((c) => [c.cmd, ...c.args].join(' ')));
 
   it('knows every CI job (a new job needs a verify step, or a reason here)', () => {
-    const covered: Record<string, string[]> = { audit: ['audit'], changes: [], secrets: ['secrets'], contract: ['contract'], evm: ['evm'], typescript: ['install', 'typecheck', 'unit'], packages: ['pack'], playwright: ['e2e'], e2e: ['sandbox'] };
+    const covered: Record<string, string[]> = { audit: ['audit'], changes: [], secrets: ['secrets'], contract: ['contract'], evm: ['evm'], typescript: ['install', 'typecheck', 'unit', 'anvil'], packages: ['pack'], playwright: ['e2e'], e2e: ['sandbox'] };
     expect(jobs.sort()).toEqual(Object.keys(covered).sort());
   });
 
@@ -389,6 +405,10 @@ describe('.github/workflows/ci.yml: every job has its step, with the same comman
     expect(cmds('sandbox')).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`, 'pnpm --filter @hana-id/api run test:sandbox']);
     expect(yml).toContain('run: pnpm --filter @hana-id/api run test:sandbox');
     expect(yml).toContain("HANA_SANDBOX_REQUIRED: '1'");
+    // The anvil lane (D868) in the TypeScript job, which has Foundry: required there, as verify runs it.
+    expect(cmds('anvil')).toEqual(['pnpm --filter @hana-id/api run test:anvil']);
+    expect(yml).toContain('run: pnpm --filter @hana-id/api run test:anvil');
+    expect(yml).toContain("HANA_ANVIL_REQUIRED: '1'");
     // The EVM delegate job (D841, D857): the same three commands, in its directory.
     expect(cmds('evm')).toEqual(['forge fmt --check', 'forge test', 'node scripts/generate.mjs --check']);
     for (const c of cmds('evm')) expect(yml, c).toContain(`run: ${c}`);

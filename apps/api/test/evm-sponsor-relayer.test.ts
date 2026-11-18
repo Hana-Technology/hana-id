@@ -130,7 +130,8 @@ describe('the routes and the relayer object, end to end over the fake chain', ()
     const looked = await w.stub.lookup(w.digests.get(w.user.address.toLowerCase())!);
     expect(looked?.hashes).toContain(tx1!.hash);
     const row = await env.DB.prepare('SELECT status, tx_hash, settled_wei FROM evm_sponsor_sends WHERE account = ?1').bind(w.user.address).first<Record<string, unknown>>();
-    expect(row).toMatchObject({ status: 'executed', tx_hash: tx1!.hash, settled_wei: String(21_000n * 1_000_000_000n) });
+    // The fake chain's receipt says 1 gwei a gas; settled at most the transaction's own max fee a gas (D868).
+    expect(row).toMatchObject({ status: 'executed', tx_hash: tx1!.hash, settled_wei: String(21_000n * (tx1!.maxFeePerGas < 1_000_000_000n ? tx1!.maxFeePerGas : 1_000_000_000n)) });
     // A later action: the account is set up, no authorization, its delegate nonce 1. The relayer takes a second batch of
     // an account once its run saw the first mined (its alarm, 15 s after a change; run here at once).
     await runDurableObjectAlarm(w.stub);

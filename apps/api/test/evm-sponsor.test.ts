@@ -650,7 +650,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
     expect(await appSpent(s.app)).toBe(0n);
   });
 
-  it('a spend above the reservation is charged (a receipt dearer than the worst case)', async () => {
+  it('a receipt dearer than the transaction’s own max fee is billed at that max fee and reported (D868), never more than could have been paid', async () => {
     const s = await setup();
     s.relayer.onSend = async (req) => {
       const { rawFor, receiptFor } = await import('./evm-sponsor-helpers.ts');
@@ -662,7 +662,35 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
     };
     expect((await send(s, signedSend(s.user).body)).status).toBe(200);
     const req = s.relayer.sends[0]!;
-    expect(await appSpent(s.app)).toBe(req.gas * (req.maxFeePerGas + 1n));
+    expect(await appSpent(s.app)).toBe(req.gas * req.maxFeePerGas);
+    const row = await env.DB.prepare('SELECT id, settled_wei FROM evm_sponsor_sends WHERE account = ?1').bind(s.user.address).first<{ id: string; settled_wei: string }>();
+    expect(row!.settled_wei).toBe((req.gas * req.maxFeePerGas).toString());
+    const bill = await env.DB.prepare('SELECT effective_gas_price_wei, execution_wei, total_cost_wei FROM evm_sponsor_billing WHERE send_id = ?1').bind(row!.id).first<Record<string, string>>();
+    expect(bill).toEqual({ effective_gas_price_wei: req.maxFeePerGas.toString(), execution_wei: (req.gas * req.maxFeePerGas).toString(), total_cost_wei: (req.gas * req.maxFeePerGas).toString() });
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_receipt_odd'").all<{ detail_json: string }>();
+    expect(ev.results.map((e) => JSON.parse(e.detail_json))).toEqual([{ chainId: 31337, priceAboveMaxFee: true }]);
+  });
+
+  it('the bound comes from the relayer’s lookup for a version it signed later (a fee bump): billed at that version’s max fee', async () => {
+    const s = await setup();
+    const bumped = `0x${'b'.repeat(64)}` as Hex;
+    s.relayer.onSend = async (req) => {
+      const { rawFor, receiptFor } = await import('./evm-sponsor-helpers.ts');
+      const { keccakHex } = await import('../src/evm/sponsor-ports.ts');
+      const raw = rawFor(req);
+      // The bump is what was mined; its receipt says a price above the bump's own max fee.
+      s.chain.receipts.set(bumped, receiptFor(req, bumped, 'executed', { gasUsed: 60_000n, price: req.maxFeePerGas * 2n }));
+      return { transactionHash: keccakHex(raw), relayerNonce: 0, raw, replay: false, digest: digestOf(req), broadcast: 'accepted' as const, rejection: null };
+    };
+    s.relayer.lookupOverride = async (digest) => {
+      const req = s.relayer.sends[0]!;
+      const first = (await import('../src/evm/sponsor-ports.ts')).keccakHex((await import('./evm-sponsor-helpers.ts')).rawFor(req));
+      const bumpFee = (req.maxFeePerGas * 9n) / 8n + 1n;
+      return { digest, relayerNonce: 0, transactionHash: bumped, hashes: [first, bumped], state: 'pending', minedHash: null, outcome: null, costWei: null, reservedWei: req.reservedWei, versionFees: [{ hash: first, maxFeePerGas: req.maxFeePerGas }, { hash: bumped, maxFeePerGas: bumpFee }] };
+    };
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    const req = s.relayer.sends[0]!;
+    expect(await appSpent(s.app)).toBe(60_000n * ((req.maxFeePerGas * 9n) / 8n + 1n));
   });
 });
 
@@ -1035,10 +1063,14 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
   });
 
-  it('a timeout reconciled to executed: settled into the reservation’s day, the failure slot freed, the floor raised; idempotent', async () => {
+  it('a timeout reconciled to executed: settled into the reservation’s day, the failure slot freed; idempotent: the same signed batch again is answered from its row, nothing sent', async () => {
     const s = await setup();
     receiptKind = 'none';
-    expect((await send(s, signedSend(s.user).body)).status).toBe(504);
+    // The one signed batch, kept: signedSend's default deadline is the wall clock's second + 300, so signing again a
+    // second later would be ANOTHER batch (a new digest: sent, never mined here, 504), which made this test fail
+    // whenever the machine was slow enough for the reconcile steps to cross a second.
+    const batch = signedSend(s.user);
+    expect((await send(s, batch.body)).status).toBe(504);
     const req = s.relayer.sends[0]!;
     expect(await appSpent(s.app)).toBe(req.reservedWei);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
@@ -1050,8 +1082,9 @@ describe('M3: the settlement survives the client, and the cron reconciles what i
     expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'executed', settled_wei: '9000000000000' });
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
     expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(0n);
-    const copy = await body(await send(s, signedSend(s.user).body));
-    expect(copy.status === 'executed' || copy.code === 'nonce_stale', JSON.stringify(copy)).toBe(true);
+    const copy = await body(await send(s, batch.body));
+    expect(copy).toMatchObject({ status: 'executed', transactionHash: hash, replay: true });
+    expect(s.relayer.sends).toHaveLength(1);
   });
 
   it('a timeout reconciled to reverted (charged, a failure) and to the deadline cancel (the lookup’s mined hash: not_executed)', async () => {

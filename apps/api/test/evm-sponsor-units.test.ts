@@ -14,6 +14,7 @@ import {
   l1FeeUpperBound,
   maxMinGasFor,
   PRE_LOOP_GAS,
+  paidGasPrice,
   receiptCost,
   operatorFeeUpperBound,
   maxStartingFees,
@@ -107,6 +108,19 @@ describe('fees and the worst case', () => {
       { gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: 199n },
       { gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: 5n, operatorFee: 199n },
     ]) expect(receiptCost(odd, true, f), JSON.stringify(odd, (_k, v) => (typeof v === 'bigint' ? String(v) : v))).toEqual({ cost: 1_000_099n, odd: true });
+  });
+
+  it('a receipt reporting a gas price above the mined version’s own max fee is billed at that max fee, priceCapped (D868); within it, as reported', () => {
+    const f = { gasLimit: 100_000n, feeCap: 10n, l1Bound: 99n, operatorBound: 0n, reservedWei: 1_000_099n };
+    // The relayer signed this version with a max fee of 4; the receipt says 7 (≤ the fee cap, so not `odd`).
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 7n, l1Fee: 5n }, true, f, 4n)).toEqual({ cost: 84_005n, odd: false, priceCapped: true });
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 4n, l1Fee: 5n }, true, f, 4n)).toEqual({ cost: 84_005n, odd: false });
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 3n, l1Fee: 5n }, true, f, 4n)).toEqual({ cost: 63_005n, odd: false });
+    // Not known (an old record): the fee cap alone bounds it, as before.
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 7n, l1Fee: 5n }, true, f, null)).toEqual({ cost: 147_005n, odd: false });
+    // Above the fee cap stays `odd` (settled at the reservation), whatever the version's max fee.
+    expect(receiptCost({ gasUsed: 21_000n, effectiveGasPrice: 11n, l1Fee: 5n }, true, f, 4n)).toEqual({ cost: 1_000_099n, odd: true });
+    expect([paidGasPrice(9n, 5n), paidGasPrice(5n, 9n), paidGasPrice(9n, null), paidGasPrice(9n, 0n)]).toEqual([5n, 5n, 9n, 9n]);
   });
 
   it('the operator fee bound: 0 off the OP Stack; a revert (before Isthmus) is 0; a value is the bound; anything else fails closed', async () => {

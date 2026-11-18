@@ -6,8 +6,9 @@
 //   pnpm verify --quick   lockfile, gitleaks, typecheck and unit tests of the affected packages, the docs checks
 //   pnpm verify           + what CI runs on a PR: contract (cargo test + wasm) and sandbox e2e if Rust changed; SDK
 //                           pack check and Playwright on Chromium if web code changed; the EVM delegate (forge fmt,
-//                           test + artifacts check) if it changed and Foundry is installed (CI's pushes after a
-//                           merge add Playwright on Firefox and WebKit, as --full does)
+//                           test + artifacts check) if it changed and Foundry is installed; the anvil lane (EVM gas
+//                           sponsorship on a real node, D868) if sponsorship code changed and anvil is installed (CI's
+//                           pushes after a merge add Playwright on Firefox and WebKit, as --full does)
 //   pnpm verify --full    everything whatever changed: all packages, the Rust jobs, the pack check, Playwright on
 //                           Chromium, Firefox and WebKit
 //
@@ -22,7 +23,7 @@
 //   0  lockfile
 //   1  gitleaks | typecheck | contract (cargo test + wasm) | EVM delegate (forge) | dependency advisories (--full)
 //   2  unit tests | docs checks                          (alone: see below)
-//   3  sandbox e2e | SDK pack check                      (Rust nodes beside a short build)
+//   3  sandbox e2e | anvil lane | SDK pack check         (local nodes beside a short build)
 //   4  Playwright                                        (alone: browsers beside 8 sandbox nodes made Firefox's
 //                                                         timing-sensitive specs time out, 2026-11-06)
 //
@@ -273,6 +274,42 @@ export function hasForge() {
   return spawnSync('forge', ['--version'], { stdio: 'ignore' }).status === 0;
 }
 
+/** Whether Foundry's `anvil` and `cast` run here (the anvil lane skips without them, D868). */
+export function hasAnvil() {
+  return ['anvil', 'cast'].every((t) => spawnSync(t, ['--version'], { stdio: 'ignore' }).status === 0);
+}
+
+/**
+ * What the anvil lane (apps/api/test-anvil, D868: the sponsorship handlers, the relayer object and the delegate's real
+ * bytecode on a local node) reads: a change to any of these runs it. Prefixes end in `/`.
+ */
+export const EVM_SPONSOR_INPUTS = [
+  'apps/api/src/evm/',
+  'apps/api/src/evm-relayer.ts',
+  'apps/api/src/evm-relayer-staff.ts',
+  'apps/api/src/handlers.ts',
+  'apps/api/src/rate-limiter.ts',
+  'apps/api/migrations/',
+  'apps/api/test-anvil/',
+  'apps/api/vitest.anvil.config.ts',
+  'apps/api/vitest.config.ts',
+  'apps/api/scripts/gen-wrangler.ts',
+  'apps/api/test/evm-sponsor-helpers.ts',
+  'apps/api/test/helpers.ts',
+  'apps/api/test/vault-helpers.ts',
+  'packages/core/src/evm-sponsor/',
+  'packages/core/src/sponsor-session.ts',
+  'packages/env/src/evm-sponsor.ts',
+  'contracts/evm-delegate/',
+  'scripts/lib/evm-delegate-artifacts.ts',
+  'scripts/lib/evm-delegate-deploy.ts',
+  'scripts/lib/evm-rpc.ts',
+  'scripts/test/anvil.ts',
+  'pnpm-lock.yaml',
+];
+/** Whether a change needs the anvil lane. */
+export const evmSponsorChanged = (files) => files.some((f) => CI_FILES.includes(f) || EVM_SPONSOR_INPUTS.some((p) => (p.endsWith('/') ? f.startsWith(p) : f === p)));
+
 /** Whether the EVM delegate's Solidity dependencies are installed (by `pnpm install`: they are workspace packages). */
 export function hasEvmDeps(root = ROOT) {
   return ['@openzeppelin/contracts/package.json', 'forge-std/src/Test.sol'].every((f) => existsSync(join(root, EVM_DIR, 'node_modules', f)));
@@ -287,12 +324,14 @@ export const SANDBOX_TEST_THREADS = 8;
  *
  * @param {{ mode: 'quick' | 'default' | 'full', files: string[] | null, pkgs: object[],
  *   reads: Map<string, { code: Set<string>, test: Set<string> }>, dirty?: boolean, cpus?: number,
- *   forge?: boolean, evmDeps?: boolean }} o forge, evmDeps: whether Foundry and the delegate's dependencies are there
+ *   forge?: boolean, evmDeps?: boolean, anvil?: boolean }} o forge, evmDeps, anvil: whether Foundry's forge, the delegate's
+ *   dependencies and anvil (with cast) are there
  */
-export function plan({ mode, files, pkgs, reads, dirty = false, cpus = availableParallelism(), forge = hasForge(), evmDeps = hasEvmDeps() }) {
+export function plan({ mode, files, pkgs, reads, dirty = false, cpus = availableParallelism(), forge = hasForge(), evmDeps = hasEvmDeps(), anvil = hasAnvil() }) {
   const scope = mode === 'full' ? null : files;
   const sel = selectPackages(scope, pkgs, reads);
   const jobs = scope === null || scope.some((f) => VERIFY_FILES.includes(f)) ? { rust: true, web: true, evm: true } : { ...classify(scope), evm: evmChanged(scope) };
+  const sponsor = scope === null || scope.some((f) => VERIFY_FILES.includes(f)) || evmSponsorChanged(scope);
   const unit = sel.all ? sel : { ...sel, names: sel.names.filter((n) => !DOCS_PACKAGES.includes(n)) };
   const notQuick = mode === 'quick' ? 'not in --quick' : null;
   const browsers = mode === 'full' ? BROWSERS : ['chromium'];
@@ -345,6 +384,10 @@ export function plan({ mode, files, pkgs, reads, dirty = false, cpus = available
       cmd('cargo', ['test', '--locked', '--', `--test-threads=${SANDBOX_TEST_THREADS}`], 'contracts/integration-tests'),
       cmd('pnpm', ['--filter', '@hana-id/api', 'run', 'test:sandbox'], '.', { HANA_SANDBOX_REQUIRED: '1' }),
     ], notQuick ?? (jobs.rust ? null : 'no Rust change')),
+    // EVM gas sponsorship on a local anvil (D868): the real handlers and relayer object (Workers pool) and the delegate's
+    // real bytecode, on its own free loopback port. Required once it runs (anvil is there): a missing node fails it.
+    step('anvil', 'anvil lane (EVM sponsorship on a local node)', 3, [cmd('pnpm', ['--filter', '@hana-id/api', 'run', 'test:anvil'], '.', { HANA_ANVIL_REQUIRED: '1' })],
+      notQuick ?? (!sponsor ? 'no EVM sponsorship change' : !anvil ? 'anvil not installed (no `anvil`/`cast` on PATH; contracts/evm-delegate/README.md)' : null)),
     step('pack', 'SDK pack check', 3, [cmd('pnpm', ['run', 'pack:check'])], notQuick ?? (jobs.web ? null : 'no web change'), 'web'),
     step('e2e', `Playwright (${browsers.join(', ')})`, 4, [cmd('pnpm', ['--filter', '@hana-id/e2e', 'run', 'e2e', '--forbid-only', ...browsers.flatMap((b) => ['--project', b])])], notQuick ?? (jobs.web ? null : 'no web change')),
   ];

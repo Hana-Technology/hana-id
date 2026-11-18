@@ -11,7 +11,7 @@ import { eventId } from '../changes/guard.ts';
 import type { Env } from '../env.ts';
 import { limiter } from '../handlers.ts';
 import { log } from '../log.ts';
-import { receiptCost, type ReservedFor } from './op-fee.ts';
+import { paidGasPrice, receiptCost, type ReservedFor } from './op-fee.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, sponsorChain } from './sponsor-config.ts';
 import { type BillingFigures, type BillingOutcome, billingStatement, correctionStatement, notChargedCorrectionStatement } from './sponsor-billing.ts';
 import { executedIn } from './sponsor-checks.ts';
@@ -202,12 +202,23 @@ export async function moveRow(env: Env, id: string, from: readonly SendStatus[],
 
 export type Outcome = 'executed' | 'reverted' | 'not_executed';
 
-/** The receipt's own figures for the billing record. */
-function figuresOf(receipt: SponsorReceipt, cost: bigint, cfg: Readonly<EvmSponsorChainConfig>, row: SendRow, blockTimestamp: number | null): BillingFigures {
-  const execution = receipt.gasUsed * receipt.effectiveGasPrice;
+/**
+ * The max fee per gas the relayer signed for version `hash` (its lookup's `versionFees`), or null when it doesn't say
+ * (an old record, a fake): the bound a receipt's gas price can't exceed (receiptCost, D868).
+ */
+export function versionMaxFee(l: EvmRelayerLookup | null | undefined, hash: string): bigint | null {
+  const list = Array.isArray(l?.versionFees) ? l.versionFees : [];
+  const v = list.find((x) => typeof x?.hash === 'string' && x.hash.toLowerCase() === hash.toLowerCase());
+  return typeof v?.maxFeePerGas === 'bigint' && v.maxFeePerGas > 0n ? v.maxFeePerGas : null;
+}
+
+/** The receipt's own figures for the billing record (its gas price bounded by the version's max fee: what was paid). */
+function figuresOf(receipt: SponsorReceipt, cost: bigint, cfg: Readonly<EvmSponsorChainConfig>, row: SendRow, blockTimestamp: number | null, maxFeePerGas: bigint | null = null): BillingFigures {
+  const price = paidGasPrice(receipt.effectiveGasPrice, maxFeePerGas);
+  const execution = receipt.gasUsed * price;
   const l1 = cfg.opStack ? (receipt.l1Fee ?? row.reserved.l1Bound) : 0n;
   const op = cfg.opStack ? (receipt.operatorFee ?? row.reserved.operatorBound) : 0n;
-  return { txHash: receipt.transactionHash.toLowerCase() as Hex, blockNumber: receipt.blockNumber, blockTimestamp, gasUsed: receipt.gasUsed, effectiveGasPrice: receipt.effectiveGasPrice, executionWei: execution, l1FeeWei: l1, operatorFeeWei: op, totalCostWei: cost };
+  return { txHash: receipt.transactionHash.toLowerCase() as Hex, blockNumber: receipt.blockNumber, blockTimestamp, gasUsed: receipt.gasUsed, effectiveGasPrice: price, executionWei: execution, l1FeeWei: l1, operatorFeeWei: op, totalCostWei: cost };
 }
 
 /**
@@ -227,12 +238,12 @@ export async function settleFromReceipt(
   row: SendRow,
   receipt: SponsorReceipt,
   from: readonly SendStatus[],
-  o: { cancelled?: boolean; chain?: SponsorChainPort; confirmed?: boolean } = {},
+  o: { cancelled?: boolean; chain?: SponsorChainPort; confirmed?: boolean; maxFeePerGas?: bigint | null } = {},
 ): Promise<{ outcome: Outcome; cost: bigint } | null> {
   const outcome: Outcome = !o.cancelled && executedIn(receipt, row.account, row.digest) ? 'executed' : receipt.status === 0 && !o.cancelled ? 'reverted' : 'not_executed';
-  const { cost, odd } = receiptCost(receipt, cfg.opStack, row.reserved);
+  const { cost, odd, priceCapped } = receiptCost(receipt, cfg.opStack, row.reserved, o.maxFeePerGas ?? null);
   const at = o.chain ? await blockTimestamp(o.chain, receipt.blockNumber).then(Number, () => null) : null;
-  const figures = figuresOf(receipt, cost, cfg, row, at);
+  const figures = figuresOf(receipt, cost, cfg, row, at, o.maxFeePerGas ?? null);
   const record: BillingOutcome = o.cancelled ? 'cancelled' : outcome;
   const now = Date.now();
   const moved = await moveRow(env, row.id, from, outcome, { txHash: figures.txHash, settledWei: row.replay ? 0n : cost, ...(o.confirmed ? { confirmedAt: now } : {}) }, (status) => billingStatement(env, row.id, status, record, cost, figures, now));
@@ -242,10 +253,20 @@ export async function settleFromReceipt(
     return { outcome, cost: 0n };
   }
   if (odd) await noteEvent(env, null, 'evm_relay_receipt_odd', [String(row.chainId), String(Math.floor(now / HOUR) * HOUR)], { chainId: row.chainId, settledAtReservation: true }, now);
+  if (priceCapped) await priceCappedEvent(env, row.chainId, now);
   if (!row.replay) await settleBudget(env, row.appId, row.chainId, row.reserved.reservedWei, cost, row.createdAt);
   if (outcome === 'executed' && !row.replay) await limiter(env, failureSubject(row.chainId, row.account, row.userId)).giveBack(FAILURES, DAY, '1', row.createdAt).catch(() => undefined);
   if (outcome === 'executed' && o.confirmed) await raiseAccountFloor(env, row);
   return { outcome, cost };
+}
+
+/**
+ * A receipt reported a gas price above the version's own max fee (billed at that max fee instead): logged each time,
+ * and the hour's `evm_relay_receipt_odd` for staff (the receipt looked wrong; counted at the most it could cost).
+ */
+async function priceCappedEvent(env: Env, chainId: number, now: number): Promise<void> {
+  log({ event: 'evm_sponsor_receipt_price_capped', code: 'price_above_max_fee' }, 'warn');
+  await noteEvent(env, null, 'evm_relay_receipt_odd', [String(chainId), String(Math.floor(now / HOUR) * HOUR), 'price'], { chainId, priceAboveMaxFee: true }, now);
 }
 
 /** The account's nonce floor past this row's own nonce: only on the relayer's verdict at confirmed depth (D847). */
@@ -494,7 +515,7 @@ export async function reconcileEvmSends(env: Env, config: EvmSponsorConfig, now:
       const hash = read.receipt.transactionHash.toLowerCase();
       const atDepth = v?.state === 'mined' && v.minedHash?.toLowerCase() === hash;
       const cancelled = (atDepth && v?.outcome === 'cancel') || (rejected && hash !== row.txHash);
-      if (await settleFromReceipt(env, cfg, row, read.receipt, OPEN_STATUSES, { cancelled, chain, confirmed: atDepth && v?.outcome === 'execute' })) counts.settled++;
+      if (await settleFromReceipt(env, cfg, row, read.receipt, OPEN_STATUSES, { cancelled, chain, confirmed: atDepth && v?.outcome === 'execute', maxFeePerGas: versionMaxFee(v, hash) })) counts.settled++;
       continue;
     }
     if (v?.state === 'closed' && v.outcome === 'consumed_elsewhere') {
@@ -587,8 +608,10 @@ async function confirmSettled(env: Env, config: EvmSponsorConfig, now: number, c
       counts.confirmed++;
       continue;
     }
-    const { cost } = receiptCost(receipt, cfg.opStack, row.reserved);
-    const figures = figuresOf(receipt, cost, cfg, row, null);
+    const maxFee = versionMaxFee(v, mined);
+    const { cost, priceCapped } = receiptCost(receipt, cfg.opStack, row.reserved, maxFee);
+    if (priceCapped) await priceCappedEvent(env, row.chainId, now);
+    const figures = figuresOf(receipt, cost, cfg, row, null, maxFee);
     const before = c.settled_wei !== null && /^\d{1,78}$/u.test(c.settled_wei) ? BigInt(c.settled_wei) : 0n;
     try {
       const [moved] = await env.DB.batch([

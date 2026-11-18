@@ -234,8 +234,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # anvil and cast for the EVM deploy tests (D849), which skip without them, as on a machine without Foundry. The
-      # same pinned release as the evm job.
+      # anvil and cast for the EVM deploy tests (D849), which skip without them, as on a machine without Foundry, and
+      # for the anvil lane (D868, required here). The same pinned release as the evm job.
       - name: Install Foundry (checksum-verified)
         working-directory: .
         env:
@@ -252,6 +252,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test
+      # EVM gas sponsorship on a local anvil (D868): the real handlers, relayer object and delegate bytecode, as
+      # `pnpm verify`'s anvil lane runs it. Required: the job installs anvil above.
+      - run: pnpm --filter @hana-id/api run test:anvil
+        env:
+          HANA_ANVIL_REQUIRED: '1'
 
   # Packs @hana-id/core, web, react and sodax, checks the tarballs, installs them with npm into a project outside the
   # workspace, type-checks and imports them there (scripts/pack-check.ts). Publishes nothing.

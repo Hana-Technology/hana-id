@@ -169,6 +169,14 @@ describe('broadcast', () => {
     expect(classifyRejection('something else')).toBeNull();
   });
 
+  it('classifies anvil’s own wording of the same conditions (captured by the anvil lane, D868)', () => {
+    expect(classifyRejection('intrinsic gas too high -- tx.gas_limit > env.block.gas_limit')).toBe('gas_limit');
+    expect(classifyRejection('Failed to decode transaction')).toBe('invalid_transaction');
+    expect(classifyRejection('transaction already imported')).toBe('already_known');
+    expect(classifyRejection('Insufficient funds for gas * price + value')).toBe('insufficient_funds');
+    expect(classifyRejection('invalid chain id for signer')).toBe('invalid_transaction');
+  });
+
   it('never puts a URL in an error or a log line', async () => {
     const lines: string[] = [];
     for (const m of ['log', 'warn', 'error'] as const) vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));

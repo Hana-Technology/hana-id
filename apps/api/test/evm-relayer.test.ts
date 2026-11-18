@@ -15,6 +15,7 @@ import type { Env } from '../src/env.ts';
 import {
   EVM_RELAYER_ALARM_MAX_MS,
   EVM_RELAYER_ALARM_MS,
+  EVM_RELAYER_BASE_FEE_TTL_MS,
   EVM_RELAYER_BUMP_AFTER_MS,
   EVM_RELAYER_IDLE_CHECK_MS,
   EVM_RELAYER_STAFF_GUARD,
@@ -926,7 +927,7 @@ describe('staff tools: input and records', () => {
 });
 
 describe('RPC failures', () => {
-  it('the read endpoint down: the alarm changes nothing and backs off; sends of a warm object still broadcast through the fallback', async () => {
+  it('the read endpoint down: the alarm changes nothing and backs off; a send is refused before anything is stored', async () => {
     const stub = await fresh();
     await stub.send(request());
     chain.modes[0] = 'down';
@@ -935,9 +936,10 @@ describe('RPC failures', () => {
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs[0]!.versions).toHaveLength(1);
     expect(await halted(stub)).toBeNull();
-    const sent = await stub.send(request());
-    expect(chain.pooled(RELAYER, 1)?.hash).toBe(sent.transactionHash);
-    expect(chain.calls.filter((c) => c.endpoint === 1).map((c) => c.method).sort()).toEqual(['eth_chainId', 'eth_sendRawTransaction']);
+    // A send needs the base fee from the read endpoint: refused, nothing stored, the fallback never read.
+    expect(await codeOf(stub.send(request()))).toBe('rpc_unavailable');
+    expect((await stored(stub)).recs).toHaveLength(1);
+    expect(chain.calls.filter((c) => c.endpoint === 1)).toEqual([]);
   });
 
   it('read endpoint and fallback both fail the broadcast: the record is kept and answered, broadcast by the next run', async () => {
@@ -1093,14 +1095,11 @@ describe('review H1: no user can halt sponsorship', () => {
     expect(await halted(stub)).toBeNull();
   });
 
-  it('a refusal only our side can cause (funds, our nonce, fees, our signature) cancels the batch AND halts: relayer_cannot_send with its code', async () => {
+  it('a refusal only our side can cause (funds, our nonce, our signature) cancels the batch AND halts: relayer_cannot_send with its code', async () => {
     const ours: [string, string][] = [
       ['insufficient funds for gas * price + value', 'insufficient_funds'],
       ['nonce too low', 'nonce_too_low'],
       ['nonce too high', 'nonce_too_high'],
-      ['replacement transaction underpriced', 'replacement_underpriced'],
-      ['transaction underpriced', 'underpriced'],
-      ['max fee per gas less than block base fee', 'fee_below_base_fee'],
       ['invalid sender', 'invalid_transaction'],
     ];
     for (const [i, [message, code]] of ours.entries()) {
@@ -1129,7 +1128,9 @@ describe('review H1: no user can halt sponsorship', () => {
     };
     expect([...EVM_REJECTIONS].sort()).toEqual(Object.keys(samples).sort());
     for (const code of EVM_REJECTIONS) expect(classifyRejection(samples[code]!)).toBe(code);
-    expect(REJECTION_CAUSE).toEqual({ gas_limit: 'request', oversized: 'request', nonce_too_low: 'relayer', nonce_too_high: 'relayer', replacement_underpriced: 'relayer', underpriced: 'relayer', insufficient_funds: 'relayer', fee_below_base_fee: 'relayer', invalid_transaction: 'relayer' });
+    // The cause of a refusal of a BATCH version (our own cancel or filler refused for any reason halts).
+    expect(REJECTION_CAUSE).toEqual({ gas_limit: 'request', oversized: 'request', underpriced: 'pricing', fee_below_base_fee: 'pricing', replacement_underpriced: 'pricing', nonce_too_low: 'relayer', nonce_too_high: 'relayer', insufficient_funds: 'relayer', invalid_transaction: 'relayer' });
+    expect(new Set(Object.values(REJECTION_CAUSE))).toEqual(new Set(['request', 'pricing', 'relayer']));
   });
 
   it('probe N1: the relayer short of funds for batches but not for cancels halts at the first send, the user is not blamed', async () => {
@@ -1140,9 +1141,59 @@ describe('review H1: no user can halt sponsorship', () => {
     expect(await codeOf(stub.send(reqFor('second')))).toBe('relayer_halted');
   });
 
-  it('probe: refused at send (ours), then the original lands anyway: outcome execute with its own hash', async () => {
+  it('a batch the pool turns away over its fees (the handler priced it early, the base fee jumped): cancelled at once, cause pricing, no halt', async () => {
+    for (const [message, code] of [
+      ['transaction underpriced', 'underpriced'],
+      ['max fee per gas less than block base fee', 'fee_below_base_fee'],
+      ['replacement transaction underpriced', 'replacement_underpriced'],
+    ] as const) {
+      chain = new EvmMock({ chainId: CHAIN }).install();
+      const stub = await fresh();
+      chain.onSend = rejectBatches(message);
+      const sent = await stub.send(reqFor(`priced ${code}`));
+      expect([code, sent.broadcast, sent.rejection]).toEqual([code, 'rejected', { cause: 'pricing', code }]);
+      expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+      expect([code, await halted(stub)]).toEqual([code, null]);
+      // Later too: a batch never accepted, then refused over its fees, gets its cancel; nothing halts.
+      chain.onSend = () => 'network';
+      await stub.send(reqFor(`later ${code}`));
+      chain.onSend = rejectBatches(message);
+      await runDurableObjectAlarm(stub);
+      await runDurableObjectAlarm(stub);
+      expect([code, await halted(stub)]).toEqual([code, null]);
+      chain.onSend = undefined;
+    }
+  });
+
+  it('our own cancel refused over its fees halts (we priced it): relayer_cannot_send', async () => {
     const stub = await fresh();
-    chain.onSend = () => ({ error: 'transaction underpriced' });
+    chain.onSend = (tx) => (tx.to === RELAYER.toLowerCase() ? { error: 'transaction underpriced' } : { error: 'intrinsic gas too low' });
+    await stub.send(request());
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'underpriced' });
+  });
+
+  it('fees_too_low before anything is stored: a max fee below the latest base fee × 1.125, or no tip at all', async () => {
+    const stub = await fresh();
+    chain.baseFee = GWEI / 10n;
+    const base = chain.baseFee;
+    expect(await codeOf(stub.send(request({ maxFeePerGas: (base * 9n) / 8n - 1n, reservedWei: ETH / 100n })))).toBe('fees_too_low');
+    expect(await codeOf(stub.send(request({ maxPriorityFeePerGas: 0n })))).toBe('fees_too_low');
+    expect(chain.broadcasts).toEqual([]);
+    expect((await stored(stub)).recs).toEqual([]);
+    expect(await stub.send(request({ maxFeePerGas: (base * 9n) / 8n, reservedWei: ETH / 100n }))).toMatchObject({ broadcast: 'accepted' });
+    // The base fee is read at most once every few seconds.
+    const priced = () => request({ maxFeePerGas: (base * 9n) / 8n, reservedWei: ETH / 100n });
+    await stub.send(priced());
+    expect(chain.calls.filter((c) => c.method === 'eth_getBlockByNumber').length).toBe(1);
+    advance(EVM_RELAYER_BASE_FEE_TTL_MS);
+    await stub.send(priced());
+    expect(chain.calls.filter((c) => c.method === 'eth_getBlockByNumber').length).toBe(2);
+    expect(evmRelayerError(new Error('evm_relayer:fees_too_low'))).toEqual({ code: 'fees_too_low', reason: null });
+  });
+
+  it('probe: refused at send over its fees, then the original lands anyway: outcome execute with its own hash', async () => {
+    const stub = await fresh();
+    chain.onSend = rejectBatches('transaction underpriced');
     const a = await stub.send(request());
     chain.onSend = undefined;
     chain.drop(RELAYER, 0);
@@ -1150,7 +1201,7 @@ describe('review H1: no user can halt sponsorship', () => {
     chain.mine(RELAYER);
     await runDurableObjectAlarm(stub);
     expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined', outcome: 'execute', minedHash: a.transactionHash });
-    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'underpriced' });
+    expect(await halted(stub)).toBeNull();
   });
 
   it('probe L3: accounts whose type-4 batches no pool takes fill the unmined cap only until their deadline; nothing halts', async () => {

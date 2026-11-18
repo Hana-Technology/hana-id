@@ -19,9 +19,9 @@
 //   cancel    a 0-value self-transfer at the same nonce, fees bumped, when the batch's deadline passed, or when the
 //             batch was definitely refused and never accepted (at send at once: the caller gets `broadcast: 'rejected'`
 //             and `rejection: { cause, code }`), or by staffCancel. A cancel has no input from the user.
-// A definite refusal's CAUSE (REJECTION_CAUSE): `request` (A: the batch's own size or shape: intrinsic gas, too
-// large) only cancels; `relayer` (B: funds, our nonce too low or high, replacement or fee too low, our signature or
-// encoding; any classified code not attributable to the batch) cancels AND halts. Unclassified errors are `unknown`.
+// A batch refusal's CAUSE (REJECTION_CAUSE): `request` (its size or shape) or `pricing` (its fees, the handler's:
+// reprice, retry) only cancel; `relayer` (funds, our nonce, signing, any other code) cancels AND halts. Our own cancel
+// or filler refused for any reason halts. Unclassified errors are `unknown`. Sends below the base fee: `fees_too_low`.
 //   bump      the latest version was signed ≥ 60 s ago: both fees × 1.125 within the caps (7 batch versions, the 8th
 //             for the cancel). Sends must start with room for two bumps (`maxStartingFees`).
 //   (filler)  staffFill: a 0-value self-transfer at a gap nonce, a record with no batch.
@@ -76,6 +76,10 @@ export const EVM_RELAYER_ALARM_MS = 15_000;
 export const EVM_RELAYER_ALARM_MAX_MS = 5 * 60_000;
 export const EVM_RELAYER_IDLE_CHECK_MS = 60 * 60_000;
 export const EVM_RELAYER_BUMP_AFTER_MS = 60_000;
+/** How long the latest base fee read for a send is reused (per instance). */
+export const EVM_RELAYER_BASE_FEE_TTL_MS = 5_000;
+/** A batch's max fee must be at least the latest base fee × 9/8 (one block's largest rise), and its tip at least 1 wei. */
+const MIN_TIP_WEI = 1n;
 export const EVM_RELAYER_DEPTH_WITHOUT_SAFE = 12;
 export const EVM_RELAYER_MAX_UNMINED = 8;
 export const EVM_RELAYER_MAX_RECORDS = 64;
@@ -104,18 +108,22 @@ const SCHEMA = 1;
 export type EvmRelayerHaltReason = 'nonce_consumed_elsewhere' | 'nonce_gap' | 'foreign_transactions' | 'relayer_cannot_send' | 'stuck_past_deadline' | 'key_mismatch' | 'storage_inconsistent';
 /** `code`: for `relayer_cannot_send`, the pool's refusal (an EvmRejection, e.g. `insufficient_funds`). */
 export type EvmRelayerHalt = { reason: EvmRelayerHaltReason; since: number; nonce?: number; code?: string };
-/** Who a definite refusal is down to: the batch itself (its size or shape: the user's input) or the relayer (funds, nonce, fees, signing). */
-export type EvmRejectionCause = 'request' | 'relayer';
-/** Each classified refusal's cause. A refusal the relayer can't attribute to the batch is the relayer's (fail-stop). */
+/** Who a definite refusal of a batch is down to: its size or shape (the user's input), its pricing (the handler's), or the relayer (funds, nonce, signing). */
+export type EvmRejectionCause = 'request' | 'pricing' | 'relayer';
+/**
+ * The cause of each classified refusal of a BATCH version: its own size or shape (`request`), its fees, which the
+ * handler set from the base fee (`pricing`), or the relayer (fail-stop: anything not attributable to the batch). A
+ * refusal of a version the relayer prices itself (a cancel or filler) is always the relayer's.
+ */
 export const REJECTION_CAUSE: Readonly<Record<EvmRejection, EvmRejectionCause>> = Object.freeze({
   gas_limit: 'request',
   oversized: 'request',
+  underpriced: 'pricing',
+  fee_below_base_fee: 'pricing',
+  replacement_underpriced: 'pricing',
   nonce_too_low: 'relayer',
   nonce_too_high: 'relayer',
-  replacement_underpriced: 'relayer',
-  underpriced: 'relayer',
   insufficient_funds: 'relayer',
-  fee_below_base_fee: 'relayer',
   invalid_transaction: 'relayer',
 });
 const causeOf = (code: string): EvmRejectionCause => (Object.hasOwn(REJECTION_CAUSE, code) ? REJECTION_CAUSE[code as EvmRejection] : 'relayer');
@@ -176,8 +184,8 @@ export interface EvmRelayerStaffStatus extends EvmRelayerStatus {
 export interface EvmRelayerStaffResult { done: boolean; refused: string | null; status: EvmRelayerStaffStatus }
 
 /** `rejected` is reserved by the interface and never thrown: a refused batch is answered with `broadcast: 'rejected'`. */
-export type EvmRelayerErrorCode = 'relayer_unconfigured' | 'relayer_misconfigured' | 'invalid_request' | 'fees_too_high' | 'wrong_chain' | 'deadline_passed' | 'relayer_busy' | 'relayer_halted' | 'daily_cap' | 'rpc_unavailable' | 'rejected' | 'internal';
-const CODES: ReadonlySet<string> = new Set(['relayer_unconfigured', 'relayer_misconfigured', 'invalid_request', 'fees_too_high', 'wrong_chain', 'deadline_passed', 'relayer_busy', 'relayer_halted', 'daily_cap', 'rpc_unavailable', 'rejected', 'internal']);
+export type EvmRelayerErrorCode = 'relayer_unconfigured' | 'relayer_misconfigured' | 'invalid_request' | 'fees_too_high' | 'fees_too_low' | 'wrong_chain' | 'deadline_passed' | 'relayer_busy' | 'relayer_halted' | 'daily_cap' | 'rpc_unavailable' | 'rejected' | 'internal';
+const CODES: ReadonlySet<string> = new Set(['relayer_unconfigured', 'relayer_misconfigured', 'invalid_request', 'fees_too_high', 'fees_too_low', 'wrong_chain', 'deadline_passed', 'relayer_busy', 'relayer_halted', 'daily_cap', 'rpc_unavailable', 'rejected', 'internal']);
 const refuse = (code: EvmRelayerErrorCode, reason?: string): never => {
   throw new Error(`evm_relayer:${code}${reason ? `:${reason}` : ''}`);
 };
@@ -434,6 +442,7 @@ export class EvmRelayer extends DurableObject<Env> {
   #queue: Promise<unknown> = Promise.resolve();
   #waiting = 0;
   #ops: Ops = { signatures: 0, recoveries: 0, fetches: 0, keyDerivations: 0 };
+  #baseFee: { wei: bigint; at: number } | null = null;
 
   /** Checks the Execute, then signs, persists and broadcasts its transaction (or answers the one already sent). */
   async send(req: EvmRelayerSendRequest): Promise<EvmRelayerSent> {
@@ -617,6 +626,12 @@ export class EvmRelayer extends DurableObject<Env> {
       refuse('daily_cap');
     }
     const rpc = this.#client(c);
+    // The pool's fee floor, checked here so a batch priced too low is refused with nothing sent (not stored, cancelled).
+    if (!this.#baseFee || now - this.#baseFee.at >= EVM_RELAYER_BASE_FEE_TTL_MS) {
+      const block = await rpc.latestBlock().catch(() => refuse('rpc_unavailable'));
+      this.#baseFee = { wei: block.baseFeePerGas, at: now };
+    }
+    if (v.fees.maxPriorityFeePerGas < MIN_TIP_WEI || v.fees.maxFeePerGas < ceilDiv(this.#baseFee.wei * 9n, 8n)) refuse('fees_too_low');
     if (!meta || meta.nextNonce === null) {
       // A fresh nonce life: the trusted endpoint's pending count, read once. Nothing is stored if it fails.
       const pending = await rpc.transactionCount(c.keyAddress!, 'pending').catch(() => refuse('rpc_unavailable'));
@@ -633,7 +648,7 @@ export class EvmRelayer extends DurableObject<Env> {
     r = this.#afterBroadcast(r, sent, true);
     if (r.batchRejected !== null) {
       // No node took the batch: its nonce goes to our own cancel, at once. A refusal the relayer caused also halts it
-      // (whatever the cancel does), as does our cancel refused; one the batch caused (its size or shape) does not.
+      // (whatever the cancel does), as does our cancel refused; one of the batch's size, shape or pricing does not.
       let code = r.cannotSend;
       const next = this.#nextVersion(c, r, now, true);
       if (next) {

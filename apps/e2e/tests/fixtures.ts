@@ -12,6 +12,8 @@ import type { AppSpec as ServerAppSpec } from '../src/server/api.ts';
 import {
   API_URL,
   AUTH_ORIGIN,
+  DEMO_ORIGIN,
+  DEMO_PK,
   EVIL_ORIGIN,
   EVM_RPC,
   ISSUER_URL,
@@ -153,6 +155,12 @@ export const test = base.extend<{ google: GoogleStub; requests: RequestLog; noCo
 });
 
 // ---- the mocked API's control endpoints ----
+
+/**
+ * The hosted demo's app on the stack: created once with its fixed key (the first create wins, so every demo spec
+ * creates it with this spec). Its sponsorship allowlist is the exact demo check-in (src/server/api.ts, D867).
+ */
+export const DEMO_APP: Readonly<AppSpec> = Object.freeze({ name: 'Journear demo', origins: [DEMO_ORIGIN], publishableKey: DEMO_PK });
 
 export async function newApp(spec: AppSpec = {}): Promise<App> {
   const res = await fetch(`${API_URL}/__e2e/apps`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origins: [PARTNER_ORIGIN], ...spec }) });

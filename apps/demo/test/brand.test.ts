@@ -57,7 +57,7 @@ describe('the page', () => {
 
   it('the strings the page shows say Journear, Journear Passport or Passport Home, not Hana', () => {
     // The signed test texts were renamed too (D766): only identifiers and package names may still say hana.
-    for (const file of ['src/errors.ts', 'src/page.ts', 'src/near-card.ts', 'src/requests.ts', 'src/near.ts']) {
+    for (const file of ['src/errors.ts', 'src/page.ts', 'src/near-card.ts', 'src/gas-free-card.ts', 'src/requests.ts', 'src/near.ts']) {
       const code = read(file)
         .split('\n')
         .filter((l) => !/^\s*(\/\/|\*|\/\*\*)/u.test(l))

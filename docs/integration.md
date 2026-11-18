@@ -26,7 +26,8 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (a linked sign-in can remove itself; gas-free EVM actions, not live; 0.5.0 not published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (a gas-free button to copy; a linked sign-in can remove itself; gas-free EVM actions, not live; 0.5.0 not published), SDK 0.5.0.
+"SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -865,6 +866,44 @@ button.onclick = () => {
     .catch((e) => showError(e.message)); // a HanaSponsorError: the message is plain words your users can read
 };
 ```
+
+**A whole button you can copy** (what the hosted demo's "Check in" does): show it only when your app is sponsored, show
+refusals with `userMessage`, and treat a rejection in the window as the user's choice, not an error. Run `setUpButton`
+once the client is ready and the user is signed in: before `hana.ready`, `sponsoredChains` is empty and `sponsorship()`
+answers `chain_not_enabled`, so the button would never appear.
+
+```ts
+import { userMessageFor } from '@hana-id/web';
+
+const CHAIN_ID = 84532;
+const CALL = { to: '0xYourContract', data: '0x183ff085' }; // fixed by your code, never from user input or the URL
+const say = (e: any): string => e?.userMessage ?? userMessageFor(e?.code, e?.data); // the SDK's plain sentence
+
+async function setUpButton(button: HTMLButtonElement, note: HTMLElement) {
+  const s = await hana.evm.sponsorship(CHAIN_ID).catch(() => null);
+  const passing = ['budget_exhausted', 'app_budget_exhausted', 'paused', 'sponsorship_paused', 'not_available'];
+  if (!s || (!s.available && !passing.includes(s.reason ?? ''))) return; // not sponsored here: no button at all
+  button.hidden = false;
+  button.disabled = !s.available;
+  note.textContent = s.available ? '' : userMessageFor(4100, { reason: s.reason }); // e.g. "… used up for today …"
+}
+
+await hana.ready;
+if (hana.status === 'logged_in') await setUpButton(button, note);
+hana.on('accountsChanged', (a) => (a ? setUpButton(button, note) : (button.hidden = true)));
+
+button.onclick = () => {
+  button.disabled = true;
+  hana.evm
+    .sendSponsored({ chainId: CHAIN_ID, calls: [CALL] }) // in the click: the window opens in it
+    .then(({ transactionHash }) => showDone(transactionHash)) // showDone, showQuiet, showError: your own UI helpers
+    .catch((e) => (e?.code === 4001 ? showQuiet(say(e)) : showError(say(e))))
+    .finally(() => (button.disabled = false));
+};
+```
+
+`userMessageFor(code, data)` comes from `@hana-id/web`. A refusal with `data.transactionHash` may still have run: link it
+so the user can look before trying again.
 
 - `calls`: 1 to 8, run in order, all or nothing. Each has `to`, `data` (a function call, at least 4 bytes) and no ETH
   (`value` left out or 0). The answer is `{ transactionHash, status: 'executed' }` once the calls ran.

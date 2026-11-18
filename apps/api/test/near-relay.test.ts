@@ -19,6 +19,11 @@ import { nearRelayKeyName, type RelayerKey, type RelayResult } from '../src/rela
 import { runInDurableObject } from 'cloudflare:test';
 import { appHeaders, call, type Chain, ORIGIN, type SeededApp, startOfMinuteClock } from './helpers.ts';
 import { MOCK_RECEIPT_GAS, MOCK_TX_GAS } from './near-mock.ts';
+import { checkNearBillingLate, finalStatus, nearBillingMaintenance } from '../src/near/relay-billing.ts';
+import { pruneEvmSponsorSends } from '../src/evm/sponsor-settle.ts';
+import { usageTransport } from '../src/usage/record.ts';
+
+const HOUR = 60 * 60_000;
 import { spentSession, vaultHeaders, vaultSetup } from './vault-helpers.ts';
 
 const GUESTBOOK = 'guestbook.test.near';
@@ -911,5 +916,113 @@ describe('the hourly funds check (near_relay_balance_low)', () => {
     expect(await checkNearRelayFunds({ ...env, NETWORK: 'mainnet' })).toBe(0);
     const rows = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'near_relay_balance_low' ORDER BY detected_at").all<{ detail_json: string }>();
     expect(rows.results.map((r) => JSON.parse(r.detail_json).missing)).toEqual([false, true]);
+  });
+});
+
+describe('billing records (D863): one permanent record per relayed NEAR transaction, written after the answer', () => {
+  let s: Awaited<ReturnType<typeof setup>>;
+  const rows = async () => (await env.DB.prepare('SELECT * FROM near_relay_billing ORDER BY created_at, tx_hash').all<Record<string, unknown>>()).results;
+  let ledgerCalls: Record<string, unknown>[][] = [];
+  const realTransport = usageTransport.query;
+  beforeEach(async () => {
+    s = await setup();
+    await env.DB.exec('DELETE FROM near_relay_billing');
+    await env.DB.exec("DELETE FROM security_events WHERE kind = 'near_billing_late'");
+    await runInDurableObject(env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName('near-relay:billing')), async (_i, state) => state.storage.deleteAll());
+    ledgerCalls = [];
+    usageTransport.query = async (_b, _sql, params) => void ledgerCalls.push(JSON.parse(String(params[0])) as Record<string, unknown>[]);
+  });
+  afterEach(() => {
+    usageTransport.query = realTransport;
+  });
+
+  it('a relayed delegate leaves one record (the contract and methods, no user account), read at FINAL by the cron and copied to the ledger once', async () => {
+    const res = await relay(s.app, plainRelay(delegate(s.user)));
+    const b = await body(res);
+    expect([res.status, b.status]).toEqual([200, 'executed']);
+    const [r, ...more] = await rows();
+    expect(more).toEqual([]);
+    const org = await env.DB.prepare('SELECT org_id FROM apps WHERE id = ?1').bind(s.app.id).first<{ org_id: string }>();
+    expect(r).toMatchObject({ network: 'testnet', tx_hash: b.transactionHash, org_id: org!.org_id, app_id: s.app.id, kind: 'delegate', relay_code: 'ok', outcome: 'executed', attached_yocto: '0', receiver: GUESTBOOK, methods_json: '["add_message"]', final_at: null, mirrored_at: null });
+    expect(JSON.stringify(r).includes(s.user.accountId)).toBe(false);
+    // The cron, a minute on: FINAL figures (the transaction and every receipt), then the ledger copy.
+    await nearBillingMaintenance(env, Date.now() + 2 * 60_000);
+    const [f] = await rows();
+    // The mock's outcome: the transaction and two receipts (the delegate's, the inner call's).
+    expect(f).toMatchObject({ outcome: 'executed', gas_burnt: String(BigInt(MOCK_TX_GAS.gas_burnt) + 2n * BigInt(MOCK_RECEIPT_GAS.gas_burnt)), tokens_burnt: String(BigInt(MOCK_TX_GAS.tokens_burnt) + 2n * BigInt(MOCK_RECEIPT_GAS.tokens_burnt)) });
+    expect(f!.final_at).not.toBeNull();
+    expect(f!.mirrored_at).not.toBeNull();
+    expect(s.near.waitUntil.filter((w) => w.method === 'tx').map((w) => w.waitUntil)).toContain('FINAL');
+    expect(ledgerCalls.length).toBe(1);
+    expect(Object.keys(ledgerCalls[0]![0]!).sort()).toEqual(['app_id', 'attached_yocto', 'block_height', 'block_time', 'created_at', 'environment', 'final_at', 'gas_burnt', 'kind', 'methods', 'network', 'org_id', 'outcome', 'receiver', 'relay_code', 'tokens_burnt_yocto', 'tx_hash']);
+    await nearBillingMaintenance(env, Date.now() + 3 * 60_000);
+    expect(ledgerCalls.length).toBe(1);
+  });
+
+  it('an activation leaves one record without a receiver, with the NEAR the relay sent; a refused relay (nothing sent) leaves none', async () => {
+    s.near.missingAccounts.add(s.user.accountId);
+    expect((await activate(s.app, { accountId: s.user.accountId })).status).toBe(200);
+    expect((await activate(s.app, { accountId: s.user.accountId })).status).toBe(200);
+    const all = await rows();
+    expect(all.map((r) => [r.kind, r.receiver, r.attached_yocto, r.methods_json])).toEqual([['activation', null, '0', '[]']]);
+    expect(JSON.stringify(all).includes(s.user.accountId)).toBe(false);
+    // A delegate refused before sending (a receiver not on the list): no transaction, no record.
+    const refused = await relay(s.app, plainRelay(delegate(s.user, { receiverId: 'other.test.near' })));
+    expect(refused.status).toBe(403);
+    expect((await rows()).length).toBe(1);
+  });
+
+  it('the write runs after the answer (waitUntil): the request waits for nothing', async () => {
+    const held: Promise<unknown>[] = [];
+    const exec = { waitUntil: (p: Promise<unknown>) => void held.push(p), passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
+    const res = await call('/v1/near/relay', { headers: appHeaders(s.app), body: plainRelay(delegate(s.user)), exec });
+    expect(res.status).toBe(200);
+    expect(held.length).toBeGreaterThan(0);
+    await Promise.all(held);
+    expect((await rows()).length).toBe(1);
+  });
+
+  it('fails open: without the table (migration 0023 not applied) the relay answers as before; the miss is counted and alerted', async () => {
+    await env.DB.exec('ALTER TABLE near_relay_billing RENAME TO near_relay_billing_hidden');
+    try {
+      const res = await relay(s.app, plainRelay(delegate(s.user)));
+      expect([res.status, (await body(res)).status]).toEqual([200, 'executed']);
+      const counts = await checkNearBillingLate(env);
+      expect(counts.misses).toBe(1);
+      const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'near_billing_late'").all<{ detail_json: string }>();
+      expect(JSON.parse(ev.results[0]!.detail_json)).toMatchObject({ misses: 1 });
+      // The cron's other parts do nothing without the table, and never throw.
+      await expect(nearBillingMaintenance(env, Date.now() + 2 * 60_000)).resolves.toBeUndefined();
+    } finally {
+      await env.DB.exec('ALTER TABLE near_relay_billing_hidden RENAME TO near_relay_billing');
+    }
+  });
+
+  it('a transaction still unknown at FINAL six hours on keeps the relay’s figures as unknown; a record not final an hour on is alerted', async () => {
+    const res = await relay(s.app, plainRelay(delegate(s.user)));
+    const hash = (await body(res)).transactionHash as string;
+    await env.DB.prepare("UPDATE near_relay_billing SET tx_hash = ?1 WHERE tx_hash = ?2").bind('1'.repeat(44), hash).run();
+    await nearBillingMaintenance(env, Date.now() + 2 * HOUR);
+    const late = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'near_billing_late'").all<{ detail_json: string }>();
+    expect(JSON.parse(late.results[0]!.detail_json)).toMatchObject({ notFinal: 1 });
+    expect((await rows())[0]).toMatchObject({ final_at: null });
+    await nearBillingMaintenance(env, Date.now() + 7 * HOUR);
+    expect((await rows())[0]).toMatchObject({ outcome: 'unknown', relay_code: 'ok' });
+  });
+
+  it('the FINAL status: failed when the transaction or any receipt failed, else executed', () => {
+    const ok = { status: { SuccessValue: '' }, receipts_outcome: [{ outcome: { gas_burnt: 1, tokens_burnt: '1', status: { SuccessValue: '' } } }] };
+    expect(finalStatus(ok as never)).toBe('executed');
+    expect(finalStatus({ ...ok, status: { Failure: { x: 1 } } } as never)).toBe('failed');
+    expect(finalStatus({ ...ok, receipts_outcome: [{ outcome: { gas_burnt: 1, tokens_burnt: '1', status: { Failure: { panic: 'p' } } } }] } as never)).toBe('failed');
+  });
+
+  it('records are never pruned and stay through a user’s erasure (no link to the directory or the audit rows)', async () => {
+    expect((await relay(s.app, plainRelay(delegate(s.user)))).status).toBe(200);
+    await env.DB.prepare('UPDATE near_relay_billing SET created_at = 1').run();
+    await pruneEvmSponsorSends(env);
+    await env.DB.exec('DELETE FROM end_user_wallets');
+    await env.DB.exec('DELETE FROM end_users');
+    expect((await rows()).length).toBe(1);
   });
 });

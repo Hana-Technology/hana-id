@@ -267,7 +267,7 @@ test('a Google ID token that carries the email is refused (token_has_pii): no /v
   await popup.click('#account-0');
   // The callback refuses the token before relaying it (D273): it relays only `{error: 'token_has_pii', claim}` and
   // stays open to say why.
-  await expect(popup.locator('body')).toContainText('Code: token_has_pii');
+  await expect(popup.locator('body')).toContainText('Error code (for support): token_has_pii');
 
   // The SDK's error, naming the first claim outside the allow-list (as the vault's own refusal does).
   const r = await settled(page, 'login');

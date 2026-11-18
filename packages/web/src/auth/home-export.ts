@@ -59,7 +59,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ChainLoginError, loginOnChain } from './chain-login.ts';
 import type { ServerClock } from './clock.ts';
-import type { Child, Dom } from './dom.ts';
+import { type Child, type Dom, supportCode, supportRequest } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { ExportPathError, exportPath } from './export-path.ts';
 import type { HomeAddress, HomeApi, HomeConfig, HomeIdentity, HomeLoginBody, HomeScope } from './home-api.ts';
@@ -82,11 +82,12 @@ export const HOME_EXPORT_CHECK_MS = 1_000;
 const LOGIN_CHILD = '/login?mode=home';
 const RELAY_WAIT_S = 25;
 const CHILD_WATCH_MS = 500;
-const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM', near: 'NEAR' } as const;
+/** Each chain's name in the section's words (D853: "Ethereum-style", never "EVM"). */
+const CHAIN_NAMES = { stellar: 'Stellar', evm: 'Ethereum-style', near: 'NEAR' } as const;
 /** The chains whose key the section shows, in the order of its buttons (D779). */
 export type HomeExportChain = keyof typeof CHAIN_NAMES;
-/** The env's NEAR network, as the other wallet app names it. */
-const NEAR_NETWORK_NAME: Readonly<Record<HanaEnv['network'], string>> = Object.freeze({ testnet: 'NEAR testnet' });
+/** The env's NEAR network, in plain words and as the other wallet app names it (its setting says "testnet"). */
+const NEAR_NETWORK_NAME: Readonly<Record<HanaEnv['network'], string>> = Object.freeze({ testnet: 'NEAR’s test network (“testnet”)' });
 export const HOME_EXPORT_TITLE = 'Move this wallet to another wallet app';
 /** What the collapsed section says under its heading, and its button: the same shape as "Devices and auto-approve". */
 export const HOME_EXPORT_ABOUT = `${BRAND.home} can show you the private key of your wallet in this app, so that you can import it into another wallet app.`;
@@ -128,9 +129,9 @@ export const HOME_EXPORT_NEAR_NOTES_TITLE = 'Before you move a NEAR account';
  */
 export function homeExportNearNotes(network: HanaEnv['network']): readonly string[] {
   return [
-    'This key is the NEAR account itself: the account’s name above is made from the key. Whoever imports it into a NEAR wallet app has full control of the account. If that app removes this key from the account, this app loses the wallet too.',
+    'This key is the NEAR account itself: the account’s name above is made from it. Whoever imports it into a NEAR wallet app has full control of the account. If that app removes this key from the account, this app loses the wallet too.',
     `Choose ${NEAR_NETWORK_NAME[network]} in the other wallet app. An account that was never sent any NEAR doesn’t exist on NEAR yet: until it gets its first NEAR, a wallet app may show it as not found or not import it.`,
-    `${BRAND.company} pays NEAR fees only for a few calls it has approved, such as its demo’s, and only in apps that use ${BRAND.product}. In another wallet app, every transaction’s fee is paid from this account’s own NEAR.`,
+    `${BRAND.company} pays NEAR network fees only for a few actions it has approved, such as its demo’s, and only in apps that use ${BRAND.product}. In another wallet app, every network fee is paid from this account’s own NEAR.`,
   ];
 }
 
@@ -308,7 +309,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       'div',
       { class: 'home-addresses', attrs: { id: 'home-export-addresses' } },
       d.h('div', { class: 'home-address' }, d.h('p', { class: 'home-address-label' }, 'Stellar'), d.h('p', { class: 'mono home-address-value', attrs: { id: 'home-export-address-stellar' } }, a.stellar)),
-      d.h('div', { class: 'home-address' }, d.h('p', { class: 'home-address-label' }, 'EVM (Ethereum and similar networks)'), d.h('p', { class: 'mono home-address-value', attrs: { id: 'home-export-address-evm' } }, a.evm)),
+      d.h('div', { class: 'home-address' }, d.h('p', { class: 'home-address-label' }, 'Ethereum-style (Ethereum and similar networks)'), d.h('p', { class: 'mono home-address-value', attrs: { id: 'home-export-address-evm' } }, a.evm)),
       d.h('div', { class: 'home-address' }, d.h('p', { class: 'home-address-label' }, 'NEAR'), d.h('p', { class: 'mono home-address-value', attrs: { id: 'home-export-address-near' } }, a.near)),
     );
   /** NEAR's own notes (D780), an info alert on its confirmation and reveal screens only; null for the other chains. */
@@ -642,7 +643,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
       }
       const checked = await verifyGoogleIdToken(payload.idToken, { clientId, nonce: p.nonce, nowMs: clock.now(), jwks: deps.jwks }).catch(() => null);
       if (stale()) return;
-      if (checked === null) return refuse(plainProblem('api_unavailable', 'Google’s keys could not be read. Try again.'));
+      if (checked === null) return refuse(plainProblem('api_unavailable', 'Journear couldn’t check your Google sign-in right now. Try again.'));
       if (!checked.ok) return refuse(plainProblem(checked.code === 'token_has_pii' ? 'token_has_pii' : 'token_invalid'));
       // Google sends no auth_time today even with max_age=0, so its absence is accepted; when present it must be fresh.
       if (checked.token.authTime !== null && checked.token.authTime * 1000 < clock.now() - EXPORT_MAX_AUTH_AGE_MS) return refuse(plainProblem('stale_sign_in'));
@@ -853,11 +854,11 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           title('Your wallet is open'),
           exportSteps(d, 2),
           mismatch
-            ? alert(d, 'warning', { class: 'warn', attrs: { id: 'home-export-mismatch' } }, `The address ${BRAND.company} had on record for you in this app is different from this wallet’s. The addresses below come from the wallet’s own key, worked out in this page.`)
+            ? alert(d, 'warning', { class: 'warn', attrs: { id: 'home-export-mismatch' } }, `The address ${BRAND.company} had on record for you in this app is different from this wallet’s. The addresses below come from the wallet itself, worked out on this page.`)
             : null,
           addressRows(addresses),
-          d.h('p', {}, 'Choose the key to show: the Stellar key for a Stellar wallet app, the EVM key for an Ethereum-style wallet app, the NEAR key for a NEAR wallet app.'),
-          d.h('div', { class: 'actions start' }, button('Stellar key', 'home-export-stellar', () => choose('stellar')), button('EVM key', 'home-export-evm', () => choose('evm')), button('NEAR key', 'home-export-near', () => choose('near'))),
+          d.h('p', {}, 'Choose the key to show: the Stellar key for a Stellar wallet app, the Ethereum-style key for an Ethereum wallet app, the NEAR key for a NEAR wallet app.'),
+          d.h('div', { class: 'actions start' }, button('Stellar key', 'home-export-stellar', () => choose('stellar')), button('Ethereum-style key', 'home-export-evm', () => choose('evm')), button('NEAR key', 'home-export-near', () => choose('near'))),
           d.h('p', { class: 'muted' }, `The wallet is locked again 5 minutes after you signed in, when you leave this app’s page, and when you close or reload ${BRAND.home}.`),
           d.h('div', { class: 'actions start' }, button('Lock now', 'home-export-lock', () => lock('locked'))),
         );
@@ -925,8 +926,8 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
             'danger',
             { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id: 'home-export-problem' } },
             d.h('p', {}, p.text),
-            d.h('p', { class: 'code muted' }, `Code: ${p.code}`),
-            p.requestId ? d.h('p', { class: 'code muted' }, `Request: ${p.requestId}`) : null,
+            d.h('p', { class: 'code muted' }, supportCode(p.code)),
+            p.requestId ? d.h('p', { class: 'code muted' }, supportRequest(p.requestId)) : null,
           ),
           d.h('div', { class: 'actions start' }, button('Try again', 'home-export-again', expand, 'primary'), button('Close', 'home-export-close', collapse)),
         );

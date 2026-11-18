@@ -354,7 +354,7 @@ async function notify(ctx: Ctx, to: string, appName: string, pending: boolean, a
     if (await isSuppressed(deps, await suppressionKey(await deps.keys(), to))) return;
     const budget = await reserveBudget(ctx, appId, share, 'user');
     if (!budget) return;
-    const res = await deps.sender.send(linkNoticeMail({ to, appName, authOrigin: deps.env.AUTH_ORIGIN, pending, appId, look: mailLook(deps.env) }));
+    const res = await deps.sender.send(linkNoticeMail({ to, appName, pending, appId, look: mailLook(deps.env) }));
     if (!res.ok) await limiter(deps, 'global').refund(budget);
     log({ event: 'link_notice', requestId: ctx.requestId, outcome: res.ok ? 'ok' : 'error', appId, ...(res.ok ? {} : { code: res.reason }) }, res.ok ? 'info' : 'error');
     if (res.ok) countDaily(deps, appId, 'sent');

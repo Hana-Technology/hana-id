@@ -33,7 +33,7 @@ import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ServerClock } from './clock.ts';
-import { type Child, type Dom, addressText, dom, maskedAddress } from './dom.ts';
+import { type Child, type Dom, addressText, dom, maskedAddress, supportCode, supportRequest } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { googleKeys } from './google-keys.ts';
 import { HOME_APP_ID, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeAddress, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
@@ -151,8 +151,8 @@ export interface CoverageText {
 type CoverageKind = 'yes' | 'maybe' | 'no' | 'unknown';
 const COVERAGE_KIND: Readonly<Record<HomeCoverage, CoverageKind>> = Object.freeze({ shared: 'yes', hana_client: 'yes', exit: 'yes', email: 'yes', partner_client: 'maybe', none: 'no', unknown: 'unknown' });
 
-const MINE_QUESTION = 'Does this wallet depend on the app?';
-const OTHER_QUESTION = 'Would a wallet here depend on the app?';
+const MINE_QUESTION = 'Does this wallet need the app?';
+const OTHER_QUESTION = 'Would a wallet here need the app?';
 /**
  * The words say only what is true today. For the user's own app: whether Hana's sign-in to the wallet depends on the
  * app. For any other app, where Hana knows of no wallet of theirs: the same, as an "if". Nothing here promises an
@@ -160,23 +160,23 @@ const OTHER_QUESTION = 'Would a wallet here depend on the app?';
  */
 const COVERAGE_WORDS: Readonly<Record<'mine' | 'other', Readonly<Record<CoverageKind, CoverageText>>>> = Object.freeze({
   mine: {
-    yes: { badge: 'Stays reachable', tone: 'ok', question: MINE_QUESTION, detail: 'No. Signing in to this wallet doesn’t depend on the app: it would still work through Journear if the app stopped running.' },
-    maybe: { badge: 'Depends on the app', tone: 'warn', question: MINE_QUESTION, detail: 'Yes. This app uses its own Google sign-in, so signing in to this wallet works only while the app keeps that sign-in running.' },
-    no: { badge: 'Out of reach', tone: 'off', question: MINE_QUESTION, detail: 'Signing in to this wallet through Journear no longer works: the sign-in this app used is gone. If the app still runs, use the app itself.' },
+    yes: { badge: 'Safe if the app closes', tone: 'ok', question: MINE_QUESTION, detail: 'No. If this app shuts down, you can still sign in to this wallet through Journear.' },
+    maybe: { badge: 'Needs the app', tone: 'warn', question: MINE_QUESTION, detail: 'Yes. This app runs its own Google sign-in. If this app shuts down, you can no longer sign in to this wallet.' },
+    no: { badge: 'Can’t be opened here', tone: 'off', question: MINE_QUESTION, detail: 'Journear can no longer sign you in to this wallet: the sign-in this app used is gone. If the app still runs, use the app itself.' },
     unknown: { badge: 'Not checked yet', tone: 'muted', question: MINE_QUESTION, detail: 'Journear hasn’t checked this app yet.' },
   },
   other: {
-    yes: { badge: 'Supported', tone: 'ok', question: OTHER_QUESTION, detail: 'No. If you had a wallet in this app, signing in to it would still work through Journear if the app stopped running. Journear has no wallet on record for you here.' },
-    maybe: { badge: 'Depends on the app', tone: 'warn', question: OTHER_QUESTION, detail: 'Yes. This app uses its own Google sign-in, so signing in to a wallet here works only while the app keeps that sign-in running. Journear has no wallet on record for you here.' },
-    no: { badge: 'Out of reach', tone: 'off', question: OTHER_QUESTION, detail: 'Signing in to wallets in this app through Journear no longer works: the sign-in it used is gone. If the app still runs, use the app itself.' },
+    yes: { badge: 'Safe if the app closes', tone: 'ok', question: OTHER_QUESTION, detail: 'No. If you had a wallet in this app and the app shut down, you could still sign in to it through Journear. Journear has no wallet on record for you here.' },
+    maybe: { badge: 'Needs the app', tone: 'warn', question: OTHER_QUESTION, detail: 'Yes. This app runs its own Google sign-in. If it shuts down, nobody can sign in to a wallet here any more. Journear has no wallet on record for you here.' },
+    no: { badge: 'Can’t be opened here', tone: 'off', question: OTHER_QUESTION, detail: 'Journear can no longer sign anyone in to wallets in this app: the sign-in it used is gone. If the app still runs, use the app itself.' },
     unknown: { badge: 'Not checked yet', tone: 'muted', question: OTHER_QUESTION, detail: 'Journear hasn’t checked this app yet.' },
   },
 });
 
 /** What the sentence adds for the user's own wallet when this page can move it out. */
 const MOVE_WORDS: Readonly<Partial<Record<CoverageKind, string>>> = Object.freeze({
-  yes: ' You can also move it to another wallet app, further down this page.',
-  maybe: ' To stop depending on it, you can move the wallet to another wallet app, further down this page.',
+  yes: ' You can also move it to another wallet app below.',
+  maybe: ' To avoid that, you can move it to another wallet app below.',
 });
 
 /**
@@ -199,15 +199,15 @@ const STATUS_TEXT: Readonly<Record<HomeApp['status'], string | null>> = Object.f
 
 /** Where a Stellar account can be looked up, by the env's network. An EVM address is the same on every EVM chain, so it gets no single link. */
 const STELLAR_ACCOUNT_URL: Readonly<Record<HanaEnv['network'], { name: string; url: string }>> = Object.freeze({
-  testnet: { name: 'StellarExpert (testnet)', url: 'https://stellar.expert/explorer/testnet/account/' },
+  testnet: { name: 'StellarExpert (test network)', url: 'https://stellar.expert/explorer/testnet/account/' },
 });
 /** Where a NEAR account can be looked up, by the env's network (D755). */
 const NEAR_ACCOUNT_URL: Readonly<Record<HanaEnv['network'], { name: string; url: string }>> = Object.freeze({
-  testnet: { name: 'NearBlocks (testnet)', url: 'https://testnet.nearblocks.io/address/' },
+  testnet: { name: 'NearBlocks (test network)', url: 'https://testnet.nearblocks.io/address/' },
 });
 /** Each chain's label on an app's page, and its copy button's name. */
-const ADDRESS_LABEL = Object.freeze({ stellar: 'Stellar', evm: 'EVM (Ethereum and similar networks)', near: 'NEAR' });
-const ADDRESS_NAME = Object.freeze({ stellar: 'Stellar address', evm: 'EVM address', near: 'NEAR account' });
+const ADDRESS_LABEL = Object.freeze({ stellar: 'Stellar', evm: 'Ethereum-style (Ethereum and similar networks)', near: 'NEAR' });
+const ADDRESS_NAME = Object.freeze({ stellar: 'Stellar address', evm: 'Ethereum-style address', near: 'NEAR account' });
 
 function browserClipboard(): HomeClipboard | null {
   try {
@@ -431,8 +431,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       'danger',
       { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id } },
       d.h('p', {}, p.text),
-      d.h('p', { class: 'code muted' }, `Code: ${p.code}`),
-      p.requestId ? d.h('p', { class: 'code muted' }, `Request: ${p.requestId}`) : null,
+      d.h('p', { class: 'code muted' }, supportCode(p.code)),
+      p.requestId ? d.h('p', { class: 'code muted' }, supportRequest(p.requestId)) : null,
       onDismiss ? button('Dismiss', onDismiss, { class: 'link' }) : null,
     );
 
@@ -851,7 +851,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     // the env's issuer, an email `sub`, not expired.
     if (!made || !c || c.aud !== HOME_EMAIL_AUDIENCE || c.nonce !== made.nonce || (env.emailIss !== undefined && c.iss !== env.emailIss) || !EMAIL_SUB_RE.test(c.sub) || c.exp * 1000 <= clock.now()) {
       made?.end();
-      return signInFailed(plain('email_token_invalid', 'The email sign-in could not be checked. Try again.'));
+      return signInFailed(plain('email_token_invalid', 'Journear couldn’t check your email sign-in. Try again.'));
     }
     if (clock.now() >= made.expiresAtMs) {
       made.end();
@@ -906,7 +906,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       } catch (err) {
         if (pending !== p) return;
         // A slot that is gone or forbidden never recovers; anything else is the wait itself failing, so it goes on.
-        if (err instanceof ApiError && (err.status === 410 || err.status === 403)) return signInFailed(plain('token_invalid', 'Google’s answer could not be read. Try again.'));
+        if (err instanceof ApiError && (err.status === 410 || err.status === 403)) return signInFailed(plain('token_invalid', 'Journear couldn’t check your Google sign-in. Try again.'));
         await sleep(1000);
       }
     }
@@ -920,23 +920,23 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     try {
       const payload = await decryptRelayPayload(p.relayKey, p.relayId, value);
       if ('error' in payload) {
-        failure = payload.error === 'access_denied' ? plain('login_cancelled', 'The sign-in was cancelled.') : plain('google_error', 'Google did not complete the sign-in. Try again.');
+        failure = payload.error === 'access_denied' ? plain('login_cancelled', 'The sign-in was cancelled.') : plain('google_error', 'Google didn’t finish the sign-in. Try again.');
       } else if (!isRelayToken(payload) || payload.accessToken !== undefined || payload.access !== undefined || payload.caseB !== undefined || payload.as !== undefined || isJsonFormToken(payload.idToken)) {
-        failure = plain('token_invalid', 'Google’s answer could not be verified. Try again.');
+        failure = plain('token_invalid', 'Journear couldn’t check your Google sign-in. Try again.');
       } else {
         const checked = await verifyGoogleIdToken(payload.idToken, { clientId: p.clientId, nonce: p.identity.nonce, nowMs: clock.now(), jwks }).catch(() => null);
-        if (checked === null) failure = plain('api_unavailable', 'Google’s keys could not be read. Try again.');
-        else if (!checked.ok) failure = checked.code === 'token_has_pii' ? plain('token_has_pii', 'Google returned more account details than Journear accepts, so the sign-in was stopped.') : plain('token_invalid', 'Google’s answer could not be verified. Try again.');
+        if (checked === null) failure = plain('api_unavailable', 'Journear couldn’t check your Google sign-in right now. Try again.');
+        else if (!checked.ok) failure = checked.code === 'token_has_pii' ? plain('token_has_pii', 'Google returned more account details than Journear accepts, so the sign-in was stopped.') : plain('token_invalid', 'Journear couldn’t check your Google sign-in. Try again.');
         else {
           token = payload.idToken;
           who = checked.token.sub;
         }
       }
     } catch {
-      failure = plain('token_invalid', 'Google’s answer could not be read. Try again.');
+      failure = plain('token_invalid', 'Journear couldn’t check your Google sign-in. Try again.');
     }
     if (pending !== p) return;
-    if (failure || token === null || who === null) return signInFailed(failure ?? plain('token_invalid', 'Google’s answer could not be verified. Try again.'));
+    if (failure || token === null || who === null) return signInFailed(failure ?? plain('token_invalid', 'Journear couldn’t check your Google sign-in. Try again.'));
     if (clock.now() >= p.identity.expiresAtMs) return signInFailed(plain('login_timeout', 'The sign-in took too long. Try again.'));
 
     p.identity.attach(token);

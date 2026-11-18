@@ -7,6 +7,7 @@
 // SDK's version or later), which is what a partner sends Hana's support with the Support ID. It is read only in its
 // exact shape (core `isApiRequestId`); a value of any other shape is dropped here.
 import { ErrorCode, type HanaErrorCode, type ProtocolError, isApiRequestId } from '@hana-id/core';
+import { userMessageFor } from './user-messages.ts';
 
 /** JSON-RPC codes the client itself uses (EIP-1474): bad arguments, an internal fault, a rate limit. */
 export const RpcCode = {
@@ -50,6 +51,15 @@ export class HanaError extends Error {
     return requestIdIn(this.data);
   }
 
+  /**
+   * D861: a plain sentence to show the user ("You rejected this in Journear Passport, or closed it. Nothing was
+   * approved."), worked out from `code` and `data.reason` alone; `message` stays the developer's. A getter, so the
+   * error's own fields are as before.
+   */
+  get userMessage(): string {
+    return userMessageFor(this.code, this.data);
+  }
+
   static from(e: ProtocolError): HanaError {
     return new HanaError(e.code, e.message, checkedData(e.data));
   }
@@ -89,6 +99,15 @@ export class ProviderRpcError extends Error {
     super(message);
     this.code = code;
     if (data !== undefined) this.data = data;
+  }
+
+  /**
+   * D861: the plain sentence for the user, as on a HanaError: from the Journear Passport code in `data.code` (and its
+   * `data.data.reason`) when there is one, else from this numeric code and `data`.
+   */
+  get userMessage(): string {
+    const d = this.data as { code?: unknown; data?: unknown } | undefined;
+    return typeof d === 'object' && d !== null && typeof d.code === 'string' ? userMessageFor(d.code, d.data) : userMessageFor(this.code, this.data);
   }
 }
 

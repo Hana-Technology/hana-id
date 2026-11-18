@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (verified list: demo check-in; sponsored EVM actions, not live), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (plain words: errors' `userMessage`, D861; sponsored EVM actions, not live), SDK 0.4.1. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -259,6 +259,11 @@ text as `LICENSE` in its tarball and `"license": "Apache-2.0"` in its `package.j
 `UNLICENSED` and ship no licence). `@hana-id/core`'s licence is still being decided; until then its tarball carries
 Journear Passport's Business Source License 1.1, which allows testing, evaluation and development, and use on test
 networks. The names and logos of Journear and Journear Passport are not licensed.
+
+Also after 0.4.1: errors carry a plain sentence to show your users, `error.userMessage`, on `HanaError` and the
+EIP-1193 provider's `ProviderRpcError`, and `userMessageFor(code, data)` for a code read elsewhere (D861,
+[section 13](#user-message)). `message` is unchanged. Journear Passport's own windows, Passport Home and its emails use
+plainer words too (D853); no code, `data.reason` or event changed.
 
 **0.4.0** (after 0.3.1; same environments: `sandbox-dev`). **Nothing to change** for Stellar and EVM: code written for
 0.3.x builds and runs as it is, and an app still on 0.3.x keeps working with Journear Passport's current vault (it just doesn't see
@@ -1553,6 +1558,31 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 
 `hana.*` methods reject with a `HanaError {code, message, data?}`. The EIP-1193 provider maps string codes to numbers
 (the Journear Passport code stays in `data.code`), and the SWK module maps them to SWK's shape.
+
+<a id="user-message"></a>**What to show your user: `userMessage`** (SDK releases after 0.4.1, D861). `message` is for
+you: it names the CSP, origins, keys and reasons a developer needs, stays as it is, and is not meant for your users.
+Every `HanaError` and `ProviderRpcError` also has `userMessage`, one or two short plain sentences for the person using
+your app: what happened, whether anything was done, and what to do ("You rejected this in Journear Passport, or closed
+it. Nothing was approved."; "This app is a test version, so Journear Passport lets it use only test networks. Nothing
+was signed."). The SDK works it out from `code` and `data.reason` alone, never from `message` or other text that
+arrived, so it is safe to show as text; it holds no code and no chain words. A code it doesn't know gets "Something went
+wrong in Journear Passport. Try again." Match on `code` and `data.reason`, never on either text: both may be reworded.
+Libraries that wrap provider errors (viem, wagmi, ethers) may drop the field, and the SWK module's errors don't carry
+it: there, call `userMessageFor(code, data)` (exported by `@hana-id/web`) with the Journear Passport code (`data.code`,
+or SWK's `ext[0]`).
+
+```ts
+import { HanaError, userMessageFor } from '@hana-id/web';
+
+try {
+  await hana.login();
+} catch (e) {
+  const code = e instanceof HanaError ? e.code : (e as { data?: { code?: unknown } }).data?.code;
+  const text = e instanceof HanaError ? e.userMessage : userMessageFor(code, undefined);
+  errorBox.textContent = text; // text, never HTML, like any string you show
+  console.warn(e); // code, message and data, for your logs
+}
+```
 
 An error that came from an answer of Journear Passport's API (a refusal, or a sign-in that gave up after one: `rate_limited`,
 `api_unavailable`, `token_invalid`, `link_refused`, `identity_unavailable`, `session_ended`, `4900` from

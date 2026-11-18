@@ -13,7 +13,7 @@ export interface HomeProblem {
 
 export const UNREACHABLE = 'Passport Home is not reachable right now. Nothing on screen was lost. Try again in a moment.';
 const NOT_COVERED = 'Journear can’t open this wallet from here. If the app still runs, use the app itself.';
-const TOKEN_REFUSED = 'Google’s answer could not be verified. Sign in again to retry.';
+const TOKEN_REFUSED = 'Journear couldn’t check your Google sign-in. Sign in again to retry.';
 
 /** The sentence for a code: the API's refusals, and the codes the page itself gives to what it stops. */
 const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
@@ -37,19 +37,19 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   api_unavailable: UNREACHABLE,
   // Opening a wallet (home-export.ts). Each says whether anything was shown: nothing ever is on a refusal.
   session_exists: 'That sign-in was already used. Sign in again to retry.',
-  session_consumed: 'That sign-in was already used. Nothing was shown. Sign in again to retry.',
-  ckd_failed: 'The key service didn’t produce the key this time. Nothing was shown. Sign in again to retry.',
-  derive_failed: 'The wallet could not be opened. Nothing was shown. Sign in again to retry.',
-  contract_rejected: 'The sign-in was refused. Nothing was shown.',
-  address_mismatch: 'The wallet this sign-in opened is not the one Journear has on record for you in this app, so nothing is shown. Try again later.',
-  pairing_failed: 'The key service returned an answer that failed its check, so it was not used. Nothing was shown.',
+  session_consumed: 'That sign-in was already used, perhaps in another window. Nothing was shown. Sign in again to retry.',
+  ckd_failed: 'Journear couldn’t open your wallet this time. Nothing was shown. Sign in again to retry.',
+  derive_failed: 'Journear couldn’t open your wallet. Nothing was shown. Sign in again to retry.',
+  contract_rejected: 'The sign-in was refused. Nothing was shown. Sign in again to retry.',
+  address_mismatch: 'Journear opened a different wallet from the one it has on record for you in this app, so it stopped. Nothing was shown or changed. Try again later.',
+  pairing_failed: 'Something didn’t look right while opening your wallet, so Journear stopped to keep it safe. Nothing was shown. Sign in again to retry.',
   invalid_token: TOKEN_REFUSED,
   nonce_mismatch: TOKEN_REFUSED,
   token_expired: TOKEN_REFUSED,
   wrong_audience: TOKEN_REFUSED,
   token_invalid: TOKEN_REFUSED,
   token_has_pii: 'Google returned more account details than Journear accepts, so the sign-in was stopped.',
-  google_error: 'Google did not complete the sign-in. Try again.',
+  google_error: 'Google didn’t finish the sign-in. Try again.',
   stale_sign_in: 'Google did not ask you to sign in again. Try again.',
   login_cancelled: 'The sign-in window closed before it finished. Try again.',
   login_timeout: 'The sign-in took too long. Try again.',
@@ -73,7 +73,7 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   profile_unavailable: 'Names aren’t available in Passport Home yet. Try again later.',
   // Email (home-email.ts).
   home_email_unavailable: 'Email sign-in to Passport Home isn’t available right now. Try again later.',
-  email_token_invalid: 'The email sign-in could not be checked. Nothing was shown. Try again.',
+  email_token_invalid: 'Journear couldn’t check your email sign-in. Nothing was shown. Try again.',
   no_sign_in: 'Passport Home can’t sign you in right now. Try again later.',
 });
 

@@ -215,6 +215,11 @@ device out (the `disconnect` event then has `reason: 'signed_out'` too): ask the
 `login_timeout`, `rate_limited`. NEAR refusals carry `data.reason` (`near_key_unknown`: call `activate()` first;
 `near_account_unrecorded` from the relay just after a login: retry for about 20 s).
 
+To show an error to your user, use `error.userMessage` (releases after 0.4.1): a plain sentence worked out from the
+code alone ("You rejected this in Journear Passport, or closed it. Nothing was approved."). `message` is for you and
+your logs. For a code read elsewhere (SWK's `ext[0]`, a provider error a library wrapped), call
+`userMessageFor(code, data)`.
+
 ## More
 
 The Journear Passport partner guide (ask Journear for the current copy) covers the partner portal, events, sessions, key export,

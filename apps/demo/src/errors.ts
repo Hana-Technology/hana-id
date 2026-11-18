@@ -47,7 +47,7 @@ export function relayTransaction(e: unknown): string | null {
 const REPORT = 'If it keeps happening, use “Copy diagnostics” and send it to the Journear team.';
 
 /** What the page says when Hana signed this device out (4900 with `data.reason` `signed_out`, D695). */
-export const SIGNED_OUT_MESSAGE = 'You were signed out on this device (from Passport Home, another tab or another device). Log in again.';
+export const SIGNED_OUT_MESSAGE = 'You were signed out on this device (from Passport Home, another tab or another device). Sign in again.';
 
 /**
  * Hana signed this device out: the `disconnect` event or a refused request with code 4900 and `data.reason`
@@ -157,22 +157,22 @@ export function plainMessage(e: unknown, action: DemoAction): string {
   if (near !== null) return near;
   switch (code) {
     case 'popup_blocked':
-      return 'Your browser blocked the Journear sign-in window. Allow pop-ups for this site and click “Log in with Google” again.';
+      return 'Your browser blocked the Journear sign-in window. Allow pop-ups for this site and click “Sign in with Google” again.';
     case 'login_cancelled':
       return 'Sign-in cancelled.';
     case 'login_method_unavailable':
-      return 'Email login isn’t turned on for the demo app yet. Use “Log in with Google”, or ask the Journear team to turn email on.';
+      return 'Email login isn’t turned on for the demo app yet. Use “Sign in with Google”, or ask the Journear team to turn email on.';
     case 'code_invalid':
-      return 'Sign-in stopped after a wrong code. Click “Log in with email” to get a new one.';
+      return 'Sign-in stopped after a wrong code. Click “Sign in with email” to get a new one.';
     case 'challenge_expired':
-      return 'The sign-in code expired. Click “Log in with email” to get a new one.';
+      return 'The sign-in code expired. Click “Sign in with email” to get a new one.';
     case 'coop_blocks_popup':
       return 'The Journear sign-in window closed before it finished loading. Try again and keep the window open.';
     case 'login_timeout':
       // data.stage (docs/integration.md section 13): 'connect', the window never connected (15 s); 'pending', the
       // sign-in was left unfinished for 5 minutes (the window left open; a closed one is login_cancelled, D347, D398).
       return isObj(e) && isObj(e.data) && e.data.stage === 'pending'
-        ? 'The sign-in wasn’t finished within 5 minutes, so it stopped. Log in again when you’re ready.'
+        ? 'The sign-in wasn’t finished within 5 minutes, so it stopped. Sign in again when you’re ready.'
         : 'The Journear sign-in window did not respond in time. Try again.';
     case 'google_error':
       return isObj(e) && isObj(e.data) && e.data.error === 'access_denied' ? 'You declined the Google sign-in.' : `Google returned an error. Try again. ${REPORT}`;
@@ -198,12 +198,12 @@ export function plainMessage(e: unknown, action: DemoAction): string {
     case 'email_sharing_unavailable':
       // D411: data.reason off (the app's identity_email setting), no_address (none for this session), unavailable.
       if (reason === 'off') return 'Email sharing is off for the demo app. The Journear team turns it on with app:settings --identity-email on_request.';
-      if (reason === 'no_address') return 'Journear has no email address for this session. Log out and log in again, then try again.';
+      if (reason === 'no_address') return 'Journear has no email address for this session. Sign out and sign in again, then try again.';
       return 'Journear couldn’t open email sharing right now. Try again in a minute.';
     case 'identity_unavailable':
       return 'Journear could not issue an identity token right now. Try again in a minute.';
     case 'session_ended':
-      return 'Your Journear session has ended. Log in again.';
+      return 'Your Journear session has ended. Sign in again.';
     case 'session_consumed':
       return 'Click “Continue signing in” on the Journear button at the bottom right to finish signing in.';
     case 'derive_failed':
@@ -223,9 +223,9 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       if (action === 'export') return 'Export cancelled.';
       return 'Rejected in the Journear window: nothing was signed.';
     case 4100:
-      if (reason === 'share_not_fresh') return '“Log out other devices” works only within 5 minutes of signing in. Log out, sign in again, then try it.';
+      if (reason === 'share_not_fresh') return '“Sign out other devices” works only within 5 minutes of signing in. Sign out, sign in again, then try it.';
       if (reason === 'mainnet_not_allowed') return 'Refused: this demo app signs for test networks only.';
-      return 'Not allowed: you may have been logged out. Log in and try again.';
+      return 'Not allowed: you may have been signed out. Sign in and try again.';
     case 4900:
       if (reason === 'signed_out') return SIGNED_OUT_MESSAGE;
       return 'The connection to the Journear vault was lost. Reload the page.';

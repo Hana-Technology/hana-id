@@ -483,7 +483,7 @@ const REFUSALS: readonly { status: number; code: string; says: string }[] = [
   { status: 409, code: 'link_pending', says: 'A sign-in method is still being added to this wallet.' },
   { status: 403, code: 'shared_login_disabled', says: 'Journear canâ€™t open this wallet from here.' },
   { status: 502, code: 'near_unavailable', says: 'Passport Home is not reachable right now.' },
-  { status: 422, code: 'ckd_failed', says: 'The key service didnâ€™t produce the key this time.' },
+  { status: 422, code: 'ckd_failed', says: 'Journear couldnâ€™t open your wallet this time.' },
 ];
 
 test('every screen before a wallet opens: collapsed, the warning, where it canâ€™t be offered, signing in, each refusal, NEAR providers that disagree', async ({ page, context, google, requests, browserName }) => {
@@ -567,9 +567,9 @@ test('every screen before a wallet opens: collapsed, the warning, where it canâ€
     refusal = r;
     const before = homeLogins(requests);
     await signInAgain(home);
-    await expect(s.problem).toContainText(`Code: ${r.code}`, { timeout: 30_000 });
+    await expect(s.problem).toContainText(`Error code (for support): ${r.code}`, { timeout: 30_000 });
     await expect(s.problem).toContainText(r.says);
-    await expect(s.problem).toContainText('Request: req_shot');
+    await expect(s.problem).toContainText('Request ID (for support): req_shot');
     await expect(s.problem).not.toContainText('error');
     // Sent once: the page never repeats a derive.
     expect(homeLogins(requests)).toBe(before + 1);
@@ -582,7 +582,7 @@ test('every screen before a wallet opens: collapsed, the warning, where it canâ€
   refusal = null;
   const sent = homeLogins(requests);
   await signInAgain(home, 1);
-  await expect(s.problem).toContainText('Code: home_account_mismatch');
+  await expect(s.problem).toContainText('Error code (for support): home_account_mismatch');
   await expect(s.problem).toContainText('Sign in as the same account you used in Passport Home.');
   await expect(s.problem).not.toContainText('Request:');
   await shots(home, 'h8-22-refused-other-google-account', browserName);
@@ -605,13 +605,13 @@ test('every screen before a wallet opens: collapsed, the warning, where it canâ€
   });
   await home.route((url) => url.origin === new URL(NEAR_RPC_FALLBACK).origin, async (route) => (second === 'unreachable' && isIdentityRead(route) ? route.abort('connectionrefused') : route.fallback()));
   await signInAgain(home);
-  await expect(s.problem).toContainText('Code: path_disputed');
+  await expect(s.problem).toContainText('Error code (for support): path_disputed');
   await expect(s.problem).toContainText('checks disagree about which wallet this sign-in opens');
   await shots(home, 'h8-23-refused-near-providers-disagree', browserName);
   await home.locator('#home-export-again').click();
   second = 'unreachable';
   await signInAgain(home);
-  await expect(s.problem).toContainText('Code: path_unconfirmed');
+  await expect(s.problem).toContainText('Error code (for support): path_unconfirmed');
   await shots(home, 'h8-24-refused-near-path-unconfirmed', browserName);
   // Neither sent a derive.
   expect(homeLogins(requests)).toBe(sent);

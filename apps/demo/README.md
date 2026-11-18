@@ -12,16 +12,16 @@ it is Journear Passport's showcase of the SDK, so it wears the full design syste
 
 ## What the page does
 
-One page: a testnet banner (Stellar, EVM and NEAR test networks) and a short explainer that leads with *Log in with
+One page: a testnet banner (Stellar, EVM and NEAR test networks) and a short explainer that leads with *Sign in with
 email* (most reviewers use it: Google sign-in is limited to the Google client's listed testers), then
 
-- **Log in with email** (`hana.login({ method: 'email' })`, batch 8a): the Journear popup's email step (address, mailed
+- **Sign in with email** (`hana.login({ method: 'email' })`, batch 8a): the Journear popup's email step (address, mailed
   code). It works once the demo app's `login_methods` include email and its scope holds its email client
   (`docs/operations.md` "Email login demo on sandbox-dev (batch 8a)"); until then it says email isn't turned on.
-- **Log in with Google** (`hana.login({ method: 'google' })` in the click handler, so the popup skips its chooser once
-  email is on), with the login's progress, *Cancel sign-in*, *Log
-  out* and *Log out other devices* (`revokeOtherDevices`, which works within 5 minutes of a fresh login);
-- a **status line**: logged in or out, when the session ends and the app's persistence (`session`: survives reloads
+- **Sign in with Google** (`hana.login({ method: 'google' })` in the click handler, so the popup skips its chooser once
+  email is on), with the login's progress, *Cancel sign-in*, *Sign
+  out* and *Sign out other devices* (`revokeOtherDevices`, which works within 5 minutes of a fresh login);
+- a **status line**: signed in or out, when the session ends and the app's persistence (`session`: survives reloads
   and new tabs; `none`, or the browser's storage fallback);
 - the **Stellar and EVM addresses**, each with *Copy* and a testnet explorer link (StellarExpert testnet, Base
   Sepolia's Basescan);
@@ -86,7 +86,7 @@ components, light and dark by the system setting, laid out for desktop and phone
 
 - a top bar with the Journear lockup, the environment badge and, signed in, the **wallet pill** (the EVM address
   short; it links to the addresses);
-- one primary button per view (*Log in with email* signed out; *Write to the guestbook* signed in), secondary for the
+- one primary button per view (*Sign in with email* signed out; *Write to the guestbook* signed in), secondary for the
   others, ghost for inline ones (*Copy*, *Refresh*, *Cancel sign-in*);
 - addresses as mono key/value rows with a **chain badge** (Stellar testnet, the EVM chain, NEAR testnet);
 - signing results in the **confirm-and-sign** style read back (`src/result.ts`): the outcome first, then the facts

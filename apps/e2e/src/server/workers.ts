@@ -19,6 +19,9 @@ export function registerCloudflareModule(): void {
   hooked = true;
 }
 
+/** The longest delay a Node timer takes (2^31 - 1 ms). */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /**
  * A Durable Object's storage, in memory: the synchronous KV API, one alarm, deleteAll. Values are structured clones,
  * as workerd stores them, so an object can't change a stored value by mutating what it put or got.
@@ -52,6 +55,13 @@ export class MemoryStorage {
     this.clearAlarm();
     this.alarmAt = Number(at);
     const ms = Math.max(0, Number(at) - Date.now());
+    // Node's timers hold at most 2^31 - 1 ms (about 24.8 days); a later alarm (a staff action's 30-day log, D866) would
+    // otherwise fire after 1 ms, again and again. It waits the longest timer, then arms itself again.
+    if (ms > MAX_TIMER_MS) {
+      this.alarmTimer = setTimeout(() => void this.setAlarm(at), MAX_TIMER_MS);
+      this.alarmTimer.unref();
+      return;
+    }
     this.alarmTimer = setTimeout(() => {
       this.alarmTimer = null;
       this.alarmAt = null;

@@ -39,7 +39,10 @@ import {
   IP_RECORD_LIMITS,
   IP_RESEND_LIMITS,
   IP_WEBHOOK_LIMITS,
+  IP_LINK_LIMITS,
   LINK_TICKET_TTL_MS,
+  LINK_TOKEN_LIMITS,
+  UNLOCK_GRANT_TTL_MS,
   MAILBOX_RETRY_AFTER_S,
   RESEND_SPACING_MS,
   STAFF_LIMITS,
@@ -61,6 +64,7 @@ import { codeMail, confirmMail, linkNoticeMail, mailLook, unlockMail } from './m
 import type { BudgetKind, Limit, OwnerClaim, OwnerRef, Reservation } from './rate-limiter.ts';
 import { SignerUnavailable, verifyRs256 } from './signer.ts';
 import { readWebhookBody, SIGNATURE_HEADER, suppressionsOf, TIMESTAMP_HEADER, verifyWebhook, webhookHeadersOk } from './webhook.ts';
+import { type SupportAction, isSupportToken, newSupportToken, openLinkEmail, sealLinkEmail, supportLinkName, tokenHash, UNLOCK_TOKEN_RE } from './support-link.ts';
 
 export const MAX_BODY = 8 * 1024;
 /** The audit `staff` of a partner client proof (D447): not an email, so it can't be a staff member's row. */
@@ -74,13 +78,11 @@ const MAX_HINTS = 4;
 export const BOUNCE_SUPPRESSION_MS = 30 * 86_400_000;
 /** `email_complaint_rate` is logged when the complaints of the last 24 h pass this (M4). */
 export const COMPLAINT_ALERT_PER_DAY = 5;
-/** A staff unlock's one-time token: "ug1." + 32 random bytes, b64url. */
-const UNLOCK_TOKEN_PREFIX = 'ug1.';
-const UNLOCK_TOKEN_RE = /^ug1\.[A-Za-z0-9_-]{43}$/u;
-/** A staff unsuppress's mailed confirmation token: "uc1." + 32 random bytes, b64url. */
-const CONFIRM_TOKEN_PREFIX = 'uc1.';
-const CONFIRM_TOKEN_RE = /^uc1\.[A-Za-z0-9_-]{43}$/u;
-const confirmName = (token: string): string => `u:${base64UrlEncode(sha256(utf8(token)))}`;
+/**
+ * The audit `staff` of a support link's press (D866): the mailbox's holder pressed the support page's button for the
+ * staff action a staff row already recorded (same action and ticket). Not an email, so it can't be a staff member's row.
+ */
+export const LINK_PRESS_STAFF = 'email-link';
 const SUPPORT_TICKET_RE = /^[A-Za-z0-9._#:-]{1,64}$/u;
 
 /** `limits`: the env's limit set (`limitsFor(ENV_NAME)`: dev or production, D340; lowered by EMAIL_TIGHTER_LIMITS, D793), picked once per request. */
@@ -386,8 +388,9 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   // or a mailed unlock token. A valid one never waits on a pool an attacker fills cheaply: it skips the prefix limits,
   // the app's quota, the domain cap and the general budget pool. An invalid one is ignored, never an error.
   const ticket = await readDeviceTicket(keys, b.deviceTicket, addrKey, now);
-  const grantHash = typeof b.unlockToken === 'string' && UNLOCK_TOKEN_RE.test(b.unlockToken) ? base64UrlEncode(sha256(utf8(b.unlockToken))) : null;
-  const claim: OwnerClaim | null = ticket ? { kind: 'ticket', id: ticket.id, addrKey, issuedAtMs: ticket.issuedAtMs, untagged: r.email === r.mailbox } : grantHash ? { kind: 'grant', hash: grantHash } : null;
+  // A grant counts only once its holder pressed the support page's button, and only for the exact address (D866).
+  const grantHash = typeof b.unlockToken === 'string' && UNLOCK_TOKEN_RE.test(b.unlockToken) ? tokenHash(b.unlockToken) : null;
+  const claim: OwnerClaim | null = ticket ? { kind: 'ticket', id: ticket.id, addrKey, issuedAtMs: ticket.issuedAtMs, untagged: r.email === r.mailbox } : grantHash ? { kind: 'grant', hash: grantHash, addrKey } : null;
   const claimOk = claim !== null && (await box.checkOwner(claim, now));
   if (!claimOk) {
     const agg = await aggregateLimits(ctx, request);
@@ -415,6 +418,8 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   const adm = await box.admit(ip, expiresAtMs, true, now, claimOk ? claim : null, ctx.limits.mailbox);
   if (!adm.ok) return tryLater(ctx, adm.reason);
   const owner = adm.owner;
+  // The unlock's one start (D866): when it was used, by a pseudonymous mailbox key prefix (never the address or token).
+  if (owner?.kind === 'grant') log({ event: 'unlock_grant_used', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: mbx.slice(0, 12) }, 'warn');
   const undoMailbox = async (alsoLive: boolean) => {
     if (adm.send) await box.refund(adm.send);
     await box.unadmit(adm.created, alsoLive ? expiresAtMs : null, now, owner);
@@ -1196,10 +1201,19 @@ async function staffGate(request: Request, ctx: Ctx, fields: string[]): Promise<
 }
 
 /** The audit row, written before the action it records (M2). */
-const audit = (deps: Deps, row: { staff: string; action: string; ticket: string; scopeId?: string; actionNonce?: number; jti?: string; subject?: string }) =>
-  deps.env.DB.prepare('INSERT INTO email_admin_audit (at_ms, staff, action, ticket, scope_id, action_nonce, jti, subject) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)')
-    .bind(deps.now(), row.staff, row.action, row.ticket, row.scopeId ?? null, row.actionNonce ?? null, row.jti ?? null, row.subject ?? null)
-    .run();
+const auditStatement = (deps: Deps, row: { staff: string; action: string; ticket: string; scopeId?: string; actionNonce?: number; jti?: string; subject?: string; detail?: Record<string, unknown> }) =>
+  deps.env.DB.prepare('INSERT INTO email_admin_audit (at_ms, staff, action, ticket, scope_id, action_nonce, jti, subject, detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)').bind(
+    deps.now(),
+    row.staff,
+    row.action,
+    row.ticket,
+    row.scopeId ?? null,
+    row.actionNonce ?? null,
+    row.jti ?? null,
+    row.subject ?? null,
+    row.detail ? JSON.stringify(row.detail) : null,
+  );
+const audit = (deps: Deps, row: Parameters<typeof auditStatement>[1]) => auditStatement(deps, row).run();
 
 /**
  * `{scopeId, actionNonce, ticket}` → a client proof for `("email", "email:" + scopeId)`: only for a registered scope
@@ -1259,10 +1273,47 @@ export async function handleClientProof(request: Request, ctx: Ctx): Promise<Res
 }
 
 /**
- * `{email, ticket}` (the address the user gave support) → a one-time unlock grant for the mailbox, its token **mailed to
- * the address** (abuse review M3): only the mailbox's holder gets it, never staff, never whoever asks. The start that
- * presents it counts as an owner's (D198). Clears nothing: the shared guess counters and every lock stay. At most 1 a
- * day and 3 in 30 days per mailbox. Audited first (staff, ticket, a 12-character prefix of the mailbox key).
+ * What staff are told (D866), in plain words, beside `mailed`: what the user gets and does next. Fixed sentences, no
+ * address and no token.
+ */
+export const STAFF_NOTES = Object.freeze({
+  unlockMailed:
+    'We emailed the user a link to unlock sign-in with this email. They open it, press “Unlock my email”, then sign in again in the same browser. The link works once, for 24 hours.',
+  unsuppressMailed:
+    'We emailed the user a link to confirm this email is theirs. They open it and press “Yes, this is my email”. Then we send sign-in codes to it again. The link works once, for 24 hours.',
+  suppressed: 'Nothing was sent: we don’t send emails to this address now (an earlier email bounced or was marked as spam). Use admin/unsuppress first. Once the user has confirmed, unlock again.',
+  notSuppressed: 'Nothing was sent: emails to this address aren’t stopped, so there is nothing to confirm.',
+  notMailed: 'The email couldn’t be sent just now. Nothing changed for the user. Try again in a few minutes.',
+});
+
+/** A support link's record and mail (D866): the link record first, then the mail; the token goes only into the mail. */
+async function mailSupportLink(
+  ctx: Ctx,
+  action: SupportAction,
+  i: { email: string; emailKey: string; mailboxKey: string | null; ticket: string; token: string; now: number },
+): Promise<boolean | null> {
+  const { deps } = ctx;
+  const record = {
+    action,
+    emailKey: i.emailKey,
+    mailboxKey: i.mailboxKey,
+    emailEnc: await sealLinkEmail(action, i.token, i.email),
+    ticket: i.ticket,
+    expiresAtMs: i.now + (action === 'unlock' ? UNLOCK_GRANT_TTL_MS : CONFIRM_TTL_MS),
+    pressedAtMs: null,
+  };
+  if (!(await challengeStub(deps, supportLinkName(action, i.token)).putSupportLink(record))) return null;
+  const look = mailLook(deps.env);
+  return mailOwner(ctx, action === 'unlock' ? unlockMail({ to: i.email, token: i.token, authOrigin: deps.env.AUTH_ORIGIN, look }) : confirmMail({ to: i.email, token: i.token, authOrigin: deps.env.AUTH_ORIGIN, look }));
+}
+
+/**
+ * `{email, ticket}` (the address the user gave support) → a one-time unlock grant for that exact address, its token
+ * **mailed to the address** (abuse review M3): only the mailbox's holder gets it, never staff, never whoever asks. The
+ * grant does nothing until its holder presses the button on `{authOrigin}/email/unlock` (D866); then the one start
+ * that presents it counts as an owner's (D198). Clears nothing: the shared guess counters and every lock stay. At most
+ * 1 a day and 3 in 30 days per mailbox (a mail the provider refused gives its place back). Audited first (staff,
+ * ticket, a 12-character prefix of the mailbox key). A suppressed address gets no mail and uses no place.
  */
 export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response> {
   const { deps } = ctx;
@@ -1273,21 +1324,29 @@ export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response
   const keys = await deps.keys();
   const mbx = await mailboxKey(keys, r.mailbox);
   const box = mailboxLimiter(deps, mbx);
-  if (!(await box.staffAction('unlock', deps.now()))) return fail(ctx, 429, 'staff_cap', 'This mailbox was unlocked already today, or 3 times in 30 days');
-  await audit(deps, { staff: gate.staff, action: 'unlock', ticket: gate.body.ticket as string, subject: mbx.slice(0, 12) });
-  // A suppressed address gets no mail (unsuppress first, with its own mailed confirmation).
-  if (await isSuppressed(deps, await suppressionKey(keys, r.email))) return ok(ctx, 200, { mailed: false, reason: 'suppressed' }, { code: 'suppressed' });
-  const token = `${UNLOCK_TOKEN_PREFIX}${randomId(32)}`;
-  await box.issueGrant(base64UrlEncode(sha256(utf8(token))), deps.now());
-  const mailed = await mailOwner(ctx, unlockMail({ to: r.email, token, authOrigin: deps.env.AUTH_ORIGIN, look: mailLook(deps.env) }));
+  const ticket = gate.body.ticket as string;
+  const emailKey = await suppressionKey(keys, r.email);
+  await audit(deps, { staff: gate.staff, action: 'unlock', ticket, subject: mbx.slice(0, 12) });
+  // A suppressed address gets no mail (unsuppress first, with its own mailed confirmation); checked before the cap,
+  // so the unlock after the user confirmed can still go out the same day.
+  if (await isSuppressed(deps, emailKey)) return ok(ctx, 200, { mailed: false, reason: 'suppressed', note: STAFF_NOTES.suppressed }, { code: 'suppressed' });
+  const at = deps.now();
+  if (!(await box.staffAction('unlock', at))) return fail(ctx, 429, 'staff_cap', 'This mailbox was unlocked already today, or 3 times in 30 days');
+  const token = newSupportToken('unlock');
+  await box.issueGrant(tokenHash(token), emailKey, at);
+  const mailed = await mailSupportLink(ctx, 'unlock', { email: r.email, emailKey, mailboxKey: mbx, ticket, token, now: at });
+  if (mailed === null) return fail(ctx, 500, 'internal', 'Could not store the unlock');
+  if (!mailed) await box.unstaffAction('unlock', at);
   log({ event: 'mailbox_unlocked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: mailed ? 'ok' : 'error', subject: mbx.slice(0, 12) }, 'warn');
-  return ok(ctx, 200, { mailed }, { code: mailed ? 'mailed' : 'not_mailed' });
+  return ok(ctx, 200, { mailed, note: mailed ? STAFF_NOTES.unlockMailed : STAFF_NOTES.notMailed }, { code: mailed ? 'mailed' : 'not_mailed' });
 }
 
 /**
  * `{email, ticket}` → mails the address a one-time confirmation (abuse review M3); its suppression (a bounce, or a
- * complaint the user withdrew) is removed only when the mailbox's holder confirms it (`POST /v1/email/confirm`).
- * Capped and audited as unlock. SendGrid keeps its own suppression list: the runbook removes the address there first.
+ * complaint the user withdrew) is removed only when the mailbox's holder presses the button on
+ * `{authOrigin}/email/confirm` (`POST /v1/email/confirm`, D866). Capped and audited as unlock; an address that isn't
+ * suppressed gets no mail and uses no place. SendGrid keeps its own suppression list: the runbook removes the address
+ * there first.
  */
 export async function handleUnsuppress(request: Request, ctx: Ctx): Promise<Response> {
   const { deps } = ctx;
@@ -1297,15 +1356,17 @@ export async function handleUnsuppress(request: Request, ctx: Ctx): Promise<Resp
   if (!r?.ok) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
   const keys = await deps.keys();
   const box = mailboxLimiter(deps, await mailboxKey(keys, r.mailbox));
-  if (!(await box.staffAction('unsuppress', deps.now()))) return fail(ctx, 429, 'staff_cap', 'This mailbox was unsuppressed already today, or 3 times in 30 days');
   const key = await suppressionKey(keys, r.email);
-  await audit(deps, { staff: gate.staff, action: 'unsuppress', ticket: gate.body.ticket as string, subject: key.slice(0, 12) });
+  const ticket = gate.body.ticket as string;
+  await audit(deps, { staff: gate.staff, action: 'unsuppress', ticket, subject: key.slice(0, 12) });
   const row = await deps.env.DB.prepare('SELECT 1 AS x FROM email_suppressions WHERE email_key = ?1').bind(key).first();
-  if (!row) return ok(ctx, 200, { mailed: false, reason: 'not_suppressed' }, { code: 'not_suppressed' });
-  const token = `${CONFIRM_TOKEN_PREFIX}${randomId(32)}`;
-  if (!(await challengeStub(deps, confirmName(token)).putConfirm({ action: 'unsuppress', emailKey: key, expiresAtMs: deps.now() + CONFIRM_TTL_MS }))) return fail(ctx, 500, 'internal', 'Could not store the confirmation');
-  const mailed = await mailOwner(ctx, confirmMail({ to: r.email, token, authOrigin: deps.env.AUTH_ORIGIN, look: mailLook(deps.env) }));
-  return ok(ctx, 200, { mailed }, { code: mailed ? 'mailed' : 'not_mailed' });
+  if (!row) return ok(ctx, 200, { mailed: false, reason: 'not_suppressed', note: STAFF_NOTES.notSuppressed }, { code: 'not_suppressed' });
+  const at = deps.now();
+  if (!(await box.staffAction('unsuppress', at))) return fail(ctx, 429, 'staff_cap', 'This mailbox was unsuppressed already today, or 3 times in 30 days');
+  const mailed = await mailSupportLink(ctx, 'unsuppress', { email: r.email, emailKey: key, mailboxKey: null, ticket, token: newSupportToken('unsuppress'), now: at });
+  if (mailed === null) return fail(ctx, 500, 'internal', 'Could not store the confirmation');
+  if (!mailed) await box.unstaffAction('unsuppress', at);
+  return ok(ctx, 200, { mailed, note: mailed ? STAFF_NOTES.unsuppressMailed : STAFF_NOTES.notMailed }, { code: mailed ? 'mailed' : 'not_mailed' });
 }
 
 /**
@@ -1328,22 +1389,100 @@ export async function handleRevokeTickets(request: Request, ctx: Ctx): Promise<R
   return ok(ctx, 200, { revoked: true });
 }
 
-/** `{token}` (from a mailed confirmation, on `authOrigin`) → does what staff asked once the mailbox's holder confirms. */
+// ---- the support pages' presses (D866) ----
+
+/**
+ * The checks both presses share: the body `{token}` of the action's form, the IP's limit, then the token's own. A
+ * token of the wrong form (another action's included) is `400 link_invalid`; the answers say only what the token's
+ * holder already knows (its own state), never whether another address exists.
+ */
+async function linkPress(request: Request, ctx: Ctx, action: SupportAction): Promise<{ ok: true; token: string } | { ok: false; response: Response }> {
+  const parsed = await readJson(request, MAX_BODY);
+  if (!parsed.ok) return { ok: false, response: fail(ctx, parsed.status, 'bad_request', parsed.message) };
+  const b = parsed.body;
+  if (!isObj(b) || !onlyKeys(b, ['token'])) return { ok: false, response: fail(ctx, 400, 'bad_request', 'Body must be {token}') };
+  const limited = await ipLimit(ctx, request, IP_LINK_LIMITS);
+  if (limited) return { ok: false, response: limited };
+  if (!isSupportToken(action, b.token)) return { ok: false, response: linkInvalid(ctx) };
+  const t = await limiter(ctx.deps, `link:${tokenHash(b.token)}`).hit(LINK_TOKEN_LIMITS, ctx.deps.now());
+  if (!t.ok) {
+    log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, limit: t.limit });
+    return { ok: false, response: tooMany(ctx, t.retryAfterMs) };
+  }
+  return { ok: true, token: b.token };
+}
+
+const linkInvalid = (ctx: Ctx): Response => fail(ctx, 400, 'link_invalid', 'The link is not valid');
+const linkUsed = (ctx: Ctx): Response => fail(ctx, 410, 'link_used', 'The link was already used');
+const linkExpired = (ctx: Ctx): Response => fail(ctx, 410, 'link_expired', 'The link expired');
+
+/**
+ * `POST /v1/email/unlock {token}` (from `{authOrigin}/email/unlock`, after the user pressed "Unlock my email"): the
+ * staff unlock's grant becomes usable (`activateGrant`) for the exact address it was mailed to. `200 {unlocked: true,
+ * email, expiresAtMs}`: the address the mail went to (the page keeps the token for the next sign-in with it, in this
+ * browser) and when the grant lapses. Pressing again while the grant is unused answers the same. `410 link_used` once a
+ * start took the grant, `410 link_expired` after 24 h, `400 link_invalid` for an unknown token. The first press is an
+ * audit row (`staff` LINK_PRESS_STAFF, the staff row's action and ticket) and a `unlock_link_pressed` log line.
+ */
+export async function handleUnlockLink(request: Request, ctx: Ctx): Promise<Response> {
+  const { deps } = ctx;
+  const p = await linkPress(request, ctx, 'unlock');
+  if (!p.ok) return p.response;
+  const now = deps.now();
+  const stub = challengeStub(deps, supportLinkName('unlock', p.token));
+  const link = await stub.pressSupportLink(false, now);
+  if (link.state === 'unknown') return linkInvalid(ctx);
+  if (link.state === 'used') return linkUsed(ctx);
+  if (link.state === 'expired') return linkExpired(ctx);
+  const rec = link.record;
+  const email = rec.action === 'unlock' && rec.mailboxKey ? await openLinkEmail('unlock', p.token, rec.emailEnc) : null;
+  if (email === null || !rec.mailboxKey) return linkInvalid(ctx);
+  if (link.firstPress) await audit(deps, { staff: LINK_PRESS_STAFF, action: 'unlock', ticket: rec.ticket, subject: rec.mailboxKey.slice(0, 12), detail: { step: 'link_pressed' } });
+  const g = await mailboxLimiter(deps, rec.mailboxKey).activateGrant(tokenHash(p.token), rec.emailKey, now);
+  if (g === 'used') {
+    await stub.markSupportUsed(now);
+    return linkUsed(ctx);
+  }
+  if (g === 'expired') return linkExpired(ctx);
+  if (g === 'unknown') return linkInvalid(ctx);
+  if (link.firstPress) log({ event: 'unlock_link_pressed', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: rec.mailboxKey.slice(0, 12) }, 'warn');
+  return ok(ctx, 200, { unlocked: true, email, expiresAtMs: rec.expiresAtMs });
+}
+
+/**
+ * `POST /v1/email/confirm {token}` (from `{authOrigin}/email/confirm`, after the user pressed "Yes, this is my email"):
+ * the exact address's suppression is removed, nothing else. Single use: the press uses the link up (atomically, in its
+ * object); the audit row (`staff` LINK_PRESS_STAFF, action `unsuppress`, the staff row's ticket) and the removal are one
+ * D1 batch, and if that fails the link is live again. `200 {confirmed: "unsuppress", email}`; `410 link_used`, `410
+ * link_expired`, `400 link_invalid` as for unlock.
+ */
 export async function handleConfirm(request: Request, ctx: Ctx): Promise<Response> {
   const { deps } = ctx;
-  const parsed = await readJson(request, MAX_BODY);
-  if (!parsed.ok) return fail(ctx, parsed.status, 'bad_request', parsed.message);
-  const b = parsed.body;
-  if (!isObj(b) || !onlyKeys(b, ['token']) || typeof b.token !== 'string' || !CONFIRM_TOKEN_RE.test(b.token)) return fail(ctx, 400, 'bad_request', 'Body must be {token}');
-  // A staff unsuppress's mailed link, not the login flow: production's resend bound in every env (D340).
-  const limited = await ipLimit(ctx, request, IP_RESEND_LIMITS);
-  if (limited) return limited;
-  const c = await challengeStub(deps, confirmName(b.token)).takeConfirm(deps.now());
-  if (!c) return fail(ctx, 410, 'confirm_expired', 'The link expired or was used');
-  const res = await deps.env.DB.prepare('DELETE FROM email_suppressions WHERE email_key = ?1').bind(c.emailKey).run();
-  const removed = (res.meta.changes ?? 0) > 0;
-  log({ event: 'suppression_removed', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: c.emailKey.slice(0, 12), count: removed ? 1 : 0 }, 'warn');
-  return ok(ctx, 200, { confirmed: c.action }, { count: removed ? 1 : 0 });
+  const p = await linkPress(request, ctx, 'unsuppress');
+  if (!p.ok) return p.response;
+  const now = deps.now();
+  const stub = challengeStub(deps, supportLinkName('unsuppress', p.token));
+  const link = await stub.pressSupportLink(true, now);
+  if (link.state === 'unknown') return linkInvalid(ctx);
+  if (link.state === 'used') return linkUsed(ctx);
+  if (link.state === 'expired') return linkExpired(ctx);
+  const rec = link.record;
+  const email = rec.action === 'unsuppress' ? await openLinkEmail('unsuppress', p.token, rec.emailEnc) : null;
+  if (email === null) return linkInvalid(ctx);
+  let removed = false;
+  try {
+    const db = deps.env.DB;
+    const [, del] = await db.batch([
+      auditStatement(deps, { staff: LINK_PRESS_STAFF, action: 'unsuppress', ticket: rec.ticket, subject: rec.emailKey.slice(0, 12), detail: { step: 'confirmed' } }),
+      db.prepare('DELETE FROM email_suppressions WHERE email_key = ?1').bind(rec.emailKey),
+    ]);
+    removed = (del?.meta.changes ?? 0) > 0;
+  } catch (err) {
+    await stub.restoreSupportLink(rec);
+    throw err;
+  }
+  log({ event: 'suppression_removed', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: rec.emailKey.slice(0, 12), count: removed ? 1 : 0 }, 'warn');
+  return ok(ctx, 200, { confirmed: rec.action, email }, { count: removed ? 1 : 0 });
 }
 
 // ---- JWKS and discovery ----
@@ -1437,6 +1576,7 @@ export const ROUTES = {
   unlock: '/v1/email/admin/unlock',
   unsuppress: '/v1/email/admin/unsuppress',
   revokeTickets: '/v1/email/admin/revoke-tickets',
+  unlockLink: '/v1/email/unlock',
   confirm: '/v1/email/confirm',
   jwks: '/v1/email/jwks.json',
   openid: '/v1/email/.well-known/openid-configuration',
@@ -1445,12 +1585,12 @@ export const ROUTES = {
 } as const;
 
 /** Routes whose limits key on the client's IP: refused without a usable `cf-connecting-ip` (L4). */
-const IP_ROUTES: ReadonlySet<string> = new Set([ROUTES.start, ROUTES.homeStart, ROUTES.resend, ROUTES.verify, ROUTES.confirm, ROUTES.googleMatch, ROUTES.googleRecord, ROUTES.sendgridWebhook]);
+const IP_ROUTES: ReadonlySet<string> = new Set([ROUTES.start, ROUTES.homeStart, ROUTES.resend, ROUTES.verify, ROUTES.unlockLink, ROUTES.confirm, ROUTES.googleMatch, ROUTES.googleRecord, ROUTES.sendgridWebhook]);
 const isStaffRoute = (path: string): boolean => path.startsWith('/v1/email/admin/');
 
 /** Which browser origin may call a POST route (null: no browser caller, no CORS). */
 function allowedOrigin(deps: Deps, path: string): string | null {
-  if (path === ROUTES.start || path === ROUTES.homeStart || path === ROUTES.resend || path === ROUTES.verify || path === ROUTES.confirm) return deps.env.AUTH_ORIGIN;
+  if (path === ROUTES.start || path === ROUTES.homeStart || path === ROUTES.resend || path === ROUTES.verify || path === ROUTES.unlockLink || path === ROUTES.confirm) return deps.env.AUTH_ORIGIN;
   if (path === ROUTES.googleMatch || path === ROUTES.googleRecord) return deps.env.VAULT_ORIGIN;
   return null;
 }
@@ -1481,6 +1621,7 @@ export async function route(request: Request, deps: Deps): Promise<Response> {
       [ROUTES.unlock]: handleUnlock,
       [ROUTES.unsuppress]: handleUnsuppress,
       [ROUTES.revokeTickets]: handleRevokeTickets,
+      [ROUTES.unlockLink]: handleUnlockLink,
       [ROUTES.confirm]: handleConfirm,
       [ROUTES.sendgridWebhook]: handleSendgridWebhook,
     };

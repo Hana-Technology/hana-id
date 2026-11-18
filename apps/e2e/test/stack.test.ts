@@ -618,6 +618,23 @@ describe('in-memory Durable Objects', () => {
     await a.state.storage.deleteAll();
     expect(a.state.storage.kv.get('k')).toBeUndefined();
   });
+
+  it('an alarm past Node’s longest timer (a 30-day staff log) waits, instead of firing at once again and again (D866)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const ns = new MemoryNamespace(Counter, () => ({}));
+      const a = ns.get(ns.idFromName('long'));
+      const at = Date.now() + 30 * 86_400_000;
+      await a.state.storage.setAlarm(at);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(a.alarms).toBe(0);
+      expect(await a.state.storage.getAlarm()).toBe(at);
+      await vi.advanceTimersByTimeAsync(30 * 86_400_000);
+      expect(a.alarms).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('the email issuer: apps/email-issuer’s Worker, its app lookups through the API’s IssuerRpc (D434)', () => {

@@ -1,5 +1,6 @@
 // The `EmailChallenge` Durable Object (spec "Codes, attempts, expiry, replay"): one object per challenge (named by
-// sha256 of its id's public half, challenge-id.ts) or per link ticket (named `t:` + sha256 of the ticket). It holds the
+// sha256 of its id's public half, challenge-id.ts), per link ticket (named `t:` + sha256 of the ticket) or per support
+// link (D866: `g:` or `u:` + sha256 of a mailed unlock or confirm token, support-link.ts). For a challenge it holds the
 // normalized address only encrypted under a key only the client holds (the id's secret half), only for resends and
 // only until the challenge ends (≤ 10 min, D197), the code only as HMAC-SHA256(K_code, challengeId ‖ code)
 // (compared in constant time), the purpose and its nonce (or, for auto_link, what the nonce needs at minting), for a
@@ -10,7 +11,8 @@ import { DurableObject } from 'cloudflare:workers';
 import { base64UrlDecode, bytesEqual } from './bytes.ts';
 import type { Purpose } from './commitment.ts';
 import type { Env } from './env.ts';
-import { MAX_ATTEMPTS, MAX_RESENDS, RESEND_SPACING_MS } from './limits.ts';
+import { LINK_TOMBSTONE_MS, MAX_ATTEMPTS, MAX_RESENDS, RESEND_SPACING_MS } from './limits.ts';
+import type { SupportAction } from './support-link.ts';
 import type { OwnerRef, Reservation } from './rate-limiter.ts';
 
 export interface ChallengeRecord {
@@ -71,13 +73,36 @@ export interface TicketRecord {
   expiresAtMs: number;
 }
 
-/** A staff action that waits for the mailbox holder's confirmation (abuse review M3). */
-export interface ConfirmRecord {
-  action: 'unsuppress';
-  /** The suppression key (K_sup HMAC) of the exact address. */
+/**
+ * A support link (D866, support-link.ts): a staff action that waits for the mailbox holder's press on the support page
+ * (abuse review M3). `emailEnc` is the address under the token's key; `mailboxKey` an unlock's limiter subject.
+ */
+export interface SupportLinkRecord {
+  action: SupportAction;
+  /** The suppression key (K_sup HMAC) of the exact address the mail went to. */
   emailKey: string;
+  /** An unlock: the mailbox limiter's subject (HMAC under K_rl of the mailbox), where the grant is. */
+  mailboxKey: string | null;
+  emailEnc: string;
+  /** The support reference staff gave (for the audit row of the press); not secret. */
+  ticket: string;
   expiresAtMs: number;
+  /** The first press (an unlock may be pressed again while its grant is unused; a confirm once). */
+  pressedAtMs: number | null;
 }
+
+/** What is left of a support link once it was used or expired: no address, no keys, no reference. */
+interface SupportTombstone {
+  action: SupportAction;
+  expiresAtMs: number;
+  usedAtMs: number | null;
+}
+
+export type SupportLinkState =
+  | { state: 'live'; record: SupportLinkRecord; firstPress: boolean }
+  | { state: 'used' }
+  | { state: 'expired' }
+  | { state: 'unknown' };
 
 export type VerifyOutcome = { result: 'ok'; record: ChallengeRecord } | { result: 'wrong'; attemptsLeft: number; expiresAtMs: number } | { result: 'gone' };
 
@@ -86,7 +111,7 @@ export type SendOutcome = { result: 'ok'; record: ChallengeRecord; previous: { l
 
 const RECORD = 'challenge';
 const TICKET = 'ticket';
-const CONFIRM = 'confirm';
+const SUPPORT = 'support';
 
 const without = (list: Reservation[], r: Reservation | null): Reservation[] => {
   if (!r) return list;
@@ -202,25 +227,69 @@ export class Challenge extends DurableObject<Env> {
     return t.expiresAtMs > now && t.appId === appId ? t : null;
   }
 
-  // ---- mailed confirmations (admin/unsuppress → confirm) ----
+  // ---- support links (admin/unlock, admin/unsuppress → the support pages' presses, D866) ----
 
-  async putConfirm(c: ConfirmRecord): Promise<boolean> {
+  async putSupportLink(c: SupportLinkRecord): Promise<boolean> {
     const kv = this.ctx.storage.kv;
-    if (kv.get(RECORD) !== undefined || kv.get(TICKET) !== undefined || kv.get(CONFIRM) !== undefined) return false;
-    kv.put(CONFIRM, c);
+    if (kv.get(RECORD) !== undefined || kv.get(TICKET) !== undefined || kv.get(SUPPORT) !== undefined) return false;
+    kv.put(SUPPORT, c);
     await this.ctx.storage.setAlarm(c.expiresAtMs + 1);
     return true;
   }
 
-  /** Single use: returns the confirmation (and deletes it) when it is live. */
-  async takeConfirm(now: number = Date.now()): Promise<ConfirmRecord | null> {
-    const c = this.ctx.storage.kv.get<ConfirmRecord>(CONFIRM);
-    if (!c) return null;
-    await this.ctx.storage.deleteAll();
-    return c.expiresAtMs > now ? c : null;
+  /** The link's state now; an expired live record becomes its tombstone. */
+  private support(now: number): { live: SupportLinkRecord } | { gone: 'used' | 'expired' } | null {
+    const kv = this.ctx.storage.kv;
+    const v = kv.get<SupportLinkRecord | SupportTombstone>(SUPPORT);
+    if (!v) return null;
+    if (!('emailEnc' in v)) return { gone: v.usedAtMs !== null ? 'used' : 'expired' };
+    if (v.expiresAtMs <= now) {
+      kv.put(SUPPORT, { action: v.action, expiresAtMs: v.expiresAtMs, usedAtMs: null } satisfies SupportTombstone);
+      return { gone: 'expired' };
+    }
+    return { live: v };
   }
 
+  /**
+   * A press of the link's button (atomic): the live record, and whether this is its first press (recorded now). A
+   * confirm (`once`) is used up by it: the record becomes its tombstone, so a second press finds `used`. An unlock is
+   * used up by the start its grant lets through (the mailbox object knows), `markSupportUsed` then.
+   */
+  async pressSupportLink(once: boolean, now: number = Date.now()): Promise<SupportLinkState> {
+    const s = this.support(now);
+    if (!s) return { state: 'unknown' };
+    if ('gone' in s) return { state: s.gone };
+    const firstPress = s.live.pressedAtMs === null;
+    const kv = this.ctx.storage.kv;
+    if (once) kv.put(SUPPORT, { action: s.live.action, expiresAtMs: s.live.expiresAtMs, usedAtMs: now } satisfies SupportTombstone);
+    else if (firstPress) kv.put(SUPPORT, { ...s.live, pressedAtMs: now });
+    return { state: 'live', record: s.live, firstPress };
+  }
+
+  /** A confirm whose action then failed: the record is live again (its first press kept), so the user can retry. */
+  restoreSupportLink(c: SupportLinkRecord): void {
+    const v = this.ctx.storage.kv.get<SupportLinkRecord | SupportTombstone>(SUPPORT);
+    if (v && !('emailEnc' in v) && v.usedAtMs !== null) this.ctx.storage.kv.put(SUPPORT, c);
+  }
+
+  /** The link was used (an unlock's grant was spent): only its tombstone stays. */
+  markSupportUsed(now: number = Date.now()): void {
+    const v = this.ctx.storage.kv.get<SupportLinkRecord | SupportTombstone>(SUPPORT);
+    if (v) this.ctx.storage.kv.put(SUPPORT, { action: v.action, expiresAtMs: v.expiresAtMs, usedAtMs: 'emailEnc' in v ? now : v.usedAtMs } satisfies SupportTombstone);
+  }
+
+  /**
+   * At expiry: a support link keeps only its tombstone, for LINK_TOMBSTONE_MS more (the page can still say "expired" or
+   * "already used"); everything else, and a tombstone past that, is deleted.
+   */
   override async alarm(): Promise<void> {
+    const v = this.ctx.storage.kv.get<SupportLinkRecord | SupportTombstone>(SUPPORT);
+    const until = v ? v.expiresAtMs + LINK_TOMBSTONE_MS : 0;
+    if (v && Date.now() < until) {
+      if ('emailEnc' in v) this.ctx.storage.kv.put(SUPPORT, { action: v.action, expiresAtMs: v.expiresAtMs, usedAtMs: null } satisfies SupportTombstone);
+      await this.ctx.storage.setAlarm(until + 1);
+      return;
+    }
     await this.ctx.storage.deleteAll();
   }
 }

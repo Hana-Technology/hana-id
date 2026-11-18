@@ -1,6 +1,7 @@
 /*
  * The sign-in popup (login-page.ts), its callback (callback-page.ts, home-callback-page.ts), the email step
- * (email-page.ts) and the email sharing sheet (share-page.ts), on the design system's login modal pattern (D765).
+ * (email-page.ts), the email sharing sheet (share-page.ts) and the support pages (support-page.ts, D866), on the
+ * design system's login modal pattern (D765).
  */
 
 /* The method chooser: the system's providers, one primary (Google), email second. */
@@ -114,4 +115,16 @@ p.address {
 
 p.address .mono {
   font-size: var(--jp-text-md);
+}
+
+/* ---- the support pages (support-page.ts, D866): /email/unlock and /email/confirm ---- */
+
+/* The heading takes the focus after a press (so a screen reader reads the answer from the top): no ring for it. */
+.support [tabindex='-1']:focus {
+  outline: none;
+}
+
+/* The address the mail went to wraps at its own break points (dom.ts addressText). */
+.support .support-email {
+  overflow-wrap: anywhere;
 }

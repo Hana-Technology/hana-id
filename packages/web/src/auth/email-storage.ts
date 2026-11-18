@@ -10,6 +10,11 @@
 //   `hana.dt.<b64url(sha256(trimmed lowercased address))>`: the issuer's owner proof of an earlier verified code at that
 //   exact address (`dt2.…`, 30 days, D198), sent with the next `start`. The key is a hash so the store lists no address.
 //   A ticket can't sign anyone in: it only lets its owner's code mail past the shared limits. At most 5 are kept.
+// - A staff unlock (D866), in localStorage under `hana.ug`: one entry, the token of the unlock link this browser's
+//   `/email/unlock` page pressed (`ug1.…`), the address the issuer said it is for, and when it lapses (24 h after the
+//   mail). /login/email sends it with each `start` while it lasts: the issuer counts it only for that exact address,
+//   once, and ignores it otherwise. It can't sign anyone in either. Dropped after a sign-in with that address, or once
+//   it lapsed.
 import { RELAY_ID_PATTERN, type LoginMethod, base64UrlDecode, base64UrlEncode, isEmailHint, isLogoUrl, sha256, utf8 } from '@hana-id/core';
 import { LOGIN_ENTRY_MAX_AGE_MS } from './login-storage.ts';
 
@@ -210,5 +215,63 @@ export function saveDeviceTicket(storage: Storage | null, email: string, ticket:
     storage.setItem(key, JSON.stringify({ t: ticket, at: now } satisfies StoredTicket));
   } catch {
     // Storage full or blocked: no ticket next time.
+  }
+}
+
+// ---- a staff unlock (D866) ----
+
+export const UNLOCK_TOKEN_KEY = 'hana.ug';
+/** `ug1.` + 43 base64url characters (apps/email-issuer support-link.ts). */
+export const UNLOCK_TOKEN_RE = /^ug1\.[A-Za-z0-9_-]{43}$/u;
+/** The issuer's grant lasts 24 h from its mail: an entry claiming more is refused. */
+const UNLOCK_MAX_MS = 24 * 3_600_000 + 60_000;
+
+interface StoredUnlock {
+  t: string;
+  e: string;
+  until: number;
+}
+
+function readUnlock(raw: string | null): StoredUnlock | null {
+  try {
+    const v: unknown = JSON.parse(raw ?? 'null');
+    return isObj(v) && typeof v.t === 'string' && UNLOCK_TOKEN_RE.test(v.t) && typeof v.e === 'string' && v.e.length <= 320 && isInt(v.until) ? { t: v.t, e: v.e, until: v.until } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps the pressed unlock (replacing an older one). False when storage refused it: the page then says so. */
+export function saveUnlockToken(storage: Storage | null, token: string, email: string, untilMs: number, now: number): boolean {
+  if (!storage || !UNLOCK_TOKEN_RE.test(token) || untilMs <= now || untilMs > now + UNLOCK_MAX_MS) return false;
+  try {
+    storage.setItem(UNLOCK_TOKEN_KEY, JSON.stringify({ t: token, e: email, until: untilMs } satisfies StoredUnlock));
+    return readUnlock(storage.getItem(UNLOCK_TOKEN_KEY))?.t === token;
+  } catch {
+    return false;
+  }
+}
+
+/** The live unlock token, or null (none, lapsed, malformed, storage unavailable). A lapsed one is dropped. */
+export function liveUnlockToken(storage: Storage | null, now: number): string | null {
+  if (!storage) return null;
+  try {
+    const u = readUnlock(storage.getItem(UNLOCK_TOKEN_KEY));
+    if (u && u.until > now && u.until <= now + UNLOCK_MAX_MS) return u.t;
+    storage.removeItem(UNLOCK_TOKEN_KEY);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** After a sign-in with `email`: its unlock was used (or not needed), so it is dropped. Other addresses keep it. */
+export function dropUnlockTokenFor(storage: Storage | null, email: string): void {
+  if (!storage) return;
+  try {
+    const u = readUnlock(storage.getItem(UNLOCK_TOKEN_KEY));
+    if (u && u.e.trim().toLowerCase() === email.trim().toLowerCase()) storage.removeItem(UNLOCK_TOKEN_KEY);
+  } catch {
+    // Nothing to do: it lapses in 24 h.
   }
 }

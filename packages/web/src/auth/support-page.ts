@@ -14,8 +14,8 @@
 // (D853): done, already used, expired, not valid, too many tries, or can't be reached (with "Try again"). After it the
 // page offers nothing else: the user goes back to the app.
 //
-// SECURITY: the token is read from the fragment only and checked against its form before anything is shown; nothing
-// from the URL is ever put on the page. The one address shown comes from the issuer's answer (the address the mail went
+// SECURITY: the token is read from the fragment only, checked against its form before anything is shown, and removed
+// from the address bar at once (kept in memory); nothing from the URL is ever put on the page. The one address shown comes from the issuer's answer (the address the mail went
 // to, which only the token's holder could ask for), as a text node. The page loads nothing from another origin, fetches
 // only the issuer (its CSP's connect-src, pages.ts), and sends no referrer.
 import { ApiError, parseApiResponse } from '@hana-id/core';
@@ -130,7 +130,7 @@ export const SUPPORT_TEXT = {
 export type SupportState = 'ready' | 'busy' | 'done' | 'used' | 'expired' | 'invalid' | 'limited' | 'unreachable' | 'failed';
 
 export interface SupportPageDeps {
-  win: Pick<PageWindow, 'document' | 'location' | 'top'>;
+  win: Pick<PageWindow, 'document' | 'location' | 'top' | 'history'>;
   kind: SupportKind;
   api: SupportApi;
   /** window.localStorage, where an unlock is kept for the sign-in window; null when it can't be used. */
@@ -195,6 +195,15 @@ export function startSupportPage(deps: SupportPageDeps): SupportPage {
   }
   const raw = win.location.hash.startsWith('#') ? win.location.hash.slice(1) : '';
   const token = TOKEN_RE[kind].test(raw) ? raw : null;
+  // The token leaves the address bar at once (a shared screen, a screenshot, a bookmark); the page keeps it in memory
+  // for its button and "Try again" (D866 review). A reload then finds no token: "not valid", open the email's link again.
+  if (raw) {
+    try {
+      win.history.replaceState(null, '', win.location.pathname);
+    } catch {
+      // Nothing to do: the fragment stays, as before.
+    }
+  }
   if (!token) {
     ended('invalid', SUPPORT_TEXT.invalidTitle, SUPPORT_TEXT.invalid, 'danger');
     return page;

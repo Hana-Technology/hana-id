@@ -3135,7 +3135,9 @@ earlier `verify` of this exact address, 30 days, not revoked): the start uses th
 a day, outside the code limits, the live cap and the challenge cap, and its checks may use the ticket slot.
 `unlockToken` (mailed to the address by a staff `admin/unlock`, kept by `/email/unlock` once its button was pressed,
 D866): the mailbox's one-time grant, only once `POST /v1/email/unlock` made it active, only within 24 h, and only for
-the exact address it was mailed to (another `+tag` of the mailbox gets nothing); used by this start only;
+the exact address it was mailed to (another `+tag` of the mailbox gets nothing); used by this start only; with a
+`deviceTicket` too, an active grant decides (the ticket's allowance is untouched; the start's checks use the ticket
+slot, then the grant's own 2);
 its challenge's mails are free and its checks use the ticket slot then the grant slot; given back if the start is
 refused later or its mail fails; logged `unlock_grant_used` (the mailbox key's prefix). Either skips the prefix limits, the app's quota, the recipient domain's cap and the
 general budget pool (it draws on the owner pool). An invalid one is ignored, never an error.
@@ -3327,7 +3329,10 @@ row. One shared bucket of 20 staff actions an hour per staff member, all routes 
   guess counters, the trip and every lock stay. Never logged. `429 staff_cap` past 1 a day or 3 in 30 days per
   mailbox (a mail the provider refused, `mailed: false`, gives its place back). Audit (first): `action: "unlock"`,
   staff, ticket, `subject` = 12 characters of the mailbox key (never the address); log `mailbox_unlocked` (warn).
-  `note`: a fixed plain sentence for staff, what the user gets and does (`STAFF_NOTES`, D866).
+  `note`: a fixed plain sentence for staff, what the user gets and does (`STAFF_NOTES`, D866). `{mailed: false}`: the
+  provider refused the mail with an HTTP error (or the staff pool is spent): the place comes back. `{mailed: false,
+  reason: "unsure"}`: no answer (a timeout, a network error): the mail may have gone, so the place stays used. Not for
+  Passport Home: `POST /v1/email/home/start` takes no `unlockToken` (D619).
 - **`POST /v1/email/admin/unsuppress`** `{email, ticket}` → `200 {mailed, note}` (or `{mailed: false, reason:
   "not_suppressed", note}`, which mails nothing and uses no place): mails the address a one-time confirmation
   (`{authOrigin}/email/confirm#uc1.…`, 24 h); the suppression row goes only when its holder presses the page's button
@@ -3347,9 +3352,10 @@ link_used`; one past its 24 h `410 link_expired` (for a week after; then `link_i
 
 - **`/v1/email/unlock`** → `200 {unlocked: true, email, expiresAtMs}`: the staff unlock's grant is active for the
   exact address it was mailed to (`email`, the address the mail went to; `expiresAtMs`, when the grant lapses). Pressing
-  again while the grant is unused answers the same; once a `start` used it, `410 link_used`. Clears nothing. The first
-  press: an audit row (`staff` `email-link`, `action: "unlock"`, the staff row's ticket and subject, `detail`
-  `{"step":"link_pressed"}`) and the log `unlock_link_pressed` (warn).
+  again while the grant is unused answers the same; once a `start` used it, `410 link_used`. Clears nothing. Every
+  press writes an audit row (`staff` `email-link`, `action: "unlock"`, the staff row's ticket and subject, `detail`
+  `{"step":"link_pressed"}`) before the grant changes, until one was written (two presses at once may write two; a
+  press whose row fails changes nothing); the first is logged `unlock_link_pressed` (warn).
 - **`/v1/email/confirm`** → `200 {confirmed: "unsuppress", email}`: that exact address's suppression is removed (log
   `suppression_removed`), nothing else. Single use. The audit row (`staff` `email-link`, `action: "unsuppress"`, the
   staff row's ticket, `detail` `{"step":"confirmed"}`) and the removal are one D1 batch; if it fails (`500`), the link

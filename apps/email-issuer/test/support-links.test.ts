@@ -152,7 +152,75 @@ describe('POST /v1/email/unlock (the unlock page’s button, D866)', () => {
     expect(await press({ token })).toEqual([400, 'link_invalid']);
   });
 
-  it('an audit row that can’t be written on the first press changes nothing; the next press writes it and unlocks', async () => {
+  it('a returning browser (a device ticket and the pressed unlock): the grant decides, so the locked owner signs in (review 1)', async () => {
+    const { h, ask } = await staffHarness();
+    h.clock.now = Date.UTC(2027, 4, 2, 6);
+    const app = await seedApp(h);
+    const a = fresh('tg');
+    const userIp = '198.18.0.9';
+    // An earlier sign-in in the user's browser: a device ticket.
+    const s0 = (await (await startAs(h, app, a, {}, userIp)).json()) as { challengeId: string };
+    const { deviceTicket } = (await (await h.call('/v1/email/verify', { challengeId: s0.challengeId, code: h.sender.codeFor(a) }, { ip: userIp })).json()) as { deviceTicket: string };
+    h.clock.now += 3_600_000;
+    await lockOut(h, app, a);
+    // The owner's own wrong codes use the ticket slot up; then the ticket's start is refused too.
+    for (let i = 0; i < 3; i++) {
+      const r = await startAs(h, app, a, { deviceTicket }, userIp);
+      if (r.status !== 202) break;
+      const { challengeId } = (await r.json()) as { challengeId: string };
+      const wrong = h.sender.codeFor(a) === '000000' ? '111111' : '000000';
+      for (let k = 0; k < 5; k++) if ((await h.call('/v1/email/verify', { challengeId, code: wrong }, { ip: userIp })).status !== 400) break;
+    }
+    expect((await startAs(h, app, a, { deviceTicket }, userIp)).status).toBe(429);
+    expect((await ask('/v1/email/admin/unlock', { email: a, ticket: 'SUP-110' })).status).toBe(200);
+    const token = unlockTokenIn(h.sender.to(a).at(-1)!.text);
+    // Both before the press: still refused (the grant isn't active, the ticket's slot is used up).
+    expect((await startAs(h, app, a, { deviceTicket, unlockToken: token }, userIp)).status).toBe(429);
+    expect((await h.call('/v1/email/unlock', { token })).status).toBe(200);
+    const s = await startAs(h, app, a, { deviceTicket, unlockToken: token }, userIp);
+    expect(s.status).toBe(202);
+    const { challengeId } = (await s.json()) as { challengeId: string };
+    expect((await h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor(a) }, { ip: userIp })).status).toBe(200);
+    // One start only: the next with both is refused again, and the page says used.
+    expect((await startAs(h, app, a, { deviceTicket, unlockToken: token }, userIp)).status).toBe(429);
+    expect(await codeOf(await h.call('/v1/email/unlock', { token }))).toBe('link_used');
+  });
+
+  it('an active grant with a ticket the owner hasn’t used up: the grant is still the one spent, the ticket’s allowance untouched', async () => {
+    const { h, ask } = await staffHarness();
+    h.clock.now = Date.UTC(2027, 4, 3, 6);
+    const app = await seedApp(h);
+    const a = fresh('tu');
+    const s0 = (await (await startAs(h, app, a)).json()) as { challengeId: string };
+    const { deviceTicket } = (await (await h.call('/v1/email/verify', { challengeId: s0.challengeId, code: h.sender.codeFor(a) })).json()) as { deviceTicket: string };
+    await ask('/v1/email/admin/unlock', { email: a, ticket: 'SUP-111' });
+    const token = unlockTokenIn(h.sender.to(a).at(-1)!.text);
+    await h.call('/v1/email/unlock', { token });
+    expect((await startAs(h, app, a, { deviceTicket, unlockToken: token })).status).toBe(202);
+    expect(await codeOf(await h.call('/v1/email/unlock', { token }))).toBe('link_used');
+    const box = await mailboxObject(h, a);
+    const addrKey = await suppressionKey(await h.deps.keys(), a);
+    const day = Date.UTC(2027, 4, 3);
+    expect(await runInDurableObject(box, (_o, state) => state.storage.kv.get<number>(`a:${addrKey}:ticket-sends:1d@${day}`))).toBeUndefined();
+  });
+
+  it('Passport Home’s own sign-in takes no unlock (D619): the token is refused there, and Home stays locked', async () => {
+    const { h, ask } = await staffHarness();
+    h.clock.now = Date.UTC(2027, 4, 4, 6);
+    const app = await seedApp(h);
+    const a = fresh('uh');
+    await lockOut(h, app, a);
+    await ask('/v1/email/admin/unlock', { email: a, ticket: 'SUP-112' });
+    const token = unlockTokenIn(h.sender.to(a).at(-1)!.text);
+    await h.call('/v1/email/unlock', { token });
+    const identity = () => ({ homePublicKey: [...crypto.getRandomValues(new Uint8Array(32))], expiresAtMs: h.clock.now + 15 * 60_000, salt: [...crypto.getRandomValues(new Uint8Array(32))] });
+    expect(await codeOf(await h.call('/v1/email/home/start', { email: a, kind: 'identity', commitment: identity(), unlockToken: token }, { ip: '198.18.0.9' }))).toBe('bad_request');
+    expect((await h.call('/v1/email/home/start', { email: a, kind: 'identity', commitment: identity() }, { ip: '198.18.0.9' })).status).toBe(429);
+    // The staff note says so.
+    expect(STAFF_NOTES.unlockMailed).toContain('not to Passport Home yet');
+  });
+
+  it('every press writes an audit row before the grant changes, until one was written: two presses at once, one failing (review 4)', async () => {
     const { h, ask } = await staffHarness();
     const app = await seedApp(h);
     const a = fresh('ua');
@@ -160,13 +228,39 @@ describe('POST /v1/email/unlock (the unlock page’s button, D866)', () => {
     await ask('/v1/email/admin/unlock', { email: a, ticket: 'SUP-109' });
     const token = unlockTokenIn(h.sender.to(a).at(-1)!.text);
     const db = h.deps.env.DB;
-    h.deps.env = { ...h.deps.env, DB: { prepare: () => ({ bind: () => ({ run: async () => Promise.reject(new Error('d1 down')) }) }) } as unknown as typeof db };
-    expect((await h.call('/v1/email/unlock', { token })).status).toBe(500);
+    // The first audit INSERT fails, the second goes through: the press whose row failed changes nothing (500); the
+    // other writes its own row (the old "first press only" rule would have skipped it) and only then unlocks.
+    let inserts = 0;
+    const flaky = new Proxy(db, {
+      get(target, prop) {
+        if (prop !== 'prepare') return Reflect.get(target, prop).bind?.(target) ?? Reflect.get(target, prop);
+        return (sql: string) => {
+          const st = target.prepare(sql);
+          if (!sql.startsWith('INSERT INTO email_admin_audit')) return st;
+          return { bind: (...args: unknown[]) => ({ run: async () => (inserts++ === 0 ? Promise.reject(new Error('d1 down')) : st.bind(...args).run()) }) };
+        };
+      },
+    });
+    h.deps.env = { ...h.deps.env, DB: flaky as typeof db };
+    const [r1, r2] = await Promise.all([h.call('/v1/email/unlock', { token }), h.call('/v1/email/unlock', { token })]);
     h.deps.env = { ...h.deps.env, DB: db };
-    // The grant is still only mailed: a start with the token gets nothing.
-    expect((await startAs(h, app, a, { unlockToken: token })).status).toBe(429);
+    expect([r1.status, r2.status].sort()).toEqual([200, 500]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM email_admin_audit WHERE ticket = 'SUP-109' AND staff = ?1").bind(LINK_PRESS_STAFF).first('n')).toBe(1);
+    // A later press writes no more rows.
     expect((await h.call('/v1/email/unlock', { token })).status).toBe(200);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM email_admin_audit WHERE ticket = 'SUP-109' AND staff = ?1").bind(LINK_PRESS_STAFF).first('n')).toBe(1);
+    // An audit that fails alone: nothing changed (the grant still counts for nothing), the next press unlocks.
+    const b = fresh('ub');
+    await lockOut(h, app, b);
+    await ask('/v1/email/admin/unlock', { email: b, ticket: 'SUP-113' });
+    const tb = unlockTokenIn(h.sender.to(b).at(-1)!.text);
+    inserts = 0;
+    h.deps.env = { ...h.deps.env, DB: flaky as typeof db };
+    expect((await h.call('/v1/email/unlock', { token: tb })).status).toBe(500);
+    h.deps.env = { ...h.deps.env, DB: db };
+    expect((await startAs(h, app, b, { unlockToken: tb })).status).toBe(429);
+    expect((await h.call('/v1/email/unlock', { token: tb })).status).toBe(200);
+    expect((await startAs(h, app, b, { unlockToken: tb })).status).toBe(202);
   });
 
   it('limited per IP and per token (the token’s window counts every presser)', async () => {
@@ -196,11 +290,25 @@ describe('POST /v1/email/unlock (the unlock page’s button, D866)', () => {
     await suppress(h, a);
     expect(await (await ask('/v1/email/admin/unlock', { email: a, ticket: 'SUP-105' })).json()).toEqual({ mailed: false, reason: 'suppressed', note: STAFF_NOTES.suppressed });
     await env.DB.prepare('DELETE FROM email_suppressions WHERE email_key = ?1').bind(await suppressionKey(await h.deps.keys(), a)).run();
+    // The provider answered with an error: the mail never left, the place comes back.
     h.sender.next = { ok: false, reason: 'unavailable', providerStatus: 503 };
     expect(await (await ask('/v1/email/admin/unlock', { email: a, ticket: 'SUP-106' })).json()).toEqual({ mailed: false, note: STAFF_NOTES.notMailed });
     h.sender.next = { ok: true };
     expect(await (await ask('/v1/email/admin/unlock', { email: a, ticket: 'SUP-107' })).json()).toEqual({ mailed: true, note: STAFF_NOTES.unlockMailed });
     expect((await ask('/v1/email/admin/unlock', { email: a, ticket: 'SUP-108' })).status).toBe(429);
+    // No answer (a timeout, a network error): the mail may have gone out, so the place stays used (review 3).
+    const c = fresh('un');
+    h.sender.next = { ok: false, reason: 'unavailable' };
+    expect(await (await ask('/v1/email/admin/unlock', { email: c, ticket: 'SUP-114' })).json()).toEqual({ mailed: false, reason: 'unsure', note: STAFF_NOTES.unsure });
+    h.sender.next = { ok: true };
+    expect((await ask('/v1/email/admin/unlock', { email: c, ticket: 'SUP-115' })).status).toBe(429);
+    // A sender that throws: the same.
+    const d = fresh('ut');
+    const send = h.sender.send.bind(h.sender);
+    h.sender.send = async () => Promise.reject(new Error('socket'));
+    expect(await (await ask('/v1/email/admin/unlock', { email: d, ticket: 'SUP-116' })).json()).toEqual({ mailed: false, reason: 'unsure', note: STAFF_NOTES.unsure });
+    h.sender.send = send;
+    expect((await ask('/v1/email/admin/unlock', { email: d, ticket: 'SUP-117' })).status).toBe(429);
   });
 });
 
@@ -259,6 +367,35 @@ describe('POST /v1/email/confirm (the confirm page’s button, D866)', () => {
     expect(await press(token)).toEqual([410, 'link_expired']);
     // Still suppressed.
     expect(await env.DB.prepare('SELECT 1 AS x FROM email_suppressions WHERE email_key = ?1').bind(await suppressionKey(await h.deps.keys(), a)).first('x')).toBe(1);
+  });
+
+  it('two presses at once: one confirms, the other finds it used', async () => {
+    const { h, ask } = await staffHarness();
+    const a = fresh('c2');
+    await suppress(h, a);
+    await ask('/v1/email/admin/unsuppress', { email: a, ticket: 'SUP-203' });
+    const token = confirmTokenIn(h.sender.to(a).at(-1)!.text);
+    const rs = await Promise.all([h.call('/v1/email/confirm', { token }), h.call('/v1/email/confirm', { token })]);
+    expect(rs.map((r) => r.status).sort()).toEqual([200, 410]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM email_admin_audit WHERE ticket = 'SUP-203' AND staff = ?1").bind(LINK_PRESS_STAFF).first('n')).toBe(1);
+  });
+
+  it('a batch that commits and then throws: the link is given back; pressing again answers done and removes nothing more', async () => {
+    const { h, ask } = await staffHarness();
+    const a = fresh('cb');
+    await suppress(h, a);
+    await ask('/v1/email/admin/unsuppress', { email: a, ticket: 'SUP-204' });
+    const token = confirmTokenIn(h.sender.to(a).at(-1)!.text);
+    const db = h.deps.env.DB;
+    h.deps.env = { ...h.deps.env, DB: { prepare: db.prepare.bind(db), batch: async (s: D1PreparedStatement[]) => { await db.batch(s); throw new Error('lost answer'); } } as unknown as typeof db };
+    expect((await h.call('/v1/email/confirm', { token })).status).toBe(500);
+    h.deps.env = { ...h.deps.env, DB: db };
+    // It did commit: the suppression is gone.
+    expect(await env.DB.prepare('SELECT 1 AS x FROM email_suppressions WHERE email_key = ?1').bind(await suppressionKey(await h.deps.keys(), a)).first('x')).toBeNull();
+    // The user presses again (the page offered nothing but a retry): done, a second audit row, nothing else changes.
+    expect(await (await h.call('/v1/email/confirm', { token })).json()).toEqual({ confirmed: 'unsuppress', email: a });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM email_admin_audit WHERE ticket = 'SUP-204' AND staff = ?1").bind(LINK_PRESS_STAFF).first('n')).toBe(2);
+    expect((await h.call('/v1/email/confirm', { token })).status).toBe(410);
   });
 
   it('a D1 failure after the press gives the link back: the user can press again', async () => {

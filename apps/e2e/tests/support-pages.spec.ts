@@ -4,7 +4,8 @@
 //
 // - Unlock: wrong codes from many requesters reach the address's daily ceiling, so the sign-in window refuses it; staff
 //   unlock mails a link; the page does nothing until its button is pressed (the token is useless before); the press;
-//   then the sign-in window sends the kept token with `start` and signs in.
+//   then the sign-in window sends the kept token with `start` and signs in. The browser signed in once before, so it
+//   also holds a device ticket and sends both: the unlock decides (the review of PR 88).
 // - Confirm: a bounce stops code mail to the address (the window still says a code was sent: start answers alike);
 //   staff unsuppress mails a link; the press; codes arrive again and the sign-in works.
 //
@@ -54,12 +55,13 @@ const commitment = () => ({
  * so no requester lock: the mailbox-wide ceiling, the dev envs' 100 checks, D340): after it nobody can get a code.
  */
 async function lockOut(pk: string, to: string): Promise<void> {
+  const base = (await outbox(to)).filter((m) => m.kind === 'code').length;
   for (let i = 0; i < 40; i++) {
     const s = await issuer('start', { pk, email: to, purpose: 'session', commitment: commitment() });
     if (s.status === 429) return;
     expect(s.status).toBe(202);
     const { challengeId } = (await s.json()) as { challengeId: string };
-    await expect.poll(async () => (await outbox(to)).filter((m) => m.kind === 'code').length).toBeGreaterThan(i);
+    await expect.poll(async () => (await outbox(to)).filter((m) => m.kind === 'code').length).toBeGreaterThan(base + i);
     const code = /\b(\d{6})\b/u.exec((await outbox(to)).filter((m) => m.kind === 'code').at(-1)!.text)![1]!;
     for (let k = 0; k < 5; k++) {
       const v = await issuer('verify', { challengeId, code: code === '000000' ? '111111' : '000000' });
@@ -121,13 +123,35 @@ test('unlock: a locked address, the staff mail, the page’s one button, and the
   const app = await newApp({ loginMethods: 'google,email' });
   await openPartner(page, app);
   const to = address(info, 'unlock');
+  // The common case (review of PR 88): this browser signed in with the address before, so it holds a device ticket.
+  const first = await openEmail(page, 'first', to);
+  await codeStep(first, to, 0);
+  await okValue(page, 'first');
+  await page.evaluate(() => (window as any).e2e.run('logout', 'logout'));
+  await okValue(page, 'logout');
   await lockOut(app.pk, to);
 
-  // The sign-in window refuses the address now.
+  // The ticket still lets this browser get a code; the owner's own wrong codes use its slot up, then the window
+  // refuses the address.
   const locked = await openEmail(page, 'locked', to);
+  await expect(locked.locator('#email-code')).toBeVisible();
+  const code = /\b(\d{6})\b/u.exec((await outbox(to)).filter((m) => m.kind === 'code').at(-1)!.text)![1]!;
+  let refused = false;
+  for (let i = 0; i < 6 && !refused; i++) {
+    await locked.fill('#email-code', code === '000000' ? '111111' : '000000');
+    const answer = locked.waitForResponse((r) => r.url() === `${ISSUER_URL}/v1/email/verify`);
+    await locked.click('#email-verify');
+    refused = (await answer).status() === 429;
+  }
+  expect(refused).toBe(true);
   await expect(locked.locator('#app')).toContainText('Too many attempts. Try again later.');
   await locked.close();
   await closeOf(locked);
+  // A new attempt with the ticket is refused too.
+  const again = await openEmail(page, 'again', to);
+  await expect(again.locator('#app')).toContainText('Too many attempts. Try again later.');
+  await again.close();
+  await closeOf(again);
 
   // Staff: the unlock mail goes to the address itself; staff get a plain note, never the token.
   const staff = await control('/__e2e/staff', { action: 'unlock', email: to, ticket: 'E2E-UNLOCK' });
@@ -145,6 +169,8 @@ test('unlock: a locked address, the staff mail, the page’s one button, and the
   if (shoot(info)) await support.setViewportSize(PHONE);
   await support.goto(url);
   await expect(support.locator('h1')).toHaveText('Unlock sign-in with your email');
+  // The token left the address bar at once.
+  expect(new URL(support.url()).hash).toBe('');
   await expect(support.locator('button')).toHaveCount(1);
   await expect(support.locator('#support-press')).toHaveText('Unlock my email');
   expect(pressed).toEqual([]);
@@ -168,9 +194,13 @@ test('unlock: a locked address, the staff mail, the page’s one button, and the
   const popup = await openEmail(page, 'after', to);
   await codeStep(popup, to, before);
   expect((await okValue<{ evm: string }>(page, 'after')).evm).toMatch(/^0x[0-9a-fA-F]{40}$/u);
+  // The window sent both the device ticket and the unlock; the unlock decided.
   expect(starts.at(-1)?.unlockToken).toBe(token);
+  expect(starts.at(-1)?.deviceTicket).toMatch(/^dt2\./u);
   // Used: the link says so, and the kept token is gone from the browser.
-  await support.reload();
+  // Opened again from the email (a new load: the page itself has dropped the token from its address).
+  await support.goto('about:blank');
+  await support.goto(url);
   await support.click('#support-press');
   await expect(support.locator('.support-used')).toContainText('This link was already used to sign in.');
   expect(await support.evaluate(() => localStorage.getItem('hana.ug'))).toBeNull();
@@ -238,7 +268,9 @@ test('confirm: a bounced address gets no codes; the staff mail, the page’s one
   const popup = await openEmail(page, 'after', to);
   await codeStep(popup, to, 0);
   expect((await okValue<{ evm: string }>(page, 'after')).evm).toMatch(/^0x[0-9a-fA-F]{40}$/u);
-  await support.reload();
+  // Opened again from the email (a new load: the page itself has dropped the token from its address).
+  await support.goto('about:blank');
+  await support.goto(url);
   await support.click('#support-press');
   await expect(support.locator('.support-used')).toContainText('This link was already used');
   await mailShot(page, mail, 'confirm-mail');

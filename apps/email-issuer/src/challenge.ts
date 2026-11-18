@@ -87,8 +87,12 @@ export interface SupportLinkRecord {
   /** The support reference staff gave (for the audit row of the press); not secret. */
   ticket: string;
   expiresAtMs: number;
-  /** The first press (an unlock may be pressed again while its grant is unused; a confirm once). */
-  pressedAtMs: number | null;
+  /**
+   * When a press's audit row was first written (an unlock may be pressed again while its grant is unused; a confirm
+   * once). Until then every press writes one before it changes anything (D866 review: two simultaneous first presses
+   * can't skip it).
+   */
+  auditedAtMs: number | null;
 }
 
 /** What is left of a support link once it was used or expired: no address, no keys, no reference. */
@@ -99,7 +103,7 @@ interface SupportTombstone {
 }
 
 export type SupportLinkState =
-  | { state: 'live'; record: SupportLinkRecord; firstPress: boolean }
+  | { state: 'live'; record: SupportLinkRecord; audited: boolean }
   | { state: 'used' }
   | { state: 'expired' }
   | { state: 'unknown' };
@@ -251,7 +255,7 @@ export class Challenge extends DurableObject<Env> {
   }
 
   /**
-   * A press of the link's button (atomic): the live record, and whether this is its first press (recorded now). A
+   * A press of the link's button (atomic): the live record, and whether a press's audit row was already written. A
    * confirm (`once`) is used up by it: the record becomes its tombstone, so a second press finds `used`. An unlock is
    * used up by the start its grant lets through (the mailbox object knows), `markSupportUsed` then.
    */
@@ -259,23 +263,22 @@ export class Challenge extends DurableObject<Env> {
     const s = this.support(now);
     if (!s) return { state: 'unknown' };
     if ('gone' in s) return { state: s.gone };
-    const firstPress = s.live.pressedAtMs === null;
-    const kv = this.ctx.storage.kv;
-    if (once) kv.put(SUPPORT, { action: s.live.action, expiresAtMs: s.live.expiresAtMs, usedAtMs: now } satisfies SupportTombstone);
-    else if (firstPress) kv.put(SUPPORT, { ...s.live, pressedAtMs: now });
-    return { state: 'live', record: s.live, firstPress };
+    if (once) this.ctx.storage.kv.put(SUPPORT, { action: s.live.action, expiresAtMs: s.live.expiresAtMs, usedAtMs: now } satisfies SupportTombstone);
+    return { state: 'live', record: s.live, audited: s.live.auditedAtMs !== null };
   }
 
-  /** A confirm whose action then failed: the record is live again (its first press kept), so the user can retry. */
+  /** A press's audit row was written: true when it was the first (later presses then write none). */
+  markSupportAudited(now: number = Date.now()): boolean {
+    const v = this.ctx.storage.kv.get<SupportLinkRecord | SupportTombstone>(SUPPORT);
+    if (!v || !('emailEnc' in v) || v.auditedAtMs !== null) return false;
+    this.ctx.storage.kv.put(SUPPORT, { ...v, auditedAtMs: now });
+    return true;
+  }
+
+  /** A confirm whose action then failed: the record is live again, so the user can retry. */
   restoreSupportLink(c: SupportLinkRecord): void {
     const v = this.ctx.storage.kv.get<SupportLinkRecord | SupportTombstone>(SUPPORT);
     if (v && !('emailEnc' in v) && v.usedAtMs !== null) this.ctx.storage.kv.put(SUPPORT, c);
-  }
-
-  /** A first press whose audit row couldn't be written: it counts as not pressed, so the next press writes it. */
-  unpressSupportLink(): void {
-    const v = this.ctx.storage.kv.get<SupportLinkRecord | SupportTombstone>(SUPPORT);
-    if (v && 'emailEnc' in v) this.ctx.storage.kv.put(SUPPORT, { ...v, pressedAtMs: null });
   }
 
   /** The link was used (an unlock's grant was spent): only its tombstone stays. */

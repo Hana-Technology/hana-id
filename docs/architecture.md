@@ -383,17 +383,20 @@ grant).
    load: a scanner or a preview that opens the link only loads the page.
 3. **The press.** One `POST {issuer}/v1/email/unlock` or `/v1/email/confirm` `{token}` per press (the button is
    disabled while it runs; "Try again" after a limit or an unreachable service is another press). Unlock: the grant
-   becomes `active` (pressing again while it is unused answers the same; the first press is an audit row and an
-   `unlock_link_pressed` line), and the answer `{unlocked, email, expiresAtMs}` lets the page keep `{token, email,
-   until}` in `localStorage` (`hana.ug`). Confirm: the link is used up atomically, then one D1 batch writes the audit
+   becomes `active` (pressing again while it is unused answers the same; every press writes an audit row before the
+   grant changes, until one was written; the first is logged `unlock_link_pressed`), and the answer `{unlocked, email,
+   expiresAtMs}` lets the page keep `{token, sha256 of the address, until}` in `localStorage` (`hana.ug`). The page
+   removes the token from the address bar as soon as it has read it (`history.replaceState`; kept in memory for the
+   button and "Try again"). Confirm: the link is used up atomically, then one D1 batch writes the audit
    row and removes that exact address's suppression (a failed batch gives the link back). The page says done (the
    address, and for an unlock the time it lapses: "in this browser", one sign-in), already used, expired, not valid,
    too many tries, or can't be reached; after done it offers nothing else.
 4. **The sign-in after an unlock.** `/login/email` sends `unlockToken` with `start`; the mailbox object honours it only
-   when the grant is `active`, unexpired and for that exact address, and then as D198 designed: one owner start past the
+   when the grant is `active`, unexpired and for that exact address (with a device ticket too, the active grant
+   decides: a locked owner has used the ticket's slot up), and then as D198 designed: one owner start past the
    live and daily caps, its mail free from the owner pool, its checks in the ticket slot then the grant's own 2 outside
    the ceiling (`unlock_grant_used`). It clears no lock and no counter. Its start takes the grant (`used`; given back
-   if the start fails); the page then says "already used".
+   if the start fails); the page then says "already used". Passport Home's own sign-in takes no unlock (D619).
 
 ### Automatic linking (build plan batch 8b)
 

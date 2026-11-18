@@ -284,20 +284,25 @@ const shareOf = (ctx: Ctx, app: { id: string; perDay: number }): number => {
  * One staff-triggered mail to the address itself (unlock, unsuppress confirmation): from the owner pool, never the
  * address in a log. Returns whether the provider accepted it.
  */
-async function mailOwner(ctx: Ctx, message: ReturnType<typeof unlockMail>): Promise<boolean> {
+async function mailOwner(ctx: Ctx, message: ReturnType<typeof unlockMail>): Promise<MailOutcome> {
   const budget = await reserveBudget(ctx, null, 0, 'staff');
-  if (!budget) return false;
+  if (!budget) return 'refused';
   try {
     const res = await ctx.deps.sender.send(message);
-    if (!res.ok) await limiter(ctx.deps, 'global').refund(budget);
+    // Only an HTTP answer refusing it says the mail never left (D866 review); a timeout or a network error may have
+    // sent it, so its budget place and the staff place stay counted.
+    const outcome: MailOutcome = res.ok ? 'sent' : res.providerStatus !== undefined || res.reason === 'misconfigured' ? 'refused' : 'unsure';
+    if (outcome === 'refused') await limiter(ctx.deps, 'global').refund(budget);
     log({ event: 'staff_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: res.ok ? 'ok' : 'error', code: res.ok ? message.kind : res.reason }, res.ok ? 'info' : 'error');
-    return res.ok;
+    return outcome;
   } catch {
-    await limiter(ctx.deps, 'global').refund(budget);
     log({ event: 'staff_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: 'internal' }, 'error');
-    return false;
+    return 'unsure';
   }
 }
+
+/** A staff mail: the provider took it, clearly refused it (an HTTP error answer, or no key), or can't be told. */
+type MailOutcome = 'sent' | 'refused' | 'unsure';
 
 /**
  * One code mail to a recipient domain, within its day and the requester prefixes' shares of it (scan finding 2).
@@ -389,9 +394,14 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   // the app's quota, the domain cap and the general budget pool. An invalid one is ignored, never an error.
   const ticket = await readDeviceTicket(keys, b.deviceTicket, addrKey, now);
   // A grant counts only once its holder pressed the support page's button, and only for the exact address (D866).
+  // When both come (a returning browser with a pressed unlock), an active grant for this address decides: the ticket's
+  // own slot is what a locked owner has already used up, and the grant is what staff sent for that (D866 review).
   const grantHash = typeof b.unlockToken === 'string' && UNLOCK_TOKEN_RE.test(b.unlockToken) ? tokenHash(b.unlockToken) : null;
-  const claim: OwnerClaim | null = ticket ? { kind: 'ticket', id: ticket.id, addrKey, issuedAtMs: ticket.issuedAtMs, untagged: r.email === r.mailbox } : grantHash ? { kind: 'grant', hash: grantHash, addrKey } : null;
-  const claimOk = claim !== null && (await box.checkOwner(claim, now));
+  const grantClaim: OwnerClaim | null = grantHash ? { kind: 'grant', hash: grantHash, addrKey } : null;
+  const ticketClaim: OwnerClaim | null = ticket ? { kind: 'ticket', id: ticket.id, addrKey, issuedAtMs: ticket.issuedAtMs, untagged: r.email === r.mailbox } : null;
+  const grantOk = grantClaim !== null && (await box.checkOwner(grantClaim, now));
+  const claim: OwnerClaim | null = grantOk ? grantClaim : ticketClaim;
+  const claimOk = grantOk || (ticketClaim !== null && (await box.checkOwner(ticketClaim, now)));
   if (!claimOk) {
     const agg = await aggregateLimits(ctx, request);
     if (agg) return agg;
@@ -1278,20 +1288,26 @@ export async function handleClientProof(request: Request, ctx: Ctx): Promise<Res
  */
 export const STAFF_NOTES = Object.freeze({
   unlockMailed:
-    'We emailed the user a link to unlock sign-in with this email. They open it, press “Unlock my email”, then sign in again in the same browser. The link works once, for 24 hours.',
+    'We emailed the user a link to unlock sign-in with this email. They open it, press “Unlock my email”, then sign in again in the same browser. The link works once, for 24 hours. It works for signing in to an app, not to Passport Home yet.',
   unsuppressMailed:
     'We emailed the user a link to confirm this email is theirs. They open it and press “Yes, this is my email”. Then we send sign-in codes to it again. The link works once, for 24 hours.',
   suppressed: 'Nothing was sent: we don’t send emails to this address now (an earlier email bounced or was marked as spam). Use admin/unsuppress first. Once the user has confirmed, unlock again.',
   notSuppressed: 'Nothing was sent: emails to this address aren’t stopped, so there is nothing to confirm.',
   notMailed: 'The email couldn’t be sent just now. Nothing changed for the user. Try again in a few minutes.',
+  unsure:
+    'We couldn’t tell whether the email was sent. Ask the user to check their inbox and spam folder. If nothing arrives within an hour, try again tomorrow.',
 });
+
+/** The staff answer for a support mail's outcome: `mailed`, and an `unsure` reason when the provider couldn't be read. */
+const staffAnswer = (m: MailOutcome, sentNote: string): Record<string, unknown> =>
+  m === 'sent' ? { mailed: true, note: sentNote } : m === 'refused' ? { mailed: false, note: STAFF_NOTES.notMailed } : { mailed: false, reason: 'unsure', note: STAFF_NOTES.unsure };
 
 /** A support link's record and mail (D866): the link record first, then the mail; the token goes only into the mail. */
 async function mailSupportLink(
   ctx: Ctx,
   action: SupportAction,
   i: { email: string; emailKey: string; mailboxKey: string | null; ticket: string; token: string; now: number },
-): Promise<boolean | null> {
+): Promise<MailOutcome | null> {
   const { deps } = ctx;
   const record = {
     action,
@@ -1300,7 +1316,7 @@ async function mailSupportLink(
     emailEnc: await sealLinkEmail(action, i.token, i.email),
     ticket: i.ticket,
     expiresAtMs: i.now + (action === 'unlock' ? UNLOCK_GRANT_TTL_MS : CONFIRM_TTL_MS),
-    pressedAtMs: null,
+    auditedAtMs: null,
   };
   if (!(await challengeStub(deps, supportLinkName(action, i.token)).putSupportLink(record))) return null;
   const look = mailLook(deps.env);
@@ -1339,9 +1355,9 @@ export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response
     await box.unstaffAction('unlock', at);
     return fail(ctx, 500, 'internal', 'Could not store the unlock');
   }
-  if (!mailed) await box.unstaffAction('unlock', at);
-  log({ event: 'mailbox_unlocked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: mailed ? 'ok' : 'error', subject: mbx.slice(0, 12) }, 'warn');
-  return ok(ctx, 200, { mailed, note: mailed ? STAFF_NOTES.unlockMailed : STAFF_NOTES.notMailed }, { code: mailed ? 'mailed' : 'not_mailed' });
+  if (mailed === 'refused') await box.unstaffAction('unlock', at);
+  log({ event: 'mailbox_unlocked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: mailed === 'sent' ? 'ok' : 'error', subject: mbx.slice(0, 12) }, 'warn');
+  return ok(ctx, 200, staffAnswer(mailed, STAFF_NOTES.unlockMailed), { code: mailed === 'sent' ? 'mailed' : `not_mailed:${mailed}` });
 }
 
 /**
@@ -1371,8 +1387,8 @@ export async function handleUnsuppress(request: Request, ctx: Ctx): Promise<Resp
     await box.unstaffAction('unsuppress', at);
     return fail(ctx, 500, 'internal', 'Could not store the confirmation');
   }
-  if (!mailed) await box.unstaffAction('unsuppress', at);
-  return ok(ctx, 200, { mailed, note: mailed ? STAFF_NOTES.unsuppressMailed : STAFF_NOTES.notMailed }, { code: mailed ? 'mailed' : 'not_mailed' });
+  if (mailed === 'refused') await box.unstaffAction('unsuppress', at);
+  return ok(ctx, 200, staffAnswer(mailed, STAFF_NOTES.unsuppressMailed), { code: mailed === 'sent' ? 'mailed' : `not_mailed:${mailed}` });
 }
 
 /**
@@ -1427,8 +1443,9 @@ const linkExpired = (ctx: Ctx): Response => fail(ctx, 410, 'link_expired', 'The 
  * staff unlock's grant becomes usable (`activateGrant`) for the exact address it was mailed to. `200 {unlocked: true,
  * email, expiresAtMs}`: the address the mail went to (the page keeps the token for the next sign-in with it, in this
  * browser) and when the grant lapses. Pressing again while the grant is unused answers the same. `410 link_used` once a
- * start took the grant, `410 link_expired` after 24 h, `400 link_invalid` for an unknown token. The first press is an
- * audit row (`staff` LINK_PRESS_STAFF, the staff row's action and ticket) and a `unlock_link_pressed` log line.
+ * start took the grant, `410 link_expired` after 24 h, `400 link_invalid` for an unknown token. Every press writes an
+ * audit row (`staff` LINK_PRESS_STAFF, the staff row's action and ticket) before the grant changes, until one was
+ * written; the first is logged `unlock_link_pressed`.
  */
 export async function handleUnlockLink(request: Request, ctx: Ctx): Promise<Response> {
   const { deps } = ctx;
@@ -1443,14 +1460,12 @@ export async function handleUnlockLink(request: Request, ctx: Ctx): Promise<Resp
   const rec = link.record;
   const email = rec.action === 'unlock' && rec.mailboxKey ? await openLinkEmail('unlock', p.token, rec.emailEnc) : null;
   if (email === null || !rec.mailboxKey) return linkInvalid(ctx);
-  // The press's audit row before the grant changes; if it can't be written, nothing changed and the next press retries.
-  if (link.firstPress) {
-    try {
-      await audit(deps, { staff: LINK_PRESS_STAFF, action: 'unlock', ticket: rec.ticket, subject: rec.mailboxKey.slice(0, 12), detail: { step: 'link_pressed' } });
-    } catch (err) {
-      await stub.unpressSupportLink();
-      throw err;
-    }
+  // An audit row before the grant changes: every press writes one until one was written (two presses at once may both
+  // write one; neither changes anything without it). If it can't be written, nothing changed and the next press retries.
+  let first = false;
+  if (!link.audited) {
+    await audit(deps, { staff: LINK_PRESS_STAFF, action: 'unlock', ticket: rec.ticket, subject: rec.mailboxKey.slice(0, 12), detail: { step: 'link_pressed' } });
+    first = await stub.markSupportAudited(now);
   }
   const g = await mailboxLimiter(deps, rec.mailboxKey).activateGrant(tokenHash(p.token), rec.emailKey, now);
   if (g === 'used') {
@@ -1459,7 +1474,7 @@ export async function handleUnlockLink(request: Request, ctx: Ctx): Promise<Resp
   }
   if (g === 'expired') return linkExpired(ctx);
   if (g === 'unknown') return linkInvalid(ctx);
-  if (link.firstPress) log({ event: 'unlock_link_pressed', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: rec.mailboxKey.slice(0, 12) }, 'warn');
+  if (first) log({ event: 'unlock_link_pressed', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: rec.mailboxKey.slice(0, 12) }, 'warn');
   return ok(ctx, 200, { unlocked: true, email, expiresAtMs: rec.expiresAtMs });
 }
 

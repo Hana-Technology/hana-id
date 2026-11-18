@@ -14374,3 +14374,32 @@ From `next` @ 0a636344; not merged, not deployed.
 - Rejected: acting on the page's load (link scanners); a GET endpoint; clearing the lock on the press (an attacker's
   fresh day of guesses, the design D198 superseded); a sign-in from the done page (the user goes back to the app).
 - Address impact: none.
+- **Amended after PR 88's independent review (2026-11-18; to confirm with D866):**
+  1. **A device ticket no longer hides the unlock.** A returning browser sends its device ticket and the pressed
+     unlock together; the issuer took the ticket, whose slot a locked owner has already used up, so the page said
+     "unlocked" and the sign-in still answered 429. Now an active grant for that exact address decides. The bound is
+     unchanged: one start, its checks in the (mailbox-wide) ticket slot then the grant's own 2 past the ceiling,
+     nothing cleared; the ticket isn't used for that start, so its 3 mails a day and its challenge count are untouched
+     (an active grant with a ticket the owner hadn't used up is still the one spent).
+  2. **Passport Home takes no unlock** (D619, confirmed by the user, stands: Home keeps nothing in storage and its start
+     takes no owner proof). The staff note and the runbook say "It works for signing in to an app, not to Passport
+     Home yet"; a user locked out of Home waits for midnight UTC. Changing it is the founder's call (read, never write,
+     the auth origin's `hana.ug` from `/home`).
+  3. **The staff place comes back only when the provider clearly refused the mail** (an HTTP error answer, a missing key,
+     or the staff pool spent). A timeout or a network error may have sent it: `{mailed: false, reason: "unsure"}`, the
+     place stays used, and the note tells staff to have the user check their inbox and spam folder.
+  4. **Every unlock press writes its audit row before the grant changes, until one was written** (was: the first press
+     only, marked before its row was written, so a second simultaneous press could activate the grant without any
+     row). Two presses at once may both write one; a press whose row fails changes nothing.
+  5. **The page removes the token from the address bar** as soon as it has read it (`history.replaceState`; kept in
+     memory for the button and "Try again"). A reload then says "not valid" (open the email's link again).
+  6. **`hana.ug` holds a sha256 of the address**, as the device tickets' keys, never the address.
+- **Residuals, stated (review item 7):**
+  - A mail scanner that runs scripts and presses buttons could press Confirm for a suppressed address. Accepted: a
+    one-button page can't tell it from the user, and the press only resumes mail to the address the link was mailed to
+    (the address whose holder asked support), lifting no limit and touching no other address.
+  - The unlock works in the browser where its link was pressed (the grant is used by that browser's next start). Kept
+    as built unless the founder decides otherwise (the decision pending above). An in-app mail browser (a mail app's
+    own viewer, with storage of its own) is the usual way to miss it: the user signs in afterwards in their normal
+    browser and is still refused; opening the email's link again in that browser and pressing again works (the press
+    answers the same until the unlock is used).

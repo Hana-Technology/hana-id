@@ -4892,7 +4892,7 @@ When to use which:
 
 | The user says | Use | What the user gets and does |
 |---|---|---|
-| "It says too many attempts, try again later" (they, or someone guessing, typed too many wrong codes) | `admin/unlock` | An email "Unlock your Journear sign-in". They open the link **in the browser where they use the app**, press **Unlock my email**, and see "Your email is unlocked. You can sign in again." Then they sign in with that email in the same browser, within the 24 hours. The unlock lets that one sign-in through; it clears no lock and no counter (D198), and adds at most 2 code checks to the day. |
+| "It says too many attempts, try again later" (they, or someone guessing, typed too many wrong codes) | `admin/unlock` | An email "Unlock your Journear sign-in". They open the link **in the browser where they use the app**, press **Unlock my email**, and see "Your email is unlocked. You can sign in again." Then they sign in with that email in the same browser, within the 24 hours (a device ticket from an earlier sign-in doesn't get in the way: the unlock decides). The unlock lets that one sign-in through; it clears no lock and no counter (D198), and adds at most 2 code checks to the day. **It works for signing in to an app, not to Passport Home yet** (D619: Home's sign-in takes no unlock); a user locked out of Home waits for midnight UTC. |
 | "The codes never arrive" (an earlier email bounced, or was marked as spam) | first clean SendGrid (below), then `admin/unsuppress` | An email "Confirm your email to get Journear sign-in codes again". They open it, press **Yes, this is my email**, and see "Thanks: this email is confirmed. We'll send sign-in codes to it again." Then they sign in as usual. Only that exact address gets mail again. |
 
 Step by step, for an unlock:
@@ -4904,7 +4904,11 @@ Step by step, for an unlock:
      use the app, press "Unlock my email", then sign in again within 24 hours.
    - `{"mailed": false, "reason": "suppressed", ...}`: we don't send email to this address now. Do the unsuppress steps
      first; once the user has confirmed, run the unlock again (it is still allowed the same day).
-   - `{"mailed": false, ...}` without a reason: the email couldn't be sent. Nothing changed; try again in a few minutes.
+   - `{"mailed": false, ...}` without a reason: the email provider refused it, so it wasn't sent. Nothing changed; try
+     again in a few minutes.
+   - `{"mailed": false, "reason": "unsure", ...}`: the provider didn't answer, so the email may or may not have gone
+     out. Ask the user to check their inbox and spam folder. If nothing arrives within an hour, try again tomorrow
+     (the day's place stays used, since the email may have been sent).
    - `429 staff_cap`: this mailbox was unlocked today already, or 3 times in 30 days. The lock ends at midnight UTC.
 4. If the user says the page shows "This link was already used to sign in" but they still can't sign in, or "This link
    has expired": send a new one (step 2), within the caps.
@@ -4917,12 +4921,14 @@ Step by step, for an unsuppress:
 3. Read the answer: `{"mailed": true, ...}`: tell the user to open "Confirm your email to get Journear sign-in codes
    again" and press "Yes, this is my email". `{"mailed": false, "reason": "not_suppressed", ...}`: email to this
    address isn't stopped: the cause is elsewhere (the limits, a typo, their spam folder). Other `mailed: false`: try
-   again in a few minutes.
+   again in a few minutes (`"reason": "unsure"`: as for the unlock above).
 4. Tell the user: if our emails land in their spam folder, mark them as "not spam". Another spam report stops mail again.
 
 What the pages can say, and what to do: "already used" (unlock: a sign-in used it; confirm: the address may already be
-confirmed): if the problem is still there, send a new email. "expired" (past 24 hours) or "isn't valid" (a cut-off
-link, or a link older than a week): send a new email. "Too many tries" or "can't be reached right now": ask them to
+confirmed): if the problem is still there, send a new email. "expired" (past 24 hours): send a new email. "isn't
+valid" (a cut-off link, a link older than a week, or the page reloaded: it removes the code from the address bar at
+once, so a reload needs the email's link opened again): ask them to open the link from the email again, else send a
+new email. "Too many tries" or "can't be reached right now": ask them to
 wait a few minutes and press the button again.
 
 The audit: your call's row (your email as `staff`), then a second row with `staff` = `email-link`, the same action and

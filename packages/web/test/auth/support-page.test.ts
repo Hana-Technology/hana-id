@@ -29,7 +29,7 @@ function open(kind: SupportKind, hash: string, answer: () => Promise<PressAnswer
   const win = new FakeWindow(kind === 'unlock' ? '/email/unlock' : '/email/confirm', '', hash);
   const api = { press: vi.fn(async (_k: SupportKind, _t: string) => answer()) };
   const page = startSupportPage({ win, kind, api, storage, now: () => NOW });
-  return { api, page };
+  return { api, page, win };
 }
 
 describe('/email/unlock', () => {
@@ -67,6 +67,24 @@ describe('/email/unlock', () => {
     // Nothing else to do here: no button, no sign-in.
     expect(document.querySelectorAll('button, a, input')).toHaveLength(0);
     expect(liveUnlockToken(storage, NOW)).toBe(UG);
+    // The browser's storage holds a hash of the address, never the address (review 6).
+    expect(storage.getItem(UNLOCK_TOKEN_KEY)).not.toContain('ada@example.com');
+    expect(JSON.parse(storage.getItem(UNLOCK_TOKEN_KEY)!)).not.toHaveProperty('e');
+  });
+
+  it('the token leaves the address bar at once; the page keeps it for its button and for "Try again" (review 5)', async () => {
+    let n = 0;
+    const { api, page, win } = open('unlock', `#${UG}`, async () => (n++ === 0 ? { kind: 'unreachable' } : { kind: 'done', email: 'ada@example.com', untilMs: UNTIL }));
+    expect(win.history.replaceState).toHaveBeenCalledWith(null, '', '/email/unlock');
+    expect(win.location.hash).toBe('');
+    press();
+    expect(await page.settled()).toBe('unreachable');
+    press();
+    expect(await page.settled()).toBe('done');
+    expect(api.press.mock.calls.map((c) => c[1])).toEqual([UG, UG]);
+    // A page with no token has nothing to remove.
+    resetDom();
+    expect(open('confirm', '', async () => ({ kind: 'used' })).win.history.replaceState).not.toHaveBeenCalled();
   });
 
   it('says each other answer in its own words; a limit or an unreachable service offers the one button again', async () => {

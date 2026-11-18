@@ -11,8 +11,8 @@
 //   exact address (`dt2.…`, 30 days, D198), sent with the next `start`. The key is a hash so the store lists no address.
 //   A ticket can't sign anyone in: it only lets its owner's code mail past the shared limits. At most 5 are kept.
 // - A staff unlock (D866), in localStorage under `hana.ug`: one entry, the token of the unlock link this browser's
-//   `/email/unlock` page pressed (`ug1.…`), the address the issuer said it is for, and when it lapses (24 h after the
-//   mail). /login/email sends it with each `start` while it lasts: the issuer counts it only for that exact address,
+//   `/email/unlock` page pressed (`ug1.…`), a hash of the address the issuer said it is for (as the tickets' keys: the
+//   store holds no address), and when it lapses (24 h after the mail). /login/email sends it with each `start` while it lasts: the issuer counts it only for that exact address,
 //   once, and ignores it otherwise. It can't sign anyone in either. Dropped after a sign-in with that address, or once
 //   it lapsed.
 import { RELAY_ID_PATTERN, type LoginMethod, base64UrlDecode, base64UrlEncode, isEmailHint, isLogoUrl, sha256, utf8 } from '@hana-id/core';
@@ -228,14 +228,17 @@ const UNLOCK_MAX_MS = 24 * 3_600_000 + 60_000;
 
 interface StoredUnlock {
   t: string;
-  e: string;
+  /** b64url(sha256(the address, trimmed and lowercased)): never the address itself. */
+  h: string;
   until: number;
 }
+
+const addressHash = (email: string): string => base64UrlEncode(sha256(utf8(email.trim().toLowerCase())));
 
 function readUnlock(raw: string | null): StoredUnlock | null {
   try {
     const v: unknown = JSON.parse(raw ?? 'null');
-    return isObj(v) && typeof v.t === 'string' && UNLOCK_TOKEN_RE.test(v.t) && typeof v.e === 'string' && v.e.length <= 320 && isInt(v.until) ? { t: v.t, e: v.e, until: v.until } : null;
+    return isObj(v) && typeof v.t === 'string' && UNLOCK_TOKEN_RE.test(v.t) && typeof v.h === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(v.h) && isInt(v.until) ? { t: v.t, h: v.h, until: v.until } : null;
   } catch {
     return null;
   }
@@ -245,7 +248,7 @@ function readUnlock(raw: string | null): StoredUnlock | null {
 export function saveUnlockToken(storage: Storage | null, token: string, email: string, untilMs: number, now: number): boolean {
   if (!storage || !UNLOCK_TOKEN_RE.test(token) || untilMs <= now || untilMs > now + UNLOCK_MAX_MS) return false;
   try {
-    storage.setItem(UNLOCK_TOKEN_KEY, JSON.stringify({ t: token, e: email, until: untilMs } satisfies StoredUnlock));
+    storage.setItem(UNLOCK_TOKEN_KEY, JSON.stringify({ t: token, h: addressHash(email), until: untilMs } satisfies StoredUnlock));
     return readUnlock(storage.getItem(UNLOCK_TOKEN_KEY))?.t === token;
   } catch {
     return false;
@@ -270,7 +273,7 @@ export function dropUnlockTokenFor(storage: Storage | null, email: string): void
   if (!storage) return;
   try {
     const u = readUnlock(storage.getItem(UNLOCK_TOKEN_KEY));
-    if (u && u.e.trim().toLowerCase() === email.trim().toLowerCase()) storage.removeItem(UNLOCK_TOKEN_KEY);
+    if (u && u.h === addressHash(email)) storage.removeItem(UNLOCK_TOKEN_KEY);
   } catch {
     // Nothing to do: it lapses in 24 h.
   }

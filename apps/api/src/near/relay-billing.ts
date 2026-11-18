@@ -148,7 +148,11 @@ export async function recordNearRelay(env: Env, app: App, result: RelayResult, f
     next_try_at: first.final ? now : now + FIRST_TRY_MS,
   };
   try {
-    await insert(env, f).run();
+    if (!(await writeRecord(env, f))) {
+      // The table refused the row for good (parking it would never help).
+      log({ event: 'near_billing_write_failed', code: 'refused' }, 'error');
+      await countMiss(env, now);
+    }
   } catch {
     log({ event: 'near_billing_write_failed', code: 'audit_unavailable' }, 'error');
     const parked = await limiter(env, BILLING_SUBJECT)
@@ -263,11 +267,29 @@ export function blockFigures(b: unknown): { height: string | null; time: number 
   return { height, time };
 }
 
-/** D1's refusal of the row itself (SQLite's constraint errors), as opposed to a failure to reach the database. */
-export const isConstraintError = (e: unknown): boolean => /SQLITE_CONSTRAINT|constraint failed/u.test(e instanceof Error ? e.message : String(e));
+/**
+ * D1's refusal of the row itself (a constraint error, or a value of a type D1 can't bind), as opposed to a failure to
+ * reach the database: retrying it can never succeed.
+ */
+export const isRowRefused = (e: unknown): boolean => /SQLITE_CONSTRAINT|constraint failed|D1_TYPE_ERROR/u.test(e instanceof Error ? e.message : String(e));
 
-/** Writes the parked records into D1 (no fetch); a row D1 refuses for good is counted as a miss and dropped. */
+/**
+ * Writes one record: true when it is in the table afterwards. INSERT OR IGNORE skips a row that breaks a CHECK or NOT
+ * NULL constraint without an error, so a write that changed nothing looks the row up: there (a duplicate) is fine,
+ * absent means the table refused it for good. Throws only when D1 couldn't be used.
+ */
+async function writeRecord(env: Env, f: Fields): Promise<boolean> {
+  const r = await insert(env, f).run();
+  if ((r.meta.changes ?? 0) > 0) return true;
+  const there = await env.DB.prepare('SELECT 1 AS n FROM near_relay_billing WHERE network = ?1 AND tx_hash = ?2').bind(f.network, f.tx_hash).first();
+  return there !== null;
+}
 
+/**
+ * Writes the parked records into D1 (no fetch), oldest first. A row the table refuses for good (or not a record at all)
+ * would block the queue for ever: it is counted as a miss and acknowledged, and the drain goes on. Anything else (D1
+ * down, no table yet) stops the drain until the next run.
+ */
 async function drainParked(env: Env, now: number): Promise<number> {
   let parked: [string, unknown][];
   try {
@@ -277,17 +299,18 @@ async function drainParked(env: Env, now: number): Promise<number> {
   }
   const done: string[] = [];
   for (const [key, item] of parked) {
+    let written: boolean;
     try {
-      await insert(env, item as Fields).run();
-      done.push(key);
+      written = typeof item === 'object' && item !== null && (await writeRecord(env, item as Fields));
     } catch (e) {
-      // A row the table refuses for good (a CHECK or NOT NULL constraint) would block the queue for ever: it is counted
-      // as a miss and acknowledged. Anything else (D1 down, no table yet): the next run.
-      if (!isConstraintError(e)) break;
-      log({ event: 'near_billing_parked_refused', code: 'constraint' }, 'error');
-      await countMiss(env, now);
-      done.push(key);
+      if (!isRowRefused(e)) break;
+      written = false;
     }
+    if (!written) {
+      log({ event: 'near_billing_parked_refused', code: 'refused' }, 'error');
+      await countMiss(env, now);
+    }
+    done.push(key);
   }
   if (done.length) await limiter(env, BILLING_SUBJECT).queueAck(PARKED, done).catch(() => undefined);
   return done.length;

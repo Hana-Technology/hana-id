@@ -1142,8 +1142,9 @@ other record (a contract or delegate failure, a timeout, an RPC error) is read b
 in a bounded queue on the RateLimiter object `near-relay:billing` (500) and written by the cron; a result with no hash,
 or a park that fails, is counted as a miss. **The cron** (every run, isolated: nothing it throws reaches the other
 jobs): at most 10 outside fetches through a client of its own (one endpoint a call, its own health: it never marks an
-endpoint down for the relay); writes the parked records (a row D1 refuses for good, a constraint error, is counted
-as a miss and dropped so it can't block the queue); once a UTC day reads each relay key's nonce (`view_access_key`:
+endpoint down for the relay); writes the parked records (a row D1 refuses for good, a constraint or bind-type error or a write
+INSERT OR IGNORE skipped with its row absent, is counted as a miss and dropped so it can't block the queue; the relay's
+own write counts such a row as a miss at once); once a UTC day reads each relay key's nonce (`view_access_key`:
 the nonce of the key's last transaction the chain included) and, when it moved since the day before, requires a record
 with that nonce (any outcome but `not_executed`), else counts one `unrecordedLast` for the key (it proves the most
 recent transaction per key per day has a record, not every one: nonces jump with the relay key object's reservations

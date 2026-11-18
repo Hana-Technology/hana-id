@@ -19,7 +19,7 @@ import { nearRelayKeyName, type RelayerKey, type RelayResult } from '../src/rela
 import { runInDurableObject } from 'cloudflare:test';
 import { appHeaders, call, type Chain, ORIGIN, type SeededApp, startOfMinuteClock } from './helpers.ts';
 import { MOCK_RECEIPT_GAS, MOCK_TX_GAS } from './near-mock.ts';
-import { blockFigures, BudgetedRpc, checkNearBillingLate, finalStatus, GIVE_UP_TRIES, initialRecord, isConstraintError, NEAR_BILLING_FETCHES, nearBillingFaults, nearBillingMaintenance } from '../src/near/relay-billing.ts';
+import { blockFigures, BudgetedRpc, checkNearBillingLate, finalStatus, GIVE_UP_TRIES, initialRecord, isRowRefused, NEAR_BILLING_FETCHES, nearBillingFaults, nearBillingMaintenance } from '../src/near/relay-billing.ts';
 import { rpcHealth } from '../src/near/rpc.ts';
 import { pruneEvmSponsorSends } from '../src/evm/sponsor-settle.ts';
 import { usageTransport } from '../src/usage/record.ts';
@@ -1153,20 +1153,39 @@ describe('billing records (D863): one permanent record per relayed NEAR transact
     await env.DB.exec('DELETE FROM near_relay_billing');
     const good = { ...r!, tx_hash: 'E'.repeat(43) };
     delete (good as Record<string, unknown>).mirrored_at;
-    // A row the table's CHECK refuses (an outcome it doesn't know), then a good one.
+    // Rows that can never be written, ahead of a good one: one the table's CHECK refuses (INSERT OR IGNORE skips it
+    // without an error), one D1 can't bind (a missing field), and something that isn't a record at all.
     await store().queuePush('near-relay-billing', { ...good, tx_hash: 'F'.repeat(43), outcome: 'bogus' }, 500, Date.now());
-    await store().queuePush('near-relay-billing', good, 500, Date.now() + 1);
+    await store().queuePush('near-relay-billing', { ...good, tx_hash: 'G'.repeat(43), app_id: undefined }, 500, Date.now() + 1);
+    await store().queuePush('near-relay-billing', 'not a record', 500, Date.now() + 2);
+    await store().queuePush('near-relay-billing', good, 500, Date.now() + 3);
+    // A duplicate of a written record is no miss.
+    await store().queuePush('near-relay-billing', good, 500, Date.now() + 4);
     await nearBillingMaintenance(env, Date.now() + 2 * 60_000);
     expect(await store().queueLength('near-relay-billing')).toBe(0);
     expect((await rows()).map((x) => x.tx_hash)).toEqual(['E'.repeat(43)]);
-    expect((await checkNearBillingLate(env, Date.now() + 2 * 60_000)).misses).toBe(1);
+    expect((await checkNearBillingLate(env, Date.now() + 2 * 60_000)).misses).toBe(3);
   });
 
-  it('isConstraintError tells a row D1 refuses from a database it can’t reach', () => {
-    expect(isConstraintError(new Error('D1_ERROR: CHECK constraint failed: outcome IN (...): SQLITE_CONSTRAINT'))).toBe(true);
-    expect(isConstraintError(new Error('D1_ERROR: NOT NULL constraint failed: near_relay_billing.app_id'))).toBe(true);
-    expect(isConstraintError(new Error('D1_ERROR: no such table: near_relay_billing'))).toBe(false);
-    expect(isConstraintError(new Error('Network connection lost.'))).toBe(false);
+  it('a relay record the table skips without an error (INSERT OR IGNORE) is a miss at once, not parked', async () => {
+    await env.DB.exec("CREATE TRIGGER near_billing_skip BEFORE INSERT ON near_relay_billing BEGIN SELECT RAISE(IGNORE); END");
+    try {
+      const res = await relay(s.app, plainRelay(delegate(s.user)));
+      expect(res.status).toBe(200);
+    } finally {
+      await env.DB.exec('DROP TRIGGER near_billing_skip');
+    }
+    expect(await rows()).toEqual([]);
+    expect(await store().queueLength('near-relay-billing')).toBe(0);
+    expect((await checkNearBillingLate(env)).misses).toBe(1);
+  });
+
+  it('isRowRefused tells a row D1 refuses from a database it can’t reach', () => {
+    expect(isRowRefused(new Error('D1_ERROR: CHECK constraint failed: outcome IN (...): SQLITE_CONSTRAINT'))).toBe(true);
+    expect(isRowRefused(new Error('D1_ERROR: NOT NULL constraint failed: near_relay_billing.app_id'))).toBe(true);
+    expect(isRowRefused(new Error("D1_TYPE_ERROR: Type 'undefined' not supported for value 'undefined'"))).toBe(true);
+    expect(isRowRefused(new Error('D1_ERROR: no such table: near_relay_billing'))).toBe(false);
+    expect(isRowRefused(new Error('Network connection lost.'))).toBe(false);
   });
 
   it('finalStatus: a failure in the user’s own call is `failed`; one only in a later callback is `executed` with had_failed_receipt', () => {

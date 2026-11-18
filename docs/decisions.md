@@ -14165,8 +14165,11 @@ deployed. The founder, 2026-11-18: "go ahead with NEAR billing records".
   would need a counter inside the relay key object, deliberately not built now so the live relay is untouched. A
   transaction included in the seconds before the check whose record is still being written could be counted once
   (rare; the next day's check is clean). The test models the reservation jump and a refused nonce. (2) A parked row
-  that D1 refuses for good (a constraint error) no longer blocks the queue: counted as a miss, acknowledged, the drain
-  goes on; any other error still stops the drain until the next run. (3) What a later billing job can rely on: the
+  that D1 refuses for good no longer blocks the queue: counted as a miss, acknowledged, the drain goes on; any other
+  error still stops the drain until the next run. "Refused for good" is a constraint or bind-type error, something
+  that isn't a record, or (found while testing: INSERT OR IGNORE skips a row breaking a CHECK or NOT NULL constraint
+  without an error) a write that changed nothing and whose row isn't there; a duplicate is fine. The relay's own write
+  uses the same test: a row skipped that way is a miss at once, not parked. (3) What a later billing job can rely on: the
   amounts and the time of recording, not block data. Records final from the relay's own figures (`figures_from:
   'relay'`) and `not_executed` ones have no block hash, height or time, and `had_failed_receipt` is always 0 for them;
   only `figures_from: 'final'` records carry a block hash. Unverified: whether newer NEAR versions charge a gas refund

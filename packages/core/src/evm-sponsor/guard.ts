@@ -1,6 +1,7 @@
 // The generic signing paths must never produce a delegate signature (docs/decisions.md D833): an Execute signed through
 // eth_signTypedData_v4 would let any page that can ask for typed data run calls as the user's account, outside the
-// sponsored approval and its checks. isSponsorDomain is the test the vault applies (WP3) to refuse such typed data.
+// sponsored approval and its checks. isSponsorDomain is the test the vault (signing.ts, before any popup and again on
+// the object it hashes), the popup's decoder and so the auto-approve matcher apply to refuse such typed data.
 // It matches on the domain's `name` alone, any version, any chain, any verifyingContract or salt: the contract hashes
 // its name as a constant, so a request with the name is either an Execute for a delegate or something pretending to be
 // one, and both are refused on the generic path. A different name cannot make a signature the delegate accepts.

@@ -428,7 +428,9 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     let decoded: DecodedApproval | null = null;
     let problem = '';
     try {
-      decoded = decodeApprovalRequest(input);
+      // A sponsored action is checked against this build's own sponsor chains (its delegate and relayer) and the page's
+      // clock (its deadline), never the vault's word.
+      decoded = decodeApprovalRequest(input, { ...(env.evmSponsor ? { sponsorChains: env.evmSponsor } : {}), nowMs: now() });
     } catch (err) {
       problem = err instanceof DecodeError ? err.message : 'The request could not be read.';
     }
@@ -456,7 +458,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
         // Support ID goes. An unreadable request keeps the Support ID and the notes in view.
         decoded
-          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [supportId] })
+          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [supportId], nowMs: now() })
           : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem)),
         buttons('Approve', decoded !== null, msg.id),
         auto?.active ? stopAutoApproveButton(auto.label) : null,

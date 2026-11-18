@@ -13,6 +13,7 @@ import { type ApprovalSummary, type SummaryText, type SummaryWarning, displayUni
 import {
   type AbiValue,
   type DecodedApproval,
+  type DecodedEvmCallSite,
   type DecodedEvmTx,
   type DecodedMessage,
   type DecodedStellarEnvelope,
@@ -183,30 +184,52 @@ const offer = (id: string, amount: string) => (id === '0' ? 'new offer' : amount
 export const ACCOUNT_CONTROL_BANNER =
   `Danger: this transaction changes who controls a Stellar account. Whoever gets control can take everything in it, and ${BRAND.product} can’t undo it. Approve only if you started this change yourself; an app should almost never need it.`;
 
-export function accountControlWarnings(op: StellarOperation): string[] {
-  const out: string[] = [];
+/**
+ * One account-control warning of an operation: its line, its bullet (D814), and whether the bullet says more than the
+ * step's own line and so always stays (`keep`): setting the account's own key to weight 0 locks the user out, which
+ * the line ("set your own key’s weight to 0") doesn't say, as NEAR's removal of the user's own key; and any threshold
+ * change may lock them out, which the request alone can't rule out.
+ */
+interface ControlItem {
+  readonly full: string;
+  readonly short: Child[];
+  readonly keep: boolean;
+}
+
+function accountControlItems(op: StellarOperation): ControlItem[] {
+  const out: ControlItem[] = [];
   for (const c of stellarAccountControl(op)) {
     if (c === 'merge' && op.type === 'accountMerge') {
-      out.push(`This closes the account and sends all of its XLM to ${op.destination}. It can’t be undone.`);
+      out.push({ full: `This closes the account and sends all of its XLM to ${op.destination}. It can’t be undone.`, short: ['Closes the account and sends all its XLM to ', op.destination], keep: false });
     } else if (op.type === 'setOptions') {
       if (c === 'signer' && op.signer) {
         out.push(
           op.signer.weight === 0
-            ? `This removes signer ${op.signer.key} from the account.`
-            : `This adds ${op.signer.key} as a signer with weight ${op.signer.weight}. Whoever holds that key can sign for the account and, with enough weight, move all its funds and lock you out.`,
+            ? { full: `This removes signer ${op.signer.key} from the account.`, short: ['Removes signer ', op.signer.key], keep: false }
+            : {
+                full: `This adds ${op.signer.key} as a signer with weight ${op.signer.weight}. Whoever holds that key can sign for the account and, with enough weight, move all its funds and lock you out.`,
+                short: ['Adds ', op.signer.key, ` as a signer (weight ${op.signer.weight})`],
+                keep: false,
+              },
         );
       } else if (c === 'thresholds') {
-        out.push('This changes the account’s signing thresholds, which decide which keys can move funds and change the account. Wrong values let other signers take over or lock you out for good.');
+        // Whether the new thresholds lock the user out depends on the account's signers and weights, which the request
+        // doesn't carry: the bullet says the risk the line doesn't, so it always stays.
+        out.push({ full: 'This changes the account’s signing thresholds, which decide which keys can move funds and change the account. Wrong values let other signers take over or lock you out for good.', short: ['Changes the signing thresholds: wrong values can lock you out of the account'], keep: true });
       } else if (c === 'master_weight') {
         out.push(
           op.masterWeight === 0
-            ? `This sets the weight of the account’s own key (your ${BRAND.product} key) to 0: it can no longer sign for the account, so you lose control of it.`
-            : `This sets the weight of the account’s own key (your ${BRAND.product} key) to ${op.masterWeight}, which changes what it can still do on the account.`,
+            ? { full: `This sets the weight of the account’s own key (your ${BRAND.product} key) to 0: it can no longer sign for the account, so you lose control of it.`, short: [`Sets your own ${BRAND.product} key’s weight to 0: you lose control of the account`], keep: true }
+            : { full: `This sets the weight of the account’s own key (your ${BRAND.product} key) to ${op.masterWeight}, which changes what it can still do on the account.`, short: [`Sets your own key’s weight to ${op.masterWeight}`], keep: false },
         );
       }
     }
   }
   return out;
+}
+
+export function accountControlWarnings(op: StellarOperation): string[] {
+  return accountControlItems(op).map((c) => c.full);
 }
 
 function classic(d: Dom, op: StellarOperation): Child[] {
@@ -341,26 +364,15 @@ function stellarAlerts(d: Dom, env: DecodedStellarEnvelope): Alerts {
   const ops = env.tx.operations;
   return {
     banners: ops.some((op) => stellarAccountControl(op).length > 0) ? [risk(0, 'danger takeover banner', [ACCOUNT_CONTROL_BANNER], ['Changes who controls a Stellar account'])] : [],
-    dangers: ops.flatMap((op, step) => {
-      const shorts = accountControlShorts(op);
-      return accountControlWarnings(op).map((w, i) => ({ ...risk(0, 'danger takeover', [w], shorts[i] ?? [w]), step }));
-    }),
+    // A bullet that says more than its step's line (the user's own key set to 0) stays even when that line is in view.
+    dangers: ops.flatMap((op, step) => accountControlItems(op).map((c) => ({ ...risk(0, 'danger takeover', [c.full], c.short), ...(c.keep ? {} : { step }) }))),
     warnings: env.tx.otherPreconditions ? [risk(5, 'warn', ['This transaction has extra preconditions (sequence or signer rules).'], ['Has extra preconditions'])] : [],
   };
 }
 
 /** The account-control warnings' bullet forms (D814), one per line of accountControlWarnings, in the same order. */
 export function accountControlShorts(op: StellarOperation): Child[][] {
-  const out: Child[][] = [];
-  for (const c of stellarAccountControl(op)) {
-    if (c === 'merge' && op.type === 'accountMerge') out.push(['Closes the account and sends all its XLM to ', op.destination]);
-    else if (op.type === 'setOptions') {
-      if (c === 'signer' && op.signer) out.push(op.signer.weight === 0 ? ['Removes signer ', op.signer.key] : ['Adds ', op.signer.key, ` as a signer (weight ${op.signer.weight})`]);
-      else if (c === 'thresholds') out.push(['Changes the signing thresholds']);
-      else if (c === 'master_weight') out.push([`Sets your own key’s weight to ${op.masterWeight}`]);
-    }
-  }
-  return out;
+  return accountControlItems(op).map((c) => c.short);
 }
 
 function envelopeBody(d: Dom, passphrase: string, env: DecodedStellarEnvelope): HTMLElement[] {
@@ -395,6 +407,19 @@ function abiValue(d: Dom, v: AbiValue): HTMLElement {
   }
 }
 
+/** A call's data in the details: the function and its arguments, or the raw bytes of one Journear doesn't know. */
+function evmCallData(d: Dom, c: Pick<DecodedEvmCallSite, 'data' | 'selector' | 'call'>): HTMLElement[] {
+  if (c.call) {
+    return [
+      d.h('p', {}, 'Function ', d.h('strong', {}, c.call.signature), ' ', mono(d, c.call.selector)),
+      ...(c.call.args.length > 0 ? [d.h('ol', { class: 'args' }, ...c.call.args.map((a) => d.h('li', {}, abiValue(d, a))))] : []),
+    ];
+  }
+  // The summary says Journear doesn't know the function; the bytes are here.
+  if (c.data !== '0x') return [d.h('p', {}, c.selector ? `Unknown function ${c.selector}. Its raw data:` : 'Raw data:'), mono(d, c.data)];
+  return [];
+}
+
 function evmTx(d: Dom, chainId: number, tx: DecodedEvmTx): HTMLElement[] {
   const fees =
     tx.type === 'eip1559'
@@ -402,15 +427,7 @@ function evmTx(d: Dom, chainId: number, tx: DecodedEvmTx): HTMLElement[] {
       : [row(d, 'Gas price', gwei(tx.gasPrice))];
   const data: Child[] = [];
   if (tx.to === null) data.push(d.h('p', {}, 'Creates a contract from this code:'), mono(d, tx.data));
-  else if (tx.call) {
-    data.push(
-      d.h('p', {}, 'Function ', d.h('strong', {}, tx.call.signature), ' ', mono(d, tx.call.selector)),
-      tx.call.args.length > 0 ? d.h('ol', { class: 'args' }, ...tx.call.args.map((a) => d.h('li', {}, abiValue(d, a)))) : null,
-    );
-  } else if (tx.data !== '0x') {
-    // The summary says Journear doesn't know the function; the bytes are here (the details start open for it).
-    data.push(d.h('p', {}, tx.selector ? `Unknown function ${tx.selector}. Its raw data:` : 'Raw data:'), mono(d, tx.data));
-  }
+  else data.push(...evmCallData(d, tx));
   return [
     facts(d, [
       row(d, 'Chain ID', String(chainId)),
@@ -423,6 +440,53 @@ function evmTx(d: Dom, chainId: number, tx: DecodedEvmTx): HTMLElement[] {
       tx.type === 'eip1559' && tx.accessList.length > 0 && row(d, 'Access list', `${tx.accessList.length} entries`),
     ]),
     ...(data.filter(Boolean) as HTMLElement[]),
+  ];
+}
+
+// ---- sponsored EVM actions (D831, D850) ----
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * A sponsored batch's deadline (unix seconds) in the user's own time: "14:05", with its date when it isn't today
+ * (`nowMs`), and the raw value. Out of the Date range: the raw value only.
+ */
+export function validUntil(deadline: bigint, nowMs?: number): string {
+  if (deadline > 8_640_000_000_000n) return `${deadline} (unix seconds)`;
+  const t = new Date(Number(deadline) * 1000);
+  const now = nowMs === undefined ? null : new Date(nowMs);
+  const today = now !== null && now.getFullYear() === t.getFullYear() && now.getMonth() === t.getMonth() && now.getDate() === t.getDate();
+  const day = today ? '' : ` on ${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`;
+  return `${pad2(t.getHours())}:${pad2(t.getMinutes())}${day} (your time; unix ${deadline})`;
+}
+
+/**
+ * A sponsored action's details: the request's own facts (chain, account, the account helper it uses or sets up, the
+ * relayer that pays, until when it can run, its nonce and gas floor), then every call as an EVM transaction's details
+ * show one. EIP-7702 is named only here, folded (D831).
+ */
+function sponsoredDetails(d: Dom, decoded: Extract<DecodedApproval, { kind: 'evm_sponsored' }>, nowMs: number | undefined): HTMLElement[] {
+  const s = decoded.subject;
+  const helper = `${BRAND.product} account helper v${decoded.helperVersion}`;
+  return [
+    d.h('h3', {}, `EVM action, network fee paid by ${BRAND.company}`),
+    facts(d, [
+      row(d, 'Chain ID', String(decoded.chainId)),
+      row(d, 'From', mono(d, s.account)),
+      s.authNonce !== null
+        ? row(d, 'Account setup (EIP-7702)', 'account helper ', mono(d, s.delegate), ` ✓ ${helper}, chain ${decoded.chainId}, account nonce ${s.authNonce}`)
+        : row(d, 'Account helper (EIP-7702)', mono(d, s.delegate), ` ✓ ${helper} (no setup in this approval)`),
+      row(d, 'Paid by', `${BRAND.company}’s relayer `, mono(d, s.relayer)),
+      row(d, 'Valid until', validUntil(s.deadline, nowMs)),
+      row(d, 'Action nonce', String(s.executeNonce)),
+      row(d, 'Gas floor', `${s.minGas} gas`),
+    ]),
+    d.h('h2', {}, decoded.calls.length === 1 ? '1 call' : `${decoded.calls.length} calls`),
+    d.h(
+      'ol',
+      { class: 'ops' },
+      ...decoded.calls.map((c, i) => d.h('li', { class: 'op' }, d.h('h3', {}, `${i + 1}. Call`), facts(d, [row(d, 'To', mono(d, c.to)), row(d, 'Value', wei(c.value))]), ...evmCallData(d, c))),
+    ),
   ];
 }
 
@@ -947,7 +1011,7 @@ function summaryNodes(d: Dom, t: SummaryText, appName: string): Child[] {
 
 /** Ranks in the boxes (D814): control, unreadable, unlimited spend, own-contract or burn, left-out steps, the rest. */
 const RED_RANK: Partial<Record<SummaryWarning['code'], number>> = { raw_signing: 1, cannot_explain: 1, summary_failed: 1, unlimited_spend: 2, collection_operator: 2, permit_lookalike: 2, steps_not_listed: 4 };
-const AMBER_RANK: Partial<Record<SummaryWarning['code'], number>> = { cannot_explain: 1, contract_creation: 1, steps_not_listed: 2, spend_permission: 3, sign_in_mismatch: 4 };
+const AMBER_RANK: Partial<Record<SummaryWarning['code'], number>> = { cannot_explain: 1, contract_creation: 1, steps_not_listed: 2, spend_permission: 3, may_move_tokens: 3, sign_in_mismatch: 4, account_setup: 4 };
 
 /** A warning of the summary as a box item, classes keyed on its code. */
 function summaryItem(d: Dom, w: SummaryWarning, appName: string): RiskItem {
@@ -1007,9 +1071,11 @@ export interface ApprovalRenderContext extends NearRenderContext {
   readonly notes?: readonly (HTMLElement | null)[];
   /** First in the details (the Support ID). */
   readonly detailsExtra?: readonly (HTMLElement | null)[];
+  /** The page's clock (ms): a sponsored action's "Valid until" names its date when it isn't today. */
+  readonly nowMs?: number;
 }
 
-function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext): Parts {
+function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext, nowMs?: number): Parts {
   switch (decoded.kind) {
     case 'stellar_tx': {
       const memo = decoded.envelope.tx.memo;
@@ -1047,6 +1113,9 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
       };
     case 'evm_tx':
       return { alerts: NO_ALERTS, network: null, visible: [], details: [d.h('h3', {}, 'EVM transaction'), ...evmTx(d, decoded.chainId, decoded.tx)] };
+    case 'evm_sponsored':
+      // Every risk line is the summary's: the same per-call warnings as an EVM transaction's, and the setup note.
+      return { alerts: NO_ALERTS, network: null, visible: [], details: sponsoredDetails(d, decoded, nowMs) };
     case 'eip712':
       return {
         alerts: { banners: [], dangers: [], warnings: decoded.chainId === null ? [risk(5, 'warn no-chain', [TYPED_DATA_NO_CHAIN], ['Isn’t tied to one chain'])] : [] },
@@ -1084,7 +1153,7 @@ export const TYPED_DATA_NO_CHAIN = 'This signature isn’t tied to one chain: it
 /** The body of the approval screen for a decoded request. */
 export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, ctx: ApprovalRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
   const summary: ApprovalSummary = summarizeApproval(decoded, { address: ctx.address ?? '', ...(ctx.parentOrigin ? { parentOrigin: ctx.parentOrigin } : {}) });
-  const k = kindParts(d, decoded, appName, ctx);
+  const k = kindParts(d, decoded, appName, ctx, ctx.nowMs);
   // A control change's bullet repeats nothing: when its step's own line is in view (the headline of a single step, or a
   // grouped line, which names the whole key, signer or address), the bullet is dropped. The banner always stays, and
   // steps left out of the lines keep their bullets (the summary's step_left_out).

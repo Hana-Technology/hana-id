@@ -1187,7 +1187,8 @@ three take the app gate (kind `evm-sponsor` for prepare and send: one per-IP win
 the gate) unless `EVM_SPONSOR` parses (`evm/sponsor-config.ts`, with core's pinned delegate table, testnet only), the
 `EVM_RELAYER` binding exists and `EVM_RELAY_KEYS` is set.
 
-Conventions: strict JSON bodies (an unknown field is `400 bad_request`; `sessionProof` is the one extra key); `chainId`
+Conventions: strict JSON bodies (an unknown field is `400 bad_request`; `sessionProof` is the one extra key; an object
+that repeats a key is `400 bad_request`: the text a reader sees is the object acted on, D856); `chainId`
 a safe positive integer; addresses `0x` + 40 hex, all lowercase, all uppercase or exactly EIP-55 (answers are EIP-55);
 data `0x` + whole bytes; every other integer a canonical decimal string (`value`, `executeNonce`, `deadline` in unix
 seconds, `minGas`, the authorization's `nonce`). The body is parsed once: the strict shape, the proof's hash and every
@@ -1270,9 +1271,11 @@ step 12:
    13): else `503 sponsorship_paused` (`retry-after: 300`), the day's `evm_relay_balance_low` (with `neededWei`), the
    user's attempts back, nothing reserved or sent. The binding check is step 15's.
 10. The digest is marked (atomic; a concurrent copy is `409 in_progress`).
-11. **The app's slot in flight:** at most 4 of an app's sends unsettled on a chain (the relayer takes 8 unmined across
-    every app): else `429 relayer_busy` (`retry-after: 5`). A slot comes back when its send settles (whoever moves its
-    row) or was never sent; one whose give-back was lost is gone at the next UTC midnight.
+11. **The app's share of the relayer:** at most 4 of an app's sends open on a chain (rows `sending`, `sent`,
+    `timeout`, `unknown`, `rejected`; the relayer takes 8 unmined across every app), counted from the audit rows, never
+    a counter that could leak: a first look here; when full, the app's own `timeout`/`unknown`/`rejected` rows (at most
+    4, never a live request's) are settled inline by the reconciler first; the binding count is the audit row's insert
+    (step 15, the same statement as the funds check). Full: `429 relayer_busy` (`retry-after: 5`).
 12. **The shared windows, only now:** the app's minute (120), the env's (`sendsPerMinute`), the directory user's day
     (`perUserPerDay`), the app's (`perAppPerDay`), the env's (`sendsPerDay`); then a failure slot of the user (the
     account without a directory user): 3 failed sends a UTC day, then `429 too_many_failures`.
@@ -1287,7 +1290,8 @@ step 12:
     hex, at most 2 KiB, else left out, never truncated) and `callIndex` (from a `CallFailed(index, reason)` naming a call
     of the batch); nothing is spent, the failure counts.
 15. The audit row (`evm_sponsor_sends`, status `sending`; `503 audit_unavailable` without it, nothing sent), written by
-    one `INSERT … SELECT … WHERE` only while the balance covers 3 × (the reserved worst cases of every send of the chain
+    one `INSERT … SELECT … WHERE` only while the app has fewer than 4 sends open (else `429 relayer_busy`) and the balance
+    covers 3 × (the reserved worst cases of every send of the chain
     already committed: rows `sending`, `sent`, `timeout`, `unknown`, `rejected`, not replays, plus this one's): D1
     serializes concurrent requests from any isolate, so no more sends reach the relayer than its funds can pay for, and
     it never meets an `insufficient_funds` refusal through a burst. Short: `503 sponsorship_paused`, everything given
@@ -1296,19 +1300,22 @@ step 12:
     the raw comes back). A coded refusal (`Error('evm_relayer:<code>[:<reason>]')`: it sent nothing) gives everything
     back, the row `refused`, the user's attempts too unless their input caused it (`invalid_request`,
     `deadline_passed`): `relayer_busy` → `429 relayer_busy` (`retry-after: 2`; `:account`, that account's previous batch
-    not yet seen mined by the relayer's run, `retry-after: 5`), `relayer_halted` → `503 sponsorship_paused`
+    not yet seen mined by the relayer's run: `429 account_busy`, `retry-after: 5`), `invalid_request` (the relayer refusing
+    the handlers' own checked request: our mismatch) → `503 internal_error` with `evm_relay_stuck {internal}`; the
+    relayer returns these as values (`{ok: false, refused, reason}`) and a thrown coded error is read the same way, `relayer_halted` → `503 sponsorship_paused`
     (`retry-after: 300`), `fees_too_high` → `503 gas_price_too_high` (30 s), `fees_too_low` (the relayer's follow-up:
     the fees below the base fee with margin) → `503 gas_price_too_high` (15 s), `daily_cap` → `429 budget_exhausted`,
     `relayer_unconfigured` / `relayer_misconfigured` → `503 sponsorship_unconfigured`, `rpc_unavailable` → `502
     evm_rpc_unavailable`, `deadline_passed` → `400 deadline_out_of_range`, anything else `503 relayer_unavailable`. Any
-    other failure is unknown (it may have broadcast): `503 relayer_unavailable` (`retry-after: 2`), the row `unknown`,
+    other failure is unknown (it may have broadcast): `503 outcome_unknown` (`retry-after: 2`), the row `unknown`,
     the reservation and counts kept (the reconciler settles them), the mark dropped so the same batch can be sent again
     (the relayer is idempotent per digest).
 16. **A batch no node took** (`broadcast: "rejected"`: the relayer gave its nonce to its own cancel at once) is answered
     now, never after a wait: the row `rejected` with `rejection` `<cause>:<code>`; the money settles later to the
     cancel's cost (the reconciler, from the relayer's `lookup`: `mined`, `outcome: "cancel"`, `costWei`, or the cancel's
     own receipt). By `rejection.cause`: `request` (the batch's own size or shape) → `422 not_executed`, the failure
-    charged; `pricing` (turned away over its fees) → `503 gas_price_too_high` (15 s), the user's attempts, the shared
+    charged (the relayer's `authority_reserved`, the user's own account having other transactions waiting: `422
+    account_pending`); `pricing` (turned away over its fees) → `503 gas_price_too_high` (15 s), the user's attempts, the shared
     windows and the failure slot back, no alert; `relayer`, and any cause this API doesn't know → `503
     sponsorship_paused`, the same given back, and `evm_relay_stuck {rejected: <code>}` (the relayer halts itself on such
     a refusal). A malformed rejection is read as `relayer`.
@@ -1316,8 +1323,9 @@ step 12:
     else every hash it lists for the digest and the one answered. None: `504 timeout {transactionHash}` (the row
     `timeout`, settled later by the reconciler). **Success** is status 1 and an `Executed(digest)` log emitted by the
     account itself with the signed digest, from the first receipt of one of the row's own hashes (at head, not at
-    confirmed depth: a reorg before then is D847's accepted risk; the relayer's own verdict follows at depth): 200; the
-    floor rises past `executeNonce`; the failure slot comes back. Status 0: `422 reverted {transactionHash}`; status 1
+    confirmed depth): 200; the failure slot comes back. The account's nonce floor rises past `executeNonce` only on the
+    relayer's verdict at confirmed depth (its `lookup` `mined`/`execute` naming this transaction), and the reconciler
+    checks every row settled at head against that verdict and corrects a reorg (below). Status 0: `422 reverted {transactionHash}`; status 1
     without that log (an authorization the network skipped, the deadline's self-transfer): `422 not_executed
     {transactionHash}`; both are charged and count as failures.
 
@@ -1333,7 +1341,9 @@ nothing. A refusal at steps 11–13 or a simulation or RPC failure before the re
 the slot, the shared windows, the failure slot, the budget), except that a simulation revert keeps the windows and the
 failure slot. **Copies** are answered from the latest audit row of the same chain, digest and app, never from the chain:
 `executed` the same 200 with `replay: true`; `reverted`/`not_executed` the same 422; a rejected batch the same answer as
-its send; `sent`/`timeout`/`lost` `504 timeout` with the hash; anything else open `409 in_progress` (a row `unknown` or
+its send; `sent`/`timeout` `504 timeout` with the hash; `lost` or `mined` (given up, or mined with its result unread)
+`409 outcome_unknown` with no retry; `consumed_elsewhere` `422 not_executed`; `duplicate` rows are skipped; anything
+else open `409 in_progress` (a row `unknown` or
 `refused` has no mark, so its batch goes to the relayer again).
 
 **The reconciler** (every cron run, `reconcileEvmSends`; at most 20 rows a run, oldest update first): every row still
@@ -1346,7 +1356,15 @@ billed `cancelled`), or (b) the relayer's `lookup` (D851): `mined` (at confirmed
 `mined`, or `not_executed` for a cancel; the money the relayer's cost, at most the reservation); `closed`
 `consumed_elsewhere` (the reservation kept as the cost, the row `consumed_elsewhere`, `evm_relay_nonce_taken`). A
 lookup's mined hash counts only when it lists it as one of the batch's versions. Nothing is inferred from the relayer
-not knowing a digest: anything else stays open, and an hour past the deadline is `lost` (the reservation kept). A row
+not knowing a digest: anything else stays open, and an hour past the deadline is `lost` (the reservation kept), but only
+when the relayer's `lookup` answered and every receipt read succeeded and found nothing (a failed read decides
+nothing). A second row of one digest (a first attempt `unknown` because the relayer failed before saving, then the real
+send) whose transaction is billed to the other becomes `duplicate`: settled at zero, its reservation and failure slot
+given back, so the money is charged once. **The reorg check:** every row settled from a head receipt (`confirmed_at`
+NULL) is compared with the relayer's `lookup` once it says `mined`: the same hash confirms it (and raises the account's
+floor); another of the batch's own versions corrects it: the row takes that transaction's outcome and cost, the budgets
+move by the difference, and a correction billing record (`fix:<send>`, naming the record it supersedes) is added,
+never an edit. A row
 moves (with its billing record, below) before anything is given back, and only the caller that moved it gives back. A
 row still open 10 minutes after its reservation writes `evm_relay_stuck` (once an hour per chain).
 
@@ -1359,12 +1377,17 @@ total cost, settled amount, the number of calls, each call's allowlisted target 
 one-time setup, times. No account address, user id or IP. Never pruned, kept through a user's erasure. The cron copies
 new rows to the usage ledger (`usage.record_evm_sponsored`, migrations-usage 0009) and retries until they land; a
 settled send without its record, or a record not copied, an hour on writes `evm_billing_late`. A relayer replay leaves
-no record of its own. A cancel the relayer or the network's fees caused is billed `cancelled` like any other (the
+no record of its own. A record the ledger refuses (the whole batch refused for its input) is retried row by row (at
+most 20); one refused on its own is set aside (`quarantined_at`) and counted in `evm_billing_late {quarantined}`, so it
+never holds the others back. A correction (`fix:<send>`, `corrects`) supersedes the record it names; the ledger's
+monthly view counts the correction. Without the `evm.sponsor` block (every env today) a cron run reads one D1 query
+(whether any audit row or uncopied record is left: none, or no table yet, and nothing more runs). A cancel the relayer
+or the network's fees caused is billed `cancelled` like any other (the
 audit row's `rejection` says whose doing it was; the record doesn't yet).
 
 **`GET /v1/evm/sponsor/status?chainId=`** (exactly that parameter; `400 bad_request` otherwise) → 200 `{available,
 reason?, remainingToday?}`: `chain_not_enabled`, `app_not_sponsored`, `paused` (the relayer is halted, D851; its
-`status()` read for at most 2 s), or `remainingToday` (this app's own day budget left, wei) with `available: false,
+`status()` read for at most 2 s and kept 15 s per isolate, so anonymous requests never reach the object each time), or `remainingToday` (this app's own day budget left, wei) with `available: false,
 reason: "budget_exhausted"` when the app's or the env's day can't take another batch. No chain read; never another app's
 or the env's figures.
 
@@ -1379,7 +1402,7 @@ run, with or without sponsorship on).
 `dailyBudgetEth`; once a UTC day per chain; `{day, chainId, spentWei, budgetWei, thresholdPct}`); `evm_relay_balance_low`
 (the relayer's balance below `lowBalanceEth` from the cron, or below a send's 3 × worst case at send with `neededWei`;
 once a UTC day per chain; `{day, chainId, relayer, balanceWei, lowBalanceWei}`); `evm_relay_stuck` (the relayer halted
-`{halted, haltCode?}`, its oldest unmined transaction over 10 minutes, a send unsettled over 10 minutes, or a batch
+`{halted, haltCode?}`, its oldest unmined (or, once the relayer reports it, unaccepted) transaction over 2 minutes, a send unsettled over 10 minutes, or a batch
 refused for the relayer's own reason `{rejected}`; once an hour per chain; `{chainId, pending, oldestPendingMs}`);
 `evm_relay_receipt_odd` (a receipt outside its reservation, settled at it; once an hour per chain); `evm_relay_nonce_taken`
 (staff closed the relayer's record: its nonce went elsewhere).

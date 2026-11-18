@@ -93,6 +93,7 @@ export const SPONSOR_TEXT = Object.freeze({
   wrongAccount: 'This isn’t the account you’re signed in with. Nothing was sent. Sign in again, then try again.',
   signInNotReady: 'Journear is still finishing your sign-in. Try again in a few seconds.',
   signInUnchecked: 'Journear couldn’t check your sign-in, so nothing was sent. Sign in again, then try again.',
+  accountPending: 'Your account has other actions waiting on the network, so this one couldn’t go through. Wait a moment, then try again.',
 });
 
 // ---- limits (D855) ----
@@ -677,6 +678,14 @@ function apiMessage(e: ApiError, setup: boolean): string {
       return SPONSOR_TEXT.signInEnded;
     case 'sponsorship_paused':
       return SPONSOR_TEXT.paused;
+    case 'outcome_unknown':
+      return SPONSOR_TEXT.unknownOutcome;
+    case 'account_pending':
+      return SPONSOR_TEXT.accountPending;
+    case 'account_busy':
+      return SPONSOR_TEXT.busy;
+    case 'batch_too_large':
+      return SPONSOR_TEXT.tooBig;
     case 'gas_price_too_high':
       return SPONSOR_TEXT.feesHigh;
     case 'relayer_busy':
@@ -704,6 +713,7 @@ function apiMessage(e: ApiError, setup: boolean): string {
     case 'directory_unavailable':
     case 'rate_limiter_unavailable':
     case 'config_unavailable':
+    case 'internal_error':
       return SPONSOR_TEXT.unavailable;
     default:
       return e.status >= 500 ? SPONSOR_TEXT.unavailable : SPONSOR_TEXT.notReady;

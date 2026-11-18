@@ -9,6 +9,7 @@ import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { checkEvmSponsorRelay, evmSponsorConfig, sponsorFaults, EVM_SPONSOR_PREPARE_ENDPOINT as PREPARE, EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, sponsorPins, sponsorTiming } from '../src/evm/sponsor.ts';
 import { DEFAULT_SPONSOR_PORTS, type Hex, keccakHex, sponsorPorts } from '../src/evm/sponsor-ports.ts';
 import { pruneEvmSponsorSends, reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
+import { checksumEvmAddress } from '../src/evm/sponsor-config.ts';
 import { BILLING_LATE_MS, mirrorEvmBilling, RECORD_EVM_SPONSORED_SQL } from '../src/evm/sponsor-billing.ts';
 import { usageTransport } from '../src/usage/record.ts';
 import { EVM_SPONSOR_LIMITS } from '../src/evm/sponsor-checks.ts';
@@ -108,7 +109,7 @@ beforeEach(async () => {
       await runInDurableObject(env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(name)), async (_i, state) => state.storage.deleteAll());
     }
   }
-  await env.DB.exec("DELETE FROM security_events WHERE kind LIKE 'evm_relay_%'");
+  await env.DB.exec("DELETE FROM security_events WHERE kind LIKE 'evm_relay_%' OR kind = 'evm_billing_late'");
   await env.DB.exec('DELETE FROM evm_sponsor_sends');
   await env.DB.exec('DELETE FROM evm_sponsor_billing');
 });
@@ -127,7 +128,10 @@ beforeEach(() => {
 afterEach(() => {
   usageTransport.query = realTransport;
 });
-beforeEach(() => {
+beforeEach(async () => {
+  const { forgetRelayerStatus, forgetRelayerBalances } = await import('../src/evm/sponsor.ts');
+  forgetRelayerStatus();
+  forgetRelayerBalances();
   receiptKind = 'executed';
   sponsorTiming.receiptWaitMs = 400;
   sponsorTiming.receiptPollMs = 50;
@@ -228,7 +232,7 @@ describe('POST /v1/evm/sponsor/send: refusals before any chain read', () => {
     ['another relayer', (s) => signedSend(s.user, { relayer: testUser('other relayer').address }).body, 400, 'wrong_relayer'],
     ['minGas below the floor', (s) => signedSend(s.user, { minGas: 99_999n }).body, 400, 'min_gas_out_of_range', { minGasFloor: '100000', maxGas: '300000' }],
     ['minGas above maxGasPerTx', (s) => signedSend(s.user, { minGas: 300_001n }).body, 400, 'min_gas_out_of_range'],
-    ['a deadline under 30 s away', (s) => signedSend(s.user, { deadline: BigInt(Math.floor(Date.now() / 1000) + 29) }).body, 400, 'deadline_out_of_range', { deadlineMaxS: 600 }],
+    ['a deadline under 30 s away', (s) => signedSend(s.user, { deadline: BigInt(Math.floor(Date.now() / 1000) + 29) }).body, 400, 'deadline_out_of_range', { deadlineMaxS: 300 }],
     ['a deadline past deadlineMaxS', (s) => signedSend(s.user, { deadline: BigInt(Math.floor(Date.now() / 1000) + 700) }).body, 400, 'deadline_out_of_range'],
     ['a batch signed by another key', (s) => signedSend(s.user, { signWith: testUser('mallory').key }).body, 401, 'invalid_signature'],
     ['a signature over another implementation (the request can’t pick the delegate)', (s) => signedSend(s.user, { delegate: OP_DELEGATE }).body, 401, 'invalid_signature'],
@@ -534,7 +538,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
     };
     const signed = signedSend(s.user);
     const res = await send(s, signed.body);
-    expect([res.status, (await body(res)).code]).toEqual([503, 'relayer_unavailable']);
+    expect([res.status, (await body(res)).code]).toEqual([503, 'outcome_unknown']);
     expect((await auditRows(s.user.address))[0]?.status).toBe('unknown');
     const first = s.relayer.sends[0]!.reservedWei;
     expect(await appSpent(s.app)).toBe(first);
@@ -550,12 +554,12 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
     // [message, status, code, retryAfterS, the user's own attempts come back]
     const cases: [string, number, string, number | undefined, boolean][] = [
       ['evm_relayer:relayer_busy', 429, 'relayer_busy', 2, true],
-      ['evm_relayer:relayer_busy:account', 429, 'relayer_busy', 5, true],
+      ['evm_relayer:relayer_busy:account', 429, 'account_busy', 5, true],
       ['evm_relayer:relayer_misconfigured', 503, 'sponsorship_unconfigured', undefined, true],
       ['evm_relayer:rpc_unavailable', 502, 'evm_rpc_unavailable', undefined, true],
       ['evm_relayer:rejected:insufficient_funds', 503, 'relayer_unavailable', undefined, true],
       ['evm_relayer:deadline_passed', 400, 'deadline_out_of_range', undefined, false],
-      ['evm_relayer:invalid_request', 503, 'relayer_unavailable', undefined, false],
+      ['evm_relayer:invalid_request', 503, 'internal_error', undefined, true],
       ['evm_relayer:fees_too_high', 503, 'gas_price_too_high', 30, true],
       ['evm_relayer:fees_too_low', 503, 'gas_price_too_high', 15, true],
       ['evm_relayer:daily_cap', 429, 'budget_exhausted', 3600, true],
@@ -609,7 +613,7 @@ describe('POST /v1/evm/sponsor/send: simulation, receipts and settlement', () =>
   it('a relayer answer whose hash is not its raw transaction’s is not trusted', async () => {
     const s = await setup();
     s.relayer.onSend = async (req) => ({ transactionHash: `0x${'ab'.repeat(32)}`, relayerNonce: 0, raw: `0x02${digestOf(req).slice(2)}`, replay: false, digest: digestOf(req), broadcast: "accepted" as const, rejection: null });
-    expect((await body(await send(s, signedSend(s.user).body))).code).toBe('relayer_unavailable');
+    expect((await body(await send(s, signedSend(s.user).body))).code).toBe('outcome_unknown');
   });
 
   it('a relayer replay (it had sent this digest): no second charge, the first send’s hash', async () => {
@@ -797,7 +801,7 @@ describe('POST /v1/evm/sponsor/prepare', () => {
     const res = await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] });
     const b = await body(res);
     expect(res.status).toBe(200);
-    expect(b).toMatchObject({ delegation: 'journear', accountNonce: '9', executeNonce: '4', relayer: RELAYER, implementation: DELEGATE, minGasFloor: '100000', deadlineMaxS: 600, allowed: true });
+    expect(b).toMatchObject({ delegation: 'journear', accountNonce: '9', executeNonce: '4', relayer: RELAYER, implementation: DELEGATE, minGasFloor: '100000', deadlineMaxS: 300, allowed: true });
     expect(Math.abs((b.serverNow as number) - Math.floor(Date.now() / 1000))).toBeLessThanOrEqual(1);
     expect(isEvmSponsorPrepareResponse(b)).toBe(true);
     // maxMinGas: a send at it fits maxGasPerTx, one above doesn't.
@@ -906,7 +910,7 @@ describe('the relayer checks (cron): balance and stuck transactions', () => {
   it('writes evm_relay_balance_low once a day and evm_relay_stuck once an hour; nothing without the config', async () => {
     const s = await setup();
     s.chain.balanceWei = 10n ** 15n;
-    s.relayer.statusValue = { address: RELAYER, unmined: 2, awaitingConfirmation: 0, oldestUnminedMs: 11 * 60_000, nextNonce: 5, halted: null };
+    s.relayer.statusValue = { address: RELAYER, unmined: 2, awaitingConfirmation: 0, oldestUnminedMs: 11 * 60_000, oldestUnacceptedMs: null, nextNonce: 5, halted: null };
     sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => s.relayer.statusValue, lookup: async () => null });
     const e = { ...env, ...s.bindings } as typeof env;
     await checkEvmSponsorRelay(e);
@@ -1169,7 +1173,7 @@ describe('the relayer’s final interface (PR #70)', () => {
     const inner = s.relayer.onSend;
     s.relayer.onSend = async (req) => ({ ...(await inner(req)), digest: `0x${'99'.repeat(32)}` as Hex });
     const r = await send(s, signedSend(s.user).body);
-    expect([r.status, (await body(r)).code]).toEqual([503, 'relayer_unavailable']);
+    expect([r.status, (await body(r)).code]).toEqual([503, 'outcome_unknown']);
     expect((await auditRows(s.user.address))[0]?.status).toBe('unknown');
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
@@ -1192,7 +1196,7 @@ describe('the relayer’s final interface (PR #70)', () => {
   it('a halted relayer: evm_relay_stuck (“Free network fees: paused or slow, needs a look”), status answers paused, a send is 503 sponsorship_paused with everything back', async () => {
     const s = await setup();
     const halted = { reason: 'nonce_gap' as const, since: Date.now(), nonce: 3 };
-    s.relayer.statusValue = { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, nextNonce: 3, halted };
+    s.relayer.statusValue = { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, oldestUnacceptedMs: null, nextNonce: 3, halted };
     await checkEvmSponsorRelay(cronEnv(s));
     const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").all<{ detail_json: string }>();
     expect(JSON.parse(ev.results[0]!.detail_json)).toMatchObject({ chainId: LOCAL_CHAIN, halted: 'nonce_gap' });
@@ -1264,11 +1268,17 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
   });
 
-  it('… and a receipt read that fails decides nothing: open, then lost an hour past the deadline, never refunded', async () => {
+  it('… and a receipt read that fails decides nothing, ever: open while reads fail, lost only once they succeed and find nothing (M3)', async () => {
     const s = await forgottenTimeout();
     s.chain.receiptDown = true;
     expect(await reconcile(s, s.deadlineMs + 3 * 60_000)).toMatchObject({ open: 1, lost: 0 });
-    expect(await reconcile(s, s.deadlineMs + 61 * 60_000)).toMatchObject({ lost: 1 });
+    expect(await reconcile(s, s.deadlineMs + 61 * 60_000)).toMatchObject({ open: 1, lost: 0 });
+    // A relayer that can't be asked decides nothing either.
+    s.chain.receiptDown = false;
+    sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('down')), status: async () => Promise.reject(new Error('down')), lookup: async () => Promise.reject(new Error('down')) });
+    expect(await reconcile(s, s.deadlineMs + 62 * 60_000)).toMatchObject({ open: 1, lost: 0 });
+    sponsorPorts.relayer = DEFAULT_SPONSOR_PORTS.relayer;
+    expect(await reconcile(s, s.deadlineMs + 63 * 60_000)).toMatchObject({ lost: 1 });
     expect(await appSpent(s.app)).toBe(s.relayer.sends[0]!.reservedWei);
   });
 
@@ -1354,7 +1364,7 @@ describe('the second review: refunds only on a verified "nothing ran", and the r
     const pending = send(s, signedSend(s.user).body);
     await atRelayer;
     // Two minutes on, the row is still `sending` and the request alive: untouched.
-    expect(await reconcile(s, Date.now() + 2 * 60_000)).toEqual({ settled: 0, lost: 0, open: 0 });
+    expect(await reconcile(s, Date.now() + 2 * 60_000)).toMatchObject({ settled: 0, lost: 0, open: 0 });
     release();
     expect((await pending).status).toBe(200);
     expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
@@ -1460,12 +1470,12 @@ describe('billing records (D852): one permanent record per sponsored transaction
     await env.DB.prepare('UPDATE evm_sponsor_billing SET settled_at = settled_at - ?1').bind(BILLING_LATE_MS + 1).run();
     await checkEvmSponsorRelay(cronEnv(s));
     const late = async () => (await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_billing_late'").all<{ detail_json: string }>()).results.map((r) => JSON.parse(r.detail_json) as Record<string, number>);
-    expect(await late()).toEqual([{ missing: 0, unmirrored: 1 }]);
+    expect(await late()).toEqual([{ missing: 0, unmirrored: 1, quarantined: 0 }]);
     await env.DB.exec("DELETE FROM security_events WHERE kind = 'evm_billing_late'");
     await env.DB.exec('DELETE FROM evm_sponsor_billing');
     await env.DB.prepare('UPDATE evm_sponsor_sends SET updated_at = updated_at - ?1, created_at = created_at - ?1').bind(BILLING_LATE_MS + 1).run();
     await checkEvmSponsorRelay(cronEnv(s));
-    expect(await late()).toEqual([{ missing: 1, unmirrored: 0 }]);
+    expect(await late()).toEqual([{ missing: 1, unmirrored: 0, quarantined: 0 }]);
   });
 });
 
@@ -1596,15 +1606,19 @@ describe('the session proof of prepare and send (D856)', () => {
         await untouched(s);
       });
 
-      it('hashes the very object it acts on: of two copies of a key the parsed (last) one is both signed and used', async () => {
+      it('refuses a body that repeats a key (L6: the text a reader sees is the object acted on): 400, nothing read', async () => {
         const s = await setup();
-        const b = make(s);
-        const proofed = withProof(s.app, b, method);
-        // The raw text repeats `account` first with a stranger's address; JSON.parse keeps the last, which the proof covers.
-        const text = JSON.stringify(proofed).replace('{', `{"account":"${testUser().address}",`);
-        const r = await call(path, { headers: vaultHeaders(s.app), rawBody: text, env: s.bindings });
-        expect(r.status).toBe(200);
-        if (method === 'send') expect(s.relayer.sends[0]!.execute.account).toBe(s.user.address);
+        const proofed = withProof(s.app, make(s), method);
+        // The raw text repeats `account` first with a stranger's address (JSON.parse would keep the last), or a call's `to`.
+        for (const text of [JSON.stringify(proofed).replace('{', `{"account":"${testUser().address}",`), JSON.stringify(proofed).replace('"calls":[{', '"calls":[{"to":"0x00",')]) {
+          const r = await call(path, { headers: vaultHeaders(s.app), rawBody: text, env: s.bindings });
+          expect([r.status, (await body(r)).code]).toEqual([400, 'bad_request']);
+        }
+        // An escaped copy of a key is the same key.
+        const escaped = JSON.stringify(proofed).replace('{', '{"\\u0061ccount":"x",');
+        expect((await call(path, { headers: vaultHeaders(s.app), rawBody: escaped, env: s.bindings })).status).toBe(400);
+        await untouched(s);
+        expect((await go(s, make(s))).status).toBe(200);
       });
     });
   }
@@ -1825,9 +1839,9 @@ describe('the one-time setup’s authorization is attached only when nothing of 
 });
 
 describe('the relayer halted or slow (cron and prepare)', () => {
-  it('a halt with its refusal code is raised with it; prepare answers paused; an unmined transaction under 10 minutes raises nothing', async () => {
+  it('a halt with its refusal code is raised with it; prepare answers paused; an unmined transaction under 2 minutes raises nothing', async () => {
     const s = await setup();
-    s.relayer.statusValue = { address: RELAYER, unmined: 1, awaitingConfirmation: 0, oldestUnminedMs: 9 * 60_000, nextNonce: 3, halted: null };
+    s.relayer.statusValue = { address: RELAYER, unmined: 1, awaitingConfirmation: 0, oldestUnminedMs: 90_000, oldestUnacceptedMs: null, nextNonce: 3, halted: null };
     await checkEvmSponsorRelay(cronEnv(s));
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ n: number }>())?.n).toBe(0);
     s.relayer.statusValue = { ...s.relayer.statusValue, halted: { reason: 'relayer_cannot_send', since: Date.now(), nonce: 2, code: 'insufficient_funds' } };
@@ -1836,5 +1850,252 @@ describe('the relayer halted or slow (cron and prepare)', () => {
     expect(JSON.parse(ev!.detail_json)).toMatchObject({ halted: 'relayer_cannot_send', haltCode: 'insufficient_funds' });
     const p = await body(await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] }));
     expect([p.allowed, p.reason]).toEqual([false, 'paused']);
+  });
+});
+
+// ---- the re-review of a0a83e25 (M1–M3, L1–L7) ----
+
+describe('M1: nothing taken can leak', () => {
+  it('the whole send runs inside waitUntil from before the first count: registered before any chain read', async () => {
+    const s = await setup();
+    const at: number[] = [];
+    const exec = { waitUntil: (p: Promise<unknown>) => void (at.push(s.chain.calls.length), p), passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
+    const res = await call(SEND, { headers: vaultHeaders(s.app), body: withProof(s.app, signedSend(s.user).body, 'send'), env: s.bindings, exec });
+    expect(res.status).toBe(200);
+    expect(at[0]).toBe(0);
+  });
+
+  it('the app’s share is counted from its open rows, atomically at the insert: of 6 at once with room for 4, exactly 4 reach the relayer', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    const users = [s.user, ...Array.from({ length: 5 }, () => testUser())];
+    for (const u of users.slice(1)) {
+      await rememberAccount(s.app.scope, u.address);
+      s.chain.codes.set(u.address.toLowerCase(), DESIGNATOR);
+    }
+    const answers = await Promise.all(users.map(async (u) => body(await send(s, signedSend(u).body))));
+    expect(answers.filter((b) => b.code === 'timeout').length).toBe(4);
+    expect(answers.filter((b) => b.code === 'relayer_busy').length).toBe(2);
+    expect(s.relayer.sends.length).toBe(4);
+    // The two refused took nothing: only the four sent hold a reservation.
+    const held = (await env.DB.prepare("SELECT reserved_wei FROM evm_sponsor_sends WHERE app_id = ?1 AND status = 'timeout'").bind(s.app.id).all<{ reserved_wei: string }>()).results;
+    expect(await appSpent(s.app)).toBe(held.reduce((n, r) => n + BigInt(r.reserved_wei), 0n));
+  });
+});
+
+describe('M2: a full share settles its own open rows inline', () => {
+  it('four sends whose receipts came after the wait: the fifth settles them first (no cron) and goes through', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    const users = [s.user, testUser(), testUser(), testUser(), testUser()];
+    for (const u of users.slice(1)) {
+      await rememberAccount(s.app.scope, u.address);
+      s.chain.codes.set(u.address.toLowerCase(), DESIGNATOR);
+    }
+    for (const u of users.slice(0, 4)) expect((await send(s, signedSend(u).body)).status).toBe(504);
+    for (const req of s.relayer.sends) {
+      const hash = keccakHex(rawFor(req));
+      s.chain.receipts.set(hash, receiptFor(req, hash, 'executed'));
+    }
+    receiptKind = 'executed';
+    expect((await send(s, signedSend(users[4]!).body)).status).toBe(200);
+    expect((await auditRows(s.user.address))[0]?.status).toBe('executed');
+  });
+});
+
+describe('L1: a digest with two rows is charged once', () => {
+  it('a first attempt answered unknown, then the real send: the first becomes a zero duplicate, the budget charged once, no late alert', async () => {
+    const s = await setup();
+    const signed = signedSend(s.user);
+    const inner = s.relayer.onSend;
+    s.relayer.onSend = async () => {
+      throw new Error('the object was reset');
+    };
+    expect((await body(await send(s, signed.body))).code).toBe('outcome_unknown');
+    s.relayer.onSend = inner;
+    expect((await send(s, signed.body)).status).toBe(200);
+    await ageRows();
+    await reconcile(s);
+    const statuses = (await auditRows(s.user.address)).map((r) => r.status).sort();
+    expect(statuses).toEqual(['duplicate', 'executed']);
+    expect(await appSpent(s.app)).toBe(9_000_000_000_000n);
+    expect((await billingRows()).length).toBe(1);
+    await env.DB.prepare('UPDATE evm_sponsor_billing SET settled_at = settled_at - ?1').bind(BILLING_LATE_MS + 1).run();
+    await checkEvmSponsorRelay(cronEnv(s));
+    const late = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_billing_late'").first<{ detail_json: string }>();
+    expect(late === null || JSON.parse(late.detail_json).missing === 0).toBe(true);
+  });
+});
+
+describe('L2: the nonce floor and the outcome follow the relayer’s verdict at confirmed depth', () => {
+  const floorOf = (s: Setup) => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`evm-sponsor:account:${LOCAL_CHAIN}:${s.user.address.toLowerCase()}`)).floor('evm-sponsor:nonce');
+
+  it('a head receipt answers 200 but raises no floor; the relayer’s mined verdict on the same hash confirms it and raises it', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    expect(await floorOf(s)).toBe('0');
+    const req = s.relayer.sends[0]!;
+    const hash = keccakHex(rawFor(req));
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: hash, hashes: [hash], state: 'mined', minedHash: hash, outcome: 'execute', costWei: 1n, reservedWei: req.reservedWei });
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ confirmed: 1, corrected: 0 });
+    expect(await floorOf(s)).toBe('1');
+  });
+
+  it('a reorg: the verdict names the batch’s cancel instead: the row corrected to not_executed, a correction record supersedes the first, the budget moves', async () => {
+    const s = await setup();
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+    const req = s.relayer.sends[0]!;
+    const first = keccakHex(rawFor(req));
+    const cancel = keccakHex(rawFor(req, 'cancel'));
+    s.chain.receipts.set(cancel, receiptFor(req, cancel, 'not_executed', { gasUsed: 21_000n, price: 100_000_000n }));
+    s.relayer.lookupOverride = async (digest) => ({ digest, relayerNonce: 0, transactionHash: cancel, hashes: [first, cancel], state: 'mined', minedHash: cancel, outcome: 'cancel', costWei: 1n, reservedWei: req.reservedWei });
+    await ageRows();
+    expect(await reconcile(s)).toMatchObject({ corrected: 1 });
+    expect((await auditRows(s.user.address))[0]).toMatchObject({ status: 'not_executed', tx_hash: cancel, settled_wei: String(21_000n * 100_000_000n) });
+    const records = await billingRows();
+    expect(records.map((r) => [r.record_key, r.corrects, r.outcome])).toEqual([
+      [first, null, 'executed'],
+      [`fix:${records[0]!.send_id}`, first, 'cancelled'],
+    ]);
+    expect(await appSpent(s.app)).toBe(21_000n * 100_000_000n);
+    expect(await floorOf(s)).toBe('0');
+    // Checked once: a second run changes nothing.
+    expect(await reconcile(s)).toMatchObject({ corrected: 0, confirmed: 0 });
+  });
+});
+
+describe('L3: never send what the relayer would refuse', () => {
+  it('calldata over the relayer’s own limit is refused before anything is sent (a second line: a valid manifest can’t reach it)', async () => {
+    const { calldataTooLarge } = await import('../src/evm/sponsor.ts');
+    const { EVM_RELAYER_MAX_DATA_BYTES } = await import('../src/evm-relayer.ts');
+    expect(calldataTooLarge(`0x${'ab'.repeat(EVM_RELAYER_MAX_DATA_BYTES)}`)).toBe(false);
+    expect(calldataTooLarge(`0x${'ab'.repeat(EVM_RELAYER_MAX_DATA_BYTES + 1)}`)).toBe(true);
+  });
+
+  it('fees the relayer’s own floor refuses (`feesTooLow`): 503 gas_price_too_high (15 s), nothing sent, the attempt back', async () => {
+    const s = await setup();
+    s.chain.baseFeeWei = 750_000_000n;
+    const r = await send(s, signedSend(s.user).body);
+    const b = await body(r);
+    expect([r.status, b.code, b.retryAfterS]).toEqual([503, 'gas_price_too_high', 15]);
+    expect(s.relayer.sends).toEqual([]);
+    expect(await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:attempts`)).toBe(0);
+  });
+
+  it('the relayer refusing the handlers’ own request (invalid_request): an internal error with everything back and an event', async () => {
+    const s = await setup();
+    s.relayer.onSend = async () => {
+      throw new Error('evm_relayer:invalid_request');
+    };
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([503, 'internal_error']);
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ detail_json: string }>();
+    expect(JSON.parse(ev!.detail_json)).toMatchObject({ internal: 'invalid_request' });
+    expect(await appSpent(s.app)).toBe(0n);
+  });
+});
+
+describe('L4 and L5: status is cached; unknown outcomes say so', () => {
+  it('GET /status asks the relayer at most once per 15 s per isolate', async () => {
+    const s = await setup();
+    let asked = 0;
+    const real = sponsorPorts.relayer;
+    sponsorPorts.relayer = (e, id) => {
+      const r = real(e, id)!;
+      return { ...r, status: async () => (asked++, r.status()) };
+    };
+    for (let i = 0; i < 5; i++) expect((await status(s, '?chainId=31337')).status).toBe(200);
+    expect(asked).toBe(1);
+  });
+
+  it('a row given up as lost answers its copies outcome_unknown with no retry, never “timeout” forever', async () => {
+    const s = await setup();
+    receiptKind = 'none';
+    const signed = signedSend(s.user);
+    expect((await send(s, signed.body)).status).toBe(504);
+    s.relayer.lookupOverride = async () => null;
+    await ageRows();
+    expect(await reconcile(s, Number(signed.body.deadline) * 1000 + 61 * 60_000)).toMatchObject({ lost: 1 });
+    const r = await send(s, signed.body);
+    expect([r.status, (await body(r)).code, r.headers.get('retry-after')]).toEqual([409, 'outcome_unknown', null]);
+  });
+});
+
+describe('L7: one bad record never blocks the others; an env without the block reads (almost) nothing', () => {
+  it('the ledger refusing a batch’s input: rows go one by one, the bad one set aside with an alert, the rest copied', async () => {
+    const s = await setup();
+    const users = [s.user, testUser(), testUser()];
+    for (const u of users.slice(1)) {
+      await rememberAccount(s.app.scope, u.address);
+      s.chain.codes.set(u.address.toLowerCase(), DESIGNATOR);
+    }
+    for (const u of users) expect((await send(s, signedSend(u).body)).status).toBe(200);
+    const bad = (await billingRows())[1]!.record_key as string;
+    const pg = (await import('pg')).default;
+    usageTransport.query = async (_b, _sql, params) => {
+      const rows = JSON.parse(String(params[0])) as { record_key: string }[];
+      if (rows.some((r) => r.record_key === bad)) throw Object.assign(new pg.DatabaseError('evm row: an amount', 0, 'error'), { code: '22023' });
+      ledgerCalls.push({ sql: _sql, rows: rows as never });
+    };
+    await mirrorEvmBilling(cronEnv(s));
+    const after = await billingRows();
+    expect(after.filter((r) => r.mirrored_at !== null).length).toBe(2);
+    expect(after.find((r) => r.record_key === bad)).toMatchObject({ mirrored_at: null, quarantined_at: expect.any(Number) });
+    await checkEvmSponsorRelay(cronEnv(s));
+    const late = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_billing_late'").first<{ detail_json: string }>();
+    expect(JSON.parse(late!.detail_json)).toMatchObject({ quarantined: 1 });
+  });
+
+  it('without the block and with nothing left in the tables: one D1 read a run, nothing else', async () => {
+    const s = await setup();
+    const e = { ...cronEnv(s), EVM_SPONSOR: undefined } as typeof env;
+    const prepared: string[] = [];
+    const db = e.DB;
+    const spy = { ...e, DB: { prepare: (q: string) => (prepared.push(q), db.prepare(q)), batch: db.batch.bind(db), exec: db.exec.bind(db) } } as unknown as typeof env;
+    await checkEvmSponsorRelay(spy);
+    expect(prepared.length).toBe(1);
+    expect(s.chain.calls).toEqual([]);
+  });
+});
+
+describe('the relayer’s answers as values (PR 86’s interface)', () => {
+  it('a coded refusal returned as `{ok: false}` is read as a thrown one: nothing sent, everything back', async () => {
+    const s = await setup();
+    s.relayer.onSend = async () => ({ ok: false, refused: 'relayer_busy', reason: 'account' }) as never;
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([429, 'account_busy']);
+    expect((await auditRows(s.user.address))[0]?.status).toBe('refused');
+    expect(await appSpent(s.app)).toBe(0n);
+  });
+
+  it('an `ok: true` answer is the transaction', async () => {
+    const s = await setup();
+    const inner = s.relayer.onSend;
+    s.relayer.onSend = async (req) => ({ ok: true, ...(await inner(req)) }) as never;
+    expect((await send(s, signedSend(s.user).body)).status).toBe(200);
+  });
+
+  it('the user’s account had other transactions waiting (`authority_reserved`, cause request): 422 account_pending, a failure', async () => {
+    const s = await setup();
+    const inner = fakeRelayer(s.chain, () => 'none').onSend;
+    s.relayer.onSend = async (req) => ({ ...(await inner(req)), broadcast: 'rejected', rejection: { cause: 'request', code: 'authority_reserved' } as never });
+    const r = await send(s, signedSend(s.user).body);
+    expect([r.status, (await body(r)).code]).toEqual([422, 'account_pending']);
+    expect(await failuresSpent(`evm-sponsor:failures:${s.userId}`)).toBe(1n);
+  });
+});
+
+describe('the relayer’s oldest unaccepted transaction (PR 86’s status field)', () => {
+  it('over 2 minutes raises evm_relay_stuck with its age; under it, nothing', async () => {
+    const s = await setup();
+    s.relayer.statusValue = { address: RELAYER, unmined: 1, awaitingConfirmation: 0, oldestUnminedMs: 10_000, oldestUnacceptedMs: 60_000, nextNonce: 1, halted: null };
+    sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => s.relayer.statusValue, lookup: async () => null });
+    await checkEvmSponsorRelay(cronEnv(s));
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ n: number }>())?.n).toBe(0);
+    s.relayer.statusValue = { ...s.relayer.statusValue, oldestUnacceptedMs: 3 * 60_000 };
+    await checkEvmSponsorRelay(cronEnv(s));
+    const ev = await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_stuck'").first<{ detail_json: string }>();
+    expect(JSON.parse(ev!.detail_json)).toMatchObject({ oldestUnacceptedMs: 3 * 60_000 });
   });
 });

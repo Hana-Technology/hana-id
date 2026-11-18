@@ -94,3 +94,16 @@ describe('usage.record_evm_sponsored (D852)', () => {
     expect(await count()).toBe(before);
   });
 });
+
+describe('corrections (D847: a reorg the relayer’s verdict showed)', () => {
+  it('a correction names the record it supersedes; the monthly view counts the correction, not the first', async () => {
+    const first = hash('c1');
+    expect(await copy([row({ record_key: first, tx_hash: first, app_id: 'app_fix', settled_wei: '9000000000500' })])).toBe(1);
+    const fix = row({ record_key: 'fix:es_000000000000000000000000000000c1', tx_hash: hash('c2'), app_id: 'app_fix', outcome: 'cancelled', settled_wei: '2100000000000', corrects: first });
+    expect(await copy([fix])).toBe(1);
+    const rows = await db.asRole('usage_admin', () => db.query<{ outcome: string; settled_wei: string }>("SELECT outcome, settled_wei::text AS settled_wei FROM usage.evm_sponsored_monthly WHERE app_id = 'app_fix'"));
+    expect(rows).toEqual([{ outcome: 'cancelled', settled_wei: '2100000000000' }]);
+    // A `corrects` on a record not keyed as a correction is refused.
+    expect((await failure(copy([row({ record_key: hash('c3'), tx_hash: hash('c3'), corrects: first })])))?.message).toMatch(/corrects/u);
+  });
+});

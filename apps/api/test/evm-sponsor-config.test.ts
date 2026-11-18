@@ -43,7 +43,7 @@ describe('parseEvmSponsorConfig', () => {
       maxFeePerGasWei: 1_000_000_000n,
       maxPriorityFeePerGasWei: 10_000_000n,
       maxCallsPerBatch: 4,
-      deadlineMaxS: 600,
+      deadlineMaxS: 300,
       minGas: 100_000n,
       dailyBudgetWei: 2n * 10n ** 16n,
       appDailyBudgetWei: 10n ** 16n,
@@ -202,6 +202,16 @@ describe('parseEvmSponsorConfig', () => {
     expect(problem(chain({ maxPriorityFeePerGasGwei: 2 }))).toBe('chains.84532.maxPriorityFeePerGasGwei exceeds maxFeePerGasGwei');
     expect(problem(chain({ maxGasPerTx: 1_000_000, maxFeePerGasGwei: 20 }))).toBe("chains.84532: one transaction's worst case exceeds appDailyBudgetEth");
     expect(parse(chain({ maxGasPerTx: 1_000_000, maxFeePerGasGwei: 10 })).status).toBe('configured');
+  });
+
+  it('refuses a tip cap with no starting tip, deadlineMaxS above 300, and batches past the relayer\'s 30 KiB of calls', () => {
+    expect(problem(chain({ maxPriorityFeePerGasGwei: 0.000000002 }))).toMatch(/^chains\.84532\.maxPriorityFeePerGasGwei is too small: after the two fee bumps/u);
+    expect(parse(chain({ maxPriorityFeePerGasGwei: 0.000000003 })).status).toBe('configured');
+    expect(problem(chain({ deadlineMaxS: 301 }))).toMatch(/deadlineMaxS/u);
+    expect(parse(chain({ deadlineMaxS: 300 })).status).toBe('configured');
+    const big = (maxCallsPerBatch: number, maxDataBytes: number) => evmSponsorVar({ ...chain({ maxCallsPerBatch }), apps: { [FIXTURE_APP]: { '84532': [target({ maxDataBytes })] } } } as EvmSponsorManifest);
+    expect(parse(big(4, 7680)).status).toBe('configured');
+    expect(parseEvmSponsorConfig(big(4, 7681), SANDBOX)).toMatchObject({ status: 'unconfigured', problem: 'chains.84532.maxCallsPerBatch × the largest target maxDataBytes is 30724 bytes; the relayer sends at most 30720 bytes of calls in one batch (30 KiB)' });
   });
 
   it('enforces the hard bounds on every number', () => {

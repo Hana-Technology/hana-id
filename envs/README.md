@@ -200,7 +200,7 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
     "rpc": "https://sepolia.base.org", "rpcFallback": "https://base-sepolia-rpc.publicnode.com",
     "delegate": "0x…", "opStack": true,
     "maxGasPerTx": 300000, "maxFeePerGasGwei": 1, "maxPriorityFeePerGasGwei": 0.01,
-    "maxCallsPerBatch": 4, "deadlineMaxS": 600, "minGas": 100000,
+    "maxCallsPerBatch": 4, "deadlineMaxS": 300, "minGas": 100000,
     "dailyBudgetEth": 0.02, "appDailyBudgetEth": 0.01, "lowBalanceEth": 0.05,
     "perUserPerDay": 30, "perAppPerDay": 2000, "sendsPerDay": 5000, "sendsPerMinute": 60,
     "requireKnownAccount": true } },
@@ -233,8 +233,11 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   deterministic deployment) is accepted only in `local*` envs. Chain 31337 itself is allowed only in `local*` envs.
 - Limits per chain, every one required except `requireKnownAccount`, with hard bounds: `maxGasPerTx` (50 000 to
   2 000 000), `minGas` (10 000 to 1 000 000, below `maxGasPerTx`), `maxFeePerGasGwei` (above 0, at most 100) and
-  `maxPriorityFeePerGasGwei` (0 to `maxFeePerGasGwei`), both to 1 wei; `maxCallsPerBatch` (1 to 8), `deadlineMaxS` (60
-  to 3600); `dailyBudgetEth` and `appDailyBudgetEth` (above 0, at most 1, to 1 gwei; the app's below the env's) and
+  `maxPriorityFeePerGasGwei` (0 to `maxFeePerGasGwei`), both to 1 wei, and the tip cap at least 0.000000003 (3 wei:
+  after the relayer's two × 1.125 fee bumps a send must still start with a tip of 1 wei); `maxCallsPerBatch` (1 to 8,
+  and `maxCallsPerBatch` × the largest target `maxDataBytes` on the chain at most 30 720 bytes, the relayer's calldata
+  limit for a batch's calls), `deadlineMaxS` (60 to 300: a user's action is cancelled at its deadline, so a short one
+  frees the relayer sooner); `dailyBudgetEth` and `appDailyBudgetEth` (above 0, at most 1, to 1 gwei; the app's below the env's) and
   `lowBalanceEth` (at most 10); `perUserPerDay` (1 to 10 000), `perAppPerDay` (1 to 1 000 000, below `sendsPerDay`),
   `sendsPerDay` (to 10 000 000), `sendsPerMinute` (to 100 000). One transaction's worst case, `maxGasPerTx` ×
   `maxFeePerGasGwei`, must fit in `appDailyBudgetEth`. `requireKnownAccount` (default true): sponsor only accounts the

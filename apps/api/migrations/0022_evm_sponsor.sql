@@ -7,7 +7,8 @@
 -- One row per send that reached the reservation (`sending`), updated as it goes: `sent` (the relayer gave its hash),
 -- then `executed`, `reverted` or `not_executed` from the receipt, `timeout` (no receipt within 30 s), `rejected` (no
 -- node took the batch: the relayer gave its nonce to its own cancel at once; `rejection` says whose doing it was),
--- `refused` (nothing was sent: a coded relayer refusal), `unknown` (the relayer failed: it may or may not have
+-- `refused` (nothing was sent: a coded relayer refusal), `duplicate` (a second row of one digest whose transaction is
+-- billed to the other row: settled at zero, its reservation given back), `unknown` (the relayer failed: it may or may not have
 -- broadcast), `mined` (the relayer saw it mined, its receipt unreadable), `consumed_elsewhere` (staff closed the
 -- relayer's record) or `lost` (the reconciler gave up: no receipt and the relayer no longer remembers it; the
 -- reservation is kept). `sending`, `sent`, `timeout`, `unknown` and `rejected` are settled by the request or, failing
@@ -43,7 +44,10 @@ CREATE TABLE evm_sponsor_sends (
   -- A rejected batch's `<cause>:<code>` as the relayer gave it (`request:gas_limit`, `relayer:insufficient_funds`,
   -- `pricing:…`): whose doing it was decides whether the user's failure slot was charged.
   rejection     TEXT CHECK (rejection IS NULL OR (length(rejection) BETWEEN 3 AND 65 AND rejection NOT GLOB '*[^a-z_:]*')),
-  status        TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'executed', 'reverted', 'not_executed', 'mined', 'timeout', 'unknown', 'rejected', 'refused', 'lost', 'consumed_elsewhere')),
+  status        TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'executed', 'reverted', 'not_executed', 'mined', 'timeout', 'unknown', 'rejected', 'refused', 'lost', 'consumed_elsewhere', 'duplicate')),
+  -- When the relayer's own verdict at confirmed depth (its `lookup`: mined, the row's hash) agreed with the outcome; NULL
+  -- for a row settled from a receipt at head until the reconciler checks it (and corrects a reorg, D847).
+  confirmed_at  INTEGER,
   request_id    TEXT NOT NULL,
   created_at    INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at    INTEGER NOT NULL CHECK (updated_at >= created_at)
@@ -56,6 +60,8 @@ CREATE INDEX evm_sponsor_sends_user ON evm_sponsor_sends (user_id);
 CREATE INDEX evm_sponsor_sends_app ON evm_sponsor_sends (app_id, created_at DESC);
 CREATE INDEX evm_sponsor_sends_open ON evm_sponsor_sends (status, updated_at) WHERE status IN ('sending', 'sent', 'timeout', 'unknown', 'rejected');
 CREATE INDEX evm_sponsor_sends_created ON evm_sponsor_sends (created_at);
+-- Settled from a receipt at head, not yet checked against the relayer's verdict at confirmed depth (the reconciler).
+CREATE INDEX evm_sponsor_sends_unconfirmed ON evm_sponsor_sends (updated_at) WHERE confirmed_at IS NULL AND status IN ('executed', 'reverted', 'not_executed');
 
 -- The billing record (D852): one per sponsored transaction that reached the chain (the batch: executed, reverted or run
 -- without effect; or the relayer's deadline self-transfer: cancelled), and one per charge with no mined transaction of
@@ -68,7 +74,10 @@ CREATE INDEX evm_sponsor_sends_created ON evm_sponsor_sends (created_at);
 CREATE TABLE evm_sponsor_billing (
   chain_id                INTEGER NOT NULL CHECK (chain_id > 0),
   record_key              TEXT NOT NULL CHECK (length(record_key) BETWEEN 1 AND 80),  -- the tx hash, or 'send:<es_…>' without one
-  send_id                 TEXT NOT NULL UNIQUE CHECK (send_id GLOB 'es_*'),
+  send_id                 TEXT NOT NULL CHECK (send_id GLOB 'es_*'),
+  -- A correction (D847, a reorg the relayer's verdict showed): the key of the record it supersedes for this send; the
+  -- correction's own key is 'fix:<send>'. Records are never edited.
+  corrects                TEXT CHECK (corrects IS NULL OR length(corrects) BETWEEN 1 AND 80),
   org_id                  TEXT NOT NULL,
   app_id                  TEXT NOT NULL,
   environment             TEXT NOT NULL,
@@ -89,13 +98,20 @@ CREATE TABLE evm_sponsor_billing (
   created_at              INTEGER NOT NULL,
   settled_at              INTEGER NOT NULL,
   mirrored_at             INTEGER,
+  -- A record the ledger refused on its own (one bad row never blocks the others): set aside, with `evm_billing_late`.
+  quarantined_at          INTEGER,
   PRIMARY KEY (chain_id, record_key),
   -- A mined transaction has its hash as its key; a charge without one has the send as its key.
-  CHECK ((tx_hash IS NOT NULL AND record_key = tx_hash) OR (tx_hash IS NULL AND outcome IN ('lost', 'consumed_elsewhere') AND record_key = 'send:' || send_id))
+  CHECK ((tx_hash IS NOT NULL AND corrects IS NULL AND record_key = tx_hash) OR (tx_hash IS NOT NULL AND corrects IS NOT NULL AND record_key = 'fix:' || send_id)
+         OR (tx_hash IS NULL AND corrects IS NULL AND outcome IN ('lost', 'consumed_elsewhere') AND record_key = 'send:' || send_id))
 );
+-- One record per send, and at most one correction of it.
+CREATE UNIQUE INDEX evm_sponsor_billing_send ON evm_sponsor_billing (send_id) WHERE corrects IS NULL;
+CREATE UNIQUE INDEX evm_sponsor_billing_fix ON evm_sponsor_billing (send_id) WHERE corrects IS NOT NULL;
 CREATE INDEX evm_sponsor_billing_org ON evm_sponsor_billing (org_id, settled_at);
 CREATE INDEX evm_sponsor_billing_app ON evm_sponsor_billing (app_id, settled_at);
-CREATE INDEX evm_sponsor_billing_unmirrored ON evm_sponsor_billing (settled_at) WHERE mirrored_at IS NULL;
+CREATE INDEX evm_sponsor_billing_unmirrored ON evm_sponsor_billing (settled_at) WHERE mirrored_at IS NULL AND quarantined_at IS NULL;
+CREATE INDEX evm_sponsor_billing_quarantined ON evm_sponsor_billing (settled_at) WHERE quarantined_at IS NOT NULL AND mirrored_at IS NULL;
 
 -- `security_events` gains `evm_relay_budget_high` (a chain's day spend reached 80% of `dailyBudgetEth`, once a day),
 -- `evm_relay_balance_low` (the relayer below `lowBalanceEth`, once a day), `evm_relay_stuck` (a relayer transaction

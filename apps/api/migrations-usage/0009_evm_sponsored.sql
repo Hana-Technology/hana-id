@@ -38,8 +38,11 @@ CREATE TABLE usage.evm_sponsored_txs (
   created_at              timestamptz    NOT NULL,
   settled_at              timestamptz    NOT NULL,
   copied_at               timestamptz    NOT NULL DEFAULT now(),
+  -- A correction (D847: a reorg the relayer's verdict at confirmed depth showed) names the record it supersedes.
+  corrects                text           CHECK (corrects IS NULL OR length(corrects) BETWEEN 1 AND 80),
   PRIMARY KEY (chain_id, record_key),
-  CHECK ((tx_hash IS NOT NULL AND record_key = tx_hash) OR (tx_hash IS NULL AND outcome IN ('lost', 'consumed_elsewhere') AND record_key LIKE 'send:%'))
+  CHECK ((tx_hash IS NOT NULL AND corrects IS NULL AND record_key = tx_hash) OR (tx_hash IS NOT NULL AND corrects IS NOT NULL AND record_key LIKE 'fix:%')
+         OR (tx_hash IS NULL AND corrects IS NULL AND outcome IN ('lost', 'consumed_elsewhere') AND record_key LIKE 'send:%'))
 );
 CREATE INDEX evm_sponsored_txs_org ON usage.evm_sponsored_txs (org_id, settled_at);
 CREATE INDEX evm_sponsored_txs_app ON usage.evm_sponsored_txs (app_id, settled_at);
@@ -64,7 +67,7 @@ DECLARE
   n       integer;
   allowed constant text[] := ARRAY['chain_id', 'record_key', 'org_id', 'app_id', 'environment', 'tx_hash', 'block_number', 'block_time',
     'outcome', 'gas_used', 'effective_gas_price_wei', 'execution_wei', 'l1_fee_wei', 'operator_fee_wei', 'total_cost_wei', 'settled_wei',
-    'call_count', 'targets', 'with_setup', 'created_at', 'settled_at'];
+    'call_count', 'targets', 'with_setup', 'created_at', 'settled_at', 'corrects'];
 BEGIN
   IF rows IS NULL OR jsonb_typeof(rows) <> 'array' THEN PERFORM usage.event_invalid('evm rows: not an array'); END IF;
   IF jsonb_array_length(rows) > 500 THEN PERFORM usage.event_invalid('evm rows: more than 500'); END IF;
@@ -91,6 +94,9 @@ BEGIN
          OR (t ->> 'address') !~ '^0x[0-9a-f]{40}$' OR (t ->> 'selector') !~ '^0x[0-9a-f]{8}$' THEN PERFORM usage.event_invalid('evm row: a target'); END IF;
     END LOOP;
     IF jsonb_typeof(r -> 'with_setup') IS DISTINCT FROM 'boolean' THEN PERFORM usage.event_invalid('evm row: with_setup'); END IF;
+    IF NOT (r ? 'corrects') OR jsonb_typeof(r -> 'corrects') = 'null' THEN NULL;
+    ELSIF jsonb_typeof(r -> 'corrects') <> 'string' OR length(r ->> 'corrects') NOT BETWEEN 1 AND 80 OR (r ->> 'record_key') NOT LIKE 'fix:%' THEN PERFORM usage.event_invalid('evm row: corrects');
+    END IF;
     FOREACH k IN ARRAY ARRAY['created_at', 'settled_at', 'block_time'] LOOP
       IF k = 'block_time' AND jsonb_typeof(r -> k) = 'null' THEN CONTINUE; END IF;
       IF jsonb_typeof(r -> k) IS DISTINCT FROM 'string' OR (r ->> k) !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$' THEN PERFORM usage.event_invalid('evm row: ' || k); END IF;
@@ -99,13 +105,13 @@ BEGIN
 
   INSERT INTO usage.evm_sponsored_txs (chain_id, record_key, org_id, app_id, environment, tx_hash, block_number, block_time, outcome, gas_used,
       effective_gas_price_wei, execution_wei, l1_fee_wei, operator_fee_wei, total_cost_wei, settled_wei, call_count, targets, with_setup,
-      created_at, settled_at)
+      created_at, settled_at, corrects)
   SELECT (x ->> 'chain_id')::integer, x ->> 'record_key', x ->> 'org_id', x ->> 'app_id', x ->> 'environment', x ->> 'tx_hash',
          (x ->> 'block_number')::numeric, (x ->> 'block_time')::timestamptz, x ->> 'outcome', (x ->> 'gas_used')::numeric,
          (x ->> 'effective_gas_price_wei')::numeric, (x ->> 'execution_wei')::numeric, (x ->> 'l1_fee_wei')::numeric,
          (x ->> 'operator_fee_wei')::numeric, (x ->> 'total_cost_wei')::numeric, (x ->> 'settled_wei')::numeric,
          (x ->> 'call_count')::smallint, x -> 'targets', (x ->> 'with_setup')::boolean, (x ->> 'created_at')::timestamptz,
-         (x ->> 'settled_at')::timestamptz
+         (x ->> 'settled_at')::timestamptz, x ->> 'corrects'
     FROM jsonb_array_elements(rows) AS x
   ON CONFLICT (chain_id, record_key) DO NOTHING;
   GET DIAGNOSTICS n = ROW_COUNT;
@@ -118,7 +124,9 @@ CREATE VIEW usage.evm_sponsored_monthly AS
   SELECT org_id, app_id, chain_id, date_trunc('month', settled_at)::date AS month, outcome,
          count(*) AS transactions, sum(settled_wei) AS settled_wei, sum(total_cost_wei) AS total_cost_wei,
          sum(l1_fee_wei) AS l1_fee_wei, sum(operator_fee_wei) AS operator_fee_wei
-    FROM usage.evm_sponsored_txs
+    FROM usage.evm_sponsored_txs t
+   -- A record a correction superseded counts no more: the correction carries the send's final figures.
+   WHERE NOT EXISTS (SELECT 1 FROM usage.evm_sponsored_txs c WHERE c.chain_id = t.chain_id AND c.corrects = t.record_key)
    GROUP BY org_id, app_id, chain_id, date_trunc('month', settled_at)::date, outcome;
 
 REVOKE EXECUTE ON FUNCTION usage.record_evm_sponsored(jsonb), usage.evm_amount_ok(jsonb, integer, boolean) FROM PUBLIC;

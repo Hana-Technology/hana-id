@@ -76,7 +76,7 @@ export const chainBlock = (chainId: number, fields: ChainFields = {}): ChainFiel
   maxFeePerGasGwei: 1,
   maxPriorityFeePerGasGwei: 0.01,
   maxCallsPerBatch: 4,
-  deadlineMaxS: 600,
+  deadlineMaxS: 300,
   minGas: 100_000,
   dailyBudgetEth: 0.02,
   appDailyBudgetEth: 0.01,
@@ -227,7 +227,7 @@ export function fakeRelayer(chain: FakeChain, kind: () => ReceiptKind = () => 'e
   const r: FakeRelayer = {
     sends: [],
     names: [],
-    statusValue: { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, nextNonce: 0, halted: null },
+    statusValue: { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, oldestUnacceptedMs: null, nextNonce: 0, halted: null },
     replaced: new Map(),
     lookups: [],
     onSend: async (req) => {
@@ -241,7 +241,9 @@ export function fakeRelayer(chain: FakeChain, kind: () => ReceiptKind = () => 'e
   const stub = {
     send: async (req: EvmRelayerSendRequest) => {
       r.sends.push(req);
-      return r.onSend(req);
+      const out = await r.onSend(req);
+      // The relayer's answer (PR 86): the transaction as `{ok: true, …}`; a test's own `{ok: false}` passes through.
+      return 'ok' in (out as object) ? out : { ok: true, ...out };
     },
     status: async () => r.statusValue,
     lookup: async (digest: Hex): Promise<EvmRelayerLookup | null> => {

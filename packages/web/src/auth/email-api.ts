@@ -5,7 +5,7 @@
 // SECURITY: `start` carries the address, `verify` the code, and `verify` answers the email token and a device ticket.
 // Nothing here logs a body or puts one in an error message; errors carry the issuer's code only.
 import { ApiError, type CaseBProof, isSealedEmailText, parseApiResponse } from '@hana-id/core';
-import { CHALLENGE_ID_RE, DEVICE_TICKET_RE } from './email-storage.ts';
+import { CHALLENGE_ID_RE, DEVICE_TICKET_RE, UNLOCK_TOKEN_RE } from './email-storage.ts';
 
 export type Fetch = typeof fetch;
 
@@ -41,9 +41,10 @@ export type Verified =
 export type LinkPurpose = 'link_new' | 'link_account' | 'link_change';
 
 export interface EmailApi {
-  start(pk: string, email: string, commitment: SessionCommitment, deviceTicket: string | null): Promise<Challenge>;
+  /** `unlockToken`: a staff unlock this browser's support page pressed (D866), sent while it lasts; the issuer ignores it for another address. */
+  start(pk: string, email: string, commitment: SessionCommitment, deviceTicket: string | null, unlockToken?: string | null): Promise<Challenge>;
   /** `start` for a link purpose (build plan batch 8b), with the commitment the vault sent. */
-  startLink(pk: string, email: string, purpose: LinkPurpose, commitment: Record<string, unknown>, deviceTicket: string | null): Promise<Challenge>;
+  startLink(pk: string, email: string, purpose: LinkPurpose, commitment: Record<string, unknown>, deviceTicket: string | null, unlockToken?: string | null): Promise<Challenge>;
   resend(challengeId: string): Promise<Challenge>;
   verify(challengeId: string, code: string): Promise<Verified>;
 }
@@ -69,6 +70,12 @@ function challenge(body: Record<string, unknown>, what: string): Challenge {
 
 const ticketOf = (v: unknown): string | null => (typeof v === 'string' && DEVICE_TICKET_RE.test(v) ? v : null);
 
+/** The owner proofs a start carries: a device ticket and a pressed staff unlock (D866), each only when well formed. */
+const owner = (deviceTicket: string | null, unlockToken: string | null): Record<string, string> => ({
+  ...(deviceTicket && DEVICE_TICKET_RE.test(deviceTicket) ? { deviceTicket } : {}),
+  ...(unlockToken && UNLOCK_TOKEN_RE.test(unlockToken) ? { unlockToken } : {}),
+});
+
 export function emailApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch(...args)): EmailApi {
   const base = `${new URL(issuerUrl).origin}/v1/email`;
   const post = async (path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> =>
@@ -84,7 +91,7 @@ export function emailApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch(
     );
 
   return {
-    async start(pk, email, c, deviceTicket) {
+    async start(pk, email, c, deviceTicket, unlockToken = null) {
       const commitment = {
         scopeId: c.scopeId,
         sessionPublicKey: Array.from(c.sessionPublicKey),
@@ -93,11 +100,11 @@ export function emailApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch(
         maxUses: c.maxUses,
         salt: Array.from(c.salt),
       };
-      return challenge(await post('start', { pk, email, purpose: 'session', commitment, ...(deviceTicket ? { deviceTicket } : {}) }), 'start');
+      return challenge(await post('start', { pk, email, purpose: 'session', commitment, ...owner(deviceTicket, unlockToken) }), 'start');
     },
 
-    async startLink(pk, email, purpose, commitment, deviceTicket) {
-      return challenge(await post('start', { pk, email, purpose, commitment, ...(deviceTicket ? { deviceTicket } : {}) }), 'start');
+    async startLink(pk, email, purpose, commitment, deviceTicket, unlockToken = null) {
+      return challenge(await post('start', { pk, email, purpose, commitment, ...owner(deviceTicket, unlockToken) }), 'start');
     },
 
     async resend(challengeId) {

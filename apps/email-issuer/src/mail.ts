@@ -206,43 +206,71 @@ export function linkNoticeMail(input: { to: string; appName: string; pending: bo
 }
 
 /**
+ * What the support pages' buttons say (D866, packages/web src/auth/support-page.ts SUPPORT_TEXT): the mails name them,
+ * so a test checks both sides agree.
+ */
+export const SUPPORT_BUTTONS = Object.freeze({ unlock: 'Unlock my email', confirm: 'Yes, this is my email' });
+
+/** The support mails' last lines (D866): when the link stops working, and what to do if the reader never asked. */
+const LINK_ONCE = 'The link works once, within 24 hours of this email.';
+const NOT_YOU = 'Didn’t ask for this? Ignore this email. Nothing changes.';
+
+/**
  * A staff unlock's one-time grant, mailed to the address (abuse review M3): only the mailbox's holder gets it. The token
- * travels in the link's fragment (never sent to a server by the browser), and the `authOrigin` page passes it to
- * `start` as `unlockToken` (batch 8).
+ * travels in the link's fragment (never sent to a server by the browser). Its page, `{authOrigin}/email/unlock`, asks
+ * for one press (D866): that makes the grant usable, and keeps the token in that browser, where the next email sign-in
+ * passes it to `start` as `unlockToken`.
  */
 export function unlockMail(input: { to: string; token: string; authOrigin: string; look?: MailLook }): MailMessage {
   const link = `${input.authOrigin.replace(/\/+$/u, '')}/email/unlock#${input.token}`;
-  const what = `${BRAND.company} support unlocked sign-in with this email, as you asked. To sign in, open this link in the browser where you use the app. It works once, within 24 hours.`;
-  const notYou = `Didn’t ask ${BRAND.company} support for this? Ignore this mail: nothing changes.`;
-  const subject = `Your ${BRAND.company} sign-in is unlocked`;
+  const what = 'Sign-in with this email was paused after too many wrong codes. You asked for help, so here is a link to unlock it.';
+  const how = `Open the link in the browser where you use the app, and press “${SUPPORT_BUTTONS.unlock}”. Then sign in with this email again.`;
+  const subject = `Unlock your ${BRAND.company} sign-in`;
   return {
     to: input.to,
     subject,
-    text: [what, '', link, '', notYou, ''].join('\n'),
+    text: [what, '', how, '', link, '', LINK_ONCE, '', NOT_YOU, ''].join('\n'),
     html: designed(
       subject,
-      `${BRAND.company} support unlocked sign-in with this email, as you asked.`,
-      [{ kind: 'heading', text: subject }, { kind: 'p', text: what }, { kind: 'button', label: 'Open the sign-in link', url: link }, { kind: 'p', text: notYou, muted: true }],
+      'Sign-in with this email was paused after too many wrong codes. Here is a link to unlock it.',
+      [
+        { kind: 'heading', text: subject },
+        { kind: 'p', text: what },
+        { kind: 'p', text: how },
+        { kind: 'button', label: 'Open the unlock page', url: link },
+        { kind: 'p', text: LINK_ONCE },
+        { kind: 'p', text: NOT_YOU, muted: true },
+      ],
       input.look,
     ),
     kind: 'unlock',
   };
 }
 
-/** A staff unsuppress's confirmation, mailed to the address (abuse review M3): mail resumes only once its holder confirms. */
+/**
+ * A staff unsuppress's confirmation, mailed to the address (abuse review M3): mail resumes only once its holder presses
+ * the button on `{authOrigin}/email/confirm` (D866).
+ */
 export function confirmMail(input: { to: string; token: string; authOrigin: string; look?: MailLook }): MailMessage {
   const link = `${input.authOrigin.replace(/\/+$/u, '')}/email/confirm#${input.token}`;
-  const what = `${BRAND.company} stopped sending sign-in codes to this email because an earlier email to you couldn’t be delivered or was marked as spam. To receive them again, open this link. It works once, within 24 hours.`;
-  const notYou = `Didn’t ask ${BRAND.company} support for this? Ignore this mail: nothing changes.`;
-  const subject = `Confirm to receive ${BRAND.company} sign-in codes again`;
+  const what = `${BRAND.company} stopped sending sign-in codes to this email. An earlier email to you couldn’t be delivered, or was marked as spam.`;
+  const how = `To get codes again, open the link and press “${SUPPORT_BUTTONS.confirm}”.`;
+  const subject = `Confirm your email to get ${BRAND.company} sign-in codes again`;
   return {
     to: input.to,
     subject,
-    text: [what, '', link, '', notYou, ''].join('\n'),
+    text: [what, '', how, '', link, '', LINK_ONCE, '', NOT_YOU, ''].join('\n'),
     html: designed(
       subject,
-      `${BRAND.company} stopped sending sign-in codes to this email because an earlier email to you couldn’t be delivered or was marked as spam.`,
-      [{ kind: 'heading', text: subject }, { kind: 'p', text: what }, { kind: 'button', label: 'Receive codes again', url: link }, { kind: 'p', text: notYou, muted: true }],
+      `${BRAND.company} stopped sending sign-in codes to this email. Confirm it to get them again.`,
+      [
+        { kind: 'heading', text: subject },
+        { kind: 'p', text: what },
+        { kind: 'p', text: how },
+        { kind: 'button', label: 'Open the confirm page', url: link },
+        { kind: 'p', text: LINK_ONCE },
+        { kind: 'p', text: NOT_YOU, muted: true },
+      ],
       input.look,
     ),
     kind: 'confirm',

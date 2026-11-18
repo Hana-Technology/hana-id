@@ -6,7 +6,8 @@
 // - vaultOrigin: `GET /vault` goes to the API Worker through the `API` service binding with the request unchanged (its
 //   URL keeps the vault origin, which vault/page.ts checks), so the page is rendered there per request with the app's
 //   D1 config inlined and its `frame-ancestors`. Every other path is a static asset (the vault bundle).
-// - authOrigin: `/login`, `/login/email`, `/login/callback`, `/approve`, `/export`, `/share-email`, `/home` and `/home/callback` are the built HTML files (`<path>.html`), served
+// - authOrigin: `/login`, `/login/email`, `/login/callback`, `/approve`, `/export`, `/share-email`, `/home`, `/home/callback`,
+//   `/email/unlock` and `/email/confirm` (D866) are the built HTML files (`<path>.html`), served
 //   with each page's CSP and headers. Every other path is a static asset.
 //
 // - both: `GET /.well-known/hana-build` is `{"build": <id> | null}`, the build id the Worker was deployed with
@@ -98,6 +99,11 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
     case '/home/callback':
       // The exit Google client's only redirect (D491): the relay write to the API, nothing else.
       return ["frame-ancestors 'none'", `connect-src ${origins.api}`];
+    case '/email/unlock':
+    case '/email/confirm':
+      // D866: the support pages press one issuer endpoint, nothing else; without an issuer they fetch nothing (and say
+      // something went wrong). packages/web src/auth/pages.ts lists the same.
+      return origins.emailIssuer ? ["frame-ancestors 'none'", `connect-src ${origins.emailIssuer}`] : ["frame-ancestors 'none'"];
     default:
       return null;
   }
@@ -111,7 +117,7 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
 export const AUTH_LOGO_PATHS: readonly string[] = ['/login', '/login/email', '/approve', '/export', '/share-email', '/home'];
 
 /** The auth pages' routes; each is served from the built file `<route>.html`. */
-export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export', '/share-email', '/home', '/home/callback'] as const;
+export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export', '/share-email', '/home', '/home/callback', '/email/unlock', '/email/confirm'] as const;
 
 /**
  * Headers one page gets beyond the policy. Hana Home (D558): `Cross-Origin-Opener-Policy: same-origin-allow-popups`, so a

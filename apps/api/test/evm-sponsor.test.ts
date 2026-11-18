@@ -171,6 +171,31 @@ describe('fail closed: 503 sponsorship_unconfigured', () => {
     expect(s.relayer.sends).toEqual([]);
   });
 
+  it('outside local* envs, without a usable trusted read endpoint secret (EVM_SPONSOR_RPC_<chainId>): never the public rpc instead', async () => {
+    sponsorPins.table = { ...SPONSOR_DELEGATES, [OP_CHAIN]: { address: OP_DELEGATE } };
+    const s = await setup({}, { chainId: OP_CHAIN });
+    const { body: b } = signedSend(s.user, { chainId: OP_CHAIN });
+    const lines: string[] = [];
+    for (const level of ['log', 'warn', 'error'] as const) vi.spyOn(console, level).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    const sandbox = { ...s.bindings, ENV_NAME: 'sandbox-test' } as Partial<typeof env> & Record<string, unknown>;
+    const variants = [sandbox, { ...sandbox, EVM_SPONSOR_RPC_84532: '' }, { ...sandbox, EVM_SPONSOR_RPC_84532: 'http://rpc.example.test/key-part' }, { ...sandbox, EVM_SPONSOR_RPC_84532: 'not a url key-part' }];
+    for (const v of variants) {
+      for (const [path, method, payload] of [[SEND, 'POST', b], [PREPARE, 'POST', { chainId: OP_CHAIN, account: s.user.address, calls: b.calls }], [`${STATUS}?chainId=${OP_CHAIN}`, 'GET', undefined]] as const) {
+        const res = await sponsorCall(path, s.app, v as Partial<typeof env>, { body: payload, method });
+        expect([res.status, (await body(res)).code], `${path} ${String(v.EVM_SPONSOR_RPC_84532)}`).toEqual([503, 'sponsorship_unconfigured']);
+      }
+    }
+    expect(s.chain.calls).toEqual([]);
+    expect(s.relayer.sends).toEqual([]);
+    const missing = lines.filter((l) => l.includes('evm_sponsor_rpc_missing'));
+    expect(missing.length).toBeGreaterThanOrEqual(1);
+    expect(JSON.parse(missing[0]!)).toMatchObject({ level: 'error', event: 'evm_sponsor_config', outcome: 'error', code: 'evm_sponsor_rpc_missing', chainIds: [OP_CHAIN] });
+    expect(lines.join('\n')).not.toContain('key-part');
+    // With an https secret the same env sends (the fake chain stands in for the endpoint); a local* env needs none.
+    const ok = await send({ app: s.app, bindings: { ...sandbox, EVM_SPONSOR_RPC_84532: 'https://rpc.example.test/key-part' } as Partial<typeof env> }, b);
+    expect(ok.status).toBe(200);
+  });
+
   it('the routes take POST (prepare, send) and GET (status) only; OPTIONS is the app preflight', async () => {
     const s = await setup();
     expect((await sponsorCall(SEND, s.app, s.bindings, { method: 'GET' })).status).toBe(405);
@@ -741,7 +766,8 @@ describe('the OP Stack L1 data fee (D836 addendum)', () => {
   async function opSetup(fields: ChainFields = {}): Promise<Setup> {
     sponsorPins.table = { ...SPONSOR_DELEGATES, [OP_CHAIN]: { address: OP_DELEGATE } };
     const s = await setup(fields, { chainId: OP_CHAIN });
-    s.bindings = { ...s.bindings, ENV_NAME: 'sandbox-test' };
+    // A non-local env needs its trusted read endpoint secret (D851 as amended); the fake chain stands in for it.
+    s.bindings = { ...s.bindings, ENV_NAME: 'sandbox-test', EVM_SPONSOR_RPC_84532: 'https://rpc.example.test/key' } as Partial<typeof env>;
     return s;
   }
 

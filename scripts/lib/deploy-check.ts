@@ -19,7 +19,9 @@
 //   watchdog      watchdog worker     wrangler, on watchdog.cloudflare.accountId          (only with --only watchdog)
 //   evm           EVM sponsorship     JSON-RPC to evm.sponsor's RPCs (lib/deploy-check-evm.ts, D849): the chain, the
 //                                     delegate's code hash against the artifact and core's pin, the relayer's balance,
-//                                     the allowlisted targets' code. Only when the manifest has evm.sponsor
+//                                     the allowlisted targets' code; and, through wrangler (names only), that the API
+//                                     Worker has each chain's EVM_SPONSOR_RPC_<chainId> secret. Only when the manifest
+//                                     has evm.sponsor
 //
 // The admin's origin is behind Cloudflare Access, which this script can't (and mustn't) pass, and the watchdog serves
 // nothing without its bearer token; neither gets a public route (D406). For both, wrangler reads the deployed version's
@@ -495,6 +497,43 @@ export function orgKindOf(output: string): string | null | undefined {
   }
 }
 
+/** `wrangler secret list` argv for one Worker: names only (Cloudflare never returns a secret's value). */
+export const secretListArgv = (worker: string): string[] => ['exec', 'wrangler', 'secret', 'list', '--name', worker, '--format', 'json'];
+
+/** The secret names in `wrangler secret list --format json`'s answer, or null when the output isn't what wrangler prints. */
+export function secretNamesOf(output: string): string[] | null {
+  const start = output.indexOf('[');
+  if (start < 0) return null;
+  try {
+    const parsed = JSON.parse(output.slice(start, output.lastIndexOf(']') + 1)) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const names = parsed.map((e) => (typeof e === 'object' && e !== null && typeof (e as { name?: unknown }).name === 'string' ? (e as { name: string }).name : null));
+    return names.every((n): n is string => n !== null) ? names : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * D851 as amended: outside `local*` envs (deploy-check never checks one) the relayer and the handlers read a sponsored
+ * chain only through the keyed endpoint in the API secret `EVM_SPONSOR_RPC_<chainId>`, and the API keeps sponsorship
+ * off without it. One failure per chain whose secret the API Worker doesn't have, saying what to upload.
+ */
+export function sponsorRpcSecretFailures(m: Manifest, names: readonly string[]): { failures: string[]; lines: string[] } {
+  const failures: string[] = [];
+  const lines: string[] = [];
+  const worker = m.cloudflare.workerName;
+  for (const id of Object.keys(m.evm?.sponsor?.chains ?? {})) {
+    const secret = `EVM_SPONSOR_RPC_${id}`;
+    if (names.includes(secret)) lines.push(`  evm ${id}  secret ${secret} is set on ${worker} (its name only: the value is never read)`);
+    else
+      failures.push(
+        `evm ${id}: the API Worker ${worker} has no secret ${secret}, the relayer's trusted read endpoint (required outside local* envs; without it sponsorship stays off): upload it with \`corepack pnpm --dir apps/api exec wrangler secret put ${secret}\` (docs/go-live-after-freeze.md step 4.12)`,
+      );
+  }
+  return { failures, lines };
+}
+
 /** Runs the check; returns the exit code (0: every piece read on one commit, HEAD's unless --skip-head). */
 export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps = {}): Promise<number> {
   const args = parseCli(argv, { booleans: ['d1', 'skip-head', 'strict'], multiple: ['only', 'skip'] });
@@ -539,6 +578,20 @@ export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps
     for (const l of evm.lines) log(l);
     failures.push(...evm.failures);
     warnings.push(...evm.warnings);
+    // The trusted read endpoint's secret, by name (wrangler, logged in to the API's account as for the deploy).
+    const pnpm = deps.pnpm ?? defaultPnpm;
+    const dir = join(repoRoot, 'apps', 'api');
+    if (!(deps.hasWranglerConfig ?? defaultHasConfig)(dir)) failures.push(`evm: no wrangler config in apps/api to list the API Worker's secret names with; run \`corepack pnpm --filter @hana-id/api gen ${m.name}\` first`);
+    else {
+      const res = pnpm(dir, secretListArgv(m.cloudflare.workerName));
+      const names = res.status === 0 ? secretNamesOf(res.output) : null;
+      if (names === null) failures.push(`evm: could not list the API Worker's secret names (${m.cloudflare.workerName})${res.status !== 0 ? `, exit ${res.status}` : ''}:\n${tail(res.output)}`);
+      else {
+        const rpc = sponsorRpcSecretFailures(m, names);
+        for (const l of rpc.lines) log(l);
+        failures.push(...rpc.failures);
+      }
+    }
   }
 
   if (args.flag('d1')) {

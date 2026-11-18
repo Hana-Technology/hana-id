@@ -13943,7 +13943,8 @@ redeployed after judging.
 - A test now holds every link of every user mail to a page the auth host serves (`AUTH_PAGE_PATHS`). It found two
   more: the staff unlock and unsuppress mails link to `/email/unlock#…` and `/email/confirm#…`, also left for later
   by D259 and never built. The test names them as not built (and fails once one is served, so the list shrinks), and
-  "Staff calls" says not to use `admin/unlock` or `admin/unsuppress` for a real user until they are.
+  "Staff calls" says not to use `admin/unlock` or `admin/unsuppress` for a real user until they are. **Closed
+  2026-11-18 by D866** (decided by the user: build them): both pages are served, the test has no exception left.
 - Open, for the founder: the pending link's email holder has no way to cancel it unless they also hold the Google
   account; the planned email-side cancel page (a code to the address) would close that gap, and is the larger fix.
   **Closed 2026-11-18 by D864** (decided by the user: build it): the email's own sign-in shows the waiting link with a
@@ -14310,6 +14311,117 @@ From `feat/link-cancel-by-email` (PR 83) @ 88104036, then `next` @ 6db2bb8b merg
      channel too (its callback goes to the follow-up mode, the vault always sends its last word), so a member signing
      in through any app of the scope is asked. Its login reads NEAR once more (the last word's `get_account`). An env
      without an email issuer has no email identities, so no links. Tested in the vault.
+
+## The support pages: unlock and confirm (branch `feat/email-support-pages`), 2026-11-18
+
+From `next` @ 0a636344; not merged, not deployed.
+
+### D866. The staff unlock and confirm emails get their pages: one button each, nothing before the press
+- Date 2026-11-18 · Status: **confirmed by the user 2026-11-18** (decided 2026-11-18, "start them": build the two
+  support pages; the details below, the amendments after PR 88's review and the residuals confirmed with the PR, "OK to
+  merge 88 and confirm D866", told: the unlock works only in the browser where the button was pressed, Passport Home
+  not covered for now, the pages' and mails' words as in the screenshots, used and expired links remembered 7 days
+  without the address, a mail scanner that clicks buttons could press Confirm) · Built: `packages/web/src/auth/support-page.ts` (entries
+  `unlock.ts`, `confirm.ts`), `email-storage.ts` (`hana.ug`), `email-api.ts` and `email-page.ts` (`unlockToken` on
+  `start`), `pages.ts`, `apps/api/src/pages/host.ts`; `apps/email-issuer/src/support-link.ts`, `handlers.ts`
+  (`handleUnlockLink`, `handleConfirm`, `handleUnlock`, `handleUnsuppress`, `STAFF_NOTES`), `challenge.ts`,
+  `rate-limiter.ts` (`activateGrant`, `unstaffAction`), `limits.ts`, `mail.ts`; tests
+  `apps/email-issuer/test/support-links.test.ts`, `packages/web/test/auth/support-page.test.ts`, the mail-links test
+  with no exception, `apps/e2e/tests/support-pages.spec.ts` (three browsers) · Amends D198 and D199 (as below), closes
+  D862's open item
+- Context: two things stop a user whose only sign-in is email. Too many wrong codes lock the address (D198: until
+  midnight UTC once the backstop trips), and a bounce or a spam report stops all mail to it (D199). Staff had a call
+  for each (`admin/unlock`, `admin/unsuppress`) that mails the address a one-time link, but the links' pages
+  (`/email/unlock`, `/email/confirm`) were never built, so support couldn't use them (D862).
+- Decision:
+  1. **Paths**: the ones the mails already used, `{authOrigin}/email/unlock#<token>` and `/email/confirm#<token>`. The
+     token stays in the fragment (never sent to a server by a browser, never in a referrer or a log); the page sends it
+     only in its press's POST body.
+  2. **One button, nothing before it**: each page reads and checks the token's form, shows the reason in plain words
+     and one button ("Unlock my email", "Yes, this is my email"), and sends nothing on load: an email app's preview or
+     a link scanner that opens the link changes nothing. The press is one `POST` (the button is disabled while it runs:
+     a double click is one request). A malformed or other-action token is "not valid" at once, with no request.
+  3. **The unlock stays D198's grant, with the press in front**: the press (`POST /v1/email/unlock`) makes the grant
+     `active`; until then a `start` presenting the token gets nothing. It clears no lock and no counter: the one start
+     it lets through takes the ticket slot, then the grant's own 2 checks past the ceiling (D198's bound unchanged:
+     ≈ 0.92% a year). Because the grant is used by a `start`, the page keeps the token in this browser's
+     `localStorage` on `authOrigin` (`hana.ug`: token, address, end), and `/login/email` sends it as `unlockToken`
+     with each start while it lasts, dropping it after a sign-in with that address. So the unlock works **in the
+     browser where the link was opened**: the mail says to open it "in the browser where you use the app", and the
+     done screen says "in this browser". Pressing again while the grant is unused answers the same (a second browser,
+     a reload); once a start used it, "already used".
+  4. **Bound to the exact address** (amends D198, where a grant was the mailbox's): the grant holds the address's
+     K_sup key, and only a start for that exact address may use it; another `+tag` of the mailbox gets nothing.
+  5. **Confirm** (`POST /v1/email/confirm`, reworked): single use, atomically in its object; then one D1 batch writes the
+     audit row and removes that exact address's suppression, nothing else; if the batch fails the link is live again.
+  6. **One record per link** (`g:` / `u:` + sha256 of the token, the `EmailChallenge` namespace; was `u:` for confirm
+     only): the action, the exact address's key, an unlock's mailbox key, the staff `ticket`, the expiry, and the
+     address AES-GCM-encrypted under a key derived from the token (readable only during a request carrying it). The
+     answer names that address (the page shows it as text); after 24 h, or once used, only a tombstone (action,
+     expiry, use time) stays for 7 days, so the page can say "expired" or "already used" rather than "not valid".
+  7. **Answers**: `200` (`{unlocked: true, email, expiresAtMs}`, `{confirmed: "unsuppress", email}`), `410 link_used`,
+     `410 link_expired`, `400 link_invalid` (unknown, malformed, or the other action's token; replaces confirm's one
+     `410 confirm_expired`). Limits: 10 presses per 10 min per IP (`ip:link:10m`, its own window, every env; confirm's
+     was the resend window) and 10 an hour per token (`link:1h`). Both from `authOrigin` only.
+  8. **Audit and logs**: the press is a second audit row under the staff row's action and ticket, `staff` =
+     `email-link` (not an email: never a staff member's row), `detail` `{"step":"link_pressed"}` or
+     `{"step":"confirmed"}`; logs `unlock_link_pressed`, `unlock_grant_used`, `suppression_removed`. No address or
+     token in any of them. No migration: the existing columns and actions.
+  9. **Staff side fixed**: an unlock of a suppressed address, or an unsuppress of one that isn't, mails nothing and now
+     uses **no** place in the per-mailbox cap (it was counted, so the unlock after a confirm was refused the same day);
+     a mail the provider refuses gives its place back. The answers carry `note`, a fixed plain sentence for staff:
+     what the user gets and does. The admin portal has no button for these calls (they are `cloudflared access curl`,
+     `docs/operations.md` "Staff calls"), so `apps/admin` is unchanged.
+  10. **Words (D853)**: the pages' and mails' texts are in `SUPPORT_TEXT` (support-page.ts) and `mail.ts`; the page's
+      done lines are the founder's ("Your email is unlocked. You can sign in again." / "Thanks: this email is confirmed.
+      We’ll send sign-in codes to it again."), each followed by what to do next and nothing to press; expired and used
+      say "Ask the app’s support to send a new email."; the confirm page adds "If our emails land in your spam folder,
+      mark them as “not spam”. Otherwise we may have to stop sending them again." The mails say what the button does,
+      that the link works once, within 24 hours, and "Didn’t ask for this? Ignore this email. Nothing changes."
+- Why: a state change that a mail scanner can trigger, or a link that works anywhere for anyone, would lift a
+  protection for whoever holds the URL; the press and the binding keep both lifts to the mailbox's holder. Keeping
+  D198's grant (rather than clearing the lock on the press) keeps an attacker who caused the lock from guessing again.
+- Security: the mail goes to the locked or suppressed address itself, so a support person tricked into sending one
+  helps only whoever reads that mailbox. Residuals: the unlock works only in the browser where the link was pressed (an
+  in-app mail browser with its own storage needs the link opened again in the user's browser: the page says so when
+  storage is refused, not when it is merely another browser); whoever can read that browser's storage within 24 h can
+  use the one start (the code still goes to the mailbox). Records written before this branch (an unlock grant stored
+  as a number, a confirm record of the old shape) are never usable: a mail sent before the deploy needs a new one.
+- Confirmed by the user 2026-11-18: the "this browser" limit of the unlock (the alternative, an unlock bound to the
+  presser's network instead of the browser, works across browsers on one network but lets anyone on that network use
+  it, was not taken); the pages' words; the 7-day tombstone.
+- Rejected: acting on the page's load (link scanners); a GET endpoint; clearing the lock on the press (an attacker's
+  fresh day of guesses, the design D198 superseded); a sign-in from the done page (the user goes back to the app).
+- Address impact: none.
+- **Amended after PR 88's independent review (2026-11-18; confirmed by the user 2026-11-18 with D866):**
+  1. **A device ticket no longer hides the unlock.** A returning browser sends its device ticket and the pressed
+     unlock together; the issuer took the ticket, whose slot a locked owner has already used up, so the page said
+     "unlocked" and the sign-in still answered 429. Now an active grant for that exact address decides. The bound is
+     unchanged: one start, its checks in the (mailbox-wide) ticket slot then the grant's own 2 past the ceiling,
+     nothing cleared; the ticket isn't used for that start, so its 3 mails a day and its challenge count are untouched
+     (an active grant with a ticket the owner hadn't used up is still the one spent).
+  2. **Passport Home takes no unlock** (D619, confirmed by the user, stands: Home keeps nothing in storage and its start
+     takes no owner proof). The staff note and the runbook say "It works for signing in to an app, not to Passport
+     Home yet"; a user locked out of Home waits for midnight UTC. Changing it is the founder's call (read, never write,
+     the auth origin's `hana.ug` from `/home`). Confirmed 2026-11-18: Passport Home is not covered for now.
+  3. **The staff place comes back only when the provider clearly refused the mail** (an HTTP error answer, a missing key,
+     or the staff pool spent). A timeout or a network error may have sent it: `{mailed: false, reason: "unsure"}`, the
+     place stays used, and the note tells staff to have the user check their inbox and spam folder.
+  4. **Every unlock press writes its audit row before the grant changes, until one was written** (was: the first press
+     only, marked before its row was written, so a second simultaneous press could activate the grant without any
+     row). Two presses at once may both write one; a press whose row fails changes nothing.
+  5. **The page removes the token from the address bar** as soon as it has read it (`history.replaceState`; kept in
+     memory for the button and "Try again"). A reload then says "not valid" (open the email's link again).
+  6. **`hana.ug` holds a sha256 of the address**, as the device tickets' keys, never the address.
+- **Residuals, stated (review item 7):**
+  - A mail scanner that runs scripts and presses buttons could press Confirm for a suppressed address. Accepted: a
+    one-button page can't tell it from the user, and the press only resumes mail to the address the link was mailed to
+    (the address whose holder asked support), lifting no limit and touching no other address.
+  - The unlock works in the browser where its link was pressed (the grant is used by that browser's next start). Kept
+    as built (confirmed by the user 2026-11-18). An in-app mail browser (a mail app's
+    own viewer, with storage of its own) is the usual way to miss it: the user signs in afterwards in their normal
+    browser and is still refused; opening the email's link again in that browser and pressing again works (the press
+    answers the same until the unlock is used).
 
 ## Free network fees in the admin portal (branch `feat/admin-evm-sponsor`), 2026-11-18
 

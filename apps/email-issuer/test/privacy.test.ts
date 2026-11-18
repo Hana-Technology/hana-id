@@ -188,6 +188,8 @@ describe('nothing personal or secret is ever logged', () => {
       await call('/v1/email/admin/unlock', { email: `${victim}@example.com`, ticket: 'SUP-1' }, { origin: null, headers: { 'cf-access-jwt-assertion': access } });
       const unlockToken = /#(ug1\.[A-Za-z0-9_-]{43})/u.exec(h0.sender.to(vAddr).at(-1)!.text)![1]!;
       secrets.push(unlockToken);
+      // D866: the support page's press, then the start that uses the grant.
+      await call('/v1/email/unlock', { token: unlockToken });
       await call('/v1/email/start', { pk: app.pk, email: `${victim}@example.com`, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json, unlockToken }, { ip: '203.0.113.90' });
       await call('/v1/email/admin/unsuppress', { email: supp, ticket: 'SUP-2' }, { origin: null, headers: { 'cf-access-jwt-assertion': access } });
       const confirmToken = /#(uc1\.[A-Za-z0-9_-]{43})/u.exec(h0.sender.to(supp).at(-1)!.text)![1]!;

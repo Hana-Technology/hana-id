@@ -15,7 +15,8 @@
 //   own messages), email unavailable for the app (the step ends), and any other refusal ("Something went wrong", with
 //   its code).
 // - The device ticket `verify` returns is kept on authOrigin for this address (email-storage.ts) and sent with the
-//   next `start`, so its owner's code mail gets past the shared limits (D198).
+//   next `start`, so its owner's code mail gets past the shared limits (D198). A staff unlock pressed on this browser's
+//   `/email/unlock` page (D866) is sent with each `start` while it lasts, and dropped after a sign-in with its address.
 // - Case B (`googleWallet`: a Google identity that reported this address has the wallet, the email identity has none):
 //   no token. With the issuer's `linkTicket` the page offers "Link and continue" (continue with Google: the login opens
 //   the Google wallet, and this email joins it, at once when Google hosts the mailbox, else after 24 h) or "Sign in
@@ -98,7 +99,7 @@ import { type Dom, dom, errorView, originText, supportCode } from './dom.ts';
 import { STORAGE_BLOCKED } from './errors.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { issuerDetail } from './email-api.ts';
-import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
+import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, dropUnlockTokenFor, liveUnlockToken, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
 import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, googleTokenFirstUrl, loginGoogleRequest } from './google.ts';
 import { type TakenLogin, peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
@@ -573,7 +574,10 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     busy(addressTitle(), 'Sending a code…', 'sending');
     try {
       const ticket = deviceTicketFor(deps.tickets, address, now());
-      const c = startAs.kind === 'link' ? await issuer.startLink(ctx.pk, address, startAs.purpose, startAs.commitment, ticket) : await issuer.start(ctx.pk, address, commitment, ticket);
+      // D866: a staff unlock this browser's support page pressed rides along while it lasts.
+      const unlock = liveUnlockToken(deps.tickets, now());
+      const extra: [string] | [] = unlock ? [unlock] : [];
+      const c = startAs.kind === 'link' ? await issuer.startLink(ctx.pk, address, startAs.purpose, startAs.commitment, ticket, ...extra) : await issuer.start(ctx.pk, address, commitment, ticket, ...extra);
       remember({ challengeId: c.challengeId });
       notice = null;
       reason = 'email_cancelled';
@@ -682,6 +686,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     }
     // A prepared code's address is Google's (masked here): no device ticket is kept for it.
     if (verified.deviceTicket && startAs.kind !== 'prepared') saveDeviceTicket(deps.tickets, address, verified.deviceTicket, now());
+    // A code to this address was right: an unlock kept for it has done its job (D866).
+    if (startAs.kind !== 'prepared') dropUnlockTokenFor(deps.tickets, address);
     remember({ challengeId: null });
     notice = null;
     reason = 'email_cancelled';

@@ -198,7 +198,7 @@ describe('the routes and the relayer object, end to end over the fake chain', ()
     expect(relayer).toMatchObject({ ok: true, halted: { reason: 'relayer_cannot_send', leakSeen: true } });
     if (!relayer.ok || !relayer.halted) throw new Error('unreachable');
     const seen = { haltSince: relayer.halted.since, lastStaffSeq: relayer.lastStaffSeq };
-    expect(await evmRelayerStaffAct(api, { chainId: LOCAL_CHAIN, tool: 'resume', note: 'Topped up from the faucet', seen }, 'staff@hana.example')).toMatchObject({ done: false, refused: 'key_confirmation_required' });
+    expect(await evmRelayerStaffAct(api, { chainId: LOCAL_CHAIN, tool: 'resume', note: 'Topped up from the faucet', seen } as Parameters<typeof evmRelayerStaffAct>[1], 'staff@hana.example')).toMatchObject({ done: false, refused: 'key_confirmation_required' });
     // Past the API (a caller that skips its check): the relayer refuses on its own and records it.
     const direct = await evmRelayerStaffResume(w.stub as never, 'staff@hana.example', 'Topped up from the faucet');
     expect(direct).toMatchObject({ done: false, refused: 'key_confirmation_required' });

@@ -270,6 +270,8 @@ describe('the route table', () => {
       [
         "GET /api/me",
         "GET /api/status",
+        "GET /api/evm-relay/:chain",
+        "POST /api/evm-relay/:chain/act",
         "GET /api/orgs",
         "GET /api/orgs/:org",
         "POST /api/orgs/:org/freeze",

@@ -4,8 +4,10 @@
 // notices not yet sent (a count and the oldest time), both relayer pools' public keys, and the governance snapshot
 // `GET /v1/governance` serves (its 10 s per-isolate cache, so a status read doesn't add NEAR reads beyond it), and the
 // NEAR relay's state (near/relay-status.ts, D784: two NEAR reads of the relay account and one RateLimiter read when a
-// relay config is set, none otherwise). Each part fails on its own: a D1 or NEAR failure leaves the others standing.
-import { type ApiSystemStatus, type CronRunView, type DbProbe, NOTICE_BACKLOG_LIMIT, type NoticeBacklog } from '@hana-id/console-core';
+// relay config is set, none otherwise), and EVM gas sponsorship's relayer per sponsored chain (D843: passed in by
+// rpc/admin.ts, the one caller allowed to reach the relayer's staff view; only with `evm.sponsor`, else nothing is read
+// and the answer has no `evmRelay`). Each part fails on its own: a D1 or NEAR failure leaves the others standing.
+import { type ApiSystemStatus, type CronRunView, type DbProbe, type EvmRelayStatus, NOTICE_BACKLOG_LIMIT, type NoticeBacklog } from '@hana-id/console-core';
 import { deployedBuild } from './build.ts';
 import { relayerPools } from './changes/admin.ts';
 import { RpcRefusal } from './changes/cas.ts';
@@ -70,7 +72,9 @@ async function governance(env: Env): Promise<ApiSystemStatus['governance']> {
   }
 }
 
-export async function systemStatus(env: Env, db: HotDb): Promise<ApiSystemStatus> {
-  const [hotDb, sync, notices, gov, nearRelay] = await Promise.all([probe(env), jwksSync(db), noticeBacklog(db), governance(env), nearRelayStatus(env)]);
-  return { build: deployedBuild(env.HANA_BUILD), hotDb, jwksSync: sync, notices, relayerKeys: poolKeys(env), usageCapture: env.USAGE_DB !== undefined, governance: gov, nearRelay };
+/** `evmRelay`: the relayer's view (undefined without `evm.sponsor`); a failure of it leaves the rest standing. */
+export async function systemStatus(env: Env, db: HotDb, evmRelay?: () => Promise<EvmRelayStatus | undefined>): Promise<ApiSystemStatus> {
+  const evm = evmRelay ? evmRelay().catch((): EvmRelayStatus => ({ state: 'on', chains: [] })) : Promise.resolve(undefined);
+  const [hotDb, sync, notices, gov, nearRelay, evmView] = await Promise.all([probe(env), jwksSync(db), noticeBacklog(db), governance(env), nearRelayStatus(env), evm]);
+  return { build: deployedBuild(env.HANA_BUILD), hotDb, jwksSync: sync, notices, relayerKeys: poolKeys(env), usageCapture: env.USAGE_DB !== undefined, governance: gov, nearRelay, ...(evmView ? { evmRelay: evmView } : {}) };
 }

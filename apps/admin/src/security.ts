@@ -5,6 +5,8 @@
 // the rejection-rate alerts (D91), the settlement alerts (relayed events not billed because their transaction wasn't
 // their own, D321) and the settlement backlog, and the partitions ahead (fewer than 2 is a warning). The
 // "Security & monitoring" view comes with C14.
+import { type SecurityEvent, securityEventLabel } from '@hana-id/console-core';
+import { getPlaybook } from '@hana-id/playbooks';
 import type { Env } from './env.ts';
 import { CRON_LAST_RUN } from './cron.ts';
 import { FEED_CURSORS } from './feed.ts';
@@ -14,6 +16,28 @@ import { type LedgerStore, ledgerSource } from './ledger.ts';
 import { opsSource } from './ops.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 import { WATCH_CURSOR } from './watcher.ts';
+
+/**
+ * The playbook of each security event kind that has one (docs/playbooks.md): what it means, how urgent, what to do.
+ * The free-network-fee kinds (D843) arrive with the sponsorship handlers (PR 71); their playbooks are here already.
+ */
+export const SECURITY_EVENT_PLAYBOOKS: Readonly<Record<string, string>> = Object.freeze({
+  home_budget_high: 'home-budget-high',
+  near_relay_budget_high: 'near-relay-budget-high',
+  near_relay_balance_low: 'near-relay-balance-low',
+  evm_relay_budget_high: 'evm-relay-budget-high',
+  evm_relay_balance_low: 'evm-relay-balance-low',
+  evm_relay_stuck: 'evm-relay-paused',
+  evm_relay_receipt_odd: 'evm-relay-receipt-odd',
+  evm_relay_nonce_taken: 'evm-relay-slot-taken',
+  evm_billing_late: 'evm-billing-late',
+});
+
+export function withWords(e: SecurityEvent): SecurityEvent & { title: string; playbook: { id: string; title: string } | null } {
+  const id = Object.hasOwn(SECURITY_EVENT_PLAYBOOKS, e.kind) ? SECURITY_EVENT_PLAYBOOKS[e.kind]! : null;
+  const pb = id ? getPlaybook(id) : undefined;
+  return { ...e, title: securityEventLabel(e.kind), playbook: pb ? { id: pb.id, title: pb.title } : null };
+}
 
 interface FeedSource {
   cursor: number;
@@ -90,7 +114,8 @@ export async function securityView(env: Env, staff: StaffRequest): Promise<Respo
       changes: changeNotices?.ok ? changeNotices.notices.map((n) => ({ changeId: n.change.id, kind: n.change.kind, appId: n.app.id, orgId: n.app.orgId, proposedAt: n.change.proposedAt, contacts: n.contacts.length })) : null,
       members: memberNotices?.ok ? memberNotices.notices.map((n) => ({ kind: n.kind, id: n.invite?.id ?? n.grant?.id, orgId: n.invite?.orgId ?? n.grant?.orgId ?? null, createdAt: n.grant?.createdAt ?? n.invite?.createdAt })) : null,
     },
-    unnotifiedEvents: events?.ok ? events.events : null,
+    // Each event with its title in words and its playbook (D843), so staff read what it means, not its code.
+    unnotifiedEvents: events?.ok ? events.events.map(withWords) : null,
     feed,
     watcher,
     lastRun,

@@ -15,13 +15,23 @@
 //   relay-key-missing  one of the API's two NEAR relay keys not on the relay account (red)
 //   relay-off      no NEAR relay in this env (Not measured, no issue)
 //   relay-stale    the NEAR relay's reading 40 minutes old (amber; the API reads it live, so only a test shows it)
+//   fees-working   free network fees on Base Sepolia (D843): working, two transactions waiting
+//   fees-paused-money  paused: the relayer's wallet is out of money (`relayer_cannot_send` · `insufficient_funds`)
+//   fees-paused-key    paused: someone else used the relayer's key (`foreign_transactions`)
+//   fees-low       working, but the relayer's wallet under its low line
+// Every other scenario has no `evm.sponsor` (the API answers no `evmRelay`): the tile says "Not set up".
+// `previewEvmDetail` and `previewEvmAct` answer the "Free network fees" page and its tools through the Worker's own
+// routes (src/evm-relay.ts) over the same fake views.
 import { CRON_LAST_RUN } from '../src/cron.ts';
 import type { Env } from '../src/env.ts';
 import { LEDGER_LAST_RUN } from '../src/ledger-cron.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
 import { type StatusAnswer, buildStatus, resetStatusCache } from '../src/status.ts';
+import type { EvmRelayChainView, EvmRelayDetail, EvmRelayRecordView, EvmRelayStaffEntry } from '@hana-id/console-core';
+import { evmRelayActRoute, evmRelayDetailRoute } from '../src/evm-relay.ts';
+import type { RouteCtx } from '../src/routes.ts';
 
-export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale'] as const;
+export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale', 'fees-working', 'fees-paused-money', 'fees-paused-key', 'fees-low'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 const BUILD = '8a797fe1c2d3';
@@ -162,8 +172,88 @@ function world(now: number, s: Scenario): World {
   if (s === 'relay-budget') relay.spend = { ok: true, day: new Date(now).toISOString().slice(0, 10), spentYocto: `43${E24.slice(1)}` };
   if (s === 'relay-key-missing') relay.keys = { configured: 2, missing: [PK_R2] };
   if (s === 'relay-stale') relay.readAt = now - 40 * MIN;
+  if (s.startsWith('fees-') && w.api) (w.api as Record<string, unknown>).evmRelay = { state: 'on', chains: [evmView(now, s)] };
   if (s === 'relay-off') (w.api as Record<string, unknown>).nearRelay = { state: 'off', offReason: 'none', readAt: now, account: null, lowBalanceYocto: null, dailyBudgetYocto: null, budgetAlertPct: null, chain: null, keys: null, spend: null };
   return w;
+}
+
+// ---- free network fees (D843) ----
+
+const EVM_RELAYER = '0x7aD3c18E50fB2a6D9e4C31b0F5A7E8c2d1B9f640';
+const EVM_HELPER = '0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA';
+const EVM_HELPER_HASH = '0xfcc832fe6c7167e0d45589881b103fed92b3a44fe3dd5d489f43e9d44b1e5fd2';
+const MILLI = 10n ** 15n;
+const hashOf = (n: number, k = 'a'): string => `0x${k.repeat(56)}${String(n).padStart(8, '0')}`;
+const staffEntry = (seq: number, at: number, over: Partial<EvmRelayStaffEntry> = {}): EvmRelayStaffEntry => ({ seq, at, who: 'tze@hana.example', tool: 'resume', slot: null, note: 'Sent 0.1 test ETH from the faucet; balance now 0.11', done: true, refused: null, ...over });
+
+export function evmView(now: number, s: Scenario | 'fees-resumed'): EvmRelayChainView {
+  const paused = s === 'fees-paused-money' || s === 'fees-paused-key';
+  const balance = s === 'fees-paused-money' ? 2n * 10n ** 13n : s === 'fees-low' ? 31n * MILLI : 112n * MILLI;
+  const log = [staffEntry(3, now - 26 * 60 * MIN), staffEntry(2, now - 27 * 60 * MIN, { tool: 'cancel', slot: 38, note: 'Time limit long gone; slot 39 waiting behind it', done: false, refused: 'nonce_mined' }), staffEntry(1, now - 50 * 60 * MIN)];
+  return {
+    chainId: 84532,
+    readAt: now,
+    relayerAddress: EVM_RELAYER,
+    key: 'ok',
+    lowBalanceWei: (50n * MILLI).toString(),
+    dailyBudgetWei: (20n * MILLI).toString(),
+    oneSendWorstWei: (6n * 10n ** 14n).toString(),
+    relayer: {
+      ok: true,
+      started: true,
+      halted: s === 'fees-paused-money' ? { reason: 'relayer_cannot_send', since: now - 12 * MIN, slot: 42, code: 'insufficient_funds' } : s === 'fees-paused-key' ? { reason: 'foreign_transactions', since: now - 4 * MIN, slot: null, code: null } : null,
+      waiting: s === 'fees-paused-key' ? 0 : 2,
+      awaitingConfirmation: s === 'fees-working' || s === 'fees-resumed' ? 1 : 0,
+      oldestWaitingMs: s === 'fees-paused-key' ? null : paused ? 13 * MIN : 40_000,
+      oldestNotTakenMs: s === 'fees-paused-money' ? 13 * MIN : null,
+      nextSlot: 44,
+      spentTodayWei: (s === 'fees-paused-money' ? 7n * MILLI : 3n * MILLI).toString(),
+      unconfirmedRefusals: null,
+      lastStaffSeq: 3,
+      staffLog: log,
+    },
+    balance: { ok: true, wei: balance.toString() },
+    helper: { address: EVM_HELPER, pinnedCodeHash: EVM_HELPER_HASH, ok: true, codeHash: EVM_HELPER_HASH, matches: true },
+  };
+}
+
+function evmRecords(now: number, s: Scenario | 'fees-resumed'): EvmRelayRecordView[] {
+  if (s === 'fees-paused-key') return [];
+  const app = { id: 'app_01jdzdemo', name: 'Journear demo' };
+  const stamps = { id: 'app_01jdzstamps', name: 'Journear stamps' };
+  if (s === 'fees-paused-money')
+    return [
+      { slot: 42, kind: 'action', onChain: false, taken: false, cancelling: true, sentAt: now - 13 * MIN, deadlineAt: now - 8 * MIN, copies: [{ hash: hashOf(42), kind: 'action' }, { hash: hashOf(42, 'c'), kind: 'cancel' }], refusedCode: 'insufficient_funds', app },
+      { slot: 43, kind: 'action', onChain: false, taken: true, cancelling: false, sentAt: now - 11 * MIN, deadlineAt: now - 6 * MIN, copies: [{ hash: hashOf(43), kind: 'action' }, { hash: hashOf(43, 'b'), kind: 'action' }], refusedCode: null, app: stamps },
+    ];
+  return [
+    { slot: 41, kind: 'action', onChain: true, taken: true, cancelling: false, sentAt: now - 70_000, deadlineAt: now + 230_000, copies: [{ hash: hashOf(41), kind: 'action' }], refusedCode: null, app },
+    { slot: 42, kind: 'action', onChain: false, taken: true, cancelling: false, sentAt: now - 40_000, deadlineAt: now + 260_000, copies: [{ hash: hashOf(42), kind: 'action' }], refusedCode: null, app: stamps },
+    { slot: 43, kind: 'action', onChain: false, taken: false, cancelling: false, sentAt: now - 9_000, deadlineAt: now + 291_000, copies: [{ hash: hashOf(43), kind: 'action' }], refusedCode: null, app },
+  ];
+}
+
+const previewStaff = { actor: { kind: 'hana' as const, id: 'access-sub-1', email: 'tze@hana.example' }, requestId: 'req_preview_fees', clientIp: '127.0.0.1' };
+
+/** `GET /api/evm-relay/84532` for a fees scenario (any other scenario: the env has no sponsorship: not found). */
+export async function previewEvmDetail(s: Scenario | 'fees-resumed', now = Date.now()): Promise<{ status: number; body: unknown }> {
+  const on = s.startsWith('fees-');
+  const detail: EvmRelayDetail = { chain: evmView(now, s), records: evmRecords(now, s), apps: 'recorded' };
+  const env = { API: { evmRelayDetail: async () => (on ? { ok: true, detail } : { ok: false, code: 'not_found', error: 'EVM sponsorship is not set up in this environment' }) } } as unknown as Env;
+  const res = await evmRelayDetailRoute({ env, staff: previewStaff, params: { chain: '84532' }, body: {} } as unknown as RouteCtx);
+  return { status: res.status, body: await res.json() };
+}
+
+/** `POST /api/evm-relay/84532/act`: a resume is done (the scenario then shows it working); every other tool is refused as the relayer would. */
+export async function previewEvmAct(body: Record<string, unknown>, s: Scenario | 'fees-resumed', now = Date.now()): Promise<{ status: number; body: unknown; resumed: boolean }> {
+  const refused = body.tool === 'resume' ? (s === 'fees-paused-key' ? 'foreign_transactions' : null) : body.tool === 'cancel' ? 'nonce_mined' : body.tool === 'fill' ? 'not_the_chains_next_nonce' : body.tool === 'close' ? 'nonce_not_consumed_at_confirmed_depth' : 'unmined_records';
+  const view = evmView(now, refused === null ? 'fees-resumed' : s);
+  const env = {
+    CONSOLE: { recordStaffAction: async () => ({ ok: true }) },
+    API: { evmRelayAct: async () => ({ ok: true, result: { done: refused === null, refused, relayer: view.relayer.ok ? view.relayer : null } }) },
+  } as unknown as Env;
+  const res = await evmRelayActRoute({ env, staff: previewStaff, params: { chain: '84532' }, body } as unknown as RouteCtx);
+  return { status: res.status, body: await res.json(), resumed: res.status === 200 && refused === null };
 }
 
 const buildResponse = (id: string, build: string | null): Response => {

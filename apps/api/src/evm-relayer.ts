@@ -182,6 +182,8 @@ export interface EvmRelayerStaffEntry {
 /** Every record as stored (no raw transactions), the day's backstop and the last 50 staff actions. */
 export interface EvmRelayerStaffStatus extends EvmRelayerStatus {
   chainId: number | null;
+  /** The UTC day (ms ÷ 1 day) `dayWei` counts; null before the first send. An earlier day's `dayWei` isn't today's spend. */
+  day: number | null;
   dayWei: bigint;
   gapSeen: number | null;
   unconfirmedRefusal: null | { count: number; lastAt: number; nonce: number; code: string };
@@ -1140,6 +1142,6 @@ export class EvmRelayer extends DurableObject<Env> {
     const s = await this.status().catch(() => ({ address: '0x' as Hex, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, oldestUnacceptedMs: null, nextNonce: null, halted: null }));
     const records = this.#records().map(({ versions, to: _t, data: _d, authorization: _a, ...r }) => ({ ...r, versions: versions.map(({ raw: _r, ...v }) => v) }));
     const staffLog = Array.from(this.ctx.storage.kv.list<EvmRelayerStaffEntry>({ prefix: 'staff:', reverse: true, limit: 50 }), ([, v]) => v);
-    return { ...s, chainId: meta?.chainId ?? null, dayWei: BigInt(meta?.dayWei ?? '0'), gapSeen: meta?.gapSeen ?? null, unconfirmedRefusal: meta?.unconfirmedRefusal ?? null, records, staffLog };
+    return { ...s, chainId: meta?.chainId ?? null, day: meta?.day ?? null, dayWei: BigInt(meta?.dayWei ?? '0'), gapSeen: meta?.gapSeen ?? null, unconfirmedRefusal: meta?.unconfirmedRefusal ?? null, records, staffLog };
   }
 }

@@ -2129,7 +2129,13 @@ async function securityPage(main) {
     panel(
       'Security events not yet emailed',
       {},
-      d.unnotifiedEvents === null ? note('error', 'The API didn’t answer', 'Try again in a minute.') : table(['Detected', 'Kind', 'Organisation', 'App', 'Scope', 'Details'], d.unnotifiedEvents.map((e) => tr(when(e.detectedAt), h('span', {}, mono(e.kind), h('span', { class: 'sub' }, e.id)), mono(e.orgId || ''), mono(e.appId || ''), mono(e.scopeId || ''), detailPairs(e.detail))), { empty: 'None: every security event has been emailed.' }),
+      d.unnotifiedEvents === null
+        ? note('error', 'The API didn’t answer', 'Try again in a minute.')
+        : table(
+            ['Detected', 'What happened', 'Organisation', 'App', 'Scope', 'Details'],
+            d.unnotifiedEvents.map((e) => tr(when(e.detectedAt), h('span', {}, e.title || e.kind, h('span', { class: 'sub' }, h('code', {}, e.kind), ` · ${e.id}`), e.playbook ? h('span', { class: 'sub' }, 'What to do: ', playbookLink(e.playbook)) : ''), mono(e.orgId || ''), mono(e.appId || ''), mono(e.scopeId || ''), detailPairs(e.detail))),
+            { empty: 'None: every security event has been emailed.' },
+          ),
     ),
     panel(
       'Feeds',
@@ -2490,21 +2496,35 @@ function issueItem(i) {
       h('div', {}, h('dt', {}, 'Where'), h('dd', {}, i.componentName)),
     ),
     i.action ? h('p', { class: 'issue-action' }, richText(i.action)) : '',
+    Array.isArray(i.steps) && i.steps.length ? h('ol', { class: 'issue-steps' }, i.steps.map((x) => h('li', {}, richText(x)))) : '',
+    typeof i.code === 'string' && i.code ? engineerCode(i.code) : '',
     i.link || i.playbook ? h('p', { class: 'issue-links' }, pathLink(i.link), i.link && i.playbook ? ' · ' : '', i.playbook ? h('span', {}, 'Playbook: ', playbookLink(i.playbook)) : '') : '',
   );
 }
 
+/** "Code for engineers: …": a technical code kept small, under the plain words (D853). */
+const engineerCode = (c) => h('p', { class: 'engineer-code' }, 'Code for engineers: ', h('code', {}, c));
+
+/** What is wrong in a sentence and what to do as numbered steps (Free network fees, D843). */
+function explainBlock(e) {
+  if (!e || typeof e.why !== 'string') return '';
+  return h('div', { class: 'explain' }, h('p', { class: 'explain-why' }, e.why), Array.isArray(e.steps) && e.steps.length ? h('ol', { class: 'explain-steps' }, e.steps.map((x) => h('li', {}, richText(x)))) : '', typeof e.code === 'string' && e.code ? engineerCode(e.code) : '');
+}
+
 function tileItem(t, checkedAt) {
   const s = tileState(t.state);
+  // A tile may name its state in its own plain words ("Paused: needs a person"); its colour is still the state's.
+  const chip = typeof t.stateLabel === 'string' && t.stateLabel ? { ...s, label: t.stateLabel } : s;
   return h(
     'li',
-    { class: `tile ${s.cls}` },
-    h('div', { class: 'tile-head' }, stateChip(s), h('h3', {}, t.name)),
+    { class: `tile ${s.cls}${t.explain ? ' wide' : ''}` },
+    h('div', { class: 'tile-head' }, stateChip(chip), h('h3', {}, t.name)),
     h('p', { class: 'tile-detail' }, t.detail),
+    explainBlock(t.explain),
     Array.isArray(t.lines) && t.lines.length
       ? h('ul', { class: 'tile-lines' }, t.lines.map((l) => {
           const ls = tileState(l.state);
-          return h('li', {}, stateChip(ls), h('span', { class: 'tile-line-label' }, l.label), h('span', {}, l.detail));
+          return h('li', {}, stateChip(typeof l.stateLabel === 'string' && l.stateLabel ? { ...ls, label: l.stateLabel } : ls), h('span', { class: 'tile-line-label' }, l.label), h('span', {}, l.detail));
         }))
       : '',
     h('p', { class: 'tile-meta' }, liveAgo(checkedAt, 'checked '), t.link ? h('span', {}, ' · ', pathLink(t.link)) : ''),
@@ -2542,6 +2562,168 @@ async function statusPage(main) {
     main.append(panel('Not measured yet', { hint: 'Nothing on this page measures these yet; they aren’t counted as issues. Each says why and how to check it meanwhile.' }, h('ul', { class: 'not-measured' }, d.notMeasured.map((n) => h('li', {}, h('strong', {}, n.what), h('span', {}, richText(n.why)))))));
   }
   startStatusTicker();
+}
+
+// ---- Free network fees (D843): EVM gas sponsorship's relayer, and the staff tools ----
+//
+// Everything on this page comes from the admin Worker in plain words (src/evm-relay.ts): the state, why and what to
+// do, the waiting transactions (block-explorer links built by the Worker for well-formed hashes only) and which tools
+// may apply now (a tool the relayer would certainly refuse isn't offered; it still checks every one). Each tool says
+// what it does and when to use it, takes a note, confirms with its consequence, and shows the relayer's answer. The
+// Worker records each use in the audit log before and after. Never a key, a raw transaction or a user's account.
+
+/** The last tool's answer, shown once at the top of the page after it re-reads. */
+let evmRelayLast = null;
+
+const NOTE_HELP = '10 to 300 characters, one line. Kept in the audit log and the relayer’s own log, with your name.';
+const noteField = (placeholder) => ({ name: 'note', label: 'Note: why you are doing this', placeholder, required: true, minlength: 10, maxlength: 300, size: 'wide', help: NOTE_HELP, invalid: 'Write at least 10 characters, on one line.' });
+const slotField = (opts) => ({ name: 'slot', type: 'number', label: opts.label || 'Slot number', required: true, min: opts.min ?? 0, max: opts.max, value: opts.value ?? '', size: 'narrow', help: opts.help });
+
+/** One tool's form: its fields, a confirmation naming the consequence, and the answer shown at the top after a re-read. */
+function evmToolForm(d, tool, label, fields, confirmText, opts = {}) {
+  return form(
+    fields,
+    label,
+    async (v) => {
+      const slot = opts.slot !== undefined ? opts.slot : v.slot !== undefined ? Number(v.slot) : undefined;
+      const body = { tool, note: v.note, seen: d.seen, ...(slot !== undefined ? { slot } : {}) };
+      return api('POST', `/api/evm-relay/${d.chainId}/act`, body);
+    },
+    {
+      confirm: typeof confirmText === 'function' ? (v) => confirmText(opts.slot !== undefined ? opts.slot : Number(v.slot)) : confirmText,
+      confirmLabel: label,
+      danger: !!opts.danger,
+      primary: !!opts.primary,
+      vertical: true,
+      after: async (out) => {
+        evmRelayLast = { chainId: d.chainId, words: out.words };
+        await render();
+      },
+    },
+  );
+}
+
+/** A part's chip, when it isn't fine. */
+const LINE_WORDS = { warning: 'Needs a look', critical: 'Problem', unknown: 'Can’t check' };
+const RECORD_TONE = { on_chain: 'ok', cancelling: 'warning', refused: 'bad', sent: 'info', not_taken: 'warning' };
+
+function evmRecordsTable(d) {
+  const now = Date.now();
+  return table(
+    ['Slot', 'App', 'Waiting for', 'Where it stands', 'Transactions on the block explorer', ''],
+    d.records.map((r) => {
+      let cancel = '';
+      if (r.canCancel) {
+        const c = disclosure(
+          'Cancel…',
+          evmToolForm(d, 'cancel', `Cancel slot ${r.slot}`, [noteField('The user’s time limit passed long ago and it blocks the others')], (n) => `Cancel slot ${n}? The user’s action in this slot won’t happen, and that can’t be undone. The relayer sends a harmless empty transfer with a higher fee in its place; whichever copy the network takes first ends the slot.`, { slot: r.slot, danger: true }),
+          { small: true },
+        );
+        cancel = h('div', { class: 'inline-action' }, c.button, c.box);
+      }
+      return tr(
+        h('span', { class: 'nw' }, String(r.slot)),
+        r.app,
+        h('span', {}, roughly(Math.max(0, now - r.sentAt)), h('span', { class: 'sub' }, r.kind === 'action' ? `time limit ${time(r.deadlineAt)}` : '')),
+        h('span', {}, badge(r.stateText, RECORD_TONE[r.state] || ''), r.refusedCode ? h('span', { class: 'sub' }, 'Code for engineers: ', h('code', {}, r.refusedCode)) : ''),
+        h('ul', { class: 'copies' }, r.copies.map((c, i) => h('li', {}, c.url ? external(c.url, `${c.hash.slice(0, 10)}…${c.hash.slice(-6)}`) : mono(c.hash), h('span', { class: 'sub' }, c.kind === 'cancel' ? 'cancel' : i === 0 ? 'the user’s action' : `copy ${i + 1}, higher fee`)))),
+        cancel,
+      );
+    }),
+    { empty: 'Nothing is waiting: every transaction is on the network.' },
+  );
+}
+
+function evmToolsPanel(d) {
+  const t = d.tools;
+  if (t.noneBecause) return panel('Staff tools', {}, note('info', 'No tool is offered now', t.noneBecause));
+  const sections = [];
+  sections.push(
+    h(
+      'div',
+      { class: 'tool' },
+      h('h3', {}, 'Resume'),
+      h('p', {}, 'Starts free network fees again. Use it once you have done what the box above says. The relayer checks the network first and says no if the problem is still there, so it is always safe to try.'),
+      t.resume
+        ? evmToolForm(d, 'resume', 'Resume', [noteField('Sent 0.1 test ETH from the faucet; balance now 0.12')], 'Resume free network fees? The relayer checks the network first, and says no if the problem is still there.', { primary: true })
+        : h('p', { class: 'hint' }, 'Not needed now: free network fees aren’t paused.'),
+    ),
+    h('div', { class: 'tool' }, h('h3', {}, 'Cancel a slot'), h('p', {}, 'Sends a harmless empty transfer in a slot’s place, so a stuck transaction stops holding up the ones behind it. The user’s action in that slot then doesn’t happen. Use it when the steps above say so, or when a slot is still waiting long after its time limit. Press “Cancel…” on its row above.')),
+  );
+  const closable = d.records.filter((r) => r.canClose);
+  const advanced = h(
+    'details',
+    { class: 'advanced' },
+    h('summary', {}, 'Advanced: rarely needed'),
+    note('error', 'Only when someone else has used the relayer’s key', 'These three tools fix the relayer’s slot numbers after a transaction it didn’t send. Use them only when the box above tells you to, ideally with an engineer. The relayer still checks each one and says no if it isn’t safe.'),
+    h(
+      'div',
+      { class: 'tool' },
+      h('h3', {}, 'Fill a gap'),
+      h('p', {}, 'Puts a harmless empty transfer into an empty slot so the slots after it can go through. It costs a small network fee from the relayer wallet. Use it only when the relayer is paused because a slot is empty.'),
+      t.fill
+        ? evmToolForm(d, 'fill', 'Fill the gap', [slotField({ max: t.fill.max, value: t.fill.suggested ?? '', help: t.fill.suggested !== null ? `The empty slot the relayer found: ${t.fill.suggested}.` : 'The empty slot, from the box above.' }), noteField('Slot 41 is empty after a transaction we did not send')], (n) => `Fill slot ${n} with a harmless empty transfer? It costs a small network fee from the relayer wallet.`, { danger: true })
+        : h('p', { class: 'hint' }, 'Not possible now: the relayer has no earlier slot, or its key isn’t loaded.'),
+    ),
+    h(
+      'div',
+      { class: 'tool' },
+      h('h3', {}, 'Close as “used by something else”'),
+      h('p', {}, 'Writes off a slot that the network shows was used by a transaction Journear didn’t send. The user’s action in it is marked as not done by Journear, and the money set aside for it stays counted. Use it only when the relayer is paused for that reason.'),
+      closable.length
+        ? evmToolForm(d, 'close', 'Close the slot', [{ name: 'slot', type: 'select', label: 'Slot number', required: true, size: 'narrow', value: String(d.plain.explained && d.plain.code && /slot (\d+)/u.exec(d.plain.code) ? /slot (\d+)/u.exec(d.plain.code)[1] : closable[0].slot), options: closable.map((r) => ({ value: String(r.slot), label: `Slot ${r.slot}` })) }, noteField('The explorer shows slot 41 used by a transfer we did not send')], (n) => `Close slot ${n} as used by something else? The user’s action in it is marked as not done by Journear, and the money set aside for it stays counted. This can’t be undone.`, { danger: true })
+        : h('p', { class: 'hint' }, 'Not possible now: no transaction is waiting.'),
+    ),
+    h(
+      'div',
+      { class: 'tool' },
+      h('h3', {}, 'Set the next slot number'),
+      h('p', {}, 'Moves the relayer’s next slot number up to the network’s count of its transactions, after someone else used the key. It can only go up. Use it only when the relayer is paused because of transactions it didn’t send.'),
+      t.adopt
+        ? evmToolForm(d, 'adopt_nonce', 'Set the number', [slotField({ label: 'Next slot number', min: t.adopt.min, help: `The relayer wallet’s number of transactions on the block explorer (at least ${t.adopt.min}).` }), noteField('The explorer shows 45 transactions from the relayer wallet')], (n) => `Set the relayer’s next slot number to ${n}? It can never go back down.`, { danger: true })
+        : h('p', { class: 'hint' }, 'Not possible now: wait until nothing is waiting.'),
+    ),
+  );
+  return panel('Staff tools', { hint: 'Safest first. Each asks for a note and says what it will do before it does it.' }, h('div', { class: 'stack' }, sections, advanced));
+}
+
+async function evmRelayPage(main, chainId) {
+  const d = await api('GET', `/api/evm-relay/${chainId}`);
+  const p = d.plain;
+  const tone = p.severity === 'ok' ? 'ok' : p.severity === 'critical' ? 'critical' : p.severity === 'warning' ? 'warning' : 'unknown';
+  main.append(
+    pageHead(d.title, {
+      crumbs: [{ href: '/status', text: 'System status' }],
+      subtitle: `Journear pays users’ network fees on ${d.chainName} through its relayer. This page shows what the relayer is doing, and the tools staff use when it needs a person.`,
+      actions: [h('button', { type: 'button', class: btn('secondary'), onclick: () => render() }, 'Check again')],
+    }),
+  );
+  if (evmRelayLast && evmRelayLast.chainId === chainId) {
+    const w = evmRelayLast.words;
+    evmRelayLast = null;
+    main.append(h('div', { class: 'act-result' }, note(w.tone, w.title, w.text, ...(w.code ? [engineerCode(w.code)] : []))));
+  }
+  main.append(
+    panel(
+      'Now',
+      {},
+      h('div', { class: `evm-state ${tone}` }, stateChip({ ...tileState(tone), label: p.label }), h('p', { class: 'tile-detail' }, p.detail)),
+      explainBlock(p.explained ? { ...p.explained, code: p.code } : null),
+      facts(p.lines.map((l) => [l.label, l.label === 'Relayer wallet' ? h('span', {}, mono(l.detail), p.walletUrl ? [' ', external(p.walletUrl, 'Open on the block explorer')] : '') : h('span', {}, LINE_WORDS[l.state] ? [stateChip({ ...tileState(l.state), label: LINE_WORDS[l.state] }), ' '] : '', l.detail)])),
+      h('p', { class: 'hint' }, `Read ${time(d.readAt)}.`),
+    ),
+    panel('Waiting transactions', { hint: d.apps === 'recorded' ? 'Oldest slot first. A slot is the relayer’s transaction number: each one ends on the network, by the user’s action or by its cancel.' : 'Oldest slot first. Which app each one belongs to shows once the sponsorship’s send records exist in this environment.' }, evmRecordsTable(d)),
+    evmToolsPanel(d),
+    panel(
+      'Recent staff actions',
+      { hint: 'The relayer’s own log: who, when, what, the note and its answer. The audit log has each one too.' },
+      table(
+        ['When', 'Who', 'Tool', 'Slot', 'Note', 'Answer'],
+        d.staffLog.map((e) => tr(time(e.at), e.who, e.tool, e.slot === null ? '' : String(e.slot), e.note, e.done ? badge('Done', 'ok') : h('span', {}, badge('Refused', 'warning'), e.refused ? h('span', { class: 'sub' }, h('code', {}, e.refused)) : ''))),
+        { empty: 'No staff action yet.' },
+      ),
+    ),
+  );
 }
 
 async function upgradesPage(main) {
@@ -3740,6 +3922,7 @@ async function render() {
     else if (path === '/security/upgrades') await upgradesPage(main);
     else if (path === '/security/playbooks') await playbooksPage(main);
     else if ((m = /^\/security\/playbooks\/([a-z0-9-]{1,64})$/u.exec(path))) await playbookPage(main, m[1]);
+    else if ((m = /^\/free-network-fees\/([1-9][0-9]{0,15})$/u.exec(path))) await evmRelayPage(main, Number(m[1]));
     else if (path === '/reports') await reportsPage(main);
     else if (path === '/statements') await statementsPage(main);
     else if (path === '/rates') await ratesPage(main);

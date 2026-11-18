@@ -69,4 +69,23 @@ describe('StaffRpc.recordStaffAction', () => {
     expect(await staffRpc().recordStaffAction({ ...hana(), orgId: org, action: 'users.find', details: { by: 'userId' } })).toMatchObject({ ok: false, code: 'bad_request', error: expect.stringMatching(/users\.find is recorded without an org/u) });
     expect(await staffRpc().recordStaffAction({ ...hana(), action: 'users.find', details: { by: 'sub', sub: '1234' } })).toMatchObject({ ok: false, code: 'bad_request' });
   });
+
+  it('records the EVM relayer’s staff tools without an org (D843): the note up to 300 characters, that key only; other details stay at 128', async () => {
+    const org = await seedOrg();
+    const note = 'Sent 0.1 test ETH from the Base Sepolia faucet to the relayer wallet; balance now 0.12. '.repeat(3).slice(0, 300);
+    const before = { ...hana(), action: 'evm_relay.staff_action', target: '84532', details: { tool: 'resume', chainId: 84532, slot: null, note } };
+    expect(await staffRpc().recordStaffAction(before)).toEqual({ ok: true });
+    const after = { ...hana(), requestId: before.requestId, action: 'evm_relay.staff_result', target: '84532', details: { tool: 'resume', chainId: 84532, slot: null, result: 'relayer_cannot_send' } };
+    expect(await staffRpc().recordStaffAction(after)).toEqual({ ok: true });
+    const rows = await env.CONSOLE_DB.prepare("SELECT action, org_id, target, details_json FROM audit_log WHERE request_id = ? AND action LIKE 'evm_relay.%' ORDER BY seq").bind(before.requestId).all();
+    expect(rows.results).toEqual([
+      { action: 'evm_relay.staff_action', org_id: null, target: '84532', details_json: JSON.stringify(before.details) },
+      { action: 'evm_relay.staff_result', org_id: null, target: '84532', details_json: JSON.stringify(after.details) },
+    ]);
+    expect(await staffRpc().recordStaffAction({ ...before, ...hana(), orgId: org })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await staffRpc().recordStaffAction({ ...before, ...hana(), details: { ...before.details, note: 'x'.repeat(301) } })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await staffRpc().recordStaffAction({ ...after, ...hana(), details: { ...after.details, result: 'x'.repeat(129) } })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await staffRpc().recordStaffAction({ ...after, ...hana(), details: { ...after.details, note } })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await staffRpc().recordStaffAction({ ...hana(), action: 'users.find', details: { by: 'userId', ticket: 'x'.repeat(129) } })).toMatchObject({ ok: false, code: 'bad_request' });
+  });
 });

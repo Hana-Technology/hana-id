@@ -171,10 +171,10 @@ export interface LinkBanner {
  * - `prove`: a link method's proof (`hana.linkAccount`'s two sign-ins).
  * - `done`: the vault's last word: close, or show these banners first.
  * - `stop`: the login ended with `code` (`link_pending`: this method's link activates at `effectiveAtMs`).
- * - `link_waiting` (D864): the login ended `link_pending` because this email sign-in is itself a pending member of an
+ * - `link_waiting`: the login ended `link_pending` because this email sign-in is itself a pending member of an
  *   account whose root signs in with `provider`; the popup says so, with when the link starts working, and offers to
  *   cancel it with `prove` (an email code over the `link_change` nonce for this member) or to keep it.
- * - `link_cancel` (D864): what became of that cancel (`code`, for support, when it wasn't made or can't be told).
+ * - `link_cancel`: what became of that cancel (`code`, for support, when it wasn't made or can't be told).
  */
 export type FollowNotice =
   | { t: 'link_code'; challengeId: string; expiresAtMs: number; to: string }
@@ -187,7 +187,7 @@ export type FollowNotice =
   | { t: 'link_cancel'; outcome: LinkCancelOutcome; code?: string };
 
 /**
- * D864: a pending link's cancel from the email that is waiting to join: made (`cancelled`), already gone before it
+ * A pending link's cancel from the email that is waiting to join: made (`cancelled`), already gone before it
  * was sent (`already_cancelled`), too late because the waiting period ended (`now_active`), refused with the link
  * still waiting (`not_cancelled`), or not known because the chain couldn't be read after a failure (`unknown`).
  */

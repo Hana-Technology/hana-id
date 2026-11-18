@@ -87,6 +87,12 @@ export const SPONSOR_TEXT = Object.freeze({
   tooMany: 'Too many actions right now. Wait a moment and try again.',
   tooManyFailed: 'Too many actions failed today. Try again tomorrow.',
   unavailable: 'Journear couldn’t send this action right now. Try again later.',
+  paused: 'Free network fees are paused right now. Try again later.',
+  feesHigh: 'Network fees are too high right now. Nothing was sent. Try again in a few minutes.',
+  busyNow: 'Journear is busy with other actions right now. Nothing was sent. Try again in a few seconds.',
+  wrongAccount: 'This isn’t the account you’re signed in with. Nothing was sent. Sign in again, then try again.',
+  signInNotReady: 'Journear is still finishing your sign-in. Try again in a few seconds.',
+  signInUnchecked: 'Journear couldn’t check your sign-in, so nothing was sent. Sign in again, then try again.',
 });
 
 // ---- limits (D855) ----
@@ -296,6 +302,8 @@ function notAllowed(reason: string): VaultError {
       return refusal(SPONSOR_TEXT.notOffered, 'chain_not_enabled');
     case 'app_not_sponsored':
       return refusal(SPONSOR_TEXT.notForThis, 'app_not_sponsored');
+    case 'paused':
+      return refusal(SPONSOR_TEXT.paused, 'paused');
     default:
       return refusal(SPONSOR_TEXT.notAvailable, 'not_available');
   }
@@ -667,6 +675,36 @@ function apiMessage(e: ApiError, setup: boolean): string {
       return SPONSOR_TEXT.tooSlow;
     case 'session_ended':
       return SPONSOR_TEXT.signInEnded;
+    case 'sponsorship_paused':
+      return SPONSOR_TEXT.paused;
+    case 'gas_price_too_high':
+      return SPONSOR_TEXT.feesHigh;
+    case 'relayer_busy':
+      return SPONSOR_TEXT.busyNow;
+    case 'account_mismatch':
+      return SPONSOR_TEXT.wrongAccount;
+    case 'session_not_visible':
+      return SPONSOR_TEXT.signInNotReady;
+    case 'stale_session_proof':
+      return SPONSOR_TEXT.tooSlow;
+    case 'proof_replayed':
+      return SPONSOR_TEXT.alreadySending;
+    case 'missing_session_proof':
+    case 'bad_session_proof':
+    case 'invalid_session_signature':
+    case 'bad_wallet_proof':
+    case 'scope_mismatch':
+      return SPONSOR_TEXT.signInUnchecked;
+    case 'sponsorship_unconfigured':
+      return SPONSOR_TEXT.notOffered;
+    case 'relayer_unavailable':
+    case 'evm_rpc_unavailable':
+    case 'near_unavailable':
+    case 'audit_unavailable':
+    case 'directory_unavailable':
+    case 'rate_limiter_unavailable':
+    case 'config_unavailable':
+      return SPONSOR_TEXT.unavailable;
     default:
       return e.status >= 500 ? SPONSOR_TEXT.unavailable : SPONSOR_TEXT.notReady;
   }

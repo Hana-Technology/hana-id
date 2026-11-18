@@ -69,7 +69,7 @@ import {
   uintReturn,
   verifiedDigest,
 } from './sponsor-checks.ts';
-import { type EvmRelayerPort, type EvmRelayerSent, EvmRpcError, type Hex, keccakHex, relayerBinding, relayerRefusal, revertOf, type SponsorChainPort, type SponsorReceipt, sponsorPorts } from './sponsor-ports.ts';
+import { type EvmRejectionCause, type EvmRelayerPort, type EvmRelayerSent, EvmRpcError, type Hex, keccakHex, relayerBinding, relayerRefusal, revertOf, type SponsorChainPort, type SponsorReceipt, sponsorPorts } from './sponsor-ports.ts';
 import {
   accountSubject,
   appSubjectOf,
@@ -454,12 +454,14 @@ function failed(ctx: Ctx, code: 'reverted' | 'not_executed', transactionHash: He
 // ---- the relayer ----
 
 /**
- * Whose doing a batch no node took was (the relayer's `rejection.cause`): `request` (its own size or shape: the user's
- * input), `pricing` (turned away over its fees: nobody's fault, try again shortly), anything else `relayer` (our side:
- * funds, nonce, signing, and any cause this API doesn't know yet: no charge to the user, an alert).
+ * Whose doing a batch no node took was (the relayer's `rejection.cause`, EvmRejectionCause): `request` (its own size or
+ * shape: the user's input), `pricing` (turned away over its fees: nobody's fault, try again shortly), `relayer` (our
+ * side: funds, nonce, signing). A cause this API doesn't know (a stored row, a newer relayer) is read as `relayer`: no
+ * charge to the user, an alert.
  */
-export type RejectionKind = 'request' | 'pricing' | 'relayer';
+export type RejectionKind = EvmRejectionCause;
 export const rejectionKind = (cause: string): RejectionKind => (cause === 'request' ? 'request' : cause === 'pricing' ? 'pricing' : 'relayer');
+const REJECTION_CAUSES: ReadonlySet<string> = new Set<EvmRejectionCause>(['request', 'pricing', 'relayer']);
 
 /** The answer to a batch no node took (its nonce went to the relayer's cancel at once): nothing ran. */
 function rejectionAnswer(ctx: Ctx, kind: RejectionKind): Response {
@@ -493,8 +495,8 @@ function checkedResult(r: unknown, digest: Hex): EvmRelayerSent | null {
   if (raw !== null && keccakHex(raw) !== hash) return null;
   const j = v.rejection as { cause?: unknown; code?: unknown } | null | undefined;
   const rejection =
-    v.broadcast !== 'rejected' ? null : { cause: typeof j?.cause === 'string' && WORD_RE.test(j.cause) ? j.cause : 'relayer', code: typeof j?.code === 'string' && WORD_RE.test(j.code) ? j.code : 'unknown' };
-  return { digest, transactionHash: hash, relayerNonce: v.relayerNonce, raw, replay: v.replay, broadcast: v.broadcast, rejection: rejection as EvmRelayerSent['rejection'] };
+    v.broadcast !== 'rejected' ? null : { cause: typeof j?.cause === 'string' && REJECTION_CAUSES.has(j.cause) ? (j.cause as EvmRejectionCause) : 'relayer', code: typeof j?.code === 'string' && WORD_RE.test(j.code) ? j.code : 'unknown' };
+  return { digest, transactionHash: hash, relayerNonce: v.relayerNonce, raw, replay: v.replay, broadcast: v.broadcast, rejection };
 }
 
 /**

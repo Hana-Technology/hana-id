@@ -13649,7 +13649,7 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
 
 ## A linked sign-in's own notice, and its removal of itself (branch `feat/link-member-banner`), 2026-11-18
 
-From `feat/link-cancel-by-email` (PR 83) @ 88104036, not merged, not deployed.
+From `feat/link-cancel-by-email` (PR 83) @ 88104036, then `next` @ 6db2bb8b merged in (PR 83 merged); not merged, not deployed.
 
 ### D865. An active member is asked before its sign-in opens the shared wallet, and can remove itself
 - Date 2026-11-18 · Status: decided by the user 2026-11-18 ("go ahead": the member's own notice with Remove, the

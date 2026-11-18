@@ -227,7 +227,7 @@ describe('/login', () => {
     const win = new FakeWindow('/login', `?v=${VAULT_FRAME}`);
     const page = startLoginPage({ win, env: ENV });
     expect(await page.done).toEqual({ stage: 'error', code: 'coop_blocks_popup' });
-    expect(pageText()).toContain('This site’s settings block the Journear Passport window (COOP)');
+    expect(pageText()).toContain('This site’s settings block the Journear Passport window');
     expect(win.listenerCount('message')).toBe(0);
   });
 

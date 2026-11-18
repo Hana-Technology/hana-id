@@ -89,6 +89,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { appLogo } from './logo.ts';
 import type { AuthApi } from './api.ts';
 import { type Dom, dom, errorView, originText } from './dom.ts';
+import { STORAGE_BLOCKED } from './errors.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { issuerDetail } from './email-api.ts';
 import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
@@ -171,7 +172,7 @@ const TEXT = {
   unreachable: `${BRAND.company}’s email service can’t be reached right now. Try again in a moment.`,
   /** `start` failed without an answer: it may still have sent a mail. */
   unreachableStart: `${BRAND.company}’s email service can’t be reached right now. A code may already be on its way: if you try again, use the newest code.`,
-  failed: (code: string) => `Something went wrong (${code}). Try again, or close this window and start again from the app.`,
+  failed: (code: string) => `Something went wrong. Try again, or close this window and start again from the app. Error code (for support): ${code}.`,
   invalidEmail: 'Enter a valid email address.',
   invalidCode: 'Enter the 6-digit code from the mail.',
   domain: 'Addresses on this domain can’t be used to sign in.',
@@ -190,6 +191,13 @@ const STOP_TEXT: Record<string, string> = {
   token_invalid: 'The sign-in couldn’t be checked. Start again from the app.',
   derive_failed: 'The sign-in couldn’t finish. Start again from the app.',
 };
+
+/**
+ * Case B's "Link and continue" (D853's wording): what the link does, and its waiting period when the mailbox isn't
+ * Google's (the contract's `change_delay_ms`: 24 hours on a production network, shorter in a test env, D138).
+ */
+export const LINK_DELAY_TEXT =
+  '“Link and continue” lets this email open the same wallet too. If this isn’t a Gmail or Google Workspace address, the link starts working after a waiting period (24 hours; shorter in a test version), and you can cancel it until then.';
 
 /** D341: the line the screen after a cancel on Google's sign-in screen shows. */
 export const GOOGLE_CANCELLED_TEXT = 'Google sign-in was cancelled.';
@@ -728,7 +736,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
             caseB: link,
           });
         } catch {
-          fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
+          fatal('Sign-in stopped', STORAGE_BLOCKED, 'storage_unavailable');
           return;
         } finally {
           zeroTaken(taken);
@@ -772,7 +780,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
           ? d.h(
               'p',
               { class: 'muted', attrs: { id: 'email-link-explain' } },
-              '“Link and continue” lets this email open the same wallet afterwards. If Google doesn’t host this mailbox, the link waits 24 hours and can be cancelled.',
+              LINK_DELAY_TEXT,
             )
           : null,
         link ? d.h('div', { class: 'actions stack' }, ...buttons, cancelButton()) : d.h('div', { class: 'actions' }, cancelButton(), ...buttons),
@@ -815,7 +823,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         ...(hint ? { leg: 'id' as const, loginHint: hint, interactive: true } : {}),
       });
     } catch {
-      fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
+      fatal('Sign-in stopped', STORAGE_BLOCKED, 'storage_unavailable');
       // The vault waits on the slot: it hears why (G-L2).
       void encryptRelayPayload(taken.relayKey, rid, { error: 'storage_unavailable' })
         .then((v) => api.writeRelay(rid, v))
@@ -891,7 +899,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         ...(taken.loginHint ? { loginHint: taken.loginHint } : {}),
       });
     } catch {
-      fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
+      fatal('Sign-in stopped', STORAGE_BLOCKED, 'storage_unavailable');
       return;
     } finally {
       zeroTaken(taken);
@@ -1020,7 +1028,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       } catch (err) {
         if (err instanceof ApiError && (err.status === 403 || err.status === 410)) {
           endFollow();
-          fatal('Sign-in stopped', 'This sign-in’s answer is gone. Start again from the app.', err.code);
+          fatal('Sign-in stopped', 'This sign-in can’t be finished any more. Start again from the app.', err.code);
           return;
         }
         await new Promise<void>((resolve) => setT(resolve, backoff));
@@ -1033,7 +1041,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         n = await decryptRelayValue(f.relayKey, id, value, isFollowNotice);
       } catch {
         endFollow();
-        fatal('Sign-in stopped', 'The sign-in answer could not be read. Start again from the app.', 'token_invalid');
+        fatal('Sign-in stopped', 'This sign-in couldn’t be read. Start again from the app.', 'token_invalid');
         return;
       }
       show(n, slot);
@@ -1173,7 +1181,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     } catch {
       void answer(slot, { error: 'storage_unavailable' }).finally(() => {
         endFollow();
-        fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
+        fatal('Sign-in stopped', STORAGE_BLOCKED, 'storage_unavailable');
       });
       return;
     }
@@ -1204,7 +1212,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         storeLoginEntry(win.sessionStorage, state, follow.relayKey, now(), undefined, { followKey: follow.followKey, home: rid, next: slot + 2, leg: 'proof', clientId: ctx.clientId });
       } catch {
         endFollow();
-        fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
+        fatal('Sign-in stopped', STORAGE_BLOCKED, 'storage_unavailable');
         return;
       }
       const url = googleAuthUrl({ clientId: ctx.clientId, authOrigin: env.authOrigin, nonce: p.nonce, state, forceReauth: false, loginHint: p.loginHint });

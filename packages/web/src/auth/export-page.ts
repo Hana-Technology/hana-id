@@ -67,7 +67,7 @@ import type { AuthApi } from './api.ts';
 import { ChainLoginError, loginOnChain } from './chain-login.ts';
 import { ServerClock } from './clock.ts';
 import { type Dom, dom, errorView, originText } from './dom.ts';
-import { PageError, apiErrorCode, errorMessage, sessionKeyText } from './errors.ts';
+import { PageError, apiErrorCode, errorMessage, safetyStop, sessionKeyText } from './errors.ts';
 import { appLogo } from './logo.ts';
 import type { NearReader } from './near-rpc.ts';
 import { exportPath } from './export-path.ts';
@@ -89,7 +89,8 @@ export const EXPORT_CHECK_MS = 1_000;
 const RELAY_WAIT_S = 25;
 /** How often the child popup's `closed` is checked until it connects. */
 const CHILD_WATCH_MS = 500;
-const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM', near: 'NEAR' } as const;
+/** Each chain's name in the window's words (D853: "Ethereum-style", never "EVM"). */
+const CHAIN_NAMES = { stellar: 'Stellar', evm: 'Ethereum-style', near: 'NEAR' } as const;
 
 /** Why an export ended without an error: the key deadline passed, the vault session ended, or the vault went away. */
 export type ExportEndReason = 'expired' | 'session_ended' | 'vault_gone';
@@ -191,7 +192,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         near.view(env.signer, 'get_self_issued', { provider: EMAIL_PROVIDER }),
       ]);
     } catch {
-      throw new PageError('api_unavailable', 'The email sign-in keys could not be read on NEAR. Try again.');
+      throw new PageError('api_unavailable', 'Journear couldn’t check your email sign-in right now. Try again.');
     }
     if (scope !== scopeId) throw new PageError('config_mismatch', errorMessage('config_mismatch'));
     // Parsed strictly, as the vault's NearView does (W-L2): a malformed answer refuses, never a key list or a policy
@@ -202,7 +203,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       chainKeys = parseIssuerKeysView(keys) ?? [];
       signerPolicy = parseSelfIssuedView(policy);
     } catch {
-      throw new PageError('api_unavailable', 'The email sign-in keys could not be read on NEAR. Try again.');
+      throw new PageError('api_unavailable', 'Journear couldn’t check your email sign-in right now. Try again.');
     }
     const checked = await verifyEmailIdToken(token, { iss: env.emailIss as string, aud: `email:${scopeId}`, nonce, nowMs: clock.now(), keys: chainKeys, policy: signerPolicy });
     if (!checked.ok) throw new PageError(checked.code === 'key_pending' ? 'api_unavailable' : 'token_invalid', errorMessage(checked.code === 'key_pending' ? 'api_unavailable' : 'token_invalid'));
@@ -334,21 +335,21 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
 
   async function checkContext(msg: WindowMessage<'hana:export-context'>): Promise<void> {
     try {
-      if (msg.signer !== env.signer) throw new PageError('config_mismatch', 'The vault named another signer.');
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', safetyStop('the app'));
       try {
         app = await api.getApp(msg.pk, msg.parentOrigin);
       } catch (err) {
         const code = apiErrorCode(err);
         throw new PageError(code, errorMessage(code));
       }
-      if (app.signer !== env.signer || app.scopeId !== msg.scopeId) throw new PageError('config_mismatch', 'The export request does not match this app’s settings.');
+      if (app.signer !== env.signer || app.scopeId !== msg.scopeId) throw new PageError('config_mismatch', 'This export didn’t match this app’s settings, so it was stopped. Start again from the app.');
       clock.sync(app.serverTimeMs);
       if (finished()) return;
       checker = setInterval(check, EXPORT_CHECK_MS);
       if (check()) return;
       showReady();
     } catch (err) {
-      const e = err instanceof PageError ? err : new PageError('config_mismatch', 'The export request could not be checked.');
+      const e = err instanceof PageError ? err : new PageError('config_mismatch', 'This export couldn’t be checked, so it was stopped. Start again from the app.');
       fail(e.code, e.message);
     }
   }
@@ -526,7 +527,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       });
       if ('error' in payload) {
         if (payload.error.startsWith('email_')) throw new PageError('login_cancelled', 'The sign-in was cancelled. Try again.');
-        throw new PageError('google_error', `${errorMessage('google_error')} (${payload.error})`);
+        throw new PageError('google_error', `${errorMessage('google_error')} Google’s error (for support): ${payload.error}.`);
       }
       if (!isRelayToken(payload) || payload.accessToken !== undefined || payload.access !== undefined || payload.caseB !== undefined || payload.as !== undefined) {
         throw new PageError('token_invalid', errorMessage('token_invalid'));
@@ -539,7 +540,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         who = await checkEmailToken(idToken, p.params.nonce, ctx.scopeId);
       } else {
         const checked = await verifyGoogleIdToken(idToken, { clientId: p.params.clientId, nonce: p.params.nonce, nowMs: clock.now(), jwks }).catch(() => {
-          throw new PageError('api_unavailable', 'Google’s keys could not be read. Try again.');
+          throw new PageError('api_unavailable', 'Journear couldn’t check your Google sign-in right now. Try again.');
         });
         if (!checked.ok) throw new PageError(checked.code, errorMessage(checked.code));
         // Google sends no auth_time today even with max_age=0 (Q33), so its absence is accepted; when present it must
@@ -717,7 +718,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
     try {
       opener.postMessage({ v: 1, t: 'hana:export-hello' }, env.vaultOrigin);
     } catch {
-      fail('vault_unavailable', 'The app is gone. Close this window and start again from the app.');
+      fail('vault_unavailable', 'The app’s page has closed. Close this window and start again from the app.');
     }
   }
 

@@ -283,7 +283,7 @@ describe('/login/callback, token_first’s access leg', () => {
     expect(a.writeRelay.mock.calls.map((c) => c[0])).toEqual([s.state]);
     expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: code });
     expect(s.win.location.assigned).toEqual([]);
-    expect(pageText()).toContain(`Code: ${code}`);
+    expect(pageText()).toContain(`Error code (for support): ${code}`);
     expect(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.state)).toBeNull();
   });
 
@@ -539,7 +539,7 @@ describe('the claim allow-list before anything is relayed (D270)', () => {
       expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: 'token_has_pii', claim: Object.keys(claim)[0] });
       expect(JSON.stringify(a.writeRelay.mock.calls)).not.toContain(jwt(claims));
       expect(s.win.location.assigned).toEqual([]);
-      expect(pageText()).toContain('Code: token_has_pii');
+      expect(pageText()).toContain('Error code (for support): token_has_pii');
     }
   });
 });

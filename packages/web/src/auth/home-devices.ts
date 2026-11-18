@@ -13,7 +13,7 @@
 // SECURITY: app names, origins and the policy's label are the partner's words: they reach the page as text nodes only,
 // never as a heading, a link or markup. The device label is the vault's coarse "Chrome on macOS", also text. Ids are held
 // in memory only, for the stop the user clicks. Nothing here is written to storage, a URL or a log.
-import { type Child, type Dom, originText } from './dom.ts';
+import { type Child, type Dom, originText, supportCode, supportRequest } from './dom.ts';
 import { type HomeConsent, type HomeDevice, type HomeDeviceScope, type HomeDevicesApi, type HomeDevicesQuery, type HomeIdentity, type HomeScope, type HomeStop, type HomeStopResult, type HomeTabConsent, HOME_DEVICES_MAX } from './home-api.ts';
 import { type HomeProblem, homeProblem, plainProblem } from './home-problems.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
@@ -62,7 +62,7 @@ export const HOME_STOP_CONFIRM: Readonly<Record<HomeStop['kind'], { title: strin
     title: 'Stop sharing your email with this app?',
     points: [
       'The app’s new sign-ins and its dashboard lose your address at once.',
-      'Sign-in tokens the app already received keep it for up to an hour.',
+      'The app may still see it for up to an hour.',
       'A copy the app already stored is the app’s own: Journear can’t delete it. Ask the app if you want it deleted.',
     ],
     go: 'Stop sharing',
@@ -456,8 +456,8 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       'danger',
       { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id: `home-devices-problem-${where}`, tabindex: '-1' } },
       d.h('p', {}, p.text),
-      d.h('p', { class: 'code muted' }, `Code: ${p.code}`),
-      p.requestId ? d.h('p', { class: 'code muted' }, `Request: ${p.requestId}`) : null,
+      d.h('p', { class: 'code muted' }, supportCode(p.code)),
+      p.requestId ? d.h('p', { class: 'code muted' }, supportRequest(p.requestId)) : null,
     );
 
   function body(where: Where): Child[] {

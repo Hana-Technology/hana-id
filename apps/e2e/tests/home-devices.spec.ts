@@ -391,7 +391,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await section.locator(`#home-stop-share-front-${ID(2)}`).click();
   await section.locator(`#home-stop-share-front-${ID(2)}-confirm-go`).click();
   await expect(section.locator('#home-devices-problem-front')).toContainText('Passport Home couldn’t find that device among yours');
-  await expect(section.locator('#home-devices-problem-front')).toContainText('Code: unknown_share');
+  await expect(section.locator('#home-devices-problem-front')).toContainText('Error code (for support): unknown_share');
   await shots(page, 'h9-08-stop-refused', browserName);
   stopAnswer = null;
 

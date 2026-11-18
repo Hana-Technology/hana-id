@@ -263,7 +263,7 @@ describe('collecting', () => {
     expect(freshViews).toHaveLength(1);
     expect(h.stamp('arrival')).toMatchObject({ status: 'collected', sponsored: true });
     expect((h.stamp('arrival') as { fresh?: boolean }).fresh).toBeUndefined();
-    expect(h.last().notice).toEqual({ kind: 'info', text: 'Arrival stamped on NEAR testnet. Your NEAR account was created for it. You paid no gas.', href: `https://testnet.nearblocks.io/txns/${TX_HASH}`, hrefLabel: 'View the transaction' });
+    expect(h.last().notice).toEqual({ kind: 'info', text: 'Arrival stamped on NEAR’s test network. Your NEAR account was created for it. It was free for you.', href: `https://testnet.nearblocks.io/txns/${TX_HASH}`, hrefLabel: 'See it on NEAR' });
     expect(h.stamp('sponsored')).toEqual({ id: 'sponsored', status: 'available' });
     expect(h.chain.stamps.passports.get(NEAR_ACCOUNT)?.map((s) => s.stamp)).toEqual(['arrival']);
   });
@@ -318,7 +318,7 @@ describe('collecting', () => {
     h.fake.near.signDelegateAction.mockRejectedValueOnce(hanaError(4001));
     h.handlers().collect('arrival');
     await flush();
-    expect(h.stamp('arrival')).toEqual({ id: 'arrival', status: 'failed', message: 'Declined in the Journear Passport window: nothing was signed, no stamp was collected.' });
+    expect(h.stamp('arrival')).toEqual({ id: 'arrival', status: 'failed', message: 'You rejected it in the Journear Passport window. Nothing was signed, and no stamp was collected.' });
     h.handlers().collect('arrival');
     await flush();
     expect(h.stamp('arrival').status).toBe('collected');
@@ -331,7 +331,7 @@ describe('collecting', () => {
     h.handlers().collect('arrival');
     await flush();
     expect(h.stamp('arrival')).toEqual({ id: 'arrival', status: 'working', stage: SENT_STAGE });
-    expect(h.last().notice).toEqual({ kind: 'info', text: 'Arrival: sent, still confirming on NEAR testnet.', href: `https://testnet.nearblocks.io/txns/${TX_HASH}`, hrefLabel: 'View the transaction' });
+    expect(h.last().notice).toEqual({ kind: 'info', text: 'Arrival: sent, waiting for NEAR to confirm.', href: `https://testnet.nearblocks.io/txns/${TX_HASH}`, hrefLabel: 'See it on NEAR' });
     // It landed: the next poll shows it.
     h.chain.stamps.collect(NEAR_ACCOUNT, true, { stamp: 'arrival' });
     await h.tick(POLL_MS);
@@ -345,11 +345,11 @@ describe('collecting', () => {
     await flush();
     // D807: the slot carries the faucet and Copy whatever notice is up (here the Arrival's success).
     expect(h.last().notice?.text).toContain('Arrival stamped');
-    expect(h.stamp('own_fare')).toEqual({ id: 'own_fare', status: 'locked', reason: LOCKED.needsNear, detail: OWN_FARE_HELP.detail, href: CONFIG.near.faucet, hrefLabel: 'Get testnet NEAR ↗', copyAccount: true });
+    expect(h.stamp('own_fare')).toEqual({ id: 'own_fare', status: 'locked', reason: LOCKED.needsNear, detail: OWN_FARE_HELP.detail, href: CONFIG.near.faucet, hrefLabel: 'Get free test NEAR ↗', copyAccount: true });
     // Once the success notice is gone, the faucet's link is the notice too.
     h.handlers().refresh();
     await flush();
-    expect(h.last().notice).toMatchObject({ kind: 'info', href: CONFIG.near.faucet, hrefLabel: 'Get testnet NEAR' });
+    expect(h.last().notice).toMatchObject({ kind: 'info', href: CONFIG.near.faucet, hrefLabel: 'Get free test NEAR' });
     h.chain.balance = String(2n * 10n ** 24n);
     await h.tick(POLL_MS);
     expect(h.last().balanceNear).toBe('2');
@@ -358,7 +358,7 @@ describe('collecting', () => {
     expect(h.fake.near.signTransaction).toHaveBeenCalledTimes(1);
     await flush();
     expect(h.stamp('own_fare')).toMatchObject({ status: 'collected', sponsored: false });
-    expect(h.last().notice?.text).toBe('Own fare stamped on NEAR testnet. Your NEAR paid the fee.');
+    expect(h.last().notice?.text).toBe('Own fare stamped on NEAR’s test network. Your NEAR paid the network fee.');
   });
 
   it('the Layover counts down from the Arrival’s block time, every second, then opens', async () => {
@@ -570,7 +570,7 @@ describe('the public passport and the recent stamps', () => {
   it('a failed read is said when nothing was shown, and Refresh says it again', async () => {
     const h = boot({ path: `/p/${OTHER_ACCOUNT}`, signedIn: false, chain: (c) => (c.down = true) });
     await flush();
-    expect(h.last().notice?.text).toMatch(/couldn’t read NEAR testnet/u);
+    expect(h.last().notice?.text).toMatch(/couldn’t reach NEAR\. Nothing was lost/u);
     h.chain.down = false;
     h.handlers().refresh();
     await flush();

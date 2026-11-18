@@ -232,7 +232,7 @@ describe('POST /v1/evm/sponsor/send: refusals before any chain read', () => {
     ['another relayer', (s) => signedSend(s.user, { relayer: testUser('other relayer').address }).body, 400, 'wrong_relayer'],
     ['minGas below the floor', (s) => signedSend(s.user, { minGas: 99_999n }).body, 400, 'min_gas_out_of_range', { minGasFloor: '100000', maxGas: '300000' }],
     ['minGas above maxGasPerTx', (s) => signedSend(s.user, { minGas: 300_001n }).body, 400, 'min_gas_out_of_range'],
-    ['a deadline under 30 s away', (s) => signedSend(s.user, { deadline: BigInt(Math.floor(Date.now() / 1000) + 29) }).body, 400, 'deadline_out_of_range', { deadlineMaxS: 600 }],
+    ['a deadline under 30 s away', (s) => signedSend(s.user, { deadline: BigInt(Math.floor(Date.now() / 1000) + 29) }).body, 400, 'deadline_out_of_range', { deadlineMaxS: 300 }],
     ['a deadline past deadlineMaxS', (s) => signedSend(s.user, { deadline: BigInt(Math.floor(Date.now() / 1000) + 700) }).body, 400, 'deadline_out_of_range'],
     ['a batch signed by another key', (s) => signedSend(s.user, { signWith: testUser('mallory').key }).body, 401, 'invalid_signature'],
     ['a signature over another implementation (the request can’t pick the delegate)', (s) => signedSend(s.user, { delegate: OP_DELEGATE }).body, 401, 'invalid_signature'],
@@ -801,7 +801,7 @@ describe('POST /v1/evm/sponsor/prepare', () => {
     const res = await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] });
     const b = await body(res);
     expect(res.status).toBe(200);
-    expect(b).toMatchObject({ delegation: 'journear', accountNonce: '9', executeNonce: '4', relayer: RELAYER, implementation: DELEGATE, minGasFloor: '100000', deadlineMaxS: 600, allowed: true });
+    expect(b).toMatchObject({ delegation: 'journear', accountNonce: '9', executeNonce: '4', relayer: RELAYER, implementation: DELEGATE, minGasFloor: '100000', deadlineMaxS: 300, allowed: true });
     expect(Math.abs((b.serverNow as number) - Math.floor(Date.now() / 1000))).toBeLessThanOrEqual(1);
     expect(isEvmSponsorPrepareResponse(b)).toBe(true);
     // maxMinGas: a send at it fits maxGasPerTx, one above doesn't.
@@ -1966,17 +1966,11 @@ describe('L2: the nonce floor and the outcome follow the relayer’s verdict at 
 });
 
 describe('L3: never send what the relayer would refuse', () => {
-  it('calldata over the relayer’s limit: 400 batch_too_large before anything is read or counted', async () => {
-    const s = await setup({ maxCallsPerBatch: 8 });
-    const big = checksumEvmAddress(`0x${'b16'.repeat(13)}b`) as Hex;
-    const cfg = JSON.parse(s.bindings.EVM_SPONSOR as string) as { apps: Record<string, Record<string, unknown[]>> };
-    cfg.apps[s.app.id]![String(LOCAL_CHAIN)]!.push({ address: big, selectors: ['0x12345678'], maxDataBytes: 8192, label: 'Big' });
-    s.bindings = { ...s.bindings, EVM_SPONSOR: JSON.stringify(cfg) };
-    const data = `0x12345678${'ab'.repeat(8188)}` as Hex;
-    const r = await send(s, signedSend(s.user, { calls: Array.from({ length: 5 }, () => ({ to: big, data })) }).body);
-    expect([r.status, (await body(r)).code]).toEqual([400, 'batch_too_large']);
-    expect(s.chain.calls).toEqual([]);
-    expect(s.relayer.sends).toEqual([]);
+  it('calldata over the relayer’s own limit is refused before anything is sent (a second line: a valid manifest can’t reach it)', async () => {
+    const { calldataTooLarge } = await import('../src/evm/sponsor.ts');
+    const { EVM_RELAYER_MAX_DATA_BYTES } = await import('../src/evm-relayer.ts');
+    expect(calldataTooLarge(`0x${'ab'.repeat(EVM_RELAYER_MAX_DATA_BYTES)}`)).toBe(false);
+    expect(calldataTooLarge(`0x${'ab'.repeat(EVM_RELAYER_MAX_DATA_BYTES + 1)}`)).toBe(true);
   });
 
   it('fees the relayer’s own floor refuses (`feesTooLow`): 503 gas_price_too_high (15 s), nothing sent, the attempt back', async () => {

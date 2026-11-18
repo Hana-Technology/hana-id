@@ -76,7 +76,7 @@ export const chainBlock = (chainId: number, fields: ChainFields = {}): ChainFiel
   maxFeePerGasGwei: 1,
   maxPriorityFeePerGasGwei: 0.01,
   maxCallsPerBatch: 4,
-  deadlineMaxS: 600,
+  deadlineMaxS: 300,
   minGas: 100_000,
   dailyBudgetEth: 0.02,
   appDailyBudgetEth: 0.01,

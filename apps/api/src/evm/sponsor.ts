@@ -109,6 +109,12 @@ export const EVM_SPONSOR_ENDPOINTS: readonly string[] = [EVM_SPONSOR_PREPARE_END
 /** 8 calls of 8 KiB of data, as hex, with the rest of the body: well under 140 000 bytes. */
 const MAX_BODY = 140_000;
 
+/**
+ * Whether a batch's calldata is over the relayer's own limit (it would refuse it). A manifest within its bounds can't
+ * produce one (maxCallsPerBatch × the largest maxDataBytes is capped below it), so this is the second line.
+ */
+export const calldataTooLarge = (calldata: Hex): boolean => (calldata.length - 2) / 2 > EVM_RELAYER_MAX_DATA_BYTES;
+
 /** The body as JSON, refused (400) when not JSON or when an object repeats a key (D856's one parsed object). */
 async function readStrictJson(request: Request): Promise<{ ok: true; body: unknown } | { ok: false; status: number; error: string }> {
   const read = await readBody(request, MAX_BODY);
@@ -803,7 +809,7 @@ export async function handleEvmSponsorSend(request: Request, env: Env, requestId
     if (a?.code === 'invalid_authorization_signature') return reject(ctx, 401, 'invalid_authorization_signature', "The authorization's signature is not the account's");
   }
   // The relayer's own limit on a transaction's calldata: refused here, before anything is counted, never sent to it.
-  if ((encodeExecuteCalldata(input, req.signature).length - 2) / 2 > EVM_RELAYER_MAX_DATA_BYTES) return done(ctx, 400, { error: 'The batch is too large for one sponsored transaction', code: 'batch_too_large', maxBytes: EVM_RELAYER_MAX_DATA_BYTES });
+  if (calldataTooLarge(encodeExecuteCalldata(input, req.signature))) return done(ctx, 400, { error: 'The batch is too large for one sponsored transaction', code: 'batch_too_large', maxBytes: EVM_RELAYER_MAX_DATA_BYTES });
   lap(ctx, 'checks');
   // 4. The proof's single use, the session, the directory.
   const session = await sessionBound(env, ctx, app, parentOrigin, chain, req.account, proof, now);

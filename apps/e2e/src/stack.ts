@@ -77,7 +77,7 @@ export const e2eEvmSponsorVar = (relayer: string, appIds: readonly string[] = []
         maxFeePerGasGwei: 10,
         maxPriorityFeePerGasGwei: 1,
         maxCallsPerBatch: 4,
-        deadlineMaxS: 600,
+        deadlineMaxS: 300,
         minGas: 100_000,
         dailyBudgetEth: 1,
         appDailyBudgetEth: 0.5,

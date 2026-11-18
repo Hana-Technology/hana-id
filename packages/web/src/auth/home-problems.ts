@@ -37,7 +37,7 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   api_unavailable: UNREACHABLE,
   // Opening a wallet (home-export.ts). Each says whether anything was shown: nothing ever is on a refusal.
   session_exists: 'That sign-in was already used. Sign in again to retry.',
-  session_consumed: 'That sign-in was already used, perhaps in another window. Nothing was shown. Sign in again to retry.',
+  session_consumed: 'That sign-in was already used, perhaps in another window. Nothing was shown. If that wasn’t you, sign in again and tell the app’s support.',
   ckd_failed: 'Journear couldn’t open your wallet this time. Nothing was shown. Sign in again to retry.',
   derive_failed: 'Journear couldn’t open your wallet. Nothing was shown. Sign in again to retry.',
   contract_rejected: 'The sign-in was refused. Nothing was shown. Sign in again to retry.',

@@ -256,7 +256,7 @@ describe('notices: the designed HTML part', () => {
     );
     const active = linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', pending: false, look: LOOK });
     expect(active.text).toContain('This email and a Google account now both open the same Journear wallet in “Sodax Demo”.');
-    expect(active.text).toContain('Not you? Change your email and Google passwords. Then, within 7 days, sign in to “Sodax Demo” the way you first signed in to this wallet: the Journear Passport sign-in window shows the new sign-in with a button to remove it.');
+    expect(active.text).toContain('Not you? Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Within 7 days, sign in to “Sodax Demo” the way you first signed in to this wallet: the Journear Passport sign-in window shows the new sign-in with a button to remove it. Then move what’s in this wallet to a new one.');
     for (const n of [m, active]) {
       expect(heading(n.html)).toBe('A sign-in method was added');
       expectOnlyTheLogo(n.html);

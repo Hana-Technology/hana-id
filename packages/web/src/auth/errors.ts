@@ -61,7 +61,7 @@ const MESSAGES: Partial<Record<HanaErrorCode, string>> = {
   derive_failed: WALLET_NOT_OPENED,
   pairing_failed: `Something didn’t look right while opening your wallet, so ${BRAND.company} stopped to keep it safe. Try again.`,
   address_mismatch: `${BRAND.company} opened a different wallet from the one it expected, so it stopped. Nothing was shown or changed.`,
-  session_consumed: 'This sign-in was already used, perhaps in another window. Start again.',
+  session_consumed: 'This sign-in was already used, perhaps in another window. If that wasn’t you, start again and tell the app’s support.',
   popup_blocked: 'Your browser blocked the sign-in window. Allow pop-ups and try again.',
 };
 

@@ -12881,7 +12881,16 @@ redeployed after judging.
   (every `ErrorCode`, `RpcCode` and `STRING_ERROR_CODES` entry, tested), closer ones for a few reasons (a test app on a
   mainnet, too many waiting requests, a request too large to show, a reserved raw domain, a NEAR request for another
   network, signed out, a sign-in left unfinished, an old browser, a cancelled Google screen), and "Something went
-  wrong in Journear Passport. Try again." for anything else. A getter on the class, so the errors' own fields, their
+  wrong in Journear Passport. Try again." for anything else. After PR 78's review: each sentence says only what is true
+  for every error that can carry it. The generic 4100 no longer says "Nothing was signed" (a sponsored action, PR 76,
+  answers 4100 after signing or sending); `api_unavailable` and the SDK's internal error say to check whether something
+  went through before trying again; `busy` is "Journear Passport is finishing something else for this wallet. Wait a
+  moment, then try again."; `session_consumed` adds "If that wasn’t you, start again and tell the app’s support." (the
+  sign-in page and Passport Home say the same). The sponsored action's reasons (`SPONSOR_REASONS`: the vault's refusals
+  and the API codes PR 76 passes on as `data.reason`) take PR 76's own `SPONSOR_TEXT` sentences word for word, for the
+  codes those errors come with; `reverted` and `not_executed` take the one that is true with or without the one-time
+  setup, and an unknown outcome says to check first. A test lists every reason, and reads PR 76's `evm-sponsor.ts`
+  once it is on the branch, so a new reason needs a sentence. A getter on the class, so the errors' own fields, their
   equality and their JSON are unchanged. `userMessageFor(code, data)` is exported for a code read elsewhere (the SWK
   module's `ext[0]`, a provider error a library wrapped). No protocol change: the vault sends what it sent, and an SDK
   of any version works with any vault.
@@ -12918,9 +12927,12 @@ redeployed after judging.
   sign in to “{app}” with that Google account: the Journear Passport sign-in window shows this email with a button to
   cancel it. If that Google account isn’t yours, don’t sign in to “{app}” with this email, and tell the app’s support."
   Active (case A, or case B Google-hosted): "This email and a Google account now both open the same Journear wallet in
-  “{app}”." and "Not you? Change your email and Google passwords. Then, within 7 days, sign in to “{app}” the way you
+  “{app}”." and "Not you? Then someone else may have been able to open this wallet. Change your email password, and
+  your Google password if this is a Gmail or Google Workspace address. Within 7 days, sign in to “{app}” the way you
   first signed in to this wallet: the Journear Passport sign-in window shows the new sign-in with a button to remove
-  it." The delay is said as "24 hours; shorter in a test version" because `changeDelayMs` is 60 s on sandbox-dev:
+  it. Then move what’s in this wallet to a new one." (After PR 78's review: an active link may already have let that
+  sign-in open the wallet and show its key, and removing it only stops it from now on; the Google password is named
+  only where the Google account can be the reader's own.) The delay is said as "24 hours; shorter in a test version" because `changeDelayMs` is 60 s on sandbox-dev:
   a flat "24 hours" would promise a cancel window that isn't there.
 - A test now holds every link of every user mail to a page the auth host serves (`AUTH_PAGE_PATHS`). It found two
   more: the staff unlock and unsuppress mails link to `/email/unlock#…` and `/email/confirm#…`, also left for later

@@ -5,11 +5,31 @@ import { ErrorCode, STRING_ERROR_CODES } from '@hana-id/core';
 import { jargonIn } from '@hana-id/brand/plain-words';
 import { describe, expect, it } from 'vitest';
 import { HanaError, ProviderRpcError, RpcCode, toProviderRpcError } from '../../src/client/errors.ts';
-import { DEFAULT_USER_MESSAGE, userMessageFor } from '../../src/client/user-messages.ts';
+import { existsSync, readFileSync } from 'node:fs';
+import { DEFAULT_USER_MESSAGE, SPONSOR_REASONS, userMessageFor } from '../../src/client/user-messages.ts';
 import { userMessageFor as exported } from '../../src/index.ts';
 
+/**
+ * Every `data.reason` a sponsored action's error can carry (PR 76's vault/evm-sponsor.ts: its refusals' reasons, and the
+ * API codes it passes on). Once that file is on this branch, the test also reads every reason it names, so a new one
+ * fails here until it has a sentence.
+ */
+const SPONSOR_REASON_LIST = [
+  'chain_not_sponsored', 'no_evm_account', 'invalid_request', 'target_not_allowed', 'delegated_elsewhere', 'budget_exhausted', 'gas_too_high', 'chain_not_enabled', 'app_not_sponsored', 'not_available',
+  'clock_wrong', 'deadline_passed', 'bad_answer', 'unknown_outcome', 'api_unavailable', 'sponsor_in_flight',
+  'reverted', 'not_executed', 'simulation_reverted', 'timeout', 'nonce_stale', 'authorization_nonce_stale', 'delegation_required', 'in_progress', 'account_unrecorded', 'app_budget_exhausted',
+  'too_many_failures', 'rate_limited', 'call_not_sponsored', 'value_not_allowed', 'too_many_calls', 'deadline_out_of_range', 'session_ended',
+];
+const SPONSOR_SOURCE = new URL('../../src/vault/evm-sponsor.ts', import.meta.url);
+function sponsorReasonsInSource(): string[] {
+  if (!existsSync(SPONSOR_SOURCE)) return [];
+  const src = readFileSync(SPONSOR_SOURCE, 'utf8');
+  const found = [...src.matchAll(/refusal\([^,]+, '([a-z_]+)'|reason: '([a-z_]+)'|case '([a-z_]+)':/gu)].map((m) => m[1] ?? m[2] ?? m[3]!);
+  return [...new Set(found)];
+}
+
 const ALL_CODES = [...Object.values(ErrorCode), ...Object.values(RpcCode), ...STRING_ERROR_CODES];
-const REASONS = ['mainnet_not_allowed', 'raw_not_allowed_for_test_apps', 'too_many_pending', 'invalid_request', 'raw_sign_off', 'raw_reserved_domain', 'near_network_mismatch', 'near_block_unknown', 'near_relayed_delegate', 'signed_out', 'pending', 'webcrypto_unsupported', 'webcrypto_failed', 'access_denied'];
+const REASONS = [...SPONSOR_REASON_LIST, 'mainnet_not_allowed', 'raw_not_allowed_for_test_apps', 'too_many_pending', 'invalid_request', 'raw_sign_off', 'raw_reserved_domain', 'near_network_mismatch', 'near_block_unknown', 'near_relayed_delegate', 'signed_out', 'pending', 'webcrypto_unsupported', 'webcrypto_failed', 'access_denied'];
 
 describe('userMessage (D861)', () => {
   it('every code the SDK can reject with has its own sentence', () => {
@@ -57,5 +77,26 @@ describe('userMessage (D861)', () => {
     expect(toProviderRpcError(new HanaError(4100, 'x', { reason: 'mainnet_not_allowed' })).userMessage).toMatch(/^This app is a test version/u);
     expect(new ProviderRpcError(4200, 'Unsupported method').userMessage).toBe('Journear Passport can’t do this kind of request. Nothing was signed.');
     expect(Object.keys(p)).not.toContain('userMessage');
+  });
+
+  it('every sponsored action reason has its own sentence, the vault’s words, whatever code carries it', () => {
+    for (const r of [...SPONSOR_REASON_LIST, ...sponsorReasonsInSource()]) {
+      const own = r === 'invalid_request' ? userMessageFor(4100, { reason: r }) : SPONSOR_REASONS[r];
+      expect(own, r).toBeDefined();
+      for (const code of [4100, 'rate_limited', 'api_unavailable', 'session_ended', 'busy']) expect(userMessageFor(code, { reason: r }), `${code} ${r}`).not.toBe(DEFAULT_USER_MESSAGE);
+    }
+    expect(userMessageFor('api_unavailable', { reason: 'unknown_outcome' })).toBe('Journear couldn’t tell whether your action went through. Check before you try again.');
+    expect(userMessageFor('api_unavailable', { reason: 'timeout', status: 504 })).toMatch(/Check again in a minute before you try again/u);
+    expect(userMessageFor(4100, { reason: 'reverted', status: 422 })).toBe('The action didn’t go through. Your account’s one-time setup may still have been done. Nothing else changed.');
+    expect(userMessageFor('busy', { reason: 'sponsor_in_flight' })).toBe('Your last action is still going through. Wait for it to finish, then try again.');
+    // The per-code reasons come first: a test app's mainnet refusal keeps its own sentence.
+    expect(userMessageFor(4100, { reason: 'mainnet_not_allowed' })).toMatch(/^This app is a test version/u);
+  });
+
+  it('never claims "nothing was signed" or "try again" without "check" where the outcome may be unknown', () => {
+    expect(userMessageFor(4100, undefined)).not.toMatch(/Nothing was/u);
+    for (const code of ['api_unavailable', -32603]) expect(userMessageFor(code, undefined), String(code)).toMatch(/check whether it went through before you try again/u);
+    expect(userMessageFor('busy', undefined)).toBe('Journear Passport is finishing something else for this wallet. Wait a moment, then try again.');
+    expect(userMessageFor('session_consumed', undefined)).toBe('This sign-in was already used, perhaps in another window. If that wasn’t you, start again and tell the app’s support.');
   });
 });

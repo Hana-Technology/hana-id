@@ -173,7 +173,9 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
  * is today: the sign-in window's link banners (D259, `vault/login.ts` `Afterword`), shown when the wallet's other
  * sign-in signs in to the app. A pending link (case B, not Google-hosted) is cancelled by the wallet's Google sign-in
  * (any active identity may cancel); an active one is removed by the wallet's first sign-in method, its root, within the
- * 7 days the banner offers it (`RECENT_LINK_MS`).
+ * 7 days the banner offers it (`RECENT_LINK_MS`). An active link may already have let another sign-in open the wallet
+ * (and show its key), and removing it only stops it from now on: so "Not you?" also says to move what the wallet holds.
+ * "Google password" only as a Gmail or Workspace address's own: otherwise the Google account may be someone else's.
  */
 export function linkNoticeMail(input: { to: string; appName: string; pending: boolean; appId?: string; look?: MailLook }): MailMessage {
   const app = displayAppName(input.appName);
@@ -183,7 +185,7 @@ export function linkNoticeMail(input: { to: string; appName: string; pending: bo
     : `This email and a Google account now both open the same ${BRAND.company} wallet in ${appText}.`;
   const notYou = input.pending
     ? `Change your email password. Then, before the waiting period ends, sign in to ${appText} with that Google account: the ${BRAND.product} sign-in window shows this email with a button to cancel it. If that Google account isn’t yours, don’t sign in to ${appText} with this email, and tell the app’s support.`
-    : `Change your email and Google passwords. Then, within 7 days, sign in to ${appText} the way you first signed in to this wallet: the ${BRAND.product} sign-in window shows the new sign-in with a button to remove it.`;
+    : `Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Within 7 days, sign in to ${appText} the way you first signed in to this wallet: the ${BRAND.product} sign-in window shows the new sign-in with a button to remove it. Then move what’s in this wallet to a new one.`;
   const subject = app ? `A sign-in method was added in ${app}` : 'A sign-in method was added';
   return {
     to: input.to,

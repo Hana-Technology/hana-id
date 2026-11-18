@@ -157,7 +157,8 @@ describe('the four cases', () => {
     // A notice to the address (spec "Notices"), with no link (D862): it says where a removal is.
     const notice = h.sender.sent.slice(sentBefore).find((m) => m.kind === 'link_notice')!;
     expect(notice.to).toBe(email);
-    expect(notice.text).toContain('Not you? Change your email and Google passwords.');
+    expect(notice.text).toContain('Not you? Then someone else may have been able to open this wallet.');
+    expect(notice.text).toContain('Then move what’s in this wallet to a new one.');
     expect(notice.text).not.toContain('https://');
   });
 

@@ -16,13 +16,14 @@ const TEST_APP = `This app is a test version, so ${P} lets it use only test netw
 /** The sentence for a code, when `data.reason` doesn't pick a closer one. */
 const BY_CODE: Readonly<Record<string, string>> = Object.freeze({
   [ErrorCode.userRejected]: `You rejected this in ${P}, or closed it. Nothing was approved.`,
-  [ErrorCode.unauthorized]: `${P} didn’t allow this. You may need to sign in again. ${NOTHING_SIGNED}`,
+  // Only what is always true: a 4100 can also answer an action that was signed or sent (a sponsored action's refusal).
+  [ErrorCode.unauthorized]: `${P} didn’t allow this. You may need to sign in again.`,
   [ErrorCode.unsupportedMethod]: `${P} can’t do this kind of request. ${NOTHING_SIGNED}`,
   [ErrorCode.disconnected]: `The connection to ${P} was lost. Reload the page and try again.`,
   [ErrorCode.chainNotConfigured]: `This app asked for a network it hasn’t set up with ${P}. ${NOTHING_SIGNED}`,
   // The JSON-RPC codes the SDK raises itself (client/errors.ts RpcCode).
   '-32602': `The app sent a request ${P} couldn’t read. ${NOTHING_SIGNED}`,
-  '-32603': `Something went wrong in ${P}. Try again in a moment.`,
+  '-32603': `Something went wrong in ${P}. If you sent something, check whether it went through before you try again.`,
   '-32005': 'Too many requests. Wait a minute and try again.',
   vault_unavailable: `${P} couldn’t load on this page. Reload the page and try again.`,
   popup_blocked: `Your browser blocked the ${P} window. Allow pop-ups for this site and try again.`,
@@ -39,12 +40,13 @@ const BY_CODE: Readonly<Record<string, string>> = Object.freeze({
   derive_failed: WALLET_NOT_OPENED,
   pairing_failed: 'Something didn’t look right while opening your wallet, so Journear stopped to keep it safe. Try again.',
   address_mismatch: 'Journear opened a different wallet from the one it expected, so it stopped. Nothing was changed.',
-  session_consumed: 'This sign-in was already used, perhaps in another window. Start again.',
+  session_consumed: 'This sign-in was already used, perhaps in another window. If that wasn’t you, start again and tell the app’s support.',
   rate_limited: 'Too many attempts. Wait a minute and try again.',
   app_suspended: `This app is paused in ${P} right now.`,
   origin_not_allowed: `This site isn’t allowed to use this app’s ${P} sign-in. Tell the app’s team.`,
-  api_unavailable: `${P} isn’t reachable right now. Try again in a moment.`,
-  busy: `${P} is already showing a key for this wallet. Finish that first.`,
+  // May follow a send whose outcome is unknown: never "try again" without "check first".
+  api_unavailable: `${P} isn’t reachable right now. If you sent something, check whether it went through before you try again.`,
+  busy: `${P} is finishing something else for this wallet. Wait a moment, then try again.`,
   identity_unavailable: `${P} can’t confirm your sign-in right now. Try again later.`,
   session_ended: `Your ${P} sign-in has ended. Sign in again.`,
   login_method_unavailable: 'This way of signing in isn’t available for this app. Choose another one.',
@@ -61,7 +63,7 @@ const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Ob
     mainnet_not_allowed: TEST_APP,
     raw_not_allowed_for_test_apps: TEST_APP,
     too_many_pending: `Too many requests are waiting for you in ${P}. Approve or reject those first, then try again.`,
-    invalid_request: `${P} couldn’t show this request, so it wasn’t signed. Try again, or tell the app’s team.`,
+    invalid_request: `${P} couldn’t use this request, so nothing was signed or sent. Try again, or tell the app’s team.`,
     raw_sign_off: `This app can’t ask for this kind of signature. ${NOTHING_SIGNED}`,
     raw_reserved_domain: CHECK_STOP,
     near_network_mismatch: CHECK_STOP,
@@ -86,6 +88,78 @@ const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Ob
   },
 });
 
+/**
+ * The sponsored action's reasons (gas-free EVM actions: the vault's `evm-sponsor.ts` refusals and the API codes it passes
+ * on as `data.reason`), each with the vault's own sentence (`SPONSOR_TEXT`), copied word for word so the partner's text
+ * and the approval window agree. They come with 4100, `rate_limited`, `api_unavailable`, `session_ended` or `busy`, and
+ * are read after the per-code reasons above. `reverted` and `not_executed` take the sentence that is true whether or
+ * not the batch carried the one-time setup (the reason doesn't say). An unknown outcome says to check first.
+ */
+const SPONSOR = Object.freeze({
+  notOffered: 'Free network fees aren’t offered on this network.',
+  notForThis: 'Journear doesn’t pay network fees for this action.',
+  delegatedElsewhere: 'Your account was set up by another wallet app, so Journear can’t pay network fees for it. Nothing was sent.',
+  budgetUsed: 'Journear’s free network fees for this app are used up for today. Try again tomorrow.',
+  notAvailable: 'Free network fees aren’t available for your account right now. Try again later.',
+  tooBig: 'This action is too big for free network fees.',
+  busy: 'Your last action is still going through. Wait for it to finish, then try again.',
+  clockWrong: 'Your device’s clock is wrong. Set it to the right time, then try again.',
+  notReady: 'Journear couldn’t get this action ready. Nothing was sent. Try again later.',
+  tooSlow: 'This took too long, so nothing was sent. Please try again.',
+  noSignIn: 'Journear can’t do this with your current sign-in. Sign in again, then try again.',
+  signInEnded: 'Your sign-in has ended. Sign in again, then try again.',
+  failedAfterSetup: 'The action didn’t go through. Your account’s one-time setup may still have been done. Nothing else changed.',
+  wouldFail: 'This action would fail, so it wasn’t sent. Nothing changed.',
+  notConfirmed: 'Your action was sent but isn’t confirmed yet. Check again in a minute before you try again.',
+  unknownOutcome: 'Journear couldn’t tell whether your action went through. Check before you try again.',
+  accountChanged: 'Your account changed while this was getting ready. Nothing was sent. Please try again.',
+  alreadySending: 'This action is already being sent. Wait a moment, then check before you try again.',
+  settingUp: 'Journear is still setting up your account. Try again in a few seconds.',
+  tooMany: 'Too many actions right now. Wait a moment and try again.',
+  tooManyFailed: 'Too many actions failed today. Try again tomorrow.',
+  unavailable: 'Journear couldn’t send this action right now. Try again later.',
+});
+
+export const SPONSOR_REASONS: Readonly<Record<string, string>> = Object.freeze({
+  // The vault's own refusals.
+  chain_not_sponsored: SPONSOR.notOffered,
+  no_evm_account: SPONSOR.noSignIn,
+  clock_wrong: SPONSOR.clockWrong,
+  deadline_passed: SPONSOR.tooSlow,
+  bad_answer: SPONSOR.notReady,
+  unknown_outcome: SPONSOR.unknownOutcome,
+  sponsor_in_flight: SPONSOR.busy,
+  not_available: SPONSOR.notAvailable,
+  // Prepare's `allowed: false` and the API's codes.
+  delegated_elsewhere: SPONSOR.delegatedElsewhere,
+  budget_exhausted: SPONSOR.budgetUsed,
+  app_budget_exhausted: SPONSOR.budgetUsed,
+  gas_too_high: SPONSOR.tooBig,
+  chain_not_enabled: SPONSOR.notOffered,
+  app_not_sponsored: SPONSOR.notForThis,
+  call_not_sponsored: SPONSOR.notForThis,
+  target_not_allowed: SPONSOR.notForThis,
+  value_not_allowed: SPONSOR.notForThis,
+  too_many_calls: SPONSOR.notForThis,
+  reverted: SPONSOR.failedAfterSetup,
+  not_executed: SPONSOR.failedAfterSetup,
+  simulation_reverted: SPONSOR.wouldFail,
+  timeout: SPONSOR.notConfirmed,
+  nonce_stale: SPONSOR.accountChanged,
+  authorization_nonce_stale: SPONSOR.accountChanged,
+  delegation_required: SPONSOR.accountChanged,
+  in_progress: SPONSOR.alreadySending,
+  account_unrecorded: SPONSOR.settingUp,
+  too_many_failures: SPONSOR.tooManyFailed,
+  rate_limited: SPONSOR.tooMany,
+  deadline_out_of_range: SPONSOR.tooSlow,
+  session_ended: SPONSOR.signInEnded,
+  api_unavailable: SPONSOR.unavailable,
+});
+
+/** The codes a sponsored action's errors come with. */
+const SPONSOR_CODES: ReadonlySet<string> = new Set([String(ErrorCode.unauthorized), 'rate_limited', 'api_unavailable', 'session_ended', 'busy']);
+
 export const DEFAULT_USER_MESSAGE = `Something went wrong in ${P}. Try again.`;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -103,6 +177,8 @@ function reasonOf(data: unknown): string[] {
 export function userMessageFor(code: unknown, data: unknown): string {
   const key = String(code);
   const closer = Object.hasOwn(BY_REASON, key) ? BY_REASON[key] : undefined;
-  if (closer) for (const r of reasonOf(data)) if (Object.hasOwn(closer, r)) return closer[r] as string;
+  const reasons = reasonOf(data);
+  if (closer) for (const r of reasons) if (Object.hasOwn(closer, r)) return closer[r] as string;
+  if (SPONSOR_CODES.has(key)) for (const r of reasons) if (Object.hasOwn(SPONSOR_REASONS, r)) return SPONSOR_REASONS[r] as string;
   return Object.hasOwn(BY_CODE, key) ? (BY_CODE[key] as string) : DEFAULT_USER_MESSAGE;
 }

@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (email cancels its pending link, D864; gas-free EVM actions, not live; 0.5.0 not published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (an email can cancel its pending link; gas-free EVM actions, not live; 0.5.0 not published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -576,7 +576,7 @@ button.addEventListener('click', async () => {
   from the Journear Passport popup's banner at their next sign-in. An email that waits to join a Google wallet can
   also cancel it itself: its refused sign-in leaves the popup open on the waiting link, with **Cancel this link** (one
   more code to the address) and **Keep the link**. Your `login()` has already rejected with `link_pending` by then;
-  nothing else reaches your page (D864).
+  nothing else reaches your page.
   - `await hana.account()` → `{methods: [{provider: 'google' | 'email', status: 'active' | 'pending', effectiveAtMs,
     root}]}`: the wallet's own method (`root: true`) and the ones linked to it. No identifiers, no addresses. Calls
     within 5 s of a read share it (the vault reads afresh after a login, a link or a banner's action). **Show
@@ -1678,7 +1678,7 @@ window, not returned.
 | `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Journear Passport popup (`data.reason: 'popup_closed'`: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Journear Passport popup on the screen it went back to; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Journear Passport's explanation | offer email sign-in |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
-| `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; sign in with the wallet's other method meanwhile (an email's popup offers to cancel the link, D864) |
+| `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; sign in with the wallet's other method meanwhile (an email's popup offers to cancel the link) |
 | `link_refused` | The sign-in methods can't be linked (`data.reason`); `login()` with the wallet's own method still works | offer the other method |
 | `google_error` | Google returned an error (`data.error`), or Journear Passport couldn't check Google's answer (`tokeninfo_unavailable`, `tokeninfo_client_mismatch`, `tokeninfo_invalid`, `google_account_mismatch`, `invalid_response`). The user cancelling Google's sign-in screen is not one: the popup goes back to its chooser, and closing it there is `login_cancelled`. `access_denied` remains only where Journear Passport has no screen to go back to (a login in an environment without Journear Passport's email service, or the fallback Google request a Google-only app makes when Google's tokeninfo can't be reached) | retry; with `access_denied`, the user declined |
 | `no_google_client` | Your scope has no usable Google client | ask Journear |

@@ -30,6 +30,18 @@ function checkedData(data: unknown): unknown {
   return Object.keys(rest).length === 0 ? undefined : rest;
 }
 
+// D871.
+/**
+ * The errors of a sponsored EVM action (HanaSponsorError marks itself, and toProviderRpcError carries the mark to
+ * the EIP-1193 provider's error), so `userMessage` reads a reason name that the NEAR relay shares as the action's. A
+ * WeakSet, so the errors' own fields, equality and JSON stay as they are.
+ */
+const sponsoredErrors = new WeakSet<Error>();
+export const markSponsored = <E extends Error>(e: E): E => {
+  sponsoredErrors.add(e);
+  return e;
+};
+
 /** What `hana.*` methods reject with. `code` is the vault's code, or one of RpcCode for a client-side check. */
 export class HanaError extends Error {
   override readonly name = 'HanaError';
@@ -57,7 +69,8 @@ export class HanaError extends Error {
    * error's own fields are as before.
    */
   get userMessage(): string {
-    return userMessageFor(this.code, this.data);
+    // A plain HanaError's shared reason names are the NEAR relay's; a HanaSponsorError's, the sponsored action's.
+    return userMessageFor(this.code, this.data, sponsoredErrors.has(this) ? 'sponsored_action' : 'near_relay');
   }
 
   static from(e: ProtocolError): HanaError {
@@ -107,7 +120,9 @@ export class ProviderRpcError extends Error {
    */
   get userMessage(): string {
     const d = this.data as { code?: unknown; data?: unknown } | undefined;
-    return typeof d === 'object' && d !== null && typeof d.code === 'string' ? userMessageFor(d.code, d.data) : userMessageFor(this.code, this.data);
+    // The provider's errors are EVM ones: a shared reason name reads as a sponsored action's (marked or not).
+    const source = sponsoredErrors.has(this) ? 'sponsored_action' : undefined;
+    return typeof d === 'object' && d !== null && typeof d.code === 'string' ? userMessageFor(d.code, d.data, source) : userMessageFor(this.code, this.data, source);
   }
 }
 
@@ -129,6 +144,11 @@ const STRING_TO_NUMERIC: Partial<Record<string, number>> = {
 export function toProviderRpcError(e: unknown): ProviderRpcError {
   if (e instanceof ProviderRpcError) return e;
   const h = asHanaError(e);
+  const out = toProviderRpcErrorOf(h);
+  return sponsoredErrors.has(h) ? markSponsored(out) : out;
+}
+
+function toProviderRpcErrorOf(h: HanaError): ProviderRpcError {
   if (typeof h.code === 'number') return new ProviderRpcError(h.code, h.message, h.data);
   const requestId = h.requestId;
   const data = { code: h.code, ...(requestId === null ? {} : { requestId }), ...(h.data === undefined ? {} : { data: h.data }) };

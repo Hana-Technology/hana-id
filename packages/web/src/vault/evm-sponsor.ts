@@ -20,8 +20,9 @@
 // asks. What a lying API controls: the prepare answer's hints (delegation, nonces, its clock, the gas window) and every
 // answer. Neither chooses the chain beyond the build's list, the account (the session's), the delegate (the pinned
 // one), the relayer (the build's) or anything the approval didn't show; a lying prepare can at worst make the send
-// fail or be refused. Every refusal is a VaultError whose message a partner may show its users as it is (the plain
-// wording rule): everyday words, nothing about gas, nonces or contracts.
+// fail or be refused. Every refusal is a VaultError in everyday words (the plain wording rule), nothing about gas,
+// nonces or contracts; a partner shows the SDK's `userMessage` (D861), which repeats these sentences word for word
+// (client/user-messages.ts SPONSOR_REASONS), never `message` itself.
 //
 // SECURITY: the signatures and the authorization go only into the send body; no message, error or log carries them.
 import {
@@ -60,7 +61,7 @@ import { VaultError } from './errors.ts';
 
 export type SponsoredRequest = Extract<PortRequest, { method: 'evm_sendSponsored' }>;
 
-// ---- the words a partner may show its users (D855, the plain-wording rule) ----
+// ---- the vault's words (D855, the plain-wording rule); the SDK's `userMessage` repeats them (D861) ----
 
 export const SPONSOR_TEXT = Object.freeze({
   notOffered: 'Free network fees aren’t offered on this network.',

@@ -144,6 +144,22 @@ describe('hana.near.relay', () => {
     expect(e.data).toMatchObject({ status, reason: body.code });
   });
 
+  it('a refusal that may follow the send says to check first (D871): 503 relayer_unavailable, 422 contract_rejected', async () => {
+    s = setup({ apiUrl: API, fetch: async () => new Response(JSON.stringify({ code: 'relayer_unavailable', error: 'The relayer is unavailable, try again' }), { status: 503 }) });
+    const down = await rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: SDA }));
+    expect(down).toMatchObject({ code: 'api_unavailable', data: { status: 503, reason: 'relayer_unavailable' } });
+    expect(down.userMessage).toBe('Journear couldn’t tell whether your request went through. Check before you try again.');
+    s.client.destroy();
+    s = setup({ apiUrl: API, fetch: async () => new Response(JSON.stringify({ code: 'contract_rejected', error: 'Smart contract panicked', nearTx: '11111111111111111111111111111111' }), { status: 422 }) });
+    const failed = await rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: SDA }));
+    expect(failed).toMatchObject({ code: 4100, data: { status: 422, reason: 'contract_rejected' } });
+    expect(failed.userMessage).toBe('This didn’t finish, but part of it may have gone through. Check before you try again, or tell the app’s team.');
+    // A name the sponsored action shares reads as the relay's here.
+    s.client.destroy();
+    s = setup({ apiUrl: API, fetch: async () => new Response(JSON.stringify({ code: 'gas_too_high', error: 'The calls attach too much gas' }), { status: 403 }) });
+    expect((await rejection(s.client.near.relay({ network: 'testnet', signedDelegateAction: SDA }))).userMessage).toBe('Journear doesn’t pay the fee for this kind of request. Nothing was sent.');
+  });
+
   it('the deadline covers reading the body: a relayer that sends headers and then stalls is cut off', async () => {
     let signal: AbortSignal | undefined;
     s = setup({

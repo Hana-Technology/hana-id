@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HanaError, ProviderRpcError } from '../../src/client/errors.ts';
 import { CALLS_VERSION, EIP5792 } from '../../src/client/ethereum.ts';
-import { HanaSponsorError, NOT_OFFERED, sponsoredCalls } from '../../src/client/evm-sponsor.ts';
+import { HanaEvm, HanaSponsorError, NOT_OFFERED, sponsoredCalls } from '../../src/client/evm-sponsor.ts';
 import { EVM, LOGGED_IN, LOGGED_OUT, type Setup, flush, rpcFetch, setup } from './harness.ts';
 
 const API = 'https://api.hana.test';
@@ -146,6 +146,49 @@ describe('hana.evm.sponsorship', () => {
     expect(init).toMatchObject({ method: 'GET', credentials: 'omit', headers: { 'x-hana-key': expect.stringMatching(/^pk_test_/u) } });
   });
 
+  it('called before ready, it waits for ready and its chains (D871), not answering chain_not_enabled early', async () => {
+    s = setup({ apiUrl: API, config: { evm: EVM_CONFIG }, fetch: async () => new Response(JSON.stringify({ available: true })) });
+    const early = s.client.evm.sponsorship(CHAIN);
+    let settled = false;
+    void early.then(() => (settled = true));
+    await flush();
+    expect(settled).toBe(false);
+    expect(s.fetch).not.toHaveBeenCalled();
+    await s.vault.connect(SPONSORED);
+    await expect(early).resolves.toEqual({ available: true });
+    expect(s.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('several calls before ready share one wait', async () => {
+    let release!: () => void;
+    const ready = vi.fn(() => new Promise<void>((r) => (release = r)));
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ available: true })));
+    const evm = new HanaEvm({ evmAddress: () => null, sponsoredChains: () => [CHAIN], request: () => Promise.reject(new Error('unused')), ready, apiUrl: API, publishableKey: 'pk_test_x', fetch });
+    const all = Promise.all([evm.sponsorship(CHAIN), evm.sponsorship(CHAIN), evm.sponsorship(CHAIN)]);
+    await flush();
+    expect(fetch).not.toHaveBeenCalled();
+    release();
+    await expect(all).resolves.toEqual([{ available: true }, { available: true }, { available: true }]);
+    expect(ready).toHaveBeenCalledTimes(1);
+  });
+
+  it('a ready that fails rejects it with ready’s code, as a HanaSponsorError', async () => {
+    const down = new HanaEvm({
+      evmAddress: () => null,
+      sponsoredChains: () => [],
+      request: () => Promise.reject(new Error('unused')),
+      ready: () => Promise.reject(new HanaError('vault_unavailable', 'The vault didn’t load', { reason: 'ready_timeout' })),
+      apiUrl: API,
+      publishableKey: 'pk_test_x',
+      fetch: vi.fn(),
+    });
+    const e = await rejection(down.sponsorship(CHAIN));
+    expect(e).toBeInstanceOf(HanaSponsorError);
+    expect(e.code).toBe('vault_unavailable');
+    // A malformed chain is still refused at once, before any wait.
+    expect((await rejection(down.sponsorship(0))).code).toBe(-32602);
+  });
+
   it('a chain the vault didn’t report: not available, with no request', async () => {
     await ready(LOGGED_IN);
     await expect(s.client.evm.sponsorship(CHAIN)).resolves.toEqual({ available: false, reason: 'chain_not_enabled' });
@@ -175,6 +218,32 @@ describe('EIP-5792 on hana.ethereum (D838)', () => {
     return e as ProviderRpcError;
   }
   const batch = (over: Record<string, unknown> = {}) => [{ version: CALLS_VERSION, chainId: '0x7a69', atomicRequired: true, calls: [{ ...CALL }], ...over }];
+
+  it('wallet_getCapabilities before ready waits for it (D871), instead of answering no capabilities', async () => {
+    s = setup({ apiUrl: API, config: { evm: EVM_CONFIG } });
+    const early = s.client.ethereum.request({ method: 'wallet_getCapabilities', params: [] });
+    let settled = false;
+    void early.then(() => (settled = true));
+    await flush();
+    expect(settled).toBe(false);
+    await s.vault.connect(SPONSORED);
+    await expect(early).resolves.toEqual({ [`0x${CHAIN.toString(16)}`]: { atomic: { status: 'supported' } } });
+  });
+
+  it('wallet_sendCalls refused with a reason the NEAR relay shares: the provider’s error reads as the sponsored action’s', async () => {
+    await ready();
+    const from = SPONSORED.addresses!.evm;
+    const send = () => s.client.ethereum.request({ method: 'wallet_sendCalls', params: [{ version: CALLS_VERSION, chainId: `0x${CHAIN.toString(16)}`, from, atomicRequired: true, calls: [CALL] }] });
+    s.vault.handle('evm_sendSponsored', () => ({ error: { code: 4100, message: 'This action is too big for free network fees.', data: { status: 400, reason: 'gas_too_high' } } }));
+    const big = (await send().then(() => null, (e: unknown) => e)) as ProviderRpcError;
+    expect(big).toBeInstanceOf(ProviderRpcError);
+    expect(big.code).toBe(4100);
+    expect(big.userMessage).toBe('This action is too big for free network fees.');
+    s.vault.handle('evm_sendSponsored', () => ({ error: { code: 'api_unavailable', message: 'x', data: { status: 503, reason: 'relayer_unavailable' } } }));
+    const down = (await send().then(() => null, (e: unknown) => e)) as ProviderRpcError;
+    expect(down.data).toMatchObject({ code: 'api_unavailable', data: { reason: 'relayer_unavailable' } });
+    expect(down.userMessage).toBe('Journear couldn’t send this action right now. Try again later.');
+  });
 
   it('wallet_getCapabilities: atomic on the configured chains the vault sponsors, nothing elsewhere', async () => {
     await ready();

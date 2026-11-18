@@ -151,11 +151,12 @@ describe('the routes and the relayer object, end to end over the fake chain', ()
     expect([r.status, b.code, b.retryAfterS]).toEqual([429, 'account_busy', 5]);
   });
 
-  it('a batch the node refuses for its own shape (intrinsic gas): 422 at once, the user charged a failure; the relayer keeps running', async () => {
+  it('a batch the node refuses over its gas (intrinsic gas: the gas Journear set): 503 at once in neutral words, the user NOT charged a failure; the relayer keeps running', async () => {
     const w = await setup({ delegated: true });
     w.chain.onSend = (tx) => (tx.data === '0x' ? 'accept' : { error: 'intrinsic gas too low' });
     const r = await sendFor(w, signedSend(w.user));
-    expect([r.status, (await body(r)).code]).toEqual([422, 'not_executed']);
+    expect([r.status, (await body(r)).code]).toEqual([503, 'relayer_unavailable']);
+    expect(await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`evm-sponsor:failures:${(await env.DB.prepare('SELECT user_id FROM end_user_wallets WHERE address = ?1').bind(w.user.address).first<{ user_id: string }>())!.user_id}`)).spent('evm-sponsor:failures', 86_400_000)).toBe('0');
     const row = await env.DB.prepare('SELECT status, rejection FROM evm_sponsor_sends WHERE account = ?1').bind(w.user.address).first<Record<string, unknown>>();
     expect(row).toMatchObject({ status: 'rejected', rejection: 'request:gas_limit' });
     // Its nonce went to the relayer's own cancel, which the node took.

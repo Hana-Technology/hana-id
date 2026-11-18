@@ -126,6 +126,7 @@ const evmRelayPaused: Playbook = {
   signals: [
     "The tile “Free network fees (Base Sepolia)” on System status says “Paused: needs a person”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.",
     "An `evm_relay_stuck` row in the admin's security events, emailed by the feed (at most one an hour per network), with one of: `halted` (the relayer stopped itself; `haltCode` the network's refusal), `rejected` (a refusal on our side turned a user's action away), `oldestPendingMs` or `oldestUnacceptedMs` over 2 minutes (the oldest transaction not on the network, or not taken by any node), or a send still unsettled after 10 minutes.",
+    "An `evm_relay_stuck` row with `rejected: gas_limit` and `gas model: yes` (its own row, at most one an hour per network): the network refused the gas Journear set for a user's action. The relayer does not pause for it and the user is not charged; it is a fault in Journear's gas settings or formula.",
   ],
   impact: [
     "While it is paused nobody gets free network fees: apps tell their users the offer is paused. Nothing is lost and no money moves by itself; transactions already sent are still looked after.",
@@ -137,6 +138,7 @@ const evmRelayPaused: Playbook = {
     { title: 'If the key may be someone else’s, the engineer first', who: 'a founder', detail: "If the box says the key may be used by someone else (a slot used by a transaction Journear didn't send, a gap, more transactions than the relayer sent, or the network saying another sender holds its numbers): don't send money to the wallet; tell an engineer now. The engineer follows “A relayer key leaked” in the runbook (free network fees off, the money moved out, the key replaced), then uses the slot tools under Advanced. Press Resume only when the engineer says the key is safe or replaced: the page asks you to confirm that, also when such a sign was seen after a pause that started for another reason. Your tick is your own recorded statement, not a second person's approval." },
     { title: 'Ask an engineer when the steps say so', who: 'a founder', detail: "If the records disagree (a bug), or Resume keeps being refused for the same reason, stop and ask an engineer. The relayer refuses anything unsafe itself; never work around a refusal." },
     { title: 'Not paused, only slow or one refusal', who: 'anyone', detail: "With no pause, a transaction waiting over 2 minutes usually means the network is busy: the relayer raises its fee every minute and it clears by itself. With `rejected` only, check the wallet's balance on the tile. If either lasts an hour, ask an engineer to look." },
+    { title: 'A gas refusal (`gas model: yes`)', who: 'a founder', detail: "Nothing to fund and nothing to resume: give an engineer the time and the network. The engineer compares the refused transactions' gas (the relayer's records, `evm_sponsor_sends.gas_limit`) with the network's limits and the manifest's `maxGasPerTx`, and fixes the gas settings or the formula (apps/api/src/evm/op-fee.ts). Until then those actions keep being turned away with “couldn't send this right now”." },
   ],
   verify: ['The tile says “Working”, and the next sponsored action goes through.'],
   followUps: ["If the wallet ran out of money, check whether the daily budget or the low-balance line in the settings should be higher."],
@@ -188,9 +190,9 @@ const evmRelayReceiptOdd: Playbook = {
   kind: 'incident',
   severity: 'warning',
   status: 'live',
-  summary: "An `evm_relay_receipt_odd` security event: a confirmation from the network provider didn't fit what was reserved (a broken or lying provider), so the transaction was counted at the most it could cost.",
-  signals: ["An `evm_relay_receipt_odd` row in the admin's security events, emailed by the feed (at most one an hour per network)."],
-  impact: ["Nothing stops, and no money was lost because of it: the budget counts the most that transaction could have cost. Billing records show the counted amount.", "How urgent: this week. Once is a curiosity; many in a day is a problem for an engineer."],
+  summary: "An `evm_relay_receipt_odd` security event: a confirmation from the network provider didn't fit what was reserved (a broken or lying provider), so the transaction was counted at the most it could cost. With `price above max fee: yes` in its details: the network reported a higher price than the relayer's own limit for that transaction; billing used the limit; likely a misreporting node.",
+  signals: ["An `evm_relay_receipt_odd` row in the admin's security events, emailed by the feed (at most one an hour per network, and one more for the `price above max fee` kind)."],
+  impact: ["Nothing stops, and no money was lost because of it: the budget counts the most that transaction could have cost. Billing records show the counted amount.", "With `price above max fee: yes`: no money was lost either. A transaction can never be charged more than the relayer's own limit for it, so billing used that limit; the provider (or the node behind it) reported the price wrong.", "How urgent: this week. Once is a curiosity; many in a day is a problem for an engineer."],
   steps: [
     { title: 'Note when and how often', who: 'anyone', detail: "Look at the event's details (network, hour) and whether more arrive. Note the time." },
     { title: 'Ask an engineer', who: 'a founder', detail: "Give an engineer the time and the network. The engineer compares the transaction on the block explorer with the API's records (`evm_sponsor_sends`) and checks the network provider (the secret `EVM_SPONSOR_RPC_<chainId>`), replacing it if it misbehaves." },

@@ -613,7 +613,7 @@ export class Vault {
   /** The EVM chains this build sponsors (HanaEnv.evmSponsor, checked: evm-sponsor.ts sponsorChains). */
   private readonly sponsorChains: readonly SponsorChain[];
   /** One sponsored action in flight per account (D855). */
-  private readonly sponsorFlights = new SponsorFlights();
+  private readonly sponsorFlights: SponsorFlights;
   /** D411: the email sharing sheet in progress (one at a time: an `at_login` sign-in's, or requestEmailSharing's). */
   private shareSheet: ShareSheet | null = null;
   private port: MessagePort | null = null;
@@ -684,6 +684,7 @@ export class Vault {
     this.mainnetDemoCheckedAt = o.config.serverTimeMs;
     this.testApp = isTestPublishableKey(o.config.publishableKey);
     this.sponsorChains = sponsorChains(o.env);
+    this.sponsorFlights = new SponsorFlights(o.locks);
     this.launcher = new Launcher(
       o.launcherView,
       (ui) => {
@@ -3266,7 +3267,7 @@ export class Vault {
       if (mainnet) throw new VaultError(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', ...mainnet });
     }
     const plan = sponsorPreflight(r, evm, this.sponsorChains);
-    if (this.sponsorFlights.has(plan.account)) throw new VaultError('busy', SPONSOR_TEXT.busy, { reason: 'sponsor_in_flight' });
+    if (this.sponsorFlights.has(plan.chain.chainId, plan.account)) throw new VaultError('busy', SPONSOR_TEXT.busy, { reason: 'sponsor_in_flight' });
     return plan;
   }
 
@@ -3281,8 +3282,7 @@ export class Vault {
     const s = this.live();
     if (!s) throw notLoggedIn();
     const plan = this.sponsorEarly(r, s.addresses.evm);
-    const release = this.sponsorFlights.take(plan.account);
-    try {
+    return this.sponsorFlights.run(plan.chain.chainId, plan.account, async () => {
       const api = this.api;
       const parentOrigin = this.parentOrigin;
       const walletProof = s.walletProofs?.evm;
@@ -3306,6 +3306,8 @@ export class Vault {
       if (this.live() !== s) throw sessionEnded(s);
       const subject = sponsorSubject(plan, answer, onChain, { vaultNowMs: this.clock.now(), deviceNowMs: this.deviceNow() });
       const approval = sponsoredApproval(subject);
+      // A copy of what the window shows: the approved bytes must still be exactly these when they are signed.
+      const shown = Uint8Array.from(approval.bytes);
       // D682: a device signed out from Journear Passport Home completes no approval (as sign() checks).
       await this.shareConfirmed(s);
       if (this.live() !== s) throw sessionEnded(s);
@@ -3315,7 +3317,7 @@ export class Vault {
       if (outcome !== 'approved') throw userRejected();
       await this.shareConfirmed(s);
       if (this.live() !== s) throw sessionEnded(s);
-      const approved = approvedSubject(approval.bytes, approval, plan, this.clock.now());
+      const approved = approvedSubject(approval.bytes, shown, plan, this.clock.now());
       const signatures = signSponsored(s.prk, approved, this.sponsorChains.map((c) => c.chainId));
       this.maybeTouch();
       const body = await withSessionProof(s.keyPair.privateKey, 'send', sendBody(approved, signatures), proof());
@@ -3323,14 +3325,12 @@ export class Vault {
       try {
         sent = await this.withTimeout(SPONSOR_SEND_TIMEOUT_MS, (signal) => api.evmSponsor('send', body, signal));
       } catch (e) {
-        throw sponsorApiError(e, 'send');
+        throw sponsorApiError(e, 'send', approved.authNonce !== null);
       }
       const result = parseSendAnswer(sent);
       if (!result) throw new VaultError('api_unavailable', SPONSOR_TEXT.unknownOutcome, { reason: 'unknown_outcome' }).fromRequest(typeof sent.requestId === 'string' ? sent.requestId : null);
       return result;
-    } finally {
-      release();
-    }
+    });
   }
 
   /**

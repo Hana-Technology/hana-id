@@ -853,9 +853,12 @@ button.onclick = () => {
 - `calls`: 1 to 8, run in order, all or nothing. Each has `to`, `data` (a function call, at least 4 bytes) and no ETH
   (`value` left out or 0). The answer is `{ transactionHash, status: 'executed' }` once the calls ran.
 - `hana.evm.sponsorship(chainId)` → `{ available, reason?, remainingToday? }`: check before showing a "free" button.
-- viem and wagmi: `sendCalls` (EIP-5792, version 2.0.0) on `hana.ethereum` does the same and returns an `id`;
-  `getCallsStatus` reads the receipt from your chain's RPC (pending until it has it). `getCapabilities` shows `atomic:
-  supported` on the chains it is offered on.
+- viem and wagmi: `sendCalls` (EIP-5792, version 2.0.0) on `hana.ethereum` does the same and returns an `id`. Unlike
+  most wallets, it returns the `id` only **after** the user approved and the calls ran (seconds, or a rejection), not as
+  soon as the request is accepted: don't put a short timeout on it. `getCallsStatus` reads the receipt from your chain's
+  RPC (pending until it has it). `getCapabilities` shows `atomic: supported` on the chains it is offered on.
+- The `transactionHash` comes from Journear's API, which waited for the receipt; your own RPC
+  (`eth_getTransactionReceipt`) or an explorer is where you confirm it independently.
 
 **What users see:** Journear Passport's usual approval window, with the calls' own summary and warnings, "Network fee:
 none. Journear pays it for you." and, the first time only, "One-time setup: this also turns on free network fees for
@@ -876,7 +879,7 @@ only in its exact shape: `status`, `reason`, `requestId`, `retryAfterS`, `transa
 | `4100` | `budget_exhausted` | Journear’s free network fees for this app are used up for today. Try again tomorrow. |
 | `4100` | `clock_wrong` | Your device’s clock is wrong. Set it to the right time, then try again. |
 | `4100` | `deadline_passed` | This took too long, so nothing was sent. Please try again. |
-| `4100` | `reverted`, `not_executed` (with `transactionHash`) | The action didn’t go through, so nothing changed. |
+| `4100` | `reverted`, `not_executed` (with `transactionHash`) | The action didn’t go through, so nothing changed. (On a first action: The action didn’t go through. Your account’s one-time setup may still have been done. Nothing else changed.) |
 | `4100` | `simulation_reverted` (`callIndex`) | This action would fail, so it wasn’t sent. Nothing changed. |
 | `4100` | `nonce_stale`, `authorization_nonce_stale` | Your account changed while this was getting ready. Nothing was sent. Please try again. |
 | `busy` | `sponsor_in_flight` | Your last action is still going through. Wait for it to finish, then try again. |

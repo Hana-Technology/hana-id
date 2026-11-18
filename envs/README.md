@@ -245,8 +245,9 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   exactly one of them, so nothing can be appended at the sponsor's cost; use it for every function whose arguments
   are fixed (the demo's `checkIn()` takes none: `["0x183ff085"]`). A selector without entries matches any data starting
   with it, up to `maxDataBytes`. Calls carry no value: there is no field for one. An empty `apps` sponsors nothing.
-- `gen` writes the block as the API var `EVM_SPONSOR` and the page build puts `{ chainId: { delegate, relayer } }`
-  into the vault's envs (`HanaEnv.evmSponsor`); a change needs `gen`, a page build and a redeploy of the API and the
+- `gen` writes the block as the API var `EVM_SPONSOR` and the page build puts `{ chainId: { delegate, relayer, rpc,
+  rpcFallback? } }` into the vault's envs (`HanaEnv.evmSponsor`; the vault reads the account's setup from those public
+  endpoints itself, D855, so `rpc` and `rpcFallback` must stay key-free and reachable from a browser, CORS included); a change needs `gen`, a page build and a redeploy of the API and the
   pages. A `__proto__`, `constructor` or `prototype` key anywhere in the block
   is refused.
 

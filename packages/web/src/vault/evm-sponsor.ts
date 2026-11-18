@@ -55,7 +55,7 @@ import {
 import { withChainKey } from '@hana-id/core/derivation';
 import type { HanaEnv } from '../hana-env.ts';
 import { isLoopbackHost } from '../client/urls.ts';
-import type { Timers } from './runtime.ts';
+import type { Locks, Timers } from './runtime.ts';
 import { VaultError } from './errors.ts';
 
 export type SponsoredRequest = Extract<PortRequest, { method: 'evm_sendSponsored' }>;
@@ -76,6 +76,8 @@ export const SPONSOR_TEXT = Object.freeze({
   noSignIn: 'Journear can’t do this with your current sign-in. Sign in again, then try again.',
   signInEnded: 'Your sign-in has ended. Sign in again, then try again.',
   failed: 'The action didn’t go through, so nothing changed.',
+  /** A batch that carried the one-time setup: an applied authorization stays applied even when the batch reverts. */
+  failedAfterSetup: 'The action didn’t go through. Your account’s one-time setup may still have been done. Nothing else changed.',
   wouldFail: 'This action would fail, so it wasn’t sent. Nothing changed.',
   notConfirmed: 'Your action was sent but isn’t confirmed yet. Check again in a minute before you try again.',
   unknownOutcome: 'Journear couldn’t tell whether your action went through. Check before you try again.',
@@ -103,8 +105,11 @@ export const SPONSOR_CLOCK_SKEW_MAX_S = 60;
 export const SPONSOR_DEVICE_SKEW_MAX_S = 240;
 /** The prepare answer's `deadlineMaxS` must be in the manifest's bounds (D836). */
 export const SPONSOR_DEADLINE_MAX_BOUNDS = [60, 3600] as const;
-/** The gas floor a call gets at the least, whatever the API says (a check-in uses about 24 000 the first time). */
-export const SPONSOR_MIN_GAS_PER_CALL = 25_000;
+/**
+ * The gas floor a call gets at the least, whatever the API says: about twice a first check-in (23 899 measured, D845).
+ * Before mainnet the floor should come from the vault's own estimate through the build's endpoints (D855).
+ */
+export const SPONSOR_MIN_GAS_PER_CALL = 50_000;
 /** The largest `maxMinGas` the vault accepts (D836's bound on `maxGasPerTx`). */
 export const SPONSOR_MAX_MIN_GAS = 2_000_000;
 /** Chains a local node uses: sponsored only in a `local*` build. */
@@ -414,7 +419,7 @@ export interface SponsorClocks {
  *   the vault's within SPONSOR_CLOCK_SKEW_MAX_S (else not ready); `serverNow` is used for nothing else;
  * - the deadline: the vault's clock + min(5 min, deadlineMaxS − 60 s), refused below 2 minutes;
  * - minGas: the most the transaction cap leaves (`maxMinGas`, D855), refused unless floor ≤ max ≤ 2,000,000 and max ≥
- *   25,000 per call;
+ *   50,000 per call;
  * - the authorization nonce only when the account as the vault read it has no code (setupNonce).
  */
 export function sponsorSubject(plan: SponsorPlanInput, answer: PrepareAnswer, onChain: AccountOnChain, clocks: SponsorClocks): EvmSponsorSubject {
@@ -448,19 +453,20 @@ export function sponsorSubject(plan: SponsorPlanInput, answer: PrepareAnswer, on
 /** The approval subject (kind evm_sponsored) of a sponsored subject: its bytes and chain, for the popup to decode. */
 export function sponsoredApproval(subject: EvmSponsorSubject): ApprovalSubject {
   const content = sponsoredApprovalContent(subject);
-  return { kind: 'evm_sponsored', chain: 'evm', address: subject.account, bytes: content.bytes, context: content.context };
+  return { kind: 'evm_sponsored', chain: 'evm', address: subject.account, bytes: Uint8Array.from(content.bytes), context: content.context };
 }
 
 // ---- after the approval: the approved bytes, decoded and checked again, then signed ----
 
 /**
- * Decodes the approved bytes (never the in-memory subject) and checks them against the build, the session and the
+ * Decodes the approved bytes (never the in-memory subject), first compared with `shown`, a copy taken when the window
+ * was built (so a later change to the approval's buffer is caught), and checks them against the build, the session and the
  * request: the chain is the plan's, the delegate the pinned one and the build's, the relayer the build's, the account
  * the session's, the calls exactly the request's, the authorization nonce only with the approval that showed it, at
  * least SPONSOR_SEND_MIN_LEFT_S before the deadline. Throws VaultError; returns the decoded subject.
  */
-export function approvedSubject(bytes: Uint8Array, expected: ApprovalSubject, plan: SponsorPlanInput, vaultNowMs: number): EvmSponsorSubject {
-  if (!bytesEqual(bytes, expected.bytes)) throw notReady('changed');
+export function approvedSubject(bytes: Uint8Array, shown: Uint8Array, plan: SponsorPlanInput, vaultNowMs: number): EvmSponsorSubject {
+  if (!bytesEqual(bytes, shown)) throw notReady('changed');
   let s: EvmSponsorSubject;
   try {
     s = decodeSponsorSubject(bytes);
@@ -574,12 +580,12 @@ function refusalData(e: ApiError): Record<string, unknown> {
   };
 }
 
-/** The plain message for an API code. */
-function apiMessage(e: ApiError): string {
+/** The plain message for an API code (`setup`: the sent batch carried the one-time setup). */
+function apiMessage(e: ApiError, setup: boolean): string {
   switch (e.code) {
     case 'reverted':
     case 'not_executed':
-      return SPONSOR_TEXT.failed;
+      return setup ? SPONSOR_TEXT.failedAfterSetup : SPONSOR_TEXT.failed;
     case 'simulation_reverted':
       return SPONSOR_TEXT.wouldFail;
     case 'timeout':
@@ -625,43 +631,53 @@ function apiMessage(e: ApiError): string {
  * a 5xx `api_unavailable`; `data` carries the HTTP status, the API's code as `reason`, and only in their exact shapes
  * `retryAfterS`, `transactionHash` (a sent batch's), `callIndex` and `retryable`; the request ID is added by the port
  * (D405). A failure with no answer (the network, the vault's timeout): for send the outcome is unknown, for prepare
- * nothing was sent.
+ * nothing was sent. `setup`: the sent batch carried the one-time setup (a revert can't undo an applied authorization).
  */
-export function sponsorApiError(e: unknown, method: EvmSponsorRequestMethod): VaultError {
+export function sponsorApiError(e: unknown, method: EvmSponsorRequestMethod, setup = false): VaultError {
   if (!(e instanceof ApiError) || e.code === 'non_json_response' || e.code === 'bad_response') {
     if (method === 'send') return new VaultError('api_unavailable', SPONSOR_TEXT.unknownOutcome, { reason: 'unknown_outcome' }).fromRequest(e instanceof ApiError ? e : null);
     return new VaultError('api_unavailable', SPONSOR_TEXT.unavailable, { reason: 'api_unavailable' }).fromRequest(e instanceof ApiError ? e : null);
   }
   const data = refusalData(e);
-  const message = apiMessage(e);
+  const message = apiMessage(e, setup);
   const code = e.status === 429 ? 'rate_limited' : e.code === 'session_ended' || e.status === 410 ? 'session_ended' : e.status >= 400 && e.status < 500 ? ErrorCode.unauthorized : 'api_unavailable';
   return new VaultError(code, message, data).fromRequest(e);
 }
 
 // ---- one sponsored action at a time per account ----
 
+/** The cross-tab lock of one account's sponsored actions on one chain (the vault origin's Web Locks). */
+export const sponsorLockName = (chainId: number, account: string): string => `hana-evm-sponsor:${chainId}:${account.toLowerCase()}`;
+
+const busy = (): VaultError => new VaultError('busy', SPONSOR_TEXT.busy, { reason: 'sponsor_in_flight' });
+
 /**
- * The accounts with a sponsored action in flight in this vault (D855): from the prepare to the send's answer. A
- * second request for the same account is refused (`busy`), not queued: the batch nonce is sequential, so a queued one
- * would be built on a nonce the first is about to use, and a page could stack approvals the user didn't ask for.
+ * One sponsored action per account and chain at a time (D855): from the prepare to the send's answer, in this vault
+ * (a set, checked before anything) and across the app's tabs and the vault origin's other frames (the shared lock,
+ * `requestIfAvailable`). A second is refused (`busy`), not queued: the batch nonce is sequential, so a queued one would
+ * be built on a nonce the first is about to use, and a page could stack approvals the user didn't ask for.
  */
 export class SponsorFlights {
   readonly #accounts = new Set<string>();
 
-  /** Takes the account's slot, or throws `busy`; returns its release. */
-  take(account: string): () => void {
-    const key = account.toLowerCase();
-    if (this.#accounts.has(key)) throw new VaultError('busy', SPONSOR_TEXT.busy, { reason: 'sponsor_in_flight' });
-    this.#accounts.add(key);
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.#accounts.delete(key);
-    };
+  constructor(private readonly locks: Locks) {}
+
+  has(chainId: number, account: string): boolean {
+    return this.#accounts.has(sponsorLockName(chainId, account));
   }
 
-  has(account: string): boolean {
-    return this.#accounts.has(account.toLowerCase());
+  /** Runs `fn` holding the slot, or throws `busy`. */
+  async run<T>(chainId: number, account: string, fn: () => Promise<T>): Promise<T> {
+    const name = sponsorLockName(chainId, account);
+    if (this.#accounts.has(name)) throw busy();
+    this.#accounts.add(name);
+    try {
+      return await this.locks.requestIfAvailable(name, async (held) => {
+        if (!held) throw busy();
+        return fn();
+      });
+    } finally {
+      this.#accounts.delete(name);
+    }
   }
 }

@@ -6,10 +6,13 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { checkEvmSponsorSessionProof, parsePortRequest } from '@hana-id/core';
 import { decodeSponsoredAction } from '@hana-id/core/decode';
-import { APP_ID, type ApiCall, Browser, apiError, ENV, type Google, PK, type Tab, START_MS, answer, google, login, makeConfig, openApproval, readyTab, waitLauncher } from './harness.ts';
+import { APP_ID, type ApiCall, Browser, apiError, persisted, ENV, type Google, PK, type Tab, START_MS, answer, google, login, makeConfig, openApproval, readyTab, waitLauncher } from './harness.ts';
 import { SPONSOR_DELEGATES, decodeSponsorSubject, recoverAuthorization, recoverExecuteSigner } from '@hana-id/core/evm-sponsor';
 import type { HanaEnv } from '../../src/hana-env.ts';
-import { SPONSOR_TEXT, sponsorChains } from '../../src/vault/evm-sponsor.ts';
+import { SPONSOR_TEXT, approvedSubject, sponsorChains, sponsorPreflight, sponsoredApproval } from '../../src/vault/evm-sponsor.ts';
+
+/** A well-known test address (anvil's first published dev account). */
+const ACCOUNT = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
 
 const DELEGATE = (SPONSOR_DELEGATES[31337] as { address: `0x${string}` }).address;
 /** anvil's published second dev account's address (a public test vector), as the e2e stack's relayer. */
@@ -367,7 +370,8 @@ describe('a lying or refusing prepare (D840, D855)', () => {
 
   it('a gas window too small for the calls: too big', async () => {
     const { t, api } = await session();
-    api.lie = { minGasFloor: '10000', maxMinGas: '49999' };
+    // The vault's own floor is 50,000 per call (D855, after the review of PR 76): 99,999 for two calls is too little.
+    api.lie = { minGasFloor: '10000', maxMinGas: '99999' };
     expect((await send(t, [{ ...CALL }, { ...CALL }])).error).toMatchObject({ code: 4100, data: { reason: 'gas_too_high' } });
   });
 
@@ -399,8 +403,12 @@ describe('a lying or refusing prepare (D840, D855)', () => {
 });
 
 describe('send’s answers (D788’s style)', () => {
-  async function sentWith(answerFn: () => Response | Promise<Response>) {
+  async function sentWith(answerFn: () => Response | Promise<Response>, o: { setUp?: boolean } = {}) {
     const s = await session();
+    if (o.setUp) {
+      s.api.delegation = 'journear';
+      s.api.chain.setUp();
+    }
     s.api.sendAnswer = answerFn;
     const reply = send(s.t);
     const { popup, m } = await windowOf(s.t);
@@ -408,12 +416,18 @@ describe('send’s answers (D788’s style)', () => {
     return { ...s, r: await reply };
   }
 
-  it('reverted: plain words, the hash, nothing else of the body', async () => {
+  it('reverted on a later action: plain words, the hash, nothing else of the body', async () => {
     const hash = `0x${'cd'.repeat(32)}`;
-    const { r, t, api } = await sentWith(() => apiError(422, 'reverted', { transactionHash: hash, revertData: '0xdead', signature: 'x' }));
+    const { r, t, api } = await sentWith(() => apiError(422, 'reverted', { transactionHash: hash, revertData: '0xdead', signature: 'x' }), { setUp: true });
     expect(r.error).toMatchObject({ code: 4100, message: SPONSOR_TEXT.failed });
     expect(r.error?.data).toEqual({ status: 422, reason: 'reverted', transactionHash: hash });
     nothingSigned(t, api);
+  });
+
+  it.each(['reverted', 'not_executed'])('%s on the first action: the setup may still have been done, said plainly', async (code) => {
+    const { r } = await sentWith(() => apiError(422, code, { transactionHash: `0x${'cd'.repeat(32)}` }));
+    expect(r.error).toMatchObject({ code: 4100, message: SPONSOR_TEXT.failedAfterSetup, data: { reason: code } });
+    expect(SPONSOR_TEXT.failedAfterSetup).toBe('The action didn’t go through. Your account’s one-time setup may still have been done. Nothing else changed.');
   });
 
   it('simulation_reverted names the call; a timeout its hash (api_unavailable)', async () => {
@@ -465,6 +479,35 @@ describe('one action per account at a time; the clock after the approval (D855)'
     const w = await windowOf(t, { popup, n: 1 });
     answer(t, w.popup, w.m, true);
     expect((await third).result).toMatchObject({ status: 'executed' });
+  });
+
+  it('across tabs: another tab of the app is refused busy while one tab’s action is in flight (the shared lock)', async () => {
+    const browser = new Browser();
+    const t1 = await readyTab(browser, { googleJwk: g.jwk, env: SPONSOR_ENV, sdk: '0.5.0' });
+    tabs.push(t1);
+    const api = new FakeSponsorApi(t1);
+    await login(t1, g);
+    await persisted(t1);
+    const t2 = await readyTab(browser, { googleJwk: g.jwk, env: SPONSOR_ENV, sdk: '0.5.0' });
+    tabs.push(t2);
+    expect((await t2.request('hana_status')).result).toMatchObject({ status: 'logged_in' });
+    let release!: () => void;
+    api.hold = new Promise<void>((r) => (release = r));
+    const first = send(t1);
+    const { popup, m } = await windowOf(t1);
+    answer(t1, popup, m, true);
+    await t1.waitUntil(() => api.sends.length === 1, 'the first send');
+    const prepares = api.prepares.length;
+    expect((await send(t2)).error).toMatchObject({ code: 'busy', data: { reason: 'sponsor_in_flight' } });
+    expect(api.prepares).toHaveLength(prepares);
+    release();
+    expect((await first).result).toMatchObject({ status: 'executed' });
+    // Freed: the other tab's next action goes ahead.
+    api.hold = null;
+    const next = send(t2);
+    const w = await windowOf(t2);
+    answer(t2, w.popup, w.m, false);
+    expect((await next).error?.code).toBe(4001);
   });
 
   it('a refused first action frees the slot', async () => {
@@ -573,6 +616,19 @@ describe('the vault reads the account itself, from the build’s endpoints (D855
     expect(sponsorChains({ name: 'local-x', evmSponsor: { '31337': { delegate: DELEGATE, relayer: RELAYER, rpc: 'ftp://x.test' } } })).toEqual([]);
     expect(sponsorChains({ name: 'sandbox-x', evmSponsor: { '84532': { delegate: DELEGATE, relayer: RELAYER, rpc: 'http://127.0.0.1:8545' } } })).toEqual([]);
     expect(sponsorChains({ name: 'local-x', evmSponsor: { '31337': { delegate: DELEGATE, relayer: RELAYER, rpc: 'http://127.0.0.1:8545' } } }).map((c) => c.rpcs)).toEqual([['http://127.0.0.1:8545']]);
+  });
+});
+
+describe('approvedSubject compares the approved bytes with a copy taken when the window was built (review item 5)', () => {
+  it('bytes changed after the window was built are refused; the same bytes pass', () => {
+    const plan = sponsorPreflight({ v: 1, id: 'r', method: 'evm_sendSponsored', params: { chainId: 31337, calls: [{ ...CALL }] } }, ACCOUNT, sponsorChains(SPONSOR_ENV));
+    const subject = { chainId: 31337, account: ACCOUNT, delegate: DELEGATE, authNonce: null, calls: plan.calls, executeNonce: 0n, deadline: BigInt(START_MS / 1000 + 300), relayer: RELAYER as `0x${string}`, minGas: 100_000n };
+    const approval = sponsoredApproval(subject);
+    const shown = Uint8Array.from(approval.bytes);
+    expect(approvedSubject(approval.bytes, shown, plan, START_MS).executeNonce).toBe(0n);
+    const changed = Uint8Array.from(approval.bytes);
+    changed[changed.length - 1] ^= 1;
+    expect(() => approvedSubject(changed, shown, plan, START_MS)).toThrow(SPONSOR_TEXT.notReady);
   });
 });
 

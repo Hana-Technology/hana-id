@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// `pnpm verify`: the local gate while CI is off (D387, D413; docs/operations.md "CI and git"). Runs what CI would run
-// for the change, picked from the diff against origin/develop with CI's own rules (scripts/ci-changes.mjs, D383),
-// cheapest first, failing fast:
+// `pnpm verify`: the local gate before a merge (D413; docs/operations.md "CI and git"), with CI on or off (D387,
+// D857). Runs what CI runs for the change, picked from the diff against origin/develop with CI's own rules
+// (scripts/ci-changes.mjs, D383), cheapest first, failing fast:
 //
 //   pnpm verify --quick   lockfile, gitleaks, typecheck and unit tests of the affected packages, the docs checks
-//   pnpm verify           + what a develop push ran in CI: contract (cargo test + wasm) and sandbox e2e if Rust
-//                           changed; SDK pack check and Playwright on Chromium if web code changed; the EVM
-//                           delegate (forge fmt, test + artifacts check) if it changed and Foundry is installed
+//   pnpm verify           + what CI runs on a PR: contract (cargo test + wasm) and sandbox e2e if Rust changed; SDK
+//                           pack check and Playwright on Chromium if web code changed; the EVM delegate (forge fmt,
+//                           test + artifacts check) if it changed and Foundry is installed (CI's pushes after a
+//                           merge add Playwright on Firefox and WebKit, as --full does)
 //   pnpm verify --full    everything whatever changed: all packages, the Rust jobs, the pack check, Playwright on
 //                           Chromium, Firefox and WebKit
 //

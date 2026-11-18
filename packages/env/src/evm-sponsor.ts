@@ -40,7 +40,7 @@ export const EVM_SPONSOR_BOUNDS = Object.freeze({
   /** Gwei, at most 9 decimal places (1 wei). */
   maxFeePerGasGwei: 100,
   maxCallsPerBatch: 8,
-  deadlineMaxS: { min: 60, max: 3600 },
+  deadlineMaxS: { min: 60, max: 300 },
   /** ETH, at most 9 decimal places (1 gwei). */
   dailyBudgetEth: 1,
   lowBalanceEth: 10,
@@ -150,6 +150,24 @@ export function sponsorCalldataProblem(selectors: readonly string[], exactCallda
   if (entries.some((e) => (e.length - 2) / 2 > maxDataBytes)) return 'exactCalldata: an entry is longer than maxDataBytes';
   return null;
 }
+/** The most calldata a batch's calls may carry, bytes: the relayer's own limit is 32 KiB, the rest is their encoding. */
+export const SPONSOR_BATCH_DATA_MAX_BYTES = 30 * 1024;
+
+/**
+ * Why a chain's tip cap leaves the relayer no starting tip, or null. A send must start at or below the cap after two
+ * × 1.125 bumps (the relayer's `maxStartingFees`), and that starting tip must be at least 1 wei: a cap of 3 wei or more.
+ */
+export function sponsorTipCapProblem(tipCapWei: bigint): string | null {
+  const bump = (x: bigint): bigint => (x * 9n + 7n) / 8n;
+  return bump(bump(1n)) <= tipCapWei ? null : 'is too small: after the two fee bumps the relayer must leave room for, the starting tip would be below 1 wei (use at least 0.000000003)';
+}
+
+/** Why a chain's batches could pass the relayer's calldata limit, or null: maxCallsPerBatch × the largest maxDataBytes. */
+export function sponsorBatchSizeProblem(maxCallsPerBatch: number, largestMaxDataBytes: number): string | null {
+  const n = maxCallsPerBatch * largestMaxDataBytes;
+  return n <= SPONSOR_BATCH_DATA_MAX_BYTES ? null : `× the largest target maxDataBytes is ${n} bytes; the relayer sends at most ${SPONSOR_BATCH_DATA_MAX_BYTES} bytes of calls in one batch (30 KiB)`;
+}
+
 // ---- End of the shared part.
 
 const eth = (max: number) =>
@@ -331,6 +349,11 @@ export function evmSponsorProblems(m: { name: string; network: string; evm?: { s
     }
     if (c.minGas >= c.maxGasPerTx) p('minGas', `(${c.minGas}) must be below maxGasPerTx (${c.maxGasPerTx})`);
     if (c.maxPriorityFeePerGasGwei > c.maxFeePerGasGwei) p('maxPriorityFeePerGasGwei', `(${c.maxPriorityFeePerGasGwei}) must not exceed maxFeePerGasGwei (${c.maxFeePerGasGwei})`);
+    const tipProblem = sponsorTipCapProblem(sponsorDecimalUnits(c.maxPriorityFeePerGasGwei, 9) ?? 0n);
+    if (tipProblem) p('maxPriorityFeePerGasGwei', tipProblem);
+    const largest = Math.max(0, ...Object.values(s.apps).flatMap((byChain) => (byChain[id] ?? []).map((t) => t.maxDataBytes)));
+    const batchProblem = sponsorBatchSizeProblem(c.maxCallsPerBatch, largest);
+    if (batchProblem) p('maxCallsPerBatch', batchProblem);
     // One transaction at its worst case (gas limit × fee cap, before any L1 data fee) must fit the app's day.
     const worstWei = BigInt(c.maxGasPerTx) * (sponsorDecimalUnits(c.maxFeePerGasGwei, 9) ?? 0n);
     if (worstWei > (sponsorDecimalUnits(c.appDailyBudgetEth, 9) ?? 0n) * 10n ** 9n) p('maxGasPerTx', `× maxFeePerGasGwei (one transaction's worst case) must fit in appDailyBudgetEth (${c.appDailyBudgetEth})`);

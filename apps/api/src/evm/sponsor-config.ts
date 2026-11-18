@@ -22,7 +22,7 @@ export const EVM_SPONSOR_BOUNDS = Object.freeze({
   minGas: { min: 10_000, max: 1_000_000 },
   maxFeePerGasGwei: 100,
   maxCallsPerBatch: 8,
-  deadlineMaxS: { min: 60, max: 3600 },
+  deadlineMaxS: { min: 60, max: 300 },
   dailyBudgetEth: 1,
   lowBalanceEth: 10,
   perUserPerDay: 10_000,
@@ -253,6 +253,24 @@ export function sponsorCalldataProblem(selectors: readonly string[], exactCallda
   if (entries.some((e) => (e.length - 2) / 2 > maxDataBytes)) return 'exactCalldata: an entry is longer than maxDataBytes';
   return null;
 }
+/** The most calldata a batch's calls may carry, bytes: the relayer's own limit is 32 KiB, the rest is their encoding. */
+export const SPONSOR_BATCH_DATA_MAX_BYTES = 30 * 1024;
+
+/**
+ * Why a chain's tip cap leaves the relayer no starting tip, or null. A send must start at or below the cap after two
+ * × 1.125 bumps (the relayer's `maxStartingFees`), and that starting tip must be at least 1 wei: a cap of 3 wei or more.
+ */
+export function sponsorTipCapProblem(tipCapWei: bigint): string | null {
+  const bump = (x: bigint): bigint => (x * 9n + 7n) / 8n;
+  return bump(bump(1n)) <= tipCapWei ? null : 'is too small: after the two fee bumps the relayer must leave room for, the starting tip would be below 1 wei (use at least 0.000000003)';
+}
+
+/** Why a chain's batches could pass the relayer's calldata limit, or null: maxCallsPerBatch × the largest maxDataBytes. */
+export function sponsorBatchSizeProblem(maxCallsPerBatch: number, largestMaxDataBytes: number): string | null {
+  const n = maxCallsPerBatch * largestMaxDataBytes;
+  return n <= SPONSOR_BATCH_DATA_MAX_BYTES ? null : `× the largest target maxDataBytes is ${n} bytes; the relayer sends at most ${SPONSOR_BATCH_DATA_MAX_BYTES} bytes of calls in one batch (30 KiB)`;
+}
+
 // ---- End of the shared part.
 
 /** Thrown inside the parse; becomes `{ status: 'unconfigured', reason: 'invalid', problem }`. */
@@ -338,6 +356,8 @@ function parseChain(id: number, v: unknown, localEnv: boolean): EvmSponsorChainC
   const maxFeePerGasWei = nano(v.maxFeePerGasGwei, b.maxFeePerGasGwei, false, `${what}.maxFeePerGasGwei`);
   const maxPriorityFeePerGasWei = nano(v.maxPriorityFeePerGasGwei, b.maxFeePerGasGwei, true, `${what}.maxPriorityFeePerGasGwei`);
   if (maxPriorityFeePerGasWei > maxFeePerGasWei) fail(`${what}.maxPriorityFeePerGasGwei exceeds maxFeePerGasGwei`);
+  const tipProblem = sponsorTipCapProblem(maxPriorityFeePerGasWei);
+  if (tipProblem) fail(`${what}.maxPriorityFeePerGasGwei ${tipProblem}`);
   const maxCallsPerBatch = int(v.maxCallsPerBatch, 1, b.maxCallsPerBatch, `${what}.maxCallsPerBatch`);
   const deadlineMaxS = int(v.deadlineMaxS, b.deadlineMaxS.min, b.deadlineMaxS.max, `${what}.deadlineMaxS`);
   const dailyBudgetWei = nano(v.dailyBudgetEth, b.dailyBudgetEth, false, `${what}.dailyBudgetEth`) * GWEI;
@@ -480,6 +500,11 @@ function parseStrict(raw: string, where: EvmSponsorWhere): EvmSponsorConfig {
       perChain.push([String(id), Object.freeze(targets)]);
     }
     apps.push([appId, frozenRecord(perChain)]);
+  }
+  for (const [id, chain] of chains) {
+    const largest = Math.max(0, ...apps.flatMap(([, byChain]) => (byChain[id] ?? []).map((t) => t.maxDataBytes)));
+    const batchProblem = sponsorBatchSizeProblem(chain.maxCallsPerBatch, largest);
+    if (batchProblem) fail(`chains.${id}.maxCallsPerBatch ${batchProblem}`);
   }
   return Object.freeze({ relayerAddress, chains: frozenRecord(chains), apps: frozenRecord(apps) });
 }

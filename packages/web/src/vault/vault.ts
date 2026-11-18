@@ -78,6 +78,7 @@ import {
   API_REQUEST_ID_SDK_MIN,
   EMAIL_SHARING_SDK_MIN,
   NEAR_SDK_MIN,
+  EVM_SPONSOR_SDK_MIN,
   type PortAddresses,
   TEST_APP_NETWORK_RULE,
   decodeNearDelegateAction,
@@ -135,6 +136,26 @@ import {
 } from './record.ts';
 import { type Channel, Clock, type Locks, type Timers, type WindowMessageEvent, type WindowRef, randomHex128, realTimers, sleep } from './runtime.ts';
 import { MAINNET_DEMO_REFUSALS, type SignRequest, approvalSubject, demoRefusalFlash, signRequest } from './signing.ts';
+import {
+  SPONSOR_PREPARE_TIMEOUT_MS,
+  SPONSOR_SEND_TIMEOUT_MS,
+  SPONSOR_TEXT,
+  type SponsorChain,
+  SponsorFlights,
+  type SponsoredRequest,
+  approvedSubject,
+  parsePrepareAnswer,
+  parseSendAnswer,
+  sendBody,
+  signSponsored,
+  sponsorApiError,
+  sponsorChains,
+  sponsorPreflight,
+  sponsorSubject,
+  sponsoredApproval,
+  wireCalls,
+  withSessionProof,
+} from './evm-sponsor.ts';
 import { type MainnetDemoPriceBook, assessMainnetDemo, fixedMainnetDemoPrices, mainnetDemoState, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
 
 /** performance.now where there is one (browsers, workers), else Date.now. */
@@ -585,6 +606,12 @@ export class Vault {
    * address object's exact keys and would drop a hana_status, hana_login, `ready` or `accountsChanged` that had it.
    */
   private sdkTakesNear = false;
+  /** D855: whether the SDK on the port takes `sponsoredChains` in a status (EVM_SPONSOR_SDK_MIN or later). */
+  private sdkTakesSponsor = false;
+  /** The EVM chains this build sponsors (HanaEnv.evmSponsor, checked: evm-sponsor.ts sponsorChains). */
+  private readonly sponsorChains: readonly SponsorChain[];
+  /** One sponsored action in flight per account (D855). */
+  private readonly sponsorFlights = new SponsorFlights();
   /** D411: the email sharing sheet in progress (one at a time: an `at_login` sign-in's, or requestEmailSharing's). */
   private shareSheet: ShareSheet | null = null;
   private port: MessagePort | null = null;
@@ -654,6 +681,7 @@ export class Vault {
     this.mainnetDemo = o.config.settings.mainnetDemo === true;
     this.mainnetDemoCheckedAt = o.config.serverTimeMs;
     this.testApp = isTestPublishableKey(o.config.publishableKey);
+    this.sponsorChains = sponsorChains(o.env);
     this.launcher = new Launcher(
       o.launcherView,
       (ui) => {
@@ -734,6 +762,7 @@ export class Vault {
     this.sdkTakesRequestId = sdkAtLeast(hello.sdk, API_REQUEST_ID_SDK_MIN);
     this.sdkTakesEmailSharing = sdkAtLeast(hello.sdk, EMAIL_SHARING_SDK_MIN);
     this.sdkTakesNear = sdkAtLeast(hello.sdk, NEAR_SDK_MIN);
+    this.sdkTakesSponsor = sdkAtLeast(hello.sdk, EVM_SPONSOR_SDK_MIN);
     this.port = port;
     const fetchFn = this.o.fetch;
     this.api = new VaultApi({
@@ -829,11 +858,20 @@ export class Vault {
   }
 
   private statusResult(): StatusResult {
+    const sponsored = this.sponsoredField();
     const s = this.live();
-    if (s) return { status: 'logged_in', addresses: this.portAddresses(s.addresses), expiresAtMs: s.expiresAtMs, persistence: s.persistence, ...this.supportIdField(s.supportId) };
+    if (s) return { status: 'logged_in', addresses: this.portAddresses(s.addresses), expiresAtMs: s.expiresAtMs, persistence: s.persistence, ...this.supportIdField(s.supportId), ...sponsored };
     const d = this.liveDormant();
-    if (d) return { status: 'logged_in', addresses: this.portAddresses(d.addresses), expiresAtMs: d.expiresAtMs, persistence: 'session', ...this.supportIdField(d.supportId) };
-    return { status: 'logged_out', persistence: this.persistence };
+    if (d) return { status: 'logged_in', addresses: this.portAddresses(d.addresses), expiresAtMs: d.expiresAtMs, persistence: 'session', ...this.supportIdField(d.supportId), ...sponsored };
+    return { status: 'logged_out', persistence: this.persistence, ...sponsored };
+  }
+
+  /**
+   * `{sponsoredChains}` (D855): the chains this build pays network fees on, only for an SDK of EVM_SPONSOR_SDK_MIN or
+   * later (an older SDK's validators refuse the key) and only when there is one. A build property, logged in or out.
+   */
+  private sponsoredField(): { sponsoredChains?: number[] } {
+    return this.sdkTakesSponsor && this.sponsorChains.length > 0 ? { sponsoredChains: this.sponsorChains.map((c) => c.chainId) } : {};
   }
 
   /** The Support ID of the session, live or dormant, or null (the approval popup's account line). */
@@ -1444,6 +1482,8 @@ export class Vault {
       }
       await this.wake();
     }
+    // A sponsored action has its own flow (D855): its subject comes from the API's prepare answer and the build.
+    if (r.method === 'evm_sendSponsored') return this.sendSponsored(r);
     const sign = isSignMethod(r.method);
     if (sign) return this.sign(r as SignRequest);
     switch (r.method) {
@@ -2038,6 +2078,10 @@ export class Vault {
   private refuseEarly(r: PortRequest): void {
     const addresses = this.addresses();
     if (!addresses) return;
+    if (r.method === 'evm_sendSponsored') {
+      this.sponsorEarly(r, addresses.evm);
+      return;
+    }
     if (isSignMethod(r.method)) {
       // In a build that may sign under the mainnet demo (D428), a mainnet request's network check waits for sign(),
       // which reads whether the app has the demo on (fresh) before deciding; every other check runs here.
@@ -3208,6 +3252,79 @@ export class Vault {
     })
       .then((body) => api.mainnetDemoEvent(body))
       .catch(() => undefined);
+  }
+
+  /**
+   * The checks of a sponsored action that need neither the API nor a window (D855): a test app never on a mainnet
+   * (D39), the chain one this build sponsors, the calls well formed, no other action of this account in flight.
+   */
+  private sponsorEarly(r: SponsoredRequest, evm: string): ReturnType<typeof sponsorPreflight> {
+    if (this.testApp) {
+      const mainnet = mainnetOfRequest(r);
+      if (mainnet) throw new VaultError(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', ...mainnet });
+    }
+    const plan = sponsorPreflight(r, evm, this.sponsorChains);
+    if (this.sponsorFlights.has(plan.account)) throw new VaultError('busy', SPONSOR_TEXT.busy, { reason: 'sponsor_in_flight' });
+    return plan;
+  }
+
+  /**
+   * evm_sendSponsored (D855, D856; vault/evm-sponsor.ts has the rules): the checks above, the API's prepare (its answer
+   * checked, never trusted for the delegate, relayer, chain or account), one approval of the subject built from the
+   * build and the session, the approved bytes decoded and checked again, one derivation of the EVM key for the
+   * authorization (first time only) and the Execute, and the send, posted by the vault itself so no signature reaches
+   * the page (D832). Both API calls carry the session proof (D856). One action per account at a time.
+   */
+  private async sendSponsored(r: SponsoredRequest): Promise<PortResultMap['evm_sendSponsored']> {
+    const s = this.live();
+    if (!s) throw notLoggedIn();
+    const plan = this.sponsorEarly(r, s.addresses.evm);
+    const release = this.sponsorFlights.take(plan.account);
+    try {
+      const api = this.api;
+      const parentOrigin = this.parentOrigin;
+      const walletProof = s.walletProofs?.evm;
+      if (!api || parentOrigin === null || !walletProof || walletProof.address.toLowerCase() !== plan.account.toLowerCase()) {
+        throw new VaultError(ErrorCode.unauthorized, SPONSOR_TEXT.noSignIn, { reason: 'no_wallet_proof' });
+      }
+      const proof = () => ({ signer: this.env.signer, appId: this.config.appId, parentOrigin, sessionPublicKey: Uint8Array.from(s.sessionPk), issuedAtMs: this.clock.now(), walletProof });
+      const prepareBody = await withSessionProof(s.keyPair.privateKey, 'prepare', { chainId: plan.chain.chainId, account: plan.account, calls: wireCalls(plan) }, proof());
+      let prepared: Record<string, unknown>;
+      try {
+        prepared = await this.withTimeout(SPONSOR_PREPARE_TIMEOUT_MS, (signal) => api.evmSponsor('prepare', prepareBody, signal));
+      } catch (e) {
+        throw sponsorApiError(e, 'prepare');
+      }
+      if (this.live() !== s) throw sessionEnded(s);
+      const answer = parsePrepareAnswer(prepared);
+      if (!answer) throw new VaultError('api_unavailable', SPONSOR_TEXT.notReady, { reason: 'bad_answer', detail: 'shape' }).fromRequest(typeof prepared.requestId === 'string' ? prepared.requestId : null);
+      const subject = sponsorSubject(plan, answer, { vaultNowMs: this.clock.now(), deviceNowMs: this.deviceNow() });
+      const approval = sponsoredApproval(subject);
+      // D682: a device signed out from Journear Passport Home completes no approval (as sign() checks).
+      await this.shareConfirmed(s);
+      if (this.live() !== s) throw sessionEnded(s);
+      // Never auto-approved (D839): no policy is read, every action shows its window.
+      const outcome = await this.approvals!.requestApproval(approval);
+      if (outcome === 'cancelled' || this.live() !== s) throw sessionEnded(s);
+      if (outcome !== 'approved') throw userRejected();
+      await this.shareConfirmed(s);
+      if (this.live() !== s) throw sessionEnded(s);
+      const approved = approvedSubject(approval.bytes, approval, plan, this.clock.now());
+      const signatures = signSponsored(s.prk, approved, this.sponsorChains.map((c) => c.chainId));
+      this.maybeTouch();
+      const body = await withSessionProof(s.keyPair.privateKey, 'send', sendBody(approved, signatures), proof());
+      let sent: Record<string, unknown>;
+      try {
+        sent = await this.withTimeout(SPONSOR_SEND_TIMEOUT_MS, (signal) => api.evmSponsor('send', body, signal));
+      } catch (e) {
+        throw sponsorApiError(e, 'send');
+      }
+      const result = parseSendAnswer(sent);
+      if (!result) throw new VaultError('api_unavailable', SPONSOR_TEXT.unknownOutcome, { reason: 'unknown_outcome' }).fromRequest(typeof sent.requestId === 'string' ? sent.requestId : null);
+      return result;
+    } finally {
+      release();
+    }
   }
 
   /**

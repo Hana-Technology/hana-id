@@ -25,6 +25,7 @@ export * from './networks.ts';
 export * from './protocol.ts';
 export * from './relay.ts';
 export * from './session.ts';
+export * from './sponsor-session.ts';
 export * from './support-id.ts';
 export * from './timings.ts';
 export * from './wallet-record.ts';

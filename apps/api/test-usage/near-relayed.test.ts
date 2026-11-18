@@ -31,6 +31,9 @@ const row = (patch: Record<string, unknown> = {}) => ({
   methods: ['collect'],
   created_at: '2026-11-18T01:02:00.000Z',
   final_at: '2026-11-18T01:03:00.000Z',
+  had_failed_receipt: false,
+  figures_from: 'relay',
+  block_hash: '7tkzFg8RHBmMw1ncRJZCCZAizgq4rwCftTKYLce8RU8t',
   ...patch,
 });
 const copy = (rows: unknown) => db.asRole('usage_writer', () => db.query<{ n: number }>('SELECT usage.record_near_relayed($1::jsonb) AS n', [JSON.stringify(rows)])).then((r) => r[0]!.n);
@@ -86,5 +89,17 @@ describe('usage.record_near_relayed (D863)', () => {
       await db.query("SELECT * FROM usage.erase_uid(decode('00112233445566778899aabbccddeeff', 'hex'))");
     });
     expect(await count()).toBe(before);
+  });
+});
+
+describe('the outcomes and flags of D863 as amended', () => {
+  it('takes not_executed, a failed callback flag and where the figures came from; refuses a bad flag or source', async () => {
+    const h = '8vCrVxB9Z9zBs8Gmyqh1W2hJ5L3DzJ1vCrVxB9Z9zBs8';
+    expect(await copy([row({ tx_hash: h, outcome: 'not_executed', had_failed_receipt: true, figures_from: 'final', block_hash: null })])).toBe(1);
+    const [r] = await db.query<{ outcome: string; had_failed_receipt: boolean; figures_from: string }>('SELECT outcome, had_failed_receipt, figures_from FROM usage.near_relayed_txs WHERE tx_hash = $1', [h]);
+    expect(r).toEqual({ outcome: 'not_executed', had_failed_receipt: true, figures_from: 'final' });
+    for (const bad of [{ had_failed_receipt: 1 }, { figures_from: 'guess' }, { block_hash: 'not base58!' }]) {
+      expect((await failure(copy([row({ tx_hash: '6vCrVxB9Z9zBs8Gmyqh1W2hJ5L3DzJ1vCrVxB9Z9zBs8', ...bad })])))?.message).toBeTruthy();
+    }
   });
 });

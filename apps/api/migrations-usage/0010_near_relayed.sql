@@ -2,7 +2,8 @@
 -- relay sent for a user that reached the chain (a relayed delegate action or an account activation; success or
 -- failure), copied by the API's cron from its D1 table `near_relay_billing` (hot-DB migration 0023) once the
 -- transaction was read at FINAL, through `usage.record_near_relayed`. As EVM sponsorship's (0009, D852): idempotent on
--- (network, tx_hash); no personal data (no user account id, user id or IP; the transaction hash is public chain data);
+-- (network, tx_hash); pseudonymous (no name, email, account id, user id or IP; the transaction hash is public chain data
+-- that can be traced to an account);
 -- not partitioned, and none of 0007's retention functions or `usage.erase_uid` touches it: never pruned, kept through a
 -- user's erasure. Amounts in yoctoNEAR, no USD: a billing job can price them with `usage.near_usd_rates` (the daily
 -- NEAR/USD rate the admin Worker already fetches, D325). Records exist only from the deploy of this code on.
@@ -17,7 +18,10 @@ CREATE TABLE usage.near_relayed_txs (
   environment    text           NOT NULL,
   kind           text           NOT NULL CHECK (kind IN ('delegate', 'activation')),
   relay_code     text           NOT NULL,
-  outcome        text           NOT NULL CHECK (outcome IN ('executed', 'failed', 'unknown')),
+  outcome        text           NOT NULL CHECK (outcome IN ('executed', 'failed', 'not_executed', 'unknown')),
+  had_failed_receipt boolean    NOT NULL DEFAULT false,
+  figures_from   text           CHECK (figures_from IS NULL OR figures_from IN ('relay', 'final')),
+  block_hash     text           CHECK (block_hash IS NULL OR block_hash ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$'),
   block_height   numeric(20, 0),
   block_time     timestamptz,
   gas_burnt      numeric(20, 0),
@@ -45,7 +49,7 @@ DECLARE
   m       jsonb;
   n       integer;
   allowed constant text[] := ARRAY['network', 'tx_hash', 'org_id', 'app_id', 'environment', 'kind', 'relay_code', 'outcome', 'block_height',
-    'block_time', 'gas_burnt', 'tokens_burnt_yocto', 'attached_yocto', 'receiver', 'methods', 'created_at', 'final_at'];
+    'block_time', 'gas_burnt', 'tokens_burnt_yocto', 'attached_yocto', 'receiver', 'methods', 'created_at', 'final_at', 'had_failed_receipt', 'figures_from', 'block_hash'];
 BEGIN
   IF rows IS NULL OR jsonb_typeof(rows) <> 'array' THEN PERFORM usage.event_invalid('near rows: not an array'); END IF;
   IF jsonb_array_length(rows) > 500 THEN PERFORM usage.event_invalid('near rows: more than 500'); END IF;
@@ -60,7 +64,10 @@ BEGIN
       IF jsonb_typeof(r -> k) IS DISTINCT FROM 'string' OR length(r ->> k) NOT BETWEEN 1 AND 64 THEN PERFORM usage.event_invalid('near row: ' || k); END IF;
     END LOOP;
     IF NOT ((r ->> 'kind') = ANY (ARRAY['delegate', 'activation'])) OR jsonb_typeof(r -> 'kind') <> 'string' THEN PERFORM usage.event_invalid('near row: kind'); END IF;
-    IF NOT ((r ->> 'outcome') = ANY (ARRAY['executed', 'failed', 'unknown'])) OR jsonb_typeof(r -> 'outcome') <> 'string' THEN PERFORM usage.event_invalid('near row: outcome'); END IF;
+    IF NOT ((r ->> 'outcome') = ANY (ARRAY['executed', 'failed', 'not_executed', 'unknown'])) OR jsonb_typeof(r -> 'outcome') <> 'string' THEN PERFORM usage.event_invalid('near row: outcome'); END IF;
+    IF jsonb_typeof(r -> 'had_failed_receipt') IS DISTINCT FROM 'boolean' THEN PERFORM usage.event_invalid('near row: had_failed_receipt'); END IF;
+    IF NOT (jsonb_typeof(r -> 'figures_from') = 'null' OR (r ->> 'figures_from') = ANY (ARRAY['relay', 'final'])) THEN PERFORM usage.event_invalid('near row: figures_from'); END IF;
+    IF NOT (jsonb_typeof(r -> 'block_hash') = 'null' OR (jsonb_typeof(r -> 'block_hash') = 'string' AND (r ->> 'block_hash') ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$')) THEN PERFORM usage.event_invalid('near row: block_hash'); END IF;
     IF NOT usage.evm_amount_ok(r -> 'block_height', 20, true) OR NOT usage.evm_amount_ok(r -> 'gas_burnt', 20, true) OR NOT usage.evm_amount_ok(r -> 'tokens_burnt_yocto', 39, true)
        OR NOT usage.evm_amount_ok(r -> 'attached_yocto', 39, false) THEN PERFORM usage.event_invalid('near row: an amount'); END IF;
     IF (r ->> 'kind') = 'activation' THEN
@@ -78,10 +85,11 @@ BEGIN
   END LOOP;
 
   INSERT INTO usage.near_relayed_txs (network, tx_hash, org_id, app_id, environment, kind, relay_code, outcome, block_height, block_time, gas_burnt,
-      tokens_burnt, attached_yocto, receiver, methods, created_at, final_at)
+      tokens_burnt, attached_yocto, receiver, methods, created_at, final_at, had_failed_receipt, figures_from, block_hash)
   SELECT x ->> 'network', x ->> 'tx_hash', x ->> 'org_id', x ->> 'app_id', x ->> 'environment', x ->> 'kind', x ->> 'relay_code', x ->> 'outcome',
          (x ->> 'block_height')::numeric, (x ->> 'block_time')::timestamptz, (x ->> 'gas_burnt')::numeric, (x ->> 'tokens_burnt_yocto')::numeric,
-         (x ->> 'attached_yocto')::numeric, x ->> 'receiver', x -> 'methods', (x ->> 'created_at')::timestamptz, (x ->> 'final_at')::timestamptz
+         (x ->> 'attached_yocto')::numeric, x ->> 'receiver', x -> 'methods', (x ->> 'created_at')::timestamptz, (x ->> 'final_at')::timestamptz,
+         (x ->> 'had_failed_receipt')::boolean, x ->> 'figures_from', x ->> 'block_hash'
     FROM jsonb_array_elements(rows) AS x
   ON CONFLICT (network, tx_hash) DO NOTHING;
   GET DIAGNOSTICS n = ROW_COUNT;

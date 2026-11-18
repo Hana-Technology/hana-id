@@ -5,28 +5,38 @@ import { ErrorCode, STRING_ERROR_CODES } from '@hana-id/core';
 import { jargonIn } from '@hana-id/brand/plain-words';
 import { describe, expect, it } from 'vitest';
 import { HanaError, ProviderRpcError, RpcCode, toProviderRpcError } from '../../src/client/errors.ts';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { DEFAULT_USER_MESSAGE, SPONSOR_REASONS, userMessageFor } from '../../src/client/user-messages.ts';
+import { HanaSponsorError } from '../../src/client/evm-sponsor.ts';
+import { SPONSOR_TEXT } from '../../src/vault/evm-sponsor.ts';
 import { userMessageFor as exported } from '../../src/index.ts';
 
 /**
- * Every `data.reason` a sponsored action's error can carry (PR 76's vault/evm-sponsor.ts: its refusals' reasons, and the
- * API codes it passes on). Once that file is on this branch, the test also reads every reason it names, so a new one
- * fails here until it has a sentence.
+ * Every `data.reason` a sponsored action's error can carry, read from the vault's own source (vault/evm-sponsor.ts), with
+ * the `SPONSOR_TEXT` sentence the vault pairs it with: its refusals (`refusal(SPONSOR_TEXT.x, 'reason')`, `{ reason }`
+ * beside a SPONSOR_TEXT), and the API codes `apiMessage` maps (`case 'code': … return SPONSOR_TEXT.x`). A new reason or a
+ * reworded sentence there fails here until `SPONSOR_REASONS` follows.
  */
-const SPONSOR_REASON_LIST = [
-  'chain_not_sponsored', 'no_evm_account', 'invalid_request', 'target_not_allowed', 'delegated_elsewhere', 'budget_exhausted', 'gas_too_high', 'chain_not_enabled', 'app_not_sponsored', 'not_available',
-  'clock_wrong', 'deadline_passed', 'bad_answer', 'unknown_outcome', 'api_unavailable', 'sponsor_in_flight',
-  'reverted', 'not_executed', 'simulation_reverted', 'timeout', 'nonce_stale', 'authorization_nonce_stale', 'delegation_required', 'in_progress', 'account_unrecorded', 'app_budget_exhausted',
-  'too_many_failures', 'rate_limited', 'call_not_sponsored', 'value_not_allowed', 'too_many_calls', 'deadline_out_of_range', 'session_ended',
-];
-const SPONSOR_SOURCE = new URL('../../src/vault/evm-sponsor.ts', import.meta.url);
-function sponsorReasonsInSource(): string[] {
-  if (!existsSync(SPONSOR_SOURCE)) return [];
-  const src = readFileSync(SPONSOR_SOURCE, 'utf8');
-  const found = [...src.matchAll(/refusal\([^,]+, '([a-z_]+)'|reason: '([a-z_]+)'|case '([a-z_]+)':/gu)].map((m) => m[1] ?? m[2] ?? m[3]!);
-  return [...new Set(found)];
+const SPONSOR_SOURCE = readFileSync(new URL('../../src/vault/evm-sponsor.ts', import.meta.url), 'utf8');
+function sponsorPairs(): [reason: string, textKey: string][] {
+  const pairs: [string, string][] = [];
+  for (const m of SPONSOR_SOURCE.matchAll(/refusal\(SPONSOR_TEXT\.(\w+), '([a-z_]+)'/gu)) pairs.push([m[2]!, m[1]!]);
+  for (const m of SPONSOR_SOURCE.matchAll(/new VaultError\([^,]+, SPONSOR_TEXT\.(\w+), \{ reason: '([a-z_]+)'/gu)) pairs.push([m[2]!, m[1]!]);
+  const api = SPONSOR_SOURCE.slice(SPONSOR_SOURCE.indexOf('function apiMessage'), SPONSOR_SOURCE.indexOf('export function sponsorApiError'));
+  let cases: string[] = [];
+  for (const line of api.split('\n')) {
+    const c = /case '([a-z_]+)':/u.exec(line);
+    if (c) cases.push(c[1]!);
+    const r = /return .*?SPONSOR_TEXT\.(\w+)/u.exec(line);
+    if (r && cases.length > 0) {
+      // reverted / not_executed: the vault picks failed or failedAfterSetup by the batch; the SDK can't tell, so it says the one true for both.
+      for (const k of cases) pairs.push([k, line.includes('failedAfterSetup') ? 'failedAfterSetup' : r[1]!]);
+      cases = [];
+    }
+  }
+  return pairs;
 }
+const SPONSOR_REASON_LIST = [...new Set(sponsorPairs().map(([r]) => r))];
 
 const ALL_CODES = [...Object.values(ErrorCode), ...Object.values(RpcCode), ...STRING_ERROR_CODES];
 const REASONS = [...SPONSOR_REASON_LIST, 'mainnet_not_allowed', 'raw_not_allowed_for_test_apps', 'too_many_pending', 'invalid_request', 'raw_sign_off', 'raw_reserved_domain', 'near_network_mismatch', 'near_block_unknown', 'near_relayed_delegate', 'signed_out', 'pending', 'webcrypto_unsupported', 'webcrypto_failed', 'access_denied'];
@@ -80,9 +90,13 @@ describe('userMessage (D861)', () => {
   });
 
   it('every sponsored action reason has its own sentence, the vault’s words, whatever code carries it', () => {
-    for (const r of [...SPONSOR_REASON_LIST, ...sponsorReasonsInSource()]) {
-      const own = r === 'invalid_request' ? userMessageFor(4100, { reason: r }) : SPONSOR_REASONS[r];
-      expect(own, r).toBeDefined();
+    expect(SPONSOR_REASON_LIST.length).toBeGreaterThan(30);
+    for (const [r, key] of sponsorPairs()) {
+      // invalid_request is shared with the approval queue's refusal: one sentence true for both (checked below).
+      if (r === 'invalid_request') continue;
+      expect(SPONSOR_REASONS[r], r).toBe((SPONSOR_TEXT as Record<string, string>)[key]);
+    }
+    for (const r of SPONSOR_REASON_LIST) {
       for (const code of [4100, 'rate_limited', 'api_unavailable', 'session_ended', 'busy']) expect(userMessageFor(code, { reason: r }), `${code} ${r}`).not.toBe(DEFAULT_USER_MESSAGE);
     }
     expect(userMessageFor('api_unavailable', { reason: 'unknown_outcome' })).toBe('Journear couldn’t tell whether your action went through. Check before you try again.');
@@ -98,5 +112,13 @@ describe('userMessage (D861)', () => {
     for (const code of ['api_unavailable', -32603]) expect(userMessageFor(code, undefined), String(code)).toMatch(/check whether it went through before you try again/u);
     expect(userMessageFor('busy', undefined)).toBe('Journear Passport is finishing something else for this wallet. Wait a moment, then try again.');
     expect(userMessageFor('session_consumed', undefined)).toBe('This sign-in was already used, perhaps in another window. If that wasn’t you, start again and tell the app’s support.');
+  });
+
+  it('a HanaSponsorError carries userMessage like any HanaError', () => {
+    const e = new HanaSponsorError('api_unavailable', 'Journear couldn’t tell whether your action went through. Check before you try again.', { reason: 'unknown_outcome', status: 504 });
+    expect(e.userMessage).toBe(SPONSOR_TEXT.unknownOutcome);
+    expect(new HanaSponsorError(4001, 'x').userMessage).toBe('You rejected this in Journear Passport, or closed it. Nothing was approved.');
+    expect(new HanaSponsorError(4100, 'x', { reason: 'chain_not_sponsored', chainId: 1 }).userMessage).toBe(SPONSOR_TEXT.notOffered);
+    expect(userMessageFor(4100, { reason: 'invalid_request' })).toMatch(/nothing was signed or sent/u);
   });
 });

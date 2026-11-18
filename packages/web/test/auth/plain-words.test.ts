@@ -8,6 +8,8 @@ import { readFileSync } from 'node:fs';
 import { jargonIn, sentencesIn } from '@hana-id/brand/plain-words';
 import { describe, expect, it } from 'vitest';
 import { errorMessage } from '../../src/auth/errors.ts';
+import { NOT_OFFERED } from '../../src/client/evm-sponsor.ts';
+import { SPONSOR_TEXT } from '../../src/vault/evm-sponsor.ts';
 import { STRING_ERROR_CODES } from '@hana-id/core';
 
 const DIR = new URL('../../src/', import.meta.url);
@@ -29,6 +31,9 @@ const FILES = [
   'auth/home-profile.ts',
   'client/user-messages.ts',
   'vault/approvals.ts',
+  // The sponsored action's words (SPONSOR_TEXT: the vault's errors and the approval flow's notes). client/evm-sponsor.ts's
+  // own messages are the developer's (`message`); its one user sentence, NOT_OFFERED, is checked below.
+  'vault/evm-sponsor.ts',
 ];
 
 /**
@@ -57,6 +62,7 @@ describe('plain words on the sign-in pages and Passport Home (D853)', () => {
 
   it('every sign-in error the pages show is plain, and the scan finds a banned word when there is one', () => {
     for (const code of STRING_ERROR_CODES) expect(jargonIn(errorMessage(code)), code).toEqual([]);
+    for (const [k, t] of Object.entries({ ...SPONSOR_TEXT, NOT_OFFERED })) expect(jargonIn(t), k).toEqual([]);
     expect(jargonIn('The vault named another signer.')).toEqual(['vault', 'signer']);
     expect(jargonIn('mainnet_not_allowed')).toEqual([]);
   });

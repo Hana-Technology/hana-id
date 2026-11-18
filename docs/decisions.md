@@ -14301,8 +14301,11 @@ From `feat/link-cancel-by-email` (PR 83) @ 88104036, then `next` @ 6db2bb8b merg
 From `next` @ 0a636344; not merged, not deployed.
 
 ### D866. The staff unlock and confirm emails get their pages: one button each, nothing before the press
-- Date 2026-11-18 · Status: **decided by the user 2026-11-18** ("start them": build the two support pages); the
-  details below decided while building, **to confirm** · Built: `packages/web/src/auth/support-page.ts` (entries
+- Date 2026-11-18 · Status: **confirmed by the user 2026-11-18** (decided 2026-11-18, "start them": build the two
+  support pages; the details below, the amendments after PR 88's review and the residuals confirmed with the PR, "OK to
+  merge 88 and confirm D866", told: the unlock works only in the browser where the button was pressed, Passport Home
+  not covered for now, the pages' and mails' words as in the screenshots, used and expired links remembered 7 days
+  without the address, a mail scanner that clicks buttons could press Confirm) · Built: `packages/web/src/auth/support-page.ts` (entries
   `unlock.ts`, `confirm.ts`), `email-storage.ts` (`hana.ug`), `email-api.ts` and `email-page.ts` (`unlockToken` on
   `start`), `pages.ts`, `apps/api/src/pages/host.ts`; `apps/email-issuer/src/support-link.ts`, `handlers.ts`
   (`handleUnlockLink`, `handleConfirm`, `handleUnlock`, `handleUnsuppress`, `STAFF_NOTES`), `challenge.ts`,
@@ -14368,13 +14371,13 @@ From `next` @ 0a636344; not merged, not deployed.
   storage is refused, not when it is merely another browser); whoever can read that browser's storage within 24 h can
   use the one start (the code still goes to the mailbox). Records written before this branch (an unlock grant stored
   as a number, a confirm record of the old shape) are never usable: a mail sent before the deploy needs a new one.
-- To confirm (the founder): the "this browser" limit of the unlock (the alternative, an unlock bound to the presser's
-  network instead of the browser, works across browsers on one network but lets anyone on that network use it); the
-  pages' words; the 7-day tombstone.
+- Confirmed by the user 2026-11-18: the "this browser" limit of the unlock (the alternative, an unlock bound to the
+  presser's network instead of the browser, works across browsers on one network but lets anyone on that network use
+  it, was not taken); the pages' words; the 7-day tombstone.
 - Rejected: acting on the page's load (link scanners); a GET endpoint; clearing the lock on the press (an attacker's
   fresh day of guesses, the design D198 superseded); a sign-in from the done page (the user goes back to the app).
 - Address impact: none.
-- **Amended after PR 88's independent review (2026-11-18; to confirm with D866):**
+- **Amended after PR 88's independent review (2026-11-18; confirmed by the user 2026-11-18 with D866):**
   1. **A device ticket no longer hides the unlock.** A returning browser sends its device ticket and the pressed
      unlock together; the issuer took the ticket, whose slot a locked owner has already used up, so the page said
      "unlocked" and the sign-in still answered 429. Now an active grant for that exact address decides. The bound is
@@ -14384,7 +14387,7 @@ From `next` @ 0a636344; not merged, not deployed.
   2. **Passport Home takes no unlock** (D619, confirmed by the user, stands: Home keeps nothing in storage and its start
      takes no owner proof). The staff note and the runbook say "It works for signing in to an app, not to Passport
      Home yet"; a user locked out of Home waits for midnight UTC. Changing it is the founder's call (read, never write,
-     the auth origin's `hana.ug` from `/home`).
+     the auth origin's `hana.ug` from `/home`). Confirmed 2026-11-18: Passport Home is not covered for now.
   3. **The staff place comes back only when the provider clearly refused the mail** (an HTTP error answer, a missing key,
      or the staff pool spent). A timeout or a network error may have sent it: `{mailed: false, reason: "unsure"}`, the
      place stays used, and the note tells staff to have the user check their inbox and spam folder.
@@ -14399,7 +14402,7 @@ From `next` @ 0a636344; not merged, not deployed.
     one-button page can't tell it from the user, and the press only resumes mail to the address the link was mailed to
     (the address whose holder asked support), lifting no limit and touching no other address.
   - The unlock works in the browser where its link was pressed (the grant is used by that browser's next start). Kept
-    as built unless the founder decides otherwise (the decision pending above). An in-app mail browser (a mail app's
+    as built (confirmed by the user 2026-11-18). An in-app mail browser (a mail app's
     own viewer, with storage of its own) is the usual way to miss it: the user signs in afterwards in their normal
     browser and is still refused; opening the email's link again in that browser and pressing again works (the press
     answers the same until the unlock is used).

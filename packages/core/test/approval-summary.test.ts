@@ -528,12 +528,47 @@ describe('NEAR', () => {
     expect(text(near([{ type: 'transfer', deposit: 1n }]).fee!)).toBe('a small amount of NEAR, from your account');
   });
 
-  it('a relayed contract call (the stamps): contract and method; the relayer pays; explainable', () => {
+  it('a relayed contract call (the stamps): contract and method; it costs nothing; it acts as the user, in amber (D858)', () => {
     const s = delegate([call('collect', '{"stamp":"arrival"}')]);
     expect(headline(s)).toBe(`${APP} wants to use stamps.testnet (collect)`);
-    expect(text(s.fee!)).toBe('free for you: someone else pays it');
+    // One row replaces the fee row and the NEAR-leaving row: never "Journear pays" (a partner may relay it).
+    expect(s.fee).toBeNull();
+    expect(text(s.cost!)).toBe('nothing. Someone else pays the fee.');
     expect(s.explainable).toBe(true);
-    expect(s.warnings).toEqual([]);
+    expect(warnings(s)).toEqual([['warning', 'acts_as_you', 'This acts as you: stamps.testnet can use anything you keep with it.']]);
+  });
+
+  it('D858: "costs nothing" only when nothing of the user’s can leave; otherwise the fee row stays (the page keeps the total row)', () => {
+    const free = (s: ApprovalSummary) => [s.cost === undefined ? null : text(s.cost), s.fee === null ? null : text(s.fee)];
+    const fee = 'free for you: someone else pays it';
+    // A transfer in a delegate action is the relayer's NEAR (nearcore): nothing of the user's; no call, so no acts-as-you.
+    const t = delegate([{ type: 'transfer', deposit: 10n ** 24n }], 'bob.testnet');
+    expect(free(t)).toEqual(['nothing. Someone else pays the fee.', null]);
+    expect(codes(t)).toEqual([]);
+    // A deposit attached to a plain call is the relayer's too.
+    expect(free(delegate([call('collect', '{}', 10n ** 22n)]))).toEqual(['nothing. Someone else pays the fee.', null]);
+    // Tokens the user holds: a token transfer, a permission, a value-like method, an unreadable or non-standard call.
+    for (const a of [
+      call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"5"}', 1n),
+      call('nft_transfer', '{"receiver_id":"bob.testnet","token_id":"7"}', 1n),
+      call('nft_approve', '{"token_id":"7","account_id":"m.testnet"}', 1n),
+      call('storage_withdraw', '{}'),
+      call('add', Uint8Array.of(0xff)),
+      call('ft_transfer', '{"receiver_id":"bob.testnet","amount":5}', 1n),
+    ]) {
+      const s = delegate([a], 'tok.testnet');
+      expect(free(s)).toEqual([null, fee]);
+      expect(codes(s)).toContain('acts_as_you');
+    }
+    // On the user's own account (its own contract runs as the account): never free, no acts-as-you (the red line says it).
+    const own = delegate([call('m', '{}')], NEAR_ME);
+    expect(free(own)).toEqual([null, fee]);
+    expect(codes(own)).not.toContain('acts_as_you');
+    // Steps left out of the lines: never free, even when each is a plain call.
+    const many = delegate(['a', 'b', 'c', 'd', 'e'].map((m) => call(m, '{}')), 'tok.testnet');
+    expect(free(many)).toEqual([null, fee]);
+    // The user's own transaction is never "free": it pays its fee.
+    expect(near([call('collect', '{}')]).cost).toBeUndefined();
   });
 
   it('arguments that aren’t JSON, or a method name that can’t be shown: not explainable', () => {
@@ -659,8 +694,8 @@ describe('NEAR standard calls: strict arguments, value-like names (review of the
   it('a relayed (delegate) call is held to the same rules', () => {
     const s = delegate([call('ft_transfer', '{"receiver_id":"bob.testnet","amount":"1","memo":{}}', 1n)], 'tok.testnet');
     expect(s.explainable).toBe(false);
-    expect(codes(s)).toEqual(['cannot_explain']);
-    expect(codes(delegate([call('storage_withdraw', '{}')], 'tok.testnet'))).toEqual(['may_move_tokens']);
+    expect(codes(s)).toEqual(['cannot_explain', 'acts_as_you']);
+    expect(codes(delegate([call('storage_withdraw', '{}')], 'tok.testnet'))).toEqual(['may_move_tokens', 'acts_as_you']);
   });
 });
 

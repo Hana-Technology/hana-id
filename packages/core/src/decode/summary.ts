@@ -65,7 +65,9 @@ export type SummaryWarningCode =
   /** Raw signing: Journear can't read what is signed at all. */
   | 'raw_signing'
   /** A sponsored EVM action that also sets the account up (its EIP-7702 authorization): the one-time setup note. */
-  | 'account_setup';
+  | 'account_setup'
+  /** A relayed NEAR action that calls another account's contract: it acts as the user there (D858). */
+  | 'acts_as_you';
 
 export interface SummaryWarning {
   /** `danger`: red, the popup's strongest style; `warning`: amber. Both always visible, never folded. */
@@ -83,8 +85,14 @@ export interface ApprovalSummary {
   readonly lines: readonly SummaryText[];
   /** The most the network fee can be, as a value ("up to 0.000042 ETH"), or null when the request costs no fee itself. */
   readonly fee: SummaryText | null;
-  /** The network the request is bound to, as a value ("Sepolia (testnet)"), when the request names one. NEAR's line is the page's. */
+  /** The network the request is bound to, as a value ("Sepolia (test network)"), when the request names one. NEAR's line is the page's. */
   readonly network: SummaryText | null;
+  /**
+   * What the request costs the user, when it is nothing at all (D858): a relayed NEAR action that takes none of the
+   * user's NEAR and moves none of their tokens that Journear can see. It replaces the fee row and the "NEAR leaving
+   * your account" row; `fee` is then null. Absent whenever anything of the user's may leave.
+   */
+  readonly cost?: SummaryText;
   readonly warnings: readonly SummaryWarning[];
   /** False when Journear can't say what the request does: a risk warning says so (the details still start folded). */
   readonly explainable: boolean;
@@ -1515,6 +1523,20 @@ function nearMovesValue(a: NearAction): boolean {
   }
 }
 
+/** D858: the one row of a relayed NEAR action that costs the user nothing. Never "Journear pays": a partner may relay it. */
+export const RELAYED_COST_NOTHING: SummaryText = Object.freeze(['nothing. Someone else pays the fee.']) as SummaryText;
+
+/**
+ * D858: the risk that a relayed call acts as the user (it was half of the blue relayer note): the contract it calls can
+ * use anything the user keeps with it. Amber, named by the receiver (an account id the decoder checked).
+ */
+export const actsAsYou = (receiver: string): SummaryWarning => ({
+  level: 'warning',
+  code: 'acts_as_you',
+  text: ['This acts as you: ', code(receiver), ' can use anything you keep with it.'],
+  short: ['Acts as you with ', code(receiver)],
+});
+
 function nearActions(actions: readonly NearAction[], receiver: string, me: string, relayed: boolean): ApprovalSummary {
   const warnings: SummaryWarning[] = [];
   const done = actions.map((a) => nearAction(a, receiver, me, warnings));
@@ -1544,11 +1566,23 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
   // The generic red line, unless an action already said in red what Journear can't read (a malformed standard call).
   if (unreadable && !warnings.some((w) => w.code === 'cannot_explain')) warnings.unshift(cannotTell('danger'));
   if (hidden) warnings.push(stepsNotListed(done.length, hidden.n, hidden.risk));
+  // D858: nothing of the user's leaves when every action is a transfer (the relayer's NEAR, nearcore) or a plain call
+  // Journear reads as "use {contract} ({method})" on another account, every step is in a line, and no line warns of
+  // anything (no token transfer or permission, no value-like method, nothing unreadable or left out). Anything else
+  // keeps the fee row and the "NEAR leaving your account" row as decided (D723, D729).
+  const costsNothing =
+    relayed &&
+    receiver !== me &&
+    warnings.length === 0 &&
+    explainable &&
+    actions.every((a, i) => a.type === 'transfer' || (a.type === 'functionCall' && (done[i] as { step: Step }).step.order === 3));
+  if (relayed && receiver !== me && actions.some((a) => a.type === 'functionCall')) warnings.push(actsAsYou(receiver));
   return {
     headline,
     lines,
-    fee: relayed ? ['free for you: someone else pays it'] : ['a small amount of NEAR, from your account'],
+    fee: costsNothing ? null : relayed ? ['free for you: someone else pays it'] : ['a small amount of NEAR, from your account'],
     network: null,
+    ...(costsNothing ? { cost: RELAYED_COST_NOTHING } : {}),
     warnings,
     explainable,
     shownSteps,

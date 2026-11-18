@@ -756,8 +756,8 @@ clicking in place without moving the mouse, Enter and Space never arm it. That s
 tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) carry a line that the signature
 isn't tied to one network: they are valid wherever the key is. For a test app every request and consent screen also
 says that Journear Passport signs only for test networks (for a test app with Journear's mainnet demo on, it says what the demo signs
-instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (testnet)", with the chain ID beside it) and
-gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
+instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (test network)", with "network no.
+11155111" beside it) and gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
 
 ### Stellar
 
@@ -999,7 +999,11 @@ action fails its NEAR is refunded to the user's account. So the user's balance g
 account itself: deleting it (everything), staking (locked), publishing a global contract (burnt), a call to a contract
 on the user's own account (it decides what it moves: the popup says "Unknown") and fees spent through a function-call
 key the action adds (up to its allowance). The actions run as the user's account, so a contract they call acts in the
-user's name (it can move tokens the user holds there).
+user's name (it can move tokens the user holds there). The approval window says so in that order: a plain call or a
+transfer reads "Cost to you: nothing. Someone else pays the fee." with an amber "This acts as you: {contract} can use
+anything you keep with it."; anything that can take the user's NEAR or tokens keeps the fee row and a "NEAR leaving
+your account" row instead. For a live app it also says, in amber, that the approval could be used on the other NEAR
+network if the account exists there.
 
 <a id="near-relay"></a>**Journear Passport's relay** (`hana.near.relay`, `POST /v1/near/relay`; `hana.near.activate`,
 `POST /v1/near/activate`). Testnet only, and running on sandbox-dev. Both are checked against your publishable key and

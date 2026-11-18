@@ -515,11 +515,15 @@ function message(d: Dom, m: DecodedMessage): HTMLElement[] {
 export const NEAR_ACCOUNT_CONTROL_BANNER =
   `Danger: this changes who controls a NEAR account. Whoever gets control can take everything in it, and ${BRAND.product} can’t undo it. Approve only if you started this change yourself. An app should almost never need it.`;
 
-/** A delegate action (NEP-366) names no network; someone else sends it and pays its fee. */
+/**
+ * A delegate action (NEP-366): who pays, in the details (D858: the window's cost row and the amber "acts as you" line
+ * say it above the fold); and, for a live app only, that it names no network (amber, D858: a test app's delegate
+ * actions are bound to the test network by the vault, D726, D729).
+ */
 export const NEAR_DELEGATE_NOTES = {
   relayer:
-    'Someone else sends this for you. They pay the network fee and any NEAR it sends. If a step fails, that NEAR comes back to your account. It acts as you: a program it uses can move tokens you keep with it.',
-  network: 'This approval doesn’t name a network. It works on any NEAR network where your account has this key.',
+    'Someone else (a relayer) sends this for you. They pay the network fee and prepay any NEAR it attaches or sends; if an action fails, that NEAR comes back to your account. The actions run as your account.',
+  network: (network: 'testnet' | 'mainnet'): string => `This approval could also be used on the ${network === 'testnet' ? 'real NEAR network' : 'NEAR test network'} if your account exists there.`,
 } as const;
 
 /** NEP-413's guidance: the recipient, prominently, and what the signature proves. */
@@ -871,14 +875,23 @@ function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>, 
   };
 }
 
-function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>, ctx: NearRenderContext): Parts {
+/**
+ * D858: a relayed NEAR action. When it costs the user nothing (`summary.cost`), the cost row replaces the fee row and
+ * the "NEAR leaving your account" row (what it sends is someone else's, said in its own row); otherwise both stay as
+ * decided (D723, D729). The acts-as-you risk is the summary's amber line. For a live app only, the amber line that the
+ * approval names no network; a test app's is bound to the test network by the vault (D726, D729).
+ */
+function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>, ctx: NearRenderContext, summary: ApprovalSummary): Parts {
   const da = decoded.delegate;
+  const alerts = nearAlerts(d, da.actions, da.receiverId, da.senderId);
+  const sent = nearDeposits(da.actions).total;
   return {
-    alerts: nearAlerts(d, da.actions, da.receiverId, da.senderId),
+    alerts: ctx.testApp ? alerts : { ...alerts, warnings: [...alerts.warnings, risk(5, 'warn no-network', [NEAR_DELEGATE_NOTES.network(decoded.network)], [])] },
     network: nearNetworkLine('near_delegate', decoded.network, ctx),
-    visible: [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId), noteLine(d, 'note', NEAR_DELEGATE_NOTES.relayer), noteLine(d, 'note', NEAR_DELEGATE_NOTES.network)],
+    visible: summary.cost ? (sent > 0n ? [facts(d, [row(d, 'NEAR it sends, paid by someone else', nearDisplay(sent))])] : []) : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
     details: [
       d.h('h3', {}, 'NEAR transaction, fee paid by a relayer'),
+      d.h('p', { class: 'muted relayer-note' }, NEAR_DELEGATE_NOTES.relayer),
       facts(d, [
         row(d, 'Network', nearNetworkDetail('near_delegate', decoded.network, ctx)),
         row(d, 'From', mono(d, da.senderId)),
@@ -1022,7 +1035,7 @@ function summaryNodes(d: Dom, t: SummaryText, appName: string): Child[] {
 
 /** Ranks in the boxes (D814): control, unreadable, unlimited spend, own-contract or burn, left-out steps, the rest. */
 const RED_RANK: Partial<Record<SummaryWarning['code'], number>> = { raw_signing: 1, cannot_explain: 1, summary_failed: 1, unlimited_spend: 2, collection_operator: 2, permit_lookalike: 2, steps_not_listed: 4 };
-const AMBER_RANK: Partial<Record<SummaryWarning['code'], number>> = { cannot_explain: 1, contract_creation: 1, steps_not_listed: 2, spend_permission: 3, may_move_tokens: 3, sign_in_mismatch: 4, account_setup: 4 };
+const AMBER_RANK: Partial<Record<SummaryWarning['code'], number>> = { cannot_explain: 1, contract_creation: 1, steps_not_listed: 2, spend_permission: 3, may_move_tokens: 3, acts_as_you: 3, sign_in_mismatch: 4, account_setup: 4 };
 
 /** A warning of the summary as a box item, classes keyed on its code. */
 function summaryItem(d: Dom, w: SummaryWarning, appName: string): RiskItem {
@@ -1086,7 +1099,7 @@ export interface ApprovalRenderContext extends NearRenderContext {
   readonly nowMs?: number;
 }
 
-function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext, nowMs?: number): Parts {
+function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext, summary: ApprovalSummary, nowMs?: number): Parts {
   switch (decoded.kind) {
     case 'stellar_tx': {
       const memo = decoded.envelope.tx.memo;
@@ -1152,7 +1165,7 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
     case 'near_tx':
       return nearTx(d, decoded, near);
     case 'near_delegate':
-      return nearDelegate(d, decoded, near);
+      return nearDelegate(d, decoded, near, summary);
     case 'near_message':
       return nearMessage(d, decoded, near);
   }
@@ -1164,7 +1177,7 @@ export const TYPED_DATA_NO_CHAIN = 'This signature isn’t tied to one network. 
 /** The body of the approval screen for a decoded request. */
 export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, ctx: ApprovalRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
   const summary: ApprovalSummary = summarizeApproval(decoded, { address: ctx.address ?? '', ...(ctx.parentOrigin ? { parentOrigin: ctx.parentOrigin } : {}) });
-  const k = kindParts(d, decoded, appName, ctx, ctx.nowMs);
+  const k = kindParts(d, decoded, appName, ctx, summary, ctx.nowMs);
   // A control change's bullet repeats nothing: when its step's own line is in view (the headline of a single step, or a
   // grouped line, which names the whole key, signer or address), the bullet is dropped. The banner always stays, and
   // steps left out of the lines keep their bullets (the summary's step_left_out).
@@ -1174,7 +1187,7 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
   const amberBox = riskBox(d, 'warning', [...summary.warnings.filter((w) => w.level === 'warning').map((w) => summaryItem(d, w, appName)), ...k.alerts.warnings]);
   const network = summary.network ? summaryNodes(d, summary.network, appName) : k.network ? [k.network] : null;
   const headline = amountHeadline(decoded);
-  const keyFacts = [network && row(d, 'Network', ...network), summary.fee && row(d, 'Network fee', ...summaryNodes(d, summary.fee, appName))];
+  const keyFacts = [network && row(d, 'Network', ...network), summary.fee && row(d, 'Network fee', ...summaryNodes(d, summary.fee, appName)), summary.cost && row(d, 'Cost to you', ...summaryNodes(d, summary.cost, appName))];
   return d.h(
     'div',
     { class: 'request jp-confirm', attrs: { 'data-explainable': String(summary.explainable) } },

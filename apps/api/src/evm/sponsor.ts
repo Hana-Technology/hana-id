@@ -909,16 +909,10 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   lap(ctx, 'chain');
   if (chainNonce === null) return rpcDown(ctx);
   if (req.executeNonce !== chainNonce) {
-    if (req.executeNonce < chainNonce) {
-      // Used on chain: the floor rises past this batch's own nonce (never to the RPC's figure, which a lying node could
-      // inflate), so it and every older one are dropped before any count from now on; the account's minute comes back.
-      try {
-        await limiter(env, account).raiseFloor(NONCE_FLOOR, (req.executeNonce + 1n).toString());
-      } catch {
-        return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again', { 'retry-after': '1' });
-      }
-      await giveBack(env, own.slice(0, 1), ownAt);
-    }
+    // Used on chain at head: the account's minute comes back. The nonce floor is NOT raised from this head read (a reorg
+    // could undo it and leave the floor above the chain's nonce for good): only the relayer's verdict at confirmed depth
+    // raises it (sponsor-settle.ts).
+    if (req.executeNonce < chainNonce) await giveBack(env, own.slice(0, 1), ownAt);
     return done(ctx, 409, { error: 'The batch nonce is not the account’s next', code: 'nonce_stale', executeNonce: chainNonce.toString() });
   }
   // The reservation is the worst case: gas at the fee cap (the relayer may replace the transaction with fees up to it),

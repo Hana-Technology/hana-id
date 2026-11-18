@@ -77,7 +77,8 @@ export function billingStatement(env: Env, sendId: string, status: string, outco
 /**
  * A correction (D847): the send's final figures when the relayer's verdict at confirmed depth names another of its
  * transactions than the receipt it was settled from (a reorg). A new record keyed 'fix:<send>' that names the record it
- * supersedes; the first is never edited. INSERT OR IGNORE: one correction per send.
+ * supersedes; the first is never edited. INSERT OR IGNORE: one correction per send. Never for a relayer replay (its
+ * transaction is the original send's, which carries the record and its correction).
  */
 export function correctionStatement(env: Env, sendId: string, corrects: string, outcome: BillingOutcome, settledWei: bigint, figures: BillingFigures, now: number): D1PreparedStatement {
   return env.DB.prepare(
@@ -87,7 +88,7 @@ export function correctionStatement(env: Env, sendId: string, corrects: string, 
      SELECT s.chain_id, 'fix:' || s.id, s.id, a.org_id, s.app_id, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, s.call_count, s.targets_json,
             s.with_setup, s.created_at, ?14, ?15
        FROM evm_sponsor_sends s JOIN apps a ON a.id = s.app_id
-      WHERE s.id = ?1`,
+      WHERE s.id = ?1 AND s.replay = 0`,
   ).bind(
     sendId,
     env.ENV_NAME,

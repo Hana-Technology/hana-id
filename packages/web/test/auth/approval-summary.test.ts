@@ -25,7 +25,8 @@ import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { ACCOUNT_CONTROL_BANNER, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NO_NETWORK_NOTE, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
 import { PASSPHRASE, USER, addSignerOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
-import { jargonWatch } from './plain-words.ts';
+import { idProblems, jargonWatch, shownText } from './plain-words.ts';
+import { shortId } from '@hana-id/core/decode';
 import { ENV, FakeWindow, PARTNER, type RemoteWindow, asWindow, remoteWindow, resetDom } from './helpers.ts';
 
 /** A public key computed here (never a literal in the source), for the full-key assertions. */
@@ -135,7 +136,7 @@ describe('warnings are never folded', () => {
     const el = render(evm({ to: TOKEN, value: '0x0', data: approveData(2n ** 256n - 1n) }));
     const w = el.querySelector('p.summary-warning.unlimited-spend');
     expect(w?.closest('.danger-box')?.classList.contains('jp-alert-danger')).toBe(true);
-    expect(w?.textContent).toContain(`This lets ${SPENDER} (not checked by Journear) take all your tokens from ${TOKEN} (an unlisted token), now or later, with no limit`);
+    expect(shownText(w)).toContain(`This lets ${shortId(SPENDER)} (not checked by Journear) take all your tokens from ${shortId(TOKEN)} (an unlisted token), now or later, with no limit`);
     expect(folded(w)).toBe(false);
     expect(details(el)?.open).toBe(false);
   });
@@ -145,7 +146,7 @@ describe('warnings are never folded', () => {
     const w = el.querySelector('p.summary-warning.spend-permission');
     expect(w?.textContent).toContain('item no. 0');
     expect(folded(w)).toBe(false);
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`Partner App wants to change ${SPENDER}’s permission for ${TOKEN}`);
+    expect(shownText(el.querySelector('h2.summary-headline'))).toBe(`Partner App wants to change ${shortId(SPENDER)}’s permission for ${shortId(TOKEN)}`);
   });
 
   it('99 harmless actions and one full-access key: the red banner sits right under the headline; the details start open (review M2)', () => {
@@ -166,7 +167,11 @@ describe('warnings are never folded', () => {
     expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual([]);
     expect(aboveFold(el).split(KEY9).length - 1).toBe(1);
     expect(el.querySelectorAll('.jp-alert-danger')).toHaveLength(1);
-    expect([...el.querySelectorAll('p.summary-line')].map((p) => p.textContent)).toEqual([`Give full control of your account to another key, ${KEY9}`, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
+    expect([...el.querySelectorAll('p.summary-line')].map(shownText)).toEqual([`Give full control of your account to another key, ${shortId(KEY9)}`, 'Send NEAR to your account, 99 times (less than 0.000001 NEAR in total)']);
+    // D859: the whole key once, in its own row right under its line.
+    const keyRow = el.querySelector('p.summary-line + dl.id-rows');
+    expect(keyRow?.querySelector('dt')?.textContent).toBe('Key');
+    expect(keyRow?.querySelector('dd')?.textContent).toBe(KEY9);
     expect(details(el)?.open).toBe(false);
   });
 
@@ -225,7 +230,7 @@ describe('hostile values stay text', () => {
     const name = '<img src=x onerror=alert(1)>';
     const el = render(evm({ to: TOKEN, value: '0x0', data: '0xdeadbeef' }), name);
     expect(el.querySelector('img')).toBeNull();
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${name} wants to use the program ${TOKEN}`);
+    expect(shownText(el.querySelector('h2.summary-headline'))).toBe(`${name} wants to use the program ${shortId(TOKEN)}`);
     // The red line names no app (its ending is "If you’re not sure, reject it."); an amber one does, as text.
     expect(el.querySelector('p.cannot-explain')?.textContent).toContain('If you’re not sure, reject it.');
     const amber = render(decodeApprovalRequest({ kind: 'personal_sign', chain: 'evm', address: EVM, context: {}, bytes: new Uint8Array([0, 0xff]) }), name);
@@ -472,5 +477,71 @@ describe('a control change is named whole above the fold: once in its own line, 
       const bullets = [...el.querySelectorAll('.danger-box li')].map((li) => li.textContent ?? '').join('\n');
       for (const key of named) if (lines.includes(key) && !bullets.includes('Not in the lines above')) expect(bullets.includes(key), `${key} repeated in round ${round}`).toBe(false);
     }
+  });
+});
+
+describe('D859: addresses and keys in sentences: short there, whole once in their own row', () => {
+  const word = (v: string | bigint) => (typeof v === 'string' ? v.slice(2).toLowerCase().padStart(64, '0') : v.toString(16).padStart(64, '0'));
+  const data = (sig: string, ...args: (string | bigint)[]) => `${parseFunctionSignature(sig).selector}${args.map(word).join('')}`;
+  const idRows = (el: Element) => [...(el.matches('dl.id-rows') ? [el] : []), ...el.querySelectorAll('dl.id-rows')].flatMap((dl) => [...dl.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]));
+
+  it('one recipient: its short form in the sentence, the whole value in a "To" row right under it, grouped in fours', () => {
+    const el = render(evm({ to: TOKEN, value: '0x0', data: data('transfer(address,uint256)', SPENDER, 5n) }));
+    expect(shownText(el.querySelector('h2.summary-headline'))).toBe(`Partner App wants to send 5 units of an unlisted token to ${shortId(SPENDER)}`);
+    expect(el.children[1]?.matches('dl.id-rows')).toBe(true);
+    expect(idRows(el.children[1]!)).toEqual([['To', SPENDER]]);
+    // The groups: "0x" then fours, spaced by CSS so the text is the value exactly.
+    expect([...el.children[1]!.querySelectorAll('.grp')].map((g) => g.textContent)).toEqual(['0x', ...SPENDER.slice(2).match(/.{4}/gu)!]);
+    // The short form and the row come from the same value; the short form is hidden from screen readers.
+    const short = el.querySelector('h2 code.short-id')!;
+    expect(short.textContent).toBe(shortId(SPENDER));
+    expect(short.getAttribute('aria-hidden')).toBe('true');
+    expect(short.nextElementSibling?.textContent).toBe(' (written out below)');
+    expect(idProblems(el)).toEqual([]);
+  });
+
+  it('two different addresses with the same short form: numbered in the sentence, both whole in their rows', () => {
+    const a = `0x1234${'5'.repeat(32)}abcd`;
+    const b = `0x1234${'6'.repeat(32)}abcd`;
+    // The decoder writes them EIP-55 ("…abcD", "…aBcd"): short forms that differ only in letter case still look alike.
+    expect(shortId(a)).toBe(shortId(b));
+    const el = render(evm({ to: TOKEN, value: '0x0', data: data('transferFrom(address,address,uint256)', a, b, 5n) }));
+    const head = shownText(el.querySelector('h2.summary-headline'))!;
+    expect(head).toBe('Partner App wants to move 5 units of an unlisted token from account 1 to account 2');
+    expect(head).not.toContain(shortId(a));
+    expect(idRows(el.children[1]!).map(([l, v]) => [l, v?.toLowerCase()])).toEqual([['From (account 1)', a], ['To (account 2)', b]]);
+    expect(idProblems(el)).toEqual([]);
+  });
+
+  it('an address that shares the user’s own short form (a look-alike of the account line) is numbered, never shown by it', () => {
+    const lookalike = `${EVM.slice(0, 6)}${'0'.repeat(32)}${EVM.slice(-4)}`;
+    expect(shortId(lookalike)).toBe(shortId(EVM));
+    const el = render(evm({ to: lookalike }));
+    expect(shownText(el.querySelector('h2.summary-headline'))).toBe('Partner App wants to send 1 ETH to account 1');
+    expect(el.textContent?.toLowerCase()).not.toContain(shortId(EVM).toLowerCase());
+    expect(idRows(el).map(([l, v]) => [l, v?.toLowerCase()])).toEqual([['To (account 1)', lookalike]]);
+  });
+
+  it('a value named twice gets one row, under the first sentence that names it (the headline’s come right after the red box)', () => {
+    const el = render(evm({ to: TOKEN, value: '0x0', data: approveData(2n ** 256n - 1n) }));
+    const box = el.querySelector('.danger-box')!;
+    // The token is the headline's: its row comes right after the red box; the spender's row is in the box, under its line.
+    expect(idRows(box)).toEqual([['Who gets the permission', SPENDER]]);
+    expect(box.nextElementSibling?.matches('dl.id-rows')).toBe(true);
+    expect(idRows(box.nextElementSibling!)).toEqual([['Token', TOKEN]]);
+    expect(idProblems(el)).toEqual([]);
+  });
+
+  it('a readable NEAR name stays whole in the sentence with no row; an implicit account is cut and gets one', () => {
+    const pub = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+    const me = nearImplicitAccountId(pub);
+    const other = nearImplicitAccountId(new Uint8Array(32).fill(7));
+    const tx = (receiverId: string) => encodeNearTransaction({ signerId: me, publicKey: { type: 'ed25519', bytes: pub }, nonce: 1n, receiverId, blockHash: sha256(utf8('b')), actions: [{ type: 'transfer', deposit: 10n ** 24n }] });
+    const named = render(decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: me, context: { nearNetwork: 'testnet' }, bytes: tx('e2e-stamps.testnet') }), 'Partner App', me);
+    expect(shownText(named.querySelector('h2.summary-headline'))).toBe('Partner App wants to send 1 NEAR to e2e-stamps.testnet');
+    expect(named.querySelector('dl.id-rows')).toBeNull();
+    const implicit = render(decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: me, context: { nearNetwork: 'testnet' }, bytes: tx(other) }), 'Partner App', me);
+    expect(shownText(implicit.querySelector('h2.summary-headline'))).toBe(`Partner App wants to send 1 NEAR to ${shortId(other)}`);
+    expect(idRows(implicit)).toEqual([['To', other]]);
   });
 });

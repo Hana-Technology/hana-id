@@ -35,7 +35,8 @@ import {
   sponsoredCall,
 } from '../../../core/test/evm-sponsored-fixture.ts';
 import { ENV, FakeWindow, PARTNER, type RemoteWindow, asWindow, remoteWindow, resetDom } from './helpers.ts';
-import { jargonWatch } from './plain-words.ts';
+import { jargonWatch, shownText } from './plain-words.ts';
+import { shortId } from '@hana-id/core/decode';
 
 const APP = 'Partner App';
 /** A contract Journear doesn't know, called with the check-in's selector. */
@@ -60,14 +61,14 @@ const fact = (el: ParentNode, label: string): string | null => {
   const dt = [...el.querySelectorAll('dt')].find((x) => x.textContent === label);
   return dt?.nextElementSibling?.textContent ?? null;
 };
-const lines = (el: ParentNode) => [...el.querySelectorAll('p.summary-line')].map((p) => p.textContent);
+const lines = (el: ParentNode) => [...el.querySelectorAll('p.summary-line')].map(shownText);
 
 beforeEach(() => document.body.replaceChildren());
 
 describe('a sponsored action’s window', () => {
   it('first time, one known call: its headline, the fee line, the amber setup note (lead); the details folded with the setup row', () => {
     const el = render(decodeSponsored({ authNonce: 0n, calls: [sponsoredCall(TOKEN, TRANSFER)] }));
-    expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${RECIPIENT}`);
+    expect(shownText(el.querySelector('h2.summary-headline'))).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${shortId(RECIPIENT)}`);
     expect(el.dataset.explainable).toBe('true');
     expect(el.querySelector('.danger-box')).toBeNull();
     expect(el.querySelectorAll('.warning-box')).toHaveLength(1);
@@ -111,8 +112,8 @@ describe('a sponsored action’s window', () => {
 
   it('an unlimited approve inside a sponsored batch: the red warning leads, the setup note in the amber box', () => {
     const el = render(decodeSponsored({ authNonce: 0n, calls: [sponsoredCall(TOKEN, APPROVE_MAX)] }));
-    expect(el.querySelector('.danger-box p.risk-lead.summary-warning.unlimited-spend')?.textContent).toBe(
-      `This lets ${SPENDER} (not checked by Journear) take all your tokens from ${TOKEN} (an unlisted token), now or later, with no limit. Approve only if you trust them completely.`,
+    expect(shownText(el.querySelector('.danger-box p.risk-lead.summary-warning.unlimited-spend'))).toBe(
+      `This lets ${shortId(SPENDER)} (not checked by Journear) take all your tokens from ${shortId(TOKEN)} (an unlisted token), now or later, with no limit. Approve only if you trust them completely.`,
     );
     expect(el.querySelector('.warning-box p.risk-lead')?.textContent).toBe(SETUP);
     // The red box comes right under the headline, the amber one after the fee row.
@@ -124,7 +125,7 @@ describe('a sponsored action’s window', () => {
   it('several calls: grouped lines; every call in the details, numbered', () => {
     const el = render(decodeSponsored({ calls: [sponsoredCall(TOKEN, TRANSFER), sponsoredCall(TOKEN, TRANSFER), sponsoredCall(UNKNOWN, CHECK_IN_DATA)] }));
     expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to do 3 things at once`);
-    expect(lines(el)).toEqual([`2 times: send 5,000,000 units of an unlisted token to ${RECIPIENT}. Journear doesn’t know this token (${TOKEN}), so it can’t tell what 5,000,000 units are worth. Check the amount in ${APP} first.`, `Use the program ${UNKNOWN}`]);
+    expect(lines(el)).toEqual([`2 times: send 5,000,000 units of an unlisted token to ${shortId(RECIPIENT)}. Journear doesn’t know this token (${shortId(TOKEN)}), so it can’t tell what 5,000,000 units are worth. Check the amount in ${APP} first.`, `Use the program ${shortId(UNKNOWN)}`]);
     expect([...details(el).querySelectorAll('ol.ops > li.op > h3')].map((h) => h.textContent)).toEqual(['1. Call', '2. Call', '3. Call']);
     expect(details(el).querySelector('h2')?.textContent).toBe('3 calls');
   });
@@ -143,7 +144,9 @@ describe('Journear’s demo check-in (D854)', () => {
   it('reads plainly with no box, its name and address in view; the details name its function', () => {
     const el = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
     expect(el.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to check you in`);
-    expect(lines(el)).toEqual(['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${CHECK_IN}, checked by Journear).`]);
+    expect(lines(el)).toEqual(['This is Journear’s demo check-in. It doesn’t move any money or tokens.', `It uses Journear demo check-in (${shortId(CHECK_IN)}, checked by Journear).`]);
+    // D859: the whole address once, in its own row right under its line.
+    expect(shownText(el.querySelector('p.summary-line + p.summary-line + dl.id-rows'))).toBe(`Program${CHECK_IN}`);
     expect(el.querySelector('.risk-box')).toBeNull();
     expect(el.dataset.explainable).toBe('true');
     expect(details(el).textContent).toContain('Function checkIn() 0x183ff085');
@@ -205,8 +208,8 @@ describe('/approve: a sponsored action is checked against this build', () => {
     start(SPONSOR_ENV);
     const m = request({ authNonce: 0n, calls: [sponsoredCall(TOKEN, TRANSFER)] });
     win.message(m, ENV.vaultOrigin, vault);
-    expect(document.querySelector('h2.summary-headline')?.textContent).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${RECIPIENT}`);
-    expect(document.querySelector('p.account')?.textContent).toBe(`Your Ethereum-style account ${SPONSOR_ME}`);
+    expect(shownText(document.querySelector('h2.summary-headline'))).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${shortId(RECIPIENT)}`);
+    expect(shownText(document.querySelector('p.account'))).toBe(`Your account: ${shortId(SPONSOR_ME)} (Ethereum-style)`);
     expect(approveButton()).not.toBeNull();
     vi.advanceTimersByTime(GUARD_DELAY_MS);
     win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1 });

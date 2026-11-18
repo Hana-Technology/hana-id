@@ -691,7 +691,9 @@ Every signing request goes through the user. The Journear Passport popup decodes
 misdescribe them. It starts with one plain sentence built only from those bytes ("Your App wants to send 0.1 NEAR to
 bob.testnet", "Your App wants to use stamps.testnet (collect)", "Your App wants you to sign a message"), the network
 and the most the network fee can be; a plain transfer (EVM value with no call data on a chain it names, one native XLM
-payment or account creation, NEAR transfers only) also shows the amount large ("Sends 0.001 ETH"). Every warning is
+payment or account creation, NEAR transfers only) also shows the amount large ("Sends 0.001 ETH"). An address or key in a
+sentence is shortened (`0x3333…3333`) and written out whole once, in its own labelled row right under it (two that
+look alike are numbered "account 1", "account 2"). Every warning is
 always in view, the red ones right under that sentence: changes to who controls the account, raw signing, and any request that lets someone spend the
 user's tokens (an ERC-20 `approve` or `increaseAllowance`, `setApprovalForAll`, EIP-2612 and Permit2 signatures, a
 Soroban token `approve`, NEAR's `nft_approve`), red when the amount has no limit, with the spender named when Journear

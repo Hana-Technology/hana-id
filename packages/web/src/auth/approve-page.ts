@@ -32,15 +32,15 @@ import {
   consentDigest,
   parseWindowMessage,
 } from '@hana-id/core';
-import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
+import { type DecodedApproval, decodeApprovalRequest, shortId } from '@hana-id/core/decode';
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './approve-guard.ts';
-import { type Dom, dom, errorView, originText } from './dom.ts';
+import { type Dom, dom, errorView, originText, row, rows } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
-import { renderApproval, watchOverflowing } from './render-approval.ts';
+import { fullId, renderApproval, watchOverflowing } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
 import { alert } from './ui.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
@@ -49,6 +49,13 @@ import { type DemoBridge, type DemoNetwork, type DemoSwap, MAINNET_DEMO, assessM
 /** How long the popup waits for a follow-up request after an answer before it closes. */
 /** The account line's chain names. */
 const ACCOUNT_CHAIN_NAMES = { stellar: 'Stellar', evm: 'Ethereum-style', near: 'NEAR' } as const;
+
+/**
+ * The account line (D859): "Your account: 6e5e4e…f350 (NEAR)", the short form only, hidden from screen readers, which
+ * read the whole account in the details' first row (where a sighted user finds it too).
+ */
+export const accountLine = (d: Dom, chain: keyof typeof ACCOUNT_CHAIN_NAMES, address: string): HTMLElement =>
+  d.h('p', { class: 'account' }, 'Your account: ', d.h('code', { class: 'mono short-id', attrs: { 'aria-hidden': 'true' } }, shortId(address)), d.h('span', { class: 'sr-only' }, ` ${address}`), ` (${ACCOUNT_CHAIN_NAMES[chain]})`);
 
 export const KEEP_OPEN_MS = 15_000;
 /** A partner-opened popup that no request reaches within this long says bye and closes (vault approvals.ts LATE_CLOSE_MS). */
@@ -424,10 +431,10 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
    * The refusal for a request this window can't read or show: no Approve. The plain line, what to do, and the reason
    * (a developer's words) folded, for support (D853).
    */
-  const unreadable = (problem: string, app: string): HTMLElement[] => [
+  const unreadable = (problem: string, app: string, address?: string): HTMLElement[] => [
     alert(d, 'danger', { class: 'danger' }, `${BRAND.company} can’t read this request, so it can’t be approved.`),
     d.h('p', { class: 'unreadable-next' }, UNREADABLE_NEXT[0], d.h('strong', {}, app), UNREADABLE_NEXT[1]),
-    d.h('details', { class: 'request-details unreadable-reason' }, d.h('summary', { class: 'details-toggle' }, 'Show details'), d.h('p', { class: 'muted' }, 'Error (for support): ', d.h('code', { class: 'mono' }, problem))),
+    d.h('details', { class: 'request-details unreadable-reason' }, d.h('summary', { class: 'details-toggle' }, 'Show details'), address ? rows(d, [row(d, 'Your account', fullId(d, address))], 'jp-kv facts your-account') : null, d.h('p', { class: 'muted' }, 'Error (for support): ', d.h('code', { class: 'mono' }, problem))),
   ];
 
   function showRequest(msg: WindowMessage<'hana:approve-request'>): void {
@@ -469,13 +476,13 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         'section',
         { class: 'panel approve' },
         header(msg, msg.queued > 1 || msg.position > 1 ? `Request ${msg.position} of ${msg.queued}` : undefined),
-        d.h('p', { class: 'account' }, `Your ${ACCOUNT_CHAIN_NAMES[msg.chain]} account `, d.h('code', { class: 'mono' }, msg.address)),
+        accountLine(d, msg.chain, msg.address),
         msg.emailShared ? emailSharedLine(msg.appName) : null,
         // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
         // Support ID goes. An unreadable request keeps the Support ID and the notes in view.
         decoded
-          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [supportId], nowMs: now() })
-          : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem, msg.appName)),
+          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [rows(d, [row(d, 'Your account', fullId(d, msg.address))], 'jp-kv facts your-account'), supportId], nowMs: now() })
+          : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem, msg.appName, msg.address)),
         buttons('Approve', decoded !== null, msg.id),
         auto?.active ? stopAutoApproveButton(auto.label) : null,
       );

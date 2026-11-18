@@ -12934,3 +12934,46 @@ founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`pac
   (nearcore `apply_delegate_action`). No fact was dropped: the refund rule and who pays are in the details, and the
   only row removed is the one that repeated the fee row.
 - Address impact: none.
+
+### D859. Addresses and keys in sentences: a name or a short form there, the whole value once in its own row
+- Date 2026-11-18 · Status: **decided by the user 2026-11-18**; details decided while building, to confirm · Amends
+  D809, D811, D814 · Built on `feat/plain-approval-wording`: `packages/core/src/decode/summary.ts` (`IdRole`, a code
+  part's `role`, `isLongId`, `shortId`), `packages/web/src/auth/render-approval.ts` (`IdBook`, `ID_LABELS`, `fullId`,
+  `summaryNodes`, `riskBox`, `renderApproval`), `auth/approve-page.ts` (`accountLine`, the details' "Your account"
+  row), `auth/css/approval.css` (`dl.id-rows`, `code.id-full`, `.sr-only`); tests
+  `packages/web/test/auth/approval-summary.test.ts` ("D859"), `packages/web/test/auth/plain-words.ts` (`idProblems`, run
+  on every window the web tests render), `approve-page.test.ts`, `apps/e2e/tests/approval-summary.spec.ts`.
+- Decision: a headline, line or warning names a value by a name when it has one ("your account", a checked contract's
+  name, a readable NEAR name such as `stamps.testnet`, shown whole as it is) or by its short form (`shortId`: first 6
+  and last 4 characters, a key's prefix kept: `0x3333…3333`, `GCI2FC…UNWJ`, `ed25519:cGfH…izuN`). The whole value
+  appears once above the fold, in its own labelled row right under the first sentence that names it ("To", "From",
+  "Token", "Collection", "Who gets the permission", "Whose permission", "Owner", "Key", "Program", "Account", "Pool",
+  "Fee paid by"), as code in groups of four for comparing (spaced by CSS, so the text and a copy of it are the value
+  exactly), never folded or cut. The headline's rows come right after the red box (D809: nothing between the
+  headline and the red box), so a control change's key row is right under the danger box (D814); a warning's rows are
+  inside its box under its line or bullet. Which values are cut is decided by the summary (a code part's role), never
+  by the page's guess: a method name, a token id, a sign-in domain, a NEP-413 recipient, a network passphrase stay
+  whole in the sentence as before.
+- Two different values with the same short form in one request (compared without letter case, as EIP-55 spellings
+  differ only there), or one with the user's own address's short form (the account line shows it), are never told
+  apart by it: each is numbered in its sentence and row ("account 1", "account 2"; "key 1" for keys), both rows shown.
+- Screen readers: the short form is `aria-hidden` and followed by a spoken "(written out below)"; they read the whole
+  value in its row.
+- The account line reads "Your account: 0x2c75…5c23 (Ethereum-style)" (Stellar, NEAR likewise), with the whole account
+  as the details' first row ("Your account"), before the Support ID; no copy button (kept simple, as decided). Screen
+  readers get the whole account on the line itself.
+- Tests: the short form and the row come from the same value (every rendered window in the web tests is checked: each
+  short form has a row whose value cuts to it, each value has exactly one row, a numbered value has a numbered row, no
+  sentence holds a whole value that has a row, every short form is hidden from screen readers); look-alike pairs on
+  EVM and against the user's own address; a NEAR readable name versus an implicit account.
+- Adversarial check (concluded): a short form is easy to grind (an EVM short form is 8 hex characters, about 32 bits),
+  so it is never the protection: the whole value is always in view, unfolded, labelled, grouped for comparing, and the
+  same value the decoder read (one source, tested). What the change could have made easier, and doesn't: a look-alike
+  of another address in the same request, or of the user's own address on the account line, can't hide behind a
+  matching short form (both are numbered, both rows shown); a look-alike of an address the user expects from outside
+  the request (a contract they know) shows a short form that matches what they remember, which is why the row stays
+  in view right under the sentence and not in the details, and the verified-contract names still come only from
+  Journear's list. Residual, accepted with D859: a user who reads only the sentence and not the row can be misled by a
+  ground short form; before D859 the same user saw the whole value in the sentence, but a 40-character value read in
+  a sentence is no stronger a check for that user than the grouped row.
+- Address impact: none.

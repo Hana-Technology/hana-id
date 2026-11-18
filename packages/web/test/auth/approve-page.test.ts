@@ -34,6 +34,7 @@ import { formatEndTime, lingeringSignaturesNote } from '../../src/auth/render-co
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { PASSPHRASE, USER, invocation, paymentOp, sorobanData, sourceAuth, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { Address, Operation, xdr } from '@stellar/stellar-base';
+import { shortId } from '@hana-id/core/decode';
 import { sodaxHubWalletOf } from '@hana-id/core/mainnet-demo';
 import { ENV, EVIL, FakeWindow, PARTNER, type RemoteWindow, asWindow, pageText, remoteWindow, resetDom } from './helpers.ts';
 import { OTHER, SODAX_ASSET_MANAGER_BASE, sodaxBridgeDeposit, sodaxEmptyDeposit, sodaxStellarSwapCalls, sodaxSwapDeposit } from '../vault/chains.ts';
@@ -235,12 +236,19 @@ describe('/approve', () => {
     }
   });
 
-  it('batch C15: shows the session’s Support ID, as text, first in the details (D808); none without one', () => {
+  it('batch C15: shows the session’s Support ID, as text, in the details right after the whole account (D808, D859); none without one', () => {
     const r = evmRequest({ supportId: 'HANA-2750-G5HM' });
     send(r);
     const line = document.querySelector('p.support-id');
     expect(line?.parentElement?.matches('details.request-details > .details-body')).toBe(true);
-    expect(line?.parentElement?.firstElementChild).toBe(line);
+    // D859: the account line shows the short form; the whole account is the details' first row.
+    const account = line?.parentElement?.firstElementChild;
+    expect(account?.matches('dl.your-account')).toBe(true);
+    expect(account?.textContent).toBe(`Your account${EVM}`);
+    expect(account?.nextElementSibling).toBe(line);
+    expect(document.querySelector('p.account')?.textContent).toBe(`Your account: ${shortId(EVM)} ${EVM} (Ethereum-style)`);
+    expect(document.querySelector('p.account code.short-id')?.getAttribute('aria-hidden')).toBe('true');
+    expect(document.querySelector('p.account .sr-only')?.textContent).toBe(` ${EVM}`);
     expect(line?.textContent).toBe(`Support ID HANA-2750-G5HM ${SUPPORT_ID_HINT}`);
     expect(line?.querySelector('code')?.textContent).toBe('HANA-2750-G5HM');
     // Decoration only: the digest binds the request, not the code.

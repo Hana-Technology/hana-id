@@ -23,9 +23,9 @@ export const ZERO_COST_ALLOWED: readonly string[] = [
   'This is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens.',
 ];
 
-/** Every text of a summary that claims zero cost outside the allowlist. */
+/** Every text of a summary that claims zero cost outside the allowlist (an allowed sentence may sit inside a longer line). */
 export const zeroCostIn = (s: ApprovalSummary): string[] =>
-  [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => ZERO_COST.test(w) && !ZERO_COST_ALLOWED.includes(w));
+  [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => ZERO_COST.test(ZERO_COST_ALLOWED.reduce((t, a) => t.split(a).join(' '), w)));
 
 /** Every text of a summary a user reads (headline, lines, fee, network, warnings and their bullets) that uses jargon. */
 export const jargonIn = (s: ApprovalSummary): string[] =>

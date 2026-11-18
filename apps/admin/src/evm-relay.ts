@@ -10,7 +10,7 @@
 // and the relayer's own checks are final), and its answer recorded (`evm_relay.staff_result`). Nothing here retries a
 // refused or failed call. Every value from the API is shown as text (plainString); links are built here, only to the
 // chain's block explorer, only for well-formed hashes and addresses.
-import { type EvmRelayActInput, type EvmRelayChainView, type EvmRelayDetail, type EvmRelayHalt, type EvmRelayRecordView, type EvmRelayTool, evmRelayActInput, isLeakHalt } from '@hana-id/console-core';
+import { type EvmRelayActInput, type EvmRelayChainView, type EvmRelayDetail, type EvmRelayHalt, type EvmRelayRecordView, type EvmRelayTool, evmRelayActInput, isLeakHalt, needsKeyConfirmation } from '@hana-id/console-core';
 import { errorResponse, json } from './http.ts';
 import { errorName, log } from './log.ts';
 import { plainString } from './plain.ts';
@@ -87,15 +87,32 @@ const leakSteps = (engineerSlotStep: string | null): string[] => [
   'Don’t press Resume until the engineer says the key is safe or replaced. Resume then asks you to confirm that.',
 ];
 
-/** The halt table of docs/operations.md, in plain words, per reason (and for `relayer_cannot_send`, per code). */
-export function haltExplained(h: Pick<EvmRelayHalt, 'reason' | 'slot' | 'code'>, w: Words): Explained {
+/** A halt as the words need it: `leakSeen` (the relayer's mark) is optional for a refusal's bare reason. */
+type HaltWords = Pick<EvmRelayHalt, 'reason' | 'slot' | 'code'> & { leakSeen?: boolean };
+
+/**
+ * The halt table of docs/operations.md, in plain words, per reason (and for `relayer_cannot_send`, per code). A pause
+ * that isn't a leak type by its reason but where the relayer has since seen a sign of one (`leakSeen`), or where the
+ * network counts more of the wallet's transactions than the relayer sent (`chainAhead`, the detail page's read), takes
+ * the leak steps instead (D843 re-check M): the engineer first, never a refill.
+ */
+export function haltExplained(h: HaltWords, w: Words, o: { chainAhead?: boolean } = {}): Explained {
+  const base = haltReasonExplained(h, w);
+  if (isLeakHalt(h) || !(h.leakSeen || o.chainAhead)) return base;
+  const seen = o.chainAhead
+    ? 'The network also shows more transactions from the relayer wallet than the relayer sent: someone else may be using its key.'
+    : 'Since it stopped, the relayer has seen something that may mean someone else is using its key (or a slot was changed by hand on this page).';
+  return { why: `${base.why} ${seen}`, steps: leakSteps(`checks the relayer wallet on ${w.explorer} for transactions nobody at Journear sent.`) };
+}
+
+function haltReasonExplained(h: HaltWords, w: Words): Explained {
   const n = h.slot === null ? 'the slot shown below' : `slot ${h.slot}`;
   switch (h.reason) {
     case 'relayer_cannot_send':
       if (h.code === 'insufficient_funds')
         return {
           why: 'The relayer’s wallet can’t send transactions: it is out of money.',
-          steps: ['Check the wallet’s balance below.', `Send at least ${w.refill} to the relayer wallet (its address is below) from ${w.faucet}.`, 'When the balance below shows the new amount, press Resume on the Free network fees page.', 'If it pauses again for the same reason, it still needs more money: send more, then press Resume again.'],
+          steps: [`Open the relayer wallet on ${w.explorer} (its address is below). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.`, 'Check the wallet’s balance below.', `Send at least ${w.refill} to the relayer wallet (its address is below) from ${w.faucet}.`, 'When the balance below shows the new amount, press Resume on the Free network fees page.', 'If it pauses again for the same reason, it still needs more money: send more, then press Resume again.'],
         };
       if (h.code === 'fee_cap_too_low')
         return {
@@ -142,8 +159,15 @@ export function haltExplained(h: Pick<EvmRelayHalt, 'reason' | 'slot' | 'code'>,
 }
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** The code for engineers: the reason, the code, the slot. */
-export const haltCode = (h: Pick<EvmRelayHalt, 'reason' | 'slot' | 'code'>): string => [code(h.reason), h.code ? code(h.code) : null, h.slot !== null ? `slot ${h.slot}` : null].filter(Boolean).join(' · ');
+/** The code for engineers: the reason, the code, the slot, and the relayer's leak mark or the network's count ahead. */
+export const haltCode = (h: HaltWords, o: { chainAhead?: boolean } = {}): string =>
+  [code(h.reason), h.code ? code(h.code) : null, h.slot !== null ? `slot ${h.slot}` : null, h.leakSeen ? 'leak_seen' : null, o.chainAhead ? 'chain_ahead' : null].filter(Boolean).join(' · ');
+
+/** The network counts more of the relayer wallet's transactions than the relayer sent (the detail page's read only). */
+export function chainAhead(v: EvmRelayChainView, chainCount: EvmRelayDetail['chainCount'] | undefined): boolean {
+  const r = v.relayer.ok ? v.relayer : null;
+  return !!(r && chainCount?.ok && r.nextSlot !== null && Math.max(chainCount.latest, chainCount.pending) > r.nextSlot);
+}
 
 // ---- one chain, as the tile and the page header show it ----
 
@@ -200,7 +224,7 @@ export const WAITING_WARN_MS = 2 * MIN;
 const pct = (part: bigint, whole: bigint): number => (whole > 0n ? Number((part * 1000n) / whole) / 10 : 0);
 
 /** The tile's words for one chain's view: its plain state, why and what to do, and a line per part. */
-export function explainChain(v: EvmRelayChainView, now: number): ChainPlain {
+export function explainChain(v: EvmRelayChainView, now: number, chainCount?: EvmRelayDetail['chainCount']): ChainPlain {
   const info = chainInfo(v.chainId);
   const low = wei(v.lowBalanceWei) ?? 0n;
   const budget = wei(v.dailyBudgetWei) ?? 0n;
@@ -274,14 +298,15 @@ export function explainChain(v: EvmRelayChainView, now: number): ChainPlain {
 
   // The main state, most urgent first.
   if (r?.halted) {
-    const leak = isLeakHalt(r.halted);
-    let e = haltExplained(r.halted, w);
+    const ahead = chainAhead(v, chainCount);
+    const leak = needsKeyConfirmation(r.halted) || ahead;
+    let e = haltExplained(r.halted, w, { chainAhead: ahead });
     // A key replaced since the stop: the records' signer is no longer the settings' wallet (the relayer tells us so).
     if (leak && ADDRESS.test(r.signerAddress) && r.signerAddress.toLowerCase() !== v.relayerAddress.toLowerCase())
       e = { ...e, why: `${e.why} The relayer’s key has been replaced since it stopped (its transactions were signed by ${shortAddress(r.signerAddress)}; the settings now name the wallet below).` };
     // Never a refill while the key may be someone else's: money sent to it can be taken.
     if (!leak && (balanceState === 'critical' || balanceState === 'warning')) extra.push(lowProblem(balance!, low, w, balanceState));
-    return out('paused', 'critical', `Paused since ${utc(r.halted.since)} (${ageText(Math.max(0, now - r.halted.since))}). Nobody gets free network fees until a person fixes it. Nothing is lost.`, e, haltCode(r.halted), 'evm-relay-paused', r.halted.since);
+    return out('paused', 'critical', `Paused since ${utc(r.halted.since)} (${ageText(Math.max(0, now - r.halted.since))}). Nobody gets free network fees until a person fixes it. Nothing is lost.`, e, haltCode(r.halted, { chainAhead: ahead }), 'evm-relay-paused', r.halted.since);
   }
   if (v.key === 'wrong')
     return out('not_set_up', 'critical', 'The relayer sends nothing new.', { why: 'The relayer’s key doesn’t belong to the relayer wallet named in the settings, so it sends nothing new.', steps: ['Ask an engineer: the key file or relayerAddress in the settings is wrong.', 'Don’t change keys while transactions are waiting.'] }, 'key_wrong', 'evm-relay-paused');
@@ -431,7 +456,7 @@ export function toolsOffered(v: EvmRelayChainView, records: EvmRelayRecordView[]
   else adopt = { suggested: chainCount.latest, min };
   return {
     resume: r.halted !== null,
-    resumeNeedsKeyConfirmation: isLeakHalt(r.halted),
+    resumeNeedsKeyConfirmation: r.halted !== null && (needsKeyConfirmation(r.halted) || chainAhead(v, chainCount)),
     fill: keyOk && r.nextSlot !== null && r.nextSlot > 0 ? { suggested: r.halted?.reason === 'nonce_gap' ? r.halted.slot : null, max: r.nextSlot - 1 } : null,
     adopt,
     adoptBecause,
@@ -467,7 +492,7 @@ export function refusalWords(refused: string, slot: number | null, w: Words): st
     chain_count_differs: `The network’s own count for the relayer wallet isn’t ${slot ?? 'that number'}. Reload the page: it shows the network’s number.`,
     no_state: 'The relayer hasn’t sent anything yet, so there is nothing to do.',
     not_past_deadline: `${cap(n)}’s time limit hasn’t passed yet: it may still go through. Cancel is for a slot past its time limit.`,
-    key_confirmation_required: 'This pause means the relayer’s key may be used by someone else. Resume needs you to confirm that an engineer said the key is safe or replaced.',
+    key_confirmation_required: 'During this pause the relayer saw signs that its key may be used by someone else. Resume needs you to confirm that an engineer said the key is safe or replaced.',
     invalid_request: 'The relayer refused the request as malformed. Reload the page and try again.',
     relayer_unbound: 'This API has no relayer for this network. Ask an engineer.',
     relayer_unavailable: 'The relayer didn’t answer. Try again in a minute.',
@@ -505,7 +530,7 @@ export interface ActWords {
 }
 
 /** A tool's answer in words. After a refusal, the relayer's latest condition (`halt`, from its answer) says why and what to do. */
-export function actWords(tool: EvmRelayTool, slot: number | null, result: { done: boolean; refused: string | null }, chainId: number, halt: Pick<EvmRelayHalt, 'reason' | 'slot' | 'code'> | null = null, refill = 'the amount the box above names'): ActWords {
+export function actWords(tool: EvmRelayTool, slot: number | null, result: { done: boolean; refused: string | null }, chainId: number, halt: HaltWords | null = null, refill = 'the amount the box above names'): ActWords {
   const info = chainInfo(chainId);
   const w: Words = { chain: info.name, faucet: info.faucet, explorer: info.explorer?.name ?? 'the block explorer', refill };
   if (result.done) return { tone: 'ok', title: `${TOOL_NAMES[tool]}: done`, text: doneWords(tool, slot), steps: [], code: null };
@@ -558,7 +583,7 @@ export async function evmRelayDetailRoute(c: RouteCtx): Promise<Response> {
     chainId,
     title: evmRelayTitle(chainId),
     chainName: chainInfo(chainId).name,
-    plain: explainChain(d.chain, now),
+    plain: explainChain(d.chain, now, d.chainCount),
     readAt: d.chain.readAt,
     relayerAddress: d.chain.relayerAddress,
     nextSlot: relayer?.nextSlot ?? null,

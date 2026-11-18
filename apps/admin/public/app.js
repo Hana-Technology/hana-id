@@ -2592,7 +2592,16 @@ function evmToolForm(d, tool, label, fields, confirmText, opts = {}) {
       if (opts.keyConfirmation && v.keyConfirmed !== true) throw new ApiError(0, 'key_confirmation_required', '');
       // The page's one-time token: the audit's key for this one use, so sending the same form twice does nothing twice.
       const body = { token: d.token, tool, note: v.note, seen: d.seen, ...(slot !== undefined ? { slot } : {}), ...(opts.keyConfirmation ? { keyConfirmed: true } : {}) };
-      return api('POST', `/api/evm-relay/${d.chainId}/act`, body);
+      try {
+        return await api('POST', `/api/evm-relay/${d.chainId}/act`, body);
+      } catch (err) {
+        // The server answered (a stale page, a used token, an outage): this page's view and its one-time token may
+        // be out of date, so it is read again (a fresh view and token) before anything else is sent, with the answer
+        // shown at its top. Only a check in this page itself (nothing sent) stays on the form.
+        if (!(err instanceof ApiError) || err.status === 0) throw err;
+        const e = explain(err);
+        return { words: { tone: err.code === 'version_conflict' || err.code === 'already_applied' ? 'warn' : 'error', title: `${label}: ${e.title}`, text: `${e.hint || ''} The page has been read again.`.trim(), steps: [], code: err.code } };
+      }
     },
     {
       confirm: typeof confirmText === 'function' ? (v) => confirmText(opts.slot !== undefined ? opts.slot : Number(v.slot)) : confirmText,
@@ -2653,7 +2662,7 @@ function evmToolsPanel(d) {
         ? h('p', { class: 'hint' }, 'Not needed now: free network fees aren’t paused.')
         : t.resumeNeedsKeyConfirmation
           ? [
-              note('error', 'Only after the engineer says so', 'This pause means the relayer’s key may be used by someone else. Resume only once an engineer has made the key safe or replaced it. Your confirmation is kept in the audit log.'),
+              note('error', 'Only after the engineer says so', 'The box above says the relayer’s key may be used by someone else. Resume only once an engineer has made the key safe or replaced it. Your confirmation is kept in the audit log.'),
               evmToolForm(d, 'resume', 'Resume', [{ name: 'keyConfirmed', type: 'checkbox', label: 'An engineer has confirmed the key is safe or replaced' }, noteField('Ana (engineer) replaced the key at 14:20 UTC and moved the money out')], 'Resume free network fees on the engineer’s word that the key is safe or replaced? The relayer checks the network first, but it can’t tell whether its key is safe.', { danger: true, keyConfirmation: true }),
             ]
           : evmToolForm(d, 'resume', 'Resume', [noteField('Sent 0.1 test ETH from the faucet; balance now 0.12')], 'Resume free network fees? The relayer checks the network first, and says no if the problem is still there.', { primary: true }),

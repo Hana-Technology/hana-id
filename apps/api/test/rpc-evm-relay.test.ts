@@ -306,7 +306,7 @@ describe('AdminRpc.systemStatus evmRelay', () => {
     for (const h of reasons) {
       const relayer = fakeRelayer(staffStatus({ halted: { ...h, since: NOW - 300_000 } as never, day: Math.floor(NOW / 86_400_000) - 1 }));
       const c = (await status(sponsorEnv(relayer))).evmRelay!.chains[0]!;
-      expect(c.relayer, h.reason).toMatchObject({ ok: true, halted: { reason: h.reason, since: NOW - 300_000, slot: 'nonce' in h ? h.nonce : null, code: 'code' in h ? h.code : null }, spentTodayWei: '0' });
+      expect(c.relayer, h.reason).toMatchObject({ ok: true, halted: { reason: h.reason, since: NOW - 300_000, slot: 'nonce' in h ? h.nonce : null, code: 'code' in h ? h.code : null, leakSeen: false }, spentTodayWei: '0' });
     }
   });
 
@@ -469,7 +469,7 @@ describe('AdminRpc.evmRelayAct', () => {
     const relayer = fakeRelayer(halted, tools);
     const rpc = rpcOf(sponsorEnv(relayer));
     const cases: [string, number | undefined, string, unknown[]][] = [
-      ['resume', undefined, 'staffResume', ['staff@hana.example', 'Sent 0.1 test ETH from the faucet', SEEN]],
+      ['resume', undefined, 'staffResume', ['staff@hana.example', 'Sent 0.1 test ETH from the faucet', SEEN, false]],
       ['cancel', 3, 'staffCancel', ['staff@hana.example', 3, 'Sent 0.1 test ETH from the faucet', SEEN]],
       ['close', 4, 'staffClose', ['staff@hana.example', 4, 'consumed_elsewhere', 'Sent 0.1 test ETH from the faucet', SEEN]],
       ['fill', 5, 'staffFill', ['staff@hana.example', 5, 'Sent 0.1 test ETH from the faucet', SEEN]],
@@ -520,7 +520,8 @@ describe('AdminRpc.evmRelayAct', () => {
   });
 
   it('a pause that means the key may be someone else’s: Resume needs keyConfirmed (else refused, the relayer not called); the confirmation goes into the relayer’s note', async () => {
-    for (const h of [{ reason: 'foreign_transactions' }, { reason: 'nonce_consumed_elsewhere', nonce: 4 }, { reason: 'nonce_gap', nonce: 4 }, { reason: 'relayer_cannot_send', nonce: 4, code: 'sender_restricted' }]) {
+    // The last: paused for money, but the relayer marked a sign of a leak seen since (D843 re-check M).
+    for (const h of [{ reason: 'foreign_transactions' }, { reason: 'nonce_consumed_elsewhere', nonce: 4 }, { reason: 'nonce_gap', nonce: 4 }, { reason: 'relayer_cannot_send', nonce: 4, code: 'sender_restricted' }, { reason: 'relayer_cannot_send', nonce: 4, code: 'insufficient_funds', leakSeen: true }]) {
       const st = staffStatus({ halted: { ...h, since: NOW - 300_000 } as never, staffLog: [entry(2), entry(1)] });
       const relayer = fakeRelayer(st, { staffResume: async () => result(staffStatus({ staffLog: [entry(3), entry(2), entry(1)] })) });
       const rpc = rpcOf(sponsorEnv(relayer));
@@ -528,6 +529,8 @@ describe('AdminRpc.evmRelayAct', () => {
       expect(relayer.calls.map((c) => c.method)).toEqual(['staffStatus']);
       expect(await rpc.evmRelayAct(act({ keyConfirmed: true }))).toMatchObject({ ok: true, result: { done: true } });
       expect(relayer.calls.at(-1)!.args[2]).toBe('[An engineer confirmed the key is safe or replaced] Sent 0.1 test ETH from the faucet');
+      // The confirmation reaches the relayer, which checks the same on its own.
+      expect(relayer.calls.at(-1)!.args[4]).toBe(true);
     }
     // Not a leak (out of money): no confirmation needed, none added.
     const relayer = fakeRelayer(halted, { staffResume: async () => result(halted) });

@@ -13,8 +13,10 @@ import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { EXECUTED_TOPIC } from '../src/evm/sponsor-checks.ts';
 import { DEFAULT_SPONSOR_PORTS, type EvmRelayerPort, sponsorPorts } from '../src/evm/sponsor-ports.ts';
 import { EVM_SPONSOR_SEND_ENDPOINT as SEND, EVM_SPONSOR_STATUS_ENDPOINT as STATUS, forgetRelayerBalances, forgetRelayerStatus, sponsorTiming } from '../src/evm/sponsor.ts';
-import { EvmMock, type Hex, type MockTx, PRIMARY_RPC } from './evm-mock.ts';
-import { DELEGATE, LOCAL_CHAIN, RELAYER, nearMock, rememberAccount, sessionsInMemory, signedSend, sponsorCall, sponsorEnv, sponsorVar, testUser, type TestUser } from './evm-sponsor-helpers.ts';
+import { signSponsorTx } from '@hana-id/core/evm-sponsor';
+import { evmRelayerStaffAct, evmRelayerStaffDetail, evmRelayerStaffResume } from '../src/evm-relayer-staff.ts';
+import { EvmMock, type Hex, type MockTx, PRIMARY_RPC, decodeRawTx } from './evm-mock.ts';
+import { DELEGATE, LOCAL_CHAIN, RELAYER, nearMock, testKey, rememberAccount, sessionsInMemory, signedSend, sponsorCall, sponsorEnv, sponsorVar, testUser, type TestUser } from './evm-sponsor-helpers.ts';
 import { seedApp, type SeededApp, uid } from './helpers.ts';
 
 type Stub = DurableObjectStub<EvmRelayer>;
@@ -172,4 +174,40 @@ describe('the routes and the relayer object, end to end over the fake chain', ()
     expect([again.status, (await body(again)).code]).toEqual([503, 'sponsorship_paused']);
     expect(w.chain.broadcasts.length).toBe(before);
   });
+
+  it('D843 re-check M, the thief: paused for money, then the wallet emptied with the relayer’s key: the page and the API ask for the key to be confirmed, and the relayer refuses Resume without it', async () => {
+    const w = await setup({ delegated: true });
+    w.chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
+    const r = await sendFor(w, signedSend(w.user));
+    expect([r.status, (await body(r)).code]).toEqual([503, 'sponsorship_paused']);
+    expect((await w.stub.status()).halted).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds' });
+    // Someone with the key sends the wallet's money away: slots 0 and 1 (our next slot is 1).
+    w.chain.onSend = undefined;
+    w.chain.pool.get(RELAYER.toLowerCase())?.clear();
+    for (const nonce of [0n, 1n]) w.chain.admit(decodeRawTx(signSponsorTx(testKey('relayer'), { type: 'eip1559', chainId: BigInt(LOCAL_CHAIN), nonce, maxFeePerGas: 10n ** 9n, maxPriorityFeePerGas: 10n ** 7n, gas: 21_000n, to: new Uint8Array(20).fill(0xee), value: 0n, data: new Uint8Array(), accessList: [] })));
+    w.chain.mine(RELAYER);
+    w.chain.blockNumber += 20;
+    await runDurableObjectAlarm(w.stub);
+    // The pause still leads with "out of money"; the mark says a leak was seen.
+    expect((await w.stub.status()).halted).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds', leakSeen: true });
+    // The admin path: the API's own view and its Resume, as the portal calls them (the relayer namespace pointed at this object).
+    const id = w.stub.id;
+    const api = { ...env, ...w.bindings, EVM_RELAYER: { idFromName: () => id, get: () => w.stub } } as unknown as Env;
+    const view = await evmRelayerStaffDetail(api, env.DB, LOCAL_CHAIN);
+    const relayer = view.chain.relayer;
+    expect(relayer).toMatchObject({ ok: true, halted: { reason: 'relayer_cannot_send', leakSeen: true } });
+    if (!relayer.ok || !relayer.halted) throw new Error('unreachable');
+    const seen = { haltSince: relayer.halted.since, lastStaffSeq: relayer.lastStaffSeq };
+    expect(await evmRelayerStaffAct(api, { chainId: LOCAL_CHAIN, tool: 'resume', note: 'Topped up from the faucet', seen }, 'staff@hana.example')).toMatchObject({ done: false, refused: 'key_confirmation_required' });
+    // Past the API (a caller that skips its check): the relayer refuses on its own and records it.
+    const direct = await evmRelayerStaffResume(w.stub as never, 'staff@hana.example', 'Topped up from the faucet');
+    expect(direct).toMatchObject({ done: false, refused: 'key_confirmation_required' });
+    expect(direct.status.staffLog[0]).toMatchObject({ action: 'resume', done: false, refused: 'key_confirmation_required' });
+    expect((await w.stub.status()).halted).toMatchObject({ leakSeen: true });
+    expect(await codeOfSend(w)).toBe('sponsorship_paused');
+  });
 });
+
+async function codeOfSend(w: World): Promise<unknown> {
+  return (await body(await sendFor(w, signedSend(w.user, { minGas: 100_002n })))).code;
+}

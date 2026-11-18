@@ -13,7 +13,7 @@
 // check per isolate). Nothing is read without the block. The view holds public data
 // only: no key, raw transaction, calldata, signature or user's account (records are reduced to slots, hashes, times).
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
-import { type EvmRelayActInput, type EvmRelayActResult, type EvmRelayChainView, type EvmRelayDetail, type EvmRelayRecordView, type EvmRelayRelayerView, type EvmRelayStatus, isLeakHalt } from '@hana-id/console-core';
+import { type EvmRelayActInput, type EvmRelayActResult, type EvmRelayChainView, type EvmRelayDetail, type EvmRelayRecordView, type EvmRelayRelayerView, type EvmRelayStatus, needsKeyConfirmation } from '@hana-id/console-core';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { RpcRefusal } from './changes/cas.ts';
 import type { Env } from './env.ts';
@@ -30,7 +30,8 @@ type Stub = DurableObjectStub<EvmRelayer>;
 export const evmRelayerStaffStatus = (stub: Stub): Promise<EvmRelayerStaffStatus> => stub.staffStatus(EVM_RELAYER_STAFF_GUARD) as Promise<EvmRelayerStaffStatus>;
 
 /** Clears the halt after a fresh check of the chain finds no halt condition; refused while one holds. */
-export const evmRelayerStaffResume = (stub: Stub, who: string, note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> => stub.staffResume(EVM_RELAYER_STAFF_GUARD, who, note, expect) as Promise<EvmRelayerStaffResult>;
+export const evmRelayerStaffResume = (stub: Stub, who: string, note: string, expect?: EvmRelayerStaffExpect, keyConfirmed?: boolean): Promise<EvmRelayerStaffResult> =>
+  stub.staffResume(EVM_RELAYER_STAFF_GUARD, who, note, expect, keyConfirmed) as Promise<EvmRelayerStaffResult>;
 
 /** Closes the record at `nonce` as consumed elsewhere: only when the chain's confirmed count is past it and none of its versions has a receipt. */
 export const evmRelayerStaffClose = (stub: Stub, who: string, nonce: number, verdict: 'consumed_elsewhere', note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> =>
@@ -86,7 +87,7 @@ export function relayerViewOf(s: EvmRelayerStaffStatus, now: number, logLimit: n
   return {
     started: s.chainId !== null,
     signerAddress: s.address,
-    halted: s.halted ? { reason: s.halted.reason, since: s.halted.since, slot: s.halted.nonce ?? null, code: s.halted.code ?? null } : null,
+    halted: s.halted ? { reason: s.halted.reason, since: s.halted.since, slot: s.halted.nonce ?? null, code: s.halted.code ?? null, leakSeen: s.halted.leakSeen === true } : null,
     waiting: s.unmined,
     awaitingConfirmation: s.awaitingConfirmation,
     oldestWaitingMs: s.oldestUnminedMs,
@@ -285,14 +286,14 @@ export async function evmRelayerStaffAct(env: Env, input: EvmRelayActInput, who:
     const rec = s.records.find((r) => r.nonce === slot);
     if (rec && rec.deadline * 1000 > now && s.halted?.reason !== 'stuck_past_deadline') return { done: false, refused: 'not_past_deadline', relayer: null };
   }
-  if (input.tool === 'resume' && isLeakHalt(s.halted) && input.keyConfirmed !== true) return { done: false, refused: 'key_confirmation_required', relayer: null };
+  if (input.tool === 'resume' && needsKeyConfirmation(s.halted) && input.keyConfirmed !== true) return { done: false, refused: 'key_confirmation_required', relayer: null };
   const note = input.tool === 'resume' && input.keyConfirmed === true ? `${KEY_CONFIRMED_NOTE}${input.note}` : input.note;
   const expect: EvmRelayerStaffExpect = { haltSince: input.seen.haltSince, lastStaffSeq: input.seen.lastStaffSeq };
   let r: EvmRelayerStaffResult;
   try {
     switch (input.tool) {
       case 'resume':
-        r = await evmRelayerStaffResume(stub, who, note, expect);
+        r = await evmRelayerStaffResume(stub, who, note, expect, input.keyConfirmed === true);
         break;
       case 'cancel':
         r = await evmRelayerStaffCancel(stub, who, slot, note, expect);

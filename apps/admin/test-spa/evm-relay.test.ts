@@ -8,7 +8,7 @@ import { type Answer, type Call, boot, closeWindow } from './boot.ts';
 
 afterEach(closeWindow);
 
-type Scenario = 'green' | 'fees-working' | 'fees-paused-money' | 'fees-paused-key' | 'fees-low';
+type Scenario = 'green' | 'fees-working' | 'fees-paused-money' | 'fees-paused-money-leak' | 'fees-paused-key' | 'fees-low';
 type Fake = { status: number; body: unknown };
 const MODULE = './preview-status.ts';
 const status = {} as Record<Scenario, Record<string, unknown>>;
@@ -17,7 +17,7 @@ const detail = {} as Record<Scenario, Fake>;
 const acts = {} as Record<'resume' | 'cancel', Fake>;
 beforeAll(async () => {
   const m = (await import(MODULE)) as { previewStatus: (s: Scenario) => Promise<Record<string, unknown>>; previewEvmDetail: (s: Scenario) => Promise<Fake>; previewEvmAct: (body: Record<string, unknown>, s: Scenario) => Promise<Fake> };
-  for (const s of ['green', 'fees-working', 'fees-paused-money', 'fees-paused-key', 'fees-low'] as const) {
+  for (const s of ['green', 'fees-working', 'fees-paused-money', 'fees-paused-money-leak', 'fees-paused-key', 'fees-low'] as const) {
     status[s] = await m.previewStatus(s);
     detail[s] = await m.previewEvmDetail(s);
   }
@@ -57,6 +57,7 @@ describe('the System status tile', () => {
     const t = feesTile(p);
     expect(t.querySelector('.explain-why')!.textContent).toBe('The relayer’s wallet can’t send transactions: it is out of money.');
     expect([...t.querySelectorAll('.explain-steps li')].map((li) => li.textContent)).toEqual([
+      'Open the relayer wallet on Basescan (its address is below). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.',
       'Check the wallet’s balance below.',
       'Send at least 0.07 test ETH to the relayer wallet (its address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”).',
       'When the balance below shows the new amount, press Resume on the Free network fees page.',
@@ -74,7 +75,7 @@ describe('the System status tile', () => {
     ]);
     // The issue at the top: the same sentence, its steps, its playbook.
     const issue = [...p.main().querySelectorAll('.issue')].find((i) => i.textContent!.includes('out of money'))!;
-    expect(issue.querySelectorAll('.issue-steps li')).toHaveLength(4);
+    expect(issue.querySelectorAll('.issue-steps li')).toHaveLength(5);
     expect(issue.querySelector('.issue-links')!.textContent).toContain('Playbook: Free network fees are paused or slow');
   });
 
@@ -90,10 +91,15 @@ describe('the System status tile', () => {
 
 // ---- the detail page ----
 
+/** The detail page; each read after the first carries a new one-time token (as the Worker issues one per read). */
 function openDetail(s: Scenario, onAct?: (c: Call) => Answer) {
   const acts: Call[] = [];
+  let reads = 0;
   const page = boot('/free-network-fees/84532', (c: Call): Answer => {
-    if (c.path === '/api/evm-relay/84532' && c.method === 'GET') return detail[s] as Answer;
+    if (c.path === '/api/evm-relay/84532' && c.method === 'GET') {
+      const d = detail[s] as { status: number; body: { token: string } };
+      return (reads++ === 0 ? d : { ...d, body: { ...d.body, token: `evmact_${String(reads).padStart(22, 'r')}` } }) as Answer;
+    }
     if (c.path === '/api/evm-relay/84532/act') {
       acts.push(c);
       return onAct ? onAct(c) : { status: 500, body: {} };
@@ -182,16 +188,39 @@ describe('the Free network fees page', () => {
     expect(r).toContain('Code for engineers: nonce_mined');
   });
 
-  it('a stale page: the request is refused and the page says to reload; nothing is retried', async () => {
-    const p = openDetail('fees-paused-money', () => ({ status: 409, body: { error: { code: 'version_conflict', message: 'The relayer changed since you opened this page (someone may have acted, or it paused again). Nothing was done. Reload the page and look again.' } } }));
+  it('a stale page (or any refused, conflicting or unclear answer): nothing is retried; the page reads a fresh view and token before the next send (D843 re-check L3)', async () => {
+    const answers: Answer[] = [
+      { status: 409, body: { error: { code: 'version_conflict', message: 'The relayer changed since you opened this page (someone may have acted, or it paused again). Nothing was done. Reload the page and look again.' } } },
+      { status: 503, body: { error: { code: 'upstream_unavailable', message: 'The API did not answer' } } },
+      { body: acts.resume.body },
+    ];
+    const p = openDetail('fees-paused-money', () => answers.shift()!);
     await ready(p);
-    const tool = [...p.main().querySelectorAll('.tool')].find((t) => t.querySelector('h3')!.textContent === 'Resume')!;
-    (tool.querySelector('input[name=note]') as unknown as HTMLInputElement).value = 'Sent 0.1 test ETH from the faucet';
-    p.submit(tool.querySelector('form'));
-    (tool.querySelector('.confirm button') as unknown as HTMLButtonElement).click();
-    await vi.waitFor(() => expect(tool.textContent).toContain('Someone changed this first'));
-    expect(tool.textContent).toContain('Nothing was done. Reload the page and look again.');
-    expect(p.acts).toHaveLength(1);
+    const reads = () => p.calls.filter((c) => c.path === '/api/evm-relay/84532' && c.method === 'GET').length;
+    const send = async (n: number) => {
+      const tool = [...p.main().querySelectorAll('.tool')].find((t) => t.querySelector('h3')!.textContent === 'Resume')!;
+      (tool.querySelector('input[name=note]') as unknown as HTMLInputElement).value = 'Sent 0.1 test ETH from the faucet';
+      p.submit(tool.querySelector('form'));
+      (tool.querySelector('.confirm button') as unknown as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(p.acts).toHaveLength(n));
+      await vi.waitFor(() => expect(reads()).toBe(n + 1));
+      await vi.waitFor(() => expect(p.main().querySelector('.act-result')).not.toBeNull());
+      return p.main().querySelector('.act-result')!.textContent!;
+    };
+    expect(reads()).toBe(1);
+    const first = await send(1);
+    expect(first).toContain('Resume: Someone changed this first');
+    expect(first).toContain('Reload the page to see the latest version, then try again. The page has been read again.');
+    expect(first).toContain('Code for engineers: version_conflict');
+    const second = await send(2);
+    expect(second).toContain('Code for engineers: upstream_unavailable');
+    await send(3);
+    // Each send carried the token of the read before it: never one already used.
+    const tokens = p.acts.map((a) => (a.body as { token: string }).token);
+    expect(new Set(tokens).size).toBe(3);
+    expect(tokens[0]).toBe((detail['fees-paused-money'].body as { token: string }).token);
+    expect(tokens.slice(1)).toEqual(['evmact_rrrrrrrrrrrrrrrrrrrrr2', 'evmact_rrrrrrrrrrrrrrrrrrrrr3']);
+    expect(p.dialogs).toEqual([]);
   });
 
   it('a pause that means the key may be someone else’s: Resume isn’t primary, needs the engineer’s confirmation, and says so', async () => {
@@ -220,6 +249,20 @@ describe('the Free network fees page', () => {
     expect(adopt.textContent).toContain('The network says the next slot number is 47.');
     expect((adopt.querySelector('input[name=slot]') as unknown as HTMLInputElement).value).toBe('47');
     expect(adopt.textContent).not.toMatch(/block explorer/u);
+  });
+
+  it('D843 re-check M: paused for money, then a sign of a leaked key seen (the relayer’s mark): the engineer first, no refill, Resume needs the confirmation', async () => {
+    const p = openDetail('fees-paused-money-leak', () => ({ status: 500, body: {} }));
+    await ready(p);
+    const now = p.main().querySelector('.explain-why')!.textContent!;
+    expect(now).toContain('it is out of money. Since it stopped, the relayer has seen something that may mean someone else is using its key');
+    const steps = [...p.main().querySelectorAll('.explain-steps li')].map((li) => li.textContent);
+    expect(steps[0]).toBe('Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.');
+    expect(steps.join(' ')).not.toMatch(/Send at least|faucet/u);
+    expect(p.main().textContent).toContain('Code for engineers: relayer_cannot_send · insufficient_funds · slot 42 · leak_seen');
+    const tool = [...p.main().querySelectorAll('.tool')].find((t) => t.querySelector('h3')!.textContent === 'Resume')!;
+    expect(tool.querySelector('.jp-btn-primary')).toBeNull();
+    expect(tool.querySelector('input[name=keyConfirmed]')).not.toBeNull();
   });
 
   it('the Advanced tools: each with its warning and its own confirmation; a tool that can’t apply says why instead', async () => {

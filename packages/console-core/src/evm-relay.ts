@@ -75,6 +75,15 @@ export function isLeakHalt(h: { reason: string; code?: string | null } | null | 
   return h.reason === 'relayer_cannot_send' && typeof h.code === 'string' && LEAK_CODES.has(h.code);
 }
 
+/**
+ * Whether Resume needs the staffer to confirm an engineer said the key is safe or replaced (D843 after its re-check):
+ * the halt itself is a leak type, or the relayer marked it `leakSeen` (a leak-type condition seen during the pause, or
+ * a staff Close, Fill or Set the next slot number done during it). The relayer refuses such a Resume on its own too.
+ */
+export function needsKeyConfirmation(h: { reason: string; code?: string | null; leakSeen?: boolean } | null | undefined): boolean {
+  return isLeakHalt(h) || h?.leakSeen === true;
+}
+
 export interface EvmRelayHalt {
   reason: string;
   since: number;
@@ -82,6 +91,8 @@ export interface EvmRelayHalt {
   slot: number | null;
   /** `relayer_cannot_send`'s refusal code (`insufficient_funds`, `fee_cap_too_low`, …), else null. */
   code: string | null;
+  /** The relayer saw a sign of a leaked key during this pause (or staff changed a slot): see `needsKeyConfirmation`. */
+  leakSeen: boolean;
 }
 
 /** One staff action as the relayer recorded it (who: the staff email). `refused`: the relayer's reason, or null when done. */

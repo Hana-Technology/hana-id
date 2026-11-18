@@ -59,6 +59,7 @@ describe('the words of each state', () => {
     expect(paused.explained).toEqual({
       why: 'The relayer’s wallet can’t send transactions: it is out of money.',
       steps: [
+        'Open the relayer wallet on Basescan (its address is below). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.',
         'Check the wallet’s balance below.',
         'Send at least 0.07 test ETH to the relayer wallet (its address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”).',
         'When the balance below shows the new amount, press Resume on the Free network fees page.',
@@ -126,6 +127,39 @@ describe('the words of each state', () => {
     const stuck = haltExplained({ reason: 'stuck_past_deadline', slot: 7, code: null }, w).steps;
     expect(stuck).toContain('If Cancel is refused because network fees are above the relayer’s limit, ask an engineer to raise the fee limit.');
     expect(stuck).toContain('If slot 7 has no Cancel button, it already has 8 copies and the relayer can’t send another: ask an engineer.');
+  });
+
+  it('D843 re-check M: paused for money, but a sign of a leak seen since (the relayer’s mark) or the network ahead of the relayer: the leak steps, no refill, Resume needs the key confirmed', () => {
+    const lowWallet = { balance: { ok: true as const, wei: '1000' } };
+    const marked = explainChain(view(lowWallet, { halted: { reason: 'relayer_cannot_send', since: NOW - 600_000, slot: 42, code: 'insufficient_funds', leakSeen: true } }), NOW);
+    expect(marked.explained!.why).toBe('The relayer’s wallet can’t send transactions: it is out of money. Since it stopped, the relayer has seen something that may mean someone else is using its key (or a slot was changed by hand on this page).');
+    expect(marked.explained!.steps).toEqual([
+      'Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.',
+      'The engineer follows “A relayer key leaked” in docs/operations.md: free network fees are switched off, the money left in the wallet is moved out, and the key is replaced.',
+      'After that, the engineer checks the relayer wallet on Basescan for transactions nobody at Journear sent.',
+      'Don’t press Resume until the engineer says the key is safe or replaced. Resume then asks you to confirm that.',
+    ]);
+    expect(marked.code).toBe('relayer_cannot_send · insufficient_funds · slot 42 · leak_seen');
+    expect(marked.extra).toEqual([]);
+    // The network's count above the relayer's next slot (the detail page reads it): the same, said as what the network shows.
+    const paused = view(lowWallet, halt('relayer_cannot_send', 42, 'insufficient_funds'));
+    const ahead = explainChain(paused, NOW, { ok: true, latest: 14, pending: 14 });
+    expect(ahead.explained!.why).toMatch(/The network also shows more transactions from the relayer wallet than the relayer sent: someone else may be using its key\.$/u);
+    expect(ahead.explained!.steps[0]).toBe('Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.');
+    expect([ahead.code, ahead.extra]).toEqual(['relayer_cannot_send · insufficient_funds · slot 42 · chain_ahead', []]);
+    // Not ahead (the count equal to the next slot), or unreadable: the money steps, the refill problem beside them.
+    for (const count of [{ ok: true as const, latest: 12, pending: 12 }, { ok: false as const, code: 'rpc_unavailable' }]) {
+      const plain = explainChain(paused, NOW, count as never);
+      expect(plain.explained!.why).toBe('The relayer’s wallet can’t send transactions: it is out of money.');
+      expect(plain.extra.map((x) => x.key)).toEqual(['low']);
+    }
+    // Resume asks for the confirmation in both cases, not in the plain one.
+    expect(toolsOffered(view({}, { halted: { reason: 'relayer_cannot_send', since: NOW, slot: 1, code: 'insufficient_funds', leakSeen: true } }), [], { ok: true, latest: 12, pending: 12 }).resumeNeedsKeyConfirmation).toBe(true);
+    expect(toolsOffered(paused, [], { ok: true, latest: 13, pending: 13 }).resumeNeedsKeyConfirmation).toBe(true);
+    expect(toolsOffered(paused, [], { ok: true, latest: 12, pending: 12 }).resumeNeedsKeyConfirmation).toBe(false);
+    // A refused Resume's answer, with the relayer's marked halt: the leak steps.
+    const words = actWords('resume', null, { done: false, refused: 'relayer_cannot_send' }, 84532, { reason: 'relayer_cannot_send', slot: 42, code: 'insufficient_funds', leakSeen: true });
+    expect(words.steps[0]).toBe('Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.');
   });
 
   it('the helper not the checked version, unreadable parts, the budget, the waiting time and backup-server refusals', () => {

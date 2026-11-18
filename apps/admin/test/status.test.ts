@@ -1018,7 +1018,9 @@ describe('Free network fees (D843)', () => {
     invariants(a);
     const t = tile(a, 'evm-relay-84532');
     expect(t).toMatchObject({ state: 'critical', stateLabel: 'Paused: needs a person', explain: { why: 'The relayer’s wallet can’t send transactions: it is out of money.', code: 'relayer_cannot_send · insufficient_funds · slot 42' } });
-    expect(t.explain!.steps).toHaveLength(4);
+    expect(t.explain!.steps).toHaveLength(5);
+    // First: look for money that went out without Journear (a thief), before sending more.
+    expect(t.explain!.steps[0]).toMatch(/^Open the relayer wallet on Basescan .*If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money\.$/u);
     const [main, low] = issuesOf(a, 'evm-relay-84532');
     expect(main).toMatchObject({ severity: 'critical', title: 'The relayer’s wallet can’t send transactions: it is out of money.', since: NOW - 600_000, sinceSource: 'source', code: 'relayer_cannot_send · insufficient_funds · slot 42', playbook: { id: 'evm-relay-paused' } });
     expect(main!.steps).toEqual(t.explain!.steps);

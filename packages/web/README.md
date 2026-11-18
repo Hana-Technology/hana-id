@@ -122,6 +122,30 @@ click (or when Safari blocks the popup after an `await`) the vault shows a revie
 transactions; Journear Passport only signs (`eth_sendTransaction` fills and
 broadcasts through your `evm.chains` RPC).
 
+### Gas-free actions (0.5.0, not live yet)
+
+Journear pays the network fee for contract calls the user approves: the user needs no ETH. Off by default, Base
+Sepolia only, and no environment offers it yet (`hana.evm.sponsoredChains` is `[]`). Ask Journear to turn it on for
+your app and to add each contract and function you call; a call that isn't on that list is refused.
+
+```ts
+const { available, reason } = await hana.evm.sponsorship(84532);  // waits for hana.ready; a "free" button only when available
+
+button.onclick = () =>                                            // in the click: the approval window opens now
+  hana.evm.sendSponsored({ chainId: 84532, calls: [{ to: contract, data }] }) // value 0, 1 to 8 calls, all or nothing
+    .then(({ transactionHash }) => done(transactionHash), (e) => show(e.userMessage));
+```
+
+Every action shows Journear Passport's window ("Network fee: none. Journear pays it for you."); none is approved
+automatically. The first one also sets the account up (an EIP-7702 authorization: the address stays the same).
+EIP-5792 `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` on `hana.ethereum` do the same for
+viem and wagmi (`5710` on a chain without it, where 0.4.x answered `4200`). `eth_sendTransaction` is never gas-free.
+Refusals are `HanaSponsorError` with `data.reason` (type `SponsorReason`: the known reasons, or any string, so a new
+one never breaks your build). `SPONSOR_REASON_NAMES`, `SPONSORSHIP_REASON_NAMES` and `NEAR_RELAY_REASON_NAMES` list
+the known names to branch on; the sentences come only through `userMessage` and `userMessageFor`, and may be reworded
+at any time. `sponsorship()` called before `hana.ready` waits for it (up to about 35 s on a slow connection). The
+partner guide's section 8 lists every reason and the limits.
+
 ### Sign-in methods (apps with email)
 
 Google and email with the same verified address open the same wallet; the Journear Passport popup handles every case. Show pending
@@ -184,7 +208,7 @@ backend take it from the verified token. A change the user makes reaches your pa
 | Run on one of your app's origins, exactly (pin your dev server's port: Vite `server: { strictPort: true }`) | `vault_unavailable` (`no_answer`, naming the page's origin) |
 | Allow the vault origin in CSP `frame-src` | `vault_unavailable` |
 | Allow your own EVM / Stellar RPCs in CSP `connect-src` | your RPC calls fail |
-| Allow Journear Passport's API origin in CSP `connect-src` if you use `hana.near.relay` or `activate` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev`) | `api_unavailable` |
+| Allow Journear Passport's API origin in CSP `connect-src` if you use `hana.near.relay`, `activate` or `hana.evm.sponsorship` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev`) | `api_unavailable` |
 | Call `login()` and `eth_requestAccounts` from a click | one extra click (the vault's fallback button) |
 | Not send `Cross-Origin-Opener-Policy: same-origin` | `coop_blocks_popup` |
 | Leave the vault's 320×72 px button (bottom right) uncovered | users can't approve |
@@ -212,17 +236,21 @@ codes (the string code in `data.code`). An error from the Journear Passport API 
 logged in or not allowed (`data.reason`); `4900` the vault is gone, or with `data.reason: 'signed_out'` Journear Passport signed this
 device out (the `disconnect` event then has `reason: 'signed_out'` too): ask the user to log in again, no reload; `4902` chain not in `evm.chains`;
 `vault_unavailable` (`data.reason`; `no_answer` when the page's origin isn't one of your app's origins), `popup_blocked`,
-`login_timeout`, `rate_limited`. NEAR refusals carry `data.reason` (`near_key_unknown`: call `activate()` first;
-`near_account_unrecorded` from the relay just after a login: retry for about 20 s).
+`login_timeout`, `rate_limited`, `login_cancelled` (the user closed the window or you cancelled; with `data.reason:
+'link_remove'` the user removed a linked sign-in method: not a failure, so show `userMessage` as information). NEAR
+refusals carry `data.reason` (`near_key_unknown`: call `activate()` first; `near_account_unrecorded` from the relay
+just after a login: retry for about 20 s).
 
-To show an error to your user, use `error.userMessage` (SDK 0.5.0): a plain sentence worked out from the
-code alone ("You rejected this in Journear Passport, or closed it. Nothing was approved."). `message` is for you and
-your logs. For a code read elsewhere (SWK's `ext[0]`, a provider error a library wrapped), call
-`userMessageFor(code, data)`.
+To show an error to your user, use `error.userMessage` (SDK 0.5.0) on a `HanaError`, `HanaSponsorError` or
+`ProviderRpcError`: a plain sentence worked out from `code` and `data.reason` alone ("You rejected this in Journear
+Passport, or closed it. Nothing was approved."), safe to show as text. `message` is for you and your logs. viem,
+wagmi and ethers keep the provider's error as `cause`; for a code read elsewhere (SWK's `ext[0]`), call
+`userMessageFor(code, data)` (a third argument, `'near_relay'`, for a NEAR relay reason that a gas-free action
+shares). Match on `code` and `data.reason`, never on either text.
 
 ## More
 
 The Journear Passport partner guide (ask Journear for the current copy) covers the partner portal, events, sessions, key export,
-auto-approve policies, your own Google client, NEAR and Journear Passport's relay, the identity token's verification
-and every error code. React bindings:
+auto-approve policies, your own Google client, NEAR and Journear Passport's relay, gas-free actions, what your users see
+in Journear Passport's windows, the identity token's verification and every error code. React bindings:
 `@hana-id/react`. Sodax wallet providers: `@hana-id/sodax`.

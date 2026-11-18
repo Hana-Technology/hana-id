@@ -33,7 +33,20 @@ export type { DisconnectReason } from '@hana-id/core';
 export { HanaError, ProviderRpcError, RpcCode, type ClientErrorCode, type SwkError } from './client/errors.ts';
 // The plain sentence for an error's code (`error.userMessage` on HanaError and ProviderRpcError), for a code read
 // elsewhere (the SWK module's `ext[0]`, a wrapped provider error's `data.code`).
-export { userMessageFor } from './client/user-messages.ts';
+// The reason NAMES only, to branch on: the sentences are reached through `userMessage` / `userMessageFor` and may be
+// reworded at any time.
+export {
+  NEAR_RELAY_REASON_NAMES,
+  SPONSOR_REASON_NAMES,
+  SPONSORSHIP_REASON_NAMES,
+  userMessageFor,
+  type KnownSponsorReason,
+  type KnownSponsorshipReason,
+  type NearRelayReason,
+  type SponsorReason,
+  type SponsorshipReason,
+  type UserMessageSource,
+} from './client/user-messages.ts';
 export {
   CALLS_VERSION,
   EIP5792,
@@ -69,6 +82,7 @@ export {
   HanaSponsorError,
   isHanaSponsorError,
   type EvmSponsorErrorData,
+  type EvmSponsorProviderErrorData,
   type SendSponsoredParams,
   type SendSponsoredResult,
   type SponsoredCall,

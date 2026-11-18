@@ -14546,3 +14546,111 @@ From `next` @ 9a4db48f, then `next` @ 25aaada3 and c0f14a8e merged in; not merge
   the relayer wallet isn't known, and a billing job could mistake it for a cost).
 - Address impact: none.
 
+## The partner guide for SDK 0.5.0 (branch `docs/partner-guide-0-5-0`), 2026-11-18
+
+From `next` @ 6d0c6800 (then `next` @ c0f14a8e, PR 88, merged in), not merged, not deployed. Docs, doc comments and
+tests only: no behaviour, endpoint, key or flow changes.
+
+### D870. The partner guide for SDK 0.5.0, held to the code: the upgrade note, gas-free actions, sign-in outcomes, what users see
+- Date 2026-11-18 · Status: decided while building, to confirm · Built: `docs/integration.md` (section 2 "Upgrading
+  from 0.4.x to 0.5.0"; section 4 "When sign-in doesn't finish"; section 8 "What your users see" and "Gas-free
+  actions (not live)" rewritten; section 13's `userText` pattern and "A user who can't get an email code"),
+  `docs/partner-start-here.md` ("SDK 0.5.0: what changes for you"), the four package READMEs, doc comments in
+  `packages/web/src/client/evm-sponsor.ts`; `scripts/lib/pack-check.ts` (`GUIDE_PARTS`, `GUIDE_CLIENT`,
+  `guideModule`), `scripts/pack-check.ts` (viem in the project); tests `packages/web/test/client/guide-gas-free.test.ts`
+  (new), `scripts/test/sdk-pack.test.ts`. Widens D778.
+- Decisions:
+  1. **The upgrade note names the one behaviour change**: `wallet_sendCalls` answered `4200` through 0.4.x, which viem's
+     `sendCalls({ experimental_fallback: true })` turns into one `eth_sendTransaction` per call; 0.5.0 answers `5710` on
+     a chain without gas-free actions, which viem 2.57.7 doesn't fall back on. Partners are told to ask
+     `getCapabilities` first. Everything else in 0.5.0's types is an addition (checked against the 0.4.1 tarballs'
+     declarations).
+  2. **The gas-free error table is the SDK's**: every key of `SPONSOR_REASONS` once, with the very sentence
+     `userMessage` gives (tested both ways, so a new reason or a reworded sentence fails until the guide follows). The
+     limits table gives only what a partner designs around (Base Sepolia only, actions per user a day, calls per
+     action, time to approve), "planned for the first test period, and they may change" (D836's values; no env sets
+     `evm.sponsor` yet); the budgets in ETH are left out (amended 2026-11-18 at the coordinator's review).
+  5. **One copyable button**: the gas-free steps absorb PR 91's example (D867): set up after `hana.ready` and once
+     signed in, a disabled button with the reason for "offered, not right now", `say(e)` = `e.userMessage ??
+     userMessageFor(e?.code, e?.data)`, a `4001` shown quietly, the partner's own helpers marked, and a refusal with
+     `transactionHash` linked; so whichever of the two PRs merges second drops PR 91's block for this one.
+  3. **The pack check type-checks four parts of the guide** (sections 4, 8 gas-free, 8 NEAR, 13), one module each,
+     against the packed tarballs, with viem installed at `@hana-id/core`'s devDependency version for the EIP-5792
+     sample. D778's rejected "every section" stays rejected: only parts written to compile are listed.
+  4. **Email-code support for partners** follows D866: what the partner's support tells the user (spam folder, Resend,
+     00:00 UTC), what it sends Journear (the address only privately, with the user's agreement), and the two one-time
+     emails Journear can then send. The guide says these pages aren't on sandbox-dev yet.
+- Address impact: none.
+
+## SDK 0.5.0's partner polish (branch `feat/sdk-0-5-0-partner-polish`), 2026-11-18
+
+From `docs/partner-guide-0-5-0` @ a8d74f8e (PR 92, not merged yet; it holds `next` @ c0f14a8e), not merged, not
+deployed. SDK 0.5.0 has never been sent to a partner (its commits are on `next` only; `develop` and `main` are at
+0.4.1; no release tag), so it stays 0.5.0.
+
+### D871. SDK 0.5.0's partner polish: typed reasons, `sponsorship()` waits for ready, `userMessage` by the error's source, closer sentences
+- Date 2026-11-18 · Status: decided while building, to confirm · Built: `packages/web/src/client/user-messages.ts`
+  (`SPONSOR_REASONS` exported and typed, `invalid_request` added; `SPONSORSHIP_REASONS`; `NEAR_RELAY_REASONS`; the
+  types `KnownSponsorReason`, `SponsorReason`, `KnownSponsorshipReason`, `SponsorshipReason`, `NearRelayReason`,
+  `UserMessageSource`; `userMessageFor`'s third argument; the new sentences in `BY_REASON`), `client/errors.ts`
+  (`markSponsored`, the getters' source), `client/evm-sponsor.ts` (`HanaSponsorError` marks itself; the typed
+  `reason`s; `EvmSponsorProviderErrorData`; `sponsorship()` awaits the host's `ready`), `client/client.ts`
+  (`ready` for `hana.evm`), `src/index.ts`, `vault/evm-sponsor.ts` (comment only); tests
+  `test/client/user-messages.test.ts`, `test/client/evm-sponsor.test.ts`, `test/client/guide-gas-free.test.ts`; docs
+  `docs/integration.md` (sections 2, 8 and 13), `packages/web/README.md`. Amends D838 (`sponsorship()` before ready) and
+  D861 (the sentences, by source).
+- Decisions:
+  1. **Typed reasons**: `SponsorshipStatus.reason` is `SponsorshipReason` and `EvmSponsorErrorData.reason` is
+     `SponsorReason`, each a string-literal union of the known reasons plus `(string & {})`, so a reason a later
+     release adds never breaks a partner's build. `SPONSOR_REASONS` (reason → sentence) and `SPONSORSHIP_REASONS` are
+     exported, frozen; `EvmSponsorProviderErrorData` types the EIP-5792 `ProviderRpcError`'s `data`. No code or reason
+     string changed.
+  2. **`sponsorship()` before `ready` waits for it** (the client's `hana.ready`, so bounded by its own timeouts)
+     instead of answering `chain_not_enabled` from a list that isn't known yet; a failed `ready` rejects with its code
+     as a `HanaSponsorError` (`vault_unavailable`). A malformed `chainId` is still refused at once. `sendSponsored` is
+     unchanged (synchronous, for the window in the click).
+  3. **`userMessage` by the error's source**: the NEAR relay and a sponsored action share reason names (`gas_too_high`,
+     `app_budget_exhausted`, `timeout`, `relayer_busy`, `relayer_unavailable`, `near_unavailable`,
+     `directory_unavailable`, `rate_limiter_unavailable`, `rate_limited`). A `HanaSponsorError` marks itself (a module
+     `WeakSet`, so no field, equality or JSON changes), `toProviderRpcError` carries the mark, and the getters pass
+     `'sponsored_action'` or, for any other `HanaError`, `'near_relay'`. A `ProviderRpcError` without the mark and a
+     partner's own `userMessageFor` call without the argument read a shared name as the sponsored action's (the EVM
+     side's, and 0.5.0's sentence until now). On a sponsored action its own table comes first, so `invalid_request`
+     reads as the vault says ("Journear doesn’t pay network fees for this action.").
+  4. **Closer sentences** for what fell to the generic 4100 ("…didn’t allow this. You may need to sign in again."):
+     the NEAR relay's reasons, the vault's other NEAR refusals, the sandbox mainnet demo's reasons, the API's app-setup
+     refusals (`missing_key`, `unknown_app`, `scope_conflict`), `email_sharing_unavailable` (`off`, `no_address`), and
+     `login_cancelled`'s `popup_closed`, `email_consent_declined` and `google_account_mismatch`. Plain by D853 and the
+     shared word list (tested); the sentences are listed for the founder in the PR.
+  5. The vault's comment that a partner may show a refusal's `message` as it is now says to show `userMessage` (D861).
+- **Amended after PR 94's independent review (2026-11-18, to confirm):**
+  1. **A NEAR relay result that may follow its send says to check first** (H1): `relayer_unavailable` (the key object
+     unreachable, or failing after its send began), `near_unavailable` (on a retry), `relayer_busy` (a dropped
+     transaction, a nonce lost to it), `contract_rejected`, `timeout`, `near_error` and the key object's
+     `method_not_allowed` now each say to check before trying again: retrying with a new signature could run a
+     transfer twice. A test reads the API's RelayResult literals (`apps/api/src/near/relay.ts`, `src/relayer-key.ts`)
+     and holds every one returned without an unconditional `notSent: true` to a sentence with "check"; `near_rejected`
+     (NEAR refused the transaction itself, so it was never included) is the one exception, "The network refused this
+     request, so it didn’t go through. Try again." A new code there fails the test until it has a sentence.
+  2. **The reviewer's sentences** for `contract_rejected`, `delegate_nonce_too_large`, `near_delegate_nonce_used`,
+     `already_relayed`, `near_rejected`, the app-setup reasons, `email_consent_declined`, `google_account_mismatch`,
+     `off`, `mainnet_demo_unknown_call` and `access_key_missing`; the NEAR relay's budget and off sentences say "free
+     network fees", the sponsored action's own words where the meaning is the same (`app_budget_exhausted`,
+     `relayer_unconfigured`). Every remaining "nothing was sent / signed / changed" was checked against where its
+     reason is produced (each is a refusal before any send or signature) except `login_cancelled`'s "nothing changed",
+     which keeps D861's code-level claim.
+  3. **Names, not sentences, are the API** (L3): `SPONSOR_REASON_NAMES`, `SPONSORSHIP_REASON_NAMES` and
+     `NEAR_RELAY_REASON_NAMES` are exported; the sentence tables are not (only `userMessage` and `userMessageFor` reach
+     them), and the guide says the sentences may be reworded at any time.
+  4. **Before `ready`** (L4, L5): `sponsorship()` calls share one wait, and `wallet_getCapabilities` waits too, bounded
+     by the vault connection's timeouts (one frame retry, up to 15 s, then 20 s for `ready`: about 35 s); the guide
+     says to show a neutral state meanwhile.
+- **`wallet_getCapabilities` stays as documented (option (a), the reviewer's reasoning)**: EIP-5792's `atomic` says the
+  wallet can run batches on that chain, which is true wherever the build sponsors it; whether this app's calls are
+  paid for today is a different, changing question, and `hana.evm.sponsorship()` answers it. Answering capabilities from
+  the API (b) would make a static capability change during the day and cost a request per call; hiding it until known
+  (c) breaks pages that ask once. A possible later step: omit a chain only after `sponsorship()` has seen a permanent
+  reason for it (`app_not_sponsored`, `chain_not_enabled`), never a passing one.
+- Not done: no Base Sepolia `DEMO_CHECK_IN` pin (it comes with the deploy); the API's `method_not_allowed` could carry
+  `notSent` (it is refused before any send), which would let its sentence say so.
+- Address impact: none.

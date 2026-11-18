@@ -69,7 +69,11 @@ const { demo, known } = useMainnetDemo();                     // Journear's sand
   `login()` returns is already marked handled, so `onClick={login}` never raises an unhandled rejection. `logout()`
   and `exportKey()` reject as usual: handle them.
 - `useHana().client` is the underlying `HanaClient`, for what the hooks don't wrap (events, auto-approve,
-  `revokeOtherDevices`, NEAR).
+  `revokeOtherDevices`, NEAR, and the gas-free EVM actions of 0.5.0: `client.evm.sponsorship()` and
+  `client.evm.sendSponsored()`, not live yet).
+- To show an error to your user, use `error.userMessage` (0.5.0), never `error.message`. A `login_cancelled` in
+  `useHana().error` is usually the user closing the window; with `data.reason: 'link_remove'` they removed a linked
+  sign-in method. Neither is a failure.
 - NEAR (0.4.0) has no hook yet: `useWallet` and `useHana().exportKey` take `'stellar'` and `'evm'` only. The account
   is `useHana().addresses?.near`; sign and relay with `useHana().client?.near` and export with
   `client.exportKey('near')` (the partner guide's section 8).

@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-18 (branch `feat/evm-sponsor-api`: "EVM gas sponsorship" for the simplified relayer (D851: `lookup`'s `closed` and `costWei`, `relayer_halted` → `503 sponsorship_paused`, status `paused`, the reconciler's rule) and the billing records (D852: `evm_sponsor_billing`, the ledger copy, "Usage ledger: EVM sponsored transactions", `evm_billing_late`)); 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review: "EVM gas sponsorship": shared windows only after the chain checks, the user's attempts, prepare's (account, IP) window and env cap, status's own window, settlement in `waitUntil` and the cron's reconciler, the reservation at the fee cap with the operator fee, fees started at cap ÷ 1.27, the simulation's gas, bounded receipts, the floor past the request's nonce, `evm_relay_receipt_odd`, 24-month retention, the relayer's new `send` and `lookup`); 2026-11-17 (branch `feat/evm-sponsor-api`, not merged, not deployed, not live: "EVM gas sponsorship" (prepare, send, status; D847, D848), the gate kind `evm-sponsor`, `evm_sponsor_sends` and the three `evm_relay_*` event kinds of migration 0022, the cron's relayer check, the `EVM_SPONSOR`, `EVM_RELAY_KEYS`, `EVM_SPONSOR_RPC_<chainId>` and `EVM_RELAYER` rows); 2026-11-18 (branch `feat/evm-sponsor-vault`, not merged: "EVM gas sponsorship: the session proof of prepare and send", the spec for the API, D856, with the review of PR 76's five additions); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: sandbox-dev's judging-week limits, D793: "NEAR relay"'s sandbox-dev budgets and activations, 3 and 6 NEAR, 300 a day; the issuer's limits table: sandbox-dev's budget 333, `appShares`, `tighterLimits` with the prefix day, their vars and `config_ignored`); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: "NEAR relay"'s answers past the relay, every one after the broadcast carries `transactionHash`; D788); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed, after its security review: the spend read's 2.5 s deadline, a malformed missing key still counted, an unparsable balance Unknown); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: `AdminRpc.systemStatus`'s `nearRelay`, the System status answer's NEAR relay tile, D784–D786); 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the Passport Home mail subjects and statement line; D765); 2026-11-11 (branch `feat/profile-names`, not merged, not deployed: Hana Home's name endpoints `GET`/`POST /v1/home/profile` and `POST /v1/home/name-sharing`, the identity token's `given_name`/`family_name`, `AdminRpc.profileNames`, the users' `name` in AdminRpc and ConsoleRpc, `purgeDirectory`'s `nameShares`, migration 0021's tables, D714); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): "NEAR relay": `POST /v1/near/activate` and `POST /v1/near/relay`, their rows in "Routing" and "Rate limits", the `near` role in "Relayer pools and gas", `NEAR_RELAY` and `NEAR_RELAY_KEYS`, the hourly funds check, migration 0020's two `security_events` kinds, D730–D739); 2026-11-11 (branch `feat/near-directory`, after its security review: `409 near_account_mismatch`, `nearCode`, the unique index, `nearAccountUser` never picks, D762, D763); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: `GET /v1/app`'s `walletChains`, `POST /v1/login`'s `exportChain` `"near"` and its event's fallback, `POST /v1/wallets/record`'s NEAR record (the v2 proofs hash, the `near` answer), migration 0019 in "D1 schema", the `near` log phase, `ConsoleRpc`/`AdminRpc` search by a NEAR account, D755–D759); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: `POST /api/orgs/:org/actions` `returnTo` and `GET /api/actions/:id` `returnTo`, D711; the Email login and scope reads answer `now`, D713; after review: a bad `returnTo` app of another org is `404`); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: `getApp`'s change status in force and `listApps`' `pendingChanges`, D701; the console's `GET /api/me` `envName`, D703; `USERS_SCREEN` from the manifest, D702; after review: the console app read's `now`, the latest `policy_set`); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: `StaffRpc.newOrgInvites`, the admin's `GET /api/invites/new-orgs`, the invite view's `newOrgKind`, D696; `issueInvite`'s `passkeys_required` off testnet only, D698); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: `POST /v1/vault/share-status`, its two Rate Limiting bindings and rows, `GET /v1/app`'s `share` as a policy app's check and the fallback, the D1 cost, D680–D684, D690–D693; after the re-review: the per-IP key across apps asked first, no parent check, the timeout, the sticky fallback); 2026-11-10 (branch `feat/hana-home-h9`, not merged, not deployed: "Routing", "Rate limits", "Hana Home": `GET /v1/home/devices` and the three stops, whose rows, the member check and `canStop`, the counts (D606–D610, D661, D663–D665); `GET /v1/app`'s `share` and `x-hana-share` (D662); the vault's `deviceLabel` (D611)); 2026-11-10 (branch `feat/hana-home-h10`, not merged, not deployed: the email issuer's `POST /v1/email/home/start` and Home's `verify` answer, `GET /v1/home/config`'s `emailSignIn`, the `/home/callback` page row and policy, `/home`'s policy with the email issuer, the page's email sign-in and exit-client sign-in, D616–D627; after its security review, D628, D629, D666–D669); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the admin's `GET /api/me` `scopeRegistration` and its `SCOPE_REGISTRATION` var, D651); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the admin's alert view: `deliveriesLatest`, D570); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: "Usage capture": the `home_login` event and who pays for it; `usage.org_report`'s `kind` and `home_logins`; `relayerKeys` with the Home pool; settlement's pool check; the statement's Home line; D585–D594; after the independent review: `relayerKeys`' `capture` and `unreadablePools`; `usage.org_ledger` for partners and `org_ledger_full` for staff; `GET /v1/health`'s `usageCapture`; the statement CSV's two columns appended last; D595–D599; D585–D599 confirmed by the user 2026-11-10, D605); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`: `404 home_no_wallet`, `503 home_directory_unavailable`, D544); 2026-11-10 (branch `feat/hana-home-h8`, not merged, not deployed: `/home`'s policy with the NEAR RPC origins, the page's one `POST /v1/home/login` per per-app sign-in, D575, D581, D583); 2026-11-10 (branch `feat/hana-home-h7`, not merged, not deployed: the `/home` page row and its policy, which Home routes the page calls, `/home`'s COOP header, D550, D551, D558); 2026-11-10 (branch `docs/tidy-deployed-1110`: the deploy notes of Hana Home, the RPC entrypoints, the admin Worker and the email issuer brought in line with sandbox-dev at `develop` 9b0ae580; the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: the vault's use of `GET /v1/app`'s `consent`, `bad_expiry`'s `maxExpiresAtMs`, D530–D538); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`, migration 0018 (`home_usage`, `user_events.app_id` nullable)); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps` and "D1 schema": `apps.first_login_at`, D462 amended); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps`'s `status = 'active'` overlay, `?scopeId=` with quiet scopes, the coverage cache's stated bound; `/v1/vault/consents*`: signature before the window, one chain read and `session_not_visible`, `too_many_consents`: security reviews of H2 and H4, D462, D500, D502, D510, D513); 2026-11-09 (branch `feat/hana-home-h2`, not merged, not deployed: "Routing", "Rate limits", "Hana Home" `GET /v1/home/apps`, "Chain views", "D1 schema" migration 0016: H2 built, D500–D503); 2026-11-09 (branch `feat/hana-home-h4`, not merged, not deployed: `GET /v1/app`'s `consent` and `x-hana-consent`, `POST /v1/vault/consents` and `/revoke`, `deviceLabel` on `POST /v1/vault/shares`, migration 0017, the consent prune in vault maintenance, D510–D513); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: "Hana Home" step 5: the email Home audience only while on the exit list, D494); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: "Hana Home": the exit client (`homeAudienceRoute`, `/v1/home/config`'s `exitGoogleClientId`), D468, D484, D490); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: the `RateLimiter` row: markers deleted by the alarm, D475); 2026-11-09 (branch `feat/hana-home-h1`, not merged: "Hana Home": `GET /v1/home/config`, `homeGate`, its refusals, the rate-limit rows, `log()`'s redacted field names; D473, D474); 2026-11-09 (branch `fix/batch-9-review`, not merged: the webhook's one D1 batch and dedupe, the feed's login-methods notice; D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: "Email login page", "Email login views", `AdminRpc.linkStats`, `ConsoleIssuerRpc`, `DirectoryRpc.issuerStats`, `link_usage`, the email AddClient proof; D444–D448); 2026-11-09 (branch `fix/before-mainnet-sweep-2`: "Relayer pools and gas": a session-signed relay's HMAC routing and its failover to the next key, D455's note; the `relay_failover` event); 2026-11-09 (branch `fix/before-mainnet-sweep`: "Relayer pools and gas": the narrowed allowlists and gas table, one relay per signed request, D455, D456); 2026-11-09 (branch `chore/status-access-followups`: the admin's `GET /api/status` NEAR reads on every endpoint the API can use, a tile's `lines`, D435's note); 2026-11-06 (branch `feat/user-events-retention`: `AdminRpc.purgeUserEvents`, the admin's monthly job's `user_events` step, `user_events`' 24-month retention and erasure, readiness 7.17, D433); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the API's `IssuerRpc` entrypoint, the issuer's `API` binding instead of `APP_DB`, `503 api_unavailable`, D434); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `NEAR_RPC_FALLBACKS`, "RPC view timeout and failover", the `near_rpc_failover` log line, D435); 2026-11-06 (branch `feat/mainnet-demo-key-export`: `GET /v1/app`'s `mainnetDemo`, `POST /v1/mainnet-demo/events`, `POST /v1/login`'s `exportChain` and the `key_exported` event, migration 0013 (`apps.mainnet_demo`, `user_events`), `AdminRpc.setMainnetDemo`, the staff app view's `settings.mainnetDemo`, `StaffUser.events`, the admin's `POST /api/apps/:app/mainnet-demo`, the auth Worker's `MAINNET_DEMO_BALANCE` and `/approve`'s dev-env `connect-src`; D428–D430); 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-09 (branch `feat/email-sharing-2`: brought up to date with `develop` @ a3de75e, not merged; migration 0014 instead of 0012, D438–D443 renumbered); 2026-11-06 (branch `feat/email-sharing`, not merged: email sharing with partners, D411, D438–D443: migration 0014 (`apps.identity_email`, `email_consents`), `GET /v1/app`'s `identityEmail`, "Email sharing" (the four consent endpoints), the mint's `email` claim and `emailStatus`, `/share-email`'s page policy, `ConsoleRpc`'s `email`/`emails` and email search, `updateSettings`' `identityEmail`, `purgeDirectory`'s `emailConsents`, the issuer's `sealedEmail` answers and `IDENTITY_SEAL_KEY`, the API's `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` and `EMAIL_CONSENT_KEY`); 2026-11-09 (branch `feat/mainnet-demo-live-prices`: `GET /v1/app`'s `mainnetDemoPrices`, D436); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ af938240 merged: "EVM gas sponsorship" on the real relayer object and chain client, the session proof checked on prepare and send (D856, built), rejected broadcasts by cause, the relayer's balance and the per-app in-flight slot, the relayer's intrinsic gas and starting fees, `fees_too_low`, the final codes); 2026-11-18 (branch `feat/evm-sponsor-api`: "EVM gas sponsorship" for the simplified relayer (D851: `lookup`'s `closed` and `costWei`, `relayer_halted` → `503 sponsorship_paused`, status `paused`, the reconciler's rule) and the billing records (D852: `evm_sponsor_billing`, the ledger copy, "Usage ledger: EVM sponsored transactions", `evm_billing_late`)); 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review: "EVM gas sponsorship": shared windows only after the chain checks, the user's attempts, prepare's (account, IP) window and env cap, status's own window, settlement in `waitUntil` and the cron's reconciler, the reservation at the fee cap with the operator fee, fees started at cap ÷ 1.27, the simulation's gas, bounded receipts, the floor past the request's nonce, `evm_relay_receipt_odd`, 24-month retention, the relayer's new `send` and `lookup`); 2026-11-17 (branch `feat/evm-sponsor-api`, not merged, not deployed, not live: "EVM gas sponsorship" (prepare, send, status; D847, D848), the gate kind `evm-sponsor`, `evm_sponsor_sends` and the three `evm_relay_*` event kinds of migration 0022, the cron's relayer check, the `EVM_SPONSOR`, `EVM_RELAY_KEYS`, `EVM_SPONSOR_RPC_<chainId>` and `EVM_RELAYER` rows); 2026-11-18 (branch `feat/evm-sponsor-vault`, not merged: "EVM gas sponsorship: the session proof of prepare and send", the spec for the API, D856, with the review of PR 76's five additions); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: sandbox-dev's judging-week limits, D793: "NEAR relay"'s sandbox-dev budgets and activations, 3 and 6 NEAR, 300 a day; the issuer's limits table: sandbox-dev's budget 333, `appShares`, `tighterLimits` with the prefix day, their vars and `config_ignored`); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: "NEAR relay"'s answers past the relay, every one after the broadcast carries `transactionHash`; D788); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed, after its security review: the spend read's 2.5 s deadline, a malformed missing key still counted, an unparsable balance Unknown); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: `AdminRpc.systemStatus`'s `nearRelay`, the System status answer's NEAR relay tile, D784–D786); 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the Passport Home mail subjects and statement line; D765); 2026-11-11 (branch `feat/profile-names`, not merged, not deployed: Hana Home's name endpoints `GET`/`POST /v1/home/profile` and `POST /v1/home/name-sharing`, the identity token's `given_name`/`family_name`, `AdminRpc.profileNames`, the users' `name` in AdminRpc and ConsoleRpc, `purgeDirectory`'s `nameShares`, migration 0021's tables, D714); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): "NEAR relay": `POST /v1/near/activate` and `POST /v1/near/relay`, their rows in "Routing" and "Rate limits", the `near` role in "Relayer pools and gas", `NEAR_RELAY` and `NEAR_RELAY_KEYS`, the hourly funds check, migration 0020's two `security_events` kinds, D730–D739); 2026-11-11 (branch `feat/near-directory`, after its security review: `409 near_account_mismatch`, `nearCode`, the unique index, `nearAccountUser` never picks, D762, D763); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: `GET /v1/app`'s `walletChains`, `POST /v1/login`'s `exportChain` `"near"` and its event's fallback, `POST /v1/wallets/record`'s NEAR record (the v2 proofs hash, the `near` answer), migration 0019 in "D1 schema", the `near` log phase, `ConsoleRpc`/`AdminRpc` search by a NEAR account, D755–D759); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: `POST /api/orgs/:org/actions` `returnTo` and `GET /api/actions/:id` `returnTo`, D711; the Email login and scope reads answer `now`, D713; after review: a bad `returnTo` app of another org is `404`); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: `getApp`'s change status in force and `listApps`' `pendingChanges`, D701; the console's `GET /api/me` `envName`, D703; `USERS_SCREEN` from the manifest, D702; after review: the console app read's `now`, the latest `policy_set`); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: `StaffRpc.newOrgInvites`, the admin's `GET /api/invites/new-orgs`, the invite view's `newOrgKind`, D696; `issueInvite`'s `passkeys_required` off testnet only, D698); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: `POST /v1/vault/share-status`, its two Rate Limiting bindings and rows, `GET /v1/app`'s `share` as a policy app's check and the fallback, the D1 cost, D680–D684, D690–D693; after the re-review: the per-IP key across apps asked first, no parent check, the timeout, the sticky fallback); 2026-11-10 (branch `feat/hana-home-h9`, not merged, not deployed: "Routing", "Rate limits", "Hana Home": `GET /v1/home/devices` and the three stops, whose rows, the member check and `canStop`, the counts (D606–D610, D661, D663–D665); `GET /v1/app`'s `share` and `x-hana-share` (D662); the vault's `deviceLabel` (D611)); 2026-11-10 (branch `feat/hana-home-h10`, not merged, not deployed: the email issuer's `POST /v1/email/home/start` and Home's `verify` answer, `GET /v1/home/config`'s `emailSignIn`, the `/home/callback` page row and policy, `/home`'s policy with the email issuer, the page's email sign-in and exit-client sign-in, D616–D627; after its security review, D628, D629, D666–D669); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: the admin's `GET /api/me` `scopeRegistration` and its `SCOPE_REGISTRATION` var, D651); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: the admin's alert view: `deliveriesLatest`, D570); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: "Usage capture": the `home_login` event and who pays for it; `usage.org_report`'s `kind` and `home_logins`; `relayerKeys` with the Home pool; settlement's pool check; the statement's Home line; D585–D594; after the independent review: `relayerKeys`' `capture` and `unreadablePools`; `usage.org_ledger` for partners and `org_ledger_full` for staff; `GET /v1/health`'s `usageCapture`; the statement CSV's two columns appended last; D595–D599; D585–D599 confirmed by the user 2026-11-10, D605); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`: `404 home_no_wallet`, `503 home_directory_unavailable`, D544); 2026-11-10 (branch `feat/hana-home-h8`, not merged, not deployed: `/home`'s policy with the NEAR RPC origins, the page's one `POST /v1/home/login` per per-app sign-in, D575, D581, D583); 2026-11-10 (branch `feat/hana-home-h7`, not merged, not deployed: the `/home` page row and its policy, which Home routes the page calls, `/home`'s COOP header, D550, D551, D558); 2026-11-10 (branch `docs/tidy-deployed-1110`: the deploy notes of Hana Home, the RPC entrypoints, the admin Worker and the email issuer brought in line with sandbox-dev at `develop` 9b0ae580; the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: the vault's use of `GET /v1/app`'s `consent`, `bad_expiry`'s `maxExpiresAtMs`, D530–D538); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: `POST /v1/home/login`, migration 0018 (`home_usage`, `user_events.app_id` nullable)); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps` and "D1 schema": `apps.first_login_at`, D462 amended); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: `GET /v1/home/apps`'s `status = 'active'` overlay, `?scopeId=` with quiet scopes, the coverage cache's stated bound; `/v1/vault/consents*`: signature before the window, one chain read and `session_not_visible`, `too_many_consents`: security reviews of H2 and H4, D462, D500, D502, D510, D513); 2026-11-09 (branch `feat/hana-home-h2`, not merged, not deployed: "Routing", "Rate limits", "Hana Home" `GET /v1/home/apps`, "Chain views", "D1 schema" migration 0016: H2 built, D500–D503); 2026-11-09 (branch `feat/hana-home-h4`, not merged, not deployed: `GET /v1/app`'s `consent` and `x-hana-consent`, `POST /v1/vault/consents` and `/revoke`, `deviceLabel` on `POST /v1/vault/shares`, migration 0017, the consent prune in vault maintenance, D510–D513); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: "Hana Home" step 5: the email Home audience only while on the exit list, D494); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: "Hana Home": the exit client (`homeAudienceRoute`, `/v1/home/config`'s `exitGoogleClientId`), D468, D484, D490); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: the `RateLimiter` row: markers deleted by the alarm, D475); 2026-11-09 (branch `feat/hana-home-h1`, not merged: "Hana Home": `GET /v1/home/config`, `homeGate`, its refusals, the rate-limit rows, `log()`'s redacted field names; D473, D474); 2026-11-09 (branch `fix/batch-9-review`, not merged: the webhook's one D1 batch and dedupe, the feed's login-methods notice; D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: "Email login page", "Email login views", `AdminRpc.linkStats`, `ConsoleIssuerRpc`, `DirectoryRpc.issuerStats`, `link_usage`, the email AddClient proof; D444–D448); 2026-11-09 (branch `fix/before-mainnet-sweep-2`: "Relayer pools and gas": a session-signed relay's HMAC routing and its failover to the next key, D455's note; the `relay_failover` event); 2026-11-09 (branch `fix/before-mainnet-sweep`: "Relayer pools and gas": the narrowed allowlists and gas table, one relay per signed request, D455, D456); 2026-11-09 (branch `chore/status-access-followups`: the admin's `GET /api/status` NEAR reads on every endpoint the API can use, a tile's `lines`, D435's note); 2026-11-06 (branch `feat/user-events-retention`: `AdminRpc.purgeUserEvents`, the admin's monthly job's `user_events` step, `user_events`' 24-month retention and erasure, readiness 7.17, D433); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the API's `IssuerRpc` entrypoint, the issuer's `API` binding instead of `APP_DB`, `503 api_unavailable`, D434); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `NEAR_RPC_FALLBACKS`, "RPC view timeout and failover", the `near_rpc_failover` log line, D435); 2026-11-06 (branch `feat/mainnet-demo-key-export`: `GET /v1/app`'s `mainnetDemo`, `POST /v1/mainnet-demo/events`, `POST /v1/login`'s `exportChain` and the `key_exported` event, migration 0013 (`apps.mainnet_demo`, `user_events`), `AdminRpc.setMainnetDemo`, the staff app view's `settings.mainnetDemo`, `StaffUser.events`, the admin's `POST /api/apps/:app/mainnet-demo`, the auth Worker's `MAINNET_DEMO_BALANCE` and `/approve`'s dev-env `connect-src`; D428–D430); 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-09 (branch `feat/email-sharing-2`: brought up to date with `develop` @ a3de75e, not merged; migration 0014 instead of 0012, D438–D443 renumbered); 2026-11-06 (branch `feat/email-sharing`, not merged: email sharing with partners, D411, D438–D443: migration 0014 (`apps.identity_email`, `email_consents`), `GET /v1/app`'s `identityEmail`, "Email sharing" (the four consent endpoints), the mint's `email` claim and `emailStatus`, `/share-email`'s page policy, `ConsoleRpc`'s `email`/`emails` and email search, `updateSettings`' `identityEmail`, `purgeDirectory`'s `emailConsents`, the issuer's `sealedEmail` answers and `IDENTITY_SEAL_KEY`, the API's `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` and `EMAIL_CONSENT_KEY`); 2026-11-09 (branch `feat/mainnet-demo-live-prices`: `GET /v1/app`'s `mainnetDemoPrices`, D436); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -877,14 +877,15 @@ still the vault's word (the API never sees it); staff see the rows as "reported 
 | 502 | `near_unavailable` | the session couldn't be read |
 | 503 | `event_unavailable`, `rate_limiter_unavailable` | the write, the directory keys or the limiter failed |
 
-### EVM gas sponsorship: the session proof of prepare and send (D856; spec for the API, not built here)
+### EVM gas sponsorship: the session proof of prepare and send (D856)
 
-**Not live, and not yet checked by the API:** the sponsorship routes are their own branch (PR #71, docs there); this
-is what they must check before anything else so that prepare and send prove they come from the user's signed-in
-session, as `/v1/identity/token` and `/v1/mainnet-demo/events` do. The vault sends it today (`packages/web/src/vault/
+**Checked by the API** (`src/evm/sponsor.ts` `proofRefusal`, `sessionBound`; tests `apps/api/test/evm-sponsor.test.ts`
+"the session proof of prepare and send"); not live (the routes below). The vault sends it (`packages/web/src/vault/
 evm-sponsor.ts` `withSessionProof`); core has the layout and the stateless check (`packages/core/src/sponsor-session.ts`,
-tests `packages/core/test/sponsor-session.test.ts`). `GET /v1/evm/sponsor/status` carries none (no signature, no
-chain read).
+also served on the subpath `@hana-id/core/sponsor-session` for the API; tests `packages/core/test/sponsor-session.test.ts`).
+`GET /v1/evm/sponsor/status` carries none (no signature, no chain read). As built, step 3 reads the session once
+(`singleRead`, D513): one not visible yet is `503 session_not_visible` (`retry-after: 1`), and the route's own
+stateless checks (the allowlist, send's signatures) run between steps 1 and 2.
 
 **The body field** (both routes; strict bodies must allow it): `sessionProof: {sessionPublicKey: number[32], issuedAtMs,
 nonce: number[16], signature: number[64], walletProof: {address, signature: number[65]}}`, exactly those keys.
@@ -1135,50 +1136,65 @@ Logs: the request line (`code`, `nearTx`), `relay_dispatched` / `relay_retry` / 
 `method` `delegate` or `activate`; `near_relay_alert_failed`, `near_relay_funds_check`, `near_relay_balance_short`,
 `near_relay_floor_failed`. No account id, key, signature or path is logged.
 
-### EVM gas sponsorship: `POST /v1/evm/sponsor/prepare`, `POST /v1/evm/sponsor/send`, `GET /v1/evm/sponsor/status` (D830–D848) · X
+### EVM gas sponsorship: `POST /v1/evm/sponsor/prepare`, `POST /v1/evm/sponsor/send`, `GET /v1/evm/sponsor/status` (D830–D851, D856) · X
 
-**Built, not live.** No env has `evm.sponsor` (sandbox-dev neither) and no Worker has the `EVM_RELAYER` binding (the
-relayer Durable Object is its own build), so on every deployed env all three routes answer `503
-sponsorship_unconfigured` before anything is read. Base Sepolia (84532) only once the delegate is deployed and pinned;
-31337 in `local*` envs. Code: `src/evm/sponsor.ts` (prepare, send, the cron check), `sponsor-settle.ts` (settlement,
-the reconciler, retention), `sponsor-checks.ts` (the strict bodies, the allowlist, both signatures, the delegation,
-revert data, the success rule, the fixed limits), `op-fee.ts` (gas, fees, the OP Stack L1 and operator fees, the worst
-case, a receipt's checked cost), `sponsor-status.ts`, `sponsor-ports.ts` (the relayer and chain ports, a minimal RPC
-client).
+**Built, not live.** No env has `evm.sponsor` (sandbox-dev neither) and no deployed Worker has the `EVM_RELAYER`
+binding, so on every deployed env all three routes answer `503 sponsorship_unconfigured` before anything is read. Base
+Sepolia (84532) only once the delegate is deployed and pinned; 31337 in `local*` envs (the e2e stack runs these routes
+and the real relayer object over its mocked chain). Code: `src/evm/sponsor.ts` (prepare, send, the session proof, the
+cron check), `sponsor-settle.ts` (settlement, the reconciler, retention), `sponsor-checks.ts` (the strict bodies, the
+allowlist, both signatures, the delegation, revert data, the success rule, the fixed limits), `op-fee.ts` (gas with the
+relayer's own `intrinsicGas`, fees from the relayer's `maxStartingFees`, the OP Stack L1 and operator fees, the worst
+case, a receipt's checked cost), `sponsor-status.ts`, `sponsor-ports.ts` (the seam to the relayer object,
+`evm-relayer.ts`, and the chain client, `evm/sponsor-chain.ts` `sponsorChainFor`: one trusted read endpoint).
 
 A Journear user's EVM account runs a batch of allowlisted calls through the EIP-7702 delegate
 (`contracts/evm-delegate`, `HanaDelegateExecutor`) while Journear's relayer pays the network fee. **Who calls:** prepare
 and send only the vault (`VAULT_ORIGIN` acting for an allowed `x-hana-parent-origin`, D832: the signatures never reach
-the partner page); status the partner page too. All three take the app gate (kind `evm-sponsor` for prepare and send:
-one per-IP window across every app, 30 a minute; kind `evm-sponsor-status` for status: its own, 60 a minute). **Off**
-(`503 sponsorship_unconfigured`, checked first, before the gate) unless `EVM_SPONSOR` parses (`evm/sponsor-config.ts`,
-with core's pinned delegate table, testnet only), the `EVM_RELAYER` binding exists and `EVM_RELAY_KEYS` is set.
-Neither route is bound to the user's session yet (D847's open item): the publishable key and the Origin are public, so
-everything below is bounded by the account's own signature (send) and the windows.
+the partner page), each with the user's **session proof** (D856, the section above); status the partner page too. All
+three take the app gate (kind `evm-sponsor` for prepare and send: one per-IP window across every app, 30 a minute; kind
+`evm-sponsor-status` for status: its own, 60 a minute). **Off** (`503 sponsorship_unconfigured`, checked first, before
+the gate) unless `EVM_SPONSOR` parses (`evm/sponsor-config.ts`, with core's pinned delegate table, testnet only), the
+`EVM_RELAYER` binding exists and `EVM_RELAY_KEYS` is set.
 
-Conventions: strict JSON bodies (an unknown field is `400 bad_request`); `chainId` a number; addresses `0x` + 40 hex,
-all lowercase, all uppercase or exactly EIP-55 (answers are EIP-55); data `0x` + whole bytes; every other integer a
-canonical decimal string (`value`, `executeNonce`, `deadline` in unix seconds, `minGas`, the authorization's `nonce`).
-Errors are the API's usual `{error, code, requestId, …}`; a `retry-after` header comes with `retryAfterS` in the body.
-Types and response guards: `packages/core/src/api-types.ts` (`EvmSponsor*`).
+Conventions: strict JSON bodies (an unknown field is `400 bad_request`; `sessionProof` is the one extra key); `chainId`
+a safe positive integer; addresses `0x` + 40 hex, all lowercase, all uppercase or exactly EIP-55 (answers are EIP-55);
+data `0x` + whole bytes; every other integer a canonical decimal string (`value`, `executeNonce`, `deadline` in unix
+seconds, `minGas`, the authorization's `nonce`). The body is parsed once: the strict shape, the proof's hash and every
+later check read that one object. Errors are the API's usual `{error, code, requestId, …}`; a `retry-after` header
+comes with `retryAfterS` in the body. Types and response guards: `packages/core/src/api-types.ts` (`EvmSponsor*`).
 
-**`POST /v1/evm/sponsor/prepare`** `{chainId, account, calls: [{to, value, data}]}` (1 to 8 calls) → 200 `{delegation:
-"none" | "journear" | "other", accountNonce, executeNonce (null for "other"), serverNow, relayer, implementation,
-minGasFloor, maxMinGas, deadlineMaxS, allowed, reason?}`. Checks the chain, the app and every call as send does (steps
-1–2 below, same codes); with `requireKnownAccount`, an account the directory doesn't hold for a user of the app's scope
-is `409 account_unrecorded` (retryable) before any window or chain read (`503 directory_unavailable`); then the
-(account, IP) minute (10: one IP can't use up a chosen user's prepares for others), the app's (600) and the env's
-(2000) prepare minutes (`429 rate_limited`); then the account's code and pending transaction count, and `nonce()` (run
-as the delegate through a state override when the account has no code; `502 evm_rpc_unavailable`). `allowed: false`
-with `reason` `delegated_elsewhere`, `not_available` (the user's failures for the day: never named, prepare is
-unsigned), `budget_exhausted` (the app's or the env's day can't take another batch at the fee cap) or `gas_too_high` (no
-minGas above the floor fits `maxGasPerTx`). `maxMinGas` is the largest `minGas` whose gas limit fits `maxGasPerTx` for
-these calls (with the authorization when `none`). Signs nothing, sends nothing.
+**The session proof, as built** (both routes, after the body's shape and before any window, replay check, directory
+read or chain read; each refusal counts nothing shared): core's `checkEvmSponsorSessionProof` with `method` from the
+path (`401 missing_session_proof`, `400 bad_session_proof`, `400 stale_session_proof {serverTimeMs}`, `401
+invalid_session_signature`, `400 bad_wallet_proof`); then the route's own stateless checks (send's steps 1–3 below;
+prepare's chain, app and calls); then the single-use marker `identity-proof:<session key hex>` until `issuedAtMs + 120
+s` (`409 proof_replayed`); the share in `session` mode (`checkShare`: `410 session_ended` with its `reason`, `503
+config_unavailable`); the session on chain in the app's scope with **one** read (`checkChainSession` `singleRead`, as
+any throwaway key reaches it, D513: not visible yet `503 session_not_visible`, `retry-after: 1`; expired or revoked
+`410 session_ended`; another scope `403 scope_mismatch`; `502 near_unavailable`); with `requireKnownAccount`, the
+account's directory user (below) must be the session path's account root's (`directoryUser`): none yet `409
+account_unrecorded` (`retryable`, `retry-after: 2`), another user `403 account_mismatch`, a failed read or a missing
+directory key `503 directory_unavailable`.
+
+**`POST /v1/evm/sponsor/prepare`** `{chainId, account, calls: [{to, value, data}], sessionProof}` (1 to 8 calls) → 200
+`{delegation: "none" | "journear" | "other", accountNonce, executeNonce (null for "other"), serverNow, relayer,
+implementation, minGasFloor, maxMinGas, deadlineMaxS, allowed, reason?}`. Checks the chain, the app and every call as
+send does (steps 1 below, same codes), the session proof; then the account's prepare minute (10; only its own session
+reaches it), the app's (600) and the env's (2000) prepare minutes (`429 rate_limited`); then the account's code and
+pending transaction count, the relayer's balance (cached 30 s per isolate) and `nonce()` (run as the delegate through a
+state override when the account has no code; `502 evm_rpc_unavailable`). `allowed: false` with `reason`
+`delegated_elsewhere`, `paused` (the relayer is halted, D851, or its balance is under 3 × the cheapest batch's worst
+case), `not_available` (the user's failures for the day: never named), `budget_exhausted` (the app's or the env's day
+can't take another batch at the fee cap) or `gas_too_high` (no minGas above the floor fits `maxGasPerTx`). `maxMinGas`
+is the largest `minGas` whose gas limit fits `maxGasPerTx` for these calls (with the authorization when `none`). Signs
+nothing, sends nothing.
 
 **`POST /v1/evm/sponsor/send`** `{chainId, account, calls, executeNonce, deadline, relayer, minGas, signature (65 bytes r
-‖ s ‖ v), authorization?: {chainId, address, nonce, yParity, r, s}}` → 200 `{transactionHash, status: "executed"}` (and
-`replay: true` when it answers a copy from the audit row). Checks, in order, stopping at the first failure; nothing
-before step 7 reads the chain, and nothing shared (the app's or the env's windows) is counted before step 10:
+‖ s ‖ v), authorization?: {chainId, address, nonce, yParity, r, s}, sessionProof}` → 200 `{transactionHash, status:
+"executed"}` (and `replay: true` when it answers a copy from the audit row). Checks, in order, stopping at the first
+failure; nothing before step 7 reads the chain, and nothing shared (the app's or the env's windows) is counted before
+step 12:
 1. The chain (`400 chain_not_enabled`), the app has targets on it (`403 app_not_sponsored`), every call: at most
    `maxCallsPerBatch` (`400 too_many_calls`, `maxCalls`), value 0 (`403 value_not_allowed`, `callIndex`), never the
    zero address, the account, the delegate or the relayer (`403 target_not_allowed`, `callIndex`), an allowlisted target,
@@ -1190,135 +1206,157 @@ before step 7 reads the chain, and nothing shared (the app's or the env's window
    recovers to `account`, low s, v 27/28 (`401 invalid_signature`); the authorization, when present: its `chainId` is the
    chain's, never 0 (`400 bad_authorization`), its address the pinned delegate (`403 authorization_not_pinned`), signed
    by the account (`401 invalid_authorization_signature`).
-4. **Replays, no count, no chain read:** `executeNonce` below the account's durable floor (the lowest nonce not known to
+4. The session proof's stateful part (above): its single use, the share and the session on chain, the directory.
+5. **Replays, no count, no chain read:** `executeNonce` below the account's durable floor (the lowest nonce not known to
    be used; it rises past a batch's own nonce when it executes or the chain shows it used, never to a figure an RPC
    reported) is answered from the audit row of the same digest for this app (below) or `409 nonce_stale {executeNonce:
    the floor}`; a digest marked as sent (until its deadline + 2 min) is answered from its row, or `409 in_progress`
    (`retry-after: 2`) while the first copy runs.
-5. With `requireKnownAccount` (the default; `false` only in `local*` envs): the directory holds the account as an EVM
-   wallet of exactly one user of the app's scope (`409 account_unrecorded`, `retryable`, `retry-after: 2`; `503
-   directory_unavailable`). D847.
-6. What only the account's key holder pays for: the account's minute (6) and the user's day of attempts
-   (`perUserPerDay` × 3; the account's without a directory user): `429 rate_limited` (`retryAfterS`; `error` names the
-   window). A refusal after the chain reads keeps these, and only these.
-7. The chain: the account's code, its pending transaction count and the latest base fee (`502 evm_rpc_unavailable`).
-   Code other than nothing or `0xef0100 ‖ the pinned delegate`: `409 delegated_elsewhere` (D840). No code and no
-   authorization: `409 delegation_required`. Delegated already: the authorization is dropped. The authorization's nonce
-   is not the pending count: `409 authorization_nonce_stale {accountNonce}`.
-8. Gas: `ceil((21 000 + 10 per calldata token + 25 000 per authorization + 2 600 + 29 800 + 1 400 per further call + 2
-   per byte of the calls' data + minGas + 3 000) × 1.1)` (`op-fee.ts`; README "Gas"; never `eth_estimateGas`) above
-   `maxGasPerTx`: `403 gas_too_high {maxGas}`. Fees: `maxFeePerGas = min(2 × base fee + tip, maxFeePerGasGwei ÷ 1.27)`
-   (room for the relayer's two +12.5% replacements within the cap), tip `maxPriorityFeePerGasGwei` (at most that); a
-   base fee above the cap ÷ 1.27: `503 gas_price_too_high` (`retry-after: 30`). Then side by side: `nonce()`, the L1
-   data fee's bound (OP Stack: the GasPriceOracle's `getL1FeeUpperBound(size)`, the size an upper bound of the unsigned
-   transaction: calldata + 200 + 128 per authorization) and the operator fee's bound (OP Stack Isthmus:
-   `getOperatorFee(gasLimit)`; a chain whose oracle reverts it has none, 0), any other failure `502
+6. What only the session's holder pays for: the account's minute (6) and the user's day of attempts (`perUserPerDay` ×
+   3; the account's without a directory user): `429 rate_limited` (`retryAfterS`; `error` names the window). A refusal
+   after the chain reads keeps these, and only these, unless it is not the user's doing (the relayer's balance, halt,
+   busy, fees: they come back too).
+7. The chain: the account's code, its latest and pending transaction counts, the latest base fee and the relayer's
+   balance (cached 30 s) (`502 evm_rpc_unavailable`). Code other than nothing or `0xef0100 ‖ the pinned delegate`: `409
+   delegated_elsewhere` (D840). No code and no authorization: `409 delegation_required`. Delegated already: the
+   authorization is left off (a type-2 send). The authorization is attached only when the account has no code and its
+   pending and latest counts are both the authorization's nonce (nothing of the account's own in flight): else `409
+   authorization_nonce_stale {accountNonce}`.
+8. Gas: `ceil((intrinsicGas + 2 600 + 29 800 + 1 400 per further call + 2 per byte of the calls' data + minGas + 3 000)
+   × 1.1)`, where `intrinsicGas` is the relayer's own (`evm-relayer.ts`: 21 000, calldata at 4 a token and at least
+   EIP-7623's 10 a token, 25 000 per authorization), so the relayer's own check (gas ≥ intrinsic + minGas) always holds;
+   never `eth_estimateGas`; above `maxGasPerTx`: `403 gas_too_high {maxGas}`, before anything is reserved. Fees:
+   `maxFeePerGas = min(2 × base fee + tip, the relayer's maxStartingFees)` (room for its two +12.5% replacements within
+   the cap), the tip its starting edge at most; a base fee above it: `503 gas_price_too_high` (`retry-after: 30`). Then
+   side by side: `nonce()`, the L1 data fee's bound (OP Stack: the GasPriceOracle's `getL1FeeUpperBound(size)`, the size
+   an upper bound of the unsigned transaction: calldata + 200 + 128 per authorization) and the operator fee's bound (OP
+   Stack Isthmus: `getOperatorFee(gasLimit)`; a chain whose oracle reverts it has none, 0), any other failure `502
    evm_rpc_unavailable`. `executeNonce` is not `nonce()`: `409 nonce_stale {executeNonce: the chain's}` (below it, the
    floor rises past the request's nonce and the account's minute hit is given back).
-9. The digest is marked (atomic; a concurrent copy is `409 in_progress`).
-10. **The shared windows, only now:** the app's minute (120), the env's (`sendsPerMinute`), the directory user's day
+9. **The relayer's balance** covers 3 × this send's worst case (step 13), so no user can make the relayer itself run dry
+   (its own refusal halts it for staff): else `503 sponsorship_paused` (`retry-after: 300`), the day's
+   `evm_relay_balance_low` (with `neededWei`), the user's attempts back, nothing reserved or sent.
+10. The digest is marked (atomic; a concurrent copy is `409 in_progress`).
+11. **The app's slot in flight:** at most 4 of an app's sends unsettled on a chain (the relayer takes 8 unmined across
+    every app): else `429 relayer_busy` (`retry-after: 5`). A slot comes back when its send settles (whoever moves its
+    row) or was never sent; one whose give-back was lost is gone at the next UTC midnight.
+12. **The shared windows, only now:** the app's minute (120), the env's (`sendsPerMinute`), the directory user's day
     (`perUserPerDay`), the app's (`perAppPerDay`), the env's (`sendsPerDay`); then a failure slot of the user (the
     account without a directory user): 3 failed sends a UTC day, then `429 too_many_failures`.
-11. **The worst case, reserved before sending:** `gasLimit × maxFeePerGasGwei` (the cap: the relayer may replace the
+13. **The worst case, reserved before sending:** `gasLimit × maxFeePerGasGwei` (the cap: the relayer may replace the
     transaction with fees up to it) `+ the L1 bound + the operator bound`, from the app's day budget
     (`appDailyBudgetEth`: `429 app_budget_exhausted`) then the env's (`dailyBudgetEth`: `429 budget_exhausted`), each
-    atomic in its object (concurrent requests can't take more than a budget holds), `retryAfterS` to the next UTC day.
-    **Everything from here runs inside the request's `waitUntil`**: a client that goes away doesn't stop it.
-12. **The simulation:** `eth_call` from the relayer to the account with the exact calldata at the gas limit less 25 000
-    per authorization (eth_call carries no authorization list, so it charges less intrinsic gas than the type-4
-    transaction: the batch gets exactly the gas it will have), the account's code overridden to the delegation
+    atomic in its object, `retryAfterS` to the next UTC day. **Everything from here runs inside the request's
+    `waitUntil`**: a client that goes away doesn't stop it.
+14. **The simulation:** `eth_call` from the relayer to the account with the exact calldata at the gas limit less 25 000
+    per authorization (eth_call carries no authorization list), the account's code overridden to the delegation
     designator when the authorization is attached. A revert: `422 simulation_reverted` with `revertData` (well-formed
     hex, at most 2 KiB, else left out, never truncated) and `callIndex` (from a `CallFailed(index, reason)` naming a call
     of the batch); nothing is spent, the failure counts.
-13. The audit row (`evm_sponsor_sends`, status `sending`; `503 audit_unavailable` without it, nothing sent), then the
-    relayer object `evm-relayer-<chainId>-0` (`send` with core's Execute input, the signature, the authorization, gas,
-    fees and the reservation; it recomputes the digest and calldata and checks them itself, and its answer's digest
-    must be the handler's and its hash its raw transaction's keccak). A coded refusal (`Error('evm_relayer:<code>')`: it
-    sent nothing) gives everything back, the row `refused`: `relayer_busy` → `503 relayer_busy`, `relayer_unconfigured`
-    / `relayer_misconfigured` → `503 sponsorship_unconfigured`, `rpc_unavailable` → `502 evm_rpc_unavailable`,
-    `deadline_passed` → `400 deadline_out_of_range`, `rejected` → `503 relayer_rejected` (`retry-after: 30`; a relayer
-    short of funds is logged), `relayer_halted` (the relayer stopped and waits for staff) → `503 sponsorship_paused`
-    (`retry-after: 300`), `fees_too_high` → `503 gas_price_too_high`, `daily_cap` → `429 budget_exhausted`, anything
-    else `503 relayer_unavailable`. Any other failure is unknown (it may have
-    broadcast): `503 relayer_unavailable` (`retry-after: 2`), the row `unknown`, the reservation and counts kept (the
-    reconciler settles them), the mark dropped so the same batch can be sent again (the relayer is idempotent per
-    digest).
-14. The receipt, polled for up to 30 s with nothing held (no lock, no object waits) over the relayer's `lookup`: its
-    mined hash when it has one, else every hash it lists for the digest (a fee bump or a deadline cancel replaces the
-    transaction at the same nonce; the newest 4 with the answered one). None: `504 timeout {transactionHash}` (the row
+15. The audit row (`evm_sponsor_sends`, status `sending`; `503 audit_unavailable` without it, nothing sent), then the
+    relayer object `evm-relayer-<chainId>-0` (`send`; it recomputes the digest and calldata and checks them itself; its
+    answer's digest must be the handler's, its `broadcast` one it knows, and its hash its raw transaction's keccak when
+    the raw comes back). A coded refusal (`Error('evm_relayer:<code>[:<reason>]')`: it sent nothing) gives everything
+    back, the row `refused`, the user's attempts too unless their input caused it (`invalid_request`,
+    `deadline_passed`): `relayer_busy` → `429 relayer_busy` (`retry-after: 2`; `:account`, that account's previous batch
+    not yet seen mined by the relayer's run, `retry-after: 5`), `relayer_halted` → `503 sponsorship_paused`
+    (`retry-after: 300`), `fees_too_high` → `503 gas_price_too_high` (30 s), `fees_too_low` (the relayer's follow-up:
+    the fees below the base fee with margin) → `503 gas_price_too_high` (15 s), `daily_cap` → `429 budget_exhausted`,
+    `relayer_unconfigured` / `relayer_misconfigured` → `503 sponsorship_unconfigured`, `rpc_unavailable` → `502
+    evm_rpc_unavailable`, `deadline_passed` → `400 deadline_out_of_range`, anything else `503 relayer_unavailable`. Any
+    other failure is unknown (it may have broadcast): `503 relayer_unavailable` (`retry-after: 2`), the row `unknown`,
+    the reservation and counts kept (the reconciler settles them), the mark dropped so the same batch can be sent again
+    (the relayer is idempotent per digest).
+16. **A batch no node took** (`broadcast: "rejected"`: the relayer gave its nonce to its own cancel at once) is answered
+    now, never after a wait: the row `rejected` with `rejection` `<cause>:<code>`; the money settles later to the
+    cancel's cost (the reconciler, from the relayer's `lookup`: `mined`, `outcome: "cancel"`, `costWei`, or the cancel's
+    own receipt). By `rejection.cause`: `request` (the batch's own size or shape) → `422 not_executed`, the failure
+    charged; `pricing` (turned away over its fees) → `503 gas_price_too_high` (15 s), the user's attempts, the shared
+    windows and the failure slot back, no alert; `relayer`, and any cause this API doesn't know → `503
+    sponsorship_paused`, the same given back, and `evm_relay_stuck {rejected: <code>}` (the relayer halts itself on such
+    a refusal). A malformed rejection is read as `relayer`.
+17. The receipt, polled for up to 30 s with nothing held over the relayer's `lookup`: its mined hash when it has one,
+    else every hash it lists for the digest and the one answered. None: `504 timeout {transactionHash}` (the row
     `timeout`, settled later by the reconciler). **Success** is status 1 and an `Executed(digest)` log emitted by the
-    account itself with the signed digest: 200; the floor rises past `executeNonce`; the failure slot comes back.
-    Status 0: `422 reverted {transactionHash}`; status 1 without that log (an authorization the network skipped, the
-    deadline's self-transfer): `422 not_executed {transactionHash}`; both are charged and count as failures.
+    account itself with the signed digest, from the first receipt of one of the row's own hashes (at head, not at
+    confirmed depth: a reorg before then is D847's accepted risk; the relayer's own verdict follows at depth): 200; the
+    floor rises past `executeNonce`; the failure slot comes back. Status 0: `422 reverted {transactionHash}`; status 1
+    without that log (an authorization the network skipped, the deadline's self-transfer): `422 not_executed
+    {transactionHash}`; both are charged and count as failures.
 
 **Settlement**, once per row whoever gets there first (the request, or the reconciler): the row moves from its open
-state to its outcome by a conditional update, and only the caller that moved it changes the budgets. The reservation
-less the receipt's cost (`gasUsed × effectiveGasPrice + l1Fee + operatorFee`; an OP receipt without `l1Fee` is charged
-the bound) comes back into the day window it was taken from, a spend above it is charged. A receipt outside what was
-reserved (`gasUsed` below 21 000 or above the gas limit, `effectiveGasPrice` above the cap, `l1Fee` above twice the
-bound, an operator fee above its bound) settles at the reservation and writes `evm_relay_receipt_odd`. A relayer
-`replay` (it had sent the digest) gives this copy's reservation and counts back, after its row records `replay` (and
-only if this request moved the row), and settles nothing. A refusal
-at steps 10–11 or a simulation or RPC failure before the relayer gives back what it took (the mark, the shared
-windows, the slot, the budget), except that a simulation revert keeps the windows and the slot. **Copies** are answered
-from the latest audit row of the same chain, digest and app, never from the chain: `executed` the same 200 with
-`replay: true`; `reverted`/`not_executed` the same 422; `sent`/`timeout`/`lost`/`mined`/`consumed_elsewhere` `504
-timeout` with the hash (when there is one); `sending`
-`409 in_progress` (a row `unknown` or `refused` has no mark, so its batch goes to the relayer again).
+state to its outcome by a conditional update, and only the caller that moved it changes the budgets and the app's slot.
+The reservation less the receipt's cost (`gasUsed × effectiveGasPrice + l1Fee + operatorFee`, as the chain client parses
+an OP Stack receipt; an OP receipt without `l1Fee` is charged the bound) comes back into the day window it was taken
+from, a spend above it is charged. A receipt outside what was reserved (`gasUsed` below 21 000 or above the gas limit,
+`effectiveGasPrice` above the cap, `l1Fee` above twice the bound, an operator fee above its bound) settles at the
+reservation and writes `evm_relay_receipt_odd`. A relayer `replay` (it had sent the digest) gives this copy's
+reservation, counts and slot back, after its row records `replay` (and only if this request moved the row), and settles
+nothing. A refusal at steps 11–13 or a simulation or RPC failure before the relayer gives back what it took (the mark,
+the slot, the shared windows, the failure slot, the budget), except that a simulation revert keeps the windows and the
+failure slot. **Copies** are answered from the latest audit row of the same chain, digest and app, never from the chain:
+`executed` the same 200 with `replay: true`; `reverted`/`not_executed` the same 422; a rejected batch the same answer as
+its send; `sent`/`timeout`/`lost` `504 timeout` with the hash; anything else open `409 in_progress` (a row `unknown` or
+`refused` has no mark, so its batch goes to the relayer again).
 
 **The reconciler** (every cron run, `reconcileEvmSends`; at most 20 rows a run, oldest update first): every row still
-`sent`, `timeout` or `unknown` a minute after its last update, and `sending` only 5 minutes after (a live request's
-row is never raced). Every hash the relayer reports for the digest (its answer, and each lookup's list of versions:
-fee bumps, the deadline's self-transfer) is persisted on the row (`tx_hashes`) and read. A row settles **only** from (a)
-a receipt for one of its own hashes, as above (a first attempt answered `unknown` and then sent as a copy's replay is
-settled here, once), or (b) the relayer's `lookup` (D851): `mined`, with its cost, when the receipt itself still can't
-be read an hour past the deadline (the row `mined`, the money the relayer's cost, at most the reservation); `closed`
-`never_sent` (the budget and the failure slot back, `refused`); `closed` `consumed_elsewhere` (the reservation kept as
-the cost, the row `consumed_elsewhere`, `evm_relay_nonce_taken`). A lookup's mined hash counts only when it lists it as
-one of the batch's versions. Nothing is inferred from the relayer not knowing a digest: anything else stays open, and
-an hour past the deadline is `lost` (the reservation kept). A row moves (with its billing record, below) before
-anything is given back, and only the caller that moved it gives back. A row still open 10 minutes after its reservation
-writes `evm_relay_stuck` (once an hour per chain).
+`sent`, `timeout`, `unknown` or `rejected` a minute after its last update, and `sending` only 5 minutes after (a live
+request's row is never raced). Every hash the relayer reports for the digest (its answer, and each lookup's list of
+versions: fee bumps, the cancel) is persisted on the row (`tx_hashes`) and read. A row settles **only** from (a) a
+receipt for one of its own hashes, as above (for a `rejected` row any hash but its batch's is the cancel's: `not_executed`,
+billed `cancelled`), or (b) the relayer's `lookup` (D851): `mined` (at confirmed depth) with its cost, at once for a
+`rejected` row and for any other when the receipt itself still can't be read an hour past the deadline (the row
+`mined`, or `not_executed` for a cancel; the money the relayer's cost, at most the reservation); `closed`
+`consumed_elsewhere` (the reservation kept as the cost, the row `consumed_elsewhere`, `evm_relay_nonce_taken`). A
+lookup's mined hash counts only when it lists it as one of the batch's versions. Nothing is inferred from the relayer
+not knowing a digest: anything else stays open, and an hour past the deadline is `lost` (the reservation kept). A row
+moves (with its billing record, below) before anything is given back, and only the caller that moved it gives back. A
+row still open 10 minutes after its reservation writes `evm_relay_stuck` (once an hour per chain).
 
 **Billing records** (D852): every sponsored transaction that reached the chain (`executed`, `reverted`, `not_executed`,
-`cancelled` for the relayer's deadline self-transfer, `mined` when only the relayer's cost is known) and every charge
-without a mined transaction of its own (`lost`, `consumed_elsewhere`, the kept reservation as the amount) leaves one row
-in `evm_sponsor_billing`, written in the same D1 batch as the audit row's final move: org, app, chain, environment,
+`cancelled` for the relayer's cancel, `mined` when only the relayer's cost is known) and every charge without a mined
+transaction of its own (`lost`, `consumed_elsewhere`, the kept reservation as the amount) leaves one row in
+`evm_sponsor_billing`, written in the same D1 batch as the audit row's final move: org, app, chain, environment,
 transaction hash, block number and time, gas used, effective gas price, execution cost, L1 data fee, operator fee,
 total cost, settled amount, the number of calls, each call's allowlisted target and selector, whether it carried the
 one-time setup, times. No account address, user id or IP. Never pruned, kept through a user's erasure. The cron copies
 new rows to the usage ledger (`usage.record_evm_sponsored`, migrations-usage 0009) and retries until they land; a
 settled send without its record, or a record not copied, an hour on writes `evm_billing_late`. A relayer replay leaves
-no record of its own (the original send carries the transaction).
+no record of its own. A cancel the relayer or the network's fees caused is billed `cancelled` like any other (the
+audit row's `rejection` says whose doing it was; the record doesn't yet).
 
 **`GET /v1/evm/sponsor/status?chainId=`** (exactly that parameter; `400 bad_request` otherwise) → 200 `{available,
 reason?, remainingToday?}`: `chain_not_enabled`, `app_not_sponsored`, `paused` (the relayer is halted, D851; its
-`status()` read for at most 2 s), or `remainingToday` (this app's own day budget left,
-wei) with `available: false, reason: "budget_exhausted"` when the app's or the env's day can't take another batch. No
-chain read; never another app's or the env's figures.
+`status()` read for at most 2 s), or `remainingToday` (this app's own day budget left, wei) with `available: false,
+reason: "budget_exhausted"` when the app's or the env's day can't take another batch. No chain read; never another app's
+or the env's figures.
 
 **The audit table** `evm_sponsor_sends` (migration 0022, D848): one row per send that reached the reservation: app,
-chain, account, directory user (`ON DELETE CASCADE`), digest, `executeNonce`, deadline, every hash the relayer reported, the reservation's parts (gas
-limit, fee cap, L1 and operator bounds, reserved wei), hash, relayer nonce, settled wei, whether the relayer answered a
-replay, status, request id, times. Erased with the user (the cascade, `uid-erase` by the user's ids and addresses);
-kept 24 months, then pruned by the cron (500 rows a run, with or without sponsorship on).
+chain, account, directory user (`ON DELETE CASCADE`), digest, `executeNonce`, deadline, every hash the relayer reported,
+the reservation's parts (gas limit, fee cap, L1 and operator bounds, reserved wei), hash, relayer nonce, settled wei,
+whether the relayer answered a replay, a rejected batch's cause and code, status, request id, times. Erased with the
+user (the cascade, `uid-erase` by the user's ids and addresses); kept 24 months, then pruned by the cron (500 rows a
+run, with or without sponsorship on).
 
 **Security events** (migration 0022): `evm_relay_budget_high` (a chain's day reservations reach 80% of
-`dailyBudgetEth`; once a UTC day per chain; `{day, chainId, spentWei, budgetWei, thresholdPct}`); from the cron, every
-run: `evm_relay_balance_low` (the relayer's balance below `lowBalanceEth`; once a UTC day per chain; `{day, chainId,
-relayer, balanceWei, lowBalanceWei}`), `evm_relay_stuck` (the relayer object's oldest pending transaction over 5
-minutes, or a send unsettled over 10; once an hour per chain; `{chainId, pending, oldestPendingMs}`);
-`evm_relay_receipt_odd` (a receipt outside its reservation, settled at it; once an hour per chain; `{chainId,
-settledAtReservation}`).
+`dailyBudgetEth`; once a UTC day per chain; `{day, chainId, spentWei, budgetWei, thresholdPct}`); `evm_relay_balance_low`
+(the relayer's balance below `lowBalanceEth` from the cron, or below a send's 3 × worst case at send with `neededWei`;
+once a UTC day per chain; `{day, chainId, relayer, balanceWei, lowBalanceWei}`); `evm_relay_stuck` (the relayer halted
+`{halted, haltCode?}`, its oldest unmined transaction over 10 minutes, a send unsettled over 10 minutes, or a batch
+refused for the relayer's own reason `{rejected}`; once an hour per chain; `{chainId, pending, oldestPendingMs}`);
+`evm_relay_receipt_odd` (a receipt outside its reservation, settled at it; once an hour per chain); `evm_relay_nonce_taken`
+(staff closed the relayer's record: its nonce went elsewhere).
 
-**RPC:** reads go to the keyed secret `EVM_SPONSOR_RPC_<chainId>` when set, then the manifest's `rpc`, then
-`rpcFallback`, 5 s each; each endpoint is used only after its `eth_chainId` matched once in the isolate; a JSON-RPC
-error (a revert among them) is an answer, not a failover. The relayer object broadcasts (its own client). Logs: the
-request line (`code`, phases `checks`, `directory`, `limits`, `chain`, `simulate`, `relay`, `receipt`);
-`evm_sponsor_config`, `evm_sponsor_audit_failed`, `evm_sponsor_alert_failed`, `evm_sponsor_floor_failed`,
-`evm_sponsor_l1_fee`, `evm_sponsor_relayer_refused` (`relayer_balance_short`, `rejected`, a misconfigured relayer),
-`evm_sponsor_relay_check`, `evm_sponsor_reconcile`, `evm_billing_mirror` / `evm_billing_mirror_failed`, `evm_account_ambiguous`, `evm_rpc_failover` / `evm_rpc_wrong_chain`
-(endpoint indexes, never a URL). No address, signature, authorization, digest, key or RPC URL is logged.
+**RPC:** the handlers read through the relayer's own client (`sponsorChainFor`): ONE trusted read endpoint (the keyed
+secret `EVM_SPONSOR_RPC_<chainId>` when set, else the manifest's `rpc`), its `eth_chainId` checked once per isolate,
+8 s an attempt, at most 45 requests per client; no failover for reads. The relayer object broadcasts. Logs: the
+request line (`code`, phases `proof`, `checks`, `session`, `directory`, `limits`, `chain`, `simulate`, `relay`,
+`receipt`); `evm_sponsor_config`, `evm_sponsor_audit_failed`, `evm_sponsor_alert_failed`, `evm_sponsor_floor_failed`,
+`evm_sponsor_l1_fee`, `evm_sponsor_relayer_refused` (`relayer_balance_short`, `relayer_halted`, `daily_cap`, a
+misconfigured relayer), `evm_sponsor_rejected` (`<kind>:<code>`), `evm_sponsor_bad_session_path`,
+`evm_sponsor_directory`, `evm_sponsor_relay_check`, `evm_sponsor_reconcile`, `evm_billing_mirror` /
+`evm_billing_mirror_failed`, `evm_account_ambiguous`, `evm_rpc_wrong_chain` (endpoint indexes, never a URL). No
+address, signature, authorization, digest, session key or RPC URL is logged.
 
 ### Identity token · I
 

@@ -464,7 +464,7 @@ describe('D864: the email that waits to join a wallet', () => {
     expect(s.issuer.startLink).not.toHaveBeenCalled();
   });
 
-  it('too late: the waiting period ended (danger, the notice mail’s advice, who can still remove it)', async () => {
+  it('too late: the waiting period ended (danger, the corrected advice); Remove this email right there, after its confirmation', async () => {
     const s = await onWaiting();
     await s.vaultSays(4, { t: 'link_cancel', outcome: 'now_active' });
     // Slot 4 is read only after an answer: give it one, as the code would.
@@ -475,12 +475,31 @@ describe('D864: the email that waits to join a wallet', () => {
     await vi.waitFor(() => expect(s.page.stage).toBe('link_cancelled'));
     expect(document.querySelector('h1')?.textContent).toBe('This link can’t be cancelled any more');
     expect(document.getElementById('link-cancel-what')?.className).toContain('jp-alert-danger');
-    expect(pageText()).toContain('The waiting period has ended. This email and that Google account now open the same Journear wallet.');
-    expect(document.getElementById('link-cancel-advice')?.textContent).toBe(
-      'This email now opens a wallet that belongs to whoever holds that Google account. Anything you add to it is theirs. If you didn’t do this, change your email password. Don’t sign in to Partner App with this email, don’t add money to that wallet, and tell the app’s support.',
-    );
-    expect(pageText()).not.toContain('someone else may be able to open');
-    expect(document.getElementById('link-cancel-remove')?.textContent).toContain('Within 7 days, whoever signs in to Partner App with that Google account can remove this email');
+    expect(document.getElementById('link-cancel-what')?.textContent).toBe('The waiting period has ended: this email and that Google account now open the same wallet.');
+    expect(document.getElementById('link-cancel-advice')?.textContent).toBe('If you didn’t set this up, don’t add money to it. Choose Remove this email below, and change your email password.');
+    expect(pageText()).not.toContain('Within 7 days');
+    expect([...document.querySelectorAll('.actions button')].map((b) => [b.id, b.textContent])).toEqual([
+      ['link-active-remove', 'Remove this email'],
+      ['link-cancel-close', 'Close'],
+    ]);
+    click('link-active-remove');
+    expect(s.page.stage).toBe('member_confirm');
+    expect(document.querySelector('h1')?.textContent).toBe('Remove this email from that wallet?');
+    click('member-remove-back');
+    expect(s.page.stage).toBe('link_cancelled');
+    click('link-active-remove');
+    click('member-remove-confirm');
+    expect(await s.answerIn(5)).toEqual({ choice: 'remove' });
+    const commitment = { scopeId: 's1', action: 'unlink', rootIk: 'a'.repeat(64), memberIk: 'b'.repeat(64), epoch: 1, salt: [1] };
+    await s.vaultSays(6, { t: 'member_remove', prove: { method: 'email', purpose: 'link_change', commitment } });
+    await vi.waitFor(() => expect(s.page.stage).toBe('code'));
+    expect(s.issuer.startLink).toHaveBeenLastCalledWith(PK, 'ada@example.com', 'link_change', commitment, null);
+    typeInto('email-code', '555555');
+    submit('email-verify');
+    expect(await s.answerIn(7)).toEqual({ idToken: TOKEN, as: 'proof' });
+    await s.vaultSays(8, { t: 'member_removed', outcome: 'removed' });
+    await vi.waitFor(() => expect(s.page.stage).toBe('member_removed'));
+    expect(document.querySelector('h1')?.textContent).toBe('This email was removed');
   });
 
   for (const [outcome, title, line, code] of [
@@ -516,5 +535,162 @@ describe('D864: the email that waits to join a wallet', () => {
     await vi.waitFor(() => expect(s.page.stage).toBe('error'));
     expect(s.issuer.startLink).not.toHaveBeenCalled();
     expect(s.issuer.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('D865: an active member’s own notice', () => {
+  const SINCE = NOW - 3 * 86_400_000;
+  const LINK_ID = 'f'.repeat(64);
+  const memberNotice: FollowNotice = { t: 'member_link', method: 'email', rootProvider: 'google', sinceMs: SINCE, linkId: LINK_ID, how: 'chosen' };
+  const commitment = { scopeId: 's1', action: 'unlink', rootIk: 'a'.repeat(64), memberIk: 'b'.repeat(64), epoch: 1, salt: Array.from({ length: 32 }, (_, i) => i) };
+
+  async function onNotice(): Promise<Setup> {
+    const s = setup();
+    await toCode('ada@example.com');
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await vi.waitFor(() => expect(s.page.stage).toBe('following'));
+    await s.vaultSays(2, memberNotice);
+    await vi.waitFor(() => expect(s.page.stage).toBe('member_link'));
+    return s;
+  }
+
+  it('says, before the sign-in goes on, that this email opens a wallet a Google account also opens; Remove, Not now, and a separate Don’t ask again', async () => {
+    await onNotice();
+    expect(document.querySelector('h1')?.textContent).toBe('This email now also opens another wallet');
+    const what = document.getElementById('member-link-what')!;
+    expect(what.className).toContain('jp-alert-warning');
+    expect(what.textContent).toMatch(/^Since .+, this email opens a wallet that a Google account also opens\. Whoever holds that Google account can open it too\.$/u);
+    expect(document.getElementById('member-link-advice')?.textContent).toBe('If you didn’t set this up, remove this email from it.');
+    expect(document.getElementById('member-link-keep')?.textContent).toBe('If you set this up yourself, you can choose Don’t ask again on this device.');
+    expect([...document.querySelectorAll('.actions button')].map((b) => [b.id, b.textContent])).toEqual([
+      ['member-remove', 'Remove this email'],
+      ['member-not-now', 'Not now'],
+    ]);
+    // The lasting choice is smaller and apart from the two main buttons.
+    const dontAsk = document.getElementById('member-dont-ask')!;
+    expect(dontAsk.textContent).toBe('Don’t ask again on this device');
+    expect(dontAsk.closest('.actions')).toBeNull();
+  });
+
+  it('Not now answers keep and stores nothing: the next sign-in asks again', async () => {
+    const s = await onNotice();
+    click('member-not-now');
+    expect(await s.answerIn(3)).toEqual({ choice: 'keep' });
+    expect(window.localStorage.getItem(`hana.ml.${LINK_ID}`)).toBeNull();
+    resetDom();
+    const again = setup();
+    await toCode('ada@example.com');
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await vi.waitFor(() => expect(again.page.stage).toBe('following'));
+    await again.vaultSays(2, memberNotice);
+    await vi.waitFor(() => expect(again.page.stage).toBe('member_link'));
+  });
+
+  it('Don’t ask again on this device answers keep, and this device isn’t asked again about this link', async () => {
+    const s = await onNotice();
+    click('member-dont-ask');
+    expect(await s.answerIn(3)).toEqual({ choice: 'keep' });
+    expect(window.localStorage.getItem(`hana.ml.${LINK_ID}`)).not.toBeNull();
+    // Another sign-in on this device: answered at once, no screen.
+    resetDom();
+    const again = setup();
+    await toCode('ada@example.com');
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await vi.waitFor(() => expect(again.page.stage).toBe('following'));
+    await again.vaultSays(2, memberNotice);
+    expect(await again.answerIn(3)).toEqual({ choice: 'keep' });
+    expect(document.getElementById('member-link')).toBeNull();
+  });
+
+  it('Remove asks first, saying what it costs; Go back returns; Remove it answers remove, then the code goes to the same address over the unlink commitment', async () => {
+    const s = await onNotice();
+    click('member-remove');
+    expect(s.page.stage).toBe('member_confirm');
+    expect(document.querySelector('h1')?.textContent).toBe('Remove this email from that wallet?');
+    expect(document.getElementById('member-confirm-what')?.className).toContain('jp-alert-danger');
+    expect(document.getElementById('member-confirm-what')?.textContent).toBe('After you remove it, this email can’t open that wallet any more. Anything in it stays there, and whoever holds that Google account can still open it.');
+    expect(document.getElementById('member-confirm-money')?.textContent).toBe('If you added money to that wallet, move it out first. Choose Go back, then Not now, and sign in to move it. You’ll be asked again next time.');
+    expect(document.getElementById('member-confirm-next')?.textContent).toBe('If you sign in with this email again afterwards, it opens a new, empty wallet of its own.');
+    click('member-remove-back');
+    expect(s.page.stage).toBe('member_link');
+    click('member-remove');
+    const go = document.getElementById('member-remove-confirm') as HTMLButtonElement;
+    go.click();
+    go.click();
+    expect(await s.answerIn(3)).toEqual({ choice: 'remove' });
+    expect(s.api.writeRelay.mock.calls.filter((c) => c[0] === followSlot(s.followKey, 3).id)).toHaveLength(1);
+    await s.vaultSays(4, { t: 'member_remove', prove: { method: 'email', purpose: 'link_change', commitment } });
+    await vi.waitFor(() => expect(s.page.stage).toBe('code'));
+    expect(s.issuer.startLink).toHaveBeenCalledWith(PK, 'ada@example.com', 'link_change', commitment, null);
+    typeInto('email-code', '444444');
+    submit('email-verify');
+    expect(await s.answerIn(5)).toEqual({ idToken: TOKEN, as: 'proof' });
+    await s.vaultSays(6, { t: 'member_removed', outcome: 'removed' });
+    await vi.waitFor(() => expect(s.page.stage).toBe('member_removed'));
+    expect(document.querySelector('h1')?.textContent).toBe('This email was removed');
+    expect(document.getElementById('member-removed-what')?.textContent).toBe(
+      'This email no longer opens that wallet. Anything in it stays there, with whoever holds that Google account. Anyone signed in to that wallet in this app will be asked to sign in again.',
+    );
+    expect(document.getElementById('member-removed-next')?.textContent).toBe('If you sign in with this email again, it opens a new, empty wallet of its own.');
+    // A remove doesn't mark the link kept: if it failed, the next sign-in asks again.
+    expect(window.localStorage.getItem(`hana.ml.${LINK_ID}`)).toBeNull();
+    click('member-removed-close');
+    expect(s.win.closed).toBe(true);
+  });
+
+  for (const [outcome, title, line, code] of [
+    ['already_removed', 'This email was already removed', 'There’s nothing more to do.', undefined],
+    ['not_removed', 'This email wasn’t removed', 'Nothing changed: this email still opens that wallet.', 'stale_epoch'],
+    ['unknown', 'We couldn’t check the removal', 'Journear couldn’t be reached, so we can’t tell whether this email was removed.', 'api_unavailable'],
+  ] as const) {
+    it(`outcome ${outcome}: “${title}”`, async () => {
+      const s = await onNotice();
+      click('member-remove');
+      click('member-remove-confirm');
+      await s.answerIn(3);
+      await s.vaultSays(4, { t: 'member_remove', prove: { method: 'email', purpose: 'link_change', commitment } });
+      await vi.waitFor(() => expect(s.page.stage).toBe('code'));
+      typeInto('email-code', '444444');
+      submit('email-verify');
+      await s.answerIn(5);
+      await s.vaultSays(6, { t: 'member_removed', outcome, ...(code ? { code } : {}) });
+      await vi.waitFor(() => expect(s.page.stage).toBe('member_removed'));
+      expect(document.querySelector('h1')?.textContent).toBe(title);
+      expect(pageText()).toContain(line);
+      if (code) expect(pageText()).toContain(`Error code (for support): ${code}`);
+    });
+  }
+
+  it('a link that may have been made automatically (the same person’s Gmail): words that don’t push removal, Not now first', async () => {
+    const s = setup({ next: 2 });
+    await s.vaultSays(2, { t: 'member_link', method: 'google', rootProvider: 'email', sinceMs: SINCE, linkId: LINK_ID, how: 'automatic' });
+    await vi.waitFor(() => expect(s.page.stage).toBe('member_link'));
+    expect(document.getElementById('member-link-what')?.className).toContain('jp-alert-info');
+    expect(document.getElementById('member-link-advice')?.textContent).toBe(
+      'This usually happens when that email is your own Gmail or Google Workspace address. If you don’t recognise it, remove this Google account from it.',
+    );
+    expect([...document.querySelectorAll('.actions button')].map((b) => [b.id, b.textContent, b.className.includes('jp-btn-danger')])).toEqual([
+      ['member-not-now', 'Not now', false],
+      ['member-remove', 'Remove this Google account', false],
+    ]);
+  });
+
+  it('a Google member gets the same words for its own method; its proof is a Google sign-in for that account', async () => {
+    const s = setup({ next: 2 });
+    await s.vaultSays(2, { t: 'member_link', method: 'google', rootProvider: 'email', sinceMs: SINCE, linkId: LINK_ID, how: 'chosen' });
+    await vi.waitFor(() => expect(s.page.stage).toBe('member_link'));
+    expect(document.querySelector('h1')?.textContent).toBe('This Google account now also opens another wallet');
+    expect(document.getElementById('member-link-what')?.textContent).toContain('this Google account opens a wallet that an email also opens. Whoever holds that email can open it too.');
+    click('member-remove');
+    expect(document.getElementById('member-confirm-check')?.textContent).toBe('Google will ask you to sign in again to check it’s you.');
+    click('member-remove-confirm');
+    expect(await s.answerIn(3)).toEqual({ choice: 'remove' });
+    await s.vaultSays(4, { t: 'member_remove', prove: { method: 'google', nonce: 'U'.repeat(43), loginHint: SUBJECT } });
+    await vi.waitFor(() => expect(s.win.location.assigned).toHaveLength(1));
+    const url = new URL(s.win.location.assigned[0]!);
+    expect([url.searchParams.get('nonce'), url.searchParams.get('login_hint')]).toEqual(['U'.repeat(43), SUBJECT]);
   });
 });

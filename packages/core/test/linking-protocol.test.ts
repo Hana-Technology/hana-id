@@ -70,6 +70,9 @@ describe('relay payloads', () => {
       { idToken: '{"payload":"e30"}', as: 'link' },
       { idToken: 'a.b.c', as: 'proof' },
       { accessToken: 'ya29.x' },
+      // D865: the answer to an active member's own notice.
+      { choice: 'keep' },
+      { choice: 'remove' },
     ]) {
       expect(isRelayPayload(p), JSON.stringify(p)).toBe(true);
     }
@@ -99,6 +102,8 @@ describe('relay payloads', () => {
       { error: 'token_has_pii', claim: 'x'.repeat(65) },
       { error: 'token_has_pii', claim: 1 },
       { error: 'token_has_pii', claim: 'email', other: 1 },
+      { choice: 'maybe' },
+      { choice: 'keep', other: 1 },
     ]) {
       expect(isRelayPayload(p), JSON.stringify(p)).toBe(false);
     }
@@ -124,6 +129,15 @@ describe('follow-up notices', () => {
       { t: 'link_cancel', outcome: 'now_active' },
       { t: 'link_cancel', outcome: 'not_cancelled', code: 'stale_epoch' },
       { t: 'link_cancel', outcome: 'unknown', code: 'api_unavailable' },
+      // D865: an active member's own notice, its removal's proof, and the outcome.
+      { t: 'member_link', method: 'email', rootProvider: 'google', sinceMs: 9, linkId: 'a'.repeat(64), how: 'chosen' },
+      { t: 'member_link', method: 'google', rootProvider: 'email', sinceMs: 0, linkId: '0'.repeat(64), how: 'automatic' },
+      { t: 'member_remove', prove: { method: 'email', purpose: 'link_change', commitment: { scopeId: 's1' } } },
+      { t: 'member_remove', prove: { method: 'google', nonce: 'N'.repeat(43), loginHint: '1' } },
+      { t: 'member_removed', outcome: 'removed' },
+      { t: 'member_removed', outcome: 'already_removed' },
+      { t: 'member_removed', outcome: 'not_removed', code: 'stale_epoch' },
+      { t: 'member_removed', outcome: 'unknown', code: 'api_unavailable' },
     ]) {
       expect(isFollowNotice(n), JSON.stringify(n)).toBe(true);
     }
@@ -148,6 +162,12 @@ describe('follow-up notices', () => {
       { t: 'link_cancel', outcome: 'removed' },
       { t: 'link_cancel', outcome: 'cancelled', code: 'Bad Code' },
       { t: 'link_cancel', outcome: 'cancelled', extra: 1 },
+      { t: 'member_link', method: 'email', rootProvider: 'email', sinceMs: 9, linkId: 'a'.repeat(64), how: 'chosen' },
+      { t: 'member_link', method: 'email', rootProvider: 'google', sinceMs: 9, linkId: 'A'.repeat(64), how: 'chosen' },
+      { t: 'member_link', method: 'email', rootProvider: 'google', sinceMs: 9, linkId: 'a'.repeat(64) },
+      { t: 'member_link', method: 'email', rootProvider: 'google', sinceMs: 9, linkId: 'a'.repeat(64), how: 'silent' },
+      { t: 'member_remove' },
+      { t: 'member_removed', outcome: 'cancelled' },
       { t: 'whatever' },
     ]) {
       expect(isFollowNotice(n), JSON.stringify(n)).toBe(false);

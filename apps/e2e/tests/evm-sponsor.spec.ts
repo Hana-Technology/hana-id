@@ -9,7 +9,8 @@
 // delegate's domain (D833).
 //
 // With HANA_SHOTS_DIR=<dir> (Chromium only) it saves the windows for the founder: sponsored-first-time(-details),
-// sponsored-later, sponsored-unknown-call, sponsored-approve-warning.
+// sponsored-later, sponsored-token-first-time, sponsored-token-later, sponsored-unknown-call and
+// sponsored-approve-warning.
 import { type Page } from '@playwright/test';
 import { parseFunctionSignature } from '@hana-id/core/decode';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
@@ -19,6 +20,7 @@ import { approve, clickAction, expect, login, newApp, okValue, openPartner, reje
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const POPUP = { width: 420, height: 680 } as const;
 const CHECK_IN = '0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e';
+const UNKNOWN_CONTRACT = '0x4444444444444444444444444444444444444444';
 const TOKEN = '0x1111111111111111111111111111111111111111';
 const SPENDER = '0x3333333333333333333333333333333333333333';
 const RECIPIENT = '0x000000000000000000000000000000000000dEaD';
@@ -83,15 +85,16 @@ async function approveAndWait(page: Page, popup: Page, name: string): Promise<un
 const fee = (popup: Page) => popup.locator('.summary-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
 const details = (popup: Page) => popup.locator('details.request-details');
 
-test('the first action: one window with the setup note; a later one without it; both run (D831, D855)', async ({ page, browserName }) => {
+test('the demo check-in, first and later: one window, the setup note only the first time; both run (D831, D854, D855)', async ({ page, browserName }) => {
   const { evm, appId } = await freshSession(page);
   expect(await page.evaluate(() => (window as any).e2e.hana.evm.sponsoredChains)).toEqual([EVM_CHAIN_ID]);
 
-  // First: a known call, with the account's one-time setup.
-  let popup = await sponsoredWindow(page, 'first', [TRANSFER]);
-  await expect(popup.locator('h2.summary-headline')).toHaveText(`E2E Partner wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
+  // First: Journear's demo check-in (on the verified list, D854) with the account's one-time setup.
+  let popup = await sponsoredWindow(page, 'first', [CHECK_IN_CALL]);
+  await expect(popup.locator('h2.summary-headline')).toHaveText('E2E Partner wants to check you in');
   await expect(fee(popup)).toHaveText('none. Journear pays it for you.');
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(SETUP);
+  await expect(popup.locator('.danger-box')).toHaveCount(0);
   expect(await popup.locator('body').innerText()).not.toMatch(/upgrade|smart account/iu);
   await shot(popup, 'sponsored-first-time', browserName);
   await popup.getByText('Show details', { exact: true }).click();
@@ -100,24 +103,38 @@ test('the first action: one window with the setup note; a later one without it; 
   const first = (await approveAndWait(page, popup, 'first')) as { transactionHash: string; status: string };
   expect(first).toEqual({ transactionHash: expect.stringMatching(/^0x[0-9a-f]{64}$/u), status: 'executed' });
 
-  // Later: the same call, no note.
-  popup = await sponsoredWindow(page, 'later', [TRANSFER]);
-  await expect(popup.locator('.account-setup')).toHaveCount(0);
+  // Later: the same check-in, no box at all.
+  popup = await sponsoredWindow(page, 'later', [CHECK_IN_CALL]);
+  await expect(popup.locator('.risk-box')).toHaveCount(0);
   await expect(fee(popup)).toHaveText('none. Journear pays it for you.');
   await shot(popup, 'sponsored-later', browserName);
   expect(await approveAndWait(page, popup, 'later')).toMatchObject({ status: 'executed' });
 
-  // The demo's check-in: a function Journear doesn't recognise (until the verified list names it): the red line.
-  popup = await sponsoredWindow(page, 'checkin', [CHECK_IN_CALL]);
+  // The check-in's selector on a contract Journear doesn't know: the red "can't tell" line, no name.
+  popup = await sponsoredWindow(page, 'unknown', [{ to: UNKNOWN_CONTRACT, data: '0x183ff085' }]);
   await expect(popup.locator('.danger-box p.risk-lead.summary-warning.cannot-explain')).toContainText('Journear can’t tell what this request does');
   await shot(popup, 'sponsored-unknown-call', browserName);
-  expect(await approveAndWait(page, popup, 'checkin')).toMatchObject({ status: 'executed' });
+  expect(await approveAndWait(page, popup, 'unknown')).toMatchObject({ status: 'executed' });
 
   expect(await sponsorLog(appId)).toEqual({ prepares: 3, sends: 3, executed: 3, proofRefusals: [] });
   // Nothing the page saw carries a signature: the result is the hash and the status only (checked above), and the
   // vault's port answers are the SDK's (the partner app keeps them).
   expect(JSON.stringify(await page.evaluate(() => (window as any).e2e.results))).not.toMatch(/"signature"|authorization/iu);
   expect(evm).toMatch(/^0x/u);
+});
+
+test('a token transfer, first and later: the calls’ own summary, the setup note only the first time', async ({ page, browserName }) => {
+  await freshSession(page);
+  let popup = await sponsoredWindow(page, 'first', [TRANSFER]);
+  await expect(popup.locator('h2.summary-headline')).toHaveText(`E2E Partner wants to send tokens of contract ${TOKEN} to ${RECIPIENT}`);
+  await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(SETUP);
+  await expect(popup.locator('.danger-box')).toHaveCount(0);
+  await shot(popup, 'sponsored-token-first-time', browserName);
+  expect(await approveAndWait(page, popup, 'first')).toMatchObject({ status: 'executed' });
+  popup = await sponsoredWindow(page, 'later', [TRANSFER]);
+  await expect(popup.locator('.risk-box')).toHaveCount(0);
+  await shot(popup, 'sponsored-token-later', browserName);
+  expect(await approveAndWait(page, popup, 'later')).toMatchObject({ status: 'executed' });
 });
 
 test('an unlimited approve on the first action: as alarming as unsponsored, plus the setup note', async ({ page, browserName }) => {

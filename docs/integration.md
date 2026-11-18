@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (gas-free EVM actions, not live; 0.5.0 not yet published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-18 (gas-free EVM actions, not live; verified list: demo check-in; 0.5.0 not published), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -1409,7 +1409,7 @@ names. Every contract also shows its short address (`0x348B…7Bc3`) and a "View
 (Etherscan, Basescan, SonicScan, StellarExpert and others, test networks included; a chain Journear Passport has no explorer for
 shows the address alone). The verified list starts with Sodax's mainnet contracts (its Sonic hub contracts; asset
 managers and bnUSD on the EVM spokes and Stellar; Connection contracts on Hedera, Kaia and Robinhood Chain), each
-confirmed by two Sodax sources that agree.
+confirmed by two Sodax sources that agree, and Journear's own demo check-in contract on its test chains.
 
 **Getting a contract verified.** Ask Journear, with the chain, the address and the protocol's own official sources for
 it: a page of the protocol's documentation that lists the address, and/or a published, version-pinned package of the

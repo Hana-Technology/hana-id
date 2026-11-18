@@ -26,6 +26,7 @@ import {
   EVM_RELAYER_REMEMBER_MS,
   EVM_RELAYER_STUCK_AFTER_DEADLINE_MS,
   type EvmRelayer,
+  type EvmRelayerSendAnswer,
   type EvmRelayerSendRequest,
   bumpedFees,
   cancelFees,
@@ -71,7 +72,7 @@ const chainSettings = (over: Record<string, unknown> = {}) => ({
   maxFeePerGasGwei: 1,
   maxPriorityFeePerGasGwei: 0.01,
   maxCallsPerBatch: 4,
-  deadlineMaxS: 600,
+  deadlineMaxS: 300,
   minGas: 100_000,
   dailyBudgetEth: 0.02,
   appDailyBudgetEth: 0.01,
@@ -85,7 +86,11 @@ const chainSettings = (over: Record<string, unknown> = {}) => ({
 const sponsorVar = (over: Record<string, unknown> = {}, relayerAddress: string = RELAYER): string => evmSponsorVar({ relayerAddress, chains: { [CHAIN]: chainSettings(over) as never }, apps: {} });
 const overlay = (over: Partial<Record<string, string | undefined>> = {}): Partial<Env> => ({ ENV_NAME: 'local-evm-test', NETWORK: 'testnet', EVM_SPONSOR: sponsorVar(), EVM_RELAY_KEYS: JSON.stringify([keyHex(RELAYER_KEY)]), ...over });
 
-type Stub = DurableObjectStub<EvmRelayer>;
+/**
+ * The tests read `send`'s answer as the success branch (a refusal, `{ ok: false, refused, reason }`, is read through
+ * codeOf); listed first, this signature wins overload resolution, and the stub is still a DurableObjectStub.
+ */
+type Stub = { send(req: EvmRelayerSendRequest): Promise<Extract<EvmRelayerSendAnswer, { ok: true }>> } & DurableObjectStub<EvmRelayer>;
 async function configure(stub: Stub, over: Partial<Env> = overlay()): Promise<void> {
   await runInDurableObject(stub, (instance: EvmRelayer) => {
     const self = instance as unknown as { env: Env };
@@ -94,14 +99,14 @@ async function configure(stub: Stub, over: Partial<Env> = overlay()): Promise<vo
 }
 async function fresh(over: Partial<Env> = overlay()): Promise<Stub> {
   const ns = env.EVM_RELAYER!;
-  const stub = ns.get(ns.idFromName(`${evmRelayerName(CHAIN)}-test-${uid()}`));
+  const stub = ns.get(ns.idFromName(`${evmRelayerName(CHAIN)}-test-${uid()}`)) as Stub;
   await configure(stub, over);
   return stub;
 }
 /** Crashes the object (memory lost, storage kept) and returns a stub to the next instance, configured. */
 async function crash(stub: Stub, over: Partial<Env> = overlay()): Promise<Stub> {
   await runInDurableObject(stub, (_i, state) => state.abort('test crash')).catch(() => undefined);
-  const next = env.EVM_RELAYER!.get(stub.id);
+  const next = env.EVM_RELAYER!.get(stub.id) as Stub;
   await configure(next, over);
   return next;
 }
@@ -144,7 +149,9 @@ function foreign(nonce: number, maxFeePerGas = GWEI): ReturnType<typeof decodeRa
 
 async function codeOf(p: Promise<unknown>): Promise<string> {
   try {
-    await p;
+    const r = (await p) as { ok?: boolean; refused?: string; reason?: string | null } | undefined;
+    // send answers a coded refusal as a value ({ ok: false, refused, reason }), not by throwing.
+    if (r && r.ok === false) return r.reason ? `${r.refused}:${r.reason}` : r.refused!;
     return 'no error';
   } catch (e) {
     const c = evmRelayerError(e);
@@ -236,7 +243,7 @@ describe('verifySend: the in-object check', () => {
       [request({ maxPriorityFeePerGas: GWEI / 100n }), 'fees_too_high'],
       [request({ reservedWei: 200_000n * (GWEI / 10n) - 1n }), 'invalid_request'],
       [request({ execute: { deadline: nowS() + 5n } }), 'deadline_passed'],
-      [request({ execute: { deadline: nowS() + 661n } }), 'invalid_request'],
+      [request({ execute: { deadline: nowS() + 361n } }), 'invalid_request'],
       [{ ...request(), signature: '0x1234' as Hex }, 'invalid_request'],
       [request({ authorization: { ...authorization(), chainId: 84532 } }, USER_KEY), 'invalid_request'],
       [request({ authorization: authorization({}, other) }, USER_KEY), 'invalid_request'],
@@ -563,16 +570,23 @@ describe('record transitions', () => {
 
   it(`fee bump: after 60 s the same nonce with both fees × 1.125, every version kept; at most ${EVM_RELAYER_MAX_VERSIONS - 1} for the batch`, async () => {
     const stub = await fresh();
-    const req = request({ execute: { deadline: nowS() + 650n } });
+    // The longest deadline (deadlineMaxS 300 + 60 s slack) leaves room for exactly the 6 bumps before the cancel.
+    const req = request({ execute: { deadline: nowS() + 360n } });
     await stub.send(req);
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs[0]!.versions).toHaveLength(1);
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < 6; i++) {
       advance(EVM_RELAYER_BUMP_AFTER_MS);
       await runDurableObjectAlarm(stub);
     }
-    const rec = (await stored(stub)).recs[0]!;
+    let rec = (await stored(stub)).recs[0]!;
     expect(rec.versions.map((v) => v.kind)).toEqual(Array(EVM_RELAYER_MAX_VERSIONS - 1).fill('execute'));
+    for (let i = 0; i < 2; i++) {
+      advance(EVM_RELAYER_BUMP_AFTER_MS);
+      await runDurableObjectAlarm(stub);
+    }
+    rec = (await stored(stub)).recs[0]!;
+    expect(rec.versions.map((v) => v.kind)).toEqual([...Array(EVM_RELAYER_MAX_VERSIONS - 1).fill('execute'), 'cancel']);
     expect(BigInt(rec.versions[1]!.maxFeePerGas)).toBe((req.maxFeePerGas * 9n + 7n) / 8n);
     expect(chain.pooled(RELAYER, 0)?.hash).toBe(rec.versions.at(-1)!.hash);
     expect((await stub.lookup(digestOf(req)))!.hashes).toEqual(rec.versions.map((v) => v.hash));
@@ -1126,11 +1140,13 @@ describe('review H1: no user can halt sponsorship', () => {
       gas_limit: 'intrinsic gas too low',
       oversized: 'transaction too large',
       invalid_transaction: 'invalid sender',
+      authority_reserved: 'authority already reserved',
+      sender_restricted: 'in-flight transaction limit reached for delegated accounts',
     };
     expect([...EVM_REJECTIONS].sort()).toEqual(Object.keys(samples).sort());
     for (const code of EVM_REJECTIONS) expect(classifyRejection(samples[code]!)).toBe(code);
     // The cause of a refusal of a BATCH version (our own cancel or filler refused for any reason halts).
-    expect(REJECTION_CAUSE).toEqual({ gas_limit: 'request', oversized: 'request', underpriced: 'pricing', fee_below_base_fee: 'pricing', replacement_underpriced: 'pricing', nonce_too_low: 'relayer', nonce_too_high: 'relayer', insufficient_funds: 'relayer', invalid_transaction: 'relayer' });
+    expect(REJECTION_CAUSE).toEqual({ gas_limit: 'request', oversized: 'request', authority_reserved: 'request', underpriced: 'pricing', fee_below_base_fee: 'pricing', replacement_underpriced: 'pricing', nonce_too_low: 'relayer', nonce_too_high: 'relayer', insufficient_funds: 'relayer', invalid_transaction: 'relayer', sender_restricted: 'relayer' });
     expect(new Set(Object.values(REJECTION_CAUSE))).toEqual(new Set(['request', 'pricing', 'relayer']));
   });
 
@@ -1448,7 +1464,7 @@ describe('review M2/M3: a nonce is never freed', () => {
   it('probe L5: staffClose(never_sent) is gone; staffCancel signs a cancel at the SAME nonce, keeps the old versions; if the old raw lands, it resolves as execute', async () => {
     const stub = await fresh();
     chain.onSend = () => 'network';
-    const a = await stub.send(request({ execute: { deadline: nowS() + 600n } }));
+    const a = await stub.send(request({ execute: { deadline: nowS() + 300n } }));
     expect(await codeOf(stub.staffClose(EVM_RELAYER_STAFF_GUARD, WHO, 0, 'never_sent' as never, 'n'))).toBe('invalid_request');
     expect(await evmRelayerStaffCancel(stub, WHO, 0, 'free it')).toMatchObject({ done: true });
     expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
@@ -1594,5 +1610,114 @@ describe('review M4: CPU-relevant counts', () => {
     expect(ops.map((o) => o.event)).toEqual(['evm_relay_sent', 'evm_relay_sent', 'evm_relayer_run']);
     expect(ops[1]!.evmOps).toMatchObject({ signatures: 1, recoveries: 2, keyDerivations: 0 });
     expect(ops[1]!.evmOps.fetches).toBeGreaterThan(0);
+  });
+});
+
+describe('review H1 (API + relayer): one user can\'t stall the relayer with an unaccepted first transaction', () => {
+  const attacker = () => userKeyFor('stalling attacker');
+  const attackerRequest = () => {
+    const a = attacker();
+    return request({ authorization: authorization({}, a.key), execute: { account: a.addr } }, a.key);
+  };
+
+  it('a type-4 refused with a text nobody classified (unknown), victims behind it: the second run in a row that finds its nonce in no pool cancels it; the victims mine; no halt, no backoff', async () => {
+    const stub = await fresh();
+    chain.onSend = (tx) => (tx.type === 4 ? { error: 'some pool rule nobody has written down yet' } : undefined);
+    const a = await stub.send(attackerRequest());
+    expect(a).toMatchObject({ relayerNonce: 0, broadcast: 'unknown', rejection: null });
+    const victims = [await stub.send(reqFor('victim 1')), await stub.send(reqFor('victim 2'))];
+    expect(victims.map((v) => v.relayerNonce)).toEqual([1, 2]);
+    expect(chain.pendingCount(RELAYER)).toBe(0);
+    advance(5_000);
+    expect((await stub.status()).oldestUnacceptedMs).toBe(5_000);
+    expect((await stored(stub)).alarm).toBeLessThanOrEqual(now - 5_000 + EVM_RELAYER_ALARM_MS);
+    await runDurableObjectAlarm(stub);
+    // Once is not enough (a pool-less endpoint's pending count may never move): the same on the next run.
+    expect((await stored(stub)).recs.find((r) => r.nonce === 0)!.versions.map((v) => v.kind)).toEqual(['execute']);
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_ALARM_MS);
+    advance(EVM_RELAYER_ALARM_MS);
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).recs.find((r) => r.nonce === 0)!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+    expect(chain.pendingCount(RELAYER)).toBe(3);
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_ALARM_MS);
+    chain.mine(RELAYER);
+    await runDurableObjectAlarm(stub);
+    expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined', outcome: 'cancel' });
+    for (const v of victims) expect(await stub.lookup(v.digest)).toMatchObject({ state: 'mined', outcome: 'execute' });
+    expect(await halted(stub)).toBeNull();
+    expect((await stub.status()).oldestUnacceptedMs).toBeNull();
+  });
+
+  it('a pool-less endpoint (pending never moves) where broadcasts time out twice: with nothing behind it the batch is NOT cancelled early and mines; with a victim behind it, the second run cancels it and the victim mines', async () => {
+    for (const behind of [false, true]) {
+      chain = new EvmMock({ chainId: CHAIN }).install();
+      const stub = await fresh();
+      let aHash = '';
+      chain.onSend = (tx) => (aHash === '' || tx.hash === aHash ? 'network' : undefined);
+      const a = await stub.send(request());
+      aHash = a.transactionHash;
+      // The sequencer has it all along; the trusted endpoint keeps no pool, so its pending count is the mined count,
+      // and every re-send of A's raw times out (a forwarding endpoint, no "already known").
+      chain.admit(decodeRawTx(a.raw!));
+      intercept((m, p) => (m === 'eth_getTransactionCount' && p[1] === 'pending' ? `0x${chain.mined(RELAYER).toString(16)}` : undefined));
+      const inner = vi.mocked(globalThis.fetch).getMockImplementation()!;
+      vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+        const body = JSON.parse(String(init?.body)) as { method: string; params: unknown[] };
+        if (body.method === 'eth_sendRawTransaction' && String(body.params[0]).toLowerCase() === a.raw!.toLowerCase()) throw new TypeError('The operation timed out.');
+        return inner(input, init);
+      });
+      const victim = behind ? await stub.send(reqFor('behind')) : null;
+      for (let i = 0; i < 2; i++) {
+        advance(EVM_RELAYER_ALARM_MS);
+        await runDurableObjectAlarm(stub);
+      }
+      const kinds = (await stored(stub)).recs.find((r) => r.nonce === 0)!.versions.map((v) => v.kind);
+      expect([behind, kinds]).toEqual([behind, behind ? ['execute', 'cancel'] : ['execute']]);
+      chain.mine(RELAYER);
+      await runDurableObjectAlarm(stub);
+      expect(await stub.lookup(a.digest)).toMatchObject({ state: 'mined', outcome: behind ? 'cancel' : 'execute' });
+      if (victim) expect(await stub.lookup(victim.digest)).toMatchObject({ state: 'mined', outcome: 'execute' });
+      expect(await halted(stub)).toBeNull();
+    }
+  });
+
+  it('the pool\'s own 7702 refusal texts are definite: "authority already reserved" cancels at once (cause request, no halt)', async () => {
+    const stub = await fresh();
+    chain.onSend = (tx) => (tx.type === 4 ? { error: 'authority already reserved' } : undefined);
+    const a = await stub.send(attackerRequest());
+    expect(a).toMatchObject({ broadcast: 'rejected', rejection: { cause: 'request', code: 'authority_reserved' } });
+    expect(chain.pooled(RELAYER, 0)).toMatchObject({ to: RELAYER.toLowerCase() });
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('while a record is unmined and unaccepted the alarm never backs off', async () => {
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    await stub.send(request());
+    const gaps: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      await runDurableObjectAlarm(stub);
+      gaps.push((await stored(stub)).alarm! - now);
+    }
+    expect(gaps).toEqual(Array(4).fill(EVM_RELAYER_ALARM_MS));
+  });
+
+  it('a record whose nonce the trusted pool holds (pending past it) is left alone even unaccepted: no early cancel', async () => {
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    const sent = await stub.send(request());
+    expect(sent.broadcast).toBe('unknown');
+    // A node took it after all (the broadcast's answer was lost): the trusted pool holds the nonce.
+    chain.admit(decodeRawTx(sent.raw!));
+    await runDurableObjectAlarm(stub);
+    expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute']);
+  });
+
+  it('send answers a coded refusal as a value, not a thrown error (no unhandled-rejection noise in workerd)', async () => {
+    const stub = await fresh();
+    expect(await stub.send(request({ execute: { calls: [] } }))).toEqual({ ok: false, refused: 'invalid_request', reason: null });
+    await stub.send(request({}, USER_KEY));
+    expect(await stub.send(request({}, USER_KEY))).toEqual({ ok: false, refused: 'relayer_busy', reason: 'account' });
+    expect(await stub.send(request())).toMatchObject({ ok: true, relayerNonce: 1 });
   });
 });

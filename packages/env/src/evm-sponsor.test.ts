@@ -211,7 +211,18 @@ describe('evm.sponsor: limits (D836)', () => {
     expect(messages(withSponsor(chain({ minGas: 300_000 }))).join(' ')).toMatch(/minGas \(300000\) must be below maxGasPerTx \(300000\)/u);
     expect(messages(withSponsor(chain({ maxPriorityFeePerGasGwei: 1.5 }))).join(' ')).toMatch(/maxPriorityFeePerGasGwei \(1\.5\) must not exceed maxFeePerGasGwei \(1\)/u);
     expect(messages(withSponsor(chain({ maxPriorityFeePerGasGwei: 1 })))).toEqual([]);
-    expect(messages(withSponsor(chain({ maxPriorityFeePerGasGwei: 0 })))).toEqual([]);
+    // The tip cap must leave a starting tip of at least 1 wei after the relayer's two bumps: 3 wei or more.
+    for (const tiny of [0, 0.000000002]) expect(messages(withSponsor(chain({ maxPriorityFeePerGasGwei: tiny }))).join(' ')).toMatch(/maxPriorityFeePerGasGwei is too small: after the two fee bumps/u);
+    expect(messages(withSponsor(chain({ maxPriorityFeePerGasGwei: 0.000000003 })))).toEqual([]);
+  });
+
+  it('deadlineMaxS at most 300; maxCallsPerBatch × the largest target maxDataBytes at most 30 KiB (the relayer\'s calldata limit)', () => {
+    expect(refused(chain({ deadlineMaxS: 301 }))).toBe(true);
+    expect(messages(withSponsor(chain({ deadlineMaxS: 300 })))).toEqual([]);
+    const big = (maxCallsPerBatch: number, maxDataBytes: number) => ({ ...chain({ maxCallsPerBatch }), apps: { [FIXTURE_APP]: { '84532': [target({ maxDataBytes })] } } });
+    expect(messages(withSponsor(big(4, 7680)))).toEqual([]);
+    expect(messages(withSponsor(big(4, 7681))).join(' ')).toMatch(/maxCallsPerBatch × the largest target maxDataBytes is 30724 bytes; the relayer sends at most 30720 bytes/u);
+    expect(messages(withSponsor(big(8, 8192))).join(' ')).toMatch(/is 65536 bytes/u);
   });
 
   it('one transaction’s worst case (maxGasPerTx × maxFeePerGasGwei) must fit in the app’s day', () => {
@@ -259,7 +270,7 @@ describe('evm.sponsor: limits (D836)', () => {
     ];
     for (const fields of bad) expect(refused(chain(fields)), JSON.stringify(fields)).toBe(true);
     // The bounds themselves are accepted (with the rules between fields kept).
-    const edge = { maxGasPerTx: b.maxGasPerTx.max, minGas: b.minGas.max, maxFeePerGasGwei: 0.000000001, maxPriorityFeePerGasGwei: 0, maxCallsPerBatch: b.maxCallsPerBatch, deadlineMaxS: b.deadlineMaxS.max, dailyBudgetEth: b.dailyBudgetEth, appDailyBudgetEth: 0.999999999, lowBalanceEth: b.lowBalanceEth, perUserPerDay: b.perUserPerDay, perAppPerDay: b.perAppPerDay, sendsPerDay: b.sendsPerDay, sendsPerMinute: b.sendsPerMinute };
+    const edge = { maxGasPerTx: b.maxGasPerTx.max, minGas: b.minGas.max, maxFeePerGasGwei: 0.000000003, maxPriorityFeePerGasGwei: 0.000000003, maxCallsPerBatch: b.maxCallsPerBatch, deadlineMaxS: b.deadlineMaxS.max, dailyBudgetEth: b.dailyBudgetEth, appDailyBudgetEth: 0.999999999, lowBalanceEth: b.lowBalanceEth, perUserPerDay: b.perUserPerDay, perAppPerDay: b.perAppPerDay, sendsPerDay: b.sendsPerDay, sendsPerMinute: b.sendsPerMinute };
     expect(messages(withSponsor(chain(edge)))).toEqual([]);
     expect(messages(withSponsor(chain({ maxGasPerTx: b.maxGasPerTx.min, minGas: b.minGas.min, maxCallsPerBatch: 1, deadlineMaxS: b.deadlineMaxS.min, perUserPerDay: 1, perAppPerDay: 1, sendsPerDay: 2, sendsPerMinute: 1, appDailyBudgetEth: 0.001 })))).toEqual([]);
   });
@@ -326,7 +337,9 @@ describe('evm.sponsor: the staff-only allowlist (D835)', () => {
   it('maxDataBytes: required, an integer from 4 to 8192', () => {
     expect(refused(targets([target({ maxDataBytes: undefined })]))).toBe(true);
     for (const bad of [3, 8193, 4.5, '36', null]) expect(refused(targets([target({ maxDataBytes: bad })])), String(bad)).toBe(true);
-    for (const ok of [4, 8192]) expect(messages(withSponsor(targets([target({ maxDataBytes: ok })]))), String(ok)).toEqual([]);
+    // 8192 itself, within the batch-size rule (maxCallsPerBatch 3 × 8192 ≤ 30 KiB).
+    for (const ok of [4, 7680]) expect(messages(withSponsor(targets([target({ maxDataBytes: ok })]))), String(ok)).toEqual([]);
+    expect(messages(withSponsor({ ...targets([target({ maxDataBytes: 8192 })]), chains: chain({ maxCallsPerBatch: 3 }).chains }))).toEqual([]);
   });
 
   it('exactCalldata: 1 to 8 distinct lowercase whole-byte entries of 4 to 2048 bytes, each starting with a listed selector, none longer than maxDataBytes', () => {

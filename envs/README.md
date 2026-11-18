@@ -225,7 +225,8 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   literal, no loopback or link-local `.local` host, a dot and no trailing dot) with no credentials, path, query or
   fragment; a loopback host (http or https) only in `local*` envs; outside them the two are different providers
   (registrable domains). **No API keys in manifest URLs**: the manifest is committed, so a keyed RPC goes in a secret
-  (the later handlers read an optional one). `delegate` must be the delegate core pins for that chain
+  (`EVM_SPONSOR_RPC_<chainId>`: when set it is the one endpoint the relayer and the handlers read, and `rpc` then only
+  receives broadcasts; `rpcFallback` is never read, it only receives broadcasts, D851). `delegate` must be the delegate core pins for that chain
   (`@hana-id/core/evm-sponsor` `SPONSOR_DELEGATES`), checked by both generators (their command lines pass core's table)
   and again by the API at run time; a chain with no pinned delegate can't be sponsored, and an entry core marks as a
   placeholder (`placeholder: true`, a test stand-in; core has none today, its 31337 entry being the delegate's

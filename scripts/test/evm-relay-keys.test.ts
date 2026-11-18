@@ -8,22 +8,24 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Manifest, loadEnv } from '@hana-id/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { evmRelayKeysLine } from '../../apps/api/scripts/gen-wrangler.ts';
 import { sponsorFixture } from '../../packages/env/src/evm-sponsor.fixture.ts';
 import { evmKeyAddress, evmRelayKeys, freshEvmKey, gitWouldTrack, readEvmRelayKeys, writeSecretJsonOnce } from '../lib/evm-relay-keys.ts';
-import { leftoverTempDirs } from './anvil.ts';
 
 const sandbox = loadEnv('sandbox-dev');
 const notGit = () => false;
 const withRelayer = (address: string): Manifest => ({ ...sandbox, evm: { sponsor: { ...sponsorFixture(), relayerAddress: address } } }) as Manifest;
 /** A derived test key and its address (never a real key). */
 const TEST_KEY = Uint8Array.from(createHash('sha256').update('hana-id evm-relay-keys test key').digest());
-const FILE_START = Date.now();
+// One private directory for the whole file: every temporary root below is made in it, removed after each test (it
+// can hold a generated key), listed at the end and removed after the file. Nothing goes to the shared temp directory.
+const FILE_ROOT = mkdtempSync(join(tmpdir(), 'hana-evm-relay-t-'));
+afterAll(() => rmSync(FILE_ROOT, { recursive: true, force: true }));
 const made: string[] = [];
-/** A temporary root, removed after each test (it can hold a generated key). */
+/** A temporary root inside FILE_ROOT, removed after each test. */
 const tmpRoot = () => {
-  const d = mkdtempSync(join(tmpdir(), 'hana-evm-relay-'));
+  const d = mkdtempSync(join(FILE_ROOT, 'r-'));
   made.push(d);
   return d;
 };
@@ -180,7 +182,7 @@ describe('evm-relay-keys', () => {
 });
 
 describe('cleanup', () => {
-  it('leaves no hana-evm-relay-* directory of this run behind (they held generated keys)', () => {
-    expect(leftoverTempDirs(['hana-evm-relay-'], FILE_START)).toEqual([]);
+  it('leaves nothing in its own temp directory (the roots held generated keys)', () => {
+    expect(readdirSync(FILE_ROOT)).toEqual([]);
   });
 });

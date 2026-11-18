@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it } from 'vitest';
+import { testTempDir } from './temp.ts';
 
 type Pkg = { name: string; dir: string; deps: string[] };
 type Reads = Map<string, { code: Set<string>; test: Set<string> }>;
@@ -470,7 +471,7 @@ describe('the run: phases in order, lanes side by side, a lane one step at a tim
   }
   const steps = [st('install', 0), st('unit', 1), st('docs', 1), st('sandbox', 2), st('pack', 2, 'web'), st('e2e', 2, 'web'), st('skipped', 2, 'web', 'not here')];
   // Never written (the fake runner ignores it), but a run's own directory, not the shared temp dir's fixed names.
-  const quiet = { log: () => {}, logDir: mkdtempSync(join(tmpdir(), 'hana-verify-test-')) };
+  const quiet = { log: () => {}, logDir: testTempDir('hana-verify-test-') };
 
   it('runs the lanes of a phase side by side and a lane in order; the next phase waits for every lane', async () => {
     const f = fake({ sandbox: 80, pack: 10, e2e: 10 });

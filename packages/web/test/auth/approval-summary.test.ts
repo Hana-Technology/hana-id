@@ -68,7 +68,7 @@ describe('the summary first, the details folded', () => {
     }
     const fee = [...el.querySelectorAll('dt')].find((x) => x.textContent === 'Network fee');
     expect(folded(fee ?? null)).toBe(false);
-    expect(fee?.nextElementSibling?.textContent).toBe('up to less than 0.000001 ETH');
+    expect(fee?.nextElementSibling?.textContent).toBe('less than 0.000001 ETH');
   });
 
   it('the user opens and closes the details; the label follows', () => {

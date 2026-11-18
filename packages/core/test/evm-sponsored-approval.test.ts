@@ -95,6 +95,8 @@ function plain(to: string, data: string): ApprovalSummary {
 }
 
 const SETUP = 'One-time setup: this also turns on free network fees for your account on the local test chain 31337. Your address stays the same and you still approve every action.';
+/** A contract Journear doesn't know, called with the check-in's selector (the pinned check-in reads plainly, D854). */
+const UNKNOWN = '0x4444444444444444444444444444444444444444' as const;
 const TRANSFER = calldata('transfer(address,uint256)', RECIPIENT, 5_000_000n);
 const APPROVE_MAX = calldata('approve(address,uint256)', SPENDER, UINT256_MAX);
 
@@ -375,10 +377,10 @@ describe('the sponsored action’s summary (D831, D850)', () => {
   });
 
   it('an unknown call: the same red "can’t tell" line as the same call in an ordinary transaction; nothing about ETH leaving', () => {
-    const s = sponsored([sponsoredCall(CHECK_IN, CHECK_IN_DATA)]);
-    const p = plain(CHECK_IN, CHECK_IN_DATA);
+    const s = sponsored([sponsoredCall(UNKNOWN, CHECK_IN_DATA)]);
+    const p = plain(UNKNOWN, CHECK_IN_DATA);
     expect(text(s.headline)).toBe(text(p.headline));
-    expect(text(s.headline)).toBe(`${APP} wants to use contract ${CHECK_IN}`);
+    expect(text(s.headline)).toBe(`${APP} wants to use contract ${UNKNOWN}`);
     expect(warnings(s)).toEqual(warnings(p));
     expect(warnings(s)).toEqual([['danger', 'cannot_explain', `Journear can’t tell what this request does: it calls a function Journear doesn’t recognise. It could move your money or tokens. Only approve if you fully trust ${APP}. Technical details are below.`]]);
     expect(s.explainable).toBe(false);
@@ -434,11 +436,11 @@ describe('the sponsored action’s summary (D831, D850)', () => {
   });
 
   it('several calls, one unknown: the batch gets that call’s red "can’t tell" line; two kinds of unknown: one for the batch', () => {
-    const one = sponsored([sponsoredCall(TOKEN, TRANSFER), sponsoredCall(CHECK_IN, CHECK_IN_DATA)]);
-    expect(warnings(one)).toEqual(warnings(plain(CHECK_IN, CHECK_IN_DATA)));
+    const one = sponsored([sponsoredCall(TOKEN, TRANSFER), sponsoredCall(UNKNOWN, CHECK_IN_DATA)]);
+    expect(warnings(one)).toEqual(warnings(plain(UNKNOWN, CHECK_IN_DATA)));
     expect(one.explainable).toBe(false);
-    expect(one.lines.map(text)).toEqual([`Send tokens of contract ${TOKEN} to ${RECIPIENT}. Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).`, `Use contract ${CHECK_IN}`]);
-    const two = sponsored([sponsoredCall(CHECK_IN, CHECK_IN_DATA), sponsoredCall(TOKEN, calldata('multicall(bytes[])', 32n, 0n))]);
+    expect(one.lines.map(text)).toEqual([`Send tokens of contract ${TOKEN} to ${RECIPIENT}. Amount: 5,000,000 in the token’s smallest units (Journear doesn’t know this token’s decimals).`, `Use contract ${UNKNOWN}`]);
+    const two = sponsored([sponsoredCall(UNKNOWN, CHECK_IN_DATA), sponsoredCall(TOKEN, calldata('multicall(bytes[])', 32n, 0n))]);
     expect(warnings(two)).toEqual([['danger', 'cannot_explain', `Journear can’t tell what this request does: part of it is something Journear can’t summarise. It could move your money or tokens. Only approve if you fully trust ${APP}. Technical details are below.`]]);
   });
 

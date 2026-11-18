@@ -15,8 +15,13 @@
 // entry is a mainnet entry. test/verified-contracts.test.ts checks every entry's shape, sources and uniqueness;
 // packages/sodax/test/verified-contracts.test.ts checks every Sodax entry against the installed @sodax/types config.
 //
+// Journear's own demo check-in (D854) is listed on each chain where demo-check-in.ts pins it, from the checked-in
+// artifact of this repository's public source (the contract is deployed at that deterministic address and its runtime
+// code hash checked before a chain is pinned).
+//
 // Keys: EVM entries by chainId and address, compared lowercase (stored EIP-55); Stellar entries by network passphrase
 // and contract StrKey, compared exactly.
+import { DEMO_CHECK_IN } from './demo-check-in.ts';
 import { STELLAR_MAINNET_PASSPHRASE } from './networks.ts';
 
 /** A chain a policy contract lives on: an EVM chain ID, or a Stellar network passphrase. */
@@ -58,6 +63,11 @@ const sodax = (chain: ContractChain, address: string, name: string, packageFile:
 });
 
 const SONIC = evm(146);
+
+/** The demo check-in's name on the list (and in the approval summary). */
+export const DEMO_CHECK_IN_NAME = 'Journear demo check-in';
+/** Its source: the checked-in artifact (address, runtime code hash, ABI) at the commit that pinned it. */
+const CHECK_IN_SOURCE = 'https://github.com/Hana-Technology/hana-id/blob/c6b434f4/contracts/evm-delegate/artifacts/CheckIn.json';
 const STELLAR = { kind: 'stellar', networkPassphrase: STELLAR_MAINNET_PASSPHRASE } as const;
 
 /** Spoke chains: `spokeChainConfig[chain].addresses.assetManager` and `.bnUSD`, the docs' AssetManager and bnUSD rows. */
@@ -124,6 +134,15 @@ export const VERIFIED_CONTRACTS: readonly VerifiedContract[] = deepFreeze([
   // Stellar: spokeChainConfig.stellar.addresses.assetManager and .bnUSD (docs "Stellar" AssetManager, bnUSD).
   sodax(STELLAR, 'CCGF33A4CO6D3BXFEKPXVCFCZBK76I3AQOZK6KIKRPAWAZR3632WHCJ3', 'Sodax Asset Manager', SODAX_CHAINS),
   sodax(STELLAR, 'CD6YBFFWMU2UJHX2NGRJ7RN76IJVTCC7MRA46DUBXNB7E6W7H7JRJ2CX', 'Sodax bnUSD', SODAX_CHAINS),
+  // Journear's demo check-in, on every chain where it is pinned.
+  ...Object.entries(DEMO_CHECK_IN).map(([chainId, c]) => ({
+    chain: evm(Number(chainId)),
+    address: c.address,
+    name: DEMO_CHECK_IN_NAME,
+    protocol: 'Journear',
+    sources: [CHECK_IN_SOURCE],
+    added: '2026-11-18',
+  })),
 ] satisfies VerifiedContract[]);
 
 const chainKey = (chain: ContractChain): string => (chain.kind === 'evm' ? `evm:${chain.chainId}` : `stellar:${chain.networkPassphrase}`);
